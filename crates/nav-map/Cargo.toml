@@ -1,0 +1,16 @@
+[package]
+name = "nav-map"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+egui.workspace = true
+nav-types.path = "../nav-types"
+uom.workspace = true
+walkers.workspace = true
+
+[lints]
+workspace = true

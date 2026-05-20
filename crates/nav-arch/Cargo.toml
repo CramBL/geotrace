@@ -1,0 +1,8 @@
+[package]
+name = "nav-arch"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# We use the config crate to define rules
+cargo_pup_lint_config = "0.1.7"
