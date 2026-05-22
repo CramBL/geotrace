@@ -1,0 +1,18 @@
+[package]
+name = "nav-io"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+nav-types = { path = "../nav-types" }
+naview-sdk = { path = "../../naview-sdk" }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

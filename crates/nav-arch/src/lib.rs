@@ -64,7 +64,7 @@ mod tests {
         builder
             .module_lint()
             .lint_named("naview_isolation")
-            .matching(|m| m.module("naview.*"))
+            .matching(|m| m.module("^naview($|::.+)"))
             .with_severity(Severity::Error)
             .restrict_imports(
                 Some(vec![
@@ -79,10 +79,67 @@ mod tests {
                     "walkers.*".into(),
                     "nav_types.*".into(),
                     "nav_map.*".into(),
+                    "nav_io.*".into(),
+                    "rfd.*".into(),
                     "crate.*".into(),
                     "naview.*".into(),
                     "geo_types.*".into(),
                     "app.*".into(),
+                ]),
+                None,
+            )
+            .build();
+
+        // 4. naview_sdk Isolation (Whitelist) — no workspace-internal crates allowed
+        builder
+            .module_lint()
+            .lint_named("naview_sdk_isolation")
+            .matching(|m| m.module("naview_sdk.*"))
+            .with_severity(Severity::Error)
+            .restrict_imports(
+                Some(vec![
+                    "^$".into(),
+                    "std.*".into(),
+                    "core.*".into(),
+                    "alloc.*".into(),
+                    "bon.*".into(),
+                    "chrono.*".into(),
+                    "uom.*".into(),
+                    "thiserror.*".into(),
+                    "log.*".into(),
+                    "hdf5_pure.*".into(),
+                    "crate.*".into(),
+                    "naview_sdk.*".into(),
+                    // Sub-module shorthands used by the compiler
+                    "builder.*".into(),
+                    "error.*".into(),
+                    "read.*".into(),
+                    "types.*".into(),
+                    "write.*".into(),
+                ]),
+                None,
+            )
+            .build();
+
+        // 5. nav_io Isolation (Whitelist)
+        builder
+            .module_lint()
+            .lint_named("nav_io_isolation")
+            .matching(|m| m.module("nav_io.*"))
+            .with_severity(Severity::Error)
+            .restrict_imports(
+                Some(vec![
+                    "^$".into(),
+                    "std.*".into(),
+                    "core.*".into(),
+                    "alloc.*".into(),
+                    "nav_types.*".into(),
+                    "naview_sdk.*".into(),
+                    "thiserror.*".into(),
+                    "crate.*".into(),
+                    "nav_io.*".into(),
+                    // Sub-module shorthands used by the compiler
+                    "error.*".into(),
                 ]),
                 None,
             )

@@ -1,0 +1,22 @@
+[package]
+name = "naview-sdk"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+bon.workspace = true
+chrono.workspace = true
+hdf5-pure.workspace = true
+log.workspace = true
+thiserror.workspace = true
+uom.workspace = true
+
+[dev-dependencies]
+hdf5-pure.workspace = true
+tempfile = "3"
+
+[lints]
+workspace = true

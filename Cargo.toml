@@ -4,7 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["crates/nav-arch", "crates/nav-map", "crates/nav-types"]
+members = [
+    "crates/nav-arch",
+    "crates/nav-io",
+    "crates/nav-map",
+    "crates/nav-types",
+    "naview-sdk",
+]
 
 [workspace.package]
 description = ""
@@ -14,12 +20,16 @@ license = "MIT OR Apache-2.0"
 authors = ["Marc Beck König <mgit@tuta.io>"]
 
 [workspace.dependencies]
+bon = "3"
 chrono = { version = "0.4.44", default-features = false, features = ["std", "now", "clock", "oldtime"] }
 eframe = { version = "0.34.2", default-features = false, features = ["default_fonts", "wayland", "wgpu"] }
 egui = "0.34.2"
 env_logger = "0.11.10"
 geo = "0.33.1"
 geo-types = "0.7.19"
+hdf5-pure = "0.5.0"
+log = "0.4"
+thiserror = "2"
 uom = "0.38.0"
 walkers = "0.53.0"
 
@@ -148,7 +158,10 @@ ignored_unit_patterns = "warn"
 eframe.workspace = true
 egui.workspace = true
 env_logger.workspace = true
-nav-map.path = "crates/nav-map"
+log.workspace = true
+nav-io = { path = "crates/nav-io" }
+nav-map = { path = "crates/nav-map" }
+rfd = "0.17.2"
 
 [profile.dev]
 debug = "line-tables-only"
