@@ -17,6 +17,7 @@ pub enum Constellation {
 pub struct Satellite {
     constellation: Constellation,
     prn: u32,
+    in_fix: bool,
     elevation: Option<f32>,
     azimuth: Option<f32>,
     snr: Option<f32>,
@@ -29,10 +30,12 @@ impl Satellite {
         elevation: Option<f32>,
         azimuth: Option<f32>,
         snr: Option<f32>,
+        in_fix: bool,
     ) -> Self {
         Self {
             constellation,
             prn,
+            in_fix,
             elevation,
             azimuth,
             snr,
@@ -44,6 +47,9 @@ impl Satellite {
     }
     pub fn prn(&self) -> u32 {
         self.prn
+    }
+    pub fn in_fix(&self) -> bool {
+        self.in_fix
     }
     pub fn elevation(&self) -> Option<f32> {
         self.elevation
@@ -62,21 +68,17 @@ pub struct Satellites {
     fix_count: u32,
     satellite_count: u32,
     satellites: Vec<Satellite>,
-    fix: Vec<(Option<Constellation>, u32)>,
 }
 
 impl Satellites {
-    pub fn new(
-        time: DateTime<Utc>,
-        satellites: Vec<Satellite>,
-        fix: Vec<(Option<Constellation>, u32)>,
-    ) -> Self {
+    pub fn new(time: DateTime<Utc>, satellites: Vec<Satellite>) -> Self {
+        let fix_count = satellites.iter().filter(|s| s.in_fix).count() as u32;
+        let satellite_count = satellites.len() as u32;
         Self {
-            fix_count: fix.len() as u32,
-            satellite_count: satellites.len() as u32,
+            fix_count,
+            satellite_count,
             time,
             satellites,
-            fix,
         }
     }
 
@@ -102,9 +104,7 @@ impl Satellites {
 
     /// Satellites that are actively contributing to the current positional fix.
     pub fn satellites_with_fix(&self) -> impl Iterator<Item = &Satellite> {
-        self.satellites
-            .iter()
-            .filter(move |sat| self.is_in_fix(sat.constellation, sat.prn))
+        self.satellites.iter().filter(|s| s.in_fix)
     }
 
     /// Tracked satellites belonging to a specific GNSS constellation.
@@ -138,14 +138,13 @@ impl Satellites {
 
     /// The total number of valid fixes resolved by the receiver.
     pub fn total_fix(&self) -> usize {
-        self.fix.len()
+        self.fix_count as usize
     }
 
     /// Checks if a specific satellite is currently contributing to the positional fix.
     pub fn is_in_fix(&self, constellation: Constellation, prn: u32) -> bool {
-        self.fix.iter().any(|&(fix_constellation, fix_prn)| {
-            let constellation_match = fix_constellation.is_none_or(|c| c == constellation);
-            constellation_match && fix_prn == prn
-        })
+        self.satellites
+            .iter()
+            .any(|s| s.in_fix && s.constellation == constellation && s.prn == prn)
     }
 }

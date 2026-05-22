@@ -1,7 +1,7 @@
 use naview_sdk::{Angle, DateTime, Duration, Utc, Velocity, degree, meter_per_second};
 use naview_sdk::{
-    Annotation, Constellation, FixEntry, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix,
-    Satellite, SatelliteReport,
+    Annotation, Constellation, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, Satellite,
+    SatelliteReport,
 };
 
 fn base() -> DateTime<Utc> {
@@ -47,12 +47,7 @@ fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
                     .constellation(Constellation::Gps)
                     .prn(1u32)
                     .snr(35.0f32)
-                    .build(),
-            ])
-            .fix(vec![
-                FixEntry::builder()
-                    .constellation(Constellation::Gps)
-                    .prn(1u32)
+                    .in_fix(true)
                     .build(),
             ])
             .build(),

@@ -1,7 +1,7 @@
 use naview_sdk::{Angle, DateTime, Duration, Utc, Velocity, degree, meter_per_second};
 use naview_sdk::{
-    Annotation, Constellation, FixEntry, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix,
-    Satellite, SatelliteReport,
+    Annotation, Constellation, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, Satellite,
+    SatelliteReport,
 };
 
 fn base() -> DateTime<Utc> {
@@ -58,18 +58,12 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
                     .elevation(45.0f32)
                     .azimuth(90.0f32)
                     .snr(32.5f32)
+                    .in_fix(true)
                     .build(),
                 Satellite::builder()
                     .constellation(Constellation::Galileo)
                     .prn(11u32)
                     .build(),
-            ])
-            .fix(vec![
-                FixEntry::builder()
-                    .constellation(Constellation::Gps)
-                    .prn(5u32)
-                    .build(),
-                FixEntry::builder().prn(7u32).build(),
             ])
             .build(),
     );
@@ -115,11 +109,9 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(s1.elevation, None);
     assert_eq!(s1.azimuth, None);
     assert_eq!(s1.snr, None);
-    assert_eq!(rep.fix.len(), 2);
-    assert_eq!(rep.fix[0].constellation, Some(Constellation::Gps));
-    assert_eq!(rep.fix[0].prn, 5);
-    assert_eq!(rep.fix[1].constellation, None);
-    assert_eq!(rep.fix[1].prn, 7);
+    assert!(!s1.in_fix);
+    assert_eq!(rep.tracked.iter().filter(|s| s.in_fix).count(), 1);
+    assert!(s0.in_fix);
 
     assert_eq!(rt.markers().len(), 1);
     let m = &rt.markers()[0];
@@ -187,13 +179,7 @@ fn no_markers() -> Result<(), Box<dyn std::error::Error>> {
             .heading(Angle::new::<degree>(0.0))
             .build(),
     );
-    b.add_satellite_report(
-        SatelliteReport::builder()
-            .time(t0)
-            .tracked(vec![])
-            .fix(vec![])
-            .build(),
-    );
+    b.add_satellite_report(SatelliteReport::builder().time(t0).tracked(vec![]).build());
     let rt = round_trip(b.finish()?)?;
     assert!(rt.markers().is_empty());
     assert!(rt.nav_points()[0].satellites.is_some());
@@ -220,14 +206,7 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
                 .constellation(Constellation::Gps)
                 .prn(i + 1)
                 .snr(30.0f32)
-                .build()
-        })
-        .collect();
-    let fix: Vec<_> = (0u32..12u32)
-        .map(|i| {
-            FixEntry::builder()
-                .constellation(Constellation::Gps)
-                .prn(i + 1)
+                .in_fix(true)
                 .build()
         })
         .collect();
@@ -246,7 +225,6 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
             SatelliteReport::builder()
                 .time(t)
                 .tracked(tracked.clone())
-                .fix(fix.clone())
                 .build(),
         );
     }
@@ -265,7 +243,7 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
     );
     let sat_rep = rt.nav_points()[0].satellites.as_ref().ok_or("missing")?;
     assert_eq!(sat_rep.tracked.len(), 12);
-    assert_eq!(sat_rep.fix.len(), 12);
+    assert_eq!(sat_rep.tracked.iter().filter(|s| s.in_fix).count(), 12);
 
     Ok(())
 }

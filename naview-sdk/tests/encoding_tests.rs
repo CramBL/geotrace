@@ -1,8 +1,8 @@
 use hdf5_pure::{AttrValue, FileBuilder};
 use naview_sdk::{Angle, DateTime, Duration, Utc, degree};
 use naview_sdk::{
-    Annotation, Constellation, Error, FixEntry, MarkerIcon, NavFile, NavFileBuilder, NavFix,
-    Satellite, SatelliteReport,
+    Annotation, Constellation, Error, MarkerIcon, NavFile, NavFileBuilder, NavFix, Satellite,
+    SatelliteReport,
 };
 
 fn base() -> DateTime<Utc> {
@@ -68,7 +68,6 @@ fn nan_for_absent_satellite_fields() -> Result<(), Box<dyn std::error::Error>> {
                     .prn(1u32)
                     .build(),
             ])
-            .fix(vec![])
             .build(),
     );
     let nav_file = b.finish()?;
@@ -120,12 +119,7 @@ fn constellation_encoding() -> Result<(), Box<dyn std::error::Error>> {
                     Satellite::builder()
                         .constellation(constellation)
                         .prn(1u32)
-                        .build(),
-                ])
-                .fix(vec![
-                    FixEntry::builder()
-                        .constellation(constellation)
-                        .prn(1u32)
+                        .in_fix(true)
                         .build(),
                 ])
                 .build(),
@@ -205,6 +199,9 @@ fn make_file_with_invalid_constellation(code: u8) -> Vec<u8> {
     ts.create_dataset("prn")
         .with_u32_data(&[1])
         .with_shape(&[1]);
+    ts.create_dataset("in_fix")
+        .with_u8_data(&[0])
+        .with_shape(&[1]);
     ts.create_dataset("elevation")
         .with_f32_data(&[f32::NAN])
         .with_shape(&[1]);
@@ -216,57 +213,8 @@ fn make_file_with_invalid_constellation(code: u8) -> Vec<u8> {
         .with_shape(&[1]);
     fb.add_group(ts.finish());
 
-    let mut fs = fb.create_group("fix_sats");
-    fs.create_dataset("sat_report_idx")
-        .with_u64_data(&[])
-        .with_shape(&[0]);
-    fs.create_dataset("constellation")
-        .with_i8_data(&[])
-        .with_shape(&[0]);
-    fs.create_dataset("prn").with_u32_data(&[]).with_shape(&[0]);
-    fb.add_group(fs.finish());
-
     #[expect(clippy::expect_used, reason = "test helper, panics are ok")]
     fb.finish().expect("build hdf5")
-}
-
-#[test]
-fn fix_constellation_none() -> Result<(), Box<dyn std::error::Error>> {
-    // FixEntry with constellation=None encodes as i8 -1 and decodes back to None.
-    let mut b = NavFileBuilder::new();
-    b.add_nav_fix(
-        NavFix::builder()
-            .time(base())
-            .lat(Angle::new::<degree>(0.0))
-            .lon(Angle::new::<degree>(0.0))
-            .heading(Angle::new::<degree>(0.0))
-            .build(),
-    );
-    b.add_satellite_report(
-        SatelliteReport::builder()
-            .time(base())
-            .tracked(vec![])
-            .fix(vec![FixEntry::builder().prn(7u32).build()])
-            .build(),
-    );
-    let nav_file = b.finish()?;
-    let bytes = to_bytes(&nav_file);
-
-    let file = hdf5_pure::File::from_bytes(bytes)?;
-    let codes = file
-        .group("fix_sats")?
-        .dataset("constellation")?
-        .read_i8()?;
-    assert_eq!(codes[0], -1i8);
-
-    let mut bytes2 = Vec::new();
-    nav_file.write(&mut bytes2)?;
-    let rt = NavFile::read(bytes2.as_slice())?;
-    assert_eq!(
-        rt.nav_points()[0].satellites.as_ref().ok_or("missing")?.fix[0].constellation,
-        None
-    );
-    Ok(())
 }
 
 #[test]

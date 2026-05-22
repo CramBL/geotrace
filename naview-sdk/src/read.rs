@@ -6,10 +6,9 @@ use uom::si::velocity::meter_per_second;
 use crate::builder::micros_to_datetime;
 use crate::error::Error;
 use crate::types::{
-    Annotation, FixEntry, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint, Satellite,
-    SatelliteReport,
+    Annotation, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint, Satellite, SatelliteReport,
 };
-use crate::write::{decode_fix_constellation, decode_tracked_constellation};
+use crate::write::decode_tracked_constellation;
 
 pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
     let file = File::from_bytes(bytes)?;
@@ -118,24 +117,21 @@ fn attach_satellite_data(
     let ts_rep_idx = ts_grp.dataset("sat_report_idx")?.read_u64()?;
     let ts_constellation = ts_grp.dataset("constellation")?.read_u8()?;
     let ts_prn = ts_grp.dataset("prn")?.read_u32()?;
+    let ts_in_fix = ts_grp.dataset("in_fix")?.read_u8()?;
     let ts_elevation = ts_grp.dataset("elevation")?.read_f32()?;
     let ts_azimuth = ts_grp.dataset("azimuth")?.read_f32()?;
     let ts_snr = ts_grp.dataset("snr")?.read_f32()?;
 
-    let fs_grp = file.group("fix_sats")?;
-    let fs_rep_idx = fs_grp.dataset("sat_report_idx")?.read_u64()?;
-    let fs_constellation = fs_grp.dataset("constellation")?.read_i8()?;
-    let fs_prn = fs_grp.dataset("prn")?.read_u32()?;
-
     let mut tracked_by_report: Vec<Vec<Satellite>> = vec![Vec::new(); r];
-    for (&rep_idx, constellation_code, &prn, &elevation, &azimuth, &snr) in ts_rep_idx
+    for (&rep_idx, constellation_code, &prn, &in_fix, &elevation, &azimuth, &snr) in ts_rep_idx
         .iter()
         .zip(ts_constellation.iter())
         .zip(ts_prn.iter())
+        .zip(ts_in_fix.iter())
         .zip(ts_elevation.iter())
         .zip(ts_azimuth.iter())
         .zip(ts_snr.iter())
-        .map(|(((((a, b), c), d), e), f)| (a, b, c, d, e, f))
+        .map(|((((((a, b), c), d), e), f), g)| (a, b, c, d, e, f, g))
     {
         let idx = rep_idx as usize;
         if idx >= r {
@@ -145,6 +141,7 @@ fn attach_satellite_data(
         let sat = Satellite {
             constellation,
             prn,
+            in_fix: in_fix != 0,
             elevation: opt_f32(elevation),
             azimuth: opt_f32(azimuth),
             snr: opt_f32(snr),
@@ -154,31 +151,12 @@ fn attach_satellite_data(
         }
     }
 
-    let mut fix_by_report: Vec<Vec<FixEntry>> = vec![Vec::new(); r];
-    for (&rep_idx, &constellation_code, &prn) in fs_rep_idx
-        .iter()
-        .zip(fs_constellation.iter())
-        .zip(fs_prn.iter())
-        .map(|((a, b), c)| (a, b, c))
-    {
-        let idx = rep_idx as usize;
-        if idx >= r {
-            continue;
-        }
-        let constellation = decode_fix_constellation(constellation_code)?;
-        let entry = FixEntry { constellation, prn };
-        if let Some(bucket) = fix_by_report.get_mut(idx) {
-            bucket.push(entry);
-        }
-    }
-
     for (i, (&np_idx, &rep_time)) in nav_point_idx.iter().zip(report_times.iter()).enumerate() {
         let np = nav_points.get_mut(np_idx as usize);
         if let Some(np) = np {
             np.satellites = Some(SatelliteReport {
                 time: micros_to_datetime(rep_time),
                 tracked: tracked_by_report.get(i).cloned().unwrap_or_default(),
-                fix: fix_by_report.get(i).cloned().unwrap_or_default(),
             });
         }
     }
@@ -451,23 +429,20 @@ fn inspect_satellite_reports(file: &File, n_nav_points: u64, out: &mut String) {
         }
     }
 
-    let f = file
-        .group("fix_sats")
-        .and_then(|g| g.dataset("sat_report_idx"))
-        .and_then(|ds| ds.shape())
-        .ok()
-        .and_then(|s| s.first().copied())
-        .unwrap_or(0);
-
-    let avg_f = f as f64 / m as f64;
-    writeln!(
-        out,
-        "  {:<22}{} total  (avg {:.1} per report)",
-        "Fix satellites",
-        fmt_count(f),
-        avg_f
-    )
-    .unwrap_or(());
+    if let Ok(ts_grp) = file.group("tracked_sats")
+        && let Ok(in_fix_vals) = ts_grp.dataset("in_fix").and_then(|ds| ds.read_u8())
+    {
+        let fix_count: u64 = in_fix_vals.iter().filter(|&&v| v != 0).count() as u64;
+        let avg_f = fix_count as f64 / m as f64;
+        writeln!(
+            out,
+            "  {:<22}{} total  (avg {:.1} per report)",
+            "Fix satellites",
+            fmt_count(fix_count),
+            avg_f
+        )
+        .unwrap_or(());
+    }
 }
 
 fn inspect_markers(file: &File, out: &mut String) {

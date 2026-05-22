@@ -89,13 +89,10 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) {
     let mut tracked_rep_idx: Vec<u64> = Vec::new();
     let mut tracked_constellation: Vec<u8> = Vec::new();
     let mut tracked_prn: Vec<u32> = Vec::new();
+    let mut tracked_in_fix: Vec<u8> = Vec::new();
     let mut tracked_elevation: Vec<f32> = Vec::new();
     let mut tracked_azimuth: Vec<f32> = Vec::new();
     let mut tracked_snr: Vec<f32> = Vec::new();
-
-    let mut fix_rep_idx: Vec<u64> = Vec::new();
-    let mut fix_constellation: Vec<i8> = Vec::new();
-    let mut fix_prn: Vec<u32> = Vec::new();
 
     let mut report_idx: u64 = 0;
 
@@ -111,18 +108,10 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) {
             tracked_rep_idx.push(report_idx);
             tracked_constellation.push(sat.constellation.to_u8());
             tracked_prn.push(sat.prn);
+            tracked_in_fix.push(u8::from(sat.in_fix));
             tracked_elevation.push(sat.elevation.unwrap_or(f32::NAN));
             tracked_azimuth.push(sat.azimuth.unwrap_or(f32::NAN));
             tracked_snr.push(sat.snr.unwrap_or(f32::NAN));
-        }
-
-        for entry in &report.fix {
-            fix_rep_idx.push(report_idx);
-            fix_constellation.push(match entry.constellation {
-                None => -1i8,
-                Some(c) => c.to_u8() as i8,
-            });
-            fix_prn.push(entry.prn);
         }
 
         report_idx += 1;
@@ -141,7 +130,6 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) {
 
     let r = report_nav_point_idx.len();
     let ts = tracked_rep_idx.len();
-    let fs = fix_rep_idx.len();
 
     // sat_reports/
     let mut sat_grp = fb.create_group("sat_reports");
@@ -178,6 +166,14 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) {
         .with_u32_data(&tracked_prn)
         .with_shape(&[ts as u64]);
     ts_grp
+        .create_dataset("in_fix")
+        .with_u8_data(&tracked_in_fix)
+        .with_shape(&[ts as u64])
+        .set_attr(
+            "encoding",
+            AttrValue::String("0=not_in_fix,1=in_fix".into()),
+        );
+    ts_grp
         .create_dataset("elevation")
         .with_f32_data(&tracked_elevation)
         .with_shape(&[ts as u64])
@@ -196,26 +192,6 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) {
         .set_attr("units", AttrValue::String("dB-Hz".into()))
         .set_attr("nan_means", AttrValue::String("absent".into()));
     fb.add_group(ts_grp.finish());
-
-    // fix_sats/
-    let mut fs_grp = fb.create_group("fix_sats");
-    fs_grp
-        .create_dataset("sat_report_idx")
-        .with_u64_data(&fix_rep_idx)
-        .with_shape(&[fs as u64]);
-    fs_grp
-        .create_dataset("constellation")
-        .with_i8_data(&fix_constellation)
-        .with_shape(&[fs as u64])
-        .set_attr(
-            "encoding",
-            AttrValue::String("-1=unknown,0=GPS,1=GLONASS,2=Galileo,3=BeiDou".into()),
-        );
-    fs_grp
-        .create_dataset("prn")
-        .with_u32_data(&fix_prn)
-        .with_shape(&[fs as u64]);
-    fb.add_group(fs_grp.finish());
 }
 
 fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> {
@@ -303,20 +279,4 @@ fn truncate_utf8<'a>(s: &'a str, max_bytes: usize, truncated: &mut bool) -> &'a 
 
 pub(crate) fn decode_tracked_constellation(code: u8) -> Result<Constellation, Error> {
     Constellation::from_u8(code, "tracked_sats/constellation")
-}
-
-pub(crate) fn decode_fix_constellation(code: i8) -> Result<Option<Constellation>, Error> {
-    if code == -1 {
-        return Ok(None);
-    }
-    if code < 0 {
-        return Err(Error::UnknownConstellation {
-            code: i16::from(code),
-            dataset: "fix_sats/constellation",
-        });
-    }
-    Ok(Some(Constellation::from_u8(
-        code.cast_unsigned(),
-        "fix_sats/constellation",
-    )?))
 }

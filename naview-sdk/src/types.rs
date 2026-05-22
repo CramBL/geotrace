@@ -19,8 +19,6 @@ pub struct SatelliteReport {
     pub time: DateTime<Utc>,
     /// All satellites currently tracked (may include satellites not in the fix).
     pub tracked: Vec<Satellite>,
-    /// Satellites actually used to compute this fix.
-    pub fix: Vec<FixEntry>,
 }
 
 /// One tracked satellite with optional signal metrics.
@@ -28,20 +26,15 @@ pub struct SatelliteReport {
 pub struct Satellite {
     pub constellation: Constellation,
     pub prn: u32,
+    /// Whether this satellite is contributing to the current positional fix.
+    #[builder(default)]
+    pub in_fix: bool,
     /// Elevation above horizon in degrees; `None` if unavailable.
     pub elevation: Option<f32>,
     /// Azimuth from true north in degrees; `None` if unavailable.
     pub azimuth: Option<f32>,
     /// Signal-to-noise ratio in dB-Hz; `None` if unavailable.
     pub snr: Option<f32>,
-}
-
-/// A satellite entry in the position fix solution.
-#[derive(bon::Builder, Debug, Clone, Copy)]
-pub struct FixEntry {
-    /// `None` if the constellation is unknown.
-    pub constellation: Option<Constellation>,
-    pub prn: u32,
 }
 
 /// GNSS constellation identifier.

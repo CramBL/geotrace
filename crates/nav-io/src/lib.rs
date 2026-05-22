@@ -6,17 +6,33 @@ use nav_types::{CustomMarker, MarkerIcon, NavPoint, TimePositionVelocity};
 use naview_sdk::degree;
 use naview_sdk::{
     Constellation as SdkConstellation, Marker as SdkMarker, MarkerIcon as SdkMarkerIcon, NavFile,
-    SatelliteReport,
+    Satellite as SdkSatellite, SatelliteReport,
 };
 
-/// Load a `.nvd` file from `path`, convert it to nav-types domain types, and
-/// return the nav points and markers.
-pub fn load(
-    path: impl AsRef<std::path::Path>,
-) -> Result<(Vec<NavPoint>, Vec<CustomMarker>), LoadError> {
+/// Load a `.nvd` file from `path`, segment it into trips, and return a fully
+/// populated `LoadedFile`.
+pub fn load_file(path: impl AsRef<std::path::Path>) -> Result<nav_types::LoadedFile, LoadError> {
+    let path = path.as_ref();
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_else(|| path.to_str().unwrap_or("unknown"))
+        .to_owned();
     let file = std::fs::File::open(path)?;
     let nav_file = NavFile::read(file)?;
-    from_nav_file(&nav_file)
+    let (points, markers) = from_nav_file(&nav_file)?;
+    Ok(nav_types::segment::build_loaded_file(
+        filename, &points, &markers,
+    ))
+}
+
+/// Parse a `.nvd` file from raw bytes (e.g. delivered via drag-and-drop on Wayland).
+pub fn load_bytes(bytes: &[u8], filename: String) -> Result<nav_types::LoadedFile, LoadError> {
+    let nav_file = NavFile::read(bytes)?;
+    let (points, markers) = from_nav_file(&nav_file)?;
+    Ok(nav_types::segment::build_loaded_file(
+        filename, &points, &markers,
+    ))
 }
 
 fn from_nav_file(nav_file: &NavFile) -> Result<(Vec<NavPoint>, Vec<CustomMarker>), LoadError> {
@@ -66,24 +82,19 @@ fn convert_satellite_report(report: &SatelliteReport) -> Satellites {
     let satellites: Vec<Satellite> = report
         .tracked
         .iter()
-        .map(|s| {
+        .map(|s: &SdkSatellite| {
             Satellite::new(
                 convert_constellation(s.constellation),
                 s.prn,
                 s.elevation,
                 s.azimuth,
                 s.snr,
+                s.in_fix,
             )
         })
         .collect();
 
-    let fix: Vec<(Option<Constellation>, u32)> = report
-        .fix
-        .iter()
-        .map(|f| (f.constellation.map(convert_constellation), f.prn))
-        .collect();
-
-    Satellites::new(report.time, satellites, fix)
+    Satellites::new(report.time, satellites)
 }
 
 fn convert_marker(m: &SdkMarker) -> CustomMarker {
@@ -93,6 +104,7 @@ fn convert_marker(m: &SdkMarker) -> CustomMarker {
         icon: m.annotation.icon.map_or(MarkerIcon::Pin, convert_icon),
         lat: m.lat,
         lon: m.lon,
+        color_group: None,
     }
 }
 
@@ -112,9 +124,9 @@ fn convert_icon(icon: SdkMarkerIcon) -> MarkerIcon {
 mod tests {
     use super::*;
     use naview_sdk::{
-        Angle, Annotation, Constellation as SdkConst, DateTime, Duration, FixEntry,
-        MarkerIcon as SdkIcon, NavFile, NavFileBuilder, NavFix, Satellite as SdkSat,
-        SatelliteReport, Utc, Velocity, degree, meter_per_second,
+        Angle, Annotation, Constellation as SdkConst, DateTime, Duration, MarkerIcon as SdkIcon,
+        NavFile, NavFileBuilder, NavFix, Satellite as SdkSat, SatelliteReport, Utc, Velocity,
+        degree, meter_per_second,
     };
 
     fn base() -> DateTime<Utc> {
@@ -210,16 +222,11 @@ mod tests {
                         .elevation(30.0f32)
                         .azimuth(90.0f32)
                         .snr(28.0f32)
+                        .in_fix(true)
                         .build(),
                     SdkSat::builder()
                         .constellation(SdkConst::Galileo)
                         .prn(7u32)
-                        .build(),
-                ])
-                .fix(vec![
-                    FixEntry::builder()
-                        .constellation(SdkConst::Gps)
-                        .prn(3u32)
                         .build(),
                 ])
                 .build(),
@@ -247,30 +254,6 @@ mod tests {
         for (sdk, expected) in consts {
             assert_eq!(convert_constellation(sdk), expected);
         }
-    }
-
-    #[test]
-    fn fix_constellation_none() {
-        let t0 = base();
-        let mut b = NavFileBuilder::new();
-        b.add_nav_fix(minimal_fix(t0));
-        b.add_satellite_report(
-            SatelliteReport::builder()
-                .time(t0)
-                .tracked(vec![
-                    SdkSat::builder()
-                        .constellation(SdkConst::Gps)
-                        .prn(7u32)
-                        .build(),
-                ])
-                .fix(vec![FixEntry::builder().prn(7u32).build()])
-                .build(),
-        );
-        let (nav_points, _) = build(b.finish().unwrap()).unwrap();
-        let sats = nav_points[0].satellites.as_ref().unwrap();
-        assert_eq!(sats.total_fix(), 1);
-        // None-constellation fix entry matches any satellite with that PRN
-        assert!(sats.is_in_fix(Constellation::Gps, 7));
     }
 
     #[test]

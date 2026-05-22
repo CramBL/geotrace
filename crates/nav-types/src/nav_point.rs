@@ -46,10 +46,9 @@ mod tests {
         let sats = Satellites::new(
             Utc::now(),
             vec![
-                Satellite::new(Constellation::Gps, 1, None, None, None),
-                Satellite::new(Constellation::Gps, 2, None, None, None),
+                Satellite::new(Constellation::Gps, 1, None, None, None, true),
+                Satellite::new(Constellation::Gps, 2, None, None, None, false),
             ],
-            vec![(Some(Constellation::Gps), 1)],
         );
 
         np.satellites = Some(sats);

@@ -4,15 +4,21 @@ pub mod app;
 fn main() -> eframe::Result {
     env_logger::init();
 
+    let initial_paths: Vec<std::path::PathBuf> = std::env::args()
+        .skip(1)
+        .map(std::path::PathBuf::from)
+        .collect();
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([800.0, 600.0])
-            .with_min_inner_size([400.0, 320.0]),
+            .with_min_inner_size([400.0, 320.0])
+            .with_drag_and_drop(true),
         ..Default::default()
     };
     eframe::run_native(
         "naview",
         native_options,
-        Box::new(|cc| Ok(Box::new(app::App::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(app::App::new_with_files(cc, &initial_paths)))),
     )
 }

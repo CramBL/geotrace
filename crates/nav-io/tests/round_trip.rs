@@ -1,6 +1,6 @@
 use nav_types::satellites::Constellation;
 use naview_sdk::{
-    Annotation, Constellation as SdkConst, FixEntry, MarkerIcon as SdkIcon, NavFileBuilder, NavFix,
+    Annotation, Constellation as SdkConst, MarkerIcon as SdkIcon, NavFileBuilder, NavFix,
     Satellite as SdkSat, SatelliteReport, degree,
 };
 
@@ -22,6 +22,8 @@ fn sdk_icon(icon: nav_types::MarkerIcon) -> SdkIcon {
         nav_types::MarkerIcon::Warning => SdkIcon::Warning,
         nav_types::MarkerIcon::Error => SdkIcon::Error,
         nav_types::MarkerIcon::Check => SdkIcon::Check,
+        // Log markers are not stored in .nvd files; map to Pin as a fallback
+        nav_types::MarkerIcon::Log => SdkIcon::Pin,
     }
 }
 
@@ -57,16 +59,7 @@ fn round_trip_from_nav_types_test_data() {
                         .maybe_elevation(s.elevation())
                         .maybe_azimuth(s.azimuth())
                         .maybe_snr(s.snr())
-                        .build()
-                })
-                .collect();
-
-            let fix: Vec<FixEntry> = sats
-                .satellites_with_fix()
-                .map(|s| {
-                    FixEntry::builder()
-                        .constellation(sdk_constellation(s.constellation()))
-                        .prn(s.prn())
+                        .in_fix(s.in_fix())
                         .build()
                 })
                 .collect();
@@ -75,7 +68,6 @@ fn round_trip_from_nav_types_test_data() {
                 SatelliteReport::builder()
                     .time(sats.time())
                     .tracked(tracked)
-                    .fix(fix)
                     .build(),
             );
         }
@@ -103,12 +95,18 @@ fn round_trip_from_nav_types_test_data() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::io::Write::write_all(&mut tmp.as_file(), &bytes).unwrap();
 
-    let (nav_points, markers) = nav_io::load(tmp.path()).unwrap();
+    let loaded = nav_io::load_file(tmp.path()).unwrap();
+    let nav_points: Vec<_> = loaded.trips.iter().flat_map(|t| t.points.iter()).collect();
+    let markers: Vec<_> = loaded
+        .trips
+        .iter()
+        .flat_map(|t| t.custom_markers.iter())
+        .collect();
 
     assert_eq!(nav_points.len(), nav_data.len());
     assert_eq!(markers.len(), marker_data.len());
 
-    let first = &nav_points[0];
+    let first = nav_points.first().expect("at least one point");
     assert_eq!(
         first.tpv.lat().get::<degree>(),
         nav_data[0].tpv.lat().get::<degree>()
@@ -118,8 +116,8 @@ fn round_trip_from_nav_types_test_data() {
         nav_data[0].tpv.lon().get::<degree>()
     );
 
-    let last = nav_points.last().unwrap();
-    let last_orig = nav_data.last().unwrap();
+    let last = nav_points.last().expect("at least one point");
+    let last_orig = nav_data.last().expect("nav_data is non-empty");
     assert_eq!(
         last.tpv.lat().get::<degree>(),
         last_orig.tpv.lat().get::<degree>()

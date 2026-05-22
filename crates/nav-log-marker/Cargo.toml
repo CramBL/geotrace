@@ -1,16 +1,15 @@
 [package]
-name = "nav-types"
-description.workspace = true
+name = "nav-log-marker"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+description.workspace = true
 
 [dependencies]
 chrono.workspace = true
-geo.workspace = true
-geo-types.workspace = true
-nav-geo-math = { path = "../nav-geo-math" }
+log.workspace = true
+nav-types = { path = "../nav-types" }
 uom.workspace = true
 
 [lints]

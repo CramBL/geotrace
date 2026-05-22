@@ -1,7 +1,6 @@
 use naview_sdk::{Angle, DateTime, Duration, Utc, Velocity, degree, meter_per_second};
 use naview_sdk::{
-    Annotation, BuildError, Constellation, FixEntry, NavFileBuilder, NavFix, Satellite,
-    SatelliteReport,
+    Annotation, BuildError, Constellation, NavFileBuilder, NavFix, Satellite, SatelliteReport,
 };
 
 fn t(offset_ms: i64) -> DateTime<Utc> {
@@ -26,12 +25,7 @@ fn simple_report(offset_ms: i64) -> SatelliteReport {
             Satellite::builder()
                 .constellation(Constellation::Gps)
                 .prn(1u32)
-                .build(),
-        ])
-        .fix(vec![
-            FixEntry::builder()
-                .constellation(Constellation::Gps)
-                .prn(1u32)
+                .in_fix(true)
                 .build(),
         ])
         .build()
@@ -86,7 +80,6 @@ fn satellite_association_tie_breaking() -> Result<(), BuildError> {
                 .prn(99u32)
                 .build(),
         ])
-        .fix(vec![])
         .build();
     let earlier = SatelliteReport::builder()
         .time(t(250))
@@ -96,7 +89,6 @@ fn satellite_association_tie_breaking() -> Result<(), BuildError> {
                 .prn(1u32)
                 .build(),
         ])
-        .fix(vec![])
         .build();
     b.add_satellite_report(later);
     b.add_satellite_report(earlier);

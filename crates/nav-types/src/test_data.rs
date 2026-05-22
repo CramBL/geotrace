@@ -108,7 +108,6 @@ pub fn nav_test_data() -> Vec<NavPoint> {
         } else {
             let num_sats = if i < 300 { 12 } else { 8 };
             let mut sats = Vec::new();
-            let mut fix = Vec::new();
             for prn in 1..=num_sats {
                 #[expect(clippy::cast_sign_loss, reason = "prn is always positive")]
                 let prn_u32 = prn as u32;
@@ -123,10 +122,10 @@ pub fn nav_test_data() -> Vec<NavPoint> {
                     Some(45.0),
                     Some(prn as f32 * 30.0),
                     Some(30.0 + (prn as f32 % 5.0)),
+                    true,
                 ));
-                fix.push((Some(constellation), prn_u32));
             }
-            Some(Satellites::new(current_time, sats, fix))
+            Some(Satellites::new(current_time, sats))
         };
 
         route.push(NavPoint::new(tpv, satellites));
@@ -153,6 +152,7 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
                         icon: MarkerIcon::Warning,
                         lat: last_point.tpv.lat(),
                         lon: last_point.tpv.lon(),
+                        color_group: None,
                     });
                 }
                 last_fix_index = None;
@@ -181,6 +181,7 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
                         icon: MarkerIcon::Check,
                         lat: p.tpv.lat(),
                         lon: p.tpv.lon(),
+                        color_group: None,
                     });
                 }
                 last_fix_index = Some(i);

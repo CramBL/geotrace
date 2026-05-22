@@ -33,8 +33,8 @@ mod write;
 pub use builder::NavFileBuilder;
 pub use error::{BuildError, Error};
 pub use types::{
-    Annotation, Constellation, FixEntry, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint,
-    Satellite, SatelliteReport,
+    Annotation, Constellation, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint, Satellite,
+    SatelliteReport,
 };
 
 // Re-export commonly needed external types so users don't need extra deps

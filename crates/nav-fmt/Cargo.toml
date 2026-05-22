@@ -1,5 +1,5 @@
 [package]
-name = "nav-types"
+name = "nav-fmt"
 description.workspace = true
 version.workspace = true
 edition.workspace = true
@@ -8,10 +8,6 @@ authors.workspace = true
 
 [dependencies]
 chrono.workspace = true
-geo.workspace = true
-geo-types.workspace = true
-nav-geo-math = { path = "../nav-geo-math" }
-uom.workspace = true
 
 [lints]
 workspace = true
