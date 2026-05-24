@@ -74,7 +74,7 @@ fn satellite_report(
         })
         .collect();
     SatelliteReport::builder()
-        .time(time)
+        .gps_time(time)
         .tracked(tracked)
         .build()
 }
@@ -135,7 +135,7 @@ fn build_snapshot_bytes() -> Vec<u8> {
         let pt_time = offset(base, i as i64 * 30);
         b.add_nav_fix(
             NavFix::builder()
-                .time(pt_time)
+                .gps_time(pt_time)
                 .lat(a(trip0_lats[i]))
                 .lon(a(trip0_lons[i]))
                 .heading(a(45.0))
@@ -190,7 +190,7 @@ fn build_snapshot_bytes() -> Vec<u8> {
         let pt_time = offset(base, 750 + i as i64 * 30);
         b.add_nav_fix(
             NavFix::builder()
-                .time(pt_time)
+                .gps_time(pt_time)
                 .lat(a(trip1_lats[i]))
                 .lon(a(trip1_lons[i]))
                 .heading(a(45.0))

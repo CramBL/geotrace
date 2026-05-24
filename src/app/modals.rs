@@ -1,9 +1,5 @@
 use nav_map::{MapLayer, NavMap};
-use nav_types::{
-    Coord, CustomMarker, FileMetadata, LoadedFile, LoadedTrip, Rect, TripDataVisibility,
-    TripMetadata,
-};
-use uom::si::angle::degree;
+use nav_types::{LoadedFile, TripDataVisibility};
 
 use super::trip_data_panel::{SelectionKey, TripDataPanelState};
 
@@ -187,84 +183,4 @@ pub fn show_mapbox_token_dialog(ui: &egui::Ui, map: &mut NavMap, token_input: &m
                 token_input.clear();
             }
         });
-}
-
-pub fn make_log_loaded_file(filename: &str, markers: Vec<CustomMarker>) -> Option<LoadedFile> {
-    let first = markers.first()?;
-
-    let mut min_lat = first.lat.get::<degree>();
-    let mut max_lat = min_lat;
-    let mut min_lon = first.lon.get::<degree>();
-    let mut max_lon = min_lon;
-    let mut min_time = first.time;
-    let mut max_time = first.time;
-
-    for m in &markers {
-        let lat = m.lat.get::<degree>();
-        let lon = m.lon.get::<degree>();
-        if lat < min_lat {
-            min_lat = lat;
-        }
-        if lat > max_lat {
-            max_lat = lat;
-        }
-        if lon < min_lon {
-            min_lon = lon;
-        }
-        if lon > max_lon {
-            max_lon = lon;
-        }
-        if m.time < min_time {
-            min_time = m.time;
-        }
-        if m.time > max_time {
-            max_time = m.time;
-        }
-    }
-
-    let count = markers.len();
-    let duration = max_time - min_time;
-    let filename = if filename.is_empty() {
-        "log".to_owned()
-    } else {
-        filename.to_owned()
-    };
-
-    let trip = LoadedTrip {
-        metadata: TripMetadata {
-            index: 0,
-            distance_km: 0.0,
-            duration,
-            time_range: (min_time, max_time),
-            bounding_box: Rect::new(
-                Coord {
-                    x: min_lon,
-                    y: min_lat,
-                },
-                Coord {
-                    x: max_lon,
-                    y: max_lat,
-                },
-            ),
-            point_set_diameter_m: 0.0,
-            has_custom_markers: true,
-            tpv_count: 0,
-            satellite_report_count: 0,
-            custom_marker_count: count,
-            generated_marker_count: 0,
-        },
-        points: Vec::new(),
-        custom_markers: markers,
-        generated_markers: Vec::new(),
-    };
-
-    Some(LoadedFile {
-        metadata: FileMetadata {
-            filename,
-            total_distance_km: 0.0,
-            total_duration: duration,
-            time_range: (min_time, max_time),
-        },
-        trips: vec![trip],
-    })
 }

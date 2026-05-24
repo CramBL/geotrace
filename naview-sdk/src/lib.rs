@@ -10,7 +10,7 @@
 //!
 //! builder.add_nav_fix(
 //!     NavFix::builder()
-//!         .time(chrono::Utc::now())
+//!         .gps_time(chrono::Utc::now())
 //!         .lat(Angle::new::<degree>(51.5))
 //!         .lon(Angle::new::<degree>(-0.1))
 //!         .heading(Angle::new::<degree>(270.0))

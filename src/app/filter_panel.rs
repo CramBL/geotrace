@@ -17,76 +17,77 @@ pub fn render_filter_panel(
     filter: &mut GlobalFilter,
     state: &mut FilterPanelState,
 ) {
-    ui.collapsing("Filters", |ui| {
-        let full_range = compute_full_time_range(files);
+    let full_range = compute_full_time_range(files);
 
-        if let Some((range_start, range_end)) = full_range {
-            ui.label("Time range:");
-            time_range_bar(
-                ui,
-                (range_start, range_end),
-                &mut filter.time_start,
-                &mut filter.time_end,
-            );
-        }
+    if let Some((range_start, range_end)) = full_range {
+        ui.label("Time range:");
+        time_range_bar(
+            ui,
+            (range_start, range_end),
+            &mut filter.time_start,
+            &mut filter.time_end,
+        );
+    }
 
-        ui.separator();
-
-        ui.horizontal(|ui| {
-            ui.label("Min distance:");
-            let edit =
+    // Three-column grid: label | text edit | unit.  All filter inputs in one
+    // aligned block so they line up neatly regardless of label length.
+    let (dist_changed, dur_changed, spread_changed) = egui::Grid::new("filter_inputs")
+        .num_columns(3)
+        .spacing([6.0, 4.0])
+        .show(ui, |ui| {
+            ui.label("Min dist:");
+            let dist =
                 ui.add(egui::TextEdit::singleline(&mut state.distance_input).desired_width(60.0));
             ui.label("km");
-            if edit.changed() {
-                filter.min_distance_km = state
-                    .distance_input
-                    .trim()
-                    .parse::<f64>()
-                    .ok()
-                    .filter(|&v| v > 0.0);
-            }
-        });
+            ui.end_row();
 
-        ui.horizontal(|ui| {
-            ui.label("Min duration:");
-            let edit =
-                ui.add(egui::TextEdit::singleline(&mut state.duration_input).desired_width(80.0));
-            if edit.changed() {
-                filter.min_duration_secs = parse_duration_input(&state.duration_input);
-            }
-        });
+            ui.label("Min dur:");
+            let dur = ui.add(
+                egui::TextEdit::singleline(&mut state.duration_input)
+                    .desired_width(60.0)
+                    .hint_text("1h30m"),
+            );
+            ui.label(""); // no unit for duration
+            ui.end_row();
 
-        ui.horizontal(|ui| {
             ui.label("Min spread:");
-            let edit =
+            let spread =
                 ui.add(egui::TextEdit::singleline(&mut state.spread_input).desired_width(60.0));
             ui.label("m");
-            if edit.changed() {
-                filter.min_spread_m = state
-                    .spread_input
-                    .trim()
-                    .parse::<f64>()
-                    .ok()
-                    .filter(|&v| v > 0.0);
-            }
-        });
+            ui.end_row();
 
-        let any_custom = files
-            .iter()
-            .any(|f| f.trips.iter().any(|t| !t.custom_markers.is_empty()));
-        if any_custom {
-            ui.checkbox(
-                &mut filter.require_custom_marker,
-                "Only trips with custom markers",
-            );
-        }
+            (dist.changed(), dur.changed(), spread.changed())
+        })
+        .inner;
 
-        ui.separator();
-        if ui.button("Reset filters").clicked() {
-            *filter = GlobalFilter::default();
-            *state = FilterPanelState::default();
-        }
-    });
+    if dist_changed {
+        filter.min_distance_km = state
+            .distance_input
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|&v| v > 0.0);
+    }
+    if dur_changed {
+        filter.min_duration_secs = parse_duration_input(&state.duration_input);
+    }
+    if spread_changed {
+        filter.min_spread_m = state
+            .spread_input
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|&v| v > 0.0);
+    }
+
+    // Marker filters — always visible so users know they exist before loading data.
+    ui.checkbox(&mut filter.require_any_marker, "W/ markers only");
+    ui.checkbox(&mut filter.require_custom_marker, "W/ custom markers only");
+
+    if ui.small_button("Reset filters").clicked() {
+        *filter = GlobalFilter::default();
+        *state = FilterPanelState::default();
+    }
 }
 
 fn compute_full_time_range(files: &[LoadedFile]) -> Option<(DateTime<Utc>, DateTime<Utc>)> {

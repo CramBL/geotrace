@@ -7,69 +7,21 @@ pub fn to_linestring(tpvs: &[TimePositionVelocity]) -> geo_types::LineString<f64
     tpvs.iter().map(Coord::from).collect()
 }
 
-#[derive(Default, Clone, Copy)]
-pub struct TimePositionVelocityBuilder {
-    time: Option<DateTime<Utc>>,
-    lat: Option<Angle>,
-    lon: Option<Angle>,
-    velocity: Option<Velocity>,
-    heading: Option<Angle>,
-}
-
-impl TimePositionVelocityBuilder {
-    pub fn with_time(mut self, time: DateTime<Utc>) -> Self {
-        self.time = Some(time);
-        self
-    }
-    pub fn with_lat(mut self, lat: Angle) -> Self {
-        self.lat = Some(lat);
-        self
-    }
-    pub fn with_lon(mut self, lon: Angle) -> Self {
-        self.lon = Some(lon);
-        self
-    }
-    pub fn with_velocity(mut self, velocity: Velocity) -> Self {
-        self.velocity = Some(velocity);
-        self
-    }
-    pub fn with_heading(mut self, heading: Angle) -> Self {
-        self.heading = Some(heading);
-        self
-    }
-
-    #[expect(clippy::expect_used, reason = "Builder pattern invariants")]
-    pub fn build(self) -> TimePositionVelocity {
-        let Self {
-            time,
-            lat,
-            lon,
-            velocity,
-            heading,
-        } = self;
-        TimePositionVelocity {
-            time: time.expect("Time is required"),
-            lat: lat.expect("Latitude is required"),
-            lon: lon.expect("Longitude is required"),
-            velocity,
-            heading: heading.expect("Heading is required"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
+/// A GPS fix: time, position, optional heading and speed.
+///
+/// `heading` is `None` for ghost/synthetic fixes that carry satellite reports
+/// but have no known direction. The renderer draws those as circles.
+#[derive(bon::Builder, Debug, Clone, Copy)]
 pub struct TimePositionVelocity {
-    time: DateTime<Utc>,
-    lat: Angle,
-    lon: Angle,
-    velocity: Option<Velocity>,
-    heading: Angle,
+    pub(crate) time: DateTime<Utc>,
+    pub(crate) lat: Angle,
+    pub(crate) lon: Angle,
+    pub(crate) velocity: Option<Velocity>,
+    /// Compass heading in \[0°, 360°). `None` = direction unknown (ghost fix).
+    pub(crate) heading: Option<Angle>,
 }
 
 impl TimePositionVelocity {
-    pub fn build() -> TimePositionVelocityBuilder {
-        TimePositionVelocityBuilder::default()
-    }
     pub fn time(&self) -> DateTime<Utc> {
         self.time
     }
@@ -82,7 +34,7 @@ impl TimePositionVelocity {
     pub fn velocity(&self) -> Option<Velocity> {
         self.velocity
     }
-    pub fn heading(&self) -> Angle {
+    pub fn heading(&self) -> Option<Angle> {
         self.heading
     }
 }
@@ -116,32 +68,33 @@ mod tests {
         )
         .and_utc();
 
-        let tpv = TimePositionVelocity::build()
-            .with_time(dt)
-            .with_lat(Angle::new::<degree>(55.676))
-            .with_lon(Angle::new::<degree>(12.565))
-            .with_velocity(Velocity::new::<meter_per_second>(15.0))
-            .with_heading(Angle::new::<degree>(270.0))
+        let tpv = TimePositionVelocity::builder()
+            .time(dt)
+            .lat(Angle::new::<degree>(55.676))
+            .lon(Angle::new::<degree>(12.565))
+            .velocity(Velocity::new::<meter_per_second>(15.0))
+            .heading(Angle::new::<degree>(270.0))
             .build();
 
         assert_eq!(tpv.time(), dt);
         assert_eq!(tpv.lat().get::<degree>(), 55.676);
-        assert_eq!(tpv.heading().get::<degree>(), 270.0);
+        assert_eq!(tpv.heading().map(|h| h.get::<degree>()), Some(270.0));
     }
 
     #[test]
-    #[should_panic(expected = "Latitude is required")]
-    fn test_builder_panics_on_missing_required_field() {
+    fn test_builder_heading_none_when_omitted() {
         let dt = NaiveDateTime::new(
             NaiveDate::from_ymd_opt(2026, 5, 21).unwrap(),
             NaiveTime::from_hms_opt(11, 5, 0).unwrap(),
         )
         .and_utc();
 
-        TimePositionVelocity::build()
-            .with_time(dt)
-            .with_lon(Angle::new::<degree>(12.565))
-            .with_heading(Angle::new::<degree>(270.0))
+        let tpv = TimePositionVelocity::builder()
+            .time(dt)
+            .lat(Angle::new::<degree>(55.0))
+            .lon(Angle::new::<degree>(12.0))
             .build();
+
+        assert_eq!(tpv.heading(), None);
     }
 }

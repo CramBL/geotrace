@@ -63,26 +63,6 @@ impl<'a> TpvRenderer<'a> {
         }
     }
 
-    fn point_color(&self, p: &NavPoint, points: &[NavPoint], idx: usize) -> (f64, f64, Color32) {
-        let fix = p.fix_count();
-        if fix >= 10 {
-            (
-                p.tpv.lat().get::<degree>(),
-                p.tpv.lon().get::<degree>(),
-                Color32::from_rgb(66, 133, 244),
-            )
-        } else if fix > 0 {
-            (
-                p.tpv.lat().get::<degree>(),
-                p.tpv.lon().get::<degree>(),
-                Color32::from_rgb(244, 180, 0),
-            )
-        } else {
-            let (lat, lon) = interpolate_position(points, idx);
-            (lat, lon, Color32::from_rgb(219, 68, 55))
-        }
-    }
-
     #[expect(
         clippy::too_many_arguments,
         reason = "render context requires all parameters"
@@ -97,14 +77,36 @@ impl<'a> TpvRenderer<'a> {
         ti: usize,
         points: &[NavPoint],
         local_closest: &mut Option<(DataPointRef, Pos2)>,
+        outline_alpha: f32,
+        anchor: egui::Vec2,
+        total_px: f64,
     ) {
         let mut last_label_pos: Option<Pos2> = None;
         for (pi, point) in points.iter().enumerate() {
             if !point_passes_time_filter(point.tpv.time(), self.filter) {
                 continue;
             }
-            let (lat, lon, color) = self.point_color(point, points, pi);
-            let screen_pos = projector.project(Position::new(lon, lat)).to_pos2();
+            // For points with a GPS fix, use the pre-computed Mercator coordinates
+            // (cached at load time) to avoid per-frame trig. Ghost points (fix==0)
+            // use an interpolated lat/lon and still need a full projection.
+            let fix = point.fix_count();
+            let (screen_pos, color) = if fix >= 10 {
+                (
+                    crate::merc_to_screen(anchor, total_px, point.merc_x, point.merc_y),
+                    Color32::from_rgb(66, 133, 244),
+                )
+            } else if fix > 0 {
+                (
+                    crate::merc_to_screen(anchor, total_px, point.merc_x, point.merc_y),
+                    Color32::from_rgb(244, 180, 0),
+                )
+            } else {
+                let (lat, lon) = interpolate_position(points, pi);
+                (
+                    projector.project(Position::new(lon, lat)).to_pos2(),
+                    Color32::from_rgb(219, 68, 55),
+                )
+            };
             let point_ref = DataPointRef {
                 file_index: fi,
                 trip_index: ti,
@@ -112,25 +114,36 @@ impl<'a> TpvRenderer<'a> {
                 point_index: pi,
             };
             update_hover_candidate(&self.hover_out, screen_pos, hover_pos, point_ref);
-            if let Some(mouse) = hover_pos
-                && screen_pos.distance(mouse) < HOVER_THRESHOLD
-                && local_closest
-                    .as_ref()
-                    .is_none_or(|_| screen_pos.distance(mouse) < HOVER_THRESHOLD)
-            {
-                *local_closest = Some((point_ref, screen_pos));
+            if let Some(mouse) = hover_pos {
+                // Use squared distance to avoid sqrt; threshold is HOVER_THRESHOLD² = 100.
+                let dist_sq = screen_pos.distance_sq(mouse);
+                if dist_sq < HOVER_THRESHOLD * HOVER_THRESHOLD
+                    && local_closest
+                        .as_ref()
+                        .is_none_or(|(_, p)| p.distance_sq(mouse) > dist_sq)
+                {
+                    *local_closest = Some((point_ref, screen_pos));
+                }
             }
             if !view_rect.contains(screen_pos) {
                 continue;
             }
             let highlighted = self.is_arrow_highlighted(point_ref);
-            draw_navigation_arrow(
-                ui,
-                screen_pos,
-                point.tpv.heading().get::<degree>(),
-                color,
-                highlighted,
-            );
+            match point.tpv.heading() {
+                Some(h) => {
+                    draw_navigation_arrow(
+                        ui,
+                        screen_pos,
+                        h.get::<degree>(),
+                        color,
+                        highlighted,
+                        outline_alpha,
+                    );
+                }
+                None => {
+                    draw_ghost_circle(ui, screen_pos, color, highlighted, outline_alpha);
+                }
+            }
             if let Some(sats) = &point.satellites {
                 let show =
                     last_label_pos.is_none_or(|last| screen_pos.distance(last) > MIN_LABEL_DIST);
@@ -189,11 +202,22 @@ impl Plugin for TpvRenderer<'_> {
         ui: &mut Ui,
         _response: &Response,
         projector: &Projector,
-        _map_memory: &MapMemory,
+        map_memory: &MapMemory,
     ) {
         let hover_pos = ui.input(|i| i.pointer.hover_pos());
         let view_rect = ui.max_rect().expand(50.0);
         let mut local_closest: Option<(DataPointRef, Pos2)> = None;
+
+        // Scale the white outline alpha with zoom level: fully visible when zoomed
+        // in (zoom ≥ 14), fades to transparent when zoomed out (zoom ≤ 10).
+        // This prevents the outlines from blending into a white mass at low zoom.
+        let zoom = map_memory.zoom();
+        let outline_alpha = ((zoom - 10.0) / 4.0).clamp(0.0, 1.0) as f32;
+
+        // Compute affine-transform components once per frame.
+        // merc_to_screen uses: screen = anchor + (merc - 0.5) * total_px
+        let anchor = projector.project(walkers::lat_lon(0.0, 0.0));
+        let total_px = 2_f64.powf(map_memory.zoom()) * 256.0;
 
         for (fi, file) in self.files.iter().enumerate() {
             let Some(file_vis) = self.visibility.files.get(fi) else {
@@ -221,6 +245,9 @@ impl Plugin for TpvRenderer<'_> {
                     ti,
                     &trip.points,
                     &mut local_closest,
+                    outline_alpha,
+                    anchor,
+                    total_px,
                 );
             }
         }
@@ -279,55 +306,284 @@ pub(crate) fn show_hover_table(ui: &mut Ui, p: &NavPoint) {
             ui.end_row();
 
             ui.label("Speed:");
-            let vel = p
-                .tpv
-                .velocity()
-                .map_or(0.0, |v| v.get::<kilometer_per_hour>());
-            ui.label(format!("{vel:.1} km/h"));
+            match p.tpv.velocity() {
+                Some(v) => ui.label(format!("{:.1} km/h", v.get::<kilometer_per_hour>())),
+                None => ui.label("\u{2014}"), // em-dash: speed unknown (interpolated point)
+            };
             ui.end_row();
 
             ui.label("Heading:");
-            ui.label(format!("{:.1}\u{00b0}", p.tpv.heading().get::<degree>()));
+            match p.tpv.heading() {
+                Some(h) => ui.label(format!("{:.1}\u{00b0}", h.get::<degree>())),
+                None => ui.label("\u{2014}"), // em-dash: unknown direction
+            };
             ui.end_row();
 
             show_satellite_rows(ui, p);
         });
 }
 
+/// Content for the sticky popup window when a TPV point is clicked.
+/// Unlike `show_hover_table`, the time is omitted here because it is shown
+/// in the window title. The satellite section expands into a full per-PRN
+/// breakdown grouped by constellation.
+pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
+    // Basic metrics (2-column grid).
+    egui::Grid::new("sticky_tpv_basic")
+        .num_columns(2)
+        .show(ui, |ui| {
+            ui.label("Speed:");
+            match p.tpv.velocity() {
+                Some(v) => {
+                    ui.label(format!("{:.1} km/h", v.get::<kilometer_per_hour>()));
+                }
+                None => {
+                    ui.label("\u{2014}");
+                }
+            };
+            ui.end_row();
+
+            ui.label("Heading:");
+            match p.tpv.heading() {
+                Some(h) => {
+                    ui.label(format!("{:.1}\u{00b0}", h.get::<degree>()));
+                }
+                None => {
+                    ui.label("\u{2014}");
+                }
+            };
+            ui.end_row();
+
+            match &p.satellites {
+                Some(sats) => {
+                    let fix = sats.fix_count();
+                    let seen = sats.satellite_count();
+                    ui.label("Satellites:");
+                    ui.horizontal(|ui| {
+                        ui.colored_label(fix_count_color(fix), fix.to_string());
+                        ui.label("/");
+                        ui.colored_label(seen_count_color(seen), seen.to_string());
+                    });
+                    ui.end_row();
+                }
+                None => {
+                    ui.label("Satellites:");
+                    ui.colored_label(Color32::RED, "NO FIX");
+                    ui.end_row();
+                }
+            }
+        });
+
+    // Comprehensive per-PRN satellite table grouped by constellation.
+    if let Some(sats) = &p.satellites {
+        ui.add_space(6.0);
+
+        // Collect non-empty constellations up-front. `Satellite` is `Copy` so
+        // we own the data and can borrow-free inside the layout closures.
+        let groups: Vec<(usize, &str, &str, Vec<nav_types::satellites::Satellite>)> = [
+            (0usize, "GPS", "G", Constellation::Gps),
+            (1, "Galileo", "E", Constellation::Galileo),
+            (2, "GLONASS", "R", Constellation::Glonass),
+            (3, "BeiDou", "C", Constellation::Beidou),
+        ]
+        .iter()
+        .filter_map(|&(id, name, prefix, constellation)| {
+            let mut const_sats: Vec<_> = sats.by_constellation(constellation).copied().collect();
+            if const_sats.is_empty() {
+                return None;
+            }
+            const_sats.sort_by_key(|s| s.prn());
+            Some((id, name, prefix, const_sats))
+        })
+        .collect();
+
+        // Two constellation panels per row; each panel sizes to its own content.
+        for chunk in groups.chunks(2) {
+            ui.horizontal_top(|ui| {
+                for (panel_i, (id, name, prefix, const_sats)) in chunk.iter().enumerate() {
+                    if panel_i > 0 {
+                        ui.add_space(12.0);
+                    }
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{name} ({})", const_sats.len())).strong(),
+                        );
+                        egui::Grid::new(("sticky_sats", *id))
+                            .num_columns(3)
+                            .striped(true)
+                            .show(ui, |ui| {
+                                ui.label(egui::RichText::new("PRN").weak().small());
+                                ui.label(egui::RichText::new("SNR").weak().small());
+                                ui.label(egui::RichText::new("Fix").weak().small());
+                                ui.end_row();
+
+                                for sat in const_sats {
+                                    let in_fix = sat.in_fix();
+                                    let prn_color = if in_fix {
+                                        Color32::GREEN
+                                    } else {
+                                        Color32::GRAY
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(format!("{}{:02}", prefix, sat.prn()))
+                                            .color(prn_color),
+                                    );
+                                    match sat.snr() {
+                                        Some(snr) => {
+                                            ui.label(
+                                                egui::RichText::new(format!("{snr:.1}"))
+                                                    .color(snr_color(snr)),
+                                            );
+                                        }
+                                        None => {
+                                            ui.label(
+                                                egui::RichText::new("\u{2014}")
+                                                    .color(Color32::from_gray(110)),
+                                            );
+                                        }
+                                    }
+                                    if in_fix {
+                                        ui.label(
+                                            egui::RichText::new(egui_phosphor::regular::CHECK)
+                                                .color(Color32::GREEN),
+                                        );
+                                    } else {
+                                        ui.label("");
+                                    }
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                }
+            });
+            ui.add_space(6.0);
+        }
+    }
+}
+
 fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
     if let Some(sats) = &p.satellites {
-        ui.label("Satellites:");
-        ui.label(format!("{}/{}", sats.fix_count(), sats.satellite_count()));
+        let fix = sats.fix_count();
+        let seen = sats.satellite_count();
+
+        // Total summary row — bold to signal it is the aggregate.
+        ui.label(egui::RichText::new("Satellites:").strong());
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(fix.to_string())
+                    .color(fix_count_color(fix))
+                    .strong(),
+            );
+            ui.label(egui::RichText::new("/").strong());
+            ui.label(
+                egui::RichText::new(seen.to_string())
+                    .color(seen_count_color(seen))
+                    .strong(),
+            );
+        });
         ui.end_row();
 
+        // Per-constellation breakdown — each with its own colored fix/seen counts.
         for constellation in [
             Constellation::Gps,
             Constellation::Galileo,
             Constellation::Glonass,
             Constellation::Beidou,
         ] {
-            let count = sats.by_constellation(constellation).count();
-            if count > 0 {
-                let fix_count = sats
-                    .satellites_with_fix()
-                    .filter(|s| s.constellation() == constellation)
-                    .count();
-                let max_snr = sats.max_snr_by_constellation(constellation);
-                ui.label(format!("{constellation:?}:"));
-                ui.vertical(|ui| {
-                    ui.label(format!("Fix/Seen: {fix_count}/{count}"));
-                    if let Some(snr) = max_snr {
-                        ui.label(format!("Max SNR: {snr:.1}"));
-                    }
-                });
-                ui.end_row();
+            let const_total = sats.by_constellation(constellation).count() as u32;
+            if const_total == 0 {
+                continue;
             }
+            let const_fix = sats
+                .satellites_with_fix()
+                .filter(|s| s.constellation() == constellation)
+                .count() as u32;
+            let label = match constellation {
+                Constellation::Gps => "GPS:",
+                Constellation::Galileo => "Galileo:",
+                Constellation::Glonass => "GLONASS:",
+                Constellation::Beidou => "BeiDou:",
+            };
+            ui.label(label);
+            ui.horizontal(|ui| {
+                ui.colored_label(fix_count_color(const_fix), const_fix.to_string());
+                ui.label("/");
+                ui.colored_label(seen_count_color(const_total), const_total.to_string());
+            });
+            ui.end_row();
         }
     } else {
-        ui.label("Satellites:");
+        ui.label("Sats:");
         ui.colored_label(Color32::RED, "NO FIX");
         ui.end_row();
     }
+}
+
+/// Map an SNR value (dB-Hz) to a colour on a green → red gradient.
+///
+/// Typical GPS SNR ranges:
+/// - ≥ 40 dB-Hz: excellent lock
+/// - 35–40: good
+/// - 30–35: moderate
+/// - 25–30: weak
+/// - < 25: very weak / marginal
+fn snr_color(snr: f32) -> Color32 {
+    if snr >= 40.0 {
+        Color32::from_rgb(0, 200, 0) // green — excellent
+    } else if snr >= 35.0 {
+        Color32::from_rgb(120, 200, 0) // yellow-green — good
+    } else if snr >= 30.0 {
+        Color32::from_rgb(220, 200, 0) // yellow — moderate
+    } else if snr >= 25.0 {
+        Color32::from_rgb(255, 140, 0) // orange — weak
+    } else {
+        Color32::from_rgb(220, 60, 0) // red — very weak
+    }
+}
+
+/// Color for the "fix used" count in the satellite badge.
+fn fix_count_color(count: u32) -> Color32 {
+    if count == 0 {
+        Color32::RED
+    } else if count <= 2 {
+        Color32::from_rgb(255, 140, 0) // orange
+    } else if count <= 4 {
+        Color32::YELLOW
+    } else {
+        Color32::GREEN
+    }
+}
+
+/// Color for the "total seen" count in the satellite badge.
+fn seen_count_color(count: u32) -> Color32 {
+    if count < 5 {
+        Color32::from_rgb(255, 140, 0) // orange
+    } else if count < 8 {
+        Color32::YELLOW
+    } else {
+        Color32::GREEN
+    }
+}
+
+/// Render a hollow circle for ghost/extrapolated fixes with no known heading.
+fn draw_ghost_circle(ui: &Ui, center: Pos2, color: Color32, highlighted: bool, outline_alpha: f32) {
+    let radius = if highlighted { 8.0 } else { 6.0 };
+    let stroke_color = if highlighted {
+        Color32::from_rgb(100, 200, 255)
+    } else {
+        // Fade out the white outline as we zoom out to avoid a white-mass effect.
+        Color32::from_rgba_unmultiplied(255, 255, 255, alpha_u8(outline_alpha))
+    };
+    let stroke_width = if highlighted {
+        2.0
+    } else {
+        1.5 * outline_alpha
+    };
+    if stroke_width > 0.0 {
+        ui.painter()
+            .circle_stroke(center, radius, Stroke::new(stroke_width, stroke_color));
+    }
+    ui.painter().circle_filled(center, 2.5, color);
 }
 
 fn draw_navigation_arrow(
@@ -336,6 +592,7 @@ fn draw_navigation_arrow(
     heading_degrees: f64,
     color: Color32,
     highlighted: bool,
+    outline_alpha: f32,
 ) {
     let angle_rad = heading_degrees.to_radians() - std::f64::consts::FRAC_PI_2;
     let dir = egui::vec2(angle_rad.cos() as f32, angle_rad.sin() as f32);
@@ -345,19 +602,36 @@ fn draw_navigation_arrow(
     let stroke_color = if highlighted {
         Color32::from_rgb(100, 200, 255)
     } else {
-        Color32::WHITE
+        Color32::from_rgba_unmultiplied(255, 255, 255, alpha_u8(outline_alpha))
     };
-    let stroke_width = if highlighted { 2.0 } else { 1.5 };
+    let stroke_width = if highlighted {
+        2.0
+    } else {
+        1.5 * outline_alpha
+    };
 
+    // Shift the whole triangle forward so the tip is prominent (arrowhead look)
+    // while keeping the rear as a straight base — three segments, no concave notch.
     let center_offset = dir * (size * 0.4);
     let tip = center + dir * size - center_offset;
     let left = center - dir * size - perp * (size * 0.7) - center_offset;
     let right = center - dir * size + perp * (size * 0.7) - center_offset;
-    let back_indent = center - dir * (size * 0.2) - center_offset;
 
     ui.painter().add(egui::Shape::convex_polygon(
-        vec![tip, right, back_indent, left],
+        vec![tip, right, left],
         color,
         Stroke::new(stroke_width, stroke_color),
     ));
+}
+
+/// Convert a [0.0, 1.0] alpha value to a u8. The `clamp` call guarantees the
+/// result is in [0, 255], so sign loss is impossible despite the lint warning.
+#[inline]
+fn alpha_u8(alpha: f32) -> u8 {
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "value is clamped to [0.0,1.0] so the product is always non-negative"
+    )]
+    let v = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
+    v
 }

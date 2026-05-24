@@ -4,19 +4,44 @@ use uom::si::f64::{Angle, Velocity};
 use crate::error::Error;
 
 /// A single GPS/GNSS fix: position, heading, and optional speed at a point in time.
+///
+/// `heading` is `None` for synthetic/ghost fixes where the actual direction is
+/// unknown (e.g., dead-reckoned positions emitted only to carry satellite reports).
+/// The app renders those as circles rather than directional arrows.
+///
+/// `sys_time` is the system-clock timestamp recorded alongside the GPS fix.
+/// Providing it allows the builder to compute the GPS/system-clock delta, which
+/// is used to convert satellite report system-clock timestamps into the GPS time
+/// domain for accurate ghost-fix interpolation during no-fix periods.
 #[derive(bon::Builder, Debug, Clone, Copy)]
 pub struct NavFix {
-    pub time: DateTime<Utc>,
+    /// GPS time of the fix (authoritative).
+    pub gps_time: DateTime<Utc>,
+    /// System-clock time at the moment of this fix, if recorded.
+    pub sys_time: Option<DateTime<Utc>>,
     pub lat: Angle,
     pub lon: Angle,
-    pub heading: Angle,
+    /// Compass heading in \[0°, 360°). `None` = unknown direction (ghost fix).
+    pub heading: Option<Angle>,
     pub speed: Option<Velocity>,
 }
 
-/// A satellite visibility report captured at a specific time.
+/// A satellite visibility report captured at a point in time.
+///
+/// Supply at least one of `gps_time` or `sys_time`. When neither is present the
+/// builder logs a warning and drops the report.
+///
+/// - `gps_time`: the GPS-receiver timestamp, available when the receiver had an
+///   active fix at the time of capture.
+/// - `sys_time`: the system-clock timestamp, available whenever the host OS can
+///   read the clock. This is used together with the GPS/system-clock delta derived
+///   from surrounding NavFixes to place orphan reports in the GPS time domain.
 #[derive(bon::Builder, Debug, Clone)]
 pub struct SatelliteReport {
-    pub time: DateTime<Utc>,
+    /// GPS-domain timestamp; present when the receiver had an active fix.
+    pub gps_time: Option<DateTime<Utc>>,
+    /// System-clock timestamp at capture time; optional but strongly recommended.
+    pub sys_time: Option<DateTime<Utc>>,
     /// All satellites currently tracked (may include satellites not in the fix).
     pub tracked: Vec<Satellite>,
 }

@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+  <!-- Filled circle marker in blue with white outline. -->
+  <circle cx="10" cy="10" r="8" fill="#4285F4" stroke="white" stroke-width="1.5"/>
+</svg>

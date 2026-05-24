@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 24">
+  <!-- Map pin: filled circle head with white stroke, needle down to tip at (9,24). -->
+  <circle cx="9" cy="9" r="7.2" fill="#DB4437" stroke="white" stroke-width="1"/>
+  <line x1="9" y1="14.4" x2="9" y2="24" stroke="#DB4437" stroke-width="2" stroke-linecap="round"/>
+</svg>

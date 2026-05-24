@@ -23,7 +23,6 @@ pub struct PanelContext<'a> {
 pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     let header = ui.horizontal(|ui| {
         let (_, grip) = ui.allocate_exact_size(egui::vec2(10.0, 18.0), egui::Sense::drag());
-        ui.heading("Trip Data");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ctx.panel.detached {
                 if ui.small_button("Dock").clicked() {
@@ -74,6 +73,16 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
 
     ui.separator();
 
+    // Convenience buttons: show / hide all files and trips at once.
+    ui.horizontal(|ui| {
+        if ui.small_button("Show all").clicked() {
+            ctx.visibility.set_all_enabled(true);
+        }
+        if ui.small_button("Hide all").clicked() {
+            ctx.visibility.set_all_enabled(false);
+        }
+    });
+
     let ordered_keys: Vec<SelectionKey> = ctx
         .files
         .iter()
@@ -106,11 +115,16 @@ fn render_file_row(
         return;
     };
     let is_expanded = ctx.panel.expanded_files.contains(&fi);
-    let file_highlight = ctx
-        .highlight
-        .hover
-        .is_some_and(|s| matches!(s, HighlightScope::File { file_index } if file_index == fi));
+    let file_map_hovered = ctx.highlight.hover.is_some_and(|s| match s {
+        HighlightScope::Point(r) => r.file_index == fi,
+        HighlightScope::Trip { file_index, .. }
+        | HighlightScope::TripCategory { file_index, .. }
+        | HighlightScope::File { file_index } => file_index == fi,
+    });
     let file_key = SelectionKey::File(fi);
+
+    // Yellow map-hover highlight; pick a shade that reads well in both themes.
+    let map_hover_bg = map_hover_color(ui);
 
     let row_response = ui.horizontal(|ui| {
         let Some(file_vis) = ctx.visibility.files.get_mut(fi) else {
@@ -125,13 +139,13 @@ fn render_file_row(
         let dist = nav_fmt::format_distance(file.metadata.total_distance_km);
         let dur = nav_fmt::format_human_terse_duration(file.metadata.total_duration);
         let label = format!("{arrow} {}  {dist}  {dur}", file.metadata.filename);
-        let mut text = egui::RichText::new(label);
-        if file_highlight {
-            text = text.color(egui::Color32::from_rgb(100, 200, 255));
-        }
+        let text = egui::RichText::new(label);
         ui.selectable_label(ctx.panel.selection.contains(&file_key), text)
             .on_hover_text(&file.metadata.filename)
     });
+    if file_map_hovered {
+        paint_map_hover_bg(ui, row_response.response.rect, map_hover_bg);
+    }
     let response = row_response.inner;
     let modifiers = ui.ctx().input(|i| i.modifiers);
     if response.clicked() {
@@ -153,6 +167,11 @@ fn render_file_row(
         }
     }
     response.context_menu(|ui| {
+        if ui.button("Show only this file").clicked() {
+            ctx.visibility.show_only_file(fi);
+            ui.close();
+        }
+        ui.separator();
         if ui.button("Delete").clicked() {
             ctx.panel.delete_confirm = Some(DeleteConfirmState {
                 items: vec![file_key.clone()],
@@ -193,7 +212,7 @@ fn render_trip_row(
     ctx: &mut PanelContext<'_>,
     ordered_keys: &[SelectionKey],
 ) {
-    let (trip, passes, is_expanded, trip_highlight, key) = {
+    let (trip, passes, is_expanded, trip_panel_hovered, trip_map_hovered, key) = {
         let Some(file) = ctx.files.get(fi) else {
             return;
         };
@@ -202,22 +221,42 @@ fn render_trip_row(
         };
         let passes = nav_types::trip_passes_filter(&trip.metadata, ctx.filter);
         let is_expanded = ctx.panel.expanded_trips.contains(&(fi, ti));
-        let trip_highlight = ctx.highlight.hover.is_some_and(|s| {
+        // Blue text: side-panel hover (mouse over trip name in the list).
+        let trip_panel_hovered = ctx.highlight.hover.is_some_and(|s| {
             matches!(s, HighlightScope::Trip { file_index, trip_index }
                 if file_index == fi && trip_index == ti)
         });
+        // Yellow background: map hover (mouse over a TPV/marker on the map).
+        let trip_map_hovered = ctx.highlight.hover.is_some_and(
+            |s| matches!(s, HighlightScope::Point(r) if r.file_index == fi && r.trip_index == ti),
+        );
         let key = SelectionKey::Trip(fi, ti);
-        (trip.clone(), passes, is_expanded, trip_highlight, key)
+        (
+            trip.clone(),
+            passes,
+            is_expanded,
+            trip_panel_hovered,
+            trip_map_hovered,
+            key,
+        )
     };
+
+    let map_hover_bg = map_hover_color(ui);
 
     let row_response = ui.horizontal(|ui| {
         let Some(file_vis) = ctx.visibility.files.get_mut(fi) else {
-            return ui.label("").clone();
+            return (ui.label("").clone(), false);
         };
         let Some(trip_vis) = file_vis.trips.get_mut(ti) else {
-            return ui.label("").clone();
+            return (ui.label("").clone(), false);
         };
-        ui.checkbox(&mut trip_vis.enabled, "");
+        let chk = ui.checkbox(&mut trip_vis.enabled, "");
+        // If the trip was just enabled while its parent file was disabled,
+        // also enable the file so the trip actually becomes visible.
+        let need_enable_file = chk.changed() && trip_vis.enabled && !file_vis.enabled;
+        if need_enable_file {
+            file_vis.enabled = true;
+        }
         let arrow = if is_expanded {
             egui_phosphor::regular::CARET_DOWN
         } else {
@@ -230,12 +269,18 @@ fn render_trip_row(
         if !passes {
             text = text.weak();
         }
-        if trip_highlight {
+        if trip_panel_hovered {
             text = text.color(egui::Color32::from_rgb(100, 200, 255));
         }
-        ui.selectable_label(ctx.panel.selection.contains(&key), text)
+        (
+            ui.selectable_label(ctx.panel.selection.contains(&key), text),
+            false, // need_enable_file already applied inside the closure
+        )
     });
-    let response = row_response.inner;
+    if trip_map_hovered {
+        paint_map_hover_bg(ui, row_response.response.rect, map_hover_bg);
+    }
+    let (response, _) = row_response.inner;
     if response.hovered() {
         ctx.highlight.hover = Some(HighlightScope::Trip {
             file_index: fi,
@@ -262,6 +307,11 @@ fn render_trip_row(
         }
     }
     response.context_menu(|ui| {
+        if ui.button("Show only this trip").clicked() {
+            ctx.visibility.show_only_trip(fi, ti);
+            ui.close();
+        }
+        ui.separator();
         if ui.button("Delete").clicked() {
             ctx.panel.delete_confirm = Some(DeleteConfirmState {
                 items: vec![key.clone()],
@@ -453,6 +503,32 @@ fn render_trip_categories(
             });
         }
     }
+}
+
+/// Returns a yellow tint color appropriate for the current light/dark theme.
+/// Used to highlight rows that correspond to a map-hovered element.
+fn map_hover_color(ui: &egui::Ui) -> egui::Color32 {
+    if ui.visuals().dark_mode {
+        // Warm amber on a dark background — bright enough to notice, dim enough
+        // not to wash out the white text.
+        egui::Color32::from_rgba_unmultiplied(210, 160, 0, 90)
+    } else {
+        // Soft golden tint on a light background — subtle so black text stays
+        // readable, but clearly different from the plain white row.
+        egui::Color32::from_rgba_unmultiplied(200, 140, 0, 55)
+    }
+}
+
+/// Paints a filled rounded rectangle behind a row to signal that the hovered
+/// map element belongs to that row. The shape is submitted to the background
+/// layer so it renders beneath the row widgets.
+fn paint_map_hover_bg(ui: &egui::Ui, rect: egui::Rect, color: egui::Color32) {
+    let bg_layer = egui::LayerId::new(egui::Order::Background, egui::Id::new("map_hover_bg"));
+    let painter = ui
+        .ctx()
+        .layer_painter(bg_layer)
+        .with_clip_rect(ui.clip_rect());
+    painter.rect_filled(rect.expand2(egui::vec2(2.0, 1.0)), 3.0, color);
 }
 
 fn toggle_category(panel: &mut TripDataPanelState, fi: usize, ti: usize, cat: DataCategory) {

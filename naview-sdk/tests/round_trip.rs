@@ -31,7 +31,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
 
     b.add_nav_fix(
         NavFix::builder()
-            .time(t0)
+            .gps_time(t0)
             .lat(Angle::new::<degree>(51.5))
             .lon(Angle::new::<degree>(-0.1))
             .heading(Angle::new::<degree>(270.0))
@@ -40,7 +40,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
     );
     b.add_nav_fix(
         NavFix::builder()
-            .time(t1)
+            .gps_time(t1)
             .lat(Angle::new::<degree>(51.6))
             .lon(Angle::new::<degree>(-0.2))
             .heading(Angle::new::<degree>(180.0))
@@ -50,7 +50,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
 
     b.add_satellite_report(
         SatelliteReport::builder()
-            .time(t0)
+            .gps_time(t0)
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -85,17 +85,17 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
 
     assert_eq!(rt.nav_points().len(), 2);
     let p0 = &rt.nav_points()[0];
-    assert_eq!(p0.fix.time, t0);
+    assert_eq!(p0.fix.gps_time, t0);
     assert_eq!(p0.fix.lat.get::<degree>(), 51.5);
     assert_eq!(p0.fix.lon.get::<degree>(), -0.1);
-    assert_eq!(p0.fix.heading.get::<degree>(), 270.0);
+    assert_eq!(p0.fix.heading.map(|h| h.get::<degree>()), Some(270.0));
     assert_eq!(
         p0.fix.speed.map(|v| v.get::<meter_per_second>()),
         Some(12.5)
     );
 
     let rep = p0.satellites.as_ref().ok_or("missing satellite report")?;
-    assert_eq!(rep.time, t0);
+    assert_eq!(rep.gps_time, Some(t0));
     assert_eq!(rep.tracked.len(), 2);
     let s0 = &rep.tracked[0];
     assert_eq!(s0.constellation, Constellation::Gps);
@@ -129,7 +129,7 @@ fn minimal() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = NavFileBuilder::new();
     b.add_nav_fix(
         NavFix::builder()
-            .time(base())
+            .gps_time(base())
             .lat(Angle::new::<degree>(0.0))
             .lon(Angle::new::<degree>(0.0))
             .heading(Angle::new::<degree>(0.0))
@@ -150,7 +150,7 @@ fn no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
     for i in 0..3 {
         b.add_nav_fix(
             NavFix::builder()
-                .time(t0 + Duration::seconds(i64::from(i)))
+                .gps_time(t0 + Duration::seconds(i64::from(i)))
                 .lat(Angle::new::<degree>(0.0))
                 .lon(Angle::new::<degree>(0.0))
                 .heading(Angle::new::<degree>(0.0))
@@ -173,13 +173,18 @@ fn no_markers() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = NavFileBuilder::new();
     b.add_nav_fix(
         NavFix::builder()
-            .time(t0)
+            .gps_time(t0)
             .lat(Angle::new::<degree>(0.0))
             .lon(Angle::new::<degree>(0.0))
             .heading(Angle::new::<degree>(0.0))
             .build(),
     );
-    b.add_satellite_report(SatelliteReport::builder().time(t0).tracked(vec![]).build());
+    b.add_satellite_report(
+        SatelliteReport::builder()
+            .gps_time(t0)
+            .tracked(vec![])
+            .build(),
+    );
     let rt = round_trip(b.finish()?)?;
     assert!(rt.markers().is_empty());
     assert!(rt.nav_points()[0].satellites.is_some());
@@ -215,7 +220,7 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
         let t = t0 + Duration::seconds(i64::from(i));
         b.add_nav_fix(
             NavFix::builder()
-                .time(t)
+                .gps_time(t)
                 .lat(Angle::new::<degree>(55.0))
                 .lon(Angle::new::<degree>(12.0))
                 .heading(Angle::new::<degree>(0.0))
@@ -223,7 +228,7 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
         );
         b.add_satellite_report(
             SatelliteReport::builder()
-                .time(t)
+                .gps_time(t)
                 .tracked(tracked.clone())
                 .build(),
         );
@@ -236,9 +241,9 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(rt.nav_points().len(), 50_000);
     assert_eq!(rt.markers().len(), 0);
 
-    assert_eq!(rt.nav_points()[0].fix.time, t0);
+    assert_eq!(rt.nav_points()[0].fix.gps_time, t0);
     assert_eq!(
-        rt.nav_points()[49_999].fix.time,
+        rt.nav_points()[49_999].fix.gps_time,
         t0 + Duration::seconds(49_999)
     );
     let sat_rep = rt.nav_points()[0].satellites.as_ref().ok_or("missing")?;

@@ -5,8 +5,7 @@ use nav_types::{
 };
 use std::cell::Cell;
 use std::rc::Rc;
-use uom::si::angle::degree;
-use walkers::{MapMemory, Plugin, Position, Projector};
+use walkers::{MapMemory, Plugin, Projector};
 
 use crate::generated_marker_renderer::update_hover_candidate;
 
@@ -65,11 +64,23 @@ impl Plugin for MarkerRenderer<'_> {
         ui: &mut Ui,
         _response: &Response,
         projector: &Projector,
-        _map_memory: &MapMemory,
+        map_memory: &MapMemory,
     ) {
         let hover_pos = ui.input(|i| i.pointer.hover_pos());
         let view_rect = ui.max_rect().expand(20.0);
         let mut local_closest: Option<(DataPointRef, Pos2, f32)> = None;
+
+        // Compute affine-transform components once per frame.
+        // This avoids trigonometric projection for every marker.
+        let anchor = projector.project(walkers::lat_lon(0.0, 0.0));
+        let total_px = 2_f64.powf(map_memory.zoom()) * 256.0;
+
+        // Viewport bounds in Mercator space: merc = (screen - anchor) / total_px + 0.5
+        // Replaces two projector.unproject() calls with simple arithmetic.
+        let vp_min_merc_x = ((view_rect.min.x - anchor.x) as f64 / total_px) + 0.5;
+        let vp_max_merc_x = ((view_rect.max.x - anchor.x) as f64 / total_px) + 0.5;
+        let vp_min_merc_y = ((view_rect.min.y - anchor.y) as f64 / total_px) + 0.5;
+        let vp_max_merc_y = ((view_rect.max.y - anchor.y) as f64 / total_px) + 0.5;
 
         for (fi, file) in self.files.iter().enumerate() {
             let Some(file_vis) = self.visibility.files.get(fi) else {
@@ -92,8 +103,16 @@ impl Plugin for MarkerRenderer<'_> {
                     if !point_passes_time_filter(marker.time, self.filter) {
                         continue;
                     }
-                    let pos = Position::new(marker.lon.get::<degree>(), marker.lat.get::<degree>());
-                    let screen_pos = projector.project(pos).to_pos2();
+                    // Mercator-space cull: four comparisons, no trig.
+                    if marker.merc_x < vp_min_merc_x
+                        || marker.merc_x > vp_max_merc_x
+                        || marker.merc_y < vp_min_merc_y
+                        || marker.merc_y > vp_max_merc_y
+                    {
+                        continue;
+                    }
+                    let screen_pos =
+                        crate::merc_to_screen(anchor, total_px, marker.merc_x, marker.merc_y);
                     let point_ref = DataPointRef {
                         file_index: fi,
                         trip_index: ti,
@@ -102,13 +121,11 @@ impl Plugin for MarkerRenderer<'_> {
                     };
                     update_hover_candidate(&self.hover_out, screen_pos, hover_pos, point_ref);
                     if let Some(mouse) = hover_pos {
-                        let dist = screen_pos.distance(mouse);
-                        if dist < 20.0 && local_closest.is_none_or(|(_, _, d)| dist < d) {
-                            local_closest = Some((point_ref, screen_pos, dist));
+                        // Use squared distance to avoid sqrt; threshold is 20² = 400.
+                        let dist_sq = screen_pos.distance_sq(mouse);
+                        if dist_sq < 400.0 && local_closest.is_none_or(|(_, _, d)| dist_sq < d) {
+                            local_closest = Some((point_ref, screen_pos, dist_sq));
                         }
-                    }
-                    if !view_rect.contains(screen_pos) {
-                        continue;
                     }
                     let highlighted = self.is_marker_highlighted(point_ref);
                     draw_marker_icon(ui, screen_pos, marker, highlighted);
@@ -117,12 +134,17 @@ impl Plugin for MarkerRenderer<'_> {
         }
 
         if let Some((point_ref, pos, _)) = local_closest {
-            show_marker_tooltip(ui, self.files, point_ref, pos);
+            show_marker_hover_label(ui, self.files, point_ref, pos);
         }
     }
 }
 
-fn show_marker_tooltip(ui: &Ui, files: &[LoadedFile], point_ref: DataPointRef, pos: Pos2) {
+/// Paint the marker's label directly onto the map canvas, below the icon.
+///
+/// Using direct canvas painting (instead of `on_hover_text`) means the label
+/// is always visible when the marker is hovered, even when a TPV point is
+/// nearby and showing its own egui tooltip — the two are independent layers.
+fn show_marker_hover_label(ui: &Ui, files: &[LoadedFile], point_ref: DataPointRef, pos: Pos2) {
     let Some(file) = files.get(point_ref.file_index) else {
         return;
     };
@@ -132,13 +154,24 @@ fn show_marker_tooltip(ui: &Ui, files: &[LoadedFile], point_ref: DataPointRef, p
     let Some(marker) = trip.custom_markers.get(point_ref.point_index) else {
         return;
     };
-    let hit_rect = egui::Rect::from_center_size(pos, egui::vec2(20.0, 20.0));
-    let response = ui.interact(
-        hit_rect,
-        ui.id().with("marker_hover").with(point_ref.point_index),
-        egui::Sense::hover(),
+
+    // Place the label below the marker icon so it does not overlap the
+    // TPV tooltip (which egui positions near the cursor).
+    let label_pos = pos + egui::vec2(0.0, 18.0);
+    let galley = ui.painter().layout_no_wrap(
+        marker.label.clone(),
+        egui::FontId::proportional(13.0),
+        Color32::WHITE,
     );
-    response.on_hover_text(&marker.label);
+    // Centre the text horizontally under the icon.
+    let text_origin = egui::pos2(label_pos.x - galley.size().x / 2.0, label_pos.y);
+    let text_rect = egui::Rect::from_min_size(text_origin, galley.size());
+    ui.painter().rect_filled(
+        text_rect.expand(3.0),
+        4.0,
+        Color32::from_rgba_unmultiplied(20, 20, 20, 220),
+    );
+    ui.painter().galley(text_origin, galley, Color32::WHITE);
 }
 
 const LOG_COLORS: [Color32; 8] = [
@@ -190,142 +223,97 @@ fn draw_marker_icon(ui: &Ui, center: Pos2, marker: &CustomMarker, highlighted: b
     }
 }
 
-fn draw_pin(ui: &Ui, center: Pos2, color: Color32) {
-    let painter = ui.painter();
-    let size = 12.0;
-    let pin_top = center - egui::vec2(0.0, size);
-    painter.circle_filled(pin_top, size * 0.6, color);
-    painter.circle_stroke(pin_top, size * 0.6, Stroke::new(1.0, Color32::WHITE));
-    painter.line_segment([pin_top, center], Stroke::new(2.0, color));
+fn draw_pin(ui: &Ui, center: Pos2, _color: Color32) {
+    // Color (#DB4437) and white stroke are baked into the SVG.
+    // The icon is 18×24 logical pixels with the pin tip at the bottom centre,
+    // so the rect spans 9px left/right of `center` and 24px above it.
+    let icon_rect = egui::Rect::from_min_max(
+        center - egui::vec2(9.0, 24.0),
+        center + egui::vec2(9.0, 0.0),
+    );
+    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
+        crate::ICON_URI_PIN,
+    )))
+    .paint_at(ui, icon_rect);
 }
 
-fn draw_cross(ui: &Ui, center: Pos2, color: Color32) {
-    let painter = ui.painter();
-    let size = 8.0;
-    let stroke = Stroke::new(2.5, color);
-    painter.line_segment(
-        [
-            center - egui::vec2(size, size),
-            center + egui::vec2(size, size),
-        ],
-        stroke,
-    );
-    painter.line_segment(
-        [
-            center - egui::vec2(size, -size),
-            center + egui::vec2(size, -size),
-        ],
-        stroke,
+fn draw_cross(ui: &Ui, center: Pos2, _color: Color32) {
+    // Color (#0F9D58) is baked into the SVG.
+    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
+        crate::ICON_URI_CROSS,
+    )))
+    .paint_at(
+        ui,
+        egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
     );
 }
 
-fn draw_circle(ui: &Ui, center: Pos2, color: Color32) {
-    let painter = ui.painter();
-    painter.circle_filled(center, 8.0, color);
-    painter.circle_stroke(center, 8.0, Stroke::new(1.5, Color32::WHITE));
-}
-
-fn draw_lightning(ui: &Ui, center: Pos2, color: Color32) {
-    let painter = ui.painter();
-    let s = 10.0;
-    let points = vec![
-        center + egui::vec2(s * 0.2, -s),
-        center + egui::vec2(-s * 0.4, s * 0.1),
-        center + egui::vec2(s * 0.2, s * 0.1),
-        center + egui::vec2(-s * 0.2, s),
-        center + egui::vec2(s * 0.4, -s * 0.1),
-        center + egui::vec2(-s * 0.2, -s * 0.1),
-    ];
-    painter.add(egui::Shape::convex_polygon(
-        points,
-        color,
-        Stroke::new(1.0, Color32::WHITE),
-    ));
-}
-
-fn draw_warning(ui: &Ui, center: Pos2, color: Color32) {
-    let painter = ui.painter();
-    let s = 12.0;
-    let points = vec![
-        center + egui::vec2(0.0, -s),
-        center + egui::vec2(-s, s),
-        center + egui::vec2(s, s),
-    ];
-    painter.add(egui::Shape::convex_polygon(
-        points,
-        color,
-        Stroke::new(1.5, Color32::WHITE),
-    ));
-    painter.line_segment(
-        [
-            center + egui::vec2(0.0, -s * 0.2),
-            center + egui::vec2(0.0, s * 0.4),
-        ],
-        Stroke::new(2.0, Color32::WHITE),
-    );
-    painter.circle_filled(center + egui::vec2(0.0, s * 0.7), 1.5, Color32::WHITE);
-}
-
-fn draw_error_sign(ui: &Ui, center: Pos2, color: Color32) {
-    let painter = ui.painter();
-    let s = 10.0;
-    let offset = s * 0.4;
-    let points = vec![
-        center + egui::vec2(-offset, -s),
-        center + egui::vec2(offset, -s),
-        center + egui::vec2(s, -offset),
-        center + egui::vec2(s, offset),
-        center + egui::vec2(offset, s),
-        center + egui::vec2(-offset, s),
-        center + egui::vec2(-s, offset),
-        center + egui::vec2(-s, -offset),
-    ];
-    painter.add(egui::Shape::convex_polygon(
-        points,
-        color,
-        Stroke::new(1.5, Color32::WHITE),
-    ));
-    painter.line_segment(
-        [
-            center - egui::vec2(s * 0.5, 0.0),
-            center + egui::vec2(s * 0.5, 0.0),
-        ],
-        Stroke::new(2.5, Color32::WHITE),
+fn draw_circle(ui: &Ui, center: Pos2, _color: Color32) {
+    // Color (#4285F4) and white stroke are baked into the SVG.
+    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
+        crate::ICON_URI_CIRCLE_MARKER,
+    )))
+    .paint_at(
+        ui,
+        egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
     );
 }
 
-fn draw_check(ui: &Ui, center: Pos2, color: Color32) {
-    let painter = ui.painter();
-    let s = 8.0;
-    let stroke = Stroke::new(2.5, color);
-    painter.line_segment(
-        [
-            center + egui::vec2(-s, 0.0),
-            center + egui::vec2(-s * 0.3, s),
-        ],
-        stroke,
+fn draw_lightning(ui: &Ui, center: Pos2, _color: Color32) {
+    // Color (#F4B400) and white stroke are baked into the SVG; no tint needed.
+    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
+        crate::ICON_URI_LIGHTNING,
+    )))
+    .paint_at(
+        ui,
+        egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
     );
-    painter.line_segment(
-        [center + egui::vec2(-s * 0.3, s), center + egui::vec2(s, -s)],
-        stroke,
+}
+
+fn draw_warning(ui: &Ui, center: Pos2, _color: Color32) {
+    // Color (#FF9900), white stroke, and exclamation mark are all baked into the SVG.
+    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
+        crate::ICON_URI_WARNING,
+    )))
+    .paint_at(
+        ui,
+        egui::Rect::from_center_size(center, egui::vec2(24.0, 24.0)),
+    );
+}
+
+fn draw_error_sign(ui: &Ui, center: Pos2, _color: Color32) {
+    // Color (#CC0000), white stroke, and minus bar are all baked into the SVG.
+    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
+        crate::ICON_URI_ERROR,
+    )))
+    .paint_at(
+        ui,
+        egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
+    );
+}
+
+fn draw_check(ui: &Ui, center: Pos2, _color: Color32) {
+    // Color (#0F9D58) is baked into the SVG.
+    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
+        crate::ICON_URI_CHECK,
+    )))
+    .paint_at(
+        ui,
+        egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
     );
 }
 
 fn draw_log_pin(ui: &Ui, center: Pos2, color: Color32) {
-    let painter = ui.painter();
-    let size = 12.0;
-    let r = size * 0.6;
-    // Diamond head centered `size` pixels above center
-    let diamond_center = center - egui::vec2(0.0, size);
-    let top = diamond_center - egui::vec2(0.0, r);
-    let right = diamond_center + egui::vec2(r, 0.0);
-    let bottom = diamond_center + egui::vec2(0.0, r);
-    let left = diamond_center - egui::vec2(r, 0.0);
-    painter.add(egui::Shape::convex_polygon(
-        vec![top, right, bottom, left],
-        color,
-        Stroke::new(1.0, Color32::WHITE),
-    ));
-    // Needle from diamond bottom vertex to center
-    painter.line_segment([bottom, center], Stroke::new(2.0, color));
+    // White SVG tinted to the log-group color at render time.
+    // The icon is 18×24 logical pixels with the pin tip at the bottom centre,
+    // so the rect spans 9px left/right of `center` and 24px above it.
+    let icon_rect = egui::Rect::from_min_max(
+        center - egui::vec2(9.0, 24.0),
+        center + egui::vec2(9.0, 0.0),
+    );
+    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
+        crate::ICON_URI_LOG_PIN,
+    )))
+    .tint(color)
+    .paint_at(ui, icon_rect);
 }

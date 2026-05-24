@@ -34,6 +34,8 @@ pub fn segment_trips(points: &[NavPoint]) -> Vec<Range<usize>> {
 fn detect_generated_markers(points: &[NavPoint]) -> Vec<GeneratedMarker> {
     let mut markers = Vec::new();
     let mut prev_fix: Option<u32> = None;
+    // The last point where a satellite report showed fix_count > 0.
+    let mut last_fix_point: Option<&NavPoint> = None;
     let mut fix_lost_at: Option<DateTime<Utc>> = None;
 
     for point in points {
@@ -41,28 +43,34 @@ fn detect_generated_markers(points: &[NavPoint]) -> Vec<GeneratedMarker> {
             let fix = sats.fix_count();
             if let Some(prev) = prev_fix {
                 if prev > 0 && fix == 0 {
-                    fix_lost_at = Some(point.tpv.time());
-                    markers.push(GeneratedMarker {
-                        time: point.tpv.time(),
-                        kind: GeneratedMarkerKind::GpsFixLost,
-                        lat: point.tpv.lat(),
-                        lon: point.tpv.lon(),
-                        fix_lost_duration: None,
-                    });
+                    // Place the "fix lost" marker at the LAST point that had a
+                    // satellite fix, not at the current (first lost-fix) point.
+                    let anchor = last_fix_point.unwrap_or(point);
+                    fix_lost_at = Some(anchor.tpv.time());
+                    markers.push(GeneratedMarker::new(
+                        anchor.tpv.time(),
+                        GeneratedMarkerKind::GpsFixLost,
+                        anchor.tpv.lat(),
+                        anchor.tpv.lon(),
+                        None,
+                    ));
                 } else if prev == 0 && fix > 0 {
                     let fix_lost_duration =
                         fix_lost_at.map(|lost| point.tpv.time().signed_duration_since(lost));
-                    markers.push(GeneratedMarker {
-                        time: point.tpv.time(),
-                        kind: GeneratedMarkerKind::GpsFixRegained,
-                        lat: point.tpv.lat(),
-                        lon: point.tpv.lon(),
+                    markers.push(GeneratedMarker::new(
+                        point.tpv.time(),
+                        GeneratedMarkerKind::GpsFixRegained,
+                        point.tpv.lat(),
+                        point.tpv.lon(),
                         fix_lost_duration,
-                    });
+                    ));
                     fix_lost_at = None;
                 }
             }
             prev_fix = Some(fix);
+            if fix > 0 {
+                last_fix_point = Some(point);
+            }
         }
     }
     markers
@@ -224,22 +232,22 @@ mod tests {
 
     fn make_point_at(t: i64) -> NavPoint {
         let time = Utc.timestamp_opt(t, 0).single().unwrap();
-        let tpv = TimePositionVelocity::build()
-            .with_time(time)
-            .with_lat(Angle::new::<degree>(55.0))
-            .with_lon(Angle::new::<degree>(12.0))
-            .with_heading(Angle::new::<degree>(0.0))
+        let tpv = TimePositionVelocity::builder()
+            .time(time)
+            .lat(Angle::new::<degree>(55.0))
+            .lon(Angle::new::<degree>(12.0))
+            .heading(Angle::new::<degree>(0.0))
             .build();
         NavPoint::new(tpv, None)
     }
 
     fn make_point_at_pos(t: i64, lat: f64, lon: f64) -> NavPoint {
         let time = Utc.timestamp_opt(t, 0).single().unwrap();
-        let tpv = TimePositionVelocity::build()
-            .with_time(time)
-            .with_lat(Angle::new::<degree>(lat))
-            .with_lon(Angle::new::<degree>(lon))
-            .with_heading(Angle::new::<degree>(0.0))
+        let tpv = TimePositionVelocity::builder()
+            .time(time)
+            .lat(Angle::new::<degree>(lat))
+            .lon(Angle::new::<degree>(lon))
+            .heading(Angle::new::<degree>(0.0))
             .build();
         NavPoint::new(tpv, None)
     }

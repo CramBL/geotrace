@@ -28,6 +28,7 @@ chrono = { version = "0.4.44", default-features = false, features = ["std", "now
 eframe = { version = "0.34.2", default-features = false, features = ["default_fonts", "wayland", "wgpu"] }
 egui = "0.34.2"
 egui-phosphor = "0.12.0"
+egui_extras = { version = "0.34.2", features = ["svg"] }
 env_logger = "0.11.10"
 geo = "0.33.1"
 geo-types = "0.7.19"
@@ -164,8 +165,10 @@ chrono.workspace = true
 eframe.workspace = true
 egui.workspace = true
 egui-phosphor.workspace = true
+egui_extras.workspace = true
 env_logger.workspace = true
 log.workspace = true
+mimalloc = { version = "0.1.48", features = ["v3"] }
 nav-fmt = { path = "crates/nav-fmt" }
 nav-io = { path = "crates/nav-io" }
 nav-log-marker = { path = "crates/nav-log-marker" }
@@ -177,6 +180,14 @@ uom.workspace = true
 [dev-dependencies]
 egui_kittest = { version = "0.34.2", features = ["eframe"] }
 naview-sdk = { path = "naview-sdk" }
+
+[profile.release]
+opt-level = 3
+debug = false
+panic = "abort"
+strip = true
+lto = true
+codegen-units = 1
 
 [profile.dev]
 debug = "line-tables-only"

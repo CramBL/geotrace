@@ -1,6 +1,7 @@
 pub mod filter;
 pub mod highlight;
 pub mod markers;
+pub(crate) mod mercator;
 pub mod nav_point;
 pub mod satellites;
 pub mod segment;

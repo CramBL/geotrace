@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let time = timestamp.parse::<DateTime<Utc>>()?;
         builder.add_nav_fix(
             NavFix::builder()
-                .time(time)
+                .gps_time(time)
                 .lat(Angle::new::<degree>(lat))
                 .lon(Angle::new::<degree>(lon))
                 .heading(Angle::new::<degree>(heading))

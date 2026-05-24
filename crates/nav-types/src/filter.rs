@@ -23,6 +23,9 @@ pub struct GlobalFilter {
     pub min_distance_km: Option<f64>,
     pub min_duration_secs: Option<i64>,
     pub min_spread_m: Option<f64>,
+    /// Show only trips that have at least one marker of any kind (custom or generated).
+    pub require_any_marker: bool,
+    /// Show only trips that have at least one *custom* marker specifically.
     pub require_custom_marker: bool,
 }
 
@@ -34,6 +37,7 @@ impl GlobalFilter {
             && self.min_distance_km.is_none()
             && self.min_duration_secs.is_none()
             && self.min_spread_m.is_none()
+            && !self.require_any_marker
             && !self.require_custom_marker
     }
 }
@@ -63,6 +67,9 @@ pub fn trip_passes_filter(meta: &TripMetadata, filter: &GlobalFilter) -> bool {
     if let Some(min_m) = filter.min_spread_m
         && meta.point_set_diameter_m < min_m
     {
+        return false;
+    }
+    if filter.require_any_marker && !meta.has_custom_markers && meta.generated_marker_count == 0 {
         return false;
     }
     if filter.require_custom_marker && !meta.has_custom_markers {

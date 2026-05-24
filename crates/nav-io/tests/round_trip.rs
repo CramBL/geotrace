@@ -38,10 +38,10 @@ fn round_trip_from_nav_types_test_data() {
     for np in &nav_data {
         let tpv = np.tpv;
         let fix_b = NavFix::builder()
-            .time(tpv.time())
+            .gps_time(tpv.time())
             .lat(tpv.lat())
             .lon(tpv.lon())
-            .heading(tpv.heading());
+            .maybe_heading(tpv.heading());
         let nav_fix = if let Some(v) = tpv.velocity() {
             fix_b.speed(v).build()
         } else {
@@ -66,7 +66,7 @@ fn round_trip_from_nav_types_test_data() {
 
             builder.add_satellite_report(
                 SatelliteReport::builder()
-                    .time(sats.time())
+                    .gps_time(sats.time())
                     .tracked(tracked)
                     .build(),
             );

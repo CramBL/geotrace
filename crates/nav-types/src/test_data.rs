@@ -95,12 +95,12 @@ pub fn nav_test_data() -> Vec<NavPoint> {
         let current_velocity =
             Velocity::new::<kilometer_per_hour>(5.0) + (avg_velocity * 1.5 * speed_curve);
 
-        let tpv = TimePositionVelocity::build()
-            .with_time(current_time)
-            .with_lat(Angle::new::<degree>(lat))
-            .with_lon(Angle::new::<degree>(lon))
-            .with_heading(current_segment.heading)
-            .with_velocity(current_velocity)
+        let tpv = TimePositionVelocity::builder()
+            .time(current_time)
+            .lat(Angle::new::<degree>(lat))
+            .lon(Angle::new::<degree>(lon))
+            .heading(current_segment.heading)
+            .velocity(current_velocity)
             .build();
 
         let satellites = if (100..102).contains(&i) || (400..600).contains(&i) {
@@ -146,14 +146,14 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
         match (last_fix_index, has_fix) {
             (Some(last_idx), false) => {
                 if let Some(last_point) = nav_points.get(last_idx) {
-                    markers.push(CustomMarker {
-                        time: last_point.tpv.time(),
-                        label: "Fix Lost".to_string(),
-                        icon: MarkerIcon::Warning,
-                        lat: last_point.tpv.lat(),
-                        lon: last_point.tpv.lon(),
-                        color_group: None,
-                    });
+                    markers.push(CustomMarker::new(
+                        last_point.tpv.time(),
+                        "Fix Lost".to_string(),
+                        MarkerIcon::Warning,
+                        last_point.tpv.lat(),
+                        last_point.tpv.lon(),
+                        None,
+                    ));
                 }
                 last_fix_index = None;
             }
@@ -175,14 +175,14 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
                     let duration = p.tpv.time().signed_duration_since(fix_lost_time);
                     let duration_str = format_duration(duration);
 
-                    markers.push(CustomMarker {
-                        time: p.tpv.time(),
-                        label: format!("Fix Regained after {}", duration_str),
-                        icon: MarkerIcon::Check,
-                        lat: p.tpv.lat(),
-                        lon: p.tpv.lon(),
-                        color_group: None,
-                    });
+                    markers.push(CustomMarker::new(
+                        p.tpv.time(),
+                        format!("Fix Regained after {}", duration_str),
+                        MarkerIcon::Check,
+                        p.tpv.lat(),
+                        p.tpv.lon(),
+                        None,
+                    ));
                 }
                 last_fix_index = Some(i);
             }

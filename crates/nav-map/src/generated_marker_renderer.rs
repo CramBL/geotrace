@@ -5,8 +5,7 @@ use nav_types::{
 };
 use std::cell::Cell;
 use std::rc::Rc;
-use uom::si::angle::degree;
-use walkers::{MapMemory, Plugin, Position, Projector};
+use walkers::{MapMemory, Plugin, Projector};
 
 const HOVER_THRESHOLD: f32 = 10.0;
 
@@ -112,11 +111,21 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
         ui: &mut Ui,
         _response: &Response,
         projector: &Projector,
-        _map_memory: &MapMemory,
+        map_memory: &MapMemory,
     ) {
         let hover_pos = ui.input(|i| i.pointer.hover_pos());
         let view_rect = ui.max_rect().expand(20.0);
         let mut local_closest: Option<(DataPointRef, Pos2)> = None;
+
+        // Compute affine-transform components once per frame.
+        let anchor = projector.project(walkers::lat_lon(0.0, 0.0));
+        let total_px = 2_f64.powf(map_memory.zoom()) * 256.0;
+
+        // Viewport bounds in Mercator space — replaces two unproject() calls.
+        let vp_min_merc_x = ((view_rect.min.x - anchor.x) as f64 / total_px) + 0.5;
+        let vp_max_merc_x = ((view_rect.max.x - anchor.x) as f64 / total_px) + 0.5;
+        let vp_min_merc_y = ((view_rect.min.y - anchor.y) as f64 / total_px) + 0.5;
+        let vp_max_merc_y = ((view_rect.max.y - anchor.y) as f64 / total_px) + 0.5;
 
         for (fi, file) in self.files.iter().enumerate() {
             let Some(file_vis) = self.visibility.files.get(fi) else {
@@ -139,8 +148,16 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
                     if !point_passes_time_filter(marker.time, self.filter) {
                         continue;
                     }
-                    let pos = Position::new(marker.lon.get::<degree>(), marker.lat.get::<degree>());
-                    let screen_pos = projector.project(pos).to_pos2();
+                    // Mercator-space cull — four comparisons, no trig.
+                    if marker.merc_x < vp_min_merc_x
+                        || marker.merc_x > vp_max_merc_x
+                        || marker.merc_y < vp_min_merc_y
+                        || marker.merc_y > vp_max_merc_y
+                    {
+                        continue;
+                    }
+                    let screen_pos =
+                        crate::merc_to_screen(anchor, total_px, marker.merc_x, marker.merc_y);
                     let point_ref = DataPointRef {
                         file_index: fi,
                         trip_index: ti,
@@ -149,18 +166,17 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
                     };
                     update_hover_candidate(&self.hover_out, screen_pos, hover_pos, point_ref);
                     if let Some(mouse) = hover_pos {
-                        let dist = screen_pos.distance(mouse);
-                        if dist < HOVER_THRESHOLD {
-                            let is_closer = local_closest
-                                .as_ref()
-                                .is_none_or(|(_, closest_pos)| closest_pos.distance(mouse) > dist);
+                        // Use squared distance to avoid sqrt; threshold is HOVER_THRESHOLD² = 100.
+                        let dist_sq = screen_pos.distance_sq(mouse);
+                        if dist_sq < HOVER_THRESHOLD * HOVER_THRESHOLD {
+                            let is_closer =
+                                local_closest.as_ref().is_none_or(|(_, closest_pos)| {
+                                    closest_pos.distance_sq(mouse) > dist_sq
+                                });
                             if is_closer {
                                 local_closest = Some((point_ref, screen_pos));
                             }
                         }
-                    }
-                    if !view_rect.contains(screen_pos) {
-                        continue;
                     }
                     let highlighted = self.is_point_highlighted(point_ref);
                     draw_generated_marker(ui, screen_pos, marker.kind, highlighted);
@@ -178,9 +194,12 @@ pub fn update_hover_candidate(
     point_ref: DataPointRef,
 ) {
     if let Some(mouse) = hover_pos {
-        let dist = screen_pos.distance(mouse);
-        if dist < HOVER_THRESHOLD && hover_out.get().is_none_or(|(_, d)| dist < d) {
-            hover_out.set(Some((point_ref, dist)));
+        // Use squared distance to avoid sqrt; stored value is dist² for consistent comparison.
+        let dist_sq = screen_pos.distance_sq(mouse);
+        if dist_sq < HOVER_THRESHOLD * HOVER_THRESHOLD
+            && hover_out.get().is_none_or(|(_, d)| dist_sq < d)
+        {
+            hover_out.set(Some((point_ref, dist_sq)));
         }
     }
 }

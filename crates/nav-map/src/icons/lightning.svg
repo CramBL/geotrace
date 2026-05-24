@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+  <!-- Lightning bolt. Points derived from draw_lightning (s=10, center=10,10). -->
+  <polygon points="12,0 6,11 12,11 8,20 14,9 8,9"
+           fill="#F4B400" stroke="white" stroke-width="1" stroke-linejoin="round"/>
+</svg>

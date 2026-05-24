@@ -8,6 +8,7 @@ authors.workspace = true
 
 [dependencies]
 egui.workspace = true
+egui-phosphor.workspace = true
 nav-types.path = "../nav-types"
 uom.workspace = true
 walkers.workspace = true

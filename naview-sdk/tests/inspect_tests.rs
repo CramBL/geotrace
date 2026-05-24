@@ -23,7 +23,7 @@ fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
 
     b.add_nav_fix(
         NavFix::builder()
-            .time(t0)
+            .gps_time(t0)
             .lat(Angle::new::<degree>(51.5))
             .lon(Angle::new::<degree>(-0.1))
             .heading(Angle::new::<degree>(270.0))
@@ -32,7 +32,7 @@ fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
     );
     b.add_nav_fix(
         NavFix::builder()
-            .time(t1)
+            .gps_time(t1)
             .lat(Angle::new::<degree>(51.6))
             .lon(Angle::new::<degree>(-0.2))
             .heading(Angle::new::<degree>(180.0))
@@ -41,7 +41,7 @@ fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
 
     b.add_satellite_report(
         SatelliteReport::builder()
-            .time(t0)
+            .gps_time(t0)
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -102,7 +102,7 @@ fn file_with_no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
     for i in 0..3i64 {
         b.add_nav_fix(
             NavFix::builder()
-                .time(t0 + Duration::seconds(i))
+                .gps_time(t0 + Duration::seconds(i))
                 .lat(Angle::new::<degree>(55.0))
                 .lon(Angle::new::<degree>(12.0))
                 .heading(Angle::new::<degree>(0.0))
@@ -130,7 +130,7 @@ fn file_with_no_markers() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = NavFileBuilder::new();
     b.add_nav_fix(
         NavFix::builder()
-            .time(t0)
+            .gps_time(t0)
             .lat(Angle::new::<degree>(55.0))
             .lon(Angle::new::<degree>(12.0))
             .heading(Angle::new::<degree>(0.0))

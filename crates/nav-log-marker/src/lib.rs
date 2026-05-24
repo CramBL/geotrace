@@ -316,14 +316,14 @@ pub fn load_log(content: &str, nav_points: &[NavPoint], now: DateTime<Utc>) -> L
             continue;
         };
 
-        markers.push(CustomMarker {
-            time: *ts,
-            label: log_str.clone(),
-            icon: MarkerIcon::Log,
-            lat: Angle::new::<degree>(lat),
-            lon: Angle::new::<degree>(lon),
-            color_group: Some(*group_id),
-        });
+        markers.push(CustomMarker::new(
+            *ts,
+            log_str.clone(),
+            MarkerIcon::Log,
+            Angle::new::<degree>(lat),
+            Angle::new::<degree>(lon),
+            Some(*group_id),
+        ));
     }
 
     LogLoadResult {
@@ -601,12 +601,12 @@ mod tests {
         (0..count)
             .map(|i| {
                 let t = start + chrono::Duration::seconds(i as i64 * step_secs);
-                let tpv = TimePositionVelocity::build()
-                    .with_time(t)
-                    .with_lat(Angle::new::<degree>(55.0 + i as f64 * 0.001))
-                    .with_lon(Angle::new::<degree>(12.0 + i as f64 * 0.001))
-                    .with_heading(Angle::new::<degree>(0.0))
-                    .with_velocity(Velocity::new::<meter_per_second>(1.0))
+                let tpv = TimePositionVelocity::builder()
+                    .time(t)
+                    .lat(Angle::new::<degree>(55.0 + i as f64 * 0.001))
+                    .lon(Angle::new::<degree>(12.0 + i as f64 * 0.001))
+                    .heading(Angle::new::<degree>(0.0))
+                    .velocity(Velocity::new::<meter_per_second>(1.0))
                     .build();
                 NavPoint::new(tpv, None)
             })

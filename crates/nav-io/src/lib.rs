@@ -12,27 +12,50 @@ use naview_sdk::{
 /// Load a `.nvd` file from `path`, segment it into trips, and return a fully
 /// populated `LoadedFile`.
 pub fn load_file(path: impl AsRef<std::path::Path>) -> Result<nav_types::LoadedFile, LoadError> {
+    load_file_with_progress(path, |_, _| {})
+}
+
+/// Parse a `.nvd` file from raw bytes (e.g. delivered via drag-and-drop on Wayland).
+pub fn load_bytes(bytes: &[u8], filename: String) -> Result<nav_types::LoadedFile, LoadError> {
+    load_bytes_with_progress(bytes, filename, |_, _| {})
+}
+
+/// Like [`load_file`] but calls `progress(fraction, stage)` at key milestones so
+/// the caller can drive a progress bar. `fraction` is in `[0.0, 1.0]`.
+pub fn load_file_with_progress(
+    path: impl AsRef<std::path::Path>,
+    progress: impl Fn(f32, &'static str),
+) -> Result<nav_types::LoadedFile, LoadError> {
     let path = path.as_ref();
     let filename = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or_else(|| path.to_str().unwrap_or("unknown"))
         .to_owned();
+    progress(0.05, "Reading\u{2026}");
     let file = std::fs::File::open(path)?;
+    progress(0.20, "Parsing\u{2026}");
     let nav_file = NavFile::read(file)?;
+    progress(0.65, "Converting\u{2026}");
     let (points, markers) = from_nav_file(&nav_file)?;
-    Ok(nav_types::segment::build_loaded_file(
-        filename, &points, &markers,
-    ))
+    progress(0.90, "Segmenting\u{2026}");
+    let loaded = nav_types::segment::build_loaded_file(filename, &points, &markers);
+    Ok(loaded)
 }
 
-/// Parse a `.nvd` file from raw bytes (e.g. delivered via drag-and-drop on Wayland).
-pub fn load_bytes(bytes: &[u8], filename: String) -> Result<nav_types::LoadedFile, LoadError> {
+/// Like [`load_bytes`] but calls `progress(fraction, stage)` at key milestones.
+pub fn load_bytes_with_progress(
+    bytes: &[u8],
+    filename: String,
+    progress: impl Fn(f32, &'static str),
+) -> Result<nav_types::LoadedFile, LoadError> {
+    progress(0.15, "Parsing\u{2026}");
     let nav_file = NavFile::read(bytes)?;
+    progress(0.60, "Converting\u{2026}");
     let (points, markers) = from_nav_file(&nav_file)?;
-    Ok(nav_types::segment::build_loaded_file(
-        filename, &points, &markers,
-    ))
+    progress(0.90, "Segmenting\u{2026}");
+    let loaded = nav_types::segment::build_loaded_file(filename, &points, &markers);
+    Ok(loaded)
 }
 
 fn from_nav_file(nav_file: &NavFile) -> Result<(Vec<NavPoint>, Vec<CustomMarker>), LoadError> {
@@ -49,15 +72,13 @@ fn from_nav_file(nav_file: &NavFile) -> Result<(Vec<NavPoint>, Vec<CustomMarker>
             return Err(LoadError::LongitudeOutOfRange { lon: lon_deg, idx });
         }
 
-        let mut b = TimePositionVelocity::build()
-            .with_time(sdk_point.fix.time)
-            .with_lat(sdk_point.fix.lat)
-            .with_lon(sdk_point.fix.lon)
-            .with_heading(sdk_point.fix.heading);
-        if let Some(v) = sdk_point.fix.speed {
-            b = b.with_velocity(v);
-        }
-        let tpv = b.build();
+        let tpv = TimePositionVelocity::builder()
+            .time(sdk_point.fix.gps_time)
+            .lat(sdk_point.fix.lat)
+            .lon(sdk_point.fix.lon)
+            .maybe_heading(sdk_point.fix.heading)
+            .maybe_velocity(sdk_point.fix.speed)
+            .build();
 
         let satellites = sdk_point.satellites.as_ref().map(convert_satellite_report);
 
@@ -94,18 +115,20 @@ fn convert_satellite_report(report: &SatelliteReport) -> Satellites {
         })
         .collect();
 
-    Satellites::new(report.time, satellites)
+    // Use gps_time as the canonical time for display; fall back to sys_time.
+    let time = report.gps_time.or(report.sys_time).unwrap_or_default();
+    Satellites::new(time, satellites)
 }
 
 fn convert_marker(m: &SdkMarker) -> CustomMarker {
-    CustomMarker {
-        time: m.annotation.time,
-        label: m.annotation.label.as_deref().unwrap_or("").to_owned(),
-        icon: m.annotation.icon.map_or(MarkerIcon::Pin, convert_icon),
-        lat: m.lat,
-        lon: m.lon,
-        color_group: None,
-    }
+    CustomMarker::new(
+        m.annotation.time,
+        m.annotation.label.as_deref().unwrap_or("").to_owned(),
+        m.annotation.icon.map_or(MarkerIcon::Pin, convert_icon),
+        m.lat,
+        m.lon,
+        None,
+    )
 }
 
 fn convert_icon(icon: SdkMarkerIcon) -> MarkerIcon {
@@ -135,7 +158,7 @@ mod tests {
 
     fn minimal_fix(time: DateTime<Utc>) -> NavFix {
         NavFix::builder()
-            .time(time)
+            .gps_time(time)
             .lat(Angle::new::<degree>(55.0))
             .lon(Angle::new::<degree>(12.0))
             .heading(Angle::new::<degree>(0.0))
@@ -155,7 +178,7 @@ mod tests {
         let mut b = NavFileBuilder::new();
         b.add_nav_fix(
             NavFix::builder()
-                .time(t0)
+                .gps_time(t0)
                 .lat(Angle::new::<degree>(51.5))
                 .lon(Angle::new::<degree>(-0.1))
                 .heading(Angle::new::<degree>(270.0))
@@ -168,7 +191,7 @@ mod tests {
         assert_eq!(tpv.time(), t0);
         assert_eq!(tpv.lat().get::<degree>(), 51.5);
         assert_eq!(tpv.lon().get::<degree>(), -0.1);
-        assert_eq!(tpv.heading().get::<degree>(), 270.0);
+        assert_eq!(tpv.heading().map(|h| h.get::<degree>()), Some(270.0));
         assert_eq!(
             tpv.velocity().map(|v| v.get::<meter_per_second>()),
             Some(12.5)
@@ -189,7 +212,7 @@ mod tests {
         let mut b = NavFileBuilder::new();
         b.add_nav_fix(
             NavFix::builder()
-                .time(base())
+                .gps_time(base())
                 .lat(Angle::new::<degree>(0.0))
                 .lon(Angle::new::<degree>(0.0))
                 .heading(Angle::new::<degree>(0.0))
@@ -214,7 +237,7 @@ mod tests {
         b.add_nav_fix(minimal_fix(t0));
         b.add_satellite_report(
             SatelliteReport::builder()
-                .time(t0)
+                .gps_time(t0)
                 .tracked(vec![
                     SdkSat::builder()
                         .constellation(SdkConst::Gps)
@@ -326,7 +349,7 @@ mod tests {
         let mut b = NavFileBuilder::new();
         b.add_nav_fix(
             NavFix::builder()
-                .time(base())
+                .gps_time(base())
                 .lat(Angle::new::<degree>(91.0))
                 .lon(Angle::new::<degree>(0.0))
                 .heading(Angle::new::<degree>(0.0))
@@ -345,7 +368,7 @@ mod tests {
         let mut b = NavFileBuilder::new();
         b.add_nav_fix(
             NavFix::builder()
-                .time(base())
+                .gps_time(base())
                 .lat(Angle::new::<degree>(0.0))
                 .lon(Angle::new::<degree>(-181.0))
                 .heading(Angle::new::<degree>(0.0))

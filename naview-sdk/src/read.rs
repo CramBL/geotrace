@@ -3,7 +3,7 @@ use uom::si::angle::degree;
 use uom::si::f64::{Angle, Velocity};
 use uom::si::velocity::meter_per_second;
 
-use crate::builder::micros_to_datetime;
+use crate::builder::{micros_to_datetime, u64_to_opt_datetime};
 use crate::error::Error;
 use crate::types::{
     Annotation, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint, Satellite, SatelliteReport,
@@ -23,7 +23,7 @@ pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
             });
         }
     };
-    if !version.starts_with('1') {
+    if !version.starts_with('1') && !version.starts_with('2') {
         return Err(Error::UnsupportedVersion { version });
     }
 
@@ -66,6 +66,12 @@ fn read_nav_points(file: &File) -> Result<Vec<NavPoint>, Error> {
     let headings = grp.dataset("heading")?.read_f64()?;
     let speeds = grp.dataset("speed_mps")?.read_f64()?;
 
+    // sys_time_us is present in v2 files; absent in v1.
+    let sys_times: Vec<u64> = grp
+        .dataset("sys_time_us")
+        .and_then(|ds| ds.read_u64())
+        .unwrap_or_else(|_| vec![u64::MAX; times.len()]);
+
     let n = times.len();
     check_len("nav_points", "lat", n, lats.len())?;
     check_len("nav_points", "lon", n, lons.len())?;
@@ -78,13 +84,19 @@ fn read_nav_points(file: &File) -> Result<Vec<NavPoint>, Error> {
         .zip(lons.iter())
         .zip(headings.iter())
         .zip(speeds.iter())
+        .zip(sys_times.iter())
         .map(
-            |((((time_us, lat_deg), lon_deg), heading_deg), speed_mps)| NavPoint {
+            |(((((time_us, lat_deg), lon_deg), heading_deg), speed_mps), sys_time_us)| NavPoint {
                 fix: NavFix {
-                    time: micros_to_datetime(*time_us),
+                    gps_time: micros_to_datetime(*time_us),
+                    sys_time: u64_to_opt_datetime(*sys_time_us),
                     lat: Angle::new::<degree>(*lat_deg),
                     lon: Angle::new::<degree>(*lon_deg),
-                    heading: Angle::new::<degree>(*heading_deg),
+                    heading: if heading_deg.is_nan() {
+                        None
+                    } else {
+                        Some(Angle::new::<degree>(*heading_deg))
+                    },
                     speed: if speed_mps.is_nan() {
                         None
                     } else {
@@ -108,10 +120,25 @@ fn attach_satellite_data(
     };
 
     let nav_point_idx = sat_grp.dataset("nav_point_idx")?.read_u64()?;
-    let report_times = sat_grp.dataset("time")?.read_i64()?;
-
     let r = nav_point_idx.len();
-    check_len("sat_reports", "time", r, report_times.len())?;
+
+    // v2: gps_time_us / sys_time_us (both f64, NaN = absent).
+    // v1: single "time" dataset mapped to gps_time; sys_time absent.
+    let (report_gps_times, report_sys_times): (Vec<u64>, Vec<u64>) =
+        if let Ok(ds) = sat_grp.dataset("gps_time_us") {
+            let gps = ds.read_u64()?;
+            let sys = sat_grp
+                .dataset("sys_time_us")
+                .and_then(|d| d.read_u64())
+                .unwrap_or_else(|_| vec![u64::MAX; r]);
+            (gps, sys)
+        } else {
+            // v1 file: old "time" (i64) treated as gps_time; no sys_time.
+            let times = sat_grp.dataset("time")?.read_i64()?;
+            let gps = times.iter().map(|&us| us.cast_unsigned()).collect();
+            let sys = vec![u64::MAX; r];
+            (gps, sys)
+        };
 
     let ts_grp = file.group("tracked_sats")?;
     let ts_rep_idx = ts_grp.dataset("sat_report_idx")?.read_u64()?;
@@ -151,11 +178,15 @@ fn attach_satellite_data(
         }
     }
 
-    for (i, (&np_idx, &rep_time)) in nav_point_idx.iter().zip(report_times.iter()).enumerate() {
-        let np = nav_points.get_mut(np_idx as usize);
-        if let Some(np) = np {
+    for (i, (&np_idx, (gps_us, sys_us))) in nav_point_idx
+        .iter()
+        .zip(report_gps_times.iter().zip(report_sys_times.iter()))
+        .enumerate()
+    {
+        if let Some(np) = nav_points.get_mut(np_idx as usize) {
             np.satellites = Some(SatelliteReport {
-                time: micros_to_datetime(rep_time),
+                gps_time: u64_to_opt_datetime(*gps_us),
+                sys_time: u64_to_opt_datetime(*sys_us),
                 tracked: tracked_by_report.get(i).cloned().unwrap_or_default(),
             });
         }
@@ -364,8 +395,10 @@ fn inspect_satellite_reports(file: &File, n_nav_points: u64, out: &mut String) {
         return;
     };
 
+    // Count via nav_point_idx (present in all versions) rather than a time field
+    // whose name changed between v1 ("time") and v2 ("gps_time_us").
     let m = sat_grp
-        .dataset("time")
+        .dataset("nav_point_idx")
         .and_then(|ds| ds.shape())
         .ok()
         .and_then(|s| s.first().copied())

@@ -1,15 +1,30 @@
 use crate::satellites::Satellites;
 use crate::tpv::TimePositionVelocity;
+use uom::si::angle::degree;
 
 #[derive(Debug, Clone)]
 pub struct NavPoint {
     pub tpv: TimePositionVelocity,
     pub satellites: Option<Satellites>,
+    /// Normalized Web Mercator X coordinate in `[0, 1]`, pre-computed from
+    /// `tpv.lon()` at construction time so the renderer only needs an affine
+    /// transform per frame instead of a full trigonometric projection.
+    pub merc_x: f64,
+    /// Normalized Web Mercator Y coordinate in `[0, 1]`, pre-computed from
+    /// `tpv.lat()` at construction time.
+    pub merc_y: f64,
 }
 
 impl NavPoint {
     pub fn new(tpv: TimePositionVelocity, satellites: Option<Satellites>) -> Self {
-        Self { tpv, satellites }
+        let (merc_x, merc_y) =
+            crate::mercator::normalize(tpv.lon().get::<degree>(), tpv.lat().get::<degree>());
+        Self {
+            tpv,
+            satellites,
+            merc_x,
+            merc_y,
+        }
     }
 
     pub fn fix_count(&self) -> u32 {
@@ -32,11 +47,11 @@ mod tests {
 
     #[test]
     fn test_nav_point_fix_counts() {
-        let tpv = TimePositionVelocity::build()
-            .with_time(Utc::now())
-            .with_lat(Angle::new::<degree>(0.0))
-            .with_lon(Angle::new::<degree>(0.0))
-            .with_heading(Angle::new::<degree>(0.0))
+        let tpv = TimePositionVelocity::builder()
+            .time(Utc::now())
+            .lat(Angle::new::<degree>(0.0))
+            .lon(Angle::new::<degree>(0.0))
+            .heading(Angle::new::<degree>(0.0))
             .build();
 
         let mut np = NavPoint::new(tpv, None);

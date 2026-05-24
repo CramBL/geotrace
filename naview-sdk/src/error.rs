@@ -6,26 +6,13 @@ pub enum BuildError {
     #[error("no nav fixes were added; at least one NavFix is required")]
     NoNavFixes,
 
-    /// One or more satellite reports could not be associated with any nav fix
-    /// within the configured time window.
-    #[error("{count} satellite report(s) could not be associated within the {window_ms}ms window")]
-    UnassociatedSatelliteReports { count: usize, window_ms: i64 },
-
     /// One or more annotations fall outside the time range of the nav track.
+    ///
+    /// Only emitted in strict mode (the default). Use
+    /// [`NavFileBuilder::with_continue_on_error`](crate::NavFileBuilder::with_continue_on_error)
+    /// to downgrade to a warning and continue.
     #[error("{count} annotation(s) fall outside the nav fix time range")]
     AnnotationsOutsideRange { count: usize },
-
-    /// Both satellite report association failures and out-of-range annotations
-    /// occurred in strict mode.
-    #[error(
-        "{unassociated_satellite_reports} satellite report(s) unassociated (window: {window_ms}ms); \
-        {annotations_outside_range} annotation(s) outside nav fix range"
-    )]
-    Multiple {
-        unassociated_satellite_reports: usize,
-        annotations_outside_range: usize,
-        window_ms: i64,
-    },
 }
 
 /// Errors that can occur when reading or writing a `.nvd` file.

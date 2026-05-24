@@ -27,7 +27,7 @@ fn nan_for_absent_speed() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = NavFileBuilder::new();
     b.add_nav_fix(
         NavFix::builder()
-            .time(base())
+            .gps_time(base())
             .lat(Angle::new::<degree>(0.0))
             .lon(Angle::new::<degree>(0.0))
             .heading(Angle::new::<degree>(0.0))
@@ -53,7 +53,7 @@ fn nan_for_absent_satellite_fields() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = NavFileBuilder::new();
     b.add_nav_fix(
         NavFix::builder()
-            .time(base())
+            .gps_time(base())
             .lat(Angle::new::<degree>(0.0))
             .lon(Angle::new::<degree>(0.0))
             .heading(Angle::new::<degree>(0.0))
@@ -61,7 +61,7 @@ fn nan_for_absent_satellite_fields() -> Result<(), Box<dyn std::error::Error>> {
     );
     b.add_satellite_report(
         SatelliteReport::builder()
-            .time(base())
+            .gps_time(base())
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -106,7 +106,7 @@ fn constellation_encoding() -> Result<(), Box<dyn std::error::Error>> {
         let mut b = NavFileBuilder::new();
         b.add_nav_fix(
             NavFix::builder()
-                .time(base())
+                .gps_time(base())
                 .lat(Angle::new::<degree>(0.0))
                 .lon(Angle::new::<degree>(0.0))
                 .heading(Angle::new::<degree>(0.0))
@@ -114,7 +114,7 @@ fn constellation_encoding() -> Result<(), Box<dyn std::error::Error>> {
         );
         b.add_satellite_report(
             SatelliteReport::builder()
-                .time(base())
+                .gps_time(base())
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(constellation)
@@ -234,7 +234,7 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
         let mut b = NavFileBuilder::new();
         b.add_nav_fix(
             NavFix::builder()
-                .time(t(0))
+                .gps_time(t(0))
                 .lat(Angle::new::<degree>(0.0))
                 .lon(Angle::new::<degree>(0.0))
                 .heading(Angle::new::<degree>(0.0))
@@ -242,7 +242,7 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
         );
         b.add_nav_fix(
             NavFix::builder()
-                .time(t(1000))
+                .gps_time(t(1000))
                 .lat(Angle::new::<degree>(0.0))
                 .lon(Angle::new::<degree>(0.0))
                 .heading(Angle::new::<degree>(0.0))
@@ -328,7 +328,7 @@ fn timestamp_precision() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = NavFileBuilder::new();
     b.add_nav_fix(
         NavFix::builder()
-            .time(t)
+            .gps_time(t)
             .lat(Angle::new::<degree>(0.0))
             .lon(Angle::new::<degree>(0.0))
             .heading(Angle::new::<degree>(0.0))
@@ -338,7 +338,7 @@ fn timestamp_precision() -> Result<(), Box<dyn std::error::Error>> {
     let mut bytes = Vec::new();
     nav_file.write(&mut bytes)?;
     let rt = NavFile::read(bytes.as_slice())?;
-    assert_eq!(rt.nav_points()[0].fix.time, t);
+    assert_eq!(rt.nav_points()[0].fix.gps_time, t);
     Ok(())
 }
 
@@ -420,7 +420,7 @@ fn build_nav_file_with_label(label: Option<String>) -> Result<NavFile, Box<dyn s
     let mut b = NavFileBuilder::new();
     b.add_nav_fix(
         NavFix::builder()
-            .time(t(0))
+            .gps_time(t(0))
             .lat(Angle::new::<degree>(0.0))
             .lon(Angle::new::<degree>(0.0))
             .heading(Angle::new::<degree>(0.0))
@@ -428,7 +428,7 @@ fn build_nav_file_with_label(label: Option<String>) -> Result<NavFile, Box<dyn s
     );
     b.add_nav_fix(
         NavFix::builder()
-            .time(t(1000))
+            .gps_time(t(1000))
             .lat(Angle::new::<degree>(1.0))
             .lon(Angle::new::<degree>(1.0))
             .heading(Angle::new::<degree>(0.0))
