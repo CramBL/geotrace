@@ -1,3 +1,4 @@
+use crate::time_types::{GpsTime, SysTime};
 use chrono::{DateTime, Utc};
 use std::cmp::Ordering;
 
@@ -64,27 +65,60 @@ impl Satellite {
 
 #[derive(Debug, Clone)]
 pub struct Satellites {
-    time: DateTime<Utc>,
+    /// GPS receiver clock timestamp, if the original report had `gps_time`.
+    gps_time: Option<GpsTime>,
+    /// Host system-clock timestamp, if the original report had `sys_time`.
+    sys_time: Option<SysTime>,
     fix_count: u32,
     satellite_count: u32,
     satellites: Vec<Satellite>,
 }
 
 impl Satellites {
-    pub fn new(time: DateTime<Utc>, satellites: Vec<Satellite>) -> Self {
+    /// Construct a satellite report.
+    ///
+    /// At least one of `gps_time` / `sys_time` should be `Some`; the builder
+    /// guarantees this in practice, but it is not enforced here.
+    pub fn new(
+        gps_time: Option<GpsTime>,
+        sys_time: Option<SysTime>,
+        satellites: Vec<Satellite>,
+    ) -> Self {
         let fix_count = satellites.iter().filter(|s| s.in_fix).count() as u32;
         let satellite_count = satellites.len() as u32;
         Self {
+            gps_time,
+            sys_time,
             fix_count,
             satellite_count,
-            time,
             satellites,
         }
     }
 
-    /// The timestamp when this satellite data was recorded.
-    pub fn time(&self) -> DateTime<Utc> {
-        self.time
+    /// GPS receiver clock timestamp, if the report was GPS-timestamped.
+    pub fn gps_time(&self) -> Option<GpsTime> {
+        self.gps_time
+    }
+
+    /// Host system-clock timestamp, if the report was system-clock-timestamped.
+    pub fn sys_time(&self) -> Option<SysTime> {
+        self.sys_time
+    }
+
+    /// Best available timestamp for display (GPS time preferred over system
+    /// time).  Returns `None` only when both clocks are absent, which should
+    /// not occur for any report that passed `finish()`.
+    pub fn best_time(&self) -> Option<DateTime<Utc>> {
+        self.gps_time
+            .map(GpsTime::utc)
+            .or_else(|| self.sys_time.map(SysTime::utc))
+    }
+
+    /// `true` when this report carries a GPS receiver clock timestamp.
+    ///
+    /// When `false` the report was timestamped by the host system clock only.
+    pub fn time_from_gps(&self) -> bool {
+        self.gps_time.is_some()
     }
 
     /// The number of satellites actively contributing to the positional fix.

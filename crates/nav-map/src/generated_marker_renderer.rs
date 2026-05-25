@@ -84,7 +84,10 @@ impl<'a> GeneratedMarkerRenderer<'a> {
         response.show_tooltip_ui(|ui| match marker.kind {
             GeneratedMarkerKind::GpsFixLost => {
                 ui.strong("GPS fix lost");
-                let corresponding = trip.points.iter().find(|p| p.tpv.time() == marker.time);
+                let corresponding = trip
+                    .points
+                    .iter()
+                    .find(|p| p.tpv.time().utc() == marker.time);
                 if let Some(point) = corresponding {
                     ui.separator();
                     crate::tpv_renderer::show_hover_table(ui, point);

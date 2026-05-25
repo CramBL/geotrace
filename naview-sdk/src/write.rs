@@ -70,6 +70,10 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) {
                 .map_or(f64::NAN, |v| v.get::<meter_per_second>())
         })
         .collect();
+    let ephs: Vec<f64> = points
+        .iter()
+        .map(|p| p.fix.eph_m.unwrap_or(f64::NAN))
+        .collect();
 
     let mut grp = fb.create_group("nav_points");
 
@@ -125,6 +129,14 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) {
         .with_f64_data(&speeds)
         .with_shape(&[n as u64])
         .set_attr("units", AttrValue::String("m/s".into()))
+        .set_attr("nan_means", AttrValue::String("absent".into()))
+        .with_chunks(&[chunk])
+        .with_shuffle()
+        .with_deflate(6);
+    grp.create_dataset("eph_m")
+        .with_f64_data(&ephs)
+        .with_shape(&[n as u64])
+        .set_attr("units", AttrValue::String("metres".into()))
         .set_attr("nan_means", AttrValue::String("absent".into()))
         .with_chunks(&[chunk])
         .with_shuffle()

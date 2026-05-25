@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use crate::time_types::{GpsTime, SysTime};
 use geo_types::{Coord, Point};
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Velocity};
@@ -11,18 +11,29 @@ pub fn to_linestring(tpvs: &[TimePositionVelocity]) -> geo_types::LineString<f64
 ///
 /// `heading` is `None` for ghost/synthetic fixes that carry satellite reports
 /// but have no known direction. The renderer draws those as circles.
+///
+/// `sys_time` is the host system-clock timestamp at the moment of the fix, when
+/// available. Use [`GpsTime::offset_from_sys`] to compute the GPS/system-clock
+/// offset — direct arithmetic between the two fields is a compile-time error.
 #[derive(bon::Builder, Debug, Clone, Copy)]
 pub struct TimePositionVelocity {
-    pub(crate) time: DateTime<Utc>,
+    pub(crate) time: GpsTime,
     pub(crate) lat: Angle,
     pub(crate) lon: Angle,
     pub(crate) velocity: Option<Velocity>,
     /// Compass heading in \[0°, 360°). `None` = direction unknown (ghost fix).
     pub(crate) heading: Option<Angle>,
+    /// Host system-clock timestamp at the time of the fix.
+    /// `None` when the host did not record a system timestamp.
+    pub(crate) sys_time: Option<SysTime>,
+    /// Estimated horizontal position accuracy in metres, as reported by the GPS receiver.
+    /// `None` when the receiver did not report an accuracy estimate.
+    pub(crate) eph_m: Option<f32>,
 }
 
 impl TimePositionVelocity {
-    pub fn time(&self) -> DateTime<Utc> {
+    /// GPS receiver clock timestamp for this fix.
+    pub fn time(&self) -> GpsTime {
         self.time
     }
     pub fn lat(&self) -> Angle {
@@ -36,6 +47,19 @@ impl TimePositionVelocity {
     }
     pub fn heading(&self) -> Option<Angle> {
         self.heading
+    }
+    /// Host system-clock timestamp, if recorded alongside the GPS fix.
+    ///
+    /// Use [`GpsTime::offset_from_sys`] to compute the GPS/system-clock offset.
+    pub fn sys_time(&self) -> Option<SysTime> {
+        self.sys_time
+    }
+
+    /// Estimated horizontal position accuracy in metres, as reported by the GPS receiver.
+    ///
+    /// `None` when the receiver did not report an accuracy estimate.
+    pub fn eph_m(&self) -> Option<f32> {
+        self.eph_m
     }
 }
 
@@ -69,14 +93,14 @@ mod tests {
         .and_utc();
 
         let tpv = TimePositionVelocity::builder()
-            .time(dt)
+            .time(GpsTime::from_utc(dt))
             .lat(Angle::new::<degree>(55.676))
             .lon(Angle::new::<degree>(12.565))
             .velocity(Velocity::new::<meter_per_second>(15.0))
             .heading(Angle::new::<degree>(270.0))
             .build();
 
-        assert_eq!(tpv.time(), dt);
+        assert_eq!(tpv.time().utc(), dt);
         assert_eq!(tpv.lat().get::<degree>(), 55.676);
         assert_eq!(tpv.heading().map(|h| h.get::<degree>()), Some(270.0));
     }
@@ -90,7 +114,7 @@ mod tests {
         .and_utc();
 
         let tpv = TimePositionVelocity::builder()
-            .time(dt)
+            .time(GpsTime::from_utc(dt))
             .lat(Angle::new::<degree>(55.0))
             .lon(Angle::new::<degree>(12.0))
             .build();

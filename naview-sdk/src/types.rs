@@ -31,6 +31,11 @@ pub struct NavFix {
     /// Compass heading in \[0°, 360°). `None` = unknown direction (ghost fix).
     pub heading: Option<Angle>,
     pub speed: Option<Velocity>,
+    /// Estimated horizontal position accuracy in metres, as reported by the GPS receiver.
+    ///
+    /// The app renders a translucent blue circle of this radius around the point when
+    /// present. `None` when the receiver did not report an accuracy estimate.
+    pub eph_m: Option<f64>,
 }
 
 /// A satellite visibility report captured at a point in time.

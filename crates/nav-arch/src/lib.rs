@@ -75,6 +75,7 @@ mod tests {
                     "satellites.*".into(),
                     "segment.*".into(),
                     "test_data.*".into(),
+                    "time_types.*".into(),
                     "trip.*".into(),
                     "tpv.*".into(),
                     "visibility.*".into(),

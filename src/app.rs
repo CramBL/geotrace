@@ -4,6 +4,12 @@ mod modals;
 mod side_panel;
 mod trip_data_panel;
 
+// ─── String constants ────────────────────────────────────────────────────────
+const STAGE_STARTING: &str = "Starting…";
+const STAGE_READING: &str = "Reading…";
+const STAGE_PARSING: &str = "Parsing…";
+const STAGE_PROCESSING: &str = "Processing…";
+
 use std::{
     cell::RefCell,
     env, fs,
@@ -174,7 +180,7 @@ impl App {
             id,
             filename: filename.clone(),
             progress: 0.0,
-            stage: "Starting\u{2026}",
+            stage: STAGE_STARTING,
         });
 
         let tx = self.load_tx.clone();
@@ -218,7 +224,7 @@ impl App {
             id,
             filename: filename.clone(),
             progress: 0.0,
-            stage: "Starting\u{2026}",
+            stage: STAGE_STARTING,
         });
 
         let tx = self.load_tx.clone();
@@ -265,7 +271,7 @@ impl App {
             id,
             filename: filename.clone(),
             progress: 0.0,
-            stage: "Starting\u{2026}",
+            stage: STAGE_STARTING,
         });
 
         let nav_points = self.snapshot_nav_points();
@@ -286,7 +292,7 @@ impl App {
                     r_ctx.request_repaint();
                 };
 
-                report(0.20, "Reading\u{2026}");
+                report(0.20, STAGE_READING);
                 let content = match fs::read_to_string(&path) {
                     Ok(s) => s,
                     Err(e) => {
@@ -316,7 +322,7 @@ impl App {
             id,
             filename: filename.clone(),
             progress: 0.0,
-            stage: "Starting\u{2026}",
+            stage: STAGE_STARTING,
         });
 
         let nav_points = self.snapshot_nav_points();
@@ -460,7 +466,7 @@ impl eframe::App for App {
         egui::Panel::top("top_panel").show_inside(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
-                    if ui.button("Open\u{2026}").clicked() {
+                    if ui.button("Open…").clicked() {
                         ui.close();
                         if let Some(path) = rfd::FileDialog::new()
                             .add_filter("NaView Data", &["nvd"])
@@ -482,23 +488,6 @@ impl eframe::App for App {
                     ui.separator();
                     if ui.button("Quit").clicked() {
                         ui.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                });
-                ui.menu_button("Map", |ui| {
-                    let layer = self.map.layer();
-                    if ui
-                        .selectable_label(layer == MapLayer::OpenStreetMap, "OpenStreetMap")
-                        .clicked()
-                    {
-                        self.map.set_layer(MapLayer::OpenStreetMap);
-                        ui.close();
-                    }
-                    if ui
-                        .selectable_label(layer == MapLayer::Satellite, "Satellite (Mapbox)")
-                        .clicked()
-                    {
-                        self.map.set_layer(MapLayer::Satellite);
-                        ui.close();
                     }
                 });
                 ui.add_space(16.0);
@@ -653,7 +642,7 @@ fn finish_log_load(
     ctx: &egui::Context,
     report: impl Fn(f32, &'static str),
 ) {
-    report(0.55, "Parsing\u{2026}");
+    report(0.55, STAGE_PARSING);
     let result = nav_log_marker::load_log(content, nav_points, chrono::Utc::now());
 
     if result.markers.is_empty() && result.unassociated.is_empty() {
@@ -666,7 +655,7 @@ fn finish_log_load(
         return;
     }
 
-    report(0.90, "Processing\u{2026}");
+    report(0.90, STAGE_PROCESSING);
     let loaded = loader::build_log_loaded_file(filename, result.markers);
 
     tx.send(loader::LoadMessage::Completed {

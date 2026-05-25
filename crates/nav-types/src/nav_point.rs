@@ -40,6 +40,7 @@ impl NavPoint {
 mod tests {
     use super::*;
     use crate::satellites::{Constellation, Satellite, Satellites};
+    use crate::time_types::GpsTime;
     use crate::tpv::TimePositionVelocity;
     use chrono::Utc;
     use uom::si::angle::degree;
@@ -48,7 +49,7 @@ mod tests {
     #[test]
     fn test_nav_point_fix_counts() {
         let tpv = TimePositionVelocity::builder()
-            .time(Utc::now())
+            .time(GpsTime::from_utc(Utc::now()))
             .lat(Angle::new::<degree>(0.0))
             .lon(Angle::new::<degree>(0.0))
             .heading(Angle::new::<degree>(0.0))
@@ -59,7 +60,8 @@ mod tests {
         assert_eq!(np.total_satellites(), 0);
 
         let sats = Satellites::new(
-            Utc::now(),
+            Some(GpsTime::from_utc(Utc::now())),
+            None,
             vec![
                 Satellite::new(Constellation::Gps, 1, None, None, None, true),
                 Satellite::new(Constellation::Gps, 2, None, None, None, false),

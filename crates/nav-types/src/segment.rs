@@ -1,5 +1,6 @@
 use crate::markers::{CustomMarker, GeneratedMarker, GeneratedMarkerKind};
 use crate::nav_point::NavPoint;
+use crate::time_types::GpsTime;
 use crate::trip::{FileMetadata, LoadedFile, LoadedTrip, TripMetadata};
 use chrono::{DateTime, Duration, Utc};
 use geo_types::{Coord, Rect};
@@ -36,7 +37,7 @@ fn detect_generated_markers(points: &[NavPoint]) -> Vec<GeneratedMarker> {
     let mut prev_fix: Option<u32> = None;
     // The last point where a satellite report showed fix_count > 0.
     let mut last_fix_point: Option<&NavPoint> = None;
-    let mut fix_lost_at: Option<DateTime<Utc>> = None;
+    let mut fix_lost_at: Option<GpsTime> = None;
 
     for point in points {
         if let Some(sats) = &point.satellites {
@@ -48,7 +49,7 @@ fn detect_generated_markers(points: &[NavPoint]) -> Vec<GeneratedMarker> {
                     let anchor = last_fix_point.unwrap_or(point);
                     fix_lost_at = Some(anchor.tpv.time());
                     markers.push(GeneratedMarker::new(
-                        anchor.tpv.time(),
+                        anchor.tpv.time().utc(),
                         GeneratedMarkerKind::GpsFixLost,
                         anchor.tpv.lat(),
                         anchor.tpv.lon(),
@@ -58,7 +59,7 @@ fn detect_generated_markers(points: &[NavPoint]) -> Vec<GeneratedMarker> {
                     let fix_lost_duration =
                         fix_lost_at.map(|lost| point.tpv.time().signed_duration_since(lost));
                     markers.push(GeneratedMarker::new(
-                        point.tpv.time(),
+                        point.tpv.time().utc(),
                         GeneratedMarkerKind::GpsFixRegained,
                         point.tpv.lat(),
                         point.tpv.lon(),
@@ -129,7 +130,7 @@ pub fn compute_trip_metadata(
     let distance_km = path_distance_km(&coords);
     let diameter_m = point_set_diameter_m(&coords);
 
-    let time_range = (first.tpv.time(), last.tpv.time());
+    let time_range = (first.tpv.time().utc(), last.tpv.time().utc());
     let duration = if points.len() >= 2 {
         last.tpv.time() - first.tpv.time()
     } else {
@@ -172,8 +173,8 @@ pub fn build_loaded_file(
                 .expect("ranges from segment_trips are in bounds")
                 .to_vec();
 
-            let trip_start = trip_points.first().map(|p| p.tpv.time());
-            let trip_end = trip_points.last().map(|p| p.tpv.time());
+            let trip_start = trip_points.first().map(|p| p.tpv.time().utc());
+            let trip_end = trip_points.last().map(|p| p.tpv.time().utc());
 
             let trip_custom: Vec<CustomMarker> = match (trip_start, trip_end) {
                 (Some(start), Some(end)) => custom_markers
@@ -226,12 +227,13 @@ pub fn build_loaded_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::time_types::GpsTime;
     use crate::tpv::TimePositionVelocity;
     use chrono::TimeZone;
     use uom::si::f64::Angle;
 
     fn make_point_at(t: i64) -> NavPoint {
-        let time = Utc.timestamp_opt(t, 0).single().unwrap();
+        let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().unwrap());
         let tpv = TimePositionVelocity::builder()
             .time(time)
             .lat(Angle::new::<degree>(55.0))
@@ -242,7 +244,7 @@ mod tests {
     }
 
     fn make_point_at_pos(t: i64, lat: f64, lon: f64) -> NavPoint {
-        let time = Utc.timestamp_opt(t, 0).single().unwrap();
+        let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().unwrap());
         let tpv = TimePositionVelocity::builder()
             .time(time)
             .lat(Angle::new::<degree>(lat))

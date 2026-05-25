@@ -10,6 +10,7 @@ use uom::si::velocity::kilometer_per_hour;
 use crate::markers::{CustomMarker, MarkerIcon};
 use crate::nav_point::NavPoint;
 use crate::satellites::{Constellation, Satellite, Satellites};
+use crate::time_types::GpsTime;
 use crate::tpv::TimePositionVelocity;
 
 struct RouteSegment {
@@ -96,7 +97,7 @@ pub fn nav_test_data() -> Vec<NavPoint> {
             Velocity::new::<kilometer_per_hour>(5.0) + (avg_velocity * 1.5 * speed_curve);
 
         let tpv = TimePositionVelocity::builder()
-            .time(current_time)
+            .time(GpsTime::from_utc(current_time))
             .lat(Angle::new::<degree>(lat))
             .lon(Angle::new::<degree>(lon))
             .heading(current_segment.heading)
@@ -125,7 +126,11 @@ pub fn nav_test_data() -> Vec<NavPoint> {
                     true,
                 ));
             }
-            Some(Satellites::new(current_time, sats))
+            Some(Satellites::new(
+                Some(GpsTime::from_utc(current_time)),
+                None,
+                sats,
+            ))
         };
 
         route.push(NavPoint::new(tpv, satellites));
@@ -147,7 +152,7 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
             (Some(last_idx), false) => {
                 if let Some(last_point) = nav_points.get(last_idx) {
                     markers.push(CustomMarker::new(
-                        last_point.tpv.time(),
+                        last_point.tpv.time().utc(),
                         "Fix Lost".to_string(),
                         MarkerIcon::Warning,
                         last_point.tpv.lat(),
@@ -176,7 +181,7 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
                     let duration_str = format_duration(duration);
 
                     markers.push(CustomMarker::new(
-                        p.tpv.time(),
+                        p.tpv.time().utc(),
                         format!("Fix Regained after {}", duration_str),
                         MarkerIcon::Check,
                         p.tpv.lat(),

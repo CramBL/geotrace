@@ -1,10 +1,17 @@
 mod error;
 pub use error::LoadError;
 
+// ─── String constants ────────────────────────────────────────────────────────
+const STAGE_READING: &str = "Reading…";
+const STAGE_PARSING: &str = "Parsing…";
+const STAGE_CONVERTING: &str = "Converting…";
+const STAGE_SEGMENTING: &str = "Segmenting…";
+
 use std::fs::File;
 use std::path::Path;
 
 use nav_types::satellites::{Constellation, Satellite, Satellites};
+use nav_types::time_types::{GpsTime, SysTime};
 use nav_types::{CustomMarker, LoadedFile, MarkerIcon, NavPoint, TimePositionVelocity};
 use naview_sdk::degree;
 use naview_sdk::{
@@ -35,13 +42,13 @@ pub fn load_file_with_progress(
         .and_then(|n| n.to_str())
         .unwrap_or_else(|| path.to_str().unwrap_or("unknown"))
         .to_owned();
-    progress(0.05, "Reading\u{2026}");
+    progress(0.05, STAGE_READING);
     let file = File::open(path)?;
-    progress(0.20, "Parsing\u{2026}");
+    progress(0.20, STAGE_PARSING);
     let nav_file = NavFile::read(file)?;
-    progress(0.65, "Converting\u{2026}");
+    progress(0.65, STAGE_CONVERTING);
     let (points, markers) = from_nav_file(&nav_file)?;
-    progress(0.90, "Segmenting\u{2026}");
+    progress(0.90, STAGE_SEGMENTING);
     let loaded = nav_types::segment::build_loaded_file(filename, &points, &markers);
     Ok(loaded)
 }
@@ -52,11 +59,11 @@ pub fn load_bytes_with_progress(
     filename: String,
     progress: impl Fn(f32, &'static str),
 ) -> Result<LoadedFile, LoadError> {
-    progress(0.15, "Parsing\u{2026}");
+    progress(0.15, STAGE_PARSING);
     let nav_file = NavFile::read(bytes)?;
-    progress(0.60, "Converting\u{2026}");
+    progress(0.60, STAGE_CONVERTING);
     let (points, markers) = from_nav_file(&nav_file)?;
-    progress(0.90, "Segmenting\u{2026}");
+    progress(0.90, STAGE_SEGMENTING);
     let loaded = nav_types::segment::build_loaded_file(filename, &points, &markers);
     Ok(loaded)
 }
@@ -76,11 +83,13 @@ fn from_nav_file(nav_file: &NavFile) -> Result<(Vec<NavPoint>, Vec<CustomMarker>
         }
 
         let tpv = TimePositionVelocity::builder()
-            .time(sdk_point.fix.effective_gps_time())
+            .time(GpsTime::from_utc(sdk_point.fix.effective_gps_time()))
             .lat(sdk_point.fix.lat)
             .lon(sdk_point.fix.lon)
             .maybe_heading(sdk_point.fix.heading)
             .maybe_velocity(sdk_point.fix.speed)
+            .maybe_sys_time(sdk_point.fix.sys_time.map(SysTime::from_utc))
+            .maybe_eph_m(sdk_point.fix.eph_m.map(|v| v as f32))
             .build();
 
         let satellites = sdk_point.satellites.as_ref().map(convert_satellite_report);
@@ -118,9 +127,9 @@ fn convert_satellite_report(report: &SatelliteReport) -> Satellites {
         })
         .collect();
 
-    // Use gps_time as the canonical time for display; fall back to sys_time.
-    let time = report.gps_time.or(report.sys_time).unwrap_or_default();
-    Satellites::new(time, satellites)
+    let gps_time = report.gps_time.map(GpsTime::from_utc);
+    let sys_time = report.sys_time.map(SysTime::from_utc);
+    Satellites::new(gps_time, sys_time, satellites)
 }
 
 fn convert_marker(m: &SdkMarker) -> CustomMarker {
@@ -191,7 +200,7 @@ mod tests {
         let (nav_points, _) = build(b.finish().unwrap()).unwrap();
         assert_eq!(nav_points.len(), 1);
         let tpv = nav_points[0].tpv;
-        assert_eq!(tpv.time(), t0);
+        assert_eq!(tpv.time().utc(), t0);
         assert_eq!(tpv.lat().get::<degree>(), 51.5);
         assert_eq!(tpv.lon().get::<degree>(), -0.1);
         assert_eq!(tpv.heading().map(|h| h.get::<degree>()), Some(270.0));

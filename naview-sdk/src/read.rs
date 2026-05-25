@@ -66,11 +66,15 @@ fn read_nav_points(file: &File) -> Result<Vec<NavPoint>, Error> {
     let headings = grp.dataset("heading")?.read_f64()?;
     let speeds = grp.dataset("speed_mps")?.read_f64()?;
 
-    // sys_time_us is present in v2 files; absent in v1.
+    // sys_time_us and eph_m are absent in older files; default to sentinel/NaN.
     let sys_times: Vec<u64> = grp
         .dataset("sys_time_us")
         .and_then(|ds| ds.read_u64())
         .unwrap_or_else(|_| vec![u64::MAX; times.len()]);
+    let ephs: Vec<f64> = grp
+        .dataset("eph_m")
+        .and_then(|ds| ds.read_f64())
+        .unwrap_or_else(|_| vec![f64::NAN; times.len()]);
 
     let n = times.len();
     check_len("nav_points", "lat", n, lats.len())?;
@@ -85,25 +89,36 @@ fn read_nav_points(file: &File) -> Result<Vec<NavPoint>, Error> {
         .zip(headings.iter())
         .zip(speeds.iter())
         .zip(sys_times.iter())
+        .zip(ephs.iter())
         .map(
-            |(((((time_us, lat_deg), lon_deg), heading_deg), speed_mps), sys_time_us)| NavPoint {
-                fix: NavFix {
-                    gps_time: Some(micros_to_datetime(*time_us)),
-                    sys_time: u64_to_opt_datetime(*sys_time_us),
-                    lat: Angle::new::<degree>(*lat_deg),
-                    lon: Angle::new::<degree>(*lon_deg),
-                    heading: if heading_deg.is_nan() {
-                        None
-                    } else {
-                        Some(Angle::new::<degree>(*heading_deg))
+            |(
+                (((((time_us, lat_deg), lon_deg), heading_deg), speed_mps), sys_time_us),
+                eph_val,
+            )| {
+                NavPoint {
+                    fix: NavFix {
+                        gps_time: Some(micros_to_datetime(*time_us)),
+                        sys_time: u64_to_opt_datetime(*sys_time_us),
+                        lat: Angle::new::<degree>(*lat_deg),
+                        lon: Angle::new::<degree>(*lon_deg),
+                        heading: if heading_deg.is_nan() {
+                            None
+                        } else {
+                            Some(Angle::new::<degree>(*heading_deg))
+                        },
+                        speed: if speed_mps.is_nan() {
+                            None
+                        } else {
+                            Some(Velocity::new::<meter_per_second>(*speed_mps))
+                        },
+                        eph_m: if eph_val.is_nan() {
+                            None
+                        } else {
+                            Some(*eph_val)
+                        },
                     },
-                    speed: if speed_mps.is_nan() {
-                        None
-                    } else {
-                        Some(Velocity::new::<meter_per_second>(*speed_mps))
-                    },
-                },
-                satellites: None,
+                    satellites: None,
+                }
             },
         )
         .collect();

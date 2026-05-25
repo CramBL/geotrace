@@ -14,7 +14,12 @@ use walkers::{MapMemory, Plugin, Projector};
 use crate::generated_marker_renderer;
 
 const HOVER_THRESHOLD: f32 = 10.0;
-const MIN_LABEL_DIST: f32 = 60.0;
+const EM_DASH: &str = "—";
+const DEGREE_SIGN: &str = "°";
+/// U+0394 GREEK CAPITAL LETTER DELTA — used as a mathematical difference symbol.
+const DELTA: &str = "Δ";
+/// U+2212 MINUS SIGN — visually distinct from the ASCII hyphen-minus.
+const MINUS_SIGN: &str = "−";
 
 pub struct TpvRenderer<'a> {
     files: &'a [LoadedFile],
@@ -78,36 +83,44 @@ impl<'a> TpvRenderer<'a> {
         points: &[NavPoint],
         local_closest: &mut Option<(DataPointRef, Pos2)>,
         outline_alpha: f32,
+        base_arrow_size: f32,
+        base_ghost_radius: f32,
+        min_label_dist: f32,
         transform: &crate::MercTransform,
     ) {
         let mut last_label_pos: Option<Pos2> = None;
         for (pi, point) in points.iter().enumerate() {
-            if !filter::point_passes_time_filter(point.tpv.time(), self.filter) {
+            if !filter::point_passes_time_filter(point.tpv.time().utc(), self.filter) {
                 continue;
             }
-            // For points with a GPS fix, use the pre-computed Mercator coordinates
-            // (cached at load time) to avoid per-frame trig. Ghost points (fix==0)
-            // interpolate their lat/lon, normalise to Mercator, then use the same
-            // transform path — no walkers projector involved, ensuring consistent
-            // f64 precision for all point types.
-            let fix = point.fix_count();
-            let (screen_pos, color) = if fix >= 10 {
-                (
-                    transform.to_screen(point.merc_x, point.merc_y),
-                    Color32::from_rgb(66, 133, 244),
-                )
-            } else if fix > 0 {
-                (
-                    transform.to_screen(point.merc_x, point.merc_y),
-                    Color32::from_rgb(244, 180, 0),
-                )
-            } else {
-                let (lat, lon) = interpolate_position(points, pi);
-                let (merc_x, merc_y) = crate::normalize_merc(lon, lat);
-                (
-                    transform.to_screen(merc_x, merc_y),
-                    Color32::from_rgb(219, 68, 55),
-                )
+            // Distinguish real GPS fixes (heading present) from ghost/synthetic
+            // fixes (heading=None, position interpolated by the SDK builder).
+            //
+            // The correct gate is `heading.is_some()`: the SDK sets heading=None
+            // only for ghost/synthetic fixes that carry orphaned satellite reports
+            // but have no real GPS position of their own.
+            let (screen_pos, color) = match point.tpv.heading() {
+                Some(_) => {
+                    // Real GPS fix: always use the pre-computed Mercator
+                    // coordinates; color by satellite quality when available.
+                    let color = match point.fix_count() {
+                        n if n >= 10 => Color32::from_rgb(66, 133, 244), // blue: strong fix
+                        n if n > 0 => Color32::from_rgb(244, 180, 0),    // yellow: marginal
+                        // No satellite report attached — the fix is real, we
+                        // just have no satellite data for it.  Show as blue.
+                        _ => Color32::from_rgb(66, 133, 244),
+                    };
+                    (transform.to_screen(point.merc_x, point.merc_y), color)
+                }
+                None => {
+                    // Ghost fix: position interpolated from surrounding real fixes.
+                    let (lat, lon) = interpolate_position(points, pi);
+                    let (merc_x, merc_y) = crate::normalize_merc(lon, lat);
+                    (
+                        transform.to_screen(merc_x, merc_y),
+                        Color32::from_rgb(219, 68, 55),
+                    )
+                }
             };
             let point_ref = DataPointRef {
                 file_index: fi,
@@ -115,6 +128,7 @@ impl<'a> TpvRenderer<'a> {
                 category: DataCategory::Tpv,
                 point_index: pi,
             };
+
             generated_marker_renderer::update_hover_candidate(
                 &self.hover_out,
                 screen_pos,
@@ -132,10 +146,34 @@ impl<'a> TpvRenderer<'a> {
                     *local_closest = Some((point_ref, screen_pos));
                 }
             }
+
             if !view_rect.contains(screen_pos) {
                 continue;
             }
+
+            // Draw horizontal accuracy circle behind the fix icon.
+            if let Some(eph_m) = point.tpv.eph_m() {
+                let lat_deg = point.tpv.lat().get::<degree>();
+                let radius = (f64::from(eph_m) * transform.pixels_per_meter(lat_deg)) as f32;
+                if radius >= 2.0 {
+                    ui.painter().circle_filled(
+                        screen_pos,
+                        radius,
+                        egui::Color32::from_rgba_unmultiplied(30, 120, 255, 20),
+                    );
+                    ui.painter().circle_stroke(
+                        screen_pos,
+                        radius,
+                        egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgba_unmultiplied(30, 120, 255, 60),
+                        ),
+                    );
+                }
+            }
+
             let highlighted = self.is_arrow_highlighted(point_ref);
+
             match point.tpv.heading() {
                 Some(h) => {
                     draw_navigation_arrow(
@@ -145,18 +183,27 @@ impl<'a> TpvRenderer<'a> {
                         color,
                         highlighted,
                         outline_alpha,
+                        base_arrow_size,
                     );
                 }
                 None => {
-                    draw_ghost_circle(ui, screen_pos, color, highlighted, outline_alpha);
+                    draw_ghost_circle(
+                        ui,
+                        screen_pos,
+                        color,
+                        highlighted,
+                        outline_alpha,
+                        base_ghost_radius,
+                    );
                 }
             }
+
             if let Some(sats) = &point.satellites {
                 let show =
-                    last_label_pos.is_none_or(|last| screen_pos.distance(last) > MIN_LABEL_DIST);
+                    last_label_pos.is_none_or(|last| screen_pos.distance(last) > min_label_dist);
                 if show {
                     let label = format!("{}/{}", sats.fix_count(), sats.satellite_count());
-                    let text_pos = screen_pos + egui::vec2(15.0, -15.0);
+                    let text_pos = screen_pos + egui::vec2(base_arrow_size + 3.0, -base_arrow_size);
                     let galley = ui.painter().layout_no_wrap(
                         label,
                         egui::FontId::proportional(12.0),
@@ -215,10 +262,22 @@ impl Plugin for TpvRenderer<'_> {
         let view_rect = ui.max_rect().expand(50.0);
         let mut local_closest: Option<(DataPointRef, Pos2)> = None;
 
-        // Scale the white outline alpha with zoom level: fully visible when zoomed
-        // in (zoom ≥ 14), fades to transparent when zoomed out (zoom ≤ 10).
-        // This prevents the outlines from blending into a white mass at low zoom.
+        // Scale icon sizes and outline alpha with zoom level.
+        //
+        // At low zoom (≤ 12) icons are reduced to small dots so that dense
+        // clusters of points — e.g. highway driving at 1-second resolution —
+        // have visible air between them instead of blending into a solid mass.
+        // At high zoom (≥ 18) icons reach their full design size.
+        //
+        // The outline alpha fades out below zoom 14 separately, following the
+        // same principle: avoid a white mass at low zoom.
         let zoom = map_memory.zoom();
+        let size_factor = ((zoom - 12.0) / 6.0).clamp(0.0, 1.0) as f32;
+        let base_arrow_size = 3.0 + size_factor * 9.0; // 3 px at zoom ≤ 12, 12 px at zoom ≥ 18
+        let base_ghost_radius = 2.0 + size_factor * 4.0; // 2 px at zoom ≤ 12,  6 px at zoom ≥ 18
+        // Require more pixel separation between satellite-count labels when
+        // zoomed out so the label count doesn't explode at dense clusters.
+        let min_label_dist = 60.0 + (1.0 - size_factor) * 120.0; // 180 px at low zoom, 60 at high
         let outline_alpha = ((zoom - 10.0) / 4.0).clamp(0.0, 1.0) as f32;
 
         // Build the per-frame coordinate transform once.
@@ -250,6 +309,9 @@ impl Plugin for TpvRenderer<'_> {
                     &trip.points,
                     &mut local_closest,
                     outline_alpha,
+                    base_arrow_size,
+                    base_ghost_radius,
+                    min_label_dist,
                     &transform,
                 );
             }
@@ -305,24 +367,63 @@ pub(crate) fn show_hover_table(ui: &mut Ui, p: &NavPoint) {
         .num_columns(2)
         .show(ui, |ui| {
             ui.label("Time");
-            ui.label(p.tpv.time().format("%Y-%m-%d %H:%M:%S").to_string());
+            ui.label(p.tpv.time().utc().format("%Y-%m-%d %H:%M:%S").to_string());
             ui.end_row();
 
             ui.label("Speed");
             match p.tpv.velocity() {
                 Some(v) => ui.label(format!("{:.1} km/h", v.get::<kilometer_per_hour>())),
-                None => ui.label("\u{2014}"), // em-dash: speed unknown (interpolated point)
+                None => ui.label(EM_DASH), // em-dash: speed unknown (interpolated point)
             };
             ui.end_row();
 
             ui.label("Heading");
             match p.tpv.heading() {
-                Some(h) => ui.label(format!("{:.1}\u{00b0}", h.get::<degree>())),
-                None => ui.label("\u{2014}"), // em-dash: unknown direction
+                Some(h) => ui.label(format!("{:.1}{DEGREE_SIGN}", h.get::<degree>())),
+                None => ui.label(EM_DASH), // em-dash: unknown direction
             };
             ui.end_row();
 
+            if let Some(eph) = p.tpv.eph_m() {
+                ui.label("Accuracy");
+                ui.label(format!("±{eph:.1} m"));
+                ui.end_row();
+            }
+
             show_satellite_rows(ui, p);
+
+            // Time delta between the GPS fix and the satellite report.
+            // Only shown when the satellite report was GPS-timestamped — if it
+            // only has sys_time, this delta equals the GPS/sys-clock delta below
+            // and showing it would be redundant.
+            if let Some(sats) = &p.satellites
+                && let Some(sat_gps_time) = sats.gps_time()
+            {
+                let sat_delta_ms = (p.tpv.time() - sat_gps_time).num_milliseconds();
+                if sat_delta_ms != 0 {
+                    ui.label(format!("Sat {DELTA}t"));
+                    ui.label(format_signed_delta(sat_delta_ms));
+                    ui.end_row();
+                }
+            }
+
+            // GPS/system-clock delta (if system timestamp is available).
+            if let Some(sys) = p.tpv.sys_time() {
+                let clock_delta_ms = p.tpv.time().offset_from_sys(sys).num_milliseconds();
+                ui.label(format!("Clock {DELTA}t"));
+                ui.label(format!(
+                    "{} ({})",
+                    format_signed_delta(clock_delta_ms),
+                    if clock_delta_ms > 0 {
+                        "GPS ahead"
+                    } else if clock_delta_ms < 0 {
+                        "system ahead"
+                    } else {
+                        "in sync"
+                    }
+                ));
+                ui.end_row();
+            }
         });
 }
 
@@ -341,7 +442,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
                     ui.label(format!("{:.1} km/h", v.get::<kilometer_per_hour>()));
                 }
                 None => {
-                    ui.label("\u{2014}");
+                    ui.label(EM_DASH);
                 }
             };
             ui.end_row();
@@ -349,13 +450,19 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
             ui.label("Heading");
             match p.tpv.heading() {
                 Some(h) => {
-                    ui.label(format!("{:.1}\u{00b0}", h.get::<degree>()));
+                    ui.label(format!("{:.1}{DEGREE_SIGN}", h.get::<degree>()));
                 }
                 None => {
-                    ui.label("\u{2014}");
+                    ui.label(EM_DASH);
                 }
             };
             ui.end_row();
+
+            if let Some(eph) = p.tpv.eph_m() {
+                ui.label("Accuracy");
+                ui.label(format!("±{eph:.1} m"));
+                ui.end_row();
+            }
 
             match &p.satellites {
                 Some(sats) => {
@@ -368,12 +475,32 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
                         ui.colored_label(seen_count_color(seen), seen.to_string());
                     });
                     ui.end_row();
+
+                    // Time delta between the GPS fix and the satellite report.
+                    // A nonzero delta means the satellite data is from a slightly
+                    // different moment than the fix — worth showing for diagnostics.
+                    if let Some(sat_gps_time) = sats.gps_time() {
+                        let sat_delta_ms = (p.tpv.time() - sat_gps_time).num_milliseconds();
+                        if sat_delta_ms != 0 {
+                            ui.label(format!("Sat {DELTA}t"));
+                            ui.label(format_signed_delta(sat_delta_ms));
+                            ui.end_row();
+                        }
+                    }
                 }
                 None => {
-                    ui.label("Satellites");
-                    ui.colored_label(Color32::RED, "NO FIX");
-                    ui.end_row();
+                    // No satellite report for this point — omit the row.
+                    // A missing report does not mean there was no GPS fix.
                 }
+            }
+
+            // GPS/system-clock delta: how far the GPS clock leads the host clock.
+            // Only shown when the fix carries a system timestamp.
+            if let Some(sys) = p.tpv.sys_time() {
+                let clock_delta_ms = p.tpv.time().offset_from_sys(sys).num_milliseconds();
+                ui.label(format!("Clock {DELTA}t"));
+                ui.label(format_signed_delta(clock_delta_ms));
+                ui.end_row();
             }
         });
 
@@ -440,7 +567,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
                                         }
                                         None => {
                                             ui.label(
-                                                egui::RichText::new("\u{2014}")
+                                                egui::RichText::new(EM_DASH)
                                                     .color(Color32::from_gray(110)),
                                             );
                                         }
@@ -465,60 +592,93 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
 }
 
 fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
-    if let Some(sats) = &p.satellites {
-        let fix = sats.fix_count();
-        let seen = sats.satellite_count();
+    // Only show satellite rows when a report is actually attached to this point.
+    // Omit the section entirely when there is no report — a missing report
+    // does not mean there was no GPS fix, just that no satellite data was
+    // captured or associated for this particular point.
+    let Some(sats) = &p.satellites else {
+        return;
+    };
 
-        // Total summary row — bold to signal it is the aggregate.
-        ui.label(egui::RichText::new("Satellites").strong());
+    let fix = sats.fix_count();
+    let seen = sats.satellite_count();
+
+    // Total summary row — bold to signal it is the aggregate.
+    ui.label(egui::RichText::new("Satellites").strong());
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(fix.to_string())
+                .color(fix_count_color(fix))
+                .strong(),
+        );
+        ui.label(egui::RichText::new("/").strong());
+        ui.label(
+            egui::RichText::new(seen.to_string())
+                .color(seen_count_color(seen))
+                .strong(),
+        );
+    });
+    ui.end_row();
+
+    // Per-constellation breakdown — each with its own colored fix/seen counts.
+    for constellation in [
+        Constellation::Gps,
+        Constellation::Galileo,
+        Constellation::Glonass,
+        Constellation::Beidou,
+    ] {
+        let const_total = sats.by_constellation(constellation).count() as u32;
+        if const_total == 0 {
+            continue;
+        }
+        let const_fix = sats
+            .satellites_with_fix()
+            .filter(|s| s.constellation() == constellation)
+            .count() as u32;
+        let label = match constellation {
+            Constellation::Gps => "GPS",
+            Constellation::Galileo => "Galileo",
+            Constellation::Glonass => "GLONASS",
+            Constellation::Beidou => "BeiDou",
+        };
+        ui.label(label);
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(fix.to_string())
-                    .color(fix_count_color(fix))
-                    .strong(),
-            );
-            ui.label(egui::RichText::new("/").strong());
-            ui.label(
-                egui::RichText::new(seen.to_string())
-                    .color(seen_count_color(seen))
-                    .strong(),
-            );
+            ui.colored_label(fix_count_color(const_fix), const_fix.to_string());
+            ui.label("/");
+            ui.colored_label(seen_count_color(const_total), const_total.to_string());
         });
         ui.end_row();
+    }
+}
 
-        // Per-constellation breakdown — each with its own colored fix/seen counts.
-        for constellation in [
-            Constellation::Gps,
-            Constellation::Galileo,
-            Constellation::Glonass,
-            Constellation::Beidou,
-        ] {
-            let const_total = sats.by_constellation(constellation).count() as u32;
-            if const_total == 0 {
-                continue;
-            }
-            let const_fix = sats
-                .satellites_with_fix()
-                .filter(|s| s.constellation() == constellation)
-                .count() as u32;
-            let label = match constellation {
-                Constellation::Gps => "GPS",
-                Constellation::Galileo => "Galileo",
-                Constellation::Glonass => "GLONASS",
-                Constellation::Beidou => "BeiDou",
-            };
-            ui.label(label);
-            ui.horizontal(|ui| {
-                ui.colored_label(fix_count_color(const_fix), const_fix.to_string());
-                ui.label("/");
-                ui.colored_label(seen_count_color(const_total), const_total.to_string());
-            });
-            ui.end_row();
-        }
+/// Format a signed time delta (in milliseconds) for display in the point info panel.
+///
+/// - Sub-second deltas are shown as `+250ms` / `−50ms` (using `MINUS_SIGN`
+///   so the negative sign is visually distinct from a hyphen).
+/// - Larger deltas use a compact terse format (e.g. `+1s`, `+1m30s`) with a
+///   leading sign.
+fn format_signed_delta(delta_ms: i64) -> String {
+    use std::fmt::Write as _;
+    let sign = if delta_ms < 0 { MINUS_SIGN } else { "+" };
+    let abs_ms = delta_ms.unsigned_abs();
+    if abs_ms < 1_000 {
+        format!("{sign}{abs_ms}ms")
     } else {
-        ui.label("Sats");
-        ui.colored_label(Color32::RED, "NO FIX");
-        ui.end_row();
+        let total_s = abs_ms / 1_000;
+        let h = total_s / 3_600;
+        let m = (total_s % 3_600) / 60;
+        let s = total_s % 60;
+        let mut out = sign.to_owned();
+        if h > 0 {
+            write!(out, "{h}h").unwrap_or(());
+        }
+        if m > 0 {
+            write!(out, "{m}m").unwrap_or(());
+        }
+        if s > 0 || (h == 0 && m == 0) {
+            write!(out, "{s}s").unwrap_or(());
+        }
+        out
     }
 }
 
@@ -569,8 +729,19 @@ fn seen_count_color(count: u32) -> Color32 {
 }
 
 /// Render a hollow circle for ghost/extrapolated fixes with no known heading.
-fn draw_ghost_circle(ui: &Ui, center: Pos2, color: Color32, highlighted: bool, outline_alpha: f32) {
-    let radius = if highlighted { 8.0 } else { 6.0 };
+fn draw_ghost_circle(
+    ui: &Ui,
+    center: Pos2,
+    color: Color32,
+    highlighted: bool,
+    outline_alpha: f32,
+    base_radius: f32,
+) {
+    let radius = if highlighted {
+        base_radius + 2.0
+    } else {
+        base_radius
+    };
     let stroke_color = if highlighted {
         Color32::from_rgb(100, 200, 255)
     } else {
@@ -586,7 +757,10 @@ fn draw_ghost_circle(ui: &Ui, center: Pos2, color: Color32, highlighted: bool, o
         ui.painter()
             .circle_stroke(center, radius, Stroke::new(stroke_width, stroke_color));
     }
-    ui.painter().circle_filled(center, 2.5, color);
+    // Inner dot scales with the outer radius so the circle doesn't look hollow
+    // at very small sizes.
+    let dot_radius = (base_radius * 0.4).max(1.0);
+    ui.painter().circle_filled(center, dot_radius, color);
 }
 
 fn draw_navigation_arrow(
@@ -596,12 +770,17 @@ fn draw_navigation_arrow(
     color: Color32,
     highlighted: bool,
     outline_alpha: f32,
+    base_size: f32,
 ) {
     let angle_rad = heading_degrees.to_radians() - std::f64::consts::FRAC_PI_2;
     let dir = egui::vec2(angle_rad.cos() as f32, angle_rad.sin() as f32);
     let perp = egui::vec2(-dir.y, dir.x);
 
-    let size = if highlighted { 17.0 } else { 12.0 };
+    let size = if highlighted {
+        base_size + 5.0
+    } else {
+        base_size
+    };
     let stroke_color = if highlighted {
         Color32::from_rgb(100, 200, 255)
     } else {

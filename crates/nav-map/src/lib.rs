@@ -92,6 +92,19 @@ impl MercTransform {
     pub(crate) fn merc_y_from_screen(&self, screen_y: f32) -> f64 {
         (screen_y as f64 - self.clip_center_y) / self.total_px + self.merc_y_center
     }
+
+    /// Pixels per metre at the given latitude.
+    ///
+    /// Uses the Web Mercator scale factor: the equatorial circumference
+    /// (≈ 40 030 km) shrinks by cos(lat) at a given latitude.
+    #[inline]
+    pub(crate) fn pixels_per_meter(&self, lat_deg: f64) -> f64 {
+        // At zoom z the world is 256·2^z pixels wide at the equator.
+        // 1 Mercator tile column = Earth circumference / 2^z metres at the equator,
+        // scaled by cos(lat) at higher latitudes.
+        const EARTH_CIRCUMFERENCE_M: f64 = 40_030_173.0;
+        self.total_px / (EARTH_CIRCUMFERENCE_M * lat_deg.to_radians().cos())
+    }
 }
 
 /// Normalised Web Mercator projection — both outputs in `[0.0, 1.0]`.
@@ -351,6 +364,36 @@ impl NavMap {
 
         let map_response = ui.add(map);
 
+        // Layer toggle — floating panel anchored to the bottom-right of the map.
+        let map_rect = map_response.rect;
+        egui::Area::new(egui::Id::new("map_layer_toggle"))
+            .fixed_pos(egui::pos2(map_rect.right() - 8.0, map_rect.bottom() - 8.0))
+            .pivot(egui::Align2::RIGHT_BOTTOM)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    for (layer, icon, label) in [
+                        (
+                            MapLayer::OpenStreetMap,
+                            egui_phosphor::regular::MAP_TRIFOLD,
+                            "Map",
+                        ),
+                        (
+                            MapLayer::Satellite,
+                            egui_phosphor::regular::GLOBE_HEMISPHERE_WEST,
+                            "Satellite",
+                        ),
+                    ] {
+                        let selected = self.layer == layer;
+                        if ui
+                            .selectable_label(selected, format!("{icon} {label}"))
+                            .clicked()
+                        {
+                            self.layer = layer;
+                        }
+                    }
+                });
+            });
+
         // Handle click: clicking near a map element makes its info popup sticky;
         // clicking on empty space clears it. Clicking the same element again also clears it.
         if map_response.clicked() {
@@ -404,7 +447,7 @@ fn show_sticky_popup(
             .and_then(|t| t.points.get(sticky_ref.point_index))
             .map_or_else(
                 || "GPS Point".to_string(),
-                |p| p.tpv.time().format("%Y-%m-%d %H:%M:%S").to_string(),
+                |p| p.tpv.time().utc().format("%Y-%m-%d %H:%M:%S").to_string(),
             )
     } else if sticky_ref.category == DataCategory::SatelliteReport {
         files
@@ -414,7 +457,12 @@ fn show_sticky_popup(
             .and_then(|p| p.satellites.as_ref())
             .map_or_else(
                 || "Satellite Report".to_string(),
-                |sats| sats.time().format("%Y-%m-%d %H:%M:%S").to_string(),
+                |sats| {
+                    sats.best_time().map_or_else(
+                        || "Satellite Report".to_string(),
+                        |t| t.format("%Y-%m-%d %H:%M:%S").to_string(),
+                    )
+                },
             )
     } else if sticky_ref.category == DataCategory::GeneratedMarker {
         files

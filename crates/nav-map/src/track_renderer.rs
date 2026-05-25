@@ -134,7 +134,9 @@ impl Plugin for TrackRenderer<'_> {
                 let path: Vec<egui::Pos2> = trip
                     .points
                     .iter()
-                    .filter(|p| nav_types::point_passes_time_filter(p.tpv.time(), self.filter))
+                    .filter(|p| {
+                        nav_types::point_passes_time_filter(p.tpv.time().utc(), self.filter)
+                    })
                     .map(|p| transform.to_screen(p.merc_x, p.merc_y))
                     .collect();
                 if path.len() > 1 {

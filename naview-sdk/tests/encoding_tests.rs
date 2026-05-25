@@ -338,7 +338,7 @@ fn timestamp_precision() -> Result<(), Box<dyn std::error::Error>> {
     let mut bytes = Vec::new();
     nav_file.write(&mut bytes)?;
     let rt = NavFile::read(bytes.as_slice())?;
-    assert_eq!(rt.nav_points()[0].fix.gps_time, t);
+    assert_eq!(rt.nav_points()[0].fix.gps_time, Some(t));
     Ok(())
 }
 

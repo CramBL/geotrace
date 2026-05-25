@@ -38,7 +38,7 @@ fn round_trip_from_nav_types_test_data() {
     for np in &nav_data {
         let tpv = np.tpv;
         let fix_b = NavFix::builder()
-            .gps_time(tpv.time())
+            .gps_time(tpv.time().utc())
             .lat(tpv.lat())
             .lon(tpv.lon())
             .maybe_heading(tpv.heading());
@@ -66,7 +66,7 @@ fn round_trip_from_nav_types_test_data() {
 
             builder.add_satellite_report(
                 SatelliteReport::builder()
-                    .gps_time(sats.time())
+                    .maybe_gps_time(sats.gps_time().map(|t| t.utc()))
                     .tracked(tracked)
                     .build(),
             );

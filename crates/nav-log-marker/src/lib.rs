@@ -339,19 +339,19 @@ fn associate(ts: &DateTime<Utc>, nav_points: &[NavPoint]) -> Option<(f64, f64)> 
     }
 
     // Binary search for the insertion point
-    let idx = nav_points.partition_point(|p| p.tpv.time() <= *ts);
+    let idx = nav_points.partition_point(|p| p.tpv.time().utc() <= *ts);
 
     let before = idx.checked_sub(1).and_then(|i| nav_points.get(i));
     let after = nav_points.get(idx);
 
     let nearest_gap = match (before, after) {
         (Some(b), Some(a)) => {
-            let gap_before = (*ts - b.tpv.time()).abs();
-            let gap_after = (a.tpv.time() - *ts).abs();
+            let gap_before = (*ts - b.tpv.time().utc()).abs();
+            let gap_after = (a.tpv.time().utc() - *ts).abs();
             gap_before.min(gap_after)
         }
-        (Some(b), None) => (*ts - b.tpv.time()).abs(),
-        (None, Some(a)) => (a.tpv.time() - *ts).abs(),
+        (Some(b), None) => (*ts - b.tpv.time().utc()).abs(),
+        (None, Some(a)) => (a.tpv.time().utc() - *ts).abs(),
         (None, None) => return None,
     };
 
@@ -364,7 +364,7 @@ fn associate(ts: &DateTime<Utc>, nav_points: &[NavPoint]) -> Option<(f64, f64)> 
             let span = (a.tpv.time() - b.tpv.time())
                 .num_microseconds()
                 .unwrap_or(1);
-            let elapsed = (*ts - b.tpv.time()).num_microseconds().unwrap_or(0);
+            let elapsed = (*ts - b.tpv.time().utc()).num_microseconds().unwrap_or(0);
             let t = if span == 0 {
                 0.0f64
             } else {
@@ -596,13 +596,14 @@ mod tests {
 
     fn make_nav_points(start: DateTime<Utc>, count: usize, step_secs: i64) -> Vec<NavPoint> {
         use nav_types::TimePositionVelocity;
+        use nav_types::time_types::GpsTime;
         use uom::si::f64::Velocity;
         use uom::si::velocity::meter_per_second;
         (0..count)
             .map(|i| {
                 let t = start + chrono::Duration::seconds(i as i64 * step_secs);
                 let tpv = TimePositionVelocity::builder()
-                    .time(t)
+                    .time(GpsTime::from_utc(t))
                     .lat(Angle::new::<degree>(55.0 + i as f64 * 0.001))
                     .lon(Angle::new::<degree>(12.0 + i as f64 * 0.001))
                     .heading(Angle::new::<degree>(0.0))

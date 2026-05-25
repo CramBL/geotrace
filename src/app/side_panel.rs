@@ -595,7 +595,7 @@ fn render_tpv_items(
             point_index: pi,
         };
         let is_sticky = highlight.sticky.is_some_and(|r| r == point_ref);
-        let label = point.tpv.time().format("%H:%M:%S").to_string();
+        let label = point.tpv.time().utc().format("%H:%M:%S").to_string();
         let response = ui.selectable_label(is_sticky, label);
         if response.hovered() {
             highlight.hover = Some(HighlightScope::Point(point_ref));
@@ -637,7 +637,9 @@ fn render_satellite_report_items(
             point_index: pi,
         };
         let is_sticky = highlight.sticky.is_some_and(|r| r == point_ref);
-        let time_str = sats.time().format("%H:%M:%S").to_string();
+        let time_str = sats
+            .best_time()
+            .map_or_else(|| "—".to_string(), |t| t.format("%H:%M:%S").to_string());
         let label = format!(
             "{time_str}  {}/{}",
             sats.fix_count(),

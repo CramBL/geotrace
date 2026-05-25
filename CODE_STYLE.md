@@ -208,3 +208,12 @@ Avoid vague names like "address". Prefer one of:
 ### Avoid magic strings and numbers
 
 Use named constants.
+
+Never write raw Unicode escape sequences (`\u{XXXX}`) for special characters directly inside string literals or `format!` macros.
+Such escapes are opaque to reviewers and make the intent hard to see at a glance.
+Instead, use:
+
+- An [`egui_phosphor`](https://docs.rs/egui-phosphor) icon constant when the character is a visual icon (e.g. `egui_phosphor::regular::MAGNIFYING_GLASS`).
+- A named `const &str` when the character is a typographic symbol that appears inline with text — for example `const EM_DASH: &str = "—";` or `const ELLIPSIS: &str = "…";`.
+  Define the constant in the narrowest scope that covers all callers (file-level `const` in the module that owns the UI, crate-level if shared across files in a crate).
+  The constant body may contain the literal Unicode character directly (the restriction is on escape sequences, not on non-ASCII characters in source).

@@ -2,6 +2,8 @@ use chrono::{DateTime, Duration, Utc};
 use egui::Ui;
 use nav_types::{GlobalFilter, LoadedFile};
 
+const EM_DASH: &str = "—";
+
 /// Persistent state for raw text inputs in the filter panel.
 /// Kept separate from `GlobalFilter` so it survives the parse round-trip.
 #[derive(Debug, Default, Clone)]
@@ -20,7 +22,10 @@ pub fn render_filter_panel(
     let full_range = compute_full_time_range(files);
 
     if let Some((range_start, range_end)) = full_range {
-        ui.label("Time range");
+        let sel_start = filter.time_start.unwrap_or(range_start);
+        let sel_end = filter.time_end.unwrap_or(range_end);
+        let dur_str = nav_fmt::format_human_terse_duration(sel_end - sel_start);
+        ui.label(format!("Time range {EM_DASH} {dur_str}"));
         time_range_bar(
             ui,
             (range_start, range_end),
@@ -188,7 +193,7 @@ fn time_range_bar(
         || full_end.format("%m/%d %H:%M").to_string(),
         |dt| dt.format("%m/%d %H:%M").to_string(),
     );
-    ui.label(format!("{start_label} \u{2014} {end_label}"));
+    ui.label(format!("{start_label} {EM_DASH} {end_label}"));
 }
 
 fn parse_duration_input(s: &str) -> Option<i64> {

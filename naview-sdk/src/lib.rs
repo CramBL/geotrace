@@ -26,6 +26,7 @@
 mod builder;
 mod error;
 mod read;
+mod time_types;
 mod types;
 mod write;
 

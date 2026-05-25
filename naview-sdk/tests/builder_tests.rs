@@ -129,6 +129,205 @@ fn satellite_association_narrowed_window_within() -> Result<(), BuildError> {
     Ok(())
 }
 
+/// Two reports both within the window of the same fix.
+/// The closer report wins and is assigned to the fix; the runner-up must NOT
+/// be silently dropped — it must become a ghost fix instead.
+///
+/// Before the fix, `had_candidate` tracking caused the losing report to be
+/// filtered out even though it was never actually assigned anywhere.
+#[test]
+fn contested_loser_becomes_ghost_fix() -> Result<(), BuildError> {
+    // Fix A at t=0, Fix B at t=3 000 ms (well separated so the ghost sits clearly between them).
+    // Report R1 at t=400 ms → 400 ms from A (wins), 2 600 ms from B (outside window).
+    // Report R2 at t=450 ms → 450 ms from A (loses to R1), 2 550 ms from B (outside window).
+    // R2 has no valid fix to attach to; it must become a ghost fix between A and B.
+    //
+    // Ghost fixes between two real fixes receive the bearing heading, NOT None.
+    // We therefore identify each point by the satellite constellation it carries.
+    let mut b = NavFileBuilder::new();
+    b.add_nav_fix(
+        NavFix::builder()
+            .gps_time(t(0))
+            .lat(Angle::new::<degree>(55.0))
+            .lon(Angle::new::<degree>(12.0))
+            .heading(Angle::new::<degree>(0.0))
+            .build(),
+    );
+    b.add_nav_fix(
+        NavFix::builder()
+            .gps_time(t(3000))
+            .lat(Angle::new::<degree>(55.1))
+            .lon(Angle::new::<degree>(12.1))
+            .heading(Angle::new::<degree>(0.0))
+            .build(),
+    );
+
+    // R1 wins the race for fix A.
+    let r1 = SatelliteReport::builder()
+        .gps_time(t(400))
+        .tracked(vec![
+            Satellite::builder()
+                .constellation(Constellation::Gps)
+                .prn(1u32)
+                .in_fix(true)
+                .build(),
+        ])
+        .build();
+    // R2 loses to R1 and is too far from fix B — must not be silently dropped.
+    let r2 = SatelliteReport::builder()
+        .gps_time(t(450))
+        .tracked(vec![
+            Satellite::builder()
+                .constellation(Constellation::Glonass)
+                .prn(42u32)
+                .in_fix(true)
+                .build(),
+        ])
+        .build();
+    b.add_satellite_report(r1);
+    b.add_satellite_report(r2);
+
+    let nav_file = b.finish()?;
+    let points = nav_file.nav_points();
+
+    // 2 real fixes + 1 ghost for R2 = 3 total.
+    assert_eq!(
+        points.len(),
+        3,
+        "contested loser R2 must produce a ghost fix (got {} points)",
+        points.len()
+    );
+
+    // Fix A is the first point (sorted by time); it must carry R1 (GPS).
+    let r1_rep = points[0]
+        .satellites
+        .as_ref()
+        .expect("fix A must have R1 associated");
+    assert_eq!(
+        r1_rep.tracked[0].constellation,
+        Constellation::Gps,
+        "fix A must carry R1 (GPS)"
+    );
+
+    // Fix B is the last point; it must have no satellite report.
+    assert!(
+        points[2].satellites.is_none(),
+        "fix B must have no satellite report"
+    );
+
+    // The ghost is the middle point; it must carry R2 (Glonass).
+    let r2_rep = points[1]
+        .satellites
+        .as_ref()
+        .expect("ghost (middle point) must carry R2");
+    assert_eq!(
+        r2_rep.tracked[0].constellation,
+        Constellation::Glonass,
+        "ghost fix must carry R2 (Glonass)"
+    );
+
+    Ok(())
+}
+
+/// Three reports compete for two fixes; the losing middle report must become a ghost.
+///
+/// Fix A at t=0 ms, Fix B at t=3 000 ms.
+/// Report R1 at t=100 ms → assigned to A (100 ms distance).
+/// Report R2 at t=200 ms → also wants A (200 ms), loses; also outside window of B → ghost.
+/// Report R3 at t=2 900 ms → assigned to B (100 ms distance).
+///
+/// Ghost fixes between real fixes carry the bearing heading (not `None`), so we
+/// identify ghost vs real by whether a satellite report is present for fixed constellations.
+#[test]
+fn multiple_contested_losers_all_become_ghosts() -> Result<(), BuildError> {
+    let mut b = NavFileBuilder::new();
+    b.add_nav_fix(
+        NavFix::builder()
+            .gps_time(t(0))
+            .lat(Angle::new::<degree>(55.0))
+            .lon(Angle::new::<degree>(12.0))
+            .heading(Angle::new::<degree>(0.0))
+            .build(),
+    );
+    b.add_nav_fix(
+        NavFix::builder()
+            .gps_time(t(3000))
+            .lat(Angle::new::<degree>(55.1))
+            .lon(Angle::new::<degree>(12.1))
+            .heading(Angle::new::<degree>(0.0))
+            .build(),
+    );
+
+    // R1 wins fix A.
+    b.add_satellite_report(
+        SatelliteReport::builder()
+            .gps_time(t(100))
+            .tracked(vec![
+                Satellite::builder()
+                    .constellation(Constellation::Gps)
+                    .prn(1u32)
+                    .in_fix(true)
+                    .build(),
+            ])
+            .build(),
+    );
+    // R2 loses fix A, too far from B → must become ghost between A and B.
+    b.add_satellite_report(
+        SatelliteReport::builder()
+            .gps_time(t(200))
+            .tracked(vec![
+                Satellite::builder()
+                    .constellation(Constellation::Galileo)
+                    .prn(2u32)
+                    .in_fix(true)
+                    .build(),
+            ])
+            .build(),
+    );
+    // R3 wins fix B.
+    b.add_satellite_report(
+        SatelliteReport::builder()
+            .gps_time(t(2900))
+            .tracked(vec![
+                Satellite::builder()
+                    .constellation(Constellation::Beidou)
+                    .prn(3u32)
+                    .in_fix(true)
+                    .build(),
+            ])
+            .build(),
+    );
+
+    let nav_file = b.finish()?;
+    let points = nav_file.nav_points();
+
+    // 2 real fixes + 1 ghost for R2 = 3 total.
+    assert_eq!(
+        points.len(),
+        3,
+        "R2 must produce exactly one ghost fix (got {} points)",
+        points.len()
+    );
+
+    // Points are sorted by time: fix A (t=0), ghost-R2 (t≈200ms), fix B (t=3 000ms).
+    // Fix A carries R1 (GPS).
+    let r1_rep = points[0].satellites.as_ref().expect("fix A must carry R1");
+    assert_eq!(r1_rep.tracked[0].constellation, Constellation::Gps);
+
+    // Ghost (middle, t≈200 ms) carries R2 (Galileo).
+    let r2_rep = points[1]
+        .satellites
+        .as_ref()
+        .expect("ghost must carry R2 (Galileo)");
+    assert_eq!(r2_rep.tracked[0].constellation, Constellation::Galileo);
+
+    // Fix B carries R3 (Beidou).
+    let r3_rep = points[2].satellites.as_ref().expect("fix B must carry R3");
+    assert_eq!(r3_rep.tracked[0].constellation, Constellation::Beidou);
+
+    Ok(())
+}
+
 // ─── Ghost fix interpolation ────────────────────────────────────────────────
 
 /// When the GPS fix is lost between two real fixes and neither the fixes nor the

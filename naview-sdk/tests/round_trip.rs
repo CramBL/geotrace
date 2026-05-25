@@ -85,7 +85,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
 
     assert_eq!(rt.nav_points().len(), 2);
     let p0 = &rt.nav_points()[0];
-    assert_eq!(p0.fix.gps_time, t0);
+    assert_eq!(p0.fix.gps_time, Some(t0));
     assert_eq!(p0.fix.lat.get::<degree>(), 51.5);
     assert_eq!(p0.fix.lon.get::<degree>(), -0.1);
     assert_eq!(p0.fix.heading.map(|h| h.get::<degree>()), Some(270.0));
@@ -241,10 +241,10 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(rt.nav_points().len(), 50_000);
     assert_eq!(rt.markers().len(), 0);
 
-    assert_eq!(rt.nav_points()[0].fix.gps_time, t0);
+    assert_eq!(rt.nav_points()[0].fix.gps_time, Some(t0));
     assert_eq!(
         rt.nav_points()[49_999].fix.gps_time,
-        t0 + Duration::seconds(49_999)
+        Some(t0 + Duration::seconds(49_999))
     );
     let sat_rep = rt.nav_points()[0].satellites.as_ref().ok_or("missing")?;
     assert_eq!(sat_rep.tracked.len(), 12);
