@@ -20,7 +20,7 @@ pub fn render_filter_panel(
     let full_range = compute_full_time_range(files);
 
     if let Some((range_start, range_end)) = full_range {
-        ui.label("Time range:");
+        ui.label("Time range");
         time_range_bar(
             ui,
             (range_start, range_end),
@@ -35,13 +35,13 @@ pub fn render_filter_panel(
         .num_columns(3)
         .spacing([6.0, 4.0])
         .show(ui, |ui| {
-            ui.label("Min dist:");
+            ui.label("Min dist");
             let dist =
                 ui.add(egui::TextEdit::singleline(&mut state.distance_input).desired_width(60.0));
             ui.label("km");
             ui.end_row();
 
-            ui.label("Min dur:");
+            ui.label("Min dur");
             let dur = ui.add(
                 egui::TextEdit::singleline(&mut state.duration_input)
                     .desired_width(60.0)
@@ -50,7 +50,7 @@ pub fn render_filter_panel(
             ui.label(""); // no unit for duration
             ui.end_row();
 
-            ui.label("Min spread:");
+            ui.label("Min spread");
             let spread =
                 ui.add(egui::TextEdit::singleline(&mut state.spread_input).desired_width(60.0));
             ui.label("m");

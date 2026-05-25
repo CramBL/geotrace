@@ -18,7 +18,10 @@
 ///
 /// Trip 1 – 8 points at 30 s intervals, no satellite reports.
 ///   Custom marker at t+780 ("Checkpoint").
-use std::path::PathBuf;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use nav_types::GeneratedMarkerKind;
 use naview_sdk::{
@@ -29,7 +32,7 @@ use naview_sdk::{
 
 fn fixture_path() -> PathBuf {
     // CARGO_MANIFEST_DIR is crates/nav-io; workspace root is two levels up.
-    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace = manifest
         .parent()
         .expect("crates/ dir")
@@ -220,11 +223,11 @@ fn build_snapshot_bytes() -> Vec<u8> {
 #[test]
 fn generate_and_verify_snapshot_fixture() {
     let path = fixture_path();
-    std::fs::create_dir_all(path.parent().expect("fixture path has parent"))
+    fs::create_dir_all(path.parent().expect("fixture path has parent"))
         .expect("can create fixtures directory");
 
     let bytes = build_snapshot_bytes();
-    std::fs::write(&path, &bytes).expect("can write fixture file");
+    fs::write(&path, &bytes).expect("can write fixture file");
 
     let loaded = nav_io::load_file(&path).expect("fixture loads without error");
 

@@ -18,6 +18,12 @@ pub struct PanelContext<'a> {
     pub filter_state: &'a mut FilterPanelState,
     pub panel: &'a mut TripDataPanelState,
     pub map_center_request: &'a mut Option<(f64, f64)>,
+    /// When a panel list item click opens a sticky popup, this carries the
+    /// suggested screen position for the popup window (just right of the panel).
+    pub popup_pos_request: &'a mut Option<egui::Pos2>,
+    /// Set to `true` by any action that changes which trips are visible, so the
+    /// map can zoom to fit the newly visible data on the same frame.
+    pub zoom_to_visible_request: &'a mut bool,
 }
 
 pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
@@ -77,6 +83,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     ui.horizontal(|ui| {
         if ui.small_button("Show all").clicked() {
             ctx.visibility.set_all_enabled(true);
+            *ctx.zoom_to_visible_request = true;
         }
         if ui.small_button("Hide all").clicked() {
             ctx.visibility.set_all_enabled(false);
@@ -241,6 +248,13 @@ fn render_trip_row(
         )
     };
 
+    // Capture before any mutable borrow so we can detect the all-hidden → visible transition.
+    let was_all_hidden = !ctx
+        .visibility
+        .files
+        .iter()
+        .any(|f| f.enabled && f.trips.iter().any(|t| t.enabled));
+
     let map_hover_bg = map_hover_color(ui);
 
     let row_response = ui.horizontal(|ui| {
@@ -257,6 +271,7 @@ fn render_trip_row(
         if need_enable_file {
             file_vis.enabled = true;
         }
+        let newly_enabled = chk.changed() && trip_vis.enabled;
         let arrow = if is_expanded {
             egui_phosphor::regular::CARET_DOWN
         } else {
@@ -274,13 +289,17 @@ fn render_trip_row(
         }
         (
             ui.selectable_label(ctx.panel.selection.contains(&key), text),
-            false, // need_enable_file already applied inside the closure
+            newly_enabled,
         )
     });
     if trip_map_hovered {
         paint_map_hover_bg(ui, row_response.response.rect, map_hover_bg);
     }
-    let (response, _) = row_response.inner;
+    let (response, newly_enabled) = row_response.inner;
+    // Zoom to fit when a trip becomes visible after everything was hidden.
+    if newly_enabled && was_all_hidden {
+        *ctx.zoom_to_visible_request = true;
+    }
     if response.hovered() {
         ctx.highlight.hover = Some(HighlightScope::Trip {
             file_index: fi,
@@ -309,6 +328,7 @@ fn render_trip_row(
     response.context_menu(|ui| {
         if ui.button("Show only this trip").clicked() {
             ctx.visibility.show_only_trip(fi, ti);
+            *ctx.zoom_to_visible_request = true;
             ui.close();
         }
         ui.separator();
@@ -385,7 +405,15 @@ fn render_trip_categories(
         }
         if expanded {
             ui.indent(format!("tpv_{fi}_{ti}"), |ui| {
-                render_tpv_items(ui, fi, ti, trip, ctx.highlight, ctx.map_center_request);
+                render_tpv_items(
+                    ui,
+                    fi,
+                    ti,
+                    trip,
+                    ctx.highlight,
+                    ctx.map_center_request,
+                    ctx.popup_pos_request,
+                );
             });
         }
     }
@@ -428,6 +456,7 @@ fn render_trip_categories(
                     trip,
                     ctx.highlight,
                     ctx.map_center_request,
+                    ctx.popup_pos_request,
                 );
             });
         }
@@ -460,7 +489,15 @@ fn render_trip_categories(
         }
         if expanded {
             ui.indent(format!("custom_{fi}_{ti}"), |ui| {
-                render_custom_marker_items(ui, fi, ti, trip, ctx.highlight, ctx.map_center_request);
+                render_custom_marker_items(
+                    ui,
+                    fi,
+                    ti,
+                    trip,
+                    ctx.highlight,
+                    ctx.map_center_request,
+                    ctx.popup_pos_request,
+                );
             });
         }
     }
@@ -499,6 +536,7 @@ fn render_trip_categories(
                     trip,
                     ctx.highlight,
                     ctx.map_center_request,
+                    ctx.popup_pos_request,
                 );
             });
         }
@@ -547,6 +585,7 @@ fn render_tpv_items(
     trip: &LoadedTrip,
     highlight: &mut MapHighlight,
     map_center_request: &mut Option<(f64, f64)>,
+    popup_pos_request: &mut Option<egui::Pos2>,
 ) {
     for (pi, point) in trip.points.iter().enumerate() {
         let point_ref = DataPointRef {
@@ -562,7 +601,13 @@ fn render_tpv_items(
             highlight.hover = Some(HighlightScope::Point(point_ref));
         }
         if response.clicked() {
-            highlight.sticky = if is_sticky { None } else { Some(point_ref) };
+            if !is_sticky {
+                highlight.sticky = Some(point_ref);
+                *popup_pos_request =
+                    Some(egui::pos2(ui.clip_rect().max.x + 8.0, response.rect.min.y));
+            } else {
+                highlight.sticky = None;
+            }
         }
         if response.double_clicked() {
             let lat = point.tpv.lat().get::<degree>();
@@ -579,6 +624,7 @@ fn render_satellite_report_items(
     trip: &LoadedTrip,
     highlight: &mut MapHighlight,
     map_center_request: &mut Option<(f64, f64)>,
+    popup_pos_request: &mut Option<egui::Pos2>,
 ) {
     for (pi, point) in trip.points.iter().enumerate() {
         let Some(sats) = &point.satellites else {
@@ -602,7 +648,13 @@ fn render_satellite_report_items(
             highlight.hover = Some(HighlightScope::Point(point_ref));
         }
         if response.clicked() {
-            highlight.sticky = if is_sticky { None } else { Some(point_ref) };
+            if !is_sticky {
+                highlight.sticky = Some(point_ref);
+                *popup_pos_request =
+                    Some(egui::pos2(ui.clip_rect().max.x + 8.0, response.rect.min.y));
+            } else {
+                highlight.sticky = None;
+            }
         }
         if response.double_clicked() {
             let lat = point.tpv.lat().get::<degree>();
@@ -619,6 +671,7 @@ fn render_custom_marker_items(
     trip: &LoadedTrip,
     highlight: &mut MapHighlight,
     map_center_request: &mut Option<(f64, f64)>,
+    popup_pos_request: &mut Option<egui::Pos2>,
 ) {
     for (pi, marker) in trip.custom_markers.iter().enumerate() {
         let point_ref = DataPointRef {
@@ -635,7 +688,13 @@ fn render_custom_marker_items(
             highlight.hover = Some(HighlightScope::Point(point_ref));
         }
         if response.clicked() {
-            highlight.sticky = if is_sticky { None } else { Some(point_ref) };
+            if !is_sticky {
+                highlight.sticky = Some(point_ref);
+                *popup_pos_request =
+                    Some(egui::pos2(ui.clip_rect().max.x + 8.0, response.rect.min.y));
+            } else {
+                highlight.sticky = None;
+            }
         }
         if response.double_clicked() {
             *map_center_request = Some((marker.lat.get::<degree>(), marker.lon.get::<degree>()));
@@ -650,6 +709,7 @@ fn render_generated_marker_items(
     trip: &LoadedTrip,
     highlight: &mut MapHighlight,
     map_center_request: &mut Option<(f64, f64)>,
+    popup_pos_request: &mut Option<egui::Pos2>,
 ) {
     use nav_types::GeneratedMarkerKind;
     for (pi, marker) in trip.generated_markers.iter().enumerate() {
@@ -671,7 +731,13 @@ fn render_generated_marker_items(
             highlight.hover = Some(HighlightScope::Point(point_ref));
         }
         if response.clicked() {
-            highlight.sticky = if is_sticky { None } else { Some(point_ref) };
+            if !is_sticky {
+                highlight.sticky = Some(point_ref);
+                *popup_pos_request =
+                    Some(egui::pos2(ui.clip_rect().max.x + 8.0, response.rect.min.y));
+            } else {
+                highlight.sticky = None;
+            }
         }
         if response.double_clicked() {
             *map_center_request = Some((marker.lat.get::<degree>(), marker.lon.get::<degree>()));

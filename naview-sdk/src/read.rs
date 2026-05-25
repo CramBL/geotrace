@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::path::Path;
+
 use hdf5_pure::File;
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Velocity};
@@ -8,7 +11,7 @@ use crate::error::Error;
 use crate::types::{
     Annotation, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint, Satellite, SatelliteReport,
 };
-use crate::write::decode_tracked_constellation;
+use crate::write;
 
 pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
     let file = File::from_bytes(bytes)?;
@@ -39,7 +42,7 @@ pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
     })
 }
 
-fn read_meta(attrs: &std::collections::HashMap<String, hdf5_pure::AttrValue>) -> Meta {
+fn read_meta(attrs: &HashMap<String, hdf5_pure::AttrValue>) -> Meta {
     Meta {
         title: string_attr(attrs, "meta_title"),
         device: string_attr(attrs, "meta_device"),
@@ -47,10 +50,7 @@ fn read_meta(attrs: &std::collections::HashMap<String, hdf5_pure::AttrValue>) ->
     }
 }
 
-fn string_attr(
-    attrs: &std::collections::HashMap<String, hdf5_pure::AttrValue>,
-    key: &str,
-) -> Option<String> {
+fn string_attr(attrs: &HashMap<String, hdf5_pure::AttrValue>, key: &str) -> Option<String> {
     match attrs.get(key) {
         Some(hdf5_pure::AttrValue::String(s)) => Some(s.clone()),
         _ => None,
@@ -88,7 +88,7 @@ fn read_nav_points(file: &File) -> Result<Vec<NavPoint>, Error> {
         .map(
             |(((((time_us, lat_deg), lon_deg), heading_deg), speed_mps), sys_time_us)| NavPoint {
                 fix: NavFix {
-                    gps_time: micros_to_datetime(*time_us),
+                    gps_time: Some(micros_to_datetime(*time_us)),
                     sys_time: u64_to_opt_datetime(*sys_time_us),
                     lat: Angle::new::<degree>(*lat_deg),
                     lon: Angle::new::<degree>(*lon_deg),
@@ -164,7 +164,7 @@ fn attach_satellite_data(
         if idx >= r {
             continue;
         }
-        let constellation = decode_tracked_constellation(*constellation_code)?;
+        let constellation = write::decode_tracked_constellation(*constellation_code)?;
         let sat = Satellite {
             constellation,
             prn,
@@ -265,7 +265,7 @@ fn opt_f32(v: f32) -> Option<f32> {
     if v.is_nan() { None } else { Some(v) }
 }
 
-pub(crate) fn inspect_path(path: &std::path::Path) -> Result<String, Error> {
+pub(crate) fn inspect_path(path: &Path) -> Result<String, Error> {
     use std::fmt::Write as _;
 
     let file = File::open(path)?;

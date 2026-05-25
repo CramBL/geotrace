@@ -1,7 +1,8 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui};
+use nav_types::filter;
 use nav_types::{
     DataCategory, DataPointRef, GeneratedMarkerKind, GlobalFilter, HighlightScope, LoadedFile,
-    MapHighlight, TripDataVisibility, point_passes_time_filter, trip_passes_filter,
+    MapHighlight, TripDataVisibility,
 };
 use std::cell::Cell;
 use std::rc::Rc;
@@ -117,15 +118,15 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
         let view_rect = ui.max_rect().expand(20.0);
         let mut local_closest: Option<(DataPointRef, Pos2)> = None;
 
-        // Compute affine-transform components once per frame.
-        let anchor = projector.project(walkers::lat_lon(0.0, 0.0));
-        let total_px = 2_f64.powf(map_memory.zoom()) * 256.0;
+        // Build the per-frame coordinate transform once. All arithmetic is in
+        // f64 with no large-value cancellation (see MercTransform docs).
+        let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
-        // Viewport bounds in Mercator space — replaces two unproject() calls.
-        let vp_min_merc_x = ((view_rect.min.x - anchor.x) as f64 / total_px) + 0.5;
-        let vp_max_merc_x = ((view_rect.max.x - anchor.x) as f64 / total_px) + 0.5;
-        let vp_min_merc_y = ((view_rect.min.y - anchor.y) as f64 / total_px) + 0.5;
-        let vp_max_merc_y = ((view_rect.max.y - anchor.y) as f64 / total_px) + 0.5;
+        // Viewport bounds in Mercator space — entirely f64, no f32 subtraction.
+        let vp_min_merc_x = transform.merc_x_from_screen(view_rect.min.x);
+        let vp_max_merc_x = transform.merc_x_from_screen(view_rect.max.x);
+        let vp_min_merc_y = transform.merc_y_from_screen(view_rect.min.y);
+        let vp_max_merc_y = transform.merc_y_from_screen(view_rect.max.y);
 
         for (fi, file) in self.files.iter().enumerate() {
             let Some(file_vis) = self.visibility.files.get(fi) else {
@@ -141,11 +142,11 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
                 if !trip_vis.enabled || !trip_vis.generated_markers_visible {
                     continue;
                 }
-                if !trip_passes_filter(&trip.metadata, self.filter) {
+                if !filter::trip_passes_filter(&trip.metadata, self.filter) {
                     continue;
                 }
                 for (pi, marker) in trip.generated_markers.iter().enumerate() {
-                    if !point_passes_time_filter(marker.time, self.filter) {
+                    if !filter::point_passes_time_filter(marker.time, self.filter) {
                         continue;
                     }
                     // Mercator-space cull — four comparisons, no trig.
@@ -156,8 +157,7 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
                     {
                         continue;
                     }
-                    let screen_pos =
-                        crate::merc_to_screen(anchor, total_px, marker.merc_x, marker.merc_y);
+                    let screen_pos = transform.to_screen(marker.merc_x, marker.merc_y);
                     let point_ref = DataPointRef {
                         file_index: fi,
                         trip_index: ti,

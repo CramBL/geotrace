@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use nav_map::{MapLayer, NavMap};
 use nav_types::{LoadedFile, TripDataVisibility};
 
@@ -88,10 +90,8 @@ pub fn execute_delete(
     visibility: &mut TripDataVisibility,
     panel: &mut TripDataPanelState,
 ) {
-    let mut file_indices_to_remove: std::collections::BTreeSet<usize> =
-        std::collections::BTreeSet::new();
-    let mut trips_to_remove: std::collections::BTreeMap<usize, std::collections::BTreeSet<usize>> =
-        std::collections::BTreeMap::new();
+    let mut file_indices_to_remove: BTreeSet<usize> = BTreeSet::new();
+    let mut trips_to_remove: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
 
     for key in keys {
         match key {
@@ -170,7 +170,7 @@ pub fn show_mapbox_token_dialog(ui: &egui::Ui, map: &mut NavMap, token_input: &m
             ui.label("Get one free at mapbox.com.");
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label("Token:");
+                ui.label("Token");
                 let response = ui.text_edit_singleline(token_input);
                 let submitted =
                     response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));

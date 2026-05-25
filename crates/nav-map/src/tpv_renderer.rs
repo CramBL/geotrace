@@ -1,16 +1,17 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui};
+use nav_types::filter;
 use nav_types::satellites::Constellation;
 use nav_types::{
     DataCategory, DataPointRef, GlobalFilter, HighlightScope, LoadedFile, MapHighlight, NavPoint,
-    TripDataVisibility, point_passes_time_filter, trip_passes_filter,
+    TripDataVisibility,
 };
 use std::cell::Cell;
 use std::rc::Rc;
 use uom::si::angle::degree;
 use uom::si::velocity::kilometer_per_hour;
-use walkers::{MapMemory, Plugin, Position, Projector};
+use walkers::{MapMemory, Plugin, Projector};
 
-use crate::generated_marker_renderer::update_hover_candidate;
+use crate::generated_marker_renderer;
 
 const HOVER_THRESHOLD: f32 = 10.0;
 const MIN_LABEL_DIST: f32 = 60.0;
@@ -70,7 +71,6 @@ impl<'a> TpvRenderer<'a> {
     fn render_trip(
         &self,
         ui: &Ui,
-        projector: &Projector,
         hover_pos: Option<Pos2>,
         view_rect: egui::Rect,
         fi: usize,
@@ -78,32 +78,34 @@ impl<'a> TpvRenderer<'a> {
         points: &[NavPoint],
         local_closest: &mut Option<(DataPointRef, Pos2)>,
         outline_alpha: f32,
-        anchor: egui::Vec2,
-        total_px: f64,
+        transform: &crate::MercTransform,
     ) {
         let mut last_label_pos: Option<Pos2> = None;
         for (pi, point) in points.iter().enumerate() {
-            if !point_passes_time_filter(point.tpv.time(), self.filter) {
+            if !filter::point_passes_time_filter(point.tpv.time(), self.filter) {
                 continue;
             }
             // For points with a GPS fix, use the pre-computed Mercator coordinates
             // (cached at load time) to avoid per-frame trig. Ghost points (fix==0)
-            // use an interpolated lat/lon and still need a full projection.
+            // interpolate their lat/lon, normalise to Mercator, then use the same
+            // transform path — no walkers projector involved, ensuring consistent
+            // f64 precision for all point types.
             let fix = point.fix_count();
             let (screen_pos, color) = if fix >= 10 {
                 (
-                    crate::merc_to_screen(anchor, total_px, point.merc_x, point.merc_y),
+                    transform.to_screen(point.merc_x, point.merc_y),
                     Color32::from_rgb(66, 133, 244),
                 )
             } else if fix > 0 {
                 (
-                    crate::merc_to_screen(anchor, total_px, point.merc_x, point.merc_y),
+                    transform.to_screen(point.merc_x, point.merc_y),
                     Color32::from_rgb(244, 180, 0),
                 )
             } else {
                 let (lat, lon) = interpolate_position(points, pi);
+                let (merc_x, merc_y) = crate::normalize_merc(lon, lat);
                 (
-                    projector.project(Position::new(lon, lat)).to_pos2(),
+                    transform.to_screen(merc_x, merc_y),
                     Color32::from_rgb(219, 68, 55),
                 )
             };
@@ -113,7 +115,12 @@ impl<'a> TpvRenderer<'a> {
                 category: DataCategory::Tpv,
                 point_index: pi,
             };
-            update_hover_candidate(&self.hover_out, screen_pos, hover_pos, point_ref);
+            generated_marker_renderer::update_hover_candidate(
+                &self.hover_out,
+                screen_pos,
+                hover_pos,
+                point_ref,
+            );
             if let Some(mouse) = hover_pos {
                 // Use squared distance to avoid sqrt; threshold is HOVER_THRESHOLD² = 100.
                 let dist_sq = screen_pos.distance_sq(mouse);
@@ -214,10 +221,8 @@ impl Plugin for TpvRenderer<'_> {
         let zoom = map_memory.zoom();
         let outline_alpha = ((zoom - 10.0) / 4.0).clamp(0.0, 1.0) as f32;
 
-        // Compute affine-transform components once per frame.
-        // merc_to_screen uses: screen = anchor + (merc - 0.5) * total_px
-        let anchor = projector.project(walkers::lat_lon(0.0, 0.0));
-        let total_px = 2_f64.powf(map_memory.zoom()) * 256.0;
+        // Build the per-frame coordinate transform once.
+        let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         for (fi, file) in self.files.iter().enumerate() {
             let Some(file_vis) = self.visibility.files.get(fi) else {
@@ -233,12 +238,11 @@ impl Plugin for TpvRenderer<'_> {
                 if !trip_vis.enabled || !trip_vis.tpv_visible {
                     continue;
                 }
-                if !trip_passes_filter(&trip.metadata, self.filter) {
+                if !filter::trip_passes_filter(&trip.metadata, self.filter) {
                     continue;
                 }
                 self.render_trip(
                     ui,
-                    projector,
                     hover_pos,
                     view_rect,
                     fi,
@@ -246,8 +250,7 @@ impl Plugin for TpvRenderer<'_> {
                     &trip.points,
                     &mut local_closest,
                     outline_alpha,
-                    anchor,
-                    total_px,
+                    &transform,
                 );
             }
         }
@@ -301,18 +304,18 @@ pub(crate) fn show_hover_table(ui: &mut Ui, p: &NavPoint) {
         .striped(true)
         .num_columns(2)
         .show(ui, |ui| {
-            ui.label("Time:");
+            ui.label("Time");
             ui.label(p.tpv.time().format("%Y-%m-%d %H:%M:%S").to_string());
             ui.end_row();
 
-            ui.label("Speed:");
+            ui.label("Speed");
             match p.tpv.velocity() {
                 Some(v) => ui.label(format!("{:.1} km/h", v.get::<kilometer_per_hour>())),
                 None => ui.label("\u{2014}"), // em-dash: speed unknown (interpolated point)
             };
             ui.end_row();
 
-            ui.label("Heading:");
+            ui.label("Heading");
             match p.tpv.heading() {
                 Some(h) => ui.label(format!("{:.1}\u{00b0}", h.get::<degree>())),
                 None => ui.label("\u{2014}"), // em-dash: unknown direction
@@ -332,7 +335,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
     egui::Grid::new("sticky_tpv_basic")
         .num_columns(2)
         .show(ui, |ui| {
-            ui.label("Speed:");
+            ui.label("Speed");
             match p.tpv.velocity() {
                 Some(v) => {
                     ui.label(format!("{:.1} km/h", v.get::<kilometer_per_hour>()));
@@ -343,7 +346,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
             };
             ui.end_row();
 
-            ui.label("Heading:");
+            ui.label("Heading");
             match p.tpv.heading() {
                 Some(h) => {
                     ui.label(format!("{:.1}\u{00b0}", h.get::<degree>()));
@@ -358,7 +361,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
                 Some(sats) => {
                     let fix = sats.fix_count();
                     let seen = sats.satellite_count();
-                    ui.label("Satellites:");
+                    ui.label("Satellites");
                     ui.horizontal(|ui| {
                         ui.colored_label(fix_count_color(fix), fix.to_string());
                         ui.label("/");
@@ -367,7 +370,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
                     ui.end_row();
                 }
                 None => {
-                    ui.label("Satellites:");
+                    ui.label("Satellites");
                     ui.colored_label(Color32::RED, "NO FIX");
                     ui.end_row();
                 }
@@ -467,7 +470,7 @@ fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
         let seen = sats.satellite_count();
 
         // Total summary row — bold to signal it is the aggregate.
-        ui.label(egui::RichText::new("Satellites:").strong());
+        ui.label(egui::RichText::new("Satellites").strong());
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(fix.to_string())
@@ -499,10 +502,10 @@ fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
                 .filter(|s| s.constellation() == constellation)
                 .count() as u32;
             let label = match constellation {
-                Constellation::Gps => "GPS:",
-                Constellation::Galileo => "Galileo:",
-                Constellation::Glonass => "GLONASS:",
-                Constellation::Beidou => "BeiDou:",
+                Constellation::Gps => "GPS",
+                Constellation::Galileo => "Galileo",
+                Constellation::Glonass => "GLONASS",
+                Constellation::Beidou => "BeiDou",
             };
             ui.label(label);
             ui.horizontal(|ui| {
@@ -513,7 +516,7 @@ fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
             ui.end_row();
         }
     } else {
-        ui.label("Sats:");
+        ui.label("Sats");
         ui.colored_label(Color32::RED, "NO FIX");
         ui.end_row();
     }

@@ -4,7 +4,15 @@ mod modals;
 mod side_panel;
 mod trip_data_panel;
 
-use std::{cell::RefCell, rc::Rc, sync::mpsc};
+use std::{
+    cell::RefCell,
+    env, fs,
+    path::PathBuf,
+    rc::Rc,
+    str,
+    sync::{Arc, mpsc},
+    thread,
+};
 
 use nav_map::{MapLayer, NavMap};
 use nav_types::{GlobalFilter, LoadedFile, MapHighlight, NavPoint, TripDataVisibility};
@@ -21,6 +29,11 @@ struct SharedAppState {
     filter_state: filter_panel::FilterPanelState,
     panel: TripDataPanelState,
     map_center_request: Option<(f64, f64)>,
+    /// Requested screen position for the next sticky info popup, set by panel
+    /// item clicks and consumed by `NavMap::draw` as the popup's default position.
+    popup_pos_request: Option<egui::Pos2>,
+    /// When `true`, `NavMap::draw` zooms the map to fit all currently visible data.
+    zoom_to_visible_request: bool,
 }
 
 pub struct App {
@@ -47,7 +60,7 @@ impl App {
         Self::new_with_files(cc, &[])
     }
 
-    pub fn new_with_files(cc: &eframe::CreationContext<'_>, paths: &[std::path::PathBuf]) -> Self {
+    pub fn new_with_files(cc: &eframe::CreationContext<'_>, paths: &[PathBuf]) -> Self {
         let mut fonts = egui::FontDefinitions::default();
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
         cc.egui_ctx.set_fonts(fonts);
@@ -62,8 +75,8 @@ impl App {
             .storage
             .and_then(|s| s.get_string("mapbox_token"))
             .unwrap_or_default();
-        let mapbox_token = std::env::var("MAPBOX_TOKEN")
-            .or_else(|_| std::env::var("MAPBOX_ACCESS_TOKEN"))
+        let mapbox_token = env::var("MAPBOX_TOKEN")
+            .or_else(|_| env::var("MAPBOX_ACCESS_TOKEN"))
             .unwrap_or(stored_token);
 
         let map_layer = cc
@@ -96,6 +109,8 @@ impl App {
                 filter_state: filter_panel::FilterPanelState::default(),
                 panel: TripDataPanelState::new(),
                 map_center_request: None,
+                popup_pos_request: None,
+                zoom_to_visible_request: false,
             })),
             load_error: None,
             unassociated_log_lines: None,
@@ -148,7 +163,7 @@ impl App {
         clippy::expect_used,
         reason = "thread spawn can only fail under extreme system resource exhaustion"
     )]
-    fn spawn_load_nvd_path(&mut self, path: std::path::PathBuf) {
+    fn spawn_load_nvd_path(&mut self, path: PathBuf) {
         let id = self.alloc_load_id();
         let filename = path
             .file_name()
@@ -164,7 +179,7 @@ impl App {
 
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
-        std::thread::Builder::new()
+        thread::Builder::new()
             .name(format!("load-{filename}"))
             .spawn(move || {
                 // `report` uses separate clones so `tx`/`ctx` remain available
@@ -197,7 +212,7 @@ impl App {
         clippy::expect_used,
         reason = "thread spawn can only fail under extreme system resource exhaustion"
     )]
-    fn spawn_load_nvd_bytes(&mut self, bytes: std::sync::Arc<[u8]>, filename: String) {
+    fn spawn_load_nvd_bytes(&mut self, bytes: Arc<[u8]>, filename: String) {
         let id = self.alloc_load_id();
         self.loading_jobs.push(loader::LoadingJob {
             id,
@@ -208,7 +223,7 @@ impl App {
 
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
-        std::thread::Builder::new()
+        thread::Builder::new()
             .name(format!("load-{filename}"))
             .spawn(move || {
                 let r_tx = tx.clone();
@@ -239,7 +254,7 @@ impl App {
         clippy::expect_used,
         reason = "thread spawn can only fail under extreme system resource exhaustion"
     )]
-    fn spawn_load_log_path(&mut self, path: std::path::PathBuf) {
+    fn spawn_load_log_path(&mut self, path: PathBuf) {
         let id = self.alloc_load_id();
         let filename = path
             .file_name()
@@ -256,7 +271,7 @@ impl App {
         let nav_points = self.snapshot_nav_points();
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
-        std::thread::Builder::new()
+        thread::Builder::new()
             .name(format!("load-log-{filename}"))
             .spawn(move || {
                 let r_tx = tx.clone();
@@ -272,7 +287,7 @@ impl App {
                 };
 
                 report(0.20, "Reading\u{2026}");
-                let content = match std::fs::read_to_string(&path) {
+                let content = match fs::read_to_string(&path) {
                     Ok(s) => s,
                     Err(e) => {
                         tx.send(loader::LoadMessage::Completed {
@@ -307,7 +322,7 @@ impl App {
         let nav_points = self.snapshot_nav_points();
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
-        std::thread::Builder::new()
+        thread::Builder::new()
             .name(format!("load-log-{filename}"))
             .spawn(move || {
                 let r_tx = tx.clone();
@@ -377,7 +392,7 @@ impl App {
 
     // ── Drop handler ─────────────────────────────────────────────────────────
 
-    fn handle_dropped_bytes(&mut self, bytes: std::sync::Arc<[u8]>, name: &str) {
+    fn handle_dropped_bytes(&mut self, bytes: Arc<[u8]>, name: &str) {
         const HDF5_MAGIC: &[u8] = b"\x89HDF\r\n\x1a\n";
         if bytes.starts_with(HDF5_MAGIC) {
             let filename = if name.is_empty() {
@@ -386,7 +401,7 @@ impl App {
                 name.to_owned()
             };
             self.spawn_load_nvd_bytes(bytes, filename);
-        } else if let Ok(text) = std::str::from_utf8(&bytes) {
+        } else if let Ok(text) = str::from_utf8(&bytes) {
             let filename = if name.is_empty() { "dropped.log" } else { name };
             self.spawn_load_log_text(text.to_owned(), filename.to_owned());
         } else {
@@ -492,7 +507,6 @@ impl eframe::App for App {
         });
 
         let detached = self.shared.borrow().panel.detached;
-        let viewport_id = self.shared.borrow().panel.viewport_id;
         if !detached {
             egui::Panel::left("trip_data_panel")
                 .min_size(240.0)
@@ -509,46 +523,53 @@ impl eframe::App for App {
                             filter_state: &mut s.filter_state,
                             panel: &mut s.panel,
                             map_center_request: &mut s.map_center_request,
+                            popup_pos_request: &mut s.popup_pos_request,
+                            zoom_to_visible_request: &mut s.zoom_to_visible_request,
                         },
                     );
                 });
         } else {
-            let shared = Rc::clone(&self.shared);
-            ui.ctx().show_viewport_immediate(
-                viewport_id,
-                egui::ViewportBuilder::default()
-                    .with_title("Trip Data")
-                    .with_inner_size([320.0, 600.0]),
-                move |ui, _class| {
-                    ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
-                    egui::CentralPanel::default().show_inside(ui, |ui| {
-                        let mut refmut = shared.borrow_mut();
-                        let s = &mut *refmut;
-                        show_side_panel(
-                            ui,
-                            &mut PanelContext {
-                                files: &s.loaded_files,
-                                visibility: &mut s.visibility,
-                                highlight: &mut s.highlight,
-                                filter: &mut s.filter,
-                                filter_state: &mut s.filter_state,
-                                panel: &mut s.panel,
-                                map_center_request: &mut s.map_center_request,
-                            },
-                        );
-                    });
-                    if ui.ctx().input(|i| i.viewport().close_requested()) {
-                        shared.borrow_mut().panel.detached = false;
-                        ui.ctx()
-                            .send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                    }
-                },
-            );
+            // Render the panel as a floating egui Window inside the same OS window
+            // as the map. A separate OS viewport caused Wayland compositors to
+            // suspend event delivery when the child was minimised or occluded,
+            // freezing both windows. The floating-window approach is fully
+            // platform-independent.
+            let mut is_open = true;
+            egui::Window::new("Trip Data")
+                .id(egui::Id::new("detached_panel"))
+                .open(&mut is_open)
+                .default_pos(egui::pos2(10.0, 30.0))
+                .default_width(320.0)
+                .min_width(240.0)
+                .resizable(true)
+                .show(ui.ctx(), |ui| {
+                    let mut refmut = self.shared.borrow_mut();
+                    let s = &mut *refmut;
+                    show_side_panel(
+                        ui,
+                        &mut PanelContext {
+                            files: &s.loaded_files,
+                            visibility: &mut s.visibility,
+                            highlight: &mut s.highlight,
+                            filter: &mut s.filter,
+                            filter_state: &mut s.filter_state,
+                            panel: &mut s.panel,
+                            map_center_request: &mut s.map_center_request,
+                            popup_pos_request: &mut s.popup_pos_request,
+                            zoom_to_visible_request: &mut s.zoom_to_visible_request,
+                        },
+                    );
+                });
+            if !is_open {
+                self.shared.borrow_mut().panel.detached = false;
+            }
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             let mut refmut = self.shared.borrow_mut();
             let center_req = refmut.map_center_request.take();
+            let popup_pos = refmut.popup_pos_request.take();
+            let zoom_to_visible = std::mem::replace(&mut refmut.zoom_to_visible_request, false);
             let s = &mut *refmut;
             self.map.draw(
                 ui,
@@ -557,6 +578,8 @@ impl eframe::App for App {
                 &mut s.highlight,
                 &s.filter,
                 center_req,
+                zoom_to_visible,
+                popup_pos,
             );
         });
 

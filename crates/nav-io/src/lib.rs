@@ -1,8 +1,11 @@
 mod error;
 pub use error::LoadError;
 
+use std::fs::File;
+use std::path::Path;
+
 use nav_types::satellites::{Constellation, Satellite, Satellites};
-use nav_types::{CustomMarker, MarkerIcon, NavPoint, TimePositionVelocity};
+use nav_types::{CustomMarker, LoadedFile, MarkerIcon, NavPoint, TimePositionVelocity};
 use naview_sdk::degree;
 use naview_sdk::{
     Constellation as SdkConstellation, Marker as SdkMarker, MarkerIcon as SdkMarkerIcon, NavFile,
@@ -11,21 +14,21 @@ use naview_sdk::{
 
 /// Load a `.nvd` file from `path`, segment it into trips, and return a fully
 /// populated `LoadedFile`.
-pub fn load_file(path: impl AsRef<std::path::Path>) -> Result<nav_types::LoadedFile, LoadError> {
+pub fn load_file(path: impl AsRef<Path>) -> Result<LoadedFile, LoadError> {
     load_file_with_progress(path, |_, _| {})
 }
 
 /// Parse a `.nvd` file from raw bytes (e.g. delivered via drag-and-drop on Wayland).
-pub fn load_bytes(bytes: &[u8], filename: String) -> Result<nav_types::LoadedFile, LoadError> {
+pub fn load_bytes(bytes: &[u8], filename: String) -> Result<LoadedFile, LoadError> {
     load_bytes_with_progress(bytes, filename, |_, _| {})
 }
 
 /// Like [`load_file`] but calls `progress(fraction, stage)` at key milestones so
 /// the caller can drive a progress bar. `fraction` is in `[0.0, 1.0]`.
 pub fn load_file_with_progress(
-    path: impl AsRef<std::path::Path>,
+    path: impl AsRef<Path>,
     progress: impl Fn(f32, &'static str),
-) -> Result<nav_types::LoadedFile, LoadError> {
+) -> Result<LoadedFile, LoadError> {
     let path = path.as_ref();
     let filename = path
         .file_name()
@@ -33,7 +36,7 @@ pub fn load_file_with_progress(
         .unwrap_or_else(|| path.to_str().unwrap_or("unknown"))
         .to_owned();
     progress(0.05, "Reading\u{2026}");
-    let file = std::fs::File::open(path)?;
+    let file = File::open(path)?;
     progress(0.20, "Parsing\u{2026}");
     let nav_file = NavFile::read(file)?;
     progress(0.65, "Converting\u{2026}");
@@ -48,7 +51,7 @@ pub fn load_bytes_with_progress(
     bytes: &[u8],
     filename: String,
     progress: impl Fn(f32, &'static str),
-) -> Result<nav_types::LoadedFile, LoadError> {
+) -> Result<LoadedFile, LoadError> {
     progress(0.15, "Parsing\u{2026}");
     let nav_file = NavFile::read(bytes)?;
     progress(0.60, "Converting\u{2026}");
@@ -73,7 +76,7 @@ fn from_nav_file(nav_file: &NavFile) -> Result<(Vec<NavPoint>, Vec<CustomMarker>
         }
 
         let tpv = TimePositionVelocity::builder()
-            .time(sdk_point.fix.gps_time)
+            .time(sdk_point.fix.effective_gps_time())
             .lat(sdk_point.fix.lat)
             .lon(sdk_point.fix.lon)
             .maybe_heading(sdk_point.fix.heading)

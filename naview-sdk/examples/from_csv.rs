@@ -7,10 +7,11 @@
 //! In a real workflow you would replace the inline `CSV_DATA` constant with a
 //! `std::fs::read_to_string("track.csv")?` call.
 
+use std::{env, error::Error, fs};
+
 use naview_sdk::{
     Angle, DateTime, NavFileBuilder, NavFix, Utc, Velocity, degree, meter_per_second,
 };
-use std::error::Error;
 
 const CSV_DATA: &str = "\
 timestamp,lat,lon,heading,speed_mps
@@ -48,10 +49,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let nav_file = builder.finish()?;
 
-    let out = std::env::temp_dir().join("naview_from_csv.nvd");
+    let out = env::temp_dir().join("naview_from_csv.nvd");
     nav_file.write_to_file(&out)?;
     println!("Written {out:?}");
-    std::fs::remove_file(&out)?;
+    fs::remove_file(&out)?;
 
     Ok(())
 }

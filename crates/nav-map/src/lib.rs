@@ -5,27 +5,106 @@ pub mod track_renderer;
 
 use egui::Context;
 
-/// Convert pre-computed normalized Mercator coordinates to a screen position.
+/// Per-frame transform context for projecting pre-computed normalised Mercator
+/// coordinates to screen pixel positions with full f64 precision.
 ///
-/// `anchor` is the screen-space `Vec2` returned by
-/// `projector.project(walkers::lat_lon(0.0, 0.0))` — call this once per
-/// plugin run and reuse it for every point.  `total_px` is `2^zoom × 256`,
-/// computed from `2_f64.powf(map_memory.zoom()) * 256.0`.
+/// ## Why not `projector.project()`?
 ///
-/// The math: `screen = anchor + (merc - 0.5) * total_px`, which is the same
-/// result as `projector.project(pos)` but replaces trig with two multiplies
-/// and two adds per point.
-#[inline]
-pub(crate) fn merc_to_screen(
-    anchor: egui::Vec2,
+/// Walkers' `Projector::project()` computes the screen position of an arbitrary
+/// geographic point by subtracting two large pixel values (the point's Mercator
+/// pixel position and the map centre's) in f64, then calling `.to_vec2()` which
+/// truncates the result to f32. At zoom ≥ 17 and for data far from the origin
+/// (e.g. Denmark: lat 55° N, lon 12° E), the y-component of this difference is
+/// ≈ 12 M px, where f32 ULP = 1 px. The anchor obtained this way has ≈ ±0.5 px
+/// constant error per frame, which appears as snapping during smooth zoom
+/// animations. Additionally, viewport culling arithmetic done in f32 before
+/// casting to f64 has the same issue.
+///
+/// ## Solution
+///
+/// This transform uses `projector.unproject(clip_center)` to obtain the map
+/// centre's geographic coordinates. Walkers' `unproject` performs all arithmetic
+/// in f64 and returns a high-precision `Position`. We then compute the normalised
+/// Mercator coordinates of the map centre in f64, and express every point's
+/// screen position as:
+///
+/// ```text
+/// screen = clip_center + (merc_point − merc_center) × total_px
+/// ```
+///
+/// `clip_center` is a small, exact f32 value (the pixel centre of the map
+/// widget, typically around 800–1000 px). `merc_point − merc_center` is a
+/// small number (≤ ~0.05 for any visible point), so no large-magnitude
+/// arithmetic occurs anywhere. The final cast to f32 is applied only to the
+/// already-small screen coordinate, where f32 ULP < 0.001 px.
+pub(crate) struct MercTransform {
+    clip_center_x: f64,
+    clip_center_y: f64,
+    merc_x_center: f64,
+    merc_y_center: f64,
     total_px: f64,
-    merc_x: f64,
-    merc_y: f64,
-) -> egui::Pos2 {
-    egui::pos2(
-        anchor.x + ((merc_x - 0.5) * total_px) as f32,
-        anchor.y + ((merc_y - 0.5) * total_px) as f32,
-    )
+}
+
+impl MercTransform {
+    /// Build the transform for the current frame.
+    ///
+    /// `clip_center` must be `ui.max_rect().center()` inside a plugin's
+    /// `run()` method — walkers sets the child UI rect to the map widget rect,
+    /// which is also `projector`'s clip rect, so `clip_center` equals
+    /// `projector.clip_rect.center()`.
+    pub(crate) fn new(
+        projector: &walkers::Projector,
+        map_memory: &MapMemory,
+        clip_center: egui::Pos2,
+    ) -> Self {
+        let total_px = 2_f64.powf(map_memory.zoom()) * 256.0;
+        // unproject(clip_center) returns the geographic position at the
+        // viewport centre using f64 arithmetic throughout.
+        // In walkers: Position.x() = longitude, Position.y() = latitude.
+        let center_ll = projector.unproject(clip_center.to_vec2());
+        let (merc_x_center, merc_y_center) = normalize_merc(center_ll.x(), center_ll.y());
+        Self {
+            clip_center_x: clip_center.x as f64,
+            clip_center_y: clip_center.y as f64,
+            merc_x_center,
+            merc_y_center,
+            total_px,
+        }
+    }
+
+    /// Project a pre-computed normalised Mercator coordinate to a screen position.
+    #[inline]
+    pub(crate) fn to_screen(&self, merc_x: f64, merc_y: f64) -> egui::Pos2 {
+        egui::pos2(
+            (self.clip_center_x + (merc_x - self.merc_x_center) * self.total_px) as f32,
+            (self.clip_center_y + (merc_y - self.merc_y_center) * self.total_px) as f32,
+        )
+    }
+
+    /// Convert a screen-space x-coordinate to a normalised Mercator x value.
+    #[inline]
+    pub(crate) fn merc_x_from_screen(&self, screen_x: f32) -> f64 {
+        (screen_x as f64 - self.clip_center_x) / self.total_px + self.merc_x_center
+    }
+
+    /// Convert a screen-space y-coordinate to a normalised Mercator y value.
+    #[inline]
+    pub(crate) fn merc_y_from_screen(&self, screen_y: f32) -> f64 {
+        (screen_y as f64 - self.clip_center_y) / self.total_px + self.merc_y_center
+    }
+}
+
+/// Normalised Web Mercator projection — both outputs in `[0.0, 1.0]`.
+///
+/// This is identical to walkers' internal `mercator_normalized()` and to
+/// `nav_types::mercator::normalize()`. It is duplicated here because
+/// `nav_types::mercator` is a crate-private module, inaccessible from `nav_map`.
+/// Both copies must be kept in sync.
+fn normalize_merc(lon_deg: f64, lat_deg: f64) -> (f64, f64) {
+    use std::f64::consts::PI;
+    let x = lon_deg.to_radians();
+    let y = lat_deg.to_radians().tan().asinh();
+    ((1.0 + x / PI) / 2.0, (1.0 - y / PI) / 2.0)
 }
 
 // URI constants used by the marker renderer and the startup registration call.
@@ -161,6 +240,10 @@ impl NavMap {
         self.layer = layer;
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "draw context requires all parameters; a wrapper struct would not add clarity"
+    )]
     pub fn draw(
         &mut self,
         ui: &mut egui::Ui,
@@ -169,9 +252,19 @@ impl NavMap {
         highlight: &mut MapHighlight,
         filter: &GlobalFilter,
         center_request: Option<(f64, f64)>,
+        zoom_to_visible: bool,
+        sticky_pos_override: Option<egui::Pos2>,
     ) {
         if let Some((lat, lon)) = center_request {
             self.map_memory.center_at(walkers::lat_lon(lat, lon));
+        }
+
+        if let Some(pos) = sticky_pos_override {
+            self.sticky_pos = pos;
+        }
+
+        if zoom_to_visible && let Some(bbox) = compute_visible_bounding_box(files, visibility) {
+            zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
         }
 
         // Detect newly loaded files → zoom to fit all data + start blink animation.
@@ -302,8 +395,8 @@ fn show_sticky_popup(
     use nav_types::{DataCategory, GeneratedMarkerKind};
     use uom::si::angle::degree;
 
-    // For TPV points and generated-marker events the window title is the
-    // point's datetime; for everything else fall back to a generic label.
+    // For TPV points, satellite reports, and generated-marker events the window
+    // title is the point's datetime; for everything else fall back to a generic label.
     let title: String = if sticky_ref.category == DataCategory::Tpv {
         files
             .get(sticky_ref.file_index)
@@ -312,6 +405,16 @@ fn show_sticky_popup(
             .map_or_else(
                 || "GPS Point".to_string(),
                 |p| p.tpv.time().format("%Y-%m-%d %H:%M:%S").to_string(),
+            )
+    } else if sticky_ref.category == DataCategory::SatelliteReport {
+        files
+            .get(sticky_ref.file_index)
+            .and_then(|f| f.trips.get(sticky_ref.trip_index))
+            .and_then(|t| t.points.get(sticky_ref.point_index))
+            .and_then(|p| p.satellites.as_ref())
+            .map_or_else(
+                || "Satellite Report".to_string(),
+                |sats| sats.time().format("%Y-%m-%d %H:%M:%S").to_string(),
             )
     } else if sticky_ref.category == DataCategory::GeneratedMarker {
         files
@@ -362,7 +465,7 @@ fn show_sticky_popup(
                     egui::Grid::new("sticky_marker_grid")
                         .num_columns(2)
                         .show(ui, |ui| {
-                            ui.label("Time:");
+                            ui.label("Time");
                             ui.add(
                                 egui::Label::new(
                                     marker.time.format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -370,7 +473,7 @@ fn show_sticky_popup(
                                 .selectable(true),
                             );
                             ui.end_row();
-                            ui.label("Label:");
+                            ui.label("Label");
                             ui.add(egui::Label::new(marker.label.clone()).selectable(true));
                             ui.end_row();
                         });
@@ -391,7 +494,7 @@ fn show_sticky_popup(
                     egui::Grid::new("sticky_gen_grid")
                         .num_columns(2)
                         .show(ui, |ui| {
-                            ui.label("Time:");
+                            ui.label("Time");
                             ui.add(
                                 egui::Label::new(
                                     marker.time.format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -399,10 +502,10 @@ fn show_sticky_popup(
                                 .selectable(true),
                             );
                             ui.end_row();
-                            ui.label("Event:");
+                            ui.label("Event");
                             ui.add(egui::Label::new(kind_str).selectable(true));
                             ui.end_row();
-                            ui.label("Position:");
+                            ui.label("Position");
                             ui.add(
                                 egui::Label::new(format!(
                                     "{:.6}, {:.6}",
@@ -417,8 +520,78 @@ fn show_sticky_popup(
                     ui.label(egui::RichText::new("Click to deselect").small().weak());
                 }
             }
-            DataCategory::SatelliteReport | DataCategory::TripTrack => {}
+            DataCategory::SatelliteReport => {
+                if let Some(point) = files
+                    .get(sticky_ref.file_index)
+                    .and_then(|f| f.trips.get(sticky_ref.trip_index))
+                    .and_then(|t| t.points.get(sticky_ref.point_index))
+                {
+                    let max_h = (ui.ctx().viewport_rect().height() * 0.75).min(500.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(max_h)
+                        .show(ui, |ui| {
+                            show_sticky_tpv_content(ui, point);
+                        });
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new("Click to deselect").small().weak());
+                }
+            }
+            DataCategory::TripTrack => {}
         });
+}
+
+/// Bounding box over only the currently **visible** trips (those with both their
+/// file and trip enabled). Returns `None` if no visible data exists.
+fn compute_visible_bounding_box(
+    files: &[LoadedFile],
+    visibility: &TripDataVisibility,
+) -> Option<(f64, f64, f64, f64)> {
+    let mut min_lat = f64::MAX;
+    let mut max_lat = f64::MIN;
+    let mut min_lon = f64::MAX;
+    let mut max_lon = f64::MIN;
+    let mut any = false;
+
+    for (fi, file) in files.iter().enumerate() {
+        let Some(file_vis) = visibility.files.get(fi) else {
+            continue;
+        };
+        if !file_vis.enabled {
+            continue;
+        }
+        for (ti, trip) in file.trips.iter().enumerate() {
+            let Some(trip_vis) = file_vis.trips.get(ti) else {
+                continue;
+            };
+            if !trip_vis.enabled {
+                continue;
+            }
+            for point in &trip.points {
+                let lat = point.tpv.lat().get::<degree>();
+                let lon = point.tpv.lon().get::<degree>();
+                min_lat = min_lat.min(lat);
+                max_lat = max_lat.max(lat);
+                min_lon = min_lon.min(lon);
+                max_lon = max_lon.max(lon);
+                any = true;
+            }
+            for marker in &trip.custom_markers {
+                let lat = marker.lat.get::<degree>();
+                let lon = marker.lon.get::<degree>();
+                min_lat = min_lat.min(lat);
+                max_lat = max_lat.max(lat);
+                min_lon = min_lon.min(lon);
+                max_lon = max_lon.max(lon);
+                any = true;
+            }
+        }
+    }
+
+    if any {
+        Some((min_lat, max_lat, min_lon, max_lon))
+    } else {
+        None
+    }
 }
 
 /// Bounding box (min_lat, max_lat, min_lon, max_lon) over all GPS points and

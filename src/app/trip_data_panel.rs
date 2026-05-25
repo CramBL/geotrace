@@ -19,7 +19,6 @@ pub struct TripDataPanelState {
     pub selection_anchor: Option<SelectionKey>,
     pub delete_confirm: Option<DeleteConfirmState>,
     pub detached: bool,
-    pub viewport_id: egui::ViewportId,
 }
 
 impl TripDataPanelState {
@@ -32,7 +31,6 @@ impl TripDataPanelState {
             selection_anchor: None,
             delete_confirm: None,
             detached: false,
-            viewport_id: egui::ViewportId::from_hash_of("trip_data_panel"),
         }
     }
 }

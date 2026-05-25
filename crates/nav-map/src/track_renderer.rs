@@ -109,10 +109,9 @@ impl Plugin for TrackRenderer<'_> {
         projector: &Projector,
         map_memory: &MapMemory,
     ) {
-        // Compute the affine-transform components once per frame.
-        // This replaces per-point trig projection with two multiplies + two adds.
-        let anchor = projector.project(walkers::lat_lon(0.0, 0.0));
-        let total_px = 2_f64.powf(map_memory.zoom()) * 256.0;
+        // Build the per-frame coordinate transform once; all per-point calls are
+        // then two f64 multiplies + two f64 adds with no large-value cancellation.
+        let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         for (fi, file) in self.files.iter().enumerate() {
             let Some(file_vis) = self.visibility.files.get(fi) else {
@@ -136,7 +135,7 @@ impl Plugin for TrackRenderer<'_> {
                     .points
                     .iter()
                     .filter(|p| nav_types::point_passes_time_filter(p.tpv.time(), self.filter))
-                    .map(|p| crate::merc_to_screen(anchor, total_px, p.merc_x, p.merc_y))
+                    .map(|p| transform.to_screen(p.merc_x, p.merc_y))
                     .collect();
                 if path.len() > 1 {
                     ui.painter().add(egui::Shape::line(path.clone(), stroke));

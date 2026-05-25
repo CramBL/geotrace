@@ -8,8 +8,9 @@
 //! everything by time and interpolates each annotation's map position from the
 //! surrounding GPS fixes.
 
+use std::{env, error::Error, fs};
+
 use naview_sdk::{Angle, Annotation, DateTime, MarkerIcon, NavFileBuilder, NavFix, Utc, degree};
-use std::error::Error;
 
 // Source 1 — GPS track (lat/lon/heading in degrees, one fix per second).
 const GPS_FIXES: &[(&str, f64, f64, f64)] = &[
@@ -60,10 +61,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let nav_file = builder.finish()?;
 
-    let out = std::env::temp_dir().join("naview_from_multiple_sources.nvd");
+    let out = env::temp_dir().join("naview_from_multiple_sources.nvd");
     nav_file.write_to_file(&out)?;
     println!("Written {out:?}");
-    std::fs::remove_file(&out)?;
+    fs::remove_file(&out)?;
 
     Ok(())
 }

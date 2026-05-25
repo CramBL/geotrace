@@ -50,7 +50,7 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) {
 
     let times: Vec<i64> = points
         .iter()
-        .map(|p| datetime_to_micros(p.fix.gps_time))
+        .map(|p| datetime_to_micros(p.fix.effective_gps_time()))
         .collect();
     let sys_times: Vec<u64> = points
         .iter()

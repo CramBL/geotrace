@@ -107,7 +107,7 @@ impl NavFileBuilder {
             }
         });
 
-        self.fixes.sort_by_key(|f| f.gps_time);
+        self.fixes.sort_by_key(effective_time);
         self.satellite_reports
             .sort_by_key(|r| r.gps_time.or(r.sys_time));
         self.annotations.sort_by_key(|a| a.time);
@@ -157,7 +157,7 @@ impl NavFileBuilder {
             .map(|(fix, satellites)| NavPoint { fix, satellites })
             .collect();
         nav_points.extend(ghost_points);
-        nav_points.sort_by_key(|p| p.fix.gps_time);
+        nav_points.sort_by_key(|p| effective_time(&p.fix));
 
         let markers = resolved_markers
             .into_iter()
@@ -215,15 +215,16 @@ fn ghost_nav_points_for(
     //
     // delta_us = gps_us - sys_us at each NavFix that has sys_time.
     // Stored as (gps_us, delta_us) sorted by gps_us (fixes are already sorted).
+    // Only fixes with both a genuine GPS time and a sys_time contribute a delta.
+    // Fixes with no GPS lock cannot establish the GPS/sys-clock offset.
     let delta_anchors: Vec<(i64, i64)> = real_fixes
         .iter()
-        .filter_map(|f| {
-            f.sys_time.map(|s| {
-                (
-                    f.gps_time.timestamp_micros(),
-                    f.gps_time.timestamp_micros() - s.timestamp_micros(),
-                )
-            })
+        .filter_map(|f| match (f.gps_time, f.sys_time) {
+            (Some(gt), Some(st)) => Some((
+                gt.timestamp_micros(),
+                gt.timestamp_micros() - st.timestamp_micros(),
+            )),
+            _ => None,
         })
         .collect();
 
@@ -240,7 +241,7 @@ fn ghost_nav_points_for(
         let Some(guess_us) = best_guess_gps_us(&report, &delta_anchors) else {
             continue; // both timestamps absent; already filtered in finish()
         };
-        let pos = real_fixes.partition_point(|f| f.gps_time.timestamp_micros() < guess_us);
+        let pos = real_fixes.partition_point(|f| effective_time(f).timestamp_micros() < guess_us);
 
         if pos == 0 {
             // Before first fix: drop.
@@ -271,13 +272,19 @@ fn ghost_nav_points_for(
         let a_lat = a.lat.get::<degree>();
         let a_lon = a.lon.get::<degree>();
         let hdg = ghost_bearing(b_lat, b_lon, a_lat, a_lon);
-        let b_gps_us = b.gps_time.timestamp_micros();
-        let a_gps_us = a.gps_time.timestamp_micros();
+        let b_gps_us = effective_time(b).timestamp_micros();
+        let a_gps_us = effective_time(a).timestamp_micros();
         let span_us = (a_gps_us - b_gps_us) as f64;
 
-        // Per-segment delta anchors.
-        let delta_b = b.sys_time.map(|s| b_gps_us - s.timestamp_micros());
-        let delta_a = a.sys_time.map(|s| a_gps_us - s.timestamp_micros());
+        // Per-segment delta anchors — only defined when the fix has a genuine GPS lock.
+        let delta_b = b.gps_time.and_then(|gt| {
+            b.sys_time
+                .map(|st| gt.timestamp_micros() - st.timestamp_micros())
+        });
+        let delta_a = a.gps_time.and_then(|gt| {
+            a.sys_time
+                .map(|st| gt.timestamp_micros() - st.timestamp_micros())
+        });
 
         let can_correct =
             delta_b.is_some() || delta_a.is_some() || reports.iter().any(|r| r.gps_time.is_some());
@@ -339,9 +346,10 @@ fn ghost_nav_points_for(
         )]
         let last = real_fixes.last().expect("real_fixes is non-empty");
         let last_hdg = last.heading.map_or(0.0, |h| h.get::<degree>());
-        let last_delta = last
-            .sys_time
-            .map(|s| last.gps_time.timestamp_micros() - s.timestamp_micros());
+        let last_delta = last.gps_time.and_then(|gt| {
+            last.sys_time
+                .map(|st| gt.timestamp_micros() - st.timestamp_micros())
+        });
         let mut extrap_pos: Option<(f64, f64)> = None;
 
         for (i, report) in after_last.into_iter().enumerate() {
@@ -404,7 +412,7 @@ fn segment_corrected_gps_us(
     }
     let Some(st) = report.sys_time else {
         // Both timestamps absent; shouldn't reach here after finish() pre-filter.
-        return (b.gps_time.timestamp_micros() + a.gps_time.timestamp_micros()) / 2;
+        return (effective_time(b).timestamp_micros() + effective_time(a).timestamp_micros()) / 2;
     };
     let st_us = st.timestamp_micros();
 
@@ -413,10 +421,14 @@ fn segment_corrected_gps_us(
             // Interpolate delta by the report's sys_time position in the segment.
             let sys_b = b
                 .sys_time
-                .map_or(b.gps_time.timestamp_micros() - db, |s| s.timestamp_micros());
+                .map_or(effective_time(b).timestamp_micros() - db, |s| {
+                    s.timestamp_micros()
+                });
             let sys_a = a
                 .sys_time
-                .map_or(a.gps_time.timestamp_micros() - da, |s| s.timestamp_micros());
+                .map_or(effective_time(a).timestamp_micros() - da, |s| {
+                    s.timestamp_micros()
+                });
             let span = (sys_a - sys_b) as f64;
             let delta = if span < 1.0 {
                 (db + da) / 2
@@ -449,7 +461,7 @@ fn dead_reckoned_gps_us(
         return st.timestamp_micros() + last_delta.unwrap_or(0);
     }
     // No timestamp at all: space out by 1 s from the last fix.
-    last.gps_time.timestamp_micros() + (idx as i64 + 1) * 1_000_000
+    effective_time(last).timestamp_micros() + (idx as i64 + 1) * 1_000_000
 }
 
 // ─── Geometry helpers ────────────────────────────────────────────────────────
@@ -507,14 +519,14 @@ fn associate_satellites(
             .or(report.sys_time)
             .map_or(i64::MIN, |t| t.timestamp_micros());
 
-        let pos = fixes.partition_point(|f| f.gps_time.timestamp_micros() < rep_us);
+        let pos = fixes.partition_point(|f| effective_time(f).timestamp_micros() < rep_us);
 
         let mut best: Option<(i64, usize)> = None;
 
         if pos > 0
             && let Some(fix) = fixes.get(pos - 1)
         {
-            let dist = (rep_us - fix.gps_time.timestamp_micros()).abs();
+            let dist = (rep_us - effective_time(fix).timestamp_micros()).abs();
             if dist <= window_us {
                 if let Some(slot) = had_candidate.get_mut(rep_idx) {
                     *slot = true;
@@ -524,7 +536,7 @@ fn associate_satellites(
         }
 
         if let Some(fix) = fixes.get(pos) {
-            let dist = (rep_us - fix.gps_time.timestamp_micros()).abs();
+            let dist = (rep_us - effective_time(fix).timestamp_micros()).abs();
             if dist <= window_us {
                 if let Some(slot) = had_candidate.get_mut(rep_idx) {
                     *slot = true;
@@ -590,15 +602,15 @@ fn interpolate_annotations(
     for annotation in annotations {
         let ann_time = annotation.time;
 
-        let pos = fixes.partition_point(|f| f.gps_time <= ann_time);
+        let pos = fixes.partition_point(|f| effective_time(f) <= ann_time);
 
         let before = if pos > 0 { fixes.get(pos - 1) } else { None };
         let after = fixes.get(pos);
 
         let position = match (before, after) {
             (Some(b), Some(a)) => {
-                let b_us = b.gps_time.timestamp_micros();
-                let a_us = a.gps_time.timestamp_micros();
+                let b_us = effective_time(b).timestamp_micros();
+                let a_us = effective_time(a).timestamp_micros();
                 let ann_us = ann_time.timestamp_micros();
                 let t = if a_us == b_us {
                     0.0_f64
@@ -646,6 +658,16 @@ fn interpolate_annotations(
 }
 
 // ─── Time utilities ──────────────────────────────────────────────────────────
+
+/// Resolve the best available timestamp for a fix.
+///
+/// Uses `gps_time` when the receiver had an active lock, otherwise falls back
+/// to `sys_time`, then to the Unix epoch.  All internal builder logic should
+/// use this instead of accessing `fix.gps_time` directly.
+#[inline]
+fn effective_time(fix: &NavFix) -> DateTime<Utc> {
+    fix.gps_time.or(fix.sys_time).unwrap_or_default()
+}
 
 pub(crate) fn datetime_to_micros(dt: DateTime<Utc>) -> i64 {
     dt.timestamp_micros()

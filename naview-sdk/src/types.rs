@@ -1,3 +1,5 @@
+use std::{fs::File, io, path::Path};
+
 use chrono::{DateTime, Utc};
 use uom::si::f64::{Angle, Velocity};
 
@@ -9,14 +11,19 @@ use crate::error::Error;
 /// unknown (e.g., dead-reckoned positions emitted only to carry satellite reports).
 /// The app renders those as circles rather than directional arrows.
 ///
+/// `gps_time` is the GPS-receiver timestamp; it is `None` when the receiver had no
+/// lock at the time of this record.
+/// Do not substitute `sys_time` for `gps_time` on the client side — pass `None`
+/// and let the SDK resolve the effective time from `sys_time` internally.
+///
 /// `sys_time` is the system-clock timestamp recorded alongside the GPS fix.
 /// Providing it allows the builder to compute the GPS/system-clock delta, which
 /// is used to convert satellite report system-clock timestamps into the GPS time
 /// domain for accurate ghost-fix interpolation during no-fix periods.
 #[derive(bon::Builder, Debug, Clone, Copy)]
 pub struct NavFix {
-    /// GPS time of the fix (authoritative).
-    pub gps_time: DateTime<Utc>,
+    /// GPS-receiver timestamp; `None` when the receiver had no active lock.
+    pub gps_time: Option<DateTime<Utc>>,
     /// System-clock time at the moment of this fix, if recorded.
     pub sys_time: Option<DateTime<Utc>>,
     pub lat: Angle,
@@ -167,6 +174,18 @@ pub struct Meta {
     pub notes: Option<String>,
 }
 
+impl NavFix {
+    /// The best available timestamp for this fix.
+    ///
+    /// Returns `gps_time` when the receiver had an active lock, otherwise falls
+    /// back to `sys_time`, then to the Unix epoch as a last resort.
+    /// Use this instead of accessing `gps_time` directly when you need a
+    /// concrete timestamp regardless of whether a GPS lock was present.
+    pub fn effective_gps_time(&self) -> DateTime<Utc> {
+        self.gps_time.or(self.sys_time).unwrap_or_default()
+    }
+}
+
 /// A nav fix combined with its associated satellite report (if any).
 #[derive(Debug, Clone)]
 pub struct NavPoint {
@@ -204,28 +223,25 @@ impl NavFile {
     }
 
     /// Serialise the file to the provided writer.
-    pub fn write<W: std::io::Write>(&self, mut writer: W) -> Result<(), crate::error::Error> {
+    pub fn write<W: io::Write>(&self, mut writer: W) -> Result<(), crate::error::Error> {
         let bytes = crate::write::build_hdf5(self)?;
         writer.write_all(&bytes)?;
         Ok(())
     }
 
     /// Write to a file at `path`. Appends `.nvd` if `path` has no extension.
-    pub fn write_to_file(
-        &self,
-        path: impl AsRef<std::path::Path>,
-    ) -> Result<(), crate::error::Error> {
+    pub fn write_to_file(&self, path: impl AsRef<Path>) -> Result<(), crate::error::Error> {
         let path = path.as_ref();
         let dest = if path.extension().is_none() {
             path.with_extension("nvd")
         } else {
             path.to_path_buf()
         };
-        self.write(std::fs::File::create(dest)?)
+        self.write(File::create(dest)?)
     }
 
     /// Read a `.nvd` file from the provided reader.
-    pub fn read<R: std::io::Read>(mut reader: R) -> Result<Self, crate::error::Error> {
+    pub fn read<R: io::Read>(mut reader: R) -> Result<Self, crate::error::Error> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes)?;
         crate::read::parse_hdf5(bytes)
@@ -233,7 +249,7 @@ impl NavFile {
 
     /// Open a `.nvd` file at `path` and parse it.
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, crate::error::Error> {
-        Self::read(std::fs::File::open(path)?)
+        Self::read(File::open(path)?)
     }
 
     /// Pretty-print a summary of a `.nvd` file at the given path.
