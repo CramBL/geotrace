@@ -256,13 +256,13 @@ mod tests {
             let s = secs % 60;
             let mut out = String::new();
             if h > 0 {
-                write!(out, "{h}h").unwrap_or(());
+                write!(out, "{h}h").ok();
             }
             if m > 0 {
-                write!(out, "{m}m").unwrap_or(());
+                write!(out, "{m}m").ok();
             }
             if s > 0 || out.is_empty() {
-                write!(out, "{s}s").unwrap_or(());
+                write!(out, "{s}s").ok();
             }
             out
         };

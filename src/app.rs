@@ -4,7 +4,6 @@ mod modals;
 mod side_panel;
 mod trip_data_panel;
 
-// ─── String constants ────────────────────────────────────────────────────────
 const STAGE_STARTING: &str = "Starting…";
 const STAGE_READING: &str = "Reading…";
 const STAGE_PARSING: &str = "Parsing…";
@@ -59,6 +58,14 @@ pub struct App {
     loading_jobs: Vec<loader::LoadingJob>,
     /// Monotonically increasing counter for assigning unique job IDs.
     next_load_id: u64,
+    /// One-shot channel from a background file-picker thread.
+    ///
+    /// `rfd::FileDialog::pick_file()` blocks its calling thread; running it on
+    /// the render thread freezes the egui loop and on Wayland the compositor
+    /// stops delivering events, making the window appear unresponsive.  The
+    /// dialog is therefore spawned on a dedicated thread; the chosen path (or
+    /// `None` on cancellation) is sent here and consumed on the next frame.
+    file_dialog_rx: Option<mpsc::Receiver<Option<PathBuf>>>,
 }
 
 impl App {
@@ -126,6 +133,7 @@ impl App {
             load_rx,
             loading_jobs: Vec::new(),
             next_load_id: 0,
+            file_dialog_rx: None,
         };
 
         for path in paths {
@@ -143,8 +151,6 @@ impl App {
 
         app
     }
-
-    // ── Background thread helpers ─────────────────────────────────────────────
 
     fn alloc_load_id(&mut self) -> u64 {
         let id = self.next_load_id;
@@ -198,7 +204,7 @@ impl App {
                         fraction: frac,
                         stage,
                     })
-                    .unwrap_or(());
+                    .ok();
                     r_ctx.request_repaint();
                 };
 
@@ -206,8 +212,7 @@ impl App {
                     .map(loader::LoadOutcome::NvdFile)
                     .map_err(|e| e.to_string());
 
-                tx.send(loader::LoadMessage::Completed { id, outcome })
-                    .unwrap_or(());
+                tx.send(loader::LoadMessage::Completed { id, outcome }).ok();
                 ctx.request_repaint();
             })
             .expect("failed to spawn nvd-path loader thread");
@@ -240,7 +245,7 @@ impl App {
                         fraction: frac,
                         stage,
                     })
-                    .unwrap_or(());
+                    .ok();
                     r_ctx.request_repaint();
                 };
 
@@ -248,8 +253,7 @@ impl App {
                     .map(loader::LoadOutcome::NvdFile)
                     .map_err(|e| e.to_string());
 
-                tx.send(loader::LoadMessage::Completed { id, outcome })
-                    .unwrap_or(());
+                tx.send(loader::LoadMessage::Completed { id, outcome }).ok();
                 ctx.request_repaint();
             })
             .expect("failed to spawn nvd-bytes loader thread");
@@ -288,7 +292,7 @@ impl App {
                         fraction: frac,
                         stage,
                     })
-                    .unwrap_or(());
+                    .ok();
                     r_ctx.request_repaint();
                 };
 
@@ -300,7 +304,7 @@ impl App {
                             id,
                             outcome: Err(format!("Failed to read {filename}: {e}")),
                         })
-                        .unwrap_or(());
+                        .ok();
                         ctx.request_repaint();
                         return;
                     }
@@ -339,15 +343,13 @@ impl App {
                         fraction: frac,
                         stage,
                     })
-                    .unwrap_or(());
+                    .ok();
                     r_ctx.request_repaint();
                 };
                 finish_log_load(id, &filename, &text, &nav_points, &tx, &ctx, report);
             })
             .expect("failed to spawn log-text loader thread");
     }
-
-    // ── UI-thread channel drain ───────────────────────────────────────────────
 
     /// Drain all pending messages from background load threads. Called once per frame.
     fn drain_load_channel(&mut self) {
@@ -396,7 +398,58 @@ impl App {
         }
     }
 
-    // ── Drop handler ─────────────────────────────────────────────────────────
+    /// Spawn a background thread that shows the OS file-picker dialog.
+    ///
+    /// `rfd::FileDialog::pick_file()` blocks its calling thread.  Running it
+    /// on the render thread freezes the egui loop; on Wayland the compositor
+    /// then stops delivering events, making the window appear unresponsive.
+    /// The dialog runs on a dedicated thread instead; the chosen path arrives
+    /// via `file_dialog_rx` and is consumed by `drain_file_dialog` each frame.
+    #[expect(
+        clippy::expect_used,
+        reason = "thread spawn can only fail under extreme system resource exhaustion"
+    )]
+    fn open_file_dialog(&mut self) {
+        let (tx, rx) = mpsc::channel();
+        self.file_dialog_rx = Some(rx);
+        let ctx = self.ctx.clone();
+        thread::Builder::new()
+            .name("file-dialog".to_owned())
+            .spawn(move || {
+                let path = rfd::FileDialog::new()
+                    .add_filter("NaView Data", &["nvd"])
+                    .add_filter("Log Files", &["log", "txt"])
+                    .pick_file();
+                tx.send(path).ok();
+                ctx.request_repaint();
+            })
+            .expect("failed to spawn file-dialog thread");
+    }
+
+    /// Consume a pending file-picker result and dispatch the path to the
+    /// appropriate loader.  Called once per frame from `ui()`.
+    fn drain_file_dialog(&mut self) {
+        let Some(rx) = &self.file_dialog_rx else {
+            return;
+        };
+        let Ok(path_opt) = rx.try_recv() else {
+            return;
+        };
+        self.file_dialog_rx = None;
+        let Some(path) = path_opt else {
+            return;
+        };
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if ext == "nvd" {
+            self.spawn_load_nvd_path(path);
+        } else {
+            self.spawn_load_log_path(path);
+        }
+    }
 
     fn handle_dropped_bytes(&mut self, bytes: Arc<[u8]>, name: &str) {
         const HDF5_MAGIC: &[u8] = b"\x89HDF\r\n\x1a\n";
@@ -433,6 +486,7 @@ impl eframe::App for App {
         // Drain background load results first so newly loaded data is
         // visible in the same frame that it arrives.
         self.drain_load_channel();
+        self.drain_file_dialog();
 
         let dropped = ui.ctx().input(|i| i.raw.dropped_files.clone());
         for file in dropped {
@@ -468,22 +522,7 @@ impl eframe::App for App {
                 ui.menu_button("File", |ui| {
                     if ui.button("Open…").clicked() {
                         ui.close();
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("NaView Data", &["nvd"])
-                            .add_filter("Log Files", &["log", "txt"])
-                            .pick_file()
-                        {
-                            let ext = path
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .unwrap_or("")
-                                .to_ascii_lowercase();
-                            if ext == "nvd" {
-                                self.spawn_load_nvd_path(path);
-                            } else {
-                                self.spawn_load_log_path(path);
-                            }
-                        }
+                        self.open_file_dialog();
                     }
                     ui.separator();
                     if ui.button("Quit").clicked() {
@@ -628,8 +667,6 @@ impl eframe::App for App {
     }
 }
 
-// ── Free helpers (called from thread closures) ────────────────────────────────
-
 /// Shared tail of log-file loading: parse `content`, build a `LoadedFile`, and
 /// send the `Completed` message. Called from both the path-based and bytes-based
 /// log loader threads after file content has been obtained.
@@ -650,7 +687,7 @@ fn finish_log_load(
             id,
             outcome: Err("Unrecognised file format".to_owned()),
         })
-        .unwrap_or(());
+        .ok();
         ctx.request_repaint();
         return;
     }
@@ -665,7 +702,7 @@ fn finish_log_load(
             unassociated: result.unassociated,
         }),
     })
-    .unwrap_or(());
+    .ok();
     ctx.request_repaint();
 }
 

@@ -138,6 +138,10 @@ We have blank lines before functions, types, `impl` blocks, and docstrings.
 
 We format comments `// Like this`, and `//not like this`.
 
+Never use ASCII art "section divider" comments such as `// ─── Foo ───`, `# ─── Foo ───`, or any variant made of box-drawing characters or repeated dashes.
+They add visual noise, break cleanly in diffs, and communicate nothing that a blank line or a normal comment does not.
+The only exception is when the comment is literally drawing a protocol diagram, a data layout, or another spatial structure for illustrative purposes.
+
 When importing a `trait` to use its trait methods, do this: `use Trait as _;`. That lets the reader know why you imported it, even though it seems unused.
 
 Always import **types** fully so they can be used by their short name at the call site:
@@ -166,6 +170,8 @@ read_to_string(path)?;
 For very common functions (e.g. `mem::swap`, `iter::once`) retaining one module level is sufficient; for less familiar ones, keep more context.
 
 When intentionally ignoring a `Result`, prefer `foo().ok();` over `let _ = foo();`. The former shows what is happening, and will fail to compile if `foo`:s return type ever changes.
+
+Never use `foo().unwrap_or(())` to discard a `Result` — it is more verbose than `.ok()` and hides the intent behind an API designed for providing fallback values, not silently dropping errors.
 
 We group and order imports (`use` statements) by `std`, other crates, and lastly own `crate` and `super`. This corresponds to [`StdExternalCrate`](https://rust-lang.github.io/rustfmt/?version=v1.8.0&search=group#StdExternalCrate%5C%3A).
 

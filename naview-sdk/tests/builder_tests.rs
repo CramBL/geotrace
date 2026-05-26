@@ -31,8 +31,6 @@ fn simple_report(offset_ms: i64) -> SatelliteReport {
         .build()
 }
 
-// ─── Satellite association ──────────────────────────────────────────────────
-
 #[test]
 fn satellite_association_within_window() -> Result<(), BuildError> {
     // Report 400 ms from fix is within the 500 ms default window.
@@ -328,8 +326,6 @@ fn multiple_contested_losers_all_become_ghosts() -> Result<(), BuildError> {
     Ok(())
 }
 
-// ─── Ghost fix interpolation ────────────────────────────────────────────────
-
 /// When the GPS fix is lost between two real fixes and neither the fixes nor the
 /// satellite reports carry enough time information for delta correction, the builder
 /// falls back to evenly distributing ghost nav points along the segment.
@@ -484,8 +480,6 @@ fn orphan_reports_before_first_fix_are_dropped() -> Result<(), BuildError> {
     Ok(())
 }
 
-// ─── Annotation interpolation ───────────────────────────────────────────────
-
 #[test]
 fn annotation_interpolation_mid_interval() -> Result<(), Box<dyn std::error::Error>> {
     let mut b = NavFileBuilder::new();
@@ -594,8 +588,6 @@ fn no_nav_fixes_with_annotations_lenient() {
     b.add_annotation(Annotation::builder().time(t(0)).build());
     assert!(matches!(b.finish(), Err(BuildError::NoNavFixes)));
 }
-
-// ─── General ────────────────────────────────────────────────────────────────
 
 #[test]
 fn unsorted_insertion() -> Result<(), BuildError> {

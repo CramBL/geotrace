@@ -1,3 +1,16 @@
 /target
 .pup
 pup.ron
+
+# Python SDK (naview-py)
+naview-py/.venv/
+naview-py/target/
+naview-py/Cargo.lock
+naview-py/uv.lock
+naview-py/dist/
+naview-py/**/__pycache__/
+naview-py/.pytest_cache/
+naview-py/**/*.egg-info/
+# Compiled extension modules produced by maturin (all platforms)
+naview-py/**/*.so
+naview-py/**/*.pyd

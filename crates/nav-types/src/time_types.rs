@@ -23,8 +23,6 @@ use chrono::{DateTime, Duration, Utc};
 use std::fmt;
 use std::ops::Sub;
 
-// ─── GpsTime ────────────────────────────────────────────────────────────────
-
 /// A timestamp from the GPS receiver clock.
 ///
 /// GPS time and system time are different clocks; use [`SysTime`] for host
@@ -82,8 +80,6 @@ impl fmt::Display for GpsTime {
     }
 }
 
-// ─── SysTime ────────────────────────────────────────────────────────────────
-
 /// A timestamp from the host system (OS) clock.
 ///
 /// System time and GPS time are different clocks; use [`GpsTime`] for GPS
@@ -126,8 +122,6 @@ impl fmt::Display for SysTime {
         write!(f, "{}", self.0)
     }
 }
-
-// ─── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

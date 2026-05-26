@@ -1,7 +1,6 @@
 mod error;
 pub use error::LoadError;
 
-// ─── String constants ────────────────────────────────────────────────────────
 const STAGE_READING: &str = "Reading…";
 const STAGE_PARSING: &str = "Parsing…";
 const STAGE_CONVERTING: &str = "Converting…";

@@ -1,8 +1,6 @@
 use nav_types::{Coord, CustomMarker, FileMetadata, LoadedFile, LoadedTrip, Rect, TripMetadata};
 use uom::si::angle::degree;
 
-// ── Job tracking ──────────────────────────────────────────────────────────────
-
 /// State for a single in-flight background load job, shown in the progress UI.
 pub struct LoadingJob {
     pub id: u64,
@@ -10,8 +8,6 @@ pub struct LoadingJob {
     pub progress: f32,
     pub stage: &'static str,
 }
-
-// ── Channel types ─────────────────────────────────────────────────────────────
 
 /// Final result produced by a background load thread.
 pub enum LoadOutcome {
@@ -39,8 +35,6 @@ pub enum LoadMessage {
         outcome: Result<LoadOutcome, String>,
     },
 }
-
-// ── Log file helper ───────────────────────────────────────────────────────────
 
 /// Build a `LoadedFile` from a list of custom markers produced by log parsing.
 ///

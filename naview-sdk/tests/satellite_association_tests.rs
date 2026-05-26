@@ -7,8 +7,6 @@
 use naview_sdk::{Angle, DateTime, Duration, Utc, degree};
 use naview_sdk::{BuildError, Constellation, NavFileBuilder, NavFix, Satellite, SatelliteReport};
 
-// ─── Shared helpers ──────────────────────────────────────────────────────────
-
 /// A fixed base epoch for all tests (2025-05-23 UTC, arbitrary but stable).
 #[expect(clippy::expect_used, reason = "fixed base timestamp is always valid")]
 fn base() -> DateTime<Utc> {
@@ -63,8 +61,6 @@ fn first_constellation(p: &naview_sdk::NavPoint) -> Constellation {
         .constellation
 }
 
-// ─── Phase 1: window boundary ────────────────────────────────────────────────
-
 /// The association window comparison is `<=`, not `<`.
 /// A report at exactly `window` distance from a fix must be assigned to it.
 #[test]
@@ -115,8 +111,6 @@ fn window_boundary_one_microsecond_past_is_excluded() -> Result<(), BuildError> 
     );
     Ok(())
 }
-
-// ─── Phase 1: candidate selection ────────────────────────────────────────────
 
 /// When a report falls between two fixes, it is assigned to the nearer one.
 /// Here the report is closer to fix B (t=2 000 ms) than to fix A (t=0).
@@ -169,8 +163,6 @@ fn report_equidistant_goes_to_earlier_fix() -> Result<(), BuildError> {
     Ok(())
 }
 
-// ─── Phase 1: one-to-one happy path ─────────────────────────────────────────
-
 /// Four fixes spaced 2 s apart, each with one nearby report.
 /// All reports must be matched; no ghost fixes created.
 #[test]
@@ -201,8 +193,6 @@ fn four_reports_matched_to_four_fixes_no_ghosts() -> Result<(), BuildError> {
     assert_eq!(first_constellation(&points[3]), Constellation::Beidou);
     Ok(())
 }
-
-// ─── Phase 1: timestamp selection for reports ────────────────────────────────
 
 /// When a report supplies only `sys_time` (no `gps_time`), `sys_time` is used
 /// as the comparison timestamp.  If `sys_time` happens to place the report
@@ -316,8 +306,6 @@ fn report_with_no_timestamp_is_discarded() -> Result<(), BuildError> {
     Ok(())
 }
 
-// ─── Phase 1: no reports ─────────────────────────────────────────────────────
-
 /// With no satellite reports at all, every fix must have `satellites = None`
 /// and no ghost fixes must be created.
 #[test]
@@ -337,8 +325,6 @@ fn zero_reports_all_fixes_have_no_satellite_data() -> Result<(), BuildError> {
     );
     Ok(())
 }
-
-// ─── Phase 1: competition between multiple reports for one fix ───────────────
 
 /// Three reports all within the window of the same fix.
 /// The closest must win; the other two must become ghost fixes.
@@ -416,8 +402,6 @@ fn equidistant_reports_earlier_one_wins() -> Result<(), BuildError> {
     );
     Ok(())
 }
-
-// ─── Phase 2: ghost fixes after the last real fix ────────────────────────────
 
 /// Three orphan reports after the last real fix must each produce a ghost fix
 /// with `heading = None` (rendered as a circle, not an arrow).
@@ -506,8 +490,6 @@ fn second_ghost_after_last_fix_is_further_than_first() -> Result<(), BuildError>
     );
     Ok(())
 }
-
-// ─── Phase 2: between-fix ghost interpolation ────────────────────────────────
 
 /// Ghost fixes between two real fixes must be interpolated at the correct
 /// fractional position along the segment.
@@ -660,8 +642,6 @@ fn between_fix_ghosts_evenly_distributed_when_no_delta_available() -> Result<(),
     Ok(())
 }
 
-// ─── Phase 2: ghost partitioning edge cases ──────────────────────────────────
-
 /// Reports before the first real fix are dropped (no reference position).
 /// Reports after the last fix become dead-reckoned ghosts.
 /// Both must be handled correctly when they appear together.
@@ -718,8 +698,6 @@ fn ghost_after_fix_with_no_heading_does_not_panic() -> Result<(), BuildError> {
     assert!(nav_file.nav_points()[1].satellites.is_some());
     Ok(())
 }
-
-// ─── Phase 1: delta-corrected association for sys_time-only reports ───────────
 
 /// In the `--no-filter` pipeline, SAT records carry only `sys_time`; TPV records
 /// carry both `gps_time` and `sys_time`.
@@ -838,8 +816,6 @@ fn no_filter_1hz_all_sat_associated_with_large_gps_offset() -> Result<(), BuildE
     );
     Ok(())
 }
-
-// ─── Phase 1: off-by-one with large GPS/sys-clock offset ─────────────────────
 
 /// Regression test: when GPS time is ahead of system time by ~600 ms (as
 /// observed on the test device), each sys_time-only SAT report must associate
@@ -1123,8 +1099,6 @@ fn gps_ahead_600ms_sat_at_exactly_500ms_delay_boundary() -> Result<(), BuildErro
     Ok(())
 }
 
-// ─── Phase 1: sys_time comparison with drifting GPS/sys offset ───────────────
-
 /// When both the report and the candidate fix have `sys_time`, the association
 /// distance is computed as `|report.sys_time − fix.sys_time|` directly instead
 /// of going through the GPS-domain projection.
@@ -1263,8 +1237,6 @@ fn sys_time_direct_comparison_drifting_offset_with_sat_delay() -> Result<(), Bui
     }
     Ok(())
 }
-
-// ─── No fixes ────────────────────────────────────────────────────────────────
 
 /// With no nav fixes at all, `finish()` succeeds (no annotations to fail on)
 /// and returns an empty nav-point list.

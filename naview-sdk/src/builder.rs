@@ -8,7 +8,6 @@ use crate::types::{
     Annotation, Marker, Meta, NavFile, NavFix, NavPoint, Satellite, SatelliteReport,
 };
 
-// ─── Internal typed representations ─────────────────────────────────────────
 //
 // User-supplied `NavFix` and `SatelliteReport` structs carry `DateTime<Utc>` for
 // public-API simplicity.  Immediately on intake the builder converts them into
@@ -109,8 +108,6 @@ impl InternalPoint {
         }
     }
 }
-
-// ─── Builder ─────────────────────────────────────────────────────────────────
 
 /// Builder for creating a [`NavFile`].
 ///
@@ -313,8 +310,6 @@ impl Default for NavFileBuilder {
     }
 }
 
-// ─── Ghost fix creation ──────────────────────────────────────────────────────
-
 /// Create ghost [`InternalPoint`]s to carry [`InternalSatReport`]s that fall outside
 /// the association window of every real fix.
 ///
@@ -342,7 +337,6 @@ fn ghost_nav_points_for(
         return Vec::new();
     }
 
-    // ── 1. Build delta anchors ────────────────────────────────────────────────
     //
     // delta_us = gps_us - sys_us at each fix that has both a genuine GPS lock
     // and a sys_time.  Stored as (gps_us, delta_us) sorted by gps_us.
@@ -356,8 +350,6 @@ fn ghost_nav_points_for(
             _ => None,
         })
         .collect();
-
-    // ── 2. Partition orphan reports ───────────────────────────────────────────
 
     let n_segs = real_fixes.len().saturating_sub(1);
     let mut segments: Vec<Vec<InternalSatReport>> = (0..n_segs).map(|_| Vec::new()).collect();
@@ -379,8 +371,6 @@ fn ghost_nav_points_for(
     }
 
     let mut ghost_points = Vec::new();
-
-    // ── 3. Between-fix segments ───────────────────────────────────────────────
 
     for (seg_idx, reports) in segments.into_iter().enumerate() {
         if reports.is_empty() {
@@ -459,8 +449,6 @@ fn ghost_nav_points_for(
             }
         }
     }
-
-    // ── 4. After last fix: dead-reckon ────────────────────────────────────────
 
     if !after_last.is_empty() {
         #[expect(
@@ -587,8 +575,6 @@ fn dead_reckoned_gps_us(
     effective_time(last).timestamp_micros() + (idx as i64 + 1) * 1_000_000
 }
 
-// ─── Geometry helpers ────────────────────────────────────────────────────────
-
 /// Spherical forward bearing from A to B in degrees \[0, 360).
 fn ghost_bearing(lat0_deg: f64, lon0_deg: f64, lat1_deg: f64, lon1_deg: f64) -> f64 {
     let lat0 = lat0_deg.to_radians();
@@ -610,8 +596,6 @@ fn ghost_step(lat_deg: f64, lon_deg: f64, heading_deg: f64, dist_m: f64) -> (f64
         + (hdg.sin() * ang.sin() * lat.cos()).atan2(ang.cos() - lat.sin() * new_lat.sin());
     (new_lat.to_degrees(), new_lon.to_degrees())
 }
-
-// ─── Satellite association ───────────────────────────────────────────────────
 
 /// Assign each satellite report to its nearest nav fix within `window`.
 ///
@@ -726,8 +710,6 @@ fn associate_satellites(
     (assignments, unassociated)
 }
 
-// ─── Annotation interpolation ────────────────────────────────────────────────
-
 /// Best available anchor time for placing external events (annotations, markers)
 /// on the nav timeline.
 ///
@@ -822,8 +804,6 @@ fn interpolate_annotations(
 
     (resolved, out_of_range)
 }
-
-// ─── Time utilities ──────────────────────────────────────────────────────────
 
 /// Resolve the best available timestamp for a fix as a [`GpsTime`].
 ///

@@ -3,8 +3,6 @@ use nav_types::{CustomMarker, MarkerIcon, NavPoint};
 use uom::si::angle::degree;
 use uom::si::f64::Angle;
 
-// ── Timestamp format detection ────────────────────────────────────────────────
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogFormat {
     SyslogShort,
@@ -29,8 +27,6 @@ pub fn detect_format(line: &str) -> Option<LogFormat> {
     }
     None
 }
-
-// ── Low-level parsers ─────────────────────────────────────────────────────────
 
 /// `"May 29 18:48:24"` or `"May 29 18:48:24.123456"` — returns `(NaiveDateTime, rest)`.
 fn parse_syslog(line: &str, micro: bool) -> Option<(NaiveDateTime, &str)> {
@@ -150,8 +146,6 @@ fn parse_month_abbrev(s: &str) -> Option<u32> {
     }
 }
 
-// ── Year inference ────────────────────────────────────────────────────────────
-
 pub fn infer_year(naive: NaiveDateTime, now: DateTime<Utc>) -> DateTime<Utc> {
     let current_year = now.year();
     let candidate = naive.with_year(current_year).unwrap_or(naive).and_utc();
@@ -161,8 +155,6 @@ pub fn infer_year(naive: NaiveDateTime, now: DateTime<Utc>) -> DateTime<Utc> {
         candidate
     }
 }
-
-// ── Line parser ───────────────────────────────────────────────────────────────
 
 fn parse_line(line: &str, format: LogFormat, now: DateTime<Utc>) -> Option<(DateTime<Utc>, &str)> {
     match format {
@@ -178,8 +170,6 @@ fn parse_line(line: &str, format: LogFormat, now: DateTime<Utc>) -> Option<(Date
         LogFormat::Iso8601T => parse_iso_t(line),
     }
 }
-
-// ── Levenshtein distance ──────────────────────────────────────────────────────
 
 #[expect(
     clippy::indexing_slicing,
@@ -202,8 +192,6 @@ fn levenshtein(a: &str, b: &str) -> usize {
     }
     prev[n]
 }
-
-// ── Color group assignment ────────────────────────────────────────────────────
 
 struct ColorGroupAssigner {
     representatives: Vec<String>,
@@ -236,14 +224,10 @@ impl ColorGroupAssigner {
     }
 }
 
-// ── Result type ───────────────────────────────────────────────────────────────
-
 pub struct LogLoadResult {
     pub markers: Vec<CustomMarker>,
     pub unassociated: Vec<String>,
 }
-
-// ── Main entry point ──────────────────────────────────────────────────────────
 
 pub fn load_log(content: &str, nav_points: &[NavPoint], now: DateTime<Utc>) -> LogLoadResult {
     let empty = LogLoadResult {
@@ -382,8 +366,6 @@ fn associate(ts: &DateTime<Utc>, nav_points: &[NavPoint]) -> Option<(f64, f64)> 
     Some((lat, lon))
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,8 +377,6 @@ mod tests {
             .single()
             .expect("valid")
     }
-
-    // ── Levenshtein ──────────────────────────────────────────────────────────
 
     #[test]
     fn lev_empty() {
@@ -422,8 +402,6 @@ mod tests {
     fn lev_empty_abc() {
         assert_eq!(levenshtein("", "abc"), 3);
     }
-
-    // ── Format detection ─────────────────────────────────────────────────────
 
     #[test]
     fn detect_syslog_short() {
@@ -487,8 +465,6 @@ mod tests {
         assert_eq!(fmt, Some(LogFormat::SyslogShort));
     }
 
-    // ── Year inference ───────────────────────────────────────────────────────
-
     #[test]
     fn year_infer_dec_loaded_in_jan() {
         let naive = chrono::NaiveDateTime::new(
@@ -532,8 +508,6 @@ mod tests {
         let result = infer_year(naive, now);
         assert_eq!(result.year(), 2026);
     }
-
-    // ── Color group assignment ───────────────────────────────────────────────
 
     #[test]
     fn color_group_single() {
@@ -591,8 +565,6 @@ mod tests {
         assert_eq!(a.assign(s1), 0);
         assert_eq!(a.assign(s2), 0);
     }
-
-    // ── Association tests ────────────────────────────────────────────────────
 
     fn make_nav_points(start: DateTime<Utc>, count: usize, step_secs: i64) -> Vec<NavPoint> {
         use nav_types::TimePositionVelocity;
@@ -674,8 +646,6 @@ mod tests {
         let ts = utc(2026, 1, 1, 0, 0, 0);
         assert!(associate(&ts, &[]).is_none());
     }
-
-    // ── load_log integration ─────────────────────────────────────────────────
 
     fn make_log_content(entries: &[(DateTime<Utc>, &str)]) -> String {
         entries

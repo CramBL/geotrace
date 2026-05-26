@@ -294,38 +294,38 @@ pub(crate) fn inspect_path(path: &Path) -> Result<String, Error> {
         Some(hdf5_pure::AttrValue::String(v)) => v.as_str().to_owned(),
         _ => "<unknown>".into(),
     };
-    writeln!(out, "NaView Data File — version {version}").unwrap_or(());
-    writeln!(out, "{sep}").unwrap_or(());
+    writeln!(out, "NaView Data File — version {version}").ok();
+    writeln!(out, "{sep}").ok();
 
     // Metadata
-    writeln!(out, "Metadata").unwrap_or(());
+    writeln!(out, "Metadata").ok();
     let fmt_meta = |v: Option<String>| v.map_or_else(|| "—".to_owned(), |s| format!("\"{s}\""));
     writeln!(
         out,
         "  title  : {}",
         fmt_meta(string_attr(&attrs, "meta_title"))
     )
-    .unwrap_or(());
+    .ok();
     writeln!(
         out,
         "  device : {}",
         fmt_meta(string_attr(&attrs, "meta_device"))
     )
-    .unwrap_or(());
+    .ok();
     writeln!(
         out,
         "  notes  : {}",
         fmt_meta(string_attr(&attrs, "meta_notes"))
     )
-    .unwrap_or(());
-    writeln!(out).unwrap_or(());
+    .ok();
+    writeln!(out).ok();
 
     let n = inspect_nav_points(&file, &mut out);
-    writeln!(out).unwrap_or(());
+    writeln!(out).ok();
     inspect_satellite_reports(&file, n, &mut out);
-    writeln!(out).unwrap_or(());
+    writeln!(out).ok();
     inspect_markers(&file, &mut out);
-    writeln!(out, "{sep}").unwrap_or(());
+    writeln!(out, "{sep}").ok();
 
     Ok(out)
 }
@@ -334,7 +334,7 @@ fn inspect_nav_points(file: &File, out: &mut String) -> u64 {
     use std::fmt::Write as _;
 
     let Ok(grp) = file.group("nav_points") else {
-        writeln!(out, "{:<24}0 records", "Nav Points").unwrap_or(());
+        writeln!(out, "{:<24}0 records", "Nav Points").ok();
         return 0;
     };
 
@@ -345,7 +345,7 @@ fn inspect_nav_points(file: &File, out: &mut String) -> u64 {
         .and_then(|s| s.first().copied())
         .unwrap_or(0);
 
-    writeln!(out, "{:<24}{} records", "Nav Points", fmt_count(n)).unwrap_or(());
+    writeln!(out, "{:<24}{} records", "Nav Points", fmt_count(n)).ok();
 
     if n == 0 {
         return 0;
@@ -363,7 +363,7 @@ fn inspect_nav_points(file: &File, out: &mut String) -> u64 {
             t0.format("%Y-%m-%dT%H:%M:%SZ"),
             t1.format("%Y-%m-%dT%H:%M:%SZ")
         )
-        .unwrap_or(());
+        .ok();
     }
 
     for (label, ds_name, dec) in &[
@@ -381,7 +381,7 @@ fn inspect_nav_points(file: &File, out: &mut String) -> u64 {
                 mx,
                 dec = dec
             )
-            .unwrap_or(());
+            .ok();
         }
     }
 
@@ -396,7 +396,7 @@ fn inspect_nav_points(file: &File, out: &mut String) -> u64 {
             fmt_count(present as u64),
             fmt_count(n)
         )
-        .unwrap_or(());
+        .ok();
     }
 
     n
@@ -406,7 +406,7 @@ fn inspect_satellite_reports(file: &File, n_nav_points: u64, out: &mut String) {
     use std::fmt::Write as _;
 
     let Ok(sat_grp) = file.group("sat_reports") else {
-        writeln!(out, "{:<24}0 records", "Satellite Reports").unwrap_or(());
+        writeln!(out, "{:<24}0 records", "Satellite Reports").ok();
         return;
     };
 
@@ -428,9 +428,9 @@ fn inspect_satellite_reports(file: &File, n_nav_points: u64, out: &mut String) {
             fmt_count(m),
             fmt_count(n_nav_points)
         )
-        .unwrap_or(());
+        .ok();
     } else {
-        writeln!(out, "{:<24}{} records", "Satellite Reports", fmt_count(m)).unwrap_or(());
+        writeln!(out, "{:<24}{} records", "Satellite Reports", fmt_count(m)).ok();
     }
 
     if m == 0 {
@@ -453,13 +453,13 @@ fn inspect_satellite_reports(file: &File, n_nav_points: u64, out: &mut String) {
         fmt_count(t),
         avg_t
     )
-    .unwrap_or(());
+    .ok();
 
     if let Ok(ts_grp) = file.group("tracked_sats") {
         if let Ok(codes) = ts_grp.dataset("constellation").and_then(|ds| ds.read_u8()) {
             let list = constellation_names(&codes);
             if !list.is_empty() {
-                writeln!(out, "    {:<20}{}", "constellations", list.join(", ")).unwrap_or(());
+                writeln!(out, "    {:<20}{}", "constellations", list.join(", ")).ok();
             }
         }
         if let Ok(snr_vals) = ts_grp.dataset("snr").and_then(|ds| ds.read_f32()) {
@@ -473,7 +473,7 @@ fn inspect_satellite_reports(file: &File, n_nav_points: u64, out: &mut String) {
                 fmt_count(present as u64),
                 fmt_count(t)
             )
-            .unwrap_or(());
+            .ok();
         }
     }
 
@@ -489,7 +489,7 @@ fn inspect_satellite_reports(file: &File, n_nav_points: u64, out: &mut String) {
             fmt_count(fix_count),
             avg_f
         )
-        .unwrap_or(());
+        .ok();
     }
 }
 
@@ -497,7 +497,7 @@ fn inspect_markers(file: &File, out: &mut String) {
     use std::fmt::Write as _;
 
     let Ok(grp) = file.group("markers") else {
-        writeln!(out, "{:<24}0 records", "Markers").unwrap_or(());
+        writeln!(out, "{:<24}0 records", "Markers").ok();
         return;
     };
 
@@ -508,7 +508,7 @@ fn inspect_markers(file: &File, out: &mut String) {
         .and_then(|s| s.first().copied())
         .unwrap_or(0);
 
-    writeln!(out, "{:<24}{} records", "Markers", fmt_count(k)).unwrap_or(());
+    writeln!(out, "{:<24}{} records", "Markers", fmt_count(k)).ok();
 
     if k == 0 {
         return;
@@ -517,14 +517,14 @@ fn inspect_markers(file: &File, out: &mut String) {
     if let Ok(icons) = grp.dataset("icon").and_then(|ds| ds.read_u8()) {
         let hist = icon_histogram(&icons);
         if !hist.is_empty() {
-            writeln!(out, "  {:<22}{hist}", "icons").unwrap_or(());
+            writeln!(out, "  {:<22}{hist}", "icons").ok();
         }
     }
 
     if let Ok(label_flat) = grp.dataset("label").and_then(|ds| ds.read_u8()) {
         let preview = label_preview(&label_flat);
         if !preview.is_empty() {
-            writeln!(out, "  {:<22}{preview}", "labels").unwrap_or(());
+            writeln!(out, "  {:<22}{preview}", "labels").ok();
         }
     }
 }

@@ -1,0 +1,33 @@
+# Isolated workspace — not a member of the root workspace.
+# Built exclusively by maturin; the Python CI job handles it separately.
+[workspace]
+
+[package]
+name = "naview-py"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Python bindings for naview-sdk"
+
+[lib]
+name = "_naview_sdk"
+crate-type = ["cdylib"]
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+naview-sdk = { path = "../naview-sdk" }
+pyo3 = { version = "0.28.3", features = ["extension-module", "chrono"] }
+
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+needless_pass_by_value = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

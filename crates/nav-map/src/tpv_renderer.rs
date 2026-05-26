@@ -670,13 +670,13 @@ fn format_signed_delta(delta_ms: i64) -> String {
         let s = total_s % 60;
         let mut out = sign.to_owned();
         if h > 0 {
-            write!(out, "{h}h").unwrap_or(());
+            write!(out, "{h}h").ok();
         }
         if m > 0 {
-            write!(out, "{m}m").unwrap_or(());
+            write!(out, "{m}m").ok();
         }
         if s > 0 || (h == 0 && m == 0) {
-            write!(out, "{s}s").unwrap_or(());
+            write!(out, "{s}s").ok();
         }
         out
     }
@@ -792,12 +792,14 @@ fn draw_navigation_arrow(
         1.5 * outline_alpha
     };
 
-    // Shift the whole triangle forward so the tip is prominent (arrowhead look)
-    // while keeping the rear as a straight base — three segments, no concave notch.
-    let center_offset = dir * (size * 0.4);
-    let tip = center + dir * size - center_offset;
-    let left = center - dir * size - perp * (size * 0.7) - center_offset;
-    let right = center - dir * size + perp * (size * 0.7) - center_offset;
+    // Build an isoceles triangle whose centroid is exactly at `center` (the
+    // screen position of the GPS coordinate).  For a triangle with tip at
+    // `center + dir·A` and base at `center − dir·B`, the centroid is at
+    // `center + dir·(A − 2B)/3`.  Choosing A = 2B makes that term zero, so the
+    // centroid lands on `center` regardless of `size`.  Here A = size, B = size/2.
+    let tip = center + dir * size;
+    let left = center - dir * (size * 0.5) - perp * (size * 0.75);
+    let right = center - dir * (size * 0.5) + perp * (size * 0.75);
 
     ui.painter().add(egui::Shape::convex_polygon(
         vec![tip, right, left],
