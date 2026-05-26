@@ -1,4 +1,5 @@
-use egui::{Color32, Pos2, Response, Stroke, Ui};
+use egui::epaint::{PathShape, PathStroke};
+use egui::{Color32, PopupAnchor, Pos2, Response, Stroke, Ui};
 use nav_types::filter;
 use nav_types::satellites::Constellation;
 use nav_types::{
@@ -12,8 +13,6 @@ use uom::si::velocity::kilometer_per_hour;
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::generated_marker_renderer;
-
-const HOVER_THRESHOLD: f32 = 10.0;
 const EM_DASH: &str = "—";
 const DEGREE_SIGN: &str = "°";
 /// U+0394 GREEK CAPITAL LETTER DELTA — used as a mathematical difference symbol.
@@ -136,9 +135,13 @@ impl<'a> TpvRenderer<'a> {
                 point_ref,
             );
             if let Some(mouse) = hover_pos {
-                // Use squared distance to avoid sqrt; threshold is HOVER_THRESHOLD² = 100.
+                // Hover threshold scales with the icon size so the tooltip fires as
+                // soon as the pointer overlaps any part of the arrow or ghost circle,
+                // not just when it reaches the centroid.  A 4 px margin provides a
+                // small "grace zone" around the visual edge.
+                let threshold = base_arrow_size + 4.0;
                 let dist_sq = screen_pos.distance_sq(mouse);
-                if dist_sq < HOVER_THRESHOLD * HOVER_THRESHOLD
+                if dist_sq < threshold * threshold
                     && local_closest
                         .as_ref()
                         .is_none_or(|(_, p)| p.distance_sq(mouse) > dist_sq)
@@ -226,7 +229,7 @@ impl<'a> TpvRenderer<'a> {
     }
 
     fn show_tooltip(&self, ui: &Ui, local_closest: Option<(DataPointRef, Pos2)>) {
-        let Some((point_ref, pos)) = local_closest else {
+        let Some((point_ref, _pos)) = local_closest else {
             return;
         };
         let Some(file) = self.files.get(point_ref.file_index) else {
@@ -238,13 +241,22 @@ impl<'a> TpvRenderer<'a> {
         let Some(point) = trip.points.get(point_ref.point_index) else {
             return;
         };
-        let hit_rect = egui::Rect::from_center_size(pos, egui::vec2(20.0, 20.0));
-        let response = ui.interact(
-            hit_rect,
-            ui.id().with("tpv_hover").with(point_ref.point_index),
-            egui::Sense::hover(),
-        );
-        response.show_tooltip_ui(|ui| {
+        // Use Tooltip::always_open so the tooltip shows as soon as the pointer
+        // is near the icon, without relying on ui.interact / response.hovered()
+        // which can be blocked by the map widget's own interaction layer.
+        let tooltip_id = ui
+            .id()
+            .with("tpv_hover")
+            .with(point_ref.file_index)
+            .with(point_ref.trip_index)
+            .with(point_ref.point_index);
+        egui::Tooltip::always_open(
+            ui.ctx().clone(),
+            ui.layer_id(),
+            tooltip_id,
+            PopupAnchor::Pointer,
+        )
+        .show(|ui| {
             show_hover_table(ui, point);
         });
     }
@@ -777,7 +789,7 @@ fn draw_navigation_arrow(
     let perp = egui::vec2(-dir.y, dir.x);
 
     let size = if highlighted {
-        base_size + 5.0
+        base_size + 3.0
     } else {
         base_size
     };
@@ -792,20 +804,48 @@ fn draw_navigation_arrow(
         1.5 * outline_alpha
     };
 
-    // Build an isoceles triangle whose centroid is exactly at `center` (the
-    // screen position of the GPS coordinate).  For a triangle with tip at
-    // `center + dir·A` and base at `center − dir·B`, the centroid is at
-    // `center + dir·(A − 2B)/3`.  Choosing A = 2B makes that term zero, so the
-    // centroid lands on `center` regardless of `size`.  Here A = size, B = size/2.
+    // A car-GPS / Google-Maps style navigation arrow.
+    // Vertices (dir points up = forward direction of travel):
+    //
+    //           *          tip  (+size forward)
+    //          / \
+    //         /   \
+    //        /     \
+    //       /   *   \        notch (0.1·size back — concave, pulled toward tip)
+    //      /   / \   \
+    //     *   /   \   *      wings (0.4·size back, ±0.5·size wide)
+    //
+    // The outer edges (/ \) run from the tip all the way down to the wings.
+    // The inner edges (/ \) run from each wing up to the notch, creating the
+    // concave dip at the rear centre.
+    //
+    // Because the shape is non-convex, the fill is drawn as two convex
+    // triangles (tip–right–notch and tip–notch–left) and the outline as a
+    // single closed PathShape.
     let tip = center + dir * size;
-    let left = center - dir * (size * 0.5) - perp * (size * 0.75);
-    let right = center - dir * (size * 0.5) + perp * (size * 0.75);
+    let right = center - dir * (size * 0.4) + perp * (size * 0.5);
+    let notch = center - dir * (size * 0.1);
+    let left = center - dir * (size * 0.4) - perp * (size * 0.5);
 
+    // Fill — two convex triangles avoid non-convex fill artefacts.
     ui.painter().add(egui::Shape::convex_polygon(
-        vec![tip, right, left],
+        vec![tip, right, notch],
         color,
-        Stroke::new(stroke_width, stroke_color),
+        Stroke::NONE,
     ));
+    ui.painter().add(egui::Shape::convex_polygon(
+        vec![tip, notch, left],
+        color,
+        Stroke::NONE,
+    ));
+
+    // Outline — closed path drawn on top of the fill.
+    if stroke_width > 0.0 {
+        ui.painter().add(egui::Shape::Path(PathShape::closed_line(
+            vec![tip, right, notch, left],
+            PathStroke::new(stroke_width, stroke_color),
+        )));
+    }
 }
 
 /// Convert a [0.0, 1.0] alpha value to a u8. The `clamp` call guarantees the
