@@ -8,6 +8,7 @@ const STAGE_STARTING: &str = "Starting…";
 const STAGE_READING: &str = "Reading…";
 const STAGE_PARSING: &str = "Parsing…";
 const STAGE_PROCESSING: &str = "Processing…";
+const STAGE_PLOTTING: &str = "Building plot data…";
 
 use std::{
     cell::RefCell,
@@ -19,12 +20,25 @@ use std::{
     thread,
 };
 
-use nav_map::{MapLayer, NavMap};
-use nav_types::{GlobalFilter, LoadedFile, MapHighlight, NavPoint, TripDataVisibility};
+use egui_tiles::{
+    Container, Linear, LinearDir, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse,
+};
+use nav_map::{MapContextAction, MapLayer, NavMap};
+use nav_plot::{PlotState, find_closest_tpv, show_trip_plot};
+use nav_types::{
+    DataCategory, GlobalFilter, HighlightScope, LoadedFile, MapHighlight, NavPoint,
+    TripDataVisibility,
+};
 use trip_data_panel::TripDataPanelState;
 
 use modals::{show_delete_confirmation, show_mapbox_token_dialog, show_unassociated_popup};
 use side_panel::{PanelContext, show_side_panel};
+
+/// Pane variants for the central area tiles tree.
+enum MainPane {
+    Map,
+    Plot,
+}
 
 struct SharedAppState {
     loaded_files: Vec<LoadedFile>,
@@ -33,12 +47,16 @@ struct SharedAppState {
     filter: GlobalFilter,
     filter_state: filter_panel::FilterPanelState,
     panel: TripDataPanelState,
+    plot_state: PlotState,
     map_center_request: Option<(f64, f64)>,
     /// Requested screen position for the next sticky info popup, set by panel
     /// item clicks and consumed by `NavMap::draw` as the popup's default position.
     popup_pos_request: Option<egui::Pos2>,
     /// When `true`, `NavMap::draw` zooms the map to fit all currently visible data.
     zoom_to_visible_request: bool,
+    /// When `true`, the plot automatically pans to show the time range of TPV
+    /// points visible in the current map viewport.
+    sync_plot_to_map: bool,
 }
 
 pub struct App {
@@ -56,6 +74,8 @@ pub struct App {
     load_rx: mpsc::Receiver<loader::LoadMessage>,
     /// Jobs that are currently in-flight (used for the progress overlay).
     loading_jobs: Vec<loader::LoadingJob>,
+    /// Jobs that have completed and are fading out of the progress overlay.
+    finishing_jobs: Vec<loader::FinishedJob>,
     /// Monotonically increasing counter for assigning unique job IDs.
     next_load_id: u64,
     /// One-shot channel from a background file-picker thread.
@@ -66,6 +86,11 @@ pub struct App {
     /// dialog is therefore spawned on a dedicated thread; the chosen path (or
     /// `None` on cancellation) is sent here and consumed on the next frame.
     file_dialog_rx: Option<mpsc::Receiver<Option<PathBuf>>>,
+
+    /// Tiles tree for the central area — map (top) and plot (bottom).
+    tiles_tree: Tree<MainPane>,
+    /// TileId of the plot pane — toggled visible/invisible via the menu button.
+    plot_tile_id: TileId,
 }
 
 impl App {
@@ -112,6 +137,18 @@ impl App {
 
         let (load_tx, load_rx) = mpsc::channel::<loader::LoadMessage>();
 
+        // Build the central-area tiles tree: map on top (~60%), plot on bottom (~40%).
+        let mut tiles: Tiles<MainPane> = Tiles::default();
+        let map_tile_id = tiles.insert_pane(MainPane::Map);
+        let plot_tile_id = tiles.insert_pane(MainPane::Plot);
+
+        // 60 % map, 40 % plot initial split.
+        let root_tile_id = tiles.insert_new(Tile::Container(Container::Linear(
+            Linear::new_binary(LinearDir::Vertical, [map_tile_id, plot_tile_id], 0.6),
+        )));
+
+        let tiles_tree = Tree::new("main_tiles", root_tile_id, tiles);
+
         let mut app = Self {
             map,
             shared: Rc::new(RefCell::new(SharedAppState {
@@ -121,9 +158,11 @@ impl App {
                 filter: GlobalFilter::default(),
                 filter_state: filter_panel::FilterPanelState::default(),
                 panel: TripDataPanelState::new(),
+                plot_state: PlotState::default(),
                 map_center_request: None,
                 popup_pos_request: None,
                 zoom_to_visible_request: false,
+                sync_plot_to_map: true,
             })),
             load_error: None,
             unassociated_log_lines: None,
@@ -132,8 +171,11 @@ impl App {
             load_tx,
             load_rx,
             loading_jobs: Vec::new(),
+            finishing_jobs: Vec::new(),
             next_load_id: 0,
             file_dialog_rx: None,
+            tiles_tree,
+            plot_tile_id,
         };
 
         for path in paths {
@@ -187,6 +229,7 @@ impl App {
             filename: filename.clone(),
             progress: 0.0,
             stage: STAGE_STARTING,
+            started_at: std::time::Instant::now(),
         });
 
         let tx = self.load_tx.clone();
@@ -209,7 +252,17 @@ impl App {
                 };
 
                 let outcome = nav_io::load_file_with_progress(&path, report)
-                    .map(loader::LoadOutcome::NvdFile)
+                    .map(|file| {
+                        tx.send(loader::LoadMessage::Progress {
+                            id,
+                            fraction: 0.95,
+                            stage: STAGE_PLOTTING,
+                        })
+                        .ok();
+                        ctx.request_repaint();
+                        let series = nav_plot::prepare_file_series(0, &file);
+                        loader::LoadOutcome::NvdFile { file, series }
+                    })
                     .map_err(|e| e.to_string());
 
                 tx.send(loader::LoadMessage::Completed { id, outcome }).ok();
@@ -230,6 +283,7 @@ impl App {
             filename: filename.clone(),
             progress: 0.0,
             stage: STAGE_STARTING,
+            started_at: std::time::Instant::now(),
         });
 
         let tx = self.load_tx.clone();
@@ -250,7 +304,17 @@ impl App {
                 };
 
                 let outcome = nav_io::load_bytes_with_progress(&bytes, filename, report)
-                    .map(loader::LoadOutcome::NvdFile)
+                    .map(|file| {
+                        tx.send(loader::LoadMessage::Progress {
+                            id,
+                            fraction: 0.95,
+                            stage: STAGE_PLOTTING,
+                        })
+                        .ok();
+                        ctx.request_repaint();
+                        let series = nav_plot::prepare_file_series(0, &file);
+                        loader::LoadOutcome::NvdFile { file, series }
+                    })
                     .map_err(|e| e.to_string());
 
                 tx.send(loader::LoadMessage::Completed { id, outcome }).ok();
@@ -276,6 +340,7 @@ impl App {
             filename: filename.clone(),
             progress: 0.0,
             stage: STAGE_STARTING,
+            started_at: std::time::Instant::now(),
         });
 
         let nav_points = self.snapshot_nav_points();
@@ -327,6 +392,7 @@ impl App {
             filename: filename.clone(),
             progress: 0.0,
             stage: STAGE_STARTING,
+            started_at: std::time::Instant::now(),
         });
 
         let nav_points = self.snapshot_nav_points();
@@ -351,7 +417,7 @@ impl App {
             .expect("failed to spawn log-text loader thread");
     }
 
-    /// Drain all pending messages from background load threads. Called once per frame.
+    /// Drain all pending messages from background load threads.  Called once per frame.
     fn drain_load_channel(&mut self) {
         while let Ok(msg) = self.load_rx.try_recv() {
             match msg {
@@ -366,27 +432,55 @@ impl App {
                     }
                 }
                 loader::LoadMessage::Completed { id, outcome } => {
+                    // Capture elapsed time before removing the job so it can be
+                    // shown in the fade-out overlay.
+                    let elapsed_secs = self
+                        .loading_jobs
+                        .iter()
+                        .find(|j| j.id == id)
+                        .map_or(0.0, |j| j.started_at.elapsed().as_secs_f32());
+                    let filename = self
+                        .loading_jobs
+                        .iter()
+                        .find(|j| j.id == id)
+                        .map(|j| j.filename.clone())
+                        .unwrap_or_default();
                     self.loading_jobs.retain(|j| j.id != id);
                     match outcome {
-                        Ok(loader::LoadOutcome::NvdFile(loaded)) => {
+                        Ok(loader::LoadOutcome::NvdFile { file, series }) => {
                             let mut s = self.shared.borrow_mut();
-                            s.loaded_files.push(loaded);
+                            let fi = s.loaded_files.len();
+                            s.loaded_files.push(file);
                             s.visibility = TripDataVisibility::from_loaded(&s.loaded_files);
+                            s.plot_state.integrate_file(fi, series);
                             self.load_error = None;
+                            self.finishing_jobs.push(loader::FinishedJob {
+                                filename,
+                                elapsed_secs,
+                                completed_at: std::time::Instant::now(),
+                            });
                         }
                         Ok(loader::LoadOutcome::LogFile {
                             loaded,
+                            series,
                             unassociated,
                         }) => {
-                            if let Some(loaded) = loaded {
+                            if let (Some(loaded), Some(series)) = (loaded, series) {
                                 let mut s = self.shared.borrow_mut();
+                                let fi = s.loaded_files.len();
                                 s.loaded_files.push(loaded);
                                 s.visibility = TripDataVisibility::from_loaded(&s.loaded_files);
+                                s.plot_state.integrate_file(fi, series);
                             }
                             if !unassociated.is_empty() {
                                 self.unassociated_log_lines = Some(unassociated);
                             }
                             self.load_error = None;
+                            self.finishing_jobs.push(loader::FinishedJob {
+                                filename,
+                                elapsed_secs,
+                                completed_at: std::time::Instant::now(),
+                            });
                         }
                         Err(e) => {
                             log::error!("Background load failed: {e}");
@@ -467,6 +561,102 @@ impl App {
             self.load_error = Some("Unrecognised file format".to_owned());
         }
     }
+
+    /// Returns `true` when the plot tile is currently visible.
+    fn plot_is_visible(&self) -> bool {
+        self.tiles_tree.tiles.is_visible(self.plot_tile_id)
+    }
+
+    /// Toggle the plot tile's visibility.
+    ///
+    /// The tile is always kept in the tree so the GC never removes it — we
+    /// just flip its visibility flag, which causes the Linear container to
+    /// collapse it to zero size without removing it from the children list.
+    fn toggle_plot(&mut self) {
+        self.tiles_tree.tiles.toggle_visibility(self.plot_tile_id);
+    }
+}
+
+/// Behavior implementation that renders each pane of the central tiles tree.
+struct MainBehavior<'a> {
+    map: &'a mut NavMap,
+    state: &'a mut SharedAppState,
+    map_hover_time: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
+    fn pane_ui(&mut self, ui: &mut egui::Ui, _tile_id: TileId, pane: &mut MainPane) -> UiResponse {
+        match pane {
+            MainPane::Map => {
+                let s = &mut *self.state;
+                let center_req = s.map_center_request.take();
+                let popup_pos = s.popup_pos_request.take();
+                let zoom_to_visible = std::mem::replace(&mut s.zoom_to_visible_request, false);
+                if let Some(action) = self.map.draw(
+                    ui,
+                    &s.loaded_files,
+                    &s.visibility,
+                    &mut s.highlight,
+                    &s.filter,
+                    center_req,
+                    zoom_to_visible,
+                    popup_pos,
+                ) {
+                    match action {
+                        MapContextAction::ShowOnlyTrip {
+                            file_index,
+                            trip_index,
+                        } => {
+                            s.visibility.show_only_trip(file_index, trip_index);
+                        }
+                        MapContextAction::ShowOnlyFile { file_index } => {
+                            s.visibility.show_only_file(file_index);
+                        }
+                    }
+                }
+            }
+            MainPane::Plot => {
+                let s = &mut *self.state;
+                // Compute the time range of TPV points visible in the current
+                // map viewport so the plot can pan to follow the map.
+                let map_sync_x_range = if s.sync_plot_to_map {
+                    self.map
+                        .viewport_geo_bounds()
+                        .and_then(|b| tpv_time_range_in_bounds(&s.loaded_files, &s.visibility, b))
+                } else {
+                    None
+                };
+                show_trip_plot(
+                    ui,
+                    &s.loaded_files,
+                    &s.visibility,
+                    &s.filter,
+                    self.map_hover_time,
+                    map_sync_x_range,
+                    &mut s.plot_state,
+                );
+            }
+        }
+        UiResponse::None
+    }
+
+    fn tab_title_for_pane(&mut self, pane: &MainPane) -> egui::WidgetText {
+        match pane {
+            MainPane::Map => "Map".into(),
+            MainPane::Plot => "Plot".into(),
+        }
+    }
+
+    fn simplification_options(&self) -> SimplificationOptions {
+        // Do not auto-prune single-child or empty containers — this keeps the
+        // root Linear alive when the plot is hidden so the plot tile can be
+        // re-added to children without rebuilding the whole tree.
+        SimplificationOptions {
+            prune_single_child_containers: false,
+            prune_empty_containers: false,
+            ..Default::default()
+        }
+    }
 }
 
 impl eframe::App for App {
@@ -529,6 +719,22 @@ impl eframe::App for App {
                         ui.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
+                ui.add_space(16.0);
+                {
+                    let label = format!("{} Plot", egui_phosphor::regular::CHART_LINE_UP);
+                    let plot_visible = self.plot_is_visible();
+                    if ui.selectable_label(plot_visible, label).clicked() {
+                        self.toggle_plot();
+                    }
+                }
+                {
+                    let mut s = self.shared.borrow_mut();
+                    let label = format!("{} Sync", egui_phosphor::regular::LINK);
+                    ui.selectable_label(s.sync_plot_to_map, label)
+                        .on_hover_text("Sync plot time range to map viewport")
+                        .clicked()
+                        .then(|| s.sync_plot_to_map = !s.sync_plot_to_map);
+                }
                 ui.add_space(16.0);
                 egui::widgets::global_theme_preference_buttons(ui);
             });
@@ -594,40 +800,74 @@ impl eframe::App for App {
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            let mut refmut = self.shared.borrow_mut();
-            let center_req = refmut.map_center_request.take();
-            let popup_pos = refmut.popup_pos_request.take();
-            let zoom_to_visible = std::mem::replace(&mut refmut.zoom_to_visible_request, false);
-            let s = &mut *refmut;
-            self.map.draw(
-                ui,
-                &s.loaded_files,
-                &s.visibility,
-                &mut s.highlight,
-                &s.filter,
-                center_req,
-                zoom_to_visible,
-                popup_pos,
-            );
+            let mut s = self.shared.borrow_mut();
+            let map_hover_time = extract_map_hover_time(&s.loaded_files, &s.highlight);
+
+            // Render the tiles tree (map on top, optional plot on bottom).
+            // Borrow tiles_tree and map explicitly so the borrow checker can see
+            // they are disjoint from s (which comes from self.shared).
+            {
+                let map = &mut self.map;
+                let tiles_tree = &mut self.tiles_tree;
+                let mut behavior = MainBehavior {
+                    map,
+                    state: &mut s,
+                    map_hover_time,
+                };
+                tiles_tree.ui(&mut behavior, ui);
+            }
+
+            // Forward plot hover → map highlight (must happen after the tree renders
+            // so that show_trip_plot has already written the current hovered_time).
+            let plot_visible = self.plot_is_visible();
+            s.highlight.plot_hover_time = if plot_visible {
+                s.plot_state.hovered_time.and_then(|t| {
+                    find_closest_tpv(&s.loaded_files, &s.visibility, &s.filter, t).map(|_| t)
+                })
+            } else {
+                s.plot_state.hovered_time = None;
+                None
+            };
         });
 
         if self.map.layer() == MapLayer::Satellite && !self.map.has_mapbox_token() {
             show_mapbox_token_dialog(ui, &mut self.map, &mut self.mapbox_token_input);
         }
 
-        // Loading progress overlay — floats in the bottom-right corner and shows
-        // one progress bar per in-flight background load job.
-        if !self.loading_jobs.is_empty() {
+        // Loading progress overlay — floats in the bottom-right corner.
+        // Shows in-flight jobs with a live elapsed timer, and recently completed
+        // jobs that fade out over ~3 seconds so the user can see how long it took.
+        let any_finishing = !self.finishing_jobs.is_empty();
+        // Expire jobs that have fully faded (> 3 s since completion).
+        self.finishing_jobs
+            .retain(|j| j.completed_at.elapsed().as_secs_f32() < 3.0);
+
+        if !self.loading_jobs.is_empty() || any_finishing {
+            // Keep repainting while jobs are active or fading.
+            ui.ctx().request_repaint();
+
             egui::Window::new("##loading_progress")
                 .title_bar(false)
                 .resizable(false)
                 .anchor(egui::Align2::RIGHT_BOTTOM, [-8.0, -8.0])
                 .show(ui.ctx(), |ui| {
                     ui.set_min_width(260.0);
+
                     for job in &self.loading_jobs {
+                        let elapsed = job.started_at.elapsed().as_secs_f32();
                         ui.horizontal(|ui| {
                             ui.spinner();
                             ui.label(egui::RichText::new(&job.filename).strong().small());
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("{elapsed:.1}s"))
+                                            .small()
+                                            .weak(),
+                                    );
+                                },
+                            );
                         });
                         ui.add(
                             egui::ProgressBar::new(job.progress)
@@ -635,6 +875,48 @@ impl eframe::App for App {
                                 .desired_width(240.0)
                                 .text(job.stage),
                         );
+                        ui.add_space(2.0);
+                    }
+
+                    for job in &self.finishing_jobs {
+                        let since = job.completed_at.elapsed().as_secs_f32();
+                        // Fully opaque for the first 2 s, then fade to transparent by 3 s.
+                        #[expect(
+                            clippy::cast_sign_loss,
+                            reason = "fade_frac is clamped to [0, 1] before multiplying by 255"
+                        )]
+                        let alpha = if since < 2.0 {
+                            255_u8
+                        } else {
+                            let fade = 1.0 - ((since - 2.0) / 1.0).min(1.0);
+                            (fade * 255.0) as u8
+                        };
+                        let color = egui::Color32::from_rgba_unmultiplied(140, 210, 140, alpha);
+                        let weak_color =
+                            egui::Color32::from_rgba_unmultiplied(120, 170, 120, alpha);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(egui_phosphor::regular::CHECK)
+                                    .color(color)
+                                    .small(),
+                            );
+                            ui.label(
+                                egui::RichText::new(&job.filename)
+                                    .color(color)
+                                    .strong()
+                                    .small(),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("{:.1}s", job.elapsed_secs))
+                                            .color(weak_color)
+                                            .small(),
+                                    );
+                                },
+                            );
+                        });
                         ui.add_space(2.0);
                     }
                 });
@@ -660,15 +942,87 @@ impl eframe::App for App {
         {
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
-            show_delete_confirmation(ui, &mut s.panel, &mut s.loaded_files, &mut s.visibility);
+            if show_delete_confirmation(ui, &mut s.panel, &mut s.loaded_files, &mut s.visibility) {
+                s.plot_state.rebuild_all(&s.loaded_files);
+            }
         }
 
         show_unassociated_popup(ui, &mut self.unassociated_log_lines);
     }
 }
 
+/// Find the Unix-second time range of TPV points that lie within the given map
+/// geographic bounds, considering only files/trips currently enabled in `visibility`.
+///
+/// Returns `None` when no visible TPV points fall in the viewport.
+fn tpv_time_range_in_bounds(
+    files: &[LoadedFile],
+    visibility: &TripDataVisibility,
+    bounds: nav_map::GeoBounds,
+) -> Option<(f64, f64)> {
+    use uom::si::angle::degree;
+    let mut t_min = f64::INFINITY;
+    let mut t_max = f64::NEG_INFINITY;
+
+    for (fi, file) in files.iter().enumerate() {
+        let Some(fv) = visibility.files.get(fi) else {
+            continue;
+        };
+        if !fv.enabled {
+            continue;
+        }
+        for (ti, trip) in file.trips.iter().enumerate() {
+            let Some(tv) = fv.trips.get(ti) else {
+                continue;
+            };
+            if !tv.enabled {
+                continue;
+            }
+            for point in &trip.points {
+                let lat = point.tpv.lat().get::<degree>();
+                let lon = point.tpv.lon().get::<degree>();
+                if lat < bounds.lat_min
+                    || lat > bounds.lat_max
+                    || lon < bounds.lon_min
+                    || lon > bounds.lon_max
+                {
+                    continue;
+                }
+                let t = point.tpv.time().utc().timestamp() as f64;
+                t_min = t_min.min(t);
+                t_max = t_max.max(t);
+            }
+        }
+    }
+
+    if t_min.is_finite() && t_max.is_finite() {
+        Some((t_min, t_max))
+    } else {
+        None
+    }
+}
+
+/// Extract the GPS timestamp of the map-hovered TPV point (if any) so the plot
+/// can draw a vertical cursor at the corresponding time.
+fn extract_map_hover_time(
+    files: &[LoadedFile],
+    highlight: &MapHighlight,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    let HighlightScope::Point(point_ref) = highlight.hover? else {
+        return None;
+    };
+    if point_ref.category != DataCategory::Tpv {
+        return None;
+    }
+    files
+        .get(point_ref.file_index)
+        .and_then(|f| f.trips.get(point_ref.trip_index))
+        .and_then(|t| t.points.get(point_ref.point_index))
+        .map(|p| p.tpv.time().utc())
+}
+
 /// Shared tail of log-file loading: parse `content`, build a `LoadedFile`, and
-/// send the `Completed` message. Called from both the path-based and bytes-based
+/// send the `Completed` message.  Called from both the path-based and bytes-based
 /// log loader threads after file content has been obtained.
 fn finish_log_load(
     id: u64,
@@ -694,11 +1048,14 @@ fn finish_log_load(
 
     report(0.90, STAGE_PROCESSING);
     let loaded = loader::build_log_loaded_file(filename, result.markers);
+    report(0.95, STAGE_PLOTTING);
+    let series = loaded.as_ref().map(|f| nav_plot::prepare_file_series(0, f));
 
     tx.send(loader::LoadMessage::Completed {
         id,
         outcome: Ok(loader::LoadOutcome::LogFile {
             loaded,
+            series,
             unassociated: result.unassociated,
         }),
     })

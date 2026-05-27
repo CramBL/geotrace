@@ -1,3 +1,4 @@
+use nav_plot::PreparedSeries;
 use nav_types::{Coord, CustomMarker, FileMetadata, LoadedFile, LoadedTrip, Rect, TripMetadata};
 use uom::si::angle::degree;
 
@@ -7,16 +8,38 @@ pub struct LoadingJob {
     pub filename: String,
     pub progress: f32,
     pub stage: &'static str,
+    /// Wall-clock time when the job was enqueued, used to display elapsed time.
+    pub started_at: std::time::Instant,
+}
+
+/// A load job that has finished and is waiting to be dismissed from the UI.
+///
+/// Shown for a few seconds with a fade-out so the user can see how long the
+/// load took even if it completed quickly.
+pub struct FinishedJob {
+    pub filename: String,
+    /// Total wall-clock time the job took, frozen at the moment of completion.
+    pub elapsed_secs: f32,
+    /// When the job completed — used to drive the fade-out animation.
+    pub completed_at: std::time::Instant,
 }
 
 /// Final result produced by a background load thread.
 pub enum LoadOutcome {
-    /// A successfully parsed `.nvd` / HDF5 file.
-    NvdFile(LoadedFile),
+    /// A successfully parsed `.nvd` / HDF5 file with pre-built plot series.
+    NvdFile {
+        file: LoadedFile,
+        /// Pre-built mipmap series; `fi` is a placeholder (0) because the real
+        /// file index is only known on the UI thread when the file is appended
+        /// to `loaded_files`.  `PlotState::integrate_file` re-stamps the index.
+        series: PreparedSeries,
+    },
     /// A successfully parsed log file; `loaded` is `None` when all entries were
     /// unassociated with any GPS track.
     LogFile {
         loaded: Option<LoadedFile>,
+        /// Pre-built plot series for the loaded file, if any.
+        series: Option<PreparedSeries>,
         unassociated: Vec<String>,
     },
 }

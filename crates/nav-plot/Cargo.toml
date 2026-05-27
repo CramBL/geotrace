@@ -1,0 +1,19 @@
+[package]
+name = "nav-plot"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+chrono.workspace = true
+egui.workspace = true
+egui_plot.workspace = true
+nav-egui-mipmap = { path = "../nav-egui-mipmap" }
+nav-types = { path = "../nav-types" }
+rayon.workspace = true
+uom.workspace = true
+
+[lints]
+workspace = true

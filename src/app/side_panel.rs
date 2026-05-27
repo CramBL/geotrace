@@ -57,13 +57,24 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     render_filter_panel(ui, ctx.files, ctx.filter, ctx.filter_state);
 
     let filter_snapshot = *ctx.filter;
+    // Collect every trip that is not currently visible: disabled file, disabled
+    // trip, or fails the active filter.  All three cases are "filtered out".
+    let vis = &*ctx.visibility;
     let filtered_out: Vec<SelectionKey> = ctx
         .files
         .iter()
         .enumerate()
         .flat_map(|(fi, file)| {
+            let file_enabled = vis.files.get(fi).is_some_and(|fv| fv.enabled);
             file.trips.iter().enumerate().filter_map(move |(ti, trip)| {
-                if !nav_types::trip_passes_filter(&trip.metadata, &filter_snapshot) {
+                let trip_enabled = file_enabled
+                    && vis
+                        .files
+                        .get(fi)
+                        .and_then(|fv| fv.trips.get(ti))
+                        .is_some_and(|tv| tv.enabled);
+                let passes = nav_types::trip_passes_filter(&trip.metadata, &filter_snapshot);
+                if !trip_enabled || !passes {
                     Some(SelectionKey::Trip(fi, ti))
                 } else {
                     None
@@ -71,10 +82,27 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
             })
         })
         .collect();
-    if !filtered_out.is_empty() && ui.button("Delete all filtered data").clicked() {
-        ctx.panel.delete_confirm = Some(DeleteConfirmState {
-            items: filtered_out,
-        });
+    if !filtered_out.is_empty() {
+        let clicked = ui
+            .scope(|ui| {
+                // Turn the button red on hover/active to signal it's destructive.
+                let v = ui.visuals_mut();
+                v.widgets.hovered.bg_fill = egui::Color32::from_rgb(160, 35, 35);
+                v.widgets.hovered.fg_stroke.color = egui::Color32::WHITE;
+                v.widgets.active.bg_fill = egui::Color32::from_rgb(130, 25, 25);
+                v.widgets.active.fg_stroke.color = egui::Color32::WHITE;
+                ui.button(format!(
+                    "{} Delete all filtered data",
+                    egui_phosphor::regular::TRASH
+                ))
+                .clicked()
+            })
+            .inner;
+        if clicked {
+            ctx.panel.delete_confirm = Some(DeleteConfirmState {
+                items: filtered_out,
+            });
+        }
     }
 
     ui.separator();

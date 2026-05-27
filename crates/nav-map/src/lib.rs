@@ -182,6 +182,30 @@ pub enum MapLayer {
     Satellite,
 }
 
+/// Action requested from a right-click context menu on a map element.
+///
+/// Returned by [`NavMap::draw`] when the user selects an item; the caller is
+/// responsible for applying it to the visibility state.
+#[derive(Debug, Clone, Copy)]
+pub enum MapContextAction {
+    /// Hide every trip except the one at `(file_index, trip_index)`.
+    ShowOnlyTrip {
+        file_index: usize,
+        trip_index: usize,
+    },
+    /// Hide every file except the one at `file_index`.
+    ShowOnlyFile { file_index: usize },
+}
+
+/// Geographic bounding box of the currently visible map viewport.
+#[derive(Debug, Clone, Copy)]
+pub struct GeoBounds {
+    pub lat_min: f64,
+    pub lat_max: f64,
+    pub lon_min: f64,
+    pub lon_max: f64,
+}
+
 pub struct NavMap {
     egui_ctx: Context,
     osm_tiles: HttpTiles,
@@ -199,6 +223,12 @@ pub struct NavMap {
     blink_start: Option<Instant>,
     /// Index of the first newly loaded file; files[new_file_boundary..] are new.
     new_file_boundary: usize,
+    /// Geographic bounds of the last rendered viewport.
+    /// `None` before the first draw call.
+    last_viewport_bounds: Option<GeoBounds>,
+    /// The element that was under the pointer when the last right-click fired.
+    /// Held across frames so the context menu can reference it while it is open.
+    right_click_ref: Option<DataPointRef>,
 }
 
 impl NavMap {
@@ -215,7 +245,16 @@ impl NavMap {
             last_file_count: 0,
             blink_start: None,
             new_file_boundary: 0,
+            last_viewport_bounds: None,
+            right_click_ref: None,
         }
+    }
+
+    /// Return the geographic bounds of the most recently rendered map viewport.
+    ///
+    /// Returns `None` before the first call to [`Self::draw`].
+    pub fn viewport_geo_bounds(&self) -> Option<GeoBounds> {
+        self.last_viewport_bounds
     }
 
     /// Set (or clear) the Mapbox API token. Passing an empty string clears the token
@@ -267,7 +306,7 @@ impl NavMap {
         center_request: Option<(f64, f64)>,
         zoom_to_visible: bool,
         sticky_pos_override: Option<egui::Pos2>,
-    ) {
+    ) -> Option<MapContextAction> {
         if let Some((lat, lon)) = center_request {
             self.map_memory.center_at(walkers::lat_lon(lat, lon));
         }
@@ -364,8 +403,13 @@ impl NavMap {
 
         let map_response = ui.add(map);
 
-        // Layer toggle — floating panel anchored to the bottom-right of the map.
+        // Compute and cache the current viewport's geographic bounds so callers
+        // can query them via `viewport_geo_bounds()` after each draw call.
         let map_rect = map_response.rect;
+        self.last_viewport_bounds = Some(compute_viewport_bounds(&self.map_memory, map_rect));
+
+        // Layer toggle — floating panel anchored to the bottom-right of the map.
+
         egui::Area::new(egui::Id::new("map_layer_toggle"))
             .fixed_pos(egui::pos2(map_rect.right() - 8.0, map_rect.bottom() - 8.0))
             .pivot(egui::Align2::RIGHT_BOTTOM)
@@ -412,6 +456,48 @@ impl NavMap {
             }
         }
 
+        // Right-click context menu: capture the hovered element on the frame
+        // the right button fires, then hold it for the lifetime of the menu.
+        if map_response.secondary_clicked() {
+            self.right_click_ref = hover_ref.get().map(|(r, _)| r);
+        }
+        let right_click_ref = self.right_click_ref;
+        let mut context_action: Option<MapContextAction> = None;
+        map_response.context_menu(|ui| {
+            let Some(point_ref) = right_click_ref else {
+                // Right-clicked on empty map space — nothing to show.
+                ui.close();
+                return;
+            };
+            let Some(file) = files.get(point_ref.file_index) else {
+                ui.close();
+                return;
+            };
+            // Header: file name and trip number (trip omitted for single-trip files).
+            ui.add(egui::Label::new(
+                egui::RichText::new(file.metadata.filename.as_str()).weak(),
+            ));
+            if file.trips.len() > 1 {
+                ui.add(egui::Label::new(
+                    egui::RichText::new(format!("Trip {}", point_ref.trip_index + 1)).weak(),
+                ));
+            }
+            ui.separator();
+            if ui.button("Only show elements from this trip").clicked() {
+                context_action = Some(MapContextAction::ShowOnlyTrip {
+                    file_index: point_ref.file_index,
+                    trip_index: point_ref.trip_index,
+                });
+                ui.close();
+            }
+            if ui.button("Only show elements from this file").clicked() {
+                context_action = Some(MapContextAction::ShowOnlyFile {
+                    file_index: point_ref.file_index,
+                });
+                ui.close();
+            }
+        });
+
         // Show a persistent, text-selectable info window for the sticky element.
         if let Some(sticky_ref) = highlight.sticky {
             show_sticky_popup(ui.ctx(), files, sticky_ref, self.sticky_pos);
@@ -424,6 +510,8 @@ impl NavMap {
         } else {
             None
         };
+
+        context_action
     }
 }
 
@@ -678,6 +766,49 @@ fn compute_bounding_box(files: &[LoadedFile]) -> Option<(f64, f64, f64, f64)> {
         Some((min_lat, max_lat, min_lon, max_lon))
     } else {
         None
+    }
+}
+
+/// Compute the geographic bounding box of the given map viewport rect.
+///
+/// Uses the walkers `Projector` to unproject the four corners of `map_rect`
+/// into geographic positions and returns their bounding envelope.
+fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Rect) -> GeoBounds {
+    // `my_position` is only used as a fallback when the map is in GPS-follow mode;
+    // since we always call `center_at()` explicitly, `detached()` provides the
+    // actual center.  Fall back to (0, 0) if `detached()` is unset.
+    let center = map_memory
+        .detached()
+        .unwrap_or_else(|| walkers::lat_lon(0.0, 0.0));
+    let projector = walkers::Projector::new(map_rect, map_memory, center);
+
+    let corners = [
+        map_rect.left_top(),
+        map_rect.right_top(),
+        map_rect.left_bottom(),
+        map_rect.right_bottom(),
+    ];
+
+    let mut lat_min = f64::INFINITY;
+    let mut lat_max = f64::NEG_INFINITY;
+    let mut lon_min = f64::INFINITY;
+    let mut lon_max = f64::NEG_INFINITY;
+
+    for corner in corners {
+        let pos = projector.unproject(corner.to_vec2());
+        let lat = pos.y();
+        let lon = pos.x();
+        lat_min = lat_min.min(lat);
+        lat_max = lat_max.max(lat);
+        lon_min = lon_min.min(lon);
+        lon_max = lon_max.max(lon);
+    }
+
+    GeoBounds {
+        lat_min,
+        lat_max,
+        lon_min,
+        lon_max,
     }
 }
 

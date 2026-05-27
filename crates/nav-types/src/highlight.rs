@@ -33,8 +33,13 @@ pub enum HighlightScope {
     Point(DataPointRef),
 }
 
+use chrono::{DateTime, Utc};
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MapHighlight {
     pub hover: Option<HighlightScope>,
     pub sticky: Option<DataPointRef>,
+    /// Time currently hovered on the trip plot; used to cross-highlight the
+    /// closest TPV point on the map.  `None` when the plot cursor is inactive.
+    pub plot_hover_time: Option<DateTime<Utc>>,
 }

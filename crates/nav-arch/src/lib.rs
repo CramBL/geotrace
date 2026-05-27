@@ -113,7 +113,56 @@ mod tests {
             )
             .build();
 
-        // 5. Application Root Isolation (Whitelist)
+        // 4. nav_egui_mipmap Isolation (Whitelist)
+        builder
+            .module_lint()
+            .lint_named("nav_egui_mipmap_isolation")
+            .matching(|m| m.module("nav_egui_mipmap.*"))
+            .with_severity(Severity::Error)
+            .restrict_imports(
+                Some(vec![
+                    "^$".into(),
+                    "std.*".into(),
+                    "core.*".into(),
+                    "alloc.*".into(),
+                    "egui_plot.*".into(),
+                    "crate.*".into(),
+                    "nav_egui_mipmap.*".into(),
+                ]),
+                None,
+            )
+            .build();
+
+        // 5. nav_plot Isolation (Whitelist)
+        builder
+            .module_lint()
+            .lint_named("nav_plot_isolation")
+            .matching(|m| m.module("nav_plot.*"))
+            .with_severity(Severity::Error)
+            .restrict_imports(
+                Some(vec![
+                    "^$".into(),
+                    "std.*".into(),
+                    "core.*".into(),
+                    "alloc.*".into(),
+                    "chrono.*".into(),
+                    "egui.*".into(),
+                    "egui_plot.*".into(),
+                    "nav_egui_mipmap.*".into(),
+                    "rayon.*".into(),
+                    "uom.*".into(),
+                    "nav_types.*".into(),
+                    "crate.*".into(),
+                    "nav_plot.*".into(),
+                    // Sub-module shorthands used by the compiler
+                    "plot_widget.*".into(),
+                    "series.*".into(),
+                ]),
+                None,
+            )
+            .build();
+
+        // 6. Application Root Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("naview_isolation")
@@ -128,6 +177,7 @@ mod tests {
                     "egui.*".into(),
                     "egui_phosphor.*".into(),
                     "egui_extras.*".into(),
+                    "egui_tiles.*".into(),
                     "eframe.*".into(),
                     "env_logger.*".into(),
                     "log.*".into(),
@@ -136,6 +186,7 @@ mod tests {
                     "nav_fmt.*".into(),
                     "nav_types.*".into(),
                     "nav_map.*".into(),
+                    "nav_plot.*".into(),
                     "nav_io.*".into(),
                     "nav_log_marker.*".into(),
                     "naview_sdk.*".into(),
@@ -154,7 +205,7 @@ mod tests {
             )
             .build();
 
-        // 6. nav_log_marker Isolation (Whitelist)
+        // 7. nav_log_marker Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("nav_log_marker_isolation")

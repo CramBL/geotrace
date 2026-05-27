@@ -329,6 +329,76 @@ impl Plugin for TpvRenderer<'_> {
             }
         }
         self.show_tooltip(ui, local_closest);
+
+        // Cross-highlight: when the trip plot cursor is active, find the closest
+        // TPV point across all visible trips and draw a ring indicator around it.
+        if let Some(target_time) = self.highlight.plot_hover_time {
+            let target_secs = target_time.timestamp() as f64;
+            let mut closest: Option<(egui::Pos2, f32)> = None;
+
+            for (fi, file) in self.files.iter().enumerate() {
+                let Some(file_vis) = self.visibility.files.get(fi) else {
+                    continue;
+                };
+                if !file_vis.enabled {
+                    continue;
+                }
+                for (ti, trip) in file.trips.iter().enumerate() {
+                    let Some(trip_vis) = file_vis.trips.get(ti) else {
+                        continue;
+                    };
+                    if !trip_vis.enabled || !trip_vis.tpv_visible {
+                        continue;
+                    }
+                    if !filter::trip_passes_filter(&trip.metadata, self.filter) {
+                        continue;
+                    }
+                    let Some(best_pi) = trip
+                        .points
+                        .iter()
+                        .enumerate()
+                        .min_by(|(_, a), (_, b)| {
+                            let da = (a.tpv.time().utc().timestamp() as f64 - target_secs).abs();
+                            let db = (b.tpv.time().utc().timestamp() as f64 - target_secs).abs();
+                            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        .map(|(i, _)| i)
+                    else {
+                        continue;
+                    };
+                    let Some(point) = trip.points.get(best_pi) else {
+                        continue;
+                    };
+                    let dist = (point.tpv.time().utc().timestamp() as f64 - target_secs).abs();
+                    let screen_pos = transform.to_screen(point.merc_x, point.merc_y);
+                    if closest.is_none_or(|(_, d)| dist < (d as f64)) {
+                        closest = Some((screen_pos, dist as f32));
+                    }
+                }
+            }
+
+            if let Some((pos, _)) = closest {
+                // Draw a pulsing ring so the indicator is visible regardless of
+                // arrow color and doesn't obscure the underlying arrow.
+                let painter = ui.painter();
+                painter.circle_stroke(
+                    pos,
+                    base_arrow_size + 6.0,
+                    egui::Stroke::new(
+                        2.0,
+                        egui::Color32::from_rgba_unmultiplied(100, 200, 255, 230),
+                    ),
+                );
+                painter.circle_stroke(
+                    pos,
+                    base_arrow_size + 3.0,
+                    egui::Stroke::new(
+                        1.0,
+                        egui::Color32::from_rgba_unmultiplied(100, 200, 255, 120),
+                    ),
+                );
+            }
+        }
     }
 }
 

@@ -5,14 +5,18 @@ use nav_types::{LoadedFile, TripDataVisibility};
 
 use super::trip_data_panel::{SelectionKey, TripDataPanelState};
 
+/// Show the delete-confirmation dialog.
+///
+/// Returns `true` in the one frame when items were actually deleted so the
+/// caller can rebuild any caches that depend on file indices.
 pub fn show_delete_confirmation(
     ui: &egui::Ui,
     panel: &mut TripDataPanelState,
     loaded_files: &mut Vec<LoadedFile>,
     visibility: &mut TripDataVisibility,
-) {
+) -> bool {
     let Some(confirm) = &panel.delete_confirm else {
-        return;
+        return false;
     };
     let count = confirm.items.len();
     let enter_pressed = ui
@@ -27,11 +31,12 @@ pub fn show_delete_confirmation(
 
     egui::Window::new(format!("Delete {count} item(s)?"))
         .collapsible(false)
-        .resizable(false)
+        .resizable(true)
+        .min_width(360.0)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ui.ctx(), |ui| {
             egui::ScrollArea::vertical()
-                .max_height(200.0)
+                .max_height(500.0)
                 .show(ui, |ui| {
                     let items: Vec<_> = panel
                         .delete_confirm
@@ -74,6 +79,7 @@ pub fn show_delete_confirmation(
 
     if do_cancel {
         panel.delete_confirm = None;
+        return false;
     } else if do_delete {
         let items = panel
             .delete_confirm
@@ -81,7 +87,9 @@ pub fn show_delete_confirmation(
             .map(|c| c.items)
             .unwrap_or_default();
         execute_delete(&items, loaded_files, visibility, panel);
+        return true;
     }
+    false
 }
 
 pub fn execute_delete(
@@ -161,9 +169,21 @@ pub fn show_unassociated_popup(ui: &egui::Ui, lines: &mut Option<Vec<String>>) {
 }
 
 pub fn show_mapbox_token_dialog(ui: &egui::Ui, map: &mut NavMap, token_input: &mut String) {
+    // ESC dismisses the dialog — same effect as the cancel button.
+    let esc_pressed = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    if esc_pressed {
+        map.set_layer(MapLayer::OpenStreetMap);
+        token_input.clear();
+        return;
+    }
+
+    let mut open = true;
     egui::Window::new("Mapbox API Token Required")
         .collapsible(false)
         .resizable(false)
+        .open(&mut open)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ui.ctx(), |ui| {
             ui.label("Satellite view requires a Mapbox API token.");
@@ -183,4 +203,10 @@ pub fn show_mapbox_token_dialog(ui: &egui::Ui, map: &mut NavMap, token_input: &m
                 token_input.clear();
             }
         });
+
+    // X button in the title bar was clicked — treat as cancel.
+    if !open {
+        map.set_layer(MapLayer::OpenStreetMap);
+        token_input.clear();
+    }
 }
