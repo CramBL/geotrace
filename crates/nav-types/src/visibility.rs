@@ -19,6 +19,7 @@ pub struct TripVisibility {
     pub satellites_visible: bool,
     pub custom_markers_visible: bool,
     pub generated_markers_visible: bool,
+    pub event_markers_visible: bool,
 }
 
 impl TripVisibility {
@@ -30,6 +31,7 @@ impl TripVisibility {
             satellites_visible: true,
             custom_markers_visible: true,
             generated_markers_visible: true,
+            event_markers_visible: true,
         }
     }
 }

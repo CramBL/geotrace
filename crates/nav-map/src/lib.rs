@@ -1,4 +1,6 @@
+pub mod event_marker_renderer;
 pub mod generated_marker_renderer;
+mod marker_iter;
 pub mod marker_renderer;
 pub mod tpv_renderer;
 pub mod track_renderer;
@@ -160,7 +162,8 @@ pub fn register_marker_icons(ctx: &egui::Context) {
     ctx.include_bytes(ICON_URI_CHECK, include_bytes!("icons/check.svg").as_slice());
 }
 use nav_types::{
-    DataPointRef, GlobalFilter, HighlightScope, LoadedFile, MapHighlight, TripDataVisibility,
+    DataPointRef, EventMarkerVisibility, GlobalFilter, HighlightScope, LoadedFile, MapHighlight,
+    TripDataVisibility,
 };
 use std::cell::Cell;
 use std::rc::Rc;
@@ -169,6 +172,7 @@ use uom::si::angle::degree;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
 use walkers::{HttpTiles, Map, MapMemory};
 
+use crate::event_marker_renderer::EventMarkerRenderer;
 use crate::generated_marker_renderer::GeneratedMarkerRenderer;
 use crate::marker_renderer::MarkerRenderer;
 use crate::tpv_renderer::TpvRenderer;
@@ -197,6 +201,42 @@ pub enum MapContextAction {
     ShowOnlyFile { file_index: usize },
 }
 
+/// Manages the load-highlight pulse animation.
+///
+/// Tracks when the animation started and provides the per-frame alpha value.
+/// Once expired it clears itself so callers can avoid unnecessary repaints.
+struct BlinkState {
+    start: Option<Instant>,
+}
+
+impl BlinkState {
+    fn trigger(&mut self) {
+        self.start = Some(Instant::now());
+    }
+
+    /// Returns alpha in `[0.0, 1.0]` for the current frame.
+    /// Resets the timer when the animation expires so `is_active` returns
+    /// `false` on the same frame the last pulse ends.
+    fn tick(&mut self) -> f32 {
+        let Some(start) = self.start else {
+            return 0.0;
+        };
+        let elapsed = start.elapsed().as_secs_f32();
+        if elapsed >= 3.0 {
+            self.start = None;
+            0.0
+        } else {
+            // 2 Hz pulsing that fades to zero over 3 s.
+            let fade = 1.0 - (elapsed / 3.0);
+            (std::f32::consts::TAU * elapsed * 2.0).sin().abs() * fade
+        }
+    }
+
+    fn is_active(&self) -> bool {
+        self.start.is_some()
+    }
+}
+
 /// Geographic bounding box of the currently visible map viewport.
 #[derive(Debug, Clone, Copy)]
 pub struct GeoBounds {
@@ -219,8 +259,8 @@ pub struct NavMap {
     sticky_pos: egui::Pos2,
     /// How many files were loaded last frame — used to detect new loads.
     last_file_count: usize,
-    /// Start time of the load-highlight blink animation (None = not animating).
-    blink_start: Option<Instant>,
+    /// Load-highlight pulse animation state.
+    blink: BlinkState,
     /// Index of the first newly loaded file; files[new_file_boundary..] are new.
     new_file_boundary: usize,
     /// Geographic bounds of the last rendered viewport.
@@ -243,7 +283,7 @@ impl NavMap {
             hover_cell: Rc::new(Cell::new(None)),
             sticky_pos: egui::pos2(100.0, 100.0),
             last_file_count: 0,
-            blink_start: None,
+            blink: BlinkState { start: None },
             new_file_boundary: 0,
             last_viewport_bounds: None,
             right_click_ref: None,
@@ -303,6 +343,7 @@ impl NavMap {
         visibility: &TripDataVisibility,
         highlight: &mut MapHighlight,
         filter: &GlobalFilter,
+        event_marker_visibility: &EventMarkerVisibility,
         center_request: Option<(f64, f64)>,
         zoom_to_visible: bool,
         sticky_pos_override: Option<egui::Pos2>,
@@ -323,28 +364,14 @@ impl NavMap {
         if files.len() > self.last_file_count {
             self.new_file_boundary = self.last_file_count;
             self.last_file_count = files.len();
-            self.blink_start = Some(Instant::now());
+            self.blink.trigger();
             if let Some(bbox) = compute_bounding_box(files) {
                 zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
             }
         }
 
-        // Compute the current blink intensity (0 = off, 1 = fully lit).
-        let blink_alpha = match self.blink_start {
-            Some(start) => {
-                let elapsed = start.elapsed().as_secs_f32();
-                if elapsed >= 3.0 {
-                    self.blink_start = None;
-                    0.0_f32
-                } else {
-                    // 2 Hz pulsing that fades to zero over 3 s.
-                    let fade = 1.0 - (elapsed / 3.0);
-                    (std::f32::consts::TAU * elapsed * 2.0).sin().abs() * fade
-                }
-            }
-            None => 0.0_f32,
-        };
-        if self.blink_start.is_some() {
+        let blink_alpha = self.blink.tick();
+        if self.blink.is_active() {
             ui.ctx().request_repaint();
         }
 
@@ -398,6 +425,14 @@ impl NavMap {
                 visibility,
                 highlight,
                 filter,
+                Rc::clone(&hover_ref),
+            ))
+            .with_plugin(EventMarkerRenderer::new(
+                files,
+                visibility,
+                highlight,
+                filter,
+                event_marker_visibility,
                 Rc::clone(&hover_ref),
             ));
 
@@ -469,7 +504,7 @@ impl NavMap {
                 ui.close();
                 return;
             };
-            let Some(file) = files.get(point_ref.file_index) else {
+            let Some(file) = files.get(point_ref.file_index.0) else {
                 ui.close();
                 return;
             };
@@ -479,20 +514,20 @@ impl NavMap {
             ));
             if file.trips.len() > 1 {
                 ui.add(egui::Label::new(
-                    egui::RichText::new(format!("Trip {}", point_ref.trip_index + 1)).weak(),
+                    egui::RichText::new(format!("Trip {}", point_ref.trip_index.0 + 1)).weak(),
                 ));
             }
             ui.separator();
             if ui.button("Only show elements from this trip").clicked() {
                 context_action = Some(MapContextAction::ShowOnlyTrip {
-                    file_index: point_ref.file_index,
-                    trip_index: point_ref.trip_index,
+                    file_index: point_ref.file_index.0,
+                    trip_index: point_ref.trip_index.0,
                 });
                 ui.close();
             }
             if ui.button("Only show elements from this file").clicked() {
                 context_action = Some(MapContextAction::ShowOnlyFile {
-                    file_index: point_ref.file_index,
+                    file_index: point_ref.file_index.0,
                 });
                 ui.close();
             }
@@ -530,18 +565,18 @@ fn show_sticky_popup(
     // title is the point's datetime; for everything else fall back to a generic label.
     let title: String = if sticky_ref.category == DataCategory::Tpv {
         files
-            .get(sticky_ref.file_index)
-            .and_then(|f| f.trips.get(sticky_ref.trip_index))
-            .and_then(|t| t.points.get(sticky_ref.point_index))
+            .get(sticky_ref.file_index.0)
+            .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+            .and_then(|t| t.points.get(sticky_ref.point_index.0))
             .map_or_else(
                 || "GPS Point".to_string(),
                 |p| p.tpv.time().utc().format("%Y-%m-%d %H:%M:%S").to_string(),
             )
     } else if sticky_ref.category == DataCategory::SatelliteReport {
         files
-            .get(sticky_ref.file_index)
-            .and_then(|f| f.trips.get(sticky_ref.trip_index))
-            .and_then(|t| t.points.get(sticky_ref.point_index))
+            .get(sticky_ref.file_index.0)
+            .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+            .and_then(|t| t.points.get(sticky_ref.point_index.0))
             .and_then(|p| p.satellites.as_ref())
             .map_or_else(
                 || "Satellite Report".to_string(),
@@ -554,9 +589,9 @@ fn show_sticky_popup(
             )
     } else if sticky_ref.category == DataCategory::GeneratedMarker {
         files
-            .get(sticky_ref.file_index)
-            .and_then(|f| f.trips.get(sticky_ref.trip_index))
-            .and_then(|t| t.generated_markers.get(sticky_ref.point_index))
+            .get(sticky_ref.file_index.0)
+            .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+            .and_then(|t| t.generated_markers.get(sticky_ref.point_index.0))
             .map_or_else(
                 || "GPS Event".to_string(),
                 |m| m.time.format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -573,9 +608,9 @@ fn show_sticky_popup(
         .show(ctx, |ui| match sticky_ref.category {
             DataCategory::Tpv => {
                 if let Some(point) = files
-                    .get(sticky_ref.file_index)
-                    .and_then(|f| f.trips.get(sticky_ref.trip_index))
-                    .and_then(|t| t.points.get(sticky_ref.point_index))
+                    .get(sticky_ref.file_index.0)
+                    .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+                    .and_then(|t| t.points.get(sticky_ref.point_index.0))
                 {
                     // Cap the window height so satellite tables never overflow
                     // the screen. For small satellite counts the ScrollArea
@@ -594,9 +629,9 @@ fn show_sticky_popup(
             }
             DataCategory::CustomMarker => {
                 if let Some(marker) = files
-                    .get(sticky_ref.file_index)
-                    .and_then(|f| f.trips.get(sticky_ref.trip_index))
-                    .and_then(|t| t.custom_markers.get(sticky_ref.point_index))
+                    .get(sticky_ref.file_index.0)
+                    .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+                    .and_then(|t| t.custom_markers.get(sticky_ref.point_index.0))
                 {
                     egui::Grid::new("sticky_marker_grid")
                         .num_columns(2)
@@ -619,9 +654,9 @@ fn show_sticky_popup(
             }
             DataCategory::GeneratedMarker => {
                 if let Some(marker) = files
-                    .get(sticky_ref.file_index)
-                    .and_then(|f| f.trips.get(sticky_ref.trip_index))
-                    .and_then(|t| t.generated_markers.get(sticky_ref.point_index))
+                    .get(sticky_ref.file_index.0)
+                    .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+                    .and_then(|t| t.generated_markers.get(sticky_ref.point_index.0))
                 {
                     let kind_str = match marker.kind {
                         GeneratedMarkerKind::GpsFixLost => "GPS fix lost",
@@ -658,9 +693,9 @@ fn show_sticky_popup(
             }
             DataCategory::SatelliteReport => {
                 if let Some(point) = files
-                    .get(sticky_ref.file_index)
-                    .and_then(|f| f.trips.get(sticky_ref.trip_index))
-                    .and_then(|t| t.points.get(sticky_ref.point_index))
+                    .get(sticky_ref.file_index.0)
+                    .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+                    .and_then(|t| t.points.get(sticky_ref.point_index.0))
                 {
                     let max_h = (ui.ctx().viewport_rect().height() * 0.75).min(500.0);
                     egui::ScrollArea::vertical()
@@ -673,6 +708,36 @@ fn show_sticky_popup(
                 }
             }
             DataCategory::TripTrack => {}
+            DataCategory::EventMarker => {
+                if let Some(marker) = files
+                    .get(sticky_ref.file_index.0)
+                    .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+                    .and_then(|t| t.event_markers.get(sticky_ref.point_index.0))
+                {
+                    egui::Grid::new("sticky_event_marker_grid")
+                        .num_columns(2)
+                        .show(ui, |ui| {
+                            ui.label("Event");
+                            ui.add(egui::Label::new(marker.variant_path.clone()).selectable(true));
+                            ui.end_row();
+                            ui.label("Time");
+                            ui.add(
+                                egui::Label::new(
+                                    marker.time.format("%Y-%m-%d %H:%M:%S").to_string(),
+                                )
+                                .selectable(true),
+                            );
+                            ui.end_row();
+                            if let Some(ann) = &marker.annotation {
+                                ui.label("Note");
+                                ui.add(egui::Label::new(ann.clone()).selectable(true));
+                                ui.end_row();
+                            }
+                        });
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new("Click to deselect").small().weak());
+                }
+            }
         });
 }
 

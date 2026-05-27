@@ -5,21 +5,14 @@ use uom::si::velocity::meter_per_second;
 use crate::builder::{datetime_to_micros, opt_datetime_to_u64};
 use crate::error::Error;
 use crate::types::{Constellation, MarkerIcon, NavFile};
+use uom::si::angle::degree as degree_unit;
 
 /// Number of elements per chunk for 1-D compressed datasets.
 ///
-/// Chosen to balance I/O granularity and compression ratio. 1 024 elements
-/// at 8 bytes each = 8 KiB per chunk — a good fit for OS page sizes.
-const CHUNK_SIZE: u64 = 1_024;
-
-/// Maximum number of chunks per dataset.
-///
-/// hdf5-pure uses a Fixed Array chunk index whose paged variant (triggered when
-/// `num_chunks > 1 << max_nelmts_bits`, with `max_nelmts_bits` hardcoded to 10
-/// → `page_size = 1 024`) is written but **not yet readable** by the library.
-/// Keeping `num_chunks ≤ MAX_CHUNKS` (≤ 512) guarantees we always stay in the
-/// non-paged path that hdf5-pure can round-trip correctly.
-const MAX_CHUNKS: u64 = 512;
+/// 8 192 elements gives ≥ 8 KiB per chunk across all element sizes used here
+/// (1 B for u8, 4 B for f32/u32, 8 B for f64/i64/u64), which is enough for
+/// deflate to compress effectively.
+const CHUNK_SIZE: u64 = 8_192;
 
 /// Serialise `nav_file` to HDF5 bytes.
 pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
@@ -40,6 +33,7 @@ pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
     write_nav_points(nav_file, &mut fb);
     write_satellite_data(nav_file, &mut fb);
     write_markers(nav_file, &mut fb)?;
+    write_event_markers(nav_file, &mut fb);
 
     Ok(fb.finish()?)
 }
@@ -77,10 +71,7 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) {
 
     let mut grp = fb.create_group("nav_points");
 
-    // Chunk size: at least CHUNK_SIZE for I/O efficiency, but large enough to
-    // keep total chunk count ≤ MAX_CHUNKS so we never trigger hdf5-pure's
-    // unimplemented paged Fixed Array read path. The .max(1) handles n = 0.
-    let chunk = (n as u64).div_ceil(MAX_CHUNKS).max(CHUNK_SIZE).max(1);
+    let chunk = CHUNK_SIZE;
 
     grp.create_dataset("time")
         .with_i64_data(&times)
@@ -196,10 +187,8 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) {
     let r = report_nav_point_idx.len();
     let ts = tracked_rep_idx.len();
 
-    // r > 0 is guaranteed by the early return above.
-    let r_chunk = (r as u64).div_ceil(MAX_CHUNKS).max(CHUNK_SIZE).max(1);
-    // ts may be 0 if all reports have no tracked satellites (rare in practice).
-    let ts_chunk = (ts as u64).div_ceil(MAX_CHUNKS).max(CHUNK_SIZE).max(1);
+    let r_chunk = CHUNK_SIZE.max(1);
+    let ts_chunk = CHUNK_SIZE.max(1);
 
     // sat_reports/
     let mut sat_grp = fb.create_group("sat_reports");
@@ -334,8 +323,7 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
         label_flat.extend_from_slice(&row);
     }
 
-    // k > 0 is guaranteed by the early return above.
-    let k_chunk = (k as u64).div_ceil(MAX_CHUNKS).max(CHUNK_SIZE).max(1);
+    let k_chunk = CHUNK_SIZE.max(1);
 
     let mut grp = fb.create_group("markers");
     grp.create_dataset("time")
@@ -373,6 +361,8 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
         )
         .with_chunks(&[k_chunk])
         .with_deflate(6);
+    // Label rows are 256 B each; chunk by 32 rows to stay at ~8 KiB per chunk.
+    let label_row_chunk = (CHUNK_SIZE / 256).max(1);
     grp.create_dataset("label")
         .with_u8_data(&label_flat)
         .with_shape(&[k as u64, 256])
@@ -382,11 +372,163 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
         )
         .set_attr("truncated", AttrValue::I32(i32::from(any_truncated)))
         // Chunk by rows; shuffle is a no-op for u8 (1-byte elements) so omit it.
-        .with_chunks(&[k_chunk, 256])
+        .with_chunks(&[label_row_chunk, 256])
         .with_deflate(6);
     fb.add_group(grp.finish());
 
     Ok(())
+}
+
+fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) {
+    let em = nav_file.event_markers();
+    let styles = nav_file.event_marker_styles();
+
+    if !em.is_empty() {
+        let n = em.len();
+        let mut sys_times: Vec<u64> = Vec::with_capacity(n);
+        let mut lats: Vec<f64> = Vec::with_capacity(n);
+        let mut lons: Vec<f64> = Vec::with_capacity(n);
+        let mut vp_flat: Vec<u8> = Vec::with_capacity(n * 256);
+        let mut ann_flat: Vec<u8> = Vec::with_capacity(n * 512);
+
+        for m in em {
+            sys_times.push(m.sys_time.timestamp_micros().cast_unsigned());
+            lats.push(m.lat.get::<degree_unit>());
+            lons.push(m.lon.get::<degree_unit>());
+
+            let vp = m.variant_path.as_bytes();
+            let mut row = [0u8; 256];
+            let len = vp.len().min(255);
+            if let (Some(dst), Some(src)) = (row.get_mut(..len), vp.get(..len)) {
+                dst.copy_from_slice(src);
+            }
+            vp_flat.extend_from_slice(&row);
+
+            let ann = m.annotation.as_deref().unwrap_or("");
+            let ann_bytes = ann.as_bytes();
+            let mut row = [0u8; 512];
+            let len = ann_bytes.len().min(511);
+            if let (Some(dst), Some(src)) = (row.get_mut(..len), ann_bytes.get(..len)) {
+                dst.copy_from_slice(src);
+            }
+            ann_flat.extend_from_slice(&row);
+        }
+
+        let n_chunk = CHUNK_SIZE.max(1);
+        let vp_row_chunk = (CHUNK_SIZE / 256).max(1);
+        let ann_row_chunk = (CHUNK_SIZE / 512).max(1);
+
+        let mut grp = fb.create_group("event_markers");
+        grp.create_dataset("sys_time_us")
+            .with_u64_data(&sys_times)
+            .with_shape(&[n as u64])
+            .set_attr(
+                "units",
+                AttrValue::String("microseconds since 1970-01-01T00:00:00Z".into()),
+            )
+            .set_attr("absent_sentinel", AttrValue::String("u64::MAX".into()))
+            .with_chunks(&[n_chunk])
+            .with_shuffle()
+            .with_deflate(6);
+        grp.create_dataset("lat")
+            .with_f64_data(&lats)
+            .with_shape(&[n as u64])
+            .set_attr("units", AttrValue::String("degrees".into()))
+            .with_chunks(&[n_chunk])
+            .with_shuffle()
+            .with_deflate(6);
+        grp.create_dataset("lon")
+            .with_f64_data(&lons)
+            .with_shape(&[n as u64])
+            .set_attr("units", AttrValue::String("degrees".into()))
+            .with_chunks(&[n_chunk])
+            .with_shuffle()
+            .with_deflate(6);
+        // variant_path: 256 B rows → chunk at CHUNK_SIZE/256 rows
+        grp.create_dataset("variant_path")
+            .with_u8_data(&vp_flat)
+            .with_shape(&[n as u64, 256])
+            .set_attr(
+                "encoding",
+                AttrValue::String("UTF-8 null-padded to 256 bytes, max 255 content bytes".into()),
+            )
+            .with_chunks(&[vp_row_chunk, 256])
+            .with_deflate(6);
+        // annotation: 512 B rows → chunk at CHUNK_SIZE/512 rows
+        grp.create_dataset("annotation")
+            .with_u8_data(&ann_flat)
+            .with_shape(&[n as u64, 512])
+            .set_attr(
+                "encoding",
+                AttrValue::String("UTF-8 null-padded to 512 bytes, empty = no annotation".into()),
+            )
+            .with_chunks(&[ann_row_chunk, 512])
+            .with_deflate(6);
+        fb.add_group(grp.finish());
+    }
+
+    if !styles.is_empty() {
+        let m = styles.len();
+        let mut vp_flat: Vec<u8> = Vec::with_capacity(m * 256);
+        let mut icon_flat: Vec<u8> = Vec::with_capacity(m * 32);
+        let mut color_flat: Vec<u8> = Vec::with_capacity(m * 8);
+
+        for s in styles {
+            let vp = s.variant_path.as_bytes();
+            let mut row = [0u8; 256];
+            let len = vp.len().min(255);
+            if let (Some(dst), Some(src)) = (row.get_mut(..len), vp.get(..len)) {
+                dst.copy_from_slice(src);
+            }
+            vp_flat.extend_from_slice(&row);
+
+            let icon = s.icon_name.as_bytes();
+            let mut row = [0u8; 32];
+            let len = icon.len().min(31);
+            if let (Some(dst), Some(src)) = (row.get_mut(..len), icon.get(..len)) {
+                dst.copy_from_slice(src);
+            }
+            icon_flat.extend_from_slice(&row);
+
+            let color = s.color_hex.as_bytes();
+            let mut row = [0u8; 8];
+            let len = color.len().min(7);
+            if let (Some(dst), Some(src)) = (row.get_mut(..len), color.get(..len)) {
+                dst.copy_from_slice(src);
+            }
+            color_flat.extend_from_slice(&row);
+        }
+
+        let m_chunk = (CHUNK_SIZE / 256).max(1);
+        let icon_chunk = (CHUNK_SIZE / 32).max(1);
+        let color_chunk = (CHUNK_SIZE / 8).max(1);
+
+        let mut grp = fb.create_group("event_marker_styles");
+        grp.create_dataset("variant_path")
+            .with_u8_data(&vp_flat)
+            .with_shape(&[m as u64, 256])
+            .with_chunks(&[m_chunk, 256])
+            .with_deflate(6);
+        grp.create_dataset("icon_name")
+            .with_u8_data(&icon_flat)
+            .with_shape(&[m as u64, 32])
+            .set_attr(
+                "encoding",
+                AttrValue::String("lowercase MarkerIcon variant name, null-padded".into()),
+            )
+            .with_chunks(&[icon_chunk, 32])
+            .with_deflate(6);
+        grp.create_dataset("color_hex")
+            .with_u8_data(&color_flat)
+            .with_shape(&[m as u64, 8])
+            .set_attr(
+                "encoding",
+                AttrValue::String("#RRGGBB null-padded to 8 bytes".into()),
+            )
+            .with_chunks(&[color_chunk, 8])
+            .with_deflate(6);
+        fb.add_group(grp.finish());
+    }
 }
 
 /// Truncate `s` to at most `max_bytes` bytes on a valid UTF-8 boundary.

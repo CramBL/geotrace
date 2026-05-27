@@ -1,7 +1,9 @@
-use crate::markers::{CustomMarker, GeneratedMarker, GeneratedMarkerKind};
+use crate::markers::{
+    CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
+};
 use crate::nav_point::NavPoint;
 use crate::time_types::GpsTime;
-use crate::trip::{FileMetadata, LoadedFile, LoadedTrip, TripMetadata};
+use crate::trip::{FileMetadata, LoadedFile, LoadedTrip, TimeRange, TripMetadata};
 use chrono::{DateTime, Duration, Utc};
 use geo_types::{Coord, Rect};
 use nav_geo_math::{path_distance_km, point_set_diameter_m};
@@ -32,46 +34,113 @@ pub fn segment_trips(points: &[NavPoint]) -> Vec<Range<usize>> {
     ranges
 }
 
-fn detect_generated_markers(points: &[NavPoint]) -> Vec<GeneratedMarker> {
-    let mut markers = Vec::new();
-    let mut prev_fix: Option<u32> = None;
-    // The last point where a satellite report showed fix_count > 0.
-    let mut last_fix_point: Option<&NavPoint> = None;
-    let mut fix_lost_at: Option<GpsTime> = None;
+/// State machine for tracking GPS fix transitions within a trip.
+///
+/// Three states:
+/// - `Waiting` — no satellite report seen yet.
+/// - `HasFix` — the most recent satellite report had `fix_count > 0`.
+/// - `LostFix` — most recent report had `fix_count == 0`; records when the fix
+///   was last seen so the regained-duration can be computed.
+enum GpsFixState {
+    Waiting,
+    HasFix {
+        last_time: GpsTime,
+        last_lat: uom::si::f64::Angle,
+        last_lon: uom::si::f64::Angle,
+    },
+    LostFix {
+        lost_at: GpsTime,
+    },
+}
 
-    for point in points {
-        if let Some(sats) = &point.satellites {
-            let fix = sats.fix_count();
-            if let Some(prev) = prev_fix {
-                if prev > 0 && fix == 0 {
-                    // Place the "fix lost" marker at the LAST point that had a
-                    // satellite fix, not at the current (first lost-fix) point.
-                    let anchor = last_fix_point.unwrap_or(point);
-                    fix_lost_at = Some(anchor.tpv.time());
-                    markers.push(GeneratedMarker::new(
-                        anchor.tpv.time().utc(),
+struct GpsFixTracker {
+    state: GpsFixState,
+}
+
+impl GpsFixTracker {
+    fn new() -> Self {
+        Self {
+            state: GpsFixState::Waiting,
+        }
+    }
+
+    /// Advance the state machine by one satellite report.
+    ///
+    /// Returns `Some(marker)` when a transition emits a generated marker
+    /// (`GpsFixLost` or `GpsFixRegained`), or `None` for silent transitions.
+    fn update(&mut self, point: &NavPoint, fix_count: u32) -> Option<GeneratedMarker> {
+        let result;
+        self.state = match self.state {
+            GpsFixState::Waiting => {
+                result = None;
+                if fix_count > 0 {
+                    GpsFixState::HasFix {
+                        last_time: point.tpv.time(),
+                        last_lat: point.tpv.lat(),
+                        last_lon: point.tpv.lon(),
+                    }
+                } else {
+                    GpsFixState::Waiting
+                }
+            }
+            GpsFixState::HasFix {
+                last_time,
+                last_lat,
+                last_lon,
+            } => {
+                if fix_count == 0 {
+                    // Fix just dropped — emit GpsFixLost at the last known fix position.
+                    result = Some(GeneratedMarker::new(
+                        last_time.utc(),
                         GeneratedMarkerKind::GpsFixLost,
-                        anchor.tpv.lat(),
-                        anchor.tpv.lon(),
+                        last_lat,
+                        last_lon,
                         None,
                     ));
-                } else if prev == 0 && fix > 0 {
-                    let fix_lost_duration =
-                        fix_lost_at.map(|lost| point.tpv.time().signed_duration_since(lost));
-                    markers.push(GeneratedMarker::new(
+                    GpsFixState::LostFix { lost_at: last_time }
+                } else {
+                    result = None;
+                    GpsFixState::HasFix {
+                        last_time: point.tpv.time(),
+                        last_lat: point.tpv.lat(),
+                        last_lon: point.tpv.lon(),
+                    }
+                }
+            }
+            GpsFixState::LostFix { lost_at } => {
+                if fix_count > 0 {
+                    // Fix regained — emit GpsFixRegained with gap duration.
+                    let duration = point.tpv.time().signed_duration_since(lost_at);
+                    result = Some(GeneratedMarker::new(
                         point.tpv.time().utc(),
                         GeneratedMarkerKind::GpsFixRegained,
                         point.tpv.lat(),
                         point.tpv.lon(),
-                        fix_lost_duration,
+                        Some(duration),
                     ));
-                    fix_lost_at = None;
+                    GpsFixState::HasFix {
+                        last_time: point.tpv.time(),
+                        last_lat: point.tpv.lat(),
+                        last_lon: point.tpv.lon(),
+                    }
+                } else {
+                    result = None;
+                    GpsFixState::LostFix { lost_at }
                 }
             }
-            prev_fix = Some(fix);
-            if fix > 0 {
-                last_fix_point = Some(point);
-            }
+        };
+        result
+    }
+}
+
+fn detect_generated_markers(points: &[NavPoint]) -> Vec<GeneratedMarker> {
+    let mut tracker = GpsFixTracker::new();
+    let mut markers = Vec::new();
+    for point in points {
+        if let Some(sats) = &point.satellites
+            && let Some(marker) = tracker.update(point, sats.fix_count())
+        {
+            markers.push(marker);
         }
     }
     markers
@@ -121,6 +190,7 @@ pub fn compute_trip_metadata(
             y: max_lat,
         },
     );
+    let merc_bounds = crate::trip::merc_bounds_for_rect(bounding_box);
 
     let coords: Vec<(f64, f64)> = points
         .iter()
@@ -130,7 +200,7 @@ pub fn compute_trip_metadata(
     let distance_km = path_distance_km(&coords);
     let diameter_m = point_set_diameter_m(&coords);
 
-    let time_range = (first.tpv.time().utc(), last.tpv.time().utc());
+    let time_range = TimeRange::new(first.tpv.time().utc(), last.tpv.time().utc());
     let duration = if points.len() >= 2 {
         last.tpv.time() - first.tpv.time()
     } else {
@@ -143,12 +213,14 @@ pub fn compute_trip_metadata(
         duration,
         time_range,
         bounding_box,
+        merc_bounds,
         point_set_diameter_m: diameter_m,
         has_custom_markers: !custom_markers.is_empty(),
         tpv_count: points.len(),
         satellite_report_count: points.iter().filter(|p| p.satellites.is_some()).count(),
         custom_marker_count: custom_markers.len(),
         generated_marker_count: generated_markers.len(),
+        event_marker_count: 0, // filled in by build_loaded_file after event marker assignment
     }
 }
 
@@ -161,10 +233,12 @@ pub fn build_loaded_file(
     filename: String,
     points: &[NavPoint],
     custom_markers: &[CustomMarker],
+    event_markers: Vec<EventMarker>,
+    event_marker_styles: Vec<EventMarkerStyle>,
 ) -> LoadedFile {
     let ranges = segment_trips(points);
 
-    let loaded_trips: Vec<LoadedTrip> = ranges
+    let mut loaded_trips: Vec<LoadedTrip> = ranges
         .iter()
         .enumerate()
         .map(|(trip_idx, range)| {
@@ -195,9 +269,37 @@ pub fn build_loaded_file(
                 points: trip_points,
                 custom_markers: trip_custom,
                 generated_markers: trip_generated,
+                event_markers: Vec::new(),
             }
         })
         .collect();
+
+    // Assign event markers to trips by timestamp; orphans go into LoadedFile.
+    let mut orphaned_event_markers = Vec::new();
+    for em in event_markers {
+        let mut em = Some(em);
+        for trip in &mut loaded_trips {
+            let start = trip.metadata.time_range.start;
+            let end = trip.metadata.time_range.end;
+            if em
+                .as_ref()
+                .is_some_and(|e| e.time >= start && e.time <= end)
+            {
+                trip.event_markers.push(
+                    #[expect(clippy::expect_used, reason = "just checked is_some")]
+                    em.take().expect("checked above"),
+                );
+                break;
+            }
+        }
+        if let Some(unassigned) = em {
+            orphaned_event_markers.push(unassigned);
+        }
+    }
+    // Back-fill event_marker_count now that assignment is done.
+    for trip in &mut loaded_trips {
+        trip.metadata.event_marker_count = trip.event_markers.len();
+    }
 
     let total_distance_km = loaded_trips
         .iter()
@@ -209,8 +311,11 @@ pub fn build_loaded_file(
 
     let fallback = DateTime::<Utc>::UNIX_EPOCH;
     let file_time_range = match (loaded_trips.first(), loaded_trips.last()) {
-        (Some(first), Some(last)) => (first.metadata.time_range.0, last.metadata.time_range.1),
-        _ => (fallback, fallback),
+        (Some(first), Some(last)) => TimeRange::new(
+            first.metadata.time_range.start,
+            last.metadata.time_range.end,
+        ),
+        _ => TimeRange::new(fallback, fallback),
     };
 
     LoadedFile {
@@ -221,6 +326,8 @@ pub fn build_loaded_file(
             time_range: file_time_range,
         },
         trips: loaded_trips,
+        event_marker_styles,
+        orphaned_event_markers,
     }
 }
 
@@ -339,7 +446,7 @@ mod tests {
 
     #[test]
     fn build_loaded_file_empty_points() {
-        let f = build_loaded_file("test.nvd".to_owned(), &[], &[]);
+        let f = build_loaded_file("test.nvd".to_owned(), &[], &[], vec![], vec![]);
         assert!(f.trips.is_empty());
         assert_eq!(f.metadata.filename, "test.nvd");
     }
@@ -352,7 +459,7 @@ mod tests {
             make_point_at(3600), // gap → new trip
             make_point_at(3660),
         ];
-        let f = build_loaded_file("ride.nvd".to_owned(), &pts, &[]);
+        let f = build_loaded_file("ride.nvd".to_owned(), &pts, &[], vec![], vec![]);
         assert_eq!(f.trips.len(), 2);
         assert_eq!(f.trips[0].points.len(), 2);
         assert_eq!(f.trips[1].points.len(), 2);

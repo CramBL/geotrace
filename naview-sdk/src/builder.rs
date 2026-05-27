@@ -2,10 +2,11 @@ use chrono::{DateTime, Duration, Utc};
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Velocity};
 
-use crate::error::BuildError;
+use crate::error::{BuildError, EventMarkerError};
 use crate::time_types::{GpsTime, SysTime};
 use crate::types::{
-    Annotation, Marker, Meta, NavFile, NavFix, NavPoint, Satellite, SatelliteReport,
+    Annotation, EventMarker, EventMarkerResolved, EventMarkerStyle, Marker, Meta, NavFile, NavFix,
+    NavPoint, Satellite, SatelliteReport,
 };
 
 //
@@ -119,6 +120,8 @@ pub struct NavFileBuilder {
     fixes: Vec<InternalFix>,
     satellite_reports: Vec<InternalSatReport>,
     annotations: Vec<Annotation>,
+    pending_event_markers: Vec<(String, chrono::DateTime<chrono::Utc>, Option<String>)>,
+    event_marker_styles: Vec<EventMarkerStyle>,
     meta: Option<Meta>,
     satellite_window: Duration,
     continue_on_error: bool,
@@ -133,6 +136,8 @@ impl NavFileBuilder {
             fixes: Vec::new(),
             satellite_reports: Vec::new(),
             annotations: Vec::new(),
+            pending_event_markers: Vec::new(),
+            event_marker_styles: Vec::new(),
             meta: None,
             satellite_window: Duration::milliseconds(500),
             continue_on_error: false,
@@ -181,6 +186,26 @@ impl NavFileBuilder {
 
     pub fn add_annotation(&mut self, annotation: Annotation) -> &mut Self {
         self.annotations.push(annotation);
+        self
+    }
+
+    /// Add an event marker.
+    ///
+    /// Returns `Err` immediately if `marker.variant_path` is malformed.
+    /// The position is interpolated from surrounding nav fixes during
+    /// [`finish`](Self::finish).
+    pub fn add_event_marker(&mut self, marker: EventMarker) -> Result<&mut Self, EventMarkerError> {
+        validate_variant_path(&marker.variant_path)?;
+        self.pending_event_markers
+            .push((marker.variant_path, marker.sys_time, marker.annotation));
+        Ok(self)
+    }
+
+    /// Register an icon and color for a variant path.
+    ///
+    /// Variants with no registered style use the fallback hash color and Pin icon.
+    pub fn add_event_marker_style(&mut self, style: EventMarkerStyle) -> &mut Self {
+        self.event_marker_styles.push(style);
         self
     }
 
@@ -281,6 +306,8 @@ impl NavFileBuilder {
         internal_points.extend(ghost_points);
         internal_points.sort_by_key(|p| effective_time(&p.fix));
 
+        let event_markers = interpolate_event_markers(&internal_points, self.pending_event_markers);
+
         // Convert to public output types at the output boundary.
         let nav_points: Vec<NavPoint> = internal_points
             .into_iter()
@@ -300,6 +327,8 @@ impl NavFileBuilder {
             meta: self.meta.unwrap_or_default(),
             nav_points,
             markers,
+            event_markers,
+            event_marker_styles: self.event_marker_styles,
         })
     }
 }
@@ -803,6 +832,104 @@ fn interpolate_annotations(
     }
 
     (resolved, out_of_range)
+}
+
+/// Validate that `path` is a well-formed event marker variant path.
+///
+/// Rules: non-empty, ASCII alphanumeric + `-` + `_` + `/`, no leading/trailing slash,
+/// no empty segments (`//`), at most 256 bytes.
+fn validate_variant_path(path: &str) -> Result<(), EventMarkerError> {
+    if path.is_empty() {
+        return Err(EventMarkerError::Empty { path: path.into() });
+    }
+    if path.starts_with('/') {
+        return Err(EventMarkerError::LeadingSlash { path: path.into() });
+    }
+    if path.ends_with('/') {
+        return Err(EventMarkerError::TrailingSlash { path: path.into() });
+    }
+    if path.contains("//") {
+        return Err(EventMarkerError::EmptySegment { path: path.into() });
+    }
+    if path.len() > 256 {
+        return Err(EventMarkerError::TooLong {
+            path: path.into(),
+            len: path.len(),
+        });
+    }
+    if !path
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'/')
+    {
+        return Err(EventMarkerError::InvalidChars { path: path.into() });
+    }
+    Ok(())
+}
+
+/// Interpolate geographic positions for event markers from the built nav track.
+///
+/// Uses the same algorithm as [`interpolate_annotations`]: the sys_time is
+/// matched against each fix's `timeline_time` (sys_time-first), then the
+/// surrounding fixes bracket the position via linear interpolation.  Markers
+/// before the first fix or after the last fix are clamped to the endpoint.
+/// Markers with no fixes at all are silently dropped.
+fn interpolate_event_markers(
+    points: &[InternalPoint],
+    pending: Vec<(String, chrono::DateTime<chrono::Utc>, Option<String>)>,
+) -> Vec<EventMarkerResolved> {
+    if points.is_empty() {
+        return Vec::new();
+    }
+
+    // Build a lightweight slice of (timeline_time, lat, lon) from the already-sorted
+    // internal points so we can binary-search without dealing with InternalFix directly.
+    let fixes_view: Vec<(chrono::DateTime<chrono::Utc>, f64, f64)> = points
+        .iter()
+        .map(|p| {
+            (
+                timeline_time(&p.fix),
+                p.fix.lat.get::<degree>(),
+                p.fix.lon.get::<degree>(),
+            )
+        })
+        .collect();
+
+    pending
+        .into_iter()
+        .filter_map(|(variant_path, sys_time, annotation)| {
+            let pos = fixes_view.partition_point(|(t, _, _)| *t <= sys_time);
+            let before = if pos > 0 {
+                fixes_view.get(pos - 1)
+            } else {
+                None
+            };
+            let after = fixes_view.get(pos);
+
+            let (lat_deg, lon_deg) = match (before, after) {
+                (Some(&(bt, blat, blon)), Some(&(at, alat, alon))) => {
+                    let b_us = bt.timestamp_micros();
+                    let a_us = at.timestamp_micros();
+                    let t_us = sys_time.timestamp_micros();
+                    let t = if a_us == b_us {
+                        0.0_f64
+                    } else {
+                        (t_us - b_us) as f64 / (a_us - b_us) as f64
+                    };
+                    (blat + t * (alat - blat), blon + t * (alon - blon))
+                }
+                (Some(&(_, lat, lon)), None) | (None, Some(&(_, lat, lon))) => (lat, lon),
+                (None, None) => return None,
+            };
+
+            Some(EventMarkerResolved {
+                variant_path,
+                sys_time,
+                lat: uom::si::f64::Angle::new::<degree>(lat_deg),
+                lon: uom::si::f64::Angle::new::<degree>(lon_deg),
+                annotation,
+            })
+        })
+        .collect()
 }
 
 /// Resolve the best available timestamp for a fix as a [`GpsTime`].

@@ -3,28 +3,84 @@ use chrono::{DateTime, Utc};
 use egui::Color32;
 use egui_plot::{Line, PlotPoints, VLine};
 use nav_egui_mipmap::{LevelSelection, MipMap};
-use nav_types::{GlobalFilter, LoadedFile, TripDataVisibility};
+use nav_types::{FileIdx, GlobalFilter, LoadedFile, PointIdx, TripDataVisibility, TripIdx};
 use rayon::prelude::*;
 
-/// Stable per-metric colors, in the same order as the `add` calls in
-/// `add_series_lines`.  Every metric always gets the same color regardless of
-/// which trip or file it came from, making it trivial to spot "velocity" or
-/// "GPS fix" across multiple overlapping datasets.
-const METRIC_COLORS: [Color32; 13] = [
-    Color32::from_rgb(80, 200, 255), // Sats seen    — powder blue
-    Color32::from_rgb(0, 100, 220),  // Sats fix     — deep blue
-    Color32::from_rgb(0, 220, 80),   // GPS seen     — lime green
-    Color32::from_rgb(0, 140, 40),   // GPS fix      — forest green
-    Color32::from_rgb(255, 140, 30), // GLONASS seen — golden
-    Color32::from_rgb(200, 80, 0),   // GLONASS fix  — amber
-    Color32::from_rgb(255, 50, 110), // Galileo seen — hot pink
-    Color32::from_rgb(155, 30, 255), // Galileo fix  — purple
-    Color32::from_rgb(0, 230, 230),  // BeiDou seen  — cyan
-    Color32::from_rgb(0, 160, 160),  // BeiDou fix   — teal
-    Color32::from_rgb(255, 220, 0),  // Velocity     — bright yellow
-    Color32::from_rgb(220, 20, 220), // EPH          — magenta
-    Color32::from_rgb(255, 100, 50), // Heading      — red-orange
-];
+/// Identifies one of the 13 per-metric plot series.
+///
+/// Replaces the previous positional `u8` index, making chip interaction,
+/// color lookup, label lookup, and mipmap dispatch all go through one type
+/// rather than parallel arrays and magic-number match arms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MetricKind {
+    SatsSeen,
+    SatsFix,
+    GpsSeen,
+    GpsFix,
+    GlonassSeen,
+    GlonassFix,
+    GalileoSeen,
+    GalileoFix,
+    BeidouSeen,
+    BeidouFix,
+    Velocity,
+    Eph,
+    HeadingDeg,
+}
+
+impl MetricKind {
+    const ALL: [Self; 13] = [
+        Self::SatsSeen,
+        Self::SatsFix,
+        Self::GpsSeen,
+        Self::GpsFix,
+        Self::GlonassSeen,
+        Self::GlonassFix,
+        Self::GalileoSeen,
+        Self::GalileoFix,
+        Self::BeidouSeen,
+        Self::BeidouFix,
+        Self::Velocity,
+        Self::Eph,
+        Self::HeadingDeg,
+    ];
+
+    fn color(self) -> Color32 {
+        match self {
+            Self::SatsSeen => Color32::from_rgb(80, 200, 255), // powder blue
+            Self::SatsFix => Color32::from_rgb(0, 100, 220),   // deep blue
+            Self::GpsSeen => Color32::from_rgb(0, 220, 80),    // lime green
+            Self::GpsFix => Color32::from_rgb(0, 140, 40),     // forest green
+            Self::GlonassSeen => Color32::from_rgb(255, 140, 30), // golden
+            Self::GlonassFix => Color32::from_rgb(200, 80, 0), // amber
+            Self::GalileoSeen => Color32::from_rgb(255, 50, 110), // hot pink
+            Self::GalileoFix => Color32::from_rgb(155, 30, 255), // purple
+            Self::BeidouSeen => Color32::from_rgb(0, 230, 230), // cyan
+            Self::BeidouFix => Color32::from_rgb(0, 160, 160), // teal
+            Self::Velocity => Color32::from_rgb(255, 220, 0),  // bright yellow
+            Self::Eph => Color32::from_rgb(220, 20, 220),      // magenta
+            Self::HeadingDeg => Color32::from_rgb(255, 100, 50), // red-orange
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::SatsSeen => "Sats seen",
+            Self::SatsFix => "Sats fix",
+            Self::GpsSeen => "GPS seen",
+            Self::GpsFix => "GPS fix",
+            Self::GlonassSeen => "GLONASS seen",
+            Self::GlonassFix => "GLONASS fix",
+            Self::GalileoSeen => "Galileo seen",
+            Self::GalileoFix => "Galileo fix",
+            Self::BeidouSeen => "BeiDou seen",
+            Self::BeidouFix => "BeiDou fix",
+            Self::Velocity => "Velocity (km/h)",
+            Self::Eph => "EPH (m)",
+            Self::HeadingDeg => "Heading (°)",
+        }
+    }
+}
 
 /// Global per-metric visibility flags.
 ///
@@ -68,38 +124,54 @@ impl Default for MetricVisibility {
 }
 
 impl MetricVisibility {
+    /// Returns the current visibility for `kind`.
+    fn field(&self, kind: MetricKind) -> bool {
+        match kind {
+            MetricKind::SatsSeen => self.sats_seen,
+            MetricKind::SatsFix => self.sats_fix,
+            MetricKind::GpsSeen => self.gps_seen,
+            MetricKind::GpsFix => self.gps_fix,
+            MetricKind::GlonassSeen => self.glonass_seen,
+            MetricKind::GlonassFix => self.glonass_fix,
+            MetricKind::GalileoSeen => self.galileo_seen,
+            MetricKind::GalileoFix => self.galileo_fix,
+            MetricKind::BeidouSeen => self.beidou_seen,
+            MetricKind::BeidouFix => self.beidou_fix,
+            MetricKind::Velocity => self.velocity,
+            MetricKind::Eph => self.eph,
+            MetricKind::HeadingDeg => self.heading_deg,
+        }
+    }
+
+    /// Returns a mutable reference to the visibility flag for `kind`.
+    fn field_mut(&mut self, kind: MetricKind) -> &mut bool {
+        match kind {
+            MetricKind::SatsSeen => &mut self.sats_seen,
+            MetricKind::SatsFix => &mut self.sats_fix,
+            MetricKind::GpsSeen => &mut self.gps_seen,
+            MetricKind::GpsFix => &mut self.gps_fix,
+            MetricKind::GlonassSeen => &mut self.glonass_seen,
+            MetricKind::GlonassFix => &mut self.glonass_fix,
+            MetricKind::GalileoSeen => &mut self.galileo_seen,
+            MetricKind::GalileoFix => &mut self.galileo_fix,
+            MetricKind::BeidouSeen => &mut self.beidou_seen,
+            MetricKind::BeidouFix => &mut self.beidou_fix,
+            MetricKind::Velocity => &mut self.velocity,
+            MetricKind::Eph => &mut self.eph,
+            MetricKind::HeadingDeg => &mut self.heading_deg,
+        }
+    }
+
     /// Returns `true` when every metric is enabled.
     fn all_enabled(self) -> bool {
-        self.sats_seen
-            && self.sats_fix
-            && self.gps_seen
-            && self.gps_fix
-            && self.glonass_seen
-            && self.glonass_fix
-            && self.galileo_seen
-            && self.galileo_fix
-            && self.beidou_seen
-            && self.beidou_fix
-            && self.velocity
-            && self.eph
-            && self.heading_deg
+        MetricKind::ALL.iter().all(|&k| self.field(k))
     }
 
     /// Set every metric to `enabled`.
     fn set_all(&mut self, enabled: bool) {
-        self.sats_seen = enabled;
-        self.sats_fix = enabled;
-        self.gps_seen = enabled;
-        self.gps_fix = enabled;
-        self.glonass_seen = enabled;
-        self.glonass_fix = enabled;
-        self.galileo_seen = enabled;
-        self.galileo_fix = enabled;
-        self.beidou_seen = enabled;
-        self.beidou_fix = enabled;
-        self.velocity = enabled;
-        self.eph = enabled;
-        self.heading_deg = enabled;
+        for k in MetricKind::ALL {
+            *self.field_mut(k) = enabled;
+        }
     }
 }
 
@@ -119,6 +191,46 @@ struct TripLevelCache {
     velocity_kmh: LevelSelection,
     eph_m: LevelSelection,
     heading_deg: LevelSelection,
+}
+
+impl TripLevelCache {
+    fn level_for(&self, kind: MetricKind) -> LevelSelection {
+        match kind {
+            MetricKind::SatsSeen => self.total_seen,
+            MetricKind::SatsFix => self.total_fix,
+            MetricKind::GpsSeen => self.gps_seen,
+            MetricKind::GpsFix => self.gps_fix,
+            MetricKind::GlonassSeen => self.glonass_seen,
+            MetricKind::GlonassFix => self.glonass_fix,
+            MetricKind::GalileoSeen => self.galileo_seen,
+            MetricKind::GalileoFix => self.galileo_fix,
+            MetricKind::BeidouSeen => self.beidou_seen,
+            MetricKind::BeidouFix => self.beidou_fix,
+            MetricKind::Velocity => self.velocity_kmh,
+            MetricKind::Eph => self.eph_m,
+            MetricKind::HeadingDeg => self.heading_deg,
+        }
+    }
+}
+
+impl crate::series::TripSeries {
+    fn mipmap_for(&self, kind: MetricKind) -> &nav_egui_mipmap::MipMap {
+        match kind {
+            MetricKind::SatsSeen => &self.total_seen,
+            MetricKind::SatsFix => &self.total_fix,
+            MetricKind::GpsSeen => &self.gps_seen,
+            MetricKind::GpsFix => &self.gps_fix,
+            MetricKind::GlonassSeen => &self.glonass_seen,
+            MetricKind::GlonassFix => &self.glonass_fix,
+            MetricKind::GalileoSeen => &self.galileo_seen,
+            MetricKind::GalileoFix => &self.galileo_fix,
+            MetricKind::BeidouSeen => &self.beidou_seen,
+            MetricKind::BeidouFix => &self.beidou_fix,
+            MetricKind::Velocity => &self.velocity_kmh,
+            MetricKind::Eph => &self.eph_m,
+            MetricKind::HeadingDeg => &self.heading_deg,
+        }
+    }
 }
 
 /// Persistent state for the trip plot panel.
@@ -418,108 +530,68 @@ pub fn show_trip_plot(
 
 /// Draw the per-metric filter controls above the trip plot.
 ///
-/// Layout:
-/// - A small controls bar: grid toggle and master hide/show button.
-/// - A framed satellite group containing the ten constellation metrics (total
-///   counts plus per-constellation GPS/GLONASS/Galileo/BeiDou seen and fix).
-/// - A plain row for the three non-satellite metrics: velocity, EPH, heading.
+/// All controls and metric chips share a single `horizontal_wrapped` row so they
+/// fill available horizontal space before wrapping — no fixed-height satellite
+/// group that forces other chips below it.
 ///
-/// Returns the index of the chip currently being hovered, or `None`.
+/// Returns the `MetricKind` currently being hovered, or `None`.
 /// The caller passes this to `add_series_lines` to highlight the hovered metric
 /// and dim the rest, mirroring the standard egui-plot legend hover behaviour.
 fn metric_filter_row(
     ui: &mut egui::Ui,
     vis: &mut MetricVisibility,
     show_grid: &mut bool,
-) -> Option<u8> {
+) -> Option<MetricKind> {
     let all_on = vis.all_enabled();
+    let mut show_only = None;
+    let mut hovered_chip = None;
 
-    // Controls bar: grid toggle and master hide/show.
-    ui.horizontal(|ui| {
-        let grid_label = if *show_grid { "Hide grid" } else { "Show grid" };
-        if ui.small_button(grid_label).clicked() {
+    ui.horizontal_wrapped(|ui| {
+        // Grid toggle — icon button with tooltip.
+        if ui
+            .small_button(egui_phosphor::regular::GRID_FOUR)
+            .on_hover_text(if *show_grid { "Hide grid" } else { "Show grid" })
+            .clicked()
+        {
             *show_grid = !*show_grid;
         }
-        ui.separator();
-        let master_label = if all_on { "Hide all" } else { "Show all" };
-        if ui.small_button(master_label).clicked() {
+
+        // Show/hide all — icon button with tooltip.
+        let eye_icon = if all_on {
+            egui_phosphor::regular::EYE_SLASH
+        } else {
+            egui_phosphor::regular::EYE
+        };
+        if ui
+            .small_button(eye_icon)
+            .on_hover_text(if all_on {
+                "Hide all metrics"
+            } else {
+                "Show all metrics"
+            })
+            .clicked()
+        {
             vis.set_all(!all_on);
         }
-    });
 
-    // Satellite metrics — framed so they read as one coherent group.
-    // `Frame::group` is constructed before the `.show` call so that the
-    // immutable borrow of `ui` (for `ui.style()`) ends at the semicolon,
-    // leaving `ui` free for the mutable `.show` call below.
-    let sat_frame = egui::Frame::group(ui.style()).inner_margin(egui::Margin::same(4));
-    let sat = sat_frame.show(ui, |ui| {
-        let mut so: Option<u8> = None;
-        let mut hov: Option<u8> = None;
-        ui.horizontal_wrapped(|ui| {
-            macro_rules! sat_chip {
-                ($field:expr, $name:expr, $color:expr, $idx:expr) => {{
-                    let (s, h) = metric_chip(ui, &mut $field, $name, $color);
-                    if s {
-                        so = Some($idx);
-                    }
-                    if h {
-                        hov = Some($idx);
-                    }
-                }};
+        ui.separator();
+
+        // All 13 metric chips in the same wrapping row.
+        for kind in MetricKind::ALL {
+            let (s, h) = metric_chip(ui, vis.field_mut(kind), kind.label(), kind.color());
+            if s {
+                show_only = Some(kind);
             }
-            sat_chip!(vis.sats_seen, "Sats seen", METRIC_COLORS[0], 0u8);
-            sat_chip!(vis.sats_fix, "Sats fix", METRIC_COLORS[1], 1u8);
-            sat_chip!(vis.gps_seen, "GPS seen", METRIC_COLORS[2], 2u8);
-            sat_chip!(vis.gps_fix, "GPS fix", METRIC_COLORS[3], 3u8);
-            sat_chip!(vis.glonass_seen, "GLONASS seen", METRIC_COLORS[4], 4u8);
-            sat_chip!(vis.glonass_fix, "GLONASS fix", METRIC_COLORS[5], 5u8);
-            sat_chip!(vis.galileo_seen, "Galileo seen", METRIC_COLORS[6], 6u8);
-            sat_chip!(vis.galileo_fix, "Galileo fix", METRIC_COLORS[7], 7u8);
-            sat_chip!(vis.beidou_seen, "BeiDou seen", METRIC_COLORS[8], 8u8);
-            sat_chip!(vis.beidou_fix, "BeiDou fix", METRIC_COLORS[9], 9u8);
-        });
-        (so, hov)
-    });
-    let mut show_only = sat.inner.0;
-    let mut hovered_chip = sat.inner.1;
-
-    // Non-satellite metrics.
-    ui.horizontal_wrapped(|ui| {
-        macro_rules! chip {
-            ($field:expr, $name:expr, $color:expr, $idx:expr) => {{
-                let (s, h) = metric_chip(ui, &mut $field, $name, $color);
-                if s {
-                    show_only = Some($idx);
-                }
-                if h {
-                    hovered_chip = Some($idx);
-                }
-            }};
+            if h {
+                hovered_chip = Some(kind);
+            }
         }
-        chip!(vis.velocity, "Velocity", METRIC_COLORS[10], 10u8);
-        chip!(vis.eph, "EPH", METRIC_COLORS[11], 11u8);
-        chip!(vis.heading_deg, "Heading", METRIC_COLORS[12], 12u8);
     });
 
-    // Apply "Show only this" — disable everything first, then re-enable the one.
-    if let Some(idx) = show_only {
+    // Apply "Show only this" — disable everything, then re-enable the chosen one.
+    if let Some(kind) = show_only {
         vis.set_all(false);
-        match idx {
-            0 => vis.sats_seen = true,
-            1 => vis.sats_fix = true,
-            2 => vis.gps_seen = true,
-            3 => vis.gps_fix = true,
-            4 => vis.glonass_seen = true,
-            5 => vis.glonass_fix = true,
-            6 => vis.galileo_seen = true,
-            7 => vis.galileo_fix = true,
-            8 => vis.beidou_seen = true,
-            9 => vis.beidou_fix = true,
-            10 => vis.velocity = true,
-            11 => vis.eph = true,
-            12 => vis.heading_deg = true,
-            _ => {}
-        }
+        *vis.field_mut(kind) = true;
     }
 
     hovered_chip
@@ -615,10 +687,9 @@ fn trip_is_visible(
 
 /// Add all metric lines for one trip to the plot using pre-computed level selections.
 ///
-/// When `hovered_chip` is `Some(idx)`, the line at `idx` is highlighted (double
-/// stroke width, via egui-plot's built-in highlight mechanism) and every other
-/// line is dimmed to 20 % brightness — mirroring the standard egui-plot legend
-/// hover behaviour.
+/// When `hovered_chip` is `Some(kind)`, that metric is highlighted (double stroke
+/// width) and every other line is dimmed to 20 % brightness — mirroring the
+/// standard egui-plot legend hover behaviour.
 ///
 /// The `'a` lifetime ties both `plot_ui` and `series` together so that
 /// [`egui_plot::PlotPoints::Borrowed`] can reference mipmap slices directly
@@ -629,7 +700,7 @@ fn add_series_lines<'a>(
     multi_trip: bool,
     cache: &TripLevelCache,
     metric_vis: &MetricVisibility,
-    hovered_chip: Option<u8>,
+    hovered_chip: Option<MetricKind>,
 ) {
     let prefix = if multi_trip {
         format!("{}: ", series.label)
@@ -637,142 +708,21 @@ fn add_series_lines<'a>(
         String::new()
     };
 
-    let color_for = |color: Color32, idx: u8| -> (Color32, bool) {
-        match hovered_chip {
-            Some(h) if h == idx => (color, true),
-            Some(_) => (color.gamma_multiply(0.2), false),
-            None => (color, false),
+    for kind in MetricKind::ALL {
+        if !metric_vis.field(kind) {
+            continue;
         }
-    };
-
-    if metric_vis.sats_seen {
-        let (c, h) = color_for(METRIC_COLORS[0], 0);
+        let (color, highlighted) = match hovered_chip {
+            Some(h) if h == kind => (kind.color(), true),
+            Some(_) => (kind.color().gamma_multiply(0.2), false),
+            None => (kind.color(), false),
+        };
         add_line(
             plot_ui,
-            series.total_seen.slice_at(cache.total_seen),
-            format!("{prefix}Sats seen"),
-            c,
-            h,
-        );
-    }
-    if metric_vis.sats_fix {
-        let (c, h) = color_for(METRIC_COLORS[1], 1);
-        add_line(
-            plot_ui,
-            series.total_fix.slice_at(cache.total_fix),
-            format!("{prefix}Sats fix"),
-            c,
-            h,
-        );
-    }
-    if metric_vis.gps_seen {
-        let (c, h) = color_for(METRIC_COLORS[2], 2);
-        add_line(
-            plot_ui,
-            series.gps_seen.slice_at(cache.gps_seen),
-            format!("{prefix}GPS seen"),
-            c,
-            h,
-        );
-    }
-    if metric_vis.gps_fix {
-        let (c, h) = color_for(METRIC_COLORS[3], 3);
-        add_line(
-            plot_ui,
-            series.gps_fix.slice_at(cache.gps_fix),
-            format!("{prefix}GPS fix"),
-            c,
-            h,
-        );
-    }
-    if metric_vis.glonass_seen {
-        let (c, h) = color_for(METRIC_COLORS[4], 4);
-        add_line(
-            plot_ui,
-            series.glonass_seen.slice_at(cache.glonass_seen),
-            format!("{prefix}GLONASS seen"),
-            c,
-            h,
-        );
-    }
-    if metric_vis.glonass_fix {
-        let (c, h) = color_for(METRIC_COLORS[5], 5);
-        add_line(
-            plot_ui,
-            series.glonass_fix.slice_at(cache.glonass_fix),
-            format!("{prefix}GLONASS fix"),
-            c,
-            h,
-        );
-    }
-    if metric_vis.galileo_seen {
-        let (c, h) = color_for(METRIC_COLORS[6], 6);
-        add_line(
-            plot_ui,
-            series.galileo_seen.slice_at(cache.galileo_seen),
-            format!("{prefix}Galileo seen"),
-            c,
-            h,
-        );
-    }
-    if metric_vis.galileo_fix {
-        let (c, h) = color_for(METRIC_COLORS[7], 7);
-        add_line(
-            plot_ui,
-            series.galileo_fix.slice_at(cache.galileo_fix),
-            format!("{prefix}Galileo fix"),
-            c,
-            h,
-        );
-    }
-    if metric_vis.beidou_seen {
-        let (c, h) = color_for(METRIC_COLORS[8], 8);
-        add_line(
-            plot_ui,
-            series.beidou_seen.slice_at(cache.beidou_seen),
-            format!("{prefix}BeiDou seen"),
-            c,
-            h,
-        );
-    }
-    if metric_vis.beidou_fix {
-        let (c, h) = color_for(METRIC_COLORS[9], 9);
-        add_line(
-            plot_ui,
-            series.beidou_fix.slice_at(cache.beidou_fix),
-            format!("{prefix}BeiDou fix"),
-            c,
-            h,
-        );
-    }
-    if metric_vis.velocity {
-        let (c, h) = color_for(METRIC_COLORS[10], 10);
-        add_line(
-            plot_ui,
-            series.velocity_kmh.slice_at(cache.velocity_kmh),
-            format!("{prefix}Velocity (km/h)"),
-            c,
-            h,
-        );
-    }
-    if metric_vis.eph {
-        let (c, h) = color_for(METRIC_COLORS[11], 11);
-        add_line(
-            plot_ui,
-            series.eph_m.slice_at(cache.eph_m),
-            format!("{prefix}EPH (m)"),
-            c,
-            h,
-        );
-    }
-    if metric_vis.heading_deg {
-        let (c, h) = color_for(METRIC_COLORS[12], 12);
-        add_line(
-            plot_ui,
-            series.heading_deg.slice_at(cache.heading_deg),
-            format!("{prefix}Heading (°)"),
-            c,
-            h,
+            series.mipmap_for(kind).slice_at(cache.level_for(kind)),
+            format!("{prefix}{}", kind.label()),
+            color,
+            highlighted,
         );
     }
 }
@@ -813,19 +763,21 @@ pub fn find_closest_tpv(
     visibility: &TripDataVisibility,
     filter: &GlobalFilter,
     target: DateTime<Utc>,
-) -> Option<(usize, usize, usize)> {
+) -> Option<(FileIdx, TripIdx, PointIdx)> {
     let target_secs = target.timestamp() as f64;
-    let mut best: Option<(usize, usize, usize, f64)> = None;
+    let mut best: Option<(FileIdx, TripIdx, PointIdx, f64)> = None;
 
     for (fi, file) in files.iter().enumerate() {
-        let Some(file_vis) = visibility.files.get(fi) else {
+        let fi = FileIdx(fi);
+        let Some(file_vis) = visibility.files.get(fi.0) else {
             continue;
         };
         if !file_vis.enabled {
             continue;
         }
         for (ti, trip) in file.trips.iter().enumerate() {
-            let Some(trip_vis) = file_vis.trips.get(ti) else {
+            let ti = TripIdx(ti);
+            let Some(trip_vis) = file_vis.trips.get(ti.0) else {
                 continue;
             };
             if !trip_vis.enabled {
@@ -837,7 +789,8 @@ pub fn find_closest_tpv(
             let Some(pi) = closest_point_index(&trip.points, target_secs) else {
                 continue;
             };
-            let Some(point) = trip.points.get(pi) else {
+            let pi = PointIdx(pi);
+            let Some(point) = trip.points.get(pi.0) else {
                 continue;
             };
             let dist = (point.tpv.time().utc().timestamp() as f64 - target_secs).abs();

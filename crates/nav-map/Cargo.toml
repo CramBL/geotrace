@@ -7,6 +7,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+chrono.workspace = true
 egui.workspace = true
 egui-phosphor.workspace = true
 nav-types.path = "../nav-types"

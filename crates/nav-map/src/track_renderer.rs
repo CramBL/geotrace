@@ -1,7 +1,7 @@
 use egui::{Color32, Response, Stroke, Ui};
 use nav_types::{
-    DataCategory, GlobalFilter, HighlightScope, LoadedFile, MapHighlight, TripDataVisibility,
-    trip_passes_filter,
+    DataCategory, FileIdx, GlobalFilter, HighlightScope, LoadedFile, MapHighlight, MercBounds,
+    TripDataVisibility, TripIdx, trip_passes_filter,
 };
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -65,15 +65,15 @@ impl<'a> TrackRenderer<'a> {
         }
     }
 
-    fn trip_stroke(&self, fi: usize, ti: usize) -> Stroke {
+    fn trip_stroke(&self, fi: FileIdx, ti: TripIdx) -> Stroke {
         if self.is_trip_highlighted(fi, ti) {
             Stroke::new(4.0, Color32::from_rgb(100, 200, 255))
         } else {
-            Stroke::new(3.0, trip_track_color(fi, ti))
+            Stroke::new(3.0, trip_track_color(fi.0, ti.0))
         }
     }
 
-    fn is_trip_highlighted(&self, fi: usize, ti: usize) -> bool {
+    fn is_trip_highlighted(&self, fi: FileIdx, ti: TripIdx) -> bool {
         if self
             .highlight
             .sticky
@@ -113,21 +113,38 @@ impl Plugin for TrackRenderer<'_> {
         // then two f64 multiplies + two f64 adds with no large-value cancellation.
         let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
+        // Viewport bounds in Mercator space — used to skip trips that are
+        // entirely outside the visible area without iterating any points.
+        let view_rect = ui.max_rect();
+        let vp_bounds = MercBounds {
+            x_min: transform.merc_x_from_screen(view_rect.min.x),
+            x_max: transform.merc_x_from_screen(view_rect.max.x),
+            y_min: transform.merc_y_from_screen(view_rect.min.y),
+            y_max: transform.merc_y_from_screen(view_rect.max.y),
+        };
+
         for (fi, file) in self.files.iter().enumerate() {
-            let Some(file_vis) = self.visibility.files.get(fi) else {
+            let fi = FileIdx(fi);
+            let Some(file_vis) = self.visibility.files.get(fi.0) else {
                 continue;
             };
             if !file_vis.enabled {
                 continue;
             }
             for (ti, trip) in file.trips.iter().enumerate() {
-                let Some(trip_vis) = file_vis.trips.get(ti) else {
+                let ti = TripIdx(ti);
+                let Some(trip_vis) = file_vis.trips.get(ti.0) else {
                     continue;
                 };
                 if !trip_vis.enabled || !trip_vis.track_visible {
                     continue;
                 }
                 if !trip_passes_filter(&trip.metadata, self.filter) {
+                    continue;
+                }
+                // Per-trip viewport cull: if the trip's Mercator bounding box
+                // does not intersect the viewport, skip it entirely.
+                if !trip.metadata.merc_bounds.intersects(vp_bounds) {
                     continue;
                 }
                 let stroke = self.trip_stroke(fi, ti);
@@ -140,11 +157,16 @@ impl Plugin for TrackRenderer<'_> {
                     .map(|p| transform.to_screen(p.merc_x, p.merc_y))
                     .collect();
                 if path.len() > 1 {
-                    ui.painter().add(egui::Shape::line(path.clone(), stroke));
+                    // Only clone the path when the blink overlay will also need
+                    // it; otherwise move it directly into the regular stroke to
+                    // avoid a per-trip Vec allocation on 99%+ of frames.
+                    let need_blink = self.blink_alpha > 0.0 && fi.0 >= self.new_file_boundary;
+                    let blink_path = need_blink.then(|| path.clone());
+                    ui.painter().add(egui::Shape::line(path, stroke));
 
                     // Blink overlay: draw a bright pulsing stroke on top of
                     // newly loaded trips for the first 3 seconds after load.
-                    if self.blink_alpha > 0.0 && fi >= self.new_file_boundary {
+                    if let Some(bp) = blink_path {
                         #[expect(
                             clippy::cast_sign_loss,
                             reason = "blink_alpha is clamped to [0,1] in NavMap::draw so product is non-negative"
@@ -152,7 +174,7 @@ impl Plugin for TrackRenderer<'_> {
                         let blink_a = (self.blink_alpha * 200.0) as u8;
                         let blink_color = Color32::from_rgba_unmultiplied(255, 230, 80, blink_a);
                         let blink_stroke = Stroke::new(6.0, blink_color);
-                        ui.painter().add(egui::Shape::line(path, blink_stroke));
+                        ui.painter().add(egui::Shape::line(bp, blink_stroke));
                     }
                 }
             }

@@ -27,6 +27,9 @@ Quick start — reading a file::
 from naview_sdk._naview_sdk import (
     Annotation,
     Constellation,
+    EventMarker,
+    EventMarkerPoint,
+    EventMarkerStyle,
     Marker,
     MarkerIcon,
     Meta,
@@ -41,6 +44,9 @@ from naview_sdk._naview_sdk import (
 __all__ = [
     "Annotation",
     "Constellation",
+    "EventMarker",
+    "EventMarkerPoint",
+    "EventMarkerStyle",
     "Marker",
     "MarkerIcon",
     "Meta",

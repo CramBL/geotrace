@@ -9,7 +9,8 @@ use uom::si::velocity::meter_per_second;
 use crate::builder::{micros_to_datetime, u64_to_opt_datetime};
 use crate::error::Error;
 use crate::types::{
-    Annotation, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint, Satellite, SatelliteReport,
+    Annotation, EventMarkerResolved, EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix,
+    NavPoint, Satellite, SatelliteReport,
 };
 use crate::write;
 
@@ -34,11 +35,15 @@ pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
     let nav_points = read_nav_points(&file)?;
     let nav_points = attach_satellite_data(nav_points, &file)?;
     let markers = read_markers(&file)?;
+    let event_markers = read_event_markers(&file)?;
+    let event_marker_styles = read_event_marker_styles(&file)?;
 
     Ok(NavFile {
         meta,
         nav_points,
         markers,
+        event_markers,
+        event_marker_styles,
     })
 }
 
@@ -247,6 +252,86 @@ fn read_markers(file: &File) -> Result<Vec<Marker>, Error> {
         .collect();
 
     Ok(markers)
+}
+
+fn read_event_markers(file: &File) -> Result<Vec<EventMarkerResolved>, Error> {
+    let Ok(grp) = file.group("event_markers") else {
+        return Ok(Vec::new());
+    };
+
+    let sys_times = grp.dataset("sys_time_us")?.read_u64()?;
+    let lats = grp.dataset("lat")?.read_f64()?;
+    let lons = grp.dataset("lon")?.read_f64()?;
+    let vp_flat = grp.dataset("variant_path")?.read_u8()?;
+    let ann_flat = grp.dataset("annotation")?.read_u8()?;
+
+    let n = sys_times.len();
+    check_len("event_markers", "lat", n, lats.len())?;
+    check_len("event_markers", "lon", n, lons.len())?;
+    check_len("event_markers", "variant_path", n * 256, vp_flat.len())?;
+    check_len("event_markers", "annotation", n * 512, ann_flat.len())?;
+
+    let markers = sys_times
+        .iter()
+        .zip(lats.iter())
+        .zip(lons.iter())
+        .zip(vp_flat.chunks(256))
+        .zip(ann_flat.chunks(512))
+        .filter_map(|((((sys_time_us, lat_deg), lon_deg), vp_row), ann_row)| {
+            let sys_time = crate::builder::u64_to_opt_datetime(*sys_time_us)?;
+            let variant_path = decode_fixed_str(vp_row)?;
+            let annotation = decode_fixed_str(ann_row);
+            Some(EventMarkerResolved {
+                variant_path,
+                sys_time,
+                lat: Angle::new::<degree>(*lat_deg),
+                lon: Angle::new::<degree>(*lon_deg),
+                annotation,
+            })
+        })
+        .collect();
+
+    Ok(markers)
+}
+
+fn read_event_marker_styles(file: &File) -> Result<Vec<EventMarkerStyle>, Error> {
+    let Ok(grp) = file.group("event_marker_styles") else {
+        return Ok(Vec::new());
+    };
+
+    let vp_flat = grp.dataset("variant_path")?.read_u8()?;
+    let icon_flat = grp.dataset("icon_name")?.read_u8()?;
+    let color_flat = grp.dataset("color_hex")?.read_u8()?;
+
+    let m = vp_flat.len() / 256;
+    check_len("event_marker_styles", "icon_name", m * 32, icon_flat.len())?;
+    check_len("event_marker_styles", "color_hex", m * 8, color_flat.len())?;
+
+    let styles = vp_flat
+        .chunks(256)
+        .zip(icon_flat.chunks(32))
+        .zip(color_flat.chunks(8))
+        .filter_map(|((vp_row, icon_row), color_row)| {
+            let variant_path = decode_fixed_str(vp_row)?;
+            let icon_name = decode_fixed_str(icon_row).unwrap_or_default();
+            let color_hex = decode_fixed_str(color_row).unwrap_or_default();
+            Some(EventMarkerStyle {
+                variant_path,
+                icon_name,
+                color_hex,
+            })
+        })
+        .collect();
+
+    Ok(styles)
+}
+
+fn decode_fixed_str(row: &[u8]) -> Option<String> {
+    let end = row.iter().position(|&b| b == 0).unwrap_or(row.len());
+    if end == 0 {
+        return None;
+    }
+    Some(String::from_utf8_lossy(row.get(..end)?).into_owned())
 }
 
 fn check_len(

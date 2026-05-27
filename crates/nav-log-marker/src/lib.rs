@@ -28,78 +28,72 @@ pub fn detect_format(line: &str) -> Option<LogFormat> {
     None
 }
 
+/// Parses a space-padded 1–2 digit day such as `" 9"` or `"29"` at `pos` in
+/// `bytes`. Returns `(day_value, end_pos)` where `end_pos == pos + 2`.
+fn parse_day(bytes: &[u8], pos: usize) -> Option<(u32, usize)> {
+    let end = pos + 2;
+    let s = std::str::from_utf8(bytes.get(pos..end)?).ok()?;
+    let day: u32 = s.trim().parse().ok()?;
+    Some((day, end))
+}
+
+/// Parses the leading `"HH:MM:SS"` of `s` and returns `(hour, minute, second)`.
+fn parse_hms(s: &str) -> Option<(u32, u32, u32)> {
+    let b = s.as_bytes();
+    if b.get(2).copied() != Some(b':') || b.get(5).copied() != Some(b':') {
+        return None;
+    }
+    let hour: u32 = s.get(..2)?.parse().ok()?;
+    let min: u32 = s.get(3..5)?.parse().ok()?;
+    let sec: u32 = s.get(6..8)?.parse().ok()?;
+    Some((hour, min, sec))
+}
+
+/// Parses a fractional-seconds suffix beginning with `'.'` (e.g. `".123456 rest"`).
+/// Returns `(nanoseconds, remaining_trimmed)`.
+fn parse_fractional_seconds(rest: &str) -> Option<(u32, &str)> {
+    if rest.as_bytes().first().copied() != Some(b'.') {
+        return None;
+    }
+    let frac_end = rest
+        .get(1..)
+        .unwrap_or("")
+        .find(|c: char| !c.is_ascii_digit())
+        .map_or(rest.len(), |i| i + 1);
+    let frac_str = rest.get(1..frac_end)?;
+    if frac_str.is_empty() {
+        return None;
+    }
+    // Normalise to 9 digits (nanoseconds precision).
+    let padded = format!("{:0<9}", frac_str);
+    let nano: u32 = padded.get(..9)?.parse().ok()?;
+    let after = rest.get(frac_end..).unwrap_or("").trim_start();
+    Some((nano, after))
+}
+
 /// `"May 29 18:48:24"` or `"May 29 18:48:24.123456"` — returns `(NaiveDateTime, rest)`.
 fn parse_syslog(line: &str, micro: bool) -> Option<(NaiveDateTime, &str)> {
     // Pattern: "MMM DD HH:MM:SS[.ffffff] rest"
-    // Month abbrev (3) + space + day (up to 2, right-justified) + space + time
     let bytes = line.as_bytes();
     if bytes.len() < 15 {
         return None;
     }
-    // Month: 3 chars
-    let month_str = line.get(..3)?;
-    let month = parse_month_abbrev(month_str)?;
-
-    // Space
+    let month = parse_month_abbrev(line.get(..3)?)?;
     if bytes.get(3).copied() != Some(b' ') {
         return None;
     }
-
-    // Day: 1 or 2 chars (space-padded, e.g. " 9" or "29")
-    let day_start = 4;
-    let day_end = if bytes.get(day_start).copied() == Some(b' ') {
-        // single-digit day " 9"
-        6
-    } else {
-        6
-    };
-    let day_str = line.get(day_start..day_end)?.trim();
-    let day: u32 = day_str.parse().ok()?;
-
-    // Space after day
+    let (day, day_end) = parse_day(bytes, 4)?;
     if bytes.get(day_end).copied() != Some(b' ') {
         return None;
     }
-
-    // Time HH:MM:SS starts at day_end+1
     let time_start = day_end + 1;
-    let time_end = time_start + 8; // "HH:MM:SS"
-    let time_str = line.get(time_start..time_end)?;
-    if time_str.as_bytes().get(2).copied() != Some(b':')
-        || time_str.as_bytes().get(5).copied() != Some(b':')
-    {
-        return None;
-    }
-    let hour: u32 = time_str.get(..2)?.parse().ok()?;
-    let min: u32 = time_str.get(3..5)?.parse().ok()?;
-    let sec: u32 = time_str.get(6..8)?.parse().ok()?;
-
+    let (hour, min, sec) = parse_hms(line.get(time_start..)?)?;
+    let time_end = time_start + 8;
     let (nano, after_time) = if micro {
-        // Expect '.' followed by up to 6 digits
-        let rest = line.get(time_end..)?;
-        if rest.as_bytes().first().copied() != Some(b'.') {
-            return None;
-        }
-        let frac_start = 1;
-        let frac_end = rest
-            .get(1..)
-            .unwrap_or("")
-            .find(|c: char| !c.is_ascii_digit())
-            .map_or(rest.len(), |i| i + 1);
-        let frac_str = rest.get(frac_start..frac_end)?;
-        if frac_str.is_empty() {
-            return None;
-        }
-        // Normalise to 9 digits
-        let padded = format!("{:0<9}", frac_str);
-        let nano: u32 = padded.get(..9)?.parse().ok()?;
-        let after = rest.get(frac_end..).unwrap_or("").trim_start();
-        (nano, after)
+        parse_fractional_seconds(line.get(time_end..)?)?
     } else {
-        let after = line.get(time_end..).unwrap_or("").trim_start();
-        (0u32, after)
+        (0u32, line.get(time_end..).unwrap_or("").trim_start())
     };
-
     let dt = NaiveDateTime::new(
         chrono::NaiveDate::from_ymd_opt(2000, month, day)?,
         chrono::NaiveTime::from_hms_nano_opt(hour, min, sec, nano)?,

@@ -1,10 +1,18 @@
-use nav_types::DataCategory;
-use std::collections::BTreeSet;
+use nav_types::{DataCategory, FileIdx, TripIdx};
+use std::collections::{BTreeSet, HashMap};
+
+/// A typed pair of file + trip indices — used as a key wherever both are
+/// needed together, replacing bare `(FileIdx, TripIdx)` tuples.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct TripRef {
+    pub file: FileIdx,
+    pub trip: TripIdx,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SelectionKey {
-    File(usize),
-    Trip(usize, usize),
+    File(FileIdx),
+    Trip(TripRef),
 }
 
 pub struct DeleteConfirmState {
@@ -12,13 +20,15 @@ pub struct DeleteConfirmState {
 }
 
 pub struct TripDataPanelState {
-    pub expanded_files: BTreeSet<usize>,
-    pub expanded_trips: BTreeSet<(usize, usize)>,
-    pub expanded_categories: BTreeSet<(usize, usize, DataCategory)>,
+    pub expanded_files: BTreeSet<FileIdx>,
+    pub expanded_trips: BTreeSet<TripRef>,
+    pub expanded_categories: BTreeSet<(TripRef, DataCategory)>,
     pub selection: BTreeSet<SelectionKey>,
     pub selection_anchor: Option<SelectionKey>,
     pub delete_confirm: Option<DeleteConfirmState>,
     pub detached: bool,
+    /// Per-trip prefix filter text for the Events section.
+    pub event_marker_filter: HashMap<TripRef, String>,
 }
 
 impl TripDataPanelState {
@@ -31,6 +41,7 @@ impl TripDataPanelState {
             selection_anchor: None,
             delete_confirm: None,
             detached: false,
+            event_marker_filter: HashMap::new(),
         }
     }
 }

@@ -409,6 +409,31 @@ fn make_file_with_shape_mismatch() -> Vec<u8> {
     fb.finish().expect("build")
 }
 
+#[test]
+fn chunked_fixed_array_large_dataset_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+    // hdf5-pure ≤ 0.5.0 could not read datasets whose Fixed Array chunk index
+    // used the "paged" variant, triggered when num_chunks > 1024. Using
+    // chunk_size=1 with 1025 elements forces this path.
+    const N: usize = 1025;
+    let data: Vec<f64> = (0..N).map(|i| i as f64).collect();
+
+    let mut fb = FileBuilder::new();
+    let mut grp = fb.create_group("data");
+    grp.create_dataset("values")
+        .with_f64_data(&data)
+        .with_shape(&[N as u64])
+        .with_chunks(&[1])
+        .with_deflate(6);
+    fb.add_group(grp.finish());
+    #[expect(clippy::expect_used, reason = "test helper")]
+    let bytes = fb.finish().expect("build");
+
+    let file = hdf5_pure::File::from_bytes(bytes)?;
+    let read_back = file.group("data")?.dataset("values")?.read_f64()?;
+    assert_eq!(read_back, data);
+    Ok(())
+}
+
 fn nav_file_with_label(label: Option<String>) -> Result<NavFile, Box<dyn std::error::Error>> {
     let nav_file = build_nav_file_with_label(label)?;
     let mut bytes = Vec::new();

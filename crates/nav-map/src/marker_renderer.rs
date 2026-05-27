@@ -1,14 +1,11 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui};
-use nav_types::filter;
 use nav_types::{
     CustomMarker, DataCategory, DataPointRef, GlobalFilter, HighlightScope, LoadedFile,
-    MapHighlight, MarkerIcon, TripDataVisibility,
+    MapHighlight, MarkerIcon, MercBounds, TripDataVisibility,
 };
 use std::cell::Cell;
 use std::rc::Rc;
 use walkers::{MapMemory, Plugin, Projector};
-
-use crate::generated_marker_renderer;
 
 pub struct MarkerRenderer<'a> {
     files: &'a [LoadedFile],
@@ -70,71 +67,39 @@ impl Plugin for MarkerRenderer<'_> {
         let hover_pos = ui.input(|i| i.pointer.hover_pos());
         let view_rect = ui.max_rect().expand(20.0);
         let mut local_closest: Option<(DataPointRef, Pos2, f32)> = None;
-
-        // Build the per-frame coordinate transform once. All arithmetic is in
-        // f64 with no large-value cancellation (see MercTransform docs).
         let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
+        let vp_bounds = MercBounds {
+            x_min: transform.merc_x_from_screen(view_rect.min.x),
+            x_max: transform.merc_x_from_screen(view_rect.max.x),
+            y_min: transform.merc_y_from_screen(view_rect.min.y),
+            y_max: transform.merc_y_from_screen(view_rect.max.y),
+        };
 
-        // Viewport bounds in Mercator space — entirely f64, no f32 subtraction.
-        let vp_min_merc_x = transform.merc_x_from_screen(view_rect.min.x);
-        let vp_max_merc_x = transform.merc_x_from_screen(view_rect.max.x);
-        let vp_min_merc_y = transform.merc_y_from_screen(view_rect.min.y);
-        let vp_max_merc_y = transform.merc_y_from_screen(view_rect.max.y);
-
-        for (fi, file) in self.files.iter().enumerate() {
-            let Some(file_vis) = self.visibility.files.get(fi) else {
-                continue;
-            };
-            if !file_vis.enabled {
-                continue;
-            }
-            for (ti, trip) in file.trips.iter().enumerate() {
-                let Some(trip_vis) = file_vis.trips.get(ti) else {
-                    continue;
-                };
-                if !trip_vis.enabled || !trip_vis.custom_markers_visible {
-                    continue;
-                }
-                if !filter::trip_passes_filter(&trip.metadata, self.filter) {
-                    continue;
-                }
-                for (pi, marker) in trip.custom_markers.iter().enumerate() {
-                    if !filter::point_passes_time_filter(marker.time, self.filter) {
-                        continue;
+        crate::marker_iter::for_each_visible_map_point(
+            self.files,
+            self.visibility,
+            self.filter,
+            &self.hover_out,
+            hover_pos,
+            &transform,
+            vp_bounds,
+            |trip, trip_vis| {
+                trip_vis
+                    .custom_markers_visible
+                    .then_some((DataCategory::CustomMarker, trip.custom_markers.as_slice()))
+            },
+            |point_ref, screen_pos, marker| {
+                if let Some(mouse) = hover_pos {
+                    // Use squared distance to avoid sqrt; threshold is 20² = 400.
+                    let dist_sq = screen_pos.distance_sq(mouse);
+                    if dist_sq < 400.0 && local_closest.is_none_or(|(_, _, d)| dist_sq < d) {
+                        local_closest = Some((point_ref, screen_pos, dist_sq));
                     }
-                    // Mercator-space cull: four comparisons, no trig.
-                    if marker.merc_x < vp_min_merc_x
-                        || marker.merc_x > vp_max_merc_x
-                        || marker.merc_y < vp_min_merc_y
-                        || marker.merc_y > vp_max_merc_y
-                    {
-                        continue;
-                    }
-                    let screen_pos = transform.to_screen(marker.merc_x, marker.merc_y);
-                    let point_ref = DataPointRef {
-                        file_index: fi,
-                        trip_index: ti,
-                        category: DataCategory::CustomMarker,
-                        point_index: pi,
-                    };
-                    generated_marker_renderer::update_hover_candidate(
-                        &self.hover_out,
-                        screen_pos,
-                        hover_pos,
-                        point_ref,
-                    );
-                    if let Some(mouse) = hover_pos {
-                        // Use squared distance to avoid sqrt; threshold is 20² = 400.
-                        let dist_sq = screen_pos.distance_sq(mouse);
-                        if dist_sq < 400.0 && local_closest.is_none_or(|(_, _, d)| dist_sq < d) {
-                            local_closest = Some((point_ref, screen_pos, dist_sq));
-                        }
-                    }
-                    let highlighted = self.is_marker_highlighted(point_ref);
-                    draw_marker_icon(ui, screen_pos, marker, highlighted);
                 }
-            }
-        }
+                let highlighted = self.is_marker_highlighted(point_ref);
+                draw_marker_icon(ui, screen_pos, marker, highlighted);
+            },
+        );
 
         if let Some((point_ref, pos, _)) = local_closest {
             show_marker_hover_label(ui, self.files, point_ref, pos);
@@ -148,13 +113,13 @@ impl Plugin for MarkerRenderer<'_> {
 /// is always visible when the marker is hovered, even when a TPV point is
 /// nearby and showing its own egui tooltip — the two are independent layers.
 fn show_marker_hover_label(ui: &Ui, files: &[LoadedFile], point_ref: DataPointRef, pos: Pos2) {
-    let Some(file) = files.get(point_ref.file_index) else {
+    let Some(file) = files.get(point_ref.file_index.0) else {
         return;
     };
-    let Some(trip) = file.trips.get(point_ref.trip_index) else {
+    let Some(trip) = file.trips.get(point_ref.trip_index.0) else {
         return;
     };
-    let Some(marker) = trip.custom_markers.get(point_ref.point_index) else {
+    let Some(marker) = trip.custom_markers.get(point_ref.point_index.0) else {
         return;
     };
 

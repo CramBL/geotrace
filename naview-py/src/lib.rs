@@ -7,9 +7,9 @@
 use chrono::{DateTime, FixedOffset, Utc};
 use std::path::PathBuf;
 use naview_sdk::{
-    Angle, Annotation, BuildError, Constellation, Marker, MarkerIcon, Meta, NavFile,
-    NavFileBuilder, NavFix, NavPoint, Satellite, SatelliteReport, Velocity, degree,
-    meter_per_second,
+    Angle, Annotation, BuildError, Constellation, EventMarker, EventMarkerResolved,
+    EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, NavPoint,
+    Satellite, SatelliteReport, Velocity, degree, meter_per_second,
 };
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -628,6 +628,152 @@ impl PyMarker {
 
 
 
+/// An event marker to add to the nav track.
+///
+/// ``variant_path`` is a slash-separated hierarchy, e.g. ``"power/boot"`` or
+/// ``"connectivity/agps/request"``.
+/// Allowed characters: ASCII alphanumeric, hyphen, underscore, and slash.
+/// No leading or trailing slash; no empty segments (``//``); max 256 bytes.
+///
+/// ``sys_time`` must be a timezone-aware ``datetime.datetime``.
+#[pyclass(skip_from_py_object, name = "EventMarker")]
+#[derive(Debug, Clone)]
+pub struct PyEventMarker {
+    variant_path: String,
+    sys_time: DateTime<Utc>,
+    annotation: Option<String>,
+}
+
+#[pymethods]
+impl PyEventMarker {
+    #[new]
+    #[pyo3(signature = (variant_path, sys_time, *, annotation=None))]
+    fn new(
+        variant_path: String,
+        sys_time: DateTime<FixedOffset>,
+        annotation: Option<String>,
+    ) -> Self {
+        Self { variant_path, sys_time: sys_time.to_utc(), annotation }
+    }
+
+    #[getter]
+    fn variant_path(&self) -> &str {
+        &self.variant_path
+    }
+
+    #[getter]
+    fn sys_time(&self) -> DateTime<FixedOffset> {
+        to_fixed(self.sys_time)
+    }
+
+    #[getter]
+    fn annotation(&self) -> Option<&str> {
+        self.annotation.as_deref()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("EventMarker(variant_path={:?})", self.variant_path)
+    }
+}
+
+
+
+/// Per-variant icon and color style stored in the file.
+///
+/// ``variant_path`` must exactly match a path used in an event marker.
+/// ``icon_name`` is a lowercase icon name, e.g. ``"lightning"``.
+/// ``color_hex`` is ``#RRGGBB``, e.g. ``"#FF9900"``.
+#[pyclass(skip_from_py_object, name = "EventMarkerStyle")]
+#[derive(Debug, Clone)]
+pub struct PyEventMarkerStyle {
+    variant_path: String,
+    icon_name: String,
+    color_hex: String,
+}
+
+#[pymethods]
+impl PyEventMarkerStyle {
+    #[new]
+    fn new(variant_path: String, icon_name: String, color_hex: String) -> Self {
+        Self { variant_path, icon_name, color_hex }
+    }
+
+    #[getter]
+    fn variant_path(&self) -> &str {
+        &self.variant_path
+    }
+
+    #[getter]
+    fn icon_name(&self) -> &str {
+        &self.icon_name
+    }
+
+    #[getter]
+    fn color_hex(&self) -> &str {
+        &self.color_hex
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "EventMarkerStyle(variant_path={:?}, color_hex={:?})",
+            self.variant_path, self.color_hex
+        )
+    }
+}
+
+
+
+/// A resolved event marker as read from a ``NavFile``, with an interpolated
+/// map position.
+///
+/// Obtain via ``NavFile.event_markers``.
+#[pyclass(skip_from_py_object, name = "EventMarkerPoint")]
+#[derive(Debug, Clone)]
+pub struct PyEventMarkerPoint {
+    inner: EventMarkerResolved,
+}
+
+#[pymethods]
+impl PyEventMarkerPoint {
+    #[getter]
+    fn variant_path(&self) -> &str {
+        &self.inner.variant_path
+    }
+
+    #[getter]
+    fn sys_time(&self) -> DateTime<FixedOffset> {
+        to_fixed(self.inner.sys_time)
+    }
+
+    /// Interpolated latitude in degrees.
+    #[getter]
+    fn lat(&self) -> f64 {
+        self.inner.lat.get::<degree>()
+    }
+
+    /// Interpolated longitude in degrees.
+    #[getter]
+    fn lon(&self) -> f64 {
+        self.inner.lon.get::<degree>()
+    }
+
+    #[getter]
+    fn annotation(&self) -> Option<&str> {
+        self.inner.annotation.as_deref()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "EventMarkerPoint(variant_path={:?}, lat={:.6}, lon={:.6})",
+            self.inner.variant_path,
+            self.inner.lat.get::<degree>(),
+            self.inner.lon.get::<degree>(),
+        )
+    }
+}
+
+
+
 /// A parsed `.nvd` navigation data file.
 ///
 /// Construct via `NavFileBuilder.finish()` to write, or `NavFile.open(path)`
@@ -692,11 +838,36 @@ impl PyNavFile {
             .collect()
     }
 
+    /// All event markers with their interpolated positions.
+    #[getter]
+    fn event_markers(&self) -> Vec<PyEventMarkerPoint> {
+        self.inner
+            .event_markers()
+            .iter()
+            .map(|em| PyEventMarkerPoint { inner: em.clone() })
+            .collect()
+    }
+
+    /// Per-variant style overrides stored in the file.
+    #[getter]
+    fn event_marker_styles(&self) -> Vec<PyEventMarkerStyle> {
+        self.inner
+            .event_marker_styles()
+            .iter()
+            .map(|s| PyEventMarkerStyle {
+                variant_path: s.variant_path.clone(),
+                icon_name: s.icon_name.clone(),
+                color_hex: s.color_hex.clone(),
+            })
+            .collect()
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "NavFile(points={}, markers={})",
+            "NavFile(points={}, markers={}, event_markers={})",
             self.inner.nav_points().len(),
             self.inner.markers().len(),
+            self.inner.event_markers().len(),
         )
     }
 }
@@ -771,6 +942,44 @@ impl PyNavFileBuilder {
         Ok(slf.unbind())
     }
 
+    /// Add an event marker to the file.
+    ///
+    /// Raises ``ValueError`` if ``marker.variant_path`` is malformed.
+    /// Returns ``self`` to allow chaining.
+    fn add_event_marker(slf: Bound<'_, Self>, marker: &PyEventMarker) -> PyResult<Py<Self>> {
+        {
+            let mut b = slf.borrow_mut();
+            let builder = b.inner.as_mut().ok_or_else(consumed_err)?;
+            builder
+                .add_event_marker(EventMarker {
+                    variant_path: marker.variant_path.clone(),
+                    sys_time: marker.sys_time,
+                    annotation: marker.annotation.clone(),
+                })
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        }
+        Ok(slf.unbind())
+    }
+
+    /// Add a per-variant style override to the file.
+    ///
+    /// Returns ``self`` to allow chaining.
+    fn add_event_marker_style(
+        slf: Bound<'_, Self>,
+        style: &PyEventMarkerStyle,
+    ) -> PyResult<Py<Self>> {
+        {
+            let mut b = slf.borrow_mut();
+            let builder = b.inner.as_mut().ok_or_else(consumed_err)?;
+            builder.add_event_marker_style(EventMarkerStyle {
+                variant_path: style.variant_path.clone(),
+                icon_name: style.icon_name.clone(),
+                color_hex: style.color_hex.clone(),
+            });
+        }
+        Ok(slf.unbind())
+    }
+
     /// Process all data and return a `NavFile`.
     ///
     /// Consumes the builder — calling `finish()` again raises `RuntimeError`.
@@ -797,6 +1006,9 @@ fn _naview_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMeta>()?;
     m.add_class::<PyNavPoint>()?;
     m.add_class::<PyMarker>()?;
+    m.add_class::<PyEventMarker>()?;
+    m.add_class::<PyEventMarkerStyle>()?;
+    m.add_class::<PyEventMarkerPoint>()?;
     m.add_class::<PyNavFile>()?;
     m.add_class::<PyNavFileBuilder>()?;
     Ok(())

@@ -1,3 +1,28 @@
+/// Error returned by [`NavFileBuilder::add_event_marker`](crate::NavFileBuilder::add_event_marker)
+/// when the supplied variant path is malformed.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum EventMarkerError {
+    #[error("invalid event marker variant path {path:?}: path is empty")]
+    Empty { path: String },
+
+    #[error("invalid event marker variant path {path:?}: starts with '/'")]
+    LeadingSlash { path: String },
+
+    #[error("invalid event marker variant path {path:?}: ends with '/'")]
+    TrailingSlash { path: String },
+
+    #[error("invalid event marker variant path {path:?}: contains '//'")]
+    EmptySegment { path: String },
+
+    #[error("invalid event marker variant path {path:?}: exceeds 256 bytes ({len} bytes)")]
+    TooLong { path: String, len: usize },
+
+    #[error(
+        "invalid event marker variant path {path:?}: contains characters outside ASCII alphanumeric, hyphen, underscore, and slash"
+    )]
+    InvalidChars { path: String },
+}
+
 /// Errors that can occur when building a [`NavFile`](crate::NavFile).
 #[derive(Debug, Clone, Copy, thiserror::Error)]
 pub enum BuildError {

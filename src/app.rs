@@ -24,14 +24,17 @@ use egui_tiles::{
     Container, Linear, LinearDir, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse,
 };
 use nav_map::{MapContextAction, MapLayer, NavMap};
-use nav_plot::{PlotState, find_closest_tpv, show_trip_plot};
+use nav_plot::PlotState;
 use nav_types::{
-    DataCategory, GlobalFilter, HighlightScope, LoadedFile, MapHighlight, NavPoint,
-    TripDataVisibility,
+    DataCategory, EventMarkerVisibility, GlobalFilter, HighlightScope, LoadedFile, MapHighlight,
+    NavPoint, TripDataVisibility,
 };
 use trip_data_panel::TripDataPanelState;
 
-use modals::{show_delete_confirmation, show_mapbox_token_dialog, show_unassociated_popup};
+use modals::{
+    show_delete_confirmation, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
+    show_unassociated_popup,
+};
 use side_panel::{PanelContext, show_side_panel};
 
 /// Pane variants for the central area tiles tree.
@@ -43,6 +46,7 @@ enum MainPane {
 struct SharedAppState {
     loaded_files: Vec<LoadedFile>,
     visibility: TripDataVisibility,
+    event_marker_visibility: EventMarkerVisibility,
     highlight: MapHighlight,
     filter: GlobalFilter,
     filter_state: filter_panel::FilterPanelState,
@@ -64,6 +68,7 @@ pub struct App {
     shared: Rc<RefCell<SharedAppState>>,
     load_error: Option<String>,
     unassociated_log_lines: Option<Vec<String>>,
+    orphaned_event_markers: Option<Vec<String>>,
     mapbox_token_input: String,
 
     /// Egui context — cloned into background threads for `request_repaint`.
@@ -154,6 +159,7 @@ impl App {
             shared: Rc::new(RefCell::new(SharedAppState {
                 loaded_files: Vec::new(),
                 visibility: TripDataVisibility { files: Vec::new() },
+                event_marker_visibility: EventMarkerVisibility::new(),
                 highlight: MapHighlight::default(),
                 filter: GlobalFilter::default(),
                 filter_state: filter_panel::FilterPanelState::default(),
@@ -166,6 +172,7 @@ impl App {
             })),
             load_error: None,
             unassociated_log_lines: None,
+            orphaned_event_markers: None,
             mapbox_token_input: String::new(),
             ctx: cc.egui_ctx.clone(),
             load_tx,
@@ -448,11 +455,20 @@ impl App {
                     self.loading_jobs.retain(|j| j.id != id);
                     match outcome {
                         Ok(loader::LoadOutcome::NvdFile { file, series }) => {
+                            let orphans: Vec<String> = file
+                                .orphaned_event_markers
+                                .iter()
+                                .map(|m| m.variant_path.clone())
+                                .collect();
                             let mut s = self.shared.borrow_mut();
                             let fi = s.loaded_files.len();
                             s.loaded_files.push(file);
                             s.visibility = TripDataVisibility::from_loaded(&s.loaded_files);
                             s.plot_state.integrate_file(fi, series);
+                            drop(s);
+                            if !orphans.is_empty() {
+                                self.orphaned_event_markers = Some(orphans);
+                            }
                             self.load_error = None;
                             self.finishing_jobs.push(loader::FinishedJob {
                                 filename,
@@ -598,6 +614,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     &s.visibility,
                     &mut s.highlight,
                     &s.filter,
+                    &s.event_marker_visibility,
                     center_req,
                     zoom_to_visible,
                     popup_pos,
@@ -626,7 +643,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 } else {
                     None
                 };
-                show_trip_plot(
+                nav_plot::show_trip_plot(
                     ui,
                     &s.loaded_files,
                     &s.visibility,
@@ -752,6 +769,7 @@ impl eframe::App for App {
                         &mut PanelContext {
                             files: &s.loaded_files,
                             visibility: &mut s.visibility,
+                            event_marker_visibility: &mut s.event_marker_visibility,
                             highlight: &mut s.highlight,
                             filter: &mut s.filter,
                             filter_state: &mut s.filter_state,
@@ -769,7 +787,7 @@ impl eframe::App for App {
             // freezing both windows. The floating-window approach is fully
             // platform-independent.
             let mut is_open = true;
-            egui::Window::new("Trip Data")
+            egui::Window::new("Trip data")
                 .id(egui::Id::new("detached_panel"))
                 .open(&mut is_open)
                 .default_pos(egui::pos2(10.0, 30.0))
@@ -784,6 +802,7 @@ impl eframe::App for App {
                         &mut PanelContext {
                             files: &s.loaded_files,
                             visibility: &mut s.visibility,
+                            event_marker_visibility: &mut s.event_marker_visibility,
                             highlight: &mut s.highlight,
                             filter: &mut s.filter,
                             filter_state: &mut s.filter_state,
@@ -819,15 +838,24 @@ impl eframe::App for App {
 
             // Forward plot hover → map highlight (must happen after the tree renders
             // so that show_trip_plot has already written the current hovered_time).
+            // The pre-computed `plot_hover_point` lets TpvRenderer look up the
+            // closest point in O(1) instead of re-scanning all trip points.
             let plot_visible = self.plot_is_visible();
-            s.highlight.plot_hover_time = if plot_visible {
-                s.plot_state.hovered_time.and_then(|t| {
-                    find_closest_tpv(&s.loaded_files, &s.visibility, &s.filter, t).map(|_| t)
-                })
+            if plot_visible {
+                if let Some(t) = s.plot_state.hovered_time {
+                    let closest =
+                        nav_plot::find_closest_tpv(&s.loaded_files, &s.visibility, &s.filter, t);
+                    s.highlight.plot_hover_time = closest.map(|_| t);
+                    s.highlight.plot_hover_point = closest;
+                } else {
+                    s.highlight.plot_hover_time = None;
+                    s.highlight.plot_hover_point = None;
+                }
             } else {
                 s.plot_state.hovered_time = None;
-                None
-            };
+                s.highlight.plot_hover_time = None;
+                s.highlight.plot_hover_point = None;
+            }
         });
 
         if self.map.layer() == MapLayer::Satellite && !self.map.has_mapbox_token() {
@@ -948,6 +976,7 @@ impl eframe::App for App {
         }
 
         show_unassociated_popup(ui, &mut self.unassociated_log_lines);
+        show_orphaned_event_markers_popup(ui, &mut self.orphaned_event_markers);
     }
 }
 
@@ -1015,9 +1044,9 @@ fn extract_map_hover_time(
         return None;
     }
     files
-        .get(point_ref.file_index)
-        .and_then(|f| f.trips.get(point_ref.trip_index))
-        .and_then(|t| t.points.get(point_ref.point_index))
+        .get(point_ref.file_index.0)
+        .and_then(|f| f.trips.get(point_ref.trip_index.0))
+        .and_then(|t| t.points.get(point_ref.point_index.0))
         .map(|p| p.tpv.time().utc())
 }
 

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use nav_map::{MapLayer, NavMap};
 use nav_types::{LoadedFile, TripDataVisibility};
 
-use super::trip_data_panel::{SelectionKey, TripDataPanelState};
+use super::trip_data_panel::{SelectionKey, TripDataPanelState, TripRef};
 
 /// Show the delete-confirmation dialog.
 ///
@@ -46,13 +46,13 @@ pub fn show_delete_confirmation(
                     for key in &items {
                         match key {
                             SelectionKey::File(fi) => {
-                                if let Some(file) = loaded_files.get(*fi) {
+                                if let Some(file) = loaded_files.get(fi.0) {
                                     ui.label(&file.metadata.filename);
                                 }
                             }
-                            SelectionKey::Trip(fi, ti) => {
-                                if let Some(file) = loaded_files.get(*fi)
-                                    && let Some(trip) = file.trips.get(*ti)
+                            SelectionKey::Trip(TripRef { file: fi, trip: ti }) => {
+                                if let Some(file) = loaded_files.get(fi.0)
+                                    && let Some(trip) = file.trips.get(ti.0)
                                 {
                                     let dist = nav_fmt::format_distance(trip.metadata.distance_km);
                                     let dur = nav_fmt::format_human_terse_duration(
@@ -104,10 +104,10 @@ pub fn execute_delete(
     for key in keys {
         match key {
             SelectionKey::File(fi) => {
-                file_indices_to_remove.insert(*fi);
+                file_indices_to_remove.insert(fi.0);
             }
-            SelectionKey::Trip(fi, ti) => {
-                trips_to_remove.entry(*fi).or_default().insert(*ti);
+            SelectionKey::Trip(TripRef { file: fi, trip: ti }) => {
+                trips_to_remove.entry(fi.0).or_default().insert(ti.0);
             }
         }
     }
@@ -168,6 +168,32 @@ pub fn show_unassociated_popup(ui: &egui::Ui, lines: &mut Option<Vec<String>>) {
     }
 }
 
+pub fn show_orphaned_event_markers_popup(ui: &egui::Ui, markers: &mut Option<Vec<String>>) {
+    let Some(orphans) = markers else {
+        return;
+    };
+    let mut dismiss = false;
+    egui::Window::new("Event markers outside trip range")
+        .collapsible(false)
+        .resizable(true)
+        .show(ui.ctx(), |ui| {
+            ui.label("These event markers could not be assigned to any trip:");
+            egui::ScrollArea::vertical()
+                .max_height(300.0)
+                .show(ui, |ui| {
+                    for path in orphans.iter() {
+                        ui.monospace(path);
+                    }
+                });
+            if ui.button("Dismiss").clicked() {
+                dismiss = true;
+            }
+        });
+    if dismiss {
+        *markers = None;
+    }
+}
+
 pub fn show_mapbox_token_dialog(ui: &egui::Ui, map: &mut NavMap, token_input: &mut String) {
     // ESC dismisses the dialog — same effect as the cancel button.
     let esc_pressed = ui
@@ -186,8 +212,8 @@ pub fn show_mapbox_token_dialog(ui: &egui::Ui, map: &mut NavMap, token_input: &m
         .open(&mut open)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ui.ctx(), |ui| {
-            ui.label("Satellite view requires a Mapbox API token.");
-            ui.label("Get one free at mapbox.com.");
+            ui.label("Satellite view requires a Mapbox API token");
+            ui.label("Get one free at mapbox.com");
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label("Token");

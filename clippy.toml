@@ -5,6 +5,7 @@ allow-indexing-slicing-in-tests = true
 allow-panic-in-tests = true
 max-fn-params-bools = 2
 too-many-lines-threshold = 90
+cognitive-complexity-threshold = 15
 # https://rust-lang.github.io/rust-clippy/master/index.html#/large_include_file
 max-include-file-size = 1000000
 

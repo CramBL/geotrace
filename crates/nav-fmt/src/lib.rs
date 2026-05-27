@@ -12,24 +12,35 @@ pub fn format_distance(km: f64) -> String {
 /// Format a duration as a compact human-readable string.
 ///
 /// Rules:
+/// - Durations ≥ 48 h are shown as `"Xd"` or `"XdYh"` (e.g. `"2d5h"`).
 /// - Seconds are shown only when the total duration is under 2 minutes.
 /// - Minutes are shown only when the total whole hours is less than 3.
 /// - Zero-valued components are omitted entirely.
 /// - Zero duration returns `"0s"` to avoid an empty string.
 ///
-/// Examples: `"20m"`, `"1h28m"`, `"3h"`, `"1m30s"`, `"45s"`.
+/// Examples: `"20m"`, `"1h28m"`, `"3h"`, `"1m30s"`, `"45s"`, `"2d5h"`.
 pub fn format_human_terse_duration(d: chrono::Duration) -> String {
     let total_secs = d.num_seconds();
     let h = d.num_hours();
     let m = d.num_minutes() % 60;
     let s = total_secs % 60;
 
-    let show_s = total_secs < 120;
-    let show_m = h < 3;
-
     if h == 0 && m == 0 && s == 0 {
         return "0s".to_owned();
     }
+
+    if h >= 48 {
+        let days = h / 24;
+        let rem_h = h % 24;
+        return if rem_h > 0 {
+            format!("{days}d{rem_h}h")
+        } else {
+            format!("{days}d")
+        };
+    }
+
+    let show_s = total_secs < 120;
+    let show_m = h < 3;
 
     let mut out = String::new();
     if h > 0 {
@@ -100,5 +111,21 @@ mod tests {
     #[test]
     fn just_under_two_minutes_shows_seconds() {
         assert_eq!(format_human_terse_duration(dur(0, 1, 59)), "1m59s");
+    }
+
+    #[test]
+    fn forty_eight_hours_shows_days_no_hours() {
+        assert_eq!(format_human_terse_duration(dur(48, 0, 0)), "2d");
+    }
+
+    #[test]
+    fn above_forty_eight_hours_shows_days_and_hours() {
+        assert_eq!(format_human_terse_duration(dur(53, 0, 0)), "2d5h");
+        assert_eq!(format_human_terse_duration(dur(119, 0, 0)), "4d23h");
+    }
+
+    #[test]
+    fn below_forty_eight_hours_shows_plain_hours() {
+        assert_eq!(format_human_terse_duration(dur(47, 0, 0)), "47h");
     }
 }

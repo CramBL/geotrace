@@ -1,8 +1,7 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui};
-use nav_types::filter;
 use nav_types::{
     DataCategory, DataPointRef, GeneratedMarkerKind, GlobalFilter, HighlightScope, LoadedFile,
-    MapHighlight, TripDataVisibility,
+    MapHighlight, MercBounds, TripDataVisibility,
 };
 use std::cell::Cell;
 use std::rc::Rc;
@@ -62,13 +61,13 @@ impl<'a> GeneratedMarkerRenderer<'a> {
         let Some((point_ref, pos)) = local_closest else {
             return;
         };
-        let Some(file) = self.files.get(point_ref.file_index) else {
+        let Some(file) = self.files.get(point_ref.file_index.0) else {
             return;
         };
-        let Some(trip) = file.trips.get(point_ref.trip_index) else {
+        let Some(trip) = file.trips.get(point_ref.trip_index.0) else {
             return;
         };
-        let Some(marker) = trip.generated_markers.get(point_ref.point_index) else {
+        let Some(marker) = trip.generated_markers.get(point_ref.point_index.0) else {
             return;
         };
         let hit_rect = egui::Rect::from_center_size(pos, egui::vec2(20.0, 20.0));
@@ -76,9 +75,9 @@ impl<'a> GeneratedMarkerRenderer<'a> {
             hit_rect,
             ui.id()
                 .with("gen_marker_hover")
-                .with(point_ref.file_index)
-                .with(point_ref.trip_index)
-                .with(point_ref.point_index),
+                .with(point_ref.file_index.0)
+                .with(point_ref.trip_index.0)
+                .with(point_ref.point_index.0),
             egui::Sense::hover(),
         );
         response.show_tooltip_ui(|ui| match marker.kind {
@@ -120,72 +119,45 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
         let hover_pos = ui.input(|i| i.pointer.hover_pos());
         let view_rect = ui.max_rect().expand(20.0);
         let mut local_closest: Option<(DataPointRef, Pos2)> = None;
-
-        // Build the per-frame coordinate transform once. All arithmetic is in
-        // f64 with no large-value cancellation (see MercTransform docs).
         let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
+        let vp_bounds = MercBounds {
+            x_min: transform.merc_x_from_screen(view_rect.min.x),
+            x_max: transform.merc_x_from_screen(view_rect.max.x),
+            y_min: transform.merc_y_from_screen(view_rect.min.y),
+            y_max: transform.merc_y_from_screen(view_rect.max.y),
+        };
 
-        // Viewport bounds in Mercator space — entirely f64, no f32 subtraction.
-        let vp_min_merc_x = transform.merc_x_from_screen(view_rect.min.x);
-        let vp_max_merc_x = transform.merc_x_from_screen(view_rect.max.x);
-        let vp_min_merc_y = transform.merc_y_from_screen(view_rect.min.y);
-        let vp_max_merc_y = transform.merc_y_from_screen(view_rect.max.y);
-
-        for (fi, file) in self.files.iter().enumerate() {
-            let Some(file_vis) = self.visibility.files.get(fi) else {
-                continue;
-            };
-            if !file_vis.enabled {
-                continue;
-            }
-            for (ti, trip) in file.trips.iter().enumerate() {
-                let Some(trip_vis) = file_vis.trips.get(ti) else {
-                    continue;
-                };
-                if !trip_vis.enabled || !trip_vis.generated_markers_visible {
-                    continue;
-                }
-                if !filter::trip_passes_filter(&trip.metadata, self.filter) {
-                    continue;
-                }
-                for (pi, marker) in trip.generated_markers.iter().enumerate() {
-                    if !filter::point_passes_time_filter(marker.time, self.filter) {
-                        continue;
-                    }
-                    // Mercator-space cull — four comparisons, no trig.
-                    if marker.merc_x < vp_min_merc_x
-                        || marker.merc_x > vp_max_merc_x
-                        || marker.merc_y < vp_min_merc_y
-                        || marker.merc_y > vp_max_merc_y
-                    {
-                        continue;
-                    }
-                    let screen_pos = transform.to_screen(marker.merc_x, marker.merc_y);
-                    let point_ref = DataPointRef {
-                        file_index: fi,
-                        trip_index: ti,
-                        category: DataCategory::GeneratedMarker,
-                        point_index: pi,
-                    };
-                    update_hover_candidate(&self.hover_out, screen_pos, hover_pos, point_ref);
-                    if let Some(mouse) = hover_pos {
-                        // Use squared distance to avoid sqrt; threshold is HOVER_THRESHOLD² = 100.
-                        let dist_sq = screen_pos.distance_sq(mouse);
-                        if dist_sq < HOVER_THRESHOLD * HOVER_THRESHOLD {
-                            let is_closer =
-                                local_closest.as_ref().is_none_or(|(_, closest_pos)| {
-                                    closest_pos.distance_sq(mouse) > dist_sq
-                                });
-                            if is_closer {
-                                local_closest = Some((point_ref, screen_pos));
-                            }
+        crate::marker_iter::for_each_visible_map_point(
+            self.files,
+            self.visibility,
+            self.filter,
+            &self.hover_out,
+            hover_pos,
+            &transform,
+            vp_bounds,
+            |trip, trip_vis| {
+                trip_vis.generated_markers_visible.then_some((
+                    DataCategory::GeneratedMarker,
+                    trip.generated_markers.as_slice(),
+                ))
+            },
+            |point_ref, screen_pos, marker| {
+                if let Some(mouse) = hover_pos {
+                    // Use squared distance to avoid sqrt; threshold is HOVER_THRESHOLD² = 100.
+                    let dist_sq = screen_pos.distance_sq(mouse);
+                    if dist_sq < HOVER_THRESHOLD * HOVER_THRESHOLD {
+                        let is_closer = local_closest.as_ref().is_none_or(|(_, closest_pos)| {
+                            closest_pos.distance_sq(mouse) > dist_sq
+                        });
+                        if is_closer {
+                            local_closest = Some((point_ref, screen_pos));
                         }
                     }
-                    let highlighted = self.is_point_highlighted(point_ref);
-                    draw_generated_marker(ui, screen_pos, marker.kind, highlighted);
                 }
-            }
-        }
+                let highlighted = self.is_point_highlighted(point_ref);
+                draw_generated_marker(ui, screen_pos, marker.kind, highlighted);
+            },
+        );
         self.show_tooltip(ui, local_closest);
     }
 }

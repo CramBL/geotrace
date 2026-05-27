@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 use egui::Ui;
-use nav_types::{GlobalFilter, LoadedFile};
+use nav_types::{GlobalFilter, LoadedFile, MarkerRequirement};
 
 const EM_DASH: &str = "—";
 
@@ -11,6 +11,10 @@ pub struct FilterPanelState {
     pub distance_input: String,
     pub duration_input: String,
     pub spread_input: String,
+    /// Stable viewport for the secondary (zoomed) time range bar.
+    /// Initialised from the active data range the first time the secondary bar
+    /// appears; reset when the primary bar changes or filters are cleared.
+    pub secondary_zoom: Option<(DateTime<Utc>, DateTime<Utc>)>,
 }
 
 pub fn render_filter_panel(
@@ -20,18 +24,53 @@ pub fn render_filter_panel(
     state: &mut FilterPanelState,
 ) {
     let full_range = compute_full_time_range(files);
+    let filtered_range = compute_filtered_time_range(files, filter);
 
     if let Some((range_start, range_end)) = full_range {
         let sel_start = filter.time_start.unwrap_or(range_start);
         let sel_end = filter.time_end.unwrap_or(range_end);
         let dur_str = nav_fmt::format_human_terse_duration(sel_end - sel_start);
         ui.label(format!("Time range {EM_DASH} {dur_str}"));
-        time_range_bar(
+        let primary_changed = time_range_bar(
             ui,
             (range_start, range_end),
             &mut filter.time_start,
             &mut filter.time_end,
         );
+        if primary_changed {
+            state.secondary_zoom = None;
+        }
+
+        // Secondary (zoomed) time range bar — shown when the active data range
+        // is much narrower than the full range (e.g. one 30-minute trip among
+        // several days). Uses a stable stored viewport so that dragging its
+        // handles doesn't shift the viewport under the cursor.
+        if let Some((filt_start, filt_end)) = filtered_range {
+            let full_secs = (range_end - range_start).num_seconds();
+            let filt_secs = (filt_end - filt_start).num_seconds();
+            if full_secs > 0 && filt_secs * 5 < full_secs {
+                if state.secondary_zoom.is_none() {
+                    state.secondary_zoom = Some(expand_range(
+                        (filt_start, filt_end),
+                        (range_start, range_end),
+                    ));
+                }
+                if let Some((zoom_start, zoom_end)) = state.secondary_zoom {
+                    let zoom_dur = nav_fmt::format_human_terse_duration(zoom_end - zoom_start);
+                    ui.label(format!("Active range {EM_DASH} {zoom_dur}"));
+                    time_range_bar(
+                        ui,
+                        (zoom_start, zoom_end),
+                        &mut filter.time_start,
+                        &mut filter.time_end,
+                    );
+                }
+            } else {
+                state.secondary_zoom = None;
+            }
+        } else {
+            state.secondary_zoom = None;
+        }
     }
 
     // Three-column grid: label | text edit | unit.  All filter inputs in one
@@ -85,9 +124,33 @@ pub fn render_filter_panel(
             .filter(|&v| v > 0.0);
     }
 
-    // Marker filters — always visible so users know they exist before loading data.
-    ui.checkbox(&mut filter.require_any_marker, "W/ markers only");
-    ui.checkbox(&mut filter.require_custom_marker, "W/ custom markers only");
+    // Marker requirement — mutually exclusive options rendered as toggleable labels.
+    let req = &mut filter.marker_requirement;
+    ui.horizontal(|ui| {
+        if ui
+            .selectable_label(*req == MarkerRequirement::AnyMarker, "W/ markers only")
+            .clicked()
+        {
+            *req = if *req == MarkerRequirement::AnyMarker {
+                MarkerRequirement::None
+            } else {
+                MarkerRequirement::AnyMarker
+            };
+        }
+        if ui
+            .selectable_label(
+                *req == MarkerRequirement::CustomMarker,
+                "W/ custom markers only",
+            )
+            .clicked()
+        {
+            *req = if *req == MarkerRequirement::CustomMarker {
+                MarkerRequirement::None
+            } else {
+                MarkerRequirement::CustomMarker
+            };
+        }
+    });
 
     if ui.small_button("Reset filters").clicked() {
         *filter = GlobalFilter::default();
@@ -99,8 +162,8 @@ fn compute_full_time_range(files: &[LoadedFile]) -> Option<(DateTime<Utc>, DateT
     let mut min: Option<DateTime<Utc>> = None;
     let mut max: Option<DateTime<Utc>> = None;
     for file in files {
-        let start = file.metadata.time_range.0;
-        let end = file.metadata.time_range.1;
+        let start = file.metadata.time_range.start;
+        let end = file.metadata.time_range.end;
         min = Some(min.map_or(start, |m: DateTime<Utc>| m.min(start)));
         max = Some(max.map_or(end, |m: DateTime<Utc>| m.max(end)));
     }
@@ -112,11 +175,11 @@ fn time_range_bar(
     full_range: (DateTime<Utc>, DateTime<Utc>),
     selected_start: &mut Option<DateTime<Utc>>,
     selected_end: &mut Option<DateTime<Utc>>,
-) {
+) -> bool {
     let (full_start, full_end) = full_range;
     let total_secs = (full_end - full_start).num_seconds() as f64;
     if total_secs <= 0.0 {
-        return;
+        return false;
     }
 
     let desired_size = egui::vec2(ui.available_width(), 24.0);
@@ -160,6 +223,7 @@ fn time_range_bar(
     painter.circle_filled(egui::pos2(start_x, track_y), handle_radius, handle_color);
     painter.circle_filled(egui::pos2(end_x, track_y), handle_radius, handle_color);
 
+    let mut changed = false;
     if let Some(pointer) = response.interact_pointer_pos() {
         let dist_start = (pointer.x - start_x).abs();
         let dist_end = (pointer.x - end_x).abs();
@@ -178,11 +242,13 @@ fn time_range_bar(
                 Some(new_dt)
             };
         }
+        changed = true;
     }
 
     if response.double_clicked() {
         *selected_start = None;
         *selected_end = None;
+        changed = true;
     }
 
     let start_label = selected_start.map_or_else(
@@ -194,6 +260,39 @@ fn time_range_bar(
         |dt| dt.format("%m/%d %H:%M").to_string(),
     );
     ui.label(format!("{start_label} {EM_DASH} {end_label}"));
+    changed
+}
+
+fn compute_filtered_time_range(
+    files: &[LoadedFile],
+    filter: &GlobalFilter,
+) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    let mut min: Option<DateTime<Utc>> = None;
+    let mut max: Option<DateTime<Utc>> = None;
+    for file in files {
+        for trip in &file.trips {
+            if nav_types::trip_passes_filter(&trip.metadata, filter) {
+                let start = trip.metadata.time_range.start;
+                let end = trip.metadata.time_range.end;
+                min = Some(min.map_or(start, |m: DateTime<Utc>| m.min(start)));
+                max = Some(max.map_or(end, |m: DateTime<Utc>| m.max(end)));
+            }
+        }
+    }
+    min.zip(max)
+}
+
+fn expand_range(
+    range: (DateTime<Utc>, DateTime<Utc>),
+    full: (DateTime<Utc>, DateTime<Utc>),
+) -> (DateTime<Utc>, DateTime<Utc>) {
+    let (start, end) = range;
+    let (full_start, full_end) = full;
+    let span_secs = (end - start).num_seconds().max(60);
+    let padding = Duration::seconds(span_secs / 5);
+    let expanded_start = (start - padding).max(full_start);
+    let expanded_end = (end + padding).min(full_end);
+    (expanded_start, expanded_end)
 }
 
 fn parse_duration_input(s: &str) -> Option<i64> {
@@ -226,6 +325,8 @@ fn parse_duration_input(s: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use std::fmt::Write as _;
+
+    use nav_types::TimeRange;
 
     use super::*;
 
@@ -291,12 +392,14 @@ mod tests {
                 filename: "test.nvd".to_owned(),
                 total_distance_km: 1.0,
                 total_duration: Duration::seconds(60),
-                time_range: (
+                time_range: TimeRange::new(
                     Utc.timestamp_opt(0, 0).single().expect("valid"),
                     Utc.timestamp_opt(60, 0).single().expect("valid"),
                 ),
             },
             trips: vec![],
+            event_marker_styles: vec![],
+            orphaned_event_markers: vec![],
         };
         let range = compute_full_time_range(&[file]);
         assert!(range.is_some());

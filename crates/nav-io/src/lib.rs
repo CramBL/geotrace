@@ -11,11 +11,15 @@ use std::path::Path;
 
 use nav_types::satellites::{Constellation, Satellite, Satellites};
 use nav_types::time_types::{GpsTime, SysTime};
-use nav_types::{CustomMarker, LoadedFile, MarkerIcon, NavPoint, TimePositionVelocity};
+use nav_types::{
+    CustomMarker, EventMarker, EventMarkerStyle, LoadedFile, MarkerIcon, NavPoint,
+    TimePositionVelocity,
+};
 use naview_sdk::degree;
 use naview_sdk::{
-    Constellation as SdkConstellation, Marker as SdkMarker, MarkerIcon as SdkMarkerIcon, NavFile,
-    Satellite as SdkSatellite, SatelliteReport,
+    Constellation as SdkConstellation, EventMarkerResolved,
+    EventMarkerStyle as SdkEventMarkerStyle, Marker as SdkMarker, MarkerIcon as SdkMarkerIcon,
+    NavFile, Satellite as SdkSatellite, SatelliteReport,
 };
 
 /// Load a `.nvd` file from `path`, segment it into trips, and return a fully
@@ -46,9 +50,15 @@ pub fn load_file_with_progress(
     progress(0.20, STAGE_PARSING);
     let nav_file = NavFile::read(file)?;
     progress(0.65, STAGE_CONVERTING);
-    let (points, markers) = from_nav_file(&nav_file)?;
+    let (points, markers, event_markers, event_marker_styles) = from_nav_file(&nav_file)?;
     progress(0.90, STAGE_SEGMENTING);
-    let loaded = nav_types::segment::build_loaded_file(filename, &points, &markers);
+    let loaded = nav_types::segment::build_loaded_file(
+        filename,
+        &points,
+        &markers,
+        event_markers,
+        event_marker_styles,
+    );
     Ok(loaded)
 }
 
@@ -61,13 +71,26 @@ pub fn load_bytes_with_progress(
     progress(0.15, STAGE_PARSING);
     let nav_file = NavFile::read(bytes)?;
     progress(0.60, STAGE_CONVERTING);
-    let (points, markers) = from_nav_file(&nav_file)?;
+    let (points, markers, event_markers, event_marker_styles) = from_nav_file(&nav_file)?;
     progress(0.90, STAGE_SEGMENTING);
-    let loaded = nav_types::segment::build_loaded_file(filename, &points, &markers);
+    let loaded = nav_types::segment::build_loaded_file(
+        filename,
+        &points,
+        &markers,
+        event_markers,
+        event_marker_styles,
+    );
     Ok(loaded)
 }
 
-fn from_nav_file(nav_file: &NavFile) -> Result<(Vec<NavPoint>, Vec<CustomMarker>), LoadError> {
+type NavFileContents = (
+    Vec<NavPoint>,
+    Vec<CustomMarker>,
+    Vec<EventMarker>,
+    Vec<EventMarkerStyle>,
+);
+
+fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
     let mut nav_points = Vec::with_capacity(nav_file.nav_points().len());
 
     for (idx, sdk_point) in nav_file.nav_points().iter().enumerate() {
@@ -98,7 +121,60 @@ fn from_nav_file(nav_file: &NavFile) -> Result<(Vec<NavPoint>, Vec<CustomMarker>
 
     let markers = nav_file.markers().iter().map(convert_marker).collect();
 
-    Ok((nav_points, markers))
+    let event_markers = nav_file
+        .event_markers()
+        .iter()
+        .map(convert_event_marker)
+        .collect();
+
+    let event_marker_styles = nav_file
+        .event_marker_styles()
+        .iter()
+        .map(convert_event_marker_style)
+        .collect();
+
+    Ok((nav_points, markers, event_markers, event_marker_styles))
+}
+
+fn convert_event_marker(m: &EventMarkerResolved) -> EventMarker {
+    EventMarker::new(
+        m.sys_time,
+        m.variant_path.clone(),
+        m.annotation.clone(),
+        m.lat,
+        m.lon,
+    )
+}
+
+fn convert_event_marker_style(s: &SdkEventMarkerStyle) -> EventMarkerStyle {
+    EventMarkerStyle {
+        variant_path: s.variant_path.clone(),
+        icon: icon_name_to_marker_icon(&s.icon_name),
+        color: parse_hex_color(&s.color_hex).unwrap_or((128, 128, 128)),
+    }
+}
+
+fn icon_name_to_marker_icon(name: &str) -> MarkerIcon {
+    match name {
+        "cross" => MarkerIcon::Cross,
+        "circle" => MarkerIcon::Circle,
+        "lightning" => MarkerIcon::Lightning,
+        "warning" => MarkerIcon::Warning,
+        "error" => MarkerIcon::Error,
+        "check" => MarkerIcon::Check,
+        _ => MarkerIcon::Pin,
+    }
+}
+
+fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
+    let hex = hex.strip_prefix('#')?;
+    if hex.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(hex.get(..2)?, 16).ok()?;
+    let g = u8::from_str_radix(hex.get(2..4)?, 16).ok()?;
+    let b = u8::from_str_radix(hex.get(4..6)?, 16).ok()?;
+    Some((r, g, b))
 }
 
 fn convert_constellation(c: SdkConstellation) -> Constellation {
@@ -177,7 +253,7 @@ mod tests {
     }
 
     fn build(nav_file: NavFile) -> Result<(Vec<NavPoint>, Vec<CustomMarker>), LoadError> {
-        from_nav_file(&nav_file)
+        from_nav_file(&nav_file).map(|(pts, markers, _, _)| (pts, markers))
     }
 
     // -----------------------------------------------------------------------

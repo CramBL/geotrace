@@ -1,5 +1,8 @@
 use nav_plot::PreparedSeries;
-use nav_types::{Coord, CustomMarker, FileMetadata, LoadedFile, LoadedTrip, Rect, TripMetadata};
+use nav_types::{
+    Coord, CustomMarker, FileMetadata, LoadedFile, LoadedTrip, Rect, TimeRange, TripMetadata,
+    merc_bounds_for_rect,
+};
 use uom::si::angle::degree;
 
 /// State for a single in-flight background load job, shown in the progress UI.
@@ -107,32 +110,36 @@ pub(super) fn build_log_loaded_file(
         filename.to_owned()
     };
 
+    let bounding_box = Rect::new(
+        Coord {
+            x: min_lon,
+            y: min_lat,
+        },
+        Coord {
+            x: max_lon,
+            y: max_lat,
+        },
+    );
     let trip = LoadedTrip {
         metadata: TripMetadata {
             index: 0,
             distance_km: 0.0,
             duration,
-            time_range: (min_time, max_time),
-            bounding_box: Rect::new(
-                Coord {
-                    x: min_lon,
-                    y: min_lat,
-                },
-                Coord {
-                    x: max_lon,
-                    y: max_lat,
-                },
-            ),
+            time_range: TimeRange::new(min_time, max_time),
+            bounding_box,
+            merc_bounds: merc_bounds_for_rect(bounding_box),
             point_set_diameter_m: 0.0,
             has_custom_markers: true,
             tpv_count: 0,
             satellite_report_count: 0,
             custom_marker_count: count,
             generated_marker_count: 0,
+            event_marker_count: 0,
         },
         points: Vec::new(),
         custom_markers: markers,
         generated_markers: Vec::new(),
+        event_markers: Vec::new(),
     };
 
     Some(LoadedFile {
@@ -140,8 +147,10 @@ pub(super) fn build_log_loaded_file(
             filename,
             total_distance_km: 0.0,
             total_duration: duration,
-            time_range: (min_time, max_time),
+            time_range: TimeRange::new(min_time, max_time),
         },
         trips: vec![trip],
+        event_marker_styles: Vec::new(),
+        orphaned_event_markers: Vec::new(),
     })
 }

@@ -9,6 +9,7 @@ authors.workspace = true
 [dependencies]
 chrono.workspace = true
 egui.workspace = true
+egui-phosphor.workspace = true
 egui_plot.workspace = true
 nav-egui-mipmap = { path = "../nav-egui-mipmap" }
 nav-types = { path = "../nav-types" }

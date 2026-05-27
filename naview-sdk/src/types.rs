@@ -208,6 +208,45 @@ pub struct Marker {
     pub lon: Angle,
 }
 
+/// An event marker to add to the nav file.
+///
+/// The builder computes the geographic position by interpolating surrounding
+/// nav fixes; producers supply only a timestamp.
+#[derive(bon::Builder, Debug, Clone)]
+pub struct EventMarker {
+    /// Slash-separated variant path, e.g. `"agps/request-epo/gps"`.
+    ///
+    /// Rules: ASCII alphanumeric + `-` + `/`, no leading/trailing slash, no
+    /// empty segments (`//`), max 256 bytes.
+    pub variant_path: String,
+    /// System-clock timestamp for this event.
+    pub sys_time: chrono::DateTime<chrono::Utc>,
+    /// Optional free-text note shown on hover. `None` = no annotation.
+    pub annotation: Option<String>,
+}
+
+/// Per-variant icon and color override stored in the file.
+#[derive(bon::Builder, Debug, Clone)]
+pub struct EventMarkerStyle {
+    /// Must exactly match a `variant_path` used in the event markers.
+    pub variant_path: String,
+    /// Lowercase `MarkerIcon` variant name, e.g. `"lightning"`. Unknown names
+    /// fall back to `"pin"` when loading.
+    pub icon_name: String,
+    /// Fill color as `#RRGGBB` hex, e.g. `"#FF9900"`.
+    pub color_hex: String,
+}
+
+/// An event marker after position interpolation, stored in [`NavFile`].
+#[derive(Debug, Clone)]
+pub struct EventMarkerResolved {
+    pub variant_path: String,
+    pub sys_time: chrono::DateTime<chrono::Utc>,
+    pub lat: uom::si::f64::Angle,
+    pub lon: uom::si::f64::Angle,
+    pub annotation: Option<String>,
+}
+
 /// A complete, validated naview data file ready for serialisation.
 ///
 /// Construct via [`NavFileBuilder::finish`](crate::NavFileBuilder::finish).
@@ -216,6 +255,8 @@ pub struct NavFile {
     pub meta: Meta,
     pub(crate) nav_points: Vec<NavPoint>,
     pub(crate) markers: Vec<Marker>,
+    pub(crate) event_markers: Vec<EventMarkerResolved>,
+    pub(crate) event_marker_styles: Vec<EventMarkerStyle>,
 }
 
 impl NavFile {
@@ -225,6 +266,14 @@ impl NavFile {
 
     pub fn markers(&self) -> &[Marker] {
         &self.markers
+    }
+
+    pub fn event_markers(&self) -> &[EventMarkerResolved] {
+        &self.event_markers
+    }
+
+    pub fn event_marker_styles(&self) -> &[EventMarkerStyle] {
+        &self.event_marker_styles
     }
 
     /// Serialise the file to the provided writer.

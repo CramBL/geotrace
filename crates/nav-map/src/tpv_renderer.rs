@@ -3,8 +3,8 @@ use egui::{Color32, PopupAnchor, Pos2, Response, Stroke, Ui};
 use nav_types::filter;
 use nav_types::satellites::Constellation;
 use nav_types::{
-    DataCategory, DataPointRef, GlobalFilter, HighlightScope, LoadedFile, MapHighlight, NavPoint,
-    TripDataVisibility,
+    DataCategory, DataPointRef, FileIdx, GlobalFilter, HighlightScope, LoadedFile, MapHighlight,
+    NavPoint, PointIdx, TripDataVisibility, TripIdx,
 };
 use std::cell::Cell;
 use std::rc::Rc;
@@ -77,16 +77,21 @@ impl<'a> TpvRenderer<'a> {
         ui: &Ui,
         hover_pos: Option<Pos2>,
         view_rect: egui::Rect,
-        fi: usize,
-        ti: usize,
+        fi: FileIdx,
+        ti: TripIdx,
         points: &[NavPoint],
         local_closest: &mut Option<(DataPointRef, Pos2)>,
-        outline_alpha: f32,
-        base_arrow_size: f32,
-        base_ghost_radius: f32,
-        min_label_dist: f32,
+        style: &TpvDrawStyle,
         transform: &crate::MercTransform,
     ) {
+        // Viewport bounds in Mercator space — used to skip off-screen real
+        // fixes before projection.  Ghost fixes (heading == None) need
+        // interpolation first and are handled separately below.
+        let vp_x_min = transform.merc_x_from_screen(view_rect.min.x);
+        let vp_x_max = transform.merc_x_from_screen(view_rect.max.x);
+        let vp_y_min = transform.merc_y_from_screen(view_rect.min.y);
+        let vp_y_max = transform.merc_y_from_screen(view_rect.max.y);
+
         let mut last_label_pos: Option<Pos2> = None;
         for (pi, point) in points.iter().enumerate() {
             if !filter::point_passes_time_filter(point.tpv.time().utc(), self.filter) {
@@ -98,34 +103,46 @@ impl<'a> TpvRenderer<'a> {
             // The correct gate is `heading.is_some()`: the SDK sets heading=None
             // only for ghost/synthetic fixes that carry orphaned satellite reports
             // but have no real GPS position of their own.
-            let (screen_pos, color) = match point.tpv.heading() {
-                Some(_) => {
-                    // Real GPS fix: always use the pre-computed Mercator
-                    // coordinates; color by satellite quality when available.
-                    let color = match point.fix_count() {
-                        n if n >= 10 => Color32::from_rgb(66, 133, 244), // blue: strong fix
-                        n if n > 0 => Color32::from_rgb(244, 180, 0),    // yellow: marginal
-                        // No satellite report attached — the fix is real, we
-                        // just have no satellite data for it.  Show as blue.
-                        _ => Color32::from_rgb(66, 133, 244),
-                    };
-                    (transform.to_screen(point.merc_x, point.merc_y), color)
+            // Classify the point once — PointKind carries everything the draw
+            // step needs so the second heading match is eliminated entirely.
+            let point_kind = match point.tpv.heading() {
+                Some(h) => {
+                    // Real GPS fix: Mercator-space cull before projection.
+                    // The pointer is always inside the map widget, so off-screen
+                    // points can never be hovered — skip both projection and
+                    // hover detection for them.
+                    if point.merc_x < vp_x_min
+                        || point.merc_x > vp_x_max
+                        || point.merc_y < vp_y_min
+                        || point.merc_y > vp_y_max
+                    {
+                        continue;
+                    }
+                    // Color by satellite fix quality.
+                    let color = tpv_point_color(point);
+                    PointKind::Real {
+                        screen_pos: transform.to_screen(point.merc_x, point.merc_y),
+                        color,
+                        heading_deg: h.get::<degree>(),
+                    }
                 }
                 None => {
                     // Ghost fix: position interpolated from surrounding real fixes.
+                    // No precomputed merc coords — project first, then apply
+                    // the screen-space view check below.
                     let (lat, lon) = interpolate_position(points, pi);
                     let (merc_x, merc_y) = crate::normalize_merc(lon, lat);
-                    (
-                        transform.to_screen(merc_x, merc_y),
-                        Color32::from_rgb(219, 68, 55),
-                    )
+                    PointKind::Ghost {
+                        screen_pos: transform.to_screen(merc_x, merc_y),
+                    }
                 }
             };
+            let screen_pos = point_kind.screen_pos();
             let point_ref = DataPointRef {
                 file_index: fi,
                 trip_index: ti,
                 category: DataCategory::Tpv,
-                point_index: pi,
+                point_index: PointIdx(pi),
             };
 
             generated_marker_renderer::update_hover_candidate(
@@ -139,7 +156,7 @@ impl<'a> TpvRenderer<'a> {
                 // soon as the pointer overlaps any part of the arrow or ghost circle,
                 // not just when it reaches the centroid.  A 4 px margin provides a
                 // small "grace zone" around the visual edge.
-                let threshold = base_arrow_size + 4.0;
+                let threshold = style.base_arrow_size + 4.0;
                 let dist_sq = screen_pos.distance_sq(mouse);
                 if dist_sq < threshold * threshold
                     && local_closest
@@ -154,77 +171,25 @@ impl<'a> TpvRenderer<'a> {
                 continue;
             }
 
-            // Draw horizontal accuracy circle behind the fix icon.
-            if let Some(eph_m) = point.tpv.eph_m() {
-                let lat_deg = point.tpv.lat().get::<degree>();
-                let radius = (f64::from(eph_m) * transform.pixels_per_meter(lat_deg)) as f32;
-                if radius >= 2.0 {
-                    ui.painter().circle_filled(
-                        screen_pos,
-                        radius,
-                        egui::Color32::from_rgba_unmultiplied(30, 120, 255, 20),
-                    );
-                    ui.painter().circle_stroke(
-                        screen_pos,
-                        radius,
-                        egui::Stroke::new(
-                            1.0,
-                            egui::Color32::from_rgba_unmultiplied(30, 120, 255, 60),
-                        ),
-                    );
-                }
-            }
-
+            let eph_m = point.tpv.eph_m();
+            let pixels_per_meter = if eph_m.is_some() {
+                transform.pixels_per_meter(point.tpv.lat().get::<degree>())
+            } else {
+                0.0
+            };
             let highlighted = self.is_arrow_highlighted(point_ref);
 
-            match point.tpv.heading() {
-                Some(h) => {
-                    draw_navigation_arrow(
-                        ui,
-                        screen_pos,
-                        h.get::<degree>(),
-                        color,
-                        highlighted,
-                        outline_alpha,
-                        base_arrow_size,
-                    );
-                }
-                None => {
-                    draw_ghost_circle(
-                        ui,
-                        screen_pos,
-                        color,
-                        highlighted,
-                        outline_alpha,
-                        base_ghost_radius,
-                    );
-                }
-            }
-
-            if let Some(sats) = &point.satellites {
-                let show =
-                    last_label_pos.is_none_or(|last| screen_pos.distance(last) > min_label_dist);
-                if show {
-                    let label = format!("{}/{}", sats.fix_count(), sats.satellite_count());
-                    let text_pos = screen_pos + egui::vec2(base_arrow_size + 3.0, -base_arrow_size);
-                    let galley = ui.painter().layout_no_wrap(
-                        label,
-                        egui::FontId::proportional(12.0),
-                        Color32::WHITE,
-                    );
-                    let text_rect = egui::Rect::from_min_size(
-                        egui::pos2(text_pos.x, text_pos.y - galley.size().y),
-                        galley.size(),
-                    );
-                    ui.painter().rect_filled(
-                        text_rect.expand(2.0),
-                        2.0,
-                        Color32::from_rgba_unmultiplied(0, 0, 0, 160),
-                    );
-                    ui.painter().galley(text_rect.min, galley, Color32::WHITE);
-                    last_label_pos = Some(screen_pos);
-                }
-            }
+            draw_tpv_point(
+                ui,
+                screen_pos,
+                &point_kind,
+                eph_m,
+                pixels_per_meter,
+                point.satellites.as_ref(),
+                highlighted,
+                style,
+                &mut last_label_pos,
+            );
         }
     }
 
@@ -232,13 +197,13 @@ impl<'a> TpvRenderer<'a> {
         let Some((point_ref, _pos)) = local_closest else {
             return;
         };
-        let Some(file) = self.files.get(point_ref.file_index) else {
+        let Some(file) = self.files.get(point_ref.file_index.0) else {
             return;
         };
-        let Some(trip) = file.trips.get(point_ref.trip_index) else {
+        let Some(trip) = file.trips.get(point_ref.trip_index.0) else {
             return;
         };
-        let Some(point) = trip.points.get(point_ref.point_index) else {
+        let Some(point) = trip.points.get(point_ref.point_index.0) else {
             return;
         };
         // Use Tooltip::always_open so the tooltip shows as soon as the pointer
@@ -247,9 +212,9 @@ impl<'a> TpvRenderer<'a> {
         let tooltip_id = ui
             .id()
             .with("tpv_hover")
-            .with(point_ref.file_index)
-            .with(point_ref.trip_index)
-            .with(point_ref.point_index);
+            .with(point_ref.file_index.0)
+            .with(point_ref.trip_index.0)
+            .with(point_ref.point_index.0);
         egui::Tooltip::always_open(
             ui.ctx().clone(),
             ui.layer_id(),
@@ -285,25 +250,29 @@ impl Plugin for TpvRenderer<'_> {
         // same principle: avoid a white mass at low zoom.
         let zoom = map_memory.zoom();
         let size_factor = ((zoom - 12.0) / 6.0).clamp(0.0, 1.0) as f32;
-        let base_arrow_size = 3.0 + size_factor * 9.0; // 3 px at zoom ≤ 12, 12 px at zoom ≥ 18
-        let base_ghost_radius = 2.0 + size_factor * 4.0; // 2 px at zoom ≤ 12,  6 px at zoom ≥ 18
-        // Require more pixel separation between satellite-count labels when
-        // zoomed out so the label count doesn't explode at dense clusters.
-        let min_label_dist = 60.0 + (1.0 - size_factor) * 120.0; // 180 px at low zoom, 60 at high
-        let outline_alpha = ((zoom - 10.0) / 4.0).clamp(0.0, 1.0) as f32;
+        let style = TpvDrawStyle {
+            base_arrow_size: 3.0 + size_factor * 9.0, // 3 px at zoom ≤ 12, 12 px at zoom ≥ 18
+            base_ghost_radius: 2.0 + size_factor * 4.0, // 2 px at zoom ≤ 12,  6 px at zoom ≥ 18
+            // Require more pixel separation between satellite-count labels when
+            // zoomed out so the label count doesn't explode at dense clusters.
+            min_label_dist: 60.0 + (1.0 - size_factor) * 120.0, // 180 px at low zoom, 60 at high
+            outline_alpha: ((zoom - 10.0) / 4.0).clamp(0.0, 1.0) as f32,
+        };
 
         // Build the per-frame coordinate transform once.
         let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         for (fi, file) in self.files.iter().enumerate() {
-            let Some(file_vis) = self.visibility.files.get(fi) else {
+            let fi = FileIdx(fi);
+            let Some(file_vis) = self.visibility.files.get(fi.0) else {
                 continue;
             };
             if !file_vis.enabled {
                 continue;
             }
             for (ti, trip) in file.trips.iter().enumerate() {
-                let Some(trip_vis) = file_vis.trips.get(ti) else {
+                let ti = TripIdx(ti);
+                let Some(trip_vis) = file_vis.trips.get(ti.0) else {
                     continue;
                 };
                 if !trip_vis.enabled || !trip_vis.tpv_visible {
@@ -320,84 +289,42 @@ impl Plugin for TpvRenderer<'_> {
                     ti,
                     &trip.points,
                     &mut local_closest,
-                    outline_alpha,
-                    base_arrow_size,
-                    base_ghost_radius,
-                    min_label_dist,
+                    &style,
                     &transform,
                 );
             }
         }
         self.show_tooltip(ui, local_closest);
 
-        // Cross-highlight: when the trip plot cursor is active, find the closest
-        // TPV point across all visible trips and draw a ring indicator around it.
-        if let Some(target_time) = self.highlight.plot_hover_time {
-            let target_secs = target_time.timestamp() as f64;
-            let mut closest: Option<(egui::Pos2, f32)> = None;
-
-            for (fi, file) in self.files.iter().enumerate() {
-                let Some(file_vis) = self.visibility.files.get(fi) else {
-                    continue;
-                };
-                if !file_vis.enabled {
-                    continue;
-                }
-                for (ti, trip) in file.trips.iter().enumerate() {
-                    let Some(trip_vis) = file_vis.trips.get(ti) else {
-                        continue;
-                    };
-                    if !trip_vis.enabled || !trip_vis.tpv_visible {
-                        continue;
-                    }
-                    if !filter::trip_passes_filter(&trip.metadata, self.filter) {
-                        continue;
-                    }
-                    let Some(best_pi) = trip
-                        .points
-                        .iter()
-                        .enumerate()
-                        .min_by(|(_, a), (_, b)| {
-                            let da = (a.tpv.time().utc().timestamp() as f64 - target_secs).abs();
-                            let db = (b.tpv.time().utc().timestamp() as f64 - target_secs).abs();
-                            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-                        })
-                        .map(|(i, _)| i)
-                    else {
-                        continue;
-                    };
-                    let Some(point) = trip.points.get(best_pi) else {
-                        continue;
-                    };
-                    let dist = (point.tpv.time().utc().timestamp() as f64 - target_secs).abs();
-                    let screen_pos = transform.to_screen(point.merc_x, point.merc_y);
-                    if closest.is_none_or(|(_, d)| dist < (d as f64)) {
-                        closest = Some((screen_pos, dist as f32));
-                    }
-                }
-            }
-
-            if let Some((pos, _)) = closest {
-                // Draw a pulsing ring so the indicator is visible regardless of
-                // arrow color and doesn't obscure the underlying arrow.
-                let painter = ui.painter();
-                painter.circle_stroke(
-                    pos,
-                    base_arrow_size + 6.0,
-                    egui::Stroke::new(
-                        2.0,
-                        egui::Color32::from_rgba_unmultiplied(100, 200, 255, 230),
-                    ),
-                );
-                painter.circle_stroke(
-                    pos,
-                    base_arrow_size + 3.0,
-                    egui::Stroke::new(
-                        1.0,
-                        egui::Color32::from_rgba_unmultiplied(100, 200, 255, 120),
-                    ),
-                );
-            }
+        // Cross-highlight: when the trip plot cursor is active, draw a ring
+        // indicator around the pre-computed closest point.
+        // The app layer computes (fi, ti, pi) via find_closest_tpv and stores
+        // it in MapHighlight::plot_hover_point — no O(n) scan needed here.
+        if let Some((fi, ti, pi)) = self.highlight.plot_hover_point
+            && let Some(point) = self
+                .files
+                .get(fi.0)
+                .and_then(|f| f.trips.get(ti.0))
+                .and_then(|t| t.points.get(pi.0))
+        {
+            let pos = transform.to_screen(point.merc_x, point.merc_y);
+            let painter = ui.painter();
+            painter.circle_stroke(
+                pos,
+                style.base_arrow_size + 6.0,
+                egui::Stroke::new(
+                    2.0,
+                    egui::Color32::from_rgba_unmultiplied(100, 200, 255, 230),
+                ),
+            );
+            painter.circle_stroke(
+                pos,
+                style.base_arrow_size + 3.0,
+                egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(100, 200, 255, 120),
+                ),
+            );
         }
     }
 }
@@ -810,6 +737,149 @@ fn seen_count_color(count: u32) -> Color32 {
     }
 }
 
+/// Zoom-derived visual parameters computed once per frame and shared across
+/// all points in all trips.
+struct TpvDrawStyle {
+    outline_alpha: f32,
+    base_arrow_size: f32,
+    base_ghost_radius: f32,
+    min_label_dist: f32,
+}
+
+/// Renders the three visual layers for a single on-screen GPS point:
+/// the horizontal-accuracy circle, the directional icon (arrow or ghost), and
+/// the satellite-count label.
+///
+/// `last_label_pos` is updated when a label is drawn so that the caller can
+/// throttle label density across consecutive points.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "three independent drawing concerns each need distinct parameters; no natural grouping below 9"
+)]
+fn draw_tpv_point(
+    ui: &Ui,
+    screen_pos: Pos2,
+    point_kind: &PointKind,
+    eph_m: Option<f32>,
+    pixels_per_meter: f64,
+    satellites: Option<&nav_types::satellites::Satellites>,
+    highlighted: bool,
+    style: &TpvDrawStyle,
+    last_label_pos: &mut Option<Pos2>,
+) {
+    // Accuracy circle — rendered beneath the icon.
+    if let Some(eph_m) = eph_m {
+        let radius = (f64::from(eph_m) * pixels_per_meter) as f32;
+        if radius >= 2.0 {
+            ui.painter().circle_filled(
+                screen_pos,
+                radius,
+                egui::Color32::from_rgba_unmultiplied(30, 120, 255, 20),
+            );
+            ui.painter().circle_stroke(
+                screen_pos,
+                radius,
+                egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(30, 120, 255, 60)),
+            );
+        }
+    }
+
+    // Directional icon.
+    match point_kind {
+        PointKind::Real {
+            color, heading_deg, ..
+        } => {
+            draw_navigation_arrow(
+                ui,
+                screen_pos,
+                *heading_deg,
+                *color,
+                highlighted,
+                style.outline_alpha,
+                style.base_arrow_size,
+            );
+        }
+        PointKind::Ghost { .. } => {
+            draw_ghost_circle(
+                ui,
+                screen_pos,
+                Color32::from_rgb(219, 68, 55),
+                highlighted,
+                style.outline_alpha,
+                style.base_ghost_radius,
+            );
+        }
+    }
+
+    // Satellite-count label — throttled to avoid over-dense clusters.
+    if let Some(sats) = satellites {
+        let show =
+            last_label_pos.is_none_or(|last| screen_pos.distance(last) > style.min_label_dist);
+        if show {
+            let label = format!("{}/{}", sats.fix_count(), sats.satellite_count());
+            let text_pos =
+                screen_pos + egui::vec2(style.base_arrow_size + 3.0, -style.base_arrow_size);
+            let galley = ui.painter().layout_no_wrap(
+                label,
+                egui::FontId::proportional(12.0),
+                Color32::WHITE,
+            );
+            let text_rect = egui::Rect::from_min_size(
+                egui::pos2(text_pos.x, text_pos.y - galley.size().y),
+                galley.size(),
+            );
+            ui.painter().rect_filled(
+                text_rect.expand(2.0),
+                2.0,
+                Color32::from_rgba_unmultiplied(0, 0, 0, 160),
+            );
+            ui.painter().galley(text_rect.min, galley, Color32::WHITE);
+            *last_label_pos = Some(screen_pos);
+        }
+    }
+}
+
+/// Map a real (non-ghost) GPS point to its arrow colour based on satellite fix quality.
+///
+/// Three-tier scheme:
+/// - **Blue** — strong fix (≥ 10 satellites) or no satellite report attached (unknown quality).
+/// - **Yellow** — marginal fix (1–9 satellites in fix).
+/// - **Red** — fix lost: satellite report present but zero satellites are in the fix.
+///
+/// Ghost/interpolated points (heading == `None`) are a separate visual category
+/// rendered as red circles by `draw_ghost_circle`; they never reach this function.
+fn tpv_point_color(point: &NavPoint) -> Color32 {
+    match &point.satellites {
+        None => Color32::from_rgb(66, 133, 244), // no satellite data — assume fine, show blue
+        Some(sats) => match sats.fix_count() {
+            n if n >= 10 => Color32::from_rgb(66, 133, 244), // blue: strong fix
+            n if n > 0 => Color32::from_rgb(244, 180, 0),    // yellow: marginal fix
+            _ => Color32::from_rgb(219, 68, 55),             // red: fix lost
+        },
+    }
+}
+
+/// Classifies a GPS point for a single render pass, carrying everything the
+/// draw step needs so `render_trip` only matches `heading()` once.
+enum PointKind {
+    /// Real GPS fix — heading known, precomputed Mercator coordinates used.
+    Real {
+        screen_pos: Pos2,
+        color: Color32,
+        heading_deg: f64,
+    },
+    /// Ghost/synthetic fix — heading absent, position interpolated from neighbours.
+    Ghost { screen_pos: Pos2 },
+}
+
+impl PointKind {
+    fn screen_pos(&self) -> Pos2 {
+        match self {
+            Self::Real { screen_pos, .. } | Self::Ghost { screen_pos } => *screen_pos,
+        }
+    }
+}
+
 /// Render a hollow circle for ghost/extrapolated fixes with no known heading.
 fn draw_ghost_circle(
     ui: &Ui,
@@ -928,4 +998,68 @@ fn alpha_u8(alpha: f32) -> u8 {
     )]
     let v = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::Color32;
+    use nav_types::NavPoint;
+    use nav_types::satellites::{Constellation, Satellite, Satellites};
+    use nav_types::time_types::GpsTime;
+    use nav_types::tpv::TimePositionVelocity;
+    use uom::si::angle::degree;
+    use uom::si::f64::Angle;
+
+    fn make_point(satellites: Option<Satellites>) -> NavPoint {
+        let tpv = TimePositionVelocity::builder()
+            .time(GpsTime::from_utc(chrono::Utc::now()))
+            .lat(Angle::new::<degree>(51.5))
+            .lon(Angle::new::<degree>(-0.1))
+            .heading(Angle::new::<degree>(90.0))
+            .build();
+        NavPoint::new(tpv, satellites)
+    }
+
+    fn sats_with_fix(fix_count: u32) -> Satellites {
+        let satellites: Vec<_> = (1u32..=12)
+            .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, prn <= fix_count))
+            .collect();
+        Satellites::new(None, None, satellites)
+    }
+
+    /// No satellite report → blue (unknown quality, assume fine).
+    #[test]
+    fn color_no_satellite_report_is_blue() {
+        let point = make_point(None);
+        assert_eq!(tpv_point_color(&point), Color32::from_rgb(66, 133, 244));
+    }
+
+    /// 10+ satellites in fix → blue (strong fix).
+    #[test]
+    fn color_strong_fix_is_blue() {
+        let point = make_point(Some(sats_with_fix(10)));
+        assert_eq!(tpv_point_color(&point), Color32::from_rgb(66, 133, 244));
+    }
+
+    /// 1–9 satellites in fix → yellow (marginal fix).
+    #[test]
+    fn color_marginal_fix_is_yellow() {
+        let point = make_point(Some(sats_with_fix(5)));
+        assert_eq!(tpv_point_color(&point), Color32::from_rgb(244, 180, 0));
+    }
+
+    /// 1 satellite in fix → yellow (lowest marginal threshold).
+    #[test]
+    fn color_single_sat_fix_is_yellow() {
+        let point = make_point(Some(sats_with_fix(1)));
+        assert_eq!(tpv_point_color(&point), Color32::from_rgb(244, 180, 0));
+    }
+
+    /// Satellite report present but 0 in fix → red (fix lost).
+    #[test]
+    fn color_fix_lost_is_red() {
+        let point = make_point(Some(sats_with_fix(0)));
+        assert_eq!(tpv_point_color(&point), Color32::from_rgb(219, 68, 55));
+    }
 }

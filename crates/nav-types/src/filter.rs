@@ -1,19 +1,9 @@
-use crate::trip::TripMetadata;
+use crate::trip::{MarkerRequirement, TimeRange, TripMetadata};
 use chrono::{DateTime, Utc};
 
 /// Returns `true` when the timestamp falls within the filter's active time window.
 pub fn point_passes_time_filter(time: DateTime<Utc>, filter: &GlobalFilter) -> bool {
-    if let Some(start) = filter.time_start
-        && time < start
-    {
-        return false;
-    }
-    if let Some(end) = filter.time_end
-        && time > end
-    {
-        return false;
-    }
-    true
+    TimeRange::new(time, time).overlaps_window(filter.time_start, filter.time_end)
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -23,10 +13,8 @@ pub struct GlobalFilter {
     pub min_distance_km: Option<f64>,
     pub min_duration_secs: Option<i64>,
     pub min_spread_m: Option<f64>,
-    /// Show only trips that have at least one marker of any kind (custom or generated).
-    pub require_any_marker: bool,
-    /// Show only trips that have at least one *custom* marker specifically.
-    pub require_custom_marker: bool,
+    /// Whether trips must carry markers of a particular kind to pass.
+    pub marker_requirement: MarkerRequirement,
 }
 
 impl GlobalFilter {
@@ -37,20 +25,15 @@ impl GlobalFilter {
             && self.min_distance_km.is_none()
             && self.min_duration_secs.is_none()
             && self.min_spread_m.is_none()
-            && !self.require_any_marker
-            && !self.require_custom_marker
+            && self.marker_requirement == MarkerRequirement::None
     }
 }
 
 /// Returns `true` when the trip satisfies all active filter conditions.
 pub fn trip_passes_filter(meta: &TripMetadata, filter: &GlobalFilter) -> bool {
-    if let Some(start) = filter.time_start
-        && meta.time_range.1 < start
-    {
-        return false;
-    }
-    if let Some(end) = filter.time_end
-        && meta.time_range.0 > end
+    if !meta
+        .time_range
+        .overlaps_window(filter.time_start, filter.time_end)
     {
         return false;
     }
@@ -69,11 +52,10 @@ pub fn trip_passes_filter(meta: &TripMetadata, filter: &GlobalFilter) -> bool {
     {
         return false;
     }
-    if filter.require_any_marker && !meta.has_custom_markers && meta.generated_marker_count == 0 {
-        return false;
-    }
-    if filter.require_custom_marker && !meta.has_custom_markers {
-        return false;
+    match filter.marker_requirement {
+        MarkerRequirement::AnyMarker if !meta.has_any_marker() => return false,
+        MarkerRequirement::CustomMarker if !meta.has_custom_markers => return false,
+        _ => {}
     }
     true
 }
@@ -81,7 +63,7 @@ pub fn trip_passes_filter(meta: &TripMetadata, filter: &GlobalFilter) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trip::TripMetadata;
+    use crate::trip::{MercBounds, TimeRange, TripMetadata};
     use chrono::{Duration, TimeZone, Utc};
     use geo_types::Rect;
 
@@ -98,7 +80,7 @@ mod tests {
             index: 1,
             distance_km,
             duration: Duration::seconds(duration_secs),
-            time_range: (
+            time_range: TimeRange::new(
                 epoch + Duration::seconds(start_offset_secs),
                 epoch + Duration::seconds(end_offset_secs),
             ),
@@ -106,6 +88,12 @@ mod tests {
                 geo_types::coord! { x: 0.0, y: 0.0 },
                 geo_types::coord! { x: 1.0, y: 1.0 },
             ),
+            merc_bounds: MercBounds {
+                x_min: 0.0,
+                x_max: 0.0,
+                y_min: 0.0,
+                y_max: 0.0,
+            },
             point_set_diameter_m: spread_m,
             has_custom_markers: has_custom,
             tpv_count: 1,
@@ -225,7 +213,7 @@ mod tests {
     fn require_custom_marker_pass() {
         let meta = make_meta(1.0, 60, 100.0, true, 0, 60);
         let filter = GlobalFilter {
-            require_custom_marker: true,
+            marker_requirement: MarkerRequirement::CustomMarker,
             ..Default::default()
         };
         assert!(trip_passes_filter(&meta, &filter));
@@ -235,7 +223,7 @@ mod tests {
     fn require_custom_marker_fail() {
         let meta = make_meta(1.0, 60, 100.0, false, 0, 60);
         let filter = GlobalFilter {
-            require_custom_marker: true,
+            marker_requirement: MarkerRequirement::CustomMarker,
             ..Default::default()
         };
         assert!(!trip_passes_filter(&meta, &filter));

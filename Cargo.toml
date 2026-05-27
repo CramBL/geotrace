@@ -37,7 +37,7 @@ egui_tiles = "0.15"
 env_logger = "0.11.10"
 geo = "0.33.1"
 geo-types = "0.7.19"
-hdf5-pure = "0.5.0"
+hdf5-pure = "0.5.1"
 log = "0.4"
 rayon = "1"
 smallvec = { version = "1", features = ["union"] }
@@ -55,6 +55,7 @@ unexpected_cfgs = "warn"
 unsafe_code = "warn"
 
 [workspace.lints.clippy]
+cognitive_complexity = { level = "warn", priority = -1 }
 disallowed_macros = "warn"                   # See clippy.toml
 disallowed_methods = "warn"                  # See clippy.toml
 disallowed_names = "warn"                    # See clippy.toml
