@@ -6,7 +6,7 @@ use std::{
 };
 
 use egui_kittest::Harness;
-use naview_sdk::{Angle, DateTime, Duration, NavFileBuilder, NavFix, Utc, degree};
+use geotrace_sdk::{Angle, DateTime, Duration, NavFileBuilder, NavFix, Utc};
 
 use super::App;
 
@@ -15,26 +15,26 @@ fn base_time() -> DateTime<Utc> {
 }
 
 fn minimal_nvd_bytes() -> Vec<u8> {
-    let mut builder = NavFileBuilder::new();
+    let mut sink = NavFileBuilder::new().open();
     let t0 = base_time();
     let t1 = t0 + Duration::seconds(60);
-    builder.add_nav_fix(
+    sink.add_nav_fix(
         NavFix::builder()
             .gps_time(t0)
-            .lat(Angle::new::<degree>(51.5))
-            .lon(Angle::new::<degree>(-0.1))
-            .heading(Angle::new::<degree>(270.0))
+            .lat(Angle::degrees(51.5))
+            .lon(Angle::degrees(-0.1))
+            .heading(Angle::degrees(270.0))
             .build(),
     );
-    builder.add_nav_fix(
+    sink.add_nav_fix(
         NavFix::builder()
             .gps_time(t1)
-            .lat(Angle::new::<degree>(51.6))
-            .lon(Angle::new::<degree>(-0.2))
-            .heading(Angle::new::<degree>(90.0))
+            .lat(Angle::degrees(51.6))
+            .lon(Angle::degrees(-0.2))
+            .heading(Angle::degrees(90.0))
             .build(),
     );
-    let nav_file = builder.finish().expect("valid nav file");
+    let nav_file = sink.finish().expect("valid nav file");
     let mut bytes = Vec::new();
     nav_file.write(&mut bytes).expect("write succeeds");
     bytes
@@ -60,7 +60,7 @@ fn step_until_loaded(harness: &mut Harness<App>) {
 #[test]
 fn drag_drop_nvd_path_loads_file() {
     let nvd_bytes = minimal_nvd_bytes();
-    let tmp = env::temp_dir().join("naview_test_drag_drop_path.nvd");
+    let tmp = env::temp_dir().join("geotrace_test_drag_drop_path.nvd");
     fs::write(&tmp, &nvd_bytes).expect("write temp nvd");
 
     let mut harness = Harness::builder()

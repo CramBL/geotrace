@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+  <!-- Body -->
+  <rect x="6" y="6" width="8" height="8" rx="0.5"
+        fill="#4285F4" stroke="white" stroke-width="1"/>
+  <!-- Body cross detail -->
+  <line x1="10" y1="6" x2="10" y2="14" stroke="white" stroke-width="0.5" opacity="0.5"/>
+  <line x1="6" y1="10" x2="14" y2="10" stroke="white" stroke-width="0.5" opacity="0.5"/>
+  <!-- Left solar panel -->
+  <rect x="0.5" y="7" width="4.5" height="6" rx="0.3"
+        fill="#1A5CD6" stroke="white" stroke-width="0.8"/>
+  <!-- Left panel grid -->
+  <line x1="2.5" y1="7" x2="2.5" y2="13" stroke="white" stroke-width="0.5" opacity="0.6"/>
+  <line x1="0.5" y1="10" x2="5" y2="10" stroke="white" stroke-width="0.5" opacity="0.6"/>
+  <!-- Right solar panel -->
+  <rect x="15" y="7" width="4.5" height="6" rx="0.3"
+        fill="#1A5CD6" stroke="white" stroke-width="0.8"/>
+  <!-- Right panel grid -->
+  <line x1="17.2" y1="7" x2="17.2" y2="13" stroke="white" stroke-width="0.5" opacity="0.6"/>
+  <line x1="15" y1="10" x2="19.5" y2="10" stroke="white" stroke-width="0.5" opacity="0.6"/>
+  <!-- Antenna mast -->
+  <line x1="13.5" y1="6" x2="16" y2="3.5"
+        stroke="white" stroke-width="1.2" stroke-linecap="round"/>
+  <!-- Dish arc -->
+  <path d="M 14.5,2 A 2.5,2.5 0 0 1 18,4.5"
+        fill="none" stroke="white" stroke-width="1.2" stroke-linecap="round"/>
+  <!-- Dish centre -->
+  <circle cx="16" cy="3.2" r="0.8" fill="white"/>
+</svg>

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["maturin>=1,<2"]
+build-backend = "maturin"
+
+[project]
+name = "geotrace-sdk"
+version = "0.1.0"
+requires-python = ">=3.12"
+description = "Python bindings for geotrace-sdk — read and write .nvd navigation data files"
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "License :: OSI Approved :: MIT License",
+    "Typing :: Typed",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.maturin]
+module-name = "geotrace_sdk._geotrace_sdk"
+python-source = "python"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

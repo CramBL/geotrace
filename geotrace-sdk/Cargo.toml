@@ -1,0 +1,26 @@
+[package]
+name = "geotrace-sdk"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version = "1.88"
+
+authors.workspace = true
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+bon.workspace = true
+chrono.workspace = true
+hdf5-pure.workspace = true
+log.workspace = true
+geotrace-sdk-macros = { path = "../geotrace-sdk-macros" }
+thiserror.workspace = true
+uom.workspace = true
+
+[dev-dependencies]
+hdf5-pure.workspace = true
+tempfile = "3"
+
+[lints]
+workspace = true

@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 use egui::Ui;
-use nav_types::{GlobalFilter, LoadedFile, MarkerRequirement};
+use gt_types::{GlobalFilter, LoadedFile, MarkerRequirement};
 
 const EM_DASH: &str = "—";
 
@@ -29,7 +29,7 @@ pub fn render_filter_panel(
     if let Some((range_start, range_end)) = full_range {
         let sel_start = filter.time_start.unwrap_or(range_start);
         let sel_end = filter.time_end.unwrap_or(range_end);
-        let dur_str = nav_fmt::format_human_terse_duration(sel_end - sel_start);
+        let dur_str = gt_fmt::format_human_terse_duration(sel_end - sel_start);
         ui.label(format!("Time range {EM_DASH} {dur_str}"));
         let primary_changed = time_range_bar(
             ui,
@@ -56,7 +56,7 @@ pub fn render_filter_panel(
                     ));
                 }
                 if let Some((zoom_start, zoom_end)) = state.secondary_zoom {
-                    let zoom_dur = nav_fmt::format_human_terse_duration(zoom_end - zoom_start);
+                    let zoom_dur = gt_fmt::format_human_terse_duration(zoom_end - zoom_start);
                     ui.label(format!("Active range {EM_DASH} {zoom_dur}"));
                     time_range_bar(
                         ui,
@@ -271,7 +271,7 @@ fn compute_filtered_time_range(
     let mut max: Option<DateTime<Utc>> = None;
     for file in files {
         for trip in &file.trips {
-            if nav_types::trip_passes_filter(&trip.metadata, filter) {
+            if gt_types::trip_passes_filter(&trip.metadata, filter) {
                 let start = trip.metadata.time_range.start;
                 let end = trip.metadata.time_range.end;
                 min = Some(min.map_or(start, |m: DateTime<Utc>| m.min(start)));
@@ -326,7 +326,7 @@ fn parse_duration_input(s: &str) -> Option<i64> {
 mod tests {
     use std::fmt::Write as _;
 
-    use nav_types::TimeRange;
+    use gt_types::TimeRange;
 
     use super::*;
 
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn compute_range_single_file() {
         use chrono::TimeZone;
-        use nav_types::trip::{FileMetadata, LoadedFile};
+        use gt_types::trip::{FileMetadata, LoadedFile};
         let file = LoadedFile {
             metadata: FileMetadata {
                 filename: "test.nvd".to_owned(),
@@ -398,7 +398,7 @@ mod tests {
                 ),
             },
             trips: vec![],
-            event_marker_styles: vec![],
+            event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
         };
         let range = compute_full_time_range(&[file]);

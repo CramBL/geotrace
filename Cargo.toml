@@ -1,46 +1,54 @@
 [package]
-name = "naview"
+name = "geotrace"
 version = "0.1.0"
 edition = "2024"
+rust-version.workspace = true
 license = "AGPL-3.0-only"
 
 [workspace]
 members = [
-    "crates/nav-arch",
-    "crates/nav-egui-mipmap",
-    "crates/nav-fmt",
-    "crates/nav-geo-math",
-    "crates/nav-io",
-    "crates/nav-log-marker",
-    "crates/nav-map",
-    "crates/nav-plot",
-    "crates/nav-types",
-    "naview-sdk",
+    "crates/gt-arch",
+    "crates/gt-egui-mipmap",
+    "crates/gt-fmt",
+    "crates/gt-geo-math",
+    "crates/gt-io",
+    "crates/gt-log-marker",
+    "crates/gt-map",
+    "crates/gt-plot",
+    "crates/gt-types",
+    "geotrace-sdk",
+    "geotrace-sdk-macros",
 ]
 
 [workspace.package]
 description = ""
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.92"
 license = "AGPL-3.0-only"
 authors = ["Marc Beck König <mgit@tuta.io>"]
 
 [workspace.dependencies]
 bon = "3"
 chrono = { version = "0.4.44", default-features = false, features = ["std", "now", "clock", "oldtime"] }
-eframe = { version = "0.34.2", default-features = false, features = ["default_fonts", "wgpu", "wayland"] }
-egui = "0.34.2"
+eframe = { version = "0.34.3", default-features = false, features = ["default_fonts", "wgpu", "wayland"] }
+egui = "0.34.3"
 egui-phosphor = "0.12.0"
-egui_extras = { version = "0.34.2", features = ["svg"] }
+egui_extras = { version = "0.34.3", features = ["svg"] }
 egui_plot = "0.35.0"
 egui_tiles = "0.15"
 env_logger = "0.11.10"
 geo = "0.33.1"
 geo-types = "0.7.19"
-hdf5-pure = "0.5.1"
+hdf5-pure = "0.6.0"
 log = "0.4"
+proc-macro2 = "1"
+quote = "1"
 rayon = "1"
+rstar = "0.13"
 smallvec = { version = "1", features = ["union"] }
+strum = { version = "0.28", features = ["derive"] }
+syn = "2"
 thiserror = "2"
 uom = "0.38.0"
 walkers = "0.53.0"
@@ -176,18 +184,18 @@ egui_tiles.workspace = true
 env_logger.workspace = true
 log.workspace = true
 mimalloc = { version = "0.1.48", features = ["v3"] }
-nav-fmt = { path = "crates/nav-fmt" }
-nav-io = { path = "crates/nav-io" }
-nav-log-marker = { path = "crates/nav-log-marker" }
-nav-map = { path = "crates/nav-map" }
-nav-plot = { path = "crates/nav-plot" }
-nav-types = { path = "crates/nav-types" }
+gt-fmt = { path = "crates/gt-fmt" }
+gt-io = { path = "crates/gt-io" }
+gt-log-marker = { path = "crates/gt-log-marker" }
+gt-map = { path = "crates/gt-map" }
+gt-plot = { path = "crates/gt-plot" }
+gt-types = { path = "crates/gt-types" }
 rfd = "0.17.2"
 uom.workspace = true
 
 [dev-dependencies]
-egui_kittest = { version = "0.34.2", features = ["eframe"] }
-naview-sdk = { path = "naview-sdk" }
+egui_kittest = { version = "0.34.3", features = ["eframe"] }
+geotrace-sdk = { path = "geotrace-sdk" }
 
 [profile.release]
 opt-level = 3
@@ -208,10 +216,10 @@ debug = false
 # Full optimization for the hottest crates: mipmap binary search, plot
 # rendering, and egui_plot layout are the main performance bottlenecks in debug
 # builds.
-[profile.dev.package.nav-egui-mipmap]
+[profile.dev.package.gt-egui-mipmap]
 opt-level = 3
 
-[profile.dev.package.nav-plot]
+[profile.dev.package.gt-plot]
 opt-level = 3
 
 [profile.dev.package.egui_plot]

@@ -1,0 +1,23 @@
+[package]
+name = "gt-map"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+chrono.workspace = true
+egui.workspace = true
+egui-phosphor.workspace = true
+gt-types.path = "../gt-types"
+uom.workspace = true
+walkers.workspace = true
+
+[dev-dependencies]
+egui_extras.workspace = true
+egui_kittest = { version = "0.34.3", features = ["wgpu", "snapshot"] }
+strum.workspace = true
+
+[lints]
+workspace = true

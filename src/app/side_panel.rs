@@ -1,5 +1,5 @@
-use nav_fmt;
-use nav_types::{
+use gt_fmt;
+use gt_types::{
     DataCategory, DataPointRef, EventMarkerVisibility, FileIdx, GlobalFilter, HighlightScope,
     LoadedFile, LoadedTrip, MapHighlight, PointIdx, TripDataVisibility, TripIdx,
 };
@@ -78,7 +78,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
                         .get(fi.0)
                         .and_then(|fv| fv.trips.get(ti.0))
                         .is_some_and(|tv| tv.enabled);
-                let passes = nav_types::trip_passes_filter(&trip.metadata, &filter_snapshot);
+                let passes = gt_types::trip_passes_filter(&trip.metadata, &filter_snapshot);
                 if !trip_enabled || !passes {
                     Some(SelectionKey::Trip(TripRef { file: fi, trip: ti }))
                 } else {
@@ -169,27 +169,38 @@ fn render_file_row(
 
     let row_response = ui.horizontal(|ui| {
         let Some(file_vis) = ctx.visibility.files.get_mut(fi.0) else {
-            return ui.label("").clone();
+            return (ui.label("").clone(), false, false);
         };
-        ui.checkbox(&mut file_vis.enabled, "");
+        let chk = ui.checkbox(&mut file_vis.enabled, "");
+        let cascade = chk.changed();
+        let new_enabled = file_vis.enabled;
         let arrow = if is_expanded {
             egui_phosphor::regular::CARET_DOWN
         } else {
             egui_phosphor::regular::CARET_RIGHT
         };
-        let dist = nav_fmt::format_distance(file.metadata.total_distance_km);
-        let dur = nav_fmt::format_human_terse_duration(file.metadata.total_duration);
+        let dist = gt_fmt::format_distance(file.metadata.total_distance_km);
+        let dur = gt_fmt::format_human_terse_duration(file.metadata.total_duration);
         let label = format!("{arrow} {}  {dist}  {dur}", file.metadata.filename);
         let text = egui::RichText::new(label);
-        ui.selectable_label(ctx.panel.selection.contains(&file_key), text)
-            .on_hover_text(&file.metadata.filename)
+        (
+            ui.selectable_label(ctx.panel.selection.contains(&file_key), text)
+                .on_hover_text(&file.metadata.filename),
+            cascade,
+            new_enabled,
+        )
     });
+    let (file_label_resp, file_cascade, file_new_enabled) = row_response.inner;
+    if file_cascade && let Some(file_vis) = ctx.visibility.files.get_mut(fi.0) {
+        for trip_vis in &mut file_vis.trips {
+            trip_vis.enabled = file_new_enabled;
+        }
+    }
     if file_map_hovered {
         paint_map_hover_bg(ui, row_response.response.rect, map_hover_bg);
     }
-    let response = row_response.inner;
     let modifiers = ui.ctx().input(|i| i.modifiers);
-    if response.clicked() {
+    if file_label_resp.clicked() {
         if modifiers.ctrl || modifiers.shift {
             apply_click(
                 ctx.panel,
@@ -207,7 +218,7 @@ fn render_file_row(
             apply_click(ctx.panel, file_key.clone(), false, false, ordered_keys);
         }
     }
-    response.context_menu(|ui| {
+    file_label_resp.context_menu(|ui| {
         if ui.button("Show only this file").clicked() {
             ctx.visibility.show_only_file(fi.0);
             ui.close();
@@ -260,7 +271,7 @@ fn render_trip_row(
         let Some(trip) = file.trips.get(ti.0) else {
             return;
         };
-        let passes = nav_types::trip_passes_filter(&trip.metadata, ctx.filter);
+        let passes = gt_types::trip_passes_filter(&trip.metadata, ctx.filter);
         let trip_ref = TripRef { file: fi, trip: ti };
         let is_expanded = ctx.panel.expanded_trips.contains(&trip_ref);
         // Blue text: side-panel hover (mouse over trip name in the list).
@@ -312,8 +323,8 @@ fn render_trip_row(
         } else {
             egui_phosphor::regular::CARET_RIGHT
         };
-        let dist = nav_fmt::format_distance(trip.metadata.distance_km);
-        let dur = nav_fmt::format_human_terse_duration(trip.metadata.duration);
+        let dist = gt_fmt::format_distance(trip.metadata.distance_km);
+        let dur = gt_fmt::format_human_terse_duration(trip.metadata.duration);
         let label = format!("{arrow} T{}  {dist}  {dur}", trip.metadata.index);
         let mut text = egui::RichText::new(label);
         if !passes {
@@ -704,15 +715,19 @@ fn render_event_markers_section(
                     })
                     .count();
 
-                let mut visible = !ctx
-                    .event_marker_visibility
-                    .is_explicitly_hidden(fi.0, ti.0, prefix);
+                let mut visible = ctx.event_marker_visibility.is_visible(fi.0, ti.0, prefix);
 
                 ui.horizontal(|ui| {
                     ui.add_space(16.0 + depth as f32 * 12.0);
                     let resp = ui.checkbox(&mut visible, "");
                     if resp.changed() {
-                        ctx.event_marker_visibility.toggle(fi.0, ti.0, prefix);
+                        if visible {
+                            ctx.event_marker_visibility
+                                .set_visible_cascade(fi.0, ti.0, prefix);
+                        } else {
+                            ctx.event_marker_visibility
+                                .set_hidden_cascade(fi.0, ti.0, prefix);
+                        }
                     }
                     ui.label(format!("{segment}  {marker_count}"));
                 });
@@ -890,7 +905,7 @@ fn render_generated_marker_items(
     map_center_request: &mut Option<(f64, f64)>,
     popup_pos_request: &mut Option<egui::Pos2>,
 ) {
-    use nav_types::GeneratedMarkerKind;
+    use gt_types::GeneratedMarkerKind;
     for (pi, marker) in trip.generated_markers.iter().enumerate() {
         let point_ref = DataPointRef {
             file_index: fi,

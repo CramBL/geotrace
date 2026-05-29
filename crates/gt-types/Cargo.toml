@@ -1,0 +1,20 @@
+[package]
+name = "gt-types"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+bon.workspace = true
+chrono.workspace = true
+geo.workspace = true
+geo-types.workspace = true
+gt-geo-math = { path = "../gt-geo-math" }
+rstar.workspace = true
+strum.workspace = true
+uom.workspace = true
+
+[lints]
+workspace = true

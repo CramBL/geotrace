@@ -2,15 +2,15 @@
 .pup
 pup.ron
 
-# Python SDK (naview-py)
-naview-py/.venv/
-naview-py/target/
-naview-py/Cargo.lock
-naview-py/uv.lock
-naview-py/dist/
-naview-py/**/__pycache__/
-naview-py/.pytest_cache/
-naview-py/**/*.egg-info/
+# Python SDK (geotrace-py)
+geotrace-py/.venv/
+geotrace-py/target/
+geotrace-py/Cargo.lock
+geotrace-py/uv.lock
+geotrace-py/dist/
+geotrace-py/**/__pycache__/
+geotrace-py/.pytest_cache/
+geotrace-py/**/*.egg-info/
 # Compiled extension modules produced by maturin (all platforms)
-naview-py/**/*.so
-naview-py/**/*.pyd
+geotrace-py/**/*.so
+geotrace-py/**/*.pyd

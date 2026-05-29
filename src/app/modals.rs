@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use nav_map::{MapLayer, NavMap};
-use nav_types::{LoadedFile, TripDataVisibility};
+use gt_map::{MapLayer, NavMap};
+use gt_types::{LoadedFile, TripDataVisibility};
 
 use super::trip_data_panel::{SelectionKey, TripDataPanelState, TripRef};
 
@@ -54,10 +54,9 @@ pub fn show_delete_confirmation(
                                 if let Some(file) = loaded_files.get(fi.0)
                                     && let Some(trip) = file.trips.get(ti.0)
                                 {
-                                    let dist = nav_fmt::format_distance(trip.metadata.distance_km);
-                                    let dur = nav_fmt::format_human_terse_duration(
-                                        trip.metadata.duration,
-                                    );
+                                    let dist = gt_fmt::format_distance(trip.metadata.distance_km);
+                                    let dur =
+                                        gt_fmt::format_human_terse_duration(trip.metadata.duration);
                                     ui.label(format!(
                                         "  {} / T{}  {dist}  {dur}",
                                         file.metadata.filename, trip.metadata.index

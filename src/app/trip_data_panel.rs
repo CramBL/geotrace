@@ -1,4 +1,4 @@
-use nav_types::{DataCategory, FileIdx, TripIdx};
+use gt_types::{DataCategory, FileIdx, TripIdx};
 use std::collections::{BTreeSet, HashMap};
 
 /// A typed pair of file + trip indices — used as a key wherever both are

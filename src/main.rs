@@ -20,7 +20,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "naview",
+        "GeoTrace",
         native_options,
         Box::new(move |cc| Ok(Box::new(app::App::new_with_files(cc, &initial_paths)))),
     )

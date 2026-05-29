@@ -1,5 +1,5 @@
-use nav_plot::PreparedSeries;
-use nav_types::{
+use gt_plot::PreparedSeries;
+use gt_types::{
     Coord, CustomMarker, FileMetadata, LoadedFile, LoadedTrip, Rect, TimeRange, TripMetadata,
     merc_bounds_for_rect,
 };
@@ -140,6 +140,7 @@ pub(super) fn build_log_loaded_file(
         custom_markers: markers,
         generated_markers: Vec::new(),
         event_markers: Vec::new(),
+        tpv_tree: Default::default(),
     };
 
     Some(LoadedFile {
@@ -150,7 +151,7 @@ pub(super) fn build_log_loaded_file(
             time_range: TimeRange::new(min_time, max_time),
         },
         trips: vec![trip],
-        event_marker_styles: Vec::new(),
+        event_marker_styles: std::collections::HashMap::new(),
         orphaned_event_markers: Vec::new(),
     })
 }

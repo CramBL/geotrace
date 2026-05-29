@@ -23,9 +23,9 @@ use std::{
 use egui_tiles::{
     Container, Linear, LinearDir, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse,
 };
-use nav_map::{MapContextAction, MapLayer, NavMap};
-use nav_plot::PlotState;
-use nav_types::{
+use gt_map::{MapContextAction, MapLayer, NavMap};
+use gt_plot::PlotState;
+use gt_types::{
     DataCategory, EventMarkerVisibility, GlobalFilter, HighlightScope, LoadedFile, MapHighlight,
     NavPoint, TripDataVisibility,
 };
@@ -112,7 +112,7 @@ impl App {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         // Pre-register the compiled-in SVG marker icons so the texture cache
         // can serve them without any per-frame heap allocation.
-        nav_map::register_marker_icons(&cc.egui_ctx);
+        gt_map::register_marker_icons(&cc.egui_ctx);
 
         let stored_token = cc
             .storage
@@ -258,7 +258,7 @@ impl App {
                     r_ctx.request_repaint();
                 };
 
-                let outcome = nav_io::load_file_with_progress(&path, report)
+                let outcome = gt_io::load_file_with_progress(&path, report)
                     .map(|file| {
                         tx.send(loader::LoadMessage::Progress {
                             id,
@@ -267,7 +267,7 @@ impl App {
                         })
                         .ok();
                         ctx.request_repaint();
-                        let series = nav_plot::prepare_file_series(0, &file);
+                        let series = gt_plot::prepare_file_series(0, &file);
                         loader::LoadOutcome::NvdFile { file, series }
                     })
                     .map_err(|e| e.to_string());
@@ -310,7 +310,7 @@ impl App {
                     r_ctx.request_repaint();
                 };
 
-                let outcome = nav_io::load_bytes_with_progress(&bytes, filename, report)
+                let outcome = gt_io::load_bytes_with_progress(&bytes, filename, report)
                     .map(|file| {
                         tx.send(loader::LoadMessage::Progress {
                             id,
@@ -319,7 +319,7 @@ impl App {
                         })
                         .ok();
                         ctx.request_repaint();
-                        let series = nav_plot::prepare_file_series(0, &file);
+                        let series = gt_plot::prepare_file_series(0, &file);
                         loader::LoadOutcome::NvdFile { file, series }
                     })
                     .map_err(|e| e.to_string());
@@ -527,7 +527,7 @@ impl App {
             .name("file-dialog".to_owned())
             .spawn(move || {
                 let path = rfd::FileDialog::new()
-                    .add_filter("NaView Data", &["nvd"])
+                    .add_filter("GeoTrace Data", &["nvd"])
                     .add_filter("Log Files", &["log", "txt"])
                     .pick_file();
                 tx.send(path).ok();
@@ -643,7 +643,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 } else {
                     None
                 };
-                nav_plot::show_trip_plot(
+                gt_plot::show_trip_plot(
                     ui,
                     &s.loaded_files,
                     &s.visibility,
@@ -844,7 +844,7 @@ impl eframe::App for App {
             if plot_visible {
                 if let Some(t) = s.plot_state.hovered_time {
                     let closest =
-                        nav_plot::find_closest_tpv(&s.loaded_files, &s.visibility, &s.filter, t);
+                        gt_plot::find_closest_tpv(&s.loaded_files, &s.visibility, &s.filter, t);
                     s.highlight.plot_hover_time = closest.map(|_| t);
                     s.highlight.plot_hover_point = closest;
                 } else {
@@ -987,7 +987,7 @@ impl eframe::App for App {
 fn tpv_time_range_in_bounds(
     files: &[LoadedFile],
     visibility: &TripDataVisibility,
-    bounds: nav_map::GeoBounds,
+    bounds: gt_map::GeoBounds,
 ) -> Option<(f64, f64)> {
     use uom::si::angle::degree;
     let mut t_min = f64::INFINITY;
@@ -1063,7 +1063,7 @@ fn finish_log_load(
     report: impl Fn(f32, &'static str),
 ) {
     report(0.55, STAGE_PARSING);
-    let result = nav_log_marker::load_log(content, nav_points, chrono::Utc::now());
+    let result = gt_log_marker::load_log(content, nav_points, chrono::Utc::now());
 
     if result.markers.is_empty() && result.unassociated.is_empty() {
         tx.send(loader::LoadMessage::Completed {
@@ -1078,7 +1078,7 @@ fn finish_log_load(
     report(0.90, STAGE_PROCESSING);
     let loaded = loader::build_log_loaded_file(filename, result.markers);
     report(0.95, STAGE_PLOTTING);
-    let series = loaded.as_ref().map(|f| nav_plot::prepare_file_series(0, f));
+    let series = loaded.as_ref().map(|f| gt_plot::prepare_file_series(0, f));
 
     tx.send(loader::LoadMessage::Completed {
         id,
