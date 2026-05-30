@@ -1,10 +1,8 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui};
 use gt_types::{
     CustomMarker, DataCategory, DataPointRef, GlobalFilter, HighlightScope, LoadedFile,
-    MapHighlight, MarkerIcon, MercBounds, TripDataVisibility,
+    MapHighlight, MarkerIcon, SpatialPoint, TripDataVisibility, filter,
 };
-use std::cell::Cell;
-use std::rc::Rc;
 use walkers::{MapMemory, Plugin, Projector};
 
 pub struct MarkerRenderer<'a> {
@@ -12,7 +10,7 @@ pub struct MarkerRenderer<'a> {
     visibility: &'a TripDataVisibility,
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
-    hover_out: Rc<Cell<Option<(DataPointRef, f32)>>>,
+    visible_custom: Vec<SpatialPoint>,
 }
 
 impl<'a> MarkerRenderer<'a> {
@@ -21,14 +19,14 @@ impl<'a> MarkerRenderer<'a> {
         visibility: &'a TripDataVisibility,
         highlight: &'a MapHighlight,
         filter: &'a GlobalFilter,
-        hover_out: Rc<Cell<Option<(DataPointRef, f32)>>>,
+        visible_custom: Vec<SpatialPoint>,
     ) -> Self {
         Self {
             files,
             visibility,
             highlight,
             filter,
-            hover_out,
+            visible_custom,
         }
     }
 
@@ -64,74 +62,72 @@ impl Plugin for MarkerRenderer<'_> {
         projector: &Projector,
         map_memory: &MapMemory,
     ) {
-        let hover_pos = ui.input(|i| i.pointer.hover_pos());
-        let view_rect = ui.max_rect().expand(20.0);
-        let mut local_closest: Option<(DataPointRef, Pos2, f32)> = None;
         let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
-        let vp_bounds = MercBounds {
-            x_min: transform.merc_x_from_screen(view_rect.min.x),
-            x_max: transform.merc_x_from_screen(view_rect.max.x),
-            y_min: transform.merc_y_from_screen(view_rect.min.y),
-            y_max: transform.merc_y_from_screen(view_rect.max.y),
-        };
 
-        crate::marker_iter::for_each_visible_map_point(
-            self.files,
-            self.visibility,
-            self.filter,
-            &self.hover_out,
-            hover_pos,
-            &transform,
-            vp_bounds,
-            |trip, trip_vis| {
-                trip_vis
-                    .custom_markers_visible
-                    .then_some((DataCategory::CustomMarker, trip.custom_markers.as_slice()))
-            },
-            |point_ref, screen_pos, marker| {
-                if let Some(mouse) = hover_pos {
-                    // Use squared distance to avoid sqrt; threshold is 20² = 400.
-                    let dist_sq = screen_pos.distance_sq(mouse);
-                    if dist_sq < 400.0 && local_closest.is_none_or(|(_, _, d)| dist_sq < d) {
-                        local_closest = Some((point_ref, screen_pos, dist_sq));
-                    }
-                }
-                let highlighted = self.is_marker_highlighted(point_ref);
-                draw_marker_icon(ui, screen_pos, marker, highlighted);
-            },
-        );
+        for sp in &self.visible_custom {
+            let Some(file_vis) = self.visibility.files.get(sp.file_index.0) else {
+                continue;
+            };
+            if !file_vis.enabled {
+                continue;
+            }
+            let Some(trip_vis) = file_vis.trips.get(sp.trip_index.0) else {
+                continue;
+            };
+            if !trip_vis.enabled || !trip_vis.custom_markers_visible {
+                continue;
+            }
+            let Some(file) = self.files.get(sp.file_index.0) else {
+                continue;
+            };
+            let Some(trip) = file.trips.get(sp.trip_index.0) else {
+                continue;
+            };
+            if !filter::trip_passes_filter(&trip.metadata, self.filter) {
+                continue;
+            }
+            let Some(marker) = trip.custom_markers.get(sp.point_index.0) else {
+                continue;
+            };
+            if !filter::point_passes_time_filter(marker.time, self.filter) {
+                continue;
+            }
+            let point_ref = DataPointRef {
+                file_index: sp.file_index,
+                trip_index: sp.trip_index,
+                category: DataCategory::CustomMarker,
+                point_index: sp.point_index,
+            };
+            let screen_pos = transform.to_screen(sp.merc_x, sp.merc_y);
+            let highlighted = self.is_marker_highlighted(point_ref);
+            draw_marker_icon(ui, screen_pos, marker, highlighted);
+        }
 
-        if let Some((point_ref, pos, _)) = local_closest {
-            show_marker_hover_label(ui, self.files, point_ref, pos);
+        // Show hover label for the currently hovered custom marker.
+        // Suppressed when the sticky popup is already showing this point, or when
+        // any popup (e.g. context menu) is open and would be painted underneath.
+        if let Some(HighlightScope::Point(r)) = self.highlight.hover
+            && r.category == DataCategory::CustomMarker
+            && self.highlight.sticky != Some(r)
+            && !ui.ctx().any_popup_open()
+            && let Some(file) = self.files.get(r.file_index.0)
+            && let Some(trip) = file.trips.get(r.trip_index.0)
+            && let Some(marker) = trip.custom_markers.get(r.point_index.0)
+        {
+            let pos = transform.to_screen(marker.merc_x, marker.merc_y);
+            show_marker_hover_label(ui, marker, pos);
         }
     }
 }
 
 /// Paint the marker's label directly onto the map canvas, below the icon.
-///
-/// Using direct canvas painting (instead of `on_hover_text`) means the label
-/// is always visible when the marker is hovered, even when a TPV point is
-/// nearby and showing its own egui tooltip — the two are independent layers.
-fn show_marker_hover_label(ui: &Ui, files: &[LoadedFile], point_ref: DataPointRef, pos: Pos2) {
-    let Some(file) = files.get(point_ref.file_index.0) else {
-        return;
-    };
-    let Some(trip) = file.trips.get(point_ref.trip_index.0) else {
-        return;
-    };
-    let Some(marker) = trip.custom_markers.get(point_ref.point_index.0) else {
-        return;
-    };
-
-    // Place the label below the marker icon so it does not overlap the
-    // TPV tooltip (which egui positions near the cursor).
+fn show_marker_hover_label(ui: &Ui, marker: &CustomMarker, pos: Pos2) {
     let label_pos = pos + egui::vec2(0.0, 18.0);
     let galley = ui.painter().layout_no_wrap(
         marker.label.clone(),
         egui::FontId::proportional(13.0),
         Color32::WHITE,
     );
-    // Centre the text horizontally under the icon.
     let text_origin = egui::pos2(label_pos.x - galley.size().x / 2.0, label_pos.y);
     let text_rect = egui::Rect::from_min_size(text_origin, galley.size());
     ui.painter().rect_filled(
@@ -206,9 +202,6 @@ fn draw_marker_icon(ui: &Ui, center: Pos2, marker: &CustomMarker, highlighted: b
 }
 
 fn draw_pin(ui: &Ui, center: Pos2, _color: Color32) {
-    // Color (#DB4437) and white stroke are baked into the SVG.
-    // The icon is 18×24 logical pixels with the pin tip at the bottom centre,
-    // so the rect spans 9px left/right of `center` and 24px above it.
     let icon_rect = egui::Rect::from_min_max(
         center - egui::vec2(9.0, 24.0),
         center + egui::vec2(9.0, 0.0),
@@ -220,7 +213,6 @@ fn draw_pin(ui: &Ui, center: Pos2, _color: Color32) {
 }
 
 fn draw_cross(ui: &Ui, center: Pos2, _color: Color32) {
-    // Color (#0F9D58) is baked into the SVG.
     egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
         crate::ICON_URI_CROSS,
     )))
@@ -231,7 +223,6 @@ fn draw_cross(ui: &Ui, center: Pos2, _color: Color32) {
 }
 
 fn draw_circle(ui: &Ui, center: Pos2, _color: Color32) {
-    // Color (#4285F4) and white stroke are baked into the SVG.
     egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
         crate::ICON_URI_CIRCLE_MARKER,
     )))
@@ -242,7 +233,6 @@ fn draw_circle(ui: &Ui, center: Pos2, _color: Color32) {
 }
 
 fn draw_lightning(ui: &Ui, center: Pos2, _color: Color32) {
-    // Color (#F4B400) and white stroke are baked into the SVG; no tint needed.
     egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
         crate::ICON_URI_LIGHTNING,
     )))
@@ -253,7 +243,6 @@ fn draw_lightning(ui: &Ui, center: Pos2, _color: Color32) {
 }
 
 fn draw_warning(ui: &Ui, center: Pos2, _color: Color32) {
-    // Color (#FF9900), white stroke, and exclamation mark are all baked into the SVG.
     egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
         crate::ICON_URI_WARNING,
     )))
@@ -264,7 +253,6 @@ fn draw_warning(ui: &Ui, center: Pos2, _color: Color32) {
 }
 
 fn draw_error_sign(ui: &Ui, center: Pos2, _color: Color32) {
-    // Color (#CC0000), white stroke, and minus bar are all baked into the SVG.
     egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
         crate::ICON_URI_ERROR,
     )))
@@ -275,7 +263,6 @@ fn draw_error_sign(ui: &Ui, center: Pos2, _color: Color32) {
 }
 
 fn draw_check(ui: &Ui, center: Pos2, _color: Color32) {
-    // Color (#0F9D58) is baked into the SVG.
     egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
         crate::ICON_URI_CHECK,
     )))
@@ -293,9 +280,6 @@ fn draw_svg_icon(ui: &Ui, center: Pos2, uri: &'static str, size: f32) {
 }
 
 fn draw_log_pin(ui: &Ui, center: Pos2, color: Color32) {
-    // White SVG tinted to the log-group color at render time.
-    // The icon is 18×24 logical pixels with the pin tip at the bottom centre,
-    // so the rect spans 9px left/right of `center` and 24px above it.
     let icon_rect = egui::Rect::from_min_max(
         center - egui::vec2(9.0, 24.0),
         center + egui::vec2(9.0, 0.0),

@@ -11,6 +11,7 @@ chrono.workspace = true
 egui.workspace = true
 egui-phosphor.workspace = true
 gt-types.path = "../gt-types"
+rstar.workspace = true
 uom.workspace = true
 walkers.workspace = true
 

@@ -65,4 +65,21 @@ impl EventMarkerVisibility {
             hidden.retain(|p| p != path && !p.starts_with(&child_prefix));
         }
     }
+
+    /// Replace the hidden set for one trip with the given minimal root paths.
+    ///
+    /// Each entry in `hidden_roots` should be a path whose parent is NOT hidden —
+    /// callers are responsible for ensuring minimality.
+    pub fn set_hidden(&mut self, fi: usize, ti: usize, hidden_roots: impl Iterator<Item = String>) {
+        self.hidden.remove(&(fi, ti));
+        let paths: BTreeSet<String> = hidden_roots.collect();
+        if !paths.is_empty() {
+            self.hidden.insert((fi, ti), paths);
+        }
+    }
+
+    /// Clear all hidden state.
+    pub fn clear_all(&mut self) {
+        self.hidden.clear();
+    }
 }

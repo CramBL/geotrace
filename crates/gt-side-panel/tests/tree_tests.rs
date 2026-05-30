@@ -1,0 +1,302 @@
+use gt_side_panel::tree::{CategoriesExpanded, CheckState, NodeKey, TreeState, TripRef};
+use gt_types::{FileIdx, TripIdx};
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+fn make_tree(file_count: usize, trips_per_file: usize) -> TreeState {
+    let mut tree = TreeState::new();
+    for _ in 0..file_count {
+        let file_node = gt_side_panel::FileNode {
+            expanded: false,
+            check: CheckState::On,
+            trips: (0..trips_per_file).map(|_| make_trip_node()).collect(),
+        };
+        tree.files.push(file_node);
+    }
+    tree
+}
+
+fn make_trip_node() -> gt_side_panel::TripNode {
+    gt_side_panel::TripNode {
+        expanded: false,
+        check: CheckState::On,
+        categories_expanded: CategoriesExpanded::default(),
+        track_visible: true,
+        tpv_visible: true,
+        satellites_visible: true,
+        custom_markers_visible: true,
+        generated_markers_visible: true,
+        event_paths: Default::default(),
+        event_filter: String::new(),
+    }
+}
+
+fn add_event_paths(tree: &mut TreeState, fi: usize, ti: usize, paths: &[&str]) {
+    if let Some(trip_node) = tree.files.get_mut(fi).and_then(|f| f.trips.get_mut(ti)) {
+        trip_node.event_paths.sync_from_paths(paths.iter().copied());
+    }
+}
+
+fn trip_check(tree: &TreeState, fi: usize, ti: usize) -> CheckState {
+    tree.files
+        .get(fi)
+        .and_then(|f| f.trips.get(ti))
+        .map(|t| t.check)
+        .unwrap_or(CheckState::Off)
+}
+
+fn file_check(tree: &TreeState, fi: usize) -> CheckState {
+    tree.files
+        .get(fi)
+        .map(|f| f.check)
+        .unwrap_or(CheckState::Off)
+}
+
+fn event_path_check(tree: &TreeState, fi: usize, ti: usize, path: &str) -> CheckState {
+    tree.files
+        .get(fi)
+        .and_then(|f| f.trips.get(ti))
+        .and_then(|t| t.event_paths.nodes.get(path).copied())
+        .unwrap_or(CheckState::On)
+}
+
+// ── file-level cascade ───────────────────────────────────────────────────────
+
+#[test]
+fn toggle_check_file_on_off() {
+    let mut tree = make_tree(1, 3);
+    tree.toggle_file_check(FileIdx(0));
+    assert_eq!(file_check(&tree, 0), CheckState::Off);
+    assert_eq!(trip_check(&tree, 0, 0), CheckState::Off);
+    assert_eq!(trip_check(&tree, 0, 1), CheckState::Off);
+    assert_eq!(trip_check(&tree, 0, 2), CheckState::Off);
+}
+
+#[test]
+fn toggle_check_file_off_to_on() {
+    let mut tree = make_tree(1, 2);
+    tree.toggle_file_check(FileIdx(0)); // → Off
+    tree.toggle_file_check(FileIdx(0)); // → On
+    assert_eq!(file_check(&tree, 0), CheckState::On);
+    assert_eq!(trip_check(&tree, 0, 0), CheckState::On);
+    assert_eq!(trip_check(&tree, 0, 1), CheckState::On);
+}
+
+#[test]
+fn toggle_check_trip_partial_makes_file_mixed() {
+    let mut tree = make_tree(1, 2);
+    tree.toggle_trip_check(FileIdx(0), TripIdx(1)); // trip[1] → Off, trip[0] stays On
+    assert_eq!(trip_check(&tree, 0, 0), CheckState::On);
+    assert_eq!(trip_check(&tree, 0, 1), CheckState::Off);
+    assert_eq!(file_check(&tree, 0), CheckState::Mixed);
+}
+
+#[test]
+fn toggle_check_file_mixed_goes_on() {
+    let mut tree = make_tree(1, 2);
+    tree.toggle_trip_check(FileIdx(0), TripIdx(1)); // file → Mixed
+    assert_eq!(file_check(&tree, 0), CheckState::Mixed);
+    tree.toggle_file_check(FileIdx(0)); // Mixed → On, all children On
+    assert_eq!(file_check(&tree, 0), CheckState::On);
+    assert_eq!(trip_check(&tree, 0, 0), CheckState::On);
+    assert_eq!(trip_check(&tree, 0, 1), CheckState::On);
+}
+
+#[test]
+fn toggle_check_trip_enables_parent_file() {
+    let mut tree = make_tree(1, 2);
+    tree.toggle_file_check(FileIdx(0)); // all Off
+    tree.toggle_trip_check(FileIdx(0), TripIdx(0)); // trip[0] → On
+    assert_eq!(trip_check(&tree, 0, 0), CheckState::On);
+    assert_eq!(trip_check(&tree, 0, 1), CheckState::Off);
+    assert_eq!(file_check(&tree, 0), CheckState::Mixed);
+}
+
+// ── event path cascade ───────────────────────────────────────────────────────
+
+#[test]
+fn event_path_toggle_parent_cascades() {
+    let mut tree = make_tree(1, 1);
+    add_event_paths(&mut tree, 0, 0, &["power/boot", "power/sleep"]);
+    // All nodes start On
+    assert_eq!(event_path_check(&tree, 0, 0, "power"), CheckState::On);
+    assert_eq!(event_path_check(&tree, 0, 0, "power/boot"), CheckState::On);
+
+    tree.toggle_event_path(FileIdx(0), TripIdx(0), "power"); // parent Off → all descendants Off
+    assert_eq!(event_path_check(&tree, 0, 0, "power"), CheckState::Off);
+    assert_eq!(event_path_check(&tree, 0, 0, "power/boot"), CheckState::Off);
+    assert_eq!(
+        event_path_check(&tree, 0, 0, "power/sleep"),
+        CheckState::Off
+    );
+
+    tree.toggle_event_path(FileIdx(0), TripIdx(0), "power"); // parent Off → On
+    assert_eq!(event_path_check(&tree, 0, 0, "power"), CheckState::On);
+    assert_eq!(event_path_check(&tree, 0, 0, "power/boot"), CheckState::On);
+    assert_eq!(event_path_check(&tree, 0, 0, "power/sleep"), CheckState::On);
+}
+
+#[test]
+fn event_path_toggle_leaf_recomputes_parent() {
+    let mut tree = make_tree(1, 1);
+    add_event_paths(&mut tree, 0, 0, &["power/boot", "power/sleep"]);
+
+    tree.toggle_event_path(FileIdx(0), TripIdx(0), "power/boot"); // boot → Off
+    assert_eq!(event_path_check(&tree, 0, 0, "power/boot"), CheckState::Off);
+    assert_eq!(event_path_check(&tree, 0, 0, "power/sleep"), CheckState::On);
+    assert_eq!(event_path_check(&tree, 0, 0, "power"), CheckState::Mixed);
+}
+
+#[test]
+fn event_path_grandparent_recomputes() {
+    let mut tree = make_tree(1, 1);
+    add_event_paths(&mut tree, 0, 0, &["a/b/c", "a/b/d"]);
+
+    tree.toggle_event_path(FileIdx(0), TripIdx(0), "a/b/c"); // → Off
+    assert_eq!(event_path_check(&tree, 0, 0, "a/b/c"), CheckState::Off);
+    assert_eq!(event_path_check(&tree, 0, 0, "a/b/d"), CheckState::On);
+    assert_eq!(event_path_check(&tree, 0, 0, "a/b"), CheckState::Mixed);
+    assert_eq!(event_path_check(&tree, 0, 0, "a"), CheckState::Mixed);
+}
+
+// ── expand / collapse ────────────────────────────────────────────────────────
+
+#[test]
+fn toggle_expand_file() {
+    let mut tree = make_tree(1, 1);
+    assert!(!tree.files[0].expanded);
+    tree.toggle_expand_file(FileIdx(0));
+    assert!(tree.files[0].expanded);
+    tree.toggle_expand_file(FileIdx(0));
+    assert!(!tree.files[0].expanded);
+}
+
+// ── selection ────────────────────────────────────────────────────────────────
+
+#[test]
+fn apply_click_single_clears_previous_selection() {
+    let mut tree = make_tree(1, 2);
+    tree.files[0].expanded = true;
+    let fi = FileIdx(0);
+    let trip0 = NodeKey::Trip(TripRef {
+        file: fi,
+        trip: TripIdx(0),
+    });
+    let trip1 = NodeKey::Trip(TripRef {
+        file: fi,
+        trip: TripIdx(1),
+    });
+    tree.apply_click(trip0.clone(), false, false);
+    assert!(tree.selection.contains(&trip0));
+    tree.apply_click(trip1.clone(), false, false);
+    assert!(!tree.selection.contains(&trip0));
+    assert!(tree.selection.contains(&trip1));
+}
+
+#[test]
+fn apply_click_ctrl_adds_to_selection() {
+    let mut tree = make_tree(1, 2);
+    tree.files[0].expanded = true;
+    let fi = FileIdx(0);
+    let trip0 = NodeKey::Trip(TripRef {
+        file: fi,
+        trip: TripIdx(0),
+    });
+    let trip1 = NodeKey::Trip(TripRef {
+        file: fi,
+        trip: TripIdx(1),
+    });
+    tree.apply_click(trip0.clone(), false, false);
+    tree.apply_click(trip1.clone(), true, false);
+    assert!(tree.selection.contains(&trip0));
+    assert!(tree.selection.contains(&trip1));
+}
+
+#[test]
+fn apply_click_shift_selects_range() {
+    let mut tree = make_tree(1, 3);
+    tree.files[0].expanded = true;
+    let fi = FileIdx(0);
+    let file_key = NodeKey::File(fi);
+    let trip0 = NodeKey::Trip(TripRef {
+        file: fi,
+        trip: TripIdx(0),
+    });
+    let trip2 = NodeKey::Trip(TripRef {
+        file: fi,
+        trip: TripIdx(2),
+    });
+    tree.apply_click(file_key.clone(), false, false); // anchor = File(0)
+    tree.apply_click(trip2.clone(), false, true); // shift to Trip(2)
+    // Should select File, Trip(0), Trip(1), Trip(2)
+    assert_eq!(tree.selection.len(), 4);
+    assert!(tree.selection.contains(&file_key));
+    assert!(tree.selection.contains(&trip0));
+    assert!(tree.selection.contains(&trip2));
+}
+
+// ── ordered_visible_keys ─────────────────────────────────────────────────────
+
+#[test]
+fn ordered_visible_keys_excludes_collapsed_children() {
+    let mut tree = make_tree(2, 2);
+    tree.files[0].expanded = true; // file 0 expanded
+    // file 1 collapsed (default)
+
+    let keys = tree.ordered_visible_keys();
+    // Expected: File(0), Trip(0,0), Trip(0,1), File(1)
+    assert_eq!(keys.len(), 4);
+    assert_eq!(keys[0], NodeKey::File(FileIdx(0)));
+    assert_eq!(
+        keys[1],
+        NodeKey::Trip(TripRef {
+            file: FileIdx(0),
+            trip: TripIdx(0)
+        })
+    );
+    assert_eq!(
+        keys[2],
+        NodeKey::Trip(TripRef {
+            file: FileIdx(0),
+            trip: TripIdx(1)
+        })
+    );
+    assert_eq!(keys[3], NodeKey::File(FileIdx(1)));
+}
+
+// ── visibility sync ──────────────────────────────────────────────────────────
+
+#[test]
+fn event_marker_visibility_synced_after_path_toggle() {
+    let mut tree = make_tree(1, 1);
+    add_event_paths(&mut tree, 0, 0, &["power/boot", "power/sleep"]);
+
+    // Initially all visible
+    assert!(
+        tree.event_marker_visibility()
+            .is_visible(0, 0, "power/boot")
+    );
+
+    tree.toggle_event_path(FileIdx(0), TripIdx(0), "power"); // hide all under power
+    assert!(
+        !tree
+            .event_marker_visibility()
+            .is_visible(0, 0, "power/boot")
+    );
+    assert!(
+        !tree
+            .event_marker_visibility()
+            .is_visible(0, 0, "power/sleep")
+    );
+
+    tree.toggle_event_path(FileIdx(0), TripIdx(0), "power/boot"); // show just boot
+    assert!(
+        tree.event_marker_visibility()
+            .is_visible(0, 0, "power/boot")
+    );
+    assert!(
+        !tree
+            .event_marker_visibility()
+            .is_visible(0, 0, "power/sleep")
+    );
+}

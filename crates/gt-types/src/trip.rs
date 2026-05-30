@@ -1,3 +1,4 @@
+use crate::highlight::{DataCategory, FileIdx, PointIdx, TripIdx};
 use crate::markers::{CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker};
 use crate::nav_point::NavPoint;
 use chrono::{DateTime, Duration, Utc};
@@ -127,16 +128,18 @@ pub fn merc_bounds_for_rect(bb: Rect<f64>) -> MercBounds {
     }
 }
 
-/// A single real GPS fix in the spatial index, storing only what the renderer needs.
+/// A point in the global spatial index, covering TPV fixes and all marker categories.
 ///
-/// Ghost fixes (heading == None) are excluded because their position is
-/// interpolated at render time rather than pre-computed.
+/// Ghost TPV fixes (heading == `None`) are excluded — their position is interpolated
+/// at render time rather than pre-computed.
 #[derive(Debug, Clone, Copy)]
 pub struct SpatialPoint {
     pub merc_x: f64,
     pub merc_y: f64,
-    /// Index into `LoadedTrip::points`.
-    pub index: usize,
+    pub file_index: FileIdx,
+    pub trip_index: TripIdx,
+    pub point_index: PointIdx,
+    pub category: DataCategory,
 }
 
 impl rstar::RTreeObject for SpatialPoint {
@@ -144,6 +147,14 @@ impl rstar::RTreeObject for SpatialPoint {
 
     fn envelope(&self) -> Self::Envelope {
         rstar::AABB::from_point([self.merc_x, self.merc_y])
+    }
+}
+
+impl rstar::PointDistance for SpatialPoint {
+    fn distance_2(&self, point: &[f64; 2]) -> f64 {
+        let dx = self.merc_x - point[0];
+        let dy = self.merc_y - point[1];
+        dx * dx + dy * dy
     }
 }
 
@@ -155,38 +166,68 @@ pub struct LoadedTrip {
     pub custom_markers: Vec<CustomMarker>,
     pub generated_markers: Vec<GeneratedMarker>,
     pub event_markers: Vec<EventMarker>,
-    /// Spatial index of real GPS fixes (heading present) for viewport culling.
-    pub tpv_tree: rstar::RTree<SpatialPoint>,
 }
 
-impl LoadedTrip {
-    /// Returns point indices for real TPV fixes whose Mercator position falls
-    /// within the given bounds (all values in normalised Mercator space, 0..1).
-    pub fn tpv_in_viewport(
-        &self,
-        x_min: f64,
-        x_max: f64,
-        y_min: f64,
-        y_max: f64,
-    ) -> impl Iterator<Item = usize> + '_ {
-        let aabb = rstar::AABB::from_corners([x_min, y_min], [x_max, y_max]);
-        self.tpv_tree.locate_in_envelope(aabb).map(|sp| sp.index)
+/// Build the global spatial index over all loaded files.
+///
+/// Includes real TPV fixes (heading present), custom markers, generated markers,
+/// and event markers. Ghost TPV fixes are excluded until their positions are
+/// pre-computed at load time.
+///
+/// Call `RTree::bulk_load` once after all files are loaded; the result is stored
+/// on `NavMap` and rebuilt whenever the file list changes.
+pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
+    let mut points: Vec<SpatialPoint> = Vec::new();
+    for (fi, file) in files.iter().enumerate() {
+        let file_index = FileIdx(fi);
+        for (ti, trip) in file.trips.iter().enumerate() {
+            let trip_index = TripIdx(ti);
+            for (pi, p) in trip.points.iter().enumerate() {
+                if p.tpv.heading().is_none() {
+                    continue;
+                }
+                points.push(SpatialPoint {
+                    merc_x: p.merc_x,
+                    merc_y: p.merc_y,
+                    file_index,
+                    trip_index,
+                    point_index: PointIdx(pi),
+                    category: DataCategory::Tpv,
+                });
+            }
+            for (pi, m) in trip.custom_markers.iter().enumerate() {
+                points.push(SpatialPoint {
+                    merc_x: m.merc_x,
+                    merc_y: m.merc_y,
+                    file_index,
+                    trip_index,
+                    point_index: PointIdx(pi),
+                    category: DataCategory::CustomMarker,
+                });
+            }
+            for (pi, m) in trip.generated_markers.iter().enumerate() {
+                points.push(SpatialPoint {
+                    merc_x: m.merc_x,
+                    merc_y: m.merc_y,
+                    file_index,
+                    trip_index,
+                    point_index: PointIdx(pi),
+                    category: DataCategory::GeneratedMarker,
+                });
+            }
+            for (pi, m) in trip.event_markers.iter().enumerate() {
+                points.push(SpatialPoint {
+                    merc_x: m.merc_x,
+                    merc_y: m.merc_y,
+                    file_index,
+                    trip_index,
+                    point_index: PointIdx(pi),
+                    category: DataCategory::EventMarker,
+                });
+            }
+        }
     }
-}
-
-pub(crate) fn build_tpv_tree(points: &[NavPoint]) -> rstar::RTree<SpatialPoint> {
-    rstar::RTree::bulk_load(
-        points
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| p.tpv.heading().is_some())
-            .map(|(i, p)| SpatialPoint {
-                merc_x: p.merc_x,
-                merc_y: p.merc_y,
-                index: i,
-            })
-            .collect(),
-    )
+    rstar::RTree::bulk_load(points)
 }
 
 #[derive(Debug, Clone)]

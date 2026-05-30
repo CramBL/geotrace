@@ -1,0 +1,813 @@
+use uom::si::angle::degree;
+
+use gt_types::{
+    DataCategory, DataPointRef, FileIdx, GlobalFilter, HighlightScope, LoadedFile, LoadedTrip,
+    MapHighlight, PointIdx, TripIdx,
+};
+
+use crate::filter::{FilterPanelState, render_filter_panel};
+use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState, TripRef};
+use crate::widgets::{
+    expand_arrow, map_hover_color, paint_map_hover_bg, point_item_row, tri_checkbox,
+};
+
+pub struct PanelContext<'a> {
+    pub files: &'a [LoadedFile],
+    pub tree: &'a mut TreeState,
+    pub highlight: &'a mut MapHighlight,
+    pub filter: &'a mut GlobalFilter,
+    pub filter_state: &'a mut FilterPanelState,
+    pub map_center_request: &'a mut Option<(f64, f64)>,
+    pub popup_pos_request: &'a mut Option<egui::Pos2>,
+    pub zoom_to_visible_request: &'a mut bool,
+}
+
+pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
+    let header = ui.horizontal(|ui| {
+        let (_, grip) = ui.allocate_exact_size(egui::vec2(10.0, 18.0), egui::Sense::drag());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ctx.tree.detached {
+                if ui.small_button("Dock").clicked() {
+                    ctx.tree.detached = false;
+                }
+            } else if ui
+                .small_button(egui_phosphor::regular::ARROW_SQUARE_OUT)
+                .on_hover_text("Pop out")
+                .clicked()
+            {
+                ctx.tree.detached = true;
+            }
+        });
+        grip
+    });
+    if header.inner.dragged()
+        && ui
+            .ctx()
+            .pointer_latest_pos()
+            .is_some_and(|p| !ui.clip_rect().contains(p))
+    {
+        ctx.tree.detached = true;
+    }
+
+    ui.separator();
+    render_filter_panel(ui, ctx.files, ctx.filter, ctx.filter_state);
+
+    let filter_snapshot = *ctx.filter;
+    let vis = ctx.tree.visibility();
+    let filtered_out: Vec<NodeKey> = ctx
+        .files
+        .iter()
+        .enumerate()
+        .flat_map(|(fi, file)| {
+            let fi = FileIdx(fi);
+            let file_enabled = fi.get(&vis.files).is_some_and(|fv| fv.enabled);
+            file.trips.iter().enumerate().filter_map(move |(ti, trip)| {
+                let ti = TripIdx(ti);
+                let trip_enabled = file_enabled
+                    && fi
+                        .get(&vis.files)
+                        .and_then(|fv| ti.get(&fv.trips))
+                        .is_some_and(|tv| tv.enabled);
+                let passes = gt_types::trip_passes_filter(&trip.metadata, &filter_snapshot);
+                if !trip_enabled || !passes {
+                    Some(NodeKey::Trip(TripRef { file: fi, trip: ti }))
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+    if !filtered_out.is_empty() {
+        let clicked = ui
+            .scope(|ui| {
+                let v = ui.visuals_mut();
+                v.widgets.hovered.bg_fill = egui::Color32::from_rgb(160, 35, 35);
+                v.widgets.hovered.fg_stroke.color = egui::Color32::WHITE;
+                v.widgets.active.bg_fill = egui::Color32::from_rgb(130, 25, 25);
+                v.widgets.active.fg_stroke.color = egui::Color32::WHITE;
+                ui.button(format!(
+                    "{} Delete all filtered data",
+                    egui_phosphor::regular::TRASH
+                ))
+                .clicked()
+            })
+            .inner;
+        if clicked {
+            ctx.tree.delete_confirm = Some(DeleteConfirmState {
+                items: filtered_out,
+            });
+        }
+    }
+
+    ui.separator();
+
+    ui.horizontal(|ui| {
+        if ui.small_button("Show all").clicked() {
+            ctx.tree.set_all_enabled(true);
+            *ctx.zoom_to_visible_request = true;
+        }
+        if ui.small_button("Hide all").clicked() {
+            ctx.tree.set_all_enabled(false);
+        }
+    });
+
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for fi in 0..ctx.files.len() {
+                render_file_row(ui, FileIdx(fi), ctx);
+            }
+        });
+}
+
+fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
+    let Some(file) = fi.get(ctx.files) else {
+        return;
+    };
+    let Some(file_node) = ctx.tree.file_node(fi) else {
+        return;
+    };
+    let is_expanded = file_node.expanded;
+    let check = file_node.check;
+    let file_key = NodeKey::File(fi);
+
+    let file_map_hovered = ctx.highlight.hover.is_some_and(|s| match s {
+        HighlightScope::Point(r) => r.file_index == fi,
+        HighlightScope::Trip { file_index, .. }
+        | HighlightScope::TripCategory { file_index, .. }
+        | HighlightScope::File { file_index } => file_index == fi,
+    });
+
+    let map_hover_bg = map_hover_color(ui);
+
+    let row_response = ui.horizontal(|ui| {
+        let chk_resp = tri_checkbox(ui, check);
+        if chk_resp.clicked() {
+            ctx.tree.toggle_file_check(fi);
+        }
+        let arrow = expand_arrow(is_expanded);
+        let dist = gt_fmt::format_distance(file.metadata.total_distance_km);
+        let dur = gt_fmt::format_human_terse_duration(file.metadata.total_duration);
+        let label = format!("{arrow} {}  {dist}  {dur}", file.metadata.filename);
+        let is_selected = ctx.tree.selection.contains(&file_key);
+        ui.selectable_label(is_selected, egui::RichText::new(label))
+            .on_hover_text(&file.metadata.filename)
+    });
+
+    let file_label_resp = row_response.inner;
+    if file_map_hovered {
+        paint_map_hover_bg(ui, row_response.response.rect, map_hover_bg);
+    }
+    let modifiers = ui.ctx().input(|i| i.modifiers);
+    if file_label_resp.double_clicked() {
+        if let Some(center) = file_bounding_center(fi.get(ctx.files)) {
+            *ctx.map_center_request = Some(center);
+        }
+    } else if file_label_resp.clicked() {
+        if modifiers.ctrl || modifiers.shift {
+            ctx.tree
+                .apply_click(file_key, modifiers.ctrl, modifiers.shift);
+        } else {
+            ctx.tree.toggle_expand_file(fi);
+            ctx.tree.apply_click(file_key, false, false);
+        }
+    }
+    file_label_resp.context_menu(|ui| {
+        if ui.button("Show only this file").clicked() {
+            ctx.tree.show_only_file(fi);
+            ui.close();
+        }
+        ui.separator();
+        if ui.button("Delete").clicked() {
+            ctx.tree.delete_confirm = Some(DeleteConfirmState {
+                items: vec![file_key],
+            });
+            ui.close();
+        }
+        if ctx.tree.selection.len() >= 2 && ui.button("Delete selected").clicked() {
+            ctx.tree.delete_confirm = Some(DeleteConfirmState {
+                items: ctx.tree.selection.iter().cloned().collect(),
+            });
+            ui.close();
+        }
+    });
+
+    if is_expanded {
+        ui.indent(format!("file_{}", fi.0), |ui| {
+            let trip_count = fi.get(ctx.files).map_or(0, |f| f.trips.len());
+            for ti in 0..trip_count {
+                render_trip_row(ui, fi, TripIdx(ti), ctx);
+            }
+        });
+    }
+}
+
+fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TripIdx, ctx: &mut PanelContext<'_>) {
+    let (trip, passes, is_expanded, trip_panel_hovered, trip_map_hovered, key) = {
+        let Some(file) = fi.get(ctx.files) else {
+            return;
+        };
+        let Some(trip) = ti.get(&file.trips) else {
+            return;
+        };
+        let passes = gt_types::trip_passes_filter(&trip.metadata, ctx.filter);
+        let trip_ref = TripRef { file: fi, trip: ti };
+        let is_expanded = ctx.tree.trip_node(fi, ti).is_some_and(|t| t.expanded);
+        let trip_panel_hovered = ctx.highlight.hover.is_some_and(|s| {
+            matches!(s, HighlightScope::Trip { file_index, trip_index }
+                if file_index == fi && trip_index == ti)
+        });
+        let trip_map_hovered = ctx.highlight.hover.is_some_and(
+            |s| matches!(s, HighlightScope::Point(r) if r.file_index == fi && r.trip_index == ti),
+        );
+        let key = NodeKey::Trip(trip_ref);
+        (
+            trip.clone(),
+            passes,
+            is_expanded,
+            trip_panel_hovered,
+            trip_map_hovered,
+            key,
+        )
+    };
+
+    let was_all_hidden = ctx.tree.all_hidden();
+    let map_hover_bg = map_hover_color(ui);
+
+    let check = ctx
+        .tree
+        .trip_node(fi, ti)
+        .map_or(CheckState::On, |t| t.check);
+
+    let row_response = ui.horizontal(|ui| {
+        let chk_resp = tri_checkbox(ui, check);
+        if chk_resp.clicked() {
+            ctx.tree.toggle_trip_check(fi, ti);
+        }
+        let newly_enabled =
+            chk_resp.clicked() && matches!(check, CheckState::Off | CheckState::Mixed);
+        let arrow = expand_arrow(is_expanded);
+        let dist = gt_fmt::format_distance(trip.metadata.distance_km);
+        let dur = gt_fmt::format_human_terse_duration(trip.metadata.duration);
+        let label = format!("{arrow} T{}  {dist}  {dur}", trip.metadata.index);
+        let mut text = egui::RichText::new(label);
+        if !passes {
+            text = text.weak();
+        }
+        if trip_panel_hovered {
+            text = text.color(egui::Color32::from_rgb(100, 200, 255));
+        }
+        let is_selected = ctx.tree.selection.contains(&key);
+        (ui.selectable_label(is_selected, text), newly_enabled)
+    });
+
+    if trip_map_hovered {
+        paint_map_hover_bg(ui, row_response.response.rect, map_hover_bg);
+    }
+    let (response, newly_enabled) = row_response.inner;
+    if newly_enabled && was_all_hidden {
+        *ctx.zoom_to_visible_request = true;
+    }
+    if response.hovered() {
+        ctx.highlight.hover = Some(HighlightScope::Trip {
+            file_index: fi,
+            trip_index: ti,
+        });
+    }
+    let modifiers = ui.ctx().input(|i| i.modifiers);
+    if response.double_clicked() {
+        let bb = trip.metadata.bounding_box;
+        let center_lat = (bb.min().y + bb.max().y) / 2.0;
+        let center_lon = (bb.min().x + bb.max().x) / 2.0;
+        *ctx.map_center_request = Some((center_lat, center_lon));
+    } else if response.clicked() {
+        if modifiers.ctrl || modifiers.shift {
+            ctx.tree.apply_click(key, modifiers.ctrl, modifiers.shift);
+        } else {
+            ctx.tree.toggle_expand_trip(fi, ti);
+            ctx.tree.apply_click(key, false, false);
+        }
+    }
+    response.context_menu(|ui| {
+        if ui.button("Show only this trip").clicked() {
+            ctx.tree.show_only_trip(fi, ti);
+            *ctx.zoom_to_visible_request = true;
+            ui.close();
+        }
+        ui.separator();
+        if ui.button("Delete").clicked() {
+            ctx.tree.delete_confirm = Some(DeleteConfirmState { items: vec![key] });
+            ui.close();
+        }
+        if ctx.tree.selection.len() >= 2 && ui.button("Delete selected").clicked() {
+            ctx.tree.delete_confirm = Some(DeleteConfirmState {
+                items: ctx.tree.selection.iter().cloned().collect(),
+            });
+            ui.close();
+        }
+    });
+
+    if is_expanded {
+        ui.indent(format!("trip_{}_{}", fi.0, ti.0), |ui| {
+            render_trip_categories(ui, fi, ti, &trip, ctx);
+        });
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "all arguments are distinct; extracting a context struct avoids re-borrowing tree mid-render"
+)]
+fn render_category_section(
+    ui: &mut egui::Ui,
+    fi: FileIdx,
+    ti: TripIdx,
+    cat: DataCategory,
+    count: usize,
+    label: &str,
+    visible: bool,
+    expanded: bool,
+    tree: &mut TreeState,
+    highlight: &mut MapHighlight,
+    render_items: impl FnOnce(&mut egui::Ui, &mut MapHighlight),
+) {
+    if count == 0 {
+        return;
+    }
+    let header = ui.horizontal(|ui| {
+        let chk = tri_checkbox(
+            ui,
+            if visible {
+                CheckState::On
+            } else {
+                CheckState::Off
+            },
+        );
+        if chk.clicked() {
+            tree.set_category_visible(fi, ti, cat, !visible);
+        }
+        let arrow = expand_arrow(expanded);
+        let resp = ui.selectable_label(expanded, format!("{arrow} {label}  {count}"));
+        if resp.clicked() {
+            tree.toggle_category_expanded(fi, ti, cat);
+        }
+        resp
+    });
+    if header.inner.hovered() {
+        highlight.hover = Some(HighlightScope::TripCategory {
+            file_index: fi,
+            trip_index: ti,
+            category: cat,
+        });
+    }
+    if expanded {
+        let trip_ref = TripRef { file: fi, trip: ti };
+        ui.indent((cat, trip_ref), |ui| {
+            render_items(ui, highlight);
+        });
+    }
+}
+
+fn render_trip_categories(
+    ui: &mut egui::Ui,
+    fi: FileIdx,
+    ti: TripIdx,
+    trip: &LoadedTrip,
+    ctx: &mut PanelContext<'_>,
+) {
+    let Some(trip_node) = ctx.tree.trip_node(fi, ti) else {
+        return;
+    };
+    let track_visible = trip_node.track_visible;
+    let tpv_visible = trip_node.tpv_visible;
+    let sat_visible = trip_node.satellites_visible;
+    let cm_visible = trip_node.custom_markers_visible;
+    let gm_visible = trip_node.generated_markers_visible;
+    let tpv_expanded = trip_node.categories_expanded.contains(&DataCategory::Tpv);
+    let sat_expanded = trip_node
+        .categories_expanded
+        .contains(&DataCategory::SatelliteReport);
+    let cm_expanded = trip_node
+        .categories_expanded
+        .contains(&DataCategory::CustomMarker);
+    let gm_expanded = trip_node
+        .categories_expanded
+        .contains(&DataCategory::GeneratedMarker);
+    let em_expanded = trip_node
+        .categories_expanded
+        .contains(&DataCategory::EventMarker);
+    let em_agg = trip_node.event_paths.aggregate();
+    let event_filter = trip_node.event_filter.clone();
+
+    let track_resp = ui.horizontal(|ui| {
+        let chk = tri_checkbox(
+            ui,
+            if track_visible {
+                CheckState::On
+            } else {
+                CheckState::Off
+            },
+        );
+        if chk.clicked() {
+            ctx.tree
+                .set_category_visible(fi, ti, DataCategory::TripTrack, !track_visible);
+        }
+        ui.label("Trip track")
+    });
+    if track_resp.inner.hovered() {
+        ctx.highlight.hover = Some(HighlightScope::TripCategory {
+            file_index: fi,
+            trip_index: ti,
+            category: DataCategory::TripTrack,
+        });
+    }
+
+    render_category_section(
+        ui,
+        fi,
+        ti,
+        DataCategory::Tpv,
+        trip.points.len(),
+        "Trip points",
+        tpv_visible,
+        tpv_expanded,
+        ctx.tree,
+        ctx.highlight,
+        |ui, highlight| {
+            render_tpv_items(
+                ui,
+                fi,
+                ti,
+                trip,
+                highlight,
+                ctx.map_center_request,
+                ctx.popup_pos_request,
+            );
+        },
+    );
+
+    let sat_count = trip
+        .points
+        .iter()
+        .filter(|p| p.satellites.is_some())
+        .count();
+    render_category_section(
+        ui,
+        fi,
+        ti,
+        DataCategory::SatelliteReport,
+        sat_count,
+        "Satellite reports",
+        sat_visible,
+        sat_expanded,
+        ctx.tree,
+        ctx.highlight,
+        |ui, highlight| {
+            render_satellite_report_items(
+                ui,
+                fi,
+                ti,
+                trip,
+                highlight,
+                ctx.map_center_request,
+                ctx.popup_pos_request,
+            );
+        },
+    );
+
+    render_category_section(
+        ui,
+        fi,
+        ti,
+        DataCategory::CustomMarker,
+        trip.custom_markers.len(),
+        "Custom markers",
+        cm_visible,
+        cm_expanded,
+        ctx.tree,
+        ctx.highlight,
+        |ui, highlight| {
+            render_custom_marker_items(
+                ui,
+                fi,
+                ti,
+                trip,
+                highlight,
+                ctx.map_center_request,
+                ctx.popup_pos_request,
+            );
+        },
+    );
+
+    render_category_section(
+        ui,
+        fi,
+        ti,
+        DataCategory::GeneratedMarker,
+        trip.generated_markers.len(),
+        "Generated markers",
+        gm_visible,
+        gm_expanded,
+        ctx.tree,
+        ctx.highlight,
+        |ui, highlight| {
+            render_generated_marker_items(
+                ui,
+                fi,
+                ti,
+                trip,
+                highlight,
+                ctx.map_center_request,
+                ctx.popup_pos_request,
+            );
+        },
+    );
+
+    if !trip.event_markers.is_empty() {
+        render_event_markers_section(ui, fi, ti, trip, em_agg, em_expanded, &event_filter, ctx);
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "all arguments are distinct; extracting them avoids re-borrowing tree mid-render"
+)]
+fn render_event_markers_section(
+    ui: &mut egui::Ui,
+    fi: FileIdx,
+    ti: TripIdx,
+    trip: &LoadedTrip,
+    em_agg: CheckState,
+    is_open: bool,
+    filter_text: &str,
+    ctx: &mut PanelContext<'_>,
+) {
+    let count = trip.event_markers.len();
+    let header_response = ui.horizontal(|ui| {
+        let chk_resp = tri_checkbox(ui, em_agg);
+        if chk_resp.clicked() {
+            ctx.tree.toggle_all_event_paths(fi, ti);
+        }
+        let arrow = expand_arrow(is_open);
+        let label = format!("{arrow} Events  {count}");
+        ui.selectable_label(false, label)
+    });
+
+    if header_response.inner.clicked() {
+        ctx.tree
+            .toggle_category_expanded(fi, ti, DataCategory::EventMarker);
+    }
+
+    if !is_open {
+        return;
+    }
+
+    let header_id = egui::Id::new(("events_section", fi.0, ti.0));
+
+    ui.horizontal(|ui| {
+        ui.add_space(16.0);
+        let mut text = filter_text.to_owned();
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut text)
+                .hint_text("Filter…")
+                .desired_width(120.0)
+                .id(egui::Id::new(("event_filter", header_id))),
+        );
+        if resp.changed()
+            && let Some(trip_node) = ctx.tree.trip_node_mut(fi, ti)
+        {
+            trip_node.event_filter = text.clone();
+        }
+        if !text.is_empty()
+            && ui.small_button("×").clicked()
+            && let Some(trip_node) = ctx.tree.trip_node_mut(fi, ti)
+        {
+            trip_node.event_filter.clear();
+        }
+    });
+
+    let current_filter = ctx
+        .tree
+        .trip_node(fi, ti)
+        .map_or("", |t| t.event_filter.as_str());
+
+    let mut paths: Vec<&str> = trip
+        .event_markers
+        .iter()
+        .map(|m| m.variant_path.as_str())
+        .collect();
+    paths.sort_unstable();
+    paths.dedup();
+
+    let filtered: Vec<&str> = if current_filter.is_empty() {
+        paths
+    } else {
+        paths
+            .into_iter()
+            .filter(|p| p.contains(current_filter))
+            .collect()
+    };
+
+    let mut prefix_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for path in &filtered {
+        let segments: Vec<&str> = path.split('/').collect();
+        for depth in 1..=segments.len() {
+            if let Some(slice) = segments.get(..depth) {
+                prefix_set.insert(slice.join("/"));
+            }
+        }
+    }
+
+    // No max_height cap — expands inline with the trip's content.
+    for prefix in &prefix_set {
+        let depth = prefix.chars().filter(|&c| c == '/').count();
+        let segment = prefix.split('/').next_back().unwrap_or(prefix.as_str());
+        let marker_count = trip
+            .event_markers
+            .iter()
+            .filter(|m| {
+                m.variant_path == *prefix || m.variant_path.starts_with(&format!("{prefix}/"))
+            })
+            .count();
+
+        let node_check = ctx
+            .tree
+            .trip_node(fi, ti)
+            .and_then(|t| t.event_paths.nodes.get(prefix.as_str()).copied())
+            .unwrap_or(CheckState::On);
+
+        ui.horizontal(|ui| {
+            ui.add_space(16.0 + depth as f32 * 12.0);
+            let chk_resp = tri_checkbox(ui, node_check);
+            if chk_resp.clicked() {
+                ctx.tree.toggle_event_path(fi, ti, prefix);
+            }
+            ui.label(format!("{segment}  {marker_count}"));
+        });
+    }
+}
+
+fn render_tpv_items(
+    ui: &mut egui::Ui,
+    fi: FileIdx,
+    ti: TripIdx,
+    trip: &LoadedTrip,
+    highlight: &mut MapHighlight,
+    map_center_request: &mut Option<(f64, f64)>,
+    popup_pos_request: &mut Option<egui::Pos2>,
+) {
+    for (pi, point) in trip.points.iter().enumerate() {
+        let point_ref = DataPointRef {
+            file_index: fi,
+            trip_index: ti,
+            category: DataCategory::Tpv,
+            point_index: PointIdx(pi),
+        };
+        let label = point.tpv.time().utc().format("%H:%M:%S").to_string();
+        let lat_lon = (
+            point.tpv.lat().get::<degree>(),
+            point.tpv.lon().get::<degree>(),
+        );
+        point_item_row(
+            ui,
+            point_ref,
+            label,
+            lat_lon,
+            highlight,
+            map_center_request,
+            popup_pos_request,
+        );
+    }
+}
+
+fn render_satellite_report_items(
+    ui: &mut egui::Ui,
+    fi: FileIdx,
+    ti: TripIdx,
+    trip: &LoadedTrip,
+    highlight: &mut MapHighlight,
+    map_center_request: &mut Option<(f64, f64)>,
+    popup_pos_request: &mut Option<egui::Pos2>,
+) {
+    for (pi, point) in trip.points.iter().enumerate() {
+        let Some(sats) = &point.satellites else {
+            continue;
+        };
+        let point_ref = DataPointRef {
+            file_index: fi,
+            trip_index: ti,
+            category: DataCategory::SatelliteReport,
+            point_index: PointIdx(pi),
+        };
+        let time_str = sats
+            .best_time()
+            .map_or_else(|| "—".to_string(), |t| t.format("%H:%M:%S").to_string());
+        let label = format!(
+            "{time_str}  {}/{}",
+            sats.fix_count(),
+            sats.satellite_count()
+        );
+        let lat_lon = (
+            point.tpv.lat().get::<degree>(),
+            point.tpv.lon().get::<degree>(),
+        );
+        point_item_row(
+            ui,
+            point_ref,
+            label,
+            lat_lon,
+            highlight,
+            map_center_request,
+            popup_pos_request,
+        );
+    }
+}
+
+fn render_custom_marker_items(
+    ui: &mut egui::Ui,
+    fi: FileIdx,
+    ti: TripIdx,
+    trip: &LoadedTrip,
+    highlight: &mut MapHighlight,
+    map_center_request: &mut Option<(f64, f64)>,
+    popup_pos_request: &mut Option<egui::Pos2>,
+) {
+    for (pi, marker) in trip.custom_markers.iter().enumerate() {
+        let point_ref = DataPointRef {
+            file_index: fi,
+            trip_index: ti,
+            category: DataCategory::CustomMarker,
+            point_index: PointIdx(pi),
+        };
+        let label = format!("{}  {}", marker.time.format("%H:%M:%S"), marker.label);
+        let lat_lon = (marker.lat.get::<degree>(), marker.lon.get::<degree>());
+        point_item_row(
+            ui,
+            point_ref,
+            label,
+            lat_lon,
+            highlight,
+            map_center_request,
+            popup_pos_request,
+        );
+    }
+}
+
+fn render_generated_marker_items(
+    ui: &mut egui::Ui,
+    fi: FileIdx,
+    ti: TripIdx,
+    trip: &LoadedTrip,
+    highlight: &mut MapHighlight,
+    map_center_request: &mut Option<(f64, f64)>,
+    popup_pos_request: &mut Option<egui::Pos2>,
+) {
+    use gt_types::GeneratedMarkerKind;
+    for (pi, marker) in trip.generated_markers.iter().enumerate() {
+        let point_ref = DataPointRef {
+            file_index: fi,
+            trip_index: ti,
+            category: DataCategory::GeneratedMarker,
+            point_index: PointIdx(pi),
+        };
+        let kind_str = match marker.kind {
+            GeneratedMarkerKind::GpsFixLost => "GPS fix lost",
+            GeneratedMarkerKind::GpsFixRegained => "GPS fix regained",
+        };
+        let label = format!("{}  {kind_str}", marker.time.format("%H:%M:%S"));
+        let lat_lon = (marker.lat.get::<degree>(), marker.lon.get::<degree>());
+        point_item_row(
+            ui,
+            point_ref,
+            label,
+            lat_lon,
+            highlight,
+            map_center_request,
+            popup_pos_request,
+        );
+    }
+}
+
+fn file_bounding_center(file: Option<&LoadedFile>) -> Option<(f64, f64)> {
+    let trips = &file?.trips;
+    if trips.is_empty() {
+        return None;
+    }
+    let min_lat = trips
+        .iter()
+        .map(|t| t.metadata.bounding_box.min().y)
+        .fold(f64::INFINITY, f64::min);
+    let max_lat = trips
+        .iter()
+        .map(|t| t.metadata.bounding_box.max().y)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let min_lon = trips
+        .iter()
+        .map(|t| t.metadata.bounding_box.min().x)
+        .fold(f64::INFINITY, f64::min);
+    let max_lon = trips
+        .iter()
+        .map(|t| t.metadata.bounding_box.max().x)
+        .fold(f64::NEG_INFINITY, f64::max);
+    Some(((min_lat + max_lat) / 2.0, (min_lon + max_lon) / 2.0))
+}

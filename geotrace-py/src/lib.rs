@@ -90,6 +90,20 @@ pub enum PyMarkerIcon {
     Error,
     #[pyo3(name = "CHECK")]
     Check,
+    #[pyo3(name = "SATELLITE")]
+    Satellite,
+    #[pyo3(name = "SATELLITE_LOST")]
+    SatelliteLost,
+    #[pyo3(name = "GEAR")]
+    Gear,
+    #[pyo3(name = "REFRESH")]
+    Refresh,
+    #[pyo3(name = "DOWNLOAD")]
+    Download,
+    #[pyo3(name = "UPLOAD")]
+    Upload,
+    #[pyo3(name = "WRENCH")]
+    Wrench,
 }
 
 impl From<MarkerIcon> for PyMarkerIcon {
@@ -102,6 +116,13 @@ impl From<MarkerIcon> for PyMarkerIcon {
             MarkerIcon::Warning => Self::Warning,
             MarkerIcon::Error => Self::Error,
             MarkerIcon::Check => Self::Check,
+            MarkerIcon::Satellite => Self::Satellite,
+            MarkerIcon::SatelliteLost => Self::SatelliteLost,
+            MarkerIcon::Gear => Self::Gear,
+            MarkerIcon::Refresh => Self::Refresh,
+            MarkerIcon::Download => Self::Download,
+            MarkerIcon::Upload => Self::Upload,
+            MarkerIcon::Wrench => Self::Wrench,
         }
     }
 }
@@ -116,6 +137,13 @@ impl From<PyMarkerIcon> for MarkerIcon {
             PyMarkerIcon::Warning => Self::Warning,
             PyMarkerIcon::Error => Self::Error,
             PyMarkerIcon::Check => Self::Check,
+            PyMarkerIcon::Satellite => Self::Satellite,
+            PyMarkerIcon::SatelliteLost => Self::SatelliteLost,
+            PyMarkerIcon::Gear => Self::Gear,
+            PyMarkerIcon::Refresh => Self::Refresh,
+            PyMarkerIcon::Download => Self::Download,
+            PyMarkerIcon::Upload => Self::Upload,
+            PyMarkerIcon::Wrench => Self::Wrench,
         }
     }
 }

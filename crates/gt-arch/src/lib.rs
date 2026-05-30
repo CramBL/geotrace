@@ -105,6 +105,7 @@ mod tests {
                     "egui_kittest.*".into(),
                     "egui_phosphor.*".into(),
                     "strum.*".into(),
+                    "rstar.*".into(),
                     "walkers.*".into(),
                     "uom.*".into(),
                     "gt_types.*".into(),
@@ -114,7 +115,6 @@ mod tests {
                     "event_marker_renderer.*".into(),
                     "generated_marker_renderer.*".into(),
                     "marker_renderer.*".into(),
-                    "marker_iter.*".into(),
                     "track_renderer.*".into(),
                     "tpv_renderer.*".into(),
                 ]),
@@ -199,6 +199,7 @@ mod tests {
                     "gt_plot.*".into(),
                     "gt_io.*".into(),
                     "gt_log_marker.*".into(),
+                    "gt_side_panel.*".into(),
                     "geotrace_sdk.*".into(),
                     "rfd.*".into(),
                     "uom.*".into(),
@@ -206,10 +207,36 @@ mod tests {
                     "geotrace.*".into(),
                     "geo_types.*".into(),
                     "app.*".into(),
-                    "filter_panel.*".into(),
                     "modals.*".into(),
-                    "side_panel.*".into(),
-                    "trip_data_panel.*".into(),
+                ]),
+                None,
+            )
+            .build();
+
+        // 11. gt_side_panel Isolation (Whitelist)
+        builder
+            .module_lint()
+            .lint_named("gt_side_panel_isolation")
+            .matching(|m| m.module("gt_side_panel.*"))
+            .with_severity(Severity::Error)
+            .restrict_imports(
+                Some(vec![
+                    "^$".into(),
+                    "std.*".into(),
+                    "core.*".into(),
+                    "alloc.*".into(),
+                    "chrono.*".into(),
+                    "egui.*".into(),
+                    "egui_phosphor.*".into(),
+                    "uom.*".into(),
+                    "gt_types.*".into(),
+                    "gt_fmt.*".into(),
+                    "crate.*".into(),
+                    "gt_side_panel.*".into(),
+                    // Sub-module shorthands
+                    "filter.*".into(),
+                    "render.*".into(),
+                    "tree.*".into(),
                 ]),
                 None,
             )

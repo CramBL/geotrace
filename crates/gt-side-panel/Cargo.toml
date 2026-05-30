@@ -1,16 +1,21 @@
 [package]
-name = "gt-log-marker"
+name = "gt-side-panel"
+description.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description.workspace = true
 
 [dependencies]
 chrono.workspace = true
+egui.workspace = true
+egui-phosphor.workspace = true
+gt-fmt = { path = "../gt-fmt" }
 gt-types = { path = "../gt-types" }
-log.workspace = true
 uom.workspace = true
+
+[dev-dependencies]
+egui_kittest = { version = "0.34.3", features = ["wgpu", "snapshot"] }
 
 [lints]
 workspace = true

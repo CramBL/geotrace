@@ -7,8 +7,8 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-gt-types = { path = "../gt-types" }
 geotrace-sdk = { path = "../../geotrace-sdk" }
+gt-types = { path = "../gt-types" }
 thiserror.workspace = true
 uom.workspace = true
 

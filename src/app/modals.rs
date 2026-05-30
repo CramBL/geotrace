@@ -1,9 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use gt_map::{MapLayer, NavMap};
-use gt_types::{LoadedFile, TripDataVisibility};
-
-use super::trip_data_panel::{SelectionKey, TripDataPanelState, TripRef};
+use gt_side_panel::{NodeKey, TreeState, TripRef};
+use gt_types::LoadedFile;
 
 /// Show the delete-confirmation dialog.
 ///
@@ -11,11 +10,10 @@ use super::trip_data_panel::{SelectionKey, TripDataPanelState, TripRef};
 /// caller can rebuild any caches that depend on file indices.
 pub fn show_delete_confirmation(
     ui: &egui::Ui,
-    panel: &mut TripDataPanelState,
+    tree: &mut TreeState,
     loaded_files: &mut Vec<LoadedFile>,
-    visibility: &mut TripDataVisibility,
 ) -> bool {
-    let Some(confirm) = &panel.delete_confirm else {
+    let Some(confirm) = &tree.delete_confirm else {
         return false;
     };
     let count = confirm.items.len();
@@ -38,19 +36,19 @@ pub fn show_delete_confirmation(
             egui::ScrollArea::vertical()
                 .max_height(500.0)
                 .show(ui, |ui| {
-                    let items: Vec<_> = panel
+                    let items: Vec<_> = tree
                         .delete_confirm
                         .as_ref()
                         .map(|c| c.items.clone())
                         .unwrap_or_default();
                     for key in &items {
                         match key {
-                            SelectionKey::File(fi) => {
+                            NodeKey::File(fi) => {
                                 if let Some(file) = loaded_files.get(fi.0) {
                                     ui.label(&file.metadata.filename);
                                 }
                             }
-                            SelectionKey::Trip(TripRef { file: fi, trip: ti }) => {
+                            NodeKey::Trip(TripRef { file: fi, trip: ti }) => {
                                 if let Some(file) = loaded_files.get(fi.0)
                                     && let Some(trip) = file.trips.get(ti.0)
                                 {
@@ -77,35 +75,30 @@ pub fn show_delete_confirmation(
         });
 
     if do_cancel {
-        panel.delete_confirm = None;
+        tree.delete_confirm = None;
         return false;
     } else if do_delete {
-        let items = panel
+        let items = tree
             .delete_confirm
             .take()
             .map(|c| c.items)
             .unwrap_or_default();
-        execute_delete(&items, loaded_files, visibility, panel);
+        execute_delete(&items, loaded_files, tree);
         return true;
     }
     false
 }
 
-pub fn execute_delete(
-    keys: &[SelectionKey],
-    loaded_files: &mut Vec<LoadedFile>,
-    visibility: &mut TripDataVisibility,
-    panel: &mut TripDataPanelState,
-) {
+pub fn execute_delete(keys: &[NodeKey], loaded_files: &mut Vec<LoadedFile>, tree: &mut TreeState) {
     let mut file_indices_to_remove: BTreeSet<usize> = BTreeSet::new();
     let mut trips_to_remove: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
 
     for key in keys {
         match key {
-            SelectionKey::File(fi) => {
+            NodeKey::File(fi) => {
                 file_indices_to_remove.insert(fi.0);
             }
-            SelectionKey::Trip(TripRef { file: fi, trip: ti }) => {
+            NodeKey::Trip(TripRef { file: fi, trip: ti }) => {
                 trips_to_remove.entry(fi.0).or_default().insert(ti.0);
             }
         }
@@ -137,9 +130,7 @@ pub fn execute_delete(
         }
     }
 
-    *visibility = TripDataVisibility::from_loaded(loaded_files);
-    panel.selection.clear();
-    panel.delete_confirm = None;
+    tree.reset_for_files(loaded_files);
 }
 
 pub fn show_unassociated_popup(ui: &egui::Ui, lines: &mut Option<Vec<String>>) {

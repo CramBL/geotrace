@@ -1,22 +1,18 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui};
 use gt_types::{
-    DataCategory, DataPointRef, EventMarker, EventMarkerStyle, EventMarkerVisibility, FileIdx,
-    GlobalFilter, LoadedFile, MapHighlight, MarkerIcon, MercBounds, PointIdx, TripIdx, filter,
+    DataCategory, DataPointRef, EventMarkerStyle, GlobalFilter, HighlightScope, LoadedFile,
+    MapHighlight, MarkerIcon, SpatialPoint, TripDataVisibility, filter,
 };
-use std::cell::Cell;
 use std::collections::HashMap;
-use std::rc::Rc;
 use walkers::{MapMemory, Plugin, Projector};
-
-const HOVER_THRESHOLD: f32 = 12.0;
 
 pub struct EventMarkerRenderer<'a> {
     files: &'a [LoadedFile],
-    visibility: &'a gt_types::TripDataVisibility,
+    visibility: &'a TripDataVisibility,
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
-    event_vis: &'a EventMarkerVisibility,
-    hover_out: Rc<Cell<Option<(DataPointRef, f32)>>>,
+    event_vis: &'a gt_types::EventMarkerVisibility,
+    visible_event: Vec<SpatialPoint>,
 }
 
 impl<'a> EventMarkerRenderer<'a> {
@@ -25,8 +21,8 @@ impl<'a> EventMarkerRenderer<'a> {
         visibility: &'a gt_types::TripDataVisibility,
         highlight: &'a MapHighlight,
         filter: &'a GlobalFilter,
-        event_vis: &'a EventMarkerVisibility,
-        hover_out: Rc<Cell<Option<(DataPointRef, f32)>>>,
+        event_vis: &'a gt_types::EventMarkerVisibility,
+        visible_event: Vec<SpatialPoint>,
     ) -> Self {
         Self {
             files,
@@ -34,7 +30,7 @@ impl<'a> EventMarkerRenderer<'a> {
             highlight,
             filter,
             event_vis,
-            hover_out,
+            visible_event,
         }
     }
 }
@@ -47,90 +43,77 @@ impl Plugin for EventMarkerRenderer<'_> {
         projector: &Projector,
         map_memory: &MapMemory,
     ) {
-        let hover_pos = ui.input(|i| i.pointer.hover_pos());
-        let view_rect = ui.max_rect().expand(20.0);
-        let mut local_closest: Option<(DataPointRef, Pos2)> = None;
         let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
-        let vp_bounds = MercBounds {
-            x_min: transform.merc_x_from_screen(view_rect.min.x),
-            x_max: transform.merc_x_from_screen(view_rect.max.x),
-            y_min: transform.merc_y_from_screen(view_rect.min.y),
-            y_max: transform.merc_y_from_screen(view_rect.max.y),
-        };
 
-        for (fi, file) in self.files.iter().enumerate() {
-            let Some(file_vis) = self.visibility.files.get(fi) else {
+        for sp in &self.visible_event {
+            let Some(file_vis) = self.visibility.files.get(sp.file_index.0) else {
                 continue;
             };
             if !file_vis.enabled {
                 continue;
             }
-
-            let style_map = &file.event_marker_styles;
-
-            for (ti, trip) in file.trips.iter().enumerate() {
-                let Some(trip_vis) = file_vis.trips.get(ti) else {
-                    continue;
-                };
-                if !trip_vis.enabled || !trip_vis.event_markers_visible {
-                    continue;
-                }
-                if !filter::trip_passes_filter(&trip.metadata, self.filter) {
-                    continue;
-                }
-
-                for (pi, marker) in trip.event_markers.iter().enumerate() {
-                    if !self.event_vis.is_visible(fi, ti, &marker.variant_path) {
-                        continue;
-                    }
-                    if !filter::point_passes_time_filter(marker.time, self.filter) {
-                        continue;
-                    }
-                    if marker.merc_x < vp_bounds.x_min
-                        || marker.merc_x > vp_bounds.x_max
-                        || marker.merc_y < vp_bounds.y_min
-                        || marker.merc_y > vp_bounds.y_max
-                    {
-                        continue;
-                    }
-
-                    let screen_pos = transform.to_screen(marker.merc_x, marker.merc_y);
-                    let point_ref = DataPointRef {
-                        file_index: FileIdx(fi),
-                        trip_index: TripIdx(ti),
-                        category: DataCategory::EventMarker,
-                        point_index: PointIdx(pi),
-                    };
-
-                    if let Some(mouse) = hover_pos {
-                        let dist_sq = screen_pos.distance_sq(mouse);
-                        if dist_sq < HOVER_THRESHOLD * HOVER_THRESHOLD {
-                            let hover_val = self.hover_out.get();
-                            if hover_val.is_none_or(|(_, d)| dist_sq < d) {
-                                self.hover_out.set(Some((point_ref, dist_sq)));
-                            }
-                            let is_closer = local_closest
-                                .as_ref()
-                                .is_none_or(|(_, p)| p.distance_sq(mouse) > dist_sq);
-                            if is_closer {
-                                local_closest = Some((point_ref, screen_pos));
-                            }
-                        }
-                    }
-
-                    let color = resolve_color(marker, style_map);
-                    let icon = resolve_icon(&marker.variant_path, style_map);
-                    let highlighted = is_highlighted(self.highlight, point_ref);
-                    draw_event_marker(ui, screen_pos, icon, color, highlighted);
-                }
+            let Some(trip_vis) = file_vis.trips.get(sp.trip_index.0) else {
+                continue;
+            };
+            if !trip_vis.enabled || !trip_vis.event_markers_visible {
+                continue;
             }
+            let Some(file) = self.files.get(sp.file_index.0) else {
+                continue;
+            };
+            let Some(trip) = file.trips.get(sp.trip_index.0) else {
+                continue;
+            };
+            if !filter::trip_passes_filter(&trip.metadata, self.filter) {
+                continue;
+            }
+            let Some(marker) = trip.event_markers.get(sp.point_index.0) else {
+                continue;
+            };
+            if !self
+                .event_vis
+                .is_visible(sp.file_index.0, sp.trip_index.0, &marker.variant_path)
+            {
+                continue;
+            }
+            if !filter::point_passes_time_filter(marker.time, self.filter) {
+                continue;
+            }
+            let point_ref = DataPointRef {
+                file_index: sp.file_index,
+                trip_index: sp.trip_index,
+                category: DataCategory::EventMarker,
+                point_index: sp.point_index,
+            };
+            let screen_pos = transform.to_screen(sp.merc_x, sp.merc_y);
+            let style_map = &file.event_marker_styles;
+            let color = resolve_color(marker, style_map);
+            let icon = resolve_icon(&marker.variant_path, style_map);
+            let highlighted = is_highlighted(self.highlight, point_ref);
+            draw_event_marker(ui, screen_pos, icon, color, highlighted);
         }
 
-        show_tooltip(ui, self.files, local_closest);
+        // Show tooltip for the currently hovered event marker.
+        // Suppressed when the sticky popup is already showing this point, or when
+        // any popup (e.g. context menu) is open and would be painted underneath.
+        if let Some(HighlightScope::Point(r)) = self.highlight.hover
+            && r.category == DataCategory::EventMarker
+            && self.highlight.sticky != Some(r)
+            && !ui.ctx().any_popup_open()
+            && let Some(file) = self.files.get(r.file_index.0)
+            && let Some(trip) = file.trips.get(r.trip_index.0)
+            && let Some(marker) = trip.event_markers.get(r.point_index.0)
+        {
+            let pos = transform.to_screen(marker.merc_x, marker.merc_y);
+            show_tooltip(ui, r, marker, pos);
+        }
     }
 }
 
-fn resolve_color(marker: &EventMarker, style_map: &HashMap<String, EventMarkerStyle>) -> Color32 {
+fn resolve_color(
+    marker: &gt_types::EventMarker,
+    style_map: &HashMap<String, EventMarkerStyle>,
+) -> Color32 {
     if let Some(style) = style_map.get(marker.variant_path.as_str()) {
         Color32::from_rgb(style.color.0, style.color.1, style.color.2)
     } else {
@@ -342,20 +325,7 @@ mod snapshot_tests {
     }
 }
 
-fn show_tooltip(ui: &Ui, files: &[LoadedFile], local_closest: Option<(DataPointRef, Pos2)>) {
-    let Some((point_ref, pos)) = local_closest else {
-        return;
-    };
-    let Some(file) = files.get(point_ref.file_index.0) else {
-        return;
-    };
-    let Some(trip) = file.trips.get(point_ref.trip_index.0) else {
-        return;
-    };
-    let Some(marker) = trip.event_markers.get(point_ref.point_index.0) else {
-        return;
-    };
-
+fn show_tooltip(ui: &Ui, point_ref: DataPointRef, marker: &gt_types::EventMarker, pos: Pos2) {
     let hit_rect = egui::Rect::from_center_size(pos, egui::vec2(24.0, 24.0));
     let response = ui.interact(
         hit_rect,

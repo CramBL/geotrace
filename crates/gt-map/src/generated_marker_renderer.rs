@@ -1,20 +1,16 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui};
 use gt_types::{
-    DataCategory, DataPointRef, GeneratedMarkerKind, GlobalFilter, HighlightScope, LoadedFile,
-    MapHighlight, MercBounds, TripDataVisibility,
+    DataCategory, DataPointRef, GlobalFilter, HighlightScope, LoadedFile, MapHighlight,
+    SpatialPoint, TripDataVisibility, filter,
 };
-use std::cell::Cell;
-use std::rc::Rc;
 use walkers::{MapMemory, Plugin, Projector};
-
-const HOVER_THRESHOLD: f32 = 10.0;
 
 pub struct GeneratedMarkerRenderer<'a> {
     files: &'a [LoadedFile],
     visibility: &'a TripDataVisibility,
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
-    hover_out: Rc<Cell<Option<(DataPointRef, f32)>>>,
+    visible_generated: Vec<SpatialPoint>,
 }
 
 impl<'a> GeneratedMarkerRenderer<'a> {
@@ -23,14 +19,14 @@ impl<'a> GeneratedMarkerRenderer<'a> {
         visibility: &'a TripDataVisibility,
         highlight: &'a MapHighlight,
         filter: &'a GlobalFilter,
-        hover_out: Rc<Cell<Option<(DataPointRef, f32)>>>,
+        visible_generated: Vec<SpatialPoint>,
     ) -> Self {
         Self {
             files,
             visibility,
             highlight,
             filter,
-            hover_out,
+            visible_generated,
         }
     }
 
@@ -57,10 +53,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
         }
     }
 
-    fn show_tooltip(&self, ui: &Ui, local_closest: Option<(DataPointRef, Pos2)>) {
-        let Some((point_ref, pos)) = local_closest else {
-            return;
-        };
+    fn show_tooltip(&self, ui: &Ui, point_ref: DataPointRef, pos: Pos2) {
         let Some(file) = self.files.get(point_ref.file_index.0) else {
             return;
         };
@@ -81,7 +74,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
             egui::Sense::hover(),
         );
         response.show_tooltip_ui(|ui| match marker.kind {
-            GeneratedMarkerKind::GpsFixLost => {
+            gt_types::GeneratedMarkerKind::GpsFixLost => {
                 ui.strong("GPS fix lost");
                 let corresponding = trip
                     .points
@@ -92,7 +85,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
                     crate::tpv_renderer::show_hover_table(ui, point);
                 }
             }
-            GeneratedMarkerKind::GpsFixRegained => {
+            gt_types::GeneratedMarkerKind::GpsFixRegained => {
                 let label = match marker.fix_lost_duration {
                     Some(dur) => {
                         format!(
@@ -116,72 +109,65 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
         projector: &Projector,
         map_memory: &MapMemory,
     ) {
-        let hover_pos = ui.input(|i| i.pointer.hover_pos());
-        let view_rect = ui.max_rect().expand(20.0);
-        let mut local_closest: Option<(DataPointRef, Pos2)> = None;
         let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
-        let vp_bounds = MercBounds {
-            x_min: transform.merc_x_from_screen(view_rect.min.x),
-            x_max: transform.merc_x_from_screen(view_rect.max.x),
-            y_min: transform.merc_y_from_screen(view_rect.min.y),
-            y_max: transform.merc_y_from_screen(view_rect.max.y),
-        };
 
-        crate::marker_iter::for_each_visible_map_point(
-            self.files,
-            self.visibility,
-            self.filter,
-            &self.hover_out,
-            hover_pos,
-            &transform,
-            vp_bounds,
-            |trip, trip_vis| {
-                trip_vis.generated_markers_visible.then_some((
-                    DataCategory::GeneratedMarker,
-                    trip.generated_markers.as_slice(),
-                ))
-            },
-            |point_ref, screen_pos, marker| {
-                if let Some(mouse) = hover_pos {
-                    // Use squared distance to avoid sqrt; threshold is HOVER_THRESHOLD² = 100.
-                    let dist_sq = screen_pos.distance_sq(mouse);
-                    if dist_sq < HOVER_THRESHOLD * HOVER_THRESHOLD {
-                        let is_closer = local_closest.as_ref().is_none_or(|(_, closest_pos)| {
-                            closest_pos.distance_sq(mouse) > dist_sq
-                        });
-                        if is_closer {
-                            local_closest = Some((point_ref, screen_pos));
-                        }
-                    }
-                }
-                let highlighted = self.is_point_highlighted(point_ref);
-                draw_generated_marker(ui, screen_pos, marker.kind, highlighted);
-            },
-        );
-        self.show_tooltip(ui, local_closest);
-    }
-}
+        for sp in &self.visible_generated {
+            let Some(file_vis) = self.visibility.files.get(sp.file_index.0) else {
+                continue;
+            };
+            if !file_vis.enabled {
+                continue;
+            }
+            let Some(trip_vis) = file_vis.trips.get(sp.trip_index.0) else {
+                continue;
+            };
+            if !trip_vis.enabled || !trip_vis.generated_markers_visible {
+                continue;
+            }
+            let Some(file) = self.files.get(sp.file_index.0) else {
+                continue;
+            };
+            let Some(trip) = file.trips.get(sp.trip_index.0) else {
+                continue;
+            };
+            if !filter::trip_passes_filter(&trip.metadata, self.filter) {
+                continue;
+            }
+            let Some(marker) = trip.generated_markers.get(sp.point_index.0) else {
+                continue;
+            };
+            if !filter::point_passes_time_filter(marker.time, self.filter) {
+                continue;
+            }
+            let point_ref = DataPointRef {
+                file_index: sp.file_index,
+                trip_index: sp.trip_index,
+                category: DataCategory::GeneratedMarker,
+                point_index: sp.point_index,
+            };
+            let screen_pos = transform.to_screen(sp.merc_x, sp.merc_y);
+            let highlighted = self.is_point_highlighted(point_ref);
+            draw_generated_marker(ui, screen_pos, marker.kind, highlighted);
+        }
 
-pub fn update_hover_candidate(
-    hover_out: &Rc<Cell<Option<(DataPointRef, f32)>>>,
-    screen_pos: Pos2,
-    hover_pos: Option<Pos2>,
-    point_ref: DataPointRef,
-) {
-    if let Some(mouse) = hover_pos {
-        // Use squared distance to avoid sqrt; stored value is dist² for consistent comparison.
-        let dist_sq = screen_pos.distance_sq(mouse);
-        if dist_sq < HOVER_THRESHOLD * HOVER_THRESHOLD
-            && hover_out.get().is_none_or(|(_, d)| dist_sq < d)
+        // Show tooltip for the currently hovered generated marker.
+        // Suppressed when the sticky popup is already showing this point, or when
+        // any popup (e.g. context menu) is open and would be painted underneath.
+        if let Some(HighlightScope::Point(r)) = self.highlight.hover
+            && r.category == DataCategory::GeneratedMarker
+            && self.highlight.sticky != Some(r)
+            && !ui.ctx().any_popup_open()
+            && let Some(file) = self.files.get(r.file_index.0)
+            && let Some(trip) = file.trips.get(r.trip_index.0)
+            && let Some(marker) = trip.generated_markers.get(r.point_index.0)
         {
-            hover_out.set(Some((point_ref, dist_sq)));
+            let pos = transform.to_screen(marker.merc_x, marker.merc_y);
+            self.show_tooltip(ui, r, pos);
         }
     }
 }
 
 /// Formats a duration (given in milliseconds) for display in "fix regained" tooltips.
-/// Under 1 minute: shows seconds with up to 2 decimal places, no trailing zeros.
-/// 1 minute or more: shows "XmYs" (omitting seconds if zero).
 fn format_fix_duration(total_ms: i64) -> String {
     let total_ms = total_ms.max(0);
     let secs = total_ms / 1000;
@@ -203,11 +189,20 @@ fn format_fix_duration(total_ms: i64) -> String {
     }
 }
 
-fn draw_generated_marker(ui: &Ui, center: Pos2, kind: GeneratedMarkerKind, highlighted: bool) {
+fn draw_generated_marker(
+    ui: &Ui,
+    center: Pos2,
+    kind: gt_types::GeneratedMarkerKind,
+    highlighted: bool,
+) {
     let painter = ui.painter();
     let (bg, stroke_color) = match kind {
-        GeneratedMarkerKind::GpsFixLost => (Color32::from_rgb(219, 68, 55), Color32::WHITE),
-        GeneratedMarkerKind::GpsFixRegained => (Color32::from_rgb(15, 157, 88), Color32::WHITE),
+        gt_types::GeneratedMarkerKind::GpsFixLost => {
+            (Color32::from_rgb(219, 68, 55), Color32::WHITE)
+        }
+        gt_types::GeneratedMarkerKind::GpsFixRegained => {
+            (Color32::from_rgb(15, 157, 88), Color32::WHITE)
+        }
     };
     let radius = if highlighted { 11.0 } else { 8.0 };
     painter.circle_filled(center, radius, bg);
@@ -221,12 +216,12 @@ fn draw_generated_marker(ui: &Ui, center: Pos2, kind: GeneratedMarkerKind, highl
     }
     let s = 4.0;
     match kind {
-        GeneratedMarkerKind::GpsFixLost => {
+        gt_types::GeneratedMarkerKind::GpsFixLost => {
             let st = Stroke::new(2.0, stroke_color);
             painter.line_segment([center - egui::vec2(s, s), center + egui::vec2(s, s)], st);
             painter.line_segment([center + egui::vec2(-s, s), center + egui::vec2(s, -s)], st);
         }
-        GeneratedMarkerKind::GpsFixRegained => {
+        gt_types::GeneratedMarkerKind::GpsFixRegained => {
             let st = Stroke::new(2.0, stroke_color);
             painter.line_segment(
                 [

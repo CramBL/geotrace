@@ -4,9 +4,29 @@
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct FileIdx(pub usize);
 
+impl FileIdx {
+    pub fn get<T>(self, slice: &[T]) -> Option<&T> {
+        slice.get(self.0)
+    }
+
+    pub fn get_mut<T>(self, slice: &mut [T]) -> Option<&mut T> {
+        slice.get_mut(self.0)
+    }
+}
+
 /// Typed wrapper for a trip index into `loaded_files[fi].trips[ti]`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct TripIdx(pub usize);
+
+impl TripIdx {
+    pub fn get<T>(self, slice: &[T]) -> Option<&T> {
+        slice.get(self.0)
+    }
+
+    pub fn get_mut<T>(self, slice: &mut [T]) -> Option<&mut T> {
+        slice.get_mut(self.0)
+    }
+}
 
 /// Typed wrapper for a point index into `loaded_files[fi].trips[ti].points[pi]`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]

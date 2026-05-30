@@ -4,15 +4,12 @@ use gt_types::filter;
 use gt_types::satellites::Constellation;
 use gt_types::{
     DataCategory, DataPointRef, FileIdx, GlobalFilter, HighlightScope, LoadedFile, LoadedTrip,
-    MapHighlight, NavPoint, PointIdx, TripDataVisibility, TripIdx,
+    MapHighlight, NavPoint, PointIdx, SpatialPoint, TripDataVisibility, TripIdx,
 };
-use std::cell::Cell;
-use std::rc::Rc;
+use std::collections::HashMap;
 use uom::si::angle::degree;
 use uom::si::velocity::kilometer_per_hour;
 use walkers::{MapMemory, Plugin, Projector};
-
-use crate::generated_marker_renderer;
 const EM_DASH: &str = "—";
 const DEGREE_SIGN: &str = "°";
 /// U+0394 GREEK CAPITAL LETTER DELTA — used as a mathematical difference symbol.
@@ -25,7 +22,7 @@ pub struct TpvRenderer<'a> {
     visibility: &'a TripDataVisibility,
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
-    hover_out: Rc<Cell<Option<(DataPointRef, f32)>>>,
+    visible_tpv: Vec<SpatialPoint>,
 }
 
 impl<'a> TpvRenderer<'a> {
@@ -34,14 +31,14 @@ impl<'a> TpvRenderer<'a> {
         visibility: &'a TripDataVisibility,
         highlight: &'a MapHighlight,
         filter: &'a GlobalFilter,
-        hover_out: Rc<Cell<Option<(DataPointRef, f32)>>>,
+        visible_tpv: Vec<SpatialPoint>,
     ) -> Self {
         Self {
             files,
             visibility,
             highlight,
             filter,
-            hover_out,
+            visible_tpv,
         }
     }
 
@@ -70,92 +67,70 @@ impl<'a> TpvRenderer<'a> {
 
     #[expect(
         clippy::too_many_arguments,
-        reason = "render context requires all parameters"
+        reason = "render context requires all parameters; a context struct would not add clarity"
     )]
     fn render_trip(
         &self,
         ui: &Ui,
-        hover_pos: Option<Pos2>,
         view_rect: egui::Rect,
         fi: FileIdx,
         ti: TripIdx,
         trip: &LoadedTrip,
-        local_closest: &mut Option<(DataPointRef, Pos2)>,
+        real_fix_indices: Option<&Vec<usize>>,
         style: &TpvDrawStyle,
         transform: &crate::MercTransform,
     ) {
-        let vp_x_min = transform.merc_x_from_screen(view_rect.min.x);
-        let vp_x_max = transform.merc_x_from_screen(view_rect.max.x);
-        let vp_y_min = transform.merc_y_from_screen(view_rect.min.y);
-        let vp_y_max = transform.merc_y_from_screen(view_rect.max.y);
-
         let mut last_label_pos: Option<Pos2> = None;
-        let threshold = style.base_arrow_size + 4.0;
 
-        // Real fixes: R-tree query returns only in-viewport points, O(log N + k).
-        for pi in trip.tpv_in_viewport(vp_x_min, vp_x_max, vp_y_min, vp_y_max) {
-            #[expect(
-                clippy::indexing_slicing,
-                reason = "index comes from RTree built over trip.points, so always in bounds"
-            )]
-            let point = &trip.points[pi];
-            if !filter::point_passes_time_filter(point.tpv.time().utc(), self.filter) {
-                continue;
-            }
-            let Some(h) = point.tpv.heading() else {
-                continue; // tree only contains real fixes; this branch is unreachable
-            };
-            let screen_pos = transform.to_screen(point.merc_x, point.merc_y);
-            let point_kind = PointKind::Real {
-                color: tpv_point_color(point),
-                heading_deg: h.get::<degree>(),
-            };
-            let point_ref = DataPointRef {
-                file_index: fi,
-                trip_index: ti,
-                category: DataCategory::Tpv,
-                point_index: PointIdx(pi),
-            };
-            generated_marker_renderer::update_hover_candidate(
-                &self.hover_out,
-                screen_pos,
-                hover_pos,
-                point_ref,
-            );
-            if let Some(mouse) = hover_pos {
-                let dist_sq = screen_pos.distance_sq(mouse);
-                if dist_sq < threshold * threshold
-                    && local_closest
-                        .as_ref()
-                        .is_none_or(|(_, p)| p.distance_sq(mouse) > dist_sq)
-                {
-                    *local_closest = Some((point_ref, screen_pos));
+        // Real fixes: indices come from the global R-tree viewport query.
+        if let Some(indices) = real_fix_indices {
+            for &pi in indices {
+                #[expect(
+                    clippy::indexing_slicing,
+                    reason = "index from global RTree built over trip.points, so always in bounds"
+                )]
+                let point = &trip.points[pi];
+                if !filter::point_passes_time_filter(point.tpv.time().utc(), self.filter) {
+                    continue;
                 }
+                let Some(h) = point.tpv.heading() else {
+                    continue;
+                };
+                let screen_pos = transform.to_screen(point.merc_x, point.merc_y);
+                let point_ref = DataPointRef {
+                    file_index: fi,
+                    trip_index: ti,
+                    category: DataCategory::Tpv,
+                    point_index: PointIdx(pi),
+                };
+                let eph_m = point.tpv.eph_m();
+                let pixels_per_meter = if eph_m.is_some() {
+                    transform.pixels_per_meter(point.tpv.lat().get::<degree>())
+                } else {
+                    0.0
+                };
+                draw_tpv_point(
+                    ui,
+                    screen_pos,
+                    &PointKind::Real {
+                        color: tpv_point_color(point),
+                        heading_deg: h.get::<degree>(),
+                    },
+                    eph_m,
+                    pixels_per_meter,
+                    point.satellites.as_ref(),
+                    self.is_arrow_highlighted(point_ref),
+                    style,
+                    &mut last_label_pos,
+                );
             }
-            let eph_m = point.tpv.eph_m();
-            let pixels_per_meter = if eph_m.is_some() {
-                transform.pixels_per_meter(point.tpv.lat().get::<degree>())
-            } else {
-                0.0
-            };
-            draw_tpv_point(
-                ui,
-                screen_pos,
-                &point_kind,
-                eph_m,
-                pixels_per_meter,
-                point.satellites.as_ref(),
-                self.is_arrow_highlighted(point_ref),
-                style,
-                &mut last_label_pos,
-            );
         }
 
-        // Ghost fixes (heading == None): position must be interpolated at render
-        // time, so they are not in the R-tree. They are rare in practice.
+        // Ghost fixes (heading == None): position interpolated at render time,
+        // not in the global tree. Rare in practice.
         for (pi, point) in trip.points.iter().enumerate() {
             if point.tpv.heading().is_some() {
-                continue; // handled by R-tree above
+                continue;
             }
             if !filter::point_passes_time_filter(point.tpv.time().utc(), self.filter) {
                 continue;
@@ -166,33 +141,16 @@ impl<'a> TpvRenderer<'a> {
             if !view_rect.contains(screen_pos) {
                 continue;
             }
-            let point_kind = PointKind::Ghost;
             let point_ref = DataPointRef {
                 file_index: fi,
                 trip_index: ti,
                 category: DataCategory::Tpv,
                 point_index: PointIdx(pi),
             };
-            generated_marker_renderer::update_hover_candidate(
-                &self.hover_out,
-                screen_pos,
-                hover_pos,
-                point_ref,
-            );
-            if let Some(mouse) = hover_pos {
-                let dist_sq = screen_pos.distance_sq(mouse);
-                if dist_sq < threshold * threshold
-                    && local_closest
-                        .as_ref()
-                        .is_none_or(|(_, p)| p.distance_sq(mouse) > dist_sq)
-                {
-                    *local_closest = Some((point_ref, screen_pos));
-                }
-            }
             draw_tpv_point(
                 ui,
                 screen_pos,
-                &point_kind,
+                &PointKind::Ghost,
                 None,
                 0.0,
                 None,
@@ -203,10 +161,7 @@ impl<'a> TpvRenderer<'a> {
         }
     }
 
-    fn show_tooltip(&self, ui: &Ui, local_closest: Option<(DataPointRef, Pos2)>) {
-        let Some((point_ref, _pos)) = local_closest else {
-            return;
-        };
+    fn show_tooltip(&self, ui: &Ui, point_ref: DataPointRef) {
         let Some(file) = self.files.get(point_ref.file_index.0) else {
             return;
         };
@@ -216,9 +171,6 @@ impl<'a> TpvRenderer<'a> {
         let Some(point) = trip.points.get(point_ref.point_index.0) else {
             return;
         };
-        // Use Tooltip::always_open so the tooltip shows as soon as the pointer
-        // is near the icon, without relying on ui.interact / response.hovered()
-        // which can be blocked by the map widget's own interaction layer.
         let tooltip_id = ui
             .id()
             .with("tpv_hover")
@@ -245,9 +197,7 @@ impl Plugin for TpvRenderer<'_> {
         projector: &Projector,
         map_memory: &MapMemory,
     ) {
-        let hover_pos = ui.input(|i| i.pointer.hover_pos());
         let view_rect = ui.max_rect().expand(50.0);
-        let mut local_closest: Option<(DataPointRef, Pos2)> = None;
 
         // Scale icon sizes and outline alpha with zoom level.
         //
@@ -272,6 +222,15 @@ impl Plugin for TpvRenderer<'_> {
         // Build the per-frame coordinate transform once.
         let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
+        // Group visible real fixes by trip so render_trip gets O(k/trips) per trip.
+        let mut by_trip: HashMap<(FileIdx, TripIdx), Vec<usize>> = HashMap::new();
+        for sp in &self.visible_tpv {
+            by_trip
+                .entry((sp.file_index, sp.trip_index))
+                .or_default()
+                .push(sp.point_index.0);
+        }
+
         for (fi, file) in self.files.iter().enumerate() {
             let fi = FileIdx(fi);
             let Some(file_vis) = self.visibility.files.get(fi.0) else {
@@ -293,18 +252,28 @@ impl Plugin for TpvRenderer<'_> {
                 }
                 self.render_trip(
                     ui,
-                    hover_pos,
                     view_rect,
                     fi,
                     ti,
                     trip,
-                    &mut local_closest,
+                    by_trip.get(&(fi, ti)),
                     &style,
                     &transform,
                 );
             }
         }
-        self.show_tooltip(ui, local_closest);
+
+        // Show TPV tooltip for the currently hovered point (set by NavMap the previous frame).
+        // Suppressed when the sticky popup is already showing this exact point (the window is
+        // in Order::Middle; the tooltip is in Order::Tooltip, so it would paint over the popup),
+        // and suppressed when any popup (e.g. the context menu) is open.
+        if let Some(HighlightScope::Point(r)) = self.highlight.hover
+            && r.category == DataCategory::Tpv
+            && self.highlight.sticky != Some(r)
+            && !ui.ctx().any_popup_open()
+        {
+            self.show_tooltip(ui, r);
+        }
 
         // Cross-highlight: when the trip plot cursor is active, draw a ring
         // indicator around the pre-computed closest point.

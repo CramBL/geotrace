@@ -264,15 +264,12 @@ pub fn build_loaded_file(
             let metadata =
                 compute_trip_metadata(trip_idx + 1, &trip_points, &trip_custom, &trip_generated);
 
-            let tpv_tree = crate::trip::build_tpv_tree(&trip_points);
-
             LoadedTrip {
                 metadata,
                 points: trip_points,
                 custom_markers: trip_custom,
                 generated_markers: trip_generated,
                 event_markers: Vec::new(),
-                tpv_tree,
             }
         })
         .collect();

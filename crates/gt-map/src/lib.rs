@@ -1,6 +1,5 @@
 pub mod event_marker_renderer;
 pub mod generated_marker_renderer;
-mod marker_iter;
 pub mod marker_renderer;
 #[cfg(test)]
 mod test_harness;
@@ -196,11 +195,9 @@ pub fn register_marker_icons(ctx: &egui::Context) {
     );
 }
 use gt_types::{
-    DataPointRef, EventMarkerVisibility, GlobalFilter, HighlightScope, LoadedFile, MapHighlight,
-    TripDataVisibility,
+    DataCategory, DataPointRef, EventMarkerVisibility, GlobalFilter, HighlightScope, LoadedFile,
+    MapHighlight, SpatialPoint, TripDataVisibility, build_global_tree,
 };
-use std::cell::Cell;
-use std::rc::Rc;
 use std::time::Instant;
 use uom::si::angle::degree;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
@@ -287,7 +284,7 @@ pub struct NavMap {
     mapbox_token: String,
     layer: MapLayer,
     map_memory: MapMemory,
-    hover_cell: Rc<Cell<Option<(DataPointRef, f32)>>>,
+    global_tree: rstar::RTree<SpatialPoint>,
     /// Screen position where the last sticky click happened; used as the
     /// default position for the sticky info window.
     sticky_pos: egui::Pos2,
@@ -314,7 +311,7 @@ impl NavMap {
             layer: MapLayer::default(),
             map_memory: MapMemory::default(),
             egui_ctx,
-            hover_cell: Rc::new(Cell::new(None)),
+            global_tree: rstar::RTree::new(),
             sticky_pos: egui::pos2(100.0, 100.0),
             last_file_count: 0,
             blink: BlinkState { start: None },
@@ -370,6 +367,10 @@ impl NavMap {
         clippy::too_many_arguments,
         reason = "draw context requires all parameters; a wrapper struct would not add clarity"
     )]
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "draw orchestrates viewport query, plugin wiring, hover, click, and popup — splitting would obscure the data flow"
+    )]
     pub fn draw(
         &mut self,
         ui: &mut egui::Ui,
@@ -402,6 +403,7 @@ impl NavMap {
             if let Some(bbox) = compute_bounding_box(files) {
                 zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
             }
+            self.global_tree = build_global_tree(files);
         }
 
         let blink_alpha = self.blink.tick();
@@ -409,8 +411,47 @@ impl NavMap {
             ui.ctx().request_repaint();
         }
 
-        self.hover_cell.set(None);
-        let hover_ref = Rc::clone(&self.hover_cell);
+        let map_rect_estimate = ui.max_rect();
+        let map_center = self
+            .map_memory
+            .detached()
+            .unwrap_or_else(|| walkers::lat_lon(55.676, 12.565));
+        let projector_estimate =
+            walkers::Projector::new(map_rect_estimate, &self.map_memory, map_center);
+        let transform_estimate = MercTransform::new(
+            &projector_estimate,
+            &self.map_memory,
+            map_rect_estimate.center(),
+        );
+
+        let (visible_tpv, visible_custom, visible_generated, visible_event) = {
+            let lt = map_rect_estimate.left_top();
+            let rb = map_rect_estimate.right_bottom();
+            let aabb = rstar::AABB::from_corners(
+                [
+                    transform_estimate.merc_x_from_screen(lt.x),
+                    transform_estimate.merc_y_from_screen(lt.y),
+                ],
+                [
+                    transform_estimate.merc_x_from_screen(rb.x),
+                    transform_estimate.merc_y_from_screen(rb.y),
+                ],
+            );
+            let mut tpv: Vec<SpatialPoint> = Vec::new();
+            let mut custom: Vec<SpatialPoint> = Vec::new();
+            let mut generated: Vec<SpatialPoint> = Vec::new();
+            let mut event: Vec<SpatialPoint> = Vec::new();
+            for sp in self.global_tree.locate_in_envelope(aabb) {
+                match sp.category {
+                    DataCategory::Tpv => tpv.push(*sp),
+                    DataCategory::CustomMarker => custom.push(*sp),
+                    DataCategory::GeneratedMarker => generated.push(*sp),
+                    DataCategory::EventMarker => event.push(*sp),
+                    _ => {}
+                }
+            }
+            (tpv, custom, generated, event)
+        };
 
         let use_mapbox = self.layer == MapLayer::Satellite && self.mapbox_tiles.is_some();
         let map = if use_mapbox {
@@ -445,21 +486,21 @@ impl NavMap {
                 visibility,
                 highlight,
                 filter,
-                Rc::clone(&hover_ref),
+                visible_tpv,
             ))
             .with_plugin(MarkerRenderer::new(
                 files,
                 visibility,
                 highlight,
                 filter,
-                Rc::clone(&hover_ref),
+                visible_custom,
             ))
             .with_plugin(GeneratedMarkerRenderer::new(
                 files,
                 visibility,
                 highlight,
                 filter,
-                Rc::clone(&hover_ref),
+                visible_generated,
             ))
             .with_plugin(EventMarkerRenderer::new(
                 files,
@@ -467,7 +508,7 @@ impl NavMap {
                 highlight,
                 filter,
                 event_marker_visibility,
-                Rc::clone(&hover_ref),
+                visible_event,
             ));
 
         let map_response = ui.add(map);
@@ -476,6 +517,33 @@ impl NavMap {
         // can query them via `viewport_geo_bounds()` after each draw call.
         let map_rect = map_response.rect;
         self.last_viewport_bounds = Some(compute_viewport_bounds(&self.map_memory, map_rect));
+
+        // Recompute the transform from the actual map rect for accurate hover detection.
+        let projector_actual = walkers::Projector::new(map_rect, &self.map_memory, map_center);
+        let transform = MercTransform::new(&projector_actual, &self.map_memory, map_rect.center());
+        let hover_point_ref: Option<DataPointRef> = if map_response.hovered() {
+            ui.input(|i| i.pointer.hover_pos()).and_then(|screen_pos| {
+                let merc_x = transform.merc_x_from_screen(screen_pos.x);
+                let merc_y = transform.merc_y_from_screen(screen_pos.y);
+                let total_px = 2_f64.powf(self.map_memory.zoom()) * 256.0;
+                let threshold_merc_sq = (20.0_f64 / total_px).powi(2);
+                self.global_tree
+                    .nearest_neighbor([merc_x, merc_y])
+                    .filter(|sp| {
+                        let dx = sp.merc_x - merc_x;
+                        let dy = sp.merc_y - merc_y;
+                        dx * dx + dy * dy <= threshold_merc_sq
+                    })
+                    .map(|sp| DataPointRef {
+                        file_index: sp.file_index,
+                        trip_index: sp.trip_index,
+                        category: sp.category,
+                        point_index: sp.point_index,
+                    })
+            })
+        } else {
+            None
+        };
 
         // Layer toggle — floating panel anchored to the bottom-right of the map.
 
@@ -510,7 +578,7 @@ impl NavMap {
         // Handle click: clicking near a map element makes its info popup sticky;
         // clicking on empty space clears it. Clicking the same element again also clears it.
         if map_response.clicked() {
-            if let Some((point_ref, _)) = hover_ref.get() {
+            if let Some(point_ref) = hover_point_ref {
                 if highlight.sticky == Some(point_ref) {
                     highlight.sticky = None;
                 } else {
@@ -528,7 +596,7 @@ impl NavMap {
         // Right-click context menu: capture the hovered element on the frame
         // the right button fires, then hold it for the lifetime of the menu.
         if map_response.secondary_clicked() {
-            self.right_click_ref = hover_ref.get().map(|(r, _)| r);
+            self.right_click_ref = hover_point_ref;
         }
         let right_click_ref = self.right_click_ref;
         let mut context_action: Option<MapContextAction> = None;
@@ -572,13 +640,7 @@ impl NavMap {
             show_sticky_popup(ui.ctx(), files, sticky_ref, self.sticky_pos);
         }
 
-        highlight.hover = if map_response.hovered() {
-            hover_ref
-                .get()
-                .map(|(point_ref, _)| HighlightScope::Point(point_ref))
-        } else {
-            None
-        };
+        highlight.hover = hover_point_ref.map(HighlightScope::Point);
 
         context_action
     }

@@ -1,0 +1,80 @@
+use gt_types::{DataPointRef, HighlightScope, MapHighlight};
+
+use crate::tree::CheckState;
+
+/// Caret icon for an expand/collapse toggle.
+pub fn expand_arrow(expanded: bool) -> &'static str {
+    if expanded {
+        egui_phosphor::regular::CARET_DOWN
+    } else {
+        egui_phosphor::regular::CARET_RIGHT
+    }
+}
+
+/// Frameless button showing On/Off/Mixed state with Phosphor icons.
+///
+/// Sized to match egui's standard checkbox: icon at `icon_width`, total hit area `interact_size.y²`.
+pub fn tri_checkbox(ui: &mut egui::Ui, state: CheckState) -> egui::Response {
+    let icon = match state {
+        CheckState::On => egui_phosphor::regular::CHECK_SQUARE,
+        CheckState::Off => egui_phosphor::regular::SQUARE,
+        CheckState::Mixed => egui_phosphor::regular::MINUS_SQUARE,
+    };
+    let icon_size = ui.spacing().icon_width;
+    let side = ui.spacing().interact_size.y;
+    ui.add(
+        egui::Button::new(egui::RichText::new(icon).size(icon_size))
+            .frame(false)
+            .min_size(egui::vec2(side, side)),
+    )
+}
+
+/// Background colour used to indicate that the corresponding map element is hovered.
+pub fn map_hover_color(ui: &egui::Ui) -> egui::Color32 {
+    if ui.visuals().dark_mode {
+        egui::Color32::from_rgba_unmultiplied(210, 160, 0, 90)
+    } else {
+        egui::Color32::from_rgba_unmultiplied(200, 140, 0, 55)
+    }
+}
+
+/// Paints a translucent highlight behind `rect` to mark map-hover correspondence.
+pub fn paint_map_hover_bg(ui: &egui::Ui, rect: egui::Rect, color: egui::Color32) {
+    let bg_layer = egui::LayerId::new(egui::Order::Background, egui::Id::new("map_hover_bg"));
+    let painter = ui
+        .ctx()
+        .layer_painter(bg_layer)
+        .with_clip_rect(ui.clip_rect());
+    painter.rect_filled(rect.expand2(egui::vec2(2.0, 1.0)), 3.0, color);
+}
+
+/// A selectable, sticky, double-click-to-focus row for a single data point.
+///
+/// Handles hover highlight, click-to-pin, and double-click map centering
+/// uniformly across all point-list categories (TPV, satellite, markers).
+pub fn point_item_row(
+    ui: &mut egui::Ui,
+    point_ref: DataPointRef,
+    label: impl Into<egui::WidgetText>,
+    lat_lon: (f64, f64),
+    highlight: &mut MapHighlight,
+    map_center_request: &mut Option<(f64, f64)>,
+    popup_pos_request: &mut Option<egui::Pos2>,
+) {
+    let is_sticky = highlight.sticky.is_some_and(|r| r == point_ref);
+    let response = ui.selectable_label(is_sticky, label);
+    if response.hovered() {
+        highlight.hover = Some(HighlightScope::Point(point_ref));
+    }
+    if response.clicked() {
+        if !is_sticky {
+            highlight.sticky = Some(point_ref);
+            *popup_pos_request = Some(egui::pos2(ui.clip_rect().max.x + 8.0, response.rect.min.y));
+        } else {
+            highlight.sticky = None;
+        }
+    }
+    if response.double_clicked() {
+        *map_center_request = Some(lat_lon);
+    }
+}

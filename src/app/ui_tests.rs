@@ -119,11 +119,11 @@ fn panel_detached_renders_without_panic() {
         .with_wait_for_pending_images(false)
         .build_eframe(|cc| App::new(cc));
     harness.step();
-    assert!(!harness.state().shared.borrow().panel.detached);
+    assert!(!harness.state().shared.borrow().tree.detached);
 
-    harness.state_mut().shared.borrow_mut().panel.detached = true;
+    harness.state_mut().shared.borrow_mut().tree.detached = true;
     harness.step();
-    assert!(harness.state().shared.borrow().panel.detached);
+    assert!(harness.state().shared.borrow().tree.detached);
 }
 
 /// Guard against blocking render paths in the detached panel.
@@ -157,7 +157,7 @@ fn detached_panel_steps_complete_within_time_budget() {
         .build_eframe(|cc| App::new(cc));
     harness.step();
 
-    harness.state_mut().shared.borrow_mut().panel.detached = true;
+    harness.state_mut().shared.borrow_mut().tree.detached = true;
 
     // 50 consecutive steps must all finish within 10 seconds total.
     // In a healthy headless runner each step takes well under 1 ms; the
@@ -172,7 +172,7 @@ fn detached_panel_steps_complete_within_time_budget() {
     }
 
     // Docking must also work cleanly after repeated detached rendering.
-    harness.state_mut().shared.borrow_mut().panel.detached = false;
+    harness.state_mut().shared.borrow_mut().tree.detached = false;
     harness.step();
-    assert!(!harness.state().shared.borrow().panel.detached);
+    assert!(!harness.state().shared.borrow().tree.detached);
 }

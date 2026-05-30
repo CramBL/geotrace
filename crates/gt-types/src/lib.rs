@@ -27,8 +27,8 @@ pub use time_types::{GpsTime, SysTime};
 pub use tpv::TimePositionVelocity;
 pub use tpv::TimePositionVelocityBuilder;
 pub use trip::{
-    FileMetadata, LoadedFile, LoadedTrip, MarkerRequirement, MercBounds, TimeRange, TripMetadata,
-    merc_bounds_for_rect,
+    FileMetadata, LoadedFile, LoadedTrip, MarkerRequirement, MercBounds, SpatialPoint, TimeRange,
+    TripMetadata, build_global_tree, merc_bounds_for_rect,
 };
 pub use visibility::{FileVisibility, TripDataVisibility, TripVisibility};
 

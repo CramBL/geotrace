@@ -1,8 +1,5 @@
-mod filter_panel;
 mod loader;
 mod modals;
-mod side_panel;
-mod trip_data_panel;
 
 const STAGE_STARTING: &str = "Starting…";
 const STAGE_READING: &str = "Reading…";
@@ -25,17 +22,16 @@ use egui_tiles::{
 };
 use gt_map::{MapContextAction, MapLayer, NavMap};
 use gt_plot::PlotState;
+use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
 use gt_types::{
-    DataCategory, EventMarkerVisibility, GlobalFilter, HighlightScope, LoadedFile, MapHighlight,
-    NavPoint, TripDataVisibility,
+    DataCategory, FileIdx, GlobalFilter, HighlightScope, LoadedFile, MapHighlight, NavPoint,
+    TripDataVisibility, TripIdx,
 };
-use trip_data_panel::TripDataPanelState;
 
 use modals::{
     show_delete_confirmation, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
     show_unassociated_popup,
 };
-use side_panel::{PanelContext, show_side_panel};
 
 /// Pane variants for the central area tiles tree.
 enum MainPane {
@@ -45,12 +41,10 @@ enum MainPane {
 
 struct SharedAppState {
     loaded_files: Vec<LoadedFile>,
-    visibility: TripDataVisibility,
-    event_marker_visibility: EventMarkerVisibility,
+    tree: TreeState,
     highlight: MapHighlight,
     filter: GlobalFilter,
-    filter_state: filter_panel::FilterPanelState,
-    panel: TripDataPanelState,
+    filter_state: FilterPanelState,
     plot_state: PlotState,
     map_center_request: Option<(f64, f64)>,
     /// Requested screen position for the next sticky info popup, set by panel
@@ -94,8 +88,46 @@ pub struct App {
 
     /// Tiles tree for the central area — map (top) and plot (bottom).
     tiles_tree: Tree<MainPane>,
+    /// TileId of the map pane — used to read/write the split ratio.
+    map_tile_id: TileId,
     /// TileId of the plot pane — toggled visible/invisible via the menu button.
     plot_tile_id: TileId,
+
+    /// `true` when settings have changed since the last flush.
+    config_dirty: bool,
+    /// Instant of the most recent settings change; drives the debounce window.
+    config_last_changed: Option<std::time::Instant>,
+    /// Snapshot of settings-affecting state from the previous frame, used for
+    /// change detection without instrumenting every individual change site.
+    prev_snapshot: AppSnapshot,
+}
+
+/// Compact snapshot of all settings-relevant app state.
+///
+/// `f32` fields are stored as bit patterns (`u32`) so the struct can derive
+/// `PartialEq` without triggering the `float_cmp` lint.
+#[derive(PartialEq)]
+struct AppSnapshot {
+    show_grid: bool,
+    panel_visible: bool,
+    split_ratio_bits: u32,
+    metric_sats_seen: bool,
+    metric_sats_fix: bool,
+    metric_gps_seen: bool,
+    metric_gps_fix: bool,
+    metric_glonass_seen: bool,
+    metric_glonass_fix: bool,
+    metric_galileo_seen: bool,
+    metric_galileo_fix: bool,
+    metric_beidou_seen: bool,
+    metric_beidou_fix: bool,
+    metric_velocity: bool,
+    metric_eph: bool,
+    metric_heading_deg: bool,
+    layer: crate::settings::MapLayerSetting,
+    mapbox_token: String,
+    sync_to_map: bool,
+    theme: crate::settings::ThemeSetting,
 }
 
 impl App {
@@ -114,56 +146,52 @@ impl App {
         // can serve them without any per-frame heap allocation.
         gt_map::register_marker_icons(&cc.egui_ctx);
 
-        let stored_token = cc
-            .storage
-            .and_then(|s| s.get_string("mapbox_token"))
-            .unwrap_or_default();
-        let mapbox_token = env::var("MAPBOX_TOKEN")
-            .or_else(|_| env::var("MAPBOX_ACCESS_TOKEN"))
-            .unwrap_or(stored_token);
+        let mut loaded_settings = crate::settings::load_settings();
 
-        let map_layer = cc
-            .storage
-            .and_then(|s| s.get_string("map_layer"))
-            .map(|s| {
-                if s == "satellite" {
-                    MapLayer::Satellite
-                } else {
-                    MapLayer::OpenStreetMap
-                }
-            })
-            .unwrap_or_default();
-
-        let mut map = NavMap::new(cc.egui_ctx.clone());
-        if !mapbox_token.is_empty() {
-            map.set_mapbox_token(mapbox_token);
+        // One-time migration: pick up mapbox_token and map_layer from the old
+        // eframe storage when config.toml doesn't exist yet.
+        if crate::settings::settings_path().is_none_or(|p| !p.exists()) {
+            if let Some(token) = cc.storage.and_then(|s| s.get_string("mapbox_token"))
+                && loaded_settings.map.mapbox_token.is_empty()
+            {
+                loaded_settings.map.mapbox_token = token;
+            }
+            if cc
+                .storage
+                .and_then(|s| s.get_string("map_layer"))
+                .as_deref()
+                == Some("satellite")
+            {
+                loaded_settings.map.layer = crate::settings::MapLayerSetting::Satellite;
+            }
         }
-        map.set_layer(map_layer);
 
+        // Environment variables override the config file for the token.
+        if let Ok(token) = env::var("MAPBOX_TOKEN").or_else(|_| env::var("MAPBOX_ACCESS_TOKEN")) {
+            loaded_settings.map.mapbox_token = token;
+        }
+
+        let map = NavMap::new(cc.egui_ctx.clone());
         let (load_tx, load_rx) = mpsc::channel::<loader::LoadMessage>();
 
-        // Build the central-area tiles tree: map on top (~60%), plot on bottom (~40%).
+        // Build the central-area tiles tree: map on top, plot on bottom.
+        // The split ratio and panel visibility are applied from settings below.
         let mut tiles: Tiles<MainPane> = Tiles::default();
         let map_tile_id = tiles.insert_pane(MainPane::Map);
         let plot_tile_id = tiles.insert_pane(MainPane::Plot);
-
-        // 60 % map, 40 % plot initial split.
         let root_tile_id = tiles.insert_new(Tile::Container(Container::Linear(
             Linear::new_binary(LinearDir::Vertical, [map_tile_id, plot_tile_id], 0.6),
         )));
-
         let tiles_tree = Tree::new("main_tiles", root_tile_id, tiles);
 
         let mut app = Self {
             map,
             shared: Rc::new(RefCell::new(SharedAppState {
                 loaded_files: Vec::new(),
-                visibility: TripDataVisibility { files: Vec::new() },
-                event_marker_visibility: EventMarkerVisibility::new(),
+                tree: TreeState::new(),
                 highlight: MapHighlight::default(),
                 filter: GlobalFilter::default(),
-                filter_state: filter_panel::FilterPanelState::default(),
-                panel: TripDataPanelState::new(),
+                filter_state: FilterPanelState::default(),
                 plot_state: PlotState::default(),
                 map_center_request: None,
                 popup_pos_request: None,
@@ -182,8 +210,15 @@ impl App {
             next_load_id: 0,
             file_dialog_rx: None,
             tiles_tree,
+            map_tile_id,
             plot_tile_id,
+            config_dirty: false,
+            config_last_changed: None,
+            prev_snapshot: AppSnapshot::default(),
         };
+
+        app.apply_startup_settings(&loaded_settings);
+        app.prev_snapshot = app.collect_snapshot();
 
         for path in paths {
             let ext = path
@@ -463,7 +498,9 @@ impl App {
                             let mut s = self.shared.borrow_mut();
                             let fi = s.loaded_files.len();
                             s.loaded_files.push(file);
-                            s.visibility = TripDataVisibility::from_loaded(&s.loaded_files);
+                            let files = std::mem::take(&mut s.loaded_files);
+                            s.tree.sync_from_loaded_files(&files);
+                            s.loaded_files = files;
                             s.plot_state.integrate_file(fi, series);
                             drop(s);
                             if !orphans.is_empty() {
@@ -485,7 +522,9 @@ impl App {
                                 let mut s = self.shared.borrow_mut();
                                 let fi = s.loaded_files.len();
                                 s.loaded_files.push(loaded);
-                                s.visibility = TripDataVisibility::from_loaded(&s.loaded_files);
+                                let files = std::mem::take(&mut s.loaded_files);
+                                s.tree.sync_from_loaded_files(&files);
+                                s.loaded_files = files;
                                 s.plot_state.integrate_file(fi, series);
                             }
                             if !unassociated.is_empty() {
@@ -591,6 +630,238 @@ impl App {
     fn toggle_plot(&mut self) {
         self.tiles_tree.tiles.toggle_visibility(self.plot_tile_id);
     }
+
+    /// Returns the current map/plot split ratio (fraction for the map tile, 0.0–1.0).
+    fn get_split_ratio(&self) -> f32 {
+        let Some(root_id) = self.tiles_tree.root else {
+            return 0.6;
+        };
+        let Some(Tile::Container(Container::Linear(linear))) = self.tiles_tree.tiles.get(root_id)
+        else {
+            return 0.6;
+        };
+        let map_share = linear
+            .shares
+            .iter()
+            .find(|(id, _)| *id == &self.map_tile_id)
+            .map_or(0.6, |(_, s)| *s);
+        let total: f32 = linear.shares.iter().map(|(_, s)| s).sum();
+        if total > 0.0 { map_share / total } else { 0.6 }
+    }
+
+    fn set_split_ratio(&mut self, ratio: f32) {
+        let Some(root_id) = self.tiles_tree.root else {
+            return;
+        };
+        let Some(Tile::Container(Container::Linear(linear))) =
+            self.tiles_tree.tiles.get_mut(root_id)
+        else {
+            return;
+        };
+        linear.shares.set_share(self.map_tile_id, ratio);
+        linear.shares.set_share(self.plot_tile_id, 1.0 - ratio);
+    }
+
+    /// Apply loaded settings on startup.
+    fn apply_startup_settings(&mut self, s: &crate::settings::Settings) {
+        if !s.map.mapbox_token.is_empty() {
+            self.map.set_mapbox_token(s.map.mapbox_token.clone());
+        }
+        self.map.set_layer(map_layer_from_setting(s.map.layer));
+        self.ctx.set_theme(theme_pref_from_setting(s.ui.theme));
+
+        {
+            let mut shared = self.shared.borrow_mut();
+            shared.sync_plot_to_map = s.map.sync_to_map;
+            shared.plot_state.show_grid = s.plot.show_grid;
+            let vis = &mut shared.plot_state.metric_vis;
+            vis.sats_seen = s
+                .plot
+                .metric
+                .get(&crate::settings::MetricKind::SatsSeen)
+                .copied()
+                .unwrap_or(true);
+            vis.sats_fix = s
+                .plot
+                .metric
+                .get(&crate::settings::MetricKind::SatsFix)
+                .copied()
+                .unwrap_or(true);
+            vis.gps_seen = s
+                .plot
+                .metric
+                .get(&crate::settings::MetricKind::GpsSeen)
+                .copied()
+                .unwrap_or(true);
+            vis.gps_fix = s
+                .plot
+                .metric
+                .get(&crate::settings::MetricKind::GpsFix)
+                .copied()
+                .unwrap_or(true);
+            vis.glonass_seen = s
+                .plot
+                .metric
+                .get(&crate::settings::MetricKind::GlonassSeen)
+                .copied()
+                .unwrap_or(true);
+            vis.glonass_fix = s
+                .plot
+                .metric
+                .get(&crate::settings::MetricKind::GlonassFix)
+                .copied()
+                .unwrap_or(true);
+            vis.galileo_seen = s
+                .plot
+                .metric
+                .get(&crate::settings::MetricKind::GalileoSeen)
+                .copied()
+                .unwrap_or(true);
+            vis.galileo_fix = s
+                .plot
+                .metric
+                .get(&crate::settings::MetricKind::GalileoFix)
+                .copied()
+                .unwrap_or(true);
+            vis.beidou_seen = s
+                .plot
+                .metric
+                .get(&crate::settings::MetricKind::BeidouSeen)
+                .copied()
+                .unwrap_or(true);
+            vis.beidou_fix = s
+                .plot
+                .metric
+                .get(&crate::settings::MetricKind::BeidouFix)
+                .copied()
+                .unwrap_or(true);
+            vis.velocity = s
+                .plot
+                .metric
+                .get(&crate::settings::MetricKind::Velocity)
+                .copied()
+                .unwrap_or(true);
+            vis.eph = s
+                .plot
+                .metric
+                .get(&crate::settings::MetricKind::Eph)
+                .copied()
+                .unwrap_or(true);
+            vis.heading_deg = s
+                .plot
+                .metric
+                .get(&crate::settings::MetricKind::HeadingDeg)
+                .copied()
+                .unwrap_or(true);
+        }
+
+        self.tiles_tree
+            .tiles
+            .set_visible(self.plot_tile_id, s.plot.panel_visible);
+        self.set_split_ratio(s.plot.split_ratio);
+    }
+
+    /// Snapshot of all settings-relevant state for change detection.
+    fn collect_snapshot(&self) -> AppSnapshot {
+        let s = self.shared.borrow();
+        let theme = self
+            .ctx
+            .options(|o| theme_pref_to_setting(o.theme_preference));
+        let vis = &s.plot_state.metric_vis;
+        AppSnapshot {
+            show_grid: s.plot_state.show_grid,
+            panel_visible: self.tiles_tree.tiles.is_visible(self.plot_tile_id),
+            split_ratio_bits: self.get_split_ratio().to_bits(),
+            metric_sats_seen: vis.sats_seen,
+            metric_sats_fix: vis.sats_fix,
+            metric_gps_seen: vis.gps_seen,
+            metric_gps_fix: vis.gps_fix,
+            metric_glonass_seen: vis.glonass_seen,
+            metric_glonass_fix: vis.glonass_fix,
+            metric_galileo_seen: vis.galileo_seen,
+            metric_galileo_fix: vis.galileo_fix,
+            metric_beidou_seen: vis.beidou_seen,
+            metric_beidou_fix: vis.beidou_fix,
+            metric_velocity: vis.velocity,
+            metric_eph: vis.eph,
+            metric_heading_deg: vis.heading_deg,
+            layer: map_layer_to_setting(self.map.layer()),
+            mapbox_token: self.map.mapbox_token().to_owned(),
+            sync_to_map: s.sync_plot_to_map,
+            theme,
+        }
+    }
+
+    fn collect_settings_for_flush(&self) -> crate::settings::Settings {
+        use crate::settings::MetricKind as K;
+        let s = self.shared.borrow();
+        let vis = &s.plot_state.metric_vis;
+        let metric = std::collections::HashMap::from([
+            (K::SatsSeen, vis.sats_seen),
+            (K::SatsFix, vis.sats_fix),
+            (K::GpsSeen, vis.gps_seen),
+            (K::GpsFix, vis.gps_fix),
+            (K::GlonassSeen, vis.glonass_seen),
+            (K::GlonassFix, vis.glonass_fix),
+            (K::GalileoSeen, vis.galileo_seen),
+            (K::GalileoFix, vis.galileo_fix),
+            (K::BeidouSeen, vis.beidou_seen),
+            (K::BeidouFix, vis.beidou_fix),
+            (K::Velocity, vis.velocity),
+            (K::Eph, vis.eph),
+            (K::HeadingDeg, vis.heading_deg),
+        ]);
+        let theme = self
+            .ctx
+            .options(|o| theme_pref_to_setting(o.theme_preference));
+        crate::settings::Settings {
+            version: 1,
+            plot: crate::settings::PlotSettings {
+                show_grid: s.plot_state.show_grid,
+                panel_visible: self.tiles_tree.tiles.is_visible(self.plot_tile_id),
+                split_ratio: self.get_split_ratio(),
+                metric,
+            },
+            map: crate::settings::MapSettings {
+                layer: map_layer_to_setting(self.map.layer()),
+                mapbox_token: self.map.mapbox_token().to_owned(),
+                sync_to_map: s.sync_plot_to_map,
+            },
+            ui: crate::settings::UiSettings { theme },
+        }
+    }
+
+    fn flush_settings(&self) {
+        let Some(path) = crate::settings::settings_path() else {
+            log::warn!("Config directory unavailable — settings not saved");
+            return;
+        };
+        let current = self.collect_settings_for_flush();
+        let text = match toml::to_string_pretty(&current) {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!("Failed to serialize config: {e:#}");
+                return;
+            }
+        };
+        if let Some(dir) = path.parent()
+            && let Err(e) = std::fs::create_dir_all(dir)
+        {
+            log::warn!("Failed to create config dir {dir:?}: {e:#}");
+            return;
+        }
+        let header = "# GeoTrace configuration — generated automatically.\n\
+                      # WARNING: do not commit this file to a public repository if mapbox_token is set.\n\n";
+        let full_text = format!("{header}{text}");
+        let tmp = path.with_extension("toml.tmp");
+        if let Err(e) = std::fs::write(&tmp, full_text.as_bytes()) {
+            log::warn!("Failed to write config to {tmp:?}: {e:#}");
+            return;
+        }
+        if let Err(e) = std::fs::rename(&tmp, &path) {
+            log::warn!("Failed to rename config file: {e:#}");
+        }
+    }
 }
 
 /// Behavior implementation that renders each pane of the central tiles tree.
@@ -611,10 +882,10 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 if let Some(action) = self.map.draw(
                     ui,
                     &s.loaded_files,
-                    &s.visibility,
+                    s.tree.visibility(),
                     &mut s.highlight,
                     &s.filter,
-                    &s.event_marker_visibility,
+                    s.tree.event_marker_visibility(),
                     center_req,
                     zoom_to_visible,
                     popup_pos,
@@ -624,10 +895,11 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                             file_index,
                             trip_index,
                         } => {
-                            s.visibility.show_only_trip(file_index, trip_index);
+                            s.tree
+                                .show_only_trip(FileIdx(file_index), TripIdx(trip_index));
                         }
                         MapContextAction::ShowOnlyFile { file_index } => {
-                            s.visibility.show_only_file(file_index);
+                            s.tree.show_only_file(FileIdx(file_index));
                         }
                     }
                 }
@@ -637,16 +909,16 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 // Compute the time range of TPV points visible in the current
                 // map viewport so the plot can pan to follow the map.
                 let map_sync_x_range = if s.sync_plot_to_map {
-                    self.map
-                        .viewport_geo_bounds()
-                        .and_then(|b| tpv_time_range_in_bounds(&s.loaded_files, &s.visibility, b))
+                    self.map.viewport_geo_bounds().and_then(|b| {
+                        tpv_time_range_in_bounds(&s.loaded_files, s.tree.visibility(), b)
+                    })
                 } else {
                     None
                 };
                 gt_plot::show_trip_plot(
                     ui,
                     &s.loaded_files,
-                    &s.visibility,
+                    s.tree.visibility(),
                     &s.filter,
                     self.map_hover_time,
                     map_sync_x_range,
@@ -677,16 +949,8 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
 }
 
 impl eframe::App for App {
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        let token = self.map.mapbox_token();
-        if !token.is_empty() {
-            storage.set_string("mapbox_token", token.to_owned());
-        }
-        let layer_str = match self.map.layer() {
-            MapLayer::OpenStreetMap => "osm",
-            MapLayer::Satellite => "satellite",
-        };
-        storage.set_string("map_layer", layer_str.to_owned());
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+        self.flush_settings();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -718,9 +982,9 @@ impl eframe::App for App {
             let delete_pressed = ui
                 .ctx()
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete));
-            if delete_pressed && !s.panel.selection.is_empty() && s.panel.delete_confirm.is_none() {
-                let items = s.panel.selection.iter().cloned().collect();
-                s.panel.delete_confirm = Some(trip_data_panel::DeleteConfirmState { items });
+            if delete_pressed && !s.tree.selection.is_empty() && s.tree.delete_confirm.is_none() {
+                let items = s.tree.selection.iter().cloned().collect();
+                s.tree.delete_confirm = Some(gt_side_panel::DeleteConfirmState { items });
             }
         }
 
@@ -757,7 +1021,7 @@ impl eframe::App for App {
             });
         });
 
-        let detached = self.shared.borrow().panel.detached;
+        let detached = self.shared.borrow().tree.detached;
         if !detached {
             egui::Panel::left("trip_data_panel")
                 .min_size(240.0)
@@ -768,12 +1032,10 @@ impl eframe::App for App {
                         ui,
                         &mut PanelContext {
                             files: &s.loaded_files,
-                            visibility: &mut s.visibility,
-                            event_marker_visibility: &mut s.event_marker_visibility,
+                            tree: &mut s.tree,
                             highlight: &mut s.highlight,
                             filter: &mut s.filter,
                             filter_state: &mut s.filter_state,
-                            panel: &mut s.panel,
                             map_center_request: &mut s.map_center_request,
                             popup_pos_request: &mut s.popup_pos_request,
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
@@ -801,12 +1063,10 @@ impl eframe::App for App {
                         ui,
                         &mut PanelContext {
                             files: &s.loaded_files,
-                            visibility: &mut s.visibility,
-                            event_marker_visibility: &mut s.event_marker_visibility,
+                            tree: &mut s.tree,
                             highlight: &mut s.highlight,
                             filter: &mut s.filter,
                             filter_state: &mut s.filter_state,
-                            panel: &mut s.panel,
                             map_center_request: &mut s.map_center_request,
                             popup_pos_request: &mut s.popup_pos_request,
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
@@ -814,7 +1074,7 @@ impl eframe::App for App {
                     );
                 });
             if !is_open {
-                self.shared.borrow_mut().panel.detached = false;
+                self.shared.borrow_mut().tree.detached = false;
             }
         }
 
@@ -843,8 +1103,12 @@ impl eframe::App for App {
             let plot_visible = self.plot_is_visible();
             if plot_visible {
                 if let Some(t) = s.plot_state.hovered_time {
-                    let closest =
-                        gt_plot::find_closest_tpv(&s.loaded_files, &s.visibility, &s.filter, t);
+                    let closest = gt_plot::find_closest_tpv(
+                        &s.loaded_files,
+                        s.tree.visibility(),
+                        &s.filter,
+                        t,
+                    );
                     s.highlight.plot_hover_time = closest.map(|_| t);
                     s.highlight.plot_hover_point = closest;
                 } else {
@@ -970,13 +1234,30 @@ impl eframe::App for App {
         {
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
-            if show_delete_confirmation(ui, &mut s.panel, &mut s.loaded_files, &mut s.visibility) {
+            if show_delete_confirmation(ui, &mut s.tree, &mut s.loaded_files) {
                 s.plot_state.rebuild_all(&s.loaded_files);
             }
         }
 
         show_unassociated_popup(ui, &mut self.unassociated_log_lines);
         show_orphaned_event_markers_popup(ui, &mut self.orphaned_event_markers);
+
+        // Detect settings changes and trigger a debounced write-through.
+        let snapshot = self.collect_snapshot();
+        if snapshot != self.prev_snapshot {
+            self.prev_snapshot = snapshot;
+            self.config_dirty = true;
+            self.config_last_changed = Some(std::time::Instant::now());
+        }
+        const DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(500);
+        if self.config_dirty
+            && self
+                .config_last_changed
+                .is_some_and(|t| t.elapsed() >= DEBOUNCE)
+        {
+            self.flush_settings();
+            self.config_dirty = false;
+        }
     }
 }
 
@@ -1090,6 +1371,63 @@ fn finish_log_load(
     })
     .ok();
     ctx.request_repaint();
+}
+
+fn map_layer_to_setting(layer: MapLayer) -> crate::settings::MapLayerSetting {
+    match layer {
+        MapLayer::OpenStreetMap => crate::settings::MapLayerSetting::Osm,
+        MapLayer::Satellite => crate::settings::MapLayerSetting::Satellite,
+    }
+}
+
+fn map_layer_from_setting(s: crate::settings::MapLayerSetting) -> MapLayer {
+    match s {
+        crate::settings::MapLayerSetting::Osm => MapLayer::OpenStreetMap,
+        crate::settings::MapLayerSetting::Satellite => MapLayer::Satellite,
+    }
+}
+
+fn theme_pref_to_setting(p: egui::ThemePreference) -> crate::settings::ThemeSetting {
+    match p {
+        egui::ThemePreference::System => crate::settings::ThemeSetting::System,
+        egui::ThemePreference::Light => crate::settings::ThemeSetting::Light,
+        egui::ThemePreference::Dark => crate::settings::ThemeSetting::Dark,
+    }
+}
+
+fn theme_pref_from_setting(s: crate::settings::ThemeSetting) -> egui::ThemePreference {
+    match s {
+        crate::settings::ThemeSetting::System => egui::ThemePreference::System,
+        crate::settings::ThemeSetting::Light => egui::ThemePreference::Light,
+        crate::settings::ThemeSetting::Dark => egui::ThemePreference::Dark,
+    }
+}
+
+impl Default for AppSnapshot {
+    fn default() -> Self {
+        Self {
+            show_grid: true,
+            panel_visible: true,
+            split_ratio_bits: 0.6_f32.to_bits(),
+            metric_sats_seen: true,
+            metric_sats_fix: true,
+            metric_gps_seen: true,
+            metric_gps_fix: true,
+            metric_glonass_seen: true,
+            metric_glonass_fix: true,
+            metric_galileo_seen: true,
+            metric_galileo_fix: true,
+            metric_beidou_seen: true,
+            metric_beidou_fix: true,
+            metric_velocity: true,
+            metric_eph: true,
+            metric_heading_deg: true,
+            layer: crate::settings::MapLayerSetting::Osm,
+            mapbox_token: String::new(),
+            sync_to_map: true,
+            theme: crate::settings::ThemeSetting::System,
+        }
+    }
 }
 
 #[cfg(test)]

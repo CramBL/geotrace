@@ -15,6 +15,7 @@ members = [
     "crates/gt-log-marker",
     "crates/gt-map",
     "crates/gt-plot",
+    "crates/gt-side-panel",
     "crates/gt-types",
     "geotrace-sdk",
     "geotrace-sdk-macros",
@@ -30,6 +31,7 @@ authors = ["Marc Beck König <mgit@tuta.io>"]
 
 [workspace.dependencies]
 bon = "3"
+dirs = "6"
 chrono = { version = "0.4.44", default-features = false, features = ["std", "now", "clock", "oldtime"] }
 eframe = { version = "0.34.3", default-features = false, features = ["default_fonts", "wgpu", "wayland"] }
 egui = "0.34.3"
@@ -176,21 +178,25 @@ ignored_unit_patterns = "warn"
 
 [dependencies]
 chrono.workspace = true
+dirs.workspace = true
 eframe.workspace = true
 egui.workspace = true
 egui-phosphor.workspace = true
 egui_extras.workspace = true
 egui_tiles.workspace = true
 env_logger.workspace = true
-log.workspace = true
-mimalloc = { version = "0.1.48", features = ["v3"] }
 gt-fmt = { path = "crates/gt-fmt" }
 gt-io = { path = "crates/gt-io" }
 gt-log-marker = { path = "crates/gt-log-marker" }
 gt-map = { path = "crates/gt-map" }
 gt-plot = { path = "crates/gt-plot" }
+gt-side-panel = { path = "crates/gt-side-panel" }
 gt-types = { path = "crates/gt-types" }
+log.workspace = true
+mimalloc = { version = "0.1.48", features = ["v3"] }
 rfd = "0.17.2"
+serde = { version = "1", features = ["derive"] }
+toml = "1"
 uom.workspace = true
 
 [dev-dependencies]
