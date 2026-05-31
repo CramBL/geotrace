@@ -194,6 +194,42 @@ pub fn register_marker_icons(ctx: &egui::Context) {
         include_bytes!("icons/wrench.svg").as_slice(),
     );
 }
+/// Draw an SVG marker icon at `rect`, with optional `tint`.
+///
+/// The resolved `TextureId` is cached in egui's context data store after the
+/// first successful load so that subsequent frames skip the URI hash and image
+/// cache lookup and go directly to `painter.add(Shape::image(...))`.
+pub(crate) fn draw_cached_icon(
+    ui: &egui::Ui,
+    uri: &'static str,
+    rect: egui::Rect,
+    tint: egui::Color32,
+) {
+    let cache_key = egui::Id::new(("gt_icon_tex", uri));
+    if let Some(tex_id) = ui.ctx().data(|d| d.get_temp::<egui::TextureId>(cache_key)) {
+        ui.painter().add(egui::Shape::image(
+            tex_id,
+            rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            tint,
+        ));
+        return;
+    }
+    if let Ok(egui::load::TexturePoll::Ready { texture }) = ui.ctx().try_load_texture(
+        uri,
+        egui::TextureOptions::LINEAR,
+        egui::load::SizeHint::default(),
+    ) {
+        ui.ctx().data_mut(|d| d.insert_temp(cache_key, texture.id));
+        ui.painter().add(egui::Shape::image(
+            texture.id,
+            rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            tint,
+        ));
+    }
+}
+
 use gt_types::{
     DataCategory, DataPointRef, EventMarkerVisibility, GlobalFilter, HighlightScope, LoadedFile,
     MapHighlight, SpatialPoint, TrackDataVisibility,
@@ -441,7 +477,8 @@ impl NavMap {
 
         let blink_alpha = self.blink.tick();
         if self.blink.is_active() {
-            ui.ctx().request_repaint();
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(16));
         }
 
         let map_rect_estimate = ui.max_rect();

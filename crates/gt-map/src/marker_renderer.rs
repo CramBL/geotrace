@@ -193,76 +193,69 @@ fn draw_pin(ui: &Ui, center: Pos2, _color: Color32) {
         center - egui::vec2(9.0, 24.0),
         center + egui::vec2(9.0, 0.0),
     );
-    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
-        crate::ICON_URI_PIN,
-    )))
-    .paint_at(ui, icon_rect);
+    crate::draw_cached_icon(ui, crate::ICON_URI_PIN, icon_rect, Color32::WHITE);
 }
 
 fn draw_cross(ui: &Ui, center: Pos2, _color: Color32) {
-    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
-        crate::ICON_URI_CROSS,
-    )))
-    .paint_at(
+    crate::draw_cached_icon(
         ui,
+        crate::ICON_URI_CROSS,
         egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
+        Color32::WHITE,
     );
 }
 
 fn draw_circle(ui: &Ui, center: Pos2, _color: Color32) {
-    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
-        crate::ICON_URI_CIRCLE_MARKER,
-    )))
-    .paint_at(
+    crate::draw_cached_icon(
         ui,
+        crate::ICON_URI_CIRCLE_MARKER,
         egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
+        Color32::WHITE,
     );
 }
 
 fn draw_lightning(ui: &Ui, center: Pos2, _color: Color32) {
-    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
-        crate::ICON_URI_LIGHTNING,
-    )))
-    .paint_at(
+    crate::draw_cached_icon(
         ui,
+        crate::ICON_URI_LIGHTNING,
         egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
+        Color32::WHITE,
     );
 }
 
 fn draw_warning(ui: &Ui, center: Pos2, _color: Color32) {
-    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
-        crate::ICON_URI_WARNING,
-    )))
-    .paint_at(
+    crate::draw_cached_icon(
         ui,
+        crate::ICON_URI_WARNING,
         egui::Rect::from_center_size(center, egui::vec2(24.0, 24.0)),
+        Color32::WHITE,
     );
 }
 
 fn draw_error_sign(ui: &Ui, center: Pos2, _color: Color32) {
-    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
-        crate::ICON_URI_ERROR,
-    )))
-    .paint_at(
+    crate::draw_cached_icon(
         ui,
+        crate::ICON_URI_ERROR,
         egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
+        Color32::WHITE,
     );
 }
 
 fn draw_check(ui: &Ui, center: Pos2, _color: Color32) {
-    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
-        crate::ICON_URI_CHECK,
-    )))
-    .paint_at(
+    crate::draw_cached_icon(
         ui,
+        crate::ICON_URI_CHECK,
         egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
+        Color32::WHITE,
     );
 }
 
 fn draw_svg_icon(ui: &Ui, center: Pos2, uri: &'static str, size: f32) {
-    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(uri))).paint_at(
+    crate::draw_cached_icon(
         ui,
+        uri,
         egui::Rect::from_center_size(center, egui::vec2(size, size)),
+        Color32::WHITE,
     );
 }
 
@@ -271,9 +264,5 @@ fn draw_log_pin(ui: &Ui, center: Pos2, color: Color32) {
         center - egui::vec2(9.0, 24.0),
         center + egui::vec2(9.0, 0.0),
     );
-    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(
-        crate::ICON_URI_LOG_PIN,
-    )))
-    .tint(color)
-    .paint_at(ui, icon_rect);
+    crate::draw_cached_icon(ui, crate::ICON_URI_LOG_PIN, icon_rect, color);
 }

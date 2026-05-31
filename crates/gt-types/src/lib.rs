@@ -3,7 +3,7 @@ pub mod event_marker_visibility;
 pub mod filter;
 pub mod highlight;
 pub mod markers;
-pub(crate) mod mercator;
+pub mod mercator;
 pub mod nav_point;
 pub mod satellites;
 pub use satellites::{Prn, SignalQuality, Snr};

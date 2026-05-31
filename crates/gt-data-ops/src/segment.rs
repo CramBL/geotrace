@@ -276,9 +276,12 @@ pub fn build_loaded_file(
             let metadata =
                 compute_trip_metadata(trip_idx + 1, &trip_points, &trip_custom, &trip_generated);
 
+            let mut trip_points_vec = trip_points.into_vec();
+            precompute_ghost_positions(&mut trip_points_vec);
+
             LoadedTrack {
                 metadata,
-                points: trip_points.into_vec(),
+                points: trip_points_vec,
                 custom_markers: trip_custom,
                 generated_markers: trip_generated,
                 event_markers: Vec::new(),
@@ -347,11 +350,99 @@ pub fn build_loaded_file(
     }
 }
 
+/// Overwrites `merc_x`/`merc_y` on ghost points (those with `heading == None`) with
+/// positions linearly interpolated from the surrounding real fixes (`fix_count > 0`).
+///
+/// The renderer displays ghost points at the interpolated position rather than at their
+/// raw GPS coordinates (which may be unreliable when no heading is present). Pre-computing
+/// this once at load time eliminates the O(k) per-ghost scan that previously ran every frame.
+///
+/// Runs in O(n) over all points in the track.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "all indices are constructed from 0..n and arrays have length n, so always in bounds"
+)]
+fn precompute_ghost_positions(points: &mut [NavPoint]) {
+    let n = points.len();
+    if n == 0 {
+        return;
+    }
+
+    // Forward pass: for each index, the nearest preceding index with fix_count > 0.
+    let mut prev_real: Vec<Option<usize>> = vec![None; n];
+    let mut last_real: Option<usize> = None;
+    for i in 0..n {
+        prev_real[i] = last_real;
+        if points[i].fix_count() > 0 {
+            last_real = Some(i);
+        }
+    }
+
+    // Backward pass: for each index, the nearest following index with fix_count > 0.
+    let mut next_real: Vec<Option<usize>> = vec![None; n];
+    let mut next_real_fix: Option<usize> = None;
+    for i in (0..n).rev() {
+        next_real[i] = next_real_fix;
+        if points[i].fix_count() > 0 {
+            next_real_fix = Some(i);
+        }
+    }
+
+    // Collect updates to avoid simultaneous mutable and immutable borrows.
+    let mut updates: Vec<(usize, f64, f64)> = Vec::new();
+    for i in 0..n {
+        if points[i].tpv.heading().is_some() {
+            continue;
+        }
+        let (lat, lon) = match (prev_real[i], next_real[i]) {
+            (Some(pi), Some(ni)) => {
+                let t_total = (points[ni].tpv.time() - points[pi].tpv.time()).num_seconds() as f64;
+                let t_curr = (points[i].tpv.time() - points[pi].tpv.time()).num_seconds() as f64;
+                if t_total > 0.0 {
+                    let f = t_curr / t_total;
+                    let lat = points[pi].tpv.lat().as_degrees()
+                        + (points[ni].tpv.lat().as_degrees() - points[pi].tpv.lat().as_degrees())
+                            * f;
+                    let lon = points[pi].tpv.lon().as_degrees()
+                        + (points[ni].tpv.lon().as_degrees() - points[pi].tpv.lon().as_degrees())
+                            * f;
+                    (lat, lon)
+                } else {
+                    (
+                        points[i].tpv.lat().as_degrees(),
+                        points[i].tpv.lon().as_degrees(),
+                    )
+                }
+            }
+            (Some(pi), None) => (
+                points[pi].tpv.lat().as_degrees(),
+                points[pi].tpv.lon().as_degrees(),
+            ),
+            (None, Some(ni)) => (
+                points[ni].tpv.lat().as_degrees(),
+                points[ni].tpv.lon().as_degrees(),
+            ),
+            (None, None) => (
+                points[i].tpv.lat().as_degrees(),
+                points[i].tpv.lon().as_degrees(),
+            ),
+        };
+        let (merc_x, merc_y) = gt_types::mercator::normalize(lon, lat);
+        updates.push((i, merc_x, merc_y));
+    }
+
+    for (i, merc_x, merc_y) in updates {
+        points[i].merc_x = merc_x;
+        points[i].merc_y = merc_y;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use gt_types::coordinates::Latitude;
+    use gt_types::coordinates::{Latitude, Longitude};
+    use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::time_types::GpsTime;
     use gt_types::tpv::TimePositionVelocity;
     use uom::si::angle::degree;
@@ -501,5 +592,126 @@ mod tests {
         assert_eq!(f.tracks[1].points.len(), 2);
         assert_eq!(f.tracks[0].metadata.index, 1);
         assert_eq!(f.tracks[1].metadata.index, 2);
+    }
+
+    fn make_real_fix(t: i64, lat: Latitude, lon: Longitude) -> NavPoint {
+        #[expect(
+            clippy::expect_used,
+            reason = "fixed timestamp is always valid in tests"
+        )]
+        let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
+        let tpv = TimePositionVelocity::builder()
+            .time(time)
+            .lat(lat)
+            .lon(lon)
+            .heading(Angle::new::<degree>(0.0))
+            .build();
+        let sats = Satellites::new(
+            Some(time),
+            None,
+            vec![Satellite::new(
+                Constellation::Gps,
+                1,
+                None,
+                None,
+                None,
+                true,
+            )],
+        );
+        NavPoint::new(tpv, Some(sats))
+    }
+
+    fn make_ghost(t: i64, lat: Latitude, lon: Longitude) -> NavPoint {
+        #[expect(
+            clippy::expect_used,
+            reason = "fixed timestamp is always valid in tests"
+        )]
+        let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
+        let tpv = TimePositionVelocity::builder()
+            .time(time)
+            .lat(lat)
+            .lon(lon)
+            .build();
+        NavPoint::new(tpv, None)
+    }
+
+    #[test]
+    fn precompute_ghost_positions_empty_slice() {
+        let mut points: Vec<NavPoint> = vec![];
+        precompute_ghost_positions(&mut points);
+    }
+
+    #[test]
+    fn precompute_ghost_positions_all_real_unchanged() {
+        let mut points = vec![
+            make_real_fix(0, Latitude::new(55.0), Longitude::new(12.0)),
+            make_real_fix(1, Latitude::new(55.1), Longitude::new(12.1)),
+        ];
+        let before: Vec<(f64, f64)> = points.iter().map(|p| (p.merc_x, p.merc_y)).collect();
+        precompute_ghost_positions(&mut points);
+        let after: Vec<(f64, f64)> = points.iter().map(|p| (p.merc_x, p.merc_y)).collect();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn precompute_ghost_positions_ghost_between_two_anchors_interpolates() {
+        // real at t=0 (lat=0, lon=0), ghost at t=5, real at t=10 (lat=1, lon=1)
+        // → ghost should land at lat=0.5, lon=0.5
+        let mut points = vec![
+            make_real_fix(0, Latitude::new(0.0), Longitude::new(0.0)),
+            make_ghost(5, Latitude::new(10.0), Longitude::new(10.0)), // initial coords are irrelevant — will be overwritten
+            make_real_fix(10, Latitude::new(1.0), Longitude::new(1.0)),
+        ];
+        precompute_ghost_positions(&mut points);
+
+        let (expected_x, expected_y) = gt_types::mercator::normalize(0.5, 0.5);
+        assert!(
+            (points[1].merc_x - expected_x).abs() < 1e-9,
+            "merc_x mismatch: {} vs {expected_x}",
+            points[1].merc_x
+        );
+        assert!(
+            (points[1].merc_y - expected_y).abs() < 1e-9,
+            "merc_y mismatch: {} vs {expected_y}",
+            points[1].merc_y
+        );
+    }
+
+    #[test]
+    fn precompute_ghost_positions_ghost_before_first_anchor_snaps_to_it() {
+        let mut points = vec![
+            make_ghost(0, Latitude::new(10.0), Longitude::new(10.0)),
+            make_real_fix(10, Latitude::new(55.0), Longitude::new(12.0)),
+        ];
+        precompute_ghost_positions(&mut points);
+
+        let (expected_x, expected_y) = gt_types::mercator::normalize(12.0, 55.0);
+        assert!((points[0].merc_x - expected_x).abs() < 1e-9);
+        assert!((points[0].merc_y - expected_y).abs() < 1e-9);
+    }
+
+    #[test]
+    fn precompute_ghost_positions_ghost_after_last_anchor_snaps_to_it() {
+        let mut points = vec![
+            make_real_fix(0, Latitude::new(55.0), Longitude::new(12.0)),
+            make_ghost(10, Latitude::new(10.0), Longitude::new(10.0)),
+        ];
+        precompute_ghost_positions(&mut points);
+
+        let (expected_x, expected_y) = gt_types::mercator::normalize(12.0, 55.0);
+        assert!((points[1].merc_x - expected_x).abs() < 1e-9);
+        assert!((points[1].merc_y - expected_y).abs() < 1e-9);
+    }
+
+    #[test]
+    fn precompute_ghost_positions_all_ghosts_no_anchors_unchanged() {
+        let mut points = vec![
+            make_ghost(0, Latitude::new(55.0), Longitude::new(12.0)),
+            make_ghost(5, Latitude::new(56.0), Longitude::new(13.0)),
+        ];
+        let before: Vec<(f64, f64)> = points.iter().map(|p| (p.merc_x, p.merc_y)).collect();
+        precompute_ghost_positions(&mut points);
+        let after: Vec<(f64, f64)> = points.iter().map(|p| (p.merc_x, p.merc_y)).collect();
+        assert_eq!(before, after);
     }
 }

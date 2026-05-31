@@ -15,7 +15,7 @@ use std::f64::consts::PI;
 /// The anchor point (lon = 0°, lat = 0°) maps to exactly `(0.5, 0.5)`, which
 /// is used by the renderers to turn a single `projector.project(lat_lon(0,0))`
 /// call into the per-frame screen → Mercator offset.
-pub(crate) fn normalize(lon_deg: f64, lat_deg: f64) -> (f64, f64) {
+pub fn normalize(lon_deg: f64, lat_deg: f64) -> (f64, f64) {
     let x = lon_deg.to_radians();
     let y = lat_deg.to_radians().tan().asinh();
     let x = (1.0 + x / PI) / 2.0;

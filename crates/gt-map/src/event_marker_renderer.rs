@@ -270,9 +270,11 @@ fn draw_event_icon(ui: &Ui, center: Pos2, uri: &'static str, size: f32, highligh
         ui.painter()
             .circle_stroke(center, (size / 2.0) + 4.0, Stroke::new(2.0, HIGHLIGHT_BLUE));
     }
-    egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(uri))).paint_at(
+    crate::draw_cached_icon(
         ui,
+        uri,
         egui::Rect::from_center_size(center, egui::vec2(size, size)),
+        egui::Color32::WHITE,
     );
 }
 

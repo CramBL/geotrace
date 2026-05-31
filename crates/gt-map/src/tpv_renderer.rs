@@ -121,8 +121,9 @@ impl<'a> TpvRenderer<'a> {
             }
         }
 
-        // Ghost fixes (heading == None): position interpolated at render time,
-        // not in the global tree. Rare in practice.
+        // Ghost fixes (heading == None): position pre-computed at load time
+        // in `precompute_ghost_positions`; merc_x/merc_y already hold the
+        // interpolated coordinates.
         for (pi, point) in track.points.iter().enumerate() {
             if point.tpv.heading().is_some() {
                 continue;
@@ -130,9 +131,7 @@ impl<'a> TpvRenderer<'a> {
             if !filter::point_passes_time_filter(point.tpv.time().utc(), self.filter) {
                 continue;
             }
-            let (lat, lon) = interpolate_position(&track.points, pi);
-            let (merc_x, merc_y) = crate::normalize_merc(lon, lat);
-            let screen_pos = transform.to_screen(merc_x, merc_y);
+            let screen_pos = transform.to_screen(point.merc_x, point.merc_y);
             if !view_rect.contains(screen_pos) {
                 continue;
             }
@@ -300,45 +299,6 @@ impl Plugin for TpvRenderer<'_> {
                 ),
             );
         }
-    }
-}
-
-fn interpolate_position(points: &[NavPoint], idx: usize) -> (f64, f64) {
-    let prev = (0..idx)
-        .rev()
-        .find(|&i| points.get(i).is_some_and(|p| p.fix_count() > 0));
-    let next = (idx + 1..points.len()).find(|&i| points.get(i).is_some_and(|p| p.fix_count() > 0));
-
-    match (prev, next) {
-        (Some(pi), Some(ni)) => match (points.get(pi), points.get(ni), points.get(idx)) {
-            (Some(prev_pt), Some(next_pt), Some(curr_pt)) => {
-                let t_total = (next_pt.tpv.time() - prev_pt.tpv.time()).num_seconds() as f64;
-                let t_curr = (curr_pt.tpv.time() - prev_pt.tpv.time()).num_seconds() as f64;
-                if t_total > 0.0 {
-                    let f = t_curr / t_total;
-                    let lat = prev_pt.tpv.lat().as_degrees()
-                        + (next_pt.tpv.lat().as_degrees() - prev_pt.tpv.lat().as_degrees()) * f;
-                    let lon = prev_pt.tpv.lon().as_degrees()
-                        + (next_pt.tpv.lon().as_degrees() - prev_pt.tpv.lon().as_degrees()) * f;
-                    (lat, lon)
-                } else {
-                    (
-                        curr_pt.tpv.lat().as_degrees(),
-                        curr_pt.tpv.lon().as_degrees(),
-                    )
-                }
-            }
-            _ => (0.0, 0.0),
-        },
-        (Some(pi), None) => points.get(pi).map_or((0.0, 0.0), |p| {
-            (p.tpv.lat().as_degrees(), p.tpv.lon().as_degrees())
-        }),
-        (None, Some(ni)) => points.get(ni).map_or((0.0, 0.0), |p| {
-            (p.tpv.lat().as_degrees(), p.tpv.lon().as_degrees())
-        }),
-        (None, None) => points.get(idx).map_or((0.0, 0.0), |p| {
-            (p.tpv.lat().as_degrees(), p.tpv.lon().as_degrees())
-        }),
     }
 }
 
