@@ -1833,6 +1833,7 @@ dependencies = [
  "gt-plot",
  "gt-side-panel",
  "gt-types",
+ "gt-ui-theme",
  "log",
  "mimalloc",
  "rfd",
@@ -2041,6 +2042,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gt-data-ops"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "geo-types",
+ "gt-geo-math",
+ "gt-types",
+ "rstar 0.13.0",
+ "uom",
+ "vec1",
+]
+
+[[package]]
 name = "gt-egui-mipmap"
 version = "0.1.0"
 dependencies = [
@@ -2068,6 +2082,8 @@ name = "gt-io"
 version = "0.1.0"
 dependencies = [
  "geotrace-sdk",
+ "gt-data-ops",
+ "gt-test-utils",
  "gt-types",
  "tempfile",
  "thiserror 2.0.18",
@@ -2093,7 +2109,10 @@ dependencies = [
  "egui-phosphor",
  "egui_extras",
  "egui_kittest",
+ "gt-data-ops",
+ "gt-test-utils",
  "gt-types",
+ "gt-ui-theme",
  "rstar 0.13.0",
  "strum",
  "uom",
@@ -2110,6 +2129,7 @@ dependencies = [
  "egui_plot",
  "gt-egui-mipmap",
  "gt-types",
+ "gt-ui-theme",
  "rayon",
  "uom",
 ]
@@ -2122,8 +2142,22 @@ dependencies = [
  "egui",
  "egui-phosphor",
  "egui_kittest",
+ "gt-data-ops",
  "gt-fmt",
+ "gt-test-utils",
  "gt-types",
+ "gt-ui-theme",
+]
+
+[[package]]
+name = "gt-test-utils"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "geo",
+ "geo-types",
+ "gt-types",
+ "uom",
 ]
 
 [[package]]
@@ -2132,14 +2166,19 @@ version = "0.1.0"
 dependencies = [
  "bon",
  "chrono",
- "geo",
  "geo-types",
- "gt-geo-math",
  "proptest",
  "rstar 0.13.0",
  "strum",
  "uom",
- "vec1",
+]
+
+[[package]]
+name = "gt-ui-theme"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "gt-types",
 ]
 
 [[package]]

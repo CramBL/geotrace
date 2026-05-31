@@ -7,12 +7,10 @@ use uom::si::length::meter;
 use uom::si::time::second;
 use uom::si::velocity::kilometer_per_hour;
 
-use crate::coordinates::{Latitude, Longitude};
-use crate::markers::{CustomMarker, MarkerIcon};
-use crate::nav_point::NavPoint;
-use crate::satellites::{Constellation, Satellite, Satellites};
-use crate::time_types::GpsTime;
-use crate::tpv::TimePositionVelocity;
+use gt_types::satellites::{Constellation, Satellite, Satellites};
+use gt_types::{
+    CustomMarker, GpsTime, Latitude, Longitude, MarkerIcon, NavPoint, TimePositionVelocity,
+};
 
 struct RouteSegment {
     start: Point<f64>,
@@ -183,7 +181,7 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
 
                     markers.push(CustomMarker::new(
                         p.tpv.time().utc(),
-                        format!("Fix Regained after {}", duration_str),
+                        format!("Fix Regained after {duration_str}"),
                         MarkerIcon::Check,
                         p.tpv.lat(),
                         p.tpv.lon(),
@@ -211,16 +209,16 @@ fn format_duration(duration: Duration) -> String {
 
     let mut parts = Vec::new();
     if h > 0 {
-        parts.push(format!("{}h", h));
+        parts.push(format!("{h}h"));
     }
     if m > 0 {
-        parts.push(format!("{}m", m));
+        parts.push(format!("{m}m"));
     }
     if s > 0.0 || (h == 0 && m == 0) {
         if s.fract() == 0.0 {
-            parts.push(format!("{:.0}s", s));
+            parts.push(format!("{s:.0}s"));
         } else {
-            let s_str = format!("{:.2}s", s);
+            let s_str = format!("{s:.2}s");
             let trimmed = s_str
                 .trim_end_matches('s')
                 .trim_end_matches('0')
@@ -242,25 +240,20 @@ mod tests {
         let route = nav_test_data();
         assert_eq!(route.len(), 1200);
 
-        // Check for fix gaps
-        assert!(route.get(100).unwrap().satellites.is_none());
-        assert!(route.get(101).unwrap().satellites.is_none());
-        assert!(route.get(99).unwrap().satellites.is_some());
-        assert!(route.get(102).unwrap().satellites.is_some());
+        assert!(route.get(100).is_some_and(|p| p.satellites.is_none()));
+        assert!(route.get(101).is_some_and(|p| p.satellites.is_none()));
+        assert!(route.get(99).is_some_and(|p| p.satellites.is_some()));
+        assert!(route.get(102).is_some_and(|p| p.satellites.is_some()));
 
-        // Check for color transition threshold in renderer (implicitly via data)
-        assert!(route.get(0).unwrap().fix_count() >= 10); // 12 sats initially
-        assert!(route.get(400).unwrap().fix_count() == 0); // Gap
-        assert!(route.get(601).unwrap().fix_count() == 8); // 8 sats later
+        assert!(route.first().is_some_and(|p| p.fix_count() >= 10));
+        assert!(route.get(400).is_some_and(|p| p.fix_count() == 0));
+        assert!(route.get(601).is_some_and(|p| p.fix_count() == 8));
     }
 
     #[test]
     fn test_marker_data_generation() {
         let markers = marker_test_data();
 
-        // We expect at least:
-        // 2 Warning markers (fix lost at 100 and 400)
-        // 2 Check markers (fix regained at 102 and 600)
         let warning_count = markers
             .iter()
             .filter(|m| m.icon == MarkerIcon::Warning)
@@ -273,12 +266,11 @@ mod tests {
         assert!(warning_count >= 2);
         assert!(check_count >= 2);
 
-        // Verify duration string format
-        let regain_marker = markers
-            .iter()
-            .find(|m| m.icon == MarkerIcon::Check)
-            .unwrap();
-        assert!(regain_marker.label.contains("2s") || regain_marker.label.contains("Fix Regained"));
+        let regain_marker = markers.iter().find(|m| m.icon == MarkerIcon::Check);
+        assert!(
+            regain_marker
+                .is_some_and(|m| m.label.contains("2s") || m.label.contains("Fix Regained"))
+        );
     }
 
     #[test]

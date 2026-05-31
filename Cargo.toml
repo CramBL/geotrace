@@ -8,6 +8,7 @@ license = "AGPL-3.0-only"
 [workspace]
 members = [
     "crates/gt-arch",
+    "crates/gt-data-ops",
     "crates/gt-egui-mipmap",
     "crates/gt-fmt",
     "crates/gt-geo-math",
@@ -16,7 +17,9 @@ members = [
     "crates/gt-map",
     "crates/gt-plot",
     "crates/gt-side-panel",
+    "crates/gt-test-utils",
     "crates/gt-types",
+    "crates/gt-ui-theme",
     "geotrace-sdk",
     "geotrace-sdk-macros",
 ]
@@ -194,6 +197,7 @@ gt-map = { path = "crates/gt-map" }
 gt-plot = { path = "crates/gt-plot" }
 gt-side-panel = { path = "crates/gt-side-panel" }
 gt-types = { path = "crates/gt-types" }
+gt-ui-theme = { path = "crates/gt-ui-theme" }
 log.workspace = true
 mimalloc = { version = "0.1.48", features = ["v3"] }
 rfd = "0.17.2"

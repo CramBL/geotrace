@@ -1,8 +1,8 @@
 use egui_kittest::{Harness, SnapshotOptions};
+use gt_data_ops::build_loaded_file;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
-use gt_types::{
-    FileIdx, GlobalFilter, MapHighlight, TrackIdx, nav_test_data, segment::build_loaded_file,
-};
+use gt_test_utils::nav_test_data;
+use gt_types::{FileIdx, GlobalFilter, MapHighlight, TrackIdx};
 
 struct State {
     files: Vec<gt_types::LoadedFile>,

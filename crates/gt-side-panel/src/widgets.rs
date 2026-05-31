@@ -29,15 +29,6 @@ pub fn tri_checkbox(ui: &mut egui::Ui, state: CheckState) -> egui::Response {
     )
 }
 
-/// Background colour used to indicate that the corresponding map element is hovered.
-pub fn map_hover_color(ui: &egui::Ui) -> egui::Color32 {
-    if ui.visuals().dark_mode {
-        egui::Color32::from_rgba_unmultiplied(210, 160, 0, 90)
-    } else {
-        egui::Color32::from_rgba_unmultiplied(200, 140, 0, 55)
-    }
-}
-
 /// Paints a translucent highlight behind `rect` to mark map-hover correspondence.
 pub fn paint_map_hover_bg(ui: &egui::Ui, rect: egui::Rect, color: egui::Color32) {
     let bg_layer = egui::LayerId::new(egui::Order::Background, egui::Id::new("map_hover_bg"));

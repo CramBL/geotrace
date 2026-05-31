@@ -168,68 +168,6 @@ pub struct LoadedTrack {
     pub event_markers: Vec<EventMarker>,
 }
 
-/// Build the global spatial index over all loaded files.
-///
-/// Includes real TPV fixes (heading present), custom markers, generated markers,
-/// and event markers. Ghost TPV fixes are excluded until their positions are
-/// pre-computed at load time.
-///
-/// Call `RTree::bulk_load` once after all files are loaded; the result is stored
-/// on `NavMap` and rebuilt whenever the file list changes.
-pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
-    let mut points: Vec<SpatialPoint> = Vec::new();
-    for (fi, file) in files.iter().enumerate() {
-        let file_index = FileIdx(fi);
-        for (ti, track) in file.tracks.iter().enumerate() {
-            let track_index = TrackIdx(ti);
-            for (pi, p) in track.points.iter().enumerate() {
-                if p.tpv.heading().is_none() {
-                    continue;
-                }
-                points.push(SpatialPoint {
-                    merc_x: p.merc_x,
-                    merc_y: p.merc_y,
-                    file_index,
-                    track_index,
-                    point_index: PointIdx(pi),
-                    category: DataCategory::Tpv,
-                });
-            }
-            for (pi, m) in track.custom_markers.iter().enumerate() {
-                points.push(SpatialPoint {
-                    merc_x: m.merc_x,
-                    merc_y: m.merc_y,
-                    file_index,
-                    track_index,
-                    point_index: PointIdx(pi),
-                    category: DataCategory::CustomMarker,
-                });
-            }
-            for (pi, m) in track.generated_markers.iter().enumerate() {
-                points.push(SpatialPoint {
-                    merc_x: m.merc_x,
-                    merc_y: m.merc_y,
-                    file_index,
-                    track_index,
-                    point_index: PointIdx(pi),
-                    category: DataCategory::GeneratedMarker,
-                });
-            }
-            for (pi, m) in track.event_markers.iter().enumerate() {
-                points.push(SpatialPoint {
-                    merc_x: m.merc_x,
-                    merc_y: m.merc_y,
-                    file_index,
-                    track_index,
-                    point_index: PointIdx(pi),
-                    category: DataCategory::EventMarker,
-                });
-            }
-        }
-    }
-    rstar::RTree::bulk_load(points)
-}
-
 #[derive(Debug, Clone)]
 pub struct FileMetadata {
     pub filename: String,

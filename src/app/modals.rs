@@ -81,9 +81,9 @@ pub fn show_delete_confirmation(
                     if ui
                         .add(
                             egui::Button::new(
-                                egui::RichText::new("Delete").color(egui::Color32::WHITE),
+                                egui::RichText::new("Delete").color(gt_ui_theme::DANGER_FG),
                             )
-                            .fill(egui::Color32::from_rgb(160, 30, 30)),
+                            .fill(gt_ui_theme::DANGER_HOVER),
                         )
                         .clicked()
                     {

@@ -1,13 +1,13 @@
-use crate::coordinates::{Latitude, Longitude};
-use crate::markers::{
-    CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
-};
-use crate::nav_point::NavPoint;
-use crate::time_types::GpsTime;
-use crate::track::{FileMetadata, LoadedFile, LoadedTrack, TimeRange, TrackMetadata};
 use chrono::{DateTime, Duration, Utc};
 use geo_types::{Coord, Rect};
 use gt_geo_math::{path_distance_km, point_set_diameter_m};
+use gt_types::coordinates::{Latitude, Longitude};
+use gt_types::markers::{
+    CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
+};
+use gt_types::nav_point::NavPoint;
+use gt_types::time_types::GpsTime;
+use gt_types::track::{FileMetadata, LoadedFile, LoadedTrack, TimeRange, TrackMetadata};
 use std::ops::Range;
 
 /// Partitions `points` into contiguous trip ranges. A new trip begins when the
@@ -183,7 +183,7 @@ pub fn compute_trip_metadata(
             y: max_lat,
         },
     );
-    let merc_bounds = crate::track::merc_bounds_for_rect(bounding_box);
+    let merc_bounds = gt_types::merc_bounds_for_rect(bounding_box);
 
     let coords: Vec<(f64, f64)> = points
         .iter()
@@ -330,29 +330,38 @@ pub fn build_loaded_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::time_types::GpsTime;
-    use crate::tpv::TimePositionVelocity;
     use chrono::TimeZone;
+    use gt_types::coordinates::Latitude;
+    use gt_types::time_types::GpsTime;
+    use gt_types::tpv::TimePositionVelocity;
     use uom::si::angle::degree;
     use uom::si::f64::Angle;
 
     fn make_point_at(t: i64) -> NavPoint {
-        let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().unwrap());
+        #[expect(
+            clippy::expect_used,
+            reason = "fixed timestamp is always valid in tests"
+        )]
+        let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
         let tpv = TimePositionVelocity::builder()
             .time(time)
             .lat(Latitude::new(55.0))
-            .lon(Longitude::new(12.0))
+            .lon(gt_types::coordinates::Longitude::new(12.0))
             .heading(Angle::new::<degree>(0.0))
             .build();
         NavPoint::new(tpv, None)
     }
 
     fn make_point_at_pos(t: i64, lat: f64, lon: f64) -> NavPoint {
-        let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().unwrap());
+        #[expect(
+            clippy::expect_used,
+            reason = "fixed timestamp is always valid in tests"
+        )]
+        let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
         let tpv = TimePositionVelocity::builder()
             .time(time)
             .lat(Latitude::new(lat))
-            .lon(Longitude::new(lon))
+            .lon(gt_types::coordinates::Longitude::new(lon))
             .heading(Angle::new::<degree>(0.0))
             .build();
         NavPoint::new(tpv, None)

@@ -3,6 +3,7 @@ use gt_types::{
     CustomMarker, DataCategory, DataPointRef, GlobalFilter, HighlightScope, LoadedFile,
     MapHighlight, MarkerIcon, SpatialPoint, TrackDataVisibility, filter,
 };
+use gt_ui_theme::{HIGHLIGHT_BLUE, LOG_COLORS};
 use walkers::{MapMemory, Plugin, Projector};
 
 pub struct MarkerRenderer<'a> {
@@ -138,17 +139,6 @@ fn show_marker_hover_label(ui: &Ui, marker: &CustomMarker, pos: Pos2) {
     ui.painter().galley(text_origin, galley, Color32::WHITE);
 }
 
-const LOG_COLORS: [Color32; 8] = [
-    Color32::from_rgb(230, 57, 70),
-    Color32::from_rgb(255, 149, 0),
-    Color32::from_rgb(255, 190, 11),
-    Color32::from_rgb(6, 214, 160),
-    Color32::from_rgb(46, 196, 182),
-    Color32::from_rgb(131, 56, 236),
-    Color32::from_rgb(255, 45, 85),
-    Color32::from_rgb(238, 66, 102),
-];
-
 fn draw_marker_icon(ui: &Ui, center: Pos2, marker: &CustomMarker, highlighted: bool) {
     let color = match marker.icon {
         MarkerIcon::Pin | MarkerIcon::Cross => Color32::from_rgb(219, 68, 55),
@@ -174,11 +164,8 @@ fn draw_marker_icon(ui: &Ui, center: Pos2, marker: &CustomMarker, highlighted: b
         }
     };
     if highlighted {
-        ui.painter().circle_stroke(
-            center,
-            14.0,
-            Stroke::new(2.0, Color32::from_rgb(100, 200, 255)),
-        );
+        ui.painter()
+            .circle_stroke(center, 14.0, Stroke::new(2.0, HIGHLIGHT_BLUE));
     }
     match marker.icon {
         MarkerIcon::Pin => draw_pin(ui, center, color),

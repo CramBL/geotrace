@@ -1,6 +1,76 @@
 use crate::time_types::{GpsTime, SysTime};
 use chrono::{DateTime, Utc};
 use std::cmp::Ordering;
+use std::fmt;
+
+/// Pseudo-Random Noise code number that uniquely identifies a satellite within its constellation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Prn(u32);
+
+impl Prn {
+    pub fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    pub fn value(self) -> u32 {
+        self.0
+    }
+}
+
+impl fmt::Display for Prn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl PartialEq<u32> for Prn {
+    fn eq(&self, other: &u32) -> bool {
+        self.0 == *other
+    }
+}
+
+/// Signal quality tier derived from an [`Snr`] value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignalQuality {
+    /// ≥ 40 dB-Hz — excellent lock.
+    Excellent,
+    /// 35–40 dB-Hz — good.
+    Good,
+    /// 30–35 dB-Hz — moderate.
+    Moderate,
+    /// 25–30 dB-Hz — weak.
+    Weak,
+    /// < 25 dB-Hz — very weak / marginal.
+    VeryWeak,
+}
+
+/// Signal-to-Noise Ratio for a satellite signal, in dB-Hz.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct Snr(f32);
+
+impl Snr {
+    pub fn new(value: f32) -> Self {
+        Self(value)
+    }
+
+    pub fn value(self) -> f32 {
+        self.0
+    }
+
+    pub fn quality(self) -> SignalQuality {
+        if self.0 >= 40.0 {
+            SignalQuality::Excellent
+        } else if self.0 >= 35.0 {
+            SignalQuality::Good
+        } else if self.0 >= 30.0 {
+            SignalQuality::Moderate
+        } else if self.0 >= 25.0 {
+            SignalQuality::Weak
+        } else {
+            SignalQuality::VeryWeak
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Constellation {
@@ -17,11 +87,11 @@ pub enum Constellation {
 #[derive(Debug, Clone, Copy)]
 pub struct Satellite {
     constellation: Constellation,
-    prn: u32,
+    prn: Prn,
     in_fix: bool,
     elevation: Option<f32>,
     azimuth: Option<f32>,
-    snr: Option<f32>,
+    snr: Option<Snr>,
 }
 
 impl Satellite {
@@ -35,18 +105,18 @@ impl Satellite {
     ) -> Self {
         Self {
             constellation,
-            prn,
+            prn: Prn::new(prn),
             in_fix,
             elevation,
             azimuth,
-            snr,
+            snr: snr.map(Snr::new),
         }
     }
 
     pub fn constellation(&self) -> Constellation {
         self.constellation
     }
-    pub fn prn(&self) -> u32 {
+    pub fn prn(&self) -> Prn {
         self.prn
     }
     pub fn in_fix(&self) -> bool {
@@ -58,7 +128,7 @@ impl Satellite {
     pub fn azimuth(&self) -> Option<f32> {
         self.azimuth
     }
-    pub fn snr(&self) -> Option<f32> {
+    pub fn snr(&self) -> Option<Snr> {
         self.snr
     }
 }
@@ -154,7 +224,7 @@ impl Satellites {
     /// The strongest Signal-to-Noise Ratio (SNR) across all tracked satellites.
     ///
     /// Returns `None` if no SNR data is available.
-    pub fn max_snr(&self) -> Option<f32> {
+    pub fn max_snr(&self) -> Option<Snr> {
         self.satellites
             .iter()
             .filter_map(|s| s.snr)
@@ -164,7 +234,7 @@ impl Satellites {
     /// The strongest Signal-to-Noise Ratio (SNR) for a specific constellation.
     ///
     /// Returns `None` if no satellites in the constellation have SNR data.
-    pub fn max_snr_by_constellation(&self, constellation: Constellation) -> Option<f32> {
+    pub fn max_snr_by_constellation(&self, constellation: Constellation) -> Option<Snr> {
         self.by_constellation(constellation)
             .filter_map(|s| s.snr)
             .max_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal))
@@ -176,7 +246,7 @@ impl Satellites {
     }
 
     /// Checks if a specific satellite is currently contributing to the positional fix.
-    pub fn is_in_fix(&self, constellation: Constellation, prn: u32) -> bool {
+    pub fn is_in_fix(&self, constellation: Constellation, prn: Prn) -> bool {
         self.satellites
             .iter()
             .any(|s| s.in_fix && s.constellation == constellation && s.prn == prn)

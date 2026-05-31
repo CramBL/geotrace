@@ -1,5 +1,5 @@
 [package]
-name = "gt-io"
+name = "gt-data-ops"
 description.workspace = true
 version.workspace = true
 edition.workspace = true
@@ -7,15 +7,15 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-geotrace-sdk = { path = "../../geotrace-sdk" }
-gt-data-ops = { path = "../gt-data-ops" }
+chrono.workspace = true
+geo-types.workspace = true
+gt-geo-math = { path = "../gt-geo-math" }
 gt-types = { path = "../gt-types" }
-thiserror.workspace = true
-uom.workspace = true
+rstar.workspace = true
+vec1.workspace = true
 
 [dev-dependencies]
-gt-test-utils = { path = "../gt-test-utils" }
-tempfile = "3"
+uom.workspace = true
 
 [lints]
 workspace = true

@@ -5,9 +5,7 @@ use gt_types::{
 
 use crate::filter::{FilterPanelState, render_filter_panel};
 use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TrackRef, TreeState};
-use crate::widgets::{
-    expand_arrow, map_hover_color, paint_map_hover_bg, point_item_row, tri_checkbox,
-};
+use crate::widgets::{expand_arrow, paint_map_hover_bg, point_item_row, tri_checkbox};
 
 pub struct PanelContext<'a> {
     pub files: &'a [LoadedFile],
@@ -82,10 +80,10 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
         let clicked = ui
             .scope(|ui| {
                 let v = ui.visuals_mut();
-                v.widgets.hovered.bg_fill = egui::Color32::from_rgb(160, 35, 35);
-                v.widgets.hovered.fg_stroke.color = egui::Color32::WHITE;
-                v.widgets.active.bg_fill = egui::Color32::from_rgb(130, 25, 25);
-                v.widgets.active.fg_stroke.color = egui::Color32::WHITE;
+                v.widgets.hovered.bg_fill = gt_ui_theme::DANGER_HOVER;
+                v.widgets.hovered.fg_stroke.color = gt_ui_theme::DANGER_FG;
+                v.widgets.active.bg_fill = gt_ui_theme::DANGER_ACTIVE;
+                v.widgets.active.fg_stroke.color = gt_ui_theme::DANGER_FG;
                 ui.button(format!(
                     "{} Delete all filtered data",
                     egui_phosphor::regular::TRASH
@@ -139,7 +137,7 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
         | HighlightScope::File { file_index } => file_index == fi,
     });
 
-    let map_hover_bg = map_hover_color(ui);
+    let map_hover_bg = gt_ui_theme::map_hover_color(ui.visuals().dark_mode);
 
     let row_response = ui.horizontal(|ui| {
         let chk_resp = tri_checkbox(ui, check);
@@ -233,7 +231,7 @@ fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Panel
     };
 
     let was_all_hidden = ctx.tree.all_hidden();
-    let map_hover_bg = map_hover_color(ui);
+    let map_hover_bg = gt_ui_theme::map_hover_color(ui.visuals().dark_mode);
 
     let check = ctx
         .tree
@@ -256,7 +254,7 @@ fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Panel
             text = text.weak();
         }
         if trip_panel_hovered {
-            text = text.color(egui::Color32::from_rgb(100, 200, 255));
+            text = text.color(gt_ui_theme::HIGHLIGHT_BLUE);
         }
         let is_selected = ctx.tree.selection.contains(&key);
         (ui.selectable_label(is_selected, text), newly_enabled)
@@ -697,9 +695,10 @@ fn render_satellite_report_items(
             category: DataCategory::SatelliteReport,
             point_index: PointIdx(pi),
         };
-        let time_str = sats
-            .best_time()
-            .map_or_else(|| "—".to_string(), |t| t.format("%H:%M:%S").to_string());
+        let time_str = sats.best_time().map_or_else(
+            || gt_ui_theme::EM_DASH.to_string(),
+            |t| t.format("%H:%M:%S").to_string(),
+        );
         let label = format!(
             "{time_str}  {}/{}",
             sats.fix_count(),

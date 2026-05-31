@@ -6,16 +6,11 @@ use gt_types::{
     DataCategory, DataPointRef, FileIdx, GlobalFilter, HighlightScope, LoadedFile, LoadedTrack,
     MapHighlight, NavPoint, PointIdx, SpatialPoint, TrackDataVisibility, TrackIdx,
 };
+use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH, MINUS_SIGN};
 use std::collections::HashMap;
 use uom::si::angle::degree;
 use uom::si::velocity::kilometer_per_hour;
 use walkers::{MapMemory, Plugin, Projector};
-const EM_DASH: &str = "—";
-const DEGREE_SIGN: &str = "°";
-/// U+0394 GREEK CAPITAL LETTER DELTA — used as a mathematical difference symbol.
-const DELTA: &str = "Δ";
-/// U+2212 MINUS SIGN — visually distinct from the ASCII hyphen-minus.
-const MINUS_SIGN: &str = "−";
 
 pub struct TpvRenderer<'a> {
     files: &'a [LoadedFile],
@@ -547,8 +542,8 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
                                     match sat.snr() {
                                         Some(snr) => {
                                             ui.label(
-                                                egui::RichText::new(format!("{snr:.1}"))
-                                                    .color(snr_color(snr)),
+                                                egui::RichText::new(format!("{:.1}", snr.value()))
+                                                    .color(gt_ui_theme::snr_color(snr.quality())),
                                             );
                                         }
                                         None => {
@@ -665,28 +660,6 @@ fn format_signed_delta(delta_ms: i64) -> String {
             write!(out, "{s}s").ok();
         }
         out
-    }
-}
-
-/// Map an SNR value (dB-Hz) to a colour on a green → red gradient.
-///
-/// Typical GPS SNR ranges:
-/// - ≥ 40 dB-Hz: excellent lock
-/// - 35–40: good
-/// - 30–35: moderate
-/// - 25–30: weak
-/// - < 25: very weak / marginal
-fn snr_color(snr: f32) -> Color32 {
-    if snr >= 40.0 {
-        Color32::from_rgb(0, 200, 0) // green — excellent
-    } else if snr >= 35.0 {
-        Color32::from_rgb(120, 200, 0) // yellow-green — good
-    } else if snr >= 30.0 {
-        Color32::from_rgb(220, 200, 0) // yellow — moderate
-    } else if snr >= 25.0 {
-        Color32::from_rgb(255, 140, 0) // orange — weak
-    } else {
-        Color32::from_rgb(220, 60, 0) // red — very weak
     }
 }
 

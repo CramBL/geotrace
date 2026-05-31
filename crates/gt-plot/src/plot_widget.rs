@@ -499,7 +499,7 @@ pub fn show_trip_plot(
             let x = t.timestamp() as f64;
             plot_ui.vline(
                 VLine::new("Map position", x)
-                    .color(Color32::from_rgba_unmultiplied(100, 200, 255, 200))
+                    .color(gt_ui_theme::HIGHLIGHT_BLUE_SEEK)
                     .width(1.5),
             );
         }

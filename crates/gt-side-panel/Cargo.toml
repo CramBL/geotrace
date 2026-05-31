@@ -12,9 +12,12 @@ egui.workspace = true
 egui-phosphor.workspace = true
 gt-fmt = { path = "../gt-fmt" }
 gt-types = { path = "../gt-types" }
+gt-ui-theme = { path = "../gt-ui-theme" }
 
 [dev-dependencies]
 egui_kittest = { version = "0.34.3", features = ["wgpu", "snapshot"] }
+gt-data-ops = { path = "../gt-data-ops" }
+gt-test-utils = { path = "../gt-test-utils" }
 
 [lints]
 workspace = true

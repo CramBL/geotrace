@@ -60,7 +60,7 @@ pub fn load_file_with_progress(
     progress(0.65, STAGE_CONVERTING);
     let (points, markers, event_markers, event_marker_styles) = from_nav_file(&nav_file)?;
     progress(0.90, STAGE_SEGMENTING);
-    let loaded = gt_types::segment::build_loaded_file(
+    let loaded = gt_data_ops::build_loaded_file(
         filename,
         &points,
         &markers,
@@ -81,7 +81,7 @@ pub fn load_bytes_with_progress(
     progress(0.60, STAGE_CONVERTING);
     let (points, markers, event_markers, event_marker_styles) = from_nav_file(&nav_file)?;
     progress(0.90, STAGE_SEGMENTING);
-    let loaded = gt_types::segment::build_loaded_file(
+    let loaded = gt_data_ops::build_loaded_file(
         filename,
         &points,
         &markers,
@@ -379,7 +379,7 @@ mod tests {
         assert_eq!(first.prn(), 3);
         assert_eq!(first.elevation(), Some(30.0));
         assert_eq!(first.azimuth(), Some(90.0));
-        assert_eq!(first.snr(), Some(28.0));
+        assert_eq!(first.snr().map(|s| s.value()), Some(28.0));
     }
 
     #[test]

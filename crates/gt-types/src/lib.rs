@@ -6,8 +6,7 @@ pub mod markers;
 pub(crate) mod mercator;
 pub mod nav_point;
 pub mod satellites;
-pub mod segment;
-pub mod test_data;
+pub use satellites::{Prn, SignalQuality, Snr};
 pub mod time_types;
 pub mod tpv;
 pub mod track;
@@ -30,9 +29,6 @@ pub use tpv::TimePositionVelocity;
 pub use tpv::TimePositionVelocityBuilder;
 pub use track::{
     FileMetadata, LoadedFile, LoadedTrack, MarkerRequirement, MercBounds, SpatialPoint, TimeRange,
-    TrackMetadata, build_global_tree, merc_bounds_for_rect,
+    TrackMetadata, merc_bounds_for_rect,
 };
 pub use visibility::{FileVisibility, TrackDataVisibility, TrackVisibility};
-
-pub use test_data::marker_test_data;
-pub use test_data::nav_test_data;

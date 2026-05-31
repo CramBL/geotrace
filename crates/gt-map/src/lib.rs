@@ -194,9 +194,10 @@ pub fn register_marker_icons(ctx: &egui::Context) {
         include_bytes!("icons/wrench.svg").as_slice(),
     );
 }
+use gt_data_ops::build_global_tree;
 use gt_types::{
     DataCategory, DataPointRef, EventMarkerVisibility, GlobalFilter, HighlightScope, LoadedFile,
-    MapHighlight, SpatialPoint, TrackDataVisibility, build_global_tree,
+    MapHighlight, SpatialPoint, TrackDataVisibility,
 };
 use std::time::Instant;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
@@ -1010,9 +1011,10 @@ fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Rect) -> GeoB
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gt_test_utils::nav_test_data;
     use gt_types::{
         Coord, DataCategory, FileMetadata, LoadedFile, LoadedTrack, Rect, TimeRange, TrackMetadata,
-        merc_bounds_for_rect, nav_test_data,
+        merc_bounds_for_rect,
     };
 
     fn make_file_from_points(points: Vec<gt_types::NavPoint>) -> LoadedFile {
@@ -1078,7 +1080,7 @@ mod tests {
         // Confirm the bug scenario: the stale tree (built before deletion) has
         // entries with point_index ≥ 340, which would be OOB for file_b alone.
         let files_initial = vec![file_a, make_file_from_points(points_b)];
-        let stale_tree = gt_types::build_global_tree(&files_initial);
+        let stale_tree = gt_data_ops::build_global_tree(&files_initial);
         let files_after = vec![file_b];
         let stale_has_oob = stale_tree.iter().any(|sp| {
             let Some(file) = files_after.get(sp.file_index.0) else {

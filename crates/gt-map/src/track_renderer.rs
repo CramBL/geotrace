@@ -3,36 +3,8 @@ use gt_types::{
     DataCategory, FileIdx, GlobalFilter, HighlightScope, LoadedFile, MapHighlight, MercBounds,
     TrackDataVisibility, TrackIdx, track_passes_filter,
 };
+use gt_ui_theme::{HIGHLIGHT_BLUE, track_color};
 use walkers::{MapMemory, Plugin, Projector};
-
-/// Vibrant colors assigned to trip tracks — chosen to stand out on both OSM
-/// and satellite map backgrounds. The palette cycles over (file_index, track_index)
-/// using a mixing function so adjacent trips get distinct colours.
-const TRACK_COLORS: [Color32; 12] = [
-    Color32::from_rgb(255, 85, 0),   // vivid orange
-    Color32::from_rgb(220, 20, 220), // magenta
-    Color32::from_rgb(0, 210, 100),  // lime green
-    Color32::from_rgb(30, 180, 255), // sky blue
-    Color32::from_rgb(255, 220, 0),  // bright yellow
-    Color32::from_rgb(255, 50, 110), // hot pink
-    Color32::from_rgb(0, 230, 230),  // cyan
-    Color32::from_rgb(200, 110, 0),  // amber
-    Color32::from_rgb(155, 30, 255), // purple
-    Color32::from_rgb(0, 255, 160),  // mint
-    Color32::from_rgb(255, 140, 30), // golden
-    Color32::from_rgb(80, 200, 255), // powder blue
-];
-
-fn trip_track_color(fi: usize, ti: usize) -> Color32 {
-    // Mix file and trip indices with coprime factors so each (fi,ti) pair
-    // maps to a distinct slot even for moderate numbers of files/trips.
-    let idx = fi.wrapping_mul(7).wrapping_add(ti.wrapping_mul(3));
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "idx is computed via modulo so always in bounds"
-    )]
-    TRACK_COLORS[idx % TRACK_COLORS.len()]
-}
 
 pub struct TrackRenderer<'a> {
     files: &'a [LoadedFile],
@@ -67,9 +39,9 @@ impl<'a> TrackRenderer<'a> {
 
     fn trip_stroke(&self, fi: FileIdx, ti: TrackIdx) -> Stroke {
         if self.is_trip_highlighted(fi, ti) {
-            Stroke::new(4.0, Color32::from_rgb(100, 200, 255))
+            Stroke::new(4.0, HIGHLIGHT_BLUE)
         } else {
-            Stroke::new(3.0, trip_track_color(fi.0, ti.0))
+            Stroke::new(3.0, track_color(fi.0, ti.0))
         }
     }
 

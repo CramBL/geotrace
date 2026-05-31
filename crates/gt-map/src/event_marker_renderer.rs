@@ -3,6 +3,7 @@ use gt_types::{
     DataCategory, DataPointRef, EventMarkerStyle, GlobalFilter, HighlightScope, LoadedFile,
     MapHighlight, MarkerIcon, SpatialPoint, TrackDataVisibility, filter,
 };
+use gt_ui_theme::HIGHLIGHT_BLUE;
 use std::collections::HashMap;
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -259,18 +260,15 @@ fn draw_diamond(ui: &Ui, center: Pos2, color: Color32, highlighted: bool) {
             ]
             .to_vec(),
             Color32::TRANSPARENT,
-            Stroke::new(1.5, Color32::from_rgb(100, 200, 255)),
+            Stroke::new(1.5, HIGHLIGHT_BLUE),
         ));
     }
 }
 
 fn draw_event_icon(ui: &Ui, center: Pos2, uri: &'static str, size: f32, highlighted: bool) {
     if highlighted {
-        ui.painter().circle_stroke(
-            center,
-            (size / 2.0) + 4.0,
-            Stroke::new(2.0, Color32::from_rgb(100, 200, 255)),
-        );
+        ui.painter()
+            .circle_stroke(center, (size / 2.0) + 4.0, Stroke::new(2.0, HIGHLIGHT_BLUE));
     }
     egui::Image::new(egui::ImageSource::Uri(std::borrow::Cow::Borrowed(uri))).paint_at(
         ui,

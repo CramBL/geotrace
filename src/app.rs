@@ -850,7 +850,7 @@ impl eframe::App for App {
             if let Some(error) = &self.load_error {
                 ui.horizontal(|ui| {
                     ui.colored_label(
-                        egui::Color32::from_rgb(220, 70, 50),
+                        gt_ui_theme::ERROR_INDICATOR,
                         format!("{} {error}", egui_phosphor::regular::WARNING),
                     );
                     dismiss = ui.small_button(egui_phosphor::regular::X).clicked();

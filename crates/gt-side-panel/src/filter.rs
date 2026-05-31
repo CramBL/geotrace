@@ -1,8 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use egui::Ui;
 use gt_types::{GlobalFilter, LoadedFile, MarkerRequirement};
-
-const EM_DASH: &str = "—";
+use gt_ui_theme::EM_DASH;
 
 /// Persistent state for raw text inputs in the filter panel.
 /// Kept separate from `GlobalFilter` so it survives the parse round-trip.

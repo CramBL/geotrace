@@ -28,7 +28,28 @@ mod tests {
             )
             .build();
 
-        // 2. gt_fmt Isolation (Whitelist)
+        // 2. gt_ui_theme Isolation (Whitelist)
+        builder
+            .module_lint()
+            .lint_named("gt_ui_theme_isolation")
+            .matching(|m| m.module("gt_ui_theme.*"))
+            .with_severity(Severity::Error)
+            .restrict_imports(
+                Some(vec![
+                    "^$".into(),
+                    "std.*".into(),
+                    "core.*".into(),
+                    "alloc.*".into(),
+                    "egui.*".into(),
+                    "gt_types.*".into(),
+                    "crate.*".into(),
+                    "gt_ui_theme.*".into(),
+                ]),
+                None,
+            )
+            .build();
+
+        // 2b. gt_fmt Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_fmt_isolation")
@@ -62,13 +83,10 @@ mod tests {
                     "alloc.*".into(),
                     "bon.*".into(),
                     "chrono.*".into(),
-                    "geo.*".into(),
                     "geo_types.*".into(),
                     "proptest.*".into(),
                     "strum.*".into(),
                     "uom.*".into(),
-                    "vec1.*".into(),
-                    "gt_geo_math.*".into(),
                     "rstar.*".into(),
                     "crate.*".into(),
                     "gt_types.*".into(),
@@ -78,13 +96,64 @@ mod tests {
                     "markers.*".into(),
                     "nav_point.*".into(),
                     "satellites.*".into(),
-                    "segment.*".into(),
-                    "test_data.*".into(),
                     "time_types.*".into(),
                     "track.*".into(),
                     "tpv.*".into(),
                     "visibility.*".into(),
                     "event_marker_visibility.*".into(),
+                ]),
+                None,
+            )
+            .build();
+
+        // 3b. gt_test_utils Isolation (Whitelist)
+        builder
+            .module_lint()
+            .lint_named("gt_test_utils_isolation")
+            .matching(|m| m.module("gt_test_utils.*"))
+            .with_severity(Severity::Error)
+            .restrict_imports(
+                Some(vec![
+                    "^$".into(),
+                    "std.*".into(),
+                    "core.*".into(),
+                    "alloc.*".into(),
+                    "chrono.*".into(),
+                    "geo.*".into(),
+                    "geo_types.*".into(),
+                    "gt_types.*".into(),
+                    "uom.*".into(),
+                    "crate.*".into(),
+                    "gt_test_utils.*".into(),
+                    "fixtures.*".into(),
+                ]),
+                None,
+            )
+            .build();
+
+        // 3c. gt_data_ops Isolation (Whitelist)
+        builder
+            .module_lint()
+            .lint_named("gt_data_ops_isolation")
+            .matching(|m| m.module("gt_data_ops.*"))
+            .with_severity(Severity::Error)
+            .restrict_imports(
+                Some(vec![
+                    "^$".into(),
+                    "std.*".into(),
+                    "core.*".into(),
+                    "alloc.*".into(),
+                    "chrono.*".into(),
+                    "geo_types.*".into(),
+                    "gt_geo_math.*".into(),
+                    "gt_types.*".into(),
+                    "rstar.*".into(),
+                    "uom.*".into(),
+                    "vec1.*".into(),
+                    "crate.*".into(),
+                    "gt_data_ops.*".into(),
+                    "segment.*".into(),
+                    "spatial.*".into(),
                 ]),
                 None,
             )
@@ -111,7 +180,10 @@ mod tests {
                     "rstar.*".into(),
                     "walkers.*".into(),
                     "uom.*".into(),
+                    "gt_data_ops.*".into(),
+                    "gt_test_utils.*".into(),
                     "gt_types.*".into(),
+                    "gt_ui_theme.*".into(),
                     "crate.*".into(),
                     "gt_map.*".into(),
                     "geo_types.*".into(),
@@ -165,6 +237,7 @@ mod tests {
                     "rayon.*".into(),
                     "uom.*".into(),
                     "gt_types.*".into(),
+                    "gt_ui_theme.*".into(),
                     "crate.*".into(),
                     "gt_plot.*".into(),
                     // Sub-module shorthands used by the compiler
@@ -203,6 +276,7 @@ mod tests {
                     "gt_io.*".into(),
                     "gt_log_marker.*".into(),
                     "gt_side_panel.*".into(),
+                    "gt_ui_theme.*".into(),
                     "geotrace_sdk.*".into(),
                     "rfd.*".into(),
                     "uom.*".into(),
@@ -234,8 +308,10 @@ mod tests {
                     "egui.*".into(),
                     "egui_phosphor.*".into(),
                     "uom.*".into(),
+                    "gt_data_ops.*".into(),
                     "gt_types.*".into(),
                     "gt_fmt.*".into(),
+                    "gt_ui_theme.*".into(),
                     "crate.*".into(),
                     "gt_side_panel.*".into(),
                     // Sub-module shorthands
@@ -338,6 +414,7 @@ mod tests {
                     "std.*".into(),
                     "core.*".into(),
                     "alloc.*".into(),
+                    "gt_data_ops.*".into(),
                     "gt_types.*".into(),
                     "geotrace_sdk.*".into(),
                     "thiserror.*".into(),
