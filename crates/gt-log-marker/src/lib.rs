@@ -364,6 +364,8 @@ fn associate(ts: &DateTime<Utc>, nav_points: &[NavPoint], window_s: i64) -> Opti
 
 #[cfg(test)]
 mod tests {
+    use gt_test_utils::{assert_matches_sequence, nav_points_from};
+
     use super::*;
     use chrono::TimeZone;
     use uom::si::angle::degree;
@@ -564,30 +566,10 @@ mod tests {
         assert_eq!(a.assign(s2), 0);
     }
 
-    fn make_nav_points(start: DateTime<Utc>, count: usize, step_secs: i64) -> Vec<NavPoint> {
-        use gt_types::TimePositionVelocity;
-        use gt_types::time_types::GpsTime;
-        use uom::si::f64::Velocity;
-        use uom::si::velocity::meter_per_second;
-        (0..count)
-            .map(|i| {
-                let t = start + chrono::Duration::seconds(i as i64 * step_secs);
-                let tpv = TimePositionVelocity::builder()
-                    .time(GpsTime::from_utc(t))
-                    .lat(Latitude::new(55.0 + i as f64 * 0.001))
-                    .lon(Longitude::new(12.0 + i as f64 * 0.001))
-                    .heading(Angle::new::<degree>(0.0))
-                    .velocity(Velocity::new::<meter_per_second>(1.0))
-                    .build();
-                NavPoint::new(tpv, None)
-            })
-            .collect()
-    }
-
     #[test]
     fn associate_interpolates_midpoint() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
-        let pts = make_nav_points(t0, 5, 1);
+        let pts = nav_points_from(t0, 5, 1);
         let ts = t0 + chrono::Duration::milliseconds(500);
         let (lat, lon) = associate(&ts, &pts, 60).expect("should associate");
         let expected_lat = 55.0 + 0.0005;
@@ -599,7 +581,7 @@ mod tests {
     #[test]
     fn associate_exact_fix_time() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
-        let pts = make_nav_points(t0, 5, 1);
+        let pts = nav_points_from(t0, 5, 1);
         let (lat, lon) = associate(&t0, &pts, 60).expect("should associate");
         assert!((lat - 55.0).abs() < 1e-9);
         assert!((lon - 12.0).abs() < 1e-9);
@@ -608,7 +590,7 @@ mod tests {
     #[test]
     fn associate_within_60s_after_last() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
-        let pts = make_nav_points(t0, 5, 1); // last fix at t0+4s
+        let pts = nav_points_from(t0, 5, 1); // last fix at t0+4s
         let ts = t0 + chrono::Duration::seconds(4 + 59);
         assert!(associate(&ts, &pts, 60).is_some());
     }
@@ -616,7 +598,7 @@ mod tests {
     #[test]
     fn associate_beyond_60s_after_last() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
-        let pts = make_nav_points(t0, 5, 1); // last fix at t0+4s
+        let pts = nav_points_from(t0, 5, 1); // last fix at t0+4s
         let ts = t0 + chrono::Duration::seconds(4 + 61);
         assert!(associate(&ts, &pts, 60).is_none());
     }
@@ -624,7 +606,7 @@ mod tests {
     #[test]
     fn associate_beyond_60s_before_first() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
-        let pts = make_nav_points(t0, 5, 1);
+        let pts = nav_points_from(t0, 5, 1);
         let ts = t0 - chrono::Duration::seconds(61);
         assert!(associate(&ts, &pts, 60).is_none());
     }
@@ -632,7 +614,7 @@ mod tests {
     #[test]
     fn associate_within_60s_before_first() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
-        let pts = make_nav_points(t0, 5, 1);
+        let pts = nav_points_from(t0, 5, 1);
         let ts = t0 - chrono::Duration::seconds(30);
         let (lat, lon) = associate(&ts, &pts, 60).expect("should associate");
         assert!((lat - 55.0).abs() < 1e-9);
@@ -656,7 +638,7 @@ mod tests {
     #[test]
     fn load_log_mix_associated_unassociated() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
-        let pts = make_nav_points(t0, 5, 1);
+        let pts = nav_points_from(t0, 5, 1);
         let entries = vec![
             (t0, "msg alpha"),
             (t0 + chrono::Duration::seconds(1), "msg beta"),
@@ -704,7 +686,7 @@ mod tests {
     #[test]
     fn load_log_two_bad_lines_then_good_continues() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
-        let pts = make_nav_points(t0, 5, 1);
+        let pts = nav_points_from(t0, 5, 1);
         let content = format!(
             "2026-01-01 00:00:00 msg0\nNOT_A_TIMESTAMP\nALSO_NOT\n2026-01-01 00:00:01 msg1\n"
         );
@@ -720,7 +702,7 @@ mod tests {
     #[test]
     fn load_log_three_consecutive_bad_aborts() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
-        let pts = make_nav_points(t0, 5, 1);
+        let pts = nav_points_from(t0, 5, 1);
         let content = "2026-01-01 00:00:00 msg0\nBAD1\nBAD2\nBAD3\n2026-01-01 00:00:01 msg1\n";
         let result = load_log(
             &content,
@@ -735,7 +717,7 @@ mod tests {
     #[test]
     fn load_log_blank_lines_dont_count_toward_failures() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
-        let pts = make_nav_points(t0, 5, 1);
+        let pts = nav_points_from(t0, 5, 1);
         // bad, blank, bad, blank, bad — blanks don't count, so only 3 non-empty failures
         let content =
             "2026-01-01 00:00:00 good\nBAD\n\nBAD\n\nBAD\n2026-01-01 00:00:01 also_good\n";
@@ -753,7 +735,7 @@ mod tests {
     #[test]
     fn load_log_markers_have_log_icon() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
-        let pts = make_nav_points(t0, 5, 1);
+        let pts = nav_points_from(t0, 5, 1);
         let content = make_log_content(&[(t0, "msg")]);
         let result = load_log(
             &content,
@@ -767,7 +749,7 @@ mod tests {
     #[test]
     fn load_log_color_groups_match_assigner() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
-        let pts = make_nav_points(t0, 10, 1);
+        let pts = nav_points_from(t0, 10, 1);
         let very_different = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
         let entries = vec![
             (t0, "gpsd[1234]: offset 0.003"),
@@ -784,17 +766,14 @@ mod tests {
             utc(2026, 5, 23, 0, 0, 0),
             &AssociationConfig::default(),
         );
-        assert_eq!(result.markers.len(), 3);
         let groups: Vec<_> = result.markers.iter().map(|m| m.color_group).collect();
-        assert_eq!(groups[0], Some(0));
-        assert_eq!(groups[1], Some(0)); // same group as first
-        assert_eq!(groups[2], Some(1)); // different group
+        assert_matches_sequence!(groups, [Some(0), Some(0), Some(1)]);
     }
 
     #[test]
     fn load_log_microsecond_precision() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
-        let pts = make_nav_points(t0, 5, 1);
+        let pts = nav_points_from(t0, 5, 1);
         // SyslogShortMicro line
         let content = "Jan  1 00:00:00.500000 msg_micro\n";
         let result = load_log(

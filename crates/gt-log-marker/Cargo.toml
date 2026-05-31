@@ -12,6 +12,7 @@ gt-types = { path = "../gt-types" }
 log.workspace = true
 
 [dev-dependencies]
+gt-test-utils = { path = "../gt-test-utils" }
 uom.workspace = true
 
 [lints]

@@ -138,6 +138,126 @@ pub fn nav_test_data() -> Vec<NavPoint> {
     route
 }
 
+/// A single GPS fix at a known location (Copenhagen, 2026-01-01 12:00:00 UTC).
+///
+/// Useful for edge-case tests that require the minimum valid input.
+#[expect(
+    clippy::unwrap_used,
+    reason = "Test data generation with hardcoded values"
+)]
+pub fn single_nav_point() -> NavPoint {
+    let time = NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+        NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+    )
+    .and_utc();
+    let tpv = TimePositionVelocity::builder()
+        .time(GpsTime::from_utc(time))
+        .lat(Latitude::new(55.6867))
+        .lon(Longitude::new(12.5638))
+        .heading(Angle::new::<degree>(0.0))
+        .velocity(Velocity::new::<kilometer_per_hour>(0.0))
+        .build();
+    NavPoint::new(tpv, None)
+}
+
+/// `count` evenly-spaced GPS fixes, one per second starting at 2026-01-01 12:00:00 UTC.
+///
+/// All points are at the same location (stationary). No satellite reports.
+/// Useful for tests that need a predictable number of fixes without caring about movement.
+#[expect(
+    clippy::unwrap_used,
+    reason = "Test data generation with hardcoded values"
+)]
+pub fn stationary_nav_data(count: usize) -> Vec<NavPoint> {
+    let start = NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+        NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+    )
+    .and_utc();
+    (0..count)
+        .map(|i| {
+            let time = start + Duration::seconds(i as i64);
+            let tpv = TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(time))
+                .lat(Latitude::new(55.6867))
+                .lon(Longitude::new(12.5638))
+                .heading(Angle::new::<degree>(0.0))
+                .velocity(Velocity::new::<kilometer_per_hour>(0.0))
+                .build();
+            NavPoint::new(tpv, None)
+        })
+        .collect()
+}
+
+/// Two groups of GPS fixes separated by a 10-minute gap, suitable for trip segmentation tests.
+///
+/// Returns `first_count + second_count` points. The gap falls between index `first_count - 1`
+/// and `first_count`. Both groups move along the same straight line; no satellite reports.
+#[expect(
+    clippy::unwrap_used,
+    reason = "Test data generation with hardcoded values"
+)]
+pub fn nav_data_with_gap(first_count: usize, second_count: usize) -> Vec<NavPoint> {
+    let start = NaiveDateTime::new(
+        NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+        NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+    )
+    .and_utc();
+    let gap = Duration::minutes(10);
+
+    let make_point = |i: usize, time_offset: Duration| -> NavPoint {
+        let time = start + time_offset;
+        let lat = 55.6867 + (i as f64) * 0.0001;
+        let lon = 12.5638 + (i as f64) * 0.0001;
+        let tpv = TimePositionVelocity::builder()
+            .time(GpsTime::from_utc(time))
+            .lat(Latitude::new(lat))
+            .lon(Longitude::new(lon))
+            .heading(Angle::new::<degree>(45.0))
+            .velocity(Velocity::new::<kilometer_per_hour>(15.0))
+            .build();
+        NavPoint::new(tpv, None)
+    };
+
+    let mut points = Vec::with_capacity(first_count + second_count);
+    for i in 0..first_count {
+        points.push(make_point(i, Duration::seconds(i as i64)));
+    }
+    let second_start = Duration::seconds(first_count as i64) + gap;
+    for i in 0..second_count {
+        points.push(make_point(
+            first_count + i,
+            second_start + Duration::seconds(i as i64),
+        ));
+    }
+    points
+}
+
+/// `count` GPS fixes starting at `start`, separated by `step_secs` each.
+///
+/// Points move slightly north-east (0.001°/step) to avoid zero-distance degenerate tracks.
+/// No satellite reports. Useful when tests need full control over timestamps.
+pub fn nav_points_from(
+    start: chrono::DateTime<chrono::Utc>,
+    count: usize,
+    step_secs: i64,
+) -> Vec<NavPoint> {
+    (0..count)
+        .map(|i| {
+            let time = start + Duration::seconds(i as i64 * step_secs);
+            let tpv = TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(time))
+                .lat(Latitude::new(55.0 + i as f64 * 0.001))
+                .lon(Longitude::new(12.0 + i as f64 * 0.001))
+                .heading(Angle::new::<degree>(45.0))
+                .velocity(Velocity::new::<kilometer_per_hour>(15.0))
+                .build();
+            NavPoint::new(tpv, None)
+        })
+        .collect()
+}
+
 pub fn marker_test_data() -> Vec<CustomMarker> {
     let nav_points = nav_test_data();
     let mut markers = Vec::new();
@@ -234,6 +354,48 @@ fn format_duration(duration: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn single_nav_point_is_valid() {
+        let p = single_nav_point();
+        assert!(p.tpv.lat().as_degrees() > 55.0 && p.tpv.lat().as_degrees() < 56.0);
+        assert!(p.satellites.is_none());
+    }
+
+    #[test]
+    fn stationary_nav_data_has_correct_count() {
+        let points = stationary_nav_data(5);
+        assert_eq!(points.len(), 5);
+        let lats: Vec<f64> = points.iter().map(|p| p.tpv.lat().as_degrees()).collect();
+        assert!(lats.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-9));
+    }
+
+    #[test]
+    fn stationary_nav_data_has_consecutive_timestamps() {
+        let points = stationary_nav_data(3);
+        let t0 = points[0].tpv.time().utc();
+        let t1 = points[1].tpv.time().utc();
+        let t2 = points[2].tpv.time().utc();
+        assert_eq!((t1 - t0).num_seconds(), 1);
+        assert_eq!((t2 - t1).num_seconds(), 1);
+    }
+
+    #[test]
+    fn nav_data_with_gap_has_correct_total_count() {
+        let points = nav_data_with_gap(3, 4);
+        assert_eq!(points.len(), 7);
+    }
+
+    #[test]
+    fn nav_data_with_gap_has_gap_between_groups() {
+        let points = nav_data_with_gap(3, 4);
+        let gap_start = points[2].tpv.time().utc();
+        let gap_end = points[3].tpv.time().utc();
+        assert!(
+            (gap_end - gap_start).num_seconds() > 300,
+            "gap should be >5 minutes"
+        );
+    }
 
     #[test]
     fn test_nav_data_generation() {

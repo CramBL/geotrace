@@ -340,6 +340,7 @@ mod tests {
                     "chrono.*".into(),
                     "uom.*".into(),
                     "gt_types.*".into(),
+                    "gt_test_utils.*".into(),
                     "thiserror.*".into(),
                     "log.*".into(),
                     "crate.*".into(),

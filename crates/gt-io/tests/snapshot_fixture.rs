@@ -27,6 +27,7 @@ use geotrace_sdk::{
     Angle, Annotation, Constellation as SdkConst, DateTime, Duration, MarkerIcon as SdkIcon,
     NavFileBuilder, NavFix, Satellite as SdkSat, SatelliteReport, Utc, Velocity,
 };
+use gt_test_utils::assert_matches_sequence;
 use gt_types::GeneratedMarkerKind;
 
 fn fixture_path() -> PathBuf {
@@ -233,9 +234,7 @@ fn generate_and_verify_snapshot_fixture() {
     // Two trips separated by a >5-minute gap
     assert_eq!(loaded.tracks.len(), 2, "expected 2 trips");
 
-    // ------------------------------------------------------------------
     // Trip 0
-    // ------------------------------------------------------------------
     let t0 = loaded.tracks.first().expect("trip 0 exists");
 
     assert_eq!(t0.points.len(), 12, "trip 0: 12 TPV points");
@@ -257,16 +256,13 @@ fn generate_and_verify_snapshot_fixture() {
     );
     assert!(t0.metadata.has_custom_markers, "trip 0 has custom markers");
 
-    let mut gen_iter = t0.generated_markers.iter();
-    let lost = gen_iter.next().expect("first generated marker");
-    let regained = gen_iter.next().expect("second generated marker");
-    assert!(
-        matches!(lost.kind, GeneratedMarkerKind::GpsFixLost),
-        "first generated marker should be GpsFixLost"
-    );
-    assert!(
-        matches!(regained.kind, GeneratedMarkerKind::GpsFixRegained),
-        "second generated marker should be GpsFixRegained"
+    let gen_kinds: Vec<_> = t0.generated_markers.iter().map(|m| m.kind).collect();
+    assert_matches_sequence!(
+        gen_kinds,
+        [
+            GeneratedMarkerKind::GpsFixLost,
+            GeneratedMarkerKind::GpsFixRegained
+        ]
     );
 
     let mut custom = t0.custom_markers.iter();
@@ -275,9 +271,7 @@ fn generate_and_verify_snapshot_fixture() {
     assert_eq!(bike_lock.label, "Bike lock spot");
     assert_eq!(coffee.label, "Coffee stop");
 
-    // ------------------------------------------------------------------
     // Trip 1
-    // ------------------------------------------------------------------
     let t1 = loaded.tracks.get(1).expect("trip 1 exists");
 
     assert_eq!(t1.points.len(), 8, "trip 1: 8 TPV points");
@@ -302,9 +296,7 @@ fn generate_and_verify_snapshot_fixture() {
     let checkpoint = t1.custom_markers.first().expect("trip 1 custom marker");
     assert_eq!(checkpoint.label, "Checkpoint");
 
-    // ------------------------------------------------------------------
     // File-level metadata
-    // ------------------------------------------------------------------
     assert_eq!(loaded.metadata.filename, "snapshot.nvd");
     assert!(
         loaded.metadata.total_distance_km > 0.8 && loaded.metadata.total_distance_km < 2.5,

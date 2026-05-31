@@ -2097,6 +2097,7 @@ name = "gt-log-marker"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "gt-test-utils",
  "gt-types",
  "log",
  "uom",
