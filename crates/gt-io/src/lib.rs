@@ -8,6 +8,7 @@ const STAGE_SEGMENTING: &str = "Segmenting…";
 
 use std::fs::File;
 use std::path::Path;
+use std::sync::Arc;
 
 use geotrace_sdk::{
     Constellation as SdkConstellation, EventMarkerColor as SdkEventMarkerColor,
@@ -18,8 +19,8 @@ use geotrace_sdk::{
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::{GpsTime, SysTime};
 use gt_types::{
-    CustomMarker, EventMarker, EventMarkerStyle, Latitude, LoadedFile, Longitude, MarkerIcon,
-    NavPoint, TimePositionVelocity,
+    CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude, LoadedFile, Longitude,
+    MarkerIcon, NavPoint, TimePositionVelocity,
 };
 
 fn to_uom_velocity(v: geotrace_sdk::Velocity) -> uom::si::f64::Velocity {
@@ -66,6 +67,7 @@ pub fn load_file_with_progress(
     progress(0.65, STAGE_CONVERTING);
     let (points, markers, event_markers, event_marker_styles) = from_nav_file(&nav_file)?;
     progress(0.90, STAGE_SEGMENTING);
+    let source = FileSource::NvdPath(path.to_path_buf());
     let loaded = gt_data_ops::build_loaded_file(
         filename,
         &points,
@@ -73,6 +75,7 @@ pub fn load_file_with_progress(
         event_markers,
         event_marker_styles,
         config,
+        source,
     );
     Ok(loaded)
 }
@@ -89,6 +92,7 @@ pub fn load_bytes_with_progress(
     progress(0.60, STAGE_CONVERTING);
     let (points, markers, event_markers, event_marker_styles) = from_nav_file(&nav_file)?;
     progress(0.90, STAGE_SEGMENTING);
+    let source = FileSource::NvdBytes(Arc::from(bytes));
     let loaded = gt_data_ops::build_loaded_file(
         filename,
         &points,
@@ -96,6 +100,7 @@ pub fn load_bytes_with_progress(
         event_markers,
         event_marker_styles,
         config,
+        source,
     );
     Ok(loaded)
 }
@@ -296,8 +301,6 @@ mod tests {
     fn build(nav_file: NavFile) -> Result<(Vec<NavPoint>, Vec<CustomMarker>), LoadError> {
         from_nav_file(&nav_file).map(|(pts, markers, _, _)| (pts, markers))
     }
-
-    // -----------------------------------------------------------------------
 
     #[test]
     #[expect(clippy::float_cmp, reason = "direct f64 round-trip comparisons")]

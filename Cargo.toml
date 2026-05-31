@@ -52,6 +52,7 @@ proptest = "1"
 quote = "1"
 rayon = "1"
 rstar = "0.13"
+serde = { version = "1", features = ["derive"] }
 smallvec = { version = "1", features = ["union"] }
 strum = { version = "0.28", features = ["derive"] }
 syn = "2"
@@ -202,7 +203,7 @@ gt-ui-theme = { path = "crates/gt-ui-theme" }
 log.workspace = true
 mimalloc = { version = "0.1.48", features = ["v3"] }
 rfd = "0.17.2"
-serde = { version = "1", features = ["derive"] }
+serde.workspace = true
 toml = "1"
 
 [dev-dependencies]

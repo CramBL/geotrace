@@ -7,7 +7,9 @@ use gt_types::markers::{
 };
 use gt_types::nav_point::NavPoint;
 use gt_types::time_types::GpsTime;
-use gt_types::track::{FileMetadata, LoadedFile, LoadedTrack, TimeRange, TrackMetadata};
+use gt_types::track::{
+    FileMetadata, FileSource, LoadedFile, LoadedTrack, TimeRange, TrackMetadata,
+};
 use std::ops::Range;
 
 /// Configuration for the track-segmentation algorithm.
@@ -244,6 +246,7 @@ pub fn build_loaded_file(
     event_markers: Vec<EventMarker>,
     event_marker_styles: Vec<EventMarkerStyle>,
     config: &SegmentationConfig,
+    source: FileSource,
 ) -> LoadedFile {
     let ranges = segment_trips(points, config);
 
@@ -340,6 +343,7 @@ pub fn build_loaded_file(
             .map(|s| (s.variant_path.clone(), s))
             .collect(),
         orphaned_event_markers,
+        source,
     }
 }
 
@@ -382,8 +386,6 @@ mod tests {
             .build();
         NavPoint::new(tpv, None)
     }
-
-    // --- segment_trips ---
 
     #[test]
     fn segment_trips_empty_input() {
@@ -435,8 +437,6 @@ mod tests {
         assert_eq!(ranges, vec![0..1, 1..2, 2..3]);
     }
 
-    // --- compute_trip_metadata ---
-
     #[test]
     fn compute_trip_metadata_basic() {
         let pts = vec1::vec1![
@@ -464,8 +464,6 @@ mod tests {
         assert_eq!(meta.distance_km, 0.0);
     }
 
-    // --- build_loaded_file ---
-
     #[test]
     fn build_loaded_file_empty_points() {
         let f = build_loaded_file(
@@ -475,6 +473,7 @@ mod tests {
             vec![],
             vec![],
             &SegmentationConfig::default(),
+            FileSource::NvdPath(std::path::PathBuf::from("test.nvd")),
         );
         assert!(f.tracks.is_empty());
         assert_eq!(f.metadata.filename, "test.nvd");
@@ -495,6 +494,7 @@ mod tests {
             vec![],
             vec![],
             &SegmentationConfig::default(),
+            FileSource::NvdPath(std::path::PathBuf::from("ride.nvd")),
         );
         assert_eq!(f.tracks.len(), 2);
         assert_eq!(f.tracks[0].points.len(), 2);

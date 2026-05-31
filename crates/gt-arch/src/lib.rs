@@ -85,6 +85,7 @@ mod tests {
                     "chrono.*".into(),
                     "geo_types.*".into(),
                     "proptest.*".into(),
+                    "serde.*".into(),
                     "strum.*".into(),
                     "uom.*".into(),
                     "rstar.*".into(),

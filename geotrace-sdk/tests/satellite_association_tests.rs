@@ -827,8 +827,7 @@ fn no_filter_1hz_all_sat_associated_with_large_gps_offset() -> Result<(), BuildE
 /// observed on the test device), each sys_time-only SAT report must associate
 /// to the fix from its own GPS epoch, not the neighboring one.
 ///
-/// Root-cause sketch
-/// -----------------
+/// ## Root-cause sketch
 /// `best_guess_gps_us` corrects `SAT.sys_time` into the GPS domain by adding
 /// the delta from the nearest anchor (nearest by anchor-sys_time distance,
 /// where anchor_sys_time = anchor_gps_time − delta).

@@ -11,8 +11,8 @@ use chrono::{DateTime, Utc};
 use egui::Context;
 use gt_plot::PreparedSeries;
 use gt_types::{
-    Coord, CustomMarker, FileMetadata, LoadedFile, LoadedTrack, NavPoint, Rect, TimeRange,
-    TrackMetadata, merc_bounds_for_rect,
+    AssociationConfig, Coord, CustomMarker, FileMetadata, FileSource, LoadedFile, LoadedTrack,
+    NavPoint, Rect, TimeRange, TrackMetadata, merc_bounds_for_rect,
 };
 
 pub(super) const STAGE_STARTING: &str = "Starting…";
@@ -64,6 +64,10 @@ pub enum LoadOutcome {
 }
 
 /// Messages sent from background load threads to the UI thread via `mpsc`.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Completed carries a full LoadOutcome by design; boxing would add an allocation on the infrequent completion path"
+)]
 pub enum LoadMessage {
     /// Intermediate progress update — does not indicate completion.
     Progress {
@@ -228,7 +232,12 @@ impl LoaderManager {
         clippy::expect_used,
         reason = "thread spawn can only fail under extreme system resource exhaustion"
     )]
-    pub fn spawn_log_path(&mut self, path: PathBuf, nav_points: Vec<NavPoint>) {
+    pub fn spawn_log_path(
+        &mut self,
+        path: PathBuf,
+        nav_points: Vec<NavPoint>,
+        assoc_config: AssociationConfig,
+    ) {
         let id = self.alloc_id();
         let filename = path
             .file_name()
@@ -258,6 +267,7 @@ impl LoaderManager {
                     .ok();
                     r_ctx.request_repaint();
                 };
+                let source = FileSource::LogPath(path.clone());
                 report(0.20, STAGE_READING);
                 let content = match fs::read_to_string(&path) {
                     Ok(s) => s,
@@ -271,7 +281,17 @@ impl LoaderManager {
                         return;
                     }
                 };
-                finish_log_load(id, &filename, &content, &nav_points, &tx, &ctx, report);
+                finish_log_load(
+                    id,
+                    &filename,
+                    &content,
+                    &nav_points,
+                    &tx,
+                    &ctx,
+                    report,
+                    assoc_config,
+                    source,
+                );
             })
             .expect("failed to spawn log-path loader thread");
     }
@@ -280,7 +300,13 @@ impl LoaderManager {
         clippy::expect_used,
         reason = "thread spawn can only fail under extreme system resource exhaustion"
     )]
-    pub fn spawn_log_text(&mut self, text: String, filename: String, nav_points: Vec<NavPoint>) {
+    pub fn spawn_log_text(
+        &mut self,
+        text: String,
+        filename: String,
+        nav_points: Vec<NavPoint>,
+        assoc_config: AssociationConfig,
+    ) {
         let id = self.alloc_id();
         self.loading_jobs.push(LoadingJob {
             id,
@@ -291,6 +317,7 @@ impl LoaderManager {
         });
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
+        let source = FileSource::LogText(Arc::from(text.as_str()));
         thread::Builder::new()
             .name(format!("load-log-{filename}"))
             .spawn(move || {
@@ -305,7 +332,17 @@ impl LoaderManager {
                     .ok();
                     r_ctx.request_repaint();
                 };
-                finish_log_load(id, &filename, &text, &nav_points, &tx, &ctx, report);
+                finish_log_load(
+                    id,
+                    &filename,
+                    &text,
+                    &nav_points,
+                    &tx,
+                    &ctx,
+                    report,
+                    assoc_config,
+                    source,
+                );
             })
             .expect("failed to spawn log-text loader thread");
     }
@@ -402,6 +439,7 @@ impl LoaderManager {
 pub(super) fn build_log_loaded_file(
     filename: &str,
     markers: Vec<CustomMarker>,
+    source: FileSource,
 ) -> Option<LoadedFile> {
     let first = markers.first()?;
 
@@ -474,12 +512,17 @@ pub(super) fn build_log_loaded_file(
         tracks: vec![track],
         event_marker_styles: std::collections::HashMap::new(),
         orphaned_event_markers: Vec::new(),
+        source,
     })
 }
 
 /// Shared tail of log-file loading: parse `content`, build a `LoadedFile`, and
 /// send the `Completed` message. Called from both the path-based and text-based
 /// log loader threads after file content has been obtained.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "log loading inherently needs thread ID, file context, IPC channel, progress callback, association config, and source — grouping would obscure rather than clarify"
+)]
 fn finish_log_load(
     id: u64,
     filename: &str,
@@ -488,9 +531,11 @@ fn finish_log_load(
     tx: &mpsc::Sender<LoadMessage>,
     ctx: &Context,
     report: impl Fn(f32, &'static str),
+    assoc_config: AssociationConfig,
+    source: FileSource,
 ) {
     report(0.55, STAGE_PARSING);
-    let result = gt_log_marker::load_log(content, nav_points, chrono::Utc::now());
+    let result = gt_log_marker::load_log(content, nav_points, chrono::Utc::now(), &assoc_config);
 
     if result.markers.is_empty() && result.unassociated.is_empty() {
         tx.send(LoadMessage::Completed {
@@ -503,7 +548,7 @@ fn finish_log_load(
     }
 
     report(0.90, STAGE_PROCESSING);
-    let loaded = build_log_loaded_file(filename, result.markers);
+    let loaded = build_log_loaded_file(filename, result.markers, source);
     report(0.95, STAGE_PLOTTING);
     let series = loaded.as_ref().map(|f| gt_plot::prepare_file_series(0, f));
 

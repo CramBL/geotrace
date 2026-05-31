@@ -11,6 +11,7 @@ bon.workspace = true
 chrono.workspace = true
 geo-types.workspace = true
 rstar.workspace = true
+serde.workspace = true
 strum.workspace = true
 uom.workspace = true
 

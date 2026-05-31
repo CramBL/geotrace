@@ -13,8 +13,8 @@ use gt_map::{MapContextAction, MapLayer, NavMap};
 use gt_plot::PlotState;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
 use gt_types::{
-    DataCategory, FileIdx, GlobalFilter, HighlightScope, LoadedFile, MapHighlight, NavPoint,
-    TrackDataVisibility, TrackIdx,
+    AssociationConfig, DataCategory, FileIdx, GlobalFilter, HighlightScope, LoadedFile,
+    MapHighlight, NavPoint, TrackDataVisibility, TrackIdx,
 };
 use loader::{CompletedLoad, FinishedJob, LoadOutcome, LoaderManager};
 
@@ -74,6 +74,8 @@ pub struct App {
     settings_open: bool,
     /// Active segmentation config — applied to all new file loads and re-segmentation.
     processing_config: SegmentationConfig,
+    /// Active association config — applied to all new log loads.
+    assoc_config: AssociationConfig,
 }
 
 impl App {
@@ -156,6 +158,7 @@ impl App {
             config: ConfigManager::new(AppSnapshot::default()),
             settings_open: false,
             processing_config: SegmentationConfig::default(),
+            assoc_config: AssociationConfig::default(),
         };
 
         app.apply_startup_settings(&loaded_settings);
@@ -173,7 +176,8 @@ impl App {
                     .spawn_nvd_path(path.clone(), app.processing_config);
             } else {
                 let nav_points = app.snapshot_nav_points();
-                app.loader.spawn_log_path(path.clone(), nav_points);
+                app.loader
+                    .spawn_log_path(path.clone(), nav_points, app.assoc_config);
             }
         }
 
@@ -203,7 +207,8 @@ impl App {
             self.loader.spawn_nvd_path(path, self.processing_config);
         } else {
             let nav_points = self.snapshot_nav_points();
-            self.loader.spawn_log_path(path, nav_points);
+            self.loader
+                .spawn_log_path(path, nav_points, self.assoc_config);
         }
     }
 
@@ -271,7 +276,11 @@ impl App {
                 ui.strong("Data Processing");
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.label("Track split gap");
+                    ui.label("Track split gap").on_hover_text(
+                        "Consecutive GPS points separated by more than this gap start a new \
+                             trip segment. For example, with a gap of 5 min, two fixes at 10:00 \
+                             and 10:06 would be split into separate trips.",
+                    );
                     let mut gap_secs = self
                         .processing_config
                         .track_split_gap
@@ -291,17 +300,38 @@ impl App {
                     ui.weak(format!("({:.0} min)", gap_secs as f32 / 60.0));
                 });
                 ui.add_space(4.0);
-                ui.label(
-                    egui::RichText::new(
-                        "Consecutive GPS points separated by more than this gap\nstart a new trip.",
-                    )
-                    .small()
-                    .weak(),
-                );
+                ui.horizontal(|ui| {
+                    ui.label("Log marker window").on_hover_text(
+                        "Maximum time between a log file entry's timestamp and the nearest \
+                             GPS fix for the entry to be placed on the map. For example, with a \
+                             window of 60 s, a log line timestamped at 10:00:30 can be associated \
+                             with a GPS fix from 10:00:00 — but not one from 09:59:00.",
+                    );
+                    let mut window_s = self.assoc_config.log_marker_window_s.clamp(1, 3600);
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut window_s)
+                                .range(1_u64..=3600_u64)
+                                .suffix("s"),
+                        )
+                        .changed()
+                    {
+                        self.assoc_config.log_marker_window_s = window_s;
+                    }
+                    ui.weak(format!("({:.0} min)", window_s as f32 / 60.0));
+                });
                 ui.add_space(8.0);
-                if ui.button("Apply to loaded data").clicked() {
-                    apply = true;
-                }
+                ui.horizontal(|ui| {
+                    if ui.button("Apply to loaded data").clicked() {
+                        apply = true;
+                    }
+                    if ui.button("Restore Defaults").clicked() {
+                        let defaults = crate::settings::ProcessingSettings::default();
+                        self.processing_config.track_split_gap =
+                            chrono::Duration::seconds(defaults.track_split_gap_seconds as i64);
+                        self.assoc_config.log_marker_window_s = defaults.log_marker_window_s;
+                    }
+                });
             });
         self.settings_open = open;
         apply
@@ -315,6 +345,9 @@ impl App {
         self.map.set_layer(map_layer_from_setting(s.map.layer));
         self.processing_config = SegmentationConfig {
             track_split_gap: chrono::Duration::seconds(s.processing.track_split_gap_seconds as i64),
+        };
+        self.assoc_config = AssociationConfig {
+            log_marker_window_s: s.processing.log_marker_window_s,
         };
         self.ctx.set_theme(theme_pref_from_setting(s.ui.theme));
 
@@ -442,6 +475,7 @@ impl App {
                 .track_split_gap
                 .to_std()
                 .map_or(300, |d| d.as_secs()),
+            log_marker_window_s: self.assoc_config.log_marker_window_s,
         }
     }
 
@@ -487,6 +521,7 @@ impl App {
                     .track_split_gap
                     .to_std()
                     .map_or(300, |d| d.as_secs()),
+                log_marker_window_s: self.assoc_config.log_marker_window_s,
             },
         }
     }
@@ -559,6 +594,7 @@ impl App {
                 let event_marker_styles: Vec<gt_types::EventMarkerStyle> =
                     file.event_marker_styles.values().cloned().collect();
                 let filename = file.metadata.filename.clone();
+                let source = file.source.clone();
                 *file = gt_data_ops::build_loaded_file(
                     filename,
                     &all_points,
@@ -566,6 +602,7 @@ impl App {
                     all_event_markers,
                     event_marker_styles,
                     &config,
+                    source,
                 );
             }
             s.plot_state.rebuild_all(&s.loaded_files);
@@ -1041,6 +1078,7 @@ fn handle_dropped_bytes_dispatch(
     bytes: Arc<[u8]>,
     name: &str,
     config: SegmentationConfig,
+    assoc_config: AssociationConfig,
 ) {
     const HDF5_MAGIC: &[u8] = b"\x89HDF\r\n\x1a\n";
     if bytes.starts_with(HDF5_MAGIC) {
@@ -1052,7 +1090,12 @@ fn handle_dropped_bytes_dispatch(
         loader.spawn_nvd_bytes(bytes, filename, config);
     } else if let Ok(text) = str::from_utf8(&bytes) {
         let filename = if name.is_empty() { "dropped.log" } else { name };
-        loader.spawn_log_text(text.to_owned(), filename.to_owned(), nav_points);
+        loader.spawn_log_text(
+            text.to_owned(),
+            filename.to_owned(),
+            nav_points,
+            assoc_config,
+        );
     } else {
         *load_error = Some("Unrecognised file format".to_owned());
     }
@@ -1068,6 +1111,7 @@ impl App {
             bytes,
             name,
             self.processing_config,
+            self.assoc_config,
         );
     }
 }

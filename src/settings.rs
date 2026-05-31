@@ -122,12 +122,15 @@ pub enum ThemeSetting {
 pub struct ProcessingSettings {
     /// Gap between consecutive GPS points that triggers a new trip segment, in seconds.
     pub track_split_gap_seconds: u64,
+    /// Max seconds between a log entry timestamp and the nearest GPS fix for association.
+    pub log_marker_window_s: u64,
 }
 
 impl Default for ProcessingSettings {
     fn default() -> Self {
         Self {
             track_split_gap_seconds: 300,
+            log_marker_window_s: 60,
         }
     }
 }

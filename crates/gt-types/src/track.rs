@@ -4,6 +4,8 @@ use crate::nav_point::NavPoint;
 use chrono::{DateTime, Duration, Utc};
 use geo_types::Rect;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Normalised Web Mercator bounding box, with all values in `[0.0, 1.0]`.
 ///
@@ -176,6 +178,41 @@ pub struct FileMetadata {
     pub time_range: TimeRange,
 }
 
+/// Configuration for log-marker and satellite association.
+///
+/// Stored in `Settings` and persisted to the config file; also carried on
+/// `LoadedFile` so that re-processing knows which window was last used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct AssociationConfig {
+    /// Max seconds between a log-file timestamp and the nearest GPS fix for the
+    /// entry to be associated (placed on the map). Entries further away are
+    /// listed as "unassociated." Default: 60 s.
+    pub log_marker_window_s: u64,
+}
+
+impl Default for AssociationConfig {
+    fn default() -> Self {
+        Self {
+            log_marker_window_s: 60,
+        }
+    }
+}
+
+/// Where the file content came from; stored on [`LoadedFile`] to enable
+/// re-processing when association settings change.
+#[derive(Debug, Clone)]
+pub enum FileSource {
+    /// Loaded from a path on disk (NVD file).
+    NvdPath(PathBuf),
+    /// Loaded from bytes delivered via drag-and-drop (NVD file).
+    NvdBytes(Arc<[u8]>),
+    /// Loaded from a log file on disk.
+    LogPath(PathBuf),
+    /// Loaded from in-memory log text (e.g. dropped bytes decoded to UTF-8).
+    LogText(Arc<str>),
+}
+
 #[derive(Debug, Clone)]
 pub struct LoadedFile {
     pub metadata: FileMetadata,
@@ -184,4 +221,6 @@ pub struct LoadedFile {
     pub event_marker_styles: HashMap<String, EventMarkerStyle>,
     /// Event markers whose timestamp did not fall within any trip's time window.
     pub orphaned_event_markers: Vec<EventMarker>,
+    /// Where this file was loaded from; used to re-process when settings change.
+    pub source: FileSource,
 }

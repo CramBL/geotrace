@@ -2171,6 +2171,7 @@ dependencies = [
  "geo-types",
  "proptest",
  "rstar 0.13.0",
+ "serde",
  "strum",
  "uom",
 ]

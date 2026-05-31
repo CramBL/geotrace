@@ -1,7 +1,5 @@
 use egui_kittest::{Harness, SnapshotOptions};
-use gt_data_ops::build_loaded_file;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
-use gt_test_utils::nav_test_data;
 use gt_types::{FileIdx, GlobalFilter, MapHighlight, TrackIdx};
 
 struct State {
@@ -16,16 +14,17 @@ struct State {
 }
 
 fn make_state(file_count: usize) -> State {
-    let points = nav_test_data();
+    let points = gt_test_utils::nav_test_data();
     let files = (0..file_count)
         .map(|i| {
-            build_loaded_file(
+            gt_data_ops::build_loaded_file(
                 format!("ride_{i}.nvd"),
                 &points,
                 &[],
                 vec![],
                 vec![],
                 &gt_data_ops::SegmentationConfig::default(),
+                gt_types::FileSource::NvdPath(std::path::PathBuf::from(format!("ride_{i}.nvd"))),
             )
         })
         .collect();

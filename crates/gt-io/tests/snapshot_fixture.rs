@@ -4,8 +4,8 @@
 /// The fixture is intentionally deterministic so it can be committed to the repo
 /// and referenced by GUI snapshot tests later.
 ///
-/// Layout
-/// ------
+/// ## Layout
+///
 /// Trip 0 – 12 points at 30 s intervals, all with satellite reports.
 ///   Points 0-4: GPS fix held (5 satellites in fix).
 ///   Point 5:    fix lost (0 in fix)   → generates GpsFixLost marker.

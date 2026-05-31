@@ -1,5 +1,5 @@
 use chrono::{DateTime, Datelike, NaiveDateTime, Utc};
-use gt_types::{CustomMarker, Latitude, Longitude, MarkerIcon, NavPoint};
+use gt_types::{AssociationConfig, CustomMarker, Latitude, Longitude, MarkerIcon, NavPoint};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogFormat {
@@ -221,7 +221,12 @@ pub struct LogLoadResult {
     pub unassociated: Vec<(DateTime<Utc>, String)>,
 }
 
-pub fn load_log(content: &str, nav_points: &[NavPoint], now: DateTime<Utc>) -> LogLoadResult {
+pub fn load_log(
+    content: &str,
+    nav_points: &[NavPoint],
+    now: DateTime<Utc>,
+    config: &AssociationConfig,
+) -> LogLoadResult {
     let empty = LogLoadResult {
         markers: Vec::new(),
         unassociated: Vec::new(),
@@ -287,7 +292,7 @@ pub fn load_log(content: &str, nav_points: &[NavPoint], now: DateTime<Utc>) -> L
     let mut unassociated: Vec<(DateTime<Utc>, String)> = Vec::new();
 
     for ((ts, log_str), group_id) in entries.iter().zip(group_ids.iter()) {
-        let Some((lat, lon)) = associate(ts, nav_points) else {
+        let Some((lat, lon)) = associate(ts, nav_points, config.log_marker_window_s as i64) else {
             unassociated.push((*ts, log_str.clone()));
             continue;
         };
@@ -308,8 +313,7 @@ pub fn load_log(content: &str, nav_points: &[NavPoint], now: DateTime<Utc>) -> L
     }
 }
 
-/// Returns `Some((lat, lon))` if the timestamp is within 60 s of the track.
-fn associate(ts: &DateTime<Utc>, nav_points: &[NavPoint]) -> Option<(f64, f64)> {
+fn associate(ts: &DateTime<Utc>, nav_points: &[NavPoint], window_s: i64) -> Option<(f64, f64)> {
     if nav_points.is_empty() {
         return None;
     }
@@ -331,7 +335,7 @@ fn associate(ts: &DateTime<Utc>, nav_points: &[NavPoint]) -> Option<(f64, f64)> 
         (None, None) => return None,
     };
 
-    if nearest_gap > chrono::Duration::seconds(60) {
+    if nearest_gap > chrono::Duration::seconds(window_s) {
         return None;
     }
 
@@ -585,7 +589,7 @@ mod tests {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
         let pts = make_nav_points(t0, 5, 1);
         let ts = t0 + chrono::Duration::milliseconds(500);
-        let (lat, lon) = associate(&ts, &pts).expect("should associate");
+        let (lat, lon) = associate(&ts, &pts, 60).expect("should associate");
         let expected_lat = 55.0 + 0.0005;
         let expected_lon = 12.0 + 0.0005;
         assert!((lat - expected_lat).abs() < 1e-9);
@@ -596,7 +600,7 @@ mod tests {
     fn associate_exact_fix_time() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
         let pts = make_nav_points(t0, 5, 1);
-        let (lat, lon) = associate(&t0, &pts).expect("should associate");
+        let (lat, lon) = associate(&t0, &pts, 60).expect("should associate");
         assert!((lat - 55.0).abs() < 1e-9);
         assert!((lon - 12.0).abs() < 1e-9);
     }
@@ -606,7 +610,7 @@ mod tests {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
         let pts = make_nav_points(t0, 5, 1); // last fix at t0+4s
         let ts = t0 + chrono::Duration::seconds(4 + 59);
-        assert!(associate(&ts, &pts).is_some());
+        assert!(associate(&ts, &pts, 60).is_some());
     }
 
     #[test]
@@ -614,7 +618,7 @@ mod tests {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
         let pts = make_nav_points(t0, 5, 1); // last fix at t0+4s
         let ts = t0 + chrono::Duration::seconds(4 + 61);
-        assert!(associate(&ts, &pts).is_none());
+        assert!(associate(&ts, &pts, 60).is_none());
     }
 
     #[test]
@@ -622,7 +626,7 @@ mod tests {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
         let pts = make_nav_points(t0, 5, 1);
         let ts = t0 - chrono::Duration::seconds(61);
-        assert!(associate(&ts, &pts).is_none());
+        assert!(associate(&ts, &pts, 60).is_none());
     }
 
     #[test]
@@ -630,7 +634,7 @@ mod tests {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
         let pts = make_nav_points(t0, 5, 1);
         let ts = t0 - chrono::Duration::seconds(30);
-        let (lat, lon) = associate(&ts, &pts).expect("should associate");
+        let (lat, lon) = associate(&ts, &pts, 60).expect("should associate");
         assert!((lat - 55.0).abs() < 1e-9);
         assert!((lon - 12.0).abs() < 1e-9);
     }
@@ -638,7 +642,7 @@ mod tests {
     #[test]
     fn associate_empty_nav() {
         let ts = utc(2026, 1, 1, 0, 0, 0);
-        assert!(associate(&ts, &[]).is_none());
+        assert!(associate(&ts, &[], 60).is_none());
     }
 
     fn make_log_content(entries: &[(DateTime<Utc>, &str)]) -> String {
@@ -661,14 +665,24 @@ mod tests {
             (t0 - chrono::Duration::seconds(200), "far past"),   // unassociated
         ];
         let content = make_log_content(&entries);
-        let result = load_log(&content, &pts, utc(2026, 5, 23, 0, 0, 0));
+        let result = load_log(
+            &content,
+            &pts,
+            utc(2026, 5, 23, 0, 0, 0),
+            &AssociationConfig::default(),
+        );
         assert_eq!(result.markers.len(), 3);
         assert_eq!(result.unassociated.len(), 2);
     }
 
     #[test]
     fn load_log_empty_content() {
-        let result = load_log("", &[], utc(2026, 5, 23, 0, 0, 0));
+        let result = load_log(
+            "",
+            &[],
+            utc(2026, 5, 23, 0, 0, 0),
+            &AssociationConfig::default(),
+        );
         assert!(result.markers.is_empty());
         assert!(result.unassociated.is_empty());
     }
@@ -677,7 +691,12 @@ mod tests {
     fn load_log_empty_nav() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
         let content = make_log_content(&[(t0, "msg")]);
-        let result = load_log(&content, &[], utc(2026, 5, 23, 0, 0, 0));
+        let result = load_log(
+            &content,
+            &[],
+            utc(2026, 5, 23, 0, 0, 0),
+            &AssociationConfig::default(),
+        );
         assert!(result.markers.is_empty());
         assert_eq!(result.unassociated.len(), 1);
     }
@@ -689,7 +708,12 @@ mod tests {
         let content = format!(
             "2026-01-01 00:00:00 msg0\nNOT_A_TIMESTAMP\nALSO_NOT\n2026-01-01 00:00:01 msg1\n"
         );
-        let result = load_log(&content, &pts, utc(2026, 5, 23, 0, 0, 0));
+        let result = load_log(
+            &content,
+            &pts,
+            utc(2026, 5, 23, 0, 0, 0),
+            &AssociationConfig::default(),
+        );
         assert_eq!(result.markers.len(), 2);
     }
 
@@ -698,7 +722,12 @@ mod tests {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
         let pts = make_nav_points(t0, 5, 1);
         let content = "2026-01-01 00:00:00 msg0\nBAD1\nBAD2\nBAD3\n2026-01-01 00:00:01 msg1\n";
-        let result = load_log(&content, &pts, utc(2026, 5, 23, 0, 0, 0));
+        let result = load_log(
+            &content,
+            &pts,
+            utc(2026, 5, 23, 0, 0, 0),
+            &AssociationConfig::default(),
+        );
         assert!(result.markers.is_empty());
         assert!(result.unassociated.is_empty());
     }
@@ -710,7 +739,12 @@ mod tests {
         // bad, blank, bad, blank, bad — blanks don't count, so only 3 non-empty failures
         let content =
             "2026-01-01 00:00:00 good\nBAD\n\nBAD\n\nBAD\n2026-01-01 00:00:01 also_good\n";
-        let result = load_log(&content, &pts, utc(2026, 5, 23, 0, 0, 0));
+        let result = load_log(
+            &content,
+            &pts,
+            utc(2026, 5, 23, 0, 0, 0),
+            &AssociationConfig::default(),
+        );
         // 3 consecutive bad → abort
         assert!(result.markers.is_empty());
         assert!(result.unassociated.is_empty());
@@ -721,7 +755,12 @@ mod tests {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
         let pts = make_nav_points(t0, 5, 1);
         let content = make_log_content(&[(t0, "msg")]);
-        let result = load_log(&content, &pts, utc(2026, 5, 23, 0, 0, 0));
+        let result = load_log(
+            &content,
+            &pts,
+            utc(2026, 5, 23, 0, 0, 0),
+            &AssociationConfig::default(),
+        );
         assert!(result.markers.iter().all(|m| m.icon == MarkerIcon::Log));
     }
 
@@ -739,7 +778,12 @@ mod tests {
             (t0 + chrono::Duration::seconds(2), very_different),
         ];
         let content = make_log_content(&entries);
-        let result = load_log(&content, &pts, utc(2026, 5, 23, 0, 0, 0));
+        let result = load_log(
+            &content,
+            &pts,
+            utc(2026, 5, 23, 0, 0, 0),
+            &AssociationConfig::default(),
+        );
         assert_eq!(result.markers.len(), 3);
         let groups: Vec<_> = result.markers.iter().map(|m| m.color_group).collect();
         assert_eq!(groups[0], Some(0));
@@ -753,7 +797,12 @@ mod tests {
         let pts = make_nav_points(t0, 5, 1);
         // SyslogShortMicro line
         let content = "Jan  1 00:00:00.500000 msg_micro\n";
-        let result = load_log(&content, &pts, utc(2026, 1, 1, 12, 0, 0));
+        let result = load_log(
+            &content,
+            &pts,
+            utc(2026, 1, 1, 12, 0, 0),
+            &AssociationConfig::default(),
+        );
         assert_eq!(result.markers.len(), 1);
         let ts = result.markers[0].time;
         assert_eq!(ts.timestamp_subsec_micros(), 500_000);

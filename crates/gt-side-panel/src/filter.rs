@@ -399,6 +399,7 @@ mod tests {
             tracks: vec![],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
+            source: gt_types::FileSource::NvdPath(std::path::PathBuf::from("test.nvd")),
         };
         let range = compute_full_time_range(&[file]);
         assert!(range.is_some());

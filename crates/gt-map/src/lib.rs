@@ -194,7 +194,6 @@ pub fn register_marker_icons(ctx: &egui::Context) {
         include_bytes!("icons/wrench.svg").as_slice(),
     );
 }
-use gt_data_ops::build_global_tree;
 use gt_types::{
     DataCategory, DataPointRef, EventMarkerVisibility, GlobalFilter, HighlightScope, LoadedFile,
     MapHighlight, SpatialPoint, TrackDataVisibility,
@@ -369,7 +368,7 @@ impl NavMap {
     /// track deletion) to prevent stale R-tree entries from causing out-of-bounds
     /// panics in the renderers.
     pub fn rebuild_spatial_index(&mut self, files: &[LoadedFile]) {
-        self.global_tree = build_global_tree(files);
+        self.global_tree = gt_data_ops::build_global_tree(files);
         self.last_file_count = files.len();
     }
 
@@ -437,7 +436,7 @@ impl NavMap {
             if let Some(bbox) = compute_bounding_box(files) {
                 zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
             }
-            self.global_tree = build_global_tree(files);
+            self.global_tree = gt_data_ops::build_global_tree(files);
         }
 
         let blink_alpha = self.blink.tick();
@@ -1062,6 +1061,9 @@ mod tests {
             tracks: vec![trip],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
+            source: gt_types::FileSource::NvdPath(std::path::PathBuf::from(format!(
+                "test_{n}.nvd"
+            ))),
         }
     }
 
