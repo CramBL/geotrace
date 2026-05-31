@@ -269,6 +269,7 @@ mod tests {
                     "log.*".into(),
                     "walkers.*".into(),
                     "chrono.*".into(),
+                    "gt_data_ops.*".into(),
                     "gt_fmt.*".into(),
                     "gt_types.*".into(),
                     "gt_map.*".into(),

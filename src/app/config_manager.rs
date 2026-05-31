@@ -1,14 +1,28 @@
 use std::time::{Duration, Instant};
 
+/// `f32` stored as its bit pattern so `AppSnapshot` can derive `PartialEq`
+/// without triggering the `float_cmp` lint.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct StableF32(u32);
+
+impl From<f32> for StableF32 {
+    fn from(v: f32) -> Self {
+        Self(v.to_bits())
+    }
+}
+
+impl From<StableF32> for f32 {
+    fn from(s: StableF32) -> Self {
+        f32::from_bits(s.0)
+    }
+}
+
 /// Compact snapshot of all settings-relevant app state.
-///
-/// `f32` fields are stored as bit patterns (`u32`) so the struct can derive
-/// `PartialEq` without triggering the `float_cmp` lint.
 #[derive(PartialEq)]
 pub(super) struct AppSnapshot {
     pub show_grid: bool,
     pub panel_visible: bool,
-    pub split_ratio_bits: u32,
+    pub split_ratio: StableF32,
     pub metric_sats_seen: bool,
     pub metric_sats_fix: bool,
     pub metric_gps_seen: bool,
@@ -26,6 +40,7 @@ pub(super) struct AppSnapshot {
     pub mapbox_token: String,
     pub sync_to_map: bool,
     pub theme: crate::settings::ThemeSetting,
+    pub track_split_gap_seconds: u64,
 }
 
 impl Default for AppSnapshot {
@@ -33,7 +48,7 @@ impl Default for AppSnapshot {
         Self {
             show_grid: true,
             panel_visible: true,
-            split_ratio_bits: 0.6_f32.to_bits(),
+            split_ratio: StableF32::from(0.6_f32),
             metric_sats_seen: true,
             metric_sats_fix: true,
             metric_gps_seen: true,
@@ -51,6 +66,7 @@ impl Default for AppSnapshot {
             mapbox_token: String::new(),
             sync_to_map: true,
             theme: crate::settings::ThemeSetting::System,
+            track_split_gap_seconds: 300,
         }
     }
 }

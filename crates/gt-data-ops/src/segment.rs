@@ -10,10 +10,25 @@ use gt_types::time_types::GpsTime;
 use gt_types::track::{FileMetadata, LoadedFile, LoadedTrack, TimeRange, TrackMetadata};
 use std::ops::Range;
 
+/// Configuration for the track-segmentation algorithm.
+#[derive(Debug, Clone, Copy)]
+pub struct SegmentationConfig {
+    /// Timestamp gap between consecutive points that triggers a new track split.
+    pub track_split_gap: Duration,
+}
+
+impl Default for SegmentationConfig {
+    fn default() -> Self {
+        Self {
+            track_split_gap: Duration::seconds(300),
+        }
+    }
+}
+
 /// Partitions `points` into contiguous trip ranges. A new trip begins when the
-/// gap between consecutive timestamps is ≥ 5 minutes (300 s). Returns an empty
-/// vec for empty input.
-pub fn segment_trips(points: &[NavPoint]) -> Vec<Range<usize>> {
+/// timestamp gap between consecutive points reaches `config.track_split_gap`.
+/// Returns an empty vec for empty input.
+pub fn segment_trips(points: &[NavPoint], config: &SegmentationConfig) -> Vec<Range<usize>> {
     if points.is_empty() {
         return Vec::new();
     }
@@ -24,7 +39,7 @@ pub fn segment_trips(points: &[NavPoint]) -> Vec<Range<usize>> {
     for (i, pair) in points.windows(2).enumerate() {
         if let [a, b] = pair {
             let gap = b.tpv.time() - a.tpv.time();
-            if gap.num_seconds() >= 300 {
+            if gap >= config.track_split_gap {
                 ranges.push(start..i + 1);
                 start = i + 1;
             }
@@ -228,8 +243,9 @@ pub fn build_loaded_file(
     custom_markers: &[CustomMarker],
     event_markers: Vec<EventMarker>,
     event_marker_styles: Vec<EventMarkerStyle>,
+    config: &SegmentationConfig,
 ) -> LoadedFile {
-    let ranges = segment_trips(points);
+    let ranges = segment_trips(points, config);
 
     let mut loaded_tracks: Vec<LoadedTrack> = ranges
         .iter()
@@ -371,20 +387,20 @@ mod tests {
 
     #[test]
     fn segment_trips_empty_input() {
-        assert!(segment_trips(&[]).is_empty());
+        assert!(segment_trips(&[], &SegmentationConfig::default()).is_empty());
     }
 
     #[test]
     fn segment_trips_single_point() {
         let pts = vec![make_point_at(0)];
-        let ranges = segment_trips(&pts);
+        let ranges = segment_trips(&pts, &SegmentationConfig::default());
         assert_eq!(ranges, vec![0..1]);
     }
 
     #[test]
     fn segment_trips_all_within_five_minutes() {
         let pts: Vec<NavPoint> = (0..5).map(|i| make_point_at(i * 60)).collect();
-        let ranges = segment_trips(&pts);
+        let ranges = segment_trips(&pts, &SegmentationConfig::default());
         assert_eq!(ranges, vec![0..5]);
     }
 
@@ -392,7 +408,7 @@ mod tests {
     fn segment_trips_gap_exactly_300s_starts_new_trip() {
         // [0s, 300s] → gap of exactly 300 s triggers a new trip
         let pts = vec![make_point_at(0), make_point_at(300), make_point_at(360)];
-        let ranges = segment_trips(&pts);
+        let ranges = segment_trips(&pts, &SegmentationConfig::default());
         assert_eq!(ranges, vec![0..1, 1..3]);
     }
 
@@ -404,7 +420,7 @@ mod tests {
             make_point_at(3600), // +1 h gap
             make_point_at(3660),
         ];
-        let ranges = segment_trips(&pts);
+        let ranges = segment_trips(&pts, &SegmentationConfig::default());
         assert_eq!(ranges, vec![0..2, 2..4]);
     }
 
@@ -415,7 +431,7 @@ mod tests {
             make_point_at(3600), // gap
             make_point_at(7200), // gap
         ];
-        let ranges = segment_trips(&pts);
+        let ranges = segment_trips(&pts, &SegmentationConfig::default());
         assert_eq!(ranges, vec![0..1, 1..2, 2..3]);
     }
 
@@ -452,7 +468,14 @@ mod tests {
 
     #[test]
     fn build_loaded_file_empty_points() {
-        let f = build_loaded_file("test.nvd".to_owned(), &[], &[], vec![], vec![]);
+        let f = build_loaded_file(
+            "test.nvd".to_owned(),
+            &[],
+            &[],
+            vec![],
+            vec![],
+            &SegmentationConfig::default(),
+        );
         assert!(f.tracks.is_empty());
         assert_eq!(f.metadata.filename, "test.nvd");
     }
@@ -465,7 +488,14 @@ mod tests {
             make_point_at(3600), // gap → new trip
             make_point_at(3660),
         ];
-        let f = build_loaded_file("ride.nvd".to_owned(), &pts, &[], vec![], vec![]);
+        let f = build_loaded_file(
+            "ride.nvd".to_owned(),
+            &pts,
+            &[],
+            vec![],
+            vec![],
+            &SegmentationConfig::default(),
+        );
         assert_eq!(f.tracks.len(), 2);
         assert_eq!(f.tracks[0].points.len(), 2);
         assert_eq!(f.tracks[1].points.len(), 2);

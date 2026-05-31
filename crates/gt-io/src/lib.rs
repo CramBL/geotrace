@@ -33,12 +33,17 @@ fn to_uom_angle(a: geotrace_sdk::Angle) -> uom::si::f64::Angle {
 /// Load a `.nvd` file from `path`, segment it into trips, and return a fully
 /// populated `LoadedFile`.
 pub fn load_file(path: impl AsRef<Path>) -> Result<LoadedFile, LoadError> {
-    load_file_with_progress(path, |_, _| {})
+    load_file_with_progress(path, |_, _| {}, &gt_data_ops::SegmentationConfig::default())
 }
 
 /// Parse a `.nvd` file from raw bytes (e.g. delivered via drag-and-drop on Wayland).
 pub fn load_bytes(bytes: &[u8], filename: String) -> Result<LoadedFile, LoadError> {
-    load_bytes_with_progress(bytes, filename, |_, _| {})
+    load_bytes_with_progress(
+        bytes,
+        filename,
+        |_, _| {},
+        &gt_data_ops::SegmentationConfig::default(),
+    )
 }
 
 /// Like [`load_file`] but calls `progress(fraction, stage)` at key milestones so
@@ -46,6 +51,7 @@ pub fn load_bytes(bytes: &[u8], filename: String) -> Result<LoadedFile, LoadErro
 pub fn load_file_with_progress(
     path: impl AsRef<Path>,
     progress: impl Fn(f32, &'static str),
+    config: &gt_data_ops::SegmentationConfig,
 ) -> Result<LoadedFile, LoadError> {
     let path = path.as_ref();
     let filename = path
@@ -66,6 +72,7 @@ pub fn load_file_with_progress(
         &markers,
         event_markers,
         event_marker_styles,
+        config,
     );
     Ok(loaded)
 }
@@ -75,6 +82,7 @@ pub fn load_bytes_with_progress(
     bytes: &[u8],
     filename: String,
     progress: impl Fn(f32, &'static str),
+    config: &gt_data_ops::SegmentationConfig,
 ) -> Result<LoadedFile, LoadError> {
     progress(0.15, STAGE_PARSING);
     let nav_file = NavFile::read(bytes)?;
@@ -87,6 +95,7 @@ pub fn load_bytes_with_progress(
         &markers,
         event_markers,
         event_marker_styles,
+        config,
     );
     Ok(loaded)
 }

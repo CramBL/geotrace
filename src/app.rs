@@ -8,6 +8,7 @@ use config_manager::{AppSnapshot, ConfigManager};
 use egui_tiles::{
     Container, Linear, LinearDir, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse,
 };
+use gt_data_ops::SegmentationConfig;
 use gt_map::{MapContextAction, MapLayer, NavMap};
 use gt_plot::PlotState;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
@@ -68,6 +69,11 @@ pub struct App {
 
     /// Detects settings changes and drives debounced write-through to disk.
     config: ConfigManager,
+
+    /// Whether the Settings window is currently open.
+    settings_open: bool,
+    /// Active segmentation config — applied to all new file loads and re-segmentation.
+    processing_config: SegmentationConfig,
 }
 
 impl App {
@@ -148,6 +154,8 @@ impl App {
             map_tile_id,
             plot_tile_id,
             config: ConfigManager::new(AppSnapshot::default()),
+            settings_open: false,
+            processing_config: SegmentationConfig::default(),
         };
 
         app.apply_startup_settings(&loaded_settings);
@@ -161,7 +169,8 @@ impl App {
                 .unwrap_or("")
                 .to_ascii_lowercase();
             if ext == "nvd" {
-                app.loader.spawn_nvd_path(path.clone());
+                app.loader
+                    .spawn_nvd_path(path.clone(), app.processing_config);
             } else {
                 let nav_points = app.snapshot_nav_points();
                 app.loader.spawn_log_path(path.clone(), nav_points);
@@ -191,7 +200,7 @@ impl App {
             .unwrap_or("")
             .to_ascii_lowercase();
         if ext == "nvd" {
-            self.loader.spawn_nvd_path(path);
+            self.loader.spawn_nvd_path(path, self.processing_config);
         } else {
             let nav_points = self.snapshot_nav_points();
             self.loader.spawn_log_path(path, nav_points);
@@ -243,12 +252,70 @@ impl App {
         linear.shares.set_share(self.plot_tile_id, 1.0 - ratio);
     }
 
+    /// Render the Settings window.
+    ///
+    /// Returns `true` in the frame when the user clicks "Apply to loaded data",
+    /// signalling that the caller should call `apply_resegmentation`.
+    fn show_settings_window(&mut self, ui: &egui::Ui) -> bool {
+        if !self.settings_open {
+            return false;
+        }
+        let mut open = self.settings_open;
+        let mut apply = false;
+        egui::Window::new("Settings")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .min_width(320.0)
+            .show(ui.ctx(), |ui| {
+                ui.strong("Data Processing");
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Track split gap");
+                    let mut gap_secs = self
+                        .processing_config
+                        .track_split_gap
+                        .to_std()
+                        .map_or(300, |d| d.as_secs().clamp(30, 3600));
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut gap_secs)
+                                .range(30_u64..=3600_u64)
+                                .suffix("s"),
+                        )
+                        .changed()
+                    {
+                        self.processing_config.track_split_gap =
+                            chrono::Duration::seconds(gap_secs as i64);
+                    }
+                    ui.weak(format!("({:.0} min)", gap_secs as f32 / 60.0));
+                });
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(
+                        "Consecutive GPS points separated by more than this gap\nstart a new trip.",
+                    )
+                    .small()
+                    .weak(),
+                );
+                ui.add_space(8.0);
+                if ui.button("Apply to loaded data").clicked() {
+                    apply = true;
+                }
+            });
+        self.settings_open = open;
+        apply
+    }
+
     /// Apply loaded settings on startup.
     fn apply_startup_settings(&mut self, s: &crate::settings::Settings) {
         if !s.map.mapbox_token.is_empty() {
             self.map.set_mapbox_token(s.map.mapbox_token.clone());
         }
         self.map.set_layer(map_layer_from_setting(s.map.layer));
+        self.processing_config = SegmentationConfig {
+            track_split_gap: chrono::Duration::seconds(s.processing.track_split_gap_seconds as i64),
+        };
         self.ctx.set_theme(theme_pref_from_setting(s.ui.theme));
 
         {
@@ -352,7 +419,7 @@ impl App {
         AppSnapshot {
             show_grid: s.plot_state.show_grid,
             panel_visible: self.tiles_tree.tiles.is_visible(self.plot_tile_id),
-            split_ratio_bits: self.get_split_ratio().to_bits(),
+            split_ratio: self.get_split_ratio().into(),
             metric_sats_seen: vis.sats_seen,
             metric_sats_fix: vis.sats_fix,
             metric_gps_seen: vis.gps_seen,
@@ -370,6 +437,11 @@ impl App {
             mapbox_token: self.map.mapbox_token().to_owned(),
             sync_to_map: s.sync_plot_to_map,
             theme,
+            track_split_gap_seconds: self
+                .processing_config
+                .track_split_gap
+                .to_std()
+                .map_or(300, |d| d.as_secs()),
         }
     }
 
@@ -409,6 +481,13 @@ impl App {
                 sync_to_map: s.sync_plot_to_map,
             },
             ui: crate::settings::UiSettings { theme },
+            processing: crate::settings::ProcessingSettings {
+                track_split_gap_seconds: self
+                    .processing_config
+                    .track_split_gap
+                    .to_std()
+                    .map_or(300, |d| d.as_secs()),
+            },
         }
     }
 
@@ -442,6 +521,58 @@ impl App {
         if let Err(e) = std::fs::rename(&tmp, &path) {
             log::warn!("Failed to rename config file: {e:#}");
         }
+    }
+
+    /// Re-segment all loaded GPS files using the current `processing_config`.
+    ///
+    /// Log-only files (those with no nav points) are left unchanged since they
+    /// don't have trip structure to re-segment.
+    fn apply_resegmentation(&mut self) {
+        let config = self.processing_config;
+        {
+            let mut refmut = self.shared.borrow_mut();
+            let s = &mut *refmut;
+            for file in &mut s.loaded_files {
+                let has_nav_points = file.tracks.iter().any(|t| !t.points.is_empty());
+                if !has_nav_points {
+                    continue;
+                }
+                let all_points: Vec<gt_types::NavPoint> = file
+                    .tracks
+                    .iter()
+                    .flat_map(|t| t.points.iter())
+                    .cloned()
+                    .collect();
+                let all_custom_markers: Vec<gt_types::CustomMarker> = file
+                    .tracks
+                    .iter()
+                    .flat_map(|t| t.custom_markers.iter())
+                    .cloned()
+                    .collect();
+                let all_event_markers: Vec<gt_types::EventMarker> = file
+                    .tracks
+                    .iter()
+                    .flat_map(|t| t.event_markers.iter())
+                    .chain(file.orphaned_event_markers.iter())
+                    .cloned()
+                    .collect();
+                let event_marker_styles: Vec<gt_types::EventMarkerStyle> =
+                    file.event_marker_styles.values().cloned().collect();
+                let filename = file.metadata.filename.clone();
+                *file = gt_data_ops::build_loaded_file(
+                    filename,
+                    &all_points,
+                    &all_custom_markers,
+                    all_event_markers,
+                    event_marker_styles,
+                    &config,
+                );
+            }
+            s.plot_state.rebuild_all(&s.loaded_files);
+            s.tree.reset_for_files(&s.loaded_files);
+        }
+        let s = self.shared.borrow();
+        self.map.rebuild_spatial_index(&s.loaded_files);
     }
 
     /// Process a completed background load: integrate the result into shared state.
@@ -592,6 +723,10 @@ impl eframe::App for App {
         self.flush_settings();
     }
 
+    #[expect(
+        clippy::cognitive_complexity,
+        reason = "egui immediate-mode UI rendering is inherently sequential; splitting artificially hurts readability"
+    )]
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // Drain background load results first so newly loaded data is
         // visible in the same frame that it arrives.
@@ -652,6 +787,13 @@ impl eframe::App for App {
                         .on_hover_text("Sync plot time range to map viewport")
                         .clicked()
                         .then(|| s.sync_plot_to_map = !s.sync_plot_to_map);
+                }
+                ui.add_space(16.0);
+                {
+                    let label = format!("{} Settings", egui_phosphor::regular::GEAR);
+                    if ui.selectable_label(self.settings_open, label).clicked() {
+                        self.settings_open = !self.settings_open;
+                    }
                 }
                 ui.add_space(16.0);
                 egui::widgets::global_theme_preference_buttons(ui);
@@ -758,6 +900,11 @@ impl eframe::App for App {
                 s.highlight.plot_hover_point = None;
             }
         });
+
+        let apply_resegment = self.show_settings_window(ui);
+        if apply_resegment {
+            self.apply_resegmentation();
+        }
 
         if self.map.layer() == MapLayer::Satellite && !self.map.has_mapbox_token() {
             show_mapbox_token_dialog(ui, &mut self.map, &mut self.mapbox_token_input);
@@ -893,6 +1040,7 @@ fn handle_dropped_bytes_dispatch(
     nav_points: Vec<NavPoint>,
     bytes: Arc<[u8]>,
     name: &str,
+    config: SegmentationConfig,
 ) {
     const HDF5_MAGIC: &[u8] = b"\x89HDF\r\n\x1a\n";
     if bytes.starts_with(HDF5_MAGIC) {
@@ -901,7 +1049,7 @@ fn handle_dropped_bytes_dispatch(
         } else {
             name.to_owned()
         };
-        loader.spawn_nvd_bytes(bytes, filename);
+        loader.spawn_nvd_bytes(bytes, filename, config);
     } else if let Ok(text) = str::from_utf8(&bytes) {
         let filename = if name.is_empty() { "dropped.log" } else { name };
         loader.spawn_log_text(text.to_owned(), filename.to_owned(), nav_points);
@@ -919,6 +1067,7 @@ impl App {
             nav_points,
             bytes,
             name,
+            self.processing_config,
         );
     }
 }

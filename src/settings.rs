@@ -9,6 +9,7 @@ pub struct Settings {
     pub plot: PlotSettings,
     pub map: MapSettings,
     pub ui: UiSettings,
+    pub processing: ProcessingSettings,
 }
 
 impl Default for Settings {
@@ -18,6 +19,7 @@ impl Default for Settings {
             plot: PlotSettings::default(),
             map: MapSettings::default(),
             ui: UiSettings::default(),
+            processing: ProcessingSettings::default(),
         }
     }
 }
@@ -113,6 +115,21 @@ pub enum ThemeSetting {
     System,
     Light,
     Dark,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct ProcessingSettings {
+    /// Gap between consecutive GPS points that triggers a new trip segment, in seconds.
+    pub track_split_gap_seconds: u64,
+}
+
+impl Default for ProcessingSettings {
+    fn default() -> Self {
+        Self {
+            track_split_gap_seconds: 300,
+        }
+    }
 }
 
 /// Returns the path to the GeoTrace config file, or `None` when the platform

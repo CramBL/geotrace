@@ -18,7 +18,16 @@ struct State {
 fn make_state(file_count: usize) -> State {
     let points = nav_test_data();
     let files = (0..file_count)
-        .map(|i| build_loaded_file(format!("ride_{i}.nvd"), &points, &[], vec![], vec![]))
+        .map(|i| {
+            build_loaded_file(
+                format!("ride_{i}.nvd"),
+                &points,
+                &[],
+                vec![],
+                vec![],
+                &gt_data_ops::SegmentationConfig::default(),
+            )
+        })
         .collect();
     let mut tree = TreeState::new();
     let files_ref: &Vec<gt_types::LoadedFile> = &files;

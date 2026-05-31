@@ -190,6 +190,7 @@ egui-phosphor.workspace = true
 egui_extras.workspace = true
 egui_tiles.workspace = true
 env_logger.workspace = true
+gt-data-ops = { path = "crates/gt-data-ops" }
 gt-fmt = { path = "crates/gt-fmt" }
 gt-io = { path = "crates/gt-io" }
 gt-log-marker = { path = "crates/gt-log-marker" }

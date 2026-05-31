@@ -1826,6 +1826,7 @@ dependencies = [
  "egui_tiles",
  "env_logger",
  "geotrace-sdk",
+ "gt-data-ops",
  "gt-fmt",
  "gt-io",
  "gt-log-marker",

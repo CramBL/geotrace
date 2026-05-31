@@ -5,6 +5,8 @@ use std::{
     thread,
 };
 
+use gt_data_ops::SegmentationConfig;
+
 use chrono::{DateTime, Utc};
 use egui::Context;
 use gt_plot::PreparedSeries;
@@ -120,7 +122,7 @@ impl LoaderManager {
         clippy::expect_used,
         reason = "thread spawn can only fail under extreme system resource exhaustion"
     )]
-    pub fn spawn_nvd_path(&mut self, path: PathBuf) {
+    pub fn spawn_nvd_path(&mut self, path: PathBuf, config: SegmentationConfig) {
         let id = self.alloc_id();
         let filename = path
             .file_name()
@@ -150,7 +152,7 @@ impl LoaderManager {
                     .ok();
                     r_ctx.request_repaint();
                 };
-                let outcome = gt_io::load_file_with_progress(&path, report)
+                let outcome = gt_io::load_file_with_progress(&path, report, &config)
                     .map(|file| {
                         tx.send(LoadMessage::Progress {
                             id,
@@ -173,7 +175,12 @@ impl LoaderManager {
         clippy::expect_used,
         reason = "thread spawn can only fail under extreme system resource exhaustion"
     )]
-    pub fn spawn_nvd_bytes(&mut self, bytes: Arc<[u8]>, filename: String) {
+    pub fn spawn_nvd_bytes(
+        &mut self,
+        bytes: Arc<[u8]>,
+        filename: String,
+        config: SegmentationConfig,
+    ) {
         let id = self.alloc_id();
         self.loading_jobs.push(LoadingJob {
             id,
@@ -198,7 +205,7 @@ impl LoaderManager {
                     .ok();
                     r_ctx.request_repaint();
                 };
-                let outcome = gt_io::load_bytes_with_progress(&bytes, filename, report)
+                let outcome = gt_io::load_bytes_with_progress(&bytes, filename, report, &config)
                     .map(|file| {
                         tx.send(LoadMessage::Progress {
                             id,
