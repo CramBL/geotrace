@@ -1,0 +1,10 @@
+target/
+geotrace-sdks/geotrace-py/target/
+geotrace-sdks/geotrace-py/.venv/
+geotrace-sdks/geotrace-py/Cargo.lock
+geotrace-sdks/geotrace-py/__pycache__/
+.git/
+docs/
+*.nvd
+*.md
+!README.md
