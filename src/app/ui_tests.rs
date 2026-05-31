@@ -47,7 +47,7 @@ fn minimal_nvd_bytes() -> Vec<u8> {
 /// We sleep briefly between steps to let the threads make progress.
 fn step_until_loaded(harness: &mut Harness<App>) {
     for _ in 0..200 {
-        if harness.state().loading_jobs.is_empty() {
+        if harness.state().loader.loading_jobs.is_empty() {
             return;
         }
         thread::sleep(StdDuration::from_millis(5));

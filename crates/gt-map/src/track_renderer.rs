@@ -1,12 +1,12 @@
 use egui::{Color32, Response, Stroke, Ui};
 use gt_types::{
     DataCategory, FileIdx, GlobalFilter, HighlightScope, LoadedFile, MapHighlight, MercBounds,
-    TripDataVisibility, TripIdx, trip_passes_filter,
+    TrackDataVisibility, TrackIdx, track_passes_filter,
 };
 use walkers::{MapMemory, Plugin, Projector};
 
 /// Vibrant colors assigned to trip tracks — chosen to stand out on both OSM
-/// and satellite map backgrounds. The palette cycles over (file_index, trip_index)
+/// and satellite map backgrounds. The palette cycles over (file_index, track_index)
 /// using a mixing function so adjacent trips get distinct colours.
 const TRACK_COLORS: [Color32; 12] = [
     Color32::from_rgb(255, 85, 0),   // vivid orange
@@ -36,7 +36,7 @@ fn trip_track_color(fi: usize, ti: usize) -> Color32 {
 
 pub struct TrackRenderer<'a> {
     files: &'a [LoadedFile],
-    visibility: &'a TripDataVisibility,
+    visibility: &'a TrackDataVisibility,
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
     /// First file index that is considered "newly loaded"; files[new_file_boundary..]
@@ -49,7 +49,7 @@ pub struct TrackRenderer<'a> {
 impl<'a> TrackRenderer<'a> {
     pub fn new(
         files: &'a [LoadedFile],
-        visibility: &'a TripDataVisibility,
+        visibility: &'a TrackDataVisibility,
         highlight: &'a MapHighlight,
         filter: &'a GlobalFilter,
         new_file_boundary: usize,
@@ -65,7 +65,7 @@ impl<'a> TrackRenderer<'a> {
         }
     }
 
-    fn trip_stroke(&self, fi: FileIdx, ti: TripIdx) -> Stroke {
+    fn trip_stroke(&self, fi: FileIdx, ti: TrackIdx) -> Stroke {
         if self.is_trip_highlighted(fi, ti) {
             Stroke::new(4.0, Color32::from_rgb(100, 200, 255))
         } else {
@@ -73,28 +73,28 @@ impl<'a> TrackRenderer<'a> {
         }
     }
 
-    fn is_trip_highlighted(&self, fi: FileIdx, ti: TripIdx) -> bool {
+    fn is_trip_highlighted(&self, fi: FileIdx, ti: TrackIdx) -> bool {
         if self
             .highlight
             .sticky
-            .is_some_and(|r| r.file_index == fi && r.trip_index == ti)
+            .is_some_and(|r| r.file_index == fi && r.track_index == ti)
         {
             return true;
         }
         match self.highlight.hover {
             Some(HighlightScope::File { file_index }) => file_index == fi,
-            Some(HighlightScope::Trip {
+            Some(HighlightScope::Track {
                 file_index,
-                trip_index,
-            }) => file_index == fi && trip_index == ti,
-            Some(HighlightScope::TripCategory {
+                track_index,
+            }) => file_index == fi && track_index == ti,
+            Some(HighlightScope::TrackCategory {
                 file_index,
-                trip_index,
+                track_index,
                 category,
             }) => {
                 file_index == fi
-                    && trip_index == ti
-                    && matches!(category, DataCategory::TripTrack | DataCategory::Tpv)
+                    && track_index == ti
+                    && matches!(category, DataCategory::Track | DataCategory::Tpv)
             }
             Some(HighlightScope::Point(_)) | None => false,
         }
@@ -131,51 +131,180 @@ impl Plugin for TrackRenderer<'_> {
             if !file_vis.enabled {
                 continue;
             }
-            for (ti, trip) in file.trips.iter().enumerate() {
-                let ti = TripIdx(ti);
-                let Some(trip_vis) = file_vis.trips.get(ti.0) else {
+            for (ti, track) in file.tracks.iter().enumerate() {
+                let ti = TrackIdx(ti);
+                let Some(trip_vis) = file_vis.tracks.get(ti.0) else {
                     continue;
                 };
                 if !trip_vis.enabled || !trip_vis.track_visible {
                     continue;
                 }
-                if !trip_passes_filter(&trip.metadata, self.filter) {
+                if !track_passes_filter(&track.metadata, self.filter) {
                     continue;
                 }
                 // Per-trip viewport cull: if the trip's Mercator bounding box
                 // does not intersect the viewport, skip it entirely.
-                if !trip.metadata.merc_bounds.intersects(vp_bounds) {
+                if !track.metadata.merc_bounds.intersects(vp_bounds) {
                     continue;
                 }
                 let stroke = self.trip_stroke(fi, ti);
-                let path: Vec<egui::Pos2> = trip
+
+                // Collect (is_ghost, screen_pos) for each visible point.
+                // Ghost fixes (heading == None) are dead-reckoned post-last-fix
+                // positions rendered as dashed segments.
+                let pts: Vec<(bool, egui::Pos2)> = track
                     .points
                     .iter()
                     .filter(|p| gt_types::point_passes_time_filter(p.tpv.time().utc(), self.filter))
-                    .map(|p| transform.to_screen(p.merc_x, p.merc_y))
+                    .map(|p| {
+                        (
+                            p.tpv.heading().is_none(),
+                            transform.to_screen(p.merc_x, p.merc_y),
+                        )
+                    })
                     .collect();
-                if path.len() > 1 {
-                    // Only clone the path when the blink overlay will also need
-                    // it; otherwise move it directly into the regular stroke to
-                    // avoid a per-trip Vec allocation on 99%+ of frames.
-                    let need_blink = self.blink_alpha > 0.0 && fi.0 >= self.new_file_boundary;
-                    let blink_path = need_blink.then(|| path.clone());
-                    ui.painter().add(egui::Shape::line(path, stroke));
 
-                    // Blink overlay: draw a bright pulsing stroke on top of
-                    // newly loaded trips for the first 3 seconds after load.
-                    if let Some(bp) = blink_path {
-                        #[expect(
-                            clippy::cast_sign_loss,
-                            reason = "blink_alpha is clamped to [0,1] in NavMap::draw so product is non-negative"
-                        )]
-                        let blink_a = (self.blink_alpha * 200.0) as u8;
-                        let blink_color = Color32::from_rgba_unmultiplied(255, 230, 80, blink_a);
-                        let blink_stroke = Stroke::new(6.0, blink_color);
-                        ui.painter().add(egui::Shape::line(bp, blink_stroke));
-                    }
+                if pts.len() < 2 {
+                    continue;
+                }
+
+                // Blink overlay uses the full path without ghost distinction.
+                let need_blink = self.blink_alpha > 0.0 && fi.0 >= self.new_file_boundary;
+                let blink_path: Option<Vec<egui::Pos2>> =
+                    need_blink.then(|| pts.iter().map(|(_, pos)| *pos).collect());
+
+                draw_track_with_ghost(ui.painter(), &pts, stroke);
+
+                // Blink overlay: draw a bright pulsing stroke on top of
+                // newly loaded trips for the first 3 seconds after load.
+                if let Some(bp) = blink_path {
+                    #[expect(
+                        clippy::cast_sign_loss,
+                        reason = "blink_alpha is clamped to [0,1] in NavMap::draw so product is non-negative"
+                    )]
+                    let blink_a = (self.blink_alpha * 200.0) as u8;
+                    let blink_color = Color32::from_rgba_unmultiplied(255, 230, 80, blink_a);
+                    let blink_stroke = Stroke::new(6.0, blink_color);
+                    ui.painter().add(egui::Shape::line(bp, blink_stroke));
                 }
             }
         }
+    }
+}
+
+/// Draw a track polyline where ghost-fix edges (either endpoint has `heading == None`)
+/// are rendered as dashed lines and real edges as solid lines.
+///
+/// An edge is ghost when either endpoint is a ghost fix, so the dashed region
+/// extends one segment on each side of every ghost point — ensuring the
+/// visual uncertainty is clear even at the real→ghost boundary.
+fn draw_track_with_ghost(painter: &egui::Painter, pts: &[(bool, egui::Pos2)], stroke: Stroke) {
+    if pts.len() < 2 {
+        return;
+    }
+
+    let mut solid_run: Vec<egui::Pos2> = Vec::new();
+    let mut ghost_run: Vec<egui::Pos2> = Vec::new();
+
+    for w in pts.windows(2) {
+        let [(ghost_a, pos_a), (ghost_b, pos_b)] = w else {
+            continue;
+        };
+        let (ghost_a, pos_a, ghost_b, pos_b) = (*ghost_a, *pos_a, *ghost_b, *pos_b);
+        let edge_is_ghost = ghost_a || ghost_b;
+
+        if edge_is_ghost {
+            if solid_run.len() >= 2 {
+                painter.add(egui::Shape::line(std::mem::take(&mut solid_run), stroke));
+            } else {
+                solid_run.clear();
+            }
+            if ghost_run.is_empty() {
+                ghost_run.push(pos_a);
+            }
+            ghost_run.push(pos_b);
+        } else {
+            if ghost_run.len() >= 2 {
+                draw_dashed_line(painter, &ghost_run, stroke, 8.0, 5.0);
+            }
+            ghost_run.clear();
+            if solid_run.is_empty() {
+                solid_run.push(pos_a);
+            }
+            solid_run.push(pos_b);
+        }
+    }
+
+    if solid_run.len() >= 2 {
+        painter.add(egui::Shape::line(solid_run, stroke));
+    }
+    if ghost_run.len() >= 2 {
+        draw_dashed_line(painter, &ghost_run, stroke, 8.0, 5.0);
+    }
+}
+
+/// Draw a polyline as a dashed line with the given dash and gap lengths in screen pixels.
+fn draw_dashed_line(
+    painter: &egui::Painter,
+    points: &[egui::Pos2],
+    stroke: Stroke,
+    dash: f32,
+    gap: f32,
+) {
+    if points.len() < 2 {
+        return;
+    }
+    let period = dash + gap;
+    let mut phase: f32 = 0.0;
+    let mut dash_start: Option<egui::Pos2> = None;
+
+    for w in points.windows(2) {
+        let [a, b] = w else { continue };
+        let (a, b) = (*a, *b);
+        let seg_len = (b - a).length();
+        if seg_len < f32::EPSILON {
+            continue;
+        }
+        let dir = (b - a) / seg_len;
+        let mut pos = a;
+        let mut remaining = seg_len;
+
+        while remaining > f32::EPSILON {
+            let in_dash = phase < dash;
+            let phase_end = if in_dash { dash } else { period };
+            let step = (phase_end - phase).min(remaining);
+            let next_pos = pos + dir * step;
+
+            if in_dash {
+                if dash_start.is_none() {
+                    dash_start = Some(pos);
+                }
+            } else if let Some(start) = dash_start.take() {
+                painter.line_segment([start, pos], stroke);
+            }
+
+            pos = next_pos;
+            remaining -= step;
+            phase += step;
+
+            // Transition: end of dash → start of gap, or end of gap → start of dash.
+            if phase + f32::EPSILON >= phase_end {
+                if in_dash {
+                    if let Some(start) = dash_start.take() {
+                        painter.line_segment([start, pos], stroke);
+                    }
+                    phase = dash;
+                } else {
+                    phase = 0.0;
+                }
+            }
+        }
+    }
+
+    // Flush any final in-progress dash.
+    if let Some(start) = dash_start
+        && let Some(&last) = points.last()
+    {
+        painter.line_segment([start, last], stroke);
     }
 }

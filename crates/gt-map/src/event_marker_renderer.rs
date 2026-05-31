@@ -1,14 +1,14 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui};
 use gt_types::{
     DataCategory, DataPointRef, EventMarkerStyle, GlobalFilter, HighlightScope, LoadedFile,
-    MapHighlight, MarkerIcon, SpatialPoint, TripDataVisibility, filter,
+    MapHighlight, MarkerIcon, SpatialPoint, TrackDataVisibility, filter,
 };
 use std::collections::HashMap;
 use walkers::{MapMemory, Plugin, Projector};
 
 pub struct EventMarkerRenderer<'a> {
     files: &'a [LoadedFile],
-    visibility: &'a TripDataVisibility,
+    visibility: &'a TrackDataVisibility,
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
     event_vis: &'a gt_types::EventMarkerVisibility,
@@ -18,7 +18,7 @@ pub struct EventMarkerRenderer<'a> {
 impl<'a> EventMarkerRenderer<'a> {
     pub fn new(
         files: &'a [LoadedFile],
-        visibility: &'a gt_types::TripDataVisibility,
+        visibility: &'a gt_types::TrackDataVisibility,
         highlight: &'a MapHighlight,
         filter: &'a GlobalFilter,
         event_vis: &'a gt_types::EventMarkerVisibility,
@@ -52,7 +52,7 @@ impl Plugin for EventMarkerRenderer<'_> {
             if !file_vis.enabled {
                 continue;
             }
-            let Some(trip_vis) = file_vis.trips.get(sp.trip_index.0) else {
+            let Some(trip_vis) = file_vis.tracks.get(sp.track_index.0) else {
                 continue;
             };
             if !trip_vis.enabled || !trip_vis.event_markers_visible {
@@ -61,18 +61,18 @@ impl Plugin for EventMarkerRenderer<'_> {
             let Some(file) = self.files.get(sp.file_index.0) else {
                 continue;
             };
-            let Some(trip) = file.trips.get(sp.trip_index.0) else {
+            let Some(track) = file.tracks.get(sp.track_index.0) else {
                 continue;
             };
-            if !filter::trip_passes_filter(&trip.metadata, self.filter) {
+            if !filter::track_passes_filter(&track.metadata, self.filter) {
                 continue;
             }
-            let Some(marker) = trip.event_markers.get(sp.point_index.0) else {
+            let Some(marker) = track.event_markers.get(sp.point_index.0) else {
                 continue;
             };
             if !self
                 .event_vis
-                .is_visible(sp.file_index.0, sp.trip_index.0, &marker.variant_path)
+                .is_visible(sp.file_index.0, sp.track_index.0, &marker.variant_path)
             {
                 continue;
             }
@@ -81,7 +81,7 @@ impl Plugin for EventMarkerRenderer<'_> {
             }
             let point_ref = DataPointRef {
                 file_index: sp.file_index,
-                trip_index: sp.trip_index,
+                track_index: sp.track_index,
                 category: DataCategory::EventMarker,
                 point_index: sp.point_index,
             };
@@ -101,8 +101,8 @@ impl Plugin for EventMarkerRenderer<'_> {
             && self.highlight.sticky != Some(r)
             && !ui.ctx().any_popup_open()
             && let Some(file) = self.files.get(r.file_index.0)
-            && let Some(trip) = file.trips.get(r.trip_index.0)
-            && let Some(marker) = trip.event_markers.get(r.point_index.0)
+            && let Some(track) = file.tracks.get(r.track_index.0)
+            && let Some(marker) = track.event_markers.get(r.point_index.0)
         {
             let pos = transform.to_screen(marker.merc_x, marker.merc_y);
             show_tooltip(ui, r, marker, pos);
@@ -186,10 +186,10 @@ fn is_highlighted(highlight: &MapHighlight, point_ref: DataPointRef) -> bool {
     }
     match highlight.hover {
         Some(gt_types::HighlightScope::Point(r)) => r == point_ref,
-        Some(gt_types::HighlightScope::Trip {
+        Some(gt_types::HighlightScope::Track {
             file_index,
-            trip_index,
-        }) => file_index == point_ref.file_index && trip_index == point_ref.trip_index,
+            track_index,
+        }) => file_index == point_ref.file_index && track_index == point_ref.track_index,
         _ => false,
     }
 }
@@ -332,7 +332,7 @@ fn show_tooltip(ui: &Ui, point_ref: DataPointRef, marker: &gt_types::EventMarker
         ui.id()
             .with("event_marker_hover")
             .with(point_ref.file_index.0)
-            .with(point_ref.trip_index.0)
+            .with(point_ref.track_index.0)
             .with(point_ref.point_index.0),
         egui::Sense::hover(),
     );

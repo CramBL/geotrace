@@ -1,7 +1,5 @@
 use chrono::{DateTime, Datelike, NaiveDateTime, Utc};
-use gt_types::{CustomMarker, MarkerIcon, NavPoint};
-use uom::si::angle::degree;
-use uom::si::f64::Angle;
+use gt_types::{CustomMarker, Latitude, Longitude, MarkerIcon, NavPoint};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogFormat {
@@ -220,7 +218,7 @@ impl ColorGroupAssigner {
 
 pub struct LogLoadResult {
     pub markers: Vec<CustomMarker>,
-    pub unassociated: Vec<String>,
+    pub unassociated: Vec<(DateTime<Utc>, String)>,
 }
 
 pub fn load_log(content: &str, nav_points: &[NavPoint], now: DateTime<Utc>) -> LogLoadResult {
@@ -286,11 +284,11 @@ pub fn load_log(content: &str, nav_points: &[NavPoint], now: DateTime<Utc>) -> L
 
     // Associate with nav track
     let mut markers: Vec<CustomMarker> = Vec::new();
-    let mut unassociated: Vec<String> = Vec::new();
+    let mut unassociated: Vec<(DateTime<Utc>, String)> = Vec::new();
 
     for ((ts, log_str), group_id) in entries.iter().zip(group_ids.iter()) {
         let Some((lat, lon)) = associate(ts, nav_points) else {
-            unassociated.push(log_str.clone());
+            unassociated.push((*ts, log_str.clone()));
             continue;
         };
 
@@ -298,8 +296,8 @@ pub fn load_log(content: &str, nav_points: &[NavPoint], now: DateTime<Utc>) -> L
             *ts,
             log_str.clone(),
             MarkerIcon::Log,
-            Angle::new::<degree>(lat),
-            Angle::new::<degree>(lon),
+            Latitude::new(lat),
+            Longitude::new(lon),
             Some(*group_id),
         ));
     }
@@ -348,12 +346,12 @@ fn associate(ts: &DateTime<Utc>, nav_points: &[NavPoint]) -> Option<(f64, f64)> 
             } else {
                 elapsed as f64 / span as f64
             };
-            let lat = b.tpv.lat().get::<degree>() * (1.0 - t) + a.tpv.lat().get::<degree>() * t;
-            let lon = b.tpv.lon().get::<degree>() * (1.0 - t) + a.tpv.lon().get::<degree>() * t;
+            let lat = b.tpv.lat().as_degrees() * (1.0 - t) + a.tpv.lat().as_degrees() * t;
+            let lon = b.tpv.lon().as_degrees() * (1.0 - t) + a.tpv.lon().as_degrees() * t;
             (lat, lon)
         }
-        (Some(b), None) => (b.tpv.lat().get::<degree>(), b.tpv.lon().get::<degree>()),
-        (None, Some(a)) => (a.tpv.lat().get::<degree>(), a.tpv.lon().get::<degree>()),
+        (Some(b), None) => (b.tpv.lat().as_degrees(), b.tpv.lon().as_degrees()),
+        (None, Some(a)) => (a.tpv.lat().as_degrees(), a.tpv.lon().as_degrees()),
         (None, None) => return None,
     };
 
@@ -364,6 +362,8 @@ fn associate(ts: &DateTime<Utc>, nav_points: &[NavPoint]) -> Option<(f64, f64)> 
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use uom::si::angle::degree;
+    use uom::si::f64::Angle;
 
     fn utc(y: i32, mo: u32, d: u32, h: u32, m: u32, s: u32) -> DateTime<Utc> {
         #[expect(clippy::expect_used, reason = "fixed test timestamp")]
@@ -570,8 +570,8 @@ mod tests {
                 let t = start + chrono::Duration::seconds(i as i64 * step_secs);
                 let tpv = TimePositionVelocity::builder()
                     .time(GpsTime::from_utc(t))
-                    .lat(Angle::new::<degree>(55.0 + i as f64 * 0.001))
-                    .lon(Angle::new::<degree>(12.0 + i as f64 * 0.001))
+                    .lat(Latitude::new(55.0 + i as f64 * 0.001))
+                    .lon(Longitude::new(12.0 + i as f64 * 0.001))
                     .heading(Angle::new::<degree>(0.0))
                     .velocity(Velocity::new::<meter_per_second>(1.0))
                     .build();

@@ -231,12 +231,12 @@ fn generate_and_verify_snapshot_fixture() {
     let loaded = gt_io::load_file(&path).expect("fixture loads without error");
 
     // Two trips separated by a >5-minute gap
-    assert_eq!(loaded.trips.len(), 2, "expected 2 trips");
+    assert_eq!(loaded.tracks.len(), 2, "expected 2 trips");
 
     // ------------------------------------------------------------------
     // Trip 0
     // ------------------------------------------------------------------
-    let t0 = loaded.trips.first().expect("trip 0 exists");
+    let t0 = loaded.tracks.first().expect("trip 0 exists");
 
     assert_eq!(t0.points.len(), 12, "trip 0: 12 TPV points");
     assert_eq!(
@@ -278,7 +278,7 @@ fn generate_and_verify_snapshot_fixture() {
     // ------------------------------------------------------------------
     // Trip 1
     // ------------------------------------------------------------------
-    let t1 = loaded.trips.get(1).expect("trip 1 exists");
+    let t1 = loaded.tracks.get(1).expect("trip 1 exists");
 
     assert_eq!(t1.points.len(), 8, "trip 1: 8 TPV points");
     assert_eq!(

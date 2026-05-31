@@ -270,10 +270,10 @@ fn compute_filtered_time_range(
     let mut min: Option<DateTime<Utc>> = None;
     let mut max: Option<DateTime<Utc>> = None;
     for file in files {
-        for trip in &file.trips {
-            if gt_types::trip_passes_filter(&trip.metadata, filter) {
-                let start = trip.metadata.time_range.start;
-                let end = trip.metadata.time_range.end;
+        for track in &file.tracks {
+            if gt_types::track_passes_filter(&track.metadata, filter) {
+                let start = track.metadata.time_range.start;
+                let end = track.metadata.time_range.end;
                 min = Some(min.map_or(start, |m: DateTime<Utc>| m.min(start)));
                 max = Some(max.map_or(end, |m: DateTime<Utc>| m.max(end)));
             }
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn compute_range_single_file() {
         use chrono::TimeZone;
-        use gt_types::trip::{FileMetadata, LoadedFile};
+        use gt_types::track::{FileMetadata, LoadedFile};
         let file = LoadedFile {
             metadata: FileMetadata {
                 filename: "test.nvd".to_owned(),
@@ -397,7 +397,7 @@ mod tests {
                     Utc.timestamp_opt(60, 0).single().expect("valid"),
                 ),
             },
-            trips: vec![],
+            tracks: vec![],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
         };

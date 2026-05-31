@@ -1,6 +1,5 @@
 use crate::satellites::Satellites;
 use crate::tpv::TimePositionVelocity;
-use uom::si::angle::degree;
 
 #[derive(Debug, Clone)]
 pub struct NavPoint {
@@ -18,7 +17,7 @@ pub struct NavPoint {
 impl NavPoint {
     pub fn new(tpv: TimePositionVelocity, satellites: Option<Satellites>) -> Self {
         let (merc_x, merc_y) =
-            crate::mercator::normalize(tpv.lon().get::<degree>(), tpv.lat().get::<degree>());
+            crate::mercator::normalize(tpv.lon().as_degrees(), tpv.lat().as_degrees());
         Self {
             tpv,
             satellites,
@@ -39,6 +38,7 @@ impl NavPoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coordinates::{Latitude, Longitude};
     use crate::satellites::{Constellation, Satellite, Satellites};
     use crate::time_types::GpsTime;
     use crate::tpv::TimePositionVelocity;
@@ -50,8 +50,8 @@ mod tests {
     fn test_nav_point_fix_counts() {
         let tpv = TimePositionVelocity::builder()
             .time(GpsTime::from_utc(Utc::now()))
-            .lat(Angle::new::<degree>(0.0))
-            .lon(Angle::new::<degree>(0.0))
+            .lat(Latitude::new(0.0))
+            .lon(Longitude::new(0.0))
             .heading(Angle::new::<degree>(0.0))
             .build();
 

@@ -7,6 +7,7 @@ use uom::si::length::meter;
 use uom::si::time::second;
 use uom::si::velocity::kilometer_per_hour;
 
+use crate::coordinates::{Latitude, Longitude};
 use crate::markers::{CustomMarker, MarkerIcon};
 use crate::nav_point::NavPoint;
 use crate::satellites::{Constellation, Satellite, Satellites};
@@ -98,8 +99,8 @@ pub fn nav_test_data() -> Vec<NavPoint> {
 
         let tpv = TimePositionVelocity::builder()
             .time(GpsTime::from_utc(current_time))
-            .lat(Angle::new::<degree>(lat))
-            .lon(Angle::new::<degree>(lon))
+            .lat(Latitude::new(lat))
+            .lon(Longitude::new(lon))
             .heading(current_segment.heading)
             .velocity(current_velocity)
             .build();

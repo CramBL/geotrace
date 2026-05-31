@@ -1,7 +1,7 @@
 use egui_kittest::{Harness, SnapshotOptions};
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
 use gt_types::{
-    FileIdx, GlobalFilter, MapHighlight, TripIdx, nav_test_data, segment::build_loaded_file,
+    FileIdx, GlobalFilter, MapHighlight, TrackIdx, nav_test_data, segment::build_loaded_file,
 };
 
 struct State {
@@ -65,8 +65,6 @@ fn skip_snapshot_on_ci() -> bool {
     std::env::var("CI").is_ok() && !cfg!(target_os = "macos")
 }
 
-// ── snapshot tests ────────────────────────────────────────────────────────────
-
 #[test]
 fn snapshot_collapsed_files() {
     if skip_snapshot_on_ci() {
@@ -89,8 +87,6 @@ fn snapshot_one_file_expanded() {
     harness.snapshot_options("side_panel_file_expanded", &snapshot_options());
 }
 
-// ── behavioural tests ─────────────────────────────────────────────────────────
-
 #[test]
 fn renders_without_panic() {
     let mut harness = make_harness(make_state(1));
@@ -111,14 +107,14 @@ fn hiding_file_updates_visibility() {
 fn hiding_one_trip_makes_file_mixed() {
     let mut harness = make_harness(make_state(1));
     harness.run();
-    let trip_count = harness.state().files[0].trips.len();
+    let trip_count = harness.state().files[0].tracks.len();
     if trip_count < 2 {
         return; // need at least 2 trips
     }
     harness
         .state_mut()
         .tree
-        .toggle_trip_check(FileIdx(0), TripIdx(0));
+        .toggle_trip_check(FileIdx(0), TrackIdx(0));
     harness.run();
     let check = harness.state().tree.files[0].check;
     assert_eq!(

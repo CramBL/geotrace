@@ -1,18 +1,18 @@
-use crate::trip::LoadedFile;
+use crate::track::LoadedFile;
 
 #[derive(Debug, Clone)]
-pub struct TripDataVisibility {
+pub struct TrackDataVisibility {
     pub files: Vec<FileVisibility>,
 }
 
 #[derive(Debug, Clone)]
 pub struct FileVisibility {
     pub enabled: bool,
-    pub trips: Vec<TripVisibility>,
+    pub tracks: Vec<TrackVisibility>,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct TripVisibility {
+pub struct TrackVisibility {
     pub enabled: bool,
     pub track_visible: bool,
     pub tpv_visible: bool,
@@ -22,7 +22,7 @@ pub struct TripVisibility {
     pub event_markers_visible: bool,
 }
 
-impl TripVisibility {
+impl TrackVisibility {
     pub fn all_visible() -> Self {
         Self {
             enabled: true,
@@ -36,17 +36,17 @@ impl TripVisibility {
     }
 }
 
-impl TripDataVisibility {
+impl TrackDataVisibility {
     pub fn from_loaded(files: &[LoadedFile]) -> Self {
         Self {
             files: files
                 .iter()
                 .map(|f| FileVisibility {
                     enabled: true,
-                    trips: f
-                        .trips
+                    tracks: f
+                        .tracks
                         .iter()
-                        .map(|_| TripVisibility::all_visible())
+                        .map(|_| TrackVisibility::all_visible())
                         .collect(),
                 })
                 .collect(),
@@ -57,8 +57,8 @@ impl TripDataVisibility {
     pub fn set_all_enabled(&mut self, enabled: bool) {
         for file in &mut self.files {
             file.enabled = enabled;
-            for trip in &mut file.trips {
-                trip.enabled = enabled;
+            for track in &mut file.tracks {
+                track.enabled = enabled;
             }
         }
     }
@@ -76,7 +76,7 @@ impl TripDataVisibility {
         for (i, file) in self.files.iter_mut().enumerate() {
             if i == fi {
                 file.enabled = true;
-                for (j, trip) in file.trips.iter_mut().enumerate() {
+                for (j, trip) in file.tracks.iter_mut().enumerate() {
                     trip.enabled = j == ti;
                 }
             } else {

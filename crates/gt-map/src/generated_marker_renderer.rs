@@ -1,13 +1,13 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui};
 use gt_types::{
     DataCategory, DataPointRef, GlobalFilter, HighlightScope, LoadedFile, MapHighlight,
-    SpatialPoint, TripDataVisibility, filter,
+    SpatialPoint, TrackDataVisibility, filter,
 };
 use walkers::{MapMemory, Plugin, Projector};
 
 pub struct GeneratedMarkerRenderer<'a> {
     files: &'a [LoadedFile],
-    visibility: &'a TripDataVisibility,
+    visibility: &'a TrackDataVisibility,
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
     visible_generated: Vec<SpatialPoint>,
@@ -16,7 +16,7 @@ pub struct GeneratedMarkerRenderer<'a> {
 impl<'a> GeneratedMarkerRenderer<'a> {
     pub fn new(
         files: &'a [LoadedFile],
-        visibility: &'a TripDataVisibility,
+        visibility: &'a TrackDataVisibility,
         highlight: &'a MapHighlight,
         filter: &'a GlobalFilter,
         visible_generated: Vec<SpatialPoint>,
@@ -36,17 +36,17 @@ impl<'a> GeneratedMarkerRenderer<'a> {
         }
         match self.highlight.hover {
             Some(HighlightScope::Point(r)) => r == point_ref,
-            Some(HighlightScope::Trip {
+            Some(HighlightScope::Track {
                 file_index,
-                trip_index,
-            }) => file_index == point_ref.file_index && trip_index == point_ref.trip_index,
-            Some(HighlightScope::TripCategory {
+                track_index,
+            }) => file_index == point_ref.file_index && track_index == point_ref.track_index,
+            Some(HighlightScope::TrackCategory {
                 file_index,
-                trip_index,
+                track_index,
                 category,
             }) => {
                 file_index == point_ref.file_index
-                    && trip_index == point_ref.trip_index
+                    && track_index == point_ref.track_index
                     && category == DataCategory::GeneratedMarker
             }
             _ => false,
@@ -57,10 +57,10 @@ impl<'a> GeneratedMarkerRenderer<'a> {
         let Some(file) = self.files.get(point_ref.file_index.0) else {
             return;
         };
-        let Some(trip) = file.trips.get(point_ref.trip_index.0) else {
+        let Some(track) = file.tracks.get(point_ref.track_index.0) else {
             return;
         };
-        let Some(marker) = trip.generated_markers.get(point_ref.point_index.0) else {
+        let Some(marker) = track.generated_markers.get(point_ref.point_index.0) else {
             return;
         };
         let hit_rect = egui::Rect::from_center_size(pos, egui::vec2(20.0, 20.0));
@@ -69,14 +69,14 @@ impl<'a> GeneratedMarkerRenderer<'a> {
             ui.id()
                 .with("gen_marker_hover")
                 .with(point_ref.file_index.0)
-                .with(point_ref.trip_index.0)
+                .with(point_ref.track_index.0)
                 .with(point_ref.point_index.0),
             egui::Sense::hover(),
         );
         response.show_tooltip_ui(|ui| match marker.kind {
             gt_types::GeneratedMarkerKind::GpsFixLost => {
                 ui.strong("GPS fix lost");
-                let corresponding = trip
+                let corresponding = track
                     .points
                     .iter()
                     .find(|p| p.tpv.time().utc() == marker.time);
@@ -118,7 +118,7 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             if !file_vis.enabled {
                 continue;
             }
-            let Some(trip_vis) = file_vis.trips.get(sp.trip_index.0) else {
+            let Some(trip_vis) = file_vis.tracks.get(sp.track_index.0) else {
                 continue;
             };
             if !trip_vis.enabled || !trip_vis.generated_markers_visible {
@@ -127,13 +127,13 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             let Some(file) = self.files.get(sp.file_index.0) else {
                 continue;
             };
-            let Some(trip) = file.trips.get(sp.trip_index.0) else {
+            let Some(track) = file.tracks.get(sp.track_index.0) else {
                 continue;
             };
-            if !filter::trip_passes_filter(&trip.metadata, self.filter) {
+            if !filter::track_passes_filter(&track.metadata, self.filter) {
                 continue;
             }
-            let Some(marker) = trip.generated_markers.get(sp.point_index.0) else {
+            let Some(marker) = track.generated_markers.get(sp.point_index.0) else {
                 continue;
             };
             if !filter::point_passes_time_filter(marker.time, self.filter) {
@@ -141,7 +141,7 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             }
             let point_ref = DataPointRef {
                 file_index: sp.file_index,
-                trip_index: sp.trip_index,
+                track_index: sp.track_index,
                 category: DataCategory::GeneratedMarker,
                 point_index: sp.point_index,
             };
@@ -158,8 +158,8 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             && self.highlight.sticky != Some(r)
             && !ui.ctx().any_popup_open()
             && let Some(file) = self.files.get(r.file_index.0)
-            && let Some(trip) = file.trips.get(r.trip_index.0)
-            && let Some(marker) = trip.generated_markers.get(r.point_index.0)
+            && let Some(track) = file.tracks.get(r.track_index.0)
+            && let Some(marker) = track.generated_markers.get(r.point_index.0)
         {
             let pos = transform.to_screen(marker.merc_x, marker.merc_y);
             self.show_tooltip(ui, r, pos);

@@ -43,8 +43,8 @@ pub(crate) struct TripSeries {
 /// so the cache stays valid across filter changes without a rebuild.
 pub(crate) fn build_file_series(fi: usize, file: &LoadedFile) -> Vec<TripSeries> {
     let mut result = Vec::new();
-    for (ti, trip) in file.trips.iter().enumerate() {
-        result.push(build_trip_series(fi, ti, file, trip));
+    for (ti, track) in file.tracks.iter().enumerate() {
+        result.push(build_trip_series(fi, ti, file, track));
     }
     result
 }
@@ -53,8 +53,8 @@ pub(crate) fn build_file_series(fi: usize, file: &LoadedFile) -> Vec<TripSeries>
 pub(crate) fn build_all_series(files: &[LoadedFile]) -> Vec<TripSeries> {
     let mut result = Vec::new();
     for (fi, file) in files.iter().enumerate() {
-        for (ti, trip) in file.trips.iter().enumerate() {
-            result.push(build_trip_series(fi, ti, file, trip));
+        for (ti, track) in file.tracks.iter().enumerate() {
+            result.push(build_trip_series(fi, ti, file, track));
         }
     }
     result
@@ -64,16 +64,16 @@ fn build_trip_series(
     fi: usize,
     ti: usize,
     file: &LoadedFile,
-    trip: &gt_types::LoadedTrip,
+    track: &gt_types::LoadedTrack,
 ) -> TripSeries {
-    let label = if file.trips.len() == 1 {
+    let label = if file.tracks.len() == 1 {
         file.metadata.filename.clone()
     } else {
         format!("{} T{}", file.metadata.filename, ti + 1)
     };
 
-    let mut total_seen_pts: Vec<[f64; 2]> = Vec::with_capacity(trip.points.len());
-    let mut total_fix_pts: Vec<[f64; 2]> = Vec::with_capacity(trip.points.len());
+    let mut total_seen_pts: Vec<[f64; 2]> = Vec::with_capacity(track.points.len());
+    let mut total_fix_pts: Vec<[f64; 2]> = Vec::with_capacity(track.points.len());
     let mut gps_seen_pts: Vec<[f64; 2]> = Vec::new();
     let mut gps_fix_pts: Vec<[f64; 2]> = Vec::new();
     let mut glonass_seen_pts: Vec<[f64; 2]> = Vec::new();
@@ -82,11 +82,11 @@ fn build_trip_series(
     let mut galileo_fix_pts: Vec<[f64; 2]> = Vec::new();
     let mut beidou_seen_pts: Vec<[f64; 2]> = Vec::new();
     let mut beidou_fix_pts: Vec<[f64; 2]> = Vec::new();
-    let mut velocity_kmh_pts: Vec<[f64; 2]> = Vec::with_capacity(trip.points.len());
+    let mut velocity_kmh_pts: Vec<[f64; 2]> = Vec::with_capacity(track.points.len());
     let mut eph_m_pts: Vec<[f64; 2]> = Vec::new();
     let mut heading_deg_pts: Vec<[f64; 2]> = Vec::new();
 
-    for point in &trip.points {
+    for point in &track.points {
         let t = point.tpv.time().utc().timestamp() as f64;
 
         if let Some(sats) = &point.satellites {
@@ -137,10 +137,10 @@ fn build_trip_series(
         }
     }
 
-    let x_range = trip
+    let x_range = track
         .points
         .first()
-        .zip(trip.points.last())
+        .zip(track.points.last())
         .map(|(first, last)| {
             (
                 first.tpv.time().utc().timestamp() as f64,

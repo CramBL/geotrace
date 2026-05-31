@@ -1,14 +1,14 @@
+use crate::coordinates::{Latitude, Longitude};
 use crate::markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
 };
 use crate::nav_point::NavPoint;
 use crate::time_types::GpsTime;
-use crate::trip::{FileMetadata, LoadedFile, LoadedTrip, TimeRange, TripMetadata};
+use crate::track::{FileMetadata, LoadedFile, LoadedTrack, TimeRange, TrackMetadata};
 use chrono::{DateTime, Duration, Utc};
 use geo_types::{Coord, Rect};
 use gt_geo_math::{path_distance_km, point_set_diameter_m};
 use std::ops::Range;
-use uom::si::angle::degree;
 
 /// Partitions `points` into contiguous trip ranges. A new trip begins when the
 /// gap between consecutive timestamps is ≥ 5 minutes (300 s). Returns an empty
@@ -45,8 +45,8 @@ enum GpsFixState {
     Waiting,
     HasFix {
         last_time: GpsTime,
-        last_lat: uom::si::f64::Angle,
-        last_lon: uom::si::f64::Angle,
+        last_lat: Latitude,
+        last_lon: Longitude,
     },
     LostFix {
         lost_at: GpsTime,
@@ -146,31 +146,24 @@ fn detect_generated_markers(points: &[NavPoint]) -> Vec<GeneratedMarker> {
     markers
 }
 
-/// Computes `TripMetadata` from a non-empty slice of points.
-///
-/// # Panics
-/// Panics if `points` is empty.
-#[expect(
-    clippy::expect_used,
-    reason = "non-empty precondition enforced by segment_trips"
-)]
+/// Computes `TrackMetadata` from a non-empty slice of points.
 pub fn compute_trip_metadata(
     index: usize,
-    points: &[NavPoint],
+    points: &vec1::Vec1<NavPoint>,
     custom_markers: &[CustomMarker],
     generated_markers: &[GeneratedMarker],
-) -> TripMetadata {
-    let first = points.first().expect("points must be non-empty");
-    let last = points.last().expect("points must be non-empty");
+) -> TrackMetadata {
+    let first = points.first();
+    let last = points.last();
 
-    let first_lat = first.tpv.lat().get::<degree>();
-    let first_lon = first.tpv.lon().get::<degree>();
+    let first_lat = first.tpv.lat().as_degrees();
+    let first_lon = first.tpv.lon().as_degrees();
 
     let (min_lat, max_lat, min_lon, max_lon) = points.iter().fold(
         (first_lat, first_lat, first_lon, first_lon),
         |(min_lat, max_lat, min_lon, max_lon), p| {
-            let lat = p.tpv.lat().get::<degree>();
-            let lon = p.tpv.lon().get::<degree>();
+            let lat = p.tpv.lat().as_degrees();
+            let lon = p.tpv.lon().as_degrees();
             (
                 min_lat.min(lat),
                 max_lat.max(lat),
@@ -190,11 +183,11 @@ pub fn compute_trip_metadata(
             y: max_lat,
         },
     );
-    let merc_bounds = crate::trip::merc_bounds_for_rect(bounding_box);
+    let merc_bounds = crate::track::merc_bounds_for_rect(bounding_box);
 
     let coords: Vec<(f64, f64)> = points
         .iter()
-        .map(|p| (p.tpv.lat().get::<degree>(), p.tpv.lon().get::<degree>()))
+        .map(|p| (p.tpv.lat().as_degrees(), p.tpv.lon().as_degrees()))
         .collect();
 
     let distance_km = path_distance_km(&coords);
@@ -207,7 +200,7 @@ pub fn compute_trip_metadata(
         Duration::zero()
     };
 
-    TripMetadata {
+    TrackMetadata {
         index,
         distance_km,
         duration,
@@ -227,7 +220,7 @@ pub fn compute_trip_metadata(
 /// Segments `points` into trips and builds a fully-populated `LoadedFile`.
 #[expect(
     clippy::expect_used,
-    reason = "ranges from segment_trips are always in-bounds"
+    reason = "ranges from segment_trips are always in-bounds and non-empty"
 )]
 pub fn build_loaded_file(
     filename: String,
@@ -238,35 +231,35 @@ pub fn build_loaded_file(
 ) -> LoadedFile {
     let ranges = segment_trips(points);
 
-    let mut loaded_trips: Vec<LoadedTrip> = ranges
+    let mut loaded_tracks: Vec<LoadedTrack> = ranges
         .iter()
         .enumerate()
         .map(|(trip_idx, range)| {
-            let trip_points = points
+            let trip_points_slice = points
                 .get(range.clone())
-                .expect("ranges from segment_trips are in bounds")
-                .to_vec();
+                .expect("ranges from segment_trips are in bounds");
 
-            let trip_start = trip_points.first().map(|p| p.tpv.time().utc());
-            let trip_end = trip_points.last().map(|p| p.tpv.time().utc());
+            let trip_points: vec1::Vec1<NavPoint> =
+                vec1::Vec1::try_from_vec(trip_points_slice.to_vec())
+                    .expect("segment_trips produces only non-empty ranges");
 
-            let trip_custom: Vec<CustomMarker> = match (trip_start, trip_end) {
-                (Some(start), Some(end)) => custom_markers
-                    .iter()
-                    .filter(|m| m.time >= start && m.time <= end)
-                    .cloned()
-                    .collect(),
-                _ => Vec::new(),
-            };
+            let trip_start = trip_points.first().tpv.time().utc();
+            let trip_end = trip_points.last().tpv.time().utc();
+
+            let trip_custom: Vec<CustomMarker> = custom_markers
+                .iter()
+                .filter(|m| m.time >= trip_start && m.time <= trip_end)
+                .cloned()
+                .collect();
 
             let trip_generated = detect_generated_markers(&trip_points);
 
             let metadata =
                 compute_trip_metadata(trip_idx + 1, &trip_points, &trip_custom, &trip_generated);
 
-            LoadedTrip {
+            LoadedTrack {
                 metadata,
-                points: trip_points,
+                points: trip_points.into_vec(),
                 custom_markers: trip_custom,
                 generated_markers: trip_generated,
                 event_markers: Vec::new(),
@@ -278,14 +271,14 @@ pub fn build_loaded_file(
     let mut orphaned_event_markers = Vec::new();
     for em in event_markers {
         let mut em = Some(em);
-        for trip in &mut loaded_trips {
-            let start = trip.metadata.time_range.start;
-            let end = trip.metadata.time_range.end;
+        for track in &mut loaded_tracks {
+            let start = track.metadata.time_range.start;
+            let end = track.metadata.time_range.end;
             if em
                 .as_ref()
                 .is_some_and(|e| e.time >= start && e.time <= end)
             {
-                trip.event_markers.push(
+                track.event_markers.push(
                     #[expect(clippy::expect_used, reason = "just checked is_some")]
                     em.take().expect("checked above"),
                 );
@@ -297,20 +290,20 @@ pub fn build_loaded_file(
         }
     }
     // Back-fill event_marker_count now that assignment is done.
-    for trip in &mut loaded_trips {
-        trip.metadata.event_marker_count = trip.event_markers.len();
+    for track in &mut loaded_tracks {
+        track.metadata.event_marker_count = track.event_markers.len();
     }
 
-    let total_distance_km = loaded_trips
+    let total_distance_km = loaded_tracks
         .iter()
         .map(|t| t.metadata.distance_km)
         .sum::<f64>();
-    let total_duration = loaded_trips
+    let total_duration = loaded_tracks
         .iter()
         .fold(Duration::zero(), |acc, t| acc + t.metadata.duration);
 
     let fallback = DateTime::<Utc>::UNIX_EPOCH;
-    let file_time_range = match (loaded_trips.first(), loaded_trips.last()) {
+    let file_time_range = match (loaded_tracks.first(), loaded_tracks.last()) {
         (Some(first), Some(last)) => TimeRange::new(
             first.metadata.time_range.start,
             last.metadata.time_range.end,
@@ -325,7 +318,7 @@ pub fn build_loaded_file(
             total_duration,
             time_range: file_time_range,
         },
-        trips: loaded_trips,
+        tracks: loaded_tracks,
         event_marker_styles: event_marker_styles
             .into_iter()
             .map(|s| (s.variant_path.clone(), s))
@@ -340,14 +333,15 @@ mod tests {
     use crate::time_types::GpsTime;
     use crate::tpv::TimePositionVelocity;
     use chrono::TimeZone;
+    use uom::si::angle::degree;
     use uom::si::f64::Angle;
 
     fn make_point_at(t: i64) -> NavPoint {
         let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().unwrap());
         let tpv = TimePositionVelocity::builder()
             .time(time)
-            .lat(Angle::new::<degree>(55.0))
-            .lon(Angle::new::<degree>(12.0))
+            .lat(Latitude::new(55.0))
+            .lon(Longitude::new(12.0))
             .heading(Angle::new::<degree>(0.0))
             .build();
         NavPoint::new(tpv, None)
@@ -357,8 +351,8 @@ mod tests {
         let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().unwrap());
         let tpv = TimePositionVelocity::builder()
             .time(time)
-            .lat(Angle::new::<degree>(lat))
-            .lon(Angle::new::<degree>(lon))
+            .lat(Latitude::new(lat))
+            .lon(Longitude::new(lon))
             .heading(Angle::new::<degree>(0.0))
             .build();
         NavPoint::new(tpv, None)
@@ -420,7 +414,7 @@ mod tests {
 
     #[test]
     fn compute_trip_metadata_basic() {
-        let pts = vec![
+        let pts = vec1::vec1![
             make_point_at_pos(0, 55.0, 12.0),
             make_point_at_pos(3600, 55.1, 12.1), // 1 h later, ~13 km away
         ];
@@ -439,7 +433,7 @@ mod tests {
 
     #[test]
     fn compute_trip_metadata_single_point_has_zero_duration() {
-        let pts = vec![make_point_at_pos(0, 55.0, 12.0)];
+        let pts = vec1::vec1![make_point_at_pos(0, 55.0, 12.0)];
         let meta = compute_trip_metadata(1, &pts, &[], &[]);
         assert_eq!(meta.duration.num_seconds(), 0);
         assert_eq!(meta.distance_km, 0.0);
@@ -450,7 +444,7 @@ mod tests {
     #[test]
     fn build_loaded_file_empty_points() {
         let f = build_loaded_file("test.nvd".to_owned(), &[], &[], vec![], vec![]);
-        assert!(f.trips.is_empty());
+        assert!(f.tracks.is_empty());
         assert_eq!(f.metadata.filename, "test.nvd");
     }
 
@@ -463,10 +457,10 @@ mod tests {
             make_point_at(3660),
         ];
         let f = build_loaded_file("ride.nvd".to_owned(), &pts, &[], vec![], vec![]);
-        assert_eq!(f.trips.len(), 2);
-        assert_eq!(f.trips[0].points.len(), 2);
-        assert_eq!(f.trips[1].points.len(), 2);
-        assert_eq!(f.trips[0].metadata.index, 1);
-        assert_eq!(f.trips[1].metadata.index, 2);
+        assert_eq!(f.tracks.len(), 2);
+        assert_eq!(f.tracks[0].points.len(), 2);
+        assert_eq!(f.tracks[1].points.len(), 2);
+        assert_eq!(f.tracks[0].metadata.index, 1);
+        assert_eq!(f.tracks[1].metadata.index, 2);
     }
 }

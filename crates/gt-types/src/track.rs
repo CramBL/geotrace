@@ -1,4 +1,4 @@
-use crate::highlight::{DataCategory, FileIdx, PointIdx, TripIdx};
+use crate::highlight::{DataCategory, FileIdx, PointIdx, TrackIdx};
 use crate::markers::{CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker};
 use crate::nav_point::NavPoint;
 use chrono::{DateTime, Duration, Utc};
@@ -85,7 +85,7 @@ pub enum MarkerRequirement {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct TripMetadata {
+pub struct TrackMetadata {
     pub index: usize,
     pub distance_km: f64,
     pub duration: Duration,
@@ -104,7 +104,7 @@ pub struct TripMetadata {
     pub event_marker_count: usize,
 }
 
-impl TripMetadata {
+impl TrackMetadata {
     /// Returns `true` when the trip has at least one custom, event, or generated marker.
     pub fn has_any_marker(&self) -> bool {
         self.has_custom_markers || self.generated_marker_count > 0 || self.event_marker_count > 0
@@ -137,7 +137,7 @@ pub struct SpatialPoint {
     pub merc_x: f64,
     pub merc_y: f64,
     pub file_index: FileIdx,
-    pub trip_index: TripIdx,
+    pub track_index: TrackIdx,
     pub point_index: PointIdx,
     pub category: DataCategory,
 }
@@ -159,8 +159,8 @@ impl rstar::PointDistance for SpatialPoint {
 }
 
 #[derive(Debug, Clone)]
-pub struct LoadedTrip {
-    pub metadata: TripMetadata,
+pub struct LoadedTrack {
+    pub metadata: TrackMetadata,
     /// TPV points, each optionally paired with a satellite report.
     pub points: Vec<NavPoint>,
     pub custom_markers: Vec<CustomMarker>,
@@ -180,9 +180,9 @@ pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
     let mut points: Vec<SpatialPoint> = Vec::new();
     for (fi, file) in files.iter().enumerate() {
         let file_index = FileIdx(fi);
-        for (ti, trip) in file.trips.iter().enumerate() {
-            let trip_index = TripIdx(ti);
-            for (pi, p) in trip.points.iter().enumerate() {
+        for (ti, track) in file.tracks.iter().enumerate() {
+            let track_index = TrackIdx(ti);
+            for (pi, p) in track.points.iter().enumerate() {
                 if p.tpv.heading().is_none() {
                     continue;
                 }
@@ -190,37 +190,37 @@ pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
                     merc_x: p.merc_x,
                     merc_y: p.merc_y,
                     file_index,
-                    trip_index,
+                    track_index,
                     point_index: PointIdx(pi),
                     category: DataCategory::Tpv,
                 });
             }
-            for (pi, m) in trip.custom_markers.iter().enumerate() {
+            for (pi, m) in track.custom_markers.iter().enumerate() {
                 points.push(SpatialPoint {
                     merc_x: m.merc_x,
                     merc_y: m.merc_y,
                     file_index,
-                    trip_index,
+                    track_index,
                     point_index: PointIdx(pi),
                     category: DataCategory::CustomMarker,
                 });
             }
-            for (pi, m) in trip.generated_markers.iter().enumerate() {
+            for (pi, m) in track.generated_markers.iter().enumerate() {
                 points.push(SpatialPoint {
                     merc_x: m.merc_x,
                     merc_y: m.merc_y,
                     file_index,
-                    trip_index,
+                    track_index,
                     point_index: PointIdx(pi),
                     category: DataCategory::GeneratedMarker,
                 });
             }
-            for (pi, m) in trip.event_markers.iter().enumerate() {
+            for (pi, m) in track.event_markers.iter().enumerate() {
                 points.push(SpatialPoint {
                     merc_x: m.merc_x,
                     merc_y: m.merc_y,
                     file_index,
-                    trip_index,
+                    track_index,
                     point_index: PointIdx(pi),
                     category: DataCategory::EventMarker,
                 });
@@ -241,7 +241,7 @@ pub struct FileMetadata {
 #[derive(Debug, Clone)]
 pub struct LoadedFile {
     pub metadata: FileMetadata,
-    pub trips: Vec<LoadedTrip>,
+    pub tracks: Vec<LoadedTrack>,
     /// Icon/color overrides keyed by variant path; file-level (shared across trips).
     pub event_marker_styles: HashMap<String, EventMarkerStyle>,
     /// Event markers whose timestamp did not fall within any trip's time window.

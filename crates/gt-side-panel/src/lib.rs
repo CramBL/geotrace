@@ -6,6 +6,6 @@ pub mod widgets;
 pub use filter::{FilterPanelState, render_filter_panel};
 pub use render::{PanelContext, show_side_panel};
 pub use tree::{
-    CategoriesExpanded, CheckState, DeleteConfirmState, FileNode, NodeKey, TreeState, TripNode,
-    TripRef,
+    CategoriesExpanded, CheckState, DeleteConfirmState, FileNode, NodeKey, TrackRef, TreeState,
+    TripNode,
 };

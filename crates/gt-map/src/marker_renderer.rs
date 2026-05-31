@@ -1,13 +1,13 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui};
 use gt_types::{
     CustomMarker, DataCategory, DataPointRef, GlobalFilter, HighlightScope, LoadedFile,
-    MapHighlight, MarkerIcon, SpatialPoint, TripDataVisibility, filter,
+    MapHighlight, MarkerIcon, SpatialPoint, TrackDataVisibility, filter,
 };
 use walkers::{MapMemory, Plugin, Projector};
 
 pub struct MarkerRenderer<'a> {
     files: &'a [LoadedFile],
-    visibility: &'a TripDataVisibility,
+    visibility: &'a TrackDataVisibility,
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
     visible_custom: Vec<SpatialPoint>,
@@ -16,7 +16,7 @@ pub struct MarkerRenderer<'a> {
 impl<'a> MarkerRenderer<'a> {
     pub fn new(
         files: &'a [LoadedFile],
-        visibility: &'a TripDataVisibility,
+        visibility: &'a TrackDataVisibility,
         highlight: &'a MapHighlight,
         filter: &'a GlobalFilter,
         visible_custom: Vec<SpatialPoint>,
@@ -36,17 +36,17 @@ impl<'a> MarkerRenderer<'a> {
         }
         match self.highlight.hover {
             Some(HighlightScope::Point(r)) => r == point_ref,
-            Some(HighlightScope::Trip {
+            Some(HighlightScope::Track {
                 file_index,
-                trip_index,
-            }) => file_index == point_ref.file_index && trip_index == point_ref.trip_index,
-            Some(HighlightScope::TripCategory {
+                track_index,
+            }) => file_index == point_ref.file_index && track_index == point_ref.track_index,
+            Some(HighlightScope::TrackCategory {
                 file_index,
-                trip_index,
+                track_index,
                 category,
             }) => {
                 file_index == point_ref.file_index
-                    && trip_index == point_ref.trip_index
+                    && track_index == point_ref.track_index
                     && category == DataCategory::CustomMarker
             }
             _ => false,
@@ -71,7 +71,7 @@ impl Plugin for MarkerRenderer<'_> {
             if !file_vis.enabled {
                 continue;
             }
-            let Some(trip_vis) = file_vis.trips.get(sp.trip_index.0) else {
+            let Some(trip_vis) = file_vis.tracks.get(sp.track_index.0) else {
                 continue;
             };
             if !trip_vis.enabled || !trip_vis.custom_markers_visible {
@@ -80,13 +80,13 @@ impl Plugin for MarkerRenderer<'_> {
             let Some(file) = self.files.get(sp.file_index.0) else {
                 continue;
             };
-            let Some(trip) = file.trips.get(sp.trip_index.0) else {
+            let Some(track) = file.tracks.get(sp.track_index.0) else {
                 continue;
             };
-            if !filter::trip_passes_filter(&trip.metadata, self.filter) {
+            if !filter::track_passes_filter(&track.metadata, self.filter) {
                 continue;
             }
-            let Some(marker) = trip.custom_markers.get(sp.point_index.0) else {
+            let Some(marker) = track.custom_markers.get(sp.point_index.0) else {
                 continue;
             };
             if !filter::point_passes_time_filter(marker.time, self.filter) {
@@ -94,7 +94,7 @@ impl Plugin for MarkerRenderer<'_> {
             }
             let point_ref = DataPointRef {
                 file_index: sp.file_index,
-                trip_index: sp.trip_index,
+                track_index: sp.track_index,
                 category: DataCategory::CustomMarker,
                 point_index: sp.point_index,
             };
@@ -111,8 +111,8 @@ impl Plugin for MarkerRenderer<'_> {
             && self.highlight.sticky != Some(r)
             && !ui.ctx().any_popup_open()
             && let Some(file) = self.files.get(r.file_index.0)
-            && let Some(trip) = file.trips.get(r.trip_index.0)
-            && let Some(marker) = trip.custom_markers.get(r.point_index.0)
+            && let Some(track) = file.tracks.get(r.track_index.0)
+            && let Some(marker) = track.custom_markers.get(r.point_index.0)
         {
             let pos = transform.to_screen(marker.merc_x, marker.merc_y);
             show_marker_hover_label(ui, marker, pos);

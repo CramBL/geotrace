@@ -31,8 +31,8 @@ authors = ["Marc Beck König <mgit@tuta.io>"]
 
 [workspace.dependencies]
 bon = "3"
-dirs = "6"
 chrono = { version = "0.4.44", default-features = false, features = ["std", "now", "clock", "oldtime"] }
+dirs = "6"
 eframe = { version = "0.34.3", default-features = false, features = ["default_fonts", "wgpu", "wayland"] }
 egui = "0.34.3"
 egui-phosphor = "0.12.0"
@@ -45,6 +45,7 @@ geo-types = "0.7.19"
 hdf5-pure = "0.6.0"
 log = "0.4"
 proc-macro2 = "1"
+proptest = "1"
 quote = "1"
 rayon = "1"
 rstar = "0.13"
@@ -53,6 +54,7 @@ strum = { version = "0.28", features = ["derive"] }
 syn = "2"
 thiserror = "2"
 uom = "0.38.0"
+vec1 = "1"
 walkers = "0.53.0"
 
 [workspace.lints.rust]
@@ -197,7 +199,6 @@ mimalloc = { version = "0.1.48", features = ["v3"] }
 rfd = "0.17.2"
 serde = { version = "1", features = ["derive"] }
 toml = "1"
-uom.workspace = true
 
 [dev-dependencies]
 egui_kittest = { version = "0.34.3", features = ["eframe"] }

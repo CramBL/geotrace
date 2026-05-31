@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use egui::Color32;
 use egui_plot::{Line, PlotPoints, VLine};
 use gt_egui_mipmap::{LevelSelection, MipMap};
-use gt_types::{FileIdx, GlobalFilter, LoadedFile, PointIdx, TripDataVisibility, TripIdx};
+use gt_types::{FileIdx, GlobalFilter, LoadedFile, PointIdx, TrackDataVisibility, TrackIdx};
 use rayon::prelude::*;
 
 /// Identifies one of the 13 per-metric plot series.
@@ -324,7 +324,7 @@ impl PlotState {
 pub fn show_trip_plot(
     ui: &mut egui::Ui,
     files: &[LoadedFile],
-    visibility: &TripDataVisibility,
+    visibility: &TrackDataVisibility,
     filter: &GlobalFilter,
     map_hover_time: Option<DateTime<Utc>>,
     // When map→plot sync is enabled, this carries the Unix-second x range
@@ -658,7 +658,7 @@ fn compute_level_cache(
 
 /// Returns `true` when the trip at `(fi, ti)` passes visibility and filter checks.
 fn trip_is_visible(
-    visibility: &TripDataVisibility,
+    visibility: &TrackDataVisibility,
     global_filter: &GlobalFilter,
     files: &[LoadedFile],
     fi: usize,
@@ -670,7 +670,7 @@ fn trip_is_visible(
     if !file_vis.enabled {
         return false;
     }
-    let Some(trip_vis) = file_vis.trips.get(ti) else {
+    let Some(trip_vis) = file_vis.tracks.get(ti) else {
         return false;
     };
     if !trip_vis.enabled {
@@ -679,10 +679,10 @@ fn trip_is_visible(
     let Some(file) = files.get(fi) else {
         return false;
     };
-    let Some(trip) = file.trips.get(ti) else {
+    let Some(track) = file.tracks.get(ti) else {
         return false;
     };
-    gt_types::filter::trip_passes_filter(&trip.metadata, global_filter)
+    gt_types::filter::track_passes_filter(&track.metadata, global_filter)
 }
 
 /// Add all metric lines for one trip to the plot using pre-computed level selections.
@@ -754,18 +754,18 @@ fn add_line<'a>(
 }
 
 /// Given a set of visible trips and a plot-hovered time (in seconds since
-/// epoch), find the `(file_index, trip_index, point_index)` of the closest
+/// epoch), find the `(file_index, track_index, point_index)` of the closest
 /// TPV point across all visible trips.
 ///
 /// Called by the app to set `MapHighlight::plot_hover_time` after the plot renders.
 pub fn find_closest_tpv(
     files: &[LoadedFile],
-    visibility: &TripDataVisibility,
+    visibility: &TrackDataVisibility,
     filter: &GlobalFilter,
     target: DateTime<Utc>,
-) -> Option<(FileIdx, TripIdx, PointIdx)> {
+) -> Option<(FileIdx, TrackIdx, PointIdx)> {
     let target_secs = target.timestamp() as f64;
-    let mut best: Option<(FileIdx, TripIdx, PointIdx, f64)> = None;
+    let mut best: Option<(FileIdx, TrackIdx, PointIdx, f64)> = None;
 
     for (fi, file) in files.iter().enumerate() {
         let fi = FileIdx(fi);
@@ -775,22 +775,22 @@ pub fn find_closest_tpv(
         if !file_vis.enabled {
             continue;
         }
-        for (ti, trip) in file.trips.iter().enumerate() {
-            let ti = TripIdx(ti);
-            let Some(trip_vis) = file_vis.trips.get(ti.0) else {
+        for (ti, track) in file.tracks.iter().enumerate() {
+            let ti = TrackIdx(ti);
+            let Some(trip_vis) = file_vis.tracks.get(ti.0) else {
                 continue;
             };
             if !trip_vis.enabled {
                 continue;
             }
-            if !gt_types::filter::trip_passes_filter(&trip.metadata, filter) {
+            if !gt_types::filter::track_passes_filter(&track.metadata, filter) {
                 continue;
             }
-            let Some(pi) = closest_point_index(&trip.points, target_secs) else {
+            let Some(pi) = closest_point_index(&track.points, target_secs) else {
                 continue;
             };
             let pi = PointIdx(pi);
-            let Some(point) = trip.points.get(pi.0) else {
+            let Some(point) = track.points.get(pi.0) else {
                 continue;
             };
             let dist = (point.tpv.time().utc().timestamp() as f64 - target_secs).abs();

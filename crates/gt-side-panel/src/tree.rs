@@ -1,11 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use gt_types::{
-    DataCategory, EventMarkerVisibility, FileIdx, FileVisibility, LoadedFile, TripDataVisibility,
-    TripIdx, TripVisibility,
+    DataCategory, EventMarkerVisibility, FileIdx, FileVisibility, LoadedFile, TrackDataVisibility,
+    TrackIdx, TrackVisibility,
 };
-
-// ── public types ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckState {
@@ -16,16 +14,16 @@ pub enum CheckState {
 
 /// Typed pair of file + trip indices.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct TripRef {
+pub struct TrackRef {
     pub file: FileIdx,
-    pub trip: TripIdx,
+    pub trip: TrackIdx,
 }
 
 /// A tree node that can be selected (for shift/ctrl-click).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NodeKey {
     File(FileIdx),
-    Trip(TripRef),
+    Track(TrackRef),
 }
 
 pub struct DeleteConfirmState {
@@ -47,7 +45,7 @@ pub struct CategoriesExpanded {
 impl CategoriesExpanded {
     pub fn contains(&self, cat: &DataCategory) -> bool {
         match cat {
-            DataCategory::TripTrack => false,
+            DataCategory::Track => false,
             DataCategory::Tpv => self.tpv,
             DataCategory::SatelliteReport => self.satellite_report,
             DataCategory::CustomMarker => self.custom_marker,
@@ -58,7 +56,7 @@ impl CategoriesExpanded {
 
     pub fn insert(&mut self, cat: DataCategory) {
         match cat {
-            DataCategory::TripTrack => {}
+            DataCategory::Track => {}
             DataCategory::Tpv => self.tpv = true,
             DataCategory::SatelliteReport => self.satellite_report = true,
             DataCategory::CustomMarker => self.custom_marker = true,
@@ -69,7 +67,7 @@ impl CategoriesExpanded {
 
     pub fn remove(&mut self, cat: &DataCategory) {
         match cat {
-            DataCategory::TripTrack => {}
+            DataCategory::Track => {}
             DataCategory::Tpv => self.tpv = false,
             DataCategory::SatelliteReport => self.satellite_report = false,
             DataCategory::CustomMarker => self.custom_marker = false,
@@ -86,8 +84,6 @@ impl CategoriesExpanded {
         }
     }
 }
-
-// ── event path tree ──────────────────────────────────────────────────────────
 
 /// Per-trip tree of event variant paths with tri-state visibility.
 ///
@@ -172,8 +168,6 @@ impl EventPathTree {
     }
 }
 
-// ── node types ───────────────────────────────────────────────────────────────
-
 pub struct TripNode {
     pub expanded: bool,
     pub check: CheckState,
@@ -208,7 +202,7 @@ impl TripNode {
 pub struct FileNode {
     pub expanded: bool,
     pub check: CheckState,
-    pub trips: Vec<TripNode>,
+    pub tracks: Vec<TripNode>,
 }
 
 impl FileNode {
@@ -216,17 +210,15 @@ impl FileNode {
         Self {
             expanded: false,
             check: CheckState::On,
-            trips: Vec::new(),
+            tracks: Vec::new(),
         }
     }
 
     fn recompute_check(&mut self) {
         self.check =
-            aggregate_check_states(self.trips.iter().map(|t| t.check)).unwrap_or(CheckState::On);
+            aggregate_check_states(self.tracks.iter().map(|t| t.check)).unwrap_or(CheckState::On);
     }
 }
-
-// ── main public state ────────────────────────────────────────────────────────
 
 pub struct TreeState {
     pub files: Vec<FileNode>,
@@ -235,7 +227,7 @@ pub struct TreeState {
     pub delete_confirm: Option<DeleteConfirmState>,
     pub detached: bool,
     /// Derived from tree state, kept in sync.  Passed to gt-map renderers.
-    visibility: TripDataVisibility,
+    visibility: TrackDataVisibility,
     /// Derived from tree state, kept in sync.  Passed to gt-map renderers.
     event_marker_visibility: EventMarkerVisibility,
 }
@@ -254,12 +246,10 @@ impl TreeState {
             selection_anchor: None,
             delete_confirm: None,
             detached: false,
-            visibility: TripDataVisibility { files: Vec::new() },
+            visibility: TrackDataVisibility { files: Vec::new() },
             event_marker_visibility: EventMarkerVisibility::new(),
         }
     }
-
-    // ── sync ────────────────────────────────────────────────────────────────
 
     /// Integrate newly loaded files while preserving state for existing nodes.
     ///
@@ -272,12 +262,13 @@ impl TreeState {
         self.files.truncate(files.len());
 
         for (file_node, loaded_file) in self.files.iter_mut().zip(files.iter()) {
-            while file_node.trips.len() < loaded_file.trips.len() {
-                file_node.trips.push(TripNode::new());
+            while file_node.tracks.len() < loaded_file.tracks.len() {
+                file_node.tracks.push(TripNode::new());
             }
-            file_node.trips.truncate(loaded_file.trips.len());
+            file_node.tracks.truncate(loaded_file.tracks.len());
 
-            for (trip_node, loaded_trip) in file_node.trips.iter_mut().zip(loaded_file.trips.iter())
+            for (trip_node, loaded_trip) in
+                file_node.tracks.iter_mut().zip(loaded_file.tracks.iter())
             {
                 trip_node.event_paths.sync_from_paths(
                     loaded_trip
@@ -301,7 +292,7 @@ impl TreeState {
             .iter()
             .map(|loaded_file| {
                 let mut file_node = FileNode::new();
-                for loaded_trip in &loaded_file.trips {
+                for loaded_trip in &loaded_file.tracks {
                     let mut trip_node = TripNode::new();
                     trip_node.event_paths.sync_from_paths(
                         loaded_trip
@@ -309,7 +300,7 @@ impl TreeState {
                             .iter()
                             .map(|m| m.variant_path.as_str()),
                     );
-                    file_node.trips.push(trip_node);
+                    file_node.tracks.push(trip_node);
                 }
                 file_node
             })
@@ -321,8 +312,6 @@ impl TreeState {
         self.rebuild_event_marker_visibility();
     }
 
-    // ── check toggles ───────────────────────────────────────────────────────
-
     /// Toggle a file's check state with cascade to all child trips.
     pub fn toggle_file_check(&mut self, fi: FileIdx) {
         let Some(file_node) = self.file_node_mut(fi) else {
@@ -333,18 +322,18 @@ impl TreeState {
             CheckState::Off | CheckState::Mixed => CheckState::On,
         };
         file_node.check = new_state;
-        for trip in &mut file_node.trips {
-            trip.check = new_state;
+        for track in &mut file_node.tracks {
+            track.check = new_state;
         }
         self.rebuild_visibility();
     }
 
     /// Toggle a trip's check state and recompute the parent file's aggregate.
-    pub fn toggle_trip_check(&mut self, fi: FileIdx, ti: TripIdx) {
+    pub fn toggle_trip_check(&mut self, fi: FileIdx, ti: TrackIdx) {
         let Some(file_node) = self.file_node_mut(fi) else {
             return;
         };
-        let Some(trip_node) = ti.get_mut(&mut file_node.trips) else {
+        let Some(trip_node) = ti.get_mut(&mut file_node.tracks) else {
             return;
         };
         trip_node.check = match trip_node.check {
@@ -356,7 +345,7 @@ impl TreeState {
     }
 
     /// Toggle a single event path node and recompute ancestors.
-    pub fn toggle_event_path(&mut self, fi: FileIdx, ti: TripIdx, path: &str) {
+    pub fn toggle_event_path(&mut self, fi: FileIdx, ti: TrackIdx, path: &str) {
         let Some(trip_node) = self.trip_node_mut(fi, ti) else {
             return;
         };
@@ -366,7 +355,7 @@ impl TreeState {
     }
 
     /// Toggle all event paths for a trip (the "Events" header checkbox).
-    pub fn toggle_all_event_paths(&mut self, fi: FileIdx, ti: TripIdx) {
+    pub fn toggle_all_event_paths(&mut self, fi: FileIdx, ti: TrackIdx) {
         let agg = self.trip_node(fi, ti).map(|t| t.event_paths.aggregate());
         let Some(agg) = agg else { return };
         let new_state = match agg {
@@ -376,7 +365,7 @@ impl TreeState {
         self.set_all_event_paths(fi, ti, new_state);
     }
 
-    fn set_all_event_paths(&mut self, fi: FileIdx, ti: TripIdx, state: CheckState) {
+    fn set_all_event_paths(&mut self, fi: FileIdx, ti: TrackIdx, state: CheckState) {
         let Some(trip_node) = self.trip_node_mut(fi, ti) else {
             return;
         };
@@ -387,12 +376,10 @@ impl TreeState {
         self.rebuild_visibility_trip(fi, ti);
     }
 
-    // ── category visibility ─────────────────────────────────────────────────
-
     pub fn set_category_visible(
         &mut self,
         fi: FileIdx,
-        ti: TripIdx,
+        ti: TrackIdx,
         cat: DataCategory,
         visible: bool,
     ) {
@@ -400,7 +387,7 @@ impl TreeState {
             return;
         };
         match cat {
-            DataCategory::TripTrack => trip_node.track_visible = visible,
+            DataCategory::Track => trip_node.track_visible = visible,
             DataCategory::Tpv => trip_node.tpv_visible = visible,
             DataCategory::SatelliteReport => trip_node.satellites_visible = visible,
             DataCategory::CustomMarker => trip_node.custom_markers_visible = visible,
@@ -420,27 +407,23 @@ impl TreeState {
         self.rebuild_visibility_trip(fi, ti);
     }
 
-    // ── expand toggles ──────────────────────────────────────────────────────
-
     pub fn toggle_expand_file(&mut self, fi: FileIdx) {
         if let Some(file_node) = self.file_node_mut(fi) {
             file_node.expanded = !file_node.expanded;
         }
     }
 
-    pub fn toggle_expand_trip(&mut self, fi: FileIdx, ti: TripIdx) {
+    pub fn toggle_expand_trip(&mut self, fi: FileIdx, ti: TrackIdx) {
         if let Some(trip_node) = self.trip_node_mut(fi, ti) {
             trip_node.expanded = !trip_node.expanded;
         }
     }
 
-    pub fn toggle_category_expanded(&mut self, fi: FileIdx, ti: TripIdx, cat: DataCategory) {
+    pub fn toggle_category_expanded(&mut self, fi: FileIdx, ti: TrackIdx, cat: DataCategory) {
         if let Some(trip_node) = self.trip_node_mut(fi, ti) {
             trip_node.categories_expanded.toggle(cat);
         }
     }
-
-    // ── bulk visibility ─────────────────────────────────────────────────────
 
     pub fn set_all_enabled(&mut self, enabled: bool) {
         let state = if enabled {
@@ -450,7 +433,7 @@ impl TreeState {
         };
         for file_node in &mut self.files {
             file_node.check = state;
-            for trip_node in &mut file_node.trips {
+            for trip_node in &mut file_node.tracks {
                 trip_node.check = state;
             }
         }
@@ -461,12 +444,12 @@ impl TreeState {
         for (i, file_node) in self.files.iter_mut().enumerate() {
             if i == fi.0 {
                 file_node.check = CheckState::On;
-                for trip_node in &mut file_node.trips {
+                for trip_node in &mut file_node.tracks {
                     trip_node.check = CheckState::On;
                 }
             } else {
                 file_node.check = CheckState::Off;
-                for trip_node in &mut file_node.trips {
+                for trip_node in &mut file_node.tracks {
                     trip_node.check = CheckState::Off;
                 }
             }
@@ -474,10 +457,10 @@ impl TreeState {
         self.rebuild_visibility();
     }
 
-    pub fn show_only_trip(&mut self, fi: FileIdx, ti: TripIdx) {
+    pub fn show_only_trip(&mut self, fi: FileIdx, ti: TrackIdx) {
         for (i, file_node) in self.files.iter_mut().enumerate() {
             if i == fi.0 {
-                for (j, trip_node) in file_node.trips.iter_mut().enumerate() {
+                for (j, trip_node) in file_node.tracks.iter_mut().enumerate() {
                     trip_node.check = if j == ti.0 {
                         CheckState::On
                     } else {
@@ -487,15 +470,13 @@ impl TreeState {
                 file_node.recompute_check();
             } else {
                 file_node.check = CheckState::Off;
-                for trip_node in &mut file_node.trips {
+                for trip_node in &mut file_node.tracks {
                     trip_node.check = CheckState::Off;
                 }
             }
         }
         self.rebuild_visibility();
     }
-
-    // ── selection ───────────────────────────────────────────────────────────
 
     pub fn apply_click(&mut self, key: NodeKey, ctrl: bool, shift: bool) {
         let ordered = self.ordered_visible_keys();
@@ -534,18 +515,16 @@ impl TreeState {
             let fi = FileIdx(fi);
             keys.push(NodeKey::File(fi));
             if file_node.expanded {
-                for ti in 0..file_node.trips.len() {
-                    keys.push(NodeKey::Trip(TripRef {
+                for ti in 0..file_node.tracks.len() {
+                    keys.push(NodeKey::Track(TrackRef {
                         file: fi,
-                        trip: TripIdx(ti),
+                        trip: TrackIdx(ti),
                     }));
                 }
             }
         }
         keys
     }
-
-    // ── indexed accessors ────────────────────────────────────────────────────
 
     pub fn file_node(&self, fi: FileIdx) -> Option<&FileNode> {
         fi.get(&self.files)
@@ -555,18 +534,16 @@ impl TreeState {
         fi.get_mut(&mut self.files)
     }
 
-    pub fn trip_node(&self, fi: FileIdx, ti: TripIdx) -> Option<&TripNode> {
-        ti.get(&fi.get(&self.files)?.trips)
+    pub fn trip_node(&self, fi: FileIdx, ti: TrackIdx) -> Option<&TripNode> {
+        ti.get(&fi.get(&self.files)?.tracks)
     }
 
-    pub fn trip_node_mut(&mut self, fi: FileIdx, ti: TripIdx) -> Option<&mut TripNode> {
-        ti.get_mut(&mut fi.get_mut(&mut self.files)?.trips)
+    pub fn trip_node_mut(&mut self, fi: FileIdx, ti: TrackIdx) -> Option<&mut TripNode> {
+        ti.get_mut(&mut fi.get_mut(&mut self.files)?.tracks)
     }
-
-    // ── queries ─────────────────────────────────────────────────────────────
 
     /// Returns the derived visibility state for gt-map renderers.
-    pub fn visibility(&self) -> &TripDataVisibility {
+    pub fn visibility(&self) -> &TrackDataVisibility {
         &self.visibility
     }
 
@@ -582,10 +559,8 @@ impl TreeState {
             .visibility
             .files
             .iter()
-            .any(|f| f.enabled && f.trips.iter().any(|t| t.enabled))
+            .any(|f| f.enabled && f.tracks.iter().any(|t| t.enabled))
     }
-
-    // ── private rebuilds ────────────────────────────────────────────────────
 
     fn rebuild_visibility(&mut self) {
         let files = &self.files;
@@ -593,7 +568,7 @@ impl TreeState {
 
         vis.files.resize_with(files.len(), || FileVisibility {
             enabled: true,
-            trips: vec![],
+            tracks: vec![],
         });
 
         for (fi, file_node) in files.iter().enumerate() {
@@ -602,11 +577,11 @@ impl TreeState {
             };
             file_vis.enabled = !matches!(file_node.check, CheckState::Off);
             file_vis
-                .trips
-                .resize_with(file_node.trips.len(), TripVisibility::all_visible);
+                .tracks
+                .resize_with(file_node.tracks.len(), TrackVisibility::all_visible);
 
-            for (ti, trip_node) in file_node.trips.iter().enumerate() {
-                let Some(tv) = file_vis.trips.get_mut(ti) else {
+            for (ti, trip_node) in file_node.tracks.iter().enumerate() {
+                let Some(tv) = file_vis.tracks.get_mut(ti) else {
                     continue;
                 };
                 tv.enabled = matches!(trip_node.check, CheckState::On);
@@ -621,7 +596,7 @@ impl TreeState {
         }
     }
 
-    fn rebuild_visibility_trip(&mut self, fi: FileIdx, ti: TripIdx) {
+    fn rebuild_visibility_trip(&mut self, fi: FileIdx, ti: TrackIdx) {
         let Some(trip_node) = self.trip_node(fi, ti) else {
             return;
         };
@@ -634,7 +609,7 @@ impl TreeState {
         let event_markers_visible = !matches!(trip_node.event_paths.aggregate(), CheckState::Off);
 
         if let Some(file_vis) = self.visibility.files.get_mut(fi.0)
-            && let Some(tv) = file_vis.trips.get_mut(ti.0)
+            && let Some(tv) = file_vis.tracks.get_mut(ti.0)
         {
             tv.enabled = enabled;
             tv.track_visible = track_visible;
@@ -652,7 +627,7 @@ impl TreeState {
         emv.clear_all();
 
         for (fi, file_node) in files.iter().enumerate() {
-            for (ti, trip_node) in file_node.trips.iter().enumerate() {
+            for (ti, trip_node) in file_node.tracks.iter().enumerate() {
                 emv.set_hidden(
                     fi,
                     ti,
@@ -662,13 +637,13 @@ impl TreeState {
         }
     }
 
-    fn rebuild_event_marker_visibility_for(&mut self, fi: FileIdx, ti: TripIdx) {
+    fn rebuild_event_marker_visibility_for(&mut self, fi: FileIdx, ti: TrackIdx) {
         let files = &self.files;
         let emv = &mut self.event_marker_visibility;
 
         let hidden = files
             .get(fi.0)
-            .and_then(|f| f.trips.get(ti.0))
+            .and_then(|f| f.tracks.get(ti.0))
             .into_iter()
             .flat_map(|t| t.event_paths.hidden_roots())
             .map(str::to_owned);
@@ -676,8 +651,6 @@ impl TreeState {
         emv.set_hidden(fi.0, ti.0, hidden);
     }
 }
-
-// ── helpers ──────────────────────────────────────────────────────────────────
 
 fn set_subtree(nodes: &mut BTreeMap<String, CheckState>, prefix: &str, state: CheckState) {
     let child_prefix = format!("{prefix}/");

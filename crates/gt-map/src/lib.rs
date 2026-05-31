@@ -196,10 +196,9 @@ pub fn register_marker_icons(ctx: &egui::Context) {
 }
 use gt_types::{
     DataCategory, DataPointRef, EventMarkerVisibility, GlobalFilter, HighlightScope, LoadedFile,
-    MapHighlight, SpatialPoint, TripDataVisibility, build_global_tree,
+    MapHighlight, SpatialPoint, TrackDataVisibility, build_global_tree,
 };
 use std::time::Instant;
-use uom::si::angle::degree;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
 use walkers::{HttpTiles, Map, MapMemory};
 
@@ -223,10 +222,10 @@ pub enum MapLayer {
 /// responsible for applying it to the visibility state.
 #[derive(Debug, Clone, Copy)]
 pub enum MapContextAction {
-    /// Hide every trip except the one at `(file_index, trip_index)`.
+    /// Hide every trip except the one at `(file_index, track_index)`.
     ShowOnlyTrip {
         file_index: usize,
-        trip_index: usize,
+        track_index: usize,
     },
     /// Hide every file except the one at `file_index`.
     ShowOnlyFile { file_index: usize },
@@ -363,6 +362,40 @@ impl NavMap {
         self.layer = layer;
     }
 
+    /// Rebuild the global spatial index from the current file list.
+    ///
+    /// Must be called after any structural change to `loaded_files` (file or
+    /// track deletion) to prevent stale R-tree entries from causing out-of-bounds
+    /// panics in the renderers.
+    pub fn rebuild_spatial_index(&mut self, files: &[LoadedFile]) {
+        self.global_tree = build_global_tree(files);
+        self.last_file_count = files.len();
+    }
+
+    /// Returns `true` when every entry in the spatial index is in-bounds for
+    /// the given file list. Used in tests to verify the index is not stale.
+    #[cfg(test)]
+    pub(crate) fn all_tree_indices_valid(&self, files: &[LoadedFile]) -> bool {
+        use gt_types::DataCategory;
+        self.global_tree.iter().all(|sp| {
+            let Some(file) = files.get(sp.file_index.0) else {
+                return false;
+            };
+            let Some(track) = file.tracks.get(sp.track_index.0) else {
+                return false;
+            };
+            let len = match sp.category {
+                DataCategory::Tpv => track.points.len(),
+                DataCategory::CustomMarker => track.custom_markers.len(),
+                DataCategory::GeneratedMarker => track.generated_markers.len(),
+                DataCategory::EventMarker => track.event_markers.len(),
+                // These categories are never inserted into the spatial index.
+                DataCategory::Track | DataCategory::SatelliteReport => return true,
+            };
+            sp.point_index.0 < len
+        })
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "draw context requires all parameters; a wrapper struct would not add clarity"
@@ -375,7 +408,7 @@ impl NavMap {
         &mut self,
         ui: &mut egui::Ui,
         files: &[LoadedFile],
-        visibility: &TripDataVisibility,
+        visibility: &TrackDataVisibility,
         highlight: &mut MapHighlight,
         filter: &GlobalFilter,
         event_marker_visibility: &EventMarkerVisibility,
@@ -536,7 +569,7 @@ impl NavMap {
                     })
                     .map(|sp| DataPointRef {
                         file_index: sp.file_index,
-                        trip_index: sp.trip_index,
+                        track_index: sp.track_index,
                         category: sp.category,
                         point_index: sp.point_index,
                     })
@@ -614,16 +647,16 @@ impl NavMap {
             ui.add(egui::Label::new(
                 egui::RichText::new(file.metadata.filename.as_str()).weak(),
             ));
-            if file.trips.len() > 1 {
+            if file.tracks.len() > 1 {
                 ui.add(egui::Label::new(
-                    egui::RichText::new(format!("Trip {}", point_ref.trip_index.0 + 1)).weak(),
+                    egui::RichText::new(format!("Trip {}", point_ref.track_index.0 + 1)).weak(),
                 ));
             }
             ui.separator();
             if ui.button("Only show elements from this trip").clicked() {
                 context_action = Some(MapContextAction::ShowOnlyTrip {
                     file_index: point_ref.file_index.0,
-                    trip_index: point_ref.trip_index.0,
+                    track_index: point_ref.track_index.0,
                 });
                 ui.close();
             }
@@ -655,14 +688,13 @@ fn show_sticky_popup(
 ) {
     use crate::tpv_renderer::show_sticky_tpv_content;
     use gt_types::{DataCategory, GeneratedMarkerKind};
-    use uom::si::angle::degree;
 
     // For TPV points, satellite reports, and generated-marker events the window
     // title is the point's datetime; for everything else fall back to a generic label.
     let title: String = if sticky_ref.category == DataCategory::Tpv {
         files
             .get(sticky_ref.file_index.0)
-            .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+            .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
             .and_then(|t| t.points.get(sticky_ref.point_index.0))
             .map_or_else(
                 || "GPS Point".to_string(),
@@ -671,7 +703,7 @@ fn show_sticky_popup(
     } else if sticky_ref.category == DataCategory::SatelliteReport {
         files
             .get(sticky_ref.file_index.0)
-            .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+            .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
             .and_then(|t| t.points.get(sticky_ref.point_index.0))
             .and_then(|p| p.satellites.as_ref())
             .map_or_else(
@@ -686,7 +718,7 @@ fn show_sticky_popup(
     } else if sticky_ref.category == DataCategory::GeneratedMarker {
         files
             .get(sticky_ref.file_index.0)
-            .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+            .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
             .and_then(|t| t.generated_markers.get(sticky_ref.point_index.0))
             .map_or_else(
                 || "GPS Event".to_string(),
@@ -705,7 +737,7 @@ fn show_sticky_popup(
             DataCategory::Tpv => {
                 if let Some(point) = files
                     .get(sticky_ref.file_index.0)
-                    .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+                    .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
                     .and_then(|t| t.points.get(sticky_ref.point_index.0))
                 {
                     // Cap the window height so satellite tables never overflow
@@ -726,7 +758,7 @@ fn show_sticky_popup(
             DataCategory::CustomMarker => {
                 if let Some(marker) = files
                     .get(sticky_ref.file_index.0)
-                    .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+                    .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
                     .and_then(|t| t.custom_markers.get(sticky_ref.point_index.0))
                 {
                     egui::Grid::new("sticky_marker_grid")
@@ -751,7 +783,7 @@ fn show_sticky_popup(
             DataCategory::GeneratedMarker => {
                 if let Some(marker) = files
                     .get(sticky_ref.file_index.0)
-                    .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+                    .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
                     .and_then(|t| t.generated_markers.get(sticky_ref.point_index.0))
                 {
                     let kind_str = match marker.kind {
@@ -776,8 +808,8 @@ fn show_sticky_popup(
                             ui.add(
                                 egui::Label::new(format!(
                                     "{:.6}, {:.6}",
-                                    marker.lat.get::<degree>(),
-                                    marker.lon.get::<degree>()
+                                    marker.lat.as_degrees(),
+                                    marker.lon.as_degrees()
                                 ))
                                 .selectable(true),
                             );
@@ -790,7 +822,7 @@ fn show_sticky_popup(
             DataCategory::SatelliteReport => {
                 if let Some(point) = files
                     .get(sticky_ref.file_index.0)
-                    .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+                    .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
                     .and_then(|t| t.points.get(sticky_ref.point_index.0))
                 {
                     let max_h = (ui.ctx().viewport_rect().height() * 0.75).min(500.0);
@@ -803,11 +835,11 @@ fn show_sticky_popup(
                     ui.label(egui::RichText::new("Click to deselect").small().weak());
                 }
             }
-            DataCategory::TripTrack => {}
+            DataCategory::Track => {}
             DataCategory::EventMarker => {
                 if let Some(marker) = files
                     .get(sticky_ref.file_index.0)
-                    .and_then(|f| f.trips.get(sticky_ref.trip_index.0))
+                    .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
                     .and_then(|t| t.event_markers.get(sticky_ref.point_index.0))
                 {
                     egui::Grid::new("sticky_event_marker_grid")
@@ -841,7 +873,7 @@ fn show_sticky_popup(
 /// file and trip enabled). Returns `None` if no visible data exists.
 fn compute_visible_bounding_box(
     files: &[LoadedFile],
-    visibility: &TripDataVisibility,
+    visibility: &TrackDataVisibility,
 ) -> Option<(f64, f64, f64, f64)> {
     let mut min_lat = f64::MAX;
     let mut max_lat = f64::MIN;
@@ -856,25 +888,25 @@ fn compute_visible_bounding_box(
         if !file_vis.enabled {
             continue;
         }
-        for (ti, trip) in file.trips.iter().enumerate() {
-            let Some(trip_vis) = file_vis.trips.get(ti) else {
+        for (ti, track) in file.tracks.iter().enumerate() {
+            let Some(trip_vis) = file_vis.tracks.get(ti) else {
                 continue;
             };
             if !trip_vis.enabled {
                 continue;
             }
-            for point in &trip.points {
-                let lat = point.tpv.lat().get::<degree>();
-                let lon = point.tpv.lon().get::<degree>();
+            for point in &track.points {
+                let lat = point.tpv.lat().as_degrees();
+                let lon = point.tpv.lon().as_degrees();
                 min_lat = min_lat.min(lat);
                 max_lat = max_lat.max(lat);
                 min_lon = min_lon.min(lon);
                 max_lon = max_lon.max(lon);
                 any = true;
             }
-            for marker in &trip.custom_markers {
-                let lat = marker.lat.get::<degree>();
-                let lon = marker.lon.get::<degree>();
+            for marker in &track.custom_markers {
+                let lat = marker.lat.as_degrees();
+                let lon = marker.lon.as_degrees();
                 min_lat = min_lat.min(lat);
                 max_lat = max_lat.max(lat);
                 min_lon = min_lon.min(lon);
@@ -901,19 +933,19 @@ fn compute_bounding_box(files: &[LoadedFile]) -> Option<(f64, f64, f64, f64)> {
     let mut any = false;
 
     for file in files {
-        for trip in &file.trips {
-            for point in &trip.points {
-                let lat = point.tpv.lat().get::<degree>();
-                let lon = point.tpv.lon().get::<degree>();
+        for track in &file.tracks {
+            for point in &track.points {
+                let lat = point.tpv.lat().as_degrees();
+                let lon = point.tpv.lon().as_degrees();
                 min_lat = min_lat.min(lat);
                 max_lat = max_lat.max(lat);
                 min_lon = min_lon.min(lon);
                 max_lon = max_lon.max(lon);
                 any = true;
             }
-            for marker in &trip.custom_markers {
-                let lat = marker.lat.get::<degree>();
-                let lon = marker.lon.get::<degree>();
+            for marker in &track.custom_markers {
+                let lat = marker.lat.as_degrees();
+                let lon = marker.lon.as_degrees();
                 min_lat = min_lat.min(lat);
                 max_lat = max_lat.max(lat);
                 min_lon = min_lon.min(lon);
@@ -975,6 +1007,112 @@ fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Rect) -> GeoB
 
 /// Center the map and set the zoom so the given bounding box fills ~80 % of the
 /// viewport. Respects walkers' valid zoom range [1, 18].
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gt_types::{
+        Coord, DataCategory, FileMetadata, LoadedFile, LoadedTrack, Rect, TimeRange, TrackMetadata,
+        merc_bounds_for_rect, nav_test_data,
+    };
+
+    fn make_file_from_points(points: Vec<gt_types::NavPoint>) -> LoadedFile {
+        let now = chrono::Utc::now();
+        let bb = Rect::new(
+            Coord {
+                x: 12.55f64,
+                y: 55.67,
+            },
+            Coord {
+                x: 12.59f64,
+                y: 55.69,
+            },
+        );
+        let n = points.len();
+        #[expect(clippy::cast_possible_truncation, reason = "test helper, n is small")]
+        let trip = LoadedTrack {
+            metadata: TrackMetadata {
+                index: 0,
+                distance_km: 1.0,
+                duration: chrono::Duration::seconds(n as i64),
+                time_range: TimeRange::new(now, now + chrono::Duration::seconds(n as i64)),
+                bounding_box: bb,
+                merc_bounds: merc_bounds_for_rect(bb),
+                point_set_diameter_m: 100.0,
+                has_custom_markers: false,
+                tpv_count: n,
+                satellite_report_count: 0,
+                custom_marker_count: 0,
+                generated_marker_count: 0,
+                event_marker_count: 0,
+            },
+            points,
+            custom_markers: vec![],
+            generated_markers: vec![],
+            event_markers: vec![],
+        };
+        LoadedFile {
+            metadata: FileMetadata {
+                filename: format!("test_{n}.nvd"),
+                total_distance_km: 1.0,
+                total_duration: chrono::Duration::seconds(n as i64),
+                time_range: TimeRange::new(now, now + chrono::Duration::seconds(n as i64)),
+            },
+            tracks: vec![trip],
+            event_marker_styles: std::collections::HashMap::new(),
+            orphaned_event_markers: vec![],
+        }
+    }
+
+    /// After deleting a file, the global spatial index must be rebuilt so that
+    /// point indices from the old (deleted) file don't survive into the next frame
+    /// and cause out-of-bounds panics in the renderers.
+    #[test]
+    fn spatial_index_valid_after_file_deletion() {
+        let all_points = nav_test_data(); // 1 200 points, all with headings
+        let points_a: Vec<_> = all_points.iter().take(700).cloned().collect();
+        let points_b: Vec<_> = all_points.iter().take(340).cloned().collect();
+
+        let file_a = make_file_from_points(points_a);
+        let file_b = make_file_from_points(points_b.clone());
+
+        // Confirm the bug scenario: the stale tree (built before deletion) has
+        // entries with point_index ≥ 340, which would be OOB for file_b alone.
+        let files_initial = vec![file_a, make_file_from_points(points_b)];
+        let stale_tree = gt_types::build_global_tree(&files_initial);
+        let files_after = vec![file_b];
+        let stale_has_oob = stale_tree.iter().any(|sp| {
+            let Some(file) = files_after.get(sp.file_index.0) else {
+                return true; // file index out of bounds → OOB
+            };
+            let Some(track) = file.tracks.get(sp.track_index.0) else {
+                return true; // track index out of bounds → OOB
+            };
+            let len = match sp.category {
+                DataCategory::Tpv => track.points.len(),
+                DataCategory::CustomMarker => track.custom_markers.len(),
+                DataCategory::GeneratedMarker => track.generated_markers.len(),
+                DataCategory::EventMarker => track.event_markers.len(),
+                DataCategory::Track | DataCategory::SatelliteReport => return false,
+            };
+            sp.point_index.0 >= len
+        });
+        assert!(
+            stale_has_oob,
+            "test setup: stale tree must have OOB entries"
+        );
+
+        // After calling rebuild_spatial_index, all entries must be in-bounds.
+        let mut map = NavMap::new(egui::Context::default());
+        map.rebuild_spatial_index(&files_initial);
+        map.rebuild_spatial_index(&files_after);
+
+        assert!(
+            map.all_tree_indices_valid(&files_after),
+            "spatial index has stale entries after file deletion"
+        );
+    }
+}
+
 fn zoom_to_fit(
     map_memory: &mut MapMemory,
     viewport: egui::Rect,

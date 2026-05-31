@@ -1,4 +1,4 @@
-use crate::trip::{MarkerRequirement, TimeRange, TripMetadata};
+use crate::track::{MarkerRequirement, TimeRange, TrackMetadata};
 use chrono::{DateTime, Utc};
 
 /// Returns `true` when the timestamp falls within the filter's active time window.
@@ -30,7 +30,7 @@ impl GlobalFilter {
 }
 
 /// Returns `true` when the trip satisfies all active filter conditions.
-pub fn trip_passes_filter(meta: &TripMetadata, filter: &GlobalFilter) -> bool {
+pub fn track_passes_filter(meta: &TrackMetadata, filter: &GlobalFilter) -> bool {
     if !meta
         .time_range
         .overlaps_window(filter.time_start, filter.time_end)
@@ -67,7 +67,7 @@ pub fn trip_passes_filter(meta: &TripMetadata, filter: &GlobalFilter) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trip::{MercBounds, TimeRange, TripMetadata};
+    use crate::track::{MercBounds, TimeRange, TrackMetadata};
     use chrono::{Duration, TimeZone, Utc};
     use geo_types::Rect;
 
@@ -78,9 +78,9 @@ mod tests {
         has_custom: bool,
         start_offset_secs: i64,
         end_offset_secs: i64,
-    ) -> TripMetadata {
+    ) -> TrackMetadata {
         let epoch = Utc.timestamp_opt(0, 0).single().expect("valid");
-        TripMetadata {
+        TrackMetadata {
             index: 1,
             distance_km,
             duration: Duration::seconds(duration_secs),
@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn empty_filter_passes_all() {
         let meta = make_meta(1.0, 60, 100.0, false, 0, 60);
-        assert!(trip_passes_filter(&meta, &GlobalFilter::default()));
+        assert!(track_passes_filter(&meta, &GlobalFilter::default()));
     }
 
     #[test]
@@ -121,7 +121,7 @@ mod tests {
             time_start: Some(Utc.timestamp_opt(120, 0).single().expect("valid")),
             ..Default::default()
         };
-        assert!(!trip_passes_filter(&meta, &filter));
+        assert!(!track_passes_filter(&meta, &filter));
     }
 
     #[test]
@@ -131,7 +131,7 @@ mod tests {
             time_start: Some(Utc.timestamp_opt(100, 0).single().expect("valid")),
             ..Default::default()
         };
-        assert!(trip_passes_filter(&meta, &filter));
+        assert!(track_passes_filter(&meta, &filter));
     }
 
     #[test]
@@ -141,7 +141,7 @@ mod tests {
             time_end: Some(Utc.timestamp_opt(100, 0).single().expect("valid")),
             ..Default::default()
         };
-        assert!(!trip_passes_filter(&meta, &filter));
+        assert!(!track_passes_filter(&meta, &filter));
     }
 
     #[test]
@@ -151,7 +151,7 @@ mod tests {
             time_end: Some(Utc.timestamp_opt(100, 0).single().expect("valid")),
             ..Default::default()
         };
-        assert!(trip_passes_filter(&meta, &filter));
+        assert!(track_passes_filter(&meta, &filter));
     }
 
     #[test]
@@ -161,7 +161,7 @@ mod tests {
             min_distance_km: Some(5.0),
             ..Default::default()
         };
-        assert!(trip_passes_filter(&meta, &filter));
+        assert!(track_passes_filter(&meta, &filter));
     }
 
     #[test]
@@ -171,7 +171,7 @@ mod tests {
             min_distance_km: Some(5.0),
             ..Default::default()
         };
-        assert!(!trip_passes_filter(&meta, &filter));
+        assert!(!track_passes_filter(&meta, &filter));
     }
 
     #[test]
@@ -181,7 +181,7 @@ mod tests {
             min_duration_secs: Some(300),
             ..Default::default()
         };
-        assert!(trip_passes_filter(&meta, &filter));
+        assert!(track_passes_filter(&meta, &filter));
     }
 
     #[test]
@@ -191,7 +191,7 @@ mod tests {
             min_duration_secs: Some(300),
             ..Default::default()
         };
-        assert!(!trip_passes_filter(&meta, &filter));
+        assert!(!track_passes_filter(&meta, &filter));
     }
 
     #[test]
@@ -201,7 +201,7 @@ mod tests {
             min_spread_m: Some(200.0),
             ..Default::default()
         };
-        assert!(trip_passes_filter(&meta, &filter));
+        assert!(track_passes_filter(&meta, &filter));
     }
 
     #[test]
@@ -211,7 +211,7 @@ mod tests {
             min_spread_m: Some(200.0),
             ..Default::default()
         };
-        assert!(!trip_passes_filter(&meta, &filter));
+        assert!(!track_passes_filter(&meta, &filter));
     }
 
     #[test]
@@ -221,7 +221,7 @@ mod tests {
             marker_requirement: MarkerRequirement::CustomMarker,
             ..Default::default()
         };
-        assert!(trip_passes_filter(&meta, &filter));
+        assert!(track_passes_filter(&meta, &filter));
     }
 
     #[test]
@@ -231,7 +231,7 @@ mod tests {
             marker_requirement: MarkerRequirement::CustomMarker,
             ..Default::default()
         };
-        assert!(!trip_passes_filter(&meta, &filter));
+        assert!(!track_passes_filter(&meta, &filter));
     }
 
     #[test]
@@ -245,7 +245,7 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            trip_passes_filter(&meta, &filter),
+            track_passes_filter(&meta, &filter),
             "trip with event markers should pass CustomMarker filter"
         );
     }
@@ -259,7 +259,7 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            trip_passes_filter(&meta, &filter),
+            track_passes_filter(&meta, &filter),
             "trip with event markers should pass AnyMarker filter"
         );
     }

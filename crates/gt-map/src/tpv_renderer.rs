@@ -3,8 +3,8 @@ use egui::{Color32, PopupAnchor, Pos2, Response, Stroke, Ui};
 use gt_types::filter;
 use gt_types::satellites::Constellation;
 use gt_types::{
-    DataCategory, DataPointRef, FileIdx, GlobalFilter, HighlightScope, LoadedFile, LoadedTrip,
-    MapHighlight, NavPoint, PointIdx, SpatialPoint, TripDataVisibility, TripIdx,
+    DataCategory, DataPointRef, FileIdx, GlobalFilter, HighlightScope, LoadedFile, LoadedTrack,
+    MapHighlight, NavPoint, PointIdx, SpatialPoint, TrackDataVisibility, TrackIdx,
 };
 use std::collections::HashMap;
 use uom::si::angle::degree;
@@ -19,7 +19,7 @@ const MINUS_SIGN: &str = "−";
 
 pub struct TpvRenderer<'a> {
     files: &'a [LoadedFile],
-    visibility: &'a TripDataVisibility,
+    visibility: &'a TrackDataVisibility,
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
     visible_tpv: Vec<SpatialPoint>,
@@ -28,7 +28,7 @@ pub struct TpvRenderer<'a> {
 impl<'a> TpvRenderer<'a> {
     pub fn new(
         files: &'a [LoadedFile],
-        visibility: &'a TripDataVisibility,
+        visibility: &'a TrackDataVisibility,
         highlight: &'a MapHighlight,
         filter: &'a GlobalFilter,
         visible_tpv: Vec<SpatialPoint>,
@@ -48,17 +48,17 @@ impl<'a> TpvRenderer<'a> {
         }
         match self.highlight.hover {
             Some(HighlightScope::Point(r)) => r == point_ref,
-            Some(HighlightScope::Trip {
+            Some(HighlightScope::Track {
                 file_index,
-                trip_index,
-            }) => file_index == point_ref.file_index && trip_index == point_ref.trip_index,
-            Some(HighlightScope::TripCategory {
+                track_index,
+            }) => file_index == point_ref.file_index && track_index == point_ref.track_index,
+            Some(HighlightScope::TrackCategory {
                 file_index,
-                trip_index,
+                track_index,
                 category,
             }) => {
                 file_index == point_ref.file_index
-                    && trip_index == point_ref.trip_index
+                    && track_index == point_ref.track_index
                     && category == DataCategory::Tpv
             }
             _ => false,
@@ -74,8 +74,8 @@ impl<'a> TpvRenderer<'a> {
         ui: &Ui,
         view_rect: egui::Rect,
         fi: FileIdx,
-        ti: TripIdx,
-        trip: &LoadedTrip,
+        ti: TrackIdx,
+        track: &LoadedTrack,
         real_fix_indices: Option<&Vec<usize>>,
         style: &TpvDrawStyle,
         transform: &crate::MercTransform,
@@ -87,9 +87,9 @@ impl<'a> TpvRenderer<'a> {
             for &pi in indices {
                 #[expect(
                     clippy::indexing_slicing,
-                    reason = "index from global RTree built over trip.points, so always in bounds"
+                    reason = "index from global RTree built over track.points, so always in bounds"
                 )]
-                let point = &trip.points[pi];
+                let point = &track.points[pi];
                 if !filter::point_passes_time_filter(point.tpv.time().utc(), self.filter) {
                     continue;
                 }
@@ -99,13 +99,13 @@ impl<'a> TpvRenderer<'a> {
                 let screen_pos = transform.to_screen(point.merc_x, point.merc_y);
                 let point_ref = DataPointRef {
                     file_index: fi,
-                    trip_index: ti,
+                    track_index: ti,
                     category: DataCategory::Tpv,
                     point_index: PointIdx(pi),
                 };
                 let eph_m = point.tpv.eph_m();
                 let pixels_per_meter = if eph_m.is_some() {
-                    transform.pixels_per_meter(point.tpv.lat().get::<degree>())
+                    transform.pixels_per_meter(point.tpv.lat().as_degrees())
                 } else {
                     0.0
                 };
@@ -128,14 +128,14 @@ impl<'a> TpvRenderer<'a> {
 
         // Ghost fixes (heading == None): position interpolated at render time,
         // not in the global tree. Rare in practice.
-        for (pi, point) in trip.points.iter().enumerate() {
+        for (pi, point) in track.points.iter().enumerate() {
             if point.tpv.heading().is_some() {
                 continue;
             }
             if !filter::point_passes_time_filter(point.tpv.time().utc(), self.filter) {
                 continue;
             }
-            let (lat, lon) = interpolate_position(&trip.points, pi);
+            let (lat, lon) = interpolate_position(&track.points, pi);
             let (merc_x, merc_y) = crate::normalize_merc(lon, lat);
             let screen_pos = transform.to_screen(merc_x, merc_y);
             if !view_rect.contains(screen_pos) {
@@ -143,7 +143,7 @@ impl<'a> TpvRenderer<'a> {
             }
             let point_ref = DataPointRef {
                 file_index: fi,
-                trip_index: ti,
+                track_index: ti,
                 category: DataCategory::Tpv,
                 point_index: PointIdx(pi),
             };
@@ -165,17 +165,17 @@ impl<'a> TpvRenderer<'a> {
         let Some(file) = self.files.get(point_ref.file_index.0) else {
             return;
         };
-        let Some(trip) = file.trips.get(point_ref.trip_index.0) else {
+        let Some(track) = file.tracks.get(point_ref.track_index.0) else {
             return;
         };
-        let Some(point) = trip.points.get(point_ref.point_index.0) else {
+        let Some(point) = track.points.get(point_ref.point_index.0) else {
             return;
         };
         let tooltip_id = ui
             .id()
             .with("tpv_hover")
             .with(point_ref.file_index.0)
-            .with(point_ref.trip_index.0)
+            .with(point_ref.track_index.0)
             .with(point_ref.point_index.0);
         egui::Tooltip::always_open(
             ui.ctx().clone(),
@@ -223,10 +223,10 @@ impl Plugin for TpvRenderer<'_> {
         let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         // Group visible real fixes by trip so render_trip gets O(k/trips) per trip.
-        let mut by_trip: HashMap<(FileIdx, TripIdx), Vec<usize>> = HashMap::new();
+        let mut by_trip: HashMap<(FileIdx, TrackIdx), Vec<usize>> = HashMap::new();
         for sp in &self.visible_tpv {
             by_trip
-                .entry((sp.file_index, sp.trip_index))
+                .entry((sp.file_index, sp.track_index))
                 .or_default()
                 .push(sp.point_index.0);
         }
@@ -239,15 +239,15 @@ impl Plugin for TpvRenderer<'_> {
             if !file_vis.enabled {
                 continue;
             }
-            for (ti, trip) in file.trips.iter().enumerate() {
-                let ti = TripIdx(ti);
-                let Some(trip_vis) = file_vis.trips.get(ti.0) else {
+            for (ti, track) in file.tracks.iter().enumerate() {
+                let ti = TrackIdx(ti);
+                let Some(trip_vis) = file_vis.tracks.get(ti.0) else {
                     continue;
                 };
                 if !trip_vis.enabled || !trip_vis.tpv_visible {
                     continue;
                 }
-                if !filter::trip_passes_filter(&trip.metadata, self.filter) {
+                if !filter::track_passes_filter(&track.metadata, self.filter) {
                     continue;
                 }
                 self.render_trip(
@@ -255,7 +255,7 @@ impl Plugin for TpvRenderer<'_> {
                     view_rect,
                     fi,
                     ti,
-                    trip,
+                    track,
                     by_trip.get(&(fi, ti)),
                     &style,
                     &transform,
@@ -283,7 +283,7 @@ impl Plugin for TpvRenderer<'_> {
             && let Some(point) = self
                 .files
                 .get(fi.0)
-                .and_then(|f| f.trips.get(ti.0))
+                .and_then(|f| f.tracks.get(ti.0))
                 .and_then(|t| t.points.get(pi.0))
         {
             let pos = transform.to_screen(point.merc_x, point.merc_y);
@@ -321,30 +321,28 @@ fn interpolate_position(points: &[NavPoint], idx: usize) -> (f64, f64) {
                 let t_curr = (curr_pt.tpv.time() - prev_pt.tpv.time()).num_seconds() as f64;
                 if t_total > 0.0 {
                     let f = t_curr / t_total;
-                    let lat = prev_pt.tpv.lat().get::<degree>()
-                        + (next_pt.tpv.lat().get::<degree>() - prev_pt.tpv.lat().get::<degree>())
-                            * f;
-                    let lon = prev_pt.tpv.lon().get::<degree>()
-                        + (next_pt.tpv.lon().get::<degree>() - prev_pt.tpv.lon().get::<degree>())
-                            * f;
+                    let lat = prev_pt.tpv.lat().as_degrees()
+                        + (next_pt.tpv.lat().as_degrees() - prev_pt.tpv.lat().as_degrees()) * f;
+                    let lon = prev_pt.tpv.lon().as_degrees()
+                        + (next_pt.tpv.lon().as_degrees() - prev_pt.tpv.lon().as_degrees()) * f;
                     (lat, lon)
                 } else {
                     (
-                        curr_pt.tpv.lat().get::<degree>(),
-                        curr_pt.tpv.lon().get::<degree>(),
+                        curr_pt.tpv.lat().as_degrees(),
+                        curr_pt.tpv.lon().as_degrees(),
                     )
                 }
             }
             _ => (0.0, 0.0),
         },
         (Some(pi), None) => points.get(pi).map_or((0.0, 0.0), |p| {
-            (p.tpv.lat().get::<degree>(), p.tpv.lon().get::<degree>())
+            (p.tpv.lat().as_degrees(), p.tpv.lon().as_degrees())
         }),
         (None, Some(ni)) => points.get(ni).map_or((0.0, 0.0), |p| {
-            (p.tpv.lat().get::<degree>(), p.tpv.lon().get::<degree>())
+            (p.tpv.lat().as_degrees(), p.tpv.lon().as_degrees())
         }),
         (None, None) => points.get(idx).map_or((0.0, 0.0), |p| {
-            (p.tpv.lat().get::<degree>(), p.tpv.lon().get::<degree>())
+            (p.tpv.lat().as_degrees(), p.tpv.lon().as_degrees())
         }),
     }
 }
@@ -970,6 +968,7 @@ mod tests {
     use super::*;
     use egui::Color32;
     use gt_types::NavPoint;
+    use gt_types::coordinates::{Latitude, Longitude};
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::time_types::GpsTime;
     use gt_types::tpv::TimePositionVelocity;
@@ -979,8 +978,8 @@ mod tests {
     fn make_point(satellites: Option<Satellites>) -> NavPoint {
         let tpv = TimePositionVelocity::builder()
             .time(GpsTime::from_utc(chrono::Utc::now()))
-            .lat(Angle::new::<degree>(51.5))
-            .lon(Angle::new::<degree>(-0.1))
+            .lat(Latitude::new(51.5))
+            .lon(Longitude::new(-0.1))
             .heading(Angle::new::<degree>(90.0))
             .build();
         NavPoint::new(tpv, satellites)

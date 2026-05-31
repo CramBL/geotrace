@@ -14,11 +14,11 @@ impl FileIdx {
     }
 }
 
-/// Typed wrapper for a trip index into `loaded_files[fi].trips[ti]`.
+/// Typed wrapper for a track index into `loaded_files[fi].trips[ti]`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct TripIdx(pub usize);
+pub struct TrackIdx(pub usize);
 
-impl TripIdx {
+impl TrackIdx {
     pub fn get<T>(self, slice: &[T]) -> Option<&T> {
         slice.get(self.0)
     }
@@ -35,7 +35,7 @@ pub struct PointIdx(pub usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DataCategory {
     /// Rendered as a polyline through all TPV points; no individual point refs.
-    TripTrack,
+    Track,
     Tpv,
     SatelliteReport,
     CustomMarker,
@@ -46,7 +46,7 @@ pub enum DataCategory {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DataPointRef {
     pub file_index: FileIdx,
-    pub trip_index: TripIdx,
+    pub track_index: TrackIdx,
     pub category: DataCategory,
     pub point_index: PointIdx,
 }
@@ -56,13 +56,13 @@ pub enum HighlightScope {
     File {
         file_index: FileIdx,
     },
-    Trip {
+    Track {
         file_index: FileIdx,
-        trip_index: TripIdx,
+        track_index: TrackIdx,
     },
-    TripCategory {
+    TrackCategory {
         file_index: FileIdx,
-        trip_index: TripIdx,
+        track_index: TrackIdx,
         category: DataCategory,
     },
     Point(DataPointRef),
@@ -77,9 +77,9 @@ pub struct MapHighlight {
     /// Time currently hovered on the trip plot; used to cross-highlight the
     /// closest TPV point on the map.  `None` when the plot cursor is inactive.
     pub plot_hover_time: Option<DateTime<Utc>>,
-    /// Pre-computed `(FileIdx, TripIdx, PointIdx)` of the TPV point closest to
+    /// Pre-computed `(FileIdx, TrackIdx, PointIdx)` of the TPV point closest to
     /// `plot_hover_time`, set by the app layer alongside that field.
     /// `TpvRenderer` reads this directly instead of re-scanning all points.
     /// `None` when `plot_hover_time` is `None`.
-    pub plot_hover_point: Option<(FileIdx, TripIdx, PointIdx)>,
+    pub plot_hover_point: Option<(FileIdx, TrackIdx, PointIdx)>,
 }

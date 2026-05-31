@@ -3,7 +3,6 @@ use geotrace_sdk::{
     Satellite as SdkSat, SatelliteReport, Velocity,
 };
 use gt_types::satellites::Constellation;
-use uom::si::angle::degree;
 
 fn sdk_constellation(c: Constellation) -> SdkConst {
     match c {
@@ -47,8 +46,8 @@ fn round_trip_from_gt_types_test_data() {
         let tpv = np.tpv;
         let fix_b = NavFix::builder()
             .gps_time(tpv.time().utc())
-            .lat(Angle::from(tpv.lat()))
-            .lon(Angle::from(tpv.lon()))
+            .lat(Angle::degrees(tpv.lat().as_degrees()))
+            .lon(Angle::degrees(tpv.lon().as_degrees()))
             .maybe_heading(tpv.heading().map(Angle::from));
         let nav_fix = if let Some(v) = tpv.velocity() {
             fix_b.speed(Velocity::from(v)).build()
@@ -104,9 +103,9 @@ fn round_trip_from_gt_types_test_data() {
     std::io::Write::write_all(&mut tmp.as_file(), &bytes).unwrap();
 
     let loaded = gt_io::load_file(tmp.path()).unwrap();
-    let nav_points: Vec<_> = loaded.trips.iter().flat_map(|t| t.points.iter()).collect();
+    let nav_points: Vec<_> = loaded.tracks.iter().flat_map(|t| t.points.iter()).collect();
     let markers: Vec<_> = loaded
-        .trips
+        .tracks
         .iter()
         .flat_map(|t| t.custom_markers.iter())
         .collect();
@@ -116,23 +115,23 @@ fn round_trip_from_gt_types_test_data() {
 
     let first = nav_points.first().expect("at least one point");
     assert_eq!(
-        first.tpv.lat().get::<degree>(),
-        nav_data[0].tpv.lat().get::<degree>()
+        first.tpv.lat().as_degrees(),
+        nav_data[0].tpv.lat().as_degrees()
     );
     assert_eq!(
-        first.tpv.lon().get::<degree>(),
-        nav_data[0].tpv.lon().get::<degree>()
+        first.tpv.lon().as_degrees(),
+        nav_data[0].tpv.lon().as_degrees()
     );
 
     let last = nav_points.last().expect("at least one point");
     let last_orig = nav_data.last().expect("nav_data is non-empty");
     assert_eq!(
-        last.tpv.lat().get::<degree>(),
-        last_orig.tpv.lat().get::<degree>()
+        last.tpv.lat().as_degrees(),
+        last_orig.tpv.lat().as_degrees()
     );
     assert_eq!(
-        last.tpv.lon().get::<degree>(),
-        last_orig.tpv.lon().get::<degree>()
+        last.tpv.lon().as_degrees(),
+        last_orig.tpv.lon().as_degrees()
     );
 
     for (i, (m, orig)) in markers.iter().zip(&marker_data).enumerate() {

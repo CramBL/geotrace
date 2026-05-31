@@ -1,13 +1,13 @@
 use egui::accesskit;
 use egui_kittest::{Harness, kittest::Queryable as _};
 use gt_types::{
-    DataCategory, DataPointRef, FileIdx, HighlightScope, MapHighlight, PointIdx, TripIdx,
+    DataCategory, DataPointRef, FileIdx, HighlightScope, MapHighlight, PointIdx, TrackIdx,
 };
 
 fn tpv_point(pi: usize) -> DataPointRef {
     DataPointRef {
         file_index: FileIdx(0),
-        trip_index: TripIdx(0),
+        track_index: TrackIdx(0),
         category: DataCategory::Tpv,
         point_index: PointIdx(pi),
     }
@@ -21,8 +21,6 @@ fn tpv_point(pi: usize) -> DataPointRef {
 fn tooltip_guard_passes(highlight: &MapHighlight, r: DataPointRef, any_popup_open: bool) -> bool {
     highlight.sticky != Some(r) && !any_popup_open
 }
-
-// ── sticky-suppression logic ─────────────────────────────────────────────────
 
 #[test]
 fn tooltip_suppressed_when_sticky_eq_hover() {
@@ -92,8 +90,6 @@ fn tooltip_suppressed_when_popup_open() {
         "tooltip should be suppressed when a popup is open"
     );
 }
-
-// ── egui context integration: any_popup_open() ───────────────────────────────
 
 /// Verifies that `any_popup_open()` returns false when no popup has been opened —
 /// confirming the egui baseline the guard relies on.

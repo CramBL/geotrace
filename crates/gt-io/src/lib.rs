@@ -18,16 +18,16 @@ use geotrace_sdk::{
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::{GpsTime, SysTime};
 use gt_types::{
-    CustomMarker, EventMarker, EventMarkerStyle, LoadedFile, MarkerIcon, NavPoint,
-    TimePositionVelocity,
+    CustomMarker, EventMarker, EventMarkerStyle, Latitude, LoadedFile, Longitude, MarkerIcon,
+    NavPoint, TimePositionVelocity,
 };
-
-fn to_uom_angle(a: geotrace_sdk::Angle) -> uom::si::f64::Angle {
-    uom::si::f64::Angle::new::<uom::si::angle::degree>(a.as_degrees())
-}
 
 fn to_uom_velocity(v: geotrace_sdk::Velocity) -> uom::si::f64::Velocity {
     uom::si::f64::Velocity::new::<uom::si::velocity::meter_per_second>(v.as_meters_per_second())
+}
+
+fn to_uom_angle(a: geotrace_sdk::Angle) -> uom::si::f64::Angle {
+    uom::si::f64::Angle::new::<uom::si::angle::degree>(a.as_degrees())
 }
 
 /// Load a `.nvd` file from `path`, segment it into trips, and return a fully
@@ -114,8 +114,8 @@ fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
 
         let tpv = TimePositionVelocity::builder()
             .time(GpsTime::from_utc(sdk_point.fix.effective_gps_time()))
-            .lat(to_uom_angle(sdk_point.fix.lat))
-            .lon(to_uom_angle(sdk_point.fix.lon))
+            .lat(Latitude::new(lat_deg))
+            .lon(Longitude::new(lon_deg))
             .maybe_heading(sdk_point.fix.heading.map(to_uom_angle))
             .maybe_velocity(sdk_point.fix.speed.map(to_uom_velocity))
             .maybe_sys_time(sdk_point.fix.sys_time.map(SysTime::from_utc))
@@ -149,8 +149,8 @@ fn convert_event_marker(m: &EventMarkerPoint) -> EventMarker {
         m.sys_time,
         m.variant_path.clone(),
         m.annotation.clone(),
-        to_uom_angle(m.lat),
-        to_uom_angle(m.lon),
+        Latitude::new(m.lat.as_degrees()),
+        Longitude::new(m.lon.as_degrees()),
     )
 }
 
@@ -237,8 +237,8 @@ fn convert_marker(m: &SdkMarker) -> CustomMarker {
         m.annotation.time,
         m.annotation.label.as_deref().unwrap_or("").to_owned(),
         m.annotation.icon.map_or(MarkerIcon::Pin, convert_icon),
-        to_uom_angle(m.lat),
-        to_uom_angle(m.lon),
+        Latitude::new(m.lat.as_degrees()),
+        Longitude::new(m.lon.as_degrees()),
         None,
     )
 }
@@ -269,7 +269,6 @@ mod tests {
         Angle, Annotation, Constellation as SdkConst, DateTime, Duration, MarkerIcon as SdkIcon,
         NavFile, NavFileBuilder, NavFix, Satellite as SdkSat, SatelliteReport, Utc, Velocity,
     };
-    use uom::si::angle::degree as uom_degree;
     use uom::si::velocity::meter_per_second as uom_mps;
 
     fn base() -> DateTime<Utc> {
@@ -309,9 +308,12 @@ mod tests {
         assert_eq!(nav_points.len(), 1);
         let tpv = nav_points[0].tpv;
         assert_eq!(tpv.time().utc(), t0);
-        assert_eq!(tpv.lat().get::<uom_degree>(), 51.5);
-        assert_eq!(tpv.lon().get::<uom_degree>(), -0.1);
-        assert_eq!(tpv.heading().map(|h| h.get::<uom_degree>()), Some(270.0));
+        assert_eq!(tpv.lat().as_degrees(), 51.5);
+        assert_eq!(tpv.lon().as_degrees(), -0.1);
+        assert_eq!(
+            tpv.heading().map(|h| h.get::<uom::si::angle::degree>()),
+            Some(270.0)
+        );
         assert_eq!(tpv.velocity().map(|v| v.get::<uom_mps>()), Some(12.5));
     }
 

@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use chrono::{DateTime, Utc};
 use gt_map::{MapLayer, NavMap};
-use gt_side_panel::{NodeKey, TreeState, TripRef};
+use gt_side_panel::{NodeKey, TrackRef, TreeState};
 use gt_types::LoadedFile;
 
 /// Show the delete-confirmation dialog.
@@ -30,7 +31,7 @@ pub fn show_delete_confirmation(
     egui::Window::new(format!("Delete {count} item(s)?"))
         .collapsible(false)
         .resizable(true)
-        .min_width(360.0)
+        .min_width(420.0)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ui.ctx(), |ui| {
             egui::ScrollArea::vertical()
@@ -48,29 +49,47 @@ pub fn show_delete_confirmation(
                                     ui.label(&file.metadata.filename);
                                 }
                             }
-                            NodeKey::Trip(TripRef { file: fi, trip: ti }) => {
+                            NodeKey::Track(TrackRef { file: fi, trip: ti }) => {
                                 if let Some(file) = loaded_files.get(fi.0)
-                                    && let Some(trip) = file.trips.get(ti.0)
+                                    && let Some(track) = file.tracks.get(ti.0)
                                 {
-                                    let dist = gt_fmt::format_distance(trip.metadata.distance_km);
-                                    let dur =
-                                        gt_fmt::format_human_terse_duration(trip.metadata.duration);
+                                    let dist = gt_fmt::format_distance(track.metadata.distance_km);
+                                    let dur = gt_fmt::format_human_terse_duration(
+                                        track.metadata.duration,
+                                    );
                                     ui.label(format!(
-                                        "  {} / T{}  {dist}  {dur}",
-                                        file.metadata.filename, trip.metadata.index
+                                        "  {} / Tk{}  {dist}  {dur}",
+                                        file.metadata.filename, track.metadata.index
                                     ));
                                 }
                             }
                         }
                     }
                 });
+            ui.separator();
+            ui.label(
+                egui::RichText::new("This action cannot be undone.")
+                    .color(ui.visuals().error_fg_color)
+                    .small(),
+            );
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
                 if ui.button("Cancel").clicked() {
                     do_cancel = true;
                 }
-                if ui.button("Delete").clicked() {
-                    do_delete = true;
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("Delete").color(egui::Color32::WHITE),
+                            )
+                            .fill(egui::Color32::from_rgb(160, 30, 30)),
+                        )
+                        .clicked()
+                    {
+                        do_delete = true;
+                    }
+                });
             });
         });
 
@@ -98,7 +117,7 @@ pub fn execute_delete(keys: &[NodeKey], loaded_files: &mut Vec<LoadedFile>, tree
             NodeKey::File(fi) => {
                 file_indices_to_remove.insert(fi.0);
             }
-            NodeKey::Trip(TripRef { file: fi, trip: ti }) => {
+            NodeKey::Track(TrackRef { file: fi, trip: ti }) => {
                 trips_to_remove.entry(fi.0).or_default().insert(ti.0);
             }
         }
@@ -109,22 +128,18 @@ pub fn execute_delete(keys: &[NodeKey], loaded_files: &mut Vec<LoadedFile>, tree
             continue;
         }
         if let Some(file) = loaded_files.get_mut(*fi) {
-            let mut ti = file.trips.len();
-            while ti > 0 {
-                ti -= 1;
+            for ti in (0..file.tracks.len()).rev() {
                 if trip_set.contains(&ti) {
-                    file.trips.remove(ti);
+                    file.tracks.remove(ti);
                 }
             }
-            if file.trips.is_empty() {
+            if file.tracks.is_empty() {
                 file_indices_to_remove.insert(*fi);
             }
         }
     }
 
-    let mut fi = loaded_files.len();
-    while fi > 0 {
-        fi -= 1;
+    for fi in (0..loaded_files.len()).rev() {
         if file_indices_to_remove.contains(&fi) {
             loaded_files.remove(fi);
         }
@@ -133,20 +148,30 @@ pub fn execute_delete(keys: &[NodeKey], loaded_files: &mut Vec<LoadedFile>, tree
     tree.reset_for_files(loaded_files);
 }
 
-pub fn show_unassociated_popup(ui: &egui::Ui, lines: &mut Option<Vec<String>>) {
+pub fn show_unassociated_popup(ui: &egui::Ui, lines: &mut Option<Vec<(DateTime<Utc>, String)>>) {
     let Some(unassociated) = lines else {
         return;
     };
+    let count = unassociated.len();
     let mut dismiss = false;
-    egui::Window::new("Log entries could not be associated")
+    egui::Window::new(format!("{count} log entries could not be associated"))
         .collapsible(false)
         .resizable(true)
+        .min_width(480.0)
         .show(ui.ctx(), |ui| {
             egui::ScrollArea::vertical()
-                .max_height(300.0)
+                .max_height(400.0)
                 .show(ui, |ui| {
-                    for line in unassociated.iter() {
-                        ui.monospace(line);
+                    let ten_min = chrono::Duration::minutes(10);
+                    let mut prev_ts: Option<DateTime<Utc>> = None;
+                    for (ts, line) in unassociated.iter() {
+                        if let Some(prev) = prev_ts
+                            && ts.signed_duration_since(prev) > ten_min
+                        {
+                            ui.separator();
+                        }
+                        ui.monospace(format!("{}  {}", ts.format("%Y-%m-%d %H:%M:%S"), line));
+                        prev_ts = Some(*ts);
                     }
                 });
             if ui.button("Dismiss").clicked() {
@@ -158,21 +183,36 @@ pub fn show_unassociated_popup(ui: &egui::Ui, lines: &mut Option<Vec<String>>) {
     }
 }
 
-pub fn show_orphaned_event_markers_popup(ui: &egui::Ui, markers: &mut Option<Vec<String>>) {
+pub fn show_orphaned_event_markers_popup(
+    ui: &egui::Ui,
+    markers: &mut Option<Vec<(DateTime<Utc>, String)>>,
+) {
     let Some(orphans) = markers else {
         return;
     };
-    let mut dismiss = false;
-    egui::Window::new("Event markers outside trip range")
+    let count = orphans.len();
+    let enter_pressed = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let mut dismiss = enter_pressed;
+    egui::Window::new(format!("{count} event markers outside trip range"))
         .collapsible(false)
         .resizable(true)
+        .min_width(480.0)
         .show(ui.ctx(), |ui| {
-            ui.label("These event markers could not be assigned to any trip:");
             egui::ScrollArea::vertical()
-                .max_height(300.0)
+                .max_height(400.0)
                 .show(ui, |ui| {
-                    for path in orphans.iter() {
-                        ui.monospace(path);
+                    let ten_min = chrono::Duration::minutes(10);
+                    let mut prev_ts: Option<DateTime<Utc>> = None;
+                    for (ts, path) in orphans.iter() {
+                        if let Some(prev) = prev_ts
+                            && ts.signed_duration_since(prev) > ten_min
+                        {
+                            ui.separator();
+                        }
+                        ui.monospace(format!("{}  {}", ts.format("%Y-%m-%d %H:%M:%S"), path));
+                        prev_ts = Some(*ts);
                     }
                 });
             if ui.button("Dismiss").clicked() {

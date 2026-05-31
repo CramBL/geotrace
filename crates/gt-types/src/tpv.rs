@@ -1,6 +1,6 @@
+use crate::coordinates::{Latitude, Longitude};
 use crate::time_types::{GpsTime, SysTime};
 use geo_types::{Coord, Point};
-use uom::si::angle::degree;
 use uom::si::f64::{Angle, Velocity};
 
 pub fn to_linestring(tpvs: &[TimePositionVelocity]) -> geo_types::LineString<f64> {
@@ -18,8 +18,8 @@ pub fn to_linestring(tpvs: &[TimePositionVelocity]) -> geo_types::LineString<f64
 #[derive(bon::Builder, Debug, Clone, Copy)]
 pub struct TimePositionVelocity {
     pub(crate) time: GpsTime,
-    pub(crate) lat: Angle,
-    pub(crate) lon: Angle,
+    pub(crate) lat: Latitude,
+    pub(crate) lon: Longitude,
     pub(crate) velocity: Option<Velocity>,
     /// Compass heading in \[0°, 360°). `None` = direction unknown (ghost fix).
     pub(crate) heading: Option<Angle>,
@@ -36,10 +36,10 @@ impl TimePositionVelocity {
     pub fn time(&self) -> GpsTime {
         self.time
     }
-    pub fn lat(&self) -> Angle {
+    pub fn lat(&self) -> Latitude {
         self.lat
     }
-    pub fn lon(&self) -> Angle {
+    pub fn lon(&self) -> Longitude {
         self.lon
     }
     pub fn velocity(&self) -> Option<Velocity> {
@@ -66,8 +66,8 @@ impl TimePositionVelocity {
 impl From<&TimePositionVelocity> for Coord<f64> {
     fn from(tpv: &TimePositionVelocity) -> Self {
         Coord {
-            x: tpv.lon().get::<degree>(), // X is Longitude
-            y: tpv.lat().get::<degree>(), // Y is Latitude
+            x: tpv.lon().as_degrees(), // X is Longitude
+            y: tpv.lat().as_degrees(), // Y is Latitude
         }
     }
 }
@@ -94,15 +94,18 @@ mod tests {
 
         let tpv = TimePositionVelocity::builder()
             .time(GpsTime::from_utc(dt))
-            .lat(Angle::new::<degree>(55.676))
-            .lon(Angle::new::<degree>(12.565))
+            .lat(Latitude::new(55.676))
+            .lon(Longitude::new(12.565))
             .velocity(Velocity::new::<meter_per_second>(15.0))
-            .heading(Angle::new::<degree>(270.0))
+            .heading(Angle::new::<uom::si::angle::degree>(270.0))
             .build();
 
         assert_eq!(tpv.time().utc(), dt);
-        assert_eq!(tpv.lat().get::<degree>(), 55.676);
-        assert_eq!(tpv.heading().map(|h| h.get::<degree>()), Some(270.0));
+        assert_eq!(tpv.lat().as_degrees(), 55.676);
+        assert_eq!(
+            tpv.heading().map(|h| h.get::<uom::si::angle::degree>()),
+            Some(270.0)
+        );
     }
 
     #[test]
@@ -115,8 +118,8 @@ mod tests {
 
         let tpv = TimePositionVelocity::builder()
             .time(GpsTime::from_utc(dt))
-            .lat(Angle::new::<degree>(55.0))
-            .lon(Angle::new::<degree>(12.0))
+            .lat(Latitude::new(55.0))
+            .lon(Longitude::new(12.0))
             .build();
 
         assert_eq!(tpv.heading(), None);

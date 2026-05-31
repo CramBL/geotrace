@@ -1,12 +1,10 @@
-use uom::si::angle::degree;
-
 use gt_types::{
-    DataCategory, DataPointRef, FileIdx, GlobalFilter, HighlightScope, LoadedFile, LoadedTrip,
-    MapHighlight, PointIdx, TripIdx,
+    DataCategory, DataPointRef, FileIdx, GlobalFilter, HighlightScope, LoadedFile, LoadedTrack,
+    MapHighlight, PointIdx, TrackIdx,
 };
 
 use crate::filter::{FilterPanelState, render_filter_panel};
-use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState, TripRef};
+use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TrackRef, TreeState};
 use crate::widgets::{
     expand_arrow, map_hover_color, paint_map_hover_bg, point_item_row, tri_checkbox,
 };
@@ -61,20 +59,23 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
         .flat_map(|(fi, file)| {
             let fi = FileIdx(fi);
             let file_enabled = fi.get(&vis.files).is_some_and(|fv| fv.enabled);
-            file.trips.iter().enumerate().filter_map(move |(ti, trip)| {
-                let ti = TripIdx(ti);
-                let trip_enabled = file_enabled
-                    && fi
-                        .get(&vis.files)
-                        .and_then(|fv| ti.get(&fv.trips))
-                        .is_some_and(|tv| tv.enabled);
-                let passes = gt_types::trip_passes_filter(&trip.metadata, &filter_snapshot);
-                if !trip_enabled || !passes {
-                    Some(NodeKey::Trip(TripRef { file: fi, trip: ti }))
-                } else {
-                    None
-                }
-            })
+            file.tracks
+                .iter()
+                .enumerate()
+                .filter_map(move |(ti, track)| {
+                    let ti = TrackIdx(ti);
+                    let trip_enabled = file_enabled
+                        && fi
+                            .get(&vis.files)
+                            .and_then(|fv| ti.get(&fv.tracks))
+                            .is_some_and(|tv| tv.enabled);
+                    let passes = gt_types::track_passes_filter(&track.metadata, &filter_snapshot);
+                    if !trip_enabled || !passes {
+                        Some(NodeKey::Track(TrackRef { file: fi, trip: ti }))
+                    } else {
+                        None
+                    }
+                })
         })
         .collect();
     if !filtered_out.is_empty() {
@@ -133,8 +134,8 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
 
     let file_map_hovered = ctx.highlight.hover.is_some_and(|s| match s {
         HighlightScope::Point(r) => r.file_index == fi,
-        HighlightScope::Trip { file_index, .. }
-        | HighlightScope::TripCategory { file_index, .. }
+        HighlightScope::Track { file_index, .. }
+        | HighlightScope::TrackCategory { file_index, .. }
         | HighlightScope::File { file_index } => file_index == fi,
     });
 
@@ -194,35 +195,35 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
 
     if is_expanded {
         ui.indent(format!("file_{}", fi.0), |ui| {
-            let trip_count = fi.get(ctx.files).map_or(0, |f| f.trips.len());
+            let trip_count = fi.get(ctx.files).map_or(0, |f| f.tracks.len());
             for ti in 0..trip_count {
-                render_trip_row(ui, fi, TripIdx(ti), ctx);
+                render_trip_row(ui, fi, TrackIdx(ti), ctx);
             }
         });
     }
 }
 
-fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TripIdx, ctx: &mut PanelContext<'_>) {
-    let (trip, passes, is_expanded, trip_panel_hovered, trip_map_hovered, key) = {
+fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut PanelContext<'_>) {
+    let (track, passes, is_expanded, trip_panel_hovered, trip_map_hovered, key) = {
         let Some(file) = fi.get(ctx.files) else {
             return;
         };
-        let Some(trip) = ti.get(&file.trips) else {
+        let Some(track) = ti.get(&file.tracks) else {
             return;
         };
-        let passes = gt_types::trip_passes_filter(&trip.metadata, ctx.filter);
-        let trip_ref = TripRef { file: fi, trip: ti };
+        let passes = gt_types::track_passes_filter(&track.metadata, ctx.filter);
+        let trip_ref = TrackRef { file: fi, trip: ti };
         let is_expanded = ctx.tree.trip_node(fi, ti).is_some_and(|t| t.expanded);
         let trip_panel_hovered = ctx.highlight.hover.is_some_and(|s| {
-            matches!(s, HighlightScope::Trip { file_index, trip_index }
-                if file_index == fi && trip_index == ti)
+            matches!(s, HighlightScope::Track { file_index, track_index }
+                if file_index == fi && track_index == ti)
         });
         let trip_map_hovered = ctx.highlight.hover.is_some_and(
-            |s| matches!(s, HighlightScope::Point(r) if r.file_index == fi && r.trip_index == ti),
+            |s| matches!(s, HighlightScope::Point(r) if r.file_index == fi && r.track_index == ti),
         );
-        let key = NodeKey::Trip(trip_ref);
+        let key = NodeKey::Track(trip_ref);
         (
-            trip.clone(),
+            track.clone(),
             passes,
             is_expanded,
             trip_panel_hovered,
@@ -247,9 +248,9 @@ fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TripIdx, ctx: &mut PanelC
         let newly_enabled =
             chk_resp.clicked() && matches!(check, CheckState::Off | CheckState::Mixed);
         let arrow = expand_arrow(is_expanded);
-        let dist = gt_fmt::format_distance(trip.metadata.distance_km);
-        let dur = gt_fmt::format_human_terse_duration(trip.metadata.duration);
-        let label = format!("{arrow} T{}  {dist}  {dur}", trip.metadata.index);
+        let dist = gt_fmt::format_distance(track.metadata.distance_km);
+        let dur = gt_fmt::format_human_terse_duration(track.metadata.duration);
+        let label = format!("{arrow} Tk{}  {dist}  {dur}", track.metadata.index);
         let mut text = egui::RichText::new(label);
         if !passes {
             text = text.weak();
@@ -269,14 +270,14 @@ fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TripIdx, ctx: &mut PanelC
         *ctx.zoom_to_visible_request = true;
     }
     if response.hovered() {
-        ctx.highlight.hover = Some(HighlightScope::Trip {
+        ctx.highlight.hover = Some(HighlightScope::Track {
             file_index: fi,
-            trip_index: ti,
+            track_index: ti,
         });
     }
     let modifiers = ui.ctx().input(|i| i.modifiers);
     if response.double_clicked() {
-        let bb = trip.metadata.bounding_box;
+        let bb = track.metadata.bounding_box;
         let center_lat = (bb.min().y + bb.max().y) / 2.0;
         let center_lon = (bb.min().x + bb.max().x) / 2.0;
         *ctx.map_center_request = Some((center_lat, center_lon));
@@ -308,8 +309,8 @@ fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TripIdx, ctx: &mut PanelC
     });
 
     if is_expanded {
-        ui.indent(format!("trip_{}_{}", fi.0, ti.0), |ui| {
-            render_trip_categories(ui, fi, ti, &trip, ctx);
+        ui.indent(format!("track_{}_{}", fi.0, ti.0), |ui| {
+            render_trip_categories(ui, fi, ti, &track, ctx);
         });
     }
 }
@@ -321,7 +322,7 @@ fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TripIdx, ctx: &mut PanelC
 fn render_category_section(
     ui: &mut egui::Ui,
     fi: FileIdx,
-    ti: TripIdx,
+    ti: TrackIdx,
     cat: DataCategory,
     count: usize,
     label: &str,
@@ -354,14 +355,14 @@ fn render_category_section(
         resp
     });
     if header.inner.hovered() {
-        highlight.hover = Some(HighlightScope::TripCategory {
+        highlight.hover = Some(HighlightScope::TrackCategory {
             file_index: fi,
-            trip_index: ti,
+            track_index: ti,
             category: cat,
         });
     }
     if expanded {
-        let trip_ref = TripRef { file: fi, trip: ti };
+        let trip_ref = TrackRef { file: fi, trip: ti };
         ui.indent((cat, trip_ref), |ui| {
             render_items(ui, highlight);
         });
@@ -371,8 +372,8 @@ fn render_category_section(
 fn render_trip_categories(
     ui: &mut egui::Ui,
     fi: FileIdx,
-    ti: TripIdx,
-    trip: &LoadedTrip,
+    ti: TrackIdx,
+    track: &LoadedTrack,
     ctx: &mut PanelContext<'_>,
 ) {
     let Some(trip_node) = ctx.tree.trip_node(fi, ti) else {
@@ -410,15 +411,15 @@ fn render_trip_categories(
         );
         if chk.clicked() {
             ctx.tree
-                .set_category_visible(fi, ti, DataCategory::TripTrack, !track_visible);
+                .set_category_visible(fi, ti, DataCategory::Track, !track_visible);
         }
-        ui.label("Trip track")
+        ui.label("Track polyline")
     });
     if track_resp.inner.hovered() {
-        ctx.highlight.hover = Some(HighlightScope::TripCategory {
+        ctx.highlight.hover = Some(HighlightScope::TrackCategory {
             file_index: fi,
-            trip_index: ti,
-            category: DataCategory::TripTrack,
+            track_index: ti,
+            category: DataCategory::Track,
         });
     }
 
@@ -427,8 +428,8 @@ fn render_trip_categories(
         fi,
         ti,
         DataCategory::Tpv,
-        trip.points.len(),
-        "Trip points",
+        track.points.len(),
+        "Track points",
         tpv_visible,
         tpv_expanded,
         ctx.tree,
@@ -438,7 +439,7 @@ fn render_trip_categories(
                 ui,
                 fi,
                 ti,
-                trip,
+                track,
                 highlight,
                 ctx.map_center_request,
                 ctx.popup_pos_request,
@@ -446,7 +447,7 @@ fn render_trip_categories(
         },
     );
 
-    let sat_count = trip
+    let sat_count = track
         .points
         .iter()
         .filter(|p| p.satellites.is_some())
@@ -467,7 +468,7 @@ fn render_trip_categories(
                 ui,
                 fi,
                 ti,
-                trip,
+                track,
                 highlight,
                 ctx.map_center_request,
                 ctx.popup_pos_request,
@@ -480,7 +481,7 @@ fn render_trip_categories(
         fi,
         ti,
         DataCategory::CustomMarker,
-        trip.custom_markers.len(),
+        track.custom_markers.len(),
         "Custom markers",
         cm_visible,
         cm_expanded,
@@ -491,7 +492,7 @@ fn render_trip_categories(
                 ui,
                 fi,
                 ti,
-                trip,
+                track,
                 highlight,
                 ctx.map_center_request,
                 ctx.popup_pos_request,
@@ -504,7 +505,7 @@ fn render_trip_categories(
         fi,
         ti,
         DataCategory::GeneratedMarker,
-        trip.generated_markers.len(),
+        track.generated_markers.len(),
         "Generated markers",
         gm_visible,
         gm_expanded,
@@ -515,7 +516,7 @@ fn render_trip_categories(
                 ui,
                 fi,
                 ti,
-                trip,
+                track,
                 highlight,
                 ctx.map_center_request,
                 ctx.popup_pos_request,
@@ -523,8 +524,8 @@ fn render_trip_categories(
         },
     );
 
-    if !trip.event_markers.is_empty() {
-        render_event_markers_section(ui, fi, ti, trip, em_agg, em_expanded, &event_filter, ctx);
+    if !track.event_markers.is_empty() {
+        render_event_markers_section(ui, fi, ti, track, em_agg, em_expanded, &event_filter, ctx);
     }
 }
 
@@ -535,14 +536,14 @@ fn render_trip_categories(
 fn render_event_markers_section(
     ui: &mut egui::Ui,
     fi: FileIdx,
-    ti: TripIdx,
-    trip: &LoadedTrip,
+    ti: TrackIdx,
+    track: &LoadedTrack,
     em_agg: CheckState,
     is_open: bool,
     filter_text: &str,
     ctx: &mut PanelContext<'_>,
 ) {
-    let count = trip.event_markers.len();
+    let count = track.event_markers.len();
     let header_response = ui.horizontal(|ui| {
         let chk_resp = tri_checkbox(ui, em_agg);
         if chk_resp.clicked() {
@@ -591,7 +592,7 @@ fn render_event_markers_section(
         .trip_node(fi, ti)
         .map_or("", |t| t.event_filter.as_str());
 
-    let mut paths: Vec<&str> = trip
+    let mut paths: Vec<&str> = track
         .event_markers
         .iter()
         .map(|m| m.variant_path.as_str())
@@ -618,11 +619,11 @@ fn render_event_markers_section(
         }
     }
 
-    // No max_height cap — expands inline with the trip's content.
+    // No max_height cap — expands inline with the track's content.
     for prefix in &prefix_set {
         let depth = prefix.chars().filter(|&c| c == '/').count();
         let segment = prefix.split('/').next_back().unwrap_or(prefix.as_str());
-        let marker_count = trip
+        let marker_count = track
             .event_markers
             .iter()
             .filter(|m| {
@@ -650,24 +651,21 @@ fn render_event_markers_section(
 fn render_tpv_items(
     ui: &mut egui::Ui,
     fi: FileIdx,
-    ti: TripIdx,
-    trip: &LoadedTrip,
+    ti: TrackIdx,
+    track: &LoadedTrack,
     highlight: &mut MapHighlight,
     map_center_request: &mut Option<(f64, f64)>,
     popup_pos_request: &mut Option<egui::Pos2>,
 ) {
-    for (pi, point) in trip.points.iter().enumerate() {
+    for (pi, point) in track.points.iter().enumerate() {
         let point_ref = DataPointRef {
             file_index: fi,
-            trip_index: ti,
+            track_index: ti,
             category: DataCategory::Tpv,
             point_index: PointIdx(pi),
         };
         let label = point.tpv.time().utc().format("%H:%M:%S").to_string();
-        let lat_lon = (
-            point.tpv.lat().get::<degree>(),
-            point.tpv.lon().get::<degree>(),
-        );
+        let lat_lon = (point.tpv.lat().as_degrees(), point.tpv.lon().as_degrees());
         point_item_row(
             ui,
             point_ref,
@@ -683,19 +681,19 @@ fn render_tpv_items(
 fn render_satellite_report_items(
     ui: &mut egui::Ui,
     fi: FileIdx,
-    ti: TripIdx,
-    trip: &LoadedTrip,
+    ti: TrackIdx,
+    track: &LoadedTrack,
     highlight: &mut MapHighlight,
     map_center_request: &mut Option<(f64, f64)>,
     popup_pos_request: &mut Option<egui::Pos2>,
 ) {
-    for (pi, point) in trip.points.iter().enumerate() {
+    for (pi, point) in track.points.iter().enumerate() {
         let Some(sats) = &point.satellites else {
             continue;
         };
         let point_ref = DataPointRef {
             file_index: fi,
-            trip_index: ti,
+            track_index: ti,
             category: DataCategory::SatelliteReport,
             point_index: PointIdx(pi),
         };
@@ -707,10 +705,7 @@ fn render_satellite_report_items(
             sats.fix_count(),
             sats.satellite_count()
         );
-        let lat_lon = (
-            point.tpv.lat().get::<degree>(),
-            point.tpv.lon().get::<degree>(),
-        );
+        let lat_lon = (point.tpv.lat().as_degrees(), point.tpv.lon().as_degrees());
         point_item_row(
             ui,
             point_ref,
@@ -726,21 +721,21 @@ fn render_satellite_report_items(
 fn render_custom_marker_items(
     ui: &mut egui::Ui,
     fi: FileIdx,
-    ti: TripIdx,
-    trip: &LoadedTrip,
+    ti: TrackIdx,
+    track: &LoadedTrack,
     highlight: &mut MapHighlight,
     map_center_request: &mut Option<(f64, f64)>,
     popup_pos_request: &mut Option<egui::Pos2>,
 ) {
-    for (pi, marker) in trip.custom_markers.iter().enumerate() {
+    for (pi, marker) in track.custom_markers.iter().enumerate() {
         let point_ref = DataPointRef {
             file_index: fi,
-            trip_index: ti,
+            track_index: ti,
             category: DataCategory::CustomMarker,
             point_index: PointIdx(pi),
         };
         let label = format!("{}  {}", marker.time.format("%H:%M:%S"), marker.label);
-        let lat_lon = (marker.lat.get::<degree>(), marker.lon.get::<degree>());
+        let lat_lon = (marker.lat.as_degrees(), marker.lon.as_degrees());
         point_item_row(
             ui,
             point_ref,
@@ -756,17 +751,17 @@ fn render_custom_marker_items(
 fn render_generated_marker_items(
     ui: &mut egui::Ui,
     fi: FileIdx,
-    ti: TripIdx,
-    trip: &LoadedTrip,
+    ti: TrackIdx,
+    track: &LoadedTrack,
     highlight: &mut MapHighlight,
     map_center_request: &mut Option<(f64, f64)>,
     popup_pos_request: &mut Option<egui::Pos2>,
 ) {
     use gt_types::GeneratedMarkerKind;
-    for (pi, marker) in trip.generated_markers.iter().enumerate() {
+    for (pi, marker) in track.generated_markers.iter().enumerate() {
         let point_ref = DataPointRef {
             file_index: fi,
-            trip_index: ti,
+            track_index: ti,
             category: DataCategory::GeneratedMarker,
             point_index: PointIdx(pi),
         };
@@ -775,7 +770,7 @@ fn render_generated_marker_items(
             GeneratedMarkerKind::GpsFixRegained => "GPS fix regained",
         };
         let label = format!("{}  {kind_str}", marker.time.format("%H:%M:%S"));
-        let lat_lon = (marker.lat.get::<degree>(), marker.lon.get::<degree>());
+        let lat_lon = (marker.lat.as_degrees(), marker.lon.as_degrees());
         point_item_row(
             ui,
             point_ref,
@@ -789,7 +784,7 @@ fn render_generated_marker_items(
 }
 
 fn file_bounding_center(file: Option<&LoadedFile>) -> Option<(f64, f64)> {
-    let trips = &file?.trips;
+    let trips = &file?.tracks;
     if trips.is_empty() {
         return None;
     }

@@ -1,6 +1,5 @@
+use crate::coordinates::{Latitude, Longitude};
 use chrono::{DateTime, Duration, Utc};
-use uom::si::angle::degree;
-use uom::si::f64::Angle;
 
 const EVENT_FALLBACK_COLORS: [(u8, u8, u8); 8] = [
     (230, 57, 70),
@@ -39,8 +38,8 @@ pub enum GeneratedMarkerKind {
 pub struct GeneratedMarker {
     pub time: DateTime<Utc>,
     pub kind: GeneratedMarkerKind,
-    pub lat: Angle,
-    pub lon: Angle,
+    pub lat: Latitude,
+    pub lon: Longitude,
     /// For `GpsFixRegained`: how long the fix was lost. None for `GpsFixLost`.
     pub fix_lost_duration: Option<Duration>,
     /// Pre-computed normalized Mercator X, see [`crate::mercator`].
@@ -53,11 +52,11 @@ impl GeneratedMarker {
     pub fn new(
         time: DateTime<Utc>,
         kind: GeneratedMarkerKind,
-        lat: Angle,
-        lon: Angle,
+        lat: Latitude,
+        lon: Longitude,
         fix_lost_duration: Option<Duration>,
     ) -> Self {
-        let (merc_x, merc_y) = crate::mercator::normalize(lon.get::<degree>(), lat.get::<degree>());
+        let (merc_x, merc_y) = crate::mercator::normalize(lon.as_degrees(), lat.as_degrees());
         Self {
             time,
             kind,
@@ -94,8 +93,8 @@ pub struct CustomMarker {
     pub time: DateTime<Utc>,
     pub label: String,
     pub icon: MarkerIcon,
-    pub lat: Angle,
-    pub lon: Angle,
+    pub lat: Latitude,
+    pub lon: Longitude,
     pub color_group: Option<u32>,
     /// Pre-computed normalized Mercator X, see [`crate::mercator`].
     pub merc_x: f64,
@@ -108,11 +107,11 @@ impl CustomMarker {
         time: DateTime<Utc>,
         label: String,
         icon: MarkerIcon,
-        lat: Angle,
-        lon: Angle,
+        lat: Latitude,
+        lon: Longitude,
         color_group: Option<u32>,
     ) -> Self {
-        let (merc_x, merc_y) = crate::mercator::normalize(lon.get::<degree>(), lat.get::<degree>());
+        let (merc_x, merc_y) = crate::mercator::normalize(lon.as_degrees(), lat.as_degrees());
         Self {
             time,
             label,
@@ -142,8 +141,8 @@ pub struct EventMarker {
     pub time: DateTime<Utc>,
     pub variant_path: String,
     pub annotation: Option<String>,
-    pub lat: Angle,
-    pub lon: Angle,
+    pub lat: Latitude,
+    pub lon: Longitude,
     /// Pre-computed normalized Mercator X, see [`crate::mercator`].
     pub merc_x: f64,
     /// Pre-computed normalized Mercator Y, see [`crate::mercator`].
@@ -155,10 +154,10 @@ impl EventMarker {
         time: DateTime<Utc>,
         variant_path: String,
         annotation: Option<String>,
-        lat: Angle,
-        lon: Angle,
+        lat: Latitude,
+        lon: Longitude,
     ) -> Self {
-        let (merc_x, merc_y) = crate::mercator::normalize(lon.get::<degree>(), lat.get::<degree>());
+        let (merc_x, merc_y) = crate::mercator::normalize(lon.as_degrees(), lat.as_degrees());
         Self {
             time,
             variant_path,
