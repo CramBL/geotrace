@@ -650,11 +650,11 @@ impl NavMap {
             ));
             if file.tracks.len() > 1 {
                 ui.add(egui::Label::new(
-                    egui::RichText::new(format!("Trip {}", point_ref.track_index.0 + 1)).weak(),
+                    egui::RichText::new(format!("Track {}", point_ref.track_index.0 + 1)).weak(),
                 ));
             }
             ui.separator();
-            if ui.button("Only show elements from this trip").clicked() {
+            if ui.button("Only show elements from this track").clicked() {
                 context_action = Some(MapContextAction::ShowOnlyTrip {
                     file_index: point_ref.file_index.0,
                     track_index: point_ref.track_index.0,

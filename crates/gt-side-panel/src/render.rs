@@ -288,7 +288,7 @@ fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Panel
         }
     }
     response.context_menu(|ui| {
-        if ui.button("Show only this trip").clicked() {
+        if ui.button("Show only this track").clicked() {
             ctx.tree.show_only_trip(fi, ti);
             *ctx.zoom_to_visible_request = true;
             ui.close();

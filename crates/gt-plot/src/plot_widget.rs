@@ -347,7 +347,7 @@ pub fn show_trip_plot(
     if visible_count == 0 {
         ui.centered_and_justified(|ui| {
             ui.label(
-                egui::RichText::new("Load a .nvd file to see trip metrics")
+                egui::RichText::new("Load a .nvd file to see track metrics")
                     .weak()
                     .italics(),
             );

@@ -405,35 +405,24 @@ pub(super) fn build_log_loaded_file(
 ) -> Option<LoadedFile> {
     let first = markers.first()?;
 
-    let mut min_lat = first.lat.as_degrees();
-    let mut max_lat = min_lat;
-    let mut min_lon = first.lon.as_degrees();
-    let mut max_lon = min_lon;
-    let mut min_time = first.time;
-    let mut max_time = first.time;
-
-    for m in &markers {
-        let lat = m.lat.as_degrees();
-        let lon = m.lon.as_degrees();
-        if lat < min_lat {
-            min_lat = lat;
-        }
-        if lat > max_lat {
-            max_lat = lat;
-        }
-        if lon < min_lon {
-            min_lon = lon;
-        }
-        if lon > max_lon {
-            max_lon = lon;
-        }
-        if m.time < min_time {
-            min_time = m.time;
-        }
-        if m.time > max_time {
-            max_time = m.time;
-        }
-    }
+    let min_lat = markers
+        .iter()
+        .map(|m| m.lat.as_degrees())
+        .fold(first.lat.as_degrees(), f64::min);
+    let max_lat = markers
+        .iter()
+        .map(|m| m.lat.as_degrees())
+        .fold(first.lat.as_degrees(), f64::max);
+    let min_lon = markers
+        .iter()
+        .map(|m| m.lon.as_degrees())
+        .fold(first.lon.as_degrees(), f64::min);
+    let max_lon = markers
+        .iter()
+        .map(|m| m.lon.as_degrees())
+        .fold(first.lon.as_degrees(), f64::max);
+    let min_time = markers.iter().map(|m| m.time).min().unwrap_or(first.time);
+    let max_time = markers.iter().map(|m| m.time).max().unwrap_or(first.time);
 
     let count = markers.len();
     let duration = max_time.signed_duration_since(min_time);

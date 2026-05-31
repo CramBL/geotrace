@@ -1851,6 +1851,7 @@ dependencies = [
  "geotrace-sdk-macros",
  "hdf5-pure",
  "log",
+ "proptest",
  "tempfile",
  "thiserror 2.0.18",
  "uom",

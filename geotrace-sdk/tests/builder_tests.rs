@@ -2,6 +2,7 @@ use geotrace_sdk::{Angle, DateTime, Duration, Utc, Velocity};
 use geotrace_sdk::{
     Annotation, BuildError, Constellation, NavFileBuilder, NavFix, Satellite, SatelliteReport,
 };
+use proptest::prelude::*;
 
 fn t(offset_ms: i64) -> DateTime<Utc> {
     #[expect(clippy::expect_used, reason = "fixed base timestamp is always valid")]
@@ -631,4 +632,54 @@ fn speed_none_propagates() -> Result<(), BuildError> {
         Some(15.0)
     );
     Ok(())
+}
+
+proptest! {
+    /// GPS times in the output are always monotonically non-decreasing regardless
+    /// of insertion order and the mix of gps-only vs sys-time satellite reports.
+    #[test]
+    fn nav_point_gps_times_are_monotonic(
+        fix_offsets_ms in prop::collection::vec(1_i64..=30_000_i64, 1..=8_usize),
+        report_offsets_ms in prop::collection::vec(1_i64..=30_000_i64, 0..=8_usize),
+        insert_reversed in proptest::bool::ANY,
+    ) {
+        // Build cumulative monotonic timestamps from inter-arrival deltas.
+        let mut gps_ms: Vec<i64> = fix_offsets_ms
+            .iter()
+            .scan(0_i64, |acc, &d| { *acc += d; Some(*acc) })
+            .collect();
+        let mut sat_ms: Vec<i64> = report_offsets_ms
+            .iter()
+            .scan(0_i64, |acc, &d| { *acc += d; Some(*acc) })
+            .collect();
+
+        if insert_reversed {
+            gps_ms.reverse();
+            sat_ms.reverse();
+        }
+
+        let mut sink = NavFileBuilder::new().open();
+        for &ms in &gps_ms {
+            sink.add_nav_fix(simple_fix(ms));
+        }
+        for &ms in &sat_ms {
+            sink.add_satellite_report(simple_report(ms));
+        }
+
+        if let Ok(nav_file) = sink.finish() {
+            let times: Vec<_> = nav_file
+                .nav_points()
+                .iter()
+                .map(|p| p.fix.gps_time)
+                .collect();
+            for w in times.windows(2) {
+                prop_assert!(
+                    w[0] <= w[1],
+                    "GPS times not monotonic: {:?} > {:?}",
+                    w[0],
+                    w[1]
+                );
+            }
+        }
+    }
 }
