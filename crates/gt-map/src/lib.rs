@@ -774,7 +774,7 @@ fn show_sticky_popup(
                             );
                             ui.end_row();
                             ui.label("Label");
-                            ui.add(egui::Label::new(marker.label.clone()).selectable(true));
+                            ui.add(egui::Label::new(marker.label.as_str()).selectable(true));
                             ui.end_row();
                         });
                     ui.add_space(4.0);
@@ -847,7 +847,7 @@ fn show_sticky_popup(
                         .num_columns(2)
                         .show(ui, |ui| {
                             ui.label("Event");
-                            ui.add(egui::Label::new(marker.variant_path.clone()).selectable(true));
+                            ui.add(egui::Label::new(marker.variant_path.as_str()).selectable(true));
                             ui.end_row();
                             ui.label("Time");
                             ui.add(
@@ -859,7 +859,7 @@ fn show_sticky_popup(
                             ui.end_row();
                             if let Some(ann) = &marker.annotation {
                                 ui.label("Note");
-                                ui.add(egui::Label::new(ann.clone()).selectable(true));
+                                ui.add(egui::Label::new(ann.as_str()).selectable(true));
                                 ui.end_row();
                             }
                         });

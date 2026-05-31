@@ -248,11 +248,11 @@ pub fn build_loaded_file(
     let ranges = segment_trips(points, config);
 
     let mut loaded_tracks: Vec<LoadedTrack> = ranges
-        .iter()
+        .into_iter()
         .enumerate()
         .map(|(trip_idx, range)| {
             let trip_points_slice = points
-                .get(range.clone())
+                .get(range)
                 .expect("ranges from segment_trips are in bounds");
 
             let trip_points: vec1::Vec1<NavPoint> =

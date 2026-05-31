@@ -42,22 +42,25 @@ pub(crate) struct TripSeries {
 /// No visibility check or time filter is applied — that is done at render time
 /// so the cache stays valid across filter changes without a rebuild.
 pub(crate) fn build_file_series(fi: usize, file: &LoadedFile) -> Vec<TripSeries> {
-    let mut result = Vec::new();
-    for (ti, track) in file.tracks.iter().enumerate() {
-        result.push(build_trip_series(fi, ti, file, track));
-    }
-    result
+    file.tracks
+        .iter()
+        .enumerate()
+        .map(|(ti, track)| build_trip_series(fi, ti, file, track))
+        .collect()
 }
 
 /// Build mipmap series for every trip in every file.
 pub(crate) fn build_all_series(files: &[LoadedFile]) -> Vec<TripSeries> {
-    let mut result = Vec::new();
-    for (fi, file) in files.iter().enumerate() {
-        for (ti, track) in file.tracks.iter().enumerate() {
-            result.push(build_trip_series(fi, ti, file, track));
-        }
-    }
-    result
+    files
+        .iter()
+        .enumerate()
+        .flat_map(|(fi, file)| {
+            file.tracks
+                .iter()
+                .enumerate()
+                .map(move |(ti, track)| build_trip_series(fi, ti, file, track))
+        })
+        .collect()
 }
 
 fn build_trip_series(
