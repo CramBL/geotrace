@@ -3,14 +3,14 @@
 pup.ron
 
 # Python SDK (geotrace-py)
-geotrace-py/.venv/
-geotrace-py/target/
-geotrace-py/Cargo.lock
-geotrace-py/uv.lock
-geotrace-py/dist/
-geotrace-py/**/__pycache__/
-geotrace-py/.pytest_cache/
-geotrace-py/**/*.egg-info/
+geotrace-sdks/geotrace-py/.venv/
+geotrace-sdks/geotrace-py/target/
+geotrace-sdks/geotrace-py/Cargo.lock
+geotrace-sdks/geotrace-py/uv.lock
+geotrace-sdks/geotrace-py/dist/
+geotrace-sdks/geotrace-py/**/__pycache__/
+geotrace-sdks/geotrace-py/.pytest_cache/
+geotrace-sdks/geotrace-py/**/*.egg-info/
 # Compiled extension modules produced by maturin (all platforms)
-geotrace-py/**/*.so
-geotrace-py/**/*.pyd
+geotrace-sdks/geotrace-py/**/*.so
+geotrace-sdks/geotrace-py/**/*.pyd

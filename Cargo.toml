@@ -20,8 +20,8 @@ members = [
     "crates/gt-test-utils",
     "crates/gt-types",
     "crates/gt-ui-theme",
-    "geotrace-sdk",
-    "geotrace-sdk-macros",
+    "geotrace-sdks/geotrace-sdk",
+    "geotrace-sdks/geotrace-sdk-macros",
 ]
 
 [workspace.package]
@@ -208,7 +208,7 @@ toml = "1"
 
 [dev-dependencies]
 egui_kittest = { version = "0.34.3", features = ["eframe"] }
-geotrace-sdk = { path = "geotrace-sdk" }
+geotrace-sdk = { path = "geotrace-sdks/geotrace-sdk" }
 
 [profile.release]
 opt-level = 3
