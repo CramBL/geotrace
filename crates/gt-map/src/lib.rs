@@ -644,17 +644,34 @@ impl NavMap {
                 let total_px = 2_f64.powf(self.map_memory.zoom()) * 256.0;
                 let threshold_merc_sq = (20.0_f64 / total_px).powi(2);
                 // Iterate from nearest outward, stopping once past the threshold.
-                // Skip invisible elements so hidden tracks cannot be hovered or clicked.
-                self.global_tree
+                // Among all visible candidates within the circle, prefer a Tpv
+                // point over markers — so a NavFix is always selectable even when
+                // a generated event marker sits at the same map position.
+                let mut nearest_tpv: Option<&SpatialPoint> = None;
+                let mut nearest_other: Option<&SpatialPoint> = None;
+                for sp in self
+                    .global_tree
                     .nearest_neighbor_iter([merc_x, merc_y])
                     .take_while(|sp| sp.distance_2(&[merc_x, merc_y]) <= threshold_merc_sq)
-                    .find(|sp| is_spatial_point_visible(sp, visibility))
-                    .map(|sp| DataPointRef {
-                        file_index: sp.file_index,
-                        track_index: sp.track_index,
-                        category: sp.category,
-                        point_index: sp.point_index,
-                    })
+                {
+                    if !is_spatial_point_visible(sp, visibility) {
+                        continue;
+                    }
+                    if sp.category == DataCategory::Tpv {
+                        nearest_tpv.get_or_insert(sp);
+                    } else {
+                        nearest_other.get_or_insert(sp);
+                    }
+                    if nearest_tpv.is_some() && nearest_other.is_some() {
+                        break;
+                    }
+                }
+                nearest_tpv.or(nearest_other).map(|sp| DataPointRef {
+                    file_index: sp.file_index,
+                    track_index: sp.track_index,
+                    category: sp.category,
+                    point_index: sp.point_index,
+                })
             })
         } else {
             None

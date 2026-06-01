@@ -6,7 +6,7 @@ use gt_egui_mipmap::{LevelSelection, MipMap};
 use gt_types::{FileIdx, GlobalFilter, LoadedFile, PointIdx, TrackDataVisibility, TrackIdx};
 use rayon::prelude::*;
 
-/// Identifies one of the 13 per-metric plot series.
+/// Identifies one of the 14 per-metric plot series.
 ///
 /// Replaces the previous positional `u8` index, making chip interaction,
 /// color lookup, label lookup, and mipmap dispatch all go through one type
@@ -26,10 +26,11 @@ enum MetricKind {
     Velocity,
     Eph,
     HeadingDeg,
+    ClockDeltaMs,
 }
 
 impl MetricKind {
-    const ALL: [Self; 13] = [
+    const ALL: [Self; 14] = [
         Self::SatsSeen,
         Self::SatsFix,
         Self::GpsSeen,
@@ -43,6 +44,7 @@ impl MetricKind {
         Self::Velocity,
         Self::Eph,
         Self::HeadingDeg,
+        Self::ClockDeltaMs,
     ];
 
     fn color(self) -> Color32 {
@@ -60,6 +62,7 @@ impl MetricKind {
             Self::Velocity => Color32::from_rgb(255, 220, 0),  // bright yellow
             Self::Eph => Color32::from_rgb(220, 20, 220),      // magenta
             Self::HeadingDeg => Color32::from_rgb(255, 100, 50), // red-orange
+            Self::ClockDeltaMs => Color32::from_rgb(200, 200, 200), // light gray
         }
     }
 
@@ -78,6 +81,23 @@ impl MetricKind {
             Self::Velocity => "Velocity (km/h)",
             Self::Eph => "EPH (m)",
             Self::HeadingDeg => "Heading (°)",
+            Self::ClockDeltaMs => "Clock Δt (ms)",
+        }
+    }
+
+    fn hover_text(self) -> Option<&'static str> {
+        match self {
+            Self::Eph => Some(
+                "Estimated Horizontal Position error — the GPS receiver's own estimate of how \
+                 far the reported position may be from the true position, in metres. \
+                 Lower is more accurate.",
+            ),
+            Self::ClockDeltaMs => Some(
+                "GPS clock lead over the host system clock, in milliseconds. \
+                 Positive = GPS clock ahead of the system clock; negative = system clock ahead. \
+                 Only shown when the receiver reports a system timestamp alongside the GPS fix.",
+            ),
+            _ => None,
         }
     }
 }
@@ -101,6 +121,7 @@ pub struct MetricVisibility {
     pub velocity: bool,
     pub eph: bool,
     pub heading_deg: bool,
+    pub clock_delta_ms: bool,
 }
 
 impl Default for MetricVisibility {
@@ -119,6 +140,7 @@ impl Default for MetricVisibility {
             velocity: true,
             eph: true,
             heading_deg: true,
+            clock_delta_ms: true,
         }
     }
 }
@@ -140,6 +162,7 @@ impl MetricVisibility {
             MetricKind::Velocity => self.velocity,
             MetricKind::Eph => self.eph,
             MetricKind::HeadingDeg => self.heading_deg,
+            MetricKind::ClockDeltaMs => self.clock_delta_ms,
         }
     }
 
@@ -159,6 +182,7 @@ impl MetricVisibility {
             MetricKind::Velocity => &mut self.velocity,
             MetricKind::Eph => &mut self.eph,
             MetricKind::HeadingDeg => &mut self.heading_deg,
+            MetricKind::ClockDeltaMs => &mut self.clock_delta_ms,
         }
     }
 
@@ -191,6 +215,7 @@ struct TripLevelCache {
     velocity_kmh: LevelSelection,
     eph_m: LevelSelection,
     heading_deg: LevelSelection,
+    clock_delta_ms: LevelSelection,
 }
 
 impl TripLevelCache {
@@ -209,6 +234,7 @@ impl TripLevelCache {
             MetricKind::Velocity => self.velocity_kmh,
             MetricKind::Eph => self.eph_m,
             MetricKind::HeadingDeg => self.heading_deg,
+            MetricKind::ClockDeltaMs => self.clock_delta_ms,
         }
     }
 }
@@ -229,6 +255,7 @@ impl crate::series::TripSeries {
             MetricKind::Velocity => &self.velocity_kmh,
             MetricKind::Eph => &self.eph_m,
             MetricKind::HeadingDeg => &self.heading_deg,
+            MetricKind::ClockDeltaMs => &self.clock_delta_ms,
         }
     }
 }
@@ -576,9 +603,50 @@ fn metric_filter_row(
 
         ui.separator();
 
-        // All 13 metric chips in the same wrapping row.
-        for kind in MetricKind::ALL {
-            let (s, h) = metric_chip(ui, vis.field_mut(kind), kind.label(), kind.color());
+        // Summary metrics (total satellite counts, velocity, EPH, heading, clock delta).
+        for kind in [
+            MetricKind::SatsSeen,
+            MetricKind::SatsFix,
+            MetricKind::Velocity,
+            MetricKind::Eph,
+            MetricKind::HeadingDeg,
+            MetricKind::ClockDeltaMs,
+        ] {
+            let (s, h) = metric_chip(
+                ui,
+                vis.field_mut(kind),
+                kind.label(),
+                kind.color(),
+                kind.hover_text(),
+            );
+            if s {
+                show_only = Some(kind);
+            }
+            if h {
+                hovered_chip = Some(kind);
+            }
+        }
+
+        ui.separator();
+
+        // Per-constellation chips grouped together.
+        for kind in [
+            MetricKind::GpsSeen,
+            MetricKind::GpsFix,
+            MetricKind::GlonassSeen,
+            MetricKind::GlonassFix,
+            MetricKind::GalileoSeen,
+            MetricKind::GalileoFix,
+            MetricKind::BeidouSeen,
+            MetricKind::BeidouFix,
+        ] {
+            let (s, h) = metric_chip(
+                ui,
+                vis.field_mut(kind),
+                kind.label(),
+                kind.color(),
+                kind.hover_text(),
+            );
             if s {
                 show_only = Some(kind);
             }
@@ -603,7 +671,13 @@ fn metric_filter_row(
 /// Returns `(show_only, hovered)` — `show_only` is `true` when the user chose
 /// "Show only this" from the context menu; `hovered` is `true` while the pointer
 /// is over this chip.
-fn metric_chip(ui: &mut egui::Ui, enabled: &mut bool, name: &str, color: Color32) -> (bool, bool) {
+fn metric_chip(
+    ui: &mut egui::Ui,
+    enabled: &mut bool,
+    name: &str,
+    color: Color32,
+    tooltip: Option<&str>,
+) -> (bool, bool) {
     let fill = if *enabled {
         color.gamma_multiply(0.75)
     } else {
@@ -620,6 +694,9 @@ fn metric_chip(ui: &mut egui::Ui, enabled: &mut bool, name: &str, color: Color32
     let response = ui.add(btn);
     if response.clicked() {
         *enabled = !*enabled;
+    }
+    if let Some(tip) = tooltip {
+        response.clone().on_hover_text(tip);
     }
     let mut show_only = false;
     response.context_menu(|ui| {
@@ -653,6 +730,7 @@ fn compute_level_cache(
         velocity_kmh: sel(&series.velocity_kmh),
         eph_m: sel(&series.eph_m),
         heading_deg: sel(&series.heading_deg),
+        clock_delta_ms: sel(&series.clock_delta_ms),
     }
 }
 

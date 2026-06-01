@@ -33,6 +33,10 @@ pub(crate) struct TripSeries {
     pub velocity_kmh: MipMap,
     pub eph_m: MipMap,
     pub heading_deg: MipMap,
+    /// GPS-clock lead over the host system clock, in milliseconds.
+    /// Positive = GPS clock ahead; negative = system clock ahead.
+    /// Only present when the TPV record carries a system timestamp.
+    pub clock_delta_ms: MipMap,
 }
 
 /// Build mipmap series for every trip in a single file, using `fi` as the file
@@ -87,6 +91,7 @@ fn build_trip_series(
     let mut velocity_kmh_pts: Vec<[f64; 2]> = Vec::with_capacity(track.points.len());
     let mut eph_m_pts: Vec<[f64; 2]> = Vec::new();
     let mut heading_deg_pts: Vec<[f64; 2]> = Vec::new();
+    let mut clock_delta_ms_pts: Vec<[f64; 2]> = Vec::new();
 
     for point in &track.points {
         let t = point.tpv.time().as_secs_f64();
@@ -137,6 +142,11 @@ fn build_trip_series(
         if let Some(h) = point.tpv.heading() {
             heading_deg_pts.push([t, h.get::<degree>()]);
         }
+
+        if let Some(sys) = point.tpv.sys_time() {
+            let delta_ms = point.tpv.time().offset_from_sys(sys).num_milliseconds();
+            clock_delta_ms_pts.push([t, delta_ms as f64]);
+        }
     }
 
     let x_range = track
@@ -168,6 +178,7 @@ fn build_trip_series(
         velocity_kmh: MipMap::build(velocity_kmh_pts),
         eph_m: MipMap::build(eph_m_pts),
         heading_deg: MipMap::build(heading_deg_pts),
+        clock_delta_ms: MipMap::build(clock_delta_ms_pts),
     }
 }
 

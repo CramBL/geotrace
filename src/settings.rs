@@ -66,6 +66,7 @@ pub enum MetricKind {
     Velocity,
     Eph,
     HeadingDeg,
+    ClockDeltaMs,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]

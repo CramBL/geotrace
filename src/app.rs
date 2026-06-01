@@ -445,6 +445,12 @@ impl App {
                 .get(&crate::settings::MetricKind::HeadingDeg)
                 .copied()
                 .unwrap_or(true);
+            vis.clock_delta_ms = s
+                .plot
+                .metric
+                .get(&crate::settings::MetricKind::ClockDeltaMs)
+                .copied()
+                .unwrap_or(true);
         }
 
         self.tiles_tree
@@ -477,6 +483,7 @@ impl App {
             metric_velocity: vis.velocity,
             metric_eph: vis.eph,
             metric_heading_deg: vis.heading_deg,
+            metric_clock_delta_ms: vis.clock_delta_ms,
             layer: map_layer_to_setting(self.map.layer()),
             mapbox_token: self.map.mapbox_token().to_owned(),
             sync_to_map: s.sync_plot_to_map,
@@ -508,6 +515,7 @@ impl App {
             (K::Velocity, vis.velocity),
             (K::Eph, vis.eph),
             (K::HeadingDeg, vis.heading_deg),
+            (K::ClockDeltaMs, vis.clock_delta_ms),
         ]);
         let theme = self
             .ctx
