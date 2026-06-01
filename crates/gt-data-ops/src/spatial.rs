@@ -19,8 +19,7 @@ pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
                     continue;
                 }
                 points.push(SpatialPoint {
-                    merc_x: p.merc_x,
-                    merc_y: p.merc_y,
+                    merc: p.merc,
                     file_index,
                     track_index,
                     point_index: PointIdx(pi),
@@ -29,8 +28,7 @@ pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
             }
             for (pi, m) in track.custom_markers.iter().enumerate() {
                 points.push(SpatialPoint {
-                    merc_x: m.merc_x,
-                    merc_y: m.merc_y,
+                    merc: m.merc,
                     file_index,
                     track_index,
                     point_index: PointIdx(pi),
@@ -39,8 +37,7 @@ pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
             }
             for (pi, m) in track.generated_markers.iter().enumerate() {
                 points.push(SpatialPoint {
-                    merc_x: m.merc_x,
-                    merc_y: m.merc_y,
+                    merc: m.merc,
                     file_index,
                     track_index,
                     point_index: PointIdx(pi),
@@ -49,8 +46,7 @@ pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
             }
             for (pi, m) in track.event_markers.iter().enumerate() {
                 points.push(SpatialPoint {
-                    merc_x: m.merc_x,
-                    merc_y: m.merc_y,
+                    merc: m.merc,
                     file_index,
                     track_index,
                     point_index: PointIdx(pi),

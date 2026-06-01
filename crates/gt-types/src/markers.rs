@@ -1,22 +1,37 @@
 use crate::coordinates::{Latitude, Longitude};
+use crate::mercator::MercPoint;
 use chrono::{DateTime, Duration, Utc};
 
-const EVENT_FALLBACK_COLORS: [(u8, u8, u8); 8] = [
-    (230, 57, 70),
-    (255, 149, 0),
-    (255, 190, 11),
-    (6, 214, 160),
-    (46, 196, 182),
-    (131, 56, 236),
-    (255, 45, 85),
-    (238, 66, 102),
+/// RGB fill color for an event marker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MarkerColor {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl MarkerColor {
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b }
+    }
+}
+
+const EVENT_FALLBACK_COLORS: [MarkerColor; 8] = [
+    MarkerColor::new(230, 57, 70),
+    MarkerColor::new(255, 149, 0),
+    MarkerColor::new(255, 190, 11),
+    MarkerColor::new(6, 214, 160),
+    MarkerColor::new(46, 196, 182),
+    MarkerColor::new(131, 56, 236),
+    MarkerColor::new(255, 45, 85),
+    MarkerColor::new(238, 66, 102),
 ];
 
 /// Deterministic fallback color for an unstyled event marker variant.
 ///
 /// Hashes `variant_path` into the `LOG_COLORS`-compatible palette so unstyled
 /// variants still get visually distinct, consistent colors without configuration.
-pub fn event_marker_fallback_color(variant_path: &str) -> (u8, u8, u8) {
+pub fn event_marker_fallback_color(variant_path: &str) -> MarkerColor {
     let mut hash: u64 = 5381;
     for b in variant_path.bytes() {
         hash = hash.wrapping_mul(33).wrapping_add(u64::from(b));
@@ -42,10 +57,8 @@ pub struct GeneratedMarker {
     pub lon: Longitude,
     /// For `GpsFixRegained`: how long the fix was lost. None for `GpsFixLost`.
     pub fix_lost_duration: Option<Duration>,
-    /// Pre-computed normalized Mercator X, see [`crate::mercator`].
-    pub merc_x: f64,
-    /// Pre-computed normalized Mercator Y, see [`crate::mercator`].
-    pub merc_y: f64,
+    /// Pre-computed normalized Mercator coordinates, see [`crate::mercator`].
+    pub merc: MercPoint,
 }
 
 impl GeneratedMarker {
@@ -56,15 +69,14 @@ impl GeneratedMarker {
         lon: Longitude,
         fix_lost_duration: Option<Duration>,
     ) -> Self {
-        let (merc_x, merc_y) = crate::mercator::normalize(lon.as_degrees(), lat.as_degrees());
+        let merc = crate::mercator::normalize(lat, lon);
         Self {
             time,
             kind,
             lat,
             lon,
             fix_lost_duration,
-            merc_x,
-            merc_y,
+            merc,
         }
     }
 }
@@ -96,10 +108,8 @@ pub struct CustomMarker {
     pub lat: Latitude,
     pub lon: Longitude,
     pub color_group: Option<u32>,
-    /// Pre-computed normalized Mercator X, see [`crate::mercator`].
-    pub merc_x: f64,
-    /// Pre-computed normalized Mercator Y, see [`crate::mercator`].
-    pub merc_y: f64,
+    /// Pre-computed normalized Mercator coordinates, see [`crate::mercator`].
+    pub merc: MercPoint,
 }
 
 impl CustomMarker {
@@ -111,7 +121,7 @@ impl CustomMarker {
         lon: Longitude,
         color_group: Option<u32>,
     ) -> Self {
-        let (merc_x, merc_y) = crate::mercator::normalize(lon.as_degrees(), lat.as_degrees());
+        let merc = crate::mercator::normalize(lat, lon);
         Self {
             time,
             label,
@@ -119,8 +129,7 @@ impl CustomMarker {
             lat,
             lon,
             color_group,
-            merc_x,
-            merc_y,
+            merc,
         }
     }
 }
@@ -131,8 +140,8 @@ pub struct EventMarkerStyle {
     pub variant_path: String,
     /// Icon shape for this variant.
     pub icon: MarkerIcon,
-    /// Fill color as `(R, G, B)`.
-    pub color: (u8, u8, u8),
+    /// Fill color.
+    pub color: MarkerColor,
 }
 
 /// A single event marker instance placed on the map.
@@ -143,10 +152,8 @@ pub struct EventMarker {
     pub annotation: Option<String>,
     pub lat: Latitude,
     pub lon: Longitude,
-    /// Pre-computed normalized Mercator X, see [`crate::mercator`].
-    pub merc_x: f64,
-    /// Pre-computed normalized Mercator Y, see [`crate::mercator`].
-    pub merc_y: f64,
+    /// Pre-computed normalized Mercator coordinates, see [`crate::mercator`].
+    pub merc: MercPoint,
 }
 
 impl EventMarker {
@@ -157,15 +164,14 @@ impl EventMarker {
         lat: Latitude,
         lon: Longitude,
     ) -> Self {
-        let (merc_x, merc_y) = crate::mercator::normalize(lon.as_degrees(), lat.as_degrees());
+        let merc = crate::mercator::normalize(lat, lon);
         Self {
             time,
             variant_path,
             annotation,
             lat,
             lon,
-            merc_x,
-            merc_y,
+            merc,
         }
     }
 }

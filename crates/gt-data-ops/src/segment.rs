@@ -11,6 +11,8 @@ use gt_types::track::{
     FileMetadata, FileSource, LoadedFile, LoadedTrack, TimeRange, TrackMetadata,
 };
 use std::ops::Range;
+use uom::si::f64::Length;
+use uom::si::length::{kilometer, meter};
 
 /// Configuration for the track-segmentation algorithm.
 #[derive(Debug, Clone, Copy)]
@@ -202,13 +204,8 @@ pub fn compute_trip_metadata(
     );
     let merc_bounds = gt_types::merc_bounds_for_rect(bounding_box);
 
-    let coords: Vec<(f64, f64)> = points
-        .iter()
-        .map(|p| (p.tpv.lat().as_degrees(), p.tpv.lon().as_degrees()))
-        .collect();
-
-    let distance_km = path_distance_km(&coords);
-    let diameter_m = point_set_diameter_m(&coords);
+    let distance_km = Length::new::<kilometer>(path_distance_km(points));
+    let diameter_m = Length::new::<meter>(point_set_diameter_m(points));
 
     let time_range = TimeRange::new(first.tpv.time().utc(), last.tpv.time().utc());
     let duration = if points.len() >= 2 {
@@ -319,7 +316,7 @@ pub fn build_loaded_file(
     let total_distance_km = loaded_tracks
         .iter()
         .map(|t| t.metadata.distance_km)
-        .sum::<f64>();
+        .sum::<Length>();
     let total_duration = loaded_tracks
         .iter()
         .fold(Duration::zero(), |acc, t| acc + t.metadata.duration);
@@ -350,7 +347,7 @@ pub fn build_loaded_file(
     }
 }
 
-/// Overwrites `merc_x`/`merc_y` on ghost points (those with `heading == None`) with
+/// Overwrites `merc` on ghost points (those with `heading == None`) with
 /// positions linearly interpolated from the surrounding real fixes (`fix_count > 0`).
 ///
 /// The renderer displays ghost points at the interpolated position rather than at their
@@ -389,7 +386,7 @@ fn precompute_ghost_positions(points: &mut [NavPoint]) {
     }
 
     // Collect updates to avoid simultaneous mutable and immutable borrows.
-    let mut updates: Vec<(usize, f64, f64)> = Vec::new();
+    let mut updates: Vec<(usize, gt_types::MercPoint)> = Vec::new();
     for i in 0..n {
         if points[i].tpv.heading().is_some() {
             continue;
@@ -427,13 +424,12 @@ fn precompute_ghost_positions(points: &mut [NavPoint]) {
                 points[i].tpv.lon().as_degrees(),
             ),
         };
-        let (merc_x, merc_y) = gt_types::mercator::normalize(lon, lat);
-        updates.push((i, merc_x, merc_y));
+        let merc = gt_types::mercator::normalize(Latitude::new(lat), Longitude::new(lon));
+        updates.push((i, merc));
     }
 
-    for (i, merc_x, merc_y) in updates {
-        points[i].merc_x = merc_x;
-        points[i].merc_y = merc_y;
+    for (i, merc) in updates {
+        points[i].merc = merc;
     }
 }
 
@@ -539,8 +535,8 @@ mod tests {
         assert_eq!(meta.tpv_count, 2);
         assert_eq!(meta.duration.num_seconds(), 3600);
         assert!(
-            meta.distance_km > 5.0,
-            "expected > 5 km, got {}",
+            meta.distance_km > Length::new::<kilometer>(5.0),
+            "expected > 5 km, got {:?}",
             meta.distance_km
         );
         assert!(!meta.has_custom_markers);
@@ -552,7 +548,7 @@ mod tests {
         let pts = vec1::vec1![make_point_at_pos(0, 55.0, 12.0)];
         let meta = compute_trip_metadata(1, &pts, &[], &[]);
         assert_eq!(meta.duration.num_seconds(), 0);
-        assert_eq!(meta.distance_km, 0.0);
+        assert_eq!(meta.distance_km, Length::new::<kilometer>(0.0));
     }
 
     #[test]
@@ -647,9 +643,9 @@ mod tests {
             make_real_fix(0, Latitude::new(55.0), Longitude::new(12.0)),
             make_real_fix(1, Latitude::new(55.1), Longitude::new(12.1)),
         ];
-        let before: Vec<(f64, f64)> = points.iter().map(|p| (p.merc_x, p.merc_y)).collect();
+        let before: Vec<_> = points.iter().map(|p| p.merc).collect();
         precompute_ghost_positions(&mut points);
-        let after: Vec<(f64, f64)> = points.iter().map(|p| (p.merc_x, p.merc_y)).collect();
+        let after: Vec<_> = points.iter().map(|p| p.merc).collect();
         assert_eq!(before, after);
     }
 
@@ -664,16 +660,18 @@ mod tests {
         ];
         precompute_ghost_positions(&mut points);
 
-        let (expected_x, expected_y) = gt_types::mercator::normalize(0.5, 0.5);
+        let expected = gt_types::mercator::normalize(Latitude::new(0.5), Longitude::new(0.5));
         assert!(
-            (points[1].merc_x - expected_x).abs() < 1e-9,
-            "merc_x mismatch: {} vs {expected_x}",
-            points[1].merc_x
+            (points[1].merc.x - expected.x).abs() < 1e-9,
+            "merc.x mismatch: {} vs {}",
+            points[1].merc.x,
+            expected.x,
         );
         assert!(
-            (points[1].merc_y - expected_y).abs() < 1e-9,
-            "merc_y mismatch: {} vs {expected_y}",
-            points[1].merc_y
+            (points[1].merc.y - expected.y).abs() < 1e-9,
+            "merc.y mismatch: {} vs {}",
+            points[1].merc.y,
+            expected.y,
         );
     }
 
@@ -685,9 +683,9 @@ mod tests {
         ];
         precompute_ghost_positions(&mut points);
 
-        let (expected_x, expected_y) = gt_types::mercator::normalize(12.0, 55.0);
-        assert!((points[0].merc_x - expected_x).abs() < 1e-9);
-        assert!((points[0].merc_y - expected_y).abs() < 1e-9);
+        let expected = gt_types::mercator::normalize(Latitude::new(55.0), Longitude::new(12.0));
+        assert!((points[0].merc.x - expected.x).abs() < 1e-9);
+        assert!((points[0].merc.y - expected.y).abs() < 1e-9);
     }
 
     #[test]
@@ -698,9 +696,9 @@ mod tests {
         ];
         precompute_ghost_positions(&mut points);
 
-        let (expected_x, expected_y) = gt_types::mercator::normalize(12.0, 55.0);
-        assert!((points[1].merc_x - expected_x).abs() < 1e-9);
-        assert!((points[1].merc_y - expected_y).abs() < 1e-9);
+        let expected = gt_types::mercator::normalize(Latitude::new(55.0), Longitude::new(12.0));
+        assert!((points[1].merc.x - expected.x).abs() < 1e-9);
+        assert!((points[1].merc.y - expected.y).abs() < 1e-9);
     }
 
     #[test]
@@ -709,9 +707,9 @@ mod tests {
             make_ghost(0, Latitude::new(55.0), Longitude::new(12.0)),
             make_ghost(5, Latitude::new(56.0), Longitude::new(13.0)),
         ];
-        let before: Vec<(f64, f64)> = points.iter().map(|p| (p.merc_x, p.merc_y)).collect();
+        let before: Vec<_> = points.iter().map(|p| p.merc).collect();
         precompute_ghost_positions(&mut points);
-        let after: Vec<(f64, f64)> = points.iter().map(|p| (p.merc_x, p.merc_y)).collect();
+        let after: Vec<_> = points.iter().map(|p| p.merc).collect();
         assert_eq!(before, after);
     }
 }

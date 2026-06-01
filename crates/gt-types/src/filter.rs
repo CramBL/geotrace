@@ -1,5 +1,6 @@
 use crate::track::{MarkerRequirement, TimeRange, TrackMetadata};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
+use uom::si::f64::Length;
 
 /// Returns `true` when the timestamp falls within the filter's active time window.
 pub fn point_passes_time_filter(time: DateTime<Utc>, filter: &GlobalFilter) -> bool {
@@ -10,9 +11,9 @@ pub fn point_passes_time_filter(time: DateTime<Utc>, filter: &GlobalFilter) -> b
 pub struct GlobalFilter {
     pub time_start: Option<DateTime<Utc>>,
     pub time_end: Option<DateTime<Utc>>,
-    pub min_distance_km: Option<f64>,
-    pub min_duration_secs: Option<i64>,
-    pub min_spread_m: Option<f64>,
+    pub min_distance_km: Option<Length>,
+    pub min_duration: Option<Duration>,
+    pub min_spread_m: Option<Length>,
     /// Whether trips must carry markers of a particular kind to pass.
     pub marker_requirement: MarkerRequirement,
 }
@@ -23,7 +24,7 @@ impl GlobalFilter {
         self.time_start.is_none()
             && self.time_end.is_none()
             && self.min_distance_km.is_none()
-            && self.min_duration_secs.is_none()
+            && self.min_duration.is_none()
             && self.min_spread_m.is_none()
             && self.marker_requirement == MarkerRequirement::None
     }
@@ -37,18 +38,18 @@ pub fn track_passes_filter(meta: &TrackMetadata, filter: &GlobalFilter) -> bool 
     {
         return false;
     }
-    if let Some(min_km) = filter.min_distance_km
-        && meta.distance_km < min_km
+    if let Some(min_dist) = filter.min_distance_km
+        && meta.distance_km < min_dist
     {
         return false;
     }
-    if let Some(min_secs) = filter.min_duration_secs
-        && meta.duration.num_seconds() < min_secs
+    if let Some(min_duration) = filter.min_duration
+        && meta.duration < min_duration
     {
         return false;
     }
-    if let Some(min_m) = filter.min_spread_m
-        && meta.point_set_diameter_m < min_m
+    if let Some(min_spread) = filter.min_spread_m
+        && meta.point_set_diameter_m < min_spread
     {
         return false;
     }
@@ -70,6 +71,7 @@ mod tests {
     use crate::track::{MercBounds, TimeRange, TrackMetadata};
     use chrono::{Duration, TimeZone, Utc};
     use geo_types::Rect;
+    use uom::si::length::{kilometer, meter};
 
     fn make_meta(
         distance_km: f64,
@@ -82,7 +84,7 @@ mod tests {
         let epoch = Utc.timestamp_opt(0, 0).single().expect("valid");
         TrackMetadata {
             index: 1,
-            distance_km,
+            distance_km: Length::new::<kilometer>(distance_km),
             duration: Duration::seconds(duration_secs),
             time_range: TimeRange::new(
                 epoch + Duration::seconds(start_offset_secs),
@@ -98,7 +100,7 @@ mod tests {
                 y_min: 0.0,
                 y_max: 0.0,
             },
-            point_set_diameter_m: spread_m,
+            point_set_diameter_m: Length::new::<meter>(spread_m),
             has_custom_markers: has_custom,
             tpv_count: 1,
             satellite_report_count: 0,
@@ -158,7 +160,7 @@ mod tests {
     fn min_distance_pass() {
         let meta = make_meta(10.0, 60, 100.0, false, 0, 60);
         let filter = GlobalFilter {
-            min_distance_km: Some(5.0),
+            min_distance_km: Some(Length::new::<kilometer>(5.0)),
             ..Default::default()
         };
         assert!(track_passes_filter(&meta, &filter));
@@ -168,7 +170,7 @@ mod tests {
     fn min_distance_fail() {
         let meta = make_meta(3.0, 60, 100.0, false, 0, 60);
         let filter = GlobalFilter {
-            min_distance_km: Some(5.0),
+            min_distance_km: Some(Length::new::<kilometer>(5.0)),
             ..Default::default()
         };
         assert!(!track_passes_filter(&meta, &filter));
@@ -178,7 +180,7 @@ mod tests {
     fn min_duration_pass() {
         let meta = make_meta(1.0, 600, 100.0, false, 0, 600);
         let filter = GlobalFilter {
-            min_duration_secs: Some(300),
+            min_duration: Some(Duration::seconds(300)),
             ..Default::default()
         };
         assert!(track_passes_filter(&meta, &filter));
@@ -188,7 +190,7 @@ mod tests {
     fn min_duration_fail() {
         let meta = make_meta(1.0, 60, 100.0, false, 0, 60);
         let filter = GlobalFilter {
-            min_duration_secs: Some(300),
+            min_duration: Some(Duration::seconds(300)),
             ..Default::default()
         };
         assert!(!track_passes_filter(&meta, &filter));
@@ -198,7 +200,7 @@ mod tests {
     fn min_spread_pass() {
         let meta = make_meta(1.0, 60, 500.0, false, 0, 60);
         let filter = GlobalFilter {
-            min_spread_m: Some(200.0),
+            min_spread_m: Some(Length::new::<meter>(200.0)),
             ..Default::default()
         };
         assert!(track_passes_filter(&meta, &filter));
@@ -208,7 +210,7 @@ mod tests {
     fn min_spread_fail() {
         let meta = make_meta(1.0, 60, 50.0, false, 0, 60);
         let filter = GlobalFilter {
-            min_spread_m: Some(200.0),
+            min_spread_m: Some(Length::new::<meter>(200.0)),
             ..Default::default()
         };
         assert!(!track_passes_filter(&meta, &filter));

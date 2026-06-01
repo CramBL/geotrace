@@ -1,11 +1,13 @@
 use crate::highlight::{DataCategory, FileIdx, PointIdx, TrackIdx};
 use crate::markers::{CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker};
+use crate::mercator::MercPoint;
 use crate::nav_point::NavPoint;
 use chrono::{DateTime, Duration, Utc};
 use geo_types::Rect;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use uom::si::f64::Length;
 
 /// Normalised Web Mercator bounding box, with all values in `[0.0, 1.0]`.
 ///
@@ -89,7 +91,7 @@ pub enum MarkerRequirement {
 #[derive(Debug, Clone, Copy)]
 pub struct TrackMetadata {
     pub index: usize,
-    pub distance_km: f64,
+    pub distance_km: Length,
     pub duration: Duration,
     pub time_range: TimeRange,
     /// Geographic bounding box in (lon, lat) coordinate order per geo-types convention.
@@ -97,7 +99,7 @@ pub struct TrackMetadata {
     /// Normalised Web Mercator bounding box, pre-computed from `bounding_box`.
     /// Used by map renderers for O(1) viewport intersection tests without trigonometry.
     pub merc_bounds: MercBounds,
-    pub point_set_diameter_m: f64,
+    pub point_set_diameter_m: Length,
     pub has_custom_markers: bool,
     pub tpv_count: usize,
     pub satellite_report_count: usize,
@@ -120,13 +122,14 @@ impl TrackMetadata {
 /// Mercator Y increases south (0 = north pole, 1 = south pole), so the
 /// northernmost latitude (`bb.max().y`) maps to `y_min`.
 pub fn merc_bounds_for_rect(bb: Rect<f64>) -> MercBounds {
-    let (x_min, y_min) = crate::mercator::normalize(bb.min().x, bb.max().y);
-    let (x_max, y_max) = crate::mercator::normalize(bb.max().x, bb.min().y);
+    use crate::coordinates::{Latitude, Longitude};
+    let sw = crate::mercator::normalize(Latitude::new(bb.max().y), Longitude::new(bb.min().x));
+    let ne = crate::mercator::normalize(Latitude::new(bb.min().y), Longitude::new(bb.max().x));
     MercBounds {
-        x_min,
-        x_max,
-        y_min,
-        y_max,
+        x_min: sw.x,
+        x_max: ne.x,
+        y_min: sw.y,
+        y_max: ne.y,
     }
 }
 
@@ -136,8 +139,7 @@ pub fn merc_bounds_for_rect(bb: Rect<f64>) -> MercBounds {
 /// at render time rather than pre-computed.
 #[derive(Debug, Clone, Copy)]
 pub struct SpatialPoint {
-    pub merc_x: f64,
-    pub merc_y: f64,
+    pub merc: MercPoint,
     pub file_index: FileIdx,
     pub track_index: TrackIdx,
     pub point_index: PointIdx,
@@ -148,14 +150,14 @@ impl rstar::RTreeObject for SpatialPoint {
     type Envelope = rstar::AABB<[f64; 2]>;
 
     fn envelope(&self) -> Self::Envelope {
-        rstar::AABB::from_point([self.merc_x, self.merc_y])
+        rstar::AABB::from_point([self.merc.x, self.merc.y])
     }
 }
 
 impl rstar::PointDistance for SpatialPoint {
     fn distance_2(&self, point: &[f64; 2]) -> f64 {
-        let dx = self.merc_x - point[0];
-        let dy = self.merc_y - point[1];
+        let dx = self.merc.x - point[0];
+        let dy = self.merc.y - point[1];
         dx * dx + dy * dy
     }
 }
@@ -173,7 +175,7 @@ pub struct LoadedTrack {
 #[derive(Debug, Clone)]
 pub struct FileMetadata {
     pub filename: String,
-    pub total_distance_km: f64,
+    pub total_distance_km: Length,
     pub total_duration: Duration,
     pub time_range: TimeRange,
 }

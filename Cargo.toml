@@ -205,6 +205,7 @@ mimalloc = { version = "0.1.48", features = ["v3"] }
 rfd = "0.17.2"
 serde.workspace = true
 toml = "1"
+uom.workspace = true
 
 [dev-dependencies]
 egui_kittest = { version = "0.34.3", features = ["eframe"] }

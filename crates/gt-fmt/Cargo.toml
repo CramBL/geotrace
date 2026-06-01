@@ -8,6 +8,7 @@ authors.workspace = true
 
 [dependencies]
 chrono.workspace = true
+uom.workspace = true
 
 [lints]
 workspace = true

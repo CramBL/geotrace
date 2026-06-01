@@ -14,6 +14,8 @@ use gt_types::{
     AssociationConfig, Coord, CustomMarker, FileMetadata, FileSource, LoadedFile, LoadedTrack,
     NavPoint, Rect, TimeRange, TrackMetadata, merc_bounds_for_rect,
 };
+use uom::si::f64::Length;
+use uom::si::length::{kilometer, meter};
 
 pub(super) const STAGE_STARTING: &str = "Starting…";
 pub(super) const STAGE_READING: &str = "Reading…";
@@ -483,12 +485,12 @@ pub(super) fn build_log_loaded_file(
     let track = LoadedTrack {
         metadata: TrackMetadata {
             index: 0,
-            distance_km: 0.0,
+            distance_km: Length::new::<kilometer>(0.0),
             duration,
             time_range: TimeRange::new(min_time, max_time),
             bounding_box,
             merc_bounds: merc_bounds_for_rect(bounding_box),
-            point_set_diameter_m: 0.0,
+            point_set_diameter_m: Length::new::<meter>(0.0),
             has_custom_markers: true,
             tpv_count: 0,
             satellite_report_count: 0,
@@ -505,7 +507,7 @@ pub(super) fn build_log_loaded_file(
     Some(LoadedFile {
         metadata: FileMetadata {
             filename,
-            total_distance_km: 0.0,
+            total_distance_km: Length::new::<kilometer>(0.0),
             total_duration: duration,
             time_range: TimeRange::new(min_time, max_time),
         },

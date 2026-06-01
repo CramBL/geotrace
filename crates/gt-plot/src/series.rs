@@ -2,7 +2,6 @@ use gt_egui_mipmap::MipMap;
 use gt_types::LoadedFile;
 use gt_types::satellites::Constellation;
 use uom::si::angle::degree;
-use uom::si::velocity::kilometer_per_hour;
 
 /// Mipmap series for a single trip.
 ///
@@ -90,7 +89,7 @@ fn build_trip_series(
     let mut heading_deg_pts: Vec<[f64; 2]> = Vec::new();
 
     for point in &track.points {
-        let t = point.tpv.time().utc().timestamp() as f64;
+        let t = point.tpv.time().as_secs_f64();
 
         if let Some(sats) = &point.satellites {
             total_seen_pts.push([t, sats.satellite_count() as f64]);
@@ -127,8 +126,8 @@ fn build_trip_series(
             beidou_fix_pts.push([t, bei_f as f64]);
         }
 
-        if let Some(vel) = point.tpv.velocity() {
-            velocity_kmh_pts.push([t, vel.get::<kilometer_per_hour>()]);
+        if let Some(v) = point.tpv.velocity_kmh() {
+            velocity_kmh_pts.push([t, v]);
         }
 
         if let Some(eph) = point.tpv.eph_m() {
@@ -146,8 +145,8 @@ fn build_trip_series(
         .zip(track.points.last())
         .map(|(first, last)| {
             (
-                first.tpv.time().utc().timestamp() as f64,
-                last.tpv.time().utc().timestamp() as f64,
+                first.tpv.time().as_secs_f64(),
+                last.tpv.time().as_secs_f64(),
             )
         });
 
@@ -182,8 +181,8 @@ pub(crate) fn closest_point_index(
         .iter()
         .enumerate()
         .min_by(|(_, a), (_, b)| {
-            let da = (a.tpv.time().utc().timestamp() as f64 - target_secs).abs();
-            let db = (b.tpv.time().utc().timestamp() as f64 - target_secs).abs();
+            let da = (a.tpv.time().as_secs_f64() - target_secs).abs();
+            let db = (b.tpv.time().as_secs_f64() - target_secs).abs();
             da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
         })
         .map(|(i, _)| i)

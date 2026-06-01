@@ -769,7 +769,7 @@ pub fn find_closest_tpv(
 
     for (fi, file) in files.iter().enumerate() {
         let fi = FileIdx(fi);
-        let Some(file_vis) = visibility.files.get(fi.0) else {
+        let Some(file_vis) = fi.get(&visibility.files) else {
             continue;
         };
         if !file_vis.enabled {
@@ -777,7 +777,7 @@ pub fn find_closest_tpv(
         }
         for (ti, track) in file.tracks.iter().enumerate() {
             let ti = TrackIdx(ti);
-            let Some(trip_vis) = file_vis.tracks.get(ti.0) else {
+            let Some(trip_vis) = ti.get(&file_vis.tracks) else {
                 continue;
             };
             if !trip_vis.enabled {
@@ -790,10 +790,10 @@ pub fn find_closest_tpv(
                 continue;
             };
             let pi = PointIdx(pi);
-            let Some(point) = track.points.get(pi.0) else {
+            let Some(point) = pi.get(&track.points) else {
                 continue;
             };
-            let dist = (point.tpv.time().utc().timestamp() as f64 - target_secs).abs();
+            let dist = (point.tpv.time().as_secs_f64() - target_secs).abs();
             if best.is_none_or(|(_, _, _, d)| dist < d) {
                 best = Some((fi, ti, pi, dist));
             }

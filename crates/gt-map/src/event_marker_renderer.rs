@@ -68,7 +68,7 @@ impl Plugin for EventMarkerRenderer<'_> {
             if !filter::track_passes_filter(&track.metadata, self.filter) {
                 continue;
             }
-            let Some(marker) = track.event_markers.get(sp.point_index.0) else {
+            let Some(marker) = sp.point_index.get(&track.event_markers) else {
                 continue;
             };
             if !self
@@ -86,7 +86,7 @@ impl Plugin for EventMarkerRenderer<'_> {
                 category: DataCategory::EventMarker,
                 point_index: sp.point_index,
             };
-            let screen_pos = transform.to_screen(sp.merc_x, sp.merc_y);
+            let screen_pos = transform.to_screen(sp.merc);
             let style_map = &file.event_marker_styles;
             let color = resolve_color(marker, style_map);
             let icon = resolve_icon(&marker.variant_path, style_map);
@@ -103,9 +103,9 @@ impl Plugin for EventMarkerRenderer<'_> {
             && !ui.ctx().any_popup_open()
             && let Some(file) = self.files.get(r.file_index.0)
             && let Some(track) = file.tracks.get(r.track_index.0)
-            && let Some(marker) = track.event_markers.get(r.point_index.0)
+            && let Some(marker) = r.point_index.get(&track.event_markers)
         {
-            let pos = transform.to_screen(marker.merc_x, marker.merc_y);
+            let pos = transform.to_screen(marker.merc);
             show_tooltip(ui, r, marker, pos);
         }
     }
@@ -115,12 +115,12 @@ fn resolve_color(
     marker: &gt_types::EventMarker,
     style_map: &HashMap<String, EventMarkerStyle>,
 ) -> Color32 {
-    if let Some(style) = style_map.get(marker.variant_path.as_str()) {
-        Color32::from_rgb(style.color.0, style.color.1, style.color.2)
+    let c = if let Some(style) = style_map.get(marker.variant_path.as_str()) {
+        style.color
     } else {
-        let (r, g, b) = gt_types::event_marker_fallback_color(&marker.variant_path);
-        Color32::from_rgb(r, g, b)
-    }
+        gt_types::event_marker_fallback_color(&marker.variant_path)
+    };
+    Color32::from_rgb(c.r, c.g, c.b)
 }
 
 fn resolve_icon(variant_path: &str, style_map: &HashMap<String, EventMarkerStyle>) -> MarkerIcon {
@@ -132,13 +132,13 @@ fn resolve_icon(variant_path: &str, style_map: &HashMap<String, EventMarkerStyle
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gt_types::{EventMarkerStyle, MarkerIcon};
+    use gt_types::{EventMarkerStyle, MarkerColor, MarkerIcon};
 
     fn style(path: &str, icon: MarkerIcon) -> EventMarkerStyle {
         EventMarkerStyle {
             variant_path: path.to_string(),
             icon,
-            color: (0, 0, 0),
+            color: MarkerColor::new(0, 0, 0),
         }
     }
 

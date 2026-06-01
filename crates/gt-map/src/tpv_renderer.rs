@@ -8,8 +8,8 @@ use gt_types::{
 };
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH, MINUS_SIGN};
 use std::collections::HashMap;
-use uom::si::angle::degree;
-use uom::si::velocity::kilometer_per_hour;
+use uom::si::angle::{degree, radian};
+use uom::si::f64::Angle;
 use walkers::{MapMemory, Plugin, Projector};
 
 pub struct TpvRenderer<'a> {
@@ -91,7 +91,7 @@ impl<'a> TpvRenderer<'a> {
                 let Some(h) = point.tpv.heading() else {
                     continue;
                 };
-                let screen_pos = transform.to_screen(point.merc_x, point.merc_y);
+                let screen_pos = transform.to_screen(point.merc);
                 let point_ref = DataPointRef {
                     file_index: fi,
                     track_index: ti,
@@ -100,7 +100,7 @@ impl<'a> TpvRenderer<'a> {
                 };
                 let eph_m = point.tpv.eph_m();
                 let pixels_per_meter = if eph_m.is_some() {
-                    transform.pixels_per_meter(point.tpv.lat().as_degrees())
+                    transform.pixels_per_meter(point.tpv.lat())
                 } else {
                     0.0
                 };
@@ -109,7 +109,7 @@ impl<'a> TpvRenderer<'a> {
                     screen_pos,
                     &PointKind::Real {
                         color: tpv_point_color(point),
-                        heading_deg: h.get::<degree>(),
+                        heading: h,
                     },
                     eph_m,
                     pixels_per_meter,
@@ -122,8 +122,7 @@ impl<'a> TpvRenderer<'a> {
         }
 
         // Ghost fixes (heading == None): position pre-computed at load time
-        // in `precompute_ghost_positions`; merc_x/merc_y already hold the
-        // interpolated coordinates.
+        // in `precompute_ghost_positions`; merc already holds the interpolated coordinates.
         for (pi, point) in track.points.iter().enumerate() {
             if point.tpv.heading().is_some() {
                 continue;
@@ -131,7 +130,7 @@ impl<'a> TpvRenderer<'a> {
             if !filter::point_passes_time_filter(point.tpv.time().utc(), self.filter) {
                 continue;
             }
-            let screen_pos = transform.to_screen(point.merc_x, point.merc_y);
+            let screen_pos = transform.to_screen(point.merc);
             if !view_rect.contains(screen_pos) {
                 continue;
             }
@@ -162,7 +161,7 @@ impl<'a> TpvRenderer<'a> {
         let Some(track) = file.tracks.get(point_ref.track_index.0) else {
             return;
         };
-        let Some(point) = track.points.get(point_ref.point_index.0) else {
+        let Some(point) = point_ref.point_index.get(&track.points) else {
             return;
         };
         let tooltip_id = ui
@@ -280,7 +279,7 @@ impl Plugin for TpvRenderer<'_> {
                 .and_then(|f| f.tracks.get(ti.0))
                 .and_then(|t| t.points.get(pi.0))
         {
-            let pos = transform.to_screen(point.merc_x, point.merc_y);
+            let pos = transform.to_screen(point.merc);
             let painter = ui.painter();
             painter.circle_stroke(
                 pos,
@@ -312,8 +311,8 @@ pub(crate) fn show_hover_table(ui: &mut Ui, p: &NavPoint) {
             ui.end_row();
 
             ui.label("Speed");
-            match p.tpv.velocity() {
-                Some(v) => ui.label(format!("{:.1} km/h", v.get::<kilometer_per_hour>())),
+            match p.tpv.velocity_kmh() {
+                Some(v) => ui.label(format!("{:.1} km/h", v)),
                 None => ui.label(EM_DASH), // em-dash: speed unknown (interpolated point)
             };
             ui.end_row();
@@ -378,9 +377,9 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
         .num_columns(2)
         .show(ui, |ui| {
             ui.label("Speed");
-            match p.tpv.velocity() {
+            match p.tpv.velocity_kmh() {
                 Some(v) => {
-                    ui.label(format!("{:.1} km/h", v.get::<kilometer_per_hour>()));
+                    ui.label(format!("{:.1} km/h", v));
                 }
                 None => {
                     ui.label(EM_DASH);
@@ -696,11 +695,11 @@ fn draw_tpv_point(
 
     // Directional icon.
     match point_kind {
-        PointKind::Real { color, heading_deg } => {
+        PointKind::Real { color, heading } => {
             draw_navigation_arrow(
                 ui,
                 screen_pos,
-                *heading_deg,
+                *heading,
                 *color,
                 highlighted,
                 style.outline_alpha,
@@ -771,7 +770,7 @@ fn tpv_point_color(point: &NavPoint) -> Color32 {
 /// draw step needs so `render_trip` only matches `heading()` once.
 enum PointKind {
     /// Real GPS fix — heading known, precomputed Mercator coordinates used.
-    Real { color: Color32, heading_deg: f64 },
+    Real { color: Color32, heading: Angle },
     /// Ghost/synthetic fix — heading absent, position interpolated from neighbours.
     Ghost,
 }
@@ -814,13 +813,13 @@ fn draw_ghost_circle(
 fn draw_navigation_arrow(
     ui: &Ui,
     center: Pos2,
-    heading_degrees: f64,
+    heading: Angle,
     color: Color32,
     highlighted: bool,
     outline_alpha: f32,
     base_size: f32,
 ) {
-    let angle_rad = heading_degrees.to_radians() - std::f64::consts::FRAC_PI_2;
+    let angle_rad = heading.get::<radian>() - std::f64::consts::FRAC_PI_2;
     let dir = egui::vec2(angle_rad.cos() as f32, angle_rad.sin() as f32);
     let perp = egui::vec2(-dir.y, dir.x);
 

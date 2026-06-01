@@ -32,6 +32,16 @@ impl TrackIdx {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct PointIdx(pub usize);
 
+impl PointIdx {
+    pub fn get<T>(self, slice: &[T]) -> Option<&T> {
+        slice.get(self.0)
+    }
+
+    pub fn get_mut<T>(self, slice: &mut [T]) -> Option<&mut T> {
+        slice.get_mut(self.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DataCategory {
     /// Rendered as a polyline through all TPV points; no individual point refs.

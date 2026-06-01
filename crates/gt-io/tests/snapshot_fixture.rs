@@ -29,6 +29,8 @@ use geotrace_sdk::{
 };
 use gt_test_utils::assert_matches_sequence;
 use gt_types::GeneratedMarkerKind;
+use uom::si::f64::Length;
+use uom::si::length::kilometer;
 
 fn fixture_path() -> PathBuf {
     // CARGO_MANIFEST_DIR is crates/gt-io; workspace root is two levels up.
@@ -250,8 +252,9 @@ fn generate_and_verify_snapshot_fixture() {
     );
     assert_eq!(t0.metadata.duration.num_seconds(), 330, "trip 0: 5m30s");
     assert!(
-        t0.metadata.distance_km > 0.5 && t0.metadata.distance_km < 1.5,
-        "trip 0 distance ~0.84 km, got {:.3}",
+        t0.metadata.distance_km > Length::new::<kilometer>(0.5)
+            && t0.metadata.distance_km < Length::new::<kilometer>(1.5),
+        "trip 0 distance ~0.84 km, got {:?}",
         t0.metadata.distance_km
     );
     assert!(t0.metadata.has_custom_markers, "trip 0 has custom markers");
@@ -287,8 +290,9 @@ fn generate_and_verify_snapshot_fixture() {
     );
     assert_eq!(t1.metadata.duration.num_seconds(), 210, "trip 1: 3m30s");
     assert!(
-        t1.metadata.distance_km > 0.3 && t1.metadata.distance_km < 1.0,
-        "trip 1 distance ~0.62 km, got {:.3}",
+        t1.metadata.distance_km > Length::new::<kilometer>(0.3)
+            && t1.metadata.distance_km < Length::new::<kilometer>(1.0),
+        "trip 1 distance ~0.62 km, got {:?}",
         t1.metadata.distance_km
     );
     assert!(t1.metadata.has_custom_markers, "trip 1 has custom marker");
@@ -299,7 +303,8 @@ fn generate_and_verify_snapshot_fixture() {
     // File-level metadata
     assert_eq!(loaded.metadata.filename, "snapshot.nvd");
     assert!(
-        loaded.metadata.total_distance_km > 0.8 && loaded.metadata.total_distance_km < 2.5,
+        loaded.metadata.total_distance_km > Length::new::<kilometer>(0.8)
+            && loaded.metadata.total_distance_km < Length::new::<kilometer>(2.5),
         "total distance sane"
     );
     assert_eq!(

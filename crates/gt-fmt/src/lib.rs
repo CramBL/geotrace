@@ -1,9 +1,11 @@
-/// Format a distance in km as a compact human-readable string.
+/// Format a distance as a compact human-readable string.
 ///
 /// Uses metres for distances under 1 km, kilometres otherwise.
-pub fn format_distance(km: f64) -> String {
+pub fn format_distance(d: uom::si::f64::Length) -> String {
+    use uom::si::length::{kilometer, meter};
+    let km = d.get::<kilometer>();
     if km < 1.0 {
-        format!("{:.0} m", km * 1_000.0)
+        format!("{:.0} m", d.get::<meter>())
     } else {
         format!("{km:.1} km")
     }

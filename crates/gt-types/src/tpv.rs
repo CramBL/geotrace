@@ -2,6 +2,7 @@ use crate::coordinates::{Latitude, Longitude};
 use crate::time_types::{GpsTime, SysTime};
 use geo_types::{Coord, Point};
 use uom::si::f64::{Angle, Velocity};
+use uom::si::velocity::kilometer_per_hour;
 
 pub fn to_linestring(tpvs: &[TimePositionVelocity]) -> geo_types::LineString<f64> {
     tpvs.iter().map(Coord::from).collect()
@@ -44,6 +45,11 @@ impl TimePositionVelocity {
     }
     pub fn velocity(&self) -> Option<Velocity> {
         self.velocity
+    }
+
+    /// Speed in km/h, or `None` if the fix has no velocity data.
+    pub fn velocity_kmh(&self) -> Option<f64> {
+        self.velocity.map(|v| v.get::<kilometer_per_hour>())
     }
     pub fn heading(&self) -> Option<Angle> {
         self.heading

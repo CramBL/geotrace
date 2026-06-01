@@ -20,9 +20,10 @@ pub use highlight::{
     DataCategory, DataPointRef, FileIdx, HighlightScope, MapHighlight, PointIdx, TrackIdx,
 };
 pub use markers::{
-    CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind, MarkerIcon,
-    event_marker_fallback_color,
+    CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind, MarkerColor,
+    MarkerIcon, event_marker_fallback_color,
 };
+pub use mercator::MercPoint;
 pub use nav_point::NavPoint;
 pub use time_types::{GpsTime, SysTime};
 pub use tpv::TimePositionVelocity;

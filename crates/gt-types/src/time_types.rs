@@ -62,6 +62,12 @@ impl GpsTime {
     pub fn offset_from_sys(self, sys: SysTime) -> Duration {
         self.0 - sys.0
     }
+
+    /// Unix timestamp as `f64` seconds, for use in float-based plot axes.
+    #[inline]
+    pub fn as_secs_f64(self) -> f64 {
+        self.0.timestamp() as f64
+    }
 }
 
 /// `GpsTime − GpsTime → Duration` (same clock domain, always valid).

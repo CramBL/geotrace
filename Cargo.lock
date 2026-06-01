@@ -1840,6 +1840,7 @@ dependencies = [
  "rfd",
  "serde",
  "toml",
+ "uom",
 ]
 
 [[package]]
@@ -2068,14 +2069,17 @@ name = "gt-fmt"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "uom",
 ]
 
 [[package]]
 name = "gt-geo-math"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "geo",
  "geo-types",
+ "gt-types",
  "smallvec",
 ]
 
@@ -2150,6 +2154,7 @@ dependencies = [
  "gt-test-utils",
  "gt-types",
  "gt-ui-theme",
+ "uom",
 ]
 
 [[package]]

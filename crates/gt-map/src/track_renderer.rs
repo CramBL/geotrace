@@ -128,12 +128,7 @@ impl Plugin for TrackRenderer<'_> {
                     .points
                     .iter()
                     .filter(|p| gt_types::point_passes_time_filter(p.tpv.time().utc(), self.filter))
-                    .map(|p| {
-                        (
-                            p.tpv.heading().is_none(),
-                            transform.to_screen(p.merc_x, p.merc_y),
-                        )
-                    })
+                    .map(|p| (p.tpv.heading().is_none(), transform.to_screen(p.merc)))
                     .collect();
 
                 if pts.len() < 2 {

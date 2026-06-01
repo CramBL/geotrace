@@ -12,10 +12,8 @@ geo-types.workspace = true
 gt-geo-math = { path = "../gt-geo-math" }
 gt-types = { path = "../gt-types" }
 rstar.workspace = true
-vec1.workspace = true
-
-[dev-dependencies]
 uom.workspace = true
+vec1.workspace = true
 
 [lints]
 workspace = true

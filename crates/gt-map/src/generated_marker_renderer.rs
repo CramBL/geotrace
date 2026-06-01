@@ -60,7 +60,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
         let Some(track) = file.tracks.get(point_ref.track_index.0) else {
             return;
         };
-        let Some(marker) = track.generated_markers.get(point_ref.point_index.0) else {
+        let Some(marker) = point_ref.point_index.get(&track.generated_markers) else {
             return;
         };
         let hit_rect = egui::Rect::from_center_size(pos, egui::vec2(20.0, 20.0));
@@ -133,7 +133,7 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             if !filter::track_passes_filter(&track.metadata, self.filter) {
                 continue;
             }
-            let Some(marker) = track.generated_markers.get(sp.point_index.0) else {
+            let Some(marker) = sp.point_index.get(&track.generated_markers) else {
                 continue;
             };
             if !filter::point_passes_time_filter(marker.time, self.filter) {
@@ -145,7 +145,7 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
                 category: DataCategory::GeneratedMarker,
                 point_index: sp.point_index,
             };
-            let screen_pos = transform.to_screen(sp.merc_x, sp.merc_y);
+            let screen_pos = transform.to_screen(sp.merc);
             let highlighted = self.is_point_highlighted(point_ref);
             draw_generated_marker(ui, screen_pos, marker.kind, highlighted);
         }
@@ -159,9 +159,9 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             && !ui.ctx().any_popup_open()
             && let Some(file) = self.files.get(r.file_index.0)
             && let Some(track) = file.tracks.get(r.track_index.0)
-            && let Some(marker) = track.generated_markers.get(r.point_index.0)
+            && let Some(marker) = r.point_index.get(&track.generated_markers)
         {
-            let pos = transform.to_screen(marker.merc_x, marker.merc_y);
+            let pos = transform.to_screen(marker.merc);
             self.show_tooltip(ui, r, pos);
         }
     }

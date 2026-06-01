@@ -2,6 +2,8 @@ use chrono::{DateTime, Duration, Utc};
 use egui::Ui;
 use gt_types::{GlobalFilter, LoadedFile, MarkerRequirement};
 use gt_ui_theme::EM_DASH;
+use uom::si::f64::Length;
+use uom::si::length::{kilometer, meter};
 
 /// Persistent state for raw text inputs in the filter panel.
 /// Kept separate from `GlobalFilter` so it survives the parse round-trip.
@@ -109,10 +111,11 @@ pub fn render_filter_panel(
             .trim()
             .parse::<f64>()
             .ok()
-            .filter(|&v| v > 0.0);
+            .filter(|&v| v > 0.0)
+            .map(Length::new::<kilometer>);
     }
     if dur_changed {
-        filter.min_duration_secs = parse_duration_input(&state.duration_input);
+        filter.min_duration = parse_duration_input(&state.duration_input);
     }
     if spread_changed {
         filter.min_spread_m = state
@@ -120,7 +123,8 @@ pub fn render_filter_panel(
             .trim()
             .parse::<f64>()
             .ok()
-            .filter(|&v| v > 0.0);
+            .filter(|&v| v > 0.0)
+            .map(Length::new::<meter>);
     }
 
     // Marker requirement — mutually exclusive options rendered as toggleable labels.
@@ -294,12 +298,12 @@ fn expand_range(
     (expanded_start, expanded_end)
 }
 
-fn parse_duration_input(s: &str) -> Option<i64> {
+fn parse_duration_input(s: &str) -> Option<Duration> {
     let s = s.trim();
     if s.is_empty() {
         return None;
     }
-    let mut total: i64 = 0;
+    let mut total_secs: i64 = 0;
     let mut current = String::new();
     for ch in s.chars() {
         if ch.is_ascii_digit() {
@@ -307,7 +311,7 @@ fn parse_duration_input(s: &str) -> Option<i64> {
         } else {
             let val: i64 = current.parse().ok()?;
             current.clear();
-            total += match ch {
+            total_secs += match ch {
                 'h' | 'H' => val * 3600,
                 'm' | 'M' => val * 60,
                 's' | 'S' => val,
@@ -318,7 +322,11 @@ fn parse_duration_input(s: &str) -> Option<i64> {
     if !current.is_empty() {
         return None;
     }
-    if total > 0 { Some(total) } else { None }
+    if total_secs > 0 {
+        Some(Duration::seconds(total_secs))
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -336,10 +344,13 @@ mod tests {
 
     #[test]
     fn parse_hours_minutes_seconds() {
-        assert_eq!(parse_duration_input("1h30m"), Some(5400));
-        assert_eq!(parse_duration_input("2h"), Some(7200));
-        assert_eq!(parse_duration_input("45s"), Some(45));
-        assert_eq!(parse_duration_input("1h30m15s"), Some(5415));
+        assert_eq!(parse_duration_input("1h30m"), Some(Duration::seconds(5400)));
+        assert_eq!(parse_duration_input("2h"), Some(Duration::seconds(7200)));
+        assert_eq!(parse_duration_input("45s"), Some(Duration::seconds(45)));
+        assert_eq!(
+            parse_duration_input("1h30m15s"),
+            Some(Duration::seconds(5415))
+        );
     }
 
     #[test]
@@ -372,7 +383,7 @@ mod tests {
             if secs == 0 {
                 assert_eq!(parsed, None);
             } else {
-                assert_eq!(parsed, Some(secs));
+                assert_eq!(parsed, Some(Duration::seconds(secs)));
             }
         }
     }
@@ -389,7 +400,7 @@ mod tests {
         let file = LoadedFile {
             metadata: FileMetadata {
                 filename: "test.nvd".to_owned(),
-                total_distance_km: 1.0,
+                total_distance_km: Length::new::<kilometer>(1.0),
                 total_duration: Duration::seconds(60),
                 time_range: TimeRange::new(
                     Utc.timestamp_opt(0, 0).single().expect("valid"),

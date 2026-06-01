@@ -20,7 +20,7 @@ use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::{GpsTime, SysTime};
 use gt_types::{
     CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude, LoadedFile, Longitude,
-    MarkerIcon, NavPoint, TimePositionVelocity,
+    MarkerColor, MarkerIcon, NavPoint, TimePositionVelocity,
 };
 
 fn to_uom_velocity(v: geotrace_sdk::Velocity) -> uom::si::f64::Velocity {
@@ -177,7 +177,9 @@ fn convert_event_marker_style(s: &SdkEventMarkerStyle) -> EventMarkerStyle {
         SdkEventMarkerColor::Auto => {
             gt_types::markers::event_marker_fallback_color(&s.variant_path)
         }
-        SdkEventMarkerColor::Hex(hex) => parse_hex_color(hex).unwrap_or((128, 128, 128)),
+        SdkEventMarkerColor::Hex(hex) => {
+            parse_hex_color(hex).unwrap_or(MarkerColor::new(128, 128, 128))
+        }
     };
     EventMarkerStyle {
         variant_path: s.variant_path.clone(),
@@ -205,7 +207,7 @@ fn sdk_icon_to_marker_icon(i: SdkMarkerIcon) -> MarkerIcon {
     }
 }
 
-fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
+fn parse_hex_color(hex: &str) -> Option<MarkerColor> {
     let hex = hex.strip_prefix('#')?;
     if hex.len() != 6 {
         return None;
@@ -213,7 +215,7 @@ fn parse_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
     let r = u8::from_str_radix(hex.get(..2)?, 16).ok()?;
     let g = u8::from_str_radix(hex.get(2..4)?, 16).ok()?;
     let b = u8::from_str_radix(hex.get(4..6)?, 16).ok()?;
-    Some((r, g, b))
+    Some(MarkerColor::new(r, g, b))
 }
 
 fn convert_constellation(c: SdkConstellation) -> Constellation {

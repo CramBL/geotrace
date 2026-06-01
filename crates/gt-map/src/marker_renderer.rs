@@ -87,7 +87,7 @@ impl Plugin for MarkerRenderer<'_> {
             if !filter::track_passes_filter(&track.metadata, self.filter) {
                 continue;
             }
-            let Some(marker) = track.custom_markers.get(sp.point_index.0) else {
+            let Some(marker) = sp.point_index.get(&track.custom_markers) else {
                 continue;
             };
             if !filter::point_passes_time_filter(marker.time, self.filter) {
@@ -99,7 +99,7 @@ impl Plugin for MarkerRenderer<'_> {
                 category: DataCategory::CustomMarker,
                 point_index: sp.point_index,
             };
-            let screen_pos = transform.to_screen(sp.merc_x, sp.merc_y);
+            let screen_pos = transform.to_screen(sp.merc);
             let highlighted = self.is_marker_highlighted(point_ref);
             draw_marker_icon(ui, screen_pos, marker, highlighted);
         }
@@ -113,9 +113,9 @@ impl Plugin for MarkerRenderer<'_> {
             && !ui.ctx().any_popup_open()
             && let Some(file) = self.files.get(r.file_index.0)
             && let Some(track) = file.tracks.get(r.track_index.0)
-            && let Some(marker) = track.custom_markers.get(r.point_index.0)
+            && let Some(marker) = r.point_index.get(&track.custom_markers)
         {
-            let pos = transform.to_screen(marker.merc_x, marker.merc_y);
+            let pos = transform.to_screen(marker.merc);
             show_marker_hover_label(ui, marker, pos);
         }
     }

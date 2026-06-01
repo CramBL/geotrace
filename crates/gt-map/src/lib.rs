@@ -43,8 +43,7 @@ use egui::Context;
 pub(crate) struct MercTransform {
     clip_center_x: f64,
     clip_center_y: f64,
-    merc_x_center: f64,
-    merc_y_center: f64,
+    merc_center: gt_types::MercPoint,
     total_px: f64,
 }
 
@@ -65,35 +64,37 @@ impl MercTransform {
         // viewport centre using f64 arithmetic throughout.
         // In walkers: Position.x() = longitude, Position.y() = latitude.
         let center_ll = projector.unproject(clip_center.to_vec2());
-        let (merc_x_center, merc_y_center) = normalize_merc(center_ll.x(), center_ll.y());
+        let merc_center = gt_types::mercator::normalize(
+            Latitude::new(center_ll.y()),
+            Longitude::new(center_ll.x()),
+        );
         Self {
             clip_center_x: clip_center.x as f64,
             clip_center_y: clip_center.y as f64,
-            merc_x_center,
-            merc_y_center,
+            merc_center,
             total_px,
         }
     }
 
     /// Project a pre-computed normalised Mercator coordinate to a screen position.
     #[inline]
-    pub(crate) fn to_screen(&self, merc_x: f64, merc_y: f64) -> egui::Pos2 {
+    pub(crate) fn to_screen(&self, merc: gt_types::MercPoint) -> egui::Pos2 {
         egui::pos2(
-            (self.clip_center_x + (merc_x - self.merc_x_center) * self.total_px) as f32,
-            (self.clip_center_y + (merc_y - self.merc_y_center) * self.total_px) as f32,
+            (self.clip_center_x + (merc.x - self.merc_center.x) * self.total_px) as f32,
+            (self.clip_center_y + (merc.y - self.merc_center.y) * self.total_px) as f32,
         )
     }
 
     /// Convert a screen-space x-coordinate to a normalised Mercator x value.
     #[inline]
     pub(crate) fn merc_x_from_screen(&self, screen_x: f32) -> f64 {
-        (screen_x as f64 - self.clip_center_x) / self.total_px + self.merc_x_center
+        (screen_x as f64 - self.clip_center_x) / self.total_px + self.merc_center.x
     }
 
     /// Convert a screen-space y-coordinate to a normalised Mercator y value.
     #[inline]
     pub(crate) fn merc_y_from_screen(&self, screen_y: f32) -> f64 {
-        (screen_y as f64 - self.clip_center_y) / self.total_px + self.merc_y_center
+        (screen_y as f64 - self.clip_center_y) / self.total_px + self.merc_center.y
     }
 
     /// Pixels per metre at the given latitude.
@@ -101,26 +102,13 @@ impl MercTransform {
     /// Uses the Web Mercator scale factor: the equatorial circumference
     /// (≈ 40 030 km) shrinks by cos(lat) at a given latitude.
     #[inline]
-    pub(crate) fn pixels_per_meter(&self, lat_deg: f64) -> f64 {
+    pub(crate) fn pixels_per_meter(&self, lat: Latitude) -> f64 {
         // At zoom z the world is 256·2^z pixels wide at the equator.
         // 1 Mercator tile column = Earth circumference / 2^z metres at the equator,
         // scaled by cos(lat) at higher latitudes.
         const EARTH_CIRCUMFERENCE_M: f64 = 40_030_173.0;
-        self.total_px / (EARTH_CIRCUMFERENCE_M * lat_deg.to_radians().cos())
+        self.total_px / (EARTH_CIRCUMFERENCE_M * lat.as_degrees().to_radians().cos())
     }
-}
-
-/// Normalised Web Mercator projection — both outputs in `[0.0, 1.0]`.
-///
-/// This is identical to walkers' internal `mercator_normalized()` and to
-/// `gt_types::mercator::normalize()`. It is duplicated here because
-/// `gt_types::mercator` is a crate-private module, inaccessible from `gt_map`.
-/// Both copies must be kept in sync.
-fn normalize_merc(lon_deg: f64, lat_deg: f64) -> (f64, f64) {
-    use std::f64::consts::PI;
-    let x = lon_deg.to_radians();
-    let y = lat_deg.to_radians().tan().asinh();
-    ((1.0 + x / PI) / 2.0, (1.0 - y / PI) / 2.0)
 }
 
 // URI constants used by the marker renderer and the startup registration call.
@@ -231,8 +219,8 @@ pub(crate) fn draw_cached_icon(
 }
 
 use gt_types::{
-    DataCategory, DataPointRef, EventMarkerVisibility, GlobalFilter, HighlightScope, LoadedFile,
-    MapHighlight, SpatialPoint, TrackDataVisibility,
+    DataCategory, DataPointRef, EventMarkerVisibility, GlobalFilter, HighlightScope, Latitude,
+    LoadedFile, Longitude, MapHighlight, SpatialPoint, TrackDataVisibility,
 };
 use std::time::Instant;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
@@ -600,8 +588,8 @@ impl NavMap {
                 self.global_tree
                     .nearest_neighbor([merc_x, merc_y])
                     .filter(|sp| {
-                        let dx = sp.merc_x - merc_x;
-                        let dy = sp.merc_y - merc_y;
+                        let dx = sp.merc.x - merc_x;
+                        let dy = sp.merc.y - merc_y;
                         dx * dx + dy * dy <= threshold_merc_sq
                     })
                     .map(|sp| DataPointRef {
@@ -732,7 +720,7 @@ fn show_sticky_popup(
         files
             .get(sticky_ref.file_index.0)
             .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
-            .and_then(|t| t.points.get(sticky_ref.point_index.0))
+            .and_then(|t| sticky_ref.point_index.get(&t.points))
             .map_or_else(
                 || "GPS Point".to_string(),
                 |p| p.tpv.time().utc().format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -741,7 +729,7 @@ fn show_sticky_popup(
         files
             .get(sticky_ref.file_index.0)
             .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
-            .and_then(|t| t.points.get(sticky_ref.point_index.0))
+            .and_then(|t| sticky_ref.point_index.get(&t.points))
             .and_then(|p| p.satellites.as_ref())
             .map_or_else(
                 || "Satellite Report".to_string(),
@@ -756,7 +744,7 @@ fn show_sticky_popup(
         files
             .get(sticky_ref.file_index.0)
             .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
-            .and_then(|t| t.generated_markers.get(sticky_ref.point_index.0))
+            .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
             .map_or_else(
                 || "GPS Event".to_string(),
                 |m| m.time.format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -775,7 +763,7 @@ fn show_sticky_popup(
                 if let Some(point) = files
                     .get(sticky_ref.file_index.0)
                     .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
-                    .and_then(|t| t.points.get(sticky_ref.point_index.0))
+                    .and_then(|t| sticky_ref.point_index.get(&t.points))
                 {
                     // Cap the window height so satellite tables never overflow
                     // the screen. For small satellite counts the ScrollArea
@@ -796,7 +784,7 @@ fn show_sticky_popup(
                 if let Some(marker) = files
                     .get(sticky_ref.file_index.0)
                     .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
-                    .and_then(|t| t.custom_markers.get(sticky_ref.point_index.0))
+                    .and_then(|t| sticky_ref.point_index.get(&t.custom_markers))
                 {
                     egui::Grid::new("sticky_marker_grid")
                         .num_columns(2)
@@ -821,7 +809,7 @@ fn show_sticky_popup(
                 if let Some(marker) = files
                     .get(sticky_ref.file_index.0)
                     .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
-                    .and_then(|t| t.generated_markers.get(sticky_ref.point_index.0))
+                    .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
                 {
                     let kind_str = match marker.kind {
                         GeneratedMarkerKind::GpsFixLost => "GPS fix lost",
@@ -860,7 +848,7 @@ fn show_sticky_popup(
                 if let Some(point) = files
                     .get(sticky_ref.file_index.0)
                     .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
-                    .and_then(|t| t.points.get(sticky_ref.point_index.0))
+                    .and_then(|t| sticky_ref.point_index.get(&t.points))
                 {
                     let max_h = (ui.ctx().viewport_rect().height() * 0.75).min(500.0);
                     egui::ScrollArea::vertical()
@@ -877,7 +865,7 @@ fn show_sticky_popup(
                 if let Some(marker) = files
                     .get(sticky_ref.file_index.0)
                     .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
-                    .and_then(|t| t.event_markers.get(sticky_ref.point_index.0))
+                    .and_then(|t| sticky_ref.point_index.get(&t.event_markers))
                 {
                     egui::Grid::new("sticky_event_marker_grid")
                         .num_columns(2)
@@ -1052,6 +1040,8 @@ mod tests {
         Coord, DataCategory, FileMetadata, LoadedFile, LoadedTrack, Rect, TimeRange, TrackMetadata,
         merc_bounds_for_rect,
     };
+    use uom::si::f64::Length;
+    use uom::si::length::{kilometer, meter};
 
     fn make_file_from_points(points: Vec<gt_types::NavPoint>) -> LoadedFile {
         let now = chrono::Utc::now();
@@ -1070,12 +1060,12 @@ mod tests {
         let trip = LoadedTrack {
             metadata: TrackMetadata {
                 index: 0,
-                distance_km: 1.0,
+                distance_km: Length::new::<kilometer>(1.0),
                 duration: chrono::Duration::seconds(n as i64),
                 time_range: TimeRange::new(now, now + chrono::Duration::seconds(n as i64)),
                 bounding_box: bb,
                 merc_bounds: merc_bounds_for_rect(bb),
-                point_set_diameter_m: 100.0,
+                point_set_diameter_m: Length::new::<meter>(100.0),
                 has_custom_markers: false,
                 tpv_count: n,
                 satellite_report_count: 0,
@@ -1091,7 +1081,7 @@ mod tests {
         LoadedFile {
             metadata: FileMetadata {
                 filename: format!("test_{n}.nvd"),
-                total_distance_km: 1.0,
+                total_distance_km: Length::new::<kilometer>(1.0),
                 total_duration: chrono::Duration::seconds(n as i64),
                 time_range: TimeRange::new(now, now + chrono::Duration::seconds(n as i64)),
             },

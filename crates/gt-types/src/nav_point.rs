@@ -1,3 +1,4 @@
+use crate::mercator::MercPoint;
 use crate::satellites::Satellites;
 use crate::tpv::TimePositionVelocity;
 
@@ -5,24 +6,17 @@ use crate::tpv::TimePositionVelocity;
 pub struct NavPoint {
     pub tpv: TimePositionVelocity,
     pub satellites: Option<Satellites>,
-    /// Normalized Web Mercator X coordinate in `[0, 1]`, pre-computed from
-    /// `tpv.lon()` at construction time so the renderer only needs an affine
-    /// transform per frame instead of a full trigonometric projection.
-    pub merc_x: f64,
-    /// Normalized Web Mercator Y coordinate in `[0, 1]`, pre-computed from
-    /// `tpv.lat()` at construction time.
-    pub merc_y: f64,
+    /// Pre-computed normalized Web Mercator coordinates, see [`crate::mercator`].
+    pub merc: MercPoint,
 }
 
 impl NavPoint {
     pub fn new(tpv: TimePositionVelocity, satellites: Option<Satellites>) -> Self {
-        let (merc_x, merc_y) =
-            crate::mercator::normalize(tpv.lon().as_degrees(), tpv.lat().as_degrees());
+        let merc = crate::mercator::normalize(tpv.lat(), tpv.lon());
         Self {
             tpv,
             satellites,
-            merc_x,
-            merc_y,
+            merc,
         }
     }
 
