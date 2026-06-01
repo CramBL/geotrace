@@ -5,6 +5,7 @@ use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
 };
+use gt_types::mercator::{self, MercPoint};
 use gt_types::nav_point::NavPoint;
 use gt_types::time_types::GpsTime;
 use gt_types::track::{
@@ -386,7 +387,7 @@ fn precompute_ghost_positions(points: &mut [NavPoint]) {
     }
 
     // Collect updates to avoid simultaneous mutable and immutable borrows.
-    let mut updates: Vec<(usize, gt_types::MercPoint)> = Vec::new();
+    let mut updates: Vec<(usize, MercPoint)> = Vec::new();
     for i in 0..n {
         if points[i].tpv.heading().is_some() {
             continue;
@@ -424,7 +425,7 @@ fn precompute_ghost_positions(points: &mut [NavPoint]) {
                 points[i].tpv.lon().as_degrees(),
             ),
         };
-        let merc = gt_types::mercator::normalize(Latitude::new(lat), Longitude::new(lon));
+        let merc = mercator::normalize(Latitude::new(lat), Longitude::new(lon));
         updates.push((i, merc));
     }
 
@@ -445,10 +446,6 @@ mod tests {
     use uom::si::f64::Angle;
 
     fn make_point_at(t: i64) -> NavPoint {
-        #[expect(
-            clippy::expect_used,
-            reason = "fixed timestamp is always valid in tests"
-        )]
         let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
         let tpv = TimePositionVelocity::builder()
             .time(time)
@@ -460,10 +457,6 @@ mod tests {
     }
 
     fn make_point_at_pos(t: i64, lat: f64, lon: f64) -> NavPoint {
-        #[expect(
-            clippy::expect_used,
-            reason = "fixed timestamp is always valid in tests"
-        )]
         let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
         let tpv = TimePositionVelocity::builder()
             .time(time)
@@ -591,10 +584,6 @@ mod tests {
     }
 
     fn make_real_fix(t: i64, lat: Latitude, lon: Longitude) -> NavPoint {
-        #[expect(
-            clippy::expect_used,
-            reason = "fixed timestamp is always valid in tests"
-        )]
         let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
         let tpv = TimePositionVelocity::builder()
             .time(time)
@@ -618,10 +607,6 @@ mod tests {
     }
 
     fn make_ghost(t: i64, lat: Latitude, lon: Longitude) -> NavPoint {
-        #[expect(
-            clippy::expect_used,
-            reason = "fixed timestamp is always valid in tests"
-        )]
         let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
         let tpv = TimePositionVelocity::builder()
             .time(time)
@@ -660,7 +645,7 @@ mod tests {
         ];
         precompute_ghost_positions(&mut points);
 
-        let expected = gt_types::mercator::normalize(Latitude::new(0.5), Longitude::new(0.5));
+        let expected = mercator::normalize(Latitude::new(0.5), Longitude::new(0.5));
         assert!(
             (points[1].merc.x - expected.x).abs() < 1e-9,
             "merc.x mismatch: {} vs {}",
@@ -683,7 +668,7 @@ mod tests {
         ];
         precompute_ghost_positions(&mut points);
 
-        let expected = gt_types::mercator::normalize(Latitude::new(55.0), Longitude::new(12.0));
+        let expected = mercator::normalize(Latitude::new(55.0), Longitude::new(12.0));
         assert!((points[0].merc.x - expected.x).abs() < 1e-9);
         assert!((points[0].merc.y - expected.y).abs() < 1e-9);
     }
@@ -696,7 +681,7 @@ mod tests {
         ];
         precompute_ghost_positions(&mut points);
 
-        let expected = gt_types::mercator::normalize(Latitude::new(55.0), Longitude::new(12.0));
+        let expected = mercator::normalize(Latitude::new(55.0), Longitude::new(12.0));
         assert!((points[1].merc.x - expected.x).abs() < 1e-9);
         assert!((points[1].merc.y - expected.y).abs() < 1e-9);
     }

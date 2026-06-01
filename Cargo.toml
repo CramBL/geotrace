@@ -210,6 +210,7 @@ uom.workspace = true
 [dev-dependencies]
 egui_kittest = { version = "0.34.3", features = ["eframe"] }
 geotrace-sdk = { path = "geotrace-sdks/geotrace-sdk" }
+tempfile = "3"
 
 [profile.release]
 opt-level = 3

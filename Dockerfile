@@ -3,17 +3,17 @@
 # Run any just recipe through the container without re-installing tools:
 #
 #   docker run --rm \
-#     -v "$HOME/.cargo/registry:/usr/local/cargo/registry" \
-#     -v "$HOME/.cargo/git:/usr/local/cargo/git" \
+#     -v "$HOME/.cargo/registry:/root/.cargo/registry" \
+#     -v "$HOME/.cargo/git:/root/.cargo/git" \
 #     -v "$(pwd):/workspace" \
 #     -w /workspace \
 #     geotrace-dev \
 #     just check
 #
 # The two ~/.cargo mounts share the package registry and git cache between the
-# host and the container.  As long as both use the same stable toolchain version
-# the compiled artifacts in target/ are compatible, so the target/ directory can
-# also be bind-mounted to share incremental build state:
+# host and the container.  Both use the same Rust version (pinned in
+# rust-toolchain.toml), so the compiled artifacts in target/ are compatible
+# and can be shared too:
 #
 #   -v "$(pwd)/target:/workspace/target"
 #
@@ -26,6 +26,7 @@ FROM debian:bookworm-slim AS base
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     ca-certificates \
     curl \
     git \
@@ -35,10 +36,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust stable via rustup
+# Install rustup without pinning a toolchain version here.
+# rust-toolchain.toml is the single source of truth for the Rust version.
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y --default-toolchain stable --no-modify-path
+    | sh -s -- -y --default-toolchain none --no-modify-path
 ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Copy the toolchain pin before any Rust commands so rustup installs the
+# version declared in rust-toolchain.toml rather than whatever "stable"
+# resolves to today.
+WORKDIR /workspace
+COPY rust-toolchain.toml ./
+RUN rustup show
 
 # Install the nightly toolchain required by cargo-pup.
 # The exact version is pinned in justfile / pup.ron.
@@ -58,6 +67,7 @@ RUN curl -L --proto '=https' --tlsv1.2 -sSf \
 
 RUN cargo binstall --no-confirm \
     just \
+    cargo-msrv \
     cargo-nextest \
     typos-cli \
     cargo-sort \
@@ -71,7 +81,6 @@ RUN cargo +nightly-2026-01-22 install cargo_pup
 # Warm up the Rust compiler cache for the workspace dependencies.
 # This layer is intentionally placed last so that changes to source files
 # do not bust the tool-installation layers above.
-WORKDIR /workspace
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 COPY geotrace-sdks/ geotrace-sdks/

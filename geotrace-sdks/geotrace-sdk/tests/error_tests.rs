@@ -84,7 +84,6 @@ fn missing_version_attribute_returns_error() {
         .with_f64_data(&[])
         .with_shape(&[0]);
     fb.add_group(np.finish());
-    #[expect(clippy::expect_used, reason = "test helper")]
     let bytes = fb.finish().expect("build");
 
     let result = NavFile::read(bytes.as_slice());
@@ -114,7 +113,6 @@ fn unrecognised_version_string_returns_unsupported_version() {
         .with_f64_data(&[])
         .with_shape(&[0]);
     fb.add_group(np.finish());
-    #[expect(clippy::expect_used, reason = "test helper")]
     let bytes = fb.finish().expect("build");
 
     let result = NavFile::read(bytes.as_slice());

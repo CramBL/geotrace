@@ -287,10 +287,6 @@ mod tests {
             "should have at least 2 levels for 10K points"
         );
         // Coarsest level should have >= MIN_LEVEL_POINTS points
-        #[expect(
-            clippy::expect_used,
-            reason = "test invariant: build succeeded so levels is non-empty"
-        )]
         let coarsest = m.levels.last().expect("at least one level");
         assert!(coarsest.len() >= MIN_LEVEL_POINTS);
     }
@@ -311,10 +307,6 @@ mod tests {
         let m = MipMap::build(data);
         if m.level_count() > 1 {
             // The spike should appear in the coarsest level.
-            #[expect(
-                clippy::expect_used,
-                reason = "test invariant: level_count > 1 guarantees levels is non-empty"
-            )]
             let has_spike = m
                 .levels
                 .last()

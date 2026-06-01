@@ -300,8 +300,8 @@ mod tests {
             .build()
     }
 
-    fn build(nav_file: NavFile) -> Result<(Vec<NavPoint>, Vec<CustomMarker>), LoadError> {
-        from_nav_file(&nav_file).map(|(pts, markers, _, _)| (pts, markers))
+    fn build(nav_file: &NavFile) -> Result<(Vec<NavPoint>, Vec<CustomMarker>), LoadError> {
+        from_nav_file(nav_file).map(|(pts, markers, _, _)| (pts, markers))
     }
 
     #[test]
@@ -318,7 +318,7 @@ mod tests {
                 .speed(Velocity::meter_per_second(12.5))
                 .build(),
         );
-        let (nav_points, _) = build(sink.finish().unwrap()).unwrap();
+        let (nav_points, _) = build(&sink.finish().unwrap()).unwrap();
         assert_eq!(nav_points.len(), 1);
         let tpv = nav_points[0].tpv;
         assert_eq!(tpv.time().utc(), t0);
@@ -335,12 +335,11 @@ mod tests {
     fn speed_none_propagation() {
         let mut sink = NavFileBuilder::new().open();
         sink.add_nav_fix(minimal_fix(base()));
-        let (nav_points, _) = build(sink.finish().unwrap()).unwrap();
+        let (nav_points, _) = build(&sink.finish().unwrap()).unwrap();
         assert_eq!(nav_points[0].tpv.velocity(), None);
     }
 
     #[test]
-    #[expect(clippy::float_cmp, reason = "exact unit preservation check")]
     fn velocity_unit_preservation() {
         let mut sink = NavFileBuilder::new().open();
         sink.add_nav_fix(
@@ -352,7 +351,7 @@ mod tests {
                 .speed(Velocity::meter_per_second(15.0))
                 .build(),
         );
-        let (nav_points, _) = build(sink.finish().unwrap()).unwrap();
+        let (nav_points, _) = build(&sink.finish().unwrap()).unwrap();
         assert_eq!(
             nav_points[0].tpv.velocity().map(|v| v.get::<uom_mps>()),
             Some(15.0)
@@ -360,7 +359,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::float_cmp, reason = "exact field preservation")]
     fn satellite_structure() {
         let t0 = base();
         let mut sink = NavFileBuilder::new().open();
@@ -384,7 +382,7 @@ mod tests {
                 ])
                 .build(),
         );
-        let (nav_points, _) = build(sink.finish().unwrap()).unwrap();
+        let (nav_points, _) = build(&sink.finish().unwrap()).unwrap();
         let sats = nav_points[0].satellites.as_ref().unwrap();
         assert_eq!(sats.satellite_count(), 2);
         assert_eq!(sats.fix_count(), 1);
@@ -421,7 +419,7 @@ mod tests {
                 .time(t0 + Duration::milliseconds(500))
                 .build(),
         );
-        let (_, markers) = build(sink.finish().unwrap()).unwrap();
+        let (_, markers) = build(&sink.finish().unwrap()).unwrap();
         assert_eq!(markers[0].label, "");
     }
 
@@ -438,7 +436,7 @@ mod tests {
                 .label(String::new())
                 .build(),
         );
-        let (_, markers) = build(sink.finish().unwrap()).unwrap();
+        let (_, markers) = build(&sink.finish().unwrap()).unwrap();
         assert_eq!(markers[0].label, "");
     }
 
@@ -454,7 +452,7 @@ mod tests {
                 .time(t0 + Duration::milliseconds(500))
                 .build(),
         );
-        let (_, markers) = build(sink.finish().unwrap()).unwrap();
+        let (_, markers) = build(&sink.finish().unwrap()).unwrap();
         assert_eq!(markers[0].icon, MarkerIcon::Pin);
     }
 

@@ -368,11 +368,8 @@ mod tests {
 
     use super::*;
     use chrono::TimeZone;
-    use uom::si::angle::degree;
-    use uom::si::f64::Angle;
 
     fn utc(y: i32, mo: u32, d: u32, h: u32, m: u32, s: u32) -> DateTime<Utc> {
-        #[expect(clippy::expect_used, reason = "fixed test timestamp")]
         Utc.with_ymd_and_hms(y, mo, d, h, m, s)
             .single()
             .expect("valid")
@@ -548,7 +545,7 @@ mod tests {
         let mut a = ColorGroupAssigner::new();
         // Each string is 20 repetitions of a unique letter — Levenshtein distance 20 apart
         let strings: Vec<String> = (0u8..10u8)
-            .map(|i| std::iter::repeat(char::from(b'a' + i)).take(20).collect())
+            .map(|i| std::iter::repeat_n(char::from(b'a' + i), 20).collect())
             .collect();
         for (i, s) in strings.iter().enumerate() {
             assert_eq!(a.assign(s), i as u32);
@@ -687,11 +684,10 @@ mod tests {
     fn load_log_two_bad_lines_then_good_continues() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
         let pts = nav_points_from(t0, 5, 1);
-        let content = format!(
-            "2026-01-01 00:00:00 msg0\nNOT_A_TIMESTAMP\nALSO_NOT\n2026-01-01 00:00:01 msg1\n"
-        );
+        let content =
+            "2026-01-01 00:00:00 msg0\nNOT_A_TIMESTAMP\nALSO_NOT\n2026-01-01 00:00:01 msg1\n";
         let result = load_log(
-            &content,
+            content,
             &pts,
             utc(2026, 5, 23, 0, 0, 0),
             &AssociationConfig::default(),
@@ -705,7 +701,7 @@ mod tests {
         let pts = nav_points_from(t0, 5, 1);
         let content = "2026-01-01 00:00:00 msg0\nBAD1\nBAD2\nBAD3\n2026-01-01 00:00:01 msg1\n";
         let result = load_log(
-            &content,
+            content,
             &pts,
             utc(2026, 5, 23, 0, 0, 0),
             &AssociationConfig::default(),
@@ -722,7 +718,7 @@ mod tests {
         let content =
             "2026-01-01 00:00:00 good\nBAD\n\nBAD\n\nBAD\n2026-01-01 00:00:01 also_good\n";
         let result = load_log(
-            &content,
+            content,
             &pts,
             utc(2026, 5, 23, 0, 0, 0),
             &AssociationConfig::default(),
@@ -777,7 +773,7 @@ mod tests {
         // SyslogShortMicro line
         let content = "Jan  1 00:00:00.500000 msg_micro\n";
         let result = load_log(
-            &content,
+            content,
             &pts,
             utc(2026, 1, 1, 12, 0, 0),
             &AssociationConfig::default(),

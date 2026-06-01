@@ -16,7 +16,8 @@ fn sdk_constellation(c: Constellation) -> SdkConst {
 
 fn sdk_icon(icon: gt_types::MarkerIcon) -> SdkIcon {
     match icon {
-        gt_types::MarkerIcon::Pin => SdkIcon::Pin,
+        // Log markers are not stored in .nvd files; map to Pin as a fallback
+        gt_types::MarkerIcon::Pin | gt_types::MarkerIcon::Log => SdkIcon::Pin,
         gt_types::MarkerIcon::Cross => SdkIcon::Cross,
         gt_types::MarkerIcon::Circle => SdkIcon::Circle,
         gt_types::MarkerIcon::Lightning => SdkIcon::Lightning,
@@ -30,8 +31,6 @@ fn sdk_icon(icon: gt_types::MarkerIcon) -> SdkIcon {
         gt_types::MarkerIcon::Download => SdkIcon::Download,
         gt_types::MarkerIcon::Upload => SdkIcon::Upload,
         gt_types::MarkerIcon::Wrench => SdkIcon::Wrench,
-        // Log markers are not stored in .nvd files; map to Pin as a fallback
-        gt_types::MarkerIcon::Log => SdkIcon::Pin,
     }
 }
 

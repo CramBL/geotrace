@@ -1839,6 +1839,7 @@ dependencies = [
  "mimalloc",
  "rfd",
  "serde",
+ "tempfile",
  "toml",
  "uom",
 ]
@@ -2104,7 +2105,6 @@ dependencies = [
  "gt-test-utils",
  "gt-types",
  "log",
- "uom",
 ]
 
 [[package]]

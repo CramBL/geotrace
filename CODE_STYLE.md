@@ -144,27 +144,41 @@ The only exception is when the comment is literally drawing a protocol diagram, 
 
 When importing a `trait` to use its trait methods, do this: `use Trait as _;`. That lets the reader know why you imported it, even though it seems unused.
 
-Always import **types** fully so they can be used by their short name at the call site:
+Always import **types** fully so they can be used by their short name at the call site.
+This applies even when the type is from an external crate — add the `use` and drop the crate qualifier at the call site:
 
 ```rust
 // Good
 use std::collections::HashMap;
 let m: HashMap<_, _> = …;
 
-// Bad
+// Good — same rule for external crates
+use some_crate::SomeType;
+fn foo(x: SomeType) { … }
+
+// Bad — qualifies a type rather than importing it
 let m: std::collections::HashMap<_, _> = …;
+fn foo(x: some_crate::SomeType) { … }
 ```
 
-Never fully import **functions** — always retain at least the parent module so the call site is self-documenting:
+Never fully import **functions** — always retain at least the parent module so the call site is self-documenting.
+Import the parent module and qualify the call with it, even across crates:
 
 ```rust
 // Good
 use std::fs;
 fs::read_to_string(path)?;
 
+// Good — same rule for external crates: import the module, qualify the call
+use some_crate::utils;
+utils::helper(…);
+
 // Bad — hides where the function comes from
 use std::fs::read_to_string;
 read_to_string(path)?;
+
+// Bad — qualifies at the crate level instead of the parent module
+some_crate::utils::helper(…);
 ```
 
 For very common functions (e.g. `mem::swap`, `iter::once`) retaining one module level is sufficient; for less familiar ones, keep more context.

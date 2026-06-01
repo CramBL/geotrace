@@ -43,7 +43,7 @@ use egui::Context;
 pub(crate) struct MercTransform {
     clip_center_x: f64,
     clip_center_y: f64,
-    merc_center: gt_types::MercPoint,
+    merc_center: MercPoint,
     total_px: f64,
 }
 
@@ -64,10 +64,8 @@ impl MercTransform {
         // viewport centre using f64 arithmetic throughout.
         // In walkers: Position.x() = longitude, Position.y() = latitude.
         let center_ll = projector.unproject(clip_center.to_vec2());
-        let merc_center = gt_types::mercator::normalize(
-            Latitude::new(center_ll.y()),
-            Longitude::new(center_ll.x()),
-        );
+        let merc_center =
+            mercator::normalize(Latitude::new(center_ll.y()), Longitude::new(center_ll.x()));
         Self {
             clip_center_x: clip_center.x as f64,
             clip_center_y: clip_center.y as f64,
@@ -78,7 +76,7 @@ impl MercTransform {
 
     /// Project a pre-computed normalised Mercator coordinate to a screen position.
     #[inline]
-    pub(crate) fn to_screen(&self, merc: gt_types::MercPoint) -> egui::Pos2 {
+    pub(crate) fn to_screen(&self, merc: MercPoint) -> egui::Pos2 {
         egui::pos2(
             (self.clip_center_x + (merc.x - self.merc_center.x) * self.total_px) as f32,
             (self.clip_center_y + (merc.y - self.merc_center.y) * self.total_px) as f32,
@@ -218,9 +216,10 @@ pub(crate) fn draw_cached_icon(
     }
 }
 
+use gt_types::mercator;
 use gt_types::{
     DataCategory, DataPointRef, EventMarkerVisibility, GlobalFilter, HighlightScope, Latitude,
-    LoadedFile, Longitude, MapHighlight, SpatialPoint, TrackDataVisibility,
+    LoadedFile, Longitude, MapHighlight, MercPoint, SpatialPoint, TrackDataVisibility,
 };
 use std::time::Instant;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
@@ -1032,6 +1031,32 @@ fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Rect) -> GeoB
 
 /// Center the map and set the zoom so the given bounding box fills ~80 % of the
 /// viewport. Respects walkers' valid zoom range [1, 18].
+fn zoom_to_fit(
+    map_memory: &mut MapMemory,
+    viewport: egui::Rect,
+    (min_lat, max_lat, min_lon, max_lon): (f64, f64, f64, f64),
+) {
+    let center_lat = (min_lat + max_lat) / 2.0;
+    let center_lon = (min_lon + max_lon) / 2.0;
+    map_memory.center_at(walkers::lat_lon(center_lat, center_lon));
+
+    let lat_range = (max_lat - min_lat).max(0.001);
+    let lon_range = (max_lon - min_lon).max(0.001);
+    let vw = viewport.width() as f64;
+    let vh = viewport.height() as f64;
+
+    // At zoom z the world is 256·2^z pixels wide (equatorial Mercator).
+    // Fill 80 % of the viewport with the bounding box:
+    //   lon_range · (256·2^z / 360) = vw · 0.8
+    //   → z = log2(vw · 0.8 · 360 / (256 · lon_range))
+    let z_lon = (vw * 0.8 * 360.0 / (256.0 * lon_range)).log2();
+    let z_lat = (vh * 0.8 * 360.0 / (256.0 * lat_range)).log2();
+    let zoom = z_lon.min(z_lat).clamp(1.0, 18.0);
+    // zoom is already clamped to [1, 18], so set_zoom can only fail if the
+    // walkers library's valid range narrows further — ignore silently.
+    let _ignored = map_memory.set_zoom(zoom);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1056,7 +1081,6 @@ mod tests {
             },
         );
         let n = points.len();
-        #[expect(clippy::cast_possible_truncation, reason = "test helper, n is small")]
         let trip = LoadedTrack {
             metadata: TrackMetadata {
                 index: 0,
@@ -1142,30 +1166,4 @@ mod tests {
             "spatial index has stale entries after file deletion"
         );
     }
-}
-
-fn zoom_to_fit(
-    map_memory: &mut MapMemory,
-    viewport: egui::Rect,
-    (min_lat, max_lat, min_lon, max_lon): (f64, f64, f64, f64),
-) {
-    let center_lat = (min_lat + max_lat) / 2.0;
-    let center_lon = (min_lon + max_lon) / 2.0;
-    map_memory.center_at(walkers::lat_lon(center_lat, center_lon));
-
-    let lat_range = (max_lat - min_lat).max(0.001);
-    let lon_range = (max_lon - min_lon).max(0.001);
-    let vw = viewport.width() as f64;
-    let vh = viewport.height() as f64;
-
-    // At zoom z the world is 256·2^z pixels wide (equatorial Mercator).
-    // Fill 80 % of the viewport with the bounding box:
-    //   lon_range · (256·2^z / 360) = vw · 0.8
-    //   → z = log2(vw · 0.8 · 360 / (256 · lon_range))
-    let z_lon = (vw * 0.8 * 360.0 / (256.0 * lon_range)).log2();
-    let z_lat = (vh * 0.8 * 360.0 / (256.0 * lat_range)).log2();
-    let zoom = z_lon.min(z_lat).clamp(1.0, 18.0);
-    // zoom is already clamped to [1, 18], so set_zoom can only fail if the
-    // walkers library's valid range narrows further — ignore silently.
-    let _ignored = map_memory.set_zoom(zoom);
 }

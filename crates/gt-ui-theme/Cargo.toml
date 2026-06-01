@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[lib]
+test = false
+doctest = false
+
 [dependencies]
 egui.workspace = true
 gt-types = { path = "../gt-types" }

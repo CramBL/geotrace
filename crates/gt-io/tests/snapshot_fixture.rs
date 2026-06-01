@@ -1,3 +1,16 @@
+#![expect(
+    clippy::expect_used,
+    reason = "test fixture helpers use expect() for setup invariants"
+)]
+#![expect(
+    clippy::indexing_slicing,
+    reason = "test fixture uses known-length arrays indexed within bounds"
+)]
+#![expect(
+    clippy::cognitive_complexity,
+    reason = "test fixture setup is inherently complex"
+)]
+
 /// Generates `tests/fixtures/snapshot.nvd` at the workspace root and verifies
 /// the structure produced by `gt_io::load_file`.
 ///

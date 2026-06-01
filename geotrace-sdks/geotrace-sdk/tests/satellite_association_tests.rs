@@ -3,12 +3,20 @@
 //! See `docs/satellite-association.md` for the authoritative description of
 //! what these tests are verifying.  Tests are grouped by the phase they target
 //! (Phase 1 = nearest-fix assignment; Phase 2 = ghost-fix creation for orphans).
+#![expect(
+    clippy::panic_in_result_fn,
+    reason = "test functions mix ? propagation with assert! — both are correct in test code"
+)]
+#![expect(
+    clippy::unwrap_in_result,
+    reason = "test code may use expect() for infallible test invariants"
+)]
 
 use geotrace_sdk::{Angle, DateTime, Duration, Utc};
 use geotrace_sdk::{BuildError, Constellation, NavFileBuilder, NavFix, Satellite, SatelliteReport};
 
 /// A fixed base epoch for all tests (2025-05-23 UTC, arbitrary but stable).
-#[expect(clippy::expect_used, reason = "fixed base timestamp is always valid")]
+#[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
 fn base() -> DateTime<Utc> {
     DateTime::from_timestamp(1_748_000_000, 0).expect("valid")
 }
@@ -53,6 +61,8 @@ fn report_with(offset_ms: i64, constellation: Constellation, prn: u32) -> Satell
 
 /// Extract the constellation of the first tracked satellite in `p`'s report.
 /// Panics if there is no report or no satellite — intended for assertions.
+#[expect(clippy::expect_used, reason = "test helper")]
+#[expect(clippy::indexing_slicing, reason = "test helper")]
 fn first_constellation(p: &geotrace_sdk::NavPoint) -> Constellation {
     p.satellites
         .as_ref()
@@ -184,8 +194,8 @@ fn four_reports_matched_to_four_fixes_no_ghosts() -> Result<(), BuildError> {
                 Constellation::Glonass,
                 Constellation::Galileo,
                 Constellation::Beidou,
-            ][i as usize],
-            i as u32 + 1,
+            ][usize::try_from(i).expect("fits")],
+            u32::try_from(i).expect("fits") + 1,
         ));
     }
 
@@ -365,10 +375,8 @@ fn three_reports_one_fix_only_closest_wins() -> Result<(), BuildError> {
     // Both losers became ghost fixes between A and B.
     // Verify by checking that GPS is only at index 0 and the remaining two
     // ghosts carry Glonass and Galileo in time order.
-    let ghost_constellations: Vec<Constellation> = points[1..=2]
-        .iter()
-        .map(|p| first_constellation(p))
-        .collect();
+    let ghost_constellations: Vec<Constellation> =
+        points[1..=2].iter().map(first_constellation).collect();
     assert!(
         ghost_constellations.contains(&Constellation::Glonass),
         "R2 (Glonass) must be a ghost"
@@ -747,7 +755,7 @@ fn no_filter_sys_time_only_with_large_gps_offset_are_associated() -> Result<(), 
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(Constellation::Gps)
-                        .prn(i as u32 + 1)
+                        .prn(u32::try_from(i).expect("fits") + 1)
                         .in_fix(true)
                         .build(),
                 ])
@@ -799,7 +807,7 @@ fn no_filter_1hz_all_sat_associated_with_large_gps_offset() -> Result<(), BuildE
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(Constellation::Gps)
-                        .prn(i as u32 + 1)
+                        .prn(u32::try_from(i).expect("fits") + 1)
                         .in_fix(true)
                         .build(),
                 ])
@@ -890,7 +898,7 @@ fn gps_ahead_600ms_sat_associates_to_own_fix_not_neighbor() -> Result<(), BuildE
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(constellation)
-                        .prn(i as u32 + 1)
+                        .prn(u32::try_from(i).expect("fits") + 1)
                         .in_fix(true)
                         .build(),
                 ])
@@ -955,7 +963,7 @@ fn gps_ahead_600ms_with_sat_logging_delay_no_off_by_one() -> Result<(), BuildErr
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(constellation)
-                        .prn(i as u32 + 1)
+                        .prn(u32::try_from(i).expect("fits") + 1)
                         .in_fix(true)
                         .build(),
                 ])
@@ -1153,7 +1161,7 @@ fn sys_time_direct_comparison_with_drifting_gps_offset() -> Result<(), BuildErro
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(constellation)
-                        .prn(i as u32 + 1)
+                        .prn(u32::try_from(i).expect("fits") + 1)
                         .in_fix(true)
                         .build(),
                 ])
@@ -1218,7 +1226,7 @@ fn sys_time_direct_comparison_drifting_offset_with_sat_delay() -> Result<(), Bui
                 .tracked(vec![
                     Satellite::builder()
                         .constellation(constellation)
-                        .prn(i as u32 + 1)
+                        .prn(u32::try_from(i).expect("fits") + 1)
                         .in_fix(true)
                         .build(),
                 ])

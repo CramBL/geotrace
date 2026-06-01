@@ -9,6 +9,9 @@ authors.workspace = true
 license = "MIT"
 readme = "README.md"
 
+[lib]
+test = false
+
 [dependencies]
 bon.workspace = true
 chrono.workspace = true

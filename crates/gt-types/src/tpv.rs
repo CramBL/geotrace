@@ -91,6 +91,10 @@ mod tests {
     use uom::si::velocity::meter_per_second;
 
     #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "testing exact bit-for-bit round-trip of stored f64"
+    )]
     fn test_builder_creates_valid_instance() {
         let dt = NaiveDateTime::new(
             NaiveDate::from_ymd_opt(2026, 5, 21).unwrap(),

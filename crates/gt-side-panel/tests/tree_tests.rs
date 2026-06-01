@@ -39,15 +39,11 @@ fn trip_check(tree: &TreeState, fi: usize, ti: usize) -> CheckState {
     tree.files
         .get(fi)
         .and_then(|f| f.tracks.get(ti))
-        .map(|t| t.check)
-        .unwrap_or(CheckState::Off)
+        .map_or(CheckState::Off, |t| t.check)
 }
 
 fn file_check(tree: &TreeState, fi: usize) -> CheckState {
-    tree.files
-        .get(fi)
-        .map(|f| f.check)
-        .unwrap_or(CheckState::Off)
+    tree.files.get(fi).map_or(CheckState::Off, |f| f.check)
 }
 
 fn event_path_check(tree: &TreeState, fi: usize, ti: usize, path: &str) -> CheckState {
@@ -176,9 +172,9 @@ fn apply_click_single_clears_previous_selection() {
         file: fi,
         trip: TrackIdx(1),
     });
-    tree.apply_click(trip0.clone(), false, false);
+    tree.apply_click(trip0, false, false);
     assert!(tree.selection.contains(&trip0));
-    tree.apply_click(trip1.clone(), false, false);
+    tree.apply_click(trip1, false, false);
     assert!(!tree.selection.contains(&trip0));
     assert!(tree.selection.contains(&trip1));
 }
@@ -196,8 +192,8 @@ fn apply_click_ctrl_adds_to_selection() {
         file: fi,
         trip: TrackIdx(1),
     });
-    tree.apply_click(trip0.clone(), false, false);
-    tree.apply_click(trip1.clone(), true, false);
+    tree.apply_click(trip0, false, false);
+    tree.apply_click(trip1, true, false);
     assert!(tree.selection.contains(&trip0));
     assert!(tree.selection.contains(&trip1));
 }
@@ -216,8 +212,8 @@ fn apply_click_shift_selects_range() {
         file: fi,
         trip: TrackIdx(2),
     });
-    tree.apply_click(file_key.clone(), false, false); // anchor = File(0)
-    tree.apply_click(trip2.clone(), false, true); // shift to Trip(2)
+    tree.apply_click(file_key, false, false); // anchor = File(0)
+    tree.apply_click(trip2, false, true); // shift to Trip(2)
     // Should select File, Trip(0), Trip(1), Trip(2)
     assert_eq!(tree.selection.len(), 4);
     assert!(tree.selection.contains(&file_key));

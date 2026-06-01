@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[lib]
+doctest = false
+
 [dependencies]
 geotrace-sdk = { path = "../../geotrace-sdks/geotrace-sdk" }
 gt-data-ops = { path = "../gt-data-ops" }

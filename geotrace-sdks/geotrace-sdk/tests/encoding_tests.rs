@@ -1,3 +1,12 @@
+#![expect(
+    clippy::panic_in_result_fn,
+    reason = "test functions mix ? propagation with assert! — both are correct in test code"
+)]
+#![expect(
+    clippy::unwrap_in_result,
+    reason = "test code may use expect() for infallible test invariants"
+)]
+
 use geotrace_sdk::{Angle, DateTime, Duration, Utc};
 use geotrace_sdk::{
     Annotation, Constellation, Error, MarkerIcon, NavFile, NavFileBuilder, NavFix, Satellite,
@@ -322,7 +331,6 @@ fn label_truncation() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn timestamp_precision() -> Result<(), Box<dyn std::error::Error>> {
     // Timestamps with sub-millisecond precision survive the round-trip.
-    #[expect(clippy::expect_used, reason = "valid known timestamp")]
     let t = DateTime::from_timestamp_micros(1_748_000_000_000_500).expect("valid");
 
     let mut sink = NavFileBuilder::new().open();
@@ -425,7 +433,6 @@ fn chunked_fixed_array_large_dataset_round_trips() -> Result<(), Box<dyn std::er
         .with_chunks(&[1])
         .with_deflate(6);
     fb.add_group(grp.finish());
-    #[expect(clippy::expect_used, reason = "test helper")]
     let bytes = fb.finish().expect("build");
 
     let file = hdf5_pure::File::from_bytes(bytes)?;

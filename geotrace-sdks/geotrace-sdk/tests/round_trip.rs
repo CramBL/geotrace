@@ -1,16 +1,21 @@
+#![expect(
+    clippy::panic_in_result_fn,
+    reason = "test functions mix ? propagation with assert! — both are correct in test code"
+)]
+#![expect(clippy::cognitive_complexity, reason = "comprehensive round-trip test")]
+
 use geotrace_sdk::{Angle, DateTime, Duration, Utc, Velocity};
 use geotrace_sdk::{
     Annotation, Constellation, MarkerIcon, NavFile, NavFileBuilder, NavFix, Satellite,
     SatelliteReport,
 };
 
+#[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
 fn base() -> DateTime<Utc> {
-    #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
-    let dt = DateTime::from_timestamp(1_748_000_000, 0).expect("valid timestamp");
-    dt
+    DateTime::from_timestamp(1_748_000_000, 0).expect("valid timestamp")
 }
 
-fn round_trip(nav_file: NavFile) -> Result<NavFile, geotrace_sdk::Error> {
+fn round_trip(nav_file: &NavFile) -> Result<NavFile, geotrace_sdk::Error> {
     let mut bytes = Vec::new();
     nav_file.write(&mut bytes)?;
     NavFile::read(bytes.as_slice())
@@ -77,7 +82,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let nav_file = sink.finish()?;
-    let rt = round_trip(nav_file)?;
+    let rt = round_trip(&nav_file)?;
 
     assert_eq!(rt.meta().title.as_deref(), Some("Test trace"));
     assert_eq!(rt.meta().device.as_deref(), Some("u-blox NEO-M9N"));
@@ -132,7 +137,7 @@ fn minimal() -> Result<(), Box<dyn std::error::Error>> {
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    let rt = round_trip(sink.finish()?)?;
+    let rt = round_trip(&sink.finish()?)?;
     assert_eq!(rt.nav_points().len(), 1);
     assert_eq!(rt.nav_points()[0].fix.speed, None);
     assert!(rt.nav_points()[0].satellites.is_none());
@@ -154,13 +159,13 @@ fn no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
                 .build(),
         );
     }
-    let rt = round_trip(sink.finish()?)?;
+    let rt = round_trip(&sink.finish()?)?;
     assert_eq!(rt.nav_points().len(), 3);
     assert!(rt.nav_points().iter().all(|p| p.satellites.is_none()));
 
     // Re-round-trip to confirm the absent groups survive another write/read cycle.
     let mut bytes = Vec::new();
-    round_trip(rt)?.write(&mut bytes)?;
+    round_trip(&rt)?.write(&mut bytes)?;
     Ok(())
 }
 
@@ -182,7 +187,7 @@ fn no_markers() -> Result<(), Box<dyn std::error::Error>> {
             .tracked(vec![])
             .build(),
     );
-    let rt = round_trip(sink.finish()?)?;
+    let rt = round_trip(&sink.finish()?)?;
     assert!(rt.markers().is_empty());
     assert!(rt.nav_points()[0].satellites.is_some());
     Ok(())
@@ -191,7 +196,7 @@ fn no_markers() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn empty_builder() -> Result<(), Box<dyn std::error::Error>> {
     let nav_file = NavFileBuilder::new().open().finish()?;
-    let rt = round_trip(nav_file)?;
+    let rt = round_trip(&nav_file)?;
     assert!(rt.nav_points().is_empty());
     assert!(rt.markers().is_empty());
     Ok(())
@@ -234,7 +239,7 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
     let nav_file = sink.finish()?;
     assert_eq!(nav_file.nav_points().len(), 50_000);
 
-    let rt = round_trip(nav_file)?;
+    let rt = round_trip(&nav_file)?;
     assert_eq!(rt.nav_points().len(), 50_000);
     assert_eq!(rt.markers().len(), 0);
 

@@ -1,11 +1,20 @@
+#![expect(
+    clippy::panic_in_result_fn,
+    reason = "test functions mix ? propagation with assert! — both are correct in test code"
+)]
+#![expect(
+    clippy::unwrap_in_result,
+    reason = "test code may use expect() for infallible test invariants"
+)]
+
 use geotrace_sdk::{Angle, DateTime, Duration, Utc, Velocity};
 use geotrace_sdk::{
     Annotation, Constellation, MarkerIcon, NavFile, NavFileBuilder, NavFix, Satellite,
     SatelliteReport,
 };
 
+#[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
 fn base() -> DateTime<Utc> {
-    #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
     DateTime::from_timestamp(1_748_000_000, 0).expect("valid")
 }
 
@@ -61,7 +70,6 @@ fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let nav_file = sink.finish()?;
-    #[expect(clippy::expect_used, reason = "test setup")]
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     nav_file.write(tmp.as_file())?;
 
@@ -84,7 +92,6 @@ fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn empty_file() -> Result<(), Box<dyn std::error::Error>> {
     let nav_file = NavFileBuilder::new().open().finish()?;
-    #[expect(clippy::expect_used, reason = "test setup")]
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     nav_file.write(tmp.as_file())?;
 
@@ -110,7 +117,6 @@ fn file_with_no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let nav_file = sink.finish()?;
-    #[expect(clippy::expect_used, reason = "test setup")]
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     nav_file.write(tmp.as_file())?;
 
@@ -137,7 +143,6 @@ fn file_with_no_markers() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let nav_file = sink.finish()?;
-    #[expect(clippy::expect_used, reason = "test setup")]
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     nav_file.write(tmp.as_file())?;
 

@@ -1,5 +1,4 @@
 use std::{
-    env, fs,
     sync::Arc,
     thread,
     time::{Duration as StdDuration, Instant},
@@ -60,20 +59,20 @@ fn step_until_loaded(harness: &mut Harness<App>) {
 #[test]
 fn drag_drop_nvd_path_loads_file() {
     let nvd_bytes = minimal_nvd_bytes();
-    let tmp = env::temp_dir().join("geotrace_test_drag_drop_path.nvd");
-    fs::write(&tmp, &nvd_bytes).expect("write temp nvd");
+    let tmp = tempfile::NamedTempFile::with_suffix(".nvd").expect("create temp file");
+    std::io::Write::write_all(&mut tmp.as_file(), &nvd_bytes).expect("write temp nvd");
+    let tmp_path = tmp.path().to_path_buf();
 
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(|cc| App::new(cc));
     harness.input_mut().dropped_files.push(egui::DroppedFile {
-        path: Some(tmp.clone()),
+        path: Some(tmp_path),
         ..Default::default()
     });
     harness.step(); // processes the drop, spawns load thread
     step_until_loaded(&mut harness); // waits for thread + drains channel
 
-    fs::remove_file(&tmp).ok();
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 1);
 }
 

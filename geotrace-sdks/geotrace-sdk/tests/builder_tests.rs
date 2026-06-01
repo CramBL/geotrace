@@ -1,3 +1,8 @@
+#![expect(
+    clippy::panic_in_result_fn,
+    reason = "test functions mix ? propagation with assert! — both are correct in test code"
+)]
+
 use geotrace_sdk::{Angle, DateTime, Duration, Utc, Velocity};
 use geotrace_sdk::{
     Annotation, BuildError, Constellation, NavFileBuilder, NavFix, Satellite, SatelliteReport,
@@ -611,7 +616,6 @@ fn unsorted_insertion() -> Result<(), BuildError> {
 }
 
 #[test]
-#[expect(clippy::float_cmp, reason = "exact round-trip")]
 fn speed_none_propagates() -> Result<(), BuildError> {
     let mut sink = NavFileBuilder::new().open();
     sink.add_nav_fix(
