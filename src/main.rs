@@ -21,7 +21,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "GeoTrace",
+        concat!("GeoTrace v", env!("CARGO_PKG_VERSION")),
         native_options,
         Box::new(move |cc| Ok(Box::new(app::App::new_with_files(cc, &initial_paths)))),
     )

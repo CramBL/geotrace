@@ -46,22 +46,23 @@ pub fn map_hover_color(dark_mode: bool) -> Color32 {
 
 // Track palette
 
-/// Vibrant colors assigned to trip tracks — chosen to stand out on both OSM
-/// and satellite map backgrounds. The palette cycles over (file_index, track_index)
-/// using a mixing function so adjacent trips get distinct colours.
+/// Blue/cyan palette assigned to trip tracks — chosen to stand out on both OSM
+/// and satellite map backgrounds without implying error or warning semantics.
+/// The palette cycles over (file_index, track_index) using a mixing function
+/// so adjacent trips get distinct shades.
 pub const TRACK_COLORS: [Color32; 12] = [
-    Color32::from_rgb(255, 85, 0),   // vivid orange
-    Color32::from_rgb(220, 20, 220), // magenta
-    Color32::from_rgb(0, 210, 100),  // lime green
-    Color32::from_rgb(30, 180, 255), // sky blue
-    Color32::from_rgb(255, 220, 0),  // bright yellow
-    Color32::from_rgb(255, 50, 110), // hot pink
-    Color32::from_rgb(0, 230, 230),  // cyan
-    Color32::from_rgb(200, 110, 0),  // amber
-    Color32::from_rgb(155, 30, 255), // purple
-    Color32::from_rgb(0, 255, 160),  // mint
-    Color32::from_rgb(255, 140, 30), // golden
-    Color32::from_rgb(80, 200, 255), // powder blue
+    Color32::from_rgb(30, 160, 255),  // vivid blue
+    Color32::from_rgb(0, 220, 220),   // cyan
+    Color32::from_rgb(80, 200, 255),  // powder blue
+    Color32::from_rgb(0, 180, 200),   // deep cyan
+    Color32::from_rgb(60, 120, 255),  // royal blue
+    Color32::from_rgb(0, 240, 180),   // cyan-green
+    Color32::from_rgb(120, 220, 255), // ice blue
+    Color32::from_rgb(0, 140, 255),   // azure
+    Color32::from_rgb(40, 200, 160),  // teal
+    Color32::from_rgb(160, 230, 255), // pale blue
+    Color32::from_rgb(0, 200, 130),   // seafoam
+    Color32::from_rgb(100, 180, 240), // cornflower
 ];
 
 /// Returns the track color for a (file_index, track_index) pair.

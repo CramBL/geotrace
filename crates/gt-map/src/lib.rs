@@ -125,6 +125,7 @@ pub(crate) const ICON_URI_REFRESH: &str = "bytes://gt-map/icons/refresh.svg";
 pub(crate) const ICON_URI_DOWNLOAD: &str = "bytes://gt-map/icons/download.svg";
 pub(crate) const ICON_URI_UPLOAD: &str = "bytes://gt-map/icons/upload.svg";
 pub(crate) const ICON_URI_WRENCH: &str = "bytes://gt-map/icons/wrench.svg";
+pub(crate) const ICON_URI_GHOST_FIX: &str = "bytes://gt-map/icons/ghost_fix.svg";
 
 /// Register the embedded SVG marker icons with the egui context.
 ///
@@ -179,6 +180,10 @@ pub fn register_marker_icons(ctx: &egui::Context) {
         ICON_URI_WRENCH,
         include_bytes!("icons/wrench.svg").as_slice(),
     );
+    ctx.include_bytes(
+        ICON_URI_GHOST_FIX,
+        include_bytes!("icons/ghost_fix.svg").as_slice(),
+    );
 }
 /// Draw an SVG marker icon at `rect`, with optional `tint`.
 ///
@@ -216,11 +221,65 @@ pub(crate) fn draw_cached_icon(
     }
 }
 
+/// Draw a rotated SVG icon centred on `center`, with the icon's "up" direction aligned to
+/// `direction`.
+///
+/// The icon is rendered as a rotated [`egui::epaint::Mesh`] quad so it can be oriented to any
+/// travel direction without re-rasterising the SVG. `size` is the half-extent: the quad spans
+/// `2*size × 2*size` pixels. The white SVG stroke is multiplied by `tint` at render time so a
+/// single texture serves all colours.
+pub(crate) fn draw_rotated_cached_icon(
+    ui: &egui::Ui,
+    uri: &'static str,
+    center: egui::Pos2,
+    direction: egui::Vec2,
+    size: f32,
+    tint: egui::Color32,
+) {
+    let cache_key = egui::Id::new(("gt_icon_tex", uri));
+    let tex_id = if let Some(id) = ui.ctx().data(|d| d.get_temp::<egui::TextureId>(cache_key)) {
+        id
+    } else if let Ok(egui::load::TexturePoll::Ready { texture }) = ui.ctx().try_load_texture(
+        uri,
+        egui::TextureOptions::LINEAR,
+        egui::load::SizeHint::default(),
+    ) {
+        ui.ctx().data_mut(|d| d.insert_temp(cache_key, texture.id));
+        texture.id
+    } else {
+        return;
+    };
+
+    // Rotate the four corners of a [-size, size]² quad so the SVG's "up" direction (0, −1)
+    // aligns with `direction`. Rotation matrix R where R*(0,−1) = (dx,dy):
+    //   R*[px, py] = (−px·dy − py·dx,  px·dx − py·dy)
+    let dx = direction.x;
+    let dy = direction.y;
+    let corner_offsets: [([f32; 2], egui::Pos2); 4] = [
+        ([-size, -size], egui::pos2(0.0, 0.0)), // top-left    → UV (0,0)
+        ([size, -size], egui::pos2(1.0, 0.0)),  // top-right   → UV (1,0)
+        ([size, size], egui::pos2(1.0, 1.0)),   // bottom-right → UV (1,1)
+        ([-size, size], egui::pos2(0.0, 1.0)),  // bottom-left → UV (0,1)
+    ];
+
+    let mut mesh = egui::epaint::Mesh::with_texture(tex_id);
+    for ([px, py], uv) in corner_offsets {
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos: center + egui::vec2(-px * dy - py * dx, px * dx - py * dy),
+            uv,
+            color: tint,
+        });
+    }
+    mesh.indices = vec![0, 1, 2, 0, 2, 3];
+    ui.painter().add(egui::Shape::Mesh(mesh.into()));
+}
+
 use gt_types::mercator;
 use gt_types::{
     DataCategory, DataPointRef, EventMarkerVisibility, GlobalFilter, HighlightScope, Latitude,
     LoadedFile, Longitude, MapHighlight, MercPoint, SpatialPoint, TrackDataVisibility,
 };
+use rstar::PointDistance as _;
 use std::time::Instant;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
 use walkers::{HttpTiles, Map, MapMemory};
@@ -584,13 +643,12 @@ impl NavMap {
                 let merc_y = transform.merc_y_from_screen(screen_pos.y);
                 let total_px = 2_f64.powf(self.map_memory.zoom()) * 256.0;
                 let threshold_merc_sq = (20.0_f64 / total_px).powi(2);
+                // Iterate from nearest outward, stopping once past the threshold.
+                // Skip invisible elements so hidden tracks cannot be hovered or clicked.
                 self.global_tree
-                    .nearest_neighbor([merc_x, merc_y])
-                    .filter(|sp| {
-                        let dx = sp.merc.x - merc_x;
-                        let dy = sp.merc.y - merc_y;
-                        dx * dx + dy * dy <= threshold_merc_sq
-                    })
+                    .nearest_neighbor_iter([merc_x, merc_y])
+                    .take_while(|sp| sp.distance_2(&[merc_x, merc_y]) <= threshold_merc_sq)
+                    .find(|sp| is_spatial_point_visible(sp, visibility))
                     .map(|sp| DataPointRef {
                         file_index: sp.file_index,
                         track_index: sp.track_index,
@@ -1029,6 +1087,33 @@ fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Rect) -> GeoB
     }
 }
 
+/// Returns `true` when a spatial point should participate in hover and click detection.
+///
+/// The renderers already suppress invisible elements from being drawn; this function
+/// ensures the hit-test layer applies the same rules so that hidden tracks cannot be
+/// accidentally hovered or clicked.
+fn is_spatial_point_visible(sp: &SpatialPoint, visibility: &TrackDataVisibility) -> bool {
+    let Some(file_vis) = visibility.files.get(sp.file_index.0) else {
+        return false;
+    };
+    if !file_vis.enabled {
+        return false;
+    }
+    let Some(trip_vis) = file_vis.tracks.get(sp.track_index.0) else {
+        return false;
+    };
+    if !trip_vis.enabled {
+        return false;
+    }
+    match sp.category {
+        DataCategory::Tpv => trip_vis.tpv_visible,
+        DataCategory::CustomMarker => trip_vis.custom_markers_visible,
+        DataCategory::GeneratedMarker => trip_vis.generated_markers_visible,
+        DataCategory::EventMarker => trip_vis.event_markers_visible,
+        DataCategory::Track | DataCategory::SatelliteReport => false,
+    }
+}
+
 /// Center the map and set the zoom so the given bounding box fills ~80 % of the
 /// viewport. Respects walkers' valid zoom range [1, 18].
 fn zoom_to_fit(
@@ -1062,8 +1147,9 @@ mod tests {
     use super::*;
     use gt_test_utils::nav_test_data;
     use gt_types::{
-        Coord, DataCategory, FileMetadata, LoadedFile, LoadedTrack, Rect, TimeRange, TrackMetadata,
-        merc_bounds_for_rect,
+        Coord, DataCategory, FileIdx, FileMetadata, FileVisibility, LoadedFile, LoadedTrack,
+        MercPoint, PointIdx, Rect, SpatialPoint, TimeRange, TrackIdx, TrackMetadata,
+        TrackVisibility, merc_bounds_for_rect,
     };
     use uom::si::f64::Length;
     use uom::si::length::{kilometer, meter};
@@ -1116,6 +1202,104 @@ mod tests {
                 "test_{n}.nvd"
             ))),
         }
+    }
+
+    fn tpv_spatial_point(fi: usize, ti: usize, pi: usize) -> SpatialPoint {
+        SpatialPoint {
+            merc: MercPoint { x: 0.5, y: 0.5 },
+            file_index: FileIdx(fi),
+            track_index: TrackIdx(ti),
+            point_index: PointIdx(pi),
+            category: DataCategory::Tpv,
+        }
+    }
+
+    fn vis_all_visible() -> TrackDataVisibility {
+        TrackDataVisibility {
+            files: vec![FileVisibility {
+                enabled: true,
+                tracks: vec![TrackVisibility::all_visible()],
+            }],
+        }
+    }
+
+    /// Regression test: a point in a visible track must be hoverable.
+    #[test]
+    fn visible_tpv_point_is_hoverable() {
+        let sp = tpv_spatial_point(0, 0, 0);
+        let vis = vis_all_visible();
+        assert!(is_spatial_point_visible(&sp, &vis));
+    }
+
+    /// Regression test: hiding the file must prevent hover on all its points.
+    #[test]
+    fn hidden_file_blocks_hover() {
+        let sp = tpv_spatial_point(0, 0, 0);
+        let mut vis = vis_all_visible();
+        vis.files[0].enabled = false;
+        assert!(!is_spatial_point_visible(&sp, &vis));
+    }
+
+    /// Regression test: hiding the track must prevent hover even when the file is visible.
+    #[test]
+    fn hidden_track_blocks_hover() {
+        let sp = tpv_spatial_point(0, 0, 0);
+        let mut vis = vis_all_visible();
+        vis.files[0].tracks[0].enabled = false;
+        assert!(!is_spatial_point_visible(&sp, &vis));
+    }
+
+    /// Regression test: turning off the TPV layer must prevent hover on TPV points.
+    #[test]
+    fn hidden_tpv_layer_blocks_hover() {
+        let sp = tpv_spatial_point(0, 0, 0);
+        let mut vis = vis_all_visible();
+        vis.files[0].tracks[0].tpv_visible = false;
+        assert!(!is_spatial_point_visible(&sp, &vis));
+    }
+
+    /// The hover must skip the hidden nearest point and return a visible one instead.
+    #[test]
+    fn hover_skips_hidden_nearest_and_finds_visible() {
+        // Two overlapping SpatialPoints in the same Mercator position.
+        // Track 0 is hidden; track 1 is visible.
+        let hidden = SpatialPoint {
+            merc: MercPoint { x: 0.5, y: 0.5 },
+            file_index: FileIdx(0),
+            track_index: TrackIdx(0),
+            point_index: PointIdx(0),
+            category: DataCategory::Tpv,
+        };
+        let visible = SpatialPoint {
+            merc: MercPoint { x: 0.5, y: 0.5 },
+            file_index: FileIdx(0),
+            track_index: TrackIdx(1),
+            point_index: PointIdx(0),
+            category: DataCategory::Tpv,
+        };
+        let tree = rstar::RTree::bulk_load(vec![hidden, visible]);
+        let vis = TrackDataVisibility {
+            files: vec![FileVisibility {
+                enabled: true,
+                tracks: vec![
+                    TrackVisibility {
+                        enabled: false,
+                        ..TrackVisibility::all_visible()
+                    },
+                    TrackVisibility::all_visible(),
+                ],
+            }],
+        };
+        let found = tree
+            .nearest_neighbor_iter([0.5_f64, 0.5_f64])
+            .take_while(|sp| sp.distance_2(&[0.5, 0.5]) <= f64::MAX)
+            .find(|sp| is_spatial_point_visible(sp, &vis));
+        assert!(found.is_some(), "should find the visible track");
+        assert_eq!(
+            found.unwrap().track_index,
+            TrackIdx(1),
+            "should return track 1, not the hidden track 0"
+        );
     }
 
     /// After deleting a file, the global spatial index must be rebuilt so that

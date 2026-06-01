@@ -267,7 +267,7 @@ impl App {
         }
         let mut open = self.settings_open;
         let mut apply = false;
-        egui::Window::new("Settings")
+        let window_resp = egui::Window::new("Settings")
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -333,6 +333,17 @@ impl App {
                     }
                 });
             });
+
+        // Close on ESC or click outside the window.
+        if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
+            open = false;
+        }
+        if let Some(resp) = window_resp
+            && resp.response.clicked_elsewhere()
+        {
+            open = false;
+        }
+
         self.settings_open = open;
         apply
     }

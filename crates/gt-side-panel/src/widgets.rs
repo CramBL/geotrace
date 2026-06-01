@@ -20,8 +20,8 @@ pub fn tri_checkbox(ui: &mut egui::Ui, state: CheckState) -> egui::Response {
         CheckState::Off => egui_phosphor::regular::SQUARE,
         CheckState::Mixed => egui_phosphor::regular::MINUS_SQUARE,
     };
-    let icon_size = ui.spacing().icon_width;
-    let side = ui.spacing().interact_size.y;
+    let icon_size = ui.spacing().icon_width + 4.0;
+    let side = ui.spacing().interact_size.y + 4.0;
     ui.add(
         egui::Button::new(egui::RichText::new(icon).size(icon_size))
             .frame(false)

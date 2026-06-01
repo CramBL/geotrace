@@ -1,5 +1,5 @@
 use egui::epaint::{PathShape, PathStroke};
-use egui::{Color32, PopupAnchor, Pos2, Response, Stroke, Ui};
+use egui::{Color32, PopupAnchor, Pos2, Response, Stroke, Ui, Vec2};
 use gt_types::filter;
 use gt_types::satellites::Constellation;
 use gt_types::{
@@ -91,6 +91,10 @@ impl<'a> TpvRenderer<'a> {
                 let Some(h) = point.tpv.heading() else {
                     continue;
                 };
+                // Fix-lost points (0 satellites in fix) are drawn by the ghost loop.
+                if is_ghost_fix(point) {
+                    continue;
+                }
                 let screen_pos = transform.to_screen(point.merc);
                 let point_ref = DataPointRef {
                     file_index: fi,
@@ -121,10 +125,12 @@ impl<'a> TpvRenderer<'a> {
             }
         }
 
-        // Ghost fixes (heading == None): position pre-computed at load time
-        // in `precompute_ghost_positions`; merc already holds the interpolated coordinates.
+        // Ghost fixes: heading absent, or satellite fix count dropped to zero.
+        // The latter covers devices that continue outputting positions and headings
+        // during fix loss — the heading field is present but unreliable as a
+        // "real" direction indicator, so we still show a hollow chevron.
         for (pi, point) in track.points.iter().enumerate() {
-            if point.tpv.heading().is_some() {
+            if !is_ghost_fix(point) {
                 continue;
             }
             if !filter::point_passes_time_filter(point.tpv.time().utc(), self.filter) {
@@ -134,6 +140,22 @@ impl<'a> TpvRenderer<'a> {
             if !view_rect.contains(screen_pos) {
                 continue;
             }
+            // Direction for the chevron:
+            // - If the GPS reported a heading (fix-lost but device maintained estimate),
+            //   use it — it is more accurate than deriving from neighbour positions.
+            // - Otherwise derive from neighbouring Mercator positions (Mercator y
+            //   increases southward, matching egui y-down, so no Y-flip needed).
+            let direction = if let Some(h) = point.tpv.heading() {
+                let angle_rad = h.get::<radian>() - std::f64::consts::FRAC_PI_2;
+                egui::vec2(angle_rad.cos() as f32, angle_rad.sin() as f32)
+            } else {
+                let merc_prev = pi
+                    .checked_sub(1)
+                    .and_then(|i| track.points.get(i))
+                    .map_or(point.merc, |p| p.merc);
+                let merc_next = track.points.get(pi + 1).map_or(point.merc, |p| p.merc);
+                ghost_direction(merc_prev, merc_next)
+            };
             let point_ref = DataPointRef {
                 file_index: fi,
                 track_index: ti,
@@ -143,7 +165,7 @@ impl<'a> TpvRenderer<'a> {
             draw_tpv_point(
                 ui,
                 screen_pos,
-                &PointKind::Ghost,
+                &PointKind::Ghost { direction },
                 None,
                 0.0,
                 None,
@@ -205,7 +227,6 @@ impl Plugin for TpvRenderer<'_> {
         let size_factor = ((zoom - 12.0) / 6.0).clamp(0.0, 1.0) as f32;
         let style = TpvDrawStyle {
             base_arrow_size: 3.0 + size_factor * 9.0, // 3 px at zoom ≤ 12, 12 px at zoom ≥ 18
-            base_ghost_radius: 2.0 + size_factor * 4.0, // 2 px at zoom ≤ 12,  6 px at zoom ≥ 18
             // Require more pixel separation between satellite-count labels when
             // zoomed out so the label count doesn't explode at dense clusters.
             min_label_dist: 60.0 + (1.0 - size_factor) * 120.0, // 180 px at low zoom, 60 at high
@@ -651,7 +672,6 @@ fn seen_count_color(count: u32) -> Color32 {
 struct TpvDrawStyle {
     outline_alpha: f32,
     base_arrow_size: f32,
-    base_ghost_radius: f32,
     min_label_dist: f32,
 }
 
@@ -706,14 +726,13 @@ fn draw_tpv_point(
                 style.base_arrow_size,
             );
         }
-        PointKind::Ghost => {
-            draw_ghost_circle(
+        PointKind::Ghost { direction } => {
+            draw_ghost_chevron(
                 ui,
                 screen_pos,
-                Color32::from_rgb(219, 68, 55),
+                *direction,
                 highlighted,
-                style.outline_alpha,
-                style.base_ghost_radius,
+                style.base_arrow_size,
             );
         }
     }
@@ -753,8 +772,8 @@ fn draw_tpv_point(
 /// - **Yellow** — marginal fix (1–9 satellites in fix).
 /// - **Red** — fix lost: satellite report present but zero satellites are in the fix.
 ///
-/// Ghost/interpolated points (heading == `None`) are a separate visual category
-/// rendered as red circles by `draw_ghost_circle`; they never reach this function.
+/// Ghost fixes (no heading, or fix count zero) are rendered as red hollow chevrons
+/// by `draw_ghost_chevron` and never reach this function.
 fn tpv_point_color(point: &NavPoint) -> Color32 {
     match &point.satellites {
         None => Color32::from_rgb(66, 133, 244), // no satellite data — assume fine, show blue
@@ -771,43 +790,60 @@ fn tpv_point_color(point: &NavPoint) -> Color32 {
 enum PointKind {
     /// Real GPS fix — heading known, precomputed Mercator coordinates used.
     Real { color: Color32, heading: Angle },
-    /// Ghost/synthetic fix — heading absent, position interpolated from neighbours.
-    Ghost,
+    /// Ghost fix — either heading is absent, or the satellite fix count is zero.
+    ///
+    /// `direction` is a normalised screen-space vector pointing in the inferred
+    /// travel direction. When the GPS reported a heading it is converted directly;
+    /// otherwise it is derived from the surrounding fixes' Mercator positions.
+    Ghost { direction: Vec2 },
 }
 
-/// Render a hollow circle for ghost/extrapolated fixes with no known heading.
-fn draw_ghost_circle(
-    ui: &Ui,
-    center: Pos2,
-    color: Color32,
-    highlighted: bool,
-    outline_alpha: f32,
-    base_radius: f32,
-) {
-    let radius = if highlighted {
-        base_radius + 2.0
+/// Returns `true` when a point should be rendered as a ghost hollow chevron rather than a
+/// filled navigation arrow.
+///
+/// Two cases qualify:
+/// - No heading from the GPS receiver (position only, direction entirely unknown).
+/// - Satellite fix count dropped to zero: the GPS may still output position and heading
+///   estimates, but those are internal dead-reckoning guesses, not real fixes. We want
+///   the icon to signal this clearly rather than pretending it is a normal arrow.
+fn is_ghost_fix(point: &NavPoint) -> bool {
+    point.tpv.heading().is_none()
+        || point
+            .satellites
+            .as_ref()
+            .is_some_and(|s| s.fix_count() == 0)
+}
+
+/// Compute the travel direction for a ghost fix from its neighbouring Mercator positions.
+///
+/// Mercator y increases southward, so dx/dy map directly to egui screen space without
+/// a Y-flip. Falls back to [`Vec2::DOWN`] when both neighbours coincide (isolated point).
+fn ghost_direction(prev: gt_types::MercPoint, next: gt_types::MercPoint) -> Vec2 {
+    let raw = egui::vec2((next.x - prev.x) as f32, (next.y - prev.y) as f32);
+    if raw.length_sq() > 1e-12 {
+        raw.normalized()
     } else {
-        base_radius
+        Vec2::DOWN
+    }
+}
+
+/// Render a hollow chevron for a ghost fix using the pre-loaded SVG texture.
+///
+/// The chevron tip points in `direction` (the inferred travel direction).
+/// The icon is rendered as a rotated mesh quad so a single SVG asset handles
+/// all orientations without re-rasterising.
+fn draw_ghost_chevron(ui: &Ui, center: Pos2, direction: Vec2, highlighted: bool, base_size: f32) {
+    let size = if highlighted {
+        base_size + 3.0
+    } else {
+        base_size
     };
-    let stroke_color = if highlighted {
+    let tint = if highlighted {
         Color32::from_rgb(100, 200, 255)
     } else {
-        // Fade out the white outline as we zoom out to avoid a white-mass effect.
-        Color32::from_rgba_unmultiplied(255, 255, 255, alpha_u8(outline_alpha))
+        Color32::from_rgb(219, 68, 55)
     };
-    let stroke_width = if highlighted {
-        2.0
-    } else {
-        1.5 * outline_alpha
-    };
-    if stroke_width > 0.0 {
-        ui.painter()
-            .circle_stroke(center, radius, Stroke::new(stroke_width, stroke_color));
-    }
-    // Inner dot scales with the outer radius so the circle doesn't look hollow
-    // at very small sizes.
-    let dot_radius = (base_radius * 0.4).max(1.0);
-    ui.painter().circle_filled(center, dot_radius, color);
+    crate::draw_rotated_cached_icon(ui, crate::ICON_URI_GHOST_FIX, center, direction, size, tint);
 }
 
 fn draw_navigation_arrow(
@@ -899,6 +935,7 @@ fn alpha_u8(alpha: f32) -> u8 {
 mod tests {
     use super::*;
     use egui::Color32;
+    use gt_types::MercPoint;
     use gt_types::NavPoint;
     use gt_types::coordinates::{Latitude, Longitude};
     use gt_types::satellites::{Constellation, Satellite, Satellites};
@@ -922,6 +959,23 @@ mod tests {
             .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, prn <= fix_count))
             .collect();
         Satellites::new(None, None, satellites)
+    }
+
+    fn make_tpv(lat: f64, lon: f64, heading: Option<f64>) -> TimePositionVelocity {
+        if let Some(h) = heading {
+            TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(chrono::Utc::now()))
+                .lat(Latitude::new(lat))
+                .lon(Longitude::new(lon))
+                .heading(Angle::new::<degree>(h))
+                .build()
+        } else {
+            TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(chrono::Utc::now()))
+                .lat(Latitude::new(lat))
+                .lon(Longitude::new(lon))
+                .build()
+        }
     }
 
     /// No satellite report → blue (unknown quality, assume fine).
@@ -957,5 +1011,89 @@ mod tests {
     fn color_fix_lost_is_red() {
         let point = make_point(Some(sats_with_fix(0)));
         assert_eq!(tpv_point_color(&point), Color32::from_rgb(219, 68, 55));
+    }
+
+    /// A point with no heading → classified as ghost (hollow chevron).
+    #[test]
+    fn no_heading_is_ghost() {
+        let tpv = make_tpv(51.5, -0.1, None);
+        let point = NavPoint::new(tpv, None);
+        assert!(is_ghost_fix(&point));
+    }
+
+    /// A point with heading and no satellite report → classified as Real (blue arrow).
+    #[test]
+    fn heading_no_satellite_report_is_real() {
+        let tpv = make_tpv(51.5, -0.1, Some(90.0));
+        let point = NavPoint::new(tpv, None);
+        assert!(!is_ghost_fix(&point));
+    }
+
+    /// Fix count > 0 with heading → classified as Real (filled arrow, good fix).
+    ///
+    /// Dead reckoning or any device that supplies heading during a genuine fix
+    /// is rendered as a filled arrow.
+    #[test]
+    fn heading_with_good_fix_is_real() {
+        let tpv = make_tpv(51.5, -0.1, Some(225.0));
+        let point = NavPoint::new(tpv, Some(sats_with_fix(5)));
+        assert!(!is_ghost_fix(&point));
+    }
+
+    /// Fix count == 0 → ghost even when heading is present.
+    ///
+    /// This is the common case for devices that continue outputting heading
+    /// estimates after fix loss. Without any satellite in the fix, the heading
+    /// is an internal guess and the icon should clearly signal uncertainty.
+    #[test]
+    fn heading_with_fix_lost_is_ghost() {
+        let tpv = make_tpv(51.5, -0.1, Some(180.0));
+        let point = NavPoint::new(tpv, Some(sats_with_fix(0)));
+        assert!(is_ghost_fix(&point));
+    }
+
+    /// Ghost chevron points east when the surrounding fixes move eastward.
+    #[test]
+    fn ghost_direction_points_east_for_eastward_movement() {
+        let prev = MercPoint { x: 0.50, y: 0.50 };
+        let next = MercPoint { x: 0.60, y: 0.50 };
+        let dir = ghost_direction(prev, next);
+        assert!(
+            dir.x > 0.99,
+            "eastward movement → large positive x; got {dir:?}"
+        );
+        assert!(
+            dir.y.abs() < 0.01,
+            "eastward movement → near-zero y; got {dir:?}"
+        );
+    }
+
+    /// Ghost chevron points south when the surrounding fixes move southward.
+    /// Mercator y increases southward, so this also tests that no Y-flip is applied.
+    #[test]
+    fn ghost_direction_points_south_for_southward_movement() {
+        let prev = MercPoint { x: 0.50, y: 0.40 };
+        let next = MercPoint { x: 0.50, y: 0.60 };
+        let dir = ghost_direction(prev, next);
+        assert!(
+            dir.y > 0.99,
+            "southward movement → large positive y; got {dir:?}"
+        );
+        assert!(
+            dir.x.abs() < 0.01,
+            "southward movement → near-zero x; got {dir:?}"
+        );
+    }
+
+    /// When prev and next coincide (isolated point) the direction falls back to DOWN.
+    #[test]
+    fn ghost_direction_falls_back_when_neighbours_coincide() {
+        let pt = MercPoint { x: 0.5, y: 0.5 };
+        let dir = ghost_direction(pt, pt);
+        assert_eq!(
+            dir,
+            Vec2::DOWN,
+            "coincident neighbours → fallback direction DOWN"
+        );
     }
 }

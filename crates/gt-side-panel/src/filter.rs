@@ -80,13 +80,16 @@ pub fn render_filter_panel(
         .num_columns(3)
         .spacing([6.0, 4.0])
         .show(ui, |ui| {
-            ui.label("Min dist");
+            ui.label(format!(
+                "{} Min dist",
+                egui_phosphor::regular::ARROWS_OUT_SIMPLE
+            ));
             let dist =
                 ui.add(egui::TextEdit::singleline(&mut state.distance_input).desired_width(60.0));
             ui.label("km");
             ui.end_row();
 
-            ui.label("Min dur");
+            ui.label(format!("{} Min dur", egui_phosphor::regular::CLOCK));
             let dur = ui.add(
                 egui::TextEdit::singleline(&mut state.duration_input)
                     .desired_width(60.0)
@@ -95,7 +98,10 @@ pub fn render_filter_panel(
             ui.label(""); // no unit for duration
             ui.end_row();
 
-            ui.label("Min spread");
+            ui.label(format!(
+                "{} Min spread",
+                egui_phosphor::regular::BOUNDING_BOX
+            ));
             let spread =
                 ui.add(egui::TextEdit::singleline(&mut state.spread_input).desired_width(60.0));
             ui.label("m");
@@ -155,7 +161,13 @@ pub fn render_filter_panel(
         }
     });
 
-    if ui.small_button("Reset filters").clicked() {
+    if ui
+        .small_button(format!(
+            "{} Reset filters",
+            egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
+        ))
+        .clicked()
+    {
         *filter = GlobalFilter::default();
         *state = FilterPanelState::default();
     }
