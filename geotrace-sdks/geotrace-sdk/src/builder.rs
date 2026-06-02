@@ -1029,7 +1029,7 @@ struct SatelliteIssues {
     gal_out_of_range: u32,
     /// BeiDou satellites with PRN > 63 (valid range is C01–C63).
     bds_out_of_range: u32,
-    /// Satellites with elevation < 0° (briefly possible during acquisition, not for storage).
+    /// Satellites with elevation < 0° — below the horizon, outside the valid NMEA range [0°, 90°].
     elevation_negative: u32,
     /// Satellites with elevation > 90° — above the zenith, outside the valid NMEA range [0°, 90°].
     elevation_above_90: u32,
@@ -1057,8 +1057,8 @@ impl SatelliteIssues {
         if self.gps_sbas_range > 0 {
             v.push(format!(
                 "{} GPS satellite(s) with PRN 33–64: this range is reserved for SBAS \
-                 (WAAS, EGNOS, MSAS, GAGAN). If these are SBAS satellites, tag them with the GPS \
-                 constellation; note that SBAS is not yet a distinct constellation in this SDK.",
+                 (WAAS, EGNOS, MSAS, GAGAN) per NMEA. If these are SBAS satellites, tag them \
+                 with the GPS constellation; SBAS is treated as a GPS PRN range in the data model.",
                 self.gps_sbas_range
             ));
         }
@@ -1072,8 +1072,8 @@ impl SatelliteIssues {
         if self.glo_offset_range > 0 {
             v.push(format!(
                 "{} GLONASS satellite(s) with PRN 65–96 — looks like an un-stripped NMEA 4.11 \
-                 GNGSV system-PRN (slot + 64). The SDK expects slot numbers 1–32; subtract 64 \
-                 before calling add_satellite_report().",
+                 GNGSV system-PRN (slot + 64). The expected format is slot numbers 1–32; \
+                 subtract 64 before reporting.",
                 self.glo_offset_range
             ));
         }
@@ -1098,8 +1098,7 @@ impl SatelliteIssues {
         }
         if self.elevation_negative > 0 {
             v.push(format!(
-                "{} satellite(s) with negative elevation — briefly valid during signal \
-                 acquisition but should not appear in stored data",
+                "{} satellite(s) with negative elevation — below the horizon, outside the valid NMEA range [0°, 90°]",
                 self.elevation_negative
             ));
         }
@@ -1117,8 +1116,8 @@ impl SatelliteIssues {
         }
         if self.snr_sentinel_99 > 0 {
             v.push(format!(
-                "{} satellite(s) with SNR ≈ 99 dB-Hz — common firmware sentinel for 'no data'; \
-                 pass `None` for unavailable SNR instead",
+                "{} satellite(s) with SNR ≈ 99 dB-Hz — common sentinel value for unavailable \
+                 signal strength; omit the SNR field when no measurement is available",
                 self.snr_sentinel_99
             ));
         }

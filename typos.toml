@@ -1,3 +1,5 @@
 [default.extend-words]
 # Level of Detail — standard graphics acronym, not a misspelling of "LOAD"
 LOD = "LOD"
+# Wide Area Augmentation System — SBAS network operated by the FAA
+WAAS = "WAAS"

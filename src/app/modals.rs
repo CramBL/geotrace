@@ -5,6 +5,7 @@ use gt_map::{MapLayer, NavMap};
 use gt_side_panel::{NodeKey, TreeState};
 use gt_types::LoadedFile;
 use gt_types::TrackRef;
+use gt_ui_theme::WARNING_AMBER;
 
 /// Show the delete-confirmation dialog.
 ///
@@ -225,6 +226,50 @@ pub fn show_orphaned_event_markers_popup(
         });
     if dismiss {
         *markers = None;
+    }
+}
+
+pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<String>)>) {
+    let Some((filename, warnings)) = popup else {
+        return;
+    };
+    let enter_pressed = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let escape_pressed = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    let mut dismiss = enter_pressed || escape_pressed;
+
+    egui::Window::new("Data quality warnings")
+        .collapsible(false)
+        .resizable(true)
+        .min_width(480.0)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ui.ctx(), |ui| {
+            ui.label(egui::RichText::new(filename.as_str()).strong());
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .max_height(400.0)
+                .show(ui, |ui| {
+                    for w in warnings.iter() {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(egui_phosphor::regular::WARNING)
+                                    .color(WARNING_AMBER),
+                            );
+                            ui.label(w);
+                        });
+                    }
+                });
+            ui.separator();
+            if ui.button("Dismiss").clicked() {
+                dismiss = true;
+            }
+        });
+
+    if dismiss {
+        *popup = None;
     }
 }
 

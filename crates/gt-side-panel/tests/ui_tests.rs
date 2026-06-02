@@ -11,6 +11,7 @@ struct State {
     map_center: Option<(f64, f64)>,
     popup_pos: Option<egui::Pos2>,
     zoom_to_visible: bool,
+    warnings_request: Option<(String, Vec<String>)>,
 }
 
 fn make_state(file_count: usize) -> State {
@@ -54,6 +55,7 @@ fn make_state_with_warnings_on(
         map_center: None,
         popup_pos: None,
         zoom_to_visible: false,
+        warnings_request: None,
     }
 }
 
@@ -72,6 +74,7 @@ fn make_harness(state: State) -> Harness<'static, State> {
                     map_center_request: &mut s.map_center,
                     popup_pos_request: &mut s.popup_pos,
                     zoom_to_visible_request: &mut s.zoom_to_visible,
+                    warnings_request: &mut s.warnings_request,
                 };
                 show_side_panel(ui, &mut ctx);
             },

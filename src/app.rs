@@ -19,8 +19,8 @@ use gt_types::{
 use loader::{CompletedLoad, FinishedJob, LoadOutcome, LoaderManager};
 
 use modals::{
-    show_delete_confirmation, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
-    show_unassociated_popup,
+    show_delete_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
+    show_orphaned_event_markers_popup, show_unassociated_popup,
 };
 
 /// Pane variants for the central area tiles tree.
@@ -45,6 +45,8 @@ struct SharedAppState {
     /// When `true`, the plot automatically pans to show the time range of TPV
     /// points visible in the current map viewport.
     sync_plot_to_map: bool,
+    /// Filename and warnings for the currently open data quality warnings dialog, if any.
+    warnings_popup: Option<(String, Vec<String>)>,
 }
 
 pub struct App {
@@ -145,6 +147,7 @@ impl App {
                 popup_pos_request: None,
                 zoom_to_visible_request: false,
                 sync_plot_to_map: true,
+                warnings_popup: None,
             })),
             load_error: None,
             unassociated_log_lines: None,
@@ -271,61 +274,67 @@ impl App {
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
-            .min_width(320.0)
+            .min_width(360.0)
             .show(ui.ctx(), |ui| {
-                ui.strong("Data Processing");
-                ui.separator();
                 ui.horizontal(|ui| {
-                    ui.label("Track split gap").on_hover_text(
-                        "Consecutive GPS points separated by more than this gap start a new \
-                             track. For example, with a gap of 5 min, two fixes at 10:00 \
-                             and 10:06 would be split into separate tracks.",
-                    );
-                    let mut gap_secs = self
-                        .processing_config
-                        .track_split_gap
-                        .to_std()
-                        .map_or(300, |d| d.as_secs().clamp(30, 3600));
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut gap_secs)
-                                .range(30_u64..=3600_u64)
-                                .suffix("s"),
-                        )
-                        .changed()
-                    {
+                    ui.label(egui_phosphor::regular::SLIDERS_HORIZONTAL);
+                    ui.strong("Processing");
+                });
+                ui.separator();
+                egui::Grid::new("settings_grid")
+                    .num_columns(2)
+                    .spacing([8.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label(format!(
+                            "{} Track split gap",
+                            egui_phosphor::regular::SCISSORS
+                        ))
+                        .on_hover_text(
+                            "Consecutive GPS points separated by more than this gap \
+                             start a new track. For example, with a gap of 5 min, two \
+                             fixes at 10:00 and 10:06 would be split into separate tracks.",
+                        );
+                        let mut gap_secs = self
+                            .processing_config
+                            .track_split_gap
+                            .to_std()
+                            .map_or(300, |d| d.as_secs());
+                        ui.horizontal(|ui| {
+                            compound_duration_input(ui, &mut gap_secs, 30, 7 * 86400, true, true);
+                        });
                         self.processing_config.track_split_gap =
                             chrono::Duration::seconds(gap_secs as i64);
-                    }
-                    ui.weak(format!("({:.0} min)", gap_secs as f32 / 60.0));
-                });
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.label("Log marker window").on_hover_text(
-                        "Maximum time between a log file entry's timestamp and the nearest \
-                             GPS fix for the entry to be placed on the map. For example, with a \
-                             window of 60 s, a log line timestamped at 10:00:30 can be associated \
-                             with a GPS fix from 10:00:00 — but not one from 09:59:00.",
-                    );
-                    let mut window_s = self.assoc_config.log_marker_window_s.clamp(1, 3600);
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut window_s)
-                                .range(1_u64..=3600_u64)
-                                .suffix("s"),
-                        )
-                        .changed()
-                    {
+                        ui.end_row();
+
+                        ui.label(format!(
+                            "{} Log marker window",
+                            egui_phosphor::regular::ARROWS_IN_LINE_HORIZONTAL
+                        ))
+                        .on_hover_text(
+                            "Maximum time between a log entry's timestamp and the nearest \
+                             GPS fix for the entry to be placed on the map. For example, \
+                             with a window of 60 s, a log line at 10:00:30 can associate \
+                             with a fix from 10:00:00 — but not one from 09:59:00.",
+                        );
+                        let mut window_s = self.assoc_config.log_marker_window_s.clamp(1, 3600);
+                        ui.horizontal(|ui| {
+                            compound_duration_input(ui, &mut window_s, 1, 3600, false, false);
+                        });
                         self.assoc_config.log_marker_window_s = window_s;
-                    }
-                    ui.weak(format!("({:.0} min)", window_s as f32 / 60.0));
-                });
+                        ui.end_row();
+                    });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Apply to loaded data").clicked() {
+                    let apply_label =
+                        format!("{} Apply to loaded data", egui_phosphor::regular::CHECK);
+                    if ui.button(apply_label).clicked() {
                         apply = true;
                     }
-                    if ui.button("Restore Defaults").clicked() {
+                    let reset_label = format!(
+                        "{} Restore Defaults",
+                        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
+                    );
+                    if ui.button(reset_label).clicked() {
                         let defaults = crate::settings::ProcessingSettings::default();
                         self.processing_config.track_split_gap =
                             chrono::Duration::seconds(defaults.track_split_gap_seconds as i64);
@@ -796,6 +805,7 @@ impl eframe::App for App {
                             map_center_request: &mut s.map_center_request,
                             popup_pos_request: &mut s.popup_pos_request,
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
+                            warnings_request: &mut s.warnings_popup,
                         },
                     );
                 });
@@ -827,6 +837,7 @@ impl eframe::App for App {
                             map_center_request: &mut s.map_center_request,
                             popup_pos_request: &mut s.popup_pos_request,
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
+                            warnings_request: &mut s.warnings_popup,
                         },
                     );
                 });
@@ -1002,6 +1013,7 @@ impl eframe::App for App {
 
         show_unassociated_popup(ui, &mut self.unassociated_log_lines);
         show_orphaned_event_markers_popup(ui, &mut self.orphaned_event_markers);
+        show_load_warnings_dialog(ui, &mut self.shared.borrow_mut().warnings_popup);
 
         // Detect settings changes and trigger a debounced write-through.
         let snapshot = self.collect_snapshot();
@@ -1155,6 +1167,64 @@ fn theme_pref_from_setting(s: crate::settings::ThemeSetting) -> egui::ThemePrefe
         crate::settings::ThemeSetting::System => egui::ThemePreference::System,
         crate::settings::ThemeSetting::Light => egui::ThemePreference::Light,
         crate::settings::ThemeSetting::Dark => egui::ThemePreference::Dark,
+    }
+}
+
+/// Renders compound duration fields (e.g. `[0d] [9h] [30m] [0s]`).
+///
+/// `show_days` controls whether the days field is included.
+/// `show_hours` controls whether the hours field is included.
+/// Each component is independent; the total is clamped to `[min_secs, max_secs]`.
+fn compound_duration_input(
+    ui: &mut egui::Ui,
+    value_secs: &mut u64,
+    min_secs: u64,
+    max_secs: u64,
+    show_days: bool,
+    show_hours: bool,
+) {
+    let mut remaining = *value_secs;
+    let mut d = if show_days {
+        let v = remaining / 86400;
+        remaining %= 86400;
+        v
+    } else {
+        0
+    };
+    let mut h = if show_hours {
+        let v = remaining / 3600;
+        remaining %= 3600;
+        v
+    } else {
+        0
+    };
+    let mut m = remaining / 60;
+    let mut s = remaining % 60;
+
+    let max_d = max_secs / 86400;
+    let max_m = if show_hours { 59 } else { max_secs / 60 };
+
+    let mut changed = false;
+    if show_days {
+        changed |= ui
+            .add(egui::DragValue::new(&mut d).range(0..=max_d).suffix("d"))
+            .changed();
+    }
+    if show_hours {
+        changed |= ui
+            .add(egui::DragValue::new(&mut h).range(0..=23).suffix("h"))
+            .changed();
+    }
+    changed |= ui
+        .add(egui::DragValue::new(&mut m).range(0..=max_m).suffix("m"))
+        .changed();
+    changed |= ui
+        .add(egui::DragValue::new(&mut s).range(0..=59).suffix("s"))
+        .changed();
+
+    if changed {
+        let total = d * 86400 + h * 3600 + m * 60 + s;
+        *value_secs = total.clamp(min_secs, max_secs);
     }
 }
 

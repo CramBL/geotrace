@@ -238,3 +238,25 @@ fn snapshot_settings_window() {
     harness.run();
     harness.snapshot("settings_window");
 }
+
+#[test]
+fn snapshot_load_warnings_dialog() {
+    if skip_snapshot_on_ci() {
+        return;
+    }
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .with_size(egui::vec2(1024.0, 768.0))
+        .build_eframe(|cc| App::new(cc));
+    harness.step();
+    harness.state().shared.borrow_mut().warnings_popup = Some((
+        "ride_2025-05-23.nvd".to_owned(),
+        vec![
+            "3 satellite(s) with PRN 0 — PRN 0 is reserved and undefined in NMEA".to_owned(),
+            "2 satellite(s) with elevation > 90° — above the zenith, outside the valid NMEA range [0°, 90°]".to_owned(),
+            "5 satellite(s) with SNR ≈ 99 dB-Hz — common sentinel value for unavailable signal strength; omit the SNR field when no measurement is available".to_owned(),
+        ],
+    ));
+    harness.run();
+    harness.snapshot("load_warnings_dialog");
+}

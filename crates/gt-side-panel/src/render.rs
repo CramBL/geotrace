@@ -16,6 +16,8 @@ pub struct PanelContext<'a> {
     pub map_center_request: &'a mut Option<(f64, f64)>,
     pub popup_pos_request: &'a mut Option<egui::Pos2>,
     pub zoom_to_visible_request: &'a mut bool,
+    /// Set by clicking the ⚠ icon on a file row; consumed by the app to show a centered dialog.
+    pub warnings_request: &'a mut Option<(String, Vec<String>)>,
 }
 
 pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
@@ -154,15 +156,16 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
             .selectable_label(is_selected, egui::RichText::new(label))
             .on_hover_text(&file.metadata.filename);
         if !file.load_warnings.is_empty() {
-            let icon = egui::RichText::new("⚠")
-                .color(egui::Color32::from_rgb(255, 180, 0))
-                .small();
-            let warn_resp = ui.add(egui::Label::new(icon).sense(egui::Sense::hover()));
-            warn_resp.show_tooltip_ui(|ui| {
-                for w in &file.load_warnings {
-                    ui.label(w);
-                }
-            });
+            let icon = egui::RichText::new(egui_phosphor::regular::WARNING)
+                .color(gt_ui_theme::WARNING_AMBER);
+            if ui
+                .add(egui::Label::new(icon).sense(egui::Sense::click()))
+                .on_hover_text("Data quality warnings — click for details")
+                .clicked()
+            {
+                *ctx.warnings_request =
+                    Some((file.metadata.filename.clone(), file.load_warnings.clone()));
+            }
         }
         resp
     });
