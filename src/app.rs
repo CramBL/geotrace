@@ -85,6 +85,9 @@ pub struct App {
     /// History database — `None` if the database could not be opened at startup.
     db: Option<gt_db::Database>,
 
+    /// When `false`, NVD files are not stored in the history database on load.
+    storage_enabled: bool,
+
     /// History window state.
     history_window: history::HistoryWindow,
 
@@ -189,6 +192,7 @@ impl App {
             processing_config: SegmentationConfig::default(),
             assoc_config: AssociationConfig::default(),
             db,
+            storage_enabled: true,
             history_window: history::HistoryWindow::new(),
             toasts: egui_notify::Toasts::default(),
         };
@@ -420,6 +424,9 @@ impl App {
             .tiles
             .set_visible(self.plot_tile_id, s.plot.panel_visible);
         self.set_split_ratio(s.plot.split_ratio);
+
+        self.storage_enabled = s.storage.enabled;
+        self.sync_db_path();
     }
 
     /// Snapshot of all settings-relevant state for change detection.
@@ -457,6 +464,7 @@ impl App {
                 .to_std()
                 .map_or(300, |d| d.as_secs()),
             log_marker_window_s: self.assoc_config.log_marker_window_s,
+            storage_enabled: self.storage_enabled,
         }
     }
 
@@ -504,6 +512,9 @@ impl App {
                     .to_std()
                     .map_or(300, |d| d.as_secs()),
                 log_marker_window_s: self.assoc_config.log_marker_window_s,
+            },
+            storage: crate::settings::StorageSettings {
+                enabled: self.storage_enabled,
             },
         }
     }
@@ -660,6 +671,14 @@ impl App {
         }
     }
 
+    fn sync_db_path(&mut self) {
+        self.loader.db_path = if self.storage_enabled {
+            self.db.as_ref().map(|db| db.path().to_owned())
+        } else {
+            None
+        };
+    }
+
     fn handle_history_action(&mut self, action: history::HistoryAction, ctx: &egui::Context) {
         let Some(db) = self.db.as_mut() else { return };
         match action {
@@ -686,6 +705,20 @@ impl App {
                         log::error!("Failed to delete recording '{label}': {e}");
                         self.toasts
                             .error(format!("Could not delete recording: {e}"));
+                    }
+                }
+            }
+            history::HistoryAction::Prune(refs) => {
+                let count = refs.len();
+                match db.delete_batch(&refs) {
+                    Ok(()) => {
+                        self.toasts
+                            .info(format!("Pruned {count} recording(s) from history"));
+                        self.history_window.invalidate();
+                    }
+                    Err(e) => {
+                        log::error!("Batch prune failed: {e}");
+                        self.toasts.error(format!("Prune failed: {e}"));
                     }
                 }
             }
@@ -1123,8 +1156,15 @@ impl eframe::App for App {
         show_orphaned_event_markers_popup(ui, &mut self.orphaned_event_markers);
         show_load_warnings_dialog(ui, &mut self.shared.borrow_mut().warnings_popup);
 
-        if let Some(action) = self.history_window.show(ui.ctx(), self.db.as_ref()) {
+        let prev_storage = self.storage_enabled;
+        if let Some(action) =
+            self.history_window
+                .show(ui.ctx(), self.db.as_ref(), &mut self.storage_enabled)
+        {
             self.handle_history_action(action, ui.ctx());
+        }
+        if self.storage_enabled != prev_storage {
+            self.sync_db_path();
         }
 
         self.toasts.show(ui.ctx());

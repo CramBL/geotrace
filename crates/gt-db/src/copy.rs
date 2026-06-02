@@ -275,6 +275,30 @@ pub(crate) fn insert_recording(
     Ok(rec_name)
 }
 
+/// Remove multiple recordings in a single read-modify-write cycle.
+pub(crate) fn delete_batch(
+    db_path: &std::path::Path,
+    refs: &[crate::DatabaseRef],
+) -> Result<(), crate::DbError> {
+    let existing_db = hdf5_pure::File::open(db_path)?;
+    let mut identity_nodes = snapshot_by_identity(&existing_db)?;
+    drop(existing_db);
+
+    for db_ref in refs {
+        if let Some(id_node) = identity_nodes
+            .iter_mut()
+            .find(|n| n.name == db_ref.identity)
+        {
+            id_node.groups.retain(|r| r.name != db_ref.group_name);
+        }
+    }
+    identity_nodes.retain(|n| !n.groups.is_empty());
+
+    write_db(&identity_nodes, db_path)?;
+    log::info!("Deleted {} recording(s) in batch prune", refs.len());
+    Ok(())
+}
+
 /// Remove one recording group from the database using a read-modify-write cycle.
 pub(crate) fn delete_recording(
     db_path: &std::path::Path,
@@ -339,6 +363,17 @@ pub(crate) fn load_recording_bytes(
     let bytes = std::fs::read(&tmp_path)?;
     std::fs::remove_file(&tmp_path).ok();
     Ok(bytes)
+}
+
+/// Rewrite the database preserving all data but updating the `schema_version`
+/// root attribute to `CURRENT_SCHEMA_VERSION`.
+///
+/// Called after a successful migration to stamp the new version.
+pub(crate) fn write_schema_version(db_path: &std::path::Path) -> Result<(), DbError> {
+    let existing_db = hdf5_pure::File::open(db_path)?;
+    let identity_nodes = snapshot_by_identity(&existing_db)?;
+    drop(existing_db);
+    write_db(&identity_nodes, db_path)
 }
 
 fn chunk_for_shape(shape: &[u64]) -> Vec<u64> {

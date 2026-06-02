@@ -10,6 +10,7 @@ pub struct Settings {
     pub map: MapSettings,
     pub ui: UiSettings,
     pub processing: ProcessingSettings,
+    pub storage: StorageSettings,
 }
 
 impl Default for Settings {
@@ -20,7 +21,22 @@ impl Default for Settings {
             map: MapSettings::default(),
             ui: UiSettings::default(),
             processing: ProcessingSettings::default(),
+            storage: StorageSettings::default(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct StorageSettings {
+    /// When `false`, NVD files are not automatically stored in the history
+    /// database on load.  Existing data is not affected.
+    pub enabled: bool,
+}
+
+impl Default for StorageSettings {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }
 

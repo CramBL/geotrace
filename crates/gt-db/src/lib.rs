@@ -57,6 +57,60 @@ pub struct RecordingEntry {
     pub meta: RecordingMeta,
 }
 
+/// Criteria for selecting recordings to prune.
+#[derive(Debug, Clone, Copy)]
+pub enum PruneMode {
+    /// Remove recordings whose last nav-point is older than `now - max_age`.
+    ByAge { max_age_secs: u64 },
+    /// Remove the oldest recordings (by start timestamp) until total
+    /// `nvd_size_bytes` across all remaining recordings is ≤ `max_bytes`.
+    ByTotalSize { max_bytes: u64 },
+    /// Keep at most `keep` recordings per identity (by start timestamp descending).
+    ByCount { keep: usize },
+}
+
+impl PruneMode {
+    fn select(&self, entries: &[RecordingEntry]) -> Vec<DatabaseRef> {
+        match self {
+            PruneMode::ByAge { max_age_secs } => {
+                let now_us = chrono::Utc::now().timestamp_micros();
+                let threshold_us = now_us - (*max_age_secs as i64) * 1_000_000;
+                entries
+                    .iter()
+                    .filter(|e| e.meta.end_us < threshold_us)
+                    .map(|e| e.db_ref.clone())
+                    .collect()
+            }
+            PruneMode::ByTotalSize { max_bytes } => {
+                let mut total: u64 = entries.iter().map(|e| e.meta.nvd_size_bytes).sum();
+                let mut to_delete = Vec::new();
+                // entries are sorted descending by start_us; remove from the end (oldest first)
+                for entry in entries.iter().rev() {
+                    if total <= *max_bytes {
+                        break;
+                    }
+                    total = total.saturating_sub(entry.meta.nvd_size_bytes);
+                    to_delete.push(entry.db_ref.clone());
+                }
+                to_delete
+            }
+            PruneMode::ByCount { keep } => {
+                let mut seen: std::collections::HashMap<&str, usize> =
+                    std::collections::HashMap::new();
+                let mut to_delete = Vec::new();
+                for entry in entries {
+                    let count = seen.entry(entry.db_ref.identity.as_str()).or_insert(0);
+                    *count += 1;
+                    if *count > *keep {
+                        to_delete.push(entry.db_ref.clone());
+                    }
+                }
+                to_delete
+            }
+        }
+    }
+}
+
 impl RecordingMeta {
     /// Extract recording metadata from raw NVD file bytes.
     ///
@@ -319,6 +373,22 @@ impl Database {
         copy::load_recording_bytes(&self.path, &db_ref.identity, &db_ref.group_name)
     }
 
+    /// Compute which recordings would be removed by a given prune mode.
+    ///
+    /// Does not modify the database.  Combine with `delete_batch` to apply.
+    pub fn prune_candidates(&self, mode: &PruneMode) -> Result<Vec<DatabaseRef>, DbError> {
+        let entries = self.list_recordings()?;
+        Ok(mode.select(&entries))
+    }
+
+    /// Remove all recordings in `refs` using a single read-modify-write cycle.
+    pub fn delete_batch(&mut self, refs: &[DatabaseRef]) -> Result<(), DbError> {
+        if refs.is_empty() {
+            return Ok(());
+        }
+        copy::delete_batch(&self.path, refs)
+    }
+
     fn create_new(path: &Path) -> Result<(), DbError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -356,11 +426,31 @@ impl Database {
             });
         }
 
+        if schema_version < CURRENT_SCHEMA_VERSION {
+            log::info!(
+                "Migrating history database from schema_version={schema_version} to {}",
+                CURRENT_SCHEMA_VERSION
+            );
+            drop(file);
+            Self::migrate(path, schema_version)?;
+        }
+
         log::debug!(
             "Opened history database at {} (schema_version={schema_version})",
             path.display()
         );
         Ok(())
+    }
+
+    /// Run all migrations from `from_version` up to `CURRENT_SCHEMA_VERSION`.
+    ///
+    /// Each version step is handled in sequence so the database always reaches
+    /// the current version regardless of how many versions behind it is.
+    /// Future migrations are added here as new `match` arms, e.g.:
+    ///   `0 => migrate_v0_to_v1(path)?`
+    fn migrate(path: &Path, _from_version: i64) -> Result<(), DbError> {
+        // No migrations exist yet (current schema is version 0).
+        copy::write_schema_version(path)
     }
 }
 

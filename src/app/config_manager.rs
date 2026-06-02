@@ -43,6 +43,7 @@ pub(super) struct AppSnapshot {
     pub theme: crate::settings::ThemeSetting,
     pub track_split_gap_seconds: u64,
     pub log_marker_window_s: u64,
+    pub storage_enabled: bool,
 }
 
 impl Default for AppSnapshot {
@@ -71,6 +72,7 @@ impl Default for AppSnapshot {
             theme: crate::settings::ThemeSetting::System,
             track_split_gap_seconds: 300,
             log_marker_window_s: 60,
+            storage_enabled: true,
         }
     }
 }

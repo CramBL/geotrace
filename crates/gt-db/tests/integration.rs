@@ -316,6 +316,114 @@ fn load_nvd_bytes_round_trips_nav_point_timestamps() {
 }
 
 #[test]
+fn prune_by_count_keeps_most_recent() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    for i in 0..5_u64 {
+        let bytes = make_nvd_bytes((i * 1_000_000) as i64, 2);
+        let meta = RecordingMeta::from_nvd_bytes(&bytes).expect("meta");
+        db.insert("dev", &meta, &bytes).expect("insert");
+    }
+
+    let candidates = db
+        .prune_candidates(&gt_db::PruneMode::ByCount { keep: 2 })
+        .expect("candidates");
+    assert_eq!(candidates.len(), 3, "should prune 3 oldest when keeping 2");
+}
+
+#[test]
+fn prune_by_total_size_removes_oldest_first() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes_a = make_nvd_bytes(1_000, 2);
+    let bytes_b = make_nvd_bytes(2_000, 2);
+    let meta_a = RecordingMeta::from_nvd_bytes(&bytes_a).expect("meta a");
+    let meta_b = RecordingMeta::from_nvd_bytes(&bytes_b).expect("meta b");
+
+    db.insert("dev", &meta_a, &bytes_a).expect("insert a");
+    db.insert("dev", &meta_b, &bytes_b).expect("insert b");
+
+    let total: u64 = meta_a.nvd_size_bytes + meta_b.nvd_size_bytes;
+
+    // Limit is just under total — should remove the oldest (a).
+    let candidates = db
+        .prune_candidates(&gt_db::PruneMode::ByTotalSize {
+            max_bytes: total - 1,
+        })
+        .expect("candidates");
+
+    assert_eq!(candidates.len(), 1);
+    // The oldest recording (start_us=1000, group_name contains timestamp) should be removed.
+    assert!(candidates[0].identity == "dev");
+}
+
+#[test]
+fn delete_batch_removes_multiple_in_one_pass() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes_a = make_nvd_bytes(10_000, 2);
+    let bytes_b = make_nvd_bytes(20_000, 3);
+    let bytes_c = make_nvd_bytes(30_000, 4);
+    let meta_a = RecordingMeta::from_nvd_bytes(&bytes_a).expect("meta a");
+    let meta_b = RecordingMeta::from_nvd_bytes(&bytes_b).expect("meta b");
+    let meta_c = RecordingMeta::from_nvd_bytes(&bytes_c).expect("meta c");
+
+    let ref_a = db.insert("dev", &meta_a, &bytes_a).expect("insert a");
+    let ref_b = db.insert("dev", &meta_b, &bytes_b).expect("insert b");
+    db.insert("dev", &meta_c, &bytes_c).expect("insert c");
+
+    db.delete_batch(&[ref_a, ref_b]).expect("batch delete");
+
+    let remaining = db.list_recordings().expect("list");
+    assert_eq!(remaining.len(), 1, "only one recording should remain");
+}
+
+#[test]
+fn open_with_older_schema_version_migrates_data() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+
+    // Create a db then manually lower the schema_version to simulate an older file.
+    {
+        let mut db = Database::open_or_create(&db_path).expect("create");
+        let bytes = make_nvd_bytes(7_000_000, 3);
+        let meta = RecordingMeta::from_nvd_bytes(&bytes).expect("meta");
+        db.insert("dev", &meta, &bytes).expect("insert");
+    }
+
+    // Rewrite schema_version to -1 to simulate an older file.
+    {
+        let existing = hdf5_pure::File::open(&db_path).expect("open");
+        let by_id = existing.root().group("by_identity").expect("by_identity");
+        let id_grp = by_id.group("dev").expect("id_grp");
+        let rec_names = id_grp.groups().expect("groups");
+
+        let mut fb = hdf5_pure::FileBuilder::new();
+        fb.set_attr("schema_version", hdf5_pure::AttrValue::I64(-1));
+        let meta_gb = fb.create_group("meta");
+        fb.add_group(meta_gb.finish());
+        let mut by_id_gb = fb.create_group("by_identity");
+        let mut dev_gb = by_id_gb.create_group("dev");
+        for rec_name in &rec_names {
+            let empty_gb = dev_gb.create_group(rec_name);
+            dev_gb.add_group(empty_gb.finish());
+        }
+        by_id_gb.add_group(dev_gb.finish());
+        fb.add_group(by_id_gb.finish());
+        fb.write(&db_path).expect("write lower version");
+    }
+
+    // Opening should succeed and migrate to current version.
+    Database::open_or_create(&db_path).expect("open after downgrade should succeed");
+}
+
+#[test]
 fn meta_end_us_and_size_bytes_are_populated() {
     let bytes = make_nvd_bytes(5_000, 10);
     let meta = RecordingMeta::from_nvd_bytes(&bytes).expect("meta");
