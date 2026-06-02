@@ -78,26 +78,30 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
                 })
         })
         .collect();
-    if !filtered_out.is_empty() {
-        let clicked = ui
-            .scope(|ui| {
+    let has_filtered = !filtered_out.is_empty();
+    let clicked = ui
+        .scope(|ui| {
+            if has_filtered {
                 let v = ui.visuals_mut();
                 v.widgets.hovered.bg_fill = gt_ui_theme::DANGER_HOVER;
                 v.widgets.hovered.fg_stroke.color = gt_ui_theme::DANGER_FG;
                 v.widgets.active.bg_fill = gt_ui_theme::DANGER_ACTIVE;
                 v.widgets.active.fg_stroke.color = gt_ui_theme::DANGER_FG;
-                ui.button(format!(
+            }
+            ui.add_enabled(
+                has_filtered,
+                egui::Button::new(format!(
                     "{} Delete all filtered data",
                     egui_phosphor::regular::TRASH
-                ))
-                .clicked()
-            })
-            .inner;
-        if clicked {
-            ctx.tree.delete_confirm = Some(DeleteConfirmState {
-                items: filtered_out,
-            });
-        }
+                )),
+            )
+            .clicked()
+        })
+        .inner;
+    if clicked {
+        ctx.tree.delete_confirm = Some(DeleteConfirmState {
+            items: filtered_out,
+        });
     }
 
     ui.separator();
@@ -552,6 +556,12 @@ fn render_event_markers_section(
     if header_response.inner.clicked() {
         ctx.tree
             .toggle_category_expanded(trip, DataCategory::EventMarker);
+    }
+    if header_response.inner.hovered() {
+        ctx.highlight.hover = Some(HighlightScope::TrackCategory {
+            track: trip,
+            category: DataCategory::EventMarker,
+        });
     }
 
     if !is_open {

@@ -65,7 +65,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
         );
         response.show_tooltip_ui(|ui| match marker.kind {
             gt_types::GeneratedMarkerKind::GpsFixLost => {
-                ui.strong("GPS fix lost");
+                ui.strong("GNSS fix lost");
                 let corresponding = track
                     .points
                     .iter()
@@ -79,11 +79,11 @@ impl<'a> GeneratedMarkerRenderer<'a> {
                 let label = match marker.fix_lost_duration {
                     Some(dur) => {
                         format!(
-                            "GPS fix regained after {}",
+                            "GNSS fix regained after {}",
                             format_fix_duration(dur.num_milliseconds())
                         )
                     }
-                    None => "GPS fix regained".to_owned(),
+                    None => "GNSS fix regained".to_owned(),
                 };
                 ui.strong(label);
             }
@@ -139,9 +139,15 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             draw_generated_marker(ui, screen_pos, marker.kind, highlighted);
         }
 
-        // Show tooltip for the hovered generated marker. Uses hover_candidates[3]
-        // so the tooltip appears even when a Tpv point is the primary hover.
-        if let Some(r) = self.highlight.hover_candidates[3]
+        // Show tooltip for the hovered generated marker. Suppressed when the primary
+        // hover is already a TPV point — the TPV tooltip covers the same data and
+        // showing both would produce two overlapping labels at the same map position.
+        let primary_is_tpv = matches!(
+            self.highlight.hover,
+            Some(HighlightScope::Point(r)) if r.category == DataCategory::Tpv
+        );
+        if !primary_is_tpv
+            && let Some(r) = self.highlight.hover_candidates[3]
             && self.highlight.sticky != Some(r)
             && !ui.ctx().any_popup_open()
             && let Some(file) = r.track.fi.get(self.files)

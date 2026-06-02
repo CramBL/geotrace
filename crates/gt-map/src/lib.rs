@@ -718,13 +718,18 @@ impl NavMap {
         // When multiple category types are within the threshold, show a small
         // disambiguation menu rather than immediately picking one.
         let candidate_count = hover_candidates.iter().flatten().count();
-        if map_response.clicked() {
+        // True only on the frame the popup is first opened. `clicked_elsewhere()` on the
+        // disambiguation area fires on the same frame as the click that opened it (the click
+        // was on the map, not inside the popup), which would immediately close the popup.
+        // Skipping that check for the opening frame prevents the flash.
+        let just_opened_disambig = if map_response.clicked() {
             if candidate_count > 1 {
                 self.disambiguation_candidates = hover_candidates;
                 self.disambiguation_pos = ui
                     .ctx()
                     .pointer_latest_pos()
                     .unwrap_or(map_response.rect.center());
+                true
             } else if let Some(point_ref) = hover_point_ref {
                 self.disambiguation_candidates = [None; 4];
                 if highlight.sticky == Some(point_ref) {
@@ -736,11 +741,15 @@ impl NavMap {
                         .pointer_latest_pos()
                         .unwrap_or(map_response.rect.center());
                 }
+                false
             } else {
                 self.disambiguation_candidates = [None; 4];
                 highlight.sticky = None;
+                false
             }
-        }
+        } else {
+            false
+        };
 
         // Disambiguation popup: shown after a click when multiple types overlap.
         let disambig_candidates = self.disambiguation_candidates;
@@ -773,8 +782,9 @@ impl NavMap {
                         }
                     });
                 });
-            if area_resp.response.clicked_elsewhere()
-                || ui.ctx().input(|i| i.key_pressed(egui::Key::Escape))
+            if !just_opened_disambig
+                && (area_resp.response.clicked_elsewhere()
+                    || ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)))
             {
                 self.disambiguation_candidates = [None; 4];
             }
@@ -849,9 +859,9 @@ fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> String {
     match candidate.category {
         DataCategory::Tpv | DataCategory::SatelliteReport => {
             if let Some(p) = candidate.point_index.get(&track.points) {
-                p.tpv.time().utc().format("GPS  %H:%M:%S").to_string()
+                p.tpv.time().utc().format("GNSS fix  %H:%M:%S").to_string()
             } else {
-                "GPS point".to_string()
+                "GNSS fix".to_string()
             }
         }
         DataCategory::EventMarker => {
@@ -876,8 +886,10 @@ fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> String {
         DataCategory::GeneratedMarker => {
             if let Some(m) = candidate.point_index.get(&track.generated_markers) {
                 match m.kind {
-                    gt_types::GeneratedMarkerKind::GpsFixLost => "GPS fix lost".to_string(),
-                    gt_types::GeneratedMarkerKind::GpsFixRegained => "GPS fix regained".to_string(),
+                    gt_types::GeneratedMarkerKind::GpsFixLost => "GNSS fix lost".to_string(),
+                    gt_types::GeneratedMarkerKind::GpsFixRegained => {
+                        "GNSS fix regained".to_string()
+                    }
                 }
             } else {
                 "Generated marker".to_string()
@@ -907,7 +919,7 @@ fn show_sticky_popup(
             .and_then(|f| sticky_ref.track.index.get(&f.tracks))
             .and_then(|t| sticky_ref.point_index.get(&t.points))
             .map_or_else(
-                || "GPS Point".to_string(),
+                || "GNSS fix".to_string(),
                 |p| p.tpv.time().utc().format("%Y-%m-%d %H:%M:%S").to_string(),
             )
     } else if sticky_ref.category == DataCategory::SatelliteReport {
@@ -919,10 +931,10 @@ fn show_sticky_popup(
             .and_then(|t| sticky_ref.point_index.get(&t.points))
             .and_then(|p| p.satellites.as_ref())
             .map_or_else(
-                || "Satellite Report".to_string(),
+                || "Satellite report".to_string(),
                 |sats| {
                     sats.best_time().map_or_else(
-                        || "Satellite Report".to_string(),
+                        || "Satellite report".to_string(),
                         |t| t.format("%Y-%m-%d %H:%M:%S").to_string(),
                     )
                 },
@@ -935,11 +947,32 @@ fn show_sticky_popup(
             .and_then(|f| sticky_ref.track.index.get(&f.tracks))
             .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
             .map_or_else(
-                || "GPS Event".to_string(),
+                || "GNSS event".to_string(),
+                |m| m.time.format("%Y-%m-%d %H:%M:%S").to_string(),
+            )
+    } else if sticky_ref.category == DataCategory::EventMarker {
+        sticky_ref
+            .track
+            .fi
+            .get(files)
+            .and_then(|f| sticky_ref.track.index.get(&f.tracks))
+            .and_then(|t| sticky_ref.point_index.get(&t.event_markers))
+            .map_or_else(
+                || "Event".to_string(),
                 |m| m.time.format("%Y-%m-%d %H:%M:%S").to_string(),
             )
     } else {
-        "Point Info".to_string()
+        // CustomMarker
+        sticky_ref
+            .track
+            .fi
+            .get(files)
+            .and_then(|f| sticky_ref.track.index.get(&f.tracks))
+            .and_then(|t| sticky_ref.point_index.get(&t.custom_markers))
+            .map_or_else(
+                || "Custom marker".to_string(),
+                |m| m.time.format("%Y-%m-%d %H:%M:%S").to_string(),
+            )
     };
 
     egui::Window::new(title)
@@ -982,14 +1015,6 @@ fn show_sticky_popup(
                     egui::Grid::new("sticky_marker_grid")
                         .num_columns(2)
                         .show(ui, |ui| {
-                            ui.label("Time");
-                            ui.add(
-                                egui::Label::new(
-                                    marker.time.format("%Y-%m-%d %H:%M:%S").to_string(),
-                                )
-                                .selectable(true),
-                            );
-                            ui.end_row();
                             ui.label("Label");
                             ui.add(egui::Label::new(marker.label.as_str()).selectable(true));
                             ui.end_row();
@@ -1007,8 +1032,8 @@ fn show_sticky_popup(
                     .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
                 {
                     let kind_str = match marker.kind {
-                        GeneratedMarkerKind::GpsFixLost => "GPS fix lost",
-                        GeneratedMarkerKind::GpsFixRegained => "GPS fix regained",
+                        GeneratedMarkerKind::GpsFixLost => "GNSS fix lost",
+                        GeneratedMarkerKind::GpsFixRegained => "GNSS fix regained",
                     };
                     egui::Grid::new("sticky_gen_grid")
                         .num_columns(2)
@@ -1071,14 +1096,6 @@ fn show_sticky_popup(
                         .show(ui, |ui| {
                             ui.label("Event");
                             ui.add(egui::Label::new(marker.variant_path.as_str()).selectable(true));
-                            ui.end_row();
-                            ui.label("Time");
-                            ui.add(
-                                egui::Label::new(
-                                    marker.time.format("%Y-%m-%d %H:%M:%S").to_string(),
-                                )
-                                .selectable(true),
-                            );
                             ui.end_row();
                             if let Some(ann) = &marker.annotation {
                                 ui.label("Note");

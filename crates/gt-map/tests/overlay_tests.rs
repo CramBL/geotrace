@@ -4,6 +4,14 @@ use gt_types::{
     DataCategory, DataPointRef, FileIdx, HighlightScope, MapHighlight, PointIdx, TrackIdx, TrackRef,
 };
 
+fn gen_marker_point(pi: usize) -> DataPointRef {
+    DataPointRef {
+        track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+        category: DataCategory::GeneratedMarker,
+        point_index: PointIdx::new(pi),
+    }
+}
+
 fn tpv_point(pi: usize) -> DataPointRef {
     DataPointRef {
         track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
@@ -87,6 +95,107 @@ fn tooltip_suppressed_when_popup_open() {
     assert!(
         !tooltip_guard_passes(&h, r, true),
         "tooltip should be suppressed when a popup is open"
+    );
+}
+
+/// Mirrors the disambiguation-close guard introduced to fix the popup-flash bug:
+/// ```ignore
+/// if !just_opened_disambig && (area_resp.response.clicked_elsewhere() || esc) {
+///     self.disambiguation_candidates = [None; 4];
+/// }
+/// ```
+/// Before the fix, `just_opened_disambig` did not exist, so `clicked_elsewhere()`
+/// (which fires on the same frame as the click that opened the popup) immediately
+/// cleared the candidates and the popup disappeared in one frame.
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "mirrors the three independent boolean inputs to the guard"
+)]
+fn disambig_should_close(just_opened: bool, clicked_elsewhere: bool, esc: bool) -> bool {
+    !just_opened && (clicked_elsewhere || esc)
+}
+
+/// Regression: the click that opens the disambiguation popup also fires
+/// `clicked_elsewhere()` on the popup area (the click was on the map, not inside
+/// the popup), which used to close it immediately in the same frame.
+#[test]
+fn disambig_stays_open_on_same_frame_as_click() {
+    assert!(
+        !disambig_should_close(true, true, false),
+        "popup must not close on the frame it was opened, even if clicked_elsewhere fires"
+    );
+}
+
+#[test]
+fn disambig_closes_on_subsequent_clicked_elsewhere() {
+    assert!(
+        disambig_should_close(false, true, false),
+        "popup must close when user clicks outside it on a later frame"
+    );
+}
+
+#[test]
+fn disambig_closes_on_esc() {
+    assert!(
+        disambig_should_close(false, false, true),
+        "popup must close when ESC is pressed"
+    );
+}
+
+/// Mirrors the hover-suppression guard added to GeneratedMarkerRenderer to prevent
+/// a second, overlapping tooltip when a TPV point and a generated marker share the
+/// same map position:
+/// ```ignore
+/// let primary_is_tpv = matches!(
+///     highlight.hover,
+///     Some(HighlightScope::Point(r)) if r.category == DataCategory::Tpv
+/// );
+/// if !primary_is_tpv && ... { show_tooltip(…) }
+/// ```
+fn generated_marker_tooltip_allowed(highlight: &MapHighlight) -> bool {
+    !matches!(
+        highlight.hover,
+        Some(HighlightScope::Point(r)) if r.category == DataCategory::Tpv
+    )
+}
+
+/// Regression: hovering a TPV point that coincides with a generated marker used to
+/// show two overlapping tooltips at the same screen position.
+#[test]
+fn generated_marker_tooltip_suppressed_when_primary_hover_is_tpv() {
+    let tpv = tpv_point(0);
+    let h = MapHighlight {
+        hover: Some(HighlightScope::Point(tpv)),
+        ..Default::default()
+    };
+    assert!(
+        !generated_marker_tooltip_allowed(&h),
+        "generated marker tooltip must be suppressed when primary hover is a TPV point"
+    );
+}
+
+#[test]
+fn generated_marker_tooltip_shown_when_no_tpv_hovered() {
+    let h = MapHighlight {
+        hover: None,
+        ..Default::default()
+    };
+    assert!(
+        generated_marker_tooltip_allowed(&h),
+        "generated marker tooltip must show when no TPV point is the primary hover"
+    );
+}
+
+#[test]
+fn generated_marker_tooltip_shown_when_primary_hover_is_non_tpv() {
+    let gm = gen_marker_point(0);
+    let h = MapHighlight {
+        hover: Some(HighlightScope::Point(gm)),
+        ..Default::default()
+    };
+    assert!(
+        generated_marker_tooltip_allowed(&h),
+        "generated marker tooltip must show when primary hover is not a TPV point"
     );
 }
 
