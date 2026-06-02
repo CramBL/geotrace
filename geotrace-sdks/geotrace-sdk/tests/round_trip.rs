@@ -6,7 +6,7 @@
 
 use geotrace_sdk::{Angle, DateTime, Duration, Utc, Velocity};
 use geotrace_sdk::{
-    Annotation, Constellation, MarkerIcon, NavFile, NavFileBuilder, NavFix, Satellite,
+    Annotation, Constellation, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, Satellite,
     SatelliteReport,
 };
 
@@ -252,5 +252,65 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(sat_rep.tracked.len(), 12);
     assert_eq!(sat_rep.tracked.iter().filter(|s| s.in_fix).count(), 12);
 
+    Ok(())
+}
+
+#[test]
+fn identity_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+    let t0 = base();
+    let mut sink = NavFileBuilder::new()
+        .with_identity("device-serial-001")
+        .open();
+    sink.add_nav_fix(
+        NavFix::builder()
+            .gps_time(t0)
+            .lat(Angle::degrees(51.5))
+            .lon(Angle::degrees(-0.1))
+            .build(),
+    );
+    let nav_file = sink.finish()?;
+    assert_eq!(
+        nav_file.meta().identity.as_deref(),
+        Some("device-serial-001")
+    );
+
+    let rt = round_trip(&nav_file)?;
+    assert_eq!(rt.meta().identity.as_deref(), Some("device-serial-001"));
+    Ok(())
+}
+
+#[test]
+fn no_identity_deserialises_as_none() -> Result<(), Box<dyn std::error::Error>> {
+    let t0 = base();
+    let mut sink = NavFileBuilder::new().with_title("No identity").open();
+    sink.add_nav_fix(
+        NavFix::builder()
+            .gps_time(t0)
+            .lat(Angle::degrees(51.5))
+            .lon(Angle::degrees(-0.1))
+            .build(),
+    );
+    let nav_file = sink.finish()?;
+
+    let rt = round_trip(&nav_file)?;
+    assert_eq!(rt.meta().identity, None);
+    Ok(())
+}
+
+#[test]
+fn identity_via_meta_builder() -> Result<(), Box<dyn std::error::Error>> {
+    let t0 = base();
+    let meta = Meta::builder().identity("route-a").build();
+    let mut sink = NavFileBuilder::new().with_meta(meta).open();
+    sink.add_nav_fix(
+        NavFix::builder()
+            .gps_time(t0)
+            .lat(Angle::degrees(48.8))
+            .lon(Angle::degrees(2.3))
+            .build(),
+    );
+    let nav_file = sink.finish()?;
+    let rt = round_trip(&nav_file)?;
+    assert_eq!(rt.meta().identity.as_deref(), Some("route-a"));
     Ok(())
 }

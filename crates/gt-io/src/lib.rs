@@ -1,6 +1,30 @@
 mod error;
 pub use error::LoadError;
 
+/// Derive a stable grouping identity from NVD file metadata.
+///
+/// Priority:
+/// 1. Explicit SDK-supplied identity — returned as-is.
+/// 2. `meta_title` and/or `meta_device` — combined as `auto:title::device`,
+///    `auto:title`, or `auto:device`.
+/// 3. Filename fallback — `auto:<filename>`.
+pub fn derive_identity(
+    explicit: Option<&str>,
+    title: Option<&str>,
+    device: Option<&str>,
+    filename: &str,
+) -> String {
+    if let Some(id) = explicit {
+        return id.to_owned();
+    }
+    match (title, device) {
+        (Some(t), Some(d)) => format!("auto:{t}::{d}"),
+        (Some(t), None) => format!("auto:{t}"),
+        (None, Some(d)) => format!("auto:{d}"),
+        (None, None) => format!("auto:{filename}"),
+    }
+}
+
 const STAGE_READING: &str = "Reading…";
 const STAGE_PARSING: &str = "Parsing…";
 const STAGE_CONVERTING: &str = "Converting…";
@@ -69,8 +93,15 @@ pub fn load_file_with_progress(
     let load_warnings = satellite_warnings_from_nav_file(&nav_file);
     progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::NvdPath(path.to_path_buf());
+    let identity = derive_identity(
+        nav_file.meta().identity.as_deref(),
+        nav_file.meta().title.as_deref(),
+        nav_file.meta().device.as_deref(),
+        &filename,
+    );
     let loaded = gt_data_ops::build_loaded_file(
         filename,
+        identity,
         &points,
         &markers,
         event_markers,
@@ -96,8 +127,15 @@ pub fn load_bytes_with_progress(
     let load_warnings = satellite_warnings_from_nav_file(&nav_file);
     progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::NvdBytes(Arc::from(bytes));
+    let identity = derive_identity(
+        nav_file.meta().identity.as_deref(),
+        nav_file.meta().title.as_deref(),
+        nav_file.meta().device.as_deref(),
+        &filename,
+    );
     let loaded = gt_data_ops::build_loaded_file(
         filename,
+        identity,
         &points,
         &markers,
         event_markers,
@@ -288,6 +326,58 @@ fn convert_icon(icon: SdkMarkerIcon) -> MarkerIcon {
         SdkMarkerIcon::Download => MarkerIcon::Download,
         SdkMarkerIcon::Upload => MarkerIcon::Upload,
         SdkMarkerIcon::Wrench => MarkerIcon::Wrench,
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::derive_identity;
+
+    #[test]
+    fn explicit_identity_returned_as_is() {
+        assert_eq!(
+            derive_identity(Some("my-device"), Some("title"), Some("device"), "file.nvd"),
+            "my-device"
+        );
+    }
+
+    #[test]
+    fn both_title_and_device_combined() {
+        assert_eq!(
+            derive_identity(None, Some("MyTitle"), Some("MyDevice"), "file.nvd"),
+            "auto:MyTitle::MyDevice"
+        );
+    }
+
+    #[test]
+    fn title_only() {
+        assert_eq!(
+            derive_identity(None, Some("MyTitle"), None, "file.nvd"),
+            "auto:MyTitle"
+        );
+    }
+
+    #[test]
+    fn device_only() {
+        assert_eq!(
+            derive_identity(None, None, Some("MyDevice"), "file.nvd"),
+            "auto:MyDevice"
+        );
+    }
+
+    #[test]
+    fn filename_fallback() {
+        assert_eq!(
+            derive_identity(None, None, None, "recording.nvd"),
+            "auto:recording.nvd"
+        );
+    }
+
+    #[test]
+    fn derive_identity_is_deterministic() {
+        let a = derive_identity(None, Some("T"), Some("D"), "f.nvd");
+        let b = derive_identity(None, Some("T"), Some("D"), "f.nvd");
+        assert_eq!(a, b);
     }
 }
 

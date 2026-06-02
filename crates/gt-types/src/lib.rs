@@ -29,7 +29,7 @@ pub use time_types::{GpsTime, SysTime};
 pub use tpv::TimePositionVelocity;
 pub use tpv::TimePositionVelocityBuilder;
 pub use track::{
-    AssociationConfig, FileMetadata, FileSource, LoadedFile, LoadedTrack, MarkerRequirement,
-    MercBounds, SpatialPoint, TimeRange, TrackMetadata, merc_bounds_for_rect,
+    AssociationConfig, DatabaseRef, FileMetadata, FileSource, LoadedFile, LoadedTrack,
+    MarkerRequirement, MercBounds, SpatialPoint, TimeRange, TrackMetadata, merc_bounds_for_rect,
 };
 pub use visibility::{FileVisibility, TrackDataVisibility, TrackVisibility};

@@ -221,6 +221,15 @@ pub enum FileSource {
     LogText(Arc<str>),
 }
 
+/// A reference to a specific recording stored in the history database.
+///
+/// Identifies the HDF5 group at `by_identity/{identity}/{group_name}`.
+#[derive(Debug, Clone)]
+pub struct DatabaseRef {
+    pub identity: String,
+    pub group_name: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct LoadedFile {
     pub metadata: FileMetadata,
@@ -233,4 +242,15 @@ pub struct LoadedFile {
     pub source: FileSource,
     /// Data quality warnings detected when the file was loaded (empty when clean).
     pub load_warnings: Vec<String>,
+    /// Grouping key used by the history database.
+    ///
+    /// For NVD files this is the explicit SDK-supplied identity or a value
+    /// derived from file metadata. For non-NVD sources (e.g. log files) it
+    /// defaults to the filename.
+    pub identity: String,
+    /// Reference to the copy of this recording stored in the history database.
+    ///
+    /// `None` for files that were not imported (storage disabled, DB error, or
+    /// non-NVD sources such as log files).
+    pub db_ref: Option<DatabaseRef>,
 }

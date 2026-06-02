@@ -78,6 +78,11 @@ pub struct App {
     processing_config: SegmentationConfig,
     /// Active association config — applied to all new log loads.
     assoc_config: AssociationConfig,
+
+    /// History database — `None` if the database could not be opened at startup.
+    /// Retained for future History window operations (list, delete, prune).
+    #[expect(dead_code, reason = "used from the History window (Phase 8+)")]
+    db: Option<gt_db::Database>,
 }
 
 impl App {
@@ -122,7 +127,7 @@ impl App {
         }
 
         let map = NavMap::new(cc.egui_ctx.clone());
-        let loader = LoaderManager::new(cc.egui_ctx.clone());
+        let mut loader = LoaderManager::new(cc.egui_ctx.clone());
 
         // Build the central-area tiles tree: map on top, plot on bottom.
         // The split ratio and panel visibility are applied from settings below.
@@ -133,6 +138,19 @@ impl App {
             Linear::new_binary(LinearDir::Vertical, [map_tile_id, plot_tile_id], 0.6),
         )));
         let tiles_tree = Tree::new("main_tiles", root_tile_id, tiles);
+
+        let db = match gt_db::Database::default_path()
+            .and_then(|p| gt_db::Database::open_or_create(&p))
+        {
+            Ok(db) => {
+                loader.db_path = Some(db.path().to_owned());
+                Some(db)
+            }
+            Err(e) => {
+                log::error!("Failed to open history database: {e}");
+                None
+            }
+        };
 
         let mut app = Self {
             map,
@@ -162,6 +180,7 @@ impl App {
             settings_open: false,
             processing_config: SegmentationConfig::default(),
             assoc_config: AssociationConfig::default(),
+            db,
         };
 
         app.apply_startup_settings(&loaded_settings);
@@ -547,9 +566,11 @@ impl App {
                 let event_marker_styles: Vec<gt_types::EventMarkerStyle> =
                     file.event_marker_styles.values().cloned().collect();
                 let filename = file.metadata.filename.clone();
+                let identity = file.identity.clone();
                 let source = file.source.clone();
                 *file = gt_data_ops::build_loaded_file(
                     filename,
+                    identity,
                     &all_points,
                     &all_custom_markers,
                     all_event_markers,
@@ -569,7 +590,12 @@ impl App {
     /// Process a completed background load: integrate the result into shared state.
     fn handle_completed_load(&mut self, completed: CompletedLoad) {
         match completed.outcome {
-            Ok(LoadOutcome::NvdFile { file, series }) => {
+            Ok(LoadOutcome::NvdFile {
+                mut file,
+                series,
+                db_ref,
+            }) => {
+                file.db_ref = db_ref;
                 let orphans: Vec<(chrono::DateTime<chrono::Utc>, String)> = file
                     .orphaned_event_markers
                     .iter()

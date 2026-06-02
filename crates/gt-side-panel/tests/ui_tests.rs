@@ -33,6 +33,7 @@ fn make_state_with_warnings_on(
             };
             gt_data_ops::build_loaded_file(
                 format!("ride_{i}.nvd"),
+                format!("auto:ride_{i}.nvd"),
                 &points,
                 &[],
                 vec![],

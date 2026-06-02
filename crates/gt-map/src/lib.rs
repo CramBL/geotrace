@@ -1354,6 +1354,7 @@ mod tests {
                 total_duration: chrono::Duration::seconds(n as i64),
                 time_range: TimeRange::new(now, now + chrono::Duration::seconds(n as i64)),
             },
+            identity: format!("auto:test_{n}.nvd"),
             tracks: vec![trip],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
@@ -1361,6 +1362,7 @@ mod tests {
                 "test_{n}.nvd"
             ))),
             load_warnings: vec![],
+            db_ref: None,
         }
     }
 

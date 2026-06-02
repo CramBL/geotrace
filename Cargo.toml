@@ -9,6 +9,7 @@ license = "AGPL-3.0-only"
 members = [
     "crates/gt-arch",
     "crates/gt-data-ops",
+    "crates/gt-db",
     "crates/gt-egui-mipmap",
     "crates/gt-fmt",
     "crates/gt-geo-math",
@@ -192,6 +193,7 @@ egui_extras.workspace = true
 egui_tiles.workspace = true
 env_logger.workspace = true
 gt-data-ops = { path = "crates/gt-data-ops" }
+gt-db = { path = "crates/gt-db" }
 gt-fmt = { path = "crates/gt-fmt" }
 gt-io = { path = "crates/gt-io" }
 gt-log-marker = { path = "crates/gt-log-marker" }

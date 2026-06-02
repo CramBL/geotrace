@@ -54,6 +54,9 @@ pub enum LoadOutcome {
         /// file index is only known on the UI thread when the file is appended
         /// to `loaded_files`.  `PlotState::integrate_file` re-stamps the index.
         series: PreparedSeries,
+        /// Reference to the recording stored in the history database, if storage
+        /// is enabled and the insert succeeded.
+        db_ref: Option<gt_db::DatabaseRef>,
     },
     /// A successfully parsed log file; `loaded` is `None` when all entries were
     /// unassociated with any GPS track.
@@ -102,6 +105,10 @@ pub(super) struct LoaderManager {
     pub finishing_jobs: Vec<FinishedJob>,
     next_id: u64,
     file_dialog_rx: Option<mpsc::Receiver<Option<PathBuf>>>,
+    /// Path to the history database file, forwarded to background load threads
+    /// so they can insert recordings after parsing.  `None` when storage is
+    /// unavailable (DB failed to open at startup).
+    pub db_path: Option<PathBuf>,
 }
 
 impl LoaderManager {
@@ -115,6 +122,7 @@ impl LoaderManager {
             finishing_jobs: Vec::new(),
             next_id: 0,
             file_dialog_rx: None,
+            db_path: None,
         }
     }
 
@@ -144,6 +152,7 @@ impl LoaderManager {
         });
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
+        let db_path = self.db_path.clone();
         thread::Builder::new()
             .name(format!("load-{filename}"))
             .spawn(move || {
@@ -168,7 +177,23 @@ impl LoaderManager {
                         .ok();
                         ctx.request_repaint();
                         let series = gt_plot::prepare_file_series(0, &file);
-                        LoadOutcome::NvdFile { file, series }
+                        let db_ref = db_path.as_deref().and_then(|p| {
+                            let bytes = std::fs::read(&path).ok()?;
+                            let meta = gt_db::RecordingMeta::from_nvd_bytes(&bytes).ok()?;
+                            let mut db = gt_db::Database::open_or_create(p).ok()?;
+                            match db.insert(&file.identity, &meta, &bytes) {
+                                Ok(r) => Some(r),
+                                Err(e) => {
+                                    log::warn!("Failed to store recording in history: {e}");
+                                    None
+                                }
+                            }
+                        });
+                        LoadOutcome::NvdFile {
+                            file,
+                            series,
+                            db_ref,
+                        }
                     })
                     .map_err(|e| e.to_string());
                 tx.send(LoadMessage::Completed { id, outcome }).ok();
@@ -197,6 +222,7 @@ impl LoaderManager {
         });
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
+        let db_path = self.db_path.clone();
         thread::Builder::new()
             .name(format!("load-{filename}"))
             .spawn(move || {
@@ -221,7 +247,22 @@ impl LoaderManager {
                         .ok();
                         ctx.request_repaint();
                         let series = gt_plot::prepare_file_series(0, &file);
-                        LoadOutcome::NvdFile { file, series }
+                        let db_ref = db_path.as_deref().and_then(|p| {
+                            let meta = gt_db::RecordingMeta::from_nvd_bytes(&bytes).ok()?;
+                            let mut db = gt_db::Database::open_or_create(p).ok()?;
+                            match db.insert(&file.identity, &meta, &bytes) {
+                                Ok(r) => Some(r),
+                                Err(e) => {
+                                    log::warn!("Failed to store recording in history: {e}");
+                                    None
+                                }
+                            }
+                        });
+                        LoadOutcome::NvdFile {
+                            file,
+                            series,
+                            db_ref,
+                        }
                     })
                     .map_err(|e| e.to_string());
                 tx.send(LoadMessage::Completed { id, outcome }).ok();
@@ -504,6 +545,7 @@ pub(super) fn build_log_loaded_file(
         event_markers: Vec::new(),
     };
 
+    let identity = format!("auto:{filename}");
     Some(LoadedFile {
         metadata: FileMetadata {
             filename,
@@ -511,11 +553,13 @@ pub(super) fn build_log_loaded_file(
             total_duration: duration,
             time_range: TimeRange::new(min_time, max_time),
         },
+        identity,
         tracks: vec![track],
         event_marker_styles: std::collections::HashMap::new(),
         orphaned_event_markers: Vec::new(),
         source,
         load_warnings: Vec::new(),
+        db_ref: None,
     })
 }
 

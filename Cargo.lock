@@ -1827,6 +1827,7 @@ dependencies = [
  "env_logger",
  "geotrace-sdk",
  "gt-data-ops",
+ "gt-db",
  "gt-fmt",
  "gt-io",
  "gt-log-marker",
@@ -2056,6 +2057,19 @@ dependencies = [
  "rstar 0.13.0",
  "uom",
  "vec1",
+]
+
+[[package]]
+name = "gt-db"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs",
+ "gt-types",
+ "hdf5-pure",
+ "log",
+ "tempfile",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

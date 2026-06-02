@@ -419,11 +419,13 @@ mod tests {
                     Utc.timestamp_opt(60, 0).single().expect("valid"),
                 ),
             },
+            identity: "auto:test.nvd".to_owned(),
             tracks: vec![],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
             source: gt_types::FileSource::NvdPath(std::path::PathBuf::from("test.nvd")),
             load_warnings: vec![],
+            db_ref: None,
         };
         let range = compute_full_time_range(&[file]);
         assert!(range.is_some());

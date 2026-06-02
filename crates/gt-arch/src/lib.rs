@@ -274,6 +274,7 @@ mod tests {
                     "walkers.*".into(),
                     "chrono.*".into(),
                     "gt_data_ops.*".into(),
+                    "gt_db.*".into(),
                     "gt_fmt.*".into(),
                     "gt_types.*".into(),
                     "gt_map.*".into(),
@@ -292,6 +293,31 @@ mod tests {
                     "config_manager.*".into(),
                     "loader.*".into(),
                     "modals.*".into(),
+                ]),
+                None,
+            )
+            .build();
+
+        // 12. gt_db Isolation (Whitelist)
+        builder
+            .module_lint()
+            .lint_named("gt_db_isolation")
+            .matching(|m| m.module("gt_db.*"))
+            .with_severity(Severity::Error)
+            .restrict_imports(
+                Some(vec![
+                    "^$".into(),
+                    "std.*".into(),
+                    "core.*".into(),
+                    "alloc.*".into(),
+                    "chrono.*".into(),
+                    "dirs.*".into(),
+                    "gt_types.*".into(),
+                    "hdf5_pure.*".into(),
+                    "log.*".into(),
+                    "thiserror.*".into(),
+                    "crate.*".into(),
+                    "gt_db.*".into(),
                 ]),
                 None,
             )

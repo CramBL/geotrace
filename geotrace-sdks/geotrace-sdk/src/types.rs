@@ -233,6 +233,11 @@ pub struct Meta {
     pub device: Option<String>,
     /// Free-text notes.
     pub notes: Option<String>,
+    /// Stable grouping key used by the app's history database.
+    ///
+    /// When set, all recordings with the same identity string are stored under
+    /// the same group in the database and appear together in the History window.
+    pub identity: Option<String>,
 }
 
 impl NavFix {

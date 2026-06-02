@@ -49,6 +49,7 @@ fn read_meta(attrs: &HashMap<String, hdf5_pure::AttrValue>) -> Meta {
         title: string_attr(attrs, "meta_title"),
         device: string_attr(attrs, "meta_device"),
         notes: string_attr(attrs, "meta_notes"),
+        identity: string_attr(attrs, "meta_identity"),
     }
 }
 

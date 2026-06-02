@@ -243,6 +243,7 @@ pub fn compute_track_metadata(
 )]
 pub fn build_loaded_file(
     filename: String,
+    identity: String,
     points: &[NavPoint],
     custom_markers: &[CustomMarker],
     event_markers: Vec<EventMarker>,
@@ -347,6 +348,7 @@ pub fn build_loaded_file(
             total_duration,
             time_range: file_time_range,
         },
+        identity,
         tracks: loaded_tracks,
         event_marker_styles: event_marker_styles
             .into_iter()
@@ -355,6 +357,7 @@ pub fn build_loaded_file(
         orphaned_event_markers,
         source,
         load_warnings,
+        db_ref: None,
     }
 }
 
@@ -558,6 +561,7 @@ mod tests {
     fn build_loaded_file_empty_points() {
         let f = build_loaded_file(
             "test.nvd".to_owned(),
+            "auto:test.nvd".to_owned(),
             &[],
             &[],
             vec![],
@@ -580,6 +584,7 @@ mod tests {
         ];
         let f = build_loaded_file(
             "ride.nvd".to_owned(),
+            "auto:ride.nvd".to_owned(),
             &pts,
             &[],
             vec![],

@@ -172,6 +172,17 @@ impl NavFileBuilder {
         self
     }
 
+    /// Set the stable identity key used by the app's history database.
+    ///
+    /// All recordings with the same identity are stored under the same group
+    /// and appear together in the History window. The string should be stable
+    /// across re-recordings — for example a device serial number or route name.
+    pub fn with_identity(mut self, id: impl Into<String>) -> Self {
+        let m = self.meta.get_or_insert_with(Meta::default);
+        m.identity = Some(id.into());
+        self
+    }
+
     /// Override the maximum time gap for associating a satellite report to a nav fix.
     pub fn with_satellite_window(mut self, window: Duration) -> Self {
         self.satellite_window = window;
