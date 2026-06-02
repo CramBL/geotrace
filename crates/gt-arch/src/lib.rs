@@ -265,6 +265,7 @@ mod tests {
                     "core.*".into(),
                     "alloc.*".into(),
                     "egui.*".into(),
+                    "egui_notify.*".into(),
                     "egui_phosphor.*".into(),
                     "egui_extras.*".into(),
                     "egui_tiles.*".into(),

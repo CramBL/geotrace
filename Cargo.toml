@@ -188,6 +188,7 @@ chrono.workspace = true
 dirs.workspace = true
 eframe.workspace = true
 egui.workspace = true
+egui-notify = "0.22"
 egui-phosphor.workspace = true
 egui_extras.workspace = true
 egui_tiles.workspace = true

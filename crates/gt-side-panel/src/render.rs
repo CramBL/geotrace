@@ -18,6 +18,9 @@ pub struct PanelContext<'a> {
     pub zoom_to_visible_request: &'a mut bool,
     /// Set by clicking the ⚠ icon on a file row; consumed by the app to show a centered dialog.
     pub warnings_request: &'a mut Option<(String, Vec<String>)>,
+    /// Set when the user clicks "Unload" on a file that has a database reference.
+    /// Consumed by the app to drop the file from memory without deleting it from the database.
+    pub unload_request: &'a mut Option<FileIdx>,
 }
 
 pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
@@ -196,6 +199,17 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
         if ui.button("Show only this file").clicked() {
             ctx.tree.show_only_file(fi);
             ui.close();
+        }
+        let has_db_ref = fi.get(ctx.files).is_some_and(|f| f.db_ref.is_some());
+        if has_db_ref {
+            ui.separator();
+            let btn = ui
+                .button("Unload")
+                .on_hover_text("Removes this recording from memory; it stays available in History");
+            if btn.clicked() {
+                *ctx.unload_request = Some(fi);
+                ui.close();
+            }
         }
         ui.separator();
         if ui.button("Delete").clicked() {

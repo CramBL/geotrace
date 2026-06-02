@@ -12,6 +12,7 @@ struct State {
     popup_pos: Option<egui::Pos2>,
     zoom_to_visible: bool,
     warnings_request: Option<(String, Vec<String>)>,
+    unload_request: Option<FileIdx>,
 }
 
 fn make_state(file_count: usize) -> State {
@@ -57,6 +58,7 @@ fn make_state_with_warnings_on(
         popup_pos: None,
         zoom_to_visible: false,
         warnings_request: None,
+        unload_request: None,
     }
 }
 
@@ -76,6 +78,7 @@ fn make_harness(state: State) -> Harness<'static, State> {
                     popup_pos_request: &mut s.popup_pos,
                     zoom_to_visible_request: &mut s.zoom_to_visible,
                     warnings_request: &mut s.warnings_request,
+                    unload_request: &mut s.unload_request,
                 };
                 show_side_panel(ui, &mut ctx);
             },

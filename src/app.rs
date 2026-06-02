@@ -1,4 +1,5 @@
 mod config_manager;
+mod history;
 mod loader;
 mod modals;
 
@@ -47,6 +48,8 @@ struct SharedAppState {
     sync_plot_to_map: bool,
     /// Filename and warnings for the currently open data quality warnings dialog, if any.
     warnings_popup: Option<(String, Vec<String>)>,
+    /// Set by the side panel when the user chooses "Unload" on a file that has a db_ref.
+    unload_request: Option<gt_types::FileIdx>,
 }
 
 pub struct App {
@@ -80,9 +83,13 @@ pub struct App {
     assoc_config: AssociationConfig,
 
     /// History database — `None` if the database could not be opened at startup.
-    /// Retained for future History window operations (list, delete, prune).
-    #[expect(dead_code, reason = "used from the History window (Phase 8+)")]
     db: Option<gt_db::Database>,
+
+    /// History window state.
+    history_window: history::HistoryWindow,
+
+    /// Toast notification queue — rendered every frame over the top of all content.
+    toasts: egui_notify::Toasts,
 }
 
 impl App {
@@ -166,6 +173,7 @@ impl App {
                 zoom_to_visible_request: false,
                 sync_plot_to_map: true,
                 warnings_popup: None,
+                unload_request: None,
             })),
             load_error: None,
             unassociated_log_lines: None,
@@ -181,6 +189,8 @@ impl App {
             processing_config: SegmentationConfig::default(),
             assoc_config: AssociationConfig::default(),
             db,
+            history_window: history::HistoryWindow::new(),
+            toasts: egui_notify::Toasts::default(),
         };
 
         app.apply_startup_settings(&loaded_settings);
@@ -649,6 +659,38 @@ impl App {
             }
         }
     }
+
+    fn handle_history_action(&mut self, action: history::HistoryAction, ctx: &egui::Context) {
+        let Some(db) = self.db.as_mut() else { return };
+        match action {
+            history::HistoryAction::Open(db_ref) => match db.load_nvd_bytes(&db_ref) {
+                Ok(bytes) => {
+                    let filename = format!("{}/{}", db_ref.identity, db_ref.group_name);
+                    self.loader
+                        .spawn_nvd_bytes(bytes.into(), filename, self.processing_config);
+                    ctx.request_repaint();
+                }
+                Err(e) => {
+                    log::error!("Failed to load recording from history: {e}");
+                    self.toasts.error(format!("Could not open recording: {e}"));
+                }
+            },
+            history::HistoryAction::Delete(db_ref) => {
+                let label = format!("{}/{}", db_ref.identity, db_ref.group_name);
+                match db.delete(&db_ref) {
+                    Ok(()) => {
+                        log::info!("Deleted recording '{label}' from history");
+                        self.history_window.invalidate();
+                    }
+                    Err(e) => {
+                        log::error!("Failed to delete recording '{label}': {e}");
+                        self.toasts
+                            .error(format!("Could not delete recording: {e}"));
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Behavior implementation that renders each pane of the central tiles tree.
@@ -803,6 +845,20 @@ impl eframe::App for App {
                 }
                 ui.add_space(16.0);
                 {
+                    let label = format!(
+                        "{} History",
+                        egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE
+                    );
+                    if ui
+                        .selectable_label(self.history_window.open, label)
+                        .on_hover_text("Browse and re-open previously recorded sessions")
+                        .clicked()
+                    {
+                        self.history_window.open = !self.history_window.open;
+                        self.history_window.invalidate();
+                    }
+                }
+                {
                     let label = format!("{} Settings", egui_phosphor::regular::GEAR);
                     if ui.selectable_label(self.settings_open, label).clicked() {
                         self.settings_open = !self.settings_open;
@@ -832,6 +888,7 @@ impl eframe::App for App {
                             popup_pos_request: &mut s.popup_pos_request,
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
+                            unload_request: &mut s.unload_request,
                         },
                     );
                 });
@@ -864,6 +921,7 @@ impl eframe::App for App {
                             popup_pos_request: &mut s.popup_pos_request,
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
+                            unload_request: &mut s.unload_request,
                         },
                     );
                 });
@@ -1037,9 +1095,39 @@ impl eframe::App for App {
             self.map.rebuild_spatial_index(&s.loaded_files);
         }
 
+        let unload_happened = {
+            let mut refmut = self.shared.borrow_mut();
+            let s = &mut *refmut;
+            if let Some(fi) = s.unload_request.take() {
+                let idx = fi.as_usize();
+                if idx < s.loaded_files.len() {
+                    s.loaded_files.remove(idx);
+                    let files = std::mem::take(&mut s.loaded_files);
+                    s.tree.sync_from_loaded_files(&files);
+                    s.loaded_files = files;
+                    s.plot_state.rebuild_all(&s.loaded_files);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        if unload_happened {
+            let s = self.shared.borrow();
+            self.map.rebuild_spatial_index(&s.loaded_files);
+        }
+
         show_unassociated_popup(ui, &mut self.unassociated_log_lines);
         show_orphaned_event_markers_popup(ui, &mut self.orphaned_event_markers);
         show_load_warnings_dialog(ui, &mut self.shared.borrow_mut().warnings_popup);
+
+        if let Some(action) = self.history_window.show(ui.ctx(), self.db.as_ref()) {
+            self.handle_history_action(action, ui.ctx());
+        }
+
+        self.toasts.show(ui.ctx());
 
         // Detect settings changes and trigger a debounced write-through.
         let snapshot = self.collect_snapshot();

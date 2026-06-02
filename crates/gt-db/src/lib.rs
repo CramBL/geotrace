@@ -41,10 +41,20 @@ pub struct Database {
 pub struct RecordingMeta {
     /// First nav-point timestamp in microseconds since epoch UTC.
     pub start_us: i64,
+    /// Last nav-point timestamp in microseconds since epoch UTC.
+    pub end_us: i64,
     pub nav_point_count: u64,
     pub sat_report_count: u64,
     pub marker_count: u64,
     pub event_marker_count: u64,
+    /// Size of the original NVD bytes at import time.
+    pub nvd_size_bytes: u64,
+}
+
+/// One entry in the History window list.
+pub struct RecordingEntry {
+    pub db_ref: DatabaseRef,
+    pub meta: RecordingMeta,
 }
 
 impl RecordingMeta {
@@ -59,15 +69,13 @@ impl RecordingMeta {
         let nav_shape = nav_grp.dataset("time")?.shape()?;
         let nav_point_count = nav_shape.first().copied().unwrap_or(0);
 
-        let start_us = if nav_point_count > 0 {
-            nav_grp
-                .dataset("time")?
-                .read_i64()?
-                .first()
-                .copied()
-                .unwrap_or(0)
+        let (start_us, end_us) = if nav_point_count > 0 {
+            let times = nav_grp.dataset("time")?.read_i64()?;
+            let first = times.first().copied().unwrap_or(0);
+            let last = times.last().copied().unwrap_or(0);
+            (first, last)
         } else {
-            0
+            (0, 0)
         };
 
         let sat_report_count = file
@@ -96,10 +104,56 @@ impl RecordingMeta {
 
         Ok(RecordingMeta {
             start_us,
+            end_us,
             nav_point_count,
             sat_report_count,
             marker_count,
             event_marker_count,
+            nvd_size_bytes: bytes.len() as u64,
+        })
+    }
+
+    /// Reconstruct metadata from HDF5 group attributes stored by `insert`.
+    ///
+    /// Returns `None` if any required attribute is missing or has the wrong
+    /// type (which indicates a corrupt or future-format database entry).
+    pub fn from_attrs(attrs: &std::collections::HashMap<String, AttrValue>) -> Option<Self> {
+        let start_us = match attrs.get("start_us")? {
+            AttrValue::I64(v) => *v,
+            _ => return None,
+        };
+        let end_us = match attrs.get("end_us") {
+            Some(AttrValue::I64(v)) => *v,
+            _ => start_us,
+        };
+        let nav_point_count = match attrs.get("nav_point_count")? {
+            AttrValue::U64(v) => *v,
+            _ => return None,
+        };
+        let sat_report_count = match attrs.get("sat_report_count")? {
+            AttrValue::U64(v) => *v,
+            _ => return None,
+        };
+        let marker_count = match attrs.get("marker_count")? {
+            AttrValue::U64(v) => *v,
+            _ => return None,
+        };
+        let event_marker_count = match attrs.get("event_marker_count")? {
+            AttrValue::U64(v) => *v,
+            _ => return None,
+        };
+        let nvd_size_bytes = match attrs.get("nvd_size_bytes") {
+            Some(AttrValue::U64(v)) => *v,
+            _ => 0,
+        };
+        Some(RecordingMeta {
+            start_us,
+            end_us,
+            nav_point_count,
+            sat_report_count,
+            marker_count,
+            event_marker_count,
+            nvd_size_bytes,
         })
     }
 
@@ -108,7 +162,10 @@ impl RecordingMeta {
         self.nav_point_count + self.sat_report_count + self.marker_count + self.event_marker_count
     }
 
-    fn matches_attrs(&self, attrs: &std::collections::HashMap<String, AttrValue>) -> bool {
+    pub(crate) fn matches_attrs(
+        &self,
+        attrs: &std::collections::HashMap<String, AttrValue>,
+    ) -> bool {
         let start_matches =
             matches!(attrs.get("start_us"), Some(AttrValue::I64(v)) if *v == self.start_us);
         let nav_matches = matches!(attrs.get("nav_point_count"), Some(AttrValue::U64(v)) if *v == self.nav_point_count);
@@ -211,6 +268,55 @@ impl Database {
             identity: identity.to_owned(),
             group_name: rec_name,
         })
+    }
+
+    /// Return all recordings in the database, sorted by start timestamp descending.
+    pub fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {
+        let file = hdf5_pure::File::open(&self.path)?;
+        let root = file.root();
+        let Ok(by_id) = root.group("by_identity") else {
+            return Ok(vec![]);
+        };
+        let mut entries = Vec::new();
+        for identity in by_id.groups()? {
+            let Ok(id_grp) = by_id.group(&identity) else {
+                continue;
+            };
+            for rec_name in id_grp.groups()? {
+                let Ok(rec_grp) = id_grp.group(&rec_name) else {
+                    continue;
+                };
+                let Ok(attrs) = rec_grp.attrs() else {
+                    continue;
+                };
+                if let Some(meta) = RecordingMeta::from_attrs(&attrs) {
+                    entries.push(RecordingEntry {
+                        db_ref: DatabaseRef {
+                            identity: identity.clone(),
+                            group_name: rec_name,
+                        },
+                        meta,
+                    });
+                }
+            }
+        }
+        entries.sort_unstable_by_key(|e| std::cmp::Reverse(e.meta.start_us));
+        Ok(entries)
+    }
+
+    /// Remove a recording from the database using a read-modify-write cycle.
+    ///
+    /// If the recording does not exist, this is a no-op.
+    pub fn delete(&mut self, db_ref: &DatabaseRef) -> Result<(), DbError> {
+        copy::delete_recording(&self.path, &db_ref.identity, &db_ref.group_name)
+    }
+
+    /// Read a recording back out of the database as NVD-format bytes.
+    ///
+    /// The returned bytes can be passed to `spawn_nvd_bytes` to load the
+    /// recording into the app without re-reading the original source file.
+    pub fn load_nvd_bytes(&self, db_ref: &DatabaseRef) -> Result<Vec<u8>, DbError> {
+        copy::load_recording_bytes(&self.path, &db_ref.identity, &db_ref.group_name)
     }
 
     fn create_new(path: &Path) -> Result<(), DbError> {

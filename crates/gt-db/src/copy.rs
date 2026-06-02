@@ -148,6 +148,7 @@ fn build_new_recording(
                 AttrValue::String(identity.to_owned()),
             ),
             ("start_us".to_owned(), AttrValue::I64(meta.start_us)),
+            ("end_us".to_owned(), AttrValue::I64(meta.end_us)),
             (
                 "nav_point_count".to_owned(),
                 AttrValue::U64(meta.nav_point_count),
@@ -160,6 +161,10 @@ fn build_new_recording(
             (
                 "event_marker_count".to_owned(),
                 AttrValue::U64(meta.event_marker_count),
+            ),
+            (
+                "nvd_size_bytes".to_owned(),
+                AttrValue::U64(meta.nvd_size_bytes),
             ),
         ],
         datasets: Vec::new(),
@@ -174,10 +179,45 @@ fn build_new_recording(
     Ok(rec)
 }
 
-#[expect(
-    clippy::cognitive_complexity,
-    reason = "read-modify-write cycle with nested group/dataset replay is inherently linear; splitting would only add indirection"
-)]
+/// Write `identity_nodes` (the full `by_identity` tree) to a new database file at `db_path`.
+fn write_db(identity_nodes: &[GroupNode], db_path: &std::path::Path) -> Result<(), DbError> {
+    let mut fb = FileBuilder::new();
+    fb.set_attr(SCHEMA_VERSION_ATTR, AttrValue::I64(CURRENT_SCHEMA_VERSION));
+
+    let meta_gb = fb.create_group("meta");
+    fb.add_group(meta_gb.finish());
+
+    let mut by_id_gb = fb.create_group("by_identity");
+    for id_node in identity_nodes {
+        let mut id_gb = by_id_gb.create_group(&id_node.name);
+        for rec_node in &id_node.groups {
+            let mut rec_gb = id_gb.create_group(&rec_node.name);
+            for (k, v) in &rec_node.attrs {
+                rec_gb.set_attr(k, v.clone());
+            }
+            for ds in &rec_node.datasets {
+                write_dataset_into!(rec_gb, ds);
+            }
+            for child in &rec_node.groups {
+                let mut child_gb = rec_gb.create_group(&child.name);
+                for (k, v) in &child.attrs {
+                    child_gb.set_attr(k, v.clone());
+                }
+                for ds in &child.datasets {
+                    write_dataset_into!(child_gb, ds);
+                }
+                rec_gb.add_group(child_gb.finish());
+            }
+            id_gb.add_group(rec_gb.finish());
+        }
+        by_id_gb.add_group(id_gb.finish());
+    }
+    fb.add_group(by_id_gb.finish());
+
+    fb.write(db_path)?;
+    Ok(())
+}
+
 pub(crate) fn insert_recording(
     db_path: &std::path::Path,
     identity: &str,
@@ -230,45 +270,75 @@ pub(crate) fn insert_recording(
         }),
     }
 
-    // Write the complete new database file.
-    let mut fb = FileBuilder::new();
-    fb.set_attr(SCHEMA_VERSION_ATTR, AttrValue::I64(CURRENT_SCHEMA_VERSION));
-
-    let meta_gb = fb.create_group("meta");
-    fb.add_group(meta_gb.finish());
-
-    {
-        let mut by_id_gb = fb.create_group("by_identity");
-        for id_node in &identity_nodes {
-            let mut id_gb = by_id_gb.create_group(&id_node.name);
-            for rec_node in &id_node.groups {
-                let mut rec_gb = id_gb.create_group(&rec_node.name);
-                for (k, v) in &rec_node.attrs {
-                    rec_gb.set_attr(k, v.clone());
-                }
-                for ds in &rec_node.datasets {
-                    write_dataset_into!(rec_gb, ds);
-                }
-                for child in &rec_node.groups {
-                    let mut child_gb = rec_gb.create_group(&child.name);
-                    for (k, v) in &child.attrs {
-                        child_gb.set_attr(k, v.clone());
-                    }
-                    for ds in &child.datasets {
-                        write_dataset_into!(child_gb, ds);
-                    }
-                    rec_gb.add_group(child_gb.finish());
-                }
-                id_gb.add_group(rec_gb.finish());
-            }
-            by_id_gb.add_group(id_gb.finish());
-        }
-        fb.add_group(by_id_gb.finish());
-    }
-
-    fb.write(db_path)?;
+    write_db(&identity_nodes, db_path)?;
     log::info!("Stored recording '{identity}/{rec_name}' in history database");
     Ok(rec_name)
+}
+
+/// Remove one recording group from the database using a read-modify-write cycle.
+pub(crate) fn delete_recording(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+) -> Result<(), DbError> {
+    let existing_db = hdf5_pure::File::open(db_path)?;
+    let mut identity_nodes = snapshot_by_identity(&existing_db)?;
+
+    if let Some(id_node) = identity_nodes.iter_mut().find(|n| n.name == identity) {
+        id_node.groups.retain(|r| r.name != group_name);
+    }
+    // Drop empty identity groups.
+    identity_nodes.retain(|n| !n.groups.is_empty());
+
+    write_db(&identity_nodes, db_path)?;
+    log::info!("Deleted recording '{identity}/{group_name}' from history database");
+    Ok(())
+}
+
+/// Read a recording back from the database and return it as NVD-format bytes.
+pub(crate) fn load_recording_bytes(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+) -> Result<Vec<u8>, DbError> {
+    let db = hdf5_pure::File::open(db_path)?;
+    let by_id = db.root().group("by_identity")?;
+    let id_grp = by_id.group(identity)?;
+    let rec_grp = id_grp.group(group_name)?;
+
+    // Snapshot all child data groups (nav_points, sat_reports, etc.) and
+    // write them as a fresh NVD-format HDF5 file.
+    let mut fb = FileBuilder::new();
+    for child_name in rec_grp.groups()? {
+        let child = rec_grp.group(&child_name)?;
+        let node = snapshot_group(&child, &child_name)?;
+        let mut gb = fb.create_group(&node.name);
+        for (k, v) in &node.attrs {
+            gb.set_attr(k, v.clone());
+        }
+        for ds in &node.datasets {
+            write_dataset_into!(gb, ds);
+        }
+        for sg in &node.groups {
+            let mut sgb = gb.create_group(&sg.name);
+            for (k, v) in &sg.attrs {
+                sgb.set_attr(k, v.clone());
+            }
+            for ds in &sg.datasets {
+                write_dataset_into!(sgb, ds);
+            }
+            gb.add_group(sgb.finish());
+        }
+        fb.add_group(gb.finish());
+    }
+
+    // hdf5-pure can only write to a path; write a sibling temp file then read
+    // it back into memory before removing it.
+    let tmp_path = db_path.with_extension("load_tmp.h5");
+    fb.write(&tmp_path)?;
+    let bytes = std::fs::read(&tmp_path)?;
+    std::fs::remove_file(&tmp_path).ok();
+    Ok(bytes)
 }
 
 fn chunk_for_shape(shape: &[u64]) -> Vec<u64> {

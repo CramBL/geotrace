@@ -225,3 +225,102 @@ fn nav_point_data_round_trips() {
 
     assert_eq!(stored, expected, "timestamps should round-trip losslessly");
 }
+
+#[test]
+fn list_recordings_returns_entries_sorted_descending() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes_a = make_nvd_bytes(1_000, 3);
+    let bytes_b = make_nvd_bytes(2_000, 5);
+    let meta_a = RecordingMeta::from_nvd_bytes(&bytes_a).expect("meta a");
+    let meta_b = RecordingMeta::from_nvd_bytes(&bytes_b).expect("meta b");
+
+    db.insert("dev", &meta_a, &bytes_a).expect("insert a");
+    db.insert("dev", &meta_b, &bytes_b).expect("insert b");
+
+    let entries = db.list_recordings().expect("list");
+    assert_eq!(entries.len(), 2);
+    assert!(
+        entries[0].meta.start_us >= entries[1].meta.start_us,
+        "entries should be sorted descending by start_us"
+    );
+}
+
+#[test]
+fn list_recordings_empty_database() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let entries = db.list_recordings().expect("list");
+    assert!(entries.is_empty());
+}
+
+#[test]
+fn delete_removes_recording() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes = make_nvd_bytes(3_000, 4);
+    let meta = RecordingMeta::from_nvd_bytes(&bytes).expect("meta");
+    let db_ref = db.insert("dev", &meta, &bytes).expect("insert");
+
+    assert_eq!(db.list_recordings().expect("list before").len(), 1);
+
+    db.delete(&db_ref).expect("delete");
+
+    assert_eq!(db.list_recordings().expect("list after").len(), 0);
+}
+
+#[test]
+fn delete_nonexistent_is_noop() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let missing = gt_db::DatabaseRef {
+        identity: "nobody".to_owned(),
+        group_name: "2000-01-01T00:00:00Z".to_owned(),
+    };
+    db.delete(&missing)
+        .expect("delete of nonexistent should not error");
+    assert_eq!(db.list_recordings().expect("list").len(), 0);
+}
+
+#[test]
+fn load_nvd_bytes_round_trips_nav_point_timestamps() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let start_us = 9_000_000_i64;
+    let n = 6_u64;
+    let expected: Vec<i64> = (0..n as i64).map(|i| start_us + i).collect();
+
+    let bytes = make_nvd_bytes(start_us, n);
+    let meta = RecordingMeta::from_nvd_bytes(&bytes).expect("meta");
+    let db_ref = db.insert("reload_test", &meta, &bytes).expect("insert");
+
+    let loaded_bytes = db.load_nvd_bytes(&db_ref).expect("load_nvd_bytes");
+    let loaded_file = hdf5_pure::File::from_bytes(loaded_bytes).expect("parse loaded bytes");
+    let times = loaded_file
+        .group("nav_points")
+        .and_then(|g| g.dataset("time"))
+        .and_then(|ds| ds.read_i64())
+        .expect("read timestamps");
+
+    assert_eq!(times, expected, "loaded timestamps should match original");
+}
+
+#[test]
+fn meta_end_us_and_size_bytes_are_populated() {
+    let bytes = make_nvd_bytes(5_000, 10);
+    let meta = RecordingMeta::from_nvd_bytes(&bytes).expect("meta");
+
+    assert_eq!(meta.start_us, 5_000);
+    assert_eq!(meta.end_us, 5_009, "end_us should be start + (n-1)");
+    assert_eq!(meta.nvd_size_bytes, bytes.len() as u64);
+}
