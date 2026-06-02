@@ -449,7 +449,7 @@ pub fn show_trip_plot(
     // Encode the incoming map sync range as bit patterns so we can compare
     // without float equality warnings.
     let map_x_key = map_sync_x_range.map(|(a, b)| (a.to_bits(), b.to_bits()));
-    let need_map_sync = map_x_key.is_some() && map_x_key != state.applied_map_x_range;
+    let need_map_sync = map_x_key.is_some_and(|k| state.applied_map_x_range != Some(k));
 
     let mut new_hovered_time: Option<DateTime<Utc>> = None;
     let mut new_computed_bounds: Option<(f64, f64, usize)> = None;
@@ -510,8 +510,9 @@ pub fn show_trip_plot(
             new_applied_map_x_range = Some(map_x_key);
         }
 
+        debug_assert_eq!(visible.len(), series_cache.len());
         for (si, series) in series_cache.iter().enumerate() {
-            if !visible.get(si).copied().unwrap_or(false) {
+            if !visible[si] {
                 continue;
             }
             // `resolved` has the same length as `series_cache` by construction.
@@ -846,7 +847,7 @@ pub fn find_closest_tpv(
     let mut best: Option<(FileIdx, TrackIdx, PointIdx, f64)> = None;
 
     for (fi, file) in files.iter().enumerate() {
-        let fi = FileIdx(fi);
+        let fi = FileIdx::new(fi);
         let Some(file_vis) = fi.get(&visibility.files) else {
             continue;
         };
@@ -854,7 +855,7 @@ pub fn find_closest_tpv(
             continue;
         }
         for (ti, track) in file.tracks.iter().enumerate() {
-            let ti = TrackIdx(ti);
+            let ti = TrackIdx::new(ti);
             let Some(trip_vis) = ti.get(&file_vis.tracks) else {
                 continue;
             };
@@ -867,7 +868,7 @@ pub fn find_closest_tpv(
             let Some(pi) = closest_point_index(&track.points, target_secs) else {
                 continue;
             };
-            let pi = PointIdx(pi);
+            let pi = PointIdx::new(pi);
             let Some(point) = pi.get(&track.points) else {
                 continue;
             };

@@ -1,24 +1,48 @@
+use std::fmt;
+
 /// Typed wrapper for a file index into `loaded_files[fi]`.
 ///
 /// Using a newtype prevents accidentally swapping a file index for a trip index.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct FileIdx(pub usize);
+pub struct FileIdx(usize);
 
 impl FileIdx {
+    pub fn new(n: usize) -> Self {
+        Self(n)
+    }
+
+    pub fn as_usize(self) -> usize {
+        self.0
+    }
+
     pub fn get<T>(self, slice: &[T]) -> Option<&T> {
         slice.get(self.0)
     }
 
     pub fn get_mut<T>(self, slice: &mut [T]) -> Option<&mut T> {
         slice.get_mut(self.0)
+    }
+}
+
+impl fmt::Display for FileIdx {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
 /// Typed wrapper for a track index into `loaded_files[fi].trips[ti]`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct TrackIdx(pub usize);
+pub struct TrackIdx(usize);
 
 impl TrackIdx {
+    pub fn new(n: usize) -> Self {
+        Self(n)
+    }
+
+    pub fn as_usize(self) -> usize {
+        self.0
+    }
+
     pub fn get<T>(self, slice: &[T]) -> Option<&T> {
         slice.get(self.0)
     }
@@ -28,17 +52,37 @@ impl TrackIdx {
     }
 }
 
+impl fmt::Display for TrackIdx {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Typed wrapper for a point index into `loaded_files[fi].trips[ti].points[pi]`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct PointIdx(pub usize);
+pub struct PointIdx(usize);
 
 impl PointIdx {
+    pub fn new(n: usize) -> Self {
+        Self(n)
+    }
+
+    pub fn as_usize(self) -> usize {
+        self.0
+    }
+
     pub fn get<T>(self, slice: &[T]) -> Option<&T> {
         slice.get(self.0)
     }
 
     pub fn get_mut<T>(self, slice: &mut [T]) -> Option<&mut T> {
         slice.get_mut(self.0)
+    }
+}
+
+impl fmt::Display for PointIdx {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 

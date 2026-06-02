@@ -54,10 +54,10 @@ impl<'a> GeneratedMarkerRenderer<'a> {
     }
 
     fn show_tooltip(&self, ui: &Ui, point_ref: DataPointRef, pos: Pos2) {
-        let Some(file) = self.files.get(point_ref.file_index.0) else {
+        let Some(file) = point_ref.file_index.get(self.files) else {
             return;
         };
-        let Some(track) = file.tracks.get(point_ref.track_index.0) else {
+        let Some(track) = point_ref.track_index.get(&file.tracks) else {
             return;
         };
         let Some(marker) = point_ref.point_index.get(&track.generated_markers) else {
@@ -68,9 +68,9 @@ impl<'a> GeneratedMarkerRenderer<'a> {
             hit_rect,
             ui.id()
                 .with("gen_marker_hover")
-                .with(point_ref.file_index.0)
-                .with(point_ref.track_index.0)
-                .with(point_ref.point_index.0),
+                .with(point_ref.file_index)
+                .with(point_ref.track_index)
+                .with(point_ref.point_index),
             egui::Sense::hover(),
         );
         response.show_tooltip_ui(|ui| match marker.kind {
@@ -112,22 +112,22 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
         let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         for sp in &self.visible_generated {
-            let Some(file_vis) = self.visibility.files.get(sp.file_index.0) else {
+            let Some(file_vis) = sp.file_index.get(&self.visibility.files) else {
                 continue;
             };
             if !file_vis.enabled {
                 continue;
             }
-            let Some(trip_vis) = file_vis.tracks.get(sp.track_index.0) else {
+            let Some(trip_vis) = sp.track_index.get(&file_vis.tracks) else {
                 continue;
             };
             if !trip_vis.enabled || !trip_vis.generated_markers_visible {
                 continue;
             }
-            let Some(file) = self.files.get(sp.file_index.0) else {
+            let Some(file) = sp.file_index.get(self.files) else {
                 continue;
             };
-            let Some(track) = file.tracks.get(sp.track_index.0) else {
+            let Some(track) = sp.track_index.get(&file.tracks) else {
                 continue;
             };
             if !filter::track_passes_filter(&track.metadata, self.filter) {
@@ -157,8 +157,8 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             && r.category == DataCategory::GeneratedMarker
             && self.highlight.sticky != Some(r)
             && !ui.ctx().any_popup_open()
-            && let Some(file) = self.files.get(r.file_index.0)
-            && let Some(track) = file.tracks.get(r.track_index.0)
+            && let Some(file) = r.file_index.get(self.files)
+            && let Some(track) = r.track_index.get(&file.tracks)
             && let Some(marker) = r.point_index.get(&track.generated_markers)
         {
             let pos = transform.to_screen(marker.merc);

@@ -11,9 +11,9 @@ use gt_types::{DataCategory, FileIdx, LoadedFile, PointIdx, SpatialPoint, TrackI
 pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
     let mut points: Vec<SpatialPoint> = Vec::new();
     for (fi, file) in files.iter().enumerate() {
-        let file_index = FileIdx(fi);
+        let file_index = FileIdx::new(fi);
         for (ti, track) in file.tracks.iter().enumerate() {
-            let track_index = TrackIdx(ti);
+            let track_index = TrackIdx::new(ti);
             for (pi, p) in track.points.iter().enumerate() {
                 if p.tpv.heading().is_none() {
                     continue;
@@ -22,7 +22,7 @@ pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
                     merc: p.merc,
                     file_index,
                     track_index,
-                    point_index: PointIdx(pi),
+                    point_index: PointIdx::new(pi),
                     category: DataCategory::Tpv,
                 });
             }
@@ -31,7 +31,7 @@ pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
                     merc: m.merc,
                     file_index,
                     track_index,
-                    point_index: PointIdx(pi),
+                    point_index: PointIdx::new(pi),
                     category: DataCategory::CustomMarker,
                 });
             }
@@ -40,7 +40,7 @@ pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
                     merc: m.merc,
                     file_index,
                     track_index,
-                    point_index: PointIdx(pi),
+                    point_index: PointIdx::new(pi),
                     category: DataCategory::GeneratedMarker,
                 });
             }
@@ -49,7 +49,7 @@ pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
                     merc: m.merc,
                     file_index,
                     track_index,
-                    point_index: PointIdx(pi),
+                    point_index: PointIdx::new(pi),
                     category: DataCategory::EventMarker,
                 });
             }

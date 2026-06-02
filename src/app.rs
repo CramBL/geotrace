@@ -367,90 +367,21 @@ impl App {
             shared.sync_plot_to_map = s.map.sync_to_map;
             shared.plot_state.show_grid = s.plot.show_grid;
             let vis = &mut shared.plot_state.metric_vis;
-            vis.sats_seen = s
-                .plot
-                .metric
-                .get(&crate::settings::MetricKind::SatsSeen)
-                .copied()
-                .unwrap_or(true);
-            vis.sats_fix = s
-                .plot
-                .metric
-                .get(&crate::settings::MetricKind::SatsFix)
-                .copied()
-                .unwrap_or(true);
-            vis.gps_seen = s
-                .plot
-                .metric
-                .get(&crate::settings::MetricKind::GpsSeen)
-                .copied()
-                .unwrap_or(true);
-            vis.gps_fix = s
-                .plot
-                .metric
-                .get(&crate::settings::MetricKind::GpsFix)
-                .copied()
-                .unwrap_or(true);
-            vis.glonass_seen = s
-                .plot
-                .metric
-                .get(&crate::settings::MetricKind::GlonassSeen)
-                .copied()
-                .unwrap_or(true);
-            vis.glonass_fix = s
-                .plot
-                .metric
-                .get(&crate::settings::MetricKind::GlonassFix)
-                .copied()
-                .unwrap_or(true);
-            vis.galileo_seen = s
-                .plot
-                .metric
-                .get(&crate::settings::MetricKind::GalileoSeen)
-                .copied()
-                .unwrap_or(true);
-            vis.galileo_fix = s
-                .plot
-                .metric
-                .get(&crate::settings::MetricKind::GalileoFix)
-                .copied()
-                .unwrap_or(true);
-            vis.beidou_seen = s
-                .plot
-                .metric
-                .get(&crate::settings::MetricKind::BeidouSeen)
-                .copied()
-                .unwrap_or(true);
-            vis.beidou_fix = s
-                .plot
-                .metric
-                .get(&crate::settings::MetricKind::BeidouFix)
-                .copied()
-                .unwrap_or(true);
-            vis.velocity = s
-                .plot
-                .metric
-                .get(&crate::settings::MetricKind::Velocity)
-                .copied()
-                .unwrap_or(true);
-            vis.eph = s
-                .plot
-                .metric
-                .get(&crate::settings::MetricKind::Eph)
-                .copied()
-                .unwrap_or(true);
-            vis.heading_deg = s
-                .plot
-                .metric
-                .get(&crate::settings::MetricKind::HeadingDeg)
-                .copied()
-                .unwrap_or(true);
-            vis.clock_delta_ms = s
-                .plot
-                .metric
-                .get(&crate::settings::MetricKind::ClockDeltaMs)
-                .copied()
-                .unwrap_or(true);
+            let get_metric = |k| s.plot.metric.get(&k).copied().unwrap_or(true);
+            vis.sats_seen = get_metric(crate::settings::MetricKind::SatsSeen);
+            vis.sats_fix = get_metric(crate::settings::MetricKind::SatsFix);
+            vis.gps_seen = get_metric(crate::settings::MetricKind::GpsSeen);
+            vis.gps_fix = get_metric(crate::settings::MetricKind::GpsFix);
+            vis.glonass_seen = get_metric(crate::settings::MetricKind::GlonassSeen);
+            vis.glonass_fix = get_metric(crate::settings::MetricKind::GlonassFix);
+            vis.galileo_seen = get_metric(crate::settings::MetricKind::GalileoSeen);
+            vis.galileo_fix = get_metric(crate::settings::MetricKind::GalileoFix);
+            vis.beidou_seen = get_metric(crate::settings::MetricKind::BeidouSeen);
+            vis.beidou_fix = get_metric(crate::settings::MetricKind::BeidouFix);
+            vis.velocity = get_metric(crate::settings::MetricKind::Velocity);
+            vis.eph = get_metric(crate::settings::MetricKind::Eph);
+            vis.heading_deg = get_metric(crate::settings::MetricKind::HeadingDeg);
+            vis.clock_delta_ms = get_metric(crate::settings::MetricKind::ClockDeltaMs);
         }
 
         self.tiles_tree
@@ -721,11 +652,13 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                             file_index,
                             track_index,
                         } => {
-                            s.tree
-                                .show_only_trip(FileIdx(file_index), TrackIdx(track_index));
+                            s.tree.show_only_trip(
+                                FileIdx::new(file_index),
+                                TrackIdx::new(track_index),
+                            );
                         }
                         MapContextAction::ShowOnlyFile { file_index } => {
-                            s.tree.show_only_file(FileIdx(file_index));
+                            s.tree.show_only_file(FileIdx::new(file_index));
                         }
                     }
                 }
@@ -1197,10 +1130,11 @@ fn extract_map_hover_time(
     if point_ref.category != DataCategory::Tpv {
         return None;
     }
-    files
-        .get(point_ref.file_index.0)
-        .and_then(|f| f.tracks.get(point_ref.track_index.0))
-        .and_then(|t| t.points.get(point_ref.point_index.0))
+    point_ref
+        .file_index
+        .get(files)
+        .and_then(|f| point_ref.track_index.get(&f.tracks))
+        .and_then(|t| point_ref.point_index.get(&t.points))
         .map(|p| p.tpv.time().utc())
 }
 

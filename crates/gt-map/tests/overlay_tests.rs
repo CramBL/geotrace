@@ -6,10 +6,10 @@ use gt_types::{
 
 fn tpv_point(pi: usize) -> DataPointRef {
     DataPointRef {
-        file_index: FileIdx(0),
-        track_index: TrackIdx(0),
+        file_index: FileIdx::new(0),
+        track_index: TrackIdx::new(0),
         category: DataCategory::Tpv,
-        point_index: PointIdx(pi),
+        point_index: PointIdx::new(pi),
     }
 }
 

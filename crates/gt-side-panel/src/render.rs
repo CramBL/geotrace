@@ -55,13 +55,13 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
         .iter()
         .enumerate()
         .flat_map(|(fi, file)| {
-            let fi = FileIdx(fi);
+            let fi = FileIdx::new(fi);
             let file_enabled = fi.get(&vis.files).is_some_and(|fv| fv.enabled);
             file.tracks
                 .iter()
                 .enumerate()
                 .filter_map(move |(ti, track)| {
-                    let ti = TrackIdx(ti);
+                    let ti = TrackIdx::new(ti);
                     let trip_enabled = file_enabled
                         && fi
                             .get(&vis.files)
@@ -114,7 +114,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             for fi in 0..ctx.files.len() {
-                render_file_row(ui, FileIdx(fi), ctx);
+                render_file_row(ui, FileIdx::new(fi), ctx);
             }
         });
 }
@@ -192,10 +192,10 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
     });
 
     if is_expanded {
-        ui.indent(format!("file_{}", fi.0), |ui| {
+        ui.indent(format!("file_{fi}"), |ui| {
             let trip_count = fi.get(ctx.files).map_or(0, |f| f.tracks.len());
             for ti in 0..trip_count {
-                render_trip_row(ui, fi, TrackIdx(ti), ctx);
+                render_trip_row(ui, fi, TrackIdx::new(ti), ctx);
             }
         });
     }
@@ -307,7 +307,7 @@ fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Panel
     });
 
     if is_expanded {
-        ui.indent(format!("track_{}_{}", fi.0, ti.0), |ui| {
+        ui.indent(format!("track_{fi}_{ti}"), |ui| {
             render_trip_categories(ui, fi, ti, &track, ctx);
         });
     }
@@ -561,7 +561,7 @@ fn render_event_markers_section(
         return;
     }
 
-    let header_id = egui::Id::new(("events_section", fi.0, ti.0));
+    let header_id = egui::Id::new(("events_section", fi, ti));
 
     ui.horizontal(|ui| {
         ui.add_space(16.0);
@@ -660,7 +660,7 @@ fn render_tpv_items(
             file_index: fi,
             track_index: ti,
             category: DataCategory::Tpv,
-            point_index: PointIdx(pi),
+            point_index: PointIdx::new(pi),
         };
         let label = point.tpv.time().utc().format("%H:%M:%S").to_string();
         let lat_lon = (point.tpv.lat().as_degrees(), point.tpv.lon().as_degrees());
@@ -693,7 +693,7 @@ fn render_satellite_report_items(
             file_index: fi,
             track_index: ti,
             category: DataCategory::SatelliteReport,
-            point_index: PointIdx(pi),
+            point_index: PointIdx::new(pi),
         };
         let time_str = sats.best_time().map_or_else(
             || gt_ui_theme::EM_DASH.to_string(),
@@ -731,7 +731,7 @@ fn render_custom_marker_items(
             file_index: fi,
             track_index: ti,
             category: DataCategory::CustomMarker,
-            point_index: PointIdx(pi),
+            point_index: PointIdx::new(pi),
         };
         let label = format!("{}  {}", marker.time.format("%H:%M:%S"), marker.label);
         let lat_lon = (marker.lat.as_degrees(), marker.lon.as_degrees());
@@ -762,7 +762,7 @@ fn render_generated_marker_items(
             file_index: fi,
             track_index: ti,
             category: DataCategory::GeneratedMarker,
-            point_index: PointIdx(pi),
+            point_index: PointIdx::new(pi),
         };
         let kind_str = match marker.kind {
             GeneratedMarkerKind::GpsFixLost => "GPS fix lost",

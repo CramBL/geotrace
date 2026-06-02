@@ -41,7 +41,7 @@ impl<'a> TrackRenderer<'a> {
         if self.is_trip_highlighted(fi, ti) {
             Stroke::new(4.0, HIGHLIGHT_BLUE)
         } else {
-            Stroke::new(3.0, track_color(fi.0, ti.0))
+            Stroke::new(3.0, track_color(fi.as_usize(), ti.as_usize()))
         }
     }
 
@@ -96,16 +96,16 @@ impl Plugin for TrackRenderer<'_> {
         };
 
         for (fi, file) in self.files.iter().enumerate() {
-            let fi = FileIdx(fi);
-            let Some(file_vis) = self.visibility.files.get(fi.0) else {
+            let fi = FileIdx::new(fi);
+            let Some(file_vis) = fi.get(&self.visibility.files) else {
                 continue;
             };
             if !file_vis.enabled {
                 continue;
             }
             for (ti, track) in file.tracks.iter().enumerate() {
-                let ti = TrackIdx(ti);
-                let Some(trip_vis) = file_vis.tracks.get(ti.0) else {
+                let ti = TrackIdx::new(ti);
+                let Some(trip_vis) = ti.get(&file_vis.tracks) else {
                     continue;
                 };
                 if !trip_vis.enabled || !trip_vis.track_visible {
@@ -136,7 +136,7 @@ impl Plugin for TrackRenderer<'_> {
                 }
 
                 // Blink overlay uses the full path without ghost distinction.
-                let need_blink = self.blink_alpha > 0.0 && fi.0 >= self.new_file_boundary;
+                let need_blink = self.blink_alpha > 0.0 && fi.as_usize() >= self.new_file_boundary;
                 let blink_path: Option<Vec<egui::Pos2>> =
                     need_blink.then(|| pts.iter().map(|(_, pos)| *pos).collect());
 

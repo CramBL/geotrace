@@ -1,5 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 
+use crate::highlight::{FileIdx, TrackIdx};
+
 /// Per-trip visibility state for event marker variant paths.
 ///
 /// A marker at variant path `p` is hidden when any prefix of `p` (including `p`
@@ -7,7 +9,7 @@ use std::collections::{BTreeSet, HashMap};
 /// This lets a single toggle on a parent node hide all its descendants.
 #[derive(Debug, Clone, Default)]
 pub struct EventMarkerVisibility {
-    hidden: HashMap<(usize, usize), BTreeSet<String>>,
+    hidden: HashMap<(FileIdx, TrackIdx), BTreeSet<String>>,
 }
 
 impl EventMarkerVisibility {
@@ -16,7 +18,7 @@ impl EventMarkerVisibility {
     }
 
     /// Returns `true` when the variant should be rendered (not hidden).
-    pub fn is_visible(&self, fi: usize, ti: usize, variant_path: &str) -> bool {
+    pub fn is_visible(&self, fi: FileIdx, ti: TrackIdx, variant_path: &str) -> bool {
         let Some(hidden) = self.hidden.get(&(fi, ti)) else {
             return true;
         };
@@ -25,23 +27,23 @@ impl EventMarkerVisibility {
             if hidden.contains(path) {
                 return false;
             }
-            match path.rfind('/') {
-                Some(pos) => match path.get(..pos) {
-                    Some(prefix) => path = prefix,
-                    None => return true,
-                },
-                None => return true,
-            }
+            let Some(pos) = path.rfind('/') else {
+                return true;
+            };
+            let Some(prefix) = path.get(..pos) else {
+                return true;
+            };
+            path = prefix;
         }
     }
 
     /// Returns `true` when this exact path (not a descendant) is explicitly hidden.
-    pub fn is_explicitly_hidden(&self, fi: usize, ti: usize, path: &str) -> bool {
+    pub fn is_explicitly_hidden(&self, fi: FileIdx, ti: TrackIdx, path: &str) -> bool {
         self.hidden.get(&(fi, ti)).is_some_and(|h| h.contains(path))
     }
 
     /// Toggle the explicit hidden state of `path` for the given trip.
-    pub fn toggle(&mut self, fi: usize, ti: usize, path: &str) {
+    pub fn toggle(&mut self, fi: FileIdx, ti: TrackIdx, path: &str) {
         let hidden = self.hidden.entry((fi, ti)).or_default();
         if !hidden.remove(path) {
             hidden.insert(path.to_owned());
@@ -50,7 +52,7 @@ impl EventMarkerVisibility {
 
     /// Hide `path` and remove any explicit hidden entries for its descendants
     /// (they are now redundant — the parent covers them).
-    pub fn set_hidden_cascade(&mut self, fi: usize, ti: usize, path: &str) {
+    pub fn set_hidden_cascade(&mut self, fi: FileIdx, ti: TrackIdx, path: &str) {
         let hidden = self.hidden.entry((fi, ti)).or_default();
         let child_prefix = format!("{path}/");
         hidden.retain(|p| !p.starts_with(&child_prefix));
@@ -59,7 +61,7 @@ impl EventMarkerVisibility {
 
     /// Show `path` by removing its explicit hidden entry and clearing any
     /// explicitly hidden descendants so they inherit visibility.
-    pub fn set_visible_cascade(&mut self, fi: usize, ti: usize, path: &str) {
+    pub fn set_visible_cascade(&mut self, fi: FileIdx, ti: TrackIdx, path: &str) {
         if let Some(hidden) = self.hidden.get_mut(&(fi, ti)) {
             let child_prefix = format!("{path}/");
             hidden.retain(|p| p != path && !p.starts_with(&child_prefix));
@@ -70,7 +72,12 @@ impl EventMarkerVisibility {
     ///
     /// Each entry in `hidden_roots` should be a path whose parent is NOT hidden —
     /// callers are responsible for ensuring minimality.
-    pub fn set_hidden(&mut self, fi: usize, ti: usize, hidden_roots: impl Iterator<Item = String>) {
+    pub fn set_hidden(
+        &mut self,
+        fi: FileIdx,
+        ti: TrackIdx,
+        hidden_roots: impl Iterator<Item = String>,
+    ) {
         self.hidden.remove(&(fi, ti));
         let paths: BTreeSet<String> = hidden_roots.collect();
         if !paths.is_empty() {

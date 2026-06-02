@@ -66,22 +66,22 @@ impl Plugin for MarkerRenderer<'_> {
         let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         for sp in &self.visible_custom {
-            let Some(file_vis) = self.visibility.files.get(sp.file_index.0) else {
+            let Some(file_vis) = sp.file_index.get(&self.visibility.files) else {
                 continue;
             };
             if !file_vis.enabled {
                 continue;
             }
-            let Some(trip_vis) = file_vis.tracks.get(sp.track_index.0) else {
+            let Some(trip_vis) = sp.track_index.get(&file_vis.tracks) else {
                 continue;
             };
             if !trip_vis.enabled || !trip_vis.custom_markers_visible {
                 continue;
             }
-            let Some(file) = self.files.get(sp.file_index.0) else {
+            let Some(file) = sp.file_index.get(self.files) else {
                 continue;
             };
-            let Some(track) = file.tracks.get(sp.track_index.0) else {
+            let Some(track) = sp.track_index.get(&file.tracks) else {
                 continue;
             };
             if !filter::track_passes_filter(&track.metadata, self.filter) {
@@ -111,8 +111,8 @@ impl Plugin for MarkerRenderer<'_> {
             && r.category == DataCategory::CustomMarker
             && self.highlight.sticky != Some(r)
             && !ui.ctx().any_popup_open()
-            && let Some(file) = self.files.get(r.file_index.0)
-            && let Some(track) = file.tracks.get(r.track_index.0)
+            && let Some(file) = r.file_index.get(self.files)
+            && let Some(track) = r.track_index.get(&file.tracks)
             && let Some(marker) = r.point_index.get(&track.custom_markers)
         {
             let pos = transform.to_screen(marker.merc);

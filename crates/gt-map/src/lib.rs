@@ -460,10 +460,10 @@ impl NavMap {
     pub(crate) fn all_tree_indices_valid(&self, files: &[LoadedFile]) -> bool {
         use gt_types::DataCategory;
         self.global_tree.iter().all(|sp| {
-            let Some(file) = files.get(sp.file_index.0) else {
+            let Some(file) = sp.file_index.get(files) else {
                 return false;
             };
-            let Some(track) = file.tracks.get(sp.track_index.0) else {
+            let Some(track) = sp.track_index.get(&file.tracks) else {
                 return false;
             };
             let len = match sp.category {
@@ -474,7 +474,7 @@ impl NavMap {
                 // These categories are never inserted into the spatial index.
                 DataCategory::Track | DataCategory::SatelliteReport => return true,
             };
-            sp.point_index.0 < len
+            sp.point_index.as_usize() < len
         })
     }
 
@@ -738,7 +738,7 @@ impl NavMap {
                 ui.close();
                 return;
             };
-            let Some(file) = files.get(point_ref.file_index.0) else {
+            let Some(file) = point_ref.file_index.get(files) else {
                 ui.close();
                 return;
             };
@@ -748,20 +748,21 @@ impl NavMap {
             ));
             if file.tracks.len() > 1 {
                 ui.add(egui::Label::new(
-                    egui::RichText::new(format!("Track {}", point_ref.track_index.0 + 1)).weak(),
+                    egui::RichText::new(format!("Track {}", point_ref.track_index.as_usize() + 1))
+                        .weak(),
                 ));
             }
             ui.separator();
             if ui.button("Only show elements from this track").clicked() {
                 context_action = Some(MapContextAction::ShowOnlyTrip {
-                    file_index: point_ref.file_index.0,
-                    track_index: point_ref.track_index.0,
+                    file_index: point_ref.file_index.as_usize(),
+                    track_index: point_ref.track_index.as_usize(),
                 });
                 ui.close();
             }
             if ui.button("Only show elements from this file").clicked() {
                 context_action = Some(MapContextAction::ShowOnlyFile {
-                    file_index: point_ref.file_index.0,
+                    file_index: point_ref.file_index.as_usize(),
                 });
                 ui.close();
             }
@@ -791,18 +792,20 @@ fn show_sticky_popup(
     // For TPV points, satellite reports, and generated-marker events the window
     // title is the point's datetime; for everything else fall back to a generic label.
     let title: String = if sticky_ref.category == DataCategory::Tpv {
-        files
-            .get(sticky_ref.file_index.0)
-            .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
+        sticky_ref
+            .file_index
+            .get(files)
+            .and_then(|f| sticky_ref.track_index.get(&f.tracks))
             .and_then(|t| sticky_ref.point_index.get(&t.points))
             .map_or_else(
                 || "GPS Point".to_string(),
                 |p| p.tpv.time().utc().format("%Y-%m-%d %H:%M:%S").to_string(),
             )
     } else if sticky_ref.category == DataCategory::SatelliteReport {
-        files
-            .get(sticky_ref.file_index.0)
-            .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
+        sticky_ref
+            .file_index
+            .get(files)
+            .and_then(|f| sticky_ref.track_index.get(&f.tracks))
             .and_then(|t| sticky_ref.point_index.get(&t.points))
             .and_then(|p| p.satellites.as_ref())
             .map_or_else(
@@ -815,9 +818,10 @@ fn show_sticky_popup(
                 },
             )
     } else if sticky_ref.category == DataCategory::GeneratedMarker {
-        files
-            .get(sticky_ref.file_index.0)
-            .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
+        sticky_ref
+            .file_index
+            .get(files)
+            .and_then(|f| sticky_ref.track_index.get(&f.tracks))
             .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
             .map_or_else(
                 || "GPS Event".to_string(),
@@ -834,9 +838,10 @@ fn show_sticky_popup(
         .auto_sized()
         .show(ctx, |ui| match sticky_ref.category {
             DataCategory::Tpv => {
-                if let Some(point) = files
-                    .get(sticky_ref.file_index.0)
-                    .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
+                if let Some(point) = sticky_ref
+                    .file_index
+                    .get(files)
+                    .and_then(|f| sticky_ref.track_index.get(&f.tracks))
                     .and_then(|t| sticky_ref.point_index.get(&t.points))
                 {
                     // Cap the window height so satellite tables never overflow
@@ -855,9 +860,10 @@ fn show_sticky_popup(
                 }
             }
             DataCategory::CustomMarker => {
-                if let Some(marker) = files
-                    .get(sticky_ref.file_index.0)
-                    .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
+                if let Some(marker) = sticky_ref
+                    .file_index
+                    .get(files)
+                    .and_then(|f| sticky_ref.track_index.get(&f.tracks))
                     .and_then(|t| sticky_ref.point_index.get(&t.custom_markers))
                 {
                     egui::Grid::new("sticky_marker_grid")
@@ -880,9 +886,10 @@ fn show_sticky_popup(
                 }
             }
             DataCategory::GeneratedMarker => {
-                if let Some(marker) = files
-                    .get(sticky_ref.file_index.0)
-                    .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
+                if let Some(marker) = sticky_ref
+                    .file_index
+                    .get(files)
+                    .and_then(|f| sticky_ref.track_index.get(&f.tracks))
                     .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
                 {
                     let kind_str = match marker.kind {
@@ -919,9 +926,10 @@ fn show_sticky_popup(
                 }
             }
             DataCategory::SatelliteReport => {
-                if let Some(point) = files
-                    .get(sticky_ref.file_index.0)
-                    .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
+                if let Some(point) = sticky_ref
+                    .file_index
+                    .get(files)
+                    .and_then(|f| sticky_ref.track_index.get(&f.tracks))
                     .and_then(|t| sticky_ref.point_index.get(&t.points))
                 {
                     let max_h = (ui.ctx().viewport_rect().height() * 0.75).min(500.0);
@@ -936,9 +944,10 @@ fn show_sticky_popup(
             }
             DataCategory::Track => {}
             DataCategory::EventMarker => {
-                if let Some(marker) = files
-                    .get(sticky_ref.file_index.0)
-                    .and_then(|f| f.tracks.get(sticky_ref.track_index.0))
+                if let Some(marker) = sticky_ref
+                    .file_index
+                    .get(files)
+                    .and_then(|f| sticky_ref.track_index.get(&f.tracks))
                     .and_then(|t| sticky_ref.point_index.get(&t.event_markers))
                 {
                     egui::Grid::new("sticky_event_marker_grid")
@@ -1110,13 +1119,13 @@ fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Rect) -> GeoB
 /// ensures the hit-test layer applies the same rules so that hidden tracks cannot be
 /// accidentally hovered or clicked.
 fn is_spatial_point_visible(sp: &SpatialPoint, visibility: &TrackDataVisibility) -> bool {
-    let Some(file_vis) = visibility.files.get(sp.file_index.0) else {
+    let Some(file_vis) = sp.file_index.get(&visibility.files) else {
         return false;
     };
     if !file_vis.enabled {
         return false;
     }
-    let Some(trip_vis) = file_vis.tracks.get(sp.track_index.0) else {
+    let Some(trip_vis) = sp.track_index.get(&file_vis.tracks) else {
         return false;
     };
     if !trip_vis.enabled {
@@ -1224,9 +1233,9 @@ mod tests {
     fn tpv_spatial_point(fi: usize, ti: usize, pi: usize) -> SpatialPoint {
         SpatialPoint {
             merc: MercPoint { x: 0.5, y: 0.5 },
-            file_index: FileIdx(fi),
-            track_index: TrackIdx(ti),
-            point_index: PointIdx(pi),
+            file_index: FileIdx::new(fi),
+            track_index: TrackIdx::new(ti),
+            point_index: PointIdx::new(pi),
             category: DataCategory::Tpv,
         }
     }
@@ -1282,16 +1291,16 @@ mod tests {
         // Track 0 is hidden; track 1 is visible.
         let hidden = SpatialPoint {
             merc: MercPoint { x: 0.5, y: 0.5 },
-            file_index: FileIdx(0),
-            track_index: TrackIdx(0),
-            point_index: PointIdx(0),
+            file_index: FileIdx::new(0),
+            track_index: TrackIdx::new(0),
+            point_index: PointIdx::new(0),
             category: DataCategory::Tpv,
         };
         let visible = SpatialPoint {
             merc: MercPoint { x: 0.5, y: 0.5 },
-            file_index: FileIdx(0),
-            track_index: TrackIdx(1),
-            point_index: PointIdx(0),
+            file_index: FileIdx::new(0),
+            track_index: TrackIdx::new(1),
+            point_index: PointIdx::new(0),
             category: DataCategory::Tpv,
         };
         let tree = rstar::RTree::bulk_load(vec![hidden, visible]);
@@ -1314,7 +1323,7 @@ mod tests {
         assert!(found.is_some(), "should find the visible track");
         assert_eq!(
             found.unwrap().track_index,
-            TrackIdx(1),
+            TrackIdx::new(1),
             "should return track 1, not the hidden track 0"
         );
     }
@@ -1337,10 +1346,10 @@ mod tests {
         let stale_tree = gt_data_ops::build_global_tree(&files_initial);
         let files_after = vec![file_b];
         let stale_has_oob = stale_tree.iter().any(|sp| {
-            let Some(file) = files_after.get(sp.file_index.0) else {
+            let Some(file) = sp.file_index.get(&files_after) else {
                 return true; // file index out of bounds → OOB
             };
-            let Some(track) = file.tracks.get(sp.track_index.0) else {
+            let Some(track) = sp.track_index.get(&file.tracks) else {
                 return true; // track index out of bounds → OOB
             };
             let len = match sp.category {
@@ -1350,7 +1359,7 @@ mod tests {
                 DataCategory::EventMarker => track.event_markers.len(),
                 DataCategory::Track | DataCategory::SatelliteReport => return false,
             };
-            sp.point_index.0 >= len
+            sp.point_index.as_usize() >= len
         });
         assert!(
             stale_has_oob,

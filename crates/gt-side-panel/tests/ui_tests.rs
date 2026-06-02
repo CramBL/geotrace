@@ -89,7 +89,7 @@ fn snapshot_one_file_expanded() {
         return;
     }
     let mut state = make_state(2);
-    state.tree.toggle_expand_file(FileIdx(0));
+    state.tree.toggle_expand_file(FileIdx::new(0));
     let mut harness = make_harness(state);
     harness.run();
     harness.snapshot_options("side_panel_file_expanded", &snapshot_options());
@@ -105,7 +105,7 @@ fn renders_without_panic() {
 fn hiding_file_updates_visibility() {
     let mut harness = make_harness(make_state(1));
     harness.run();
-    harness.state_mut().tree.toggle_file_check(FileIdx(0));
+    harness.state_mut().tree.toggle_file_check(FileIdx::new(0));
     harness.run();
     let vis = harness.state().tree.visibility();
     assert!(!vis.files[0].enabled, "file should be hidden after toggle");
@@ -122,7 +122,7 @@ fn hiding_one_trip_makes_file_mixed() {
     harness
         .state_mut()
         .tree
-        .toggle_trip_check(FileIdx(0), TrackIdx(0));
+        .toggle_trip_check(FileIdx::new(0), TrackIdx::new(0));
     harness.run();
     let check = harness.state().tree.files[0].check;
     assert_eq!(
@@ -137,7 +137,7 @@ fn expand_file_is_reflected_in_tree_state() {
     let mut harness = make_harness(make_state(1));
     harness.run();
     assert!(!harness.state().tree.files[0].expanded);
-    harness.state_mut().tree.toggle_expand_file(FileIdx(0));
+    harness.state_mut().tree.toggle_expand_file(FileIdx::new(0));
     harness.run();
     assert!(harness.state().tree.files[0].expanded);
 }

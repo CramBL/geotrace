@@ -100,35 +100,25 @@ fn build_trip_series(
             total_seen_pts.push([t, sats.satellite_count() as f64]);
             total_fix_pts.push([t, sats.fix_count() as f64]);
 
-            let gps_s = sats.by_constellation(Constellation::Gps).count();
-            let gps_f = sats
-                .by_constellation(Constellation::Gps)
-                .filter(|s| s.in_fix())
-                .count();
-            let gln_s = sats.by_constellation(Constellation::Glonass).count();
-            let gln_f = sats
-                .by_constellation(Constellation::Glonass)
-                .filter(|s| s.in_fix())
-                .count();
-            let gal_s = sats.by_constellation(Constellation::Galileo).count();
-            let gal_f = sats
-                .by_constellation(Constellation::Galileo)
-                .filter(|s| s.in_fix())
-                .count();
-            let bei_s = sats.by_constellation(Constellation::Beidou).count();
-            let bei_f = sats
-                .by_constellation(Constellation::Beidou)
-                .filter(|s| s.in_fix())
-                .count();
+            let seen_and_fix = |c| {
+                sats.by_constellation(c)
+                    .fold((0usize, 0usize), |(seen, fix), sat| {
+                        (seen + 1, fix + sat.in_fix() as usize)
+                    })
+            };
+            let (gps_seen, gps_fix) = seen_and_fix(Constellation::Gps);
+            let (gln_seen, gln_fix) = seen_and_fix(Constellation::Glonass);
+            let (gal_seen, gal_fix) = seen_and_fix(Constellation::Galileo);
+            let (bei_seen, bei_fix) = seen_and_fix(Constellation::Beidou);
 
-            gps_seen_pts.push([t, gps_s as f64]);
-            gps_fix_pts.push([t, gps_f as f64]);
-            glonass_seen_pts.push([t, gln_s as f64]);
-            glonass_fix_pts.push([t, gln_f as f64]);
-            galileo_seen_pts.push([t, gal_s as f64]);
-            galileo_fix_pts.push([t, gal_f as f64]);
-            beidou_seen_pts.push([t, bei_s as f64]);
-            beidou_fix_pts.push([t, bei_f as f64]);
+            gps_seen_pts.push([t, gps_seen as f64]);
+            gps_fix_pts.push([t, gps_fix as f64]);
+            glonass_seen_pts.push([t, gln_seen as f64]);
+            glonass_fix_pts.push([t, gln_fix as f64]);
+            galileo_seen_pts.push([t, gal_seen as f64]);
+            galileo_fix_pts.push([t, gal_fix as f64]);
+            beidou_seen_pts.push([t, bei_seen as f64]);
+            beidou_fix_pts.push([t, bei_fix as f64]);
         }
 
         if let Some(v) = point.tpv.velocity_kmh() {

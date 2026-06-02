@@ -57,7 +57,7 @@ fn event_path_check(tree: &TreeState, fi: usize, ti: usize, path: &str) -> Check
 #[test]
 fn toggle_check_file_on_off() {
     let mut tree = make_tree(1, 3);
-    tree.toggle_file_check(FileIdx(0));
+    tree.toggle_file_check(FileIdx::new(0));
     assert_eq!(file_check(&tree, 0), CheckState::Off);
     assert_eq!(trip_check(&tree, 0, 0), CheckState::Off);
     assert_eq!(trip_check(&tree, 0, 1), CheckState::Off);
@@ -67,8 +67,8 @@ fn toggle_check_file_on_off() {
 #[test]
 fn toggle_check_file_off_to_on() {
     let mut tree = make_tree(1, 2);
-    tree.toggle_file_check(FileIdx(0)); // → Off
-    tree.toggle_file_check(FileIdx(0)); // → On
+    tree.toggle_file_check(FileIdx::new(0)); // → Off
+    tree.toggle_file_check(FileIdx::new(0)); // → On
     assert_eq!(file_check(&tree, 0), CheckState::On);
     assert_eq!(trip_check(&tree, 0, 0), CheckState::On);
     assert_eq!(trip_check(&tree, 0, 1), CheckState::On);
@@ -77,7 +77,7 @@ fn toggle_check_file_off_to_on() {
 #[test]
 fn toggle_check_trip_partial_makes_file_mixed() {
     let mut tree = make_tree(1, 2);
-    tree.toggle_trip_check(FileIdx(0), TrackIdx(1)); // track[1] → Off, trip[0] stays On
+    tree.toggle_trip_check(FileIdx::new(0), TrackIdx::new(1)); // track[1] → Off, trip[0] stays On
     assert_eq!(trip_check(&tree, 0, 0), CheckState::On);
     assert_eq!(trip_check(&tree, 0, 1), CheckState::Off);
     assert_eq!(file_check(&tree, 0), CheckState::Mixed);
@@ -86,9 +86,9 @@ fn toggle_check_trip_partial_makes_file_mixed() {
 #[test]
 fn toggle_check_file_mixed_goes_on() {
     let mut tree = make_tree(1, 2);
-    tree.toggle_trip_check(FileIdx(0), TrackIdx(1)); // file → Mixed
+    tree.toggle_trip_check(FileIdx::new(0), TrackIdx::new(1)); // file → Mixed
     assert_eq!(file_check(&tree, 0), CheckState::Mixed);
-    tree.toggle_file_check(FileIdx(0)); // Mixed → On, all children On
+    tree.toggle_file_check(FileIdx::new(0)); // Mixed → On, all children On
     assert_eq!(file_check(&tree, 0), CheckState::On);
     assert_eq!(trip_check(&tree, 0, 0), CheckState::On);
     assert_eq!(trip_check(&tree, 0, 1), CheckState::On);
@@ -97,8 +97,8 @@ fn toggle_check_file_mixed_goes_on() {
 #[test]
 fn toggle_check_trip_enables_parent_file() {
     let mut tree = make_tree(1, 2);
-    tree.toggle_file_check(FileIdx(0)); // all Off
-    tree.toggle_trip_check(FileIdx(0), TrackIdx(0)); // track[0] → On
+    tree.toggle_file_check(FileIdx::new(0)); // all Off
+    tree.toggle_trip_check(FileIdx::new(0), TrackIdx::new(0)); // track[0] → On
     assert_eq!(trip_check(&tree, 0, 0), CheckState::On);
     assert_eq!(trip_check(&tree, 0, 1), CheckState::Off);
     assert_eq!(file_check(&tree, 0), CheckState::Mixed);
@@ -112,7 +112,7 @@ fn event_path_toggle_parent_cascades() {
     assert_eq!(event_path_check(&tree, 0, 0, "power"), CheckState::On);
     assert_eq!(event_path_check(&tree, 0, 0, "power/boot"), CheckState::On);
 
-    tree.toggle_event_path(FileIdx(0), TrackIdx(0), "power"); // parent Off → all descendants Off
+    tree.toggle_event_path(FileIdx::new(0), TrackIdx::new(0), "power"); // parent Off → all descendants Off
     assert_eq!(event_path_check(&tree, 0, 0, "power"), CheckState::Off);
     assert_eq!(event_path_check(&tree, 0, 0, "power/boot"), CheckState::Off);
     assert_eq!(
@@ -120,7 +120,7 @@ fn event_path_toggle_parent_cascades() {
         CheckState::Off
     );
 
-    tree.toggle_event_path(FileIdx(0), TrackIdx(0), "power"); // parent Off → On
+    tree.toggle_event_path(FileIdx::new(0), TrackIdx::new(0), "power"); // parent Off → On
     assert_eq!(event_path_check(&tree, 0, 0, "power"), CheckState::On);
     assert_eq!(event_path_check(&tree, 0, 0, "power/boot"), CheckState::On);
     assert_eq!(event_path_check(&tree, 0, 0, "power/sleep"), CheckState::On);
@@ -131,7 +131,7 @@ fn event_path_toggle_leaf_recomputes_parent() {
     let mut tree = make_tree(1, 1);
     add_event_paths(&mut tree, 0, 0, &["power/boot", "power/sleep"]);
 
-    tree.toggle_event_path(FileIdx(0), TrackIdx(0), "power/boot"); // boot → Off
+    tree.toggle_event_path(FileIdx::new(0), TrackIdx::new(0), "power/boot"); // boot → Off
     assert_eq!(event_path_check(&tree, 0, 0, "power/boot"), CheckState::Off);
     assert_eq!(event_path_check(&tree, 0, 0, "power/sleep"), CheckState::On);
     assert_eq!(event_path_check(&tree, 0, 0, "power"), CheckState::Mixed);
@@ -142,7 +142,7 @@ fn event_path_grandparent_recomputes() {
     let mut tree = make_tree(1, 1);
     add_event_paths(&mut tree, 0, 0, &["a/b/c", "a/b/d"]);
 
-    tree.toggle_event_path(FileIdx(0), TrackIdx(0), "a/b/c"); // → Off
+    tree.toggle_event_path(FileIdx::new(0), TrackIdx::new(0), "a/b/c"); // → Off
     assert_eq!(event_path_check(&tree, 0, 0, "a/b/c"), CheckState::Off);
     assert_eq!(event_path_check(&tree, 0, 0, "a/b/d"), CheckState::On);
     assert_eq!(event_path_check(&tree, 0, 0, "a/b"), CheckState::Mixed);
@@ -153,9 +153,9 @@ fn event_path_grandparent_recomputes() {
 fn toggle_expand_file() {
     let mut tree = make_tree(1, 1);
     assert!(!tree.files[0].expanded);
-    tree.toggle_expand_file(FileIdx(0));
+    tree.toggle_expand_file(FileIdx::new(0));
     assert!(tree.files[0].expanded);
-    tree.toggle_expand_file(FileIdx(0));
+    tree.toggle_expand_file(FileIdx::new(0));
     assert!(!tree.files[0].expanded);
 }
 
@@ -163,14 +163,14 @@ fn toggle_expand_file() {
 fn apply_click_single_clears_previous_selection() {
     let mut tree = make_tree(1, 2);
     tree.files[0].expanded = true;
-    let fi = FileIdx(0);
+    let fi = FileIdx::new(0);
     let trip0 = NodeKey::Track(TrackRef {
         file: fi,
-        trip: TrackIdx(0),
+        trip: TrackIdx::new(0),
     });
     let trip1 = NodeKey::Track(TrackRef {
         file: fi,
-        trip: TrackIdx(1),
+        trip: TrackIdx::new(1),
     });
     tree.apply_click(trip0, false, false);
     assert!(tree.selection.contains(&trip0));
@@ -183,14 +183,14 @@ fn apply_click_single_clears_previous_selection() {
 fn apply_click_ctrl_adds_to_selection() {
     let mut tree = make_tree(1, 2);
     tree.files[0].expanded = true;
-    let fi = FileIdx(0);
+    let fi = FileIdx::new(0);
     let trip0 = NodeKey::Track(TrackRef {
         file: fi,
-        trip: TrackIdx(0),
+        trip: TrackIdx::new(0),
     });
     let trip1 = NodeKey::Track(TrackRef {
         file: fi,
-        trip: TrackIdx(1),
+        trip: TrackIdx::new(1),
     });
     tree.apply_click(trip0, false, false);
     tree.apply_click(trip1, true, false);
@@ -202,15 +202,15 @@ fn apply_click_ctrl_adds_to_selection() {
 fn apply_click_shift_selects_range() {
     let mut tree = make_tree(1, 3);
     tree.files[0].expanded = true;
-    let fi = FileIdx(0);
+    let fi = FileIdx::new(0);
     let file_key = NodeKey::File(fi);
     let trip0 = NodeKey::Track(TrackRef {
         file: fi,
-        trip: TrackIdx(0),
+        trip: TrackIdx::new(0),
     });
     let trip2 = NodeKey::Track(TrackRef {
         file: fi,
-        trip: TrackIdx(2),
+        trip: TrackIdx::new(2),
     });
     tree.apply_click(file_key, false, false); // anchor = File(0)
     tree.apply_click(trip2, false, true); // shift to Trip(2)
@@ -230,22 +230,22 @@ fn ordered_visible_keys_excludes_collapsed_children() {
     let keys = tree.ordered_visible_keys();
     // Expected: File(0), Trip(0,0), Trip(0,1), File(1)
     assert_eq!(keys.len(), 4);
-    assert_eq!(keys[0], NodeKey::File(FileIdx(0)));
+    assert_eq!(keys[0], NodeKey::File(FileIdx::new(0)));
     assert_eq!(
         keys[1],
         NodeKey::Track(TrackRef {
-            file: FileIdx(0),
-            trip: TrackIdx(0)
+            file: FileIdx::new(0),
+            trip: TrackIdx::new(0)
         })
     );
     assert_eq!(
         keys[2],
         NodeKey::Track(TrackRef {
-            file: FileIdx(0),
-            trip: TrackIdx(1)
+            file: FileIdx::new(0),
+            trip: TrackIdx::new(1)
         })
     );
-    assert_eq!(keys[3], NodeKey::File(FileIdx(1)));
+    assert_eq!(keys[3], NodeKey::File(FileIdx::new(1)));
 }
 
 #[test]
@@ -254,31 +254,33 @@ fn event_marker_visibility_synced_after_path_toggle() {
     add_event_paths(&mut tree, 0, 0, &["power/boot", "power/sleep"]);
 
     // Initially all visible
-    assert!(
-        tree.event_marker_visibility()
-            .is_visible(0, 0, "power/boot")
-    );
+    assert!(tree.event_marker_visibility().is_visible(
+        FileIdx::new(0),
+        TrackIdx::new(0),
+        "power/boot"
+    ));
 
-    tree.toggle_event_path(FileIdx(0), TrackIdx(0), "power"); // hide all under power
-    assert!(
-        !tree
-            .event_marker_visibility()
-            .is_visible(0, 0, "power/boot")
-    );
-    assert!(
-        !tree
-            .event_marker_visibility()
-            .is_visible(0, 0, "power/sleep")
-    );
+    tree.toggle_event_path(FileIdx::new(0), TrackIdx::new(0), "power"); // hide all under power
+    assert!(!tree.event_marker_visibility().is_visible(
+        FileIdx::new(0),
+        TrackIdx::new(0),
+        "power/boot"
+    ));
+    assert!(!tree.event_marker_visibility().is_visible(
+        FileIdx::new(0),
+        TrackIdx::new(0),
+        "power/sleep"
+    ));
 
-    tree.toggle_event_path(FileIdx(0), TrackIdx(0), "power/boot"); // show just boot
-    assert!(
-        tree.event_marker_visibility()
-            .is_visible(0, 0, "power/boot")
-    );
-    assert!(
-        !tree
-            .event_marker_visibility()
-            .is_visible(0, 0, "power/sleep")
-    );
+    tree.toggle_event_path(FileIdx::new(0), TrackIdx::new(0), "power/boot"); // show just boot
+    assert!(tree.event_marker_visibility().is_visible(
+        FileIdx::new(0),
+        TrackIdx::new(0),
+        "power/boot"
+    ));
+    assert!(!tree.event_marker_visibility().is_visible(
+        FileIdx::new(0),
+        TrackIdx::new(0),
+        "power/sleep"
+    ));
 }

@@ -250,10 +250,8 @@ pub fn load_log(
                 break;
             }
         }
-        match found {
-            Some(f) => f,
-            None => return empty,
-        }
+        let Some(f) = found else { return empty };
+        f
     };
 
     // Parse all lines with consecutive-failure abort
@@ -283,15 +281,13 @@ pub fn load_log(
     // Sort by timestamp
     entries.sort_by_key(|(ts, _)| *ts);
 
-    // Assign color groups
+    // Assign color groups and associate with nav track
     let mut assigner = ColorGroupAssigner::new();
-    let group_ids: Vec<u32> = entries.iter().map(|(_, s)| assigner.assign(s)).collect();
-
-    // Associate with nav track
     let mut markers: Vec<CustomMarker> = Vec::new();
     let mut unassociated: Vec<(DateTime<Utc>, String)> = Vec::new();
 
-    for ((ts, log_str), group_id) in entries.iter().zip(group_ids.iter()) {
+    for (ts, log_str) in &entries {
+        let group_id = assigner.assign(log_str);
         let Some((lat, lon)) = associate(ts, nav_points, config.log_marker_window_s as i64) else {
             unassociated.push((*ts, log_str.clone()));
             continue;
@@ -303,7 +299,7 @@ pub fn load_log(
             MarkerIcon::Log,
             Latitude::new(lat),
             Longitude::new(lon),
-            Some(*group_id),
+            Some(group_id),
         ));
     }
 

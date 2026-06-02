@@ -1,3 +1,4 @@
+use crate::highlight::{FileIdx, TrackIdx};
 use crate::track::LoadedFile;
 
 #[derive(Debug, Clone)]
@@ -65,19 +66,19 @@ impl TrackDataVisibility {
 
     /// Show only the given file; hide all others. Trip visibility within files
     /// is preserved so that re-enabling a file restores its previous state.
-    pub fn show_only_file(&mut self, fi: usize) {
+    pub fn show_only_file(&mut self, fi: FileIdx) {
         for (i, file) in self.files.iter_mut().enumerate() {
-            file.enabled = i == fi;
+            file.enabled = FileIdx::new(i) == fi;
         }
     }
 
     /// Show only the given trip (and its parent file); hide everything else.
-    pub fn show_only_trip(&mut self, fi: usize, ti: usize) {
+    pub fn show_only_trip(&mut self, fi: FileIdx, ti: TrackIdx) {
         for (i, file) in self.files.iter_mut().enumerate() {
-            if i == fi {
+            if FileIdx::new(i) == fi {
                 file.enabled = true;
                 for (j, trip) in file.tracks.iter_mut().enumerate() {
-                    trip.enabled = j == ti;
+                    trip.enabled = TrackIdx::new(j) == ti;
                 }
             } else {
                 file.enabled = false;

@@ -442,7 +442,7 @@ impl TreeState {
 
     pub fn show_only_file(&mut self, fi: FileIdx) {
         for (i, file_node) in self.files.iter_mut().enumerate() {
-            if i == fi.0 {
+            if FileIdx::new(i) == fi {
                 file_node.check = CheckState::On;
                 for trip_node in &mut file_node.tracks {
                     trip_node.check = CheckState::On;
@@ -459,9 +459,9 @@ impl TreeState {
 
     pub fn show_only_trip(&mut self, fi: FileIdx, ti: TrackIdx) {
         for (i, file_node) in self.files.iter_mut().enumerate() {
-            if i == fi.0 {
+            if FileIdx::new(i) == fi {
                 for (j, trip_node) in file_node.tracks.iter_mut().enumerate() {
-                    trip_node.check = if j == ti.0 {
+                    trip_node.check = if TrackIdx::new(j) == ti {
                         CheckState::On
                     } else {
                         CheckState::Off
@@ -512,13 +512,13 @@ impl TreeState {
     pub fn ordered_visible_keys(&self) -> Vec<NodeKey> {
         let mut keys = Vec::new();
         for (fi, file_node) in self.files.iter().enumerate() {
-            let fi = FileIdx(fi);
+            let fi = FileIdx::new(fi);
             keys.push(NodeKey::File(fi));
             if file_node.expanded {
                 for ti in 0..file_node.tracks.len() {
                     keys.push(NodeKey::Track(TrackRef {
                         file: fi,
-                        trip: TrackIdx(ti),
+                        trip: TrackIdx::new(ti),
                     }));
                 }
             }
@@ -608,8 +608,8 @@ impl TreeState {
         let generated_markers_visible = trip_node.generated_markers_visible;
         let event_markers_visible = !matches!(trip_node.event_paths.aggregate(), CheckState::Off);
 
-        if let Some(file_vis) = self.visibility.files.get_mut(fi.0)
-            && let Some(tv) = file_vis.tracks.get_mut(ti.0)
+        if let Some(file_vis) = fi.get_mut(&mut self.visibility.files)
+            && let Some(tv) = ti.get_mut(&mut file_vis.tracks)
         {
             tv.enabled = enabled;
             tv.track_visible = track_visible;
@@ -629,8 +629,8 @@ impl TreeState {
         for (fi, file_node) in files.iter().enumerate() {
             for (ti, trip_node) in file_node.tracks.iter().enumerate() {
                 emv.set_hidden(
-                    fi,
-                    ti,
+                    FileIdx::new(fi),
+                    TrackIdx::new(ti),
                     trip_node.event_paths.hidden_roots().map(str::to_owned),
                 );
             }
@@ -641,14 +641,14 @@ impl TreeState {
         let files = &self.files;
         let emv = &mut self.event_marker_visibility;
 
-        let hidden = files
-            .get(fi.0)
-            .and_then(|f| f.tracks.get(ti.0))
+        let hidden = fi
+            .get(files)
+            .and_then(|f| ti.get(&f.tracks))
             .into_iter()
             .flat_map(|t| t.event_paths.hidden_roots())
             .map(str::to_owned);
 
-        emv.set_hidden(fi.0, ti.0, hidden);
+        emv.set_hidden(fi, ti, hidden);
     }
 }
 

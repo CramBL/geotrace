@@ -100,7 +100,7 @@ impl<'a> TpvRenderer<'a> {
                     file_index: fi,
                     track_index: ti,
                     category: DataCategory::Tpv,
-                    point_index: PointIdx(pi),
+                    point_index: PointIdx::new(pi),
                 };
                 let eph_m = point.tpv.eph_m();
                 let pixels_per_meter = if eph_m.is_some() {
@@ -160,7 +160,7 @@ impl<'a> TpvRenderer<'a> {
                 file_index: fi,
                 track_index: ti,
                 category: DataCategory::Tpv,
-                point_index: PointIdx(pi),
+                point_index: PointIdx::new(pi),
             };
             draw_tpv_point(
                 ui,
@@ -177,10 +177,10 @@ impl<'a> TpvRenderer<'a> {
     }
 
     fn show_tooltip(&self, ui: &Ui, point_ref: DataPointRef) {
-        let Some(file) = self.files.get(point_ref.file_index.0) else {
+        let Some(file) = point_ref.file_index.get(self.files) else {
             return;
         };
-        let Some(track) = file.tracks.get(point_ref.track_index.0) else {
+        let Some(track) = point_ref.track_index.get(&file.tracks) else {
             return;
         };
         let Some(point) = point_ref.point_index.get(&track.points) else {
@@ -189,9 +189,9 @@ impl<'a> TpvRenderer<'a> {
         let tooltip_id = ui
             .id()
             .with("tpv_hover")
-            .with(point_ref.file_index.0)
-            .with(point_ref.track_index.0)
-            .with(point_ref.point_index.0);
+            .with(point_ref.file_index)
+            .with(point_ref.track_index)
+            .with(point_ref.point_index);
         egui::Tooltip::always_open(
             ui.ctx().clone(),
             ui.layer_id(),
@@ -242,20 +242,20 @@ impl Plugin for TpvRenderer<'_> {
             by_trip
                 .entry((sp.file_index, sp.track_index))
                 .or_default()
-                .push(sp.point_index.0);
+                .push(sp.point_index.as_usize());
         }
 
         for (fi, file) in self.files.iter().enumerate() {
-            let fi = FileIdx(fi);
-            let Some(file_vis) = self.visibility.files.get(fi.0) else {
+            let fi = FileIdx::new(fi);
+            let Some(file_vis) = fi.get(&self.visibility.files) else {
                 continue;
             };
             if !file_vis.enabled {
                 continue;
             }
             for (ti, track) in file.tracks.iter().enumerate() {
-                let ti = TrackIdx(ti);
-                let Some(trip_vis) = file_vis.tracks.get(ti.0) else {
+                let ti = TrackIdx::new(ti);
+                let Some(trip_vis) = ti.get(&file_vis.tracks) else {
                     continue;
                 };
                 if !trip_vis.enabled || !trip_vis.tpv_visible {
@@ -294,11 +294,10 @@ impl Plugin for TpvRenderer<'_> {
         // The app layer computes (fi, ti, pi) via find_closest_tpv and stores
         // it in MapHighlight::plot_hover_point — no O(n) scan needed here.
         if let Some((fi, ti, pi)) = self.highlight.plot_hover_point
-            && let Some(point) = self
-                .files
-                .get(fi.0)
-                .and_then(|f| f.tracks.get(ti.0))
-                .and_then(|t| t.points.get(pi.0))
+            && let Some(point) = fi
+                .get(self.files)
+                .and_then(|f| ti.get(&f.tracks))
+                .and_then(|t| pi.get(&t.points))
         {
             let pos = transform.to_screen(point.merc);
             let painter = ui.painter();

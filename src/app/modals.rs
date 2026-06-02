@@ -45,13 +45,13 @@ pub fn show_delete_confirmation(
                     for key in &items {
                         match key {
                             NodeKey::File(fi) => {
-                                if let Some(file) = loaded_files.get(fi.0) {
+                                if let Some(file) = fi.get(loaded_files) {
                                     ui.label(&file.metadata.filename);
                                 }
                             }
                             NodeKey::Track(TrackRef { file: fi, trip: ti }) => {
-                                if let Some(file) = loaded_files.get(fi.0)
-                                    && let Some(track) = file.tracks.get(ti.0)
+                                if let Some(file) = fi.get(loaded_files)
+                                    && let Some(track) = ti.get(&file.tracks)
                                 {
                                     let dist = gt_fmt::format_distance(track.metadata.distance_km);
                                     let dur = gt_fmt::format_human_terse_duration(
@@ -115,10 +115,13 @@ pub fn execute_delete(keys: &[NodeKey], loaded_files: &mut Vec<LoadedFile>, tree
     for key in keys {
         match key {
             NodeKey::File(fi) => {
-                file_indices_to_remove.insert(fi.0);
+                file_indices_to_remove.insert(fi.as_usize());
             }
             NodeKey::Track(TrackRef { file: fi, trip: ti }) => {
-                trips_to_remove.entry(fi.0).or_default().insert(ti.0);
+                trips_to_remove
+                    .entry(fi.as_usize())
+                    .or_default()
+                    .insert(ti.as_usize());
             }
         }
     }
