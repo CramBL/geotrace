@@ -14,7 +14,7 @@ pub struct GlobalFilter {
     pub min_distance_km: Option<Length>,
     pub min_duration: Option<Duration>,
     pub min_spread_m: Option<Length>,
-    /// Whether trips must carry markers of a particular kind to pass.
+    /// Whether tracks must carry markers of a particular kind to pass.
     pub marker_requirement: MarkerRequirement,
 }
 
@@ -30,7 +30,7 @@ impl GlobalFilter {
     }
 }
 
-/// Returns `true` when the trip satisfies all active filter conditions.
+/// Returns `true` when the track satisfies all active filter conditions.
 pub fn track_passes_filter(meta: &TrackMetadata, filter: &GlobalFilter) -> bool {
     if !meta
         .time_range
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn require_custom_marker_passes_for_event_markers() {
-        // A trip with event markers but no annotation-based custom markers should
+        // A track with event markers but no annotation-based custom markers should
         // pass the CustomMarker filter — event markers are user/device-placed markers.
         let mut meta = make_meta(1.0, 60, 100.0, false, 0, 60);
         meta.event_marker_count = 3;
@@ -248,7 +248,7 @@ mod tests {
         };
         assert!(
             track_passes_filter(&meta, &filter),
-            "trip with event markers should pass CustomMarker filter"
+            "track with event markers should pass CustomMarker filter"
         );
     }
 
@@ -262,7 +262,7 @@ mod tests {
         };
         assert!(
             track_passes_filter(&meta, &filter),
-            "trip with event markers should pass AnyMarker filter"
+            "track with event markers should pass AnyMarker filter"
         );
     }
 }

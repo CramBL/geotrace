@@ -158,7 +158,7 @@ pub struct MapHighlight {
     /// 3 = GeneratedMarker. Used so renderers can show tooltips for secondary
     /// candidates even when a Tpv point is the primary hover.
     pub hover_candidates: [Option<DataPointRef>; 4],
-    /// Time currently hovered on the trip plot; used to cross-highlight the
+    /// Time currently hovered on the track plot; used to cross-highlight the
     /// closest TPV point on the map.  `None` when the plot cursor is inactive.
     pub plot_hover_time: Option<DateTime<Utc>>,
     /// Pre-computed `(FileIdx, TrackIdx, PointIdx)` of the TPV point closest to

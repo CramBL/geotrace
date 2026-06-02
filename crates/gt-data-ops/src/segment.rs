@@ -54,7 +54,7 @@ pub fn segment_tracks(points: &[NavPoint], config: &SegmentationConfig) -> Vec<R
     ranges
 }
 
-/// State machine for tracking GPS fix transitions within a trip.
+/// State machine for tracking GPS fix transitions within a track.
 ///
 /// Three states:
 /// - `Waiting` — no satellite report seen yet.
@@ -501,7 +501,7 @@ mod tests {
 
     #[test]
     fn segment_tracks_gap_exactly_300s_starts_new_trip() {
-        // [0s, 300s] → gap of exactly 300 s triggers a new trip
+        // [0s, 300s] → gap of exactly 300 s triggers a new track
         let pts = vec![make_point_at(0), make_point_at(300), make_point_at(360)];
         let ranges = segment_tracks(&pts, &SegmentationConfig::default());
         assert_eq!(ranges, vec![0..1, 1..3]);
@@ -579,7 +579,7 @@ mod tests {
         let pts = vec![
             make_point_at(0),
             make_point_at(60),
-            make_point_at(3600), // gap → new trip
+            make_point_at(3600), // gap → new track
             make_point_at(3660),
         ];
         let f = build_loaded_file(

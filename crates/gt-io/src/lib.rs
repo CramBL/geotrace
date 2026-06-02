@@ -55,7 +55,7 @@ fn to_uom_angle(a: geotrace_sdk::Angle) -> uom::si::f64::Angle {
     uom::si::f64::Angle::new::<uom::si::angle::degree>(a.as_degrees())
 }
 
-/// Load a `.nvd` file from `path`, segment it into trips, and return a fully
+/// Load a `.nvd` file from `path`, segment it into tracks, and return a fully
 /// populated `LoadedFile`.
 pub fn load_file(path: impl AsRef<Path>) -> Result<LoadedFile, LoadError> {
     load_file_with_progress(path, |_, _| {}, &gt_data_ops::SegmentationConfig::default())

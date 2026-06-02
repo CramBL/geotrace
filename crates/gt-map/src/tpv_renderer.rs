@@ -55,7 +55,7 @@ impl<'a> TpvRenderer<'a> {
         clippy::too_many_arguments,
         reason = "render context requires all parameters; a context struct would not add clarity"
     )]
-    fn render_trip(
+    fn render_track(
         &self,
         ui: &Ui,
         view_rect: egui::Rect,
@@ -224,7 +224,7 @@ impl Plugin for TpvRenderer<'_> {
         // Build the per-frame coordinate transform once.
         let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
-        // Group visible real fixes by trip so render_trip gets O(k/trips) per trip.
+        // Group visible real fixes by track so render_track gets O(k/tracks) per track.
         let mut by_track: HashMap<TrackRef, Vec<usize>> = HashMap::new();
         for sp in &self.visible_tpv {
             by_track
@@ -252,7 +252,7 @@ impl Plugin for TpvRenderer<'_> {
                 if !filter::track_passes_filter(&track.metadata, self.filter) {
                     continue;
                 }
-                self.render_trip(
+                self.render_track(
                     ui,
                     view_rect,
                     fi,
@@ -277,7 +277,7 @@ impl Plugin for TpvRenderer<'_> {
             self.show_tooltip(ui, r);
         }
 
-        // Cross-highlight: when the trip plot cursor is active, draw a ring
+        // Cross-highlight: when the track plot cursor is active, draw a ring
         // indicator around the pre-computed closest point.
         // The app layer computes (fi, ti, pi) via find_closest_tpv and stores
         // it in MapHighlight::plot_hover_point — no O(n) scan needed here.
@@ -667,7 +667,7 @@ fn seen_count_color(count: u32) -> Color32 {
 }
 
 /// Zoom-derived visual parameters computed once per frame and shared across
-/// all points in all trips.
+/// all points in all tracks.
 struct TpvDrawStyle {
     outline_alpha: f32,
     base_arrow_size: f32,
@@ -785,7 +785,7 @@ fn tpv_point_color(point: &NavPoint) -> Color32 {
 }
 
 /// Classifies a GPS point for a single render pass, carrying everything the
-/// draw step needs so `render_trip` only matches `heading()` once.
+/// draw step needs so `render_track` only matches `heading()` once.
 enum PointKind {
     /// Real GPS fix — heading known, precomputed Mercator coordinates used.
     Real { color: Color32, heading: Angle },

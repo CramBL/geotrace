@@ -133,12 +133,12 @@ fn hiding_file_updates_visibility() {
 }
 
 #[test]
-fn hiding_one_trip_makes_file_mixed() {
+fn hiding_one_track_makes_file_mixed() {
     let mut harness = make_harness(make_state(1));
     harness.run();
-    let trip_count = harness.state().files[0].tracks.len();
-    if trip_count < 2 {
-        return; // need at least 2 trips
+    let track_count = harness.state().files[0].tracks.len();
+    if track_count < 2 {
+        return; // need at least 2 tracks
     }
     harness
         .state_mut()
@@ -149,7 +149,7 @@ fn hiding_one_trip_makes_file_mixed() {
     assert_eq!(
         check,
         gt_side_panel::CheckState::Mixed,
-        "file should be Mixed when one trip is hidden"
+        "file should be Mixed when one track is hidden"
     );
 }
 

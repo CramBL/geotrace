@@ -19,7 +19,7 @@
 ///
 /// ## Layout
 ///
-/// Trip 0 – 12 points at 30 s intervals, all with satellite reports.
+/// Track 0 – 12 points at 30 s intervals, all with satellite reports.
 ///   Points 0-4: GPS fix held (5 satellites in fix).
 ///   Point 5:    fix lost (0 in fix)   → generates GpsFixLost marker.
 ///   Point 6:    still lost.
@@ -27,9 +27,9 @@
 ///   Points 8-11: fix maintained.
 ///   Custom markers at t+75 ("Bike lock spot") and t+225 ("Coffee stop").
 ///
-/// 7-minute gap between trips.
+/// 7-minute gap between tracks.
 ///
-/// Trip 1 – 8 points at 30 s intervals, no satellite reports.
+/// Track 1 – 8 points at 30 s intervals, no satellite reports.
 ///   Custom marker at t+780 ("Checkpoint").
 use std::{
     fs,
@@ -101,9 +101,7 @@ fn build_snapshot_bytes() -> Vec<u8> {
     let base = base();
     let mut sink = NavFileBuilder::new().open();
 
-    // ------------------------------------------------------------------
-    // Trip 0: 12 points, Copenhagen area moving NE, all with satellite data
-    // ------------------------------------------------------------------
+    // Track 0: 12 points, Copenhagen area moving NE, all with satellite data
     let trip0_lats = [
         55.6760_f64,
         55.6766,
@@ -163,7 +161,7 @@ fn build_snapshot_bytes() -> Vec<u8> {
         sink.add_satellite_report(satellite_report(pt_time, &tracked_prns, fix_prn_sets[i]));
     }
 
-    // Custom markers within Trip 0 time range [t+0, t+330]
+    // Custom markers within Track 0 time range [t+0, t+330]
     sink.add_annotation(
         Annotation::builder()
             .time(offset(base, 75))
@@ -179,10 +177,8 @@ fn build_snapshot_bytes() -> Vec<u8> {
             .build(),
     );
 
-    // ------------------------------------------------------------------
-    // Trip 1: 8 points, starts 7 min after Trip 0 ends (t+330 → t+750)
+    // Track 1: 8 points, starts 7 min after Track 0 ends (t+330 → t+750)
     // No satellite data, slightly different area
-    // ------------------------------------------------------------------
     let trip1_lats = [
         55.6750_f64,
         55.6757,
@@ -246,31 +242,31 @@ fn generate_and_verify_snapshot_fixture() {
 
     let loaded = gt_io::load_file(&path).expect("fixture loads without error");
 
-    // Two trips separated by a >5-minute gap
-    assert_eq!(loaded.tracks.len(), 2, "expected 2 trips");
+    // Two tracks separated by a >5-minute gap
+    assert_eq!(loaded.tracks.len(), 2, "expected 2 tracks");
 
-    // Trip 0
-    let t0 = loaded.tracks.first().expect("trip 0 exists");
+    // Track 0
+    let t0 = loaded.tracks.first().expect("track 0 exists");
 
-    assert_eq!(t0.points.len(), 12, "trip 0: 12 TPV points");
+    assert_eq!(t0.points.len(), 12, "track 0: 12 TPV points");
     assert_eq!(
         t0.metadata.satellite_report_count, 12,
-        "trip 0: every point has a satellite report"
+        "track 0: every point has a satellite report"
     );
-    assert_eq!(t0.custom_markers.len(), 2, "trip 0: 2 custom markers");
+    assert_eq!(t0.custom_markers.len(), 2, "track 0: 2 custom markers");
     assert_eq!(
         t0.generated_markers.len(),
         2,
-        "trip 0: GpsFixLost + GpsFixRegained"
+        "track 0: GpsFixLost + GpsFixRegained"
     );
-    assert_eq!(t0.metadata.duration.num_seconds(), 330, "trip 0: 5m30s");
+    assert_eq!(t0.metadata.duration.num_seconds(), 330, "track 0: 5m30s");
     assert!(
         t0.metadata.distance_km > Length::new::<kilometer>(0.5)
             && t0.metadata.distance_km < Length::new::<kilometer>(1.5),
-        "trip 0 distance ~0.84 km, got {:?}",
+        "track 0 distance ~0.84 km, got {:?}",
         t0.metadata.distance_km
     );
-    assert!(t0.metadata.has_custom_markers, "trip 0 has custom markers");
+    assert!(t0.metadata.has_custom_markers, "track 0 has custom markers");
 
     let gen_kinds: Vec<_> = t0.generated_markers.iter().map(|m| m.kind).collect();
     assert_matches_sequence!(
@@ -287,30 +283,30 @@ fn generate_and_verify_snapshot_fixture() {
     assert_eq!(bike_lock.label, "Bike lock spot");
     assert_eq!(coffee.label, "Coffee stop");
 
-    // Trip 1
-    let t1 = loaded.tracks.get(1).expect("trip 1 exists");
+    // Track 1
+    let t1 = loaded.tracks.get(1).expect("track 1 exists");
 
-    assert_eq!(t1.points.len(), 8, "trip 1: 8 TPV points");
+    assert_eq!(t1.points.len(), 8, "track 1: 8 TPV points");
     assert_eq!(
         t1.metadata.satellite_report_count, 0,
-        "trip 1: no satellite reports"
+        "track 1: no satellite reports"
     );
-    assert_eq!(t1.custom_markers.len(), 1, "trip 1: 1 custom marker");
+    assert_eq!(t1.custom_markers.len(), 1, "track 1: 1 custom marker");
     assert_eq!(
         t1.generated_markers.len(),
         0,
-        "trip 1: no generated markers"
+        "track 1: no generated markers"
     );
-    assert_eq!(t1.metadata.duration.num_seconds(), 210, "trip 1: 3m30s");
+    assert_eq!(t1.metadata.duration.num_seconds(), 210, "track 1: 3m30s");
     assert!(
         t1.metadata.distance_km > Length::new::<kilometer>(0.3)
             && t1.metadata.distance_km < Length::new::<kilometer>(1.0),
-        "trip 1 distance ~0.62 km, got {:?}",
+        "track 1 distance ~0.62 km, got {:?}",
         t1.metadata.distance_km
     );
-    assert!(t1.metadata.has_custom_markers, "trip 1 has custom marker");
+    assert!(t1.metadata.has_custom_markers, "track 1 has custom marker");
 
-    let checkpoint = t1.custom_markers.first().expect("trip 1 custom marker");
+    let checkpoint = t1.custom_markers.first().expect("track 1 custom marker");
     assert_eq!(checkpoint.label, "Checkpoint");
 
     // File-level metadata
@@ -323,6 +319,6 @@ fn generate_and_verify_snapshot_fixture() {
     assert_eq!(
         loaded.metadata.total_duration.num_seconds(),
         330 + 210,
-        "total duration is sum of both trips"
+        "total duration is sum of both tracks"
     );
 }

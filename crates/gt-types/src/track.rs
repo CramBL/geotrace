@@ -73,13 +73,13 @@ impl TimeRange {
     }
 }
 
-/// Which marker types a trip must have to pass the marker filter.
+/// Which marker types a track must have to pass the marker filter.
 ///
 /// The three variants are mutually exclusive; `CustomMarker` is a strict
 /// subset of `AnyMarker`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MarkerRequirement {
-    /// No marker constraint — all trips pass.
+    /// No marker constraint — all tracks pass.
     #[default]
     None,
     /// Trip must have at least one custom *or* generated marker.
@@ -109,7 +109,7 @@ pub struct TrackMetadata {
 }
 
 impl TrackMetadata {
-    /// Returns `true` when the trip has at least one custom, event, or generated marker.
+    /// Returns `true` when the track has at least one custom, event, or generated marker.
     pub fn has_any_marker(&self) -> bool {
         self.has_custom_markers || self.generated_marker_count > 0 || self.event_marker_count > 0
     }
@@ -234,9 +234,9 @@ pub struct DatabaseRef {
 pub struct LoadedFile {
     pub metadata: FileMetadata,
     pub tracks: Vec<LoadedTrack>,
-    /// Icon/color overrides keyed by variant path; file-level (shared across trips).
+    /// Icon/color overrides keyed by variant path; file-level (shared across tracks).
     pub event_marker_styles: HashMap<String, EventMarkerStyle>,
-    /// Event markers whose timestamp did not fall within any trip's time window.
+    /// Event markers whose timestamp did not fall within any track's time window.
     pub orphaned_event_markers: Vec<EventMarker>,
     /// Where this file was loaded from; used to re-process when settings change.
     pub source: FileSource,

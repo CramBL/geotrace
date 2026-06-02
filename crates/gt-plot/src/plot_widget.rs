@@ -1,4 +1,4 @@
-use crate::series::{TripSeries, build_all_series, closest_point_index};
+use crate::series::{TrackSeries, build_all_series, closest_point_index};
 use chrono::{DateTime, Utc};
 use egui::Color32;
 use egui_plot::{Line, PlotPoints, VLine};
@@ -104,8 +104,8 @@ impl MetricKind {
 
 /// Global per-metric visibility flags.
 ///
-/// Disabling a metric hides it for **all** trips at once, making it easy to
-/// declutter the plot without touching per-trip settings.
+/// Disabling a metric hides it for **all** tracks at once, making it easy to
+/// declutter the plot without touching per-track settings.
 #[derive(Debug, Clone, Copy)]
 pub struct MetricVisibility {
     pub sats_seen: bool,
@@ -199,7 +199,7 @@ impl MetricVisibility {
     }
 }
 
-/// Cached level selections for all 12 metrics of one trip's series.
+/// Cached level selections for all 12 metrics of one track's series.
 #[derive(Debug, Clone, Copy, Default)]
 struct TripLevelCache {
     total_seen: LevelSelection,
@@ -239,7 +239,7 @@ impl TripLevelCache {
     }
 }
 
-impl crate::series::TripSeries {
+impl crate::series::TrackSeries {
     fn mipmap_for(&self, kind: MetricKind) -> &gt_egui_mipmap::MipMap {
         match kind {
             MetricKind::SatsSeen => &self.total_seen,
@@ -260,7 +260,7 @@ impl crate::series::TripSeries {
     }
 }
 
-/// Persistent state for the trip plot panel.
+/// Persistent state for the track plot panel.
 ///
 /// Plot panel visibility is managed externally (via the tiles tree in the app),
 /// so this struct only tracks the cursor hover time and the mipmap series cache.
@@ -273,8 +273,8 @@ pub struct PlotState {
     pub metric_vis: MetricVisibility,
     /// Whether the plot grid lines are visible.
     pub show_grid: bool,
-    /// Mipmap cascade for every trip in every loaded file.
-    pub(crate) series_cache: Vec<TripSeries>,
+    /// Mipmap cascade for every track in every loaded file.
+    pub(crate) series_cache: Vec<TrackSeries>,
     /// Cached level selections, one entry per series.
     /// Invalidated when the effective plot bounds or target sample count changes.
     level_cache: Vec<TripLevelCache>,
@@ -339,7 +339,7 @@ impl PlotState {
     }
 }
 
-/// Render the trip plot panel.
+/// Render the track plot panel.
 ///
 /// - `map_hover_time`: the timestamp of the TPV point currently hovered on
 ///   the map (if any).  The plot draws a vertical cursor line at this time so
@@ -348,7 +348,7 @@ impl PlotState {
 ///   frame.  The caller should forward this to `MapHighlight::plot_hover_time`
 ///   before drawing the map so the renderer can cross-highlight the nearest
 ///   TPV arrow.
-pub fn show_trip_plot(
+pub fn show_track_plot(
     ui: &mut egui::Ui,
     files: &[LoadedFile],
     visibility: &TrackDataVisibility,
@@ -383,7 +383,7 @@ pub fn show_trip_plot(
         return;
     }
 
-    let multi_trip = visible_count > 1;
+    let multi_track = visible_count > 1;
 
     // Draw the per-metric filter row before the plot so it consumes vertical
     // space first; `ui.available_height()` below then gives the remainder.
@@ -423,7 +423,7 @@ pub fn show_trip_plot(
 
     // Compute the full x range across all visible series so that double-click
     // (which triggers auto-bounds reset) zooms to fit the complete dataset.
-    // Uses the precomputed `TripSeries::x_range` field — O(1) per series.
+    // Uses the precomputed `TrackSeries::x_range` field — O(1) per series.
     let mut full_x_min = f64::INFINITY;
     let mut full_x_max = f64::NEG_INFINITY;
     for (series, &is_vis) in state.series_cache.iter().zip(visible.iter()) {
@@ -456,7 +456,7 @@ pub fn show_trip_plot(
     let mut new_level_cache: Option<Vec<TripLevelCache>> = None;
     let mut new_applied_map_x_range: Option<Option<(u64, u64)>> = None;
 
-    let mut plot = egui_plot::Plot::new("trip_plot")
+    let mut plot = egui_plot::Plot::new("track_plot")
         .height(ui.available_height())
         .show_grid(state.show_grid)
         .x_axis_formatter(x_fmt)
@@ -519,7 +519,7 @@ pub fn show_trip_plot(
             let Some(cache) = resolved.get(si) else {
                 continue;
             };
-            add_series_lines(plot_ui, series, multi_trip, cache, metric_vis, hovered_chip);
+            add_series_lines(plot_ui, series, multi_track, cache, metric_vis, hovered_chip);
         }
 
         // Vertical cursor from map hover.
@@ -556,7 +556,7 @@ pub fn show_trip_plot(
     };
 }
 
-/// Draw the per-metric filter controls above the trip plot.
+/// Draw the per-metric filter controls above the track plot.
 ///
 /// All controls and metric chips share a single `horizontal_wrapped` row so they
 /// fill available horizontal space before wrapping — no fixed-height satellite
@@ -709,9 +709,9 @@ fn metric_chip(
     (show_only, response.hovered())
 }
 
-/// Compute fresh level selections for all 12 metrics of one trip's series.
+/// Compute fresh level selections for all 12 metrics of one track's series.
 fn compute_level_cache(
-    series: &TripSeries,
+    series: &TrackSeries,
     x_min: f64,
     x_max: f64,
     target_count: usize,
@@ -735,7 +735,7 @@ fn compute_level_cache(
     }
 }
 
-/// Returns `true` when the trip at `(fi, ti)` passes visibility and filter checks.
+/// Returns `true` when the track at `(fi, ti)` passes visibility and filter checks.
 fn trip_is_visible(
     visibility: &TrackDataVisibility,
     global_filter: &GlobalFilter,
@@ -764,7 +764,7 @@ fn trip_is_visible(
     gt_types::filter::track_passes_filter(&track.metadata, global_filter)
 }
 
-/// Add all metric lines for one trip to the plot using pre-computed level selections.
+/// Add all metric lines for one track to the plot using pre-computed level selections.
 ///
 /// When `hovered_chip` is `Some(kind)`, that metric is highlighted (double stroke
 /// width) and every other line is dimmed to 20 % brightness — mirroring the
@@ -775,13 +775,13 @@ fn trip_is_visible(
 /// without any per-frame allocation.
 fn add_series_lines<'a>(
     plot_ui: &mut egui_plot::PlotUi<'a>,
-    series: &'a TripSeries,
-    multi_trip: bool,
+    series: &'a TrackSeries,
+    multi_track: bool,
     cache: &TripLevelCache,
     metric_vis: &MetricVisibility,
     hovered_chip: Option<MetricKind>,
 ) {
-    let prefix = if multi_trip {
+    let prefix = if multi_track {
         format!("{}: ", series.label)
     } else {
         String::new()
@@ -832,9 +832,9 @@ fn add_line<'a>(
     );
 }
 
-/// Given a set of visible trips and a plot-hovered time (in seconds since
+/// Given a set of visible tracks and a plot-hovered time (in seconds since
 /// epoch), find the `(file_index, track_index, point_index)` of the closest
-/// TPV point across all visible trips.
+/// TPV point across all visible tracks.
 ///
 /// Called by the app to set `MapHighlight::plot_hover_time` after the plot renders.
 pub fn find_closest_tpv(

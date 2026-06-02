@@ -1,3 +1,4 @@
+mod auto_prune;
 mod config_manager;
 mod history;
 mod loader;
@@ -87,6 +88,15 @@ pub struct App {
 
     /// When `false`, NVD files are not stored in the history database on load.
     storage_enabled: bool,
+    /// When `true`, the oldest recordings are pruned after each import if the
+    /// total stored size exceeds `auto_prune_max_bytes`.
+    auto_prune_enabled: bool,
+    /// Maximum total stored size (bytes) before auto-pruning triggers.
+    auto_prune_max_bytes: u64,
+    /// When `true`, show a confirmation dialog before auto-pruning.
+    auto_prune_confirm: bool,
+    /// Recordings selected for auto-pruning, waiting for the user to confirm.
+    pending_auto_prune: Option<Vec<gt_db::DatabaseRef>>,
 
     /// History window state.
     history_window: history::HistoryWindow,
@@ -137,7 +147,7 @@ impl App {
         }
 
         let map = NavMap::new(cc.egui_ctx.clone());
-        let mut loader = LoaderManager::new(cc.egui_ctx.clone());
+        let loader = LoaderManager::new(cc.egui_ctx.clone());
 
         // Build the central-area tiles tree: map on top, plot on bottom.
         // The split ratio and panel visibility are applied from settings below.
@@ -149,18 +159,21 @@ impl App {
         )));
         let tiles_tree = Tree::new("main_tiles", root_tile_id, tiles);
 
+        // Tests must not touch the production database.  `loader.db_path` starts
+        // `None` and is populated by `sync_db_path` (called from
+        // `apply_startup_settings`) only in non-test builds.
+        #[cfg(not(test))]
         let db = match gt_db::Database::default_path()
             .and_then(|p| gt_db::Database::open_or_create(&p))
         {
-            Ok(db) => {
-                loader.db_path = Some(db.path().to_owned());
-                Some(db)
-            }
+            Ok(db) => Some(db),
             Err(e) => {
                 log::error!("Failed to open history database: {e}");
                 None
             }
         };
+        #[cfg(test)]
+        let db: Option<gt_db::Database> = None;
 
         let mut app = Self {
             map,
@@ -193,6 +206,10 @@ impl App {
             assoc_config: AssociationConfig::default(),
             db,
             storage_enabled: true,
+            auto_prune_enabled: false,
+            auto_prune_max_bytes: 10 * 1024 * 1024 * 1024,
+            auto_prune_confirm: true,
+            pending_auto_prune: None,
             history_window: history::HistoryWindow::new(),
             toasts: egui_notify::Toasts::default(),
         };
@@ -426,6 +443,9 @@ impl App {
         self.set_split_ratio(s.plot.split_ratio);
 
         self.storage_enabled = s.storage.enabled;
+        self.auto_prune_enabled = s.storage.auto_prune_enabled;
+        self.auto_prune_max_bytes = s.storage.auto_prune_max_bytes;
+        self.auto_prune_confirm = s.storage.auto_prune_confirm;
         self.sync_db_path();
     }
 
@@ -465,6 +485,9 @@ impl App {
                 .map_or(300, |d| d.as_secs()),
             log_marker_window_s: self.assoc_config.log_marker_window_s,
             storage_enabled: self.storage_enabled,
+            auto_prune_enabled: self.auto_prune_enabled,
+            auto_prune_max_bytes: self.auto_prune_max_bytes,
+            auto_prune_confirm: self.auto_prune_confirm,
         }
     }
 
@@ -515,6 +538,9 @@ impl App {
             },
             storage: crate::settings::StorageSettings {
                 enabled: self.storage_enabled,
+                auto_prune_enabled: self.auto_prune_enabled,
+                auto_prune_max_bytes: self.auto_prune_max_bytes,
+                auto_prune_confirm: self.auto_prune_confirm,
             },
         }
     }
@@ -554,7 +580,7 @@ impl App {
     /// Re-segment all loaded GPS files using the current `processing_config`.
     ///
     /// Log-only files (those with no nav points) are left unchanged since they
-    /// don't have trip structure to re-segment.
+    /// don't have track structure to re-segment.
     fn apply_resegmentation(&mut self) {
         let config = self.processing_config;
         {
@@ -616,6 +642,7 @@ impl App {
                 series,
                 db_ref,
             }) => {
+                let was_stored = db_ref.is_some();
                 file.db_ref = db_ref;
                 let orphans: Vec<(chrono::DateTime<chrono::Utc>, String)> = file
                     .orphaned_event_markers
@@ -639,6 +666,9 @@ impl App {
                     elapsed_secs: completed.elapsed_secs,
                     completed_at: std::time::Instant::now(),
                 });
+                if was_stored {
+                    self.check_auto_prune();
+                }
             }
             Ok(LoadOutcome::LogFile {
                 loaded,
@@ -677,6 +707,28 @@ impl App {
         } else {
             None
         };
+    }
+
+    /// Check whether auto-pruning is needed and either enqueue a confirmation
+    /// or prune silently.  Called after each successful NVD insert.
+    fn check_auto_prune(&mut self) {
+        if !self.auto_prune_enabled {
+            return;
+        }
+        let Some(db) = self.db.as_mut() else { return };
+        match auto_prune::run(db, self.auto_prune_max_bytes, self.auto_prune_confirm) {
+            Ok(auto_prune::AutoPruneOutcome::NotNeeded) => {}
+            Ok(auto_prune::AutoPruneOutcome::PrunedSilently(n)) => {
+                self.history_window.invalidate();
+                self.toasts
+                    .info(format!("Auto-pruned {n} recording(s)"))
+                    .duration(Some(std::time::Duration::from_secs(4)));
+            }
+            Ok(auto_prune::AutoPruneOutcome::NeedsConfirmation(candidates)) => {
+                self.pending_auto_prune = Some(candidates);
+            }
+            Err(e) => log::error!("Auto-prune failed: {e}"),
+        }
     }
 
     fn handle_history_action(&mut self, action: history::HistoryAction, ctx: &egui::Context) {
@@ -773,7 +825,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 } else {
                     None
                 };
-                gt_plot::show_trip_plot(
+                gt_plot::show_track_plot(
                     ui,
                     &s.loaded_files,
                     s.tree.visibility(),
@@ -982,9 +1034,9 @@ impl eframe::App for App {
             }
 
             // Forward plot hover → map highlight (must happen after the tree renders
-            // so that show_trip_plot has already written the current hovered_time).
+            // so that show_track_plot has already written the current hovered_time).
             // The pre-computed `plot_hover_point` lets TpvRenderer look up the
-            // closest point in O(1) instead of re-scanning all trip points.
+            // closest point in O(1) instead of re-scanning all track points.
             let plot_visible = self.plot_is_visible();
             if plot_visible {
                 if let Some(t) = s.plot_state.hovered_time {
@@ -1157,14 +1209,77 @@ impl eframe::App for App {
         show_load_warnings_dialog(ui, &mut self.shared.borrow_mut().warnings_popup);
 
         let prev_storage = self.storage_enabled;
-        if let Some(action) =
-            self.history_window
-                .show(ui.ctx(), self.db.as_ref(), &mut self.storage_enabled)
-        {
+        if let Some(action) = self.history_window.show(
+            ui.ctx(),
+            self.db.as_ref(),
+            &mut self.storage_enabled,
+            &mut self.auto_prune_enabled,
+            &mut self.auto_prune_max_bytes,
+            &mut self.auto_prune_confirm,
+        ) {
             self.handle_history_action(action, ui.ctx());
         }
         if self.storage_enabled != prev_storage {
             self.sync_db_path();
+        }
+
+        // Auto-prune confirmation dialog.
+        if let Some(refs) = &self.pending_auto_prune {
+            let max_gb = self.auto_prune_max_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+            let n = refs.len();
+            let mut do_prune = false;
+            let mut cancel = false;
+            egui::Window::new("Auto-prune")
+                .resizable(false)
+                .collapsible(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ui.ctx(), |ui| {
+                    ui.label(format!(
+                        "{n} recording(s) will be deleted to keep storage under {max_gb:.1} GB"
+                    ));
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(200.0)
+                        .show(ui, |ui| {
+                            for r in refs {
+                                ui.label(format!("{}/{}", r.identity, r.group_name));
+                            }
+                        });
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(
+                                egui::RichText::new("Delete these recordings")
+                                    .color(gt_ui_theme::WARNING_AMBER),
+                            )
+                            .on_hover_text(
+                                "This cannot be undone. The original source files are unaffected.",
+                            )
+                            .clicked()
+                        {
+                            do_prune = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if do_prune {
+                let candidates = self.pending_auto_prune.take().unwrap_or_default();
+                if let Some(db) = self.db.as_mut() {
+                    match db.delete_batch(&candidates) {
+                        Ok(()) => {
+                            self.history_window.invalidate();
+                            self.toasts
+                                .info(format!("Auto-pruned {} recording(s)", candidates.len()))
+                                .duration(Some(std::time::Duration::from_secs(4)));
+                        }
+                        Err(e) => log::error!("Auto-prune failed: {e}"),
+                    }
+                }
+            } else if cancel {
+                self.pending_auto_prune = None;
+            }
         }
 
         self.toasts.show(ui.ctx());
@@ -1224,7 +1339,7 @@ impl App {
 }
 
 /// Find the Unix-second time range of TPV points that lie within the given map
-/// geographic bounds, considering only files/trips currently enabled in `visibility`.
+/// geographic bounds, considering only files/tracks currently enabled in `visibility`.
 ///
 /// Returns `None` when no visible TPV points fall in the viewport.
 fn tpv_time_range_in_bounds(

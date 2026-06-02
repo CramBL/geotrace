@@ -68,7 +68,7 @@ impl EventMarkerVisibility {
         }
     }
 
-    /// Replace the hidden set for one trip with the given minimal root paths.
+    /// Replace the hidden set for one track with the given minimal root paths.
     ///
     /// Each entry in `hidden_roots` should be a path whose parent is NOT hidden —
     /// callers are responsible for ensuring minimality.

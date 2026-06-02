@@ -44,6 +44,9 @@ pub(super) struct AppSnapshot {
     pub track_split_gap_seconds: u64,
     pub log_marker_window_s: u64,
     pub storage_enabled: bool,
+    pub auto_prune_enabled: bool,
+    pub auto_prune_max_bytes: u64,
+    pub auto_prune_confirm: bool,
 }
 
 impl Default for AppSnapshot {
@@ -73,6 +76,9 @@ impl Default for AppSnapshot {
             track_split_gap_seconds: 300,
             log_marker_window_s: 60,
             storage_enabled: true,
+            auto_prune_enabled: false,
+            auto_prune_max_bytes: 10 * 1024 * 1024 * 1024,
+            auto_prune_confirm: true,
         }
     }
 }

@@ -84,7 +84,7 @@ impl PruneDialog {
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Mode:");
+                    ui.label("Mode");
                     let old = self.mode;
                     ui.selectable_value(&mut self.mode, PruneKind::Age, "By age");
                     ui.selectable_value(&mut self.mode, PruneKind::TotalSize, "By total size");
@@ -145,9 +145,9 @@ impl PruneDialog {
                     }
                 } else if let Some(refs) = &self.preview {
                     if refs.is_empty() {
-                        ui.label("Nothing to prune.");
+                        ui.label("Nothing to prune");
                     } else {
-                        ui.label(format!("{} recording(s) will be deleted:", refs.len()));
+                        ui.label(format!("{} recording(s) will be deleted", refs.len()));
                         egui::ScrollArea::vertical()
                             .max_height(200.0)
                             .show(ui, |ui| {
@@ -225,6 +225,9 @@ impl HistoryWindow {
         ctx: &egui::Context,
         db: Option<&gt_db::Database>,
         storage_enabled: &mut bool,
+        auto_prune_enabled: &mut bool,
+        auto_prune_max_bytes: &mut u64,
+        auto_prune_confirm: &mut bool,
     ) -> Option<HistoryAction> {
         if !self.open {
             return None;
@@ -274,7 +277,7 @@ impl HistoryWindow {
 
                 // Toolbar row: filter bar + Prune button
                 ui.horizontal(|ui| {
-                    ui.label("Filter:");
+                    ui.label("Filter");
                     ui.text_edit_singleline(&mut self.filter_text);
                     if !self.filter_text.is_empty()
                         && ui.small_button(egui_phosphor::regular::X).clicked()
@@ -289,6 +292,31 @@ impl HistoryWindow {
                         ui.checkbox(storage_enabled, "Auto-store recordings");
                     });
                 });
+
+                // Auto-prune settings row (only relevant when storage is enabled)
+                if *storage_enabled {
+                    ui.horizontal(|ui| {
+                        ui.checkbox(auto_prune_enabled, "Auto-prune when over");
+                        if *auto_prune_enabled {
+                            let mut max_gb =
+                                *auto_prune_max_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+                            ui.add(
+                                egui::DragValue::new(&mut max_gb)
+                                    .range(0.1..=1_000.0)
+                                    .speed(0.1),
+                            );
+                            ui.label("GB");
+                            #[expect(
+                                clippy::cast_sign_loss,
+                                reason = "DragValue range is 0.1..=1000 so value is always positive"
+                            )]
+                            let bytes = (max_gb * 1024.0 * 1024.0 * 1024.0).round() as u64;
+                            *auto_prune_max_bytes = bytes;
+                            ui.separator();
+                            ui.checkbox(auto_prune_confirm, "Confirm before pruning");
+                        }
+                    });
+                }
                 ui.add_space(4.0);
 
                 let filter = self.filter_text.to_lowercase();
@@ -302,7 +330,7 @@ impl HistoryWindow {
 
                 if entries.is_empty() {
                     ui.centered_and_justified(|ui| {
-                        ui.label("No recordings in history yet.");
+                        ui.label("No recordings in history yet");
                     });
                     return;
                 }
@@ -346,6 +374,9 @@ impl HistoryWindow {
                         ui.weak(format!("({} shown)", visible.len()));
                     }
                 });
+                if let Some(path) = db.map(|d| d.path().display().to_string()) {
+                    ui.weak(path);
+                }
             });
 
         self.open = open;

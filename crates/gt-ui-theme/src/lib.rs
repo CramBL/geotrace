@@ -49,10 +49,10 @@ pub fn map_hover_color(dark_mode: bool) -> Color32 {
 
 // Track palette
 
-/// Blue/cyan palette assigned to trip tracks — chosen to stand out on both OSM
-/// and satellite map backgrounds without implying error or warning semantics.
+/// Blue/cyan palette assigned to track polylines — chosen to stand out on both
+/// OSM and satellite map backgrounds without implying error or warning semantics.
 /// The palette cycles over (file_index, track_index) using a mixing function
-/// so adjacent trips get distinct shades.
+/// so adjacent tracks get distinct shades.
 pub const TRACK_COLORS: [Color32; 12] = [
     Color32::from_rgb(30, 160, 255),  // vivid blue
     Color32::from_rgb(0, 220, 220),   // cyan
@@ -70,7 +70,7 @@ pub const TRACK_COLORS: [Color32; 12] = [
 
 /// Returns the track color for a (file_index, track_index) pair.
 ///
-/// Coprime-factor mixing ensures adjacent trips get distinct palette slots even
+/// Coprime-factor mixing ensures adjacent tracks get distinct palette slots even
 /// for moderate numbers of files and tracks.
 pub fn track_color(fi: usize, ti: usize) -> Color32 {
     let idx = fi.wrapping_mul(7).wrapping_add(ti.wrapping_mul(3));

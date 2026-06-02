@@ -43,7 +43,7 @@ pub fn render_filter_panel(
         }
 
         // Secondary (zoomed) time range bar — shown when the active data range
-        // is much narrower than the full range (e.g. one 30-minute trip among
+        // is much narrower than the full range (e.g. one 30-minute track among
         // several days). Uses a stable stored viewport so that dragging its
         // handles doesn't shift the viewport under the cursor.
         if let Some((filt_start, filt_end)) = filtered_range {

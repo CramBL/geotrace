@@ -37,7 +37,7 @@ impl<'a> TrackRenderer<'a> {
         }
     }
 
-    fn trip_stroke(&self, fi: FileIdx, ti: TrackIdx) -> Stroke {
+    fn track_stroke(&self, fi: FileIdx, ti: TrackIdx) -> Stroke {
         if self.is_trip_highlighted(fi, ti) {
             Stroke::new(4.0, HIGHLIGHT_BLUE)
         } else {
@@ -73,7 +73,7 @@ impl Plugin for TrackRenderer<'_> {
         // then two f64 multiplies + two f64 adds with no large-value cancellation.
         let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
-        // Viewport bounds in Mercator space — used to skip trips that are
+        // Viewport bounds in Mercator space — used to skip tracks that are
         // entirely outside the visible area without iterating any points.
         let view_rect = ui.max_rect();
         let vp_bounds = MercBounds {
@@ -102,12 +102,12 @@ impl Plugin for TrackRenderer<'_> {
                 if !track_passes_filter(&track.metadata, self.filter) {
                     continue;
                 }
-                // Per-trip viewport cull: if the trip's Mercator bounding box
+                // Per-track viewport cull: if the track's Mercator bounding box
                 // does not intersect the viewport, skip it entirely.
                 if !track.metadata.merc_bounds.intersects(vp_bounds) {
                     continue;
                 }
-                let stroke = self.trip_stroke(fi, ti);
+                let stroke = self.track_stroke(fi, ti);
 
                 // Collect (is_ghost, screen_pos) for each visible point.
                 // Ghost fixes (heading == None) are dead-reckoned post-last-fix
@@ -131,7 +131,7 @@ impl Plugin for TrackRenderer<'_> {
                 draw_track_with_ghost(ui.painter(), &pts, stroke);
 
                 // Blink overlay: draw a bright pulsing stroke on top of
-                // newly loaded trips for the first 3 seconds after load.
+                // newly loaded tracks for the first 3 seconds after load.
                 if let Some(bp) = blink_path {
                     #[expect(
                         clippy::cast_sign_loss,

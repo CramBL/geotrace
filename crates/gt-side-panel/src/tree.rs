@@ -23,7 +23,7 @@ pub struct DeleteConfirmState {
     pub items: Vec<NodeKey>,
 }
 
-/// Tracks which data categories are currently expanded in the trip row.
+/// Tracks which data categories are currently expanded in the track row.
 ///
 /// Replaces `BTreeSet<DataCategory>` to avoid per-interaction heap allocations.
 #[derive(Default, Clone, Copy, Debug)]
@@ -78,9 +78,9 @@ impl CategoriesExpanded {
     }
 }
 
-/// Per-trip tree of event variant paths with tri-state visibility.
+/// Per-track tree of event variant paths with tri-state visibility.
 ///
-/// Stores all unique prefix segments derived from the trip's marker
+/// Stores all unique prefix segments derived from the track's marker
 /// variant paths.  Leaves are paths that exist as actual marker variants;
 /// internal nodes are shared prefix segments.  `CheckState` is derived for
 /// internal nodes from their children; only leaves carry "true" state.
@@ -171,7 +171,7 @@ pub struct TrackNode {
     pub custom_markers_visible: bool,
     pub generated_markers_visible: bool,
     pub event_paths: EventPathTree,
-    /// Per-trip text filter for the Events section search box.
+    /// Per-track text filter for the Events section search box.
     pub event_filter: String,
 }
 
@@ -305,7 +305,7 @@ impl TreeState {
         self.rebuild_event_marker_visibility();
     }
 
-    /// Toggle a file's check state with cascade to all child trips.
+    /// Toggle a file's check state with cascade to all child tracks.
     pub fn toggle_file_check(&mut self, fi: FileIdx) {
         let Some(file_node) = self.file_node_mut(fi) else {
             return;
@@ -538,8 +538,8 @@ impl TreeState {
         &self.event_marker_visibility
     }
 
-    /// Returns `true` when every trip is hidden — used to trigger zoom-to-fit
-    /// when the first trip becomes visible.
+    /// Returns `true` when every track is hidden — used to trigger zoom-to-fit
+    /// when the first track becomes visible.
     pub fn all_hidden(&self) -> bool {
         !self
             .visibility

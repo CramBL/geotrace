@@ -32,11 +32,24 @@ pub struct StorageSettings {
     /// When `false`, NVD files are not automatically stored in the history
     /// database on load.  Existing data is not affected.
     pub enabled: bool,
+    /// When `true`, the oldest recordings are automatically pruned after each
+    /// import to keep the total stored size at or below `auto_prune_max_bytes`.
+    pub auto_prune_enabled: bool,
+    /// Maximum total size (in bytes) before automatic pruning kicks in.
+    /// Default: 10 GiB.
+    pub auto_prune_max_bytes: u64,
+    /// When `true`, the user is prompted to confirm before pruning happens.
+    pub auto_prune_confirm: bool,
 }
 
 impl Default for StorageSettings {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            auto_prune_enabled: false,
+            auto_prune_max_bytes: 10 * 1024 * 1024 * 1024,
+            auto_prune_confirm: true,
+        }
     }
 }
 
@@ -137,7 +150,7 @@ pub enum ThemeSetting {
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct ProcessingSettings {
-    /// Gap between consecutive GPS points that triggers a new trip segment, in seconds.
+    /// Gap between consecutive GPS points that triggers a new track segment, in seconds.
     pub track_split_gap_seconds: u64,
     /// Max seconds between a log entry timestamp and the nearest GPS fix for association.
     pub log_marker_window_s: u64,

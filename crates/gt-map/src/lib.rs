@@ -1110,8 +1110,8 @@ fn show_sticky_popup(
         });
 }
 
-/// Bounding box over only the currently **visible** trips (those with both their
-/// file and trip enabled). Returns `None` if no visible data exists.
+/// Bounding box over only the currently **visible** tracks (those with both their
+/// file and track enabled). Returns `None` if no visible data exists.
 fn compute_visible_bounding_box(
     files: &[LoadedFile],
     visibility: &TrackDataVisibility,
@@ -1326,7 +1326,7 @@ mod tests {
             },
         );
         let n = points.len();
-        let trip = LoadedTrack {
+        let track = LoadedTrack {
             metadata: TrackMetadata {
                 index: 0,
                 distance_km: Length::new::<kilometer>(1.0),
@@ -1355,7 +1355,7 @@ mod tests {
                 time_range: TimeRange::new(now, now + chrono::Duration::seconds(n as i64)),
             },
             identity: format!("auto:test_{n}.nvd"),
-            tracks: vec![trip],
+            tracks: vec![track],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
             source: gt_types::FileSource::NvdPath(std::path::PathBuf::from(format!(

@@ -79,7 +79,7 @@ fn toggle_check_file_off_to_on() {
 #[test]
 fn toggle_check_trip_partial_makes_file_mixed() {
     let mut tree = make_tree(1, 2);
-    tree.toggle_track_check(TrackRef::new(FileIdx::new(0), TrackIdx::new(1))); // track[1] → Off, trip[0] stays On
+    tree.toggle_track_check(TrackRef::new(FileIdx::new(0), TrackIdx::new(1))); // track[1] → Off, track[0] stays On
     assert_eq!(trip_check(&tree, 0, 0), CheckState::On);
     assert_eq!(trip_check(&tree, 0, 1), CheckState::Off);
     assert_eq!(file_check(&tree, 0), CheckState::Mixed);

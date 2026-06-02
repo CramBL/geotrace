@@ -3,19 +3,19 @@ use gt_types::LoadedFile;
 use gt_types::satellites::Constellation;
 use uom::si::angle::degree;
 
-/// Mipmap series for a single trip.
+/// Mipmap series for a single track.
 ///
-/// Built from all points in the trip regardless of current visibility or filter.
+/// Built from all points in the track regardless of current visibility or filter.
 /// Visibility and time-range clamping are applied at render time in
 /// [`super::plot_widget`] so the cache stays valid across filter changes.
 #[derive(Debug, Clone)]
-pub(crate) struct TripSeries {
+pub(crate) struct TrackSeries {
     /// File index within the loaded files list.
     pub fi: usize,
-    /// Trip index within that file.
+    /// Track index within that file.
     pub ti: usize,
     pub label: String,
-    /// Precomputed `(x_min, x_max)` in Unix seconds, or `None` when the trip
+    /// Precomputed `(x_min, x_max)` in Unix seconds, or `None` when the track
     /// has no points.  Computed once at build time from the first and last
     /// point timestamps — O(1) field access vs the previous `find_map` over
     /// eight mipmaps.
@@ -39,21 +39,21 @@ pub(crate) struct TripSeries {
     pub clock_delta_ms: MipMap,
 }
 
-/// Build mipmap series for every trip in a single file, using `fi` as the file
+/// Build mipmap series for every track in a single file, using `fi` as the file
 /// index (for cache keying).
 ///
 /// No visibility check or time filter is applied — that is done at render time
 /// so the cache stays valid across filter changes without a rebuild.
-pub(crate) fn build_file_series(fi: usize, file: &LoadedFile) -> Vec<TripSeries> {
+pub(crate) fn build_file_series(fi: usize, file: &LoadedFile) -> Vec<TrackSeries> {
     file.tracks
         .iter()
         .enumerate()
-        .map(|(ti, track)| build_trip_series(fi, ti, file, track))
+        .map(|(ti, track)| build_track_series(fi, ti, file, track))
         .collect()
 }
 
-/// Build mipmap series for every trip in every file.
-pub(crate) fn build_all_series(files: &[LoadedFile]) -> Vec<TripSeries> {
+/// Build mipmap series for every track in every file.
+pub(crate) fn build_all_series(files: &[LoadedFile]) -> Vec<TrackSeries> {
     files
         .iter()
         .enumerate()
@@ -61,17 +61,17 @@ pub(crate) fn build_all_series(files: &[LoadedFile]) -> Vec<TripSeries> {
             file.tracks
                 .iter()
                 .enumerate()
-                .map(move |(ti, track)| build_trip_series(fi, ti, file, track))
+                .map(move |(ti, track)| build_track_series(fi, ti, file, track))
         })
         .collect()
 }
 
-fn build_trip_series(
+fn build_track_series(
     fi: usize,
     ti: usize,
     file: &LoadedFile,
     track: &gt_types::LoadedTrack,
-) -> TripSeries {
+) -> TrackSeries {
     let label = if file.tracks.len() == 1 {
         file.metadata.filename.clone()
     } else {
@@ -150,7 +150,7 @@ fn build_trip_series(
             )
         });
 
-    TripSeries {
+    TrackSeries {
         fi,
         ti,
         label,

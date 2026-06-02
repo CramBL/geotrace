@@ -54,7 +54,7 @@ impl TrackDataVisibility {
         }
     }
 
-    /// Enable or disable every file and trip at once.
+    /// Enable or disable every file and track at once.
     pub fn set_all_enabled(&mut self, enabled: bool) {
         for file in &mut self.files {
             file.enabled = enabled;
