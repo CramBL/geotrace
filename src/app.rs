@@ -13,8 +13,8 @@ use gt_map::{MapContextAction, MapLayer, NavMap};
 use gt_plot::PlotState;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
 use gt_types::{
-    AssociationConfig, DataCategory, FileIdx, GlobalFilter, HighlightScope, LoadedFile,
-    MapHighlight, NavPoint, TrackDataVisibility, TrackIdx,
+    AssociationConfig, DataCategory, GlobalFilter, HighlightScope, LoadedFile, MapHighlight,
+    NavPoint, TrackDataVisibility,
 };
 use loader::{CompletedLoad, FinishedJob, LoadOutcome, LoaderManager};
 
@@ -267,7 +267,7 @@ impl App {
         }
         let mut open = self.settings_open;
         let mut apply = false;
-        let window_resp = egui::Window::new("Settings")
+        egui::Window::new("Settings")
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -278,8 +278,8 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.label("Track split gap").on_hover_text(
                         "Consecutive GPS points separated by more than this gap start a new \
-                             trip segment. For example, with a gap of 5 min, two fixes at 10:00 \
-                             and 10:06 would be split into separate trips.",
+                             track. For example, with a gap of 5 min, two fixes at 10:00 \
+                             and 10:06 would be split into separate tracks.",
                     );
                     let mut gap_secs = self
                         .processing_config
@@ -334,13 +334,7 @@ impl App {
                 });
             });
 
-        // Close on ESC or click outside the window.
         if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
-            open = false;
-        }
-        if let Some(resp) = window_resp
-            && resp.response.clicked_elsewhere()
-        {
             open = false;
         }
 
@@ -553,6 +547,7 @@ impl App {
                     event_marker_styles,
                     &config,
                     source,
+                    file.load_warnings.clone(),
                 );
             }
             s.plot_state.rebuild_all(&s.loaded_files);
@@ -648,17 +643,11 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     popup_pos,
                 ) {
                     match action {
-                        MapContextAction::ShowOnlyTrip {
-                            file_index,
-                            track_index,
-                        } => {
-                            s.tree.show_only_trip(
-                                FileIdx::new(file_index),
-                                TrackIdx::new(track_index),
-                            );
+                        MapContextAction::ShowOnlyTrack(track) => {
+                            s.tree.show_only_track(track);
                         }
-                        MapContextAction::ShowOnlyFile { file_index } => {
-                            s.tree.show_only_file(FileIdx::new(file_index));
+                        MapContextAction::ShowOnlyFile(fi) => {
+                            s.tree.show_only_file(fi);
                         }
                     }
                 }
@@ -1131,9 +1120,10 @@ fn extract_map_hover_time(
         return None;
     }
     point_ref
-        .file_index
+        .track
+        .fi
         .get(files)
-        .and_then(|f| point_ref.track_index.get(&f.tracks))
+        .and_then(|f| point_ref.track.index.get(&f.tracks))
         .and_then(|t| point_ref.point_index.get(&t.points))
         .map(|p| p.tpv.time().utc())
 }

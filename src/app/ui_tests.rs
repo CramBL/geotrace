@@ -175,3 +175,66 @@ fn detached_panel_steps_complete_within_time_budget() {
     harness.step();
     assert!(!harness.state().shared.borrow().tree.detached);
 }
+
+/// Regression: the settings window used to close immediately after opening
+/// because `clicked_elsewhere()` fired on the same frame as the button click.
+#[test]
+fn settings_window_stays_open_after_step() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(|cc| App::new(cc));
+    harness.step(); // initial render
+    harness.state_mut().settings_open = true;
+    harness.step(); // frame where window is first shown
+    assert!(
+        harness.state().settings_open,
+        "settings window must stay open after opening"
+    );
+    harness.step(); // second frame — must still be open with no interaction
+    assert!(
+        harness.state().settings_open,
+        "settings window must remain open across multiple frames"
+    );
+}
+
+#[test]
+fn settings_window_closes_on_esc() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(|cc| App::new(cc));
+    harness.step();
+    harness.state_mut().settings_open = true;
+    harness.step(); // window open
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+    assert!(
+        !harness.state().settings_open,
+        "ESC must close the settings window"
+    );
+}
+
+#[cfg(test)]
+fn skip_snapshot_on_ci() -> bool {
+    std::env::var("CI").is_ok() && !cfg!(target_os = "macos")
+}
+
+#[test]
+fn snapshot_settings_window() {
+    if skip_snapshot_on_ci() {
+        return;
+    }
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .with_size(egui::vec2(600.0, 400.0))
+        .build_eframe(|cc| App::new(cc));
+    harness.step();
+    harness.state_mut().settings_open = true;
+    harness.run();
+    harness.snapshot("settings_window");
+}

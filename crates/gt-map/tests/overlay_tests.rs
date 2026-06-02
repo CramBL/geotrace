@@ -1,13 +1,12 @@
 use egui::accesskit;
 use egui_kittest::{Harness, kittest::Queryable as _};
 use gt_types::{
-    DataCategory, DataPointRef, FileIdx, HighlightScope, MapHighlight, PointIdx, TrackIdx,
+    DataCategory, DataPointRef, FileIdx, HighlightScope, MapHighlight, PointIdx, TrackIdx, TrackRef,
 };
 
 fn tpv_point(pi: usize) -> DataPointRef {
     DataPointRef {
-        file_index: FileIdx::new(0),
-        track_index: TrackIdx::new(0),
+        track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
         category: DataCategory::Tpv,
         point_index: PointIdx::new(pi),
     }

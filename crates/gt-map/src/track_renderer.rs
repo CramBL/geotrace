@@ -1,7 +1,7 @@
 use egui::{Color32, Response, Stroke, Ui};
 use gt_types::{
     DataCategory, FileIdx, GlobalFilter, HighlightScope, LoadedFile, MapHighlight, MercBounds,
-    TrackDataVisibility, TrackIdx, track_passes_filter,
+    TrackDataVisibility, TrackIdx, TrackRef, track_passes_filter,
 };
 use gt_ui_theme::{HIGHLIGHT_BLUE, track_color};
 use walkers::{MapMemory, Plugin, Projector};
@@ -46,27 +46,15 @@ impl<'a> TrackRenderer<'a> {
     }
 
     fn is_trip_highlighted(&self, fi: FileIdx, ti: TrackIdx) -> bool {
-        if self
-            .highlight
-            .sticky
-            .is_some_and(|r| r.file_index == fi && r.track_index == ti)
-        {
+        let track = TrackRef::new(fi, ti);
+        if self.highlight.sticky.is_some_and(|r| r.track == track) {
             return true;
         }
         match self.highlight.hover {
             Some(HighlightScope::File { file_index }) => file_index == fi,
-            Some(HighlightScope::Track {
-                file_index,
-                track_index,
-            }) => file_index == fi && track_index == ti,
-            Some(HighlightScope::TrackCategory {
-                file_index,
-                track_index,
-                category,
-            }) => {
-                file_index == fi
-                    && track_index == ti
-                    && matches!(category, DataCategory::Track | DataCategory::Tpv)
+            Some(HighlightScope::Track(t)) => t == track,
+            Some(HighlightScope::TrackCategory { track: t, category }) => {
+                t == track && matches!(category, DataCategory::Track | DataCategory::Tpv)
             }
             Some(HighlightScope::Point(_)) | None => false,
         }

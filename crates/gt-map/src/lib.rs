@@ -276,8 +276,9 @@ pub(crate) fn draw_rotated_cached_icon(
 
 use gt_types::mercator;
 use gt_types::{
-    DataCategory, DataPointRef, EventMarkerVisibility, GlobalFilter, HighlightScope, Latitude,
-    LoadedFile, Longitude, MapHighlight, MercPoint, SpatialPoint, TrackDataVisibility,
+    DataCategory, DataPointRef, EventMarkerVisibility, FileIdx, GlobalFilter, HighlightScope,
+    Latitude, LoadedFile, Longitude, MapHighlight, MercPoint, SpatialPoint, TrackDataVisibility,
+    TrackRef,
 };
 use rstar::PointDistance as _;
 use std::time::Instant;
@@ -304,13 +305,10 @@ pub enum MapLayer {
 /// responsible for applying it to the visibility state.
 #[derive(Debug, Clone, Copy)]
 pub enum MapContextAction {
-    /// Hide every trip except the one at `(file_index, track_index)`.
-    ShowOnlyTrip {
-        file_index: usize,
-        track_index: usize,
-    },
-    /// Hide every file except the one at `file_index`.
-    ShowOnlyFile { file_index: usize },
+    /// Hide every track except the given one.
+    ShowOnlyTrack(TrackRef),
+    /// Hide every file except the given one.
+    ShowOnlyFile(FileIdx),
 }
 
 /// Manages the load-highlight pulse animation.
@@ -381,6 +379,11 @@ pub struct NavMap {
     /// The element that was under the pointer when the last right-click fired.
     /// Held across frames so the context menu can reference it while it is open.
     right_click_ref: Option<DataPointRef>,
+    /// Candidates captured at the last click that had multiple overlapping types.
+    /// Displayed in a disambiguation popup until the user picks one or clicks elsewhere.
+    disambiguation_candidates: [Option<DataPointRef>; 4],
+    /// Screen position where the disambiguation popup is anchored.
+    disambiguation_pos: egui::Pos2,
 }
 
 impl NavMap {
@@ -399,6 +402,8 @@ impl NavMap {
             new_file_boundary: 0,
             last_viewport_bounds: None,
             right_click_ref: None,
+            disambiguation_candidates: [None; 4],
+            disambiguation_pos: egui::pos2(0.0, 0.0),
         }
     }
 
@@ -637,18 +642,17 @@ impl NavMap {
         // Recompute the transform from the actual map rect for accurate hover detection.
         let projector_actual = walkers::Projector::new(map_rect, &self.map_memory, map_center);
         let transform = MercTransform::new(&projector_actual, &self.map_memory, map_rect.center());
+        // Collect the nearest visible candidate per category group within the
+        // hover threshold. Slot 0 = Tpv/SatelliteReport, 1 = EventMarker,
+        // 2 = CustomMarker, 3 = GeneratedMarker (matches DataCategory::hover_slot).
+        let mut hover_candidates: [Option<DataPointRef>; 4] = [None; 4];
         let hover_point_ref: Option<DataPointRef> = if map_response.hovered() {
             ui.input(|i| i.pointer.hover_pos()).and_then(|screen_pos| {
                 let merc_x = transform.merc_x_from_screen(screen_pos.x);
                 let merc_y = transform.merc_y_from_screen(screen_pos.y);
                 let total_px = 2_f64.powf(self.map_memory.zoom()) * 256.0;
                 let threshold_merc_sq = (20.0_f64 / total_px).powi(2);
-                // Iterate from nearest outward, stopping once past the threshold.
-                // Among all visible candidates within the circle, prefer a Tpv
-                // point over markers — so a NavFix is always selectable even when
-                // a generated event marker sits at the same map position.
-                let mut nearest_tpv: Option<&SpatialPoint> = None;
-                let mut nearest_other: Option<&SpatialPoint> = None;
+                // First pass: one candidate per slot, in nearest-first order.
                 for sp in self
                     .global_tree
                     .nearest_neighbor_iter([merc_x, merc_y])
@@ -657,21 +661,23 @@ impl NavMap {
                     if !is_spatial_point_visible(sp, visibility) {
                         continue;
                     }
-                    if sp.category == DataCategory::Tpv {
-                        nearest_tpv.get_or_insert(sp);
-                    } else {
-                        nearest_other.get_or_insert(sp);
+                    if let Some(slot) = sp.category.hover_slot() {
+                        #[expect(
+                            clippy::indexing_slicing,
+                            reason = "hover_slot() returns 0..=3; array has 4 elements"
+                        )]
+                        hover_candidates[slot].get_or_insert_with(|| DataPointRef {
+                            track: sp.track_ref(),
+                            category: sp.category,
+                            point_index: sp.point_index,
+                        });
                     }
-                    if nearest_tpv.is_some() && nearest_other.is_some() {
+                    if hover_candidates.iter().all(|c| c.is_some()) {
                         break;
                     }
                 }
-                nearest_tpv.or(nearest_other).map(|sp| DataPointRef {
-                    file_index: sp.file_index,
-                    track_index: sp.track_index,
-                    category: sp.category,
-                    point_index: sp.point_index,
-                })
+                // Primary hover: Tpv wins if present, otherwise the first non-None slot.
+                hover_candidates.iter().flatten().copied().next()
             })
         } else {
             None
@@ -709,8 +715,18 @@ impl NavMap {
 
         // Handle click: clicking near a map element makes its info popup sticky;
         // clicking on empty space clears it. Clicking the same element again also clears it.
+        // When multiple category types are within the threshold, show a small
+        // disambiguation menu rather than immediately picking one.
+        let candidate_count = hover_candidates.iter().flatten().count();
         if map_response.clicked() {
-            if let Some(point_ref) = hover_point_ref {
+            if candidate_count > 1 {
+                self.disambiguation_candidates = hover_candidates;
+                self.disambiguation_pos = ui
+                    .ctx()
+                    .pointer_latest_pos()
+                    .unwrap_or(map_response.rect.center());
+            } else if let Some(point_ref) = hover_point_ref {
+                self.disambiguation_candidates = [None; 4];
                 if highlight.sticky == Some(point_ref) {
                     highlight.sticky = None;
                 } else {
@@ -721,7 +737,46 @@ impl NavMap {
                         .unwrap_or(map_response.rect.center());
                 }
             } else {
+                self.disambiguation_candidates = [None; 4];
                 highlight.sticky = None;
+            }
+        }
+
+        // Disambiguation popup: shown after a click when multiple types overlap.
+        let disambig_candidates = self.disambiguation_candidates;
+        if disambig_candidates.iter().any(|c| c.is_some()) {
+            let disambig_pos = self.disambiguation_pos;
+            let area_resp = egui::Area::new(egui::Id::new("map_disambig"))
+                .fixed_pos(disambig_pos)
+                .order(egui::Order::Foreground)
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.set_min_width(160.0);
+                        for candidate in disambig_candidates.iter().flatten().copied() {
+                            let icon = category_icon(candidate.category);
+                            let label = candidate_label(candidate, files);
+                            if ui
+                                .selectable_label(
+                                    highlight.sticky == Some(candidate),
+                                    format!("{icon}  {label}"),
+                                )
+                                .clicked()
+                            {
+                                if highlight.sticky == Some(candidate) {
+                                    highlight.sticky = None;
+                                } else {
+                                    highlight.sticky = Some(candidate);
+                                    self.sticky_pos = disambig_pos;
+                                }
+                                self.disambiguation_candidates = [None; 4];
+                            }
+                        }
+                    });
+                });
+            if area_resp.response.clicked_elsewhere()
+                || ui.ctx().input(|i| i.key_pressed(egui::Key::Escape))
+            {
+                self.disambiguation_candidates = [None; 4];
             }
         }
 
@@ -738,32 +793,26 @@ impl NavMap {
                 ui.close();
                 return;
             };
-            let Some(file) = point_ref.file_index.get(files) else {
+            let Some(file) = point_ref.track.fi.get(files) else {
                 ui.close();
                 return;
             };
-            // Header: file name and trip number (trip omitted for single-trip files).
             ui.add(egui::Label::new(
                 egui::RichText::new(file.metadata.filename.as_str()).weak(),
             ));
             if file.tracks.len() > 1 {
                 ui.add(egui::Label::new(
-                    egui::RichText::new(format!("Track {}", point_ref.track_index.as_usize() + 1))
+                    egui::RichText::new(format!("#{}", point_ref.track.index.as_usize() + 1))
                         .weak(),
                 ));
             }
             ui.separator();
             if ui.button("Only show elements from this track").clicked() {
-                context_action = Some(MapContextAction::ShowOnlyTrip {
-                    file_index: point_ref.file_index.as_usize(),
-                    track_index: point_ref.track_index.as_usize(),
-                });
+                context_action = Some(MapContextAction::ShowOnlyTrack(point_ref.track));
                 ui.close();
             }
             if ui.button("Only show elements from this file").clicked() {
-                context_action = Some(MapContextAction::ShowOnlyFile {
-                    file_index: point_ref.file_index.as_usize(),
-                });
+                context_action = Some(MapContextAction::ShowOnlyFile(point_ref.track.fi));
                 ui.close();
             }
         });
@@ -774,8 +823,67 @@ impl NavMap {
         }
 
         highlight.hover = hover_point_ref.map(HighlightScope::Point);
+        highlight.hover_candidates = hover_candidates;
 
         context_action
+    }
+}
+
+fn category_icon(cat: DataCategory) -> &'static str {
+    match cat {
+        DataCategory::Tpv | DataCategory::SatelliteReport => egui_phosphor::regular::CROSSHAIR,
+        DataCategory::EventMarker => egui_phosphor::regular::FLAG,
+        DataCategory::CustomMarker => egui_phosphor::regular::MAP_PIN,
+        DataCategory::GeneratedMarker => egui_phosphor::regular::ARROWS_SPLIT,
+        DataCategory::Track => "",
+    }
+}
+
+fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> String {
+    let Some(file) = candidate.track.fi.get(files) else {
+        return String::new();
+    };
+    let Some(track) = candidate.track.index.get(&file.tracks) else {
+        return String::new();
+    };
+    match candidate.category {
+        DataCategory::Tpv | DataCategory::SatelliteReport => {
+            if let Some(p) = candidate.point_index.get(&track.points) {
+                p.tpv.time().utc().format("GPS  %H:%M:%S").to_string()
+            } else {
+                "GPS point".to_string()
+            }
+        }
+        DataCategory::EventMarker => {
+            if let Some(m) = candidate.point_index.get(&track.event_markers) {
+                match &m.annotation {
+                    Some(note) if !note.is_empty() => {
+                        format!("{}  —  {note}", m.variant_path)
+                    }
+                    _ => m.variant_path.clone(),
+                }
+            } else {
+                "Event marker".to_string()
+            }
+        }
+        DataCategory::CustomMarker => {
+            if let Some(m) = candidate.point_index.get(&track.custom_markers) {
+                m.label.clone()
+            } else {
+                "Custom marker".to_string()
+            }
+        }
+        DataCategory::GeneratedMarker => {
+            if let Some(m) = candidate.point_index.get(&track.generated_markers) {
+                match m.kind {
+                    gt_types::GeneratedMarkerKind::GpsFixLost => "GPS fix lost".to_string(),
+                    gt_types::GeneratedMarkerKind::GpsFixRegained => "GPS fix regained".to_string(),
+                }
+            } else {
+                "Generated marker".to_string()
+            }
+        }
+        DataCategory::Track => String::new(),
     }
 }
 
@@ -793,9 +901,10 @@ fn show_sticky_popup(
     // title is the point's datetime; for everything else fall back to a generic label.
     let title: String = if sticky_ref.category == DataCategory::Tpv {
         sticky_ref
-            .file_index
+            .track
+            .fi
             .get(files)
-            .and_then(|f| sticky_ref.track_index.get(&f.tracks))
+            .and_then(|f| sticky_ref.track.index.get(&f.tracks))
             .and_then(|t| sticky_ref.point_index.get(&t.points))
             .map_or_else(
                 || "GPS Point".to_string(),
@@ -803,9 +912,10 @@ fn show_sticky_popup(
             )
     } else if sticky_ref.category == DataCategory::SatelliteReport {
         sticky_ref
-            .file_index
+            .track
+            .fi
             .get(files)
-            .and_then(|f| sticky_ref.track_index.get(&f.tracks))
+            .and_then(|f| sticky_ref.track.index.get(&f.tracks))
             .and_then(|t| sticky_ref.point_index.get(&t.points))
             .and_then(|p| p.satellites.as_ref())
             .map_or_else(
@@ -819,9 +929,10 @@ fn show_sticky_popup(
             )
     } else if sticky_ref.category == DataCategory::GeneratedMarker {
         sticky_ref
-            .file_index
+            .track
+            .fi
             .get(files)
-            .and_then(|f| sticky_ref.track_index.get(&f.tracks))
+            .and_then(|f| sticky_ref.track.index.get(&f.tracks))
             .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
             .map_or_else(
                 || "GPS Event".to_string(),
@@ -839,9 +950,10 @@ fn show_sticky_popup(
         .show(ctx, |ui| match sticky_ref.category {
             DataCategory::Tpv => {
                 if let Some(point) = sticky_ref
-                    .file_index
+                    .track
+                    .fi
                     .get(files)
-                    .and_then(|f| sticky_ref.track_index.get(&f.tracks))
+                    .and_then(|f| sticky_ref.track.index.get(&f.tracks))
                     .and_then(|t| sticky_ref.point_index.get(&t.points))
                 {
                     // Cap the window height so satellite tables never overflow
@@ -861,9 +973,10 @@ fn show_sticky_popup(
             }
             DataCategory::CustomMarker => {
                 if let Some(marker) = sticky_ref
-                    .file_index
+                    .track
+                    .fi
                     .get(files)
-                    .and_then(|f| sticky_ref.track_index.get(&f.tracks))
+                    .and_then(|f| sticky_ref.track.index.get(&f.tracks))
                     .and_then(|t| sticky_ref.point_index.get(&t.custom_markers))
                 {
                     egui::Grid::new("sticky_marker_grid")
@@ -887,9 +1000,10 @@ fn show_sticky_popup(
             }
             DataCategory::GeneratedMarker => {
                 if let Some(marker) = sticky_ref
-                    .file_index
+                    .track
+                    .fi
                     .get(files)
-                    .and_then(|f| sticky_ref.track_index.get(&f.tracks))
+                    .and_then(|f| sticky_ref.track.index.get(&f.tracks))
                     .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
                 {
                     let kind_str = match marker.kind {
@@ -927,9 +1041,10 @@ fn show_sticky_popup(
             }
             DataCategory::SatelliteReport => {
                 if let Some(point) = sticky_ref
-                    .file_index
+                    .track
+                    .fi
                     .get(files)
-                    .and_then(|f| sticky_ref.track_index.get(&f.tracks))
+                    .and_then(|f| sticky_ref.track.index.get(&f.tracks))
                     .and_then(|t| sticky_ref.point_index.get(&t.points))
                 {
                     let max_h = (ui.ctx().viewport_rect().height() * 0.75).min(500.0);
@@ -945,9 +1060,10 @@ fn show_sticky_popup(
             DataCategory::Track => {}
             DataCategory::EventMarker => {
                 if let Some(marker) = sticky_ref
-                    .file_index
+                    .track
+                    .fi
                     .get(files)
-                    .and_then(|f| sticky_ref.track_index.get(&f.tracks))
+                    .and_then(|f| sticky_ref.track.index.get(&f.tracks))
                     .and_then(|t| sticky_ref.point_index.get(&t.event_markers))
                 {
                     egui::Grid::new("sticky_event_marker_grid")
@@ -1227,6 +1343,7 @@ mod tests {
             source: gt_types::FileSource::NvdPath(std::path::PathBuf::from(format!(
                 "test_{n}.nvd"
             ))),
+            load_warnings: vec![],
         }
     }
 

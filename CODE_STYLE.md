@@ -215,6 +215,32 @@ Avoid negations in names. A lot of people struggle with double negations, so thi
 
 For UI functions (functions taking an `&mut egui::Ui` argument), we use the name `ui` or `_ui` suffix, e.g. `blueprint_ui(…)` or `blueprint.ui(…)`.
 
+### Project vocabulary
+
+These are the canonical terms used in code, docs, and UI.
+Using consistent names keeps grep, autocomplete, and mental models aligned.
+
+| Term | Meaning | Examples in code |
+|------|---------|-----------------|
+| **file** | A single loaded `.nvd` file; maps to one `LoadedFile`. | `FileIdx`, `FileNode`, `fi` |
+| **track** | A contiguous GPS recording within a file (what the user calls a "track"). | `LoadedTrack`, `TrackIdx`, `TrackRef`, `ti` |
+| **point** | A single data point within a track. | `PointIdx`, `SpatialPoint`, `pi` |
+| **track ref** (`TrackRef`) | Typed (file-index, track-index) pair that uniquely addresses a track. Fields: `fi: FileIdx`, `index: TrackIdx`. | `TrackRef::new(fi, ti)` |
+| **data point ref** (`DataPointRef`) | Typed address of a single rendered point. Fields: `track: TrackRef`, `category`, `point_index`. | sticky/hover highlight |
+| **event marker** | A timestamped event associated with a track (e.g. `power/boot`). | `EventMarker`, `event_markers` |
+| **custom marker** | A user-placed geographic annotation. | `CustomMarker`, `custom_markers` |
+| **generated marker** | A marker derived automatically from data (e.g. trip start/end). | `GeneratedMarker`, `generated_markers` |
+| **visibility** | Whether a file/track/marker is shown on the map. Controlled via `Visibility` / `GlobalFilter`. | `track_visible`, `show_only_track` |
+| **highlight** | Transient hover or sticky selection state. | `MapHighlight`, `HighlightScope` |
+
+Terms to avoid and their replacements:
+
+| Avoid | Use instead |
+|-------|------------|
+| trip | track |
+| TripRef | TrackRef |
+| TripNode | TrackNode |
+
 ### Be over-explicit in stringly typed situations
 
 Avoid vague names like "address". Prefer one of:

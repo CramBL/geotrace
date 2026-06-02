@@ -1,6 +1,6 @@
 use egui_kittest::{Harness, SnapshotOptions};
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
-use gt_types::{FileIdx, GlobalFilter, MapHighlight, TrackIdx};
+use gt_types::{FileIdx, GlobalFilter, MapHighlight, TrackIdx, TrackRef};
 
 struct State {
     files: Vec<gt_types::LoadedFile>,
@@ -14,9 +14,22 @@ struct State {
 }
 
 fn make_state(file_count: usize) -> State {
+    make_state_with_warnings_on(file_count, 0, &[])
+}
+
+fn make_state_with_warnings_on(
+    file_count: usize,
+    warned_file: usize,
+    warnings: &[String],
+) -> State {
     let points = gt_test_utils::nav_test_data();
     let files = (0..file_count)
         .map(|i| {
+            let w = if i == warned_file {
+                warnings.to_vec()
+            } else {
+                vec![]
+            };
             gt_data_ops::build_loaded_file(
                 format!("ride_{i}.nvd"),
                 &points,
@@ -25,6 +38,7 @@ fn make_state(file_count: usize) -> State {
                 vec![],
                 &gt_data_ops::SegmentationConfig::default(),
                 gt_types::FileSource::NvdPath(std::path::PathBuf::from(format!("ride_{i}.nvd"))),
+                w,
             )
         })
         .collect();
@@ -122,7 +136,7 @@ fn hiding_one_trip_makes_file_mixed() {
     harness
         .state_mut()
         .tree
-        .toggle_trip_check(FileIdx::new(0), TrackIdx::new(0));
+        .toggle_track_check(TrackRef::new(FileIdx::new(0), TrackIdx::new(0)));
     harness.run();
     let check = harness.state().tree.files[0].check;
     assert_eq!(
@@ -140,4 +154,19 @@ fn expand_file_is_reflected_in_tree_state() {
     harness.state_mut().tree.toggle_expand_file(FileIdx::new(0));
     harness.run();
     assert!(harness.state().tree.files[0].expanded);
+}
+
+#[test]
+fn snapshot_file_with_warnings() {
+    if skip_snapshot_on_ci() {
+        return;
+    }
+    let warnings = [
+        "3 satellite(s) with PRN 0 — PRN 0 is reserved and undefined in NMEA".to_owned(),
+        "2 satellite(s) with elevation > 90° — above the zenith, outside the valid NMEA range [0°, 90°]".to_owned(),
+    ];
+    let state = make_state_with_warnings_on(2, 0, &warnings);
+    let mut harness = make_harness(state);
+    harness.run();
+    harness.snapshot_options("side_panel_file_with_warnings", &snapshot_options());
 }

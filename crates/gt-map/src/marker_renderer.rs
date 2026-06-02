@@ -37,18 +37,9 @@ impl<'a> MarkerRenderer<'a> {
         }
         match self.highlight.hover {
             Some(HighlightScope::Point(r)) => r == point_ref,
-            Some(HighlightScope::Track {
-                file_index,
-                track_index,
-            }) => file_index == point_ref.file_index && track_index == point_ref.track_index,
-            Some(HighlightScope::TrackCategory {
-                file_index,
-                track_index,
-                category,
-            }) => {
-                file_index == point_ref.file_index
-                    && track_index == point_ref.track_index
-                    && category == DataCategory::CustomMarker
+            Some(HighlightScope::Track(track)) => track == point_ref.track,
+            Some(HighlightScope::TrackCategory { track, category }) => {
+                track == point_ref.track && category == DataCategory::CustomMarker
             }
             _ => false,
         }
@@ -94,8 +85,7 @@ impl Plugin for MarkerRenderer<'_> {
                 continue;
             }
             let point_ref = DataPointRef {
-                file_index: sp.file_index,
-                track_index: sp.track_index,
+                track: sp.track_ref(),
                 category: DataCategory::CustomMarker,
                 point_index: sp.point_index,
             };
@@ -104,15 +94,13 @@ impl Plugin for MarkerRenderer<'_> {
             draw_marker_icon(ui, screen_pos, marker, highlighted);
         }
 
-        // Show hover label for the currently hovered custom marker.
-        // Suppressed when the sticky popup is already showing this point, or when
-        // any popup (e.g. context menu) is open and would be painted underneath.
-        if let Some(HighlightScope::Point(r)) = self.highlight.hover
-            && r.category == DataCategory::CustomMarker
+        // Show hover label for the hovered custom marker. Uses hover_candidates[2]
+        // so the label appears even when a Tpv point is the primary hover.
+        if let Some(r) = self.highlight.hover_candidates[2]
             && self.highlight.sticky != Some(r)
             && !ui.ctx().any_popup_open()
-            && let Some(file) = r.file_index.get(self.files)
-            && let Some(track) = r.track_index.get(&file.tracks)
+            && let Some(file) = r.track.fi.get(self.files)
+            && let Some(track) = r.track.index.get(&file.tracks)
             && let Some(marker) = r.point_index.get(&track.custom_markers)
         {
             let pos = transform.to_screen(marker.merc);

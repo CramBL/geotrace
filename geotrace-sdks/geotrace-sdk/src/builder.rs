@@ -4,8 +4,8 @@ use chrono::{DateTime, Duration, Utc};
 use crate::error::BuildError;
 use crate::time_types::{GpsTime, SysTime};
 use crate::types::{
-    Annotation, EventMarker, EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker,
-    Meta, NavFile, NavFix, NavPoint, Satellite, SatelliteReport,
+    Annotation, Constellation, EventMarker, EventMarkerIconChoice, EventMarkerPoint,
+    EventMarkerStyle, Marker, Meta, NavFile, NavFix, NavPoint, Satellite, SatelliteReport,
 };
 use crate::variant_path::EventKind;
 
@@ -363,6 +363,8 @@ impl NavFileSink {
                 true
             }
         });
+
+        validate_satellite_data(&self.satellite_reports);
 
         self.fixes.sort_by_key(effective_time);
         self.satellite_reports.sort_by_key(|r| {
@@ -1007,6 +1009,276 @@ fn interpolate_event_markers(
         .collect()
 }
 
+/// Counts of non-conforming satellite data issues found across a set of reports.
+///
+/// All counts are aggregated over all reports so the log is never flooded.
+/// See [`collect_satellite_issues`] and [`log_satellite_warnings`].
+#[derive(Default, Debug, PartialEq, Eq)]
+struct SatelliteIssues {
+    /// Satellites with PRN = 0, which is invalid in all NMEA constellations.
+    prn_zero: u32,
+    /// GPS satellites with PRN 33–64 (the SBAS range — WAAS, EGNOS, MSAS, GAGAN).
+    gps_sbas_range: u32,
+    /// GPS satellites with PRN > 64 (entirely outside the valid GPS/SBAS range).
+    gps_out_of_range: u32,
+    /// GLONASS satellites with PRN 65–96 (looks like an un-stripped GNGSV system-PRN offset).
+    glo_offset_range: u32,
+    /// GLONASS satellites with PRN outside 1–32 and not in the 65–96 GNGSV range.
+    glo_out_of_range: u32,
+    /// Galileo satellites with PRN > 36 (valid range is E01–E36).
+    gal_out_of_range: u32,
+    /// BeiDou satellites with PRN > 63 (valid range is C01–C63).
+    bds_out_of_range: u32,
+    /// Satellites with elevation < 0° (briefly possible during acquisition, not for storage).
+    elevation_negative: u32,
+    /// Satellites with elevation > 90° — above the zenith, outside the valid NMEA range [0°, 90°].
+    elevation_above_90: u32,
+    /// Satellites with azimuth outside [0°, 360°).
+    azimuth_out_of_range: u32,
+    /// Satellites with SNR ≈ 99 dB-Hz (common firmware sentinel for "no data").
+    snr_sentinel_99: u32,
+    /// Satellites with SNR > 60 dB-Hz (above the physical limit for civil GNSS).
+    snr_above_60: u32,
+    /// Satellites with SNR < 0 dB-Hz (invalid).
+    snr_negative: u32,
+    /// Reports containing duplicate (constellation, PRN) pairs.
+    reports_with_duplicate_prn: u32,
+}
+
+impl SatelliteIssues {
+    fn to_warning_strings(&self) -> Vec<String> {
+        let mut v = Vec::new();
+        if self.prn_zero > 0 {
+            v.push(format!(
+                "{} satellite(s) with PRN 0 — PRN 0 is reserved and undefined in NMEA",
+                self.prn_zero
+            ));
+        }
+        if self.gps_sbas_range > 0 {
+            v.push(format!(
+                "{} GPS satellite(s) with PRN 33–64: this range is reserved for SBAS \
+                 (WAAS, EGNOS, MSAS, GAGAN). If these are SBAS satellites, tag them with the GPS \
+                 constellation; note that SBAS is not yet a distinct constellation in this SDK.",
+                self.gps_sbas_range
+            ));
+        }
+        if self.gps_out_of_range > 0 {
+            v.push(format!(
+                "{} GPS satellite(s) with PRN > 64 — outside the valid NMEA GPS/SBAS range \
+                 (1–64); check the source data",
+                self.gps_out_of_range
+            ));
+        }
+        if self.glo_offset_range > 0 {
+            v.push(format!(
+                "{} GLONASS satellite(s) with PRN 65–96 — looks like an un-stripped NMEA 4.11 \
+                 GNGSV system-PRN (slot + 64). The SDK expects slot numbers 1–32; subtract 64 \
+                 before calling add_satellite_report().",
+                self.glo_offset_range
+            ));
+        }
+        if self.glo_out_of_range > 0 {
+            v.push(format!(
+                "{} GLONASS satellite(s) with PRN outside 1–32 (and not in the GNGSV offset \
+                 range 65–96) — check the source data",
+                self.glo_out_of_range
+            ));
+        }
+        if self.gal_out_of_range > 0 {
+            v.push(format!(
+                "{} Galileo satellite(s) with PRN > 36 — outside the valid range (E01–E36)",
+                self.gal_out_of_range
+            ));
+        }
+        if self.bds_out_of_range > 0 {
+            v.push(format!(
+                "{} BeiDou satellite(s) with PRN > 63 — outside the valid range (C01–C63)",
+                self.bds_out_of_range
+            ));
+        }
+        if self.elevation_negative > 0 {
+            v.push(format!(
+                "{} satellite(s) with negative elevation — briefly valid during signal \
+                 acquisition but should not appear in stored data",
+                self.elevation_negative
+            ));
+        }
+        if self.elevation_above_90 > 0 {
+            v.push(format!(
+                "{} satellite(s) with elevation > 90° — above the zenith, outside the valid NMEA range [0°, 90°]",
+                self.elevation_above_90
+            ));
+        }
+        if self.azimuth_out_of_range > 0 {
+            v.push(format!(
+                "{} satellite(s) with azimuth outside [0°, 360°) — invalid per NMEA",
+                self.azimuth_out_of_range
+            ));
+        }
+        if self.snr_sentinel_99 > 0 {
+            v.push(format!(
+                "{} satellite(s) with SNR ≈ 99 dB-Hz — common firmware sentinel for 'no data'; \
+                 pass `None` for unavailable SNR instead",
+                self.snr_sentinel_99
+            ));
+        }
+        if self.snr_above_60 > 0 {
+            v.push(format!(
+                "{} satellite(s) with SNR > 60 dB-Hz — above the physical limit for civil GNSS \
+                 receivers; check for sentinel values or unit errors",
+                self.snr_above_60
+            ));
+        }
+        if self.snr_negative > 0 {
+            v.push(format!(
+                "{} satellite(s) with negative SNR — SNR must be ≥ 0 dB-Hz",
+                self.snr_negative
+            ));
+        }
+        if self.reports_with_duplicate_prn > 0 {
+            v.push(format!(
+                "{} satellite report(s) contain duplicate (constellation, PRN) pairs — each \
+                 satellite should appear at most once per report",
+                self.reports_with_duplicate_prn
+            ));
+        }
+        v
+    }
+}
+
+/// Validate satellite reports and return one human-readable warning string per issue
+/// category found across all reports.
+///
+/// The same checks are run by [`NavFileSink::finish`] (which additionally logs each
+/// warning via `log::warn!`).  Callers that load an existing `.nvd` file can use this
+/// to surface the same diagnostics without going through the builder.
+///
+/// ## PRN ranges (NMEA 0183 v4.11, talker-specific GSV sentences)
+///
+/// | Constellation | Valid native PRN range | Notes |
+/// |---|---|---|
+/// | GPS | 1–32 | PRN 33–64 = SBAS (WAAS, EGNOS, …) |
+/// | GLONASS | 1–32 | Slot numbers R01–R32; 65–96 = NMEA GNGSV offset not stripped |
+/// | Galileo | 1–36 | E01–E36 |
+/// | BeiDou | 1–63 | C01–C63 (GEO + IGSO + MEO combined) |
+///
+/// PRN 0 is invalid for all constellations.
+/// Validate satellite reports and return one human-readable warning string per issue
+/// category found.
+///
+/// Accepts any iterator of `SatelliteReport` references so callers can pass a slice,
+/// a filtered iterator from a `NavFile`, etc. without needing to clone the reports.
+pub fn collect_satellite_warnings<'a>(
+    reports: impl IntoIterator<Item = &'a SatelliteReport>,
+) -> Vec<String> {
+    collect_satellite_issues_inner(reports.into_iter().map(|r| r.tracked.as_slice()))
+        .to_warning_strings()
+}
+
+/// Inner implementation shared by the public API and the internal builder path.
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "one branch per validation rule; splitting would obscure rather than clarify"
+)]
+fn collect_satellite_issues_inner<'a>(
+    reports: impl Iterator<Item = &'a [Satellite]>,
+) -> SatelliteIssues {
+    use std::collections::HashSet;
+
+    let mut issues = SatelliteIssues::default();
+
+    for tracked in reports {
+        // (constellation discriminant, prn) — used for per-report duplicate detection.
+        let mut seen: HashSet<(u8, u32)> = HashSet::new();
+        let mut has_duplicate = false;
+
+        for sat in tracked {
+            let prn = sat.prn;
+            let c_key: u8 = match sat.constellation {
+                Constellation::Gps => 0,
+                Constellation::Glonass => 1,
+                Constellation::Galileo => 2,
+                Constellation::Beidou => 3,
+            };
+
+            if !seen.insert((c_key, prn)) {
+                has_duplicate = true;
+            }
+
+            if prn == 0 {
+                issues.prn_zero += 1;
+                // Skip further range checks; PRN 0 is invalid for all constellations.
+                continue;
+            }
+
+            match sat.constellation {
+                Constellation::Gps => match prn {
+                    1..=32 => {}
+                    33..=64 => issues.gps_sbas_range += 1,
+                    _ => issues.gps_out_of_range += 1,
+                },
+                Constellation::Glonass => match prn {
+                    1..=32 => {}
+                    65..=96 => issues.glo_offset_range += 1,
+                    _ => issues.glo_out_of_range += 1,
+                },
+                Constellation::Galileo => {
+                    if prn > 36 {
+                        issues.gal_out_of_range += 1;
+                    }
+                }
+                Constellation::Beidou => {
+                    if prn > 63 {
+                        issues.bds_out_of_range += 1;
+                    }
+                }
+            }
+
+            if let Some(el) = sat.elevation {
+                if el < 0.0 {
+                    issues.elevation_negative += 1;
+                } else if el > 90.0 {
+                    issues.elevation_above_90 += 1;
+                }
+            }
+
+            if let Some(az) = sat.azimuth
+                && !(0.0..360.0).contains(&az)
+            {
+                issues.azimuth_out_of_range += 1;
+            }
+
+            if let Some(snr) = sat.snr {
+                if snr < 0.0 {
+                    issues.snr_negative += 1;
+                } else if (snr - 99.0).abs() < 0.5 {
+                    // 99 dB-Hz is a common firmware sentinel for "no data"; callers
+                    // should pass `None` for unavailable SNR rather than a sentinel value.
+                    issues.snr_sentinel_99 += 1;
+                } else if snr > 60.0 {
+                    issues.snr_above_60 += 1;
+                }
+            }
+        }
+
+        if has_duplicate {
+            issues.reports_with_duplicate_prn += 1;
+        }
+    }
+
+    issues
+}
+
+fn collect_satellite_issues(reports: &[InternalSatReport]) -> SatelliteIssues {
+    collect_satellite_issues_inner(reports.iter().map(|r| r.tracked.as_slice()))
+}
+
+fn validate_satellite_data(reports: &[InternalSatReport]) {
+    for msg in collect_satellite_issues(reports).to_warning_strings() {
+        log::warn!("{msg}");
+    }
+}
+
 /// Resolve the best available timestamp for a fix as a [`GpsTime`].
 ///
 /// Uses `gps_time` when the receiver had an active lock, otherwise falls back
@@ -1041,5 +1313,245 @@ pub(crate) fn u64_to_opt_datetime(v: u64) -> Option<DateTime<Utc>> {
         None
     } else {
         Some(micros_to_datetime(v as i64))
+    }
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+    use crate::time_types::GpsTime;
+    use crate::types::{Constellation, Satellite};
+    use chrono::DateTime;
+
+    fn gps_time() -> GpsTime {
+        GpsTime::from_utc(DateTime::from_timestamp(1_748_000_000, 0).expect("valid"))
+    }
+
+    fn report(sats: Vec<Satellite>) -> InternalSatReport {
+        InternalSatReport {
+            gps_time: Some(gps_time()),
+            sys_time: None,
+            tracked: sats,
+        }
+    }
+
+    fn sat(constellation: Constellation, prn: u32) -> Satellite {
+        Satellite::builder()
+            .constellation(constellation)
+            .prn(prn)
+            .build()
+    }
+
+    fn sat_el(constellation: Constellation, prn: u32, elevation: f32) -> Satellite {
+        Satellite::builder()
+            .constellation(constellation)
+            .prn(prn)
+            .elevation(elevation)
+            .build()
+    }
+
+    fn sat_az(constellation: Constellation, prn: u32, azimuth: f32) -> Satellite {
+        Satellite::builder()
+            .constellation(constellation)
+            .prn(prn)
+            .azimuth(azimuth)
+            .build()
+    }
+
+    fn sat_snr(constellation: Constellation, prn: u32, snr: f32) -> Satellite {
+        Satellite::builder()
+            .constellation(constellation)
+            .prn(prn)
+            .snr(snr)
+            .build()
+    }
+
+    #[test]
+    fn clean_data_produces_no_issues() {
+        let reports = vec![report(vec![
+            sat(Constellation::Gps, 1),
+            sat(Constellation::Gps, 32),
+            sat(Constellation::Glonass, 1),
+            sat(Constellation::Glonass, 32),
+            sat(Constellation::Galileo, 1),
+            sat(Constellation::Galileo, 36),
+            sat(Constellation::Beidou, 1),
+            sat(Constellation::Beidou, 63),
+        ])];
+        assert_eq!(
+            collect_satellite_issues(&reports),
+            SatelliteIssues::default()
+        );
+    }
+
+    #[test]
+    fn prn_zero_detected() {
+        let reports = vec![report(vec![sat(Constellation::Gps, 0)])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.prn_zero, 1);
+    }
+
+    #[test]
+    fn gps_sbas_range_prn_33_to_64() {
+        let reports = vec![report(vec![
+            sat(Constellation::Gps, 33),
+            sat(Constellation::Gps, 64),
+        ])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.gps_sbas_range, 2);
+        assert_eq!(issues.gps_out_of_range, 0);
+    }
+
+    #[test]
+    fn gps_prn_above_64_is_out_of_range() {
+        let reports = vec![report(vec![sat(Constellation::Gps, 65)])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.gps_out_of_range, 1);
+        assert_eq!(issues.gps_sbas_range, 0);
+    }
+
+    #[test]
+    fn glonass_offset_range_65_to_96() {
+        let reports = vec![report(vec![
+            sat(Constellation::Glonass, 65),
+            sat(Constellation::Glonass, 96),
+        ])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.glo_offset_range, 2);
+        assert_eq!(issues.glo_out_of_range, 0);
+    }
+
+    #[test]
+    fn glonass_prn_33_to_64_is_out_of_range() {
+        let reports = vec![report(vec![sat(Constellation::Glonass, 33)])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.glo_out_of_range, 1);
+        assert_eq!(issues.glo_offset_range, 0);
+    }
+
+    #[test]
+    fn galileo_prn_above_36_is_out_of_range() {
+        let reports = vec![report(vec![sat(Constellation::Galileo, 37)])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.gal_out_of_range, 1);
+    }
+
+    #[test]
+    fn beidou_prn_above_63_is_out_of_range() {
+        let reports = vec![report(vec![sat(Constellation::Beidou, 64)])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.bds_out_of_range, 1);
+    }
+
+    #[test]
+    fn negative_elevation_detected() {
+        let reports = vec![report(vec![sat_el(Constellation::Gps, 1, -1.0)])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.elevation_negative, 1);
+    }
+
+    #[test]
+    fn elevation_above_90_detected() {
+        let reports = vec![report(vec![sat_el(Constellation::Gps, 1, 91.0)])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.elevation_above_90, 1);
+    }
+
+    #[test]
+    fn azimuth_out_of_range_detected() {
+        let reports = vec![report(vec![
+            sat_az(Constellation::Gps, 1, -1.0),
+            sat_az(Constellation::Gps, 2, 360.0),
+        ])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.azimuth_out_of_range, 2);
+    }
+
+    #[test]
+    fn azimuth_boundary_values_are_valid() {
+        let reports = vec![report(vec![
+            sat_az(Constellation::Gps, 1, 0.0),
+            sat_az(Constellation::Gps, 2, 359.9),
+        ])];
+        assert_eq!(
+            collect_satellite_issues(&reports),
+            SatelliteIssues::default()
+        );
+    }
+
+    #[test]
+    fn snr_sentinel_99_detected() {
+        let reports = vec![report(vec![sat_snr(Constellation::Gps, 1, 99.0)])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.snr_sentinel_99, 1);
+        assert_eq!(issues.snr_above_60, 0);
+    }
+
+    #[test]
+    fn snr_above_60_but_not_sentinel_detected() {
+        let reports = vec![report(vec![sat_snr(Constellation::Gps, 1, 70.0)])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.snr_above_60, 1);
+        assert_eq!(issues.snr_sentinel_99, 0);
+    }
+
+    #[test]
+    fn snr_negative_detected() {
+        let reports = vec![report(vec![sat_snr(Constellation::Gps, 1, -1.0)])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.snr_negative, 1);
+    }
+
+    #[test]
+    fn duplicate_prn_in_same_report_detected() {
+        let reports = vec![report(vec![
+            sat(Constellation::Gps, 5),
+            sat(Constellation::Gps, 5),
+        ])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.reports_with_duplicate_prn, 1);
+    }
+
+    #[test]
+    fn same_prn_in_different_constellations_is_not_duplicate() {
+        let reports = vec![report(vec![
+            sat(Constellation::Gps, 5),
+            sat(Constellation::Galileo, 5),
+        ])];
+        assert_eq!(
+            collect_satellite_issues(&reports),
+            SatelliteIssues::default()
+        );
+    }
+
+    #[test]
+    fn duplicate_counted_once_per_report_not_per_satellite() {
+        let reports = vec![report(vec![
+            sat(Constellation::Gps, 1),
+            sat(Constellation::Gps, 1),
+            sat(Constellation::Gps, 1),
+        ])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.reports_with_duplicate_prn, 1);
+    }
+
+    #[test]
+    fn issues_aggregated_across_multiple_reports() {
+        let reports = vec![
+            report(vec![sat(Constellation::Gps, 0)]),
+            report(vec![sat(Constellation::Gps, 0)]),
+            report(vec![sat(Constellation::Gps, 0)]),
+        ];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.prn_zero, 3);
+    }
+
+    #[test]
+    fn prn_zero_skips_range_check() {
+        // PRN 0 with Glonass: should only count as prn_zero, not glo_out_of_range.
+        let reports = vec![report(vec![sat(Constellation::Glonass, 0)])];
+        let issues = collect_satellite_issues(&reports);
+        assert_eq!(issues.prn_zero, 1);
+        assert_eq!(issues.glo_out_of_range, 0);
     }
 }

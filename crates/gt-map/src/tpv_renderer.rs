@@ -4,7 +4,7 @@ use gt_types::filter;
 use gt_types::satellites::Constellation;
 use gt_types::{
     DataCategory, DataPointRef, FileIdx, GlobalFilter, HighlightScope, LoadedFile, LoadedTrack,
-    MapHighlight, NavPoint, PointIdx, SpatialPoint, TrackDataVisibility, TrackIdx,
+    MapHighlight, NavPoint, PointIdx, SpatialPoint, TrackDataVisibility, TrackIdx, TrackRef,
 };
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH, MINUS_SIGN};
 use std::collections::HashMap;
@@ -43,18 +43,9 @@ impl<'a> TpvRenderer<'a> {
         }
         match self.highlight.hover {
             Some(HighlightScope::Point(r)) => r == point_ref,
-            Some(HighlightScope::Track {
-                file_index,
-                track_index,
-            }) => file_index == point_ref.file_index && track_index == point_ref.track_index,
-            Some(HighlightScope::TrackCategory {
-                file_index,
-                track_index,
-                category,
-            }) => {
-                file_index == point_ref.file_index
-                    && track_index == point_ref.track_index
-                    && category == DataCategory::Tpv
+            Some(HighlightScope::Track(track)) => track == point_ref.track,
+            Some(HighlightScope::TrackCategory { track, category }) => {
+                track == point_ref.track && category == DataCategory::Tpv
             }
             _ => false,
         }
@@ -97,8 +88,7 @@ impl<'a> TpvRenderer<'a> {
                 }
                 let screen_pos = transform.to_screen(point.merc);
                 let point_ref = DataPointRef {
-                    file_index: fi,
-                    track_index: ti,
+                    track: TrackRef::new(fi, ti),
                     category: DataCategory::Tpv,
                     point_index: PointIdx::new(pi),
                 };
@@ -157,8 +147,7 @@ impl<'a> TpvRenderer<'a> {
                 ghost_direction(merc_prev, merc_next)
             };
             let point_ref = DataPointRef {
-                file_index: fi,
-                track_index: ti,
+                track: TrackRef::new(fi, ti),
                 category: DataCategory::Tpv,
                 point_index: PointIdx::new(pi),
             };
@@ -177,10 +166,10 @@ impl<'a> TpvRenderer<'a> {
     }
 
     fn show_tooltip(&self, ui: &Ui, point_ref: DataPointRef) {
-        let Some(file) = point_ref.file_index.get(self.files) else {
+        let Some(file) = point_ref.track.fi.get(self.files) else {
             return;
         };
-        let Some(track) = point_ref.track_index.get(&file.tracks) else {
+        let Some(track) = point_ref.track.index.get(&file.tracks) else {
             return;
         };
         let Some(point) = point_ref.point_index.get(&track.points) else {
@@ -189,8 +178,7 @@ impl<'a> TpvRenderer<'a> {
         let tooltip_id = ui
             .id()
             .with("tpv_hover")
-            .with(point_ref.file_index)
-            .with(point_ref.track_index)
+            .with(point_ref.track)
             .with(point_ref.point_index);
         egui::Tooltip::always_open(
             ui.ctx().clone(),
@@ -237,10 +225,10 @@ impl Plugin for TpvRenderer<'_> {
         let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         // Group visible real fixes by trip so render_trip gets O(k/trips) per trip.
-        let mut by_trip: HashMap<(FileIdx, TrackIdx), Vec<usize>> = HashMap::new();
+        let mut by_track: HashMap<TrackRef, Vec<usize>> = HashMap::new();
         for sp in &self.visible_tpv {
-            by_trip
-                .entry((sp.file_index, sp.track_index))
+            by_track
+                .entry(sp.track_ref())
                 .or_default()
                 .push(sp.point_index.as_usize());
         }
@@ -270,7 +258,7 @@ impl Plugin for TpvRenderer<'_> {
                     fi,
                     ti,
                     track,
-                    by_trip.get(&(fi, ti)),
+                    by_track.get(&TrackRef::new(fi, ti)),
                     &style,
                     &transform,
                 );
@@ -613,16 +601,28 @@ fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
 
 /// Format a signed time delta (in milliseconds) for display in the point info panel.
 ///
-/// - Sub-second deltas are shown as `+250ms` / `−50ms` (using `MINUS_SIGN`
-///   so the negative sign is visually distinct from a hyphen).
-/// - Larger deltas use a compact terse format (e.g. `+1s`, `+1m30s`) with a
-///   leading sign.
+/// - Sub-2-second deltas are shown as `+250ms` / `−1500ms`.
+/// - 2s–59s: fractional seconds up to 2 decimal places with trailing zeros
+///   dropped (`+2.1s`, `+9.23s`).
+/// - ≥1 minute: compact terse format (`+1m9s`, `+1h2m`).
+///
+/// The negative sign uses `MINUS_SIGN` so it is visually distinct from a hyphen.
 fn format_signed_delta(delta_ms: i64) -> String {
     use std::fmt::Write as _;
     let sign = if delta_ms < 0 { MINUS_SIGN } else { "+" };
     let abs_ms = delta_ms.unsigned_abs();
-    if abs_ms < 1_000 {
+    if abs_ms < 2_000 {
         format!("{sign}{abs_ms}ms")
+    } else if abs_ms < 60_000 {
+        let secs = abs_ms / 1_000;
+        let frac = (abs_ms % 1_000) / 10;
+        if frac == 0 {
+            format!("{sign}{secs}s")
+        } else if frac.is_multiple_of(10) {
+            format!("{sign}{secs}.{}s", frac / 10)
+        } else {
+            format!("{sign}{secs}.{frac:02}s")
+        }
     } else {
         let total_s = abs_ms / 1_000;
         let h = total_s / 3_600;
@@ -1094,5 +1094,29 @@ mod tests {
             Vec2::DOWN,
             "coincident neighbours → fallback direction DOWN"
         );
+    }
+
+    #[test]
+    fn signed_delta_sub_2s_shows_ms() {
+        assert_eq!(format_signed_delta(250), "+250ms");
+        assert_eq!(format_signed_delta(-50), "\u{2212}50ms");
+        assert_eq!(format_signed_delta(1999), "+1999ms");
+    }
+
+    #[test]
+    fn signed_delta_fractional_seconds() {
+        assert_eq!(format_signed_delta(2000), "+2s");
+        assert_eq!(format_signed_delta(2100), "+2.1s");
+        assert_eq!(format_signed_delta(2140), "+2.14s");
+        assert_eq!(format_signed_delta(9230), "+9.23s");
+        assert_eq!(format_signed_delta(-2140), "\u{2212}2.14s");
+        assert_eq!(format_signed_delta(59990), "+59.99s");
+    }
+
+    #[test]
+    fn signed_delta_terse_minutes() {
+        assert_eq!(format_signed_delta(60_000), "+1m");
+        assert_eq!(format_signed_delta(69_000), "+1m9s");
+        assert_eq!(format_signed_delta(3_661_000), "+1h1m1s");
     }
 }

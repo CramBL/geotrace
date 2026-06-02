@@ -146,6 +146,12 @@ pub struct SpatialPoint {
     pub category: DataCategory,
 }
 
+impl SpatialPoint {
+    pub fn track_ref(&self) -> crate::highlight::TrackRef {
+        crate::highlight::TrackRef::new(self.file_index, self.track_index)
+    }
+}
+
 impl rstar::RTreeObject for SpatialPoint {
     type Envelope = rstar::AABB<[f64; 2]>;
 
@@ -225,4 +231,6 @@ pub struct LoadedFile {
     pub orphaned_event_markers: Vec<EventMarker>,
     /// Where this file was loaded from; used to re-process when settings change.
     pub source: FileSource,
+    /// Data quality warnings detected when the file was loaded (empty when clean).
+    pub load_warnings: Vec<String>,
 }

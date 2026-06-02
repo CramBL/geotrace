@@ -515,6 +515,7 @@ pub(super) fn build_log_loaded_file(
         event_marker_styles: std::collections::HashMap::new(),
         orphaned_event_markers: Vec::new(),
         source,
+        load_warnings: Vec::new(),
     })
 }
 

@@ -14,7 +14,7 @@ use geotrace_sdk::{
     Constellation as SdkConstellation, EventMarkerColor as SdkEventMarkerColor,
     EventMarkerIconChoice as SdkEventMarkerIconChoice, EventMarkerPoint,
     EventMarkerStyle as SdkEventMarkerStyle, Marker as SdkMarker, MarkerIcon as SdkMarkerIcon,
-    NavFile, Satellite as SdkSatellite, SatelliteReport,
+    NavFile, Satellite as SdkSatellite, SatelliteReport, collect_satellite_warnings,
 };
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::{GpsTime, SysTime};
@@ -66,6 +66,7 @@ pub fn load_file_with_progress(
     let nav_file = NavFile::read(file)?;
     progress(0.65, STAGE_CONVERTING);
     let (points, markers, event_markers, event_marker_styles) = from_nav_file(&nav_file)?;
+    let load_warnings = satellite_warnings_from_nav_file(&nav_file);
     progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::NvdPath(path.to_path_buf());
     let loaded = gt_data_ops::build_loaded_file(
@@ -76,6 +77,7 @@ pub fn load_file_with_progress(
         event_marker_styles,
         config,
         source,
+        load_warnings,
     );
     Ok(loaded)
 }
@@ -91,6 +93,7 @@ pub fn load_bytes_with_progress(
     let nav_file = NavFile::read(bytes)?;
     progress(0.60, STAGE_CONVERTING);
     let (points, markers, event_markers, event_marker_styles) = from_nav_file(&nav_file)?;
+    let load_warnings = satellite_warnings_from_nav_file(&nav_file);
     progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::NvdBytes(Arc::from(bytes));
     let loaded = gt_data_ops::build_loaded_file(
@@ -101,8 +104,18 @@ pub fn load_bytes_with_progress(
         event_marker_styles,
         config,
         source,
+        load_warnings,
     );
     Ok(loaded)
+}
+
+fn satellite_warnings_from_nav_file(nav_file: &NavFile) -> Vec<String> {
+    collect_satellite_warnings(
+        nav_file
+            .nav_points()
+            .iter()
+            .filter_map(|p| p.satellites.as_ref()),
+    )
 }
 
 type NavFileContents = (

@@ -1,4 +1,4 @@
-use crate::highlight::{FileIdx, TrackIdx};
+use crate::highlight::{FileIdx, TrackRef};
 use crate::track::LoadedFile;
 
 #[derive(Debug, Clone)]
@@ -72,13 +72,14 @@ impl TrackDataVisibility {
         }
     }
 
-    /// Show only the given trip (and its parent file); hide everything else.
-    pub fn show_only_trip(&mut self, fi: FileIdx, ti: TrackIdx) {
+    /// Show only the given track (and its parent file); hide everything else.
+    pub fn show_only_track(&mut self, track: TrackRef) {
         for (i, file) in self.files.iter_mut().enumerate() {
-            if FileIdx::new(i) == fi {
+            if FileIdx::new(i) == track.fi {
                 file.enabled = true;
-                for (j, trip) in file.tracks.iter_mut().enumerate() {
-                    trip.enabled = TrackIdx::new(j) == ti;
+                for (j, t) in file.tracks.iter_mut().enumerate() {
+                    use crate::highlight::TrackIdx;
+                    t.enabled = TrackIdx::new(j) == track.index;
                 }
             } else {
                 file.enabled = false;

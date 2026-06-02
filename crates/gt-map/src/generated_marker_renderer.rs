@@ -36,28 +36,19 @@ impl<'a> GeneratedMarkerRenderer<'a> {
         }
         match self.highlight.hover {
             Some(HighlightScope::Point(r)) => r == point_ref,
-            Some(HighlightScope::Track {
-                file_index,
-                track_index,
-            }) => file_index == point_ref.file_index && track_index == point_ref.track_index,
-            Some(HighlightScope::TrackCategory {
-                file_index,
-                track_index,
-                category,
-            }) => {
-                file_index == point_ref.file_index
-                    && track_index == point_ref.track_index
-                    && category == DataCategory::GeneratedMarker
+            Some(HighlightScope::Track(track)) => track == point_ref.track,
+            Some(HighlightScope::TrackCategory { track, category }) => {
+                track == point_ref.track && category == DataCategory::GeneratedMarker
             }
             _ => false,
         }
     }
 
     fn show_tooltip(&self, ui: &Ui, point_ref: DataPointRef, pos: Pos2) {
-        let Some(file) = point_ref.file_index.get(self.files) else {
+        let Some(file) = point_ref.track.fi.get(self.files) else {
             return;
         };
-        let Some(track) = point_ref.track_index.get(&file.tracks) else {
+        let Some(track) = point_ref.track.index.get(&file.tracks) else {
             return;
         };
         let Some(marker) = point_ref.point_index.get(&track.generated_markers) else {
@@ -68,8 +59,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
             hit_rect,
             ui.id()
                 .with("gen_marker_hover")
-                .with(point_ref.file_index)
-                .with(point_ref.track_index)
+                .with(point_ref.track)
                 .with(point_ref.point_index),
             egui::Sense::hover(),
         );
@@ -140,8 +130,7 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
                 continue;
             }
             let point_ref = DataPointRef {
-                file_index: sp.file_index,
-                track_index: sp.track_index,
+                track: sp.track_ref(),
                 category: DataCategory::GeneratedMarker,
                 point_index: sp.point_index,
             };
@@ -150,15 +139,13 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             draw_generated_marker(ui, screen_pos, marker.kind, highlighted);
         }
 
-        // Show tooltip for the currently hovered generated marker.
-        // Suppressed when the sticky popup is already showing this point, or when
-        // any popup (e.g. context menu) is open and would be painted underneath.
-        if let Some(HighlightScope::Point(r)) = self.highlight.hover
-            && r.category == DataCategory::GeneratedMarker
+        // Show tooltip for the hovered generated marker. Uses hover_candidates[3]
+        // so the tooltip appears even when a Tpv point is the primary hover.
+        if let Some(r) = self.highlight.hover_candidates[3]
             && self.highlight.sticky != Some(r)
             && !ui.ctx().any_popup_open()
-            && let Some(file) = r.file_index.get(self.files)
-            && let Some(track) = r.track_index.get(&file.tracks)
+            && let Some(file) = r.track.fi.get(self.files)
+            && let Some(track) = r.track.index.get(&file.tracks)
             && let Some(marker) = r.point_index.get(&track.generated_markers)
         {
             let pos = transform.to_screen(marker.merc);

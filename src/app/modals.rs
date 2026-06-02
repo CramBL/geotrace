@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use gt_map::{MapLayer, NavMap};
-use gt_side_panel::{NodeKey, TrackRef, TreeState};
+use gt_side_panel::{NodeKey, TreeState};
 use gt_types::LoadedFile;
+use gt_types::TrackRef;
 
 /// Show the delete-confirmation dialog.
 ///
@@ -49,7 +50,7 @@ pub fn show_delete_confirmation(
                                     ui.label(&file.metadata.filename);
                                 }
                             }
-                            NodeKey::Track(TrackRef { file: fi, trip: ti }) => {
+                            NodeKey::Track(TrackRef { fi, index: ti }) => {
                                 if let Some(file) = fi.get(loaded_files)
                                     && let Some(track) = ti.get(&file.tracks)
                                 {
@@ -58,7 +59,7 @@ pub fn show_delete_confirmation(
                                         track.metadata.duration,
                                     );
                                     ui.label(format!(
-                                        "  {} / Tk{}  {dist}  {dur}",
+                                        "  {} / #{}  {dist}  {dur}",
                                         file.metadata.filename, track.metadata.index
                                     ));
                                 }
@@ -117,7 +118,7 @@ pub fn execute_delete(keys: &[NodeKey], loaded_files: &mut Vec<LoadedFile>, tree
             NodeKey::File(fi) => {
                 file_indices_to_remove.insert(fi.as_usize());
             }
-            NodeKey::Track(TrackRef { file: fi, trip: ti }) => {
+            NodeKey::Track(TrackRef { fi, index: ti }) => {
                 trips_to_remove
                     .entry(fi.as_usize())
                     .or_default()
@@ -198,7 +199,7 @@ pub fn show_orphaned_event_markers_popup(
         .ctx()
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
     let mut dismiss = enter_pressed;
-    egui::Window::new(format!("{count} event markers outside trip range"))
+    egui::Window::new(format!("{count} event markers outside track range"))
         .collapsible(false)
         .resizable(true)
         .min_width(480.0)

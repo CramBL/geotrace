@@ -17,7 +17,7 @@ pub use event_marker_visibility::EventMarkerVisibility;
 pub use filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
 pub use geo_types::{Coord, Rect};
 pub use highlight::{
-    DataCategory, DataPointRef, FileIdx, HighlightScope, MapHighlight, PointIdx, TrackIdx,
+    DataCategory, DataPointRef, FileIdx, HighlightScope, MapHighlight, PointIdx, TrackIdx, TrackRef,
 };
 pub use markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind, MarkerColor,

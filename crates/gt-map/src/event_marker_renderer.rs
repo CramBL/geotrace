@@ -1,7 +1,7 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui};
 use gt_types::{
-    DataCategory, DataPointRef, EventMarkerStyle, GlobalFilter, HighlightScope, LoadedFile,
-    MapHighlight, MarkerIcon, SpatialPoint, TrackDataVisibility, filter,
+    DataCategory, DataPointRef, EventMarkerStyle, GlobalFilter, LoadedFile, MapHighlight,
+    MarkerIcon, SpatialPoint, TrackDataVisibility, filter,
 };
 use gt_ui_theme::HIGHLIGHT_BLUE;
 use std::collections::HashMap;
@@ -73,7 +73,7 @@ impl Plugin for EventMarkerRenderer<'_> {
             };
             if !self
                 .event_vis
-                .is_visible(sp.file_index, sp.track_index, &marker.variant_path)
+                .is_visible(sp.track_ref(), &marker.variant_path)
             {
                 continue;
             }
@@ -81,8 +81,7 @@ impl Plugin for EventMarkerRenderer<'_> {
                 continue;
             }
             let point_ref = DataPointRef {
-                file_index: sp.file_index,
-                track_index: sp.track_index,
+                track: sp.track_ref(),
                 category: DataCategory::EventMarker,
                 point_index: sp.point_index,
             };
@@ -94,15 +93,13 @@ impl Plugin for EventMarkerRenderer<'_> {
             draw_event_marker(ui, screen_pos, icon, color, highlighted);
         }
 
-        // Show tooltip for the currently hovered event marker.
-        // Suppressed when the sticky popup is already showing this point, or when
-        // any popup (e.g. context menu) is open and would be painted underneath.
-        if let Some(HighlightScope::Point(r)) = self.highlight.hover
-            && r.category == DataCategory::EventMarker
+        // Show tooltip for the hovered event marker. Uses hover_candidates[1] so
+        // the tooltip appears even when a Tpv point is the primary hover.
+        if let Some(r) = self.highlight.hover_candidates[1]
             && self.highlight.sticky != Some(r)
             && !ui.ctx().any_popup_open()
-            && let Some(file) = r.file_index.get(self.files)
-            && let Some(track) = r.track_index.get(&file.tracks)
+            && let Some(file) = r.track.fi.get(self.files)
+            && let Some(track) = r.track.index.get(&file.tracks)
             && let Some(marker) = r.point_index.get(&track.event_markers)
         {
             let pos = transform.to_screen(marker.merc);
@@ -187,10 +184,7 @@ fn is_highlighted(highlight: &MapHighlight, point_ref: DataPointRef) -> bool {
     }
     match highlight.hover {
         Some(gt_types::HighlightScope::Point(r)) => r == point_ref,
-        Some(gt_types::HighlightScope::Track {
-            file_index,
-            track_index,
-        }) => file_index == point_ref.file_index && track_index == point_ref.track_index,
+        Some(gt_types::HighlightScope::Track(track)) => track == point_ref.track,
         _ => false,
     }
 }
@@ -331,8 +325,7 @@ fn show_tooltip(ui: &Ui, point_ref: DataPointRef, marker: &gt_types::EventMarker
         hit_rect,
         ui.id()
             .with("event_marker_hover")
-            .with(point_ref.file_index)
-            .with(point_ref.track_index)
+            .with(point_ref.track)
             .with(point_ref.point_index),
         egui::Sense::hover(),
     );

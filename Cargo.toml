@@ -208,7 +208,7 @@ toml = "1"
 uom.workspace = true
 
 [dev-dependencies]
-egui_kittest = { version = "0.34.3", features = ["eframe"] }
+egui_kittest = { version = "0.34.3", features = ["eframe", "wgpu", "snapshot"] }
 geotrace-sdk = { path = "geotrace-sdks/geotrace-sdk" }
 tempfile = "3"
 

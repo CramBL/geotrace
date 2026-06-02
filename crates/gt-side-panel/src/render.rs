@@ -1,10 +1,10 @@
 use gt_types::{
     DataCategory, DataPointRef, FileIdx, GlobalFilter, HighlightScope, LoadedFile, LoadedTrack,
-    MapHighlight, PointIdx, TrackIdx,
+    MapHighlight, PointIdx, TrackIdx, TrackRef,
 };
 
 use crate::filter::{FilterPanelState, render_filter_panel};
-use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TrackRef, TreeState};
+use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState};
 use crate::widgets::{expand_arrow, paint_map_hover_bg, point_item_row, tri_checkbox};
 
 pub struct PanelContext<'a> {
@@ -69,7 +69,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
                             .is_some_and(|tv| tv.enabled);
                     let passes = gt_types::track_passes_filter(&track.metadata, &filter_snapshot);
                     if !trip_enabled || !passes {
-                        Some(NodeKey::Track(TrackRef { file: fi, trip: ti }))
+                        Some(NodeKey::Track(TrackRef::new(fi, ti)))
                     } else {
                         None
                     }
@@ -131,10 +131,11 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
     let file_key = NodeKey::File(fi);
 
     let file_map_hovered = ctx.highlight.hover.is_some_and(|s| match s {
-        HighlightScope::Point(r) => r.file_index == fi,
-        HighlightScope::Track { file_index, .. }
-        | HighlightScope::TrackCategory { file_index, .. }
-        | HighlightScope::File { file_index } => file_index == fi,
+        HighlightScope::Point(r) => r.track.fi == fi,
+        HighlightScope::Track(track) | HighlightScope::TrackCategory { track, .. } => {
+            track.fi == fi
+        }
+        HighlightScope::File { file_index } => file_index == fi,
     });
 
     let map_hover_bg = gt_ui_theme::map_hover_color(ui.visuals().dark_mode);
@@ -149,8 +150,21 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
         let dur = gt_fmt::format_human_terse_duration(file.metadata.total_duration);
         let label = format!("{arrow} {}  {dist}  {dur}", file.metadata.filename);
         let is_selected = ctx.tree.selection.contains(&file_key);
-        ui.selectable_label(is_selected, egui::RichText::new(label))
-            .on_hover_text(&file.metadata.filename)
+        let resp = ui
+            .selectable_label(is_selected, egui::RichText::new(label))
+            .on_hover_text(&file.metadata.filename);
+        if !file.load_warnings.is_empty() {
+            let icon = egui::RichText::new("⚠")
+                .color(egui::Color32::from_rgb(255, 180, 0))
+                .small();
+            let warn_resp = ui.add(egui::Label::new(icon).sense(egui::Sense::hover()));
+            warn_resp.show_tooltip_ui(|ui| {
+                for w in &file.load_warnings {
+                    ui.label(w);
+                }
+            });
+        }
+        resp
     });
 
     let file_label_resp = row_response.inner;
@@ -202,6 +216,7 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
 }
 
 fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut PanelContext<'_>) {
+    let trip = TrackRef::new(fi, ti);
     let (track, passes, is_expanded, trip_panel_hovered, trip_map_hovered, key) = {
         let Some(file) = fi.get(ctx.files) else {
             return;
@@ -210,16 +225,16 @@ fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Panel
             return;
         };
         let passes = gt_types::track_passes_filter(&track.metadata, ctx.filter);
-        let trip_ref = TrackRef { file: fi, trip: ti };
-        let is_expanded = ctx.tree.trip_node(fi, ti).is_some_and(|t| t.expanded);
-        let trip_panel_hovered = ctx.highlight.hover.is_some_and(|s| {
-            matches!(s, HighlightScope::Track { file_index, track_index }
-                if file_index == fi && track_index == ti)
-        });
-        let trip_map_hovered = ctx.highlight.hover.is_some_and(
-            |s| matches!(s, HighlightScope::Point(r) if r.file_index == fi && r.track_index == ti),
-        );
-        let key = NodeKey::Track(trip_ref);
+        let is_expanded = ctx.tree.track_node(trip).is_some_and(|t| t.expanded);
+        let trip_panel_hovered = ctx
+            .highlight
+            .hover
+            .is_some_and(|s| matches!(s, HighlightScope::Track(t) if t == trip));
+        let trip_map_hovered = ctx
+            .highlight
+            .hover
+            .is_some_and(|s| matches!(s, HighlightScope::Point(r) if r.track == trip));
+        let key = NodeKey::Track(trip);
         (
             track.clone(),
             passes,
@@ -235,20 +250,20 @@ fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Panel
 
     let check = ctx
         .tree
-        .trip_node(fi, ti)
+        .track_node(trip)
         .map_or(CheckState::On, |t| t.check);
 
     let row_response = ui.horizontal(|ui| {
         let chk_resp = tri_checkbox(ui, check);
         if chk_resp.clicked() {
-            ctx.tree.toggle_trip_check(fi, ti);
+            ctx.tree.toggle_track_check(trip);
         }
         let newly_enabled =
             chk_resp.clicked() && matches!(check, CheckState::Off | CheckState::Mixed);
         let arrow = expand_arrow(is_expanded);
         let dist = gt_fmt::format_distance(track.metadata.distance_km);
         let dur = gt_fmt::format_human_terse_duration(track.metadata.duration);
-        let label = format!("{arrow} Tk{}  {dist}  {dur}", track.metadata.index);
+        let label = format!("{arrow} #{}  {dist}  {dur}", track.metadata.index);
         let mut text = egui::RichText::new(label);
         if !passes {
             text = text.weak();
@@ -268,10 +283,7 @@ fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Panel
         *ctx.zoom_to_visible_request = true;
     }
     if response.hovered() {
-        ctx.highlight.hover = Some(HighlightScope::Track {
-            file_index: fi,
-            track_index: ti,
-        });
+        ctx.highlight.hover = Some(HighlightScope::Track(trip));
     }
     let modifiers = ui.ctx().input(|i| i.modifiers);
     if response.double_clicked() {
@@ -283,13 +295,13 @@ fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Panel
         if modifiers.ctrl || modifiers.shift {
             ctx.tree.apply_click(key, modifiers.ctrl, modifiers.shift);
         } else {
-            ctx.tree.toggle_expand_trip(fi, ti);
+            ctx.tree.toggle_expand_track(trip);
             ctx.tree.apply_click(key, false, false);
         }
     }
     response.context_menu(|ui| {
         if ui.button("Show only this track").clicked() {
-            ctx.tree.show_only_trip(fi, ti);
+            ctx.tree.show_only_track(trip);
             *ctx.zoom_to_visible_request = true;
             ui.close();
         }
@@ -308,7 +320,7 @@ fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Panel
 
     if is_expanded {
         ui.indent(format!("track_{fi}_{ti}"), |ui| {
-            render_trip_categories(ui, fi, ti, &track, ctx);
+            render_trip_categories(ui, trip, &track, ctx);
         });
     }
 }
@@ -319,8 +331,7 @@ fn render_trip_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Panel
 )]
 fn render_category_section(
     ui: &mut egui::Ui,
-    fi: FileIdx,
-    ti: TrackIdx,
+    trip: TrackRef,
     cat: DataCategory,
     count: usize,
     label: &str,
@@ -343,25 +354,23 @@ fn render_category_section(
             },
         );
         if chk.clicked() {
-            tree.set_category_visible(fi, ti, cat, !visible);
+            tree.set_category_visible(trip, cat, !visible);
         }
         let arrow = expand_arrow(expanded);
         let resp = ui.selectable_label(expanded, format!("{arrow} {label}  {count}"));
         if resp.clicked() {
-            tree.toggle_category_expanded(fi, ti, cat);
+            tree.toggle_category_expanded(trip, cat);
         }
         resp
     });
     if header.inner.hovered() {
         highlight.hover = Some(HighlightScope::TrackCategory {
-            file_index: fi,
-            track_index: ti,
+            track: trip,
             category: cat,
         });
     }
     if expanded {
-        let trip_ref = TrackRef { file: fi, trip: ti };
-        ui.indent((cat, trip_ref), |ui| {
+        ui.indent((cat, trip), |ui| {
             render_items(ui, highlight);
         });
     }
@@ -369,34 +378,33 @@ fn render_category_section(
 
 fn render_trip_categories(
     ui: &mut egui::Ui,
-    fi: FileIdx,
-    ti: TrackIdx,
+    trip: TrackRef,
     track: &LoadedTrack,
     ctx: &mut PanelContext<'_>,
 ) {
-    let Some(trip_node) = ctx.tree.trip_node(fi, ti) else {
+    let Some(track_node) = ctx.tree.track_node(trip) else {
         return;
     };
-    let track_visible = trip_node.track_visible;
-    let tpv_visible = trip_node.tpv_visible;
-    let sat_visible = trip_node.satellites_visible;
-    let cm_visible = trip_node.custom_markers_visible;
-    let gm_visible = trip_node.generated_markers_visible;
-    let tpv_expanded = trip_node.categories_expanded.contains(&DataCategory::Tpv);
-    let sat_expanded = trip_node
+    let track_visible = track_node.track_visible;
+    let tpv_visible = track_node.tpv_visible;
+    let sat_visible = track_node.satellites_visible;
+    let cm_visible = track_node.custom_markers_visible;
+    let gm_visible = track_node.generated_markers_visible;
+    let tpv_expanded = track_node.categories_expanded.contains(&DataCategory::Tpv);
+    let sat_expanded = track_node
         .categories_expanded
         .contains(&DataCategory::SatelliteReport);
-    let cm_expanded = trip_node
+    let cm_expanded = track_node
         .categories_expanded
         .contains(&DataCategory::CustomMarker);
-    let gm_expanded = trip_node
+    let gm_expanded = track_node
         .categories_expanded
         .contains(&DataCategory::GeneratedMarker);
-    let em_expanded = trip_node
+    let em_expanded = track_node
         .categories_expanded
         .contains(&DataCategory::EventMarker);
-    let em_agg = trip_node.event_paths.aggregate();
-    let event_filter = trip_node.event_filter.clone();
+    let em_agg = track_node.event_paths.aggregate();
+    let event_filter = track_node.event_filter.clone();
 
     let track_resp = ui.horizontal(|ui| {
         let chk = tri_checkbox(
@@ -409,22 +417,20 @@ fn render_trip_categories(
         );
         if chk.clicked() {
             ctx.tree
-                .set_category_visible(fi, ti, DataCategory::Track, !track_visible);
+                .set_category_visible(trip, DataCategory::Track, !track_visible);
         }
         ui.label("Track polyline")
     });
     if track_resp.inner.hovered() {
         ctx.highlight.hover = Some(HighlightScope::TrackCategory {
-            file_index: fi,
-            track_index: ti,
+            track: trip,
             category: DataCategory::Track,
         });
     }
 
     render_category_section(
         ui,
-        fi,
-        ti,
+        trip,
         DataCategory::Tpv,
         track.points.len(),
         "Track points",
@@ -435,8 +441,7 @@ fn render_trip_categories(
         |ui, highlight| {
             render_tpv_items(
                 ui,
-                fi,
-                ti,
+                trip,
                 track,
                 highlight,
                 ctx.map_center_request,
@@ -452,8 +457,7 @@ fn render_trip_categories(
         .count();
     render_category_section(
         ui,
-        fi,
-        ti,
+        trip,
         DataCategory::SatelliteReport,
         sat_count,
         "Satellite reports",
@@ -464,8 +468,7 @@ fn render_trip_categories(
         |ui, highlight| {
             render_satellite_report_items(
                 ui,
-                fi,
-                ti,
+                trip,
                 track,
                 highlight,
                 ctx.map_center_request,
@@ -476,8 +479,7 @@ fn render_trip_categories(
 
     render_category_section(
         ui,
-        fi,
-        ti,
+        trip,
         DataCategory::CustomMarker,
         track.custom_markers.len(),
         "Custom markers",
@@ -488,8 +490,7 @@ fn render_trip_categories(
         |ui, highlight| {
             render_custom_marker_items(
                 ui,
-                fi,
-                ti,
+                trip,
                 track,
                 highlight,
                 ctx.map_center_request,
@@ -500,8 +501,7 @@ fn render_trip_categories(
 
     render_category_section(
         ui,
-        fi,
-        ti,
+        trip,
         DataCategory::GeneratedMarker,
         track.generated_markers.len(),
         "Generated markers",
@@ -512,8 +512,7 @@ fn render_trip_categories(
         |ui, highlight| {
             render_generated_marker_items(
                 ui,
-                fi,
-                ti,
+                trip,
                 track,
                 highlight,
                 ctx.map_center_request,
@@ -523,18 +522,13 @@ fn render_trip_categories(
     );
 
     if !track.event_markers.is_empty() {
-        render_event_markers_section(ui, fi, ti, track, em_agg, em_expanded, &event_filter, ctx);
+        render_event_markers_section(ui, trip, track, em_agg, em_expanded, &event_filter, ctx);
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "all arguments are distinct; extracting them avoids re-borrowing tree mid-render"
-)]
 fn render_event_markers_section(
     ui: &mut egui::Ui,
-    fi: FileIdx,
-    ti: TrackIdx,
+    trip: TrackRef,
     track: &LoadedTrack,
     em_agg: CheckState,
     is_open: bool,
@@ -545,7 +539,7 @@ fn render_event_markers_section(
     let header_response = ui.horizontal(|ui| {
         let chk_resp = tri_checkbox(ui, em_agg);
         if chk_resp.clicked() {
-            ctx.tree.toggle_all_event_paths(fi, ti);
+            ctx.tree.toggle_all_event_paths(trip);
         }
         let arrow = expand_arrow(is_open);
         let label = format!("{arrow} Events  {count}");
@@ -554,14 +548,14 @@ fn render_event_markers_section(
 
     if header_response.inner.clicked() {
         ctx.tree
-            .toggle_category_expanded(fi, ti, DataCategory::EventMarker);
+            .toggle_category_expanded(trip, DataCategory::EventMarker);
     }
 
     if !is_open {
         return;
     }
 
-    let header_id = egui::Id::new(("events_section", fi, ti));
+    let header_id = egui::Id::new(("events_section", trip));
 
     ui.horizontal(|ui| {
         ui.add_space(16.0);
@@ -573,21 +567,21 @@ fn render_event_markers_section(
                 .id(egui::Id::new(("event_filter", header_id))),
         );
         if resp.changed()
-            && let Some(trip_node) = ctx.tree.trip_node_mut(fi, ti)
+            && let Some(track_node) = ctx.tree.track_node_mut(trip)
         {
-            trip_node.event_filter = text.clone();
+            track_node.event_filter = text.clone();
         }
         if !text.is_empty()
             && ui.small_button("×").clicked()
-            && let Some(trip_node) = ctx.tree.trip_node_mut(fi, ti)
+            && let Some(track_node) = ctx.tree.track_node_mut(trip)
         {
-            trip_node.event_filter.clear();
+            track_node.event_filter.clear();
         }
     });
 
     let current_filter = ctx
         .tree
-        .trip_node(fi, ti)
+        .track_node(trip)
         .map_or("", |t| t.event_filter.as_str());
 
     let mut paths: Vec<&str> = track
@@ -631,7 +625,7 @@ fn render_event_markers_section(
 
         let node_check = ctx
             .tree
-            .trip_node(fi, ti)
+            .track_node(trip)
             .and_then(|t| t.event_paths.nodes.get(prefix.as_str()).copied())
             .unwrap_or(CheckState::On);
 
@@ -639,7 +633,7 @@ fn render_event_markers_section(
             ui.add_space(16.0 + depth as f32 * 12.0);
             let chk_resp = tri_checkbox(ui, node_check);
             if chk_resp.clicked() {
-                ctx.tree.toggle_event_path(fi, ti, prefix);
+                ctx.tree.toggle_event_path(trip, prefix);
             }
             ui.label(format!("{segment}  {marker_count}"));
         });
@@ -648,8 +642,7 @@ fn render_event_markers_section(
 
 fn render_tpv_items(
     ui: &mut egui::Ui,
-    fi: FileIdx,
-    ti: TrackIdx,
+    trip: TrackRef,
     track: &LoadedTrack,
     highlight: &mut MapHighlight,
     map_center_request: &mut Option<(f64, f64)>,
@@ -657,8 +650,7 @@ fn render_tpv_items(
 ) {
     for (pi, point) in track.points.iter().enumerate() {
         let point_ref = DataPointRef {
-            file_index: fi,
-            track_index: ti,
+            track: trip,
             category: DataCategory::Tpv,
             point_index: PointIdx::new(pi),
         };
@@ -678,8 +670,7 @@ fn render_tpv_items(
 
 fn render_satellite_report_items(
     ui: &mut egui::Ui,
-    fi: FileIdx,
-    ti: TrackIdx,
+    trip: TrackRef,
     track: &LoadedTrack,
     highlight: &mut MapHighlight,
     map_center_request: &mut Option<(f64, f64)>,
@@ -690,8 +681,7 @@ fn render_satellite_report_items(
             continue;
         };
         let point_ref = DataPointRef {
-            file_index: fi,
-            track_index: ti,
+            track: trip,
             category: DataCategory::SatelliteReport,
             point_index: PointIdx::new(pi),
         };
@@ -719,8 +709,7 @@ fn render_satellite_report_items(
 
 fn render_custom_marker_items(
     ui: &mut egui::Ui,
-    fi: FileIdx,
-    ti: TrackIdx,
+    trip: TrackRef,
     track: &LoadedTrack,
     highlight: &mut MapHighlight,
     map_center_request: &mut Option<(f64, f64)>,
@@ -728,8 +717,7 @@ fn render_custom_marker_items(
 ) {
     for (pi, marker) in track.custom_markers.iter().enumerate() {
         let point_ref = DataPointRef {
-            file_index: fi,
-            track_index: ti,
+            track: trip,
             category: DataCategory::CustomMarker,
             point_index: PointIdx::new(pi),
         };
@@ -749,8 +737,7 @@ fn render_custom_marker_items(
 
 fn render_generated_marker_items(
     ui: &mut egui::Ui,
-    fi: FileIdx,
-    ti: TrackIdx,
+    trip: TrackRef,
     track: &LoadedTrack,
     highlight: &mut MapHighlight,
     map_center_request: &mut Option<(f64, f64)>,
@@ -759,8 +746,7 @@ fn render_generated_marker_items(
     use gt_types::GeneratedMarkerKind;
     for (pi, marker) in track.generated_markers.iter().enumerate() {
         let point_ref = DataPointRef {
-            file_index: fi,
-            track_index: ti,
+            track: trip,
             category: DataCategory::GeneratedMarker,
             point_index: PointIdx::new(pi),
         };

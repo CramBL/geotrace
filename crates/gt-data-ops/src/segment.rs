@@ -30,10 +30,10 @@ impl Default for SegmentationConfig {
     }
 }
 
-/// Partitions `points` into contiguous trip ranges. A new trip begins when the
+/// Partitions `points` into contiguous track ranges. A new track begins when the
 /// timestamp gap between consecutive points reaches `config.track_split_gap`.
 /// Returns an empty vec for empty input.
-pub fn segment_trips(points: &[NavPoint], config: &SegmentationConfig) -> Vec<Range<usize>> {
+pub fn segment_tracks(points: &[NavPoint], config: &SegmentationConfig) -> Vec<Range<usize>> {
     if points.is_empty() {
         return Vec::new();
     }
@@ -167,7 +167,7 @@ fn detect_generated_markers(points: &[NavPoint]) -> Vec<GeneratedMarker> {
 }
 
 /// Computes `TrackMetadata` from a non-empty slice of points.
-pub fn compute_trip_metadata(
+pub fn compute_track_metadata(
     index: usize,
     points: &vec1::Vec1<NavPoint>,
     custom_markers: &[CustomMarker],
@@ -232,10 +232,14 @@ pub fn compute_trip_metadata(
     }
 }
 
-/// Segments `points` into trips and builds a fully-populated `LoadedFile`.
+/// Segments `points` into tracks and builds a fully-populated `LoadedFile`.
 #[expect(
     clippy::expect_used,
-    reason = "ranges from segment_trips are always in-bounds and non-empty"
+    reason = "ranges from segment_tracks are always in-bounds and non-empty"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "constructor assembles all LoadedFile fields; no natural grouping to extract"
 )]
 pub fn build_loaded_file(
     filename: String,
@@ -245,49 +249,54 @@ pub fn build_loaded_file(
     event_marker_styles: Vec<EventMarkerStyle>,
     config: &SegmentationConfig,
     source: FileSource,
+    load_warnings: Vec<String>,
 ) -> LoadedFile {
-    let ranges = segment_trips(points, config);
+    let ranges = segment_tracks(points, config);
 
     let mut loaded_tracks: Vec<LoadedTrack> = ranges
         .into_iter()
         .enumerate()
-        .map(|(trip_idx, range)| {
-            let trip_points_slice = points
+        .map(|(track_idx, range)| {
+            let track_points_slice = points
                 .get(range)
-                .expect("ranges from segment_trips are in bounds");
+                .expect("ranges from segment_tracks are in bounds");
 
-            let trip_points: vec1::Vec1<NavPoint> =
-                vec1::Vec1::try_from_vec(trip_points_slice.to_vec())
-                    .expect("segment_trips produces only non-empty ranges");
+            let track_points: vec1::Vec1<NavPoint> =
+                vec1::Vec1::try_from_vec(track_points_slice.to_vec())
+                    .expect("segment_tracks produces only non-empty ranges");
 
-            let trip_start = trip_points.first().tpv.time().utc();
-            let trip_end = trip_points.last().tpv.time().utc();
+            let track_start = track_points.first().tpv.time().utc();
+            let track_end = track_points.last().tpv.time().utc();
 
-            let trip_custom: Vec<CustomMarker> = custom_markers
+            let track_custom: Vec<CustomMarker> = custom_markers
                 .iter()
-                .filter(|m| m.time >= trip_start && m.time <= trip_end)
+                .filter(|m| m.time >= track_start && m.time <= track_end)
                 .cloned()
                 .collect();
 
-            let trip_generated = detect_generated_markers(&trip_points);
+            let track_generated = detect_generated_markers(&track_points);
 
-            let metadata =
-                compute_trip_metadata(trip_idx + 1, &trip_points, &trip_custom, &trip_generated);
+            let metadata = compute_track_metadata(
+                track_idx + 1,
+                &track_points,
+                &track_custom,
+                &track_generated,
+            );
 
-            let mut trip_points_vec = trip_points.into_vec();
-            precompute_ghost_positions(&mut trip_points_vec);
+            let mut track_points_vec = track_points.into_vec();
+            precompute_ghost_positions(&mut track_points_vec);
 
             LoadedTrack {
                 metadata,
-                points: trip_points_vec,
-                custom_markers: trip_custom,
-                generated_markers: trip_generated,
+                points: track_points_vec,
+                custom_markers: track_custom,
+                generated_markers: track_generated,
                 event_markers: Vec::new(),
             }
         })
         .collect();
 
-    // Assign event markers to trips by timestamp; orphans go into LoadedFile.
+    // Assign event markers to tracks by timestamp; orphans go into LoadedFile.
     let mut orphaned_event_markers = Vec::new();
     for em in event_markers {
         let mut em = Some(em);
@@ -345,6 +354,7 @@ pub fn build_loaded_file(
             .collect(),
         orphaned_event_markers,
         source,
+        load_warnings,
     }
 }
 
@@ -468,62 +478,62 @@ mod tests {
     }
 
     #[test]
-    fn segment_trips_empty_input() {
-        assert!(segment_trips(&[], &SegmentationConfig::default()).is_empty());
+    fn segment_tracks_empty_input() {
+        assert!(segment_tracks(&[], &SegmentationConfig::default()).is_empty());
     }
 
     #[test]
-    fn segment_trips_single_point() {
+    fn segment_tracks_single_point() {
         let pts = vec![make_point_at(0)];
-        let ranges = segment_trips(&pts, &SegmentationConfig::default());
+        let ranges = segment_tracks(&pts, &SegmentationConfig::default());
         assert_eq!(ranges, vec![0..1]);
     }
 
     #[test]
-    fn segment_trips_all_within_five_minutes() {
+    fn segment_tracks_all_within_five_minutes() {
         let pts: Vec<NavPoint> = (0..5).map(|i| make_point_at(i * 60)).collect();
-        let ranges = segment_trips(&pts, &SegmentationConfig::default());
+        let ranges = segment_tracks(&pts, &SegmentationConfig::default());
         assert_eq!(ranges, vec![0..5]);
     }
 
     #[test]
-    fn segment_trips_gap_exactly_300s_starts_new_trip() {
+    fn segment_tracks_gap_exactly_300s_starts_new_trip() {
         // [0s, 300s] → gap of exactly 300 s triggers a new trip
         let pts = vec![make_point_at(0), make_point_at(300), make_point_at(360)];
-        let ranges = segment_trips(&pts, &SegmentationConfig::default());
+        let ranges = segment_tracks(&pts, &SegmentationConfig::default());
         assert_eq!(ranges, vec![0..1, 1..3]);
     }
 
     #[test]
-    fn segment_trips_one_gap_gives_two_trips() {
+    fn segment_tracks_one_gap_gives_two_trips() {
         let pts = vec![
             make_point_at(0),
             make_point_at(60),
             make_point_at(3600), // +1 h gap
             make_point_at(3660),
         ];
-        let ranges = segment_trips(&pts, &SegmentationConfig::default());
+        let ranges = segment_tracks(&pts, &SegmentationConfig::default());
         assert_eq!(ranges, vec![0..2, 2..4]);
     }
 
     #[test]
-    fn segment_trips_multiple_gaps() {
+    fn segment_tracks_multiple_gaps() {
         let pts = vec![
             make_point_at(0),
             make_point_at(3600), // gap
             make_point_at(7200), // gap
         ];
-        let ranges = segment_trips(&pts, &SegmentationConfig::default());
+        let ranges = segment_tracks(&pts, &SegmentationConfig::default());
         assert_eq!(ranges, vec![0..1, 1..2, 2..3]);
     }
 
     #[test]
-    fn compute_trip_metadata_basic() {
+    fn compute_track_metadata_basic() {
         let pts = vec1::vec1![
             make_point_at_pos(0, 55.0, 12.0),
             make_point_at_pos(3600, 55.1, 12.1), // 1 h later, ~13 km away
         ];
-        let meta = compute_trip_metadata(1, &pts, &[], &[]);
+        let meta = compute_track_metadata(1, &pts, &[], &[]);
         assert_eq!(meta.index, 1);
         assert_eq!(meta.tpv_count, 2);
         assert_eq!(meta.duration.num_seconds(), 3600);
@@ -537,9 +547,9 @@ mod tests {
     }
 
     #[test]
-    fn compute_trip_metadata_single_point_has_zero_duration() {
+    fn compute_track_metadata_single_point_has_zero_duration() {
         let pts = vec1::vec1![make_point_at_pos(0, 55.0, 12.0)];
-        let meta = compute_trip_metadata(1, &pts, &[], &[]);
+        let meta = compute_track_metadata(1, &pts, &[], &[]);
         assert_eq!(meta.duration.num_seconds(), 0);
         assert_eq!(meta.distance_km, Length::new::<kilometer>(0.0));
     }
@@ -554,6 +564,7 @@ mod tests {
             vec![],
             &SegmentationConfig::default(),
             FileSource::NvdPath(std::path::PathBuf::from("test.nvd")),
+            vec![],
         );
         assert!(f.tracks.is_empty());
         assert_eq!(f.metadata.filename, "test.nvd");
@@ -575,6 +586,7 @@ mod tests {
             vec![],
             &SegmentationConfig::default(),
             FileSource::NvdPath(std::path::PathBuf::from("ride.nvd")),
+            vec![],
         );
         assert_eq!(f.tracks.len(), 2);
         assert_eq!(f.tracks[0].points.len(), 2);
