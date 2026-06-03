@@ -11,12 +11,10 @@ the output file.
 from __future__ import annotations
 
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from geotrace_sdk import EventMarker, NavFileBuilder, NavFix, event_kind
-
-UTC = timezone.utc
 START = datetime(2024, 6, 1, 8, 0, 0, tzinfo=UTC)
 
 
@@ -38,6 +36,7 @@ for secs, lat, lon in [
 
 builder.add(EventMarker(DiagEvent.boot, START + timedelta(seconds=2)))
 builder.add(EventMarker(DiagEvent.internal_health_check, START + timedelta(seconds=30)))
+
 builder.add(EventMarker(DiagEvent.shutdown, START + timedelta(seconds=110)))
 
 nav_file = builder.finish()
@@ -46,7 +45,9 @@ out = Path(tempfile.gettempdir()) / "geotrace_event_markers_skip.nvd"
 nav_file.write_to_file(out)
 
 loaded = nav_file.__class__.open(out)
-print(f"Event markers: {len(loaded.event_markers)}  (internal_health_check not recorded)")
+print(
+    f"Event markers: {len(loaded.event_markers)}  (internal_health_check not recorded)"
+)
 for em in loaded.event_markers:
     print(f"  {em.variant_path}")
 

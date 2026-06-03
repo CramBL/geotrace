@@ -23,9 +23,9 @@ members = [
     "crates/gt-types",
     "crates/gt-ui-theme",
     "crates/gt-ui-types",
+    "sdk/rust/geotrace-c",
     "sdk/rust/geotrace-sdk",
     "sdk/rust/geotrace-sdk-macros",
-    "sdk/rust/geotrace-c",
 ]
 
 [workspace.package]

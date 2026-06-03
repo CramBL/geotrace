@@ -8,12 +8,10 @@ add a series of NavFix objects, call finish(), and write to disk.
 from __future__ import annotations
 
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from geotrace_sdk import NavFileBuilder, NavFix
-
-UTC = timezone.utc
 
 # Roughly London → Slough → Oxford via the A4/M4 corridor.
 TRACK = [

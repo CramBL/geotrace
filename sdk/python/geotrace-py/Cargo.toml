@@ -15,7 +15,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std"] }
-geotrace-sdk = { path = "../geotrace-sdk" }
+geotrace-sdk = { path = "../../rust/geotrace-sdk" }
 pyo3 = { version = "0.28.3", features = ["extension-module", "chrono"] }
 
 [lints.rust]

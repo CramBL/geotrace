@@ -18,7 +18,10 @@ _SKIP = _Skip()
 
 
 class _Namespace:
-    """Resolved event-kind namespace; attributes are path strings or nested namespaces."""
+    """Resolved event-kind namespace.
+
+    Attributes are path strings or nested namespaces.
+    """
 
     def __repr__(self) -> str:
         attrs = {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
@@ -43,7 +46,9 @@ def _to_snake_case(name: str) -> str:
             if i > 0:
                 prev = chars[i - 1]
                 next_c = chars[i + 1] if i + 1 < len(chars) else None
-                next_lower = next_c is not None and (next_c.islower() or next_c.isdigit())
+                next_lower = next_c is not None and (
+                    next_c.islower() or next_c.isdigit()
+                )
                 if prev.islower() or prev.isdigit() or (prev.isupper() and next_lower):
                     result.append("_")
             result.append(c.lower())

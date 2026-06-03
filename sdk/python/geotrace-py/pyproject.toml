@@ -27,5 +27,21 @@ module-name = "geotrace_sdk._geotrace_sdk"
 python-source = "python"
 features = ["pyo3/extension-module"]
 
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "ARG", "PTH"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

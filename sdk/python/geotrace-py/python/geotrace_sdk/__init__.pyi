@@ -5,11 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 from os import PathLike
-from typing import Any, Union, final
+from typing import Any, final
 
-StrPath = Union[str, bytes, PathLike[str]]
-
-
+StrPath = str | bytes | PathLike[str]
 
 @final
 class Constellation(Enum):
@@ -19,8 +17,6 @@ class Constellation(Enum):
     GLONASS = 1
     GALILEO = 2
     BEIDOU = 3
-
-
 
 @final
 class MarkerIcon(Enum):
@@ -33,8 +29,6 @@ class MarkerIcon(Enum):
     WARNING = 4
     ERROR = 5
     CHECK = 6
-
-
 
 @final
 class Satellite:
@@ -59,16 +53,12 @@ class Satellite:
         azimuth: float | None = None,
         snr: float | None = None,
     ) -> None: ...
-
     @property
     def constellation(self) -> Constellation: ...
-
     @property
     def prn(self) -> int: ...
-
     @property
     def in_fix(self) -> bool: ...
-
     @property
     def elevation(self) -> float | None:
         """Elevation above horizon in degrees."""
@@ -85,8 +75,6 @@ class Satellite:
         ...
 
     def __eq__(self, other: object) -> bool: ...
-
-
 
 @final
 class SatelliteReport:
@@ -108,10 +96,8 @@ class SatelliteReport:
         gps_time: datetime | None = None,
         sys_time: datetime | None = None,
     ) -> None: ...
-
     @property
     def tracked(self) -> list[Satellite]: ...
-
     @property
     def gps_time(self) -> datetime | None:
         """GPS-domain timestamp (timezone-aware UTC), or ``None``."""
@@ -123,8 +109,6 @@ class SatelliteReport:
         ...
 
     def __eq__(self, other: object) -> bool: ...
-
-
 
 @final
 class NavFix:
@@ -154,7 +138,6 @@ class NavFix:
         speed_mps: float | None = None,
         eph_m: float | None = None,
     ) -> None: ...
-
     @property
     def lat(self) -> float:
         """Latitude in degrees."""
@@ -192,8 +175,6 @@ class NavFix:
 
     def __eq__(self, other: object) -> bool: ...
 
-
-
 @final
 class Annotation:
     """A user-defined map annotation with an optional label and icon.
@@ -211,7 +192,6 @@ class Annotation:
         label: str | None = None,
         icon: MarkerIcon | None = None,
     ) -> None: ...
-
     @property
     def time(self) -> datetime:
         """Timestamp (timezone-aware UTC)."""
@@ -219,13 +199,9 @@ class Annotation:
 
     @property
     def label(self) -> str | None: ...
-
     @property
     def icon(self) -> MarkerIcon | None: ...
-
     def __eq__(self, other: object) -> bool: ...
-
-
 
 @final
 class Meta:
@@ -244,19 +220,13 @@ class Meta:
         device: str | None = None,
         notes: str | None = None,
     ) -> None: ...
-
     @property
     def title(self) -> str | None: ...
-
     @property
     def device(self) -> str | None: ...
-
     @property
     def notes(self) -> str | None: ...
-
     def __eq__(self, other: object) -> bool: ...
-
-
 
 @final
 class NavPoint:
@@ -302,8 +272,6 @@ class NavPoint:
         """Associated satellite report, or ``None`` if none was recorded."""
         ...
 
-
-
 @final
 class Marker:
     """A map annotation with its interpolated position on the nav track."""
@@ -320,7 +288,6 @@ class Marker:
 
     @property
     def annotation(self) -> Annotation: ...
-
     @property
     def label(self) -> str | None:
         """Display label from the annotation, or ``None``."""
@@ -336,8 +303,6 @@ class Marker:
         """Annotation timestamp (timezone-aware UTC)."""
         ...
 
-
-
 @final
 class EventMarker:
     """An event marker to add to the nav track.
@@ -351,22 +316,17 @@ class EventMarker:
 
     def __init__(
         self,
-        variant_path: str | None,
+        variant_path: str | _SkipSentinel | None,
         sys_time: datetime,
         *,
         annotation: str | None = None,
     ) -> None: ...
-
     @property
     def variant_path(self) -> str | None: ...
-
     @property
     def sys_time(self) -> datetime: ...
-
     @property
     def annotation(self) -> str | None: ...
-
-
 
 @final
 class EventMarkerStyle:
@@ -385,10 +345,8 @@ class EventMarkerStyle:
         icon: MarkerIcon | None = None,
         color: str | None = None,
     ) -> None: ...
-
     @property
     def variant_path(self) -> str: ...
-
     @property
     def icon(self) -> MarkerIcon | None:
         """Icon shape, or ``None`` for the default."""
@@ -399,18 +357,17 @@ class EventMarkerStyle:
         """Fill color as ``#RRGGBB``, or ``None`` for the hash-derived color."""
         ...
 
-
-
 @final
 class EventMarkerPoint:
-    """A resolved event marker as read from a :class:`NavFile`, with an interpolated position."""
+    """A resolved event marker as read from a :class:`NavFile`.
+
+    Includes an interpolated position.
+    """
 
     @property
     def variant_path(self) -> str: ...
-
     @property
     def sys_time(self) -> datetime: ...
-
     @property
     def lat(self) -> float:
         """Interpolated latitude in degrees."""
@@ -423,8 +380,6 @@ class EventMarkerPoint:
 
     @property
     def annotation(self) -> str | None: ...
-
-
 
 @final
 class NavFile:
@@ -477,8 +432,6 @@ class NavFile:
         """Per-variant style overrides stored in the file."""
         ...
 
-
-
 @final
 class NavFileBuilder:
     """Assembles nav fixes, satellite reports, and annotations into a :class:`NavFile`.
@@ -498,9 +451,11 @@ class NavFileBuilder:
     """
 
     def __init__(self) -> None: ...
-
     def with_meta(self, meta: Meta) -> NavFileBuilder:
-        """Attach file-level metadata. Must be called before ``add()``. Returns ``self``."""
+        """Attach file-level metadata.
+
+        Must be called before ``add()``. Returns ``self``.
+        """
         ...
 
     def with_title(self, title: str) -> NavFileBuilder:
@@ -508,7 +463,10 @@ class NavFileBuilder:
         ...
 
     def with_device(self, device: str) -> NavFileBuilder:
-        """Set the device or sensor name. Must be called before ``add()``. Returns ``self``."""
+        """Set the device or sensor name.
+
+        Must be called before ``add()``. Returns ``self``.
+        """
         ...
 
     def with_notes(self, notes: str) -> NavFileBuilder:
@@ -518,7 +476,9 @@ class NavFileBuilder:
     def add(
         self, item: NavFix | SatelliteReport | Annotation | EventMarker
     ) -> NavFileBuilder:
-        """Add a nav fix, satellite report, annotation, or event marker. Returns ``self``.
+        """Add a nav fix, satellite report, annotation, or event marker.
+
+        Returns ``self``.
 
         Passing an :class:`EventMarker` whose ``variant_path`` is ``None`` or
         ``event_kind.skip`` is a silent no-op.
@@ -538,31 +498,27 @@ class NavFileBuilder:
         """
         ...
 
-
 class _EventKindNamespace:
     """Resolved event-kind namespace; attributes are strings or nested namespaces."""
 
     def __getattr__(self, name: str) -> Any: ...
-
     def all_paths(self) -> list[str]:
         """Return all non-skip leaf path strings, sorted."""
         ...
 
-
 class _SkipSentinel:
     """Sentinel that marks an event-kind attribute as skipped."""
+
     ...
 
-
-def event_kind(cls: type) -> _EventKindNamespace:
+@final
+class _EventKindDecorator:
     """Class decorator that converts each attribute to its snake_case event path string.
 
     Attributes in the class body become path strings; inner classes become nested
     namespaces.
     An attribute set to ``event_kind.skip`` returns the skip sentinel; passing it to
     :class:`EventMarker` or :meth:`NavFileBuilder.add` is a silent no-op.
-
-    ``event_kind.skip`` is a module-level sentinel of type :class:`_SkipSentinel`.
 
     Example::
 
@@ -578,7 +534,9 @@ def event_kind(cls: type) -> _EventKindNamespace:
         assert Event.boot == "boot"
         assert Event.Connectivity.Agps.request == "connectivity/agps/request"
     """
-    ...
 
+    def __call__(self, cls: type) -> _EventKindNamespace: ...
+    @property
+    def skip(self) -> _SkipSentinel: ...
 
-event_kind.skip: _SkipSentinel
+event_kind: _EventKindDecorator

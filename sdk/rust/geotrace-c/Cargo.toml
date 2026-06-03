@@ -14,8 +14,8 @@ test = false
 name = "gen_fixture"
 
 [dependencies]
-geotrace-sdk = { path = "../geotrace-sdk" }
 chrono.workspace = true
+geotrace-sdk = { path = "../geotrace-sdk" }
 
 [lints]
 workspace = true

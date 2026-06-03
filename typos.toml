@@ -6,3 +6,8 @@ extend-exclude = ["sdk/python/geotrace-py/target"]
 LOD = "LOD"
 # Wide Area Augmentation System — SBAS network operated by the FAA
 WAAS = "WAAS"
+# Git SHA hex substrings (e.g. 80a9caf, ba70f12, 7d0ba21) are not English words
+ba = "ba"
+caf = "caf"
+# PN appears in "PNGs" (plural of PNG image format)
+PN = "PN"

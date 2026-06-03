@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+import pytest
 from geotrace_sdk import (
     Annotation,
     Constellation,
-    Marker,
     MarkerIcon,
     Meta,
     NavFileBuilder,
@@ -16,16 +15,12 @@ from geotrace_sdk import (
     Satellite,
     SatelliteReport,
 )
-
-UTC = timezone.utc
 T0 = datetime(2024, 6, 1, 9, 0, 0, tzinfo=UTC)
 T1 = datetime(2024, 6, 1, 9, 1, 0, tzinfo=UTC)
 T2 = datetime(2024, 6, 1, 9, 2, 0, tzinfo=UTC)
 
 
-
-
-def test_nav_fix_required_fields():
+def test_nav_fix_required_fields() -> None:
     fix = NavFix(lat=51.5074, lon=-0.1278, gps_time=T0)
     assert abs(fix.lat - 51.5074) < 1e-9
     assert abs(fix.lon - (-0.1278)) < 1e-9
@@ -35,7 +30,7 @@ def test_nav_fix_required_fields():
     assert fix.eph_m is None
 
 
-def test_nav_fix_all_fields():
+def test_nav_fix_all_fields() -> None:
     fix = NavFix(
         lat=48.8566,
         lon=2.3522,
@@ -45,29 +40,44 @@ def test_nav_fix_all_fields():
         speed_mps=13.9,
         eph_m=1.5,
     )
+    assert fix.heading is not None
     assert abs(fix.heading - 270.0) < 1e-9
+    assert fix.speed_mps is not None
     assert abs(fix.speed_mps - 13.9) < 1e-6
+    assert fix.eph_m is not None
     assert abs(fix.eph_m - 1.5) < 1e-9
 
 
-def test_nav_fix_repr():
+def test_nav_fix_repr() -> None:
     fix = NavFix(lat=51.5, lon=-0.1, gps_time=T0)
     r = repr(fix)
     assert "NavFix" in r
     assert "51.5" in r
 
 
-def test_nav_fix_eq():
-    fix_a = NavFix(lat=51.5, lon=-0.1, gps_time=T0, heading=90.0, speed_mps=5.0, eph_m=2.0)
-    fix_b = NavFix(lat=51.5, lon=-0.1, gps_time=T0, heading=90.0, speed_mps=5.0, eph_m=2.0)
+def test_nav_fix_eq() -> None:
+    fix_a = NavFix(
+        lat=51.5,
+        lon=-0.1,
+        gps_time=T0,
+        heading=90.0,
+        speed_mps=5.0,
+        eph_m=2.0,
+    )
+    fix_b = NavFix(
+        lat=51.5,
+        lon=-0.1,
+        gps_time=T0,
+        heading=90.0,
+        speed_mps=5.0,
+        eph_m=2.0,
+    )
     fix_c = NavFix(lat=51.5, lon=-0.2, gps_time=T0)
     assert fix_a == fix_b
     assert fix_a != fix_c
 
 
-
-
-def test_satellite_minimal():
+def test_satellite_minimal() -> None:
     sat = Satellite(Constellation.GPS, 12)
     assert sat.constellation == Constellation.GPS
     assert sat.prn == 12
@@ -76,17 +86,20 @@ def test_satellite_minimal():
     assert sat.snr is None
 
 
-def test_satellite_all_fields():
+def test_satellite_all_fields() -> None:
     sat = Satellite(
         Constellation.GALILEO, 5, in_fix=True, elevation=45.0, azimuth=90.0, snr=35.5
     )
     assert sat.in_fix
+    assert sat.elevation is not None
     assert abs(sat.elevation - 45.0) < 1e-4
+    assert sat.azimuth is not None
     assert abs(sat.azimuth - 90.0) < 1e-4
+    assert sat.snr is not None
     assert abs(sat.snr - 35.5) < 1e-4
 
 
-def test_satellite_eq():
+def test_satellite_eq() -> None:
     sat_a = Satellite(Constellation.GPS, 3, in_fix=True, snr=40.0)
     sat_b = Satellite(Constellation.GPS, 3, in_fix=True, snr=40.0)
     sat_c = Satellite(Constellation.GPS, 4, in_fix=True, snr=40.0)
@@ -94,9 +107,7 @@ def test_satellite_eq():
     assert sat_a != sat_c
 
 
-
-
-def test_satellite_report():
+def test_satellite_report() -> None:
     sats = [
         Satellite(Constellation.GPS, 1, in_fix=True, snr=40.0),
         Satellite(Constellation.GLONASS, 7),
@@ -107,7 +118,7 @@ def test_satellite_report():
     assert report.gps_time is not None
 
 
-def test_satellite_report_eq():
+def test_satellite_report_eq() -> None:
     sats = [Satellite(Constellation.GPS, 1, in_fix=True, snr=40.0)]
     rep_a = SatelliteReport(sats, gps_time=T0)
     rep_b = SatelliteReport(sats, gps_time=T0)
@@ -116,22 +127,20 @@ def test_satellite_report_eq():
     assert rep_a != rep_c
 
 
-
-
-def test_annotation_minimal():
+def test_annotation_minimal() -> None:
     ann = Annotation(T0)
     assert ann.time.tzinfo is not None
     assert ann.label is None
     assert ann.icon is None
 
 
-def test_annotation_all_fields():
+def test_annotation_all_fields() -> None:
     ann = Annotation(T0, label="Checkpoint", icon=MarkerIcon.CHECK)
     assert ann.label == "Checkpoint"
     assert ann.icon == MarkerIcon.CHECK
 
 
-def test_annotation_eq():
+def test_annotation_eq() -> None:
     ann_a = Annotation(T0, label="Stop", icon=MarkerIcon.PIN)
     ann_b = Annotation(T0, label="Stop", icon=MarkerIcon.PIN)
     ann_c = Annotation(T0, label="Go")
@@ -139,23 +148,21 @@ def test_annotation_eq():
     assert ann_a != ann_c
 
 
-
-
-def test_meta_empty():
+def test_meta_empty() -> None:
     meta = Meta()
     assert meta.title is None
     assert meta.device is None
     assert meta.notes is None
 
 
-def test_meta_full():
+def test_meta_full() -> None:
     meta = Meta(title="My Track", device="u-blox 9", notes="Test run")
     assert meta.title == "My Track"
     assert meta.device == "u-blox 9"
     assert meta.notes == "Test run"
 
 
-def test_meta_eq():
+def test_meta_eq() -> None:
     meta_a = Meta(title="Track", device="GPS-1")
     meta_b = Meta(title="Track", device="GPS-1")
     meta_c = Meta(title="Other")
@@ -163,31 +170,33 @@ def test_meta_eq():
     assert meta_a != meta_c
 
 
-
-
 def _three_point_builder() -> NavFileBuilder:
     b = NavFileBuilder()
     for i, (lat, lon) in enumerate([(51.5, -0.1), (51.51, -0.11), (51.52, -0.12)]):
-        b.add(NavFix(lat=lat, lon=lon, gps_time=datetime(2024, 1, 1, 0, i, 0, tzinfo=UTC)))
+        b.add(
+            NavFix(lat=lat, lon=lon, gps_time=datetime(2024, 1, 1, 0, i, 0, tzinfo=UTC))
+        )
     return b
 
 
-def test_builder_produces_nav_file():
+def test_builder_produces_nav_file() -> None:
     b = _three_point_builder()
     f = b.finish()
     assert len(f.points) == 3
 
 
-def test_builder_with_meta():
+def test_builder_with_meta() -> None:
     b = NavFileBuilder()
     b.with_meta(Meta(title="Test track"))
     for i, (lat, lon) in enumerate([(51.5, -0.1), (51.51, -0.11), (51.52, -0.12)]):
-        b.add(NavFix(lat=lat, lon=lon, gps_time=datetime(2024, 1, 1, 0, i, 0, tzinfo=UTC)))
+        b.add(
+            NavFix(lat=lat, lon=lon, gps_time=datetime(2024, 1, 1, 0, i, 0, tzinfo=UTC))
+        )
     f = b.finish()
     assert len(f.points) == 3
 
 
-def test_builder_chaining():
+def test_builder_chaining() -> None:
     f = (
         NavFileBuilder()
         .with_title("Chained")
@@ -199,7 +208,7 @@ def test_builder_chaining():
     assert f.meta.title == "Chained"
 
 
-def test_builder_with_title_device_notes():
+def test_builder_with_title_device_notes() -> None:
     f = (
         NavFileBuilder()
         .with_title("My Track")
@@ -213,7 +222,7 @@ def test_builder_with_title_device_notes():
     assert f.meta.notes == "test run"
 
 
-def test_builder_with_title_only():
+def test_builder_with_title_only() -> None:
     f = (
         NavFileBuilder()
         .with_title("Solo title")
@@ -225,7 +234,7 @@ def test_builder_with_title_only():
     assert f.meta.notes is None
 
 
-def test_builder_with_satellite_reports():
+def test_builder_with_satellite_reports() -> None:
     b = NavFileBuilder()
     b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
     b.add(
@@ -239,7 +248,7 @@ def test_builder_with_satellite_reports():
     assert f.points[0].satellites is not None
 
 
-def test_builder_with_annotation():
+def test_builder_with_annotation() -> None:
     b = NavFileBuilder()
     b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
     b.add(NavFix(lat=51.51, lon=-0.11, gps_time=T2))
@@ -249,21 +258,21 @@ def test_builder_with_annotation():
     assert f.markers[0].annotation.label == "Middle point"
 
 
-def test_builder_consumed_after_finish():
+def test_builder_consumed_after_finish() -> None:
     b = _three_point_builder()
     b.finish()
     with pytest.raises(RuntimeError, match="consumed"):
         b.finish()
 
 
-def test_builder_add_after_finish_raises():
+def test_builder_add_after_finish_raises() -> None:
     b = _three_point_builder()
     b.finish()
     with pytest.raises(RuntimeError, match="consumed"):
         b.add(NavFix(lat=0.0, lon=0.0, gps_time=T0))
 
 
-def test_nav_file_meta():
+def test_nav_file_meta() -> None:
     f = (
         NavFileBuilder()
         .with_title("Meta Test")
@@ -275,18 +284,14 @@ def test_nav_file_meta():
     assert f.meta.device == "sensor-1"
 
 
-def test_nav_file_to_bytes():
-    f = (
-        NavFileBuilder()
-        .add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
-        .finish()
-    )
+def test_nav_file_to_bytes() -> None:
+    f = NavFileBuilder().add(NavFix(lat=51.5, lon=-0.1, gps_time=T0)).finish()
     data = f.to_bytes()
     assert isinstance(data, bytes)
     assert len(data) > 0
 
 
-def test_marker_convenience_accessors():
+def test_marker_convenience_accessors() -> None:
     f = (
         NavFileBuilder()
         .add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))

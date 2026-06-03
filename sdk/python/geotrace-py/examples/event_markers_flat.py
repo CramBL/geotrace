@@ -8,12 +8,10 @@ All attributes in this example are leaves; there is no nesting.
 from __future__ import annotations
 
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from geotrace_sdk import EventMarker, NavFileBuilder, NavFix, event_kind
-
-UTC = timezone.utc
 START = datetime(2024, 6, 1, 8, 0, 0, tzinfo=UTC)
 
 
@@ -33,8 +31,12 @@ for secs, lat, lon in [
 ]:
     builder.add(NavFix(lat=lat, lon=lon, gps_time=START + timedelta(seconds=secs)))
 
-builder.add(EventMarker(PowerEvent.Boot, START + timedelta(seconds=2), annotation="cold start"))
-builder.add(EventMarker(PowerEvent.BatteryLow, START + timedelta(seconds=90), annotation="14%"))
+builder.add(
+    EventMarker(PowerEvent.Boot, START + timedelta(seconds=2), annotation="cold start")
+)
+builder.add(
+    EventMarker(PowerEvent.BatteryLow, START + timedelta(seconds=90), annotation="14%")
+)
 builder.add(EventMarker(PowerEvent.Sleep, START + timedelta(seconds=115)))
 
 nav_file = builder.finish()

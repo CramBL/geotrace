@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
-
 from geotrace_sdk import (
     Annotation,
     Constellation,
@@ -18,8 +17,6 @@ from geotrace_sdk import (
     Satellite,
     SatelliteReport,
 )
-
-UTC = timezone.utc
 T0 = datetime(2024, 6, 1, 9, 0, 0, tzinfo=UTC)
 T1 = datetime(2024, 6, 1, 9, 1, 0, tzinfo=UTC)
 T2 = datetime(2024, 6, 1, 9, 2, 0, tzinfo=UTC)
@@ -33,12 +30,10 @@ def _write_and_read(builder: NavFileBuilder, suffix: str = ".nvd") -> NavFile:
         builder.finish().write_to_file(path)
         return NavFile.open(path)
     finally:
-        os.unlink(path)
+        Path(path).unlink()
 
 
-
-
-def test_roundtrip_minimal():
+def test_roundtrip_minimal() -> None:
     b = NavFileBuilder()
     b.add(NavFix(lat=51.5074, lon=-0.1278, gps_time=T0))
     nav_file = _write_and_read(b)
@@ -49,7 +44,7 @@ def test_roundtrip_minimal():
     assert abs(pt.lon - (-0.1278)) < 1e-5
 
 
-def test_roundtrip_three_points():
+def test_roundtrip_three_points() -> None:
     fixes = [
         (51.50, -0.10, T0),
         (51.51, -0.11, T1),
@@ -68,7 +63,7 @@ def test_roundtrip_three_points():
         assert abs(pt.lon - lon) < 1e-5
 
 
-def test_roundtrip_heading_and_speed():
+def test_roundtrip_heading_and_speed() -> None:
     b = NavFileBuilder()
     b.add(NavFix(lat=48.0, lon=2.0, gps_time=T0, heading=135.0, speed_mps=22.2))
     nav_file = _write_and_read(b)
@@ -80,7 +75,7 @@ def test_roundtrip_heading_and_speed():
     assert abs(pt.speed_mps - 22.2) < 0.01
 
 
-def test_roundtrip_eph_m():
+def test_roundtrip_eph_m() -> None:
     b = NavFileBuilder()
     b.add(NavFix(lat=52.0, lon=13.0, gps_time=T0, eph_m=3.7))
     nav_file = _write_and_read(b)
@@ -90,9 +85,7 @@ def test_roundtrip_eph_m():
     assert abs(pt.eph_m - 3.7) < 0.01
 
 
-
-
-def test_roundtrip_gps_time_preserved():
+def test_roundtrip_gps_time_preserved() -> None:
     b = NavFileBuilder()
     b.add(NavFix(lat=0.0, lon=0.0, gps_time=T0))
     nav_file = _write_and_read(b)
@@ -104,7 +97,7 @@ def test_roundtrip_gps_time_preserved():
     assert delta < 0.001
 
 
-def test_roundtrip_sys_time_preserved():
+def test_roundtrip_sys_time_preserved() -> None:
     b = NavFileBuilder()
     b.add(NavFix(lat=0.0, lon=0.0, gps_time=T0, sys_time=T0))
     nav_file = _write_and_read(b)
@@ -115,9 +108,7 @@ def test_roundtrip_sys_time_preserved():
     assert delta < 0.001
 
 
-
-
-def test_roundtrip_satellites():
+def test_roundtrip_satellites() -> None:
     b = NavFileBuilder()
     b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
     b.add(
@@ -142,9 +133,7 @@ def test_roundtrip_satellites():
     assert abs(gps_sat.elevation - 60.0) < 0.1
 
 
-
-
-def test_roundtrip_annotation():
+def test_roundtrip_annotation() -> None:
     b = NavFileBuilder()
     b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
     b.add(NavFix(lat=51.52, lon=-0.12, gps_time=T2))
@@ -160,7 +149,7 @@ def test_roundtrip_annotation():
     assert -0.12 < m.lon < -0.1
 
 
-def test_roundtrip_to_bytes():
+def test_roundtrip_to_bytes() -> None:
     b = NavFileBuilder()
     b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
     nav_file = b.finish()
@@ -177,11 +166,9 @@ def test_roundtrip_to_bytes():
         assert len(reopened.points) == 1
         assert abs(reopened.points[0].lat - 51.5) < 1e-5
     finally:
-        os.unlink(path)
+        Path(path).unlink()
 
 
-
-
-def test_open_missing_file_raises():
+def test_open_missing_file_raises() -> None:
     with pytest.raises(OSError):
         NavFile.open("/nonexistent/path/that/does/not/exist.nvd")

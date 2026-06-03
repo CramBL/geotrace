@@ -108,6 +108,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     libcmocka-dev \
     ninja-build \
+    tar \
+    unzip \
+    zip \
     && rm -rf /var/lib/apt/lists/*
 
 # vcpkg — placed last because the git clone + bootstrap is slow and rarely

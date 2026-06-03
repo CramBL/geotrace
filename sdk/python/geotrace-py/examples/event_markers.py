@@ -14,7 +14,7 @@ deterministic fallback color derived from their path.
 from __future__ import annotations
 
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from geotrace_sdk import (
@@ -24,8 +24,6 @@ from geotrace_sdk import (
     NavFileBuilder,
     NavFix,
 )
-
-UTC = timezone.utc
 START = datetime(2024, 6, 1, 8, 0, 0, tzinfo=UTC)
 
 FIXES = [
@@ -55,9 +53,7 @@ for secs, lat, lon in FIXES:
     )
 
 for path, secs, note in EVENTS:
-    builder.add(
-        EventMarker(path, START + timedelta(seconds=secs), annotation=note)
-    )
+    builder.add(EventMarker(path, START + timedelta(seconds=secs), annotation=note))
 
 builder.add_event_marker_style(
     EventMarkerStyle("power/boot", icon=MarkerIcon.LIGHTNING, color="#44BB44")

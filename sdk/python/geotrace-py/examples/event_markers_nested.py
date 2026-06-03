@@ -11,12 +11,10 @@ outermost to innermost:
 from __future__ import annotations
 
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from geotrace_sdk import EventMarker, NavFileBuilder, NavFix, event_kind
-
-UTC = timezone.utc
 START = datetime(2024, 6, 1, 8, 0, 0, tzinfo=UTC)
 
 
@@ -50,11 +48,17 @@ for secs, lat, lon in [
 ]:
     builder.add(NavFix(lat=lat, lon=lon, gps_time=START + timedelta(seconds=secs)))
 
-builder.add(EventMarker(Event.Power.boot, START + timedelta(seconds=2), annotation="cold start"))
+builder.add(
+    EventMarker(Event.Power.boot, START + timedelta(seconds=2), annotation="cold start")
+)
 builder.add(EventMarker(Event.Connectivity.Agps.request, START + timedelta(seconds=5)))
 builder.add(EventMarker(Event.Connectivity.Agps.success, START + timedelta(seconds=18)))
 builder.add(EventMarker(Event.Sensor.Gps.lock_acquired, START + timedelta(seconds=20)))
-builder.add(EventMarker(Event.Power.battery_low, START + timedelta(seconds=100), annotation="14%"))
+builder.add(
+    EventMarker(
+        Event.Power.battery_low, START + timedelta(seconds=100), annotation="14%"
+    )
+)
 builder.add(EventMarker(Event.Power.sleep, START + timedelta(seconds=115)))
 
 nav_file = builder.finish()
