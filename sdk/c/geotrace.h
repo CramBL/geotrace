@@ -126,7 +126,7 @@ uint8_t gtd_ts_is_none(GtdTimestamp ts);
 typedef struct { double value; uint8_t present; } GtdOptF64;
 
 /** An absent optional double. */
-#define GTD_NONE_F64      ((GtdOptF64){ .present = 0 })
+#define GTD_NONE_F64      ((GtdOptF64){ .value = 0.0, .present = 0 })
 
 /** An optional double with value @p v. */
 #define GTD_SOME_F64(v)   ((GtdOptF64){ .value = (v), .present = 1 })
