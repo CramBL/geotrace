@@ -1,27 +1,30 @@
-# Dev toolchain image for geotrace.
+# Dev toolchain image for geotrace — two named stages.
 #
-# Run any just recipe through the container without re-installing tools:
+# Stage 1  geotrace-dev     Rust toolchain + CI lint tools.
+#                           Used by: just check / clippy / test / ci-extras / …
 #
-#   docker run --rm \
-#     -v "$HOME/.cargo/registry:/root/.cargo/registry" \
-#     -v "$HOME/.cargo/git:/root/.cargo/git" \
-#     -v "$(pwd):/workspace" \
-#     -w /workspace \
-#     geotrace-dev \
-#     just check
+# Stage 2  geotrace-sdk-dev Extends stage 1 with cmake, cmocka, vcpkg.
+#                           Used by: just test-c / test-cpp / test-install / …
 #
-# The two ~/.cargo mounts share the package registry and git cache between the
-# host and the container.  Both use the same Rust version (pinned in
-# rust-toolchain.toml), so the compiled artifacts in target/ are compatible
-# and can be shared too:
+# Build only what you need:
 #
-#   -v "$(pwd)/target:/workspace/target"
+#   just build-image          # builds geotrace-dev  (default — used by most devs)
+#   just build-sdk-image      # builds geotrace-sdk-dev  (C/C++ SDK work)
+#   just build-images         # builds both
 #
-# Note: the container does not include GPU drivers, so tests that require a
-# hardware renderer (egui/wgpu snapshot tests) must run natively or with a CI
-# software renderer (LIBGL_ALWAYS_SOFTWARE=1 + WGPU_BACKEND=gl on Linux).
+# Run any just recipe through its container without installing tools locally:
+#
+#   just test-c               # auto-uses geotrace-sdk-dev
+#   just dev-shell            # bash inside geotrace-dev
+#   just dev-shell-sdk        # bash inside geotrace-sdk-dev
+#
+# Note: the container does not include GPU drivers, so snapshot tests that
+# require a hardware renderer must run natively or with a software renderer
+# (LIBGL_ALWAYS_SOFTWARE=1 + WGPU_BACKEND=gl on Linux).
 
-FROM debian:bookworm-slim AS base
+# ── Stage 1: Rust dev ─────────────────────────────────────────────────────────
+
+FROM debian:bookworm-slim AS rust-dev
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -30,10 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     git \
-    pkg-config \
     libssl-dev \
+    pkg-config \
     python3 \
-    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install rustup without pinning a toolchain version here.
@@ -54,7 +56,7 @@ RUN rustup show
 RUN rustup toolchain install nightly-2026-01-22 \
     --component rust-src,rustc-dev,llvm-tools-preview
 
-# Install uv (Python package manager used by the Python SDK)
+# uv — Python package manager used by the Python SDK.
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
 
@@ -83,7 +85,34 @@ RUN cargo +nightly-2026-01-22 install cargo_pup
 # do not bust the tool-installation layers above.
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
-COPY geotrace-sdks/ geotrace-sdks/
+COPY sdk/ sdk/
 COPY src/ src/
 
 RUN cargo fetch
+
+# ── Stage 2: C/C++ SDK dev ────────────────────────────────────────────────────
+#
+# Inherits everything from rust-dev and adds the tools needed to build, test,
+# and package-manager-integrate the C and C++ SDKs.
+#
+# These tools are intentionally kept in a separate stage so that developers
+# working only on the Rust codebase do not need to pull or build them.
+# Docker layer sharing means the rust-dev layers are cached and reused.
+
+FROM rust-dev AS sdk-dev
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    clang \
+    cmake \
+    libcmocka-dev \
+    ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
+# vcpkg — placed last because the git clone + bootstrap is slow and rarely
+# changes; keeping it as a late layer avoids busting the apt layer above.
+RUN git clone --depth=1 https://github.com/microsoft/vcpkg /opt/vcpkg \
+    && /opt/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+ENV VCPKG_ROOT=/opt/vcpkg
+ENV PATH="${PATH}:/opt/vcpkg"
