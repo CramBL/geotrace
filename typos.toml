@@ -1,3 +1,6 @@
+[files]
+extend-exclude = ["sdk/python/geotrace-py/target"]
+
 [default.extend-words]
 # Level of Detail — standard graphics acronym, not a misspelling of "LOAD"
 LOD = "LOD"

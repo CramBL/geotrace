@@ -1,12 +1,13 @@
 use egui::epaint::{PathShape, PathStroke};
 use egui::{Color32, PopupAnchor, Pos2, Response, Stroke, Ui, Vec2};
-use gt_types::filter;
+use gt_filter::{self as filter, GlobalFilter};
 use gt_types::satellites::Constellation;
 use gt_types::{
-    DataCategory, DataPointRef, FileIdx, GlobalFilter, HighlightScope, LoadedFile, LoadedTrack,
-    MapHighlight, NavPoint, PointIdx, SpatialPoint, TrackDataVisibility, TrackIdx, TrackRef,
+    DataCategory, FileIdx, LoadedFile, LoadedTrack, NavPoint, PointIdx, SpatialPoint, TrackIdx,
+    TrackRef,
 };
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH, MINUS_SIGN};
+use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, TrackDataVisibility};
 use std::collections::HashMap;
 use uom::si::angle::{degree, radian};
 use uom::si::f64::Angle;

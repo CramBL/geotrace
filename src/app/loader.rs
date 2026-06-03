@@ -5,7 +5,7 @@ use std::{
     thread,
 };
 
-use gt_data_ops::SegmentationConfig;
+use gt_track_builder::SegmentationConfig;
 
 use chrono::{DateTime, Utc};
 use egui::Context;
@@ -47,8 +47,8 @@ pub struct FinishedJob {
 
 /// Final result produced by a background load thread.
 pub enum LoadOutcome {
-    /// A successfully parsed `.nvd` / HDF5 file with pre-built plot series.
-    NvdFile {
+    /// A successfully parsed `.gtd` / HDF5 file with pre-built plot series.
+    GtdFile {
         file: LoadedFile,
         /// Pre-built mipmap series; `fi` is a placeholder (0) because the real
         /// file index is only known on the UI thread when the file is appended
@@ -56,7 +56,7 @@ pub enum LoadOutcome {
         series: PreparedSeries,
         /// Reference to the recording stored in the history database, if storage
         /// is enabled and the insert succeeded.
-        db_ref: Option<gt_db::DatabaseRef>,
+        db_ref: Option<gt_history::DatabaseRef>,
     },
     /// A successfully parsed log file; `loaded` is `None` when all entries were
     /// unassociated with any GPS track.
@@ -136,7 +136,7 @@ impl LoaderManager {
         clippy::expect_used,
         reason = "thread spawn can only fail under extreme system resource exhaustion"
     )]
-    pub fn spawn_nvd_path(&mut self, path: PathBuf, config: SegmentationConfig) {
+    pub fn spawn_gtd_path(&mut self, path: PathBuf, config: SegmentationConfig) {
         let id = self.alloc_id();
         let filename = path
             .file_name()
@@ -167,7 +167,7 @@ impl LoaderManager {
                     .ok();
                     r_ctx.request_repaint();
                 };
-                let outcome = gt_io::load_file_with_progress(&path, report, &config)
+                let outcome = gt_loader::load_file_with_progress(&path, report, &config)
                     .map(|file| {
                         tx.send(LoadMessage::Progress {
                             id,
@@ -179,8 +179,8 @@ impl LoaderManager {
                         let series = gt_plot::prepare_file_series(0, &file);
                         let db_ref = db_path.as_deref().and_then(|p| {
                             let bytes = std::fs::read(&path).ok()?;
-                            let meta = gt_db::RecordingMeta::from_nvd_bytes(&bytes).ok()?;
-                            let mut db = gt_db::Database::open_or_create(p).ok()?;
+                            let meta = gt_history::RecordingMeta::from_gtd_bytes(&bytes).ok()?;
+                            let mut db = gt_history::Database::open_or_create(p).ok()?;
                             match db.insert(&file.identity, &meta, &bytes) {
                                 Ok(r) => Some(r),
                                 Err(e) => {
@@ -189,7 +189,7 @@ impl LoaderManager {
                                 }
                             }
                         });
-                        LoadOutcome::NvdFile {
+                        LoadOutcome::GtdFile {
                             file,
                             series,
                             db_ref,
@@ -199,14 +199,14 @@ impl LoaderManager {
                 tx.send(LoadMessage::Completed { id, outcome }).ok();
                 ctx.request_repaint();
             })
-            .expect("failed to spawn nvd-path loader thread");
+            .expect("failed to spawn gtd-path loader thread");
     }
 
     #[expect(
         clippy::expect_used,
         reason = "thread spawn can only fail under extreme system resource exhaustion"
     )]
-    pub fn spawn_nvd_bytes(
+    pub fn spawn_gtd_bytes(
         &mut self,
         bytes: Arc<[u8]>,
         filename: String,
@@ -237,38 +237,40 @@ impl LoaderManager {
                     .ok();
                     r_ctx.request_repaint();
                 };
-                let outcome = gt_io::load_bytes_with_progress(&bytes, filename, report, &config)
-                    .map(|file| {
-                        tx.send(LoadMessage::Progress {
-                            id,
-                            fraction: 0.95,
-                            stage: STAGE_PLOTTING,
-                        })
-                        .ok();
-                        ctx.request_repaint();
-                        let series = gt_plot::prepare_file_series(0, &file);
-                        let db_ref = db_path.as_deref().and_then(|p| {
-                            let meta = gt_db::RecordingMeta::from_nvd_bytes(&bytes).ok()?;
-                            let mut db = gt_db::Database::open_or_create(p).ok()?;
-                            match db.insert(&file.identity, &meta, &bytes) {
-                                Ok(r) => Some(r),
-                                Err(e) => {
-                                    log::warn!("Failed to store recording in history: {e}");
-                                    None
+                let outcome =
+                    gt_loader::load_bytes_with_progress(&bytes, filename, report, &config)
+                        .map(|file| {
+                            tx.send(LoadMessage::Progress {
+                                id,
+                                fraction: 0.95,
+                                stage: STAGE_PLOTTING,
+                            })
+                            .ok();
+                            ctx.request_repaint();
+                            let series = gt_plot::prepare_file_series(0, &file);
+                            let db_ref = db_path.as_deref().and_then(|p| {
+                                let meta =
+                                    gt_history::RecordingMeta::from_gtd_bytes(&bytes).ok()?;
+                                let mut db = gt_history::Database::open_or_create(p).ok()?;
+                                match db.insert(&file.identity, &meta, &bytes) {
+                                    Ok(r) => Some(r),
+                                    Err(e) => {
+                                        log::warn!("Failed to store recording in history: {e}");
+                                        None
+                                    }
                                 }
+                            });
+                            LoadOutcome::GtdFile {
+                                file,
+                                series,
+                                db_ref,
                             }
-                        });
-                        LoadOutcome::NvdFile {
-                            file,
-                            series,
-                            db_ref,
-                        }
-                    })
-                    .map_err(|e| e.to_string());
+                        })
+                        .map_err(|e| e.to_string());
                 tx.send(LoadMessage::Completed { id, outcome }).ok();
                 ctx.request_repaint();
             })
-            .expect("failed to spawn nvd-bytes loader thread");
+            .expect("failed to spawn gtd-bytes loader thread");
     }
 
     #[expect(
@@ -409,7 +411,7 @@ impl LoaderManager {
             .name("file-dialog".to_owned())
             .spawn(move || {
                 let path = rfd::FileDialog::new()
-                    .add_filter("GeoTrace Data", &["nvd"])
+                    .add_filter("GeoTrace Data", &["gtd"])
                     .add_filter("Log Files", &["log", "txt"])
                     .pick_file();
                 tx.send(path).ok();
@@ -582,7 +584,7 @@ fn finish_log_load(
     source: FileSource,
 ) {
     report(0.55, STAGE_PARSING);
-    let result = gt_log_marker::load_log(content, nav_points, chrono::Utc::now(), &assoc_config);
+    let result = gt_logfile::load_log(content, nav_points, chrono::Utc::now(), &assoc_config);
 
     if result.markers.is_empty() && result.unassociated.is_empty() {
         tx.send(LoadMessage::Completed {

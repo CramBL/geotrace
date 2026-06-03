@@ -1,8 +1,7 @@
 use egui::accesskit;
 use egui_kittest::{Harness, kittest::Queryable as _};
-use gt_types::{
-    DataCategory, DataPointRef, FileIdx, HighlightScope, MapHighlight, PointIdx, TrackIdx, TrackRef,
-};
+use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
+use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 
 fn gen_marker_point(pi: usize) -> DataPointRef {
     DataPointRef {

@@ -1,9 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use gt_types::{
-    DataCategory, EventMarkerVisibility, FileIdx, FileVisibility, LoadedFile, TrackDataVisibility,
-    TrackIdx, TrackRef, TrackVisibility,
-};
+use gt_types::{DataCategory, FileIdx, LoadedFile, TrackIdx, TrackRef};
+use gt_ui_types::{EventMarkerVisibility, FileVisibility, TrackDataVisibility, TrackVisibility};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckState {

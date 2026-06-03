@@ -9,8 +9,6 @@ pub const IDENTITY: &str = "Groups related recordings together in the database. 
 /// Pass a [`egui::RichText`] so the caller controls weight, size, and colour;
 /// the underline is always added here to signal that the term is hoverable.
 pub fn term_label(ui: &mut egui::Ui, text: egui::RichText, explanation: &str) {
-    ui.add(
-        egui::Label::new(text.underline()).sense(egui::Sense::hover()),
-    )
-    .on_hover_text(explanation);
+    ui.add(egui::Label::new(text.underline()).sense(egui::Sense::hover()))
+        .on_hover_text(explanation);
 }

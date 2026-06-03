@@ -1,9 +1,10 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui};
-use gt_types::{
-    DataCategory, DataPointRef, EventMarkerStyle, GlobalFilter, LoadedFile, MapHighlight,
-    MarkerIcon, SpatialPoint, TrackDataVisibility, filter,
-};
+use gt_filter::GlobalFilter;
+use gt_types::{DataCategory, EventMarkerStyle, LoadedFile, MarkerIcon, SpatialPoint};
 use gt_ui_theme::HIGHLIGHT_BLUE;
+use gt_ui_types::{
+    DataPointRef, EventMarkerVisibility, HighlightScope, MapHighlight, TrackDataVisibility,
+};
 use std::collections::HashMap;
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -12,17 +13,17 @@ pub struct EventMarkerRenderer<'a> {
     visibility: &'a TrackDataVisibility,
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
-    event_vis: &'a gt_types::EventMarkerVisibility,
+    event_vis: &'a EventMarkerVisibility,
     visible_event: Vec<SpatialPoint>,
 }
 
 impl<'a> EventMarkerRenderer<'a> {
     pub fn new(
         files: &'a [LoadedFile],
-        visibility: &'a gt_types::TrackDataVisibility,
+        visibility: &'a TrackDataVisibility,
         highlight: &'a MapHighlight,
         filter: &'a GlobalFilter,
-        event_vis: &'a gt_types::EventMarkerVisibility,
+        event_vis: &'a EventMarkerVisibility,
         visible_event: Vec<SpatialPoint>,
     ) -> Self {
         Self {
@@ -65,7 +66,7 @@ impl Plugin for EventMarkerRenderer<'_> {
             let Some(track) = sp.track_index.get(&file.tracks) else {
                 continue;
             };
-            if !filter::track_passes_filter(&track.metadata, self.filter) {
+            if !gt_filter::track_passes_filter(&track.metadata, self.filter) {
                 continue;
             }
             let Some(marker) = sp.point_index.get(&track.event_markers) else {
@@ -77,7 +78,7 @@ impl Plugin for EventMarkerRenderer<'_> {
             {
                 continue;
             }
-            if !filter::point_passes_time_filter(marker.time, self.filter) {
+            if !gt_filter::point_passes_time_filter(marker.time, self.filter) {
                 continue;
             }
             let point_ref = DataPointRef {
@@ -183,8 +184,8 @@ fn is_highlighted(highlight: &MapHighlight, point_ref: DataPointRef) -> bool {
         return true;
     }
     match highlight.hover {
-        Some(gt_types::HighlightScope::Point(r)) => r == point_ref,
-        Some(gt_types::HighlightScope::Track(track)) => track == point_ref.track,
+        Some(HighlightScope::Point(r)) => r == point_ref,
+        Some(HighlightScope::Track(track)) => track == point_ref.track,
         _ => false,
     }
 }

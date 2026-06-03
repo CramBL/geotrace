@@ -60,7 +60,7 @@ fn step_until_loaded(harness: &mut Harness<App>) {
 #[test]
 fn drag_drop_nvd_path_loads_file() {
     let nvd_bytes = minimal_nvd_bytes();
-    let tmp = tempfile::NamedTempFile::with_suffix(".nvd").expect("create temp file");
+    let tmp = tempfile::NamedTempFile::with_suffix(".gtd").expect("create temp file");
     std::io::Write::write_all(&mut tmp.as_file(), &nvd_bytes).expect("write temp nvd");
     let tmp_path = tmp.path().to_path_buf();
 
@@ -86,7 +86,7 @@ fn drag_drop_nvd_bytes_loads_file() {
         .build_eframe(|cc| App::new(cc));
     harness.input_mut().dropped_files.push(egui::DroppedFile {
         bytes: Some(Arc::from(nvd_bytes.as_slice())),
-        name: "test.nvd".to_owned(),
+        name: "test.gtd".to_owned(),
         ..Default::default()
     });
     harness.step(); // processes the drop, spawns load thread
@@ -240,7 +240,7 @@ fn snapshot_load_warnings_dialog() {
         .build_eframe(|cc| App::new(cc));
     harness.step();
     harness.state().shared.borrow_mut().warnings_popup = Some((
-        "ride_2025-05-23.nvd".to_owned(),
+        "ride_2025-05-23.gtd".to_owned(),
         vec![
             "3 satellite(s) with PRN 0 — PRN 0 is reserved and undefined in NMEA".to_owned(),
             "2 satellite(s) with elevation > 90° — above the zenith, outside the valid NMEA range [0°, 90°]".to_owned(),

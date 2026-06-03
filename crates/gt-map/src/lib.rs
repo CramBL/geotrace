@@ -134,56 +134,34 @@ pub(crate) const ICON_URI_GHOST_FIX: &str = "bytes://gt-map/icons/ghost_fix.svg"
 /// called. The icons are compiled into the binary via `include_bytes!` and
 /// cached by egui's texture system after their first rasterisation; subsequent
 /// frames pay only a GPU quad draw — no CPU tessellation, no heap allocation.
+macro_rules! icon_bytes {
+    ($name:literal) => {
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/icons/",
+            $name
+        ))
+        .as_slice()
+    };
+}
+
 pub fn register_marker_icons(ctx: &egui::Context) {
-    ctx.include_bytes(
-        ICON_URI_LIGHTNING,
-        include_bytes!("icons/lightning.svg").as_slice(),
-    );
-    ctx.include_bytes(
-        ICON_URI_WARNING,
-        include_bytes!("icons/warning.svg").as_slice(),
-    );
-    ctx.include_bytes(ICON_URI_ERROR, include_bytes!("icons/error.svg").as_slice());
-    ctx.include_bytes(
-        ICON_URI_LOG_PIN,
-        include_bytes!("icons/log_pin.svg").as_slice(),
-    );
-    ctx.include_bytes(ICON_URI_PIN, include_bytes!("icons/pin.svg").as_slice());
-    ctx.include_bytes(ICON_URI_CROSS, include_bytes!("icons/cross.svg").as_slice());
-    ctx.include_bytes(
-        ICON_URI_CIRCLE_MARKER,
-        include_bytes!("icons/circle_marker.svg").as_slice(),
-    );
-    ctx.include_bytes(ICON_URI_CHECK, include_bytes!("icons/check.svg").as_slice());
-    ctx.include_bytes(
-        ICON_URI_SATELLITE,
-        include_bytes!("icons/satellite.svg").as_slice(),
-    );
-    ctx.include_bytes(
-        ICON_URI_SATELLITE_LOST,
-        include_bytes!("icons/satellite_lost.svg").as_slice(),
-    );
-    ctx.include_bytes(ICON_URI_GEAR, include_bytes!("icons/gear.svg").as_slice());
-    ctx.include_bytes(
-        ICON_URI_REFRESH,
-        include_bytes!("icons/refresh.svg").as_slice(),
-    );
-    ctx.include_bytes(
-        ICON_URI_DOWNLOAD,
-        include_bytes!("icons/download.svg").as_slice(),
-    );
-    ctx.include_bytes(
-        ICON_URI_UPLOAD,
-        include_bytes!("icons/upload.svg").as_slice(),
-    );
-    ctx.include_bytes(
-        ICON_URI_WRENCH,
-        include_bytes!("icons/wrench.svg").as_slice(),
-    );
-    ctx.include_bytes(
-        ICON_URI_GHOST_FIX,
-        include_bytes!("icons/ghost_fix.svg").as_slice(),
-    );
+    ctx.include_bytes(ICON_URI_LIGHTNING, icon_bytes!("lightning.svg"));
+    ctx.include_bytes(ICON_URI_WARNING, icon_bytes!("warning.svg"));
+    ctx.include_bytes(ICON_URI_ERROR, icon_bytes!("error.svg"));
+    ctx.include_bytes(ICON_URI_LOG_PIN, icon_bytes!("log_pin.svg"));
+    ctx.include_bytes(ICON_URI_PIN, icon_bytes!("pin.svg"));
+    ctx.include_bytes(ICON_URI_CROSS, icon_bytes!("cross.svg"));
+    ctx.include_bytes(ICON_URI_CIRCLE_MARKER, icon_bytes!("circle_marker.svg"));
+    ctx.include_bytes(ICON_URI_CHECK, icon_bytes!("check.svg"));
+    ctx.include_bytes(ICON_URI_SATELLITE, icon_bytes!("satellite.svg"));
+    ctx.include_bytes(ICON_URI_SATELLITE_LOST, icon_bytes!("satellite_lost.svg"));
+    ctx.include_bytes(ICON_URI_GEAR, icon_bytes!("gear.svg"));
+    ctx.include_bytes(ICON_URI_REFRESH, icon_bytes!("refresh.svg"));
+    ctx.include_bytes(ICON_URI_DOWNLOAD, icon_bytes!("download.svg"));
+    ctx.include_bytes(ICON_URI_UPLOAD, icon_bytes!("upload.svg"));
+    ctx.include_bytes(ICON_URI_WRENCH, icon_bytes!("wrench.svg"));
+    ctx.include_bytes(ICON_URI_GHOST_FIX, icon_bytes!("ghost_fix.svg"));
 }
 /// Draw an SVG marker icon at `rect`, with optional `tint`.
 ///
@@ -274,11 +252,13 @@ pub(crate) fn draw_rotated_cached_icon(
     ui.painter().add(egui::Shape::Mesh(mesh.into()));
 }
 
+use gt_filter::GlobalFilter;
 use gt_types::mercator;
 use gt_types::{
-    DataCategory, DataPointRef, EventMarkerVisibility, FileIdx, GlobalFilter, HighlightScope,
-    Latitude, LoadedFile, Longitude, MapHighlight, MercPoint, SpatialPoint, TrackDataVisibility,
-    TrackRef,
+    DataCategory, FileIdx, Latitude, LoadedFile, Longitude, MercPoint, SpatialPoint, TrackRef,
+};
+use gt_ui_types::{
+    DataPointRef, EventMarkerVisibility, HighlightScope, MapHighlight, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use std::time::Instant;
@@ -455,7 +435,7 @@ impl NavMap {
     /// track deletion) to prevent stale R-tree entries from causing out-of-bounds
     /// panics in the renderers.
     pub fn rebuild_spatial_index(&mut self, files: &[LoadedFile]) {
-        self.global_tree = gt_data_ops::build_global_tree(files);
+        self.global_tree = gt_track_builder::build_global_tree(files);
         self.last_file_count = files.len();
     }
 
@@ -523,7 +503,7 @@ impl NavMap {
             if let Some(bbox) = compute_bounding_box(files) {
                 zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
             }
-            self.global_tree = gt_data_ops::build_global_tree(files);
+            self.global_tree = gt_track_builder::build_global_tree(files);
         }
 
         let blink_alpha = self.blink.tick();
@@ -1306,10 +1286,10 @@ mod tests {
     use super::*;
     use gt_test_utils::nav_test_data;
     use gt_types::{
-        Coord, DataCategory, FileIdx, FileMetadata, FileVisibility, LoadedFile, LoadedTrack,
-        MercPoint, PointIdx, Rect, SpatialPoint, TimeRange, TrackIdx, TrackMetadata,
-        TrackVisibility, merc_bounds_for_rect,
+        Coord, DataCategory, FileIdx, FileMetadata, LoadedFile, LoadedTrack, MercPoint, PointIdx,
+        Rect, SpatialPoint, TimeRange, TrackIdx, TrackMetadata, merc_bounds_for_rect,
     };
+    use gt_ui_types::{FileVisibility, TrackVisibility};
     use uom::si::f64::Length;
     use uom::si::length::{kilometer, meter};
 
@@ -1349,17 +1329,17 @@ mod tests {
         };
         LoadedFile {
             metadata: FileMetadata {
-                filename: format!("test_{n}.nvd"),
+                filename: format!("test_{n}.gtd"),
                 total_distance_km: Length::new::<kilometer>(1.0),
                 total_duration: chrono::Duration::seconds(n as i64),
                 time_range: TimeRange::new(now, now + chrono::Duration::seconds(n as i64)),
             },
-            identity: format!("auto:test_{n}.nvd"),
+            identity: format!("auto:test_{n}.gtd"),
             tracks: vec![track],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
-            source: gt_types::FileSource::NvdPath(std::path::PathBuf::from(format!(
-                "test_{n}.nvd"
+            source: gt_types::FileSource::GtdPath(std::path::PathBuf::from(format!(
+                "test_{n}.gtd"
             ))),
             load_warnings: vec![],
             db_ref: None,
@@ -1479,7 +1459,7 @@ mod tests {
         // Confirm the bug scenario: the stale tree (built before deletion) has
         // entries with point_index ≥ 340, which would be OOB for file_b alone.
         let files_initial = vec![file_a, make_file_from_points(points_b)];
-        let stale_tree = gt_data_ops::build_global_tree(&files_initial);
+        let stale_tree = gt_track_builder::build_global_tree(&files_initial);
         let files_after = vec![file_b];
         let stale_has_oob = stale_tree.iter().any(|sp| {
             let Some(file) = sp.file_index.get(&files_after) else {

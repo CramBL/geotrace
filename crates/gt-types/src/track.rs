@@ -212,7 +212,7 @@ impl Default for AssociationConfig {
 #[derive(Debug, Clone)]
 pub enum FileSource {
     /// Loaded from a path on disk (NVD file).
-    NvdPath(PathBuf),
+    GtdPath(PathBuf),
     /// Loaded from bytes delivered via drag-and-drop (NVD file).
     NvdBytes(Arc<[u8]>),
     /// Loaded from a log file on disk.

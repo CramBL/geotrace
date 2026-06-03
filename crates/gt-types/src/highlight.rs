@@ -113,26 +113,6 @@ pub enum DataCategory {
     EventMarker,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DataPointRef {
-    pub track: TrackRef,
-    pub category: DataCategory,
-    pub point_index: PointIdx,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HighlightScope {
-    File {
-        file_index: FileIdx,
-    },
-    Track(TrackRef),
-    TrackCategory {
-        track: TrackRef,
-        category: DataCategory,
-    },
-    Point(DataPointRef),
-}
-
 impl DataCategory {
     /// Index into `MapHighlight::hover_candidates` for this category.
     /// Returns `None` for categories that don't participate in multi-hover.
@@ -145,25 +125,4 @@ impl DataCategory {
             Self::Track => None,
         }
     }
-}
-
-use chrono::{DateTime, Utc};
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MapHighlight {
-    pub hover: Option<HighlightScope>,
-    pub sticky: Option<DataPointRef>,
-    /// All hovered candidates within the cursor radius, one per category group.
-    /// Indices: 0 = Tpv/SatelliteReport, 1 = EventMarker, 2 = CustomMarker,
-    /// 3 = GeneratedMarker. Used so renderers can show tooltips for secondary
-    /// candidates even when a Tpv point is the primary hover.
-    pub hover_candidates: [Option<DataPointRef>; 4],
-    /// Time currently hovered on the track plot; used to cross-highlight the
-    /// closest TPV point on the map.  `None` when the plot cursor is inactive.
-    pub plot_hover_time: Option<DateTime<Utc>>,
-    /// Pre-computed `(FileIdx, TrackIdx, PointIdx)` of the TPV point closest to
-    /// `plot_hover_time`, set by the app layer alongside that field.
-    /// `TpvRenderer` reads this directly instead of re-scanning all points.
-    /// `None` when `plot_hover_time` is `None`.
-    pub plot_hover_point: Option<(FileIdx, TrackIdx, PointIdx)>,
 }

@@ -1,7 +1,6 @@
-use gt_types::{
-    DataCategory, DataPointRef, FileIdx, GlobalFilter, HighlightScope, LoadedFile, LoadedTrack,
-    MapHighlight, PointIdx, TrackIdx, TrackRef,
-};
+use gt_filter::GlobalFilter;
+use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, PointIdx, TrackIdx, TrackRef};
+use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 
 use crate::filter::{FilterPanelState, render_filter_panel};
 use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState};
@@ -72,7 +71,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
                             .get(&vis.files)
                             .and_then(|fv| ti.get(&fv.tracks))
                             .is_some_and(|tv| tv.enabled);
-                    let passes = gt_types::track_passes_filter(&track.metadata, &filter_snapshot);
+                    let passes = gt_filter::track_passes_filter(&track.metadata, &filter_snapshot);
                     if !track_enabled || !passes {
                         Some(NodeKey::Track(TrackRef::new(fi, ti)))
                     } else {
@@ -245,7 +244,7 @@ fn render_track_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Pane
         let Some(track) = ti.get(&file.tracks) else {
             return;
         };
-        let passes = gt_types::track_passes_filter(&track.metadata, ctx.filter);
+        let passes = gt_filter::track_passes_filter(&track.metadata, ctx.filter);
         let is_expanded = ctx.tree.track_node(track_ref).is_some_and(|t| t.expanded);
         let panel_hovered = ctx
             .highlight

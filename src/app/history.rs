@@ -1,5 +1,5 @@
 use chrono::{DateTime, NaiveDate, Utc};
-use gt_db::{DatabaseRef, PruneMode, RecordingEntry};
+use gt_history::{DatabaseRef, PruneMode, RecordingEntry};
 use gt_ui_theme::WARNING_AMBER;
 
 pub enum HistoryAction {
@@ -67,7 +67,7 @@ impl PruneDialog {
     fn show(
         &mut self,
         ctx: &egui::Context,
-        db: Option<&gt_db::Database>,
+        db: Option<&gt_history::Database>,
     ) -> Option<Vec<DatabaseRef>> {
         if !self.open {
             return None;
@@ -248,7 +248,7 @@ impl HistoryWindow {
     pub fn show(
         &mut self,
         ctx: &egui::Context,
-        db: Option<&gt_db::Database>,
+        db: Option<&gt_history::Database>,
         storage_enabled: &mut bool,
         auto_prune_enabled: &mut bool,
         auto_prune_max_bytes: &mut u64,
@@ -498,7 +498,7 @@ impl HistoryWindow {
 
                 ui.separator();
                 let total_count = entries.len();
-                let total_size: u64 = entries.iter().map(|e| e.meta.nvd_size_bytes).sum();
+                let total_size: u64 = entries.iter().map(|e| e.meta.gtd_size_bytes).sum();
                 ui.horizontal(|ui| {
                     let rec_label = if total_count == 1 {
                         "recording"
@@ -551,10 +551,10 @@ fn render_row(ui: &mut egui::Ui, entry: &RecordingEntry, action: &mut Option<His
     let dur = chrono::Duration::microseconds(dur_us);
     ui.label(format_duration(dur));
 
-    let count = gt_db::format_count_suffix(entry.meta.nav_point_count);
+    let count = gt_history::format_count_suffix(entry.meta.nav_point_count);
     ui.label(count);
 
-    ui.label(format_size(entry.meta.nvd_size_bytes));
+    ui.label(format_size(entry.meta.gtd_size_bytes));
 
     ui.horizontal(|ui| {
         if ui.small_button("Open").clicked() {

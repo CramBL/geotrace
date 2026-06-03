@@ -16,8 +16,10 @@ egui.workspace = true
 egui-phosphor.workspace = true
 egui_plot.workspace = true
 gt-egui-mipmap = { path = "../gt-egui-mipmap" }
+gt-filter = { path = "../gt-filter" }
 gt-types = { path = "../gt-types" }
 gt-ui-theme = { path = "../gt-ui-theme" }
+gt-ui-types = { path = "../gt-ui-types" }
 rayon.workspace = true
 uom.workspace = true
 

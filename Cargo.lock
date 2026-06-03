@@ -1836,17 +1836,19 @@ dependencies = [
  "egui_tiles",
  "env_logger",
  "geotrace-sdk",
- "gt-data-ops",
- "gt-db",
+ "gt-filter",
  "gt-fmt",
- "gt-io",
- "gt-log-marker",
+ "gt-history",
+ "gt-loader",
+ "gt-logfile",
  "gt-map",
  "gt-plot",
  "gt-side-panel",
  "gt-test-utils",
+ "gt-track-builder",
  "gt-types",
  "gt-ui-theme",
+ "gt-ui-types",
  "log",
  "mimalloc",
  "rfd",
@@ -2058,36 +2060,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "gt-data-ops"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "geo-types",
- "gt-geo-math",
- "gt-types",
- "rstar 0.13.0",
- "uom",
- "vec1",
-]
-
-[[package]]
-name = "gt-db"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "dirs",
- "gt-types",
- "hdf5-pure",
- "log",
- "tempfile",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "gt-egui-mipmap"
 version = "0.1.0"
 dependencies = [
  "egui_plot",
+]
+
+[[package]]
+name = "gt-filter"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "geo-types",
+ "gt-types",
+ "uom",
 ]
 
 [[package]]
@@ -2110,12 +2096,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "gt-io"
+name = "gt-history"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs",
+ "gt-types",
+ "hdf5-pure",
+ "log",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "gt-loader"
 version = "0.1.0"
 dependencies = [
  "geotrace-sdk",
- "gt-data-ops",
  "gt-test-utils",
+ "gt-track-builder",
  "gt-types",
  "tempfile",
  "thiserror 2.0.18",
@@ -2123,7 +2122,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gt-log-marker"
+name = "gt-logfile"
 version = "0.1.0"
 dependencies = [
  "chrono",
@@ -2141,10 +2140,12 @@ dependencies = [
  "egui-phosphor",
  "egui_extras",
  "egui_kittest",
- "gt-data-ops",
+ "gt-filter",
  "gt-test-utils",
+ "gt-track-builder",
  "gt-types",
  "gt-ui-theme",
+ "gt-ui-types",
  "rstar 0.13.0",
  "strum",
  "uom",
@@ -2160,8 +2161,10 @@ dependencies = [
  "egui-phosphor",
  "egui_plot",
  "gt-egui-mipmap",
+ "gt-filter",
  "gt-types",
  "gt-ui-theme",
+ "gt-ui-types",
  "rayon",
  "uom",
 ]
@@ -2174,11 +2177,13 @@ dependencies = [
  "egui",
  "egui-phosphor",
  "egui_kittest",
- "gt-data-ops",
+ "gt-filter",
  "gt-fmt",
  "gt-test-utils",
+ "gt-track-builder",
  "gt-types",
  "gt-ui-theme",
+ "gt-ui-types",
  "uom",
 ]
 
@@ -2193,6 +2198,19 @@ dependencies = [
  "geo-types",
  "gt-types",
  "uom",
+]
+
+[[package]]
+name = "gt-track-builder"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "geo-types",
+ "gt-geo-math",
+ "gt-types",
+ "rstar 0.13.0",
+ "uom",
+ "vec1",
 ]
 
 [[package]]
@@ -2214,6 +2232,14 @@ name = "gt-ui-theme"
 version = "0.1.0"
 dependencies = [
  "egui",
+ "gt-types",
+]
+
+[[package]]
+name = "gt-ui-types"
+version = "0.1.0"
+dependencies = [
+ "chrono",
  "gt-types",
 ]
 

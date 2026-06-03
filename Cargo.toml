@@ -8,21 +8,23 @@ license = "AGPL-3.0-only"
 [workspace]
 members = [
     "crates/gt-arch",
-    "crates/gt-data-ops",
-    "crates/gt-db",
     "crates/gt-egui-mipmap",
+    "crates/gt-filter",
     "crates/gt-fmt",
     "crates/gt-geo-math",
-    "crates/gt-io",
-    "crates/gt-log-marker",
+    "crates/gt-history",
+    "crates/gt-loader",
+    "crates/gt-logfile",
     "crates/gt-map",
     "crates/gt-plot",
     "crates/gt-side-panel",
     "crates/gt-test-utils",
+    "crates/gt-track-builder",
     "crates/gt-types",
     "crates/gt-ui-theme",
-    "geotrace-sdks/geotrace-sdk",
-    "geotrace-sdks/geotrace-sdk-macros",
+    "crates/gt-ui-types",
+    "sdk/rust/geotrace-sdk",
+    "sdk/rust/geotrace-sdk-macros",
 ]
 
 [workspace.package]
@@ -193,16 +195,18 @@ egui-phosphor.workspace = true
 egui_extras.workspace = true
 egui_tiles.workspace = true
 env_logger.workspace = true
-gt-data-ops = { path = "crates/gt-data-ops" }
-gt-db = { path = "crates/gt-db" }
+gt-filter = { path = "crates/gt-filter" }
 gt-fmt = { path = "crates/gt-fmt" }
-gt-io = { path = "crates/gt-io" }
-gt-log-marker = { path = "crates/gt-log-marker" }
+gt-history = { path = "crates/gt-history" }
+gt-loader = { path = "crates/gt-loader" }
+gt-logfile = { path = "crates/gt-logfile" }
 gt-map = { path = "crates/gt-map" }
 gt-plot = { path = "crates/gt-plot" }
 gt-side-panel = { path = "crates/gt-side-panel" }
+gt-track-builder = { path = "crates/gt-track-builder" }
 gt-types = { path = "crates/gt-types" }
 gt-ui-theme = { path = "crates/gt-ui-theme" }
+gt-ui-types = { path = "crates/gt-ui-types" }
 log.workspace = true
 mimalloc = { version = "0.1.48", features = ["v3"] }
 rfd = "0.17.2"
@@ -212,7 +216,7 @@ uom.workspace = true
 
 [dev-dependencies]
 egui_kittest = { version = "0.34.3", features = ["eframe", "wgpu", "snapshot"] }
-geotrace-sdk = { path = "geotrace-sdks/geotrace-sdk" }
+geotrace-sdk = { path = "sdk/rust/geotrace-sdk" }
 gt-test-utils = { path = "crates/gt-test-utils", features = ["snapshot"] }
 tempfile = "3"
 

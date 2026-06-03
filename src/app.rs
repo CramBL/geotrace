@@ -10,14 +10,13 @@ use config_manager::{AppSnapshot, ConfigManager};
 use egui_tiles::{
     Container, Linear, LinearDir, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse,
 };
-use gt_data_ops::SegmentationConfig;
+use gt_filter::GlobalFilter;
 use gt_map::{MapContextAction, MapLayer, NavMap};
 use gt_plot::PlotState;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
-use gt_types::{
-    AssociationConfig, DataCategory, GlobalFilter, HighlightScope, LoadedFile, MapHighlight,
-    NavPoint, TrackDataVisibility,
-};
+use gt_track_builder::SegmentationConfig;
+use gt_types::{AssociationConfig, DataCategory, LoadedFile, NavPoint};
+use gt_ui_types::{HighlightScope, MapHighlight, TrackDataVisibility};
 use loader::{CompletedLoad, FinishedJob, LoadOutcome, LoaderManager};
 
 use modals::{
@@ -84,7 +83,7 @@ pub struct App {
     assoc_config: AssociationConfig,
 
     /// History database — `None` if the database could not be opened at startup.
-    db: Option<gt_db::Database>,
+    db: Option<gt_history::Database>,
 
     /// When `false`, NVD files are not stored in the history database on load.
     storage_enabled: bool,
@@ -96,7 +95,7 @@ pub struct App {
     /// When `true`, show a confirmation dialog before auto-pruning.
     auto_prune_confirm: bool,
     /// Recordings selected for auto-pruning, waiting for the user to confirm.
-    pending_auto_prune: Option<Vec<gt_db::DatabaseRef>>,
+    pending_auto_prune: Option<Vec<gt_history::DatabaseRef>>,
 
     /// History window state.
     history_window: history::HistoryWindow,
@@ -163,8 +162,8 @@ impl App {
         // `None` and is populated by `sync_db_path` (called from
         // `apply_startup_settings`) only in non-test builds.
         #[cfg(not(test))]
-        let db = match gt_db::Database::default_path()
-            .and_then(|p| gt_db::Database::open_or_create(&p))
+        let db = match gt_history::Database::default_path()
+            .and_then(|p| gt_history::Database::open_or_create(&p))
         {
             Ok(db) => Some(db),
             Err(e) => {
@@ -173,7 +172,7 @@ impl App {
             }
         };
         #[cfg(test)]
-        let db: Option<gt_db::Database> = None;
+        let db: Option<gt_history::Database> = None;
 
         let mut app = Self {
             map,
@@ -224,9 +223,9 @@ impl App {
                 .and_then(|e| e.to_str())
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            if ext == "nvd" {
+            if ext == "gtd" {
                 app.loader
-                    .spawn_nvd_path(path.clone(), app.processing_config);
+                    .spawn_gtd_path(path.clone(), app.processing_config);
             } else {
                 let nav_points = app.snapshot_nav_points();
                 app.loader
@@ -256,8 +255,8 @@ impl App {
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        if ext == "nvd" {
-            self.loader.spawn_nvd_path(path, self.processing_config);
+        if ext == "gtd" {
+            self.loader.spawn_gtd_path(path, self.processing_config);
         } else {
             let nav_points = self.snapshot_nav_points();
             self.loader
@@ -268,15 +267,6 @@ impl App {
     /// Returns `true` when the plot tile is currently visible.
     fn plot_is_visible(&self) -> bool {
         self.tiles_tree.tiles.is_visible(self.plot_tile_id)
-    }
-
-    /// Toggle the plot tile's visibility.
-    ///
-    /// The tile is always kept in the tree so the GC never removes it — we
-    /// just flip its visibility flag, which causes the Linear container to
-    /// collapse it to zero size without removing it from the children list.
-    fn toggle_plot(&mut self) {
-        self.tiles_tree.tiles.toggle_visibility(self.plot_tile_id);
     }
 
     /// Returns the current map/plot split ratio (fraction for the map tile, 0.0–1.0).
@@ -615,7 +605,7 @@ impl App {
                 let filename = file.metadata.filename.clone();
                 let identity = file.identity.clone();
                 let source = file.source.clone();
-                *file = gt_data_ops::build_loaded_file(
+                *file = gt_track_builder::build_loaded_file(
                     filename,
                     identity,
                     &all_points,
@@ -637,7 +627,7 @@ impl App {
     /// Process a completed background load: integrate the result into shared state.
     fn handle_completed_load(&mut self, completed: CompletedLoad) {
         match completed.outcome {
-            Ok(LoadOutcome::NvdFile {
+            Ok(LoadOutcome::GtdFile {
                 mut file,
                 series,
                 db_ref,
@@ -741,7 +731,7 @@ impl App {
                 Ok(bytes) => {
                     let filename = format!("{}/{}", db_ref.identity, db_ref.group_name);
                     self.loader
-                        .spawn_nvd_bytes(bytes.into(), filename, self.processing_config);
+                        .spawn_gtd_bytes(bytes.into(), filename, self.processing_config);
                     ctx.request_repaint();
                 }
                 Err(e) => {
@@ -792,6 +782,7 @@ struct MainBehavior<'a> {
     map: &'a mut NavMap,
     state: &'a mut SharedAppState,
     map_hover_time: Option<chrono::DateTime<chrono::Utc>>,
+    toggle_plot_request: bool,
 }
 
 impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
@@ -824,9 +815,31 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 }
             }
             MainPane::Plot => {
+                egui::Panel::top("plot_header").show_inside(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let s = &mut *self.state;
+                        if ui
+                            .selectable_label(
+                                s.sync_plot_to_map,
+                                format!("{} Sync", egui_phosphor::regular::LINK),
+                            )
+                            .on_hover_text("Sync plot time range to map viewport")
+                            .clicked()
+                        {
+                            s.sync_plot_to_map = !s.sync_plot_to_map;
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .button(egui_phosphor::regular::CARET_DOWN)
+                                .on_hover_text("Hide plot")
+                                .clicked()
+                            {
+                                self.toggle_plot_request = true;
+                            }
+                        });
+                    });
+                });
                 let s = &mut *self.state;
-                // Compute the time range of TPV points visible in the current
-                // map viewport so the plot can pan to follow the map.
                 let map_sync_x_range = if s.sync_plot_to_map {
                     self.map.viewport_geo_bounds().and_then(|b| {
                         tpv_time_range_in_bounds(&s.loaded_files, s.tree.visibility(), b)
@@ -914,33 +927,6 @@ impl eframe::App for App {
                 // Left zone — file actions
                 if ui.button("Open…").clicked() {
                     self.loader.open_file_dialog();
-                }
-
-                ui.separator();
-
-                // Center zone — view controls
-                {
-                    let plot_visible = self.plot_is_visible();
-                    if ui
-                        .selectable_label(
-                            plot_visible,
-                            format!("{} Plot", egui_phosphor::regular::CHART_LINE_UP),
-                        )
-                        .on_hover_text("Toggle plot panel")
-                        .clicked()
-                    {
-                        self.toggle_plot();
-                    }
-                }
-                {
-                    let mut s = self.shared.borrow_mut();
-                    ui.selectable_label(
-                        s.sync_plot_to_map,
-                        format!("{} Sync", egui_phosphor::regular::LINK),
-                    )
-                    .on_hover_text("Sync plot time range to map viewport")
-                    .clicked()
-                    .then(|| s.sync_plot_to_map = !s.sync_plot_to_map);
                 }
 
                 // Right zone — utility windows and preferences, trailing-aligned
@@ -1036,12 +1022,14 @@ impl eframe::App for App {
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
+            let panel_rect = ui.max_rect();
             let mut s = self.shared.borrow_mut();
             let map_hover_time = extract_map_hover_time(&s.loaded_files, &s.highlight);
 
             // Render the tiles tree (map on top, optional plot on bottom).
             // Borrow tiles_tree and map explicitly so the borrow checker can see
             // they are disjoint from s (which comes from self.shared).
+            let toggle_plot_request;
             {
                 let map = &mut self.map;
                 let tiles_tree = &mut self.tiles_tree;
@@ -1049,8 +1037,13 @@ impl eframe::App for App {
                     map,
                     state: &mut s,
                     map_hover_time,
+                    toggle_plot_request: false,
                 };
                 tiles_tree.ui(&mut behavior, ui);
+                toggle_plot_request = behavior.toggle_plot_request;
+            }
+            if toggle_plot_request {
+                self.tiles_tree.tiles.toggle_visibility(self.plot_tile_id);
             }
 
             // Forward plot hover → map highlight (must happen after the tree renders
@@ -1076,6 +1069,25 @@ impl eframe::App for App {
                 s.plot_state.hovered_time = None;
                 s.highlight.plot_hover_time = None;
                 s.highlight.plot_hover_point = None;
+
+                let btn_size = egui::vec2(28.0, 22.0);
+                let btn_rect = egui::Rect::from_min_size(
+                    egui::pos2(
+                        panel_rect.max.x - btn_size.x - 8.0,
+                        panel_rect.max.y - btn_size.y - 8.0,
+                    ),
+                    btn_size,
+                );
+                if ui
+                    .put(
+                        btn_rect,
+                        egui::Button::new(egui_phosphor::regular::CHART_LINE_UP).small(),
+                    )
+                    .on_hover_text("Show plot")
+                    .clicked()
+                {
+                    self.tiles_tree.tiles.toggle_visibility(self.plot_tile_id);
+                }
             }
         });
 
@@ -1336,11 +1348,11 @@ fn handle_dropped_bytes_dispatch(
     const HDF5_MAGIC: &[u8] = b"\x89HDF\r\n\x1a\n";
     if bytes.starts_with(HDF5_MAGIC) {
         let filename = if name.is_empty() {
-            "dropped.nvd".to_owned()
+            "dropped.gtd".to_owned()
         } else {
             name.to_owned()
         };
-        loader.spawn_nvd_bytes(bytes, filename, config);
+        loader.spawn_gtd_bytes(bytes, filename, config);
     } else if let Ok(text) = str::from_utf8(&bytes) {
         let filename = if name.is_empty() { "dropped.log" } else { name };
         loader.spawn_log_text(

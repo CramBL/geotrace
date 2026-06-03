@@ -1,0 +1,22 @@
+[package]
+name = "gt-track-builder"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+chrono.workspace = true
+geo-types.workspace = true
+gt-geo-math = { path = "../gt-geo-math" }
+gt-types = { path = "../gt-types" }
+rstar.workspace = true
+uom.workspace = true
+vec1.workspace = true
+
+[lints]
+workspace = true

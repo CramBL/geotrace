@@ -3,7 +3,9 @@ use chrono::{DateTime, Utc};
 use egui::Color32;
 use egui_plot::{Line, PlotPoints, VLine};
 use gt_egui_mipmap::{LevelSelection, MipMap};
-use gt_types::{FileIdx, GlobalFilter, LoadedFile, PointIdx, TrackDataVisibility, TrackIdx};
+use gt_filter::GlobalFilter;
+use gt_types::{FileIdx, LoadedFile, PointIdx, TrackIdx};
+use gt_ui_types::TrackDataVisibility;
 use rayon::prelude::*;
 
 /// Identifies one of the 14 per-metric plot series.
@@ -768,7 +770,7 @@ fn trip_is_visible(
     let Some(track) = file.tracks.get(ti) else {
         return false;
     };
-    gt_types::filter::track_passes_filter(&track.metadata, global_filter)
+    gt_filter::track_passes_filter(&track.metadata, global_filter)
 }
 
 /// Add all metric lines for one track to the plot using pre-computed level selections.
@@ -869,7 +871,7 @@ pub fn find_closest_tpv(
             if !trip_vis.enabled {
                 continue;
             }
-            if !gt_types::filter::track_passes_filter(&track.metadata, filter) {
+            if !gt_filter::track_passes_filter(&track.metadata, filter) {
                 continue;
             }
             let Some(pi) = closest_point_index(&track.points, target_secs) else {

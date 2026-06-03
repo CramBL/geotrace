@@ -1,0 +1,18 @@
+[package]
+name = "gt-ui-types"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+test = false
+
+[dependencies]
+chrono.workspace = true
+gt-types = { path = "../gt-types" }
+
+[lints]
+workspace = true

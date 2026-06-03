@@ -1,0 +1,21 @@
+[package]
+name = "gt-logfile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+chrono.workspace = true
+gt-types = { path = "../gt-types" }
+log.workspace = true
+
+[dev-dependencies]
+gt-test-utils = { path = "../gt-test-utils" }
+
+[lints]
+workspace = true

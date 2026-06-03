@@ -1,4 +1,4 @@
-use gt_types::{DataPointRef, HighlightScope, MapHighlight};
+use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 
 use crate::tree::CheckState;
 

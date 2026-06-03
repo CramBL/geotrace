@@ -1,6 +1,4 @@
 pub mod coordinates;
-pub mod event_marker_visibility;
-pub mod filter;
 pub mod highlight;
 pub mod markers;
 pub mod mercator;
@@ -10,15 +8,10 @@ pub use satellites::{Prn, SignalQuality, Snr};
 pub mod time_types;
 pub mod tpv;
 pub mod track;
-pub mod visibility;
 
 pub use coordinates::{Latitude, Longitude};
-pub use event_marker_visibility::EventMarkerVisibility;
-pub use filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
 pub use geo_types::{Coord, Rect};
-pub use highlight::{
-    DataCategory, DataPointRef, FileIdx, HighlightScope, MapHighlight, PointIdx, TrackIdx, TrackRef,
-};
+pub use highlight::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
 pub use markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind, MarkerColor,
     MarkerIcon, event_marker_fallback_color,
@@ -32,4 +25,3 @@ pub use track::{
     AssociationConfig, DatabaseRef, FileMetadata, FileSource, LoadedFile, LoadedTrack,
     MarkerRequirement, MercBounds, SpatialPoint, TimeRange, TrackMetadata, merc_bounds_for_rect,
 };
-pub use visibility::{FileVisibility, TrackDataVisibility, TrackVisibility};

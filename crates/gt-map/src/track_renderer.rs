@@ -1,9 +1,8 @@
 use egui::{Color32, Response, Stroke, Ui};
-use gt_types::{
-    DataCategory, FileIdx, GlobalFilter, HighlightScope, LoadedFile, MapHighlight, MercBounds,
-    TrackDataVisibility, TrackIdx, TrackRef, track_passes_filter,
-};
+use gt_filter::{GlobalFilter, track_passes_filter};
+use gt_types::{DataCategory, FileIdx, LoadedFile, MercBounds, TrackIdx, TrackRef};
 use gt_ui_theme::{HIGHLIGHT_BLUE, track_color};
+use gt_ui_types::{HighlightScope, MapHighlight, TrackDataVisibility};
 use walkers::{MapMemory, Plugin, Projector};
 
 pub struct TrackRenderer<'a> {
@@ -115,7 +114,9 @@ impl Plugin for TrackRenderer<'_> {
                 let pts: Vec<(bool, egui::Pos2)> = track
                     .points
                     .iter()
-                    .filter(|p| gt_types::point_passes_time_filter(p.tpv.time().utc(), self.filter))
+                    .filter(|p| {
+                        gt_filter::point_passes_time_filter(p.tpv.time().utc(), self.filter)
+                    })
                     .map(|p| (p.tpv.heading().is_none(), transform.to_screen(p.merc)))
                     .collect();
 

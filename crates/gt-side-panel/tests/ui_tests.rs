@@ -1,7 +1,9 @@
 use egui_kittest::Harness;
+use gt_filter::GlobalFilter;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
 use gt_test_utils::TestHarness;
-use gt_types::{FileIdx, GlobalFilter, MapHighlight, TrackIdx, TrackRef};
+use gt_types::{FileIdx, TrackIdx, TrackRef};
+use gt_ui_types::MapHighlight;
 
 struct State {
     files: Vec<gt_types::LoadedFile>,
@@ -33,15 +35,15 @@ fn make_state_with_warnings_on(
             } else {
                 vec![]
             };
-            gt_data_ops::build_loaded_file(
-                format!("ride_{i}.nvd"),
-                format!("auto:ride_{i}.nvd"),
+            gt_track_builder::build_loaded_file(
+                format!("ride_{i}.gtd"),
+                format!("auto:ride_{i}.gtd"),
                 &points,
                 &[],
                 vec![],
                 vec![],
-                &gt_data_ops::SegmentationConfig::default(),
-                gt_types::FileSource::NvdPath(std::path::PathBuf::from(format!("ride_{i}.nvd"))),
+                &gt_track_builder::SegmentationConfig::default(),
+                gt_types::FileSource::GtdPath(std::path::PathBuf::from(format!("ride_{i}.gtd"))),
                 w,
             )
         })

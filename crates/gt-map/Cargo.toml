@@ -13,9 +13,11 @@ doctest = false
 chrono.workspace = true
 egui.workspace = true
 egui-phosphor.workspace = true
-gt-data-ops = { path = "../gt-data-ops" }
+gt-filter = { path = "../gt-filter" }
+gt-track-builder = { path = "../gt-track-builder" }
 gt-types = { path = "../gt-types" }
 gt-ui-theme = { path = "../gt-ui-theme" }
+gt-ui-types = { path = "../gt-ui-types" }
 rstar.workspace = true
 uom.workspace = true
 walkers.workspace = true

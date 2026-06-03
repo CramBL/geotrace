@@ -1,8 +1,7 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui};
-use gt_types::{
-    DataCategory, DataPointRef, GlobalFilter, HighlightScope, LoadedFile, MapHighlight,
-    SpatialPoint, TrackDataVisibility, filter,
-};
+use gt_filter::GlobalFilter;
+use gt_types::{DataCategory, LoadedFile, SpatialPoint};
+use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, TrackDataVisibility};
 use walkers::{MapMemory, Plugin, Projector};
 
 pub struct GeneratedMarkerRenderer<'a> {
@@ -120,13 +119,13 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             let Some(track) = sp.track_index.get(&file.tracks) else {
                 continue;
             };
-            if !filter::track_passes_filter(&track.metadata, self.filter) {
+            if !gt_filter::track_passes_filter(&track.metadata, self.filter) {
                 continue;
             }
             let Some(marker) = sp.point_index.get(&track.generated_markers) else {
                 continue;
             };
-            if !filter::point_passes_time_filter(marker.time, self.filter) {
+            if !gt_filter::point_passes_time_filter(marker.time, self.filter) {
                 continue;
             }
             let point_ref = DataPointRef {

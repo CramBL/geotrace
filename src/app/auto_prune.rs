@@ -1,4 +1,4 @@
-use gt_db::{Database, DatabaseRef, DbError, PruneMode};
+use gt_history::{Database, DatabaseRef, DbError, PruneMode};
 
 pub enum AutoPruneOutcome {
     /// Total stored size is within the limit; nothing to delete.
@@ -31,7 +31,7 @@ pub fn run(db: &mut Database, max_bytes: u64, confirm: bool) -> Result<AutoPrune
 mod tests {
     use super::*;
     use geotrace_sdk::{Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix};
-    use gt_db::{Database, RecordingMeta};
+    use gt_history::{Database, RecordingMeta};
 
     fn make_nvd(start_secs: i64, n: u32) -> Vec<u8> {
         let t0 = DateTime::from_timestamp(start_secs, 0).expect("valid timestamp");
@@ -53,7 +53,7 @@ mod tests {
     }
 
     fn insert(db: &mut Database, identity: &str, bytes: &[u8]) {
-        let meta = RecordingMeta::from_nvd_bytes(bytes).expect("parse meta");
+        let meta = RecordingMeta::from_gtd_bytes(bytes).expect("parse meta");
         db.insert(identity, &meta, bytes).expect("insert");
     }
 

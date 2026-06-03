@@ -13,15 +13,19 @@ doctest = false
 chrono.workspace = true
 egui.workspace = true
 egui-phosphor.workspace = true
+gt-filter = { path = "../gt-filter" }
 gt-fmt = { path = "../gt-fmt" }
 gt-types = { path = "../gt-types" }
 gt-ui-theme = { path = "../gt-ui-theme" }
+gt-ui-types = { path = "../gt-ui-types" }
 uom.workspace = true
 
 [dev-dependencies]
 egui_kittest = { version = "0.34.3", features = ["wgpu", "snapshot"] }
-gt-data-ops = { path = "../gt-data-ops" }
+gt-filter = { path = "../gt-filter" }
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
+gt-track-builder = { path = "../gt-track-builder" }
+gt-ui-types = { path = "../gt-ui-types" }
 
 [lints]
 workspace = true

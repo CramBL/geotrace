@@ -1,6 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use egui::Ui;
-use gt_types::{GlobalFilter, LoadedFile, MarkerRequirement};
+use gt_filter::GlobalFilter;
+use gt_types::{LoadedFile, MarkerRequirement};
 use gt_ui_theme::EM_DASH;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
@@ -286,7 +287,7 @@ fn compute_filtered_time_range(
     let mut max: Option<DateTime<Utc>> = None;
     for file in files {
         for track in &file.tracks {
-            if gt_types::track_passes_filter(&track.metadata, filter) {
+            if gt_filter::track_passes_filter(&track.metadata, filter) {
                 let start = track.metadata.time_range.start;
                 let end = track.metadata.time_range.end;
                 min = Some(min.map_or(start, |m: DateTime<Utc>| m.min(start)));
@@ -411,7 +412,7 @@ mod tests {
         use gt_types::track::{FileMetadata, LoadedFile};
         let file = LoadedFile {
             metadata: FileMetadata {
-                filename: "test.nvd".to_owned(),
+                filename: "test.gtd".to_owned(),
                 total_distance_km: Length::new::<kilometer>(1.0),
                 total_duration: Duration::seconds(60),
                 time_range: TimeRange::new(
@@ -419,11 +420,11 @@ mod tests {
                     Utc.timestamp_opt(60, 0).single().expect("valid"),
                 ),
             },
-            identity: "auto:test.nvd".to_owned(),
+            identity: "auto:test.gtd".to_owned(),
             tracks: vec![],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
-            source: gt_types::FileSource::NvdPath(std::path::PathBuf::from("test.nvd")),
+            source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
             load_warnings: vec![],
             db_ref: None,
         };
