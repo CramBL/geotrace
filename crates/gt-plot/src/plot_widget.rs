@@ -519,7 +519,14 @@ pub fn show_track_plot(
             let Some(cache) = resolved.get(si) else {
                 continue;
             };
-            add_series_lines(plot_ui, series, multi_track, cache, metric_vis, hovered_chip);
+            add_series_lines(
+                plot_ui,
+                series,
+                multi_track,
+                cache,
+                metric_vis,
+                hovered_chip,
+            );
         }
 
         // Vertical cursor from map hover.

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use gt_db::{DatabaseRef, PruneMode, RecordingEntry};
 use gt_ui_theme::WARNING_AMBER;
 
@@ -76,12 +76,15 @@ impl PruneDialog {
         let mut open = self.open;
         let mut do_prune = false;
 
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            open = false;
+        }
+
         egui::Window::new("Prune History…")
             .open(&mut open)
-            .resizable(false)
+            .resizable(true)
             .collapsible(false)
             .default_width(420.0)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Mode");
@@ -122,7 +125,7 @@ impl PruneDialog {
                         ui.horizontal(|ui| {
                             ui.label("Keep at most");
                             ui.add(egui::DragValue::new(&mut self.keep_count).range(1..=10_000));
-                            ui.label("recording(s) per identity");
+                            ui.label("recordings per identity");
                         });
                         self.keep_count != prev
                     }
@@ -147,7 +150,9 @@ impl PruneDialog {
                     if refs.is_empty() {
                         ui.label("Nothing to prune");
                     } else {
-                        ui.label(format!("{} recording(s) will be deleted", refs.len()));
+                        let n = refs.len();
+                        let rec_label = if n == 1 { "recording" } else { "recordings" };
+                        ui.label(format!("{n} {rec_label} will be deleted"));
                         egui::ScrollArea::vertical()
                             .max_height(200.0)
                             .show(ui, |ui| {
@@ -194,8 +199,16 @@ pub struct HistoryWindow {
     pub open: bool,
     /// Cached recording list — `None` until the window is first shown.
     entries: Option<Vec<RecordingEntry>>,
-    /// Identity filter text — applied client-side against the cached list.
+    /// Identity substring filter (case-insensitive).
     filter_text: String,
+    /// Minimum nav-point count filter (empty = no filter).
+    filter_min_points: String,
+    /// Maximum nav-point count filter (empty = no filter).
+    filter_max_points: String,
+    /// Start-date lower bound in `YYYY-MM-DD` (empty = no filter).
+    filter_date_from: String,
+    /// Start-date upper bound in `YYYY-MM-DD`, inclusive (empty = no filter).
+    filter_date_to: String,
     /// Error from the last operation, if any.
     error: Option<String>,
     prune: PruneDialog,
@@ -207,9 +220,21 @@ impl HistoryWindow {
             open: false,
             entries: None,
             filter_text: String::new(),
+            filter_min_points: String::new(),
+            filter_max_points: String::new(),
+            filter_date_from: String::new(),
+            filter_date_to: String::new(),
             error: None,
             prune: PruneDialog::new(),
         }
+    }
+
+    fn any_filter_active(&self) -> bool {
+        !self.filter_text.is_empty()
+            || !self.filter_min_points.is_empty()
+            || !self.filter_max_points.is_empty()
+            || !self.filter_date_from.is_empty()
+            || !self.filter_date_to.is_empty()
     }
 
     /// Call after a delete or successful open to force a list refresh.
@@ -251,6 +276,10 @@ impl HistoryWindow {
         let mut action = None;
         let mut open = self.open;
 
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            open = false;
+        }
+
         egui::Window::new("History")
             .open(&mut open)
             .resizable(true)
@@ -270,20 +299,24 @@ impl HistoryWindow {
                     ui.add_space(4.0);
                 }
 
-                let Some(entries) = &self.entries else {
+                if self.entries.is_none() {
                     ui.spinner();
                     return;
-                };
+                }
 
-                // Toolbar row: filter bar + Prune button
+                // Snapshot filter active state before the closures that mutably
+                // borrow individual filter fields — avoids whole-self method calls
+                // inside closures where `entries` also holds an immutable borrow.
+                let filter_active = self.any_filter_active();
+
+                // Toolbar row: identity filter + Prune button
                 ui.horizontal(|ui| {
-                    ui.label("Filter");
+                    crate::terms::term_label(
+                        ui,
+                        egui::RichText::new("Identity"),
+                        crate::terms::IDENTITY,
+                    );
                     ui.text_edit_singleline(&mut self.filter_text);
-                    if !self.filter_text.is_empty()
-                        && ui.small_button(egui_phosphor::regular::X).clicked()
-                    {
-                        self.filter_text.clear();
-                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Prune…").clicked() {
                             self.prune.open = true;
@@ -293,38 +326,135 @@ impl HistoryWindow {
                     });
                 });
 
-                // Auto-prune settings row (only relevant when storage is enabled)
-                if *storage_enabled {
-                    ui.horizontal(|ui| {
-                        ui.checkbox(auto_prune_enabled, "Auto-prune when over");
-                        if *auto_prune_enabled {
-                            let mut max_gb =
-                                *auto_prune_max_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-                            ui.add(
-                                egui::DragValue::new(&mut max_gb)
-                                    .range(0.1..=1_000.0)
-                                    .speed(0.1),
-                            );
-                            ui.label("GB");
-                            #[expect(
-                                clippy::cast_sign_loss,
-                                reason = "DragValue range is 0.1..=1000 so value is always positive"
-                            )]
-                            let bytes = (max_gb * 1024.0 * 1024.0 * 1024.0).round() as u64;
-                            *auto_prune_max_bytes = bytes;
-                            ui.separator();
-                            ui.checkbox(auto_prune_confirm, "Confirm before pruning");
-                        }
+                // Advanced filter row: points + date range
+                ui.horizontal(|ui| {
+                    ui.label("Points ≥");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.filter_min_points).desired_width(60.0),
+                    );
+                    ui.label("≤");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.filter_max_points).desired_width(60.0),
+                    );
+                    ui.separator();
+                    ui.label("Date");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.filter_date_from)
+                            .desired_width(90.0)
+                            .hint_text("YYYY-MM-DD"),
+                    );
+                    ui.label("–");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.filter_date_to)
+                            .desired_width(90.0)
+                            .hint_text("YYYY-MM-DD"),
+                    );
+                    if filter_active && ui.small_button(egui_phosphor::regular::X).clicked() {
+                        self.filter_text.clear();
+                        self.filter_min_points.clear();
+                        self.filter_max_points.clear();
+                        self.filter_date_from.clear();
+                        self.filter_date_to.clear();
+                    }
+                });
+
+                // Auto-prune settings — separated because this is a persistent
+                // setting, not a filter or list entry.  Always rendered so the
+                // layout stays stable; controls are grayed out when inactive,
+                // with hover text explaining what to enable first.
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let storage_on = *storage_enabled;
+                    let prune_on = *auto_prune_enabled && storage_on;
+
+                    ui.add_enabled(
+                        storage_on,
+                        egui::Checkbox::new(auto_prune_enabled, "Auto-prune when over"),
+                    )
+                    .on_hover_text(if storage_on {
+                        "Automatically delete the oldest recordings when storage exceeds the threshold"
+                    } else {
+                        "Enable 'Auto-store recordings' to use auto-pruning"
                     });
-                }
+
+                    let mut max_gb =
+                        *auto_prune_max_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+                    ui.add_enabled(
+                        prune_on,
+                        egui::DragValue::new(&mut max_gb)
+                            .range(0.1..=1_000.0)
+                            .speed(0.1),
+                    )
+                    .on_hover_text(if prune_on {
+                        "Storage limit — oldest recordings are pruned when this is exceeded"
+                    } else if storage_on {
+                        "Tick 'Auto-prune when over' to set a threshold"
+                    } else {
+                        "Enable 'Auto-store recordings' to use auto-pruning"
+                    });
+
+                    if prune_on {
+                        #[expect(
+                            clippy::cast_sign_loss,
+                            reason = "DragValue range is 0.1..=1000 so value is always positive"
+                        )]
+                        let bytes = (max_gb * 1024.0 * 1024.0 * 1024.0).round() as u64;
+                        *auto_prune_max_bytes = bytes;
+                    }
+
+                    ui.label("GB");
+
+                    ui.separator();
+
+                    ui.add_enabled(
+                        prune_on,
+                        egui::Checkbox::new(auto_prune_confirm, "Confirm before pruning"),
+                    )
+                    .on_hover_text(if prune_on {
+                        "Show a confirmation dialog before auto-pruning deletes recordings"
+                    } else if storage_on {
+                        "Tick 'Auto-prune when over' to configure this"
+                    } else {
+                        "Enable 'Auto-store recordings' to use auto-pruning"
+                    });
+                });
                 ui.add_space(4.0);
 
-                let filter = self.filter_text.to_lowercase();
+                let Some(entries) = &self.entries else {
+                    return;
+                };
+
+                let filter_identity = self.filter_text.to_lowercase();
+                let filter_min_points: Option<u64> = self.filter_min_points.parse().ok();
+                let filter_max_points: Option<u64> = self.filter_max_points.parse().ok();
+                let filter_from_us = date_to_start_us(&self.filter_date_from);
+                let filter_to_us = date_to_end_us(&self.filter_date_to);
+
                 let visible: Vec<&RecordingEntry> = entries
                     .iter()
                     .filter(|e| {
-                        filter.is_empty()
-                            || e.db_ref.identity.to_lowercase().contains(filter.as_str())
+                        if !filter_identity.is_empty()
+                            && !e
+                                .db_ref
+                                .identity
+                                .to_lowercase()
+                                .contains(filter_identity.as_str())
+                        {
+                            return false;
+                        }
+                        if filter_min_points.is_some_and(|min| e.meta.nav_point_count < min) {
+                            return false;
+                        }
+                        if filter_max_points.is_some_and(|max| e.meta.nav_point_count > max) {
+                            return false;
+                        }
+                        if filter_from_us.is_some_and(|from| e.meta.start_us < from) {
+                            return false;
+                        }
+                        if filter_to_us.is_some_and(|to| e.meta.start_us > to) {
+                            return false;
+                        }
+                        true
                     })
                     .collect();
 
@@ -348,7 +478,11 @@ impl HistoryWindow {
                             .striped(true)
                             .min_col_width(80.0)
                             .show(ui, |ui| {
-                                ui.strong("Identity");
+                                crate::terms::term_label(
+                                    ui,
+                                    egui::RichText::new("Identity").strong(),
+                                    crate::terms::IDENTITY,
+                                );
                                 ui.strong("Date");
                                 ui.strong("Duration");
                                 ui.strong("Points");
@@ -366,11 +500,16 @@ impl HistoryWindow {
                 let total_count = entries.len();
                 let total_size: u64 = entries.iter().map(|e| e.meta.nvd_size_bytes).sum();
                 ui.horizontal(|ui| {
+                    let rec_label = if total_count == 1 {
+                        "recording"
+                    } else {
+                        "recordings"
+                    };
                     ui.label(format!(
-                        "{total_count} recording(s) — {}",
+                        "{total_count} {rec_label} — {}",
                         format_size(total_size)
                     ));
-                    if !filter.is_empty() && visible.len() != total_count {
+                    if filter_active && visible.len() != total_count {
                         ui.weak(format!("({} shown)", visible.len()));
                     }
                 });
@@ -431,10 +570,13 @@ fn render_row(ui: &mut egui::Ui, entry: &RecordingEntry, action: &mut Option<His
 
 fn format_duration(dur: chrono::Duration) -> String {
     let total_secs = dur.num_seconds().max(0);
-    let h = total_secs / 3600;
+    let d = total_secs / 86400;
+    let h = (total_secs % 86400) / 3600;
     let m = (total_secs % 3600) / 60;
     let s = total_secs % 60;
-    if h > 0 {
+    if d > 0 {
+        format!("{d}d {h}h")
+    } else if h > 0 {
         format!("{h}h {m:02}m")
     } else if m > 0 {
         format!("{m}m {s:02}s")
@@ -456,4 +598,27 @@ fn format_size(bytes: u64) -> String {
     }
     let mb = bytes as f64 / (1_024.0 * 1_024.0);
     format!("{mb:.1} MB")
+}
+
+/// Parse a `YYYY-MM-DD` string into microseconds-since-epoch at the start of that day (UTC).
+/// Returns `None` if the string is empty or not a valid date.
+fn date_to_start_us(s: &str) -> Option<i64> {
+    if s.is_empty() {
+        return None;
+    }
+    let date = NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()?;
+    let dt = date.and_hms_opt(0, 0, 0)?.and_utc();
+    Some(dt.timestamp_micros())
+}
+
+/// Parse a `YYYY-MM-DD` string into microseconds-since-epoch at the end of that day (UTC),
+/// so the "to" bound is inclusive.
+/// Returns `None` if the string is empty or not a valid date.
+fn date_to_end_us(s: &str) -> Option<i64> {
+    if s.is_empty() {
+        return None;
+    }
+    let date = NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()?;
+    let dt = date.and_hms_opt(23, 59, 59)?.and_utc();
+    Some(dt.timestamp_micros())
 }

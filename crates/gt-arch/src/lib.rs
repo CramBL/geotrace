@@ -123,6 +123,8 @@ mod tests {
                     "core.*".into(),
                     "alloc.*".into(),
                     "chrono.*".into(),
+                    "egui.*".into(),
+                    "egui_kittest.*".into(),
                     "geo.*".into(),
                     "geo_types.*".into(),
                     "gt_types.*".into(),
@@ -130,6 +132,7 @@ mod tests {
                     "crate.*".into(),
                     "gt_test_utils.*".into(),
                     "fixtures.*".into(),
+                    "snapshot_harness.*".into(),
                 ]),
                 None,
             )

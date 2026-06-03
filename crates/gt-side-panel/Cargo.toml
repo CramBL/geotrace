@@ -21,7 +21,7 @@ uom.workspace = true
 [dev-dependencies]
 egui_kittest = { version = "0.34.3", features = ["wgpu", "snapshot"] }
 gt-data-ops = { path = "../gt-data-ops" }
-gt-test-utils = { path = "../gt-test-utils" }
+gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 
 [lints]
 workspace = true

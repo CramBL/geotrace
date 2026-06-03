@@ -22,8 +22,8 @@ walkers.workspace = true
 
 [dev-dependencies]
 egui_extras.workspace = true
-egui_kittest = { version = "0.34.3", features = ["wgpu", "snapshot"] }
-gt-test-utils = { path = "../gt-test-utils" }
+egui_kittest = { version = "0.34.3", features = ["wgpu"] }
+gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 strum.workspace = true
 
 [lints]

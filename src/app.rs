@@ -721,7 +721,10 @@ impl App {
             Ok(auto_prune::AutoPruneOutcome::PrunedSilently(n)) => {
                 self.history_window.invalidate();
                 self.toasts
-                    .info(format!("Auto-pruned {n} recording(s)"))
+                    .info(format!(
+                        "Auto-pruned {n} {}",
+                        if n == 1 { "recording" } else { "recordings" }
+                    ))
                     .duration(Some(std::time::Duration::from_secs(4)));
             }
             Ok(auto_prune::AutoPruneOutcome::NeedsConfirmation(candidates)) => {
@@ -764,8 +767,14 @@ impl App {
                 let count = refs.len();
                 match db.delete_batch(&refs) {
                     Ok(()) => {
-                        self.toasts
-                            .info(format!("Pruned {count} recording(s) from history"));
+                        self.toasts.info(format!(
+                            "Pruned {count} {} from history",
+                            if count == 1 {
+                                "recording"
+                            } else {
+                                "recordings"
+                            }
+                        ));
                         self.history_window.invalidate();
                     }
                     Err(e) => {
@@ -902,55 +911,64 @@ impl eframe::App for App {
 
         egui::Panel::top("top_panel").show_inside(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    if ui.button("Open…").clicked() {
-                        ui.close();
-                        self.loader.open_file_dialog();
-                    }
-                    ui.separator();
-                    if ui.button("Quit").clicked() {
-                        ui.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                });
-                ui.add_space(16.0);
+                // Left zone — file actions
+                if ui.button("Open…").clicked() {
+                    self.loader.open_file_dialog();
+                }
+
+                ui.separator();
+
+                // Center zone — view controls
                 {
-                    let label = format!("{} Plot", egui_phosphor::regular::CHART_LINE_UP);
                     let plot_visible = self.plot_is_visible();
-                    if ui.selectable_label(plot_visible, label).clicked() {
+                    if ui
+                        .selectable_label(
+                            plot_visible,
+                            format!("{} Plot", egui_phosphor::regular::CHART_LINE_UP),
+                        )
+                        .on_hover_text("Toggle plot panel")
+                        .clicked()
+                    {
                         self.toggle_plot();
                     }
                 }
                 {
                     let mut s = self.shared.borrow_mut();
-                    let label = format!("{} Sync", egui_phosphor::regular::LINK);
-                    ui.selectable_label(s.sync_plot_to_map, label)
-                        .on_hover_text("Sync plot time range to map viewport")
-                        .clicked()
-                        .then(|| s.sync_plot_to_map = !s.sync_plot_to_map);
+                    ui.selectable_label(
+                        s.sync_plot_to_map,
+                        format!("{} Sync", egui_phosphor::regular::LINK),
+                    )
+                    .on_hover_text("Sync plot time range to map viewport")
+                    .clicked()
+                    .then(|| s.sync_plot_to_map = !s.sync_plot_to_map);
                 }
-                ui.add_space(16.0);
-                {
-                    let label = format!(
-                        "{} History",
-                        egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE
-                    );
+
+                // Right zone — utility windows and preferences, trailing-aligned
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    egui::widgets::global_theme_preference_buttons(ui);
+
+                    ui.separator();
+
                     if ui
-                        .selectable_label(self.history_window.open, label)
+                        .selectable_label(self.settings_open, egui_phosphor::regular::GEAR)
+                        .on_hover_text("Settings")
+                        .clicked()
+                    {
+                        self.settings_open = !self.settings_open;
+                    }
+
+                    if ui
+                        .selectable_label(
+                            self.history_window.open,
+                            egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE,
+                        )
                         .on_hover_text("Browse and re-open previously recorded sessions")
                         .clicked()
                     {
                         self.history_window.open = !self.history_window.open;
                         self.history_window.invalidate();
                     }
-                }
-                {
-                    let label = format!("{} Settings", egui_phosphor::regular::GEAR);
-                    if ui.selectable_label(self.settings_open, label).clicked() {
-                        self.settings_open = !self.settings_open;
-                    }
-                }
-                ui.add_space(16.0);
-                egui::widgets::global_theme_preference_buttons(ui);
+                });
             });
         });
 
@@ -983,7 +1001,9 @@ impl eframe::App for App {
             // suspend event delivery when the child was minimised or occluded,
             // freezing both windows. The floating-window approach is fully
             // platform-independent.
-            let mut is_open = true;
+            let mut is_open = !ui
+                .ctx()
+                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             egui::Window::new("Track data")
                 .id(egui::Id::new("detached_panel"))
                 .open(&mut is_open)
@@ -1228,14 +1248,17 @@ impl eframe::App for App {
             let max_gb = self.auto_prune_max_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
             let n = refs.len();
             let mut do_prune = false;
-            let mut cancel = false;
+            let mut cancel = ui
+                .ctx()
+                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             egui::Window::new("Auto-prune")
                 .resizable(false)
                 .collapsible(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .show(ui.ctx(), |ui| {
+                    let rec_label = if n == 1 { "recording" } else { "recordings" };
                     ui.label(format!(
-                        "{n} recording(s) will be deleted to keep storage under {max_gb:.1} GB"
+                        "{n} {rec_label} will be deleted to keep storage under {max_gb:.1} GB"
                     ));
                     ui.add_space(4.0);
                     egui::ScrollArea::vertical()
@@ -1271,7 +1294,15 @@ impl eframe::App for App {
                         Ok(()) => {
                             self.history_window.invalidate();
                             self.toasts
-                                .info(format!("Auto-pruned {} recording(s)", candidates.len()))
+                                .info(format!(
+                                    "Auto-pruned {} {}",
+                                    candidates.len(),
+                                    if candidates.len() == 1 {
+                                        "recording"
+                                    } else {
+                                        "recordings"
+                                    }
+                                ))
                                 .duration(Some(std::time::Duration::from_secs(4)));
                         }
                         Err(e) => log::error!("Auto-prune failed: {e}"),

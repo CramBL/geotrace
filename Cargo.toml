@@ -213,6 +213,7 @@ uom.workspace = true
 [dev-dependencies]
 egui_kittest = { version = "0.34.3", features = ["eframe", "wgpu", "snapshot"] }
 geotrace-sdk = { path = "geotrace-sdks/geotrace-sdk" }
+gt-test-utils = { path = "crates/gt-test-utils", features = ["snapshot"] }
 tempfile = "3"
 
 [profile.release]

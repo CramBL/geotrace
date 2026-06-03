@@ -1,9 +1,13 @@
 pub mod fixtures;
+#[cfg(feature = "snapshot")]
+pub mod snapshot_harness;
 
 pub use fixtures::{
     marker_test_data, nav_data_with_gap, nav_points_from, nav_test_data, single_nav_point,
     stationary_nav_data,
 };
+#[cfg(feature = "snapshot")]
+pub use snapshot_harness::TestHarness;
 
 /// Asserts that a slice or Vec exactly matches a sequence of patterns, one per element.
 ///

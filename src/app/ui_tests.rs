@@ -6,6 +6,7 @@ use std::{
 
 use egui_kittest::Harness;
 use geotrace_sdk::{Angle, DateTime, Duration, NavFileBuilder, NavFix, Utc};
+use gt_test_utils::TestHarness;
 
 use super::App;
 
@@ -219,16 +220,8 @@ fn settings_window_closes_on_esc() {
     );
 }
 
-#[cfg(test)]
-fn skip_snapshot_on_ci() -> bool {
-    std::env::var("CI").is_ok() && !cfg!(target_os = "macos")
-}
-
 #[test]
 fn snapshot_settings_window() {
-    if skip_snapshot_on_ci() {
-        return;
-    }
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(600.0, 400.0))
@@ -236,14 +229,11 @@ fn snapshot_settings_window() {
     harness.step();
     harness.state_mut().settings_open = true;
     harness.run();
-    harness.snapshot("settings_window");
+    TestHarness::from_harness(harness).snapshot("settings_window");
 }
 
 #[test]
 fn snapshot_load_warnings_dialog() {
-    if skip_snapshot_on_ci() {
-        return;
-    }
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(1024.0, 768.0))
@@ -258,5 +248,5 @@ fn snapshot_load_warnings_dialog() {
         ],
     ));
     harness.run();
-    harness.snapshot("load_warnings_dialog");
+    TestHarness::from_harness(harness).snapshot("load_warnings_dialog");
 }

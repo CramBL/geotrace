@@ -38,6 +38,19 @@ When a button action requires more input after pressing, suffix it with `…`.
 
 Good: `Save recording…` (leads to a save-dialog)
 
+### Controls and conditional state
+
+Never hide or remove a control because another setting is off.
+Render it disabled (grayed out via `ui.add_enabled(false, …)`) and use hover text to explain why it is inactive and what the user needs to enable first.
+This keeps the layout stable and makes the feature discoverable — a hidden control teaches the user nothing.
+
+Good: DragValue grayed out, tooltip reads "Tick 'Auto-prune when over' to set a threshold"
+
+Bad: DragValue hidden when the auto-prune checkbox is unchecked
+
+Every interactive control should have hover text when it is disabled.
+Active controls should also have hover text when their purpose is not obvious from the label alone.
+
 ## GUI labels
 
 We do not use a colon suffix for labels in front of a value.

@@ -30,7 +30,8 @@ pub fn show_delete_confirmation(
     let mut do_delete = enter_pressed;
     let mut do_cancel = escape_pressed;
 
-    egui::Window::new(format!("Delete {count} item(s)?"))
+    let item_label = if count == 1 { "item" } else { "items" };
+    egui::Window::new(format!("Delete {count} {item_label}?"))
         .collapsible(false)
         .resizable(true)
         .min_width(420.0)
@@ -158,7 +159,10 @@ pub fn show_unassociated_popup(ui: &egui::Ui, lines: &mut Option<Vec<(DateTime<U
         return;
     };
     let count = unassociated.len();
-    let mut dismiss = false;
+    let escape_pressed = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    let mut dismiss = escape_pressed;
     egui::Window::new(format!("{count} log entries could not be associated"))
         .collapsible(false)
         .resizable(true)
@@ -199,7 +203,10 @@ pub fn show_orphaned_event_markers_popup(
     let enter_pressed = ui
         .ctx()
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-    let mut dismiss = enter_pressed;
+    let escape_pressed = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    let mut dismiss = enter_pressed || escape_pressed;
     egui::Window::new(format!("{count} event markers outside track range"))
         .collapsible(false)
         .resizable(true)
@@ -245,7 +252,6 @@ pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<
         .collapsible(false)
         .resizable(true)
         .min_width(480.0)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ui.ctx(), |ui| {
             ui.label(egui::RichText::new(filename.as_str()).strong());
             ui.separator();

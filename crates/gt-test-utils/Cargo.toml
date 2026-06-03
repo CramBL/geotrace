@@ -6,8 +6,13 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+snapshot = ["dep:egui", "dep:egui_kittest"]
+
 [dependencies]
 chrono.workspace = true
+egui = { workspace = true, optional = true }
+egui_kittest = { version = "0.34.3", features = ["wgpu", "snapshot"], optional = true }
 geo.workspace = true
 geo-types.workspace = true
 gt-types = { path = "../gt-types" }

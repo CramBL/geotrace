@@ -1,5 +1,6 @@
-use egui_kittest::{Harness, SnapshotOptions};
+use egui_kittest::Harness;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
+use gt_test_utils::TestHarness;
 use gt_types::{FileIdx, GlobalFilter, MapHighlight, TrackIdx, TrackRef};
 
 struct State {
@@ -86,34 +87,20 @@ fn make_harness(state: State) -> Harness<'static, State> {
         )
 }
 
-fn snapshot_options() -> SnapshotOptions {
-    SnapshotOptions::new().threshold(0.6)
-}
-
-fn skip_snapshot_on_ci() -> bool {
-    std::env::var("CI").is_ok() && !cfg!(target_os = "macos")
-}
-
 #[test]
 fn snapshot_collapsed_files() {
-    if skip_snapshot_on_ci() {
-        return;
-    }
     let mut harness = make_harness(make_state(2));
     harness.run();
-    harness.snapshot_options("side_panel_collapsed", &snapshot_options());
+    TestHarness::from_harness(harness).snapshot("side_panel_collapsed");
 }
 
 #[test]
 fn snapshot_one_file_expanded() {
-    if skip_snapshot_on_ci() {
-        return;
-    }
     let mut state = make_state(2);
     state.tree.toggle_expand_file(FileIdx::new(0));
     let mut harness = make_harness(state);
     harness.run();
-    harness.snapshot_options("side_panel_file_expanded", &snapshot_options());
+    TestHarness::from_harness(harness).snapshot("side_panel_file_expanded");
 }
 
 #[test]
@@ -165,9 +152,6 @@ fn expand_file_is_reflected_in_tree_state() {
 
 #[test]
 fn snapshot_file_with_warnings() {
-    if skip_snapshot_on_ci() {
-        return;
-    }
     let warnings = [
         "3 satellite(s) with PRN 0 — PRN 0 is reserved and undefined in NMEA".to_owned(),
         "2 satellite(s) with elevation > 90° — above the zenith, outside the valid NMEA range [0°, 90°]".to_owned(),
@@ -175,5 +159,5 @@ fn snapshot_file_with_warnings() {
     let state = make_state_with_warnings_on(2, 0, &warnings);
     let mut harness = make_harness(state);
     harness.run();
-    harness.snapshot_options("side_panel_file_with_warnings", &snapshot_options());
+    TestHarness::from_harness(harness).snapshot("side_panel_file_with_warnings");
 }

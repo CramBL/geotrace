@@ -96,6 +96,9 @@ impl Plugin for MarkerRenderer<'_> {
 
         // Show hover label for the hovered custom marker. Uses hover_candidates[2]
         // so the label appears even when a Tpv point is the primary hover.
+        // When a TPV tooltip is also visible (hover_candidates[0] is Some), draw
+        // the label above the icon to avoid overlapping the TPV tooltip which
+        // egui places below/right of the cursor.
         if let Some(r) = self.highlight.hover_candidates[2]
             && self.highlight.sticky != Some(r)
             && !ui.ctx().any_popup_open()
@@ -104,20 +107,58 @@ impl Plugin for MarkerRenderer<'_> {
             && let Some(marker) = r.point_index.get(&track.custom_markers)
         {
             let pos = transform.to_screen(marker.merc);
-            show_marker_hover_label(ui, marker, pos);
+            let tpv_also_hovered = self.highlight.hover_candidates[0].is_some();
+            show_marker_hover_label(ui, marker, pos, tpv_also_hovered);
         }
     }
 }
 
-/// Paint the marker's label directly onto the map canvas, below the icon.
-fn show_marker_hover_label(ui: &Ui, marker: &CustomMarker, pos: Pos2) {
-    let label_pos = pos + egui::vec2(0.0, 18.0);
-    let galley = ui.painter().layout_no_wrap(
-        marker.label.clone(),
-        egui::FontId::proportional(13.0),
-        Color32::WHITE,
-    );
-    let text_origin = egui::pos2(label_pos.x - galley.size().x / 2.0, label_pos.y);
+/// Paint the marker's label directly onto the map canvas.
+///
+/// When `tpv_also_hovered` is true, the TPV tooltip is also visible near the
+/// cursor.  To avoid overlap, the label is drawn above the icon instead of
+/// below.  If the label is too wide to share screen space alongside the tooltip
+/// it is replaced with a "cannot be shown" message that includes the metric.
+fn show_marker_hover_label(ui: &Ui, marker: &CustomMarker, pos: Pos2, tpv_also_hovered: bool) {
+    const MAX_LABEL_WIDTH: f32 = 120.0;
+    const FONT: egui::FontId = egui::FontId::proportional(13.0);
+
+    let (galley, y_offset) = if tpv_also_hovered {
+        let label_galley = ui
+            .painter()
+            .layout_no_wrap(marker.label.clone(), FONT, Color32::WHITE);
+        let w = label_galley.size().x;
+        if w > MAX_LABEL_WIDTH {
+            #[expect(
+                clippy::cast_sign_loss,
+                reason = "galley width and MAX_LABEL_WIDTH are always non-negative"
+            )]
+            let msg = format!(
+                "label cannot be shown (width {} > {} px)",
+                w.round() as u32,
+                MAX_LABEL_WIDTH.round() as u32
+            );
+            let fallback = ui.painter().layout_no_wrap(msg, FONT, Color32::WHITE);
+            (fallback, 18.0_f32)
+        } else {
+            (label_galley, -22.0_f32)
+        }
+    } else {
+        let galley = ui
+            .painter()
+            .layout_no_wrap(marker.label.clone(), FONT, Color32::WHITE);
+        (galley, 18.0_f32)
+    };
+
+    let label_pos = pos + egui::vec2(0.0, y_offset);
+    let text_origin = if y_offset < 0.0 {
+        egui::pos2(
+            label_pos.x - galley.size().x / 2.0,
+            label_pos.y - galley.size().y,
+        )
+    } else {
+        egui::pos2(label_pos.x - galley.size().x / 2.0, label_pos.y)
+    };
     let text_rect = egui::Rect::from_min_size(text_origin, galley.size());
     ui.painter().rect_filled(
         text_rect.expand(3.0),

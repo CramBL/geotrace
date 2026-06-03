@@ -1844,6 +1844,7 @@ dependencies = [
  "gt-map",
  "gt-plot",
  "gt-side-panel",
+ "gt-test-utils",
  "gt-types",
  "gt-ui-theme",
  "log",
@@ -2186,6 +2187,8 @@ name = "gt-test-utils"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "egui",
+ "egui_kittest",
  "geo",
  "geo-types",
  "gt-types",
