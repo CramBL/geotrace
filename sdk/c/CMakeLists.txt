@@ -33,7 +33,15 @@ endif()
 
 # ── Imported target ───────────────────────────────────────────────────────────
 
-add_library(GeoTrace::C SHARED IMPORTED GLOBAL)
+# On Windows we link against the static library (geotrace_c.lib produced by
+# Rust's staticlib crate type) to avoid DLL search-path complications.
+# On Linux/macOS we use the shared library and embed an RPATH in consumers.
+if(WIN32)
+    add_library(GeoTrace::C STATIC IMPORTED GLOBAL)
+else()
+    add_library(GeoTrace::C SHARED IMPORTED GLOBAL)
+endif()
+
 set_target_properties(GeoTrace::C PROPERTIES
     IMPORTED_LOCATION "${GEOTRACE_C_LIBRARY}"
     INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -47,9 +55,15 @@ install(FILES geotrace.h
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
 )
 
-install(IMPORTED_RUNTIME_ARTIFACTS GeoTrace::C
-    DESTINATION "${CMAKE_INSTALL_LIBDIR}"
-)
+if(WIN32)
+    install(FILES "${GEOTRACE_C_LIBRARY}"
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    )
+else()
+    install(IMPORTED_RUNTIME_ARTIFACTS GeoTrace::C
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+    )
+endif()
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/GeoTraceCConfig.cmake.in"

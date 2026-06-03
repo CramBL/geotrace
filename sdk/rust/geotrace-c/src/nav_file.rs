@@ -5,8 +5,8 @@ use geotrace_sdk::NavFile;
 
 use crate::error::{GtdStatus, run_catching_panics, set_last_error};
 use crate::{
-    GtdConstellation, GtdEventMarkerInfo, GtdNavPointInfo, GtdSatInfo,
-    opt_f64_none, opt_f64_some, ts_from_datetime,
+    GtdConstellation, GtdEventMarkerInfo, GtdNavPointInfo, GtdSatInfo, opt_f64_none, opt_f64_some,
+    ts_from_datetime,
 };
 
 /// Opaque handle for a parsed or freshly-built GeoTrace nav file.
@@ -82,7 +82,10 @@ pub unsafe extern "C" fn gtd_nav_file_to_bytes(
         *len_out = boxed.len();
         *buf_out = boxed.as_mut_ptr();
         // Transfer ownership to the C caller; gtd_free_bytes reconstructs the Box.
-        #[expect(clippy::mem_forget, reason = "intentionally leaking Box<[u8]> to transfer ownership to the C caller")]
+        #[expect(
+            clippy::mem_forget,
+            reason = "intentionally leaking Box<[u8]> to transfer ownership to the C caller"
+        )]
         std::mem::forget(boxed);
         GtdStatus::Ok
     })
@@ -204,12 +207,24 @@ pub unsafe extern "C" fn gtd_nav_file_get_nav_point(
             return GtdStatus::ErrNullArgument;
         };
 
-        out.gps_time = point.fix.gps_time.map_or(crate::gtd_ts_none(), ts_from_datetime);
-        out.sys_time = point.fix.sys_time.map_or(crate::gtd_ts_none(), ts_from_datetime);
+        out.gps_time = point
+            .fix
+            .gps_time
+            .map_or(crate::gtd_ts_none(), ts_from_datetime);
+        out.sys_time = point
+            .fix
+            .sys_time
+            .map_or(crate::gtd_ts_none(), ts_from_datetime);
         out.lat_deg = point.fix.lat.as_degrees();
         out.lon_deg = point.fix.lon.as_degrees();
-        out.heading_deg = point.fix.heading.map_or(opt_f64_none(), |h| opt_f64_some(h.as_degrees()));
-        out.speed_mps = point.fix.speed.map_or(opt_f64_none(), |s| opt_f64_some(s.as_meters_per_second()));
+        out.heading_deg = point
+            .fix
+            .heading
+            .map_or(opt_f64_none(), |h| opt_f64_some(h.as_degrees()));
+        out.speed_mps = point
+            .fix
+            .speed
+            .map_or(opt_f64_none(), |s| opt_f64_some(s.as_meters_per_second()));
         out.eph_m = point.fix.eph_m.map_or(opt_f64_none(), opt_f64_some);
         out.sat_count = point.satellites.as_ref().map_or(0, |r| r.tracked.len());
 
@@ -246,9 +261,15 @@ pub unsafe extern "C" fn gtd_nav_file_get_satellite(
         out.constellation = GtdConstellation::from(sat.constellation);
         out.prn = sat.prn;
         out.in_fix = u8::from(sat.in_fix);
-        out.elevation_deg = sat.elevation.map_or(opt_f64_none(), |v| opt_f64_some(f64::from(v)));
-        out.azimuth_deg = sat.azimuth.map_or(opt_f64_none(), |v| opt_f64_some(f64::from(v)));
-        out.snr_dbhz = sat.snr.map_or(opt_f64_none(), |v| opt_f64_some(f64::from(v)));
+        out.elevation_deg = sat
+            .elevation
+            .map_or(opt_f64_none(), |v| opt_f64_some(f64::from(v)));
+        out.azimuth_deg = sat
+            .azimuth
+            .map_or(opt_f64_none(), |v| opt_f64_some(f64::from(v)));
+        out.snr_dbhz = sat
+            .snr
+            .map_or(opt_f64_none(), |v| opt_f64_some(f64::from(v)));
 
         GtdStatus::Ok
     })
@@ -258,37 +279,63 @@ pub unsafe extern "C" fn gtd_nav_file_get_satellite(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_title(f: *const GtdNavFile) -> *const c_char {
-    if f.is_null() { return std::ptr::null(); }
+    if f.is_null() {
+        return std::ptr::null();
+    }
     // SAFETY: f is non-null; CString is stored in the handle for its lifetime
-    unsafe { (*f).title.as_ref().map_or(std::ptr::null(), |cs| cs.as_c_str().as_ptr()) }
+    unsafe {
+        (*f).title
+            .as_ref()
+            .map_or(std::ptr::null(), |cs| cs.as_c_str().as_ptr())
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_device(f: *const GtdNavFile) -> *const c_char {
-    if f.is_null() { return std::ptr::null(); }
+    if f.is_null() {
+        return std::ptr::null();
+    }
     // SAFETY: same as gtd_nav_file_title
-    unsafe { (*f).device.as_ref().map_or(std::ptr::null(), |cs| cs.as_c_str().as_ptr()) }
+    unsafe {
+        (*f).device
+            .as_ref()
+            .map_or(std::ptr::null(), |cs| cs.as_c_str().as_ptr())
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_notes(f: *const GtdNavFile) -> *const c_char {
-    if f.is_null() { return std::ptr::null(); }
+    if f.is_null() {
+        return std::ptr::null();
+    }
     // SAFETY: same as gtd_nav_file_title
-    unsafe { (*f).notes.as_ref().map_or(std::ptr::null(), |cs| cs.as_c_str().as_ptr()) }
+    unsafe {
+        (*f).notes
+            .as_ref()
+            .map_or(std::ptr::null(), |cs| cs.as_c_str().as_ptr())
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_identity(f: *const GtdNavFile) -> *const c_char {
-    if f.is_null() { return std::ptr::null(); }
+    if f.is_null() {
+        return std::ptr::null();
+    }
     // SAFETY: same as gtd_nav_file_title
-    unsafe { (*f).identity.as_ref().map_or(std::ptr::null(), |cs| cs.as_c_str().as_ptr()) }
+    unsafe {
+        (*f).identity
+            .as_ref()
+            .map_or(std::ptr::null(), |cs| cs.as_c_str().as_ptr())
+    }
 }
 
 // ── Event marker accessors ────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_event_marker_count(f: *const GtdNavFile) -> usize {
-    if f.is_null() { return 0; }
+    if f.is_null() {
+        return 0;
+    }
     // SAFETY: f is non-null
     unsafe { (*f).file.event_markers().len() }
 }

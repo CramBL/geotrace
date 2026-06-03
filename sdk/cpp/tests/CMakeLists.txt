@@ -15,7 +15,13 @@ set(GEOTRACE_CPP_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/../../c/tests/fixtures/min
 function(add_cpp_test name)
     add_executable(${name} ${name}.cpp)
     target_link_libraries(${name} PRIVATE GeoTrace::Cpp doctest::doctest)
-    target_compile_options(${name} PRIVATE -Wall -Wextra -Werror)
+
+    if(MSVC)
+        target_compile_options(${name} PRIVATE /W4 /WX)
+    else()
+        target_compile_options(${name} PRIVATE -Wall -Wextra -Werror)
+    endif()
+
     target_compile_definitions(${name} PRIVATE
         DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
     )
@@ -35,9 +41,15 @@ function(add_cpp_test name)
         endif()
     endif()
 
-    set_target_properties(${name} PROPERTIES
-        ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:GeoTrace::C>:$ENV{LD_LIBRARY_PATH}"
-    )
+    # On Unix, embed an RPATH so ctest can find the shared library without
+    # LD_LIBRARY_PATH / DYLD_LIBRARY_PATH.  On Windows, GeoTrace::C is a
+    # static library so there is no DLL to locate at runtime.
+    if(NOT WIN32)
+        set_target_properties(${name} PROPERTIES
+            BUILD_RPATH "$<TARGET_FILE_DIR:GeoTrace::C>"
+        )
+    endif()
+
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 

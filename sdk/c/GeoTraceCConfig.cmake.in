@@ -16,7 +16,13 @@ if(NOT GEOTRACE_C_LIBRARY)
     return()
 endif()
 
-add_library(GeoTrace::C SHARED IMPORTED)
+# On Windows we install and link against the static library.
+if(WIN32)
+    add_library(GeoTrace::C STATIC IMPORTED)
+else()
+    add_library(GeoTrace::C SHARED IMPORTED)
+endif()
+
 set_target_properties(GeoTrace::C PROPERTIES
     IMPORTED_LOCATION "${GEOTRACE_C_LIBRARY}"
     INTERFACE_INCLUDE_DIRECTORIES "${_gtc_prefix}/@CMAKE_INSTALL_INCLUDEDIR@"

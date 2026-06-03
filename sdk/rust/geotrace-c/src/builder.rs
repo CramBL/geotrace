@@ -1,14 +1,12 @@
 use std::ffi::c_char;
 
 use geotrace_sdk::{
-    Angle, Annotation, BuildError, EventMarker, EventMarkerColor, EventMarkerStyle,
-    NavFileBuilder, NavFileSink, SatelliteReport, Velocity,
+    Angle, Annotation, BuildError, EventMarker, EventMarkerColor, EventMarkerStyle, NavFileBuilder,
+    NavFileSink, SatelliteReport, Velocity,
 };
 
 use crate::error::{GtdStatus, run_catching_panics, set_last_error};
-use crate::{
-    GtdMarkerIcon, GtdNavFile, GtdOptF64, GtdSatellite, GtdTimestamp, ts_to_datetime,
-};
+use crate::{GtdMarkerIcon, GtdNavFile, GtdOptF64, GtdSatellite, GtdTimestamp, ts_to_datetime};
 
 /// Opaque handle for a file-under-construction.
 ///
@@ -54,36 +52,64 @@ impl GtdFileBuilder {
 
     fn set_title(&mut self, title: &str) -> GtdStatus {
         match self.builder.take() {
-            Some(b) => { self.builder = Some(b.with_title(title)); GtdStatus::Ok }
-            None => { set_last_error("metadata must be set before adding data"); GtdStatus::ErrInternal }
+            Some(b) => {
+                self.builder = Some(b.with_title(title));
+                GtdStatus::Ok
+            }
+            None => {
+                set_last_error("metadata must be set before adding data");
+                GtdStatus::ErrInternal
+            }
         }
     }
 
     fn set_device(&mut self, device: &str) -> GtdStatus {
         match self.builder.take() {
-            Some(b) => { self.builder = Some(b.with_device(device)); GtdStatus::Ok }
-            None => { set_last_error("metadata must be set before adding data"); GtdStatus::ErrInternal }
+            Some(b) => {
+                self.builder = Some(b.with_device(device));
+                GtdStatus::Ok
+            }
+            None => {
+                set_last_error("metadata must be set before adding data");
+                GtdStatus::ErrInternal
+            }
         }
     }
 
     fn set_notes(&mut self, notes: &str) -> GtdStatus {
         match self.builder.take() {
-            Some(b) => { self.builder = Some(b.with_notes(notes)); GtdStatus::Ok }
-            None => { set_last_error("metadata must be set before adding data"); GtdStatus::ErrInternal }
+            Some(b) => {
+                self.builder = Some(b.with_notes(notes));
+                GtdStatus::Ok
+            }
+            None => {
+                set_last_error("metadata must be set before adding data");
+                GtdStatus::ErrInternal
+            }
         }
     }
 
     fn set_identity(&mut self, identity: &str) -> GtdStatus {
         match self.builder.take() {
-            Some(b) => { self.builder = Some(b.with_identity(identity)); GtdStatus::Ok }
-            None => { set_last_error("metadata must be set before adding data"); GtdStatus::ErrInternal }
+            Some(b) => {
+                self.builder = Some(b.with_identity(identity));
+                GtdStatus::Ok
+            }
+            None => {
+                set_last_error("metadata must be set before adding data");
+                GtdStatus::ErrInternal
+            }
         }
     }
 
     fn set_lenient(&mut self) {
         match self.builder.take() {
-            Some(b) => { self.builder = Some(b.with_lenient_errors()); }
-            None => { set_last_error("lenient mode must be set before adding data"); }
+            Some(b) => {
+                self.builder = Some(b.with_lenient_errors());
+            }
+            None => {
+                set_last_error("lenient mode must be set before adding data");
+            }
         }
     }
 }
@@ -338,7 +364,9 @@ pub unsafe extern "C" fn gtd_builder_finish(
                 GtdStatus::ErrNoNavFixes
             }
             Err(BuildError::AnnotationsOutsideRange { count }) => {
-                set_last_error(format!("{count} annotation(s) fall outside the nav fix time range"));
+                set_last_error(format!(
+                    "{count} annotation(s) fall outside the nav fix time range"
+                ));
                 GtdStatus::ErrAnnotationsOob
             }
         }

@@ -6,8 +6,9 @@ thread_local! {
 }
 
 pub(crate) fn set_last_error(msg: impl std::fmt::Display) {
-    let s = CString::new(msg.to_string())
-        .unwrap_or_else(|_| CString::new("(error message contained a null byte)").unwrap_or_default());
+    let s = CString::new(msg.to_string()).unwrap_or_else(|_| {
+        CString::new("(error message contained a null byte)").unwrap_or_default()
+    });
     LAST_ERROR.with(|e| *e.borrow_mut() = Some(s));
 }
 
@@ -32,14 +33,14 @@ pub(crate) fn run_catching_panics<F: FnOnce() -> GtdStatus>(f: F) -> GtdStatus {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GtdStatus {
-    Ok                = 0,
-    ErrNullArgument   = 1,
-    ErrInvalidPath    = 2,
-    ErrNoNavFixes     = 3,
+    Ok = 0,
+    ErrNullArgument = 1,
+    ErrInvalidPath = 2,
+    ErrNoNavFixes = 3,
     ErrAnnotationsOob = 4,
-    ErrIo             = 5,
-    ErrHdf5           = 6,
-    ErrVersion        = 7,
-    ErrUtf8           = 8,
-    ErrInternal       = 99,
+    ErrIo = 5,
+    ErrHdf5 = 6,
+    ErrVersion = 7,
+    ErrUtf8 = 8,
+    ErrInternal = 99,
 }
