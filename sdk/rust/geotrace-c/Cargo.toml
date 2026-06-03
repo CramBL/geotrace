@@ -1,0 +1,21 @@
+[package]
+name = "geotrace-c"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+doctest = false
+test = false
+
+[[bin]]
+name = "gen_fixture"
+
+[dependencies]
+geotrace-sdk = { path = "../geotrace-sdk" }
+chrono.workspace = true
+
+[lints]
+workspace = true

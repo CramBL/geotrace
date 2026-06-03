@@ -491,7 +491,34 @@ mod tests {
             )
             .build();
 
-        // 10. gt_loader Isolation (Whitelist)
+        // 10. geotrace_c Isolation (Whitelist) — FFI layer; only touches geotrace_sdk and std
+        builder
+            .module_lint()
+            .lint_named("geotrace_c_isolation")
+            .matching(|m| m.module("^geotrace_c($|::.+)"))
+            .with_severity(Severity::Error)
+            .restrict_imports(
+                Some(vec![
+                    "^$".into(),
+                    "std.*".into(),
+                    "core.*".into(),
+                    "alloc.*".into(),
+                    "chrono.*".into(),
+                    "geotrace_sdk.*".into(),
+                    "crate.*".into(),
+                    "super.*".into(),
+                    "geotrace_c.*".into(),
+                    // Sub-module shorthands used by the compiler
+                    "builder.*".into(),
+                    "error.*".into(),
+                    "macros.*".into(),
+                    "nav_file.*".into(),
+                ]),
+                None,
+            )
+            .build();
+
+        // 11. gt_loader Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_loader_isolation")

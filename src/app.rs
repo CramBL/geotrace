@@ -1073,7 +1073,7 @@ impl eframe::App for App {
                 let btn_size = egui::vec2(28.0, 22.0);
                 let btn_rect = egui::Rect::from_min_size(
                     egui::pos2(
-                        panel_rect.max.x - btn_size.x - 8.0,
+                        panel_rect.min.x + 8.0,
                         panel_rect.max.y - btn_size.y - 8.0,
                     ),
                     btn_size,

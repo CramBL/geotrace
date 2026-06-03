@@ -1859,6 +1859,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "geotrace-c"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "geotrace-sdk",
+]
+
+[[package]]
 name = "geotrace-sdk"
 version = "0.1.0"
 dependencies = [
