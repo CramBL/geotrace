@@ -60,16 +60,16 @@ pub struct App {
     orphaned_event_markers: Option<Vec<(chrono::DateTime<chrono::Utc>, String)>>,
     mapbox_token_input: String,
 
-    /// Egui context — cloned into background threads for `request_repaint`.
+    /// Egui context - cloned into background threads for `request_repaint`.
     ctx: egui::Context,
     /// Manages background load threads and the file-picker dialog thread.
     loader: LoaderManager,
 
-    /// Tiles tree for the central area — map (top) and plot (bottom).
+    /// Tiles tree for the central area - map (top) and plot (bottom).
     tiles_tree: Tree<MainPane>,
-    /// TileId of the map pane — used to read/write the split ratio.
+    /// TileId of the map pane - used to read/write the split ratio.
     map_tile_id: TileId,
-    /// TileId of the plot pane — toggled visible/invisible via the menu button.
+    /// TileId of the plot pane - toggled visible/invisible via the menu button.
     plot_tile_id: TileId,
 
     /// Detects settings changes and drives debounced write-through to disk.
@@ -77,12 +77,12 @@ pub struct App {
 
     /// Whether the Settings window is currently open.
     settings_open: bool,
-    /// Active segmentation config — applied to all new file loads and re-segmentation.
+    /// Active segmentation config - applied to all new file loads and re-segmentation.
     processing_config: SegmentationConfig,
-    /// Active association config — applied to all new log loads.
+    /// Active association config - applied to all new log loads.
     assoc_config: AssociationConfig,
 
-    /// History database — `None` if the database could not be opened at startup.
+    /// History database - `None` if the database could not be opened at startup.
     db: Option<gt_history::Database>,
 
     /// When `false`, NVD files are not stored in the history database on load.
@@ -100,7 +100,7 @@ pub struct App {
     /// History window state.
     history_window: history::HistoryWindow,
 
-    /// Toast notification queue — rendered every frame over the top of all content.
+    /// Toast notification queue - rendered every frame over the top of all content.
     toasts: egui_notify::Toasts,
 }
 
@@ -236,7 +236,7 @@ impl App {
         app
     }
 
-    /// Collect a snapshot of all currently loaded GPS points — used by log-file
+    /// Collect a snapshot of all currently loaded GPS points - used by log-file
     /// loaders so they can associate log timestamps with the existing GPS track.
     fn snapshot_nav_points(&self) -> Vec<NavPoint> {
         let s = self.shared.borrow();
@@ -354,7 +354,7 @@ impl App {
                             "Maximum time between a log entry's timestamp and the nearest \
                              GPS fix for the entry to be placed on the map. For example, \
                              with a window of 60 s, a log line at 10:00:30 can associate \
-                             with a fix from 10:00:00 — but not one from 09:59:00.",
+                             with a fix from 10:00:00 - but not one from 09:59:00.",
                         );
                         let mut window_s = self.assoc_config.log_marker_window_s.clamp(1, 3600);
                         ui.horizontal(|ui| {
@@ -537,7 +537,7 @@ impl App {
 
     fn flush_settings(&self) {
         let Some(path) = crate::settings::settings_path() else {
-            log::warn!("Config directory unavailable — settings not saved");
+            log::warn!("Config directory unavailable - settings not saved");
             return;
         };
         let current = self.collect_settings_for_flush();
@@ -554,7 +554,7 @@ impl App {
             log::warn!("Failed to create config dir {dir:?}: {e:#}");
             return;
         }
-        let header = "# GeoTrace configuration — generated automatically.\n\
+        let header = "# GeoTrace configuration - generated automatically.\n\
                       # WARNING: do not commit this file to a public repository if mapbox_token is set.\n\n";
         let full_text = format!("{header}{text}");
         let tmp = path.with_extension("toml.tmp");
@@ -869,7 +869,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
     }
 
     fn simplification_options(&self) -> SimplificationOptions {
-        // Do not auto-prune single-child or empty containers — this keeps the
+        // Do not auto-prune single-child or empty containers - this keeps the
         // root Linear alive when the plot is hidden so the plot tile can be
         // re-added to children without rebuilding the whole tree.
         SimplificationOptions {
@@ -924,12 +924,12 @@ impl eframe::App for App {
 
         egui::Panel::top("top_panel").show_inside(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                // Left zone — file actions
+                // Left zone - file actions
                 if ui.button("Open…").clicked() {
                     self.loader.open_file_dialog();
                 }
 
-                // Right zone — utility windows and preferences, trailing-aligned
+                // Right zone - utility windows and preferences, trailing-aligned
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     egui::widgets::global_theme_preference_buttons(ui);
 
@@ -1097,7 +1097,7 @@ impl eframe::App for App {
             show_mapbox_token_dialog(ui, &mut self.map, &mut self.mapbox_token_input);
         }
 
-        // Loading progress overlay — floats in the bottom-right corner.
+        // Loading progress overlay - floats in the bottom-right corner.
         // Shows in-flight jobs with a live elapsed timer, and recently completed
         // jobs that fade out over ~3 seconds so the user can see how long it took.
         let any_finishing = !self.loader.finishing_jobs.is_empty();

@@ -15,7 +15,7 @@ pub fn to_linestring(tpvs: &[TimePositionVelocity]) -> geo_types::LineString<f64
 ///
 /// `sys_time` is the host system-clock timestamp at the moment of the fix, when
 /// available. Use [`GpsTime::offset_from_sys`] to compute the GPS/system-clock
-/// offset — direct arithmetic between the two fields is a compile-time error.
+/// offset - direct arithmetic between the two fields is a compile-time error.
 #[derive(bon::Builder, Debug, Clone, Copy)]
 pub struct TimePositionVelocity {
     pub(crate) time: GpsTime,

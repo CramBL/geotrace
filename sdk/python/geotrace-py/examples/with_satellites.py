@@ -21,7 +21,7 @@ from geotrace_sdk import (
 )
 START = datetime(2024, 3, 10, 14, 0, 0, tzinfo=UTC)
 
-# Short urban loop — roughly Southwark, London.
+# Short urban loop - roughly Southwark, London.
 FIXES = [
     # (seconds, lat,     lon,      heading, speed_mps, eph_m)
     (0, 51.5030, -0.0978, 5.0, 0.0, 4.2),

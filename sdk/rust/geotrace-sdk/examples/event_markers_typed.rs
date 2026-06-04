@@ -14,7 +14,7 @@
 //!
 //! By default, `#[derive(EventKind)]` uses the `Debug` representation of the
 //! event value as the marker note.  Calling `add_event` is therefore enough to
-//! get a human-readable note in the file — no separate string is needed.
+//! get a human-readable note in the file - no separate string is needed.
 //! `add_event_with_note` overrides the automatic note for that one instance.
 //!
 //! Use `#[event_kind(note = none)]` on an enum to opt out entirely, or
@@ -115,7 +115,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         t("2024-06-01T08:00:18Z"),
         "EPO applied",
     );
-    // No note argument — Debug representation is used automatically as the note.
+    // No note argument - Debug representation is used automatically as the note.
     sink.add_event(
         &Event::Sensor(SensorEvent::Gps(GpsEvent::LockAcquired)),
         t("2024-06-01T08:00:20Z"),
@@ -157,7 +157,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     for em in loaded.event_markers() {
         let note = em.annotation.as_deref().unwrap_or("—");
         println!(
-            "  {:<40}  {:.5}, {:.5}  — {note}",
+            "  {:<40}  {:.5}, {:.5}  - {note}",
             em.variant_path,
             em.lat.as_degrees(),
             em.lon.as_degrees()

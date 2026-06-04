@@ -17,7 +17,7 @@ pub(crate) struct TrackSeries {
     pub label: String,
     /// Precomputed `(x_min, x_max)` in Unix seconds, or `None` when the track
     /// has no points.  Computed once at build time from the first and last
-    /// point timestamps — O(1) field access vs the previous `find_map` over
+    /// point timestamps - O(1) field access vs the previous `find_map` over
     /// eight mipmaps.
     pub x_range: Option<(f64, f64)>,
     pub total_seen: MipMap,
@@ -42,7 +42,7 @@ pub(crate) struct TrackSeries {
 /// Build mipmap series for every track in a single file, using `fi` as the file
 /// index (for cache keying).
 ///
-/// No visibility check or time filter is applied — that is done at render time
+/// No visibility check or time filter is applied - that is done at render time
 /// so the cache stays valid across filter changes without a rebuild.
 pub(crate) fn build_file_series(fi: usize, file: &LoadedFile) -> Vec<TrackSeries> {
     file.tracks

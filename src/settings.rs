@@ -4,7 +4,7 @@ use std::{collections::HashMap, path::PathBuf};
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// Schema version — always written as 1; reserved for future migrations.
+    /// Schema version - always written as 1; reserved for future migrations.
     pub version: u32,
     pub plot: PlotSettings,
     pub map: MapSettings,
@@ -174,7 +174,7 @@ pub fn settings_path() -> Option<PathBuf> {
 /// Load settings from disk, falling back to defaults on any error.
 pub fn load_settings() -> Settings {
     let Some(path) = settings_path() else {
-        log::warn!("Config directory unavailable — using defaults");
+        log::warn!("Config directory unavailable - using defaults");
         return Settings::default();
     };
     let Ok(text) = std::fs::read_to_string(&path) else {
@@ -183,7 +183,7 @@ pub fn load_settings() -> Settings {
     match toml::from_str::<Settings>(&text) {
         Ok(s) => s,
         Err(e) => {
-            log::warn!("Config parse error in {path:?}: {e:#} — using defaults");
+            log::warn!("Config parse error in {path:?}: {e:#} - using defaults");
             Settings::default()
         }
     }

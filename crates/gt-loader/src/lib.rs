@@ -4,10 +4,10 @@ pub use error::LoadError;
 /// Derive a stable grouping identity from NVD file metadata.
 ///
 /// Priority:
-/// 1. Explicit SDK-supplied identity — returned as-is.
-/// 2. `meta_title` and/or `meta_device` — combined as `auto:title::device`,
+/// 1. Explicit SDK-supplied identity - returned as-is.
+/// 2. `meta_title` and/or `meta_device` - combined as `auto:title::device`,
 ///    `auto:title`, or `auto:device`.
-/// 3. Filename fallback — `auto:<filename>`.
+/// 3. Filename fallback - `auto:<filename>`.
 pub fn derive_identity(
     explicit: Option<&str>,
     title: Option<&str>,

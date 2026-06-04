@@ -72,7 +72,7 @@ impl Plugin for TrackRenderer<'_> {
         // then two f64 multiplies + two f64 adds with no large-value cancellation.
         let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
-        // Viewport bounds in Mercator space — used to skip tracks that are
+        // Viewport bounds in Mercator space - used to skip tracks that are
         // entirely outside the visible area without iterating any points.
         let view_rect = ui.max_rect();
         let vp_bounds = MercBounds {
@@ -152,7 +152,7 @@ impl Plugin for TrackRenderer<'_> {
 /// are rendered as dashed lines and real edges as solid lines.
 ///
 /// An edge is ghost when either endpoint is a ghost fix, so the dashed region
-/// extends one segment on each side of every ghost point — ensuring the
+/// extends one segment on each side of every ghost point - ensuring the
 /// visual uncertainty is clear even at the real→ghost boundary.
 fn draw_track_with_ghost(painter: &egui::Painter, pts: &[(bool, egui::Pos2)], stroke: Stroke) {
     if pts.len() < 2 {

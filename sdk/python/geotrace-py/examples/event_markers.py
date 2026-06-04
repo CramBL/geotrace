@@ -3,7 +3,7 @@
 
 Scenario: a device logs structured events alongside its GPS track.
 Each event has a slash-separated variant path that places it in a
-hierarchy — e.g. ``"connectivity/agps/request"`` — so GeoTrace can
+hierarchy - e.g. ``"connectivity/agps/request"`` - so GeoTrace can
 group and filter them by prefix in the Events panel.
 
 Event markers are added via ``builder.add()``.
@@ -75,6 +75,6 @@ print(f"Styles       : {len(loaded.event_marker_styles)}")
 print()
 for em in loaded.event_markers:
     note = em.annotation or "—"
-    print(f"  [{em.variant_path}]  {em.lat:.5f}, {em.lon:.5f}  — {note}")
+    print(f"  [{em.variant_path}]  {em.lat:.5f}, {em.lon:.5f}  - {note}")
 
 out.unlink()

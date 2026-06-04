@@ -280,7 +280,7 @@ pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<
 }
 
 pub fn show_mapbox_token_dialog(ui: &egui::Ui, map: &mut NavMap, token_input: &mut String) {
-    // ESC dismisses the dialog — same effect as the cancel button.
+    // ESC dismisses the dialog - same effect as the cancel button.
     let esc_pressed = ui
         .ctx()
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
@@ -309,13 +309,13 @@ pub fn show_mapbox_token_dialog(ui: &egui::Ui, map: &mut NavMap, token_input: &m
                     map.set_mapbox_token(std::mem::take(token_input));
                 }
             });
-            if ui.button("Cancel — use OpenStreetMap").clicked() {
+            if ui.button("Cancel - use OpenStreetMap").clicked() {
                 map.set_layer(MapLayer::OpenStreetMap);
                 token_input.clear();
             }
         });
 
-    // X button in the title bar was clicked — treat as cancel.
+    // X button in the title bar was clicked - treat as cancel.
     if !open {
         map.set_layer(MapLayer::OpenStreetMap);
         token_input.clear();

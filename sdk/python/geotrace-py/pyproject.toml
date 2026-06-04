@@ -6,7 +6,7 @@ build-backend = "maturin"
 name = "geotrace-sdk"
 version = "0.1.0"
 requires-python = ">=3.12"
-description = "Python bindings for geotrace-sdk — read and write .nvd navigation data files"
+description = "Python bindings for geotrace-sdk - read and write .nvd navigation data files"
 license = { text = "MIT" }
 classifiers = [
     "Programming Language :: Rust",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Type-safe event markers using the @event_kind decorator — nested (3-level) case.
+"""Type-safe event markers using the @event_kind decorator - nested (3-level) case.
 
 Inner classes become intermediate path segments.
 The full path is built by concatenating the snake_case attribute names from
@@ -69,7 +69,7 @@ nav_file.write_to_file(out)
 loaded = nav_file.__class__.open(out)
 print(f"Event markers: {len(loaded.event_markers)}")
 for em in loaded.event_markers:
-    note = f"  — {em.annotation}" if em.annotation else ""
+    note = f"  - {em.annotation}" if em.annotation else ""
     print(f"  {em.variant_path}{note}")
 
 out.unlink()

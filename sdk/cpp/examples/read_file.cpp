@@ -45,7 +45,7 @@ int main(int argc, char** argv) {
                 auto m = file.event_marker(i);
                 std::cout << "  [" << i << "] " << m.variant_path;
                 if (!m.annotation.empty())
-                    std::cout << " — " << m.annotation;
+                    std::cout << " - " << m.annotation;
                 std::cout << "\n";
             }
         }

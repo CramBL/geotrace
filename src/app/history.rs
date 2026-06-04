@@ -197,7 +197,7 @@ impl PruneDialog {
 
 pub struct HistoryWindow {
     pub open: bool,
-    /// Cached recording list — `None` until the window is first shown.
+    /// Cached recording list - `None` until the window is first shown.
     entries: Option<Vec<RecordingEntry>>,
     /// Identity substring filter (case-insensitive).
     filter_text: String,
@@ -305,7 +305,7 @@ impl HistoryWindow {
                 }
 
                 // Snapshot filter active state before the closures that mutably
-                // borrow individual filter fields — avoids whole-self method calls
+                // borrow individual filter fields - avoids whole-self method calls
                 // inside closures where `entries` also holds an immutable borrow.
                 let filter_active = self.any_filter_active();
 
@@ -358,7 +358,7 @@ impl HistoryWindow {
                     }
                 });
 
-                // Auto-prune settings — separated because this is a persistent
+                // Auto-prune settings - separated because this is a persistent
                 // setting, not a filter or list entry.  Always rendered so the
                 // layout stays stable; controls are grayed out when inactive,
                 // with hover text explaining what to enable first.
@@ -386,7 +386,7 @@ impl HistoryWindow {
                             .speed(0.1),
                     )
                     .on_hover_text(if prune_on {
-                        "Storage limit — oldest recordings are pruned when this is exceeded"
+                        "Storage limit - oldest recordings are pruned when this is exceeded"
                     } else if storage_on {
                         "Tick 'Auto-prune when over' to set a threshold"
                     } else {
@@ -506,7 +506,7 @@ impl HistoryWindow {
                         "recordings"
                     };
                     ui.label(format!(
-                        "{total_count} {rec_label} — {}",
+                        "{total_count} {rec_label} - {}",
                         format_size(total_size)
                     ));
                     if filter_active && visible.len() != total_count {

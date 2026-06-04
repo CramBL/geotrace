@@ -1,6 +1,6 @@
 //! Feed custom domain types into the SDK using `From` trait implementations.
 //!
-//! **Scenario**: your application already owns its GPS data structs — produced by
+//! **Scenario**: your application already owns its GPS data structs - produced by
 //! a hardware driver, a third-party library, or your own domain model.
 //! Rather than reconstructing each field through SDK builders at every call site,
 //! implement `From` for each SDK type once.
@@ -14,7 +14,7 @@ use geotrace_sdk::{
     SatelliteReport, Timestamp, Velocity,
 };
 
-// Your existing domain types — not SDK types.
+// Your existing domain types - not SDK types.
 
 struct GpsFix {
     unix_ms: u64,
@@ -51,7 +51,7 @@ struct LogEntry {
     text: String,
 }
 
-// One-time From implementations — written once, called nowhere explicitly.
+// One-time From implementations - written once, called nowhere explicitly.
 
 impl From<GpsFix> for NavFix {
     fn from(f: GpsFix) -> Self {
@@ -110,7 +110,7 @@ impl From<LogEntry> for Annotation {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // 2024-06-15 08:00:00 UTC — 6 fixes at 30 s intervals, Copenhagen area.
+    // 2024-06-15 08:00:00 UTC - 6 fixes at 30 s intervals, Copenhagen area.
     const BASE_MS: u64 = 1_718_438_400_000;
 
     let fixes = vec![
@@ -263,7 +263,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let out = env::temp_dir().join("geotrace_from_domain_types.gtd");
     nav_file.write_to_file(&out)?;
     println!(
-        "{} fixes, {} satellite reports, {} annotations — written to {out:?}",
+        "{} fixes, {} satellite reports, {} annotations - written to {out:?}",
         nav_file.nav_points().len(),
         nav_file
             .nav_points()

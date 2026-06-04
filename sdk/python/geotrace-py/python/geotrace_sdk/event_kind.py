@@ -1,4 +1,4 @@
-"""``event_kind`` — class decorator for type-safe event-kind derivation."""
+"""``event_kind`` - class decorator for type-safe event-kind derivation."""
 
 from __future__ import annotations
 

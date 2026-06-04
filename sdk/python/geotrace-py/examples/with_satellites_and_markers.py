@@ -56,14 +56,14 @@ SATS = [
 ANNOTATIONS = [
     # (seconds, label,                    icon)
     (7, "Start of roadworks", MarkerIcon.WARNING),
-    (18, "Pothole — surface damage", MarkerIcon.ERROR),
+    (18, "Pothole - surface damage", MarkerIcon.ERROR),
     (27, "Speed camera", MarkerIcon.LIGHTNING),
     (38, "Kennington junction", MarkerIcon.PIN),
 ]
 
 builder = (
     NavFileBuilder()
-    .with_title("A3 Southbound — field test")
+    .with_title("A3 Southbound - field test")
     .with_device("u-blox ZED-F9P")
     .with_notes("Engineer annotations recorded via tablet app")
 )

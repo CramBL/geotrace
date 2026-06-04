@@ -1,6 +1,6 @@
 /// Implemented by enums to produce a slash-separated variant path string.
 ///
-/// Use `#[derive(EventKind)]` — the trait is sealed so manual implementations
+/// Use `#[derive(EventKind)]` - the trait is sealed so manual implementations
 /// are not possible.  Each variant's name is converted to `snake_case` and
 /// becomes one segment of the path.  Nested enums produce paths like
 /// `"power/boot"` or `"connectivity/agps/request"` by chaining segments.
@@ -20,7 +20,7 @@
 /// | Attribute | Effect |
 /// |-----------|--------|
 /// | *(none)* / `#[event_kind(strict)]` | Single-field tuple variants **delegate** to the inner type by default (compile error if the inner type does not implement `EventKind`). This is the default. |
-/// | `#[event_kind(lax)]` | Single-field tuple variants are **leaves** by default — they emit only their own segment and do not call into the inner type.  Use `#[event_kind(delegate)]` on specific variants to opt into delegation. |
+/// | `#[event_kind(lax)]` | Single-field tuple variants are **leaves** by default - they emit only their own segment and do not call into the inner type.  Use `#[event_kind(delegate)]` on specific variants to opt into delegation. |
 ///
 /// ## Variant-level
 ///
@@ -32,7 +32,7 @@
 /// | `#[event_kind(leaf)]` | Always emit only this variant's segment; never delegate, even if the inner type implements `EventKind`. |
 /// | `#[event_kind(delegate)]` | Always delegate to the inner `EventKind` implementation, appending its path after this variant's segment.  Required in `lax` mode when you *do* want delegation. |
 /// | `#[event_kind(skip)]` | `variant_path()` returns `None` for this variant; `add_event` silently ignores it. |
-/// | `#[event_kind(icon = <Name>)]` | Sets the [`MarkerIcon`](crate::MarkerIcon) for this variant.  `<Name>` must be a variant of `MarkerIcon` (e.g. `Warning`, `Check`).  Has no effect on delegating variants — their icon comes from the inner type's leaf. |
+/// | `#[event_kind(icon = <Name>)]` | Sets the [`MarkerIcon`](crate::MarkerIcon) for this variant.  `<Name>` must be a variant of `MarkerIcon` (e.g. `Warning`, `Check`).  Has no effect on delegating variants - their icon comes from the inner type's leaf. |
 ///
 /// # Example
 ///
@@ -45,7 +45,7 @@
 /// #[derive(EventKind)]
 /// enum Event {
 ///     Power(PowerEvent),
-///     Debug(String),  // compile error — String: !EventKind
+///     Debug(String),  // compile error - String: !EventKind
 /// }
 ///
 /// #[derive(EventKind)]
@@ -97,13 +97,13 @@ pub trait EventKind: __private::Sealed {
     ///
     /// | Attribute | Behaviour |
     /// |-----------|-----------|
-    /// | *(none)* / `#[event_kind(note = debug)]` | `Some(format!("{self:?}"))` — requires `Debug`. This is the default. |
-    /// | `#[event_kind(note = display)]` | `Some(format!("{self}"))` — requires `Display`. |
+    /// | *(none)* / `#[event_kind(note = debug)]` | `Some(format!("{self:?}"))` - requires `Debug`. This is the default. |
+    /// | `#[event_kind(note = display)]` | `Some(format!("{self}"))` - requires `Display`. |
     /// | `#[event_kind(note = none)]` | Always `None`; no note is stored. |
     ///
     /// For a one-off custom note on a specific event instance use
     /// [`NavFileSink::add_event_with_note`](crate::NavFileSink::add_event_with_note)
-    /// directly — it overrides `event_note` entirely.
+    /// directly - it overrides `event_note` entirely.
     fn event_note(&self) -> Option<String> {
         None
     }
@@ -114,7 +114,7 @@ pub trait EventKind: __private::Sealed {
 /// Not part of the public API; subject to change without notice.
 #[doc(hidden)]
 pub mod __private {
-    /// Sealing trait — implemented only by the `#[derive(EventKind)]` macro.
+    /// Sealing trait - implemented only by the `#[derive(EventKind)]` macro.
     /// Prevents external code from implementing `EventKind` by hand.
     pub trait Sealed {}
 }

@@ -41,7 +41,7 @@ pub struct FinishedJob {
     pub filename: String,
     /// Total wall-clock time the job took, frozen at the moment of completion.
     pub elapsed_secs: f32,
-    /// When the job completed — used to drive the fade-out animation.
+    /// When the job completed - used to drive the fade-out animation.
     pub completed_at: std::time::Instant,
 }
 
@@ -74,13 +74,13 @@ pub enum LoadOutcome {
     reason = "Completed carries a full LoadOutcome by design; boxing would add an allocation on the infrequent completion path"
 )]
 pub enum LoadMessage {
-    /// Intermediate progress update — does not indicate completion.
+    /// Intermediate progress update - does not indicate completion.
     Progress {
         id: u64,
         fraction: f32,
         stage: &'static str,
     },
-    /// The job is finished — either a usable result or an error string.
+    /// The job is finished - either a usable result or an error string.
     Completed {
         id: u64,
         outcome: Result<LoadOutcome, String>,
@@ -570,7 +570,7 @@ pub(super) fn build_log_loaded_file(
 /// log loader threads after file content has been obtained.
 #[expect(
     clippy::too_many_arguments,
-    reason = "log loading inherently needs thread ID, file context, IPC channel, progress callback, association config, and source — grouping would obscure rather than clarify"
+    reason = "log loading inherently needs thread ID, file context, IPC channel, progress callback, association config, and source - grouping would obscure rather than clarify"
 )]
 fn finish_log_load(
     id: u64,

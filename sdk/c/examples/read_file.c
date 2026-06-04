@@ -52,7 +52,7 @@ int main(int argc, char **argv) {
             GtdEventMarkerInfo m;
             if (gtd_nav_file_get_event_marker(f, i, &m) != GTD_OK) continue;
             printf("  [%zu] %s", i, m.variant_path);
-            if (m.has_annotation) printf(" — %s", m.annotation);
+            if (m.has_annotation) printf(" - %s", m.annotation);
             printf("\n");
         }
     }

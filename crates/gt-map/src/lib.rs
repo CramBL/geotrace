@@ -51,7 +51,7 @@ impl MercTransform {
     /// Build the transform for the current frame.
     ///
     /// `clip_center` must be `ui.max_rect().center()` inside a plugin's
-    /// `run()` method — walkers sets the child UI rect to the map widget rect,
+    /// `run()` method - walkers sets the child UI rect to the map widget rect,
     /// which is also `projector`'s clip rect, so `clip_center` equals
     /// `projector.clip_rect.center()`.
     pub(crate) fn new(
@@ -133,7 +133,7 @@ pub(crate) const ICON_URI_GHOST_FIX: &str = "bytes://gt-map/icons/ghost_fix.svg"
 /// implementation, **after** [`egui_extras::install_image_loaders`] has been
 /// called. The icons are compiled into the binary via `include_bytes!` and
 /// cached by egui's texture system after their first rasterisation; subsequent
-/// frames pay only a GPU quad draw — no CPU tessellation, no heap allocation.
+/// frames pay only a GPU quad draw - no CPU tessellation, no heap allocation.
 macro_rules! icon_bytes {
     ($name:literal) => {
         include_bytes!(concat!(
@@ -347,7 +347,7 @@ pub struct NavMap {
     /// Screen position where the last sticky click happened; used as the
     /// default position for the sticky info window.
     sticky_pos: egui::Pos2,
-    /// How many files were loaded last frame — used to detect new loads.
+    /// How many files were loaded last frame - used to detect new loads.
     last_file_count: usize,
     /// Load-highlight pulse animation state.
     blink: BlinkState,
@@ -469,7 +469,7 @@ impl NavMap {
     )]
     #[expect(
         clippy::cognitive_complexity,
-        reason = "draw orchestrates viewport query, plugin wiring, hover, click, and popup — splitting would obscure the data flow"
+        reason = "draw orchestrates viewport query, plugin wiring, hover, click, and popup - splitting would obscure the data flow"
     )]
     pub fn draw(
         &mut self,
@@ -663,7 +663,7 @@ impl NavMap {
             None
         };
 
-        // Layer toggle — floating panel anchored to the bottom-right of the map.
+        // Layer toggle - floating panel anchored to the bottom-right of the map.
 
         egui::Area::new(egui::Id::new("map_layer_toggle"))
             .fixed_pos(egui::pos2(map_rect.right() - 8.0, map_rect.bottom() - 8.0))
@@ -779,7 +779,7 @@ impl NavMap {
         let mut context_action: Option<MapContextAction> = None;
         map_response.context_menu(|ui| {
             let Some(point_ref) = right_click_ref else {
-                // Right-clicked on empty map space — nothing to show.
+                // Right-clicked on empty map space - nothing to show.
                 ui.close();
                 return;
             };
@@ -848,7 +848,7 @@ fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> String {
             if let Some(m) = candidate.point_index.get(&track.event_markers) {
                 match &m.annotation {
                     Some(note) if !note.is_empty() => {
-                        format!("{}  —  {note}", m.variant_path)
+                        format!("{}  -  {note}", m.variant_path)
                     }
                     _ => m.variant_path.clone(),
                 }
@@ -972,7 +972,7 @@ fn show_sticky_popup(
                     // Cap the window height so satellite tables never overflow
                     // the screen. For small satellite counts the ScrollArea
                     // auto-sizes to content (no scroll bar); it only activates
-                    // when content is taller than the cap — e.g. when the UI is
+                    // when content is taller than the cap - e.g. when the UI is
                     // zoomed in with Ctrl-+ or when there are many satellites.
                     let max_h = (ui.ctx().viewport_rect().height() * 0.75).min(500.0);
                     egui::ScrollArea::vertical()
@@ -1277,7 +1277,7 @@ fn zoom_to_fit(
     let z_lat = (vh * 0.8 * 360.0 / (256.0 * lat_range)).log2();
     let zoom = z_lon.min(z_lat).clamp(1.0, 18.0);
     // zoom is already clamped to [1, 18], so set_zoom can only fail if the
-    // walkers library's valid range narrows further — ignore silently.
+    // walkers library's valid range narrows further - ignore silently.
     let _ignored = map_memory.set_zoom(zoom);
 }
 

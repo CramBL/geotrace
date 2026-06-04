@@ -155,8 +155,8 @@ fn expand_file_is_reflected_in_tree_state() {
 #[test]
 fn snapshot_file_with_warnings() {
     let warnings = [
-        "3 satellite(s) with PRN 0 — PRN 0 is reserved and undefined in NMEA".to_owned(),
-        "2 satellite(s) with elevation > 90° — above the zenith, outside the valid NMEA range [0°, 90°]".to_owned(),
+        "3 satellite(s) with PRN 0 - PRN 0 is reserved and undefined in NMEA".to_owned(),
+        "2 satellite(s) with elevation > 90° - above the zenith, outside the valid NMEA range [0°, 90°]".to_owned(),
     ];
     let state = make_state_with_warnings_on(2, 0, &warnings);
     let mut harness = make_harness(state);

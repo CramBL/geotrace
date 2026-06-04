@@ -387,7 +387,7 @@ pub(crate) fn inspect_path(path: &Path) -> Result<String, Error> {
         Some(hdf5_pure::AttrValue::String(v)) => v.as_str().to_owned(),
         _ => "<unknown>".into(),
     };
-    writeln!(out, "GeoTrace Data File — version {version}").ok();
+    writeln!(out, "GeoTrace Data File - version {version}").ok();
     writeln!(out, "{sep}").ok();
 
     // Metadata

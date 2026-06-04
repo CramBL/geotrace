@@ -4,7 +4,7 @@
 An attribute set to ``event_kind.skip`` returns the skip sentinel instead of a
 path string.
 Passing the sentinel to ``EventMarker()`` converts it to ``None``, and
-``NavFileBuilder.add()`` silently ignores such markers — no error, no entry in
+``NavFileBuilder.add()`` silently ignores such markers - no error, no entry in
 the output file.
 """
 

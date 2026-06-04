@@ -12,7 +12,7 @@ use std::{env, error::Error, fs};
 
 use geotrace_sdk::{Angle, Annotation, DateTime, MarkerIcon, NavFileBuilder, NavFix, Utc};
 
-// Source 1 — GPS track (lat/lon/heading in degrees, one fix per second).
+// Source 1 - GPS track (lat/lon/heading in degrees, one fix per second).
 const GPS_FIXES: &[(&str, f64, f64, f64)] = &[
     ("2024-01-15T09:00:00Z", 51.5074, -0.1278, 90.0),
     ("2024-01-15T09:00:01Z", 51.5075, -0.1276, 91.0),
@@ -22,7 +22,7 @@ const GPS_FIXES: &[(&str, f64, f64, f64)] = &[
     ("2024-01-15T09:00:05Z", 51.5079, -0.1268, 90.5),
 ];
 
-// Source 2 — event annotations from a separate log / annotation system.
+// Source 2 - event annotations from a separate log / annotation system.
 const EVENTS: &[(&str, &str, MarkerIcon)] = &[
     ("2024-01-15T09:00:01Z", "Checkpoint A", MarkerIcon::Pin),
     (

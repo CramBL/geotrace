@@ -198,7 +198,7 @@ fn generated_marker_tooltip_shown_when_primary_hover_is_non_tpv() {
     );
 }
 
-/// Verifies that `any_popup_open()` returns false when no popup has been opened —
+/// Verifies that `any_popup_open()` returns false when no popup has been opened -
 /// confirming the egui baseline the guard relies on.
 #[test]
 fn egui_any_popup_open_false_by_default() {

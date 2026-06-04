@@ -1,6 +1,6 @@
 #![expect(
     clippy::panic_in_result_fn,
-    reason = "test functions mix ? propagation with assert! — both are correct in test code"
+    reason = "test functions mix ? propagation with assert! - both are correct in test code"
 )]
 
 use geotrace_sdk::{Angle, DateTime, Duration, Utc, Velocity};
@@ -51,7 +51,7 @@ fn satellite_association_within_window() -> Result<(), BuildError> {
 #[test]
 fn satellite_outside_window_creates_ghost_fix() -> Result<(), BuildError> {
     // Report 600 ms after the only real fix exceeds the 500 ms window.
-    // The builder must create a dead-reckoned ghost fix carrying the report —
+    // The builder must create a dead-reckoned ghost fix carrying the report -
     // not return an error.
     let mut sink = NavFileBuilder::new().open();
     sink.add_nav_fix(simple_fix(0));
@@ -139,7 +139,7 @@ fn satellite_association_narrowed_window_within() -> Result<(), BuildError> {
 
 /// Two reports both within the window of the same fix.
 /// The closer report wins and is assigned to the fix; the runner-up must NOT
-/// be silently dropped — it must become a ghost fix instead.
+/// be silently dropped - it must become a ghost fix instead.
 ///
 /// Before the fix, `had_candidate` tracking caused the losing report to be
 /// filtered out even though it was never actually assigned anywhere.
@@ -181,7 +181,7 @@ fn contested_loser_becomes_ghost_fix() -> Result<(), BuildError> {
                 .build(),
         ])
         .build();
-    // R2 loses to R1 and is too far from fix B — must not be silently dropped.
+    // R2 loses to R1 and is too far from fix B - must not be silently dropped.
     let r2 = SatelliteReport::builder()
         .gps_time(t(450))
         .tracked(vec![
@@ -588,7 +588,7 @@ fn annotation_out_of_range_strict_error() {
 
 #[test]
 fn no_nav_fixes_with_annotations_lenient() {
-    // NoNavFixes is returned even in lenient mode — positions cannot be interpolated at all.
+    // NoNavFixes is returned even in lenient mode - positions cannot be interpolated at all.
     let mut sink = NavFileBuilder::new().with_lenient_errors().open();
     sink.add_annotation(Annotation::builder().time(t(0)).build());
     assert!(matches!(sink.finish(), Err(BuildError::NoNavFixes)));

@@ -38,7 +38,7 @@ impl GtdFileBuilder {
         self.ensure_open();
         match &mut self.sink {
             Some(s) => s,
-            None => panic!("geotrace-c: sink is None after ensure_open — this is a bug"),
+            None => panic!("geotrace-c: sink is None after ensure_open - this is a bug"),
         }
     }
 

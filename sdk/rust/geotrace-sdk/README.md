@@ -20,8 +20,8 @@ nav_file.write_to_file("track.nvd")?;
 
 ## Examples
 
-- [**from_csv.rs**](examples/from_csv.rs) — Convert GPS data exported as CSV rows into a `.nvd` file.
-- [**from_multiple_sources.rs**](examples/from_multiple_sources.rs) — Aggregate a GPS track and event annotations from separate sources into a single `.nvd` file.
+- [**from_csv.rs**](examples/from_csv.rs) - Convert GPS data exported as CSV rows into a `.nvd` file.
+- [**from_multiple_sources.rs**](examples/from_multiple_sources.rs) - Aggregate a GPS track and event annotations from separate sources into a single `.nvd` file.
 
 ## License
 

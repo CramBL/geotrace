@@ -140,7 +140,7 @@ fn panel_detached_renders_without_panic() {
 ///
 /// The fix is to avoid creating a separate OS surface for the panel at all.
 /// `egui::Window` renders the detached panel as a floating overlay inside the
-/// *same* OS window, so there is only one Wayland surface — the compositor
+/// *same* OS window, so there is only one Wayland surface - the compositor
 /// cannot suspend it independently of the main window.
 ///
 /// # What this test checks
@@ -166,7 +166,7 @@ fn detached_panel_steps_complete_within_time_budget() {
     for _ in 0..50 {
         assert!(
             Instant::now() < deadline,
-            "step deadline exceeded — likely a blocking call in the detached panel render path"
+            "step deadline exceeded - likely a blocking call in the detached panel render path"
         );
         harness.step();
     }
@@ -191,7 +191,7 @@ fn settings_window_stays_open_after_step() {
         harness.state().settings_open,
         "settings window must stay open after opening"
     );
-    harness.step(); // second frame — must still be open with no interaction
+    harness.step(); // second frame - must still be open with no interaction
     assert!(
         harness.state().settings_open,
         "settings window must remain open across multiple frames"
@@ -242,9 +242,9 @@ fn snapshot_load_warnings_dialog() {
     harness.state().shared.borrow_mut().warnings_popup = Some((
         "ride_2025-05-23.gtd".to_owned(),
         vec![
-            "3 satellite(s) with PRN 0 — PRN 0 is reserved and undefined in NMEA".to_owned(),
-            "2 satellite(s) with elevation > 90° — above the zenith, outside the valid NMEA range [0°, 90°]".to_owned(),
-            "5 satellite(s) with SNR ≈ 99 dB-Hz — common sentinel value for unavailable signal strength; omit the SNR field when no measurement is available".to_owned(),
+            "3 satellite(s) with PRN 0 - PRN 0 is reserved and undefined in NMEA".to_owned(),
+            "2 satellite(s) with elevation > 90° - above the zenith, outside the valid NMEA range [0°, 90°]".to_owned(),
+            "5 satellite(s) with SNR ≈ 99 dB-Hz - common sentinel value for unavailable signal strength; omit the SNR field when no measurement is available".to_owned(),
         ],
     ));
     harness.run();

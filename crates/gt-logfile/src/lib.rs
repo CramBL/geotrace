@@ -69,7 +69,7 @@ fn parse_fractional_seconds(rest: &str) -> Option<(u32, &str)> {
     Some((nano, after))
 }
 
-/// `"May 29 18:48:24"` or `"May 29 18:48:24.123456"` — returns `(NaiveDateTime, rest)`.
+/// `"May 29 18:48:24"` or `"May 29 18:48:24.123456"` - returns `(NaiveDateTime, rest)`.
 fn parse_syslog(line: &str, micro: bool) -> Option<(NaiveDateTime, &str)> {
     // Pattern: "MMM DD HH:MM:SS[.ffffff] rest"
     let bytes = line.as_bytes();
@@ -539,7 +539,7 @@ mod tests {
     #[test]
     fn color_group_10_distinct() {
         let mut a = ColorGroupAssigner::new();
-        // Each string is 20 repetitions of a unique letter — Levenshtein distance 20 apart
+        // Each string is 20 repetitions of a unique letter - Levenshtein distance 20 apart
         let strings: Vec<String> = (0u8..10u8)
             .map(|i| std::iter::repeat_n(char::from(b'a' + i), 20).collect())
             .collect();
@@ -710,7 +710,7 @@ mod tests {
     fn load_log_blank_lines_dont_count_toward_failures() {
         let t0 = utc(2026, 1, 1, 0, 0, 0);
         let pts = nav_points_from(t0, 5, 1);
-        // bad, blank, bad, blank, bad — blanks don't count, so only 3 non-empty failures
+        // bad, blank, bad, blank, bad - blanks don't count, so only 3 non-empty failures
         let content =
             "2026-01-01 00:00:00 good\nBAD\n\nBAD\n\nBAD\n2026-01-01 00:00:01 also_good\n";
         let result = load_log(

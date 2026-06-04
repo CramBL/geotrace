@@ -57,9 +57,9 @@ pub fn segment_tracks(points: &[NavPoint], config: &SegmentationConfig) -> Vec<R
 /// State machine for tracking GPS fix transitions within a track.
 ///
 /// Three states:
-/// - `Waiting` — no satellite report seen yet.
-/// - `HasFix` — the most recent satellite report had `fix_count > 0`.
-/// - `LostFix` — most recent report had `fix_count == 0`; records when the fix
+/// - `Waiting` - no satellite report seen yet.
+/// - `HasFix` - the most recent satellite report had `fix_count > 0`.
+/// - `LostFix` - most recent report had `fix_count == 0`; records when the fix
 ///   was last seen so the regained-duration can be computed.
 enum GpsFixState {
     Waiting,
@@ -109,7 +109,7 @@ impl GpsFixTracker {
                 last_lon,
             } => {
                 if fix_count == 0 {
-                    // Fix just dropped — emit GpsFixLost at the last known fix position.
+                    // Fix just dropped - emit GpsFixLost at the last known fix position.
                     result = Some(GeneratedMarker::new(
                         last_time.utc(),
                         GeneratedMarkerKind::GpsFixLost,
@@ -129,7 +129,7 @@ impl GpsFixTracker {
             }
             GpsFixState::LostFix { lost_at } => {
                 if fix_count > 0 {
-                    // Fix regained — emit GpsFixRegained with gap duration.
+                    // Fix regained - emit GpsFixRegained with gap duration.
                     let duration = point.tpv.time().signed_duration_since(lost_at);
                     result = Some(GeneratedMarker::new(
                         point.tpv.time().utc(),
@@ -657,7 +657,7 @@ mod tests {
         // → ghost should land at lat=0.5, lon=0.5
         let mut points = vec![
             make_real_fix(0, Latitude::new(0.0), Longitude::new(0.0)),
-            make_ghost(5, Latitude::new(10.0), Longitude::new(10.0)), // initial coords are irrelevant — will be overwritten
+            make_ghost(5, Latitude::new(10.0), Longitude::new(10.0)), // initial coords are irrelevant - will be overwritten
             make_real_fix(10, Latitude::new(1.0), Longitude::new(1.0)),
         ];
         precompute_ghost_positions(&mut points);

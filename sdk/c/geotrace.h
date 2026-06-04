@@ -1,6 +1,6 @@
 /**
  * @file geotrace.h
- * @brief GeoTrace C SDK — public API for reading and writing `.gtd` navigation data files.
+ * @brief GeoTrace C SDK - public API for reading and writing `.gtd` navigation data files.
  *
  * Link against `libgeotrace_c` and include this header.
  *
@@ -295,7 +295,7 @@ GtdFileBuilder *gtd_builder_create(void);
 /**
  * Free a builder without writing a file.
  *
- * Do **not** call this after a successful `gtd_builder_finish()` — that call
+ * Do **not** call this after a successful `gtd_builder_finish()` - that call
  * already consumes the builder.
  *
  * @param b Builder to destroy.  No-op if NULL.
@@ -481,7 +481,7 @@ GtdStatus gtd_builder_finish(GtdFileBuilder *b, GtdNavFile **out);
  *
  * The `.gtd` extension is appended automatically if @p path has no extension.
  *
- * @param f    File handle (not consumed — caller must still call `gtd_nav_file_destroy()`).
+ * @param f    File handle (not consumed - caller must still call `gtd_nav_file_destroy()`).
  * @param path Destination file path.
  */
 GtdStatus gtd_nav_file_write_to_path(const GtdNavFile *f, const char *path);
@@ -546,7 +546,7 @@ GtdStatus gtd_nav_file_open(const char *path, GtdNavFile **out);
 /**
  * Parse a navigation file from an in-memory buffer.
  *
- * The caller retains ownership of @p data — it may be freed after this call returns.
+ * The caller retains ownership of @p data - it may be freed after this call returns.
  *
  * @param data Pointer to the serialised file data.
  * @param len  Length of the data in bytes.

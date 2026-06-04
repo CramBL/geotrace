@@ -4,7 +4,7 @@
 
 #![expect(
     clippy::expect_used,
-    reason = "fixture generator binary — panicking on errors is intentional"
+    reason = "fixture generator binary - panicking on errors is intentional"
 )]
 
 use geotrace_sdk::{

@@ -1,6 +1,6 @@
-"""Python bindings for geotrace-sdk — read and write .nvd navigation data files.
+"""Python bindings for geotrace-sdk - read and write .nvd navigation data files.
 
-Quick start — writing a track::
+Quick start - writing a track::
 
     from datetime import datetime, timezone
     from geotrace_sdk import NavFileBuilder, NavFix
@@ -15,7 +15,7 @@ Quick start — writing a track::
     nav_file = builder.finish()
     nav_file.write_to_file("track.nvd")
 
-Quick start — reading a file::
+Quick start - reading a file::
 
     from geotrace_sdk import NavFile
 

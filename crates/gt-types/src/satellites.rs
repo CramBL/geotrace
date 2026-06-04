@@ -32,15 +32,15 @@ impl PartialEq<u32> for Prn {
 /// Signal quality tier derived from an [`Snr`] value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignalQuality {
-    /// ≥ 40 dB-Hz — excellent lock.
+    /// ≥ 40 dB-Hz - excellent lock.
     Excellent,
-    /// 35–40 dB-Hz — good.
+    /// 35–40 dB-Hz - good.
     Good,
-    /// 30–35 dB-Hz — moderate.
+    /// 30–35 dB-Hz - moderate.
     Moderate,
-    /// 25–30 dB-Hz — weak.
+    /// 25–30 dB-Hz - weak.
     Weak,
-    /// < 25 dB-Hz — very weak / marginal.
+    /// < 25 dB-Hz - very weak / marginal.
     VeryWeak,
 }
 

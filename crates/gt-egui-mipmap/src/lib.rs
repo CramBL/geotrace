@@ -3,7 +3,7 @@
 //! A `MipMap` stores a series of progressively downsampled levels of a
 //! `[time_secs, value]` dataset, using [`egui_plot::PlotPoint`] as the native
 //! element type so callers can pass [`egui_plot::PlotPoints::Borrowed`] directly
-//! to a plot line — no per-frame allocation required.
+//! to a plot line - no per-frame allocation required.
 //!
 //! Each level is produced by grouping the previous level into windows of
 //! [`DOWNSAMPLE_WINDOW`] points and emitting the minimum-value point and the
@@ -101,7 +101,7 @@ impl MipMap {
 
     /// Return the `[x_min, x_max]` of the full dataset, or `None` when empty.
     ///
-    /// O(1) — the finest level is sorted by x, so the range is just its
+    /// O(1) - the finest level is sorted by x, so the range is just its
     /// first and last element.
     pub fn x_range(&self) -> Option<(f64, f64)> {
         let level = self.levels.first()?;
@@ -121,7 +121,7 @@ impl MipMap {
     /// Return the coarsest mipmap level that has at least `target_count` data
     /// points within `[x_min, x_max]`, clipped to that range.
     ///
-    /// Falls back to the finest level when no level meets the target — this
+    /// Falls back to the finest level when no level meets the target - this
     /// happens when the plot is zoomed into a very narrow time window.
     ///
     /// The returned slice borrows directly from the internal buffer, so it has
@@ -220,7 +220,7 @@ fn downsample(data: &[PlotPoint]) -> Vec<PlotPoint> {
                       NaN-free and exact equality is intentional to detect same-point min/max"
         )]
         if min_pt.x == max_pt.x {
-            // Same timestamp — one representative point.
+            // Same timestamp - one representative point.
             out.push(*min_pt);
         } else if min_pt.x < max_pt.x {
             out.push(*min_pt);
@@ -245,7 +245,7 @@ fn clip_to_range(data: &[PlotPoint], x_min: f64, x_max: f64) -> &[PlotPoint] {
     let start = data.partition_point(|p| p.x < x_min);
     let end = data.partition_point(|p| p.x <= x_max);
     // `start` and `end` come from `partition_point`, which guarantees
-    // `0 <= start <= end <= data.len()` — the slice is always in bounds.
+    // `0 <= start <= end <= data.len()` - the slice is always in bounds.
     #[expect(
         clippy::indexing_slicing,
         reason = "start and end are partition_point results, always within 0..=data.len()"

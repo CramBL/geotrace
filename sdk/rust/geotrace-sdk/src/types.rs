@@ -13,7 +13,7 @@ use crate::error::{Error, EventMarkerError};
 ///
 /// `gps_time` is the GPS-receiver timestamp; it is `None` when the receiver had no
 /// lock at the time of this record.
-/// Do not substitute `sys_time` for `gps_time` on the client side — pass `None`
+/// Do not substitute `sys_time` for `gps_time` on the client side - pass `None`
 /// and let the SDK resolve the effective time from `sys_time` internally.
 ///
 /// `sys_time` is the system-clock timestamp recorded alongside the GPS fix.
@@ -274,7 +274,7 @@ pub struct Marker {
 /// The builder computes the geographic position by interpolating surrounding
 /// nav fixes; producers supply only a timestamp.
 ///
-/// Construct via `EventMarker::builder().build()` — it validates the variant path and returns
+/// Construct via `EventMarker::builder().build()` - it validates the variant path and returns
 /// `Err` immediately if it is malformed.
 #[derive(Debug, Clone)]
 pub struct EventMarker {

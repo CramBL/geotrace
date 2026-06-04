@@ -12,7 +12,7 @@ pub struct PreparedSeries(pub(crate) Vec<series::TrackSeries>);
 
 /// Build mipmap series for all tracks in `file` using `fi` as the file index.
 ///
-/// This is the CPU-heavy work — call it from a background loader thread, not
+/// This is the CPU-heavy work - call it from a background loader thread, not
 /// from the render loop.
 pub fn prepare_file_series(fi: usize, file: &gt_types::LoadedFile) -> PreparedSeries {
     PreparedSeries(series::build_file_series(fi, file))

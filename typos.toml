@@ -2,9 +2,9 @@
 extend-exclude = ["sdk/python/geotrace-py/target"]
 
 [default.extend-words]
-# Level of Detail — standard graphics acronym, not a misspelling of "LOAD"
+# Level of Detail - standard graphics acronym, not a misspelling of "LOAD"
 LOD = "LOD"
-# Wide Area Augmentation System — SBAS network operated by the FAA
+# Wide Area Augmentation System - SBAS network operated by the FAA
 WAAS = "WAAS"
 # Git SHA hex substrings (e.g. 80a9caf, ba70f12, 7d0ba21) are not English words
 ba = "ba"

@@ -436,7 +436,7 @@ mod tests {
             )
             .build();
 
-        // 8. geotrace_sdk_macros Isolation (Whitelist) — proc-macro support crates only
+        // 8. geotrace_sdk_macros Isolation (Whitelist) - proc-macro support crates only
         builder
             .module_lint()
             .lint_named("geotrace_sdk_macros_isolation")
@@ -456,7 +456,7 @@ mod tests {
             )
             .build();
 
-        // 9. geotrace_sdk Isolation (Whitelist) — no workspace-internal crates allowed
+        // 9. geotrace_sdk Isolation (Whitelist) - no workspace-internal crates allowed
         builder
             .module_lint()
             .lint_named("geotrace_sdk_isolation")
@@ -491,7 +491,7 @@ mod tests {
             )
             .build();
 
-        // 10. geotrace_c Isolation (Whitelist) — FFI layer; only touches geotrace_sdk and std
+        // 10. geotrace_c Isolation (Whitelist) - FFI layer; only touches geotrace_sdk and std
         builder
             .module_lint()
             .lint_named("geotrace_c_isolation")

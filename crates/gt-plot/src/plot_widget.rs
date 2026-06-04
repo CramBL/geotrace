@@ -90,7 +90,7 @@ impl MetricKind {
     fn hover_text(self) -> Option<&'static str> {
         match self {
             Self::Eph => Some(
-                "Estimated Horizontal Position error — the GPS receiver's own estimate of how \
+                "Estimated Horizontal Position error - the GPS receiver's own estimate of how \
                  far the reported position may be from the true position, in metres. \
                  Lower is more accurate.",
             ),
@@ -271,7 +271,7 @@ pub struct PlotState {
     /// Time currently hovered by the plot cursor, written each frame.
     /// `None` when the cursor is outside the plot area.
     pub hovered_time: Option<DateTime<Utc>>,
-    /// Global per-metric visibility — toggled via the chip row above the plot.
+    /// Global per-metric visibility - toggled via the chip row above the plot.
     pub metric_vis: MetricVisibility,
     /// Whether the plot grid lines are visible.
     pub show_grid: bool,
@@ -328,7 +328,7 @@ impl PlotState {
 
     /// Rebuild series for all currently loaded files from scratch.
     ///
-    /// Called after file deletion — runs on the UI thread since deletion is
+    /// Called after file deletion - runs on the UI thread since deletion is
     /// cheap (files already parsed, just re-indexing the surviving files).
     pub fn rebuild_all(&mut self, files: &[LoadedFile]) {
         self.series_cache = build_all_series(files);
@@ -363,7 +363,7 @@ pub fn show_track_plot(
     state: &mut PlotState,
 ) {
     // Compute the per-series visibility mask once so the three downstream
-    // consumers — visible_count, the full-x-range loop, and the render loop —
+    // consumers - visible_count, the full-x-range loop, and the render loop -
     // all share a single pass instead of calling trip_is_visible three times
     // per series per frame.
     let visible: Vec<bool> = state
@@ -425,7 +425,7 @@ pub fn show_track_plot(
 
     // Compute the full x range across all visible series so that double-click
     // (which triggers auto-bounds reset) zooms to fit the complete dataset.
-    // Uses the precomputed `TrackSeries::x_range` field — O(1) per series.
+    // Uses the precomputed `TrackSeries::x_range` field - O(1) per series.
     let mut full_x_min = f64::INFINITY;
     let mut full_x_max = f64::NEG_INFINITY;
     for (series, &is_vis) in state.series_cache.iter().zip(visible.iter()) {
@@ -491,7 +491,7 @@ pub fn show_track_plot(
         });
 
         // Recompute if the view changed enough since the last frame.
-        // Uses rayon to parallelise across series — each is independent.
+        // Uses rayon to parallelise across series - each is independent.
         let resolved: std::borrow::Cow<[TripLevelCache]> = if cache_valid {
             std::borrow::Cow::Borrowed(level_cache)
         } else {
@@ -568,7 +568,7 @@ pub fn show_track_plot(
 /// Draw the per-metric filter controls above the track plot.
 ///
 /// All controls and metric chips share a single `horizontal_wrapped` row so they
-/// fill available horizontal space before wrapping — no fixed-height satellite
+/// fill available horizontal space before wrapping - no fixed-height satellite
 /// group that forces other chips below it.
 ///
 /// Returns the `MetricKind` currently being hovered, or `None`.
@@ -584,7 +584,7 @@ fn metric_filter_row(
     let mut hovered_chip = None;
 
     ui.horizontal_wrapped(|ui| {
-        // Grid toggle — icon button with tooltip.
+        // Grid toggle - icon button with tooltip.
         if ui
             .small_button(egui_phosphor::regular::GRID_FOUR)
             .on_hover_text(if *show_grid { "Hide grid" } else { "Show grid" })
@@ -593,7 +593,7 @@ fn metric_filter_row(
             *show_grid = !*show_grid;
         }
 
-        // Show/hide all — icon button with tooltip.
+        // Show/hide all - icon button with tooltip.
         let eye_icon = if all_on {
             egui_phosphor::regular::EYE_SLASH
         } else {
@@ -666,7 +666,7 @@ fn metric_filter_row(
         }
     });
 
-    // Apply "Show only this" — disable everything, then re-enable the chosen one.
+    // Apply "Show only this" - disable everything, then re-enable the chosen one.
     if let Some(kind) = show_only {
         vis.set_all(false);
         *vis.field_mut(kind) = true;
@@ -678,7 +678,7 @@ fn metric_filter_row(
 /// A small colored toggle chip.  Left-click toggles the metric.  Right-click
 /// opens a context menu with "Show only this".
 ///
-/// Returns `(show_only, hovered)` — `show_only` is `true` when the user chose
+/// Returns `(show_only, hovered)` - `show_only` is `true` when the user chose
 /// "Show only this" from the context menu; `hovered` is `true` while the pointer
 /// is over this chip.
 fn metric_chip(
@@ -776,7 +776,7 @@ fn trip_is_visible(
 /// Add all metric lines for one track to the plot using pre-computed level selections.
 ///
 /// When `hovered_chip` is `Some(kind)`, that metric is highlighted (double stroke
-/// width) and every other line is dimmed to 20 % brightness — mirroring the
+/// width) and every other line is dimmed to 20 % brightness - mirroring the
 /// standard egui-plot legend hover behaviour.
 ///
 /// The `'a` lifetime ties both `plot_ui` and `series` together so that
@@ -816,7 +816,7 @@ fn add_series_lines<'a>(
 }
 
 /// Submit one metric line to the plot, borrowing the point slice directly via
-/// [`PlotPoints::Borrowed`] — no allocation.
+/// [`PlotPoints::Borrowed`] - no allocation.
 ///
 /// Skips slices with fewer than two points: a single-point line produces no
 /// visible geometry and would clutter the legend.

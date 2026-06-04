@@ -12,7 +12,7 @@ pub enum AutoPruneOutcome {
 /// Check whether the database exceeds `max_bytes` and prune the oldest
 /// recordings if it does.
 ///
-/// When `confirm` is `true` the database is not touched — candidates are
+/// When `confirm` is `true` the database is not touched - candidates are
 /// returned so the caller can ask for confirmation first.
 pub fn run(db: &mut Database, max_bytes: u64, confirm: bool) -> Result<AutoPruneOutcome, DbError> {
     let candidates = db.prune_candidates(&PruneMode::ByTotalSize { max_bytes })?;
@@ -88,7 +88,7 @@ mod tests {
         insert(&mut db, "dev", &bytes_b);
         let total = bytes_a.len() as u64 + bytes_b.len() as u64;
 
-        // Limit just under total — should remove the oldest recording.
+        // Limit just under total - should remove the oldest recording.
         let outcome = run(&mut db, total - 1, false).expect("run");
         assert!(
             matches!(outcome, AutoPruneOutcome::PrunedSilently(1)),
@@ -116,7 +116,7 @@ mod tests {
             panic!("expected NeedsConfirmation");
         };
         assert_eq!(refs.len(), 1, "one candidate expected");
-        // Nothing deleted — caller must confirm.
+        // Nothing deleted - caller must confirm.
         assert_eq!(
             db.list_recordings().expect("list").len(),
             2,

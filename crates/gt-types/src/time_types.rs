@@ -16,7 +16,7 @@
 //! # Cross-domain operations
 //!
 //! When you genuinely need the GPS/sys-clock offset, use
-//! [`GpsTime::offset_from_sys`] — the explicit name signals that you are
+//! [`GpsTime::offset_from_sys`] - the explicit name signals that you are
 //! performing a cross-domain measurement.
 
 use chrono::{DateTime, Duration, Utc};
@@ -27,7 +27,7 @@ use std::ops::Sub;
 ///
 /// GPS time and system time are different clocks; use [`SysTime`] for host
 /// system-clock timestamps.  Subtracting a `GpsTime` from a `SysTime` (or
-/// vice-versa) is a compile-time error — use [`GpsTime::offset_from_sys`] for
+/// vice-versa) is a compile-time error - use [`GpsTime::offset_from_sys`] for
 /// intentional cross-domain comparisons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GpsTime(DateTime<Utc>);

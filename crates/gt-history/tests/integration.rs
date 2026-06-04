@@ -349,7 +349,7 @@ fn prune_by_total_size_removes_oldest_first() {
 
     let total: u64 = meta_a.gtd_size_bytes + meta_b.gtd_size_bytes;
 
-    // Limit is just under total — should remove the oldest (a).
+    // Limit is just under total - should remove the oldest (a).
     let candidates = db
         .prune_candidates(&gt_history::PruneMode::ByTotalSize {
             max_bytes: total - 1,

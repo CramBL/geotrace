@@ -79,7 +79,7 @@ impl TimeRange {
 /// subset of `AnyMarker`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MarkerRequirement {
-    /// No marker constraint — all tracks pass.
+    /// No marker constraint - all tracks pass.
     #[default]
     None,
     /// Trip must have at least one custom *or* generated marker.
@@ -135,7 +135,7 @@ pub fn merc_bounds_for_rect(bb: Rect<f64>) -> MercBounds {
 
 /// A point in the global spatial index, covering TPV fixes and all marker categories.
 ///
-/// Ghost TPV fixes (heading == `None`) are excluded — their position is interpolated
+/// Ghost TPV fixes (heading == `None`) are excluded - their position is interpolated
 /// at render time rather than pre-computed.
 #[derive(Debug, Clone, Copy)]
 pub struct SpatialPoint {

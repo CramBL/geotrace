@@ -5,7 +5,7 @@
 //! (Phase 1 = nearest-fix assignment; Phase 2 = ghost-fix creation for orphans).
 #![expect(
     clippy::panic_in_result_fn,
-    reason = "test functions mix ? propagation with assert! — both are correct in test code"
+    reason = "test functions mix ? propagation with assert! - both are correct in test code"
 )]
 #![expect(
     clippy::unwrap_in_result,
@@ -60,7 +60,7 @@ fn report_with(offset_ms: i64, constellation: Constellation, prn: u32) -> Satell
 }
 
 /// Extract the constellation of the first tracked satellite in `p`'s report.
-/// Panics if there is no report or no satellite — intended for assertions.
+/// Panics if there is no report or no satellite - intended for assertions.
 #[expect(clippy::expect_used, reason = "test helper")]
 #[expect(clippy::indexing_slicing, reason = "test helper")]
 fn first_constellation(p: &geotrace_sdk::NavPoint) -> Constellation {
@@ -131,8 +131,8 @@ fn window_boundary_one_microsecond_past_is_excluded() -> Result<(), BuildError> 
 #[test]
 fn report_goes_to_nearer_of_two_candidate_fixes() -> Result<(), BuildError> {
     let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(fix_at(0, 10.0, 10.0)); // fix A — GPS constellation expected
-    sink.add_nav_fix(fix_at(2000, 20.0, 20.0)); // fix B — Glonass constellation expected
+    sink.add_nav_fix(fix_at(0, 10.0, 10.0)); // fix A - GPS constellation expected
+    sink.add_nav_fix(fix_at(2000, 20.0, 20.0)); // fix B - Glonass constellation expected
     // Report at t=1 800 ms: 1 800 ms from A (outside 500 ms window), 200 ms from B (inside).
     sink.add_satellite_report(report_with(1800, Constellation::Gps, 1));
 
@@ -186,7 +186,7 @@ fn four_reports_matched_to_four_fixes_no_ghosts() -> Result<(), BuildError> {
     let mut sink = NavFileBuilder::new().open();
     for i in 0..4_i64 {
         sink.add_nav_fix(fix_at(i * 2000, 10.0 + i as f64, 10.0));
-        // Each report is 100 ms after its corresponding fix — well within the window.
+        // Each report is 100 ms after its corresponding fix - well within the window.
         sink.add_satellite_report(report_with(
             i * 2000 + 100,
             [
@@ -220,7 +220,7 @@ fn sys_time_only_report_within_window_is_assigned() -> Result<(), BuildError> {
     // Fix with gps_time = t(0).  The fix effective_time is t(0).
     sink.add_nav_fix(fix_at(0, 55.0, 12.0));
     // Report with only sys_time = t(200).  rep_us = sys_time = t(200).
-    // Distance to fix: 200 ms — inside the 500 ms window.
+    // Distance to fix: 200 ms - inside the 500 ms window.
     sink.add_satellite_report(
         SatelliteReport::builder()
             .sys_time(t(200)) // no gps_time
@@ -250,8 +250,8 @@ fn sys_time_only_report_within_window_is_assigned() -> Result<(), BuildError> {
 /// Layout:
 ///   Fix A  at t=0
 ///   Fix B  at t=2 000 ms
-///   Report: gps_time=t(200) [200 ms from A — inside window]
-///           sys_time=t(1800) [200 ms from B — inside window if sys_time were used]
+///   Report: gps_time=t(200) [200 ms from A - inside window]
+///           sys_time=t(1800) [200 ms from B - inside window if sys_time were used]
 ///
 /// If `gps_time` is preferred, the report goes to Fix A.
 /// If `sys_time` were used instead, it would go to Fix B.
@@ -298,7 +298,7 @@ fn report_with_no_timestamp_is_discarded() -> Result<(), BuildError> {
     sink.add_nav_fix(fix_at(0, 55.0, 12.0));
     sink.add_satellite_report(
         SatelliteReport::builder()
-            // neither gps_time nor sys_time — dropped in finish()
+            // neither gps_time nor sys_time - dropped in finish()
             .tracked(vec![
                 Satellite::builder()
                     .constellation(Constellation::Gps)
@@ -354,9 +354,9 @@ fn three_reports_one_fix_only_closest_wins() -> Result<(), BuildError> {
     sink.add_nav_fix(fix_at(0, 55.0, 12.0));
     sink.add_nav_fix(fix_at(5000, 55.1, 12.1));
 
-    sink.add_satellite_report(report_with(100, Constellation::Gps, 1)); // R1 — winner
-    sink.add_satellite_report(report_with(200, Constellation::Glonass, 2)); // R2 — loser
-    sink.add_satellite_report(report_with(300, Constellation::Galileo, 3)); // R3 — loser
+    sink.add_satellite_report(report_with(100, Constellation::Gps, 1)); // R1 - winner
+    sink.add_satellite_report(report_with(200, Constellation::Glonass, 2)); // R2 - loser
+    sink.add_satellite_report(report_with(300, Constellation::Galileo, 3)); // R3 - loser
 
     let nav_file = sink.finish()?;
     let points = nav_file.nav_points();
@@ -395,7 +395,7 @@ fn three_reports_one_fix_only_closest_wins() -> Result<(), BuildError> {
 }
 
 /// When two reports are equidistant from the same fix, the one that arrived
-/// earlier (lower insertion order) wins — even when added to the builder after
+/// earlier (lower insertion order) wins - even when added to the builder after
 /// the later one.
 #[test]
 fn equidistant_reports_earlier_one_wins() -> Result<(), BuildError> {
@@ -600,7 +600,7 @@ fn between_fix_ghost_interpolated_at_correct_fraction() -> Result<(), BuildError
 fn between_fix_ghosts_evenly_distributed_when_no_delta_available() -> Result<(), BuildError> {
     let mut sink = NavFileBuilder::new().open();
 
-    // Fixes with gps_time only — no sys_time, so no delta anchors.
+    // Fixes with gps_time only - no sys_time, so no delta anchors.
     sink.add_nav_fix(
         NavFix::builder()
             .gps_time(t(0))
@@ -618,7 +618,7 @@ fn between_fix_ghosts_evenly_distributed_when_no_delta_available() -> Result<(),
             .build(),
     );
 
-    // Two reports with sys_time only — no gps_time, no delta → even distribution.
+    // Two reports with sys_time only - no gps_time, no delta → even distribution.
     // sys_time values are clustered near the end, but the ghost positions must
     // ignore that and distribute evenly at fractions 1/3 and 2/3.
     for sys_offset_ms in [8000_i64, 9000] {
@@ -664,9 +664,9 @@ fn pre_fix_dropped_post_fix_ghosted_in_same_batch() -> Result<(), BuildError> {
     let mut sink = NavFileBuilder::new().open();
     sink.add_nav_fix(fix_at(5000, 0.0, 0.0));
 
-    // Pre-first-fix report — must be dropped.
+    // Pre-first-fix report - must be dropped.
     sink.add_satellite_report(report_with(0, Constellation::Gps, 1));
-    // Post-last-fix report — must become a ghost.
+    // Post-last-fix report - must become a ghost.
     sink.add_satellite_report(report_with(10_000, Constellation::Glonass, 2));
 
     let nav_file = sink.finish()?;
@@ -717,7 +717,7 @@ fn ghost_after_fix_with_no_heading_does_not_panic() -> Result<(), BuildError> {
 /// carry both `gps_time` and `sys_time`.
 /// When the GPS/sys-clock offset exceeds the association window a naïve comparison
 /// of `SAT.sys_time` against `TPV.gps_time` places every report outside the window
-/// — all become orphans — causing the alternating real-fix (no-sat) / ghost (with-sat)
+/// - all become orphans - causing the alternating real-fix (no-sat) / ghost (with-sat)
 /// pattern observed in practice.
 ///
 /// The improved algorithm applies the GPS/sys-clock delta (derived from fixes that
@@ -851,7 +851,7 @@ fn no_filter_1hz_all_sat_associated_with_large_gps_offset() -> Result<(), BuildE
 /// But anchor selection is "nearest by sys-clock distance".  The anchor for Fix i
 /// has anchor_sys_time = t(i·1000 − D).  If ε > D/2 = 300 ms, the SAT's
 /// sys_time is closer (in sys-clock space) to Fix i+1's anchor than to Fix i's
-/// anchor — but the delta values are identical so the corrected time is still
+/// anchor - but the delta values are identical so the corrected time is still
 /// t(i·1000 + ε).  The distance to Fix i is ε, still within the window.
 ///
 /// The failure occurs when ε > window (500 ms): the corrected time falls
@@ -861,10 +861,10 @@ fn no_filter_1hz_all_sat_associated_with_large_gps_offset() -> Result<(), BuildE
 /// and verifies correct constellation-per-fix assignment.
 ///
 /// Layout (D = 600 ms, GPS 600 ms ahead of sys; ε ≈ 0 ms):
-///   Fix 0:  gps=t(0),    sys=t(−600)  — GPS
-///   Fix 1:  gps=t(1000), sys=t(400)   — Galileo
-///   Fix 2:  gps=t(2000), sys=t(1400)  — GLONASS
-///   Fix 3:  gps=t(3000), sys=t(2400)  — BeiDou
+///   Fix 0:  gps=t(0),    sys=t(−600)  - GPS
+///   Fix 1:  gps=t(1000), sys=t(400)   - Galileo
+///   Fix 2:  gps=t(2000), sys=t(1400)  - GLONASS
+///   Fix 3:  gps=t(3000), sys=t(2400)  - BeiDou
 ///   SAT i:  sys_time = Fix[i].sys_time  (same host-clock moment as the fix)
 ///
 /// Expected: Fix[i] carries SAT[i]'s constellation; 4 nav points, no ghosts.
@@ -931,8 +931,8 @@ fn gps_ahead_600ms_sat_associates_to_own_fix_not_neighbor() -> Result<(), BuildE
 /// follows GGA): SAT.sys_time = Fix.sys_time + 200 ms.
 ///
 /// 200 ms is a realistic delay for ~20 GPGSV sentences at 9600 baud.
-/// The corrected time = Fix.gps_time + 200 ms — 200 ms from the current fix,
-/// 800 ms from the next — so the association must still be correct.
+/// The corrected time = Fix.gps_time + 200 ms - 200 ms from the current fix,
+/// 800 ms from the next - so the association must still be correct.
 #[test]
 fn gps_ahead_600ms_with_sat_logging_delay_no_off_by_one() -> Result<(), BuildError> {
     const GPS_SYS_OFFSET_MS: i64 = 600;
@@ -1035,7 +1035,7 @@ fn gps_ahead_600ms_sat_at_499ms_delay_still_correct() -> Result<(), BuildError> 
     let nav_file = sink.finish()?;
     let points = nav_file.nav_points();
 
-    // No ghosts — the SAT must go to fix 0, not fix 1.
+    // No ghosts - the SAT must go to fix 0, not fix 1.
     assert_eq!(
         points.len(),
         2,
@@ -1122,11 +1122,11 @@ fn gps_ahead_600ms_sat_at_exactly_500ms_delay_boundary() -> Result<(), BuildErro
 /// delta anchor would introduce approximation error in the distance to the
 /// non-nearest candidate.  Direct sys_time comparison is always exact.
 ///
-/// Setup — GPS/sys offset changes from fix to fix:
-///   Fix 0: gps=t(0),    sys=t(100)   (GPS 100 ms behind sys)  — GPS
-///   Fix 1: gps=t(1000), sys=t(1600)  (GPS 600 ms behind sys)  — Galileo
-///   Fix 2: gps=t(2000), sys=t(2250)  (GPS 250 ms behind sys)  — GLONASS
-///   Fix 3: gps=t(3000), sys=t(3450)  (GPS 450 ms behind sys)  — BeiDou
+/// Setup - GPS/sys offset changes from fix to fix:
+///   Fix 0: gps=t(0),    sys=t(100)   (GPS 100 ms behind sys)  - GPS
+///   Fix 1: gps=t(1000), sys=t(1600)  (GPS 600 ms behind sys)  - Galileo
+///   Fix 2: gps=t(2000), sys=t(2250)  (GPS 250 ms behind sys)  - GLONASS
+///   Fix 3: gps=t(3000), sys=t(3450)  (GPS 450 ms behind sys)  - BeiDou
 ///
 /// Each SAT report's sys_time matches its fix's sys_time exactly (ε = 0).
 /// Expected: all 4 reports assigned to their own fix with no ghost fixes.
@@ -1219,7 +1219,7 @@ fn sys_time_direct_comparison_drifting_offset_with_sat_delay() -> Result<(), Bui
                 .heading(Angle::degrees(0.0))
                 .build(),
         );
-        // SAT arrives SAT_DELAY_MS after the TPV's sys_time — still well inside the window.
+        // SAT arrives SAT_DELAY_MS after the TPV's sys_time - still well inside the window.
         sink.add_satellite_report(
             SatelliteReport::builder()
                 .sys_time(t(i * 1_000 + off + SAT_DELAY_MS))

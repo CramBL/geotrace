@@ -1,11 +1,11 @@
 //! C FFI layer for the GeoTrace SDK.
 //!
-//! This crate is a `cdylib`/`staticlib` — its public surface is the C header
+//! This crate is a `cdylib`/`staticlib` - its public surface is the C header
 //! `sdk/c/geotrace.h`. Do not add Rust public API here.
 
 #![expect(
     unsafe_code,
-    reason = "FFI crate — all extern C functions require unsafe"
+    reason = "FFI crate - all extern C functions require unsafe"
 )]
 
 #[macro_use]

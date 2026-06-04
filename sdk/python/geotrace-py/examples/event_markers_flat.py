@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Type-safe event markers using the @event_kind decorator — flat (single-level) case.
+"""Type-safe event markers using the @event_kind decorator - flat (single-level) case.
 
 The decorator converts each class attribute to a snake_case path string.
 All attributes in this example are leaves; there is no nesting.

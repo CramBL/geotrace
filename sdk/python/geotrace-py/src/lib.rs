@@ -678,7 +678,7 @@ impl PyEventMarker {
     /// Create an ``EventMarker``.
     ///
     /// ``variant_path`` may be a path string, ``None``, or the
-    /// ``event_kind.skip`` sentinel — the latter two are treated as a silent
+    /// ``event_kind.skip`` sentinel - the latter two are treated as a silent
     /// no-op when passed to ``NavFileBuilder.add()``.
     #[new]
     #[pyo3(signature = (variant_path, sys_time, *, annotation=None))]
@@ -1117,7 +1117,7 @@ impl PyNavFileBuilder {
 
     /// Process all data and return a `NavFile`.
     ///
-    /// Consumes the builder — calling `finish()` again raises `RuntimeError`.
+    /// Consumes the builder - calling `finish()` again raises `RuntimeError`.
     fn finish(&mut self) -> PyResult<PyNavFile> {
         let sink = if let Some(sink) = self.sink.take() {
             sink

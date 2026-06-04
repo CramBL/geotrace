@@ -176,7 +176,7 @@ impl NavFileBuilder {
     ///
     /// All recordings with the same identity are stored under the same group
     /// and appear together in the History window. The string should be stable
-    /// across re-recordings — for example a device serial number or route name.
+    /// across re-recordings - for example a device serial number or route name.
     pub fn with_identity(mut self, id: impl Into<String>) -> Self {
         let m = self.meta.get_or_insert_with(Meta::default);
         m.identity = Some(id.into());
@@ -349,7 +349,7 @@ impl NavFileSink {
     ///    `sys_time` but can be reliably placed once the clock offset is known from
     ///    the surrounding fixes.
     ///    When no delta can be computed (no fix has both timestamps), raw `sys_time`
-    ///    is used as a fallback — same behaviour as before.
+    ///    is used as a fallback - same behaviour as before.
     ///    Each fix receives at most one report; on equal distance the earlier report wins.
     /// 4. Orphan satellite reports get ghost nav fixes:
     ///    - Between two real fixes: position is interpolated proportionally using
@@ -465,7 +465,7 @@ impl NavFileSink {
 /// Reports are first partitioned into segments by their best-guess GPS position
 /// relative to the sorted real fixes, then placed as follows:
 ///
-/// **Between two real fixes** — position interpolated proportionally using the
+/// **Between two real fixes** - position interpolated proportionally using the
 /// corrected GPS timestamp.  The correction adds the GPS/system-clock delta
 /// derived from the `sys_time` fields of the bounding NavFixes; the delta is
 /// linearly interpolated between the two anchors.  Reports that already carry
@@ -473,11 +473,11 @@ impl NavFileSink {
 /// carries `gps_time`, the builder falls back to even spatial distribution so
 /// the output is still usable.  Heading = spherical bearing, fix A to fix B.
 ///
-/// **After the last real fix** — dead-reckoned in the last known heading.  The
+/// **After the last real fix** - dead-reckoned in the last known heading.  The
 /// first ghost is placed 1 m ahead (a fix-lost indicator); subsequent ghosts
 /// step 2 m each.  `heading = None` so the app renders circles.
 ///
-/// **Before the first real fix** — silently dropped (no reference position).
+/// **Before the first real fix** - silently dropped (no reference position).
 fn ghost_nav_points_for(
     real_fixes: &[InternalFix],
     orphan_reports: Vec<InternalSatReport>,
@@ -541,7 +541,7 @@ fn ghost_nav_points_for(
         let a_gps_us = effective_time(a).timestamp_micros();
         let span_us = (a_gps_us - b_gps_us) as f64;
 
-        // Per-segment delta anchors — only defined when the fix has a genuine GPS lock.
+        // Per-segment delta anchors - only defined when the fix has a genuine GPS lock.
         let delta_b = b.gps_time.and_then(|gt| {
             b.sys_time
                 .map(|st| gt.timestamp_micros() - st.timestamp_micros())
@@ -748,7 +748,7 @@ fn ghost_step(lat_deg: f64, lon_deg: f64, heading_deg: f64, dist_m: f64) -> (f64
 
 /// Assign each satellite report to its nearest nav fix within `window`.
 ///
-/// **Comparison timestamp** — binary search uses a GPS-domain estimate so the
+/// **Comparison timestamp** - binary search uses a GPS-domain estimate so the
 /// two nearest candidate fixes can be found (fixes are sorted by GPS time).
 /// The *distance* to each candidate is then computed in the most accurate
 /// clock domain available:
@@ -863,7 +863,7 @@ fn associate_satellites(
 /// on the nav timeline.
 ///
 /// External events carry host system-clock timestamps. Comparing them against
-/// the fix's `sys_time` — the same clock domain — gives the most accurate
+/// the fix's `sys_time` - the same clock domain - gives the most accurate
 /// placement. Falls back to `gps_time` when no `sys_time` is available, and to
 /// the Unix epoch as a last resort.
 ///
@@ -886,7 +886,7 @@ fn timeline_time(fix: &InternalFix) -> DateTime<Utc> {
 /// against each fix's `sys_time` (falling back to `gps_time` via
 /// [`timeline_time`]). This matches the clock domain of all external event
 /// sources (log files, user annotations). The fix slice must be sorted by a
-/// time consistent with `timeline_time` — in practice GPS and sys times are
+/// time consistent with `timeline_time` - in practice GPS and sys times are
 /// monotonically consistent for well-formed data.
 fn interpolate_annotations(
     fixes: &[InternalFix],
@@ -1028,7 +1028,7 @@ fn interpolate_event_markers(
 struct SatelliteIssues {
     /// Satellites with PRN = 0, which is invalid in all NMEA constellations.
     prn_zero: u32,
-    /// GPS satellites with PRN 33–64 (the SBAS range — WAAS, EGNOS, MSAS, GAGAN).
+    /// GPS satellites with PRN 33–64 (the SBAS range - WAAS, EGNOS, MSAS, GAGAN).
     gps_sbas_range: u32,
     /// GPS satellites with PRN > 64 (entirely outside the valid GPS/SBAS range).
     gps_out_of_range: u32,
@@ -1040,9 +1040,9 @@ struct SatelliteIssues {
     gal_out_of_range: u32,
     /// BeiDou satellites with PRN > 63 (valid range is C01–C63).
     bds_out_of_range: u32,
-    /// Satellites with elevation < 0° — below the horizon, outside the valid NMEA range [0°, 90°].
+    /// Satellites with elevation < 0° - below the horizon, outside the valid NMEA range [0°, 90°].
     elevation_negative: u32,
-    /// Satellites with elevation > 90° — above the zenith, outside the valid NMEA range [0°, 90°].
+    /// Satellites with elevation > 90° - above the zenith, outside the valid NMEA range [0°, 90°].
     elevation_above_90: u32,
     /// Satellites with azimuth outside [0°, 360°).
     azimuth_out_of_range: u32,
@@ -1061,7 +1061,7 @@ impl SatelliteIssues {
         let mut v = Vec::new();
         if self.prn_zero > 0 {
             v.push(format!(
-                "{} satellite(s) with PRN 0 — PRN 0 is reserved and undefined in NMEA",
+                "{} satellite(s) with PRN 0 - PRN 0 is reserved and undefined in NMEA",
                 self.prn_zero
             ));
         }
@@ -1075,14 +1075,14 @@ impl SatelliteIssues {
         }
         if self.gps_out_of_range > 0 {
             v.push(format!(
-                "{} GPS satellite(s) with PRN > 64 — outside the valid NMEA GPS/SBAS range \
+                "{} GPS satellite(s) with PRN > 64 - outside the valid NMEA GPS/SBAS range \
                  (1–64); check the source data",
                 self.gps_out_of_range
             ));
         }
         if self.glo_offset_range > 0 {
             v.push(format!(
-                "{} GLONASS satellite(s) with PRN 65–96 — looks like an un-stripped NMEA 4.11 \
+                "{} GLONASS satellite(s) with PRN 65–96 - looks like an un-stripped NMEA 4.11 \
                  GNGSV system-PRN (slot + 64). The expected format is slot numbers 1–32; \
                  subtract 64 before reporting.",
                 self.glo_offset_range
@@ -1091,63 +1091,63 @@ impl SatelliteIssues {
         if self.glo_out_of_range > 0 {
             v.push(format!(
                 "{} GLONASS satellite(s) with PRN outside 1–32 (and not in the GNGSV offset \
-                 range 65–96) — check the source data",
+                 range 65–96) - check the source data",
                 self.glo_out_of_range
             ));
         }
         if self.gal_out_of_range > 0 {
             v.push(format!(
-                "{} Galileo satellite(s) with PRN > 36 — outside the valid range (E01–E36)",
+                "{} Galileo satellite(s) with PRN > 36 - outside the valid range (E01–E36)",
                 self.gal_out_of_range
             ));
         }
         if self.bds_out_of_range > 0 {
             v.push(format!(
-                "{} BeiDou satellite(s) with PRN > 63 — outside the valid range (C01–C63)",
+                "{} BeiDou satellite(s) with PRN > 63 - outside the valid range (C01–C63)",
                 self.bds_out_of_range
             ));
         }
         if self.elevation_negative > 0 {
             v.push(format!(
-                "{} satellite(s) with negative elevation — below the horizon, outside the valid NMEA range [0°, 90°]",
+                "{} satellite(s) with negative elevation - below the horizon, outside the valid NMEA range [0°, 90°]",
                 self.elevation_negative
             ));
         }
         if self.elevation_above_90 > 0 {
             v.push(format!(
-                "{} satellite(s) with elevation > 90° — above the zenith, outside the valid NMEA range [0°, 90°]",
+                "{} satellite(s) with elevation > 90° - above the zenith, outside the valid NMEA range [0°, 90°]",
                 self.elevation_above_90
             ));
         }
         if self.azimuth_out_of_range > 0 {
             v.push(format!(
-                "{} satellite(s) with azimuth outside [0°, 360°) — invalid per NMEA",
+                "{} satellite(s) with azimuth outside [0°, 360°) - invalid per NMEA",
                 self.azimuth_out_of_range
             ));
         }
         if self.snr_sentinel_99 > 0 {
             v.push(format!(
-                "{} satellite(s) with SNR ≈ 99 dB-Hz — common sentinel value for unavailable \
+                "{} satellite(s) with SNR ≈ 99 dB-Hz - common sentinel value for unavailable \
                  signal strength; omit the SNR field when no measurement is available",
                 self.snr_sentinel_99
             ));
         }
         if self.snr_above_60 > 0 {
             v.push(format!(
-                "{} satellite(s) with SNR > 60 dB-Hz — above the physical limit for civil GNSS \
+                "{} satellite(s) with SNR > 60 dB-Hz - above the physical limit for civil GNSS \
                  receivers; check for sentinel values or unit errors",
                 self.snr_above_60
             ));
         }
         if self.snr_negative > 0 {
             v.push(format!(
-                "{} satellite(s) with negative SNR — SNR must be ≥ 0 dB-Hz",
+                "{} satellite(s) with negative SNR - SNR must be ≥ 0 dB-Hz",
                 self.snr_negative
             ));
         }
         if self.reports_with_duplicate_prn > 0 {
             v.push(format!(
-                "{} satellite report(s) contain duplicate (constellation, PRN) pairs — each \
+                "{} satellite report(s) contain duplicate (constellation, PRN) pairs - each \
                  satellite should appear at most once per report",
                 self.reports_with_duplicate_prn
             ));
@@ -1198,7 +1198,7 @@ fn collect_satellite_issues_inner<'a>(
     let mut issues = SatelliteIssues::default();
 
     for tracked in reports {
-        // (constellation discriminant, prn) — used for per-report duplicate detection.
+        // (constellation discriminant, prn) - used for per-report duplicate detection.
         let mut seen: HashSet<(u8, u32)> = HashSet::new();
         let mut has_duplicate = false;
 

@@ -139,7 +139,7 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
         }
 
         // Show tooltip for the hovered generated marker. Suppressed when the primary
-        // hover is already a TPV point — the TPV tooltip covers the same data and
+        // hover is already a TPV point - the TPV tooltip covers the same data and
         // showing both would produce two overlapping labels at the same map position.
         let primary_is_tpv = matches!(
             self.highlight.hover,

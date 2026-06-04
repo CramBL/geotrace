@@ -2,11 +2,11 @@ use egui::Color32;
 
 // UI symbol constants
 
-/// U+2014 EM DASH — used as a placeholder when a value is absent.
+/// U+2014 EM DASH - used as a placeholder when a value is absent.
 pub const EM_DASH: &str = "—";
-/// U+2212 MINUS SIGN — visually distinct from the ASCII hyphen-minus.
+/// U+2212 MINUS SIGN - visually distinct from the ASCII hyphen-minus.
 pub const MINUS_SIGN: &str = "−";
-/// U+0394 GREEK CAPITAL LETTER DELTA — used as a mathematical difference symbol.
+/// U+0394 GREEK CAPITAL LETTER DELTA - used as a mathematical difference symbol.
 pub const DELTA: &str = "Δ";
 /// U+00B0 DEGREE SIGN.
 pub const DEGREE_SIGN: &str = "°";
@@ -16,7 +16,7 @@ pub const DEGREE_SIGN: &str = "°";
 /// Highlight blue used for selected/hovered elements across map and panel.
 pub const HIGHLIGHT_BLUE: Color32 = Color32::from_rgb(100, 200, 255);
 
-/// Same hue as [`HIGHLIGHT_BLUE`] with reduced alpha — used for the plot seek-bar line.
+/// Same hue as [`HIGHLIGHT_BLUE`] with reduced alpha - used for the plot seek-bar line.
 ///
 /// Premultiplied equivalent of `(100, 200, 255, 200)`.
 pub const HIGHLIGHT_BLUE_SEEK: Color32 = Color32::from_rgba_premultiplied(78, 157, 200, 200);
@@ -49,7 +49,7 @@ pub fn map_hover_color(dark_mode: bool) -> Color32 {
 
 // Track palette
 
-/// Blue/cyan palette assigned to track polylines — chosen to stand out on both
+/// Blue/cyan palette assigned to track polylines - chosen to stand out on both
 /// OSM and satellite map backgrounds without implying error or warning semantics.
 /// The palette cycles over (file_index, track_index) using a mixing function
 /// so adjacent tracks get distinct shades.

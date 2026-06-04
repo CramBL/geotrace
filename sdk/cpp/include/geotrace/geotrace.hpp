@@ -1,6 +1,6 @@
 /**
  * @file geotrace.hpp
- * @brief GeoTrace C++ SDK — idiomatic C++17 header-only wrapper over the GeoTrace C SDK.
+ * @brief GeoTrace C++ SDK - idiomatic C++17 header-only wrapper over the GeoTrace C SDK.
  *
  * Usage:
  * @code
@@ -379,7 +379,7 @@ struct SatelliteView {
 /**
  * Event marker data returned by `NavFile::event_marker()`.
  *
- * String fields are copies — they are valid regardless of the `NavFile`'s lifetime.
+ * String fields are copies - they are valid regardless of the `NavFile`'s lifetime.
  */
 struct EventMarkerView {
     std::string variant_path;

@@ -51,7 +51,7 @@ fn read_empty_bytes_returns_error() {
 
 #[test]
 fn read_truncated_hdf5_magic_returns_error() {
-    // HDF5 magic is "\x89HDF\r\n\x1a\n" — truncate after 4 bytes.
+    // HDF5 magic is "\x89HDF\r\n\x1a\n" - truncate after 4 bytes.
     let truncated = b"\x89HDF";
     let result = NavFile::read(truncated.as_slice());
     assert!(

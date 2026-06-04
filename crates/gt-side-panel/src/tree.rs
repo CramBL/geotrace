@@ -135,7 +135,7 @@ impl EventPathTree {
         aggregate_check_states(iter).unwrap_or(CheckState::On)
     }
 
-    /// Iterator over hidden-root paths — paths that are Off but whose parent
+    /// Iterator over hidden-root paths - paths that are Off but whose parent
     /// is NOT Off.  This gives the minimal representation for
     /// `EventMarkerVisibility`.
     pub fn hidden_roots(&self) -> impl Iterator<Item = &str> {
@@ -536,7 +536,7 @@ impl TreeState {
         &self.event_marker_visibility
     }
 
-    /// Returns `true` when every track is hidden — used to trigger zoom-to-fit
+    /// Returns `true` when every track is hidden - used to trigger zoom-to-fit
     /// when the first track becomes visible.
     pub fn all_hidden(&self) -> bool {
         !self

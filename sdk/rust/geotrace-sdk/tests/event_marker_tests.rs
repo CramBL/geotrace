@@ -33,7 +33,7 @@ fn marker(variant_path: &str, offset_secs: i64) -> EventMarker {
         .expect("test marker path should be valid")
 }
 
-// Validation — accepted paths
+// Validation - accepted paths
 
 #[test]
 fn valid_simple() {
@@ -71,7 +71,7 @@ fn valid_exactly_256_bytes() {
     sink.add_event_marker(marker(&path, 0));
 }
 
-// Validation — rejected paths (validation now happens in EventMarker::builder().build())
+// Validation - rejected paths (validation now happens in EventMarker::builder().build())
 
 #[test]
 fn empty_path_is_rejected() {
@@ -187,7 +187,7 @@ fn error_messages_include_path() {
     }
 }
 
-// Builder — counts and round-trip
+// Builder - counts and round-trip
 
 #[test]
 fn markers_are_stored_in_nav_file() {

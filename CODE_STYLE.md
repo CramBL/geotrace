@@ -145,23 +145,23 @@ The only exception is when the comment is literally drawing a protocol diagram, 
 When importing a `trait` to use its trait methods, do this: `use Trait as _;`. That lets the reader know why you imported it, even though it seems unused.
 
 Always import **types** fully so they can be used by their short name at the call site.
-This applies even when the type is from an external crate — add the `use` and drop the crate qualifier at the call site:
+This applies even when the type is from an external crate - add the `use` and drop the crate qualifier at the call site:
 
 ```rust
 // Good
 use std::collections::HashMap;
 let m: HashMap<_, _> = …;
 
-// Good — same rule for external crates
+// Good - same rule for external crates
 use some_crate::SomeType;
 fn foo(x: SomeType) { … }
 
-// Bad — qualifies a type rather than importing it
+// Bad - qualifies a type rather than importing it
 let m: std::collections::HashMap<_, _> = …;
 fn foo(x: some_crate::SomeType) { … }
 ```
 
-Never fully import **functions** — always retain at least the parent module so the call site is self-documenting.
+Never fully import **functions** - always retain at least the parent module so the call site is self-documenting.
 Import the parent module and qualify the call with it, even across crates:
 
 ```rust
@@ -169,15 +169,15 @@ Import the parent module and qualify the call with it, even across crates:
 use std::fs;
 fs::read_to_string(path)?;
 
-// Good — same rule for external crates: import the module, qualify the call
+// Good - same rule for external crates: import the module, qualify the call
 use some_crate::utils;
 utils::helper(…);
 
-// Bad — hides where the function comes from
+// Bad - hides where the function comes from
 use std::fs::read_to_string;
 read_to_string(path)?;
 
-// Bad — qualifies at the crate level instead of the parent module
+// Bad - qualifies at the crate level instead of the parent module
 some_crate::utils::helper(…);
 ```
 
@@ -185,7 +185,7 @@ For very common functions (e.g. `mem::swap`, `iter::once`) retaining one module 
 
 When intentionally ignoring a `Result`, prefer `foo().ok();` over `let _ = foo();`. The former shows what is happening, and will fail to compile if `foo`:s return type ever changes.
 
-Never use `foo().unwrap_or(())` to discard a `Result` — it is more verbose than `.ok()` and hides the intent behind an API designed for providing fallback values, not silently dropping errors.
+Never use `foo().unwrap_or(())` to discard a `Result` - it is more verbose than `.ok()` and hides the intent behind an API designed for providing fallback values, not silently dropping errors.
 
 We group and order imports (`use` statements) by `std`, other crates, and lastly own `crate` and `super`. This corresponds to [`StdExternalCrate`](https://rust-lang.github.io/rustfmt/?version=v1.8.0&search=group#StdExternalCrate%5C%3A).
 
@@ -260,6 +260,6 @@ Such escapes are opaque to reviewers and make the intent hard to see at a glance
 Instead, use:
 
 - An [`egui_phosphor`](https://docs.rs/egui-phosphor) icon constant when the character is a visual icon (e.g. `egui_phosphor::regular::MAGNIFYING_GLASS`).
-- A named `const &str` when the character is a typographic symbol that appears inline with text — for example `const EM_DASH: &str = "—";` or `const ELLIPSIS: &str = "…";`.
+- A named `const &str` when the character is a typographic symbol that appears inline with text - for example `const EM_DASH: &str = "—";` or `const ELLIPSIS: &str = "…";`.
   Define the constant in the narrowest scope that covers all callers (file-level `const` in the module that owns the UI, crate-level if shared across files in a crate).
   The constant body may contain the literal Unicode character directly (the restriction is on escape sequences, not on non-ASCII characters in source).

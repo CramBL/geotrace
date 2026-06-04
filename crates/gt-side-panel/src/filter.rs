@@ -43,7 +43,7 @@ pub fn render_filter_panel(
             state.secondary_zoom = None;
         }
 
-        // Secondary (zoomed) time range bar — shown when the active data range
+        // Secondary (zoomed) time range bar - shown when the active data range
         // is much narrower than the full range (e.g. one 30-minute track among
         // several days). Uses a stable stored viewport so that dragging its
         // handles doesn't shift the viewport under the cursor.
@@ -134,7 +134,7 @@ pub fn render_filter_panel(
             .map(Length::new::<meter>);
     }
 
-    // Marker requirement — mutually exclusive options rendered as toggleable labels.
+    // Marker requirement - mutually exclusive options rendered as toggleable labels.
     let req = &mut filter.marker_requirement;
     ui.horizontal(|ui| {
         if ui

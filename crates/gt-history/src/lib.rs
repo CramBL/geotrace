@@ -36,7 +36,7 @@ pub struct Database {
     path: PathBuf,
 }
 
-/// Metadata for a recording — used for duplicate detection and indexing.
+/// Metadata for a recording - used for duplicate detection and indexing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecordingMeta {
     /// First nav-point timestamp in microseconds since epoch UTC.

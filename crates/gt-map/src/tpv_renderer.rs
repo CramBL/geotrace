@@ -118,7 +118,7 @@ impl<'a> TpvRenderer<'a> {
 
         // Ghost fixes: heading absent, or satellite fix count dropped to zero.
         // The latter covers devices that continue outputting positions and headings
-        // during fix loss — the heading field is present but unreliable as a
+        // during fix loss - the heading field is present but unreliable as a
         // "real" direction indicator, so we still show a hollow chevron.
         for (pi, point) in track.points.iter().enumerate() {
             if !is_ghost_fix(point) {
@@ -133,7 +133,7 @@ impl<'a> TpvRenderer<'a> {
             }
             // Direction for the chevron:
             // - If the GPS reported a heading (fix-lost but device maintained estimate),
-            //   use it — it is more accurate than deriving from neighbour positions.
+            //   use it - it is more accurate than deriving from neighbour positions.
             // - Otherwise derive from neighbouring Mercator positions (Mercator y
             //   increases southward, matching egui y-down, so no Y-flip needed).
             let direction = if let Some(h) = point.tpv.heading() {
@@ -206,7 +206,7 @@ impl Plugin for TpvRenderer<'_> {
         // Scale icon sizes and outline alpha with zoom level.
         //
         // At low zoom (≤ 12) icons are reduced to small dots so that dense
-        // clusters of points — e.g. highway driving at 1-second resolution —
+        // clusters of points - e.g. highway driving at 1-second resolution -
         // have visible air between them instead of blending into a solid mass.
         // At high zoom (≥ 18) icons reach their full design size.
         //
@@ -281,7 +281,7 @@ impl Plugin for TpvRenderer<'_> {
         // Cross-highlight: when the track plot cursor is active, draw a ring
         // indicator around the pre-computed closest point.
         // The app layer computes (fi, ti, pi) via find_closest_tpv and stores
-        // it in MapHighlight::plot_hover_point — no O(n) scan needed here.
+        // it in MapHighlight::plot_hover_point - no O(n) scan needed here.
         if let Some((fi, ti, pi)) = self.highlight.plot_hover_point
             && let Some(point) = fi
                 .get(self.files)
@@ -342,7 +342,7 @@ pub(crate) fn show_hover_table(ui: &mut Ui, p: &NavPoint) {
             show_satellite_rows(ui, p);
 
             // Time delta between the GPS fix and the satellite report.
-            // Only shown when the satellite report was GPS-timestamped — if it
+            // Only shown when the satellite report was GPS-timestamped - if it
             // only has sys_time, this delta equals the GPS/sys-clock delta below
             // and showing it would be redundant.
             if let Some(sats) = &p.satellites
@@ -427,7 +427,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
 
                     // Time delta between the GPS fix and the satellite report.
                     // A nonzero delta means the satellite data is from a slightly
-                    // different moment than the fix — worth showing for diagnostics.
+                    // different moment than the fix - worth showing for diagnostics.
                     if let Some(sat_gps_time) = sats.gps_time() {
                         let sat_delta_ms = (p.tpv.time() - sat_gps_time).num_milliseconds();
                         if sat_delta_ms != 0 {
@@ -438,7 +438,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
                     }
                 }
                 None => {
-                    // No satellite report for this point — omit the row.
+                    // No satellite report for this point - omit the row.
                     // A missing report does not mean there was no GPS fix.
                 }
             }
@@ -542,7 +542,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
 
 fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
     // Only show satellite rows when a report is actually attached to this point.
-    // Omit the section entirely when there is no report — a missing report
+    // Omit the section entirely when there is no report - a missing report
     // does not mean there was no GPS fix, just that no satellite data was
     // captured or associated for this particular point.
     let Some(sats) = &p.satellites else {
@@ -552,7 +552,7 @@ fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
     let fix = sats.fix_count();
     let seen = sats.satellite_count();
 
-    // Total summary row — bold to signal it is the aggregate.
+    // Total summary row - bold to signal it is the aggregate.
     ui.label(egui::RichText::new("Satellites").strong());
     ui.horizontal(|ui| {
         ui.label(
@@ -569,7 +569,7 @@ fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
     });
     ui.end_row();
 
-    // Per-constellation breakdown — each with its own colored fix/seen counts.
+    // Per-constellation breakdown - each with its own colored fix/seen counts.
     for constellation in [
         Constellation::Gps,
         Constellation::Galileo,
@@ -696,7 +696,7 @@ fn draw_tpv_point(
     style: &TpvDrawStyle,
     last_label_pos: &mut Option<Pos2>,
 ) {
-    // Accuracy circle — rendered beneath the icon.
+    // Accuracy circle - rendered beneath the icon.
     if let Some(eph_m) = eph_m {
         let radius = (f64::from(eph_m) * pixels_per_meter) as f32;
         if radius >= 2.0 {
@@ -737,7 +737,7 @@ fn draw_tpv_point(
         }
     }
 
-    // Satellite-count label — throttled to avoid over-dense clusters.
+    // Satellite-count label - throttled to avoid over-dense clusters.
     if let Some(sats) = satellites {
         let show =
             last_label_pos.is_none_or(|last| screen_pos.distance(last) > style.min_label_dist);
@@ -768,15 +768,15 @@ fn draw_tpv_point(
 /// Map a real (non-ghost) GPS point to its arrow colour based on satellite fix quality.
 ///
 /// Three-tier scheme:
-/// - **Blue** — strong fix (≥ 10 satellites) or no satellite report attached (unknown quality).
-/// - **Yellow** — marginal fix (1–9 satellites in fix).
-/// - **Red** — fix lost: satellite report present but zero satellites are in the fix.
+/// - **Blue** - strong fix (≥ 10 satellites) or no satellite report attached (unknown quality).
+/// - **Yellow** - marginal fix (1–9 satellites in fix).
+/// - **Red** - fix lost: satellite report present but zero satellites are in the fix.
 ///
 /// Ghost fixes (no heading, or fix count zero) are rendered as red hollow chevrons
 /// by `draw_ghost_chevron` and never reach this function.
 fn tpv_point_color(point: &NavPoint) -> Color32 {
     match &point.satellites {
-        None => Color32::from_rgb(66, 133, 244), // no satellite data — assume fine, show blue
+        None => Color32::from_rgb(66, 133, 244), // no satellite data - assume fine, show blue
         Some(sats) => match sats.fix_count() {
             n if n >= 10 => Color32::from_rgb(66, 133, 244), // blue: strong fix
             n if n > 0 => Color32::from_rgb(244, 180, 0),    // yellow: marginal fix
@@ -788,9 +788,9 @@ fn tpv_point_color(point: &NavPoint) -> Color32 {
 /// Classifies a GPS point for a single render pass, carrying everything the
 /// draw step needs so `render_track` only matches `heading()` once.
 enum PointKind {
-    /// Real GPS fix — heading known, precomputed Mercator coordinates used.
+    /// Real GPS fix - heading known, precomputed Mercator coordinates used.
     Real { color: Color32, heading: Angle },
-    /// Ghost fix — either heading is absent, or the satellite fix count is zero.
+    /// Ghost fix - either heading is absent, or the satellite fix count is zero.
     ///
     /// `direction` is a normalised screen-space vector pointing in the inferred
     /// travel direction. When the GPS reported a heading it is converted directly;
@@ -882,7 +882,7 @@ fn draw_navigation_arrow(
     //          / \
     //         /   \
     //        /     \
-    //       /   *   \        notch (0.1·size back — concave, pulled toward tip)
+    //       /   *   \        notch (0.1·size back - concave, pulled toward tip)
     //      /   / \   \
     //     *   /   \   *      wings (0.4·size back, ±0.5·size wide)
     //
@@ -898,7 +898,7 @@ fn draw_navigation_arrow(
     let notch = center - dir * (size * 0.1);
     let left = center - dir * (size * 0.4) - perp * (size * 0.5);
 
-    // Fill — two convex triangles avoid non-convex fill artefacts.
+    // Fill - two convex triangles avoid non-convex fill artefacts.
     ui.painter().add(egui::Shape::convex_polygon(
         vec![tip, right, notch],
         color,
@@ -910,7 +910,7 @@ fn draw_navigation_arrow(
         Stroke::NONE,
     ));
 
-    // Outline — closed path drawn on top of the fill.
+    // Outline - closed path drawn on top of the fill.
     if stroke_width > 0.0 {
         ui.painter().add(egui::Shape::Path(PathShape::closed_line(
             vec![tip, right, notch, left],

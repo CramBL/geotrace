@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-/// GPS-receiver clock timestamp — wraps [`DateTime<Utc>`] to prevent accidental
+/// GPS-receiver clock timestamp - wraps [`DateTime<Utc>`] to prevent accidental
 /// confusion with system-clock time inside SDK processing code.
 ///
 /// Constructed from user-supplied `DateTime<Utc>` values at the earliest possible
@@ -26,7 +26,7 @@ impl GpsTime {
     }
 }
 
-/// Host system-clock timestamp — wraps [`DateTime<Utc>`] to prevent accidental
+/// Host system-clock timestamp - wraps [`DateTime<Utc>`] to prevent accidental
 /// confusion with GPS-receiver time inside SDK processing code.
 ///
 /// The public SDK API still accepts and returns plain `DateTime<Utc>`.

@@ -51,7 +51,7 @@ impl EventMarkerVisibility {
     }
 
     /// Hide `path` and remove any explicit hidden entries for its descendants
-    /// (they are now redundant — the parent covers them).
+    /// (they are now redundant - the parent covers them).
     pub fn set_hidden_cascade(&mut self, track: TrackRef, path: &str) {
         let hidden = self.hidden.entry(track).or_default();
         let child_prefix = format!("{path}/");
@@ -70,7 +70,7 @@ impl EventMarkerVisibility {
 
     /// Replace the hidden set for one track with the given minimal root paths.
     ///
-    /// Each entry in `hidden_roots` should be a path whose parent is NOT hidden —
+    /// Each entry in `hidden_roots` should be a path whose parent is NOT hidden -
     /// callers are responsible for ensuring minimality.
     pub fn set_hidden(&mut self, track: TrackRef, hidden_roots: impl Iterator<Item = String>) {
         self.hidden.remove(&track);

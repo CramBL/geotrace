@@ -166,7 +166,7 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
                 .color(gt_ui_theme::WARNING_AMBER);
             if ui
                 .add(egui::Label::new(icon).sense(egui::Sense::click()))
-                .on_hover_text("Data quality warnings — click for details")
+                .on_hover_text("Data quality warnings - click for details")
                 .clicked()
             {
                 *ctx.warnings_request =
@@ -645,7 +645,7 @@ fn render_event_markers_section(
         }
     }
 
-    // No max_height cap — expands inline with the track's content.
+    // No max_height cap - expands inline with the track's content.
     for prefix in &prefix_set {
         let depth = prefix.chars().filter(|&c| c == '/').count();
         let segment = prefix.split('/').next_back().unwrap_or(prefix.as_str());

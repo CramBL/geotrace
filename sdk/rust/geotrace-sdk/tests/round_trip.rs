@@ -1,6 +1,6 @@
 #![expect(
     clippy::panic_in_result_fn,
-    reason = "test functions mix ? propagation with assert! — both are correct in test code"
+    reason = "test functions mix ? propagation with assert! - both are correct in test code"
 )]
 #![expect(clippy::cognitive_complexity, reason = "comprehensive round-trip test")]
 
