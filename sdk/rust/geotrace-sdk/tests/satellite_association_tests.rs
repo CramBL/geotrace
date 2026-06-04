@@ -715,10 +715,9 @@ fn ghost_after_fix_with_no_heading_does_not_panic() -> Result<(), BuildError> {
 
 /// In the `--no-filter` pipeline, SAT records carry only `sys_time`; TPV records
 /// carry both `gps_time` and `sys_time`.
-/// When the GPS/sys-clock offset exceeds the association window a naïve comparison
+/// When the GPS/sys-clock offset exceeds the association window a naive comparison
 /// of `SAT.sys_time` against `TPV.gps_time` places every report outside the window
-/// - all become orphans - causing the alternating real-fix (no-sat) / ghost (with-sat)
-/// pattern observed in practice.
+/// - all become orphans - causing the alternating real-fix (no-sat) / ghost (with-sat) pattern observed in practice.
 ///
 /// The improved algorithm applies the GPS/sys-clock delta (derived from fixes that
 /// have both timestamps) to correct `sys_time`-only reports into the GPS time domain
