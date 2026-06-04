@@ -1,13 +1,10 @@
 /target
 .pup
-pup.ron
 tests/tmp/
 
 # Python SDK (geotrace-py)
 sdk/python/geotrace-py/.venv/
 sdk/python/geotrace-py/target/
-sdk/python/geotrace-py/Cargo.lock
-sdk/python/geotrace-py/uv.lock
 sdk/python/geotrace-py/dist/
 __pycache__/
 *.pyc
