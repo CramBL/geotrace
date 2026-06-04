@@ -318,13 +318,11 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker_style(
             Some(hex) => EventMarkerColor::Hex(hex.to_owned()),
             None => EventMarkerColor::Auto,
         };
-        b.sink_mut().add_event_marker_style(
-            EventMarkerStyle::builder()
-                .variant_path(path)
-                .icon(icon_choice)
-                .color(color)
-                .build(),
-        );
+        b.sink_mut().add_event_marker_style(EventMarkerStyle {
+            variant_path: path.to_owned(),
+            icon: icon_choice,
+            color,
+        });
         GtdStatus::Ok
     })
 }

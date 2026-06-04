@@ -1,3 +1,5 @@
+use crate::error::Error;
+
 /// A point in time, wrapping [`chrono::DateTime<chrono::Utc>`].
 ///
 /// Construct from a raw integer timestamp with one of the explicit unit
@@ -53,6 +55,18 @@ impl Timestamp {
         let ns = i64::try_from(nanos).expect("unix nanoseconds timestamp out of valid range");
         Self(chrono::DateTime::from_timestamp_nanos(ns))
     }
+
+    /// Parse an ISO 8601 / RFC 3339 timestamp from a string.
+    pub fn try_from_iso8601(s: impl AsRef<str>) -> Result<Self, Error> {
+        let s = s.as_ref();
+        s.parse::<chrono::DateTime<chrono::Utc>>()
+            .map(Self)
+            .map_err(|e| Error::ParseError {
+                unit: "Timestamp (ISO 8601)",
+                input: s.to_owned(),
+                reason: e.to_string(),
+            })
+    }
 }
 
 impl From<chrono::DateTime<chrono::Utc>> for Timestamp {
@@ -89,6 +103,18 @@ impl Angle {
 
     pub fn as_radians(self) -> f64 {
         self.0.to_radians()
+    }
+
+    /// Parse a decimal degree value from a string.
+    pub fn try_from_degrees_str(s: impl AsRef<str>) -> Result<Self, Error> {
+        let s = s.as_ref();
+        s.parse::<f64>()
+            .map(Self::degrees)
+            .map_err(|e| Error::ParseError {
+                unit: "Angle (degrees)",
+                input: s.to_owned(),
+                reason: e.to_string(),
+            })
     }
 }
 
@@ -131,6 +157,18 @@ impl Velocity {
 
     pub fn as_knots(self) -> f64 {
         self.0 / MPS_PER_KNOT
+    }
+
+    /// Parse a km/h value from a string.
+    pub fn try_from_kmh_str(s: impl AsRef<str>) -> Result<Self, Error> {
+        let s = s.as_ref();
+        s.parse::<f64>()
+            .map(Self::kilometer_per_hour)
+            .map_err(|e| Error::ParseError {
+                unit: "Velocity (km/h)",
+                input: s.to_owned(),
+                reason: e.to_string(),
+            })
     }
 }
 

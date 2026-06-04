@@ -29,3 +29,19 @@ test-install: (_sdk "bash" "scripts/test-install.sh")
 # Install via vcpkg overlay port and verify a consumer project builds.
 [group("container-sdk")]
 test-install-vcpkg: (_sdk "bash" "scripts/test-install-vcpkg.sh")
+
+# clang-format check + clang-tidy for the C SDK.
+[group("container-sdk")]
+lint-c: (_sdk "bash" "scripts/lint-c.sh")
+
+# clang-format check + clang-tidy for the C++ SDK.
+[group("container-sdk")]
+lint-cpp: (_sdk "bash" "scripts/lint-cpp.sh")
+
+# Apply clang-format in-place to C SDK sources.
+[group("container-sdk")]
+fmt-c: (_sdk "bash" "scripts/fmt-c.sh")
+
+# Apply clang-format in-place to C++ SDK sources.
+[group("container-sdk")]
+fmt-cpp: (_sdk "bash" "scripts/fmt-cpp.sh")

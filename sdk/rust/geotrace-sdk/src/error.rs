@@ -94,6 +94,19 @@ pub enum Error {
         expected: usize,
         actual: usize,
     },
+
+    #[error("unknown constellation name {name:?}")]
+    UnknownConstellationName { name: String },
+
+    #[error("unknown marker icon name {name:?}")]
+    UnknownMarkerIcon { name: String },
+
+    #[error("failed to parse {unit} from {input:?}: {reason}")]
+    ParseError {
+        unit: &'static str,
+        input: String,
+        reason: String,
+    },
 }
 
 impl From<hdf5_pure::Error> for Error {

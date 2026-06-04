@@ -86,8 +86,6 @@ namespace geotrace {
 class NavFile;
 
 
-// ── Exception hierarchy ───────────────────────────────────────────────────────
-
 /** Base for all GeoTrace SDK errors. */
 struct Error : std::runtime_error {
     using std::runtime_error::runtime_error;
@@ -160,8 +158,6 @@ inline GtdOptF64 to_c(std::optional<double> v) noexcept {
 
 } // namespace detail
 
-
-// ── Value types ───────────────────────────────────────────────────────────────
 
 /**
  * UTC Unix epoch timestamp in microseconds.
@@ -236,8 +232,6 @@ private:
 };
 
 
-// ── Enumerations ──────────────────────────────────────────────────────────────
-
 enum class Constellation { Gps, Glonass, Galileo, Beidou };
 
 enum class MarkerIcon {
@@ -300,8 +294,6 @@ inline Timestamp from_c(GtdTimestamp ts) noexcept {
 } // namespace detail
 
 
-// ── Write-path aggregates ─────────────────────────────────────────────────────
-
 /** A single GPS navigation fix. */
 struct NavFix {
     Timestamp              gps_time = Timestamp::none();
@@ -352,8 +344,6 @@ struct EventMarkerStyle {
 };
 
 
-// ── View types (read path) ────────────────────────────────────────────────────
-
 /** Data for one navigation fix, returned by `NavFile::nav_point()`. */
 struct NavPointView {
     Timestamp                gps_time;
@@ -389,8 +379,6 @@ struct EventMarkerView {
     std::string annotation;  // empty if none
 };
 
-
-// ── FileBuilder ───────────────────────────────────────────────────────────────
 
 /**
  * Constructs a GeoTrace navigation file.
@@ -560,8 +548,6 @@ private:
     GtdFileBuilder* impl_;
 };
 
-
-// ── NavFile ───────────────────────────────────────────────────────────────────
 
 /**
  * A parsed or newly-built GeoTrace navigation file.
@@ -736,8 +722,6 @@ private:
     GtdNavFile* impl_;
 };
 
-
-// ── FileBuilder::finish definition (NavFile is now complete) ──────────────────
 
 inline NavFile FileBuilder::finish() {
     GtdNavFile* out = nullptr;

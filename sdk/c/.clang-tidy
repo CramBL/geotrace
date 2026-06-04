@@ -1,0 +1,7 @@
+Checks: "clang-analyzer-*,bugprone-*,cert-*,misc-*,readability-*,\
+  -bugprone-easily-swappable-parameters,\
+  -cert-err33-c,\
+  -readability-magic-numbers,\
+  -readability-function-cognitive-complexity"
+WarningsAsErrors: "*"
+HeaderFilterRegex: "sdk/c/.*\\.h"

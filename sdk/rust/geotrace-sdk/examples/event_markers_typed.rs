@@ -23,8 +23,8 @@
 use std::{env, error::Error, fs};
 
 use geotrace_sdk::{
-    Angle, DateTime, EventKind, EventMarkerColor, EventMarkerIconChoice, EventMarkerStyle,
-    MarkerIcon, NavFileBuilder, NavFix, Utc,
+    Angle, DateTime, EventKind, EventMarkerIconChoice, EventMarkerStyle, MarkerIcon,
+    NavFileBuilder, NavFix, Utc,
 };
 
 #[derive(Debug, EventKind)]
@@ -131,15 +131,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         EventMarkerStyle::builder()
             .variant_path(Event::Power(PowerEvent::Boot).variant_path().unwrap())
             .icon(EventMarkerIconChoice::Icon(MarkerIcon::Lightning))
-            .color(EventMarkerColor::hex("#44BB44"))
-            .build(),
+            .color("#44BB44")
+            .build()
+            .expect("valid hex color"),
     );
     sink.add_event_marker_style(
         EventMarkerStyle::builder()
             .variant_path(Event::Power(PowerEvent::Sleep).variant_path().unwrap())
             .icon(EventMarkerIconChoice::Icon(MarkerIcon::Pin))
-            .color(EventMarkerColor::hex("#4488FF"))
-            .build(),
+            .color("#4488FF")
+            .build()
+            .expect("valid hex color"),
     );
 
     let nav_file = sink.finish()?;

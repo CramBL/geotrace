@@ -7,7 +7,7 @@ from pathlib import Path
 Violation = tuple[Path, int, str]
 
 
-_EXCLUDED = frozenset({"target", ".venv"})
+_EXCLUDED = frozenset({"target", ".venv", "build"})
 
 
 def _is_excluded(path: Path) -> bool:
@@ -21,9 +21,19 @@ def rs_files(root: Path) -> Iterator[Path]:
 
 
 def hash_comment_files(root: Path) -> Iterator[Path]:
-    """Yield Python and Just source files (uses # comments)."""
+    """Yield Python, Just, and CMake source files (uses # comments)."""
     seen: set[Path] = set()
-    for pattern in ("*.py", "*.just", "justfile"):
+    for pattern in ("*.py", "*.just", "justfile", "CMakeLists.txt", "*.cmake"):
+        for path in root.rglob(pattern):
+            if not _is_excluded(path) and path not in seen:
+                seen.add(path)
+    yield from sorted(seen)
+
+
+def c_family_files(root: Path) -> Iterator[Path]:
+    """Yield C and C++ source and header files."""
+    seen: set[Path] = set()
+    for pattern in ("*.c", "*.h", "*.cpp", "*.hpp"):
         for path in root.rglob(pattern):
             if not _is_excluded(path) and path not in seen:
                 seen.add(path)

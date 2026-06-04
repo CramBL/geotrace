@@ -17,9 +17,14 @@ function(add_cpp_test name)
     target_link_libraries(${name} PRIVATE GeoTrace::Cpp doctest::doctest)
 
     if(MSVC)
-        target_compile_options(${name} PRIVATE /W4 /WX)
+        target_compile_options(${name} PRIVATE /W4 /WX /wd4100)
     else()
-        target_compile_options(${name} PRIVATE -Wall -Wextra -Werror)
+        target_compile_options(${name} PRIVATE
+            -Wall -Wextra -Wpedantic
+            -Wshadow -Wnon-virtual-dtor -Woverloaded-virtual
+            -Wcast-qual -Wformat=2 -Wmissing-declarations
+            -Werror
+        )
     endif()
 
     target_compile_definitions(${name} PRIVATE

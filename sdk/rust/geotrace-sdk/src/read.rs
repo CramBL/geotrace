@@ -312,7 +312,7 @@ fn read_event_marker_styles(file: &File) -> Result<Vec<EventMarkerStyle>, Error>
         .filter_map(|((vp_row, icon_row), color_row)| {
             let variant_path = decode_fixed_str(vp_row)?;
             let icon = decode_fixed_str(icon_row)
-                .and_then(|s| crate::types::MarkerIcon::from_name(&s))
+                .and_then(|s| crate::types::MarkerIcon::try_from_lower_case(&s).ok())
                 .map_or(
                     crate::types::EventMarkerIconChoice::Auto,
                     crate::types::EventMarkerIconChoice::Icon,

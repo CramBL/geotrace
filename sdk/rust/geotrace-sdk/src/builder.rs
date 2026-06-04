@@ -4,8 +4,9 @@ use chrono::{DateTime, Duration, Utc};
 use crate::error::BuildError;
 use crate::time_types::{GpsTime, SysTime};
 use crate::types::{
-    Annotation, Constellation, EventMarker, EventMarkerIconChoice, EventMarkerPoint,
-    EventMarkerStyle, Marker, Meta, NavFile, NavFix, NavPoint, Satellite, SatelliteReport,
+    Annotation, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,
+    EventMarkerPoint, EventMarkerStyle, Marker, Meta, NavFile, NavFix, NavPoint, Satellite,
+    SatelliteReport,
 };
 use crate::variant_path::EventKind;
 
@@ -313,12 +314,11 @@ impl NavFileSink {
         if let Some(icon) = event.marker_icon()
             && self.styled_paths.insert(path.to_owned())
         {
-            self.event_marker_styles.push(
-                EventMarkerStyle::builder()
-                    .variant_path(path)
-                    .icon(EventMarkerIconChoice::Icon(icon))
-                    .build(),
-            );
+            self.event_marker_styles.push(EventMarkerStyle {
+                variant_path: path.to_owned(),
+                icon: EventMarkerIconChoice::Icon(icon),
+                color: EventMarkerColor::Auto,
+            });
         }
     }
 

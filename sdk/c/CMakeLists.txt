@@ -3,8 +3,7 @@ project(GeoTraceC VERSION 0.1.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-
-# ── Locate the pre-built library ─────────────────────────────────────────────
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Callers may set GEOTRACE_C_LIB_DIR to a pre-built install prefix.
 # If not set, we look alongside the header (useful for in-tree builds).
@@ -31,8 +30,6 @@ if(NOT GEOTRACE_C_LIBRARY)
     )
 endif()
 
-# ── Imported target ───────────────────────────────────────────────────────────
-
 # On Windows we link against the static library (geotrace_c.lib produced by
 # Rust's staticlib crate type) to avoid DLL search-path complications.
 # On Linux/macOS we use the shared library and embed an RPATH in consumers.
@@ -46,8 +43,6 @@ set_target_properties(GeoTrace::C PROPERTIES
     IMPORTED_LOCATION "${GEOTRACE_C_LIBRARY}"
     INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
 )
-
-# ── Install ───────────────────────────────────────────────────────────────────
 
 include(GNUInstallDirs)
 
@@ -75,15 +70,11 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/GeoTraceCConfig.cmake"
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/GeoTraceC"
 )
 
-# ── Examples ─────────────────────────────────────────────────────────────────
-
 option(GEOTRACE_C_BUILD_EXAMPLES "Build C SDK examples" OFF)
 
 if(GEOTRACE_C_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
-
-# ── Tests ─────────────────────────────────────────────────────────────────────
 
 option(GEOTRACE_C_BUILD_TESTS "Build C SDK tests" OFF)
 

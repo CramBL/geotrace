@@ -1,0 +1,7 @@
+sys_time,variant_path,annotation
+2026-02-02T15:00:00+00:00,style/custom-icon,This should have a custom icon
+2026-02-02T15:00:01+00:00,style/custom-color,This should have a custom color
+2026-02-03T15:00:19+00:00,spiral/end,Spiral complete
+2026-02-04T15:00:10+00:00,navigation/turn-90,Sharp right turn
+2026-02-07T15:00:03+00:00,signal/lost,GNSS fix lost
+2026-02-07T15:00:08+00:00,signal/regained,GNSS fix regained

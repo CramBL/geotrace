@@ -1,0 +1,273 @@
+use geotrace_sdk::{
+    Angle, Annotation, Constellation, EventMarker, EventMarkerStyle, MarkerIcon, Meta,
+    NavFileBuilder, NavFix, Satellite, SatelliteReport, Velocity,
+};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut builder = NavFileBuilder::new().with_lenient_errors();
+    let base_dir = Path::new("tests/fixtures/gold_dataset");
+
+    if !base_dir.exists() {
+        return Err(format!(
+            "Base directory not found: {:?}. Are you running from the repository root?",
+            base_dir
+        )
+        .into());
+    }
+
+    // 0. Load Metadata
+    let meta_file = File::open(base_dir.join("meta.csv"))?;
+    let reader = BufReader::new(meta_file);
+    let mut lines = reader.lines().skip(1);
+    if let Some(Ok(line)) = lines.next() {
+        let cols: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+        if cols.len() >= 4 {
+            builder = builder.with_meta(
+                Meta::builder()
+                    .maybe_title(Some(cols[0]))
+                    .maybe_device(Some(cols[1]))
+                    .maybe_notes(Some(cols[2]))
+                    .maybe_identity(Some(cols[3]))
+                    .build(),
+            );
+        }
+    }
+    let mut sink = builder.open();
+
+    // 0.1 Load Event Styles
+    let style_file = File::open(base_dir.join("event_styles.csv"))?;
+    let reader = BufReader::new(style_file);
+    for line in reader.lines().skip(1) {
+        let line = line?;
+        let cols: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+        if cols.len() < 3 {
+            continue;
+        }
+        sink.add_event_marker_style(
+            EventMarkerStyle::builder()
+                .variant_path(cols[0])
+                .maybe_icon(
+                    MarkerIcon::try_from_lower_case(cols[1])
+                        .ok()
+                        .map(Into::into),
+                )
+                .maybe_color(Some(cols[2]))
+                .build()?,
+        );
+    }
+
+    // 1. Load Satellites into a map by (gps_time, sys_time)
+    let mut satellite_reports: HashMap<(String, String), Vec<Satellite>> = HashMap::new();
+    let sat_file = File::open(base_dir.join("satellites.csv"))?;
+    let reader = BufReader::new(sat_file);
+    for line in reader.lines().skip(1) {
+        let line = line?;
+        let cols: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+        if cols.len() < 8 {
+            continue;
+        }
+        let sat = Satellite::builder()
+            .constellation(Constellation::try_from_lower_case(cols[2])?)
+            .prn(cols[3].parse()?)
+            .in_fix(cols[4].parse()?)
+            .maybe_elevation(cols[5].parse().ok())
+            .maybe_azimuth(cols[6].parse().ok())
+            .maybe_snr(cols[7].parse().ok())
+            .build();
+
+        satellite_reports
+            .entry((cols[0].to_string(), cols[1].to_string()))
+            .or_default()
+            .push(sat);
+    }
+
+    // 2. Load Fixes
+    let fix_file = File::open(base_dir.join("fixes.csv"))?;
+    let reader = BufReader::new(fix_file);
+    for line in reader.lines().skip(1) {
+        let line = line?;
+        let cols: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+        if cols.len() < 8 {
+            continue;
+        }
+        let gps_time = parse_time(cols[1]);
+        let sys_time = parse_time(cols[2]);
+
+        sink.add_nav_fix(
+            NavFix::builder()
+                .maybe_gps_time(gps_time)
+                .maybe_sys_time(sys_time)
+                .lat(Angle::try_from_degrees_str(cols[3])?)
+                .lon(Angle::try_from_degrees_str(cols[4])?)
+                .maybe_heading(Angle::try_from_degrees_str(cols[5]).ok())
+                .maybe_speed(Velocity::try_from_kmh_str(cols[6]).ok())
+                .maybe_eph_m(cols[7].parse().ok())
+                .build(),
+        );
+
+        // Associated satellite report?
+        let key = (cols[1].to_string(), cols[2].to_string());
+        if let Some(tracked) = satellite_reports.remove(&key) {
+            sink.add_satellite_report(
+                SatelliteReport::builder()
+                    .maybe_gps_time(gps_time)
+                    .maybe_sys_time(sys_time)
+                    .tracked(tracked)
+                    .build(),
+            );
+        }
+    }
+
+    // Add remaining orphan satellite reports (if any)
+    for ((gt_str, st_str), tracked) in satellite_reports {
+        sink.add_satellite_report(
+            SatelliteReport::builder()
+                .maybe_gps_time(parse_time(&gt_str))
+                .maybe_sys_time(parse_time(&st_str))
+                .tracked(tracked)
+                .build(),
+        );
+    }
+
+    // 3. Load Markers
+    let marker_file = File::open(base_dir.join("markers.csv"))?;
+    let reader = BufReader::new(marker_file);
+    for line in reader.lines().skip(1) {
+        let line = line?;
+        let cols: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+        if cols.len() < 3 {
+            continue;
+        }
+        sink.add_annotation(
+            Annotation::builder()
+                .time(parse_time(cols[0]).expect("Marker time required"))
+                .maybe_label(Some(cols[1]))
+                .maybe_icon(MarkerIcon::try_from_lower_case(cols[2]).ok())
+                .build(),
+        );
+    }
+
+    // 4. Load Events
+    let event_file = File::open(base_dir.join("events.csv"))?;
+    let reader = BufReader::new(event_file);
+    for line in reader.lines().skip(1) {
+        let line = line?;
+        let cols: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+        if cols.len() < 3 {
+            continue;
+        }
+        sink.add_event_marker(
+            EventMarker::builder()
+                .variant_path(cols[1])
+                .sys_time(parse_time(cols[0]).expect("Event sys_time required"))
+                .maybe_annotation(if cols[2].is_empty() {
+                    None
+                } else {
+                    Some(cols[2].to_string())
+                })
+                .build()?,
+        );
+    }
+
+    let nav_file = sink.finish()?;
+    nav_file.write_to_file(base_dir.join("gold.gtd"))?;
+
+    println!("Gold dataset generated successfully: tests/fixtures/gold_dataset/gold.gtd");
+    println!("Summary:");
+    println!("  Nav Points:    {}", nav_file.nav_points().len());
+    println!("  Markers:       {}", nav_file.markers().len());
+    println!("  Event Markers: {}", nav_file.event_markers().len());
+
+    println!("Verifying round-trip integrity...");
+    verify_gold_file(base_dir.join("gold.gtd"))?;
+    println!("Verification successful! ✅");
+
+    Ok(())
+}
+
+fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
+    let file = geotrace_sdk::NavFile::open(path)?;
+
+    // 1. Metadata
+    let meta = file.meta();
+    assert!(meta.title.as_ref().unwrap().contains("Gold Dataset 🏆"));
+    assert!(
+        meta.device
+            .as_ref()
+            .unwrap()
+            .contains("Synthetic Generator 🧬")
+    );
+    assert!(meta.notes.as_ref().unwrap().contains("🛰️"));
+    assert_eq!(meta.identity.as_ref().unwrap(), "gold-standard-v2");
+
+    // 2. Nav Points
+    let points = file.nav_points();
+    assert_eq!(points.len(), 189);
+
+    // Track 8 Antimeridian: check first and last point
+    let track_8_points: Vec<_> = points
+        .iter()
+        .filter(|p| p.fix.lon.as_degrees() > 179.9 || p.fix.lon.as_degrees() < -179.9)
+        .collect();
+    assert_eq!(track_8_points.len(), 10);
+    assert!((track_8_points[0].fix.lon.as_degrees() - 179.95).abs() < 1e-6);
+    assert!((track_8_points[9].fix.lon.as_degrees() - (-179.96)).abs() < 1e-6);
+
+    // Track 9 Stationary
+    let track_9_points: Vec<_> = points
+        .iter()
+        .filter(|p| (p.fix.lat.as_degrees() - (-10.0)).abs() < 1e-6)
+        .collect();
+    assert_eq!(track_9_points.len(), 20);
+    for p in track_9_points {
+        assert_eq!(p.fix.speed.map(|s| s.as_meters_per_second()), Some(0.0));
+    }
+
+    // 3. Markers
+    let markers = file.markers();
+    assert_eq!(markers.len(), 15);
+    // Check "File Boundary Start" at index 0
+    assert_eq!(
+        markers[0].annotation.label.as_ref().unwrap(),
+        "File Boundary Start"
+    );
+    assert_eq!(markers[0].annotation.icon, Some(MarkerIcon::Check));
+
+    // 4. Event Markers & Styles
+    let events = file.event_markers();
+    assert_eq!(events.len(), 6);
+
+    let styles = file.event_marker_styles();
+    let icon_style = styles
+        .iter()
+        .find(|s| s.variant_path == "style/custom-icon")
+        .unwrap();
+    assert_eq!(
+        icon_style.icon,
+        geotrace_sdk::EventMarkerIconChoice::Icon(MarkerIcon::Lightning)
+    );
+
+    let color_style = styles
+        .iter()
+        .find(|s| s.variant_path == "style/custom-color")
+        .unwrap();
+    assert!(matches!(
+        color_style.color,
+        geotrace_sdk::EventMarkerColor::Hex(_)
+    ));
+    if let geotrace_sdk::EventMarkerColor::Hex(hex) = &color_style.color {
+        assert_eq!(hex, "#FF00FF");
+    }
+
+    Ok(())
+}
+
+fn parse_time(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    geotrace_sdk::Timestamp::try_from_iso8601(s)
+        .ok()
+        .map(Into::into)
+}

@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 check-em-dash = "qa.check_em_dash:main"
 check-floating-comments = "qa.check_floating_comments:main"
 qa-lint = "qa.lint:main"
+generate-gold = "qa.generate_gold_dataset:main"
 
 [dependency-groups]
 dev = [

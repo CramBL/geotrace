@@ -111,18 +111,46 @@ impl Constellation {
             }),
         }
     }
+
+    pub fn try_from_lower_case(s: impl AsRef<str>) -> Result<Self, Error> {
+        let s = s.as_ref();
+        match s {
+            "gps" => Ok(Constellation::Gps),
+            "glonass" => Ok(Constellation::Glonass),
+            "galileo" => Ok(Constellation::Galileo),
+            "beidou" => Ok(Constellation::Beidou),
+            _ => Err(Error::UnknownConstellationName { name: s.to_owned() }),
+        }
+    }
 }
 
 /// A user-defined map annotation with an optional label and icon.
-#[derive(bon::Builder, Debug, Clone)]
-#[builder(on(String, into))]
+#[derive(Debug, Clone)]
 pub struct Annotation {
-    #[builder(into)]
-    pub time: DateTime<Utc>,
     /// Display label; `None` or empty string renders as unlabelled.
     pub label: Option<String>,
     /// Visual icon; `None` defaults to `MarkerIcon::Pin` when loaded.
     pub icon: Option<MarkerIcon>,
+    pub time: DateTime<Utc>,
+}
+
+#[bon::bon]
+impl Annotation {
+    /// Build a new [`Annotation`].
+    ///
+    /// Empty or whitespace-only labels are automatically converted to `None`.
+    #[builder(finish_fn = build)]
+    pub fn new(
+        #[builder(into)] time: DateTime<Utc>,
+        #[builder(into)] label: Option<String>,
+        icon: Option<MarkerIcon>,
+    ) -> Self {
+        Self {
+            time,
+            label: label.filter(|s| !s.trim().is_empty()),
+            icon,
+        }
+    }
 }
 
 /// Icon displayed for a map marker.
@@ -203,30 +231,30 @@ impl MarkerIcon {
         }
     }
 
-    pub(crate) fn from_name(s: &str) -> Option<Self> {
+    pub fn try_from_lower_case(s: impl AsRef<str>) -> Result<Self, Error> {
+        let s = s.as_ref();
         match s {
-            "pin" => Some(MarkerIcon::Pin),
-            "cross" => Some(MarkerIcon::Cross),
-            "circle" => Some(MarkerIcon::Circle),
-            "lightning" => Some(MarkerIcon::Lightning),
-            "warning" => Some(MarkerIcon::Warning),
-            "error" => Some(MarkerIcon::Error),
-            "check" => Some(MarkerIcon::Check),
-            "satellite" => Some(MarkerIcon::Satellite),
-            "satellite_lost" => Some(MarkerIcon::SatelliteLost),
-            "gear" => Some(MarkerIcon::Gear),
-            "refresh" => Some(MarkerIcon::Refresh),
-            "download" => Some(MarkerIcon::Download),
-            "upload" => Some(MarkerIcon::Upload),
-            "wrench" => Some(MarkerIcon::Wrench),
-            _ => None,
+            "pin" => Ok(MarkerIcon::Pin),
+            "cross" => Ok(MarkerIcon::Cross),
+            "circle" => Ok(MarkerIcon::Circle),
+            "lightning" => Ok(MarkerIcon::Lightning),
+            "warning" => Ok(MarkerIcon::Warning),
+            "error" => Ok(MarkerIcon::Error),
+            "check" => Ok(MarkerIcon::Check),
+            "satellite" => Ok(MarkerIcon::Satellite),
+            "satellite_lost" => Ok(MarkerIcon::SatelliteLost),
+            "gear" => Ok(MarkerIcon::Gear),
+            "refresh" => Ok(MarkerIcon::Refresh),
+            "download" => Ok(MarkerIcon::Download),
+            "upload" => Ok(MarkerIcon::Upload),
+            "wrench" => Ok(MarkerIcon::Wrench),
+            _ => Err(Error::UnknownMarkerIcon { name: s.to_owned() }),
         }
     }
 }
 
 /// Optional file-level metadata.
-#[derive(bon::Builder, Debug, Clone, Default)]
-#[builder(on(String, into))]
+#[derive(Debug, Clone, Default)]
 pub struct Meta {
     pub title: Option<String>,
     /// Sensor or device that produced the data.
@@ -238,6 +266,27 @@ pub struct Meta {
     /// When set, all recordings with the same identity string are stored under
     /// the same group in the database and appear together in the History window.
     pub identity: Option<String>,
+}
+
+#[bon::bon]
+impl Meta {
+    /// Build a new [`Meta`] object.
+    ///
+    /// Empty or whitespace-only strings are automatically converted to `None`.
+    #[builder(finish_fn = build)]
+    pub fn new(
+        #[builder(into)] title: Option<String>,
+        #[builder(into)] device: Option<String>,
+        #[builder(into)] notes: Option<String>,
+        #[builder(into)] identity: Option<String>,
+    ) -> Self {
+        Self {
+            title: title.filter(|s| !s.trim().is_empty()),
+            device: device.filter(|s| !s.trim().is_empty()),
+            notes: notes.filter(|s| !s.trim().is_empty()),
+            identity: identity.filter(|s| !s.trim().is_empty()),
+        }
+    }
 }
 
 impl NavFix {
@@ -338,6 +387,25 @@ impl EventMarkerColor {
     }
 }
 
+impl TryFrom<String> for EventMarkerColor {
+    type Error = Error;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        if s.is_empty() {
+            return Ok(Self::Auto);
+        }
+        if s.len() == 7 && s.starts_with('#') && s.chars().skip(1).all(|c| c.is_ascii_hexdigit()) {
+            Ok(Self::Hex(s))
+        } else {
+            Err(Error::ParseError {
+                unit: "EventMarkerColor (hex)",
+                input: s,
+                reason: "expected #RRGGBB format".to_owned(),
+            })
+        }
+    }
+}
+
 /// Icon shape for an event marker variant.
 ///
 /// `Auto` resolves to `MarkerIcon::Pin` when the file is loaded.
@@ -350,18 +418,50 @@ pub enum EventMarkerIconChoice {
     Icon(MarkerIcon),
 }
 
+impl From<MarkerIcon> for EventMarkerIconChoice {
+    fn from(icon: MarkerIcon) -> Self {
+        Self::Icon(icon)
+    }
+}
+
+impl From<Option<MarkerIcon>> for EventMarkerIconChoice {
+    fn from(icon: Option<MarkerIcon>) -> Self {
+        icon.map_or(Self::Auto, Self::Icon)
+    }
+}
+
 /// Per-variant icon and color override stored in the file.
-#[derive(bon::Builder, Debug, Clone)]
-#[builder(on(String, into))]
+#[derive(Debug, Clone)]
 pub struct EventMarkerStyle {
     /// Must exactly match a `variant_path` used in the event markers.
     pub variant_path: String,
     /// Icon shape; defaults to `Auto` (Pin).
-    #[builder(default)]
     pub icon: EventMarkerIconChoice,
     /// Fill color; defaults to `Auto` (hash-derived from the variant path).
-    #[builder(default)]
     pub color: EventMarkerColor,
+}
+
+#[bon::bon]
+impl EventMarkerStyle {
+    /// Build a new [`EventMarkerStyle`].
+    ///
+    /// Empty or whitespace-only colors are automatically converted to `Auto`.
+    #[builder(finish_fn = build)]
+    pub fn new(
+        #[builder(into)] variant_path: String,
+        icon: Option<EventMarkerIconChoice>,
+        #[builder(into)] color: Option<String>,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            variant_path,
+            icon: icon.unwrap_or_default(),
+            color: color
+                .filter(|s| !s.trim().is_empty())
+                .map(EventMarkerColor::try_from)
+                .transpose()?
+                .unwrap_or_default(),
+        })
+    }
 }
 
 /// An event marker after position interpolation, stored in [`NavFile`].

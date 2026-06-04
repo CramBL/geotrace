@@ -38,6 +38,7 @@ build *ARGS:
 
 [group("native")]
 clippy:
+    cargo clippy --workspace --no-deps -- -D warnings
     cargo clippy --workspace --no-deps --tests -- -D warnings
 
 [group("native")]
@@ -56,6 +57,14 @@ gen-fixture:
 [group("native")]
 sdk-doc:
     RUSTDOCFLAGS="-D warnings" cargo doc -p geotrace-sdk --no-deps
+
+[group("test-gold")]
+generate-gold:
+    just qa::generate-gold
+
+[group("test-gold")]
+test-gold:
+    just qa::test-gold
 
 [group("utils")]
 setup-pup:

@@ -44,9 +44,6 @@ typedef struct GtdNavFile GtdNavFile;
 
 /** @} */
 
-/* ── Status ──────────────────────────────────────────────────────────────────
- */
-
 /**
  * @defgroup status Status codes
  * @{
@@ -78,9 +75,6 @@ typedef enum {
 const char *gtd_last_error(void);
 
 /** @} */
-
-/* ── Timestamps ──────────────────────────────────────────────────────────────
- */
 
 /**
  * @defgroup timestamps Timestamps
@@ -114,9 +108,6 @@ uint8_t gtd_ts_is_none(GtdTimestamp ts);
 
 /** @} */
 
-/* ── Optional double ─────────────────────────────────────────────────────────
- */
-
 /**
  * @defgroup optf64 Optional double
  * @{
@@ -133,9 +124,6 @@ typedef struct { double value; uint8_t present; } GtdOptF64;
 
 /** @} */
 
-/* ── Constellation ───────────────────────────────────────────────────────────
- */
-
 /**
  * @defgroup constellation GNSS constellation
  * @{
@@ -150,9 +138,6 @@ typedef enum {
 } GtdConstellation;
 
 /** @} */
-
-/* ── Marker icon ─────────────────────────────────────────────────────────────
- */
 
 /**
  * @defgroup icon Map marker icons
@@ -180,9 +165,6 @@ typedef enum {
 
 /** @} */
 
-/* ── Satellite entry (write path) ────────────────────────────────────────────
- */
-
 /**
  * @defgroup satellite Satellite data
  * @{
@@ -203,9 +185,6 @@ typedef struct {
 } GtdSatellite;
 
 /** @} */
-
-/* ── Nav point info (read path) ──────────────────────────────────────────────
- */
 
 /**
  * @defgroup navpoint Nav point
@@ -230,9 +209,6 @@ typedef struct {
 
 /** @} */
 
-/* ── Satellite info (read path) ──────────────────────────────────────────────
- */
-
 /**
  * @defgroup satinfo Satellite info (read path)
  * @{
@@ -251,9 +227,6 @@ typedef struct {
 } GtdSatInfo;
 
 /** @} */
-
-/* ── Event marker info (read path) ───────────────────────────────────────────
- */
 
 /**
  * @defgroup eventmarker Event marker info (read path)
@@ -275,9 +248,6 @@ typedef struct {
 } GtdEventMarkerInfo;
 
 /** @} */
-
-/* ── Builder lifecycle ───────────────────────────────────────────────────────
- */
 
 /**
  * @defgroup builder Builder (write path)
@@ -468,9 +438,6 @@ GtdStatus gtd_builder_finish(GtdFileBuilder *b, GtdNavFile **out);
 
 /** @} */
 
-/* ── NavFile output ──────────────────────────────────────────────────────────
- */
-
 /**
  * @defgroup navfile_write NavFile output
  * @{
@@ -521,9 +488,6 @@ void gtd_free_bytes(uint8_t *buf, size_t len);
 void gtd_nav_file_destroy(GtdNavFile *f);
 
 /** @} */
-
-/* ── Read path ───────────────────────────────────────────────────────────────
- */
 
 /**
  * @defgroup navfile_read NavFile read path

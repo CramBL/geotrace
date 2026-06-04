@@ -5,6 +5,7 @@ project(GeoTraceCpp VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD "17" CACHE STRING "C++ standard version")
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # The C++ SDK is header-only — it wraps the C SDK at link time.
 find_package(GeoTraceC REQUIRED)
@@ -19,8 +20,6 @@ target_include_directories(geotrace_cpp INTERFACE
 
 target_link_libraries(geotrace_cpp INTERFACE GeoTrace::C)
 target_compile_features(geotrace_cpp INTERFACE cxx_std_17)
-
-# ── Install ───────────────────────────────────────────────────────────────────
 
 include(GNUInstallDirs)
 
@@ -38,15 +37,11 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/GeoTraceCppConfig.cmake"
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/GeoTraceCpp"
 )
 
-# ── Examples ─────────────────────────────────────────────────────────────────
-
 option(GEOTRACE_CPP_BUILD_EXAMPLES "Build C++ SDK examples" OFF)
 
 if(GEOTRACE_CPP_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
-
-# ── Tests ─────────────────────────────────────────────────────────────────────
 
 option(BUILD_TESTING "Build C++ SDK tests" OFF)
 

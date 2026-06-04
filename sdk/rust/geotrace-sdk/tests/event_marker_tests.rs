@@ -265,8 +265,9 @@ fn event_marker_styles_are_stored() {
         EventMarkerStyle::builder()
             .variant_path("power/on")
             .icon(EventMarkerIconChoice::Icon(MarkerIcon::Lightning))
-            .color(EventMarkerColor::hex("#FFAA00"))
-            .build(),
+            .color("#FFAA00")
+            .build()
+            .expect("valid hex color"),
     );
 
     let nav_file = sink.finish().unwrap();

@@ -513,8 +513,8 @@ pub fn show_track_plot(
         }
 
         debug_assert_eq!(visible.len(), series_cache.len());
-        for (si, series) in series_cache.iter().enumerate() {
-            if !visible[si] {
+        for (si, (vis, series)) in visible.iter().zip(series_cache.iter()).enumerate() {
+            if !vis {
                 continue;
             }
             // `resolved` has the same length as `series_cache` by construction.

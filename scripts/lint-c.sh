@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# GEOTRACE_C_LIB_DIR may be set by CI to point at a pre-built cargo output dir.
+# When unset the CMakeLists.txt falls back to sdk/rust/geotrace-c/target/release.
+LIB_ARG=${GEOTRACE_C_LIB_DIR:+-DGEOTRACE_C_LIB_DIR="$GEOTRACE_C_LIB_DIR"}
+
+cmake -S sdk/c -B sdk/c/build/lint -GNinja \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DBUILD_TESTING=ON \
+    -DGEOTRACE_C_BUILD_EXAMPLES=ON \
+    $LIB_ARG
+
+echo "==> clang-format (C SDK)"
+find sdk/c \( -name "*.c" -o -name "*.h" \) -not -path '*/build/*' \
+    | sort | xargs clang-format --dry-run --Werror
+
+echo "==> clang-tidy (C SDK)"
+find sdk/c -name "*.c" -not -path '*/build/*' \
+    | sort | xargs clang-tidy -p sdk/c/build/lint

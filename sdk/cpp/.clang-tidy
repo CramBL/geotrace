@@ -1,0 +1,12 @@
+Checks: "clang-analyzer-*,bugprone-*,cert-*,cppcoreguidelines-*,hicpp-*,misc-*,modernize-*,\
+  performance-*,portability-*,readability-*,\
+  -bugprone-easily-swappable-parameters,\
+  -cppcoreguidelines-avoid-magic-numbers,\
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,\
+  -hicpp-avoid-magic-numbers,\
+  -hicpp-no-array-decay,\
+  -modernize-use-trailing-return-type,\
+  -readability-magic-numbers,\
+  -readability-function-cognitive-complexity"
+WarningsAsErrors: "*"
+HeaderFilterRegex: "sdk/cpp/.*\\.hpp"

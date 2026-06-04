@@ -1,0 +1,16 @@
+time,label,icon
+2026-02-01T15:00:00+00:00,File Boundary Start,check
+2026-02-01T15:00:09+00:00,File Boundary End,cross
+2026-02-02T15:00:02+00:00,Peak 1,lightning
+2026-02-02T15:00:07+00:00,Peak 2,lightning
+2026-02-02T15:00:12+00:00,Peak 3,lightning
+2026-02-02T15:00:17+00:00,Peak 4,lightning
+2026-02-03T15:00:10.500000+00:00,Interpolated spiral point,cross
+2026-02-05T15:00:50+00:00,Turn point 50,refresh
+2026-02-05T15:00:52+00:00,Turn point 52,refresh
+2026-02-05T15:00:54+00:00,Turn point 54,refresh
+2026-02-05T15:00:56+00:00,Turn point 56,refresh
+2026-02-05T15:00:58+00:00,Turn point 58,refresh
+2026-02-05T15:01:00+00:00,Turn point 60,refresh
+2026-02-06T15:00:05+00:00,Cluster center,wrench
+2026-02-07T15:00:05+00:00,Marker during no-fix,satellite_lost

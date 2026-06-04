@@ -69,7 +69,9 @@ jobs:
         run: just fmt-check
 
       - name: Clippy
-        run: cargo clippy --workspace --no-deps -- -D warnings
+        run: |
+          cargo clippy --workspace --no-deps -- -D warnings
+          cargo clippy --workspace --no-deps --tests -- -D warnings
 
       - name: Type-check
         run: just check
