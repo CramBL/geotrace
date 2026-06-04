@@ -15,7 +15,7 @@ use gt_map::{MapContextAction, MapLayer, NavMap};
 use gt_plot::PlotState;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
 use gt_track_builder::SegmentationConfig;
-use gt_types::{AssociationConfig, DataCategory, LoadedFile, NavPoint};
+use gt_types::{AssociationConfig, DataCategory, LoadWarning, LoadedFile, NavPoint};
 use gt_ui_types::{HighlightScope, MapHighlight, TrackDataVisibility};
 use loader::{CompletedLoad, FinishedJob, LoadOutcome, LoaderManager};
 
@@ -47,7 +47,7 @@ struct SharedAppState {
     /// points visible in the current map viewport.
     sync_plot_to_map: bool,
     /// Filename and warnings for the currently open data quality warnings dialog, if any.
-    warnings_popup: Option<(String, Vec<String>)>,
+    warnings_popup: Option<(String, Vec<LoadWarning>)>,
     /// Set by the side panel when the user chooses "Unload" on a file that has a db_ref.
     unload_request: Option<gt_types::FileIdx>,
 }

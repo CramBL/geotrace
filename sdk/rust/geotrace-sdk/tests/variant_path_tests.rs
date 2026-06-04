@@ -19,7 +19,6 @@ fn fix() -> NavFix {
 }
 
 // Unit variants produce the snake_case segment.
-
 #[derive(EventKind)]
 #[event_kind(note = none)]
 enum FlatEvent {
@@ -42,7 +41,6 @@ fn unit_variant_produces_snake_case_segment() {
 }
 
 // Single-field tuple variants delegate in strict mode (the default).
-
 #[derive(EventKind)]
 #[event_kind(note = none)]
 enum Inner {
@@ -70,7 +68,6 @@ fn delegation_concatenates_three_levels() {
 
 // Lax mode: single-field tuple variants are leaves by default.
 // Use #[event_kind(delegate)] to explicitly opt in to delegation.
-
 struct NotEventKind;
 
 #[derive(EventKind)]
@@ -102,7 +99,6 @@ fn lax_delegate_attr_forces_delegation() {
 }
 
 // Multi-field tuple variant → leaf segment.
-
 #[derive(EventKind)]
 #[event_kind(note = none)]
 enum MultiTupleEvent {
@@ -121,7 +117,6 @@ fn multi_field_tuple_variant_is_leaf() {
 }
 
 // Struct variant → leaf segment.
-
 #[derive(EventKind)]
 #[event_kind(note = none)]
 enum StructEvent {
@@ -140,7 +135,6 @@ fn struct_variant_is_leaf() {
 }
 
 // Skip attribute returns None.
-
 #[derive(EventKind)]
 #[event_kind(note = none)]
 enum SkipEvent {
@@ -156,7 +150,6 @@ fn skip_variant_returns_none() {
 }
 
 // add_event silently no-ops when variant returns None.
-
 #[test]
 fn add_event_noop_on_skip_variant() {
     let mut sink = NavFileBuilder::new().open();
@@ -177,7 +170,6 @@ fn add_event_adds_marker_on_non_skip_variant() {
 }
 
 // #[event_kind(leaf)] forces leaf even when inner type implements EventKind.
-
 #[derive(EventKind)]
 #[event_kind(note = none)]
 enum LeafOverrideEvent {
@@ -204,7 +196,6 @@ fn leaf_attr_prevents_delegation() {
 }
 
 // In strict mode, #[event_kind(lax)] on a variant is an alias for leaf.
-
 #[derive(EventKind)]
 #[event_kind(strict, note = none)]
 enum StrictEvent {

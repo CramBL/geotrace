@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [trunk]
+  pull_request:
+  workflow_dispatch: {}
+  schedule:
+    # Run monthly on the 1st at 03:00 UTC to catch regressions from upstream deps.
+    - cron: "0 3 1 * *"
+
+# Minimal permissions - CI only reads the repository.
+permissions:
+  contents: read
+
+# For pull requests: cancel any in-flight run for the same PR when a new push
+# arrives, so stale runs don't waste resources.
+# For the default branch (push or schedule): always run to completion.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  ci:
+    name: CI / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install tools
+        uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
+        with:
+          tool: just,nextest
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      # wgpu requires a GPU or a software renderer for headless test rendering.
+      # Ubuntu GitHub runners have no GPU; force Mesa's OpenGL software rasteriser.
+      - name: Set up software GPU rendering (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y --no-install-recommends libgl1-mesa-dev
+          echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
+          echo "WGPU_BACKEND=gl" >> "$GITHUB_ENV"
+
+      - name: Check formatting
+        run: just fmt-check
+
+      - name: Clippy
+        run: cargo clippy --workspace --no-deps -- -D warnings
+
+      - name: Type-check
+        run: just check
+
+      - name: Tests
+        run: just test --profile ci
+
+      - name: Examples
+        run: just examples
+
+      - name: QA checks
+        run: just qa::qa-lint qa::check-em-dash qa::check-floating-comments

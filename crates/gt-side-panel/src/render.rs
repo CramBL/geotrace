@@ -1,5 +1,7 @@
 use gt_filter::GlobalFilter;
-use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, PointIdx, TrackIdx, TrackRef};
+use gt_types::{
+    DataCategory, FileIdx, LoadWarning, LoadedFile, LoadedTrack, PointIdx, TrackIdx, TrackRef,
+};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 
 use crate::filter::{FilterPanelState, render_filter_panel};
@@ -16,7 +18,7 @@ pub struct PanelContext<'a> {
     pub popup_pos_request: &'a mut Option<egui::Pos2>,
     pub zoom_to_visible_request: &'a mut bool,
     /// Set by clicking the ⚠ icon on a file row; consumed by the app to show a centered dialog.
-    pub warnings_request: &'a mut Option<(String, Vec<String>)>,
+    pub warnings_request: &'a mut Option<(String, Vec<LoadWarning>)>,
     /// Set when the user clicks "Unload" on a file that has a database reference.
     /// Consumed by the app to drop the file from memory without deleting it from the database.
     pub unload_request: &'a mut Option<FileIdx>,

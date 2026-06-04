@@ -114,7 +114,7 @@ impl GtdFileBuilder {
     }
 }
 
-// ── Lifecycle ─────────────────────────────────────────────────────────────────
+// ── Lifecycle ───────────────────────────────────────────────────────────────── // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "C API section headers are an established convention in this FFI file"]
 
 #[unsafe(no_mangle)]
 pub extern "C" fn gtd_builder_create() -> *mut GtdFileBuilder {
@@ -130,7 +130,7 @@ pub unsafe extern "C" fn gtd_builder_destroy(b: *mut GtdFileBuilder) {
     unsafe { drop(Box::from_raw(b)) };
 }
 
-// ── Metadata setters ──────────────────────────────────────────────────────────
+// ── Metadata setters ────────────────────────────────────────────────────────── // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "C API section headers are an established convention in this FFI file"]
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_set_title(
@@ -190,7 +190,7 @@ pub unsafe extern "C" fn gtd_builder_set_lenient(b: *mut GtdFileBuilder) {
     unsafe { (*b).set_lenient() };
 }
 
-// ── Data ingestion ────────────────────────────────────────────────────────────
+// ── Data ingestion ──────────────────────────────────────────────────────────── // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "C API section headers are an established convention in this FFI file"]
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_add_nav_fix(
@@ -329,7 +329,7 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker_style(
     })
 }
 
-// ── Finalisation ──────────────────────────────────────────────────────────────
+// ── Finalisation ────────────────────────────────────────────────────────────── // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "C API section headers are an established convention in this FFI file"]
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_builder_finish(

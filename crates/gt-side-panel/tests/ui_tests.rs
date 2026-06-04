@@ -2,7 +2,7 @@ use egui_kittest::Harness;
 use gt_filter::GlobalFilter;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
 use gt_test_utils::TestHarness;
-use gt_types::{FileIdx, TrackIdx, TrackRef};
+use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
 use gt_ui_types::MapHighlight;
 
 struct State {
@@ -14,7 +14,7 @@ struct State {
     map_center: Option<(f64, f64)>,
     popup_pos: Option<egui::Pos2>,
     zoom_to_visible: bool,
-    warnings_request: Option<(String, Vec<String>)>,
+    warnings_request: Option<(String, Vec<LoadWarning>)>,
     unload_request: Option<FileIdx>,
 }
 
@@ -25,7 +25,7 @@ fn make_state(file_count: usize) -> State {
 fn make_state_with_warnings_on(
     file_count: usize,
     warned_file: usize,
-    warnings: &[String],
+    warnings: &[LoadWarning],
 ) -> State {
     let points = gt_test_utils::nav_test_data();
     let files = (0..file_count)
@@ -155,8 +155,16 @@ fn expand_file_is_reflected_in_tree_state() {
 #[test]
 fn snapshot_file_with_warnings() {
     let warnings = [
-        "3 satellite(s) with PRN 0 - PRN 0 is reserved and undefined in NMEA".to_owned(),
-        "2 satellite(s) with elevation > 90° - above the zenith, outside the valid NMEA range [0°, 90°]".to_owned(),
+        LoadWarning {
+            count: 3,
+            issue: "satellite(s) with PRN 0".to_owned(),
+            description: "PRN 0 is reserved and undefined in NMEA".to_owned(),
+        },
+        LoadWarning {
+            count: 2,
+            issue: "satellite(s) with elevation > 90°".to_owned(),
+            description: "above the zenith; valid NMEA elevation range is [0°, 90°]".to_owned(),
+        },
     ];
     let state = make_state_with_warnings_on(2, 0, &warnings);
     let mut harness = make_harness(state);

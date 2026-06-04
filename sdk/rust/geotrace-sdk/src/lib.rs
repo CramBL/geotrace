@@ -33,7 +33,7 @@ mod variant_path;
 mod write;
 
 // Re-export public API
-pub use builder::{NavFileBuilder, NavFileSink, collect_satellite_warnings};
+pub use builder::{NavFileBuilder, NavFileSink, SatelliteWarning, collect_satellite_warnings};
 pub use error::{BuildError, Error, EventMarkerError};
 pub use types::{
     Annotation, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,

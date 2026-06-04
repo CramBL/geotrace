@@ -1,0 +1,252 @@
+name: CI / SDK
+
+on:
+  push:
+    branches: [trunk]
+  pull_request:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 3 1 * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Verify that geotrace-sdk compiles and its tests pass on its declared MSRV.
+  # The SDK is a separately published crate with a lower MSRV than the main app.
+  sdk-msrv:
+    name: SDK MSRV (Rust 1.88)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust 1.88
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: "1.88"
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Check
+        run: cargo +1.88 check -p geotrace-sdk -p geotrace-sdk-macros
+
+      - name: Test
+        run: cargo +1.88 test -p geotrace-sdk
+
+  # C SDK tests - Linux and macOS only (cmocka not available on Windows runners).
+  # Windows consumers use the static library, which is tested indirectly by the
+  # C++ SDK job below.
+  c-sdk:
+    name: C SDK / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install cmocka (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y libcmocka-dev
+
+      - name: Install cmocka (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmocka
+
+      - name: Build geotrace-c
+        run: cargo build -p geotrace-c --release
+
+      - name: Generate fixture
+        run: cargo run -p geotrace-c --bin gen_fixture --release
+
+      - name: Configure C SDK tests (Linux)
+        if: runner.os == 'Linux'
+        run: >
+          cmake -S sdk/c -B build/c
+          -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release
+          -DGEOTRACE_C_BUILD_TESTS=ON
+
+      - name: Configure C SDK tests (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cmake -S sdk/c -B build/c \
+            -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release \
+            -DGEOTRACE_C_BUILD_TESTS=ON \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+
+      - name: Build C SDK tests
+        run: cmake --build build/c
+
+      - name: Run C SDK tests
+        run: ctest --test-dir build/c --output-on-failure
+
+  # C++ SDK tests - Linux, macOS, and Windows; C++17 and C++20.
+  #
+  # Strategy:
+  #   1. Build geotrace-c with Cargo (produces shared lib on Unix, static lib on Windows).
+  #   2. Install the C SDK to a local prefix so find_package(GeoTraceC) works.
+  #   3. Configure and build the C++ SDK with BUILD_TESTING=ON.
+  #   4. Run ctest.
+  cpp-sdk:
+    name: C++ SDK / ${{ matrix.os }} / C++${{ matrix.cxx_std }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        cxx_std: ["17", "20"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Build geotrace-c
+        run: cargo build -p geotrace-c --release
+
+      - name: Generate fixture
+        run: cargo run -p geotrace-c --bin gen_fixture --release
+
+      - name: Install C SDK to local prefix (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S sdk/c -B build/c \
+            -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release \
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
+          cmake --install build/c
+
+      - name: Install C SDK to local prefix (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -S sdk/c -B build/c `
+            -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release `
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
+          cmake --install build/c
+        shell: pwsh
+
+      - name: Configure C++ SDK tests (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S sdk/cpp -B build/cpp \
+            -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install \
+            -DBUILD_TESTING=ON \
+            -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }}
+
+      - name: Configure C++ SDK tests (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -S sdk/cpp -B build/cpp `
+            -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install `
+            -DBUILD_TESTING=ON `
+            -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }}
+        shell: pwsh
+
+      - name: Build C++ SDK tests
+        run: cmake --build build/cpp --config Release
+
+      - name: Run C++ SDK tests
+        run: ctest --test-dir build/cpp --config Release --output-on-failure
+
+  python-sdk:
+    name: Python SDK / ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version:
+          - "3.12"
+          - "3.13"
+          - "3.14"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo (geotrace-py workspace)
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: "sdk/python/geotrace-py -> sdk/python/geotrace-py/target"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+      - name: Build Python extension
+        working-directory: sdk/python/geotrace-py
+        run: |
+          uv venv --python ${{ matrix.python-version }}
+          uv pip install maturin pytest ruff mypy
+          uv run maturin develop
+
+      - name: Lint
+        working-directory: sdk/python/geotrace-py
+        run: uv run ruff check .
+
+      - name: Type-check
+        working-directory: sdk/python/geotrace-py
+        run: uv run mypy . --strict
+
+      - name: Test
+        working-directory: sdk/python/geotrace-py
+        run: uv run pytest tests/ -v
+
+      - name: Run examples
+        working-directory: sdk/python/geotrace-py
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in examples/*.py; do
+            filename=$(basename "$file")
+            echo "running example: ${filename}"
+            uv run python "${file}"
+          done

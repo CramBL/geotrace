@@ -34,7 +34,6 @@ fn marker(variant_path: &str, offset_secs: i64) -> EventMarker {
 }
 
 // Validation - accepted paths
-
 #[test]
 fn valid_simple() {
     let mut sink = NavFileBuilder::new().open();
@@ -72,7 +71,6 @@ fn valid_exactly_256_bytes() {
 }
 
 // Validation - rejected paths (validation now happens in EventMarker::builder().build())
-
 #[test]
 fn empty_path_is_rejected() {
     let err = EventMarker::builder()
@@ -163,7 +161,6 @@ fn dot_in_path_is_rejected() {
 }
 
 // Error messages include the offending path
-
 #[test]
 fn error_messages_include_path() {
     let cases: &[(&str, &str)] = &[
@@ -188,7 +185,6 @@ fn error_messages_include_path() {
 }
 
 // Builder - counts and round-trip
-
 #[test]
 fn markers_are_stored_in_nav_file() {
     let mut sink = NavFileBuilder::new().open();
@@ -224,7 +220,6 @@ fn annotation_is_preserved() {
 }
 
 // Position interpolation
-
 #[test]
 fn position_interpolated_at_midpoint() {
     let mut sink = NavFileBuilder::new().open();
@@ -261,7 +256,6 @@ fn position_clamped_to_first_fix_when_before_track() {
 }
 
 // Styles
-
 #[test]
 fn event_marker_styles_are_stored() {
     let mut sink = NavFileBuilder::new().open();
@@ -288,7 +282,6 @@ fn event_marker_styles_are_stored() {
 }
 
 // Enums used only by the icon tests below.
-
 #[derive(Debug, EventKind)]
 #[event_kind(note = none)]
 enum IconLeaf {

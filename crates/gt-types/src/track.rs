@@ -230,6 +230,17 @@ pub struct DatabaseRef {
     pub group_name: String,
 }
 
+/// A structured data quality warning produced when loading a recording file.
+#[derive(Debug, Clone)]
+pub struct LoadWarning {
+    /// Number of instances of this issue in the file.
+    pub count: u32,
+    /// Short description of the issue (e.g. "satellite(s) with PRN 0").
+    pub issue: String,
+    /// Explanation of why the issue matters and how to resolve it.
+    pub description: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct LoadedFile {
     pub metadata: FileMetadata,
@@ -241,7 +252,7 @@ pub struct LoadedFile {
     /// Where this file was loaded from; used to re-process when settings change.
     pub source: FileSource,
     /// Data quality warnings detected when the file was loaded (empty when clean).
-    pub load_warnings: Vec<String>,
+    pub load_warnings: Vec<LoadWarning>,
     /// Grouping key used by the history database.
     ///
     /// For NVD files this is the explicit SDK-supplied identity or a value

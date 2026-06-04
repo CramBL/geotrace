@@ -3,8 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::{DateTime, Utc};
 use gt_map::{MapLayer, NavMap};
 use gt_side_panel::{NodeKey, TreeState};
-use gt_types::LoadedFile;
-use gt_types::TrackRef;
+use gt_types::{LoadWarning, LoadedFile, TrackRef};
 use gt_ui_theme::WARNING_AMBER;
 
 /// Show the delete-confirmation dialog.
@@ -236,7 +235,7 @@ pub fn show_orphaned_event_markers_popup(
     }
 }
 
-pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<String>)>) {
+pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<LoadWarning>)>) {
     let Some((filename, warnings)) = popup else {
         return;
     };
@@ -251,22 +250,29 @@ pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<
     egui::Window::new("Data quality warnings")
         .collapsible(false)
         .resizable(true)
-        .min_width(480.0)
+        .min_width(540.0)
         .show(ui.ctx(), |ui| {
             ui.label(egui::RichText::new(filename.as_str()).strong());
             ui.separator();
             egui::ScrollArea::vertical()
                 .max_height(400.0)
                 .show(ui, |ui| {
-                    for w in warnings.iter() {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(egui_phosphor::regular::WARNING)
-                                    .color(WARNING_AMBER),
-                            );
-                            ui.label(w);
+                    egui::Grid::new("load_warnings_grid")
+                        .num_columns(4)
+                        .striped(true)
+                        .spacing([12.0, 6.0])
+                        .show(ui, |ui| {
+                            for w in warnings.iter() {
+                                ui.label(
+                                    egui::RichText::new(egui_phosphor::regular::WARNING)
+                                        .color(WARNING_AMBER),
+                                );
+                                ui.label(egui::RichText::new(w.count.to_string()).strong());
+                                ui.label(&w.issue);
+                                ui.add(egui::Label::new(&w.description).wrap());
+                                ui.end_row();
+                            }
                         });
-                    }
                 });
             ui.separator();
             if ui.button("Dismiss").clicked() {

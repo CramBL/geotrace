@@ -217,7 +217,7 @@ pub struct GtdEventMarkerInfo {
     pub annotation: [c_char; 1024],
 }
 
-// ── Timestamp helper functions ────────────────────────────────────────────────
+// ── Timestamp helper functions ──────────────────────────────────────────────── // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "C API section headers are an established convention in this FFI file"]
 
 pub(crate) fn ts_from_datetime(dt: chrono::DateTime<chrono::Utc>) -> GtdTimestamp {
     GtdTimestamp {
@@ -247,7 +247,7 @@ fn opt_f64_some(v: f64) -> GtdOptF64 {
     }
 }
 
-// ── Exported C functions ──────────────────────────────────────────────────────
+// ── Exported C functions ────────────────────────────────────────────────────── // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "C API section headers are an established convention in this FFI file"]
 
 #[unsafe(no_mangle)]
 pub extern "C" fn gtd_ts_from_seconds(secs: u64) -> GtdTimestamp {

@@ -9,7 +9,7 @@ use gt_types::mercator::{self, MercPoint};
 use gt_types::nav_point::NavPoint;
 use gt_types::time_types::GpsTime;
 use gt_types::track::{
-    FileMetadata, FileSource, LoadedFile, LoadedTrack, TimeRange, TrackMetadata,
+    FileMetadata, FileSource, LoadWarning, LoadedFile, LoadedTrack, TimeRange, TrackMetadata,
 };
 use std::ops::Range;
 use uom::si::f64::Length;
@@ -250,7 +250,7 @@ pub fn build_loaded_file(
     event_marker_styles: Vec<EventMarkerStyle>,
     config: &SegmentationConfig,
     source: FileSource,
-    load_warnings: Vec<String>,
+    load_warnings: Vec<LoadWarning>,
 ) -> LoadedFile {
     let ranges = segment_tracks(points, config);
 

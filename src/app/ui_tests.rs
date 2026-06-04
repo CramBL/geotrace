@@ -7,6 +7,7 @@ use std::{
 use egui_kittest::Harness;
 use geotrace_sdk::{Angle, DateTime, Duration, NavFileBuilder, NavFix, Utc};
 use gt_test_utils::TestHarness;
+use gt_types::LoadWarning;
 
 use super::App;
 
@@ -242,9 +243,22 @@ fn snapshot_load_warnings_dialog() {
     harness.state().shared.borrow_mut().warnings_popup = Some((
         "ride_2025-05-23.gtd".to_owned(),
         vec![
-            "3 satellite(s) with PRN 0 - PRN 0 is reserved and undefined in NMEA".to_owned(),
-            "2 satellite(s) with elevation > 90° - above the zenith, outside the valid NMEA range [0°, 90°]".to_owned(),
-            "5 satellite(s) with SNR ≈ 99 dB-Hz - common sentinel value for unavailable signal strength; omit the SNR field when no measurement is available".to_owned(),
+            LoadWarning {
+                count: 3,
+                issue: "satellite(s) with PRN 0".to_owned(),
+                description: "PRN 0 is reserved and undefined in NMEA".to_owned(),
+            },
+            LoadWarning {
+                count: 2,
+                issue: "satellite(s) with elevation > 90°".to_owned(),
+                description: "above the zenith; valid NMEA elevation range is [0°, 90°]"
+                    .to_owned(),
+            },
+            LoadWarning {
+                count: 5,
+                issue: "satellite(s) with SNR ≈ 99 dB-Hz".to_owned(),
+                description: "common sentinel value for unavailable signal strength; omit the SNR field when no measurement is available".to_owned(),
+            },
         ],
     ));
     harness.run();

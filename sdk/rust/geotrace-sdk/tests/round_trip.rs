@@ -314,3 +314,43 @@ fn identity_via_meta_builder() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(rt.meta().identity.as_deref(), Some("route-a"));
     Ok(())
 }
+
+#[test]
+fn large_file_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+    const N: u32 = 100_000;
+    let t0 = base();
+
+    let mut sink = NavFileBuilder::new().with_title("large file test").open();
+    for i in 0..N {
+        let t = t0 + Duration::seconds(i as i64);
+        let lat = -89.0 + (i as f64 % 178.0);
+        let lon = -179.0 + (i as f64 % 358.0);
+        sink.add_nav_fix(
+            NavFix::builder()
+                .gps_time(t)
+                .lat(Angle::degrees(lat))
+                .lon(Angle::degrees(lon))
+                .build(),
+        );
+    }
+    let nav_file = sink.finish()?;
+
+    assert_eq!(nav_file.nav_points().len(), N as usize);
+
+    let rt = round_trip(&nav_file)?;
+
+    assert_eq!(rt.nav_points().len(), N as usize);
+
+    let first = &rt.nav_points()[0];
+    let last = &rt.nav_points()[(N - 1) as usize];
+
+    assert!((first.fix.lat.as_degrees() - (-89.0)).abs() < 1e-9);
+    assert!((first.fix.lon.as_degrees() - (-179.0)).abs() < 1e-9);
+
+    let last_lat = -89.0 + ((N - 1) as f64 % 178.0);
+    let last_lon = -179.0 + ((N - 1) as f64 % 358.0);
+    assert!((last.fix.lat.as_degrees() - last_lat).abs() < 1e-9);
+    assert!((last.fix.lon.as_degrees() - last_lon).abs() < 1e-9);
+
+    Ok(())
+}

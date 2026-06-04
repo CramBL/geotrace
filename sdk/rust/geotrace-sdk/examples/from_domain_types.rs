@@ -15,7 +15,6 @@ use geotrace_sdk::{
 };
 
 // Your existing domain types - not SDK types.
-
 struct GpsFix {
     unix_ms: u64,
     lat_deg: f64,
@@ -52,7 +51,6 @@ struct LogEntry {
 }
 
 // One-time From implementations - written once, called nowhere explicitly.
-
 impl From<GpsFix> for NavFix {
     fn from(f: GpsFix) -> Self {
         NavFix::builder()

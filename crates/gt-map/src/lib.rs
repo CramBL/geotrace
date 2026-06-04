@@ -664,7 +664,6 @@ impl NavMap {
         };
 
         // Layer toggle - floating panel anchored to the bottom-right of the map.
-
         egui::Area::new(egui::Id::new("map_layer_toggle"))
             .fixed_pos(egui::pos2(map_rect.right() - 8.0, map_rect.bottom() - 8.0))
             .pivot(egui::Align2::RIGHT_BOTTOM)

@@ -1,7 +1,5 @@
 use egui::Color32;
 
-// UI symbol constants
-
 /// U+2014 EM DASH - used as a placeholder when a value is absent.
 pub const EM_DASH: &str = "—";
 /// U+2212 MINUS SIGN - visually distinct from the ASCII hyphen-minus.
@@ -10,8 +8,6 @@ pub const MINUS_SIGN: &str = "−";
 pub const DELTA: &str = "Δ";
 /// U+00B0 DEGREE SIGN.
 pub const DEGREE_SIGN: &str = "°";
-
-// Semantic single-use tokens
 
 /// Highlight blue used for selected/hovered elements across map and panel.
 pub const HIGHLIGHT_BLUE: Color32 = Color32::from_rgb(100, 200, 255);
@@ -47,8 +43,6 @@ pub fn map_hover_color(dark_mode: bool) -> Color32 {
     }
 }
 
-// Track palette
-
 /// Blue/cyan palette assigned to track polylines - chosen to stand out on both
 /// OSM and satellite map backgrounds without implying error or warning semantics.
 /// The palette cycles over (file_index, track_index) using a mixing function
@@ -81,8 +75,6 @@ pub fn track_color(fi: usize, ti: usize) -> Color32 {
     TRACK_COLORS[idx % TRACK_COLORS.len()]
 }
 
-// Signal quality colors
-
 /// Map a [`SignalQuality`] tier to a colour on a green → red gradient.
 pub fn snr_color(quality: gt_types::SignalQuality) -> Color32 {
     use gt_types::SignalQuality;
@@ -94,8 +86,6 @@ pub fn snr_color(quality: gt_types::SignalQuality) -> Color32 {
         SignalQuality::VeryWeak => Color32::from_rgb(220, 60, 0),
     }
 }
-
-// Log marker palette
 
 /// Colors used for log-entry markers, cycling over the marker's log index.
 pub const LOG_COLORS: [Color32; 8] = [

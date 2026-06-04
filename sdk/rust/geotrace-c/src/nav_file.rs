@@ -31,7 +31,7 @@ impl GtdNavFile {
     }
 }
 
-// ── Write-path output functions ───────────────────────────────────────────────
+// ── Write-path output functions ─────────────────────────────────────────────── // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "C API section headers are an established convention in this FFI file"]
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_write_to_path(
@@ -112,7 +112,7 @@ pub unsafe extern "C" fn gtd_nav_file_destroy(f: *mut GtdNavFile) {
     unsafe { drop(Box::from_raw(f)) };
 }
 
-// ── Read-path constructors ────────────────────────────────────────────────────
+// ── Read-path constructors ──────────────────────────────────────────────────── // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "C API section headers are an established convention in this FFI file"]
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_open(
@@ -181,7 +181,7 @@ pub unsafe extern "C" fn gtd_nav_file_from_bytes(
     })
 }
 
-// ── Nav point accessors ───────────────────────────────────────────────────────
+// ── Nav point accessors ─────────────────────────────────────────────────────── // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "C API section headers are an established convention in this FFI file"]
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_nav_point_count(f: *const GtdNavFile) -> usize {
@@ -275,7 +275,7 @@ pub unsafe extern "C" fn gtd_nav_file_get_satellite(
     })
 }
 
-// ── Metadata accessors ────────────────────────────────────────────────────────
+// ── Metadata accessors ──────────────────────────────────────────────────────── // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "C API section headers are an established convention in this FFI file"]
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_title(f: *const GtdNavFile) -> *const c_char {
@@ -329,7 +329,7 @@ pub unsafe extern "C" fn gtd_nav_file_identity(f: *const GtdNavFile) -> *const c
     }
 }
 
-// ── Event marker accessors ────────────────────────────────────────────────────
+// ── Event marker accessors ──────────────────────────────────────────────────── // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "C API section headers are an established convention in this FFI file"]
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gtd_nav_file_event_marker_count(f: *const GtdNavFile) -> usize {

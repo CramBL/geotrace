@@ -1,0 +1,50 @@
+name: CI / Cross
+
+on:
+  push:
+    branches: [trunk]
+  pull_request:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 3 1 * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Run the SDK test suite (including large_file_round_trip) under QEMU on 32-bit ARM.
+  # This catches pointer-size and integer-overflow bugs that are invisible on 64-bit hosts.
+  cross-32bit:
+    name: SDK / QEMU armv7 (32-bit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+          targets: armv7-unknown-linux-gnueabihf
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install cross
+        uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
+        with:
+          tool: cross
+
+      - name: Run SDK tests under QEMU (32-bit ARM)
+        run: cross test -p geotrace-sdk --target armv7-unknown-linux-gnueabihf

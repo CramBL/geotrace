@@ -440,7 +440,6 @@ fn meta_end_us_and_size_bytes_are_populated() {
 // panic will stop occurring, the `#[should_panic]` wrapper will report a test
 // failure, and the corresponding workaround in `copy.rs` / `lib.rs` can be
 // removed.  See `docs/storage-roadmap.md` for the full evidence trail.
-
 /// hdf5-pure 0.6 writes superblock v2 files, which set `free_space_address` to
 /// `None`.  A functional free-space manager would record a valid (non-max)
 /// address there.  Without it every delete requires a full read-modify-write

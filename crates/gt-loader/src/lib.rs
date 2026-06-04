@@ -43,8 +43,8 @@ use geotrace_sdk::{
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::{GpsTime, SysTime};
 use gt_types::{
-    CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude, LoadedFile, Longitude,
-    MarkerColor, MarkerIcon, NavPoint, TimePositionVelocity,
+    CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude, LoadWarning, LoadedFile,
+    Longitude, MarkerColor, MarkerIcon, NavPoint, TimePositionVelocity,
 };
 
 fn to_uom_velocity(v: geotrace_sdk::Velocity) -> uom::si::f64::Velocity {
@@ -151,13 +151,20 @@ pub fn load_bytes_with_progress(
     Ok(loaded)
 }
 
-fn satellite_warnings_from_nav_file(nav_file: &NavFile) -> Vec<String> {
+fn satellite_warnings_from_nav_file(nav_file: &NavFile) -> Vec<LoadWarning> {
     collect_satellite_warnings(
         nav_file
             .nav_points()
             .iter()
             .filter_map(|p| p.satellites.as_ref()),
     )
+    .into_iter()
+    .map(|w| LoadWarning {
+        count: w.count,
+        issue: w.issue.to_owned(),
+        description: w.description.to_owned(),
+    })
+    .collect()
 }
 
 type NavFileContents = (
