@@ -12,6 +12,16 @@ SAHARA_LON = 13.0
 METERS_PER_DEGREE_LAT = 111132.0
 METERS_PER_DEGREE_LON = METERS_PER_DEGREE_LAT * math.cos(math.radians(SAHARA_LAT))
 
+# Per-track origin offsets give each of tracks 1-5 a distinct starting position
+# (~5-7 km apart) so they are distinguishable on a map.
+TRACK_ORIGINS: dict[int, tuple[float, float]] = {
+    1: (SAHARA_LAT, SAHARA_LON),
+    2: (SAHARA_LAT + 0.05, SAHARA_LON + 0.05),
+    3: (SAHARA_LAT + 0.05, SAHARA_LON - 0.05),
+    4: (SAHARA_LAT - 0.05, SAHARA_LON + 0.05),
+    5: (SAHARA_LAT - 0.05, SAHARA_LON - 0.05),
+}
+
 
 def get_time(track_idx: int, seconds_offset: float) -> str:
     return (BASE_TIME + timedelta(days=track_idx, seconds=seconds_offset)).isoformat()
@@ -23,11 +33,56 @@ def add_meters(lat: float, lon: float, d_north: float, d_east: float) -> tuple[f
     return new_lat, new_lon
 
 
+def track_origin(track_id: int) -> tuple[float, float]:
+    return TRACK_ORIGINS.get(track_id, (SAHARA_LAT, SAHARA_LON))
+
+
 def write_csv(dest_path: Path, data: list[dict[str, Any]], fieldnames: list[str]) -> None:
     with dest_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(data)
+
+
+def multi_constellation_sats(t: str, gps_time: str | None = None) -> list[dict[str, Any]]:
+    """Generate a realistic modern-GNSS satellite set: 25 in-fix, 25 visible only = 50 total.
+
+    All four major constellations are represented (GPS, GLONASS, Galileo, BeiDou).
+    Matches what a high-quality dual-frequency receiver reports.
+    PRNs are within validated ranges (GPS 1-32, GLONASS 1-24, Galileo 1-36, BeiDou 1-63).
+    """
+    gt = gps_time if gps_time is not None else t
+    sats: list[dict[str, Any]] = []
+
+    # (constellation, prn_start, n_in_fix, n_visible_only, base_elev, base_az, base_snr)
+    config = [
+        ("gps", 1, 8, 4, 40, 0, 42),
+        ("glonass", 1, 6, 3, 35, 90, 38),
+        ("galileo", 1, 7, 4, 45, 180, 40),
+        ("beidou", 1, 4, 13, 25, 270, 35),
+    ]
+
+    for constellation, prn_start, n_in, n_out, base_elev, base_az, base_snr in config:
+        for j in range(n_in + n_out):
+            prn = prn_start + j
+            in_fix = j < n_in
+            elevation = base_elev + (j * 3) % 45
+            azimuth = (base_az + j * 15) % 360
+            snr = base_snr - (0 if in_fix else 8) + (j % 5)
+            sats.append(
+                {
+                    "gps_time": gt,
+                    "sys_time": t,
+                    "constellation": constellation,
+                    "prn": prn,
+                    "in_fix": "true" if in_fix else "false",
+                    "elevation": elevation,
+                    "azimuth": azimuth,
+                    "snr": snr,
+                }
+            )
+
+    return sats
 
 
 def main() -> None:
@@ -36,16 +91,18 @@ def main() -> None:
     dest_dir = repo_root / "tests" / "fixtures" / "gold_dataset"
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    fixes = []
-    satellites = []
-    markers = []
-    events = []
+    fixes: list[dict[str, Any]] = []
+    satellites: list[dict[str, Any]] = []
+    markers: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
 
     # Track 1: Straight line moving North
     # 10 points, 2m apart, speed 0 to 90 km/h (+10 each)
+    # Rich multi-constellation satellite data: 25 in-fix, 50 visible
+    base_lat, base_lon = track_origin(1)
     for i in range(10):
         t = get_time(0, float(i))
-        lat, lon = add_meters(SAHARA_LAT, SAHARA_LON, i * 2, 0)
+        lat, lon = add_meters(base_lat, base_lon, i * 2, 0)
         speed = i * 10
         fixes.append(
             {
@@ -59,28 +116,16 @@ def main() -> None:
                 "eph_m": 2.5,
             }
         )
-        # Add some satellites for Track 1 (GPS only)
-        for prn in range(1, 5):
-            satellites.append(
-                {
-                    "gps_time": t,
-                    "sys_time": t,
-                    "constellation": "gps",
-                    "prn": prn,
-                    "in_fix": "true",
-                    "elevation": 45,
-                    "azimuth": 90 + prn * 10,
-                    "snr": 35,
-                }
-            )
+        satellites.extend(multi_constellation_sats(t))
 
     # Track 2: Sine curve moving North
     # 20 points, sine wave on Lon
+    base_lat, base_lon = track_origin(2)
     for i in range(20):
         t = get_time(1, float(i))
         d_north_float = float(i * 5)
         d_east = 10 * math.sin(i * math.pi / 5)  # 10m amplitude, period 10 points
-        lat, lon = add_meters(SAHARA_LAT, SAHARA_LON, d_north_float, d_east)
+        lat, lon = add_meters(base_lat, base_lon, d_north_float, d_east)
         fixes.append(
             {
                 "track_id": 2,
@@ -110,13 +155,14 @@ def main() -> None:
 
     # Track 3: Spiral
     # 20 points
+    base_lat, base_lon = track_origin(3)
     for i in range(20):
         t = get_time(2, float(i))
         angle = i * math.pi / 4  # 45 degrees per point
         radius = float(i * 1)  # 1m increase per point
         d_north = radius * math.cos(angle)
         d_east = radius * math.sin(angle)
-        lat, lon = add_meters(SAHARA_LAT, SAHARA_LON, d_north, d_east)
+        lat, lon = add_meters(base_lat, base_lon, d_north, d_east)
         fixes.append(
             {
                 "track_id": 3,
@@ -133,9 +179,10 @@ def main() -> None:
     # Track 4: L-shape
     # 10m East, then 10m South
     # Points 0-10 move East
+    base_lat, base_lon = track_origin(4)
     for i in range(11):
         t = get_time(3, float(i))
-        lat, lon = add_meters(SAHARA_LAT, SAHARA_LON, 0, float(i))
+        lat, lon = add_meters(base_lat, base_lon, 0, float(i))
         fixes.append(
             {
                 "track_id": 4,
@@ -148,10 +195,10 @@ def main() -> None:
                 "eph_m": 1.0,
             }
         )
-    # Points 11-20 move South from (SAHARA_LAT, SAHARA_LON + 10m)
+    # Points 11-20 move South from (base_lat, base_lon + 10m)
     for i in range(1, 11):
         t = get_time(3, float(10 + i))
-        lat, lon = add_meters(SAHARA_LAT, SAHARA_LON, float(-i), 10.0)
+        lat, lon = add_meters(base_lat, base_lon, float(-i), 10.0)
         fixes.append(
             {
                 "track_id": 4,
@@ -168,9 +215,10 @@ def main() -> None:
     # Track 5: Soft turn
     # 50m West, then 30 degree turn North over 10s
     # Move West for 50s at 1m/s
+    base_lat, base_lon = track_origin(5)
     for i in range(51):
         t = get_time(4, float(i))
-        lat, lon = add_meters(SAHARA_LAT, SAHARA_LON, 0, float(-i))
+        lat, lon = add_meters(base_lat, base_lon, 0, float(-i))
         fixes.append(
             {
                 "track_id": 5,
@@ -187,11 +235,9 @@ def main() -> None:
     for i in range(1, 11):
         t = get_time(4, float(50 + i))
         angle_deg = 270 + (i * 3)  # 3 degrees per second
-        # For simplicity, we just calculate the arc
-        angle_rad = math.radians(angle_deg)  # noqa: F841
         d_north = float(i) * math.sin(math.radians(i * 3))  # increasing north component
         d_east = -50 - i * math.cos(math.radians(i * 3))  # still moving west-ish
-        lat, lon = add_meters(SAHARA_LAT, SAHARA_LON, d_north, d_east)
+        lat, lon = add_meters(base_lat, base_lon, d_north, d_east)
         fixes.append(
             {
                 "track_id": 5,
@@ -225,7 +271,8 @@ def main() -> None:
         )
 
     # Add Edge Case: No fix
-    # Track 7: Fix loss
+    # Track 7: Fix loss then regain mid-track
+    # Points 0-2: real fix. Points 3-7: ghost (no gps_time). Points 8-9: real fix again.
     for i in range(10):
         t = get_time(6, float(i))
         lat, lon = add_meters(SAHARA_LAT + 0.2, SAHARA_LON + 0.2, i * 5, 0)
@@ -344,6 +391,40 @@ def main() -> None:
                 "heading_deg": 0.0,
                 "speed_kmh": 0.0,
                 "eph_m": 0.1,
+            }
+        )
+
+    # Track 12: Ghost fix at start, then fix acquired
+    # 3 ghost points (no gps_time) followed by 7 real fixes.
+    # Tests "ghost fix start" rendering: the track begins without a GPS time and
+    # then gains a fix part-way through, exercising the transition from ghost to
+    # real in the rendering and track-building pipeline.
+    for i in range(10):
+        t = get_time(11, float(i))
+        lat, lon = add_meters(SAHARA_LAT + 0.3, SAHARA_LON, i * 5, 0)
+        has_fix = i >= 3
+        fixes.append(
+            {
+                "track_id": 12,
+                "gps_time": t if has_fix else "",
+                "sys_time": t,
+                "lat": lat,
+                "lon": lon,
+                "heading_deg": 0.0,
+                "speed_kmh": 18.0,
+                "eph_m": 2.0 if has_fix else "",
+            }
+        )
+        satellites.append(
+            {
+                "gps_time": t if has_fix else "",
+                "sys_time": t,
+                "constellation": "gps",
+                "prn": 5,
+                "in_fix": "true" if has_fix else "false",
+                "elevation": 50,
+                "azimuth": 270,
+                "snr": 38,
             }
         )
 
