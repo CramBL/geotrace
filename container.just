@@ -2,8 +2,7 @@ IMAGE := "geotrace-dev"
 SDK_IMAGE := "geotrace-sdk-dev"
 
 [private]
-_runner := `if command -v docker >/dev/null 2>&1; then echo docker; elif command -v podman >/dev/null 2>&1; then echo podman; fi`
-RUNNER := _runner
+RUNNER := `if command -v podman >/dev/null 2>&1; then printf "podman"; elif command -v docker >/dev/null 2>&1; then printf "docker"; fi`
 
 [private]
 _require-runner:
@@ -36,6 +35,7 @@ _dev *args:
     set -euo pipefail
     [[ "${IN_GEOTRACE_CONTAINER:-}" == "1" ]] && { {{ args }}; exit; }
     just _require-runner
+    echo "{{ GREEN }}{{ BOLD }}{{ args }}{{ NORMAL }}"
     {{ RUNNER }} run {{ COMMON_RUN_ARGS }} {{ IMAGE }} {{ args }}
 
 # Run a command inside the SDK dev container (adds cmake build volumes), or directly if already in one.
@@ -45,6 +45,7 @@ _sdk *args:
     set -euo pipefail
     [[ "${IN_GEOTRACE_CONTAINER:-}" == "1" ]] && { {{ args }}; exit; }
     just _require-runner
+    echo "{{ GREEN }}{{ BOLD }}{{ args }}{{ NORMAL }}"
     {{ RUNNER }} run {{ COMMON_RUN_ARGS }} {{ SDK_VOLUMES }} {{ SDK_IMAGE }} {{ args }}
 
 # Open an interactive shell inside the Rust dev container.
