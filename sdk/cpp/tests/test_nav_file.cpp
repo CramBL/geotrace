@@ -10,13 +10,11 @@ using geotrace::NavFix;
 using geotrace::Timestamp;
 
 static NavFile make_minimal() {
-    return FileBuilder{}
-        .add_nav_fix(NavFix{
-            .gps_time = Timestamp::from_seconds(1700000000ULL),
-            .lat = Angle::degrees(51.5074),
-            .lon = Angle::degrees(-0.1278),
-        })
-        .finish();
+    NavFix fix;
+    fix.gps_time = Timestamp::from_seconds(1700000000ULL);
+    fix.lat = Angle::degrees(51.5074);
+    fix.lon = Angle::degrees(-0.1278);
+    return FileBuilder{}.add_nav_fix(fix).finish();
 }
 
 TEST_CASE("NavFile: open on non-existent path throws IoError") {
@@ -49,23 +47,22 @@ TEST_CASE("NavFile: absent metadata returns empty string_view") {
 }
 
 TEST_CASE("NavFile: nav_point_count returns correct value") {
-    auto file = FileBuilder{}
-                    .add_nav_fix(NavFix{
-                        .gps_time = Timestamp::from_seconds(1700000000ULL),
-                        .lat = Angle::degrees(0.0),
-                        .lon = Angle::degrees(0.0),
-                    })
-                    .add_nav_fix(NavFix{
-                        .gps_time = Timestamp::from_seconds(1700000010ULL),
-                        .lat = Angle::degrees(0.1),
-                        .lon = Angle::degrees(0.1),
-                    })
-                    .add_nav_fix(NavFix{
-                        .gps_time = Timestamp::from_seconds(1700000020ULL),
-                        .lat = Angle::degrees(0.2),
-                        .lon = Angle::degrees(0.2),
-                    })
-                    .finish();
+    NavFix f1;
+    f1.gps_time = Timestamp::from_seconds(1700000000ULL);
+    f1.lat = Angle::degrees(0.0);
+    f1.lon = Angle::degrees(0.0);
+
+    NavFix f2;
+    f2.gps_time = Timestamp::from_seconds(1700000010ULL);
+    f2.lat = Angle::degrees(0.1);
+    f2.lon = Angle::degrees(0.1);
+
+    NavFix f3;
+    f3.gps_time = Timestamp::from_seconds(1700000020ULL);
+    f3.lat = Angle::degrees(0.2);
+    f3.lon = Angle::degrees(0.2);
+
+    auto file = FileBuilder{}.add_nav_fix(f1).add_nav_fix(f2).add_nav_fix(f3).finish();
 
     CHECK(file.nav_point_count() == 3);
 }

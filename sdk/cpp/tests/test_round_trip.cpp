@@ -22,21 +22,20 @@ static const Timestamp T1 = Timestamp::from_seconds(1700000010ULL);
 TEST_CASE("round-trip: nav fix fields survive write → from_bytes → read") {
     std::vector<std::uint8_t> bytes;
     {
-        auto file = FileBuilder{}
-                        .add_nav_fix(NavFix{
-                            .gps_time = T0,
-                            .lat = Angle::degrees(LAT),
-                            .lon = Angle::degrees(LON),
-                            .heading = Angle::degrees(270.0),
-                            .speed = Velocity::mps(5.5),
-                            .eph_m = 3.2,
-                        })
-                        .add_nav_fix(NavFix{
-                            .gps_time = T1,
-                            .lat = Angle::degrees(LAT2),
-                            .lon = Angle::degrees(LON2),
-                        })
-                        .finish();
+        NavFix f1;
+        f1.gps_time = T0;
+        f1.lat = Angle::degrees(LAT);
+        f1.lon = Angle::degrees(LON);
+        f1.heading = Angle::degrees(270.0);
+        f1.speed = Velocity::mps(5.5);
+        f1.eph_m = 3.2;
+
+        NavFix f2;
+        f2.gps_time = T1;
+        f2.lat = Angle::degrees(LAT2);
+        f2.lon = Angle::degrees(LON2);
+
+        auto file = FileBuilder{}.add_nav_fix(f1).add_nav_fix(f2).finish();
         bytes = file.to_bytes();
     }
 
@@ -63,33 +62,31 @@ TEST_CASE("round-trip: nav fix fields survive write → from_bytes → read") {
 }
 
 TEST_CASE("round-trip: satellite report survives write → from_bytes → read") {
-    auto file = FileBuilder{}
-                    .add_nav_fix(NavFix{
-                        .gps_time = T0,
-                        .lat = Angle::degrees(LAT),
-                        .lon = Angle::degrees(LON),
-                    })
-                    .add_satellite_report(SatelliteReport{
-                        .gps_time = T0,
-                        .tracked =
-                            {
-                                Satellite{
-                                    .constellation = Constellation::Gps,
-                                    .prn = 12,
-                                    .in_fix = true,
-                                    .elevation_deg = 60.0,
-                                    .azimuth_deg = 200.0,
-                                    .snr_dbhz = 42.0,
-                                },
-                                Satellite{
-                                    .constellation = Constellation::Galileo,
-                                    .prn = 5,
-                                    .in_fix = false,
-                                    .snr_dbhz = 25.0,
-                                },
-                            },
-                    })
-                    .finish();
+    NavFix fix;
+    fix.gps_time = T0;
+    fix.lat = Angle::degrees(LAT);
+    fix.lon = Angle::degrees(LON);
+
+    Satellite s1;
+    s1.constellation = Constellation::Gps;
+    s1.prn = 12;
+    s1.in_fix = true;
+    s1.elevation_deg = 60.0;
+    s1.azimuth_deg = 200.0;
+    s1.snr_dbhz = 42.0;
+
+    Satellite s2;
+    s2.constellation = Constellation::Galileo;
+    s2.prn = 5;
+    s2.in_fix = false;
+    s2.snr_dbhz = 25.0;
+
+    SatelliteReport report;
+    report.gps_time = T0;
+    report.tracked.push_back(s1);
+    report.tracked.push_back(s2);
+
+    auto file = FileBuilder{}.add_nav_fix(fix).add_satellite_report(report).finish();
 
     auto bytes = file.to_bytes();
     auto file2 = NavFile::from_bytes(bytes);
@@ -97,55 +94,51 @@ TEST_CASE("round-trip: satellite report survives write → from_bytes → read")
     auto p = file2.nav_point(0);
     CHECK(p.satellite_count == 2);
 
-    auto s0 = file2.satellite(0, 0);
-    CHECK(s0.constellation == Constellation::Gps);
-    CHECK(s0.prn == 12);
-    CHECK(s0.in_fix);
-    REQUIRE(s0.elevation_deg.has_value());
-    CHECK(*s0.elevation_deg == doctest::Approx(60.0).epsilon(0.5));
-    REQUIRE(s0.snr_dbhz.has_value());
-    CHECK(*s0.snr_dbhz == doctest::Approx(42.0).epsilon(0.5));
+    auto s0_out = file2.satellite(0, 0);
+    CHECK(s0_out.constellation == Constellation::Gps);
+    CHECK(s0_out.prn == 12);
+    CHECK(s0_out.in_fix);
+    REQUIRE(s0_out.elevation_deg.has_value());
+    CHECK(*s0_out.elevation_deg == doctest::Approx(60.0).epsilon(0.5));
+    REQUIRE(s0_out.snr_dbhz.has_value());
+    CHECK(*s0_out.snr_dbhz == doctest::Approx(42.0).epsilon(0.5));
 
-    auto s1 = file2.satellite(0, 1);
-    CHECK(s1.constellation == Constellation::Galileo);
-    CHECK_FALSE(s1.in_fix);
+    auto s1_out = file2.satellite(0, 1);
+    CHECK(s1_out.constellation == Constellation::Galileo);
+    CHECK_FALSE(s1_out.in_fix);
 }
 
 TEST_CASE("round-trip: event marker survives write → from_bytes → read") {
-    auto file = FileBuilder{}
-                    .add_nav_fix(NavFix{
-                        .gps_time = T0,
-                        .lat = Angle::degrees(LAT),
-                        .lon = Angle::degrees(LON),
-                    })
-                    .add_event_marker(EventMarker{
-                        .variant_path = "engine/start",
-                        .sys_time = T0,
-                        .annotation = "Engine started",
-                    })
-                    .finish();
+    NavFix fix;
+    fix.gps_time = T0;
+    fix.lat = Angle::degrees(LAT);
+    fix.lon = Angle::degrees(LON);
+
+    EventMarker m_in;
+    m_in.variant_path = "engine/start";
+    m_in.sys_time = T0;
+    m_in.annotation = "Engine started";
+
+    auto file = FileBuilder{}.add_nav_fix(fix).add_event_marker(m_in).finish();
 
     auto bytes = file.to_bytes();
     auto file2 = NavFile::from_bytes(bytes);
 
     REQUIRE(file2.event_marker_count() == 1);
-    auto m = file2.event_marker(0);
-    CHECK(m.variant_path == "engine/start");
-    CHECK(m.annotation == "Engine started");
-    CHECK_FALSE(m.sys_time.is_none());
-    CHECK(m.sys_time.unix_micros == T0.unix_micros);
+    auto m_out = file2.event_marker(0);
+    CHECK(m_out.variant_path == "engine/start");
+    CHECK(m_out.annotation == "Engine started");
+    CHECK_FALSE(m_out.sys_time.is_none());
+    CHECK(m_out.sys_time.unix_micros == T0.unix_micros);
 }
 
 TEST_CASE("round-trip: metadata survives write → to_bytes → from_bytes") {
-    auto file = FileBuilder{}
-                    .title("test title")
-                    .device("test device")
-                    .add_nav_fix(NavFix{
-                        .gps_time = T0,
-                        .lat = Angle::degrees(0.0),
-                        .lon = Angle::degrees(0.0),
-                    })
-                    .finish();
+    NavFix fix;
+    fix.gps_time = T0;
+    fix.lat = Angle::degrees(0.0);
+    fix.lon = Angle::degrees(0.0);
+
+    auto file = FileBuilder{}.title("test title").device("test device").add_nav_fix(fix).finish();
 
     auto bytes = file.to_bytes();
     auto file2 = NavFile::from_bytes(bytes);
@@ -155,14 +148,13 @@ TEST_CASE("round-trip: metadata survives write → to_bytes → from_bytes") {
 }
 
 TEST_CASE("round-trip: velocity unit conversions are consistent") {
-    auto file = FileBuilder{}
-                    .add_nav_fix(NavFix{
-                        .gps_time = T0,
-                        .lat = Angle::degrees(LAT),
-                        .lon = Angle::degrees(LON),
-                        .speed = Velocity::kmh(72.0), // 20 m/s
-                    })
-                    .finish();
+    NavFix fix;
+    fix.gps_time = T0;
+    fix.lat = Angle::degrees(LAT);
+    fix.lon = Angle::degrees(LON);
+    fix.speed = Velocity::kmh(72.0); // 20 m/s
+
+    auto file = FileBuilder{}.add_nav_fix(fix).finish();
 
     auto bytes = file.to_bytes();
     auto file2 = NavFile::from_bytes(bytes);

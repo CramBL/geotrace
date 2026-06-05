@@ -36,8 +36,10 @@ TEST_CASE("exception hierarchy: all types derive from std::exception") {
 TEST_CASE("exception: NoNavFixesError is catchable as BuildError and Error") {
     auto throw_it = [] {
         FileBuilder b;
-        b.add_annotation(
-            Annotation{.time = Timestamp::from_seconds(1700000000ULL), .label = "no fixes"});
+        Annotation ann;
+        ann.time = Timestamp::from_seconds(1700000000ULL);
+        ann.label = "no fixes";
+        b.add_annotation(ann);
         std::move(b).finish();
     };
     CHECK_THROWS_AS(throw_it(), NoNavFixesError);
@@ -50,12 +52,16 @@ TEST_CASE("exception: InvalidPathError is catchable as Error") {
     auto throw_it = [] {
         FileBuilder b;
         Timestamp t = Timestamp::from_seconds(1700000000ULL);
-        b.add_nav_fix(
-            NavFix{.gps_time = t, .lat = Angle::degrees(0.0), .lon = Angle::degrees(0.0)});
-        b.add_event_marker(EventMarker{
-            .variant_path = "invalid path with spaces!",
-            .sys_time = t,
-        });
+        NavFix fix;
+        fix.gps_time = t;
+        fix.lat = Angle::degrees(0.0);
+        fix.lon = Angle::degrees(0.0);
+        b.add_nav_fix(fix);
+
+        EventMarker marker;
+        marker.variant_path = "invalid path with spaces!";
+        marker.sys_time = t;
+        b.add_event_marker(marker);
     };
     CHECK_THROWS_AS(throw_it(), InvalidPathError);
     CHECK_THROWS_AS(throw_it(), Error);
@@ -69,13 +75,12 @@ TEST_CASE("exception: IoError is catchable as Error") {
 }
 
 TEST_CASE("exception: out_of_range from nav_point is std::out_of_range, not geotrace::Error") {
-    auto file = FileBuilder{}
-                    .add_nav_fix(NavFix{
-                        .gps_time = Timestamp::from_seconds(1700000000ULL),
-                        .lat = Angle::degrees(0.0),
-                        .lon = Angle::degrees(0.0),
-                    })
-                    .finish();
+    NavFix fix;
+    fix.gps_time = Timestamp::from_seconds(1700000000ULL);
+    fix.lat = Angle::degrees(0.0);
+    fix.lon = Angle::degrees(0.0);
+
+    auto file = FileBuilder{}.add_nav_fix(fix).finish();
 
     CHECK_THROWS_AS(file.nav_point(9999), std::out_of_range);
     // std::out_of_range is NOT a geotrace::Error
@@ -91,14 +96,21 @@ TEST_CASE("exception: AnnotationsOutOfRangeError carries a count field") {
     Timestamp t0 = Timestamp::from_seconds(1700000000ULL); // before t1
 
     try {
-        auto file =
-            FileBuilder{}
-                .add_nav_fix(
-                    NavFix{.gps_time = t1, .lat = Angle::degrees(0.0), .lon = Angle::degrees(0.0)})
-                .add_nav_fix(
-                    NavFix{.gps_time = t2, .lat = Angle::degrees(0.1), .lon = Angle::degrees(0.1)})
-                .add_annotation(Annotation{.time = t0, .label = "outside range"})
-                .finish();
+        NavFix f1;
+        f1.gps_time = t1;
+        f1.lat = Angle::degrees(0.0);
+        f1.lon = Angle::degrees(0.0);
+
+        NavFix f2;
+        f2.gps_time = t2;
+        f2.lat = Angle::degrees(0.1);
+        f2.lon = Angle::degrees(0.1);
+
+        Annotation ann;
+        ann.time = t0;
+        ann.label = "outside range";
+
+        auto file = FileBuilder{}.add_nav_fix(f1).add_nav_fix(f2).add_annotation(ann).finish();
         FAIL("expected AnnotationsOutOfRangeError");
     } catch (const AnnotationsOutOfRangeError &e) {
         CHECK(std::string{e.what()}.size() > 0);
@@ -110,8 +122,10 @@ TEST_CASE("exception: AnnotationsOutOfRangeError carries a count field") {
 TEST_CASE("exception: what() returns a non-empty string") {
     try {
         FileBuilder b;
-        b.add_annotation(
-            Annotation{.time = Timestamp::from_seconds(1700000000ULL), .label = "no fixes"});
+        Annotation ann;
+        ann.time = Timestamp::from_seconds(1700000000ULL);
+        ann.label = "no fixes";
+        b.add_annotation(ann);
         std::move(b).finish();
     } catch (const Error &e) {
         CHECK(std::string{e.what()}.size() > 0);

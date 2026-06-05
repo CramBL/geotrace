@@ -7,7 +7,7 @@ cmake --build sdk/c/build/test-for-cpp
 cmake --install sdk/c/build/test-for-cpp
 cmake -S sdk/cpp -B sdk/cpp/build/test -GNinja \
       -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
-      -DCMAKE_CXX_STANDARD=20 \
+      -DCMAKE_CXX_STANDARD=17 \
       -DGeoTraceC_DIR="$C_INSTALL/lib/cmake/GeoTraceC"
 cmake --build sdk/cpp/build/test
 ctest --test-dir sdk/cpp/build/test --output-on-failure
