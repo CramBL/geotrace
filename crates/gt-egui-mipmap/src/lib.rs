@@ -140,14 +140,20 @@ impl MipMap {
     /// Storing the `LevelSelection` and calling `slice_at` each frame avoids
     /// repeating the binary searches inside `select_slice` when the view bounds
     /// have not changed.
+    ///
+    /// The selection always extends one point beyond each edge of `[x_min, x_max]`
+    /// when such a point exists, so the rendered line stays connected to the
+    /// data outside the visible viewport.
     pub fn select_indices(&self, x_min: f64, x_max: f64, target_count: usize) -> LevelSelection {
         if self.levels.is_empty() {
             return LevelSelection::default();
         }
         let level_idx = self.select_level_idx(x_min, x_max, target_count);
         let level = self.levels.get(level_idx).map_or(&[][..], Vec::as_slice);
-        let clip_start = level.partition_point(|p| p.x < x_min);
-        let clip_end = level.partition_point(|p| p.x <= x_max);
+        let inner_start = level.partition_point(|p| p.x < x_min);
+        let inner_end = level.partition_point(|p| p.x <= x_max);
+        let clip_start = inner_start.saturating_sub(1);
+        let clip_end = (inner_end + 1).min(level.len());
         LevelSelection {
             level_idx,
             clip_start,
@@ -240,15 +246,22 @@ fn count_in_range(data: &[PlotPoint], x_min: f64, x_max: f64) -> usize {
     end.saturating_sub(start)
 }
 
-/// Return the sub-slice of `data` within `[x_min, x_max]`.
+/// Return the sub-slice of `data` that covers `[x_min, x_max]`, extended by
+/// one point on each side when those neighbors exist.
+///
+/// The extra neighbor points keep the rendered line connected to the data that
+/// lies just outside the visible viewport, preventing the line from appearing
+/// as a disconnected segment at the viewport edges.
 fn clip_to_range(data: &[PlotPoint], x_min: f64, x_max: f64) -> &[PlotPoint] {
-    let start = data.partition_point(|p| p.x < x_min);
-    let end = data.partition_point(|p| p.x <= x_max);
-    // `start` and `end` come from `partition_point`, which guarantees
-    // `0 <= start <= end <= data.len()` - the slice is always in bounds.
+    let inner_start = data.partition_point(|p| p.x < x_min);
+    let inner_end = data.partition_point(|p| p.x <= x_max);
+    let start = inner_start.saturating_sub(1);
+    let end = (inner_end + 1).min(data.len());
+    // `start` and `end` are derived from `partition_point` results clamped to
+    // `0..=data.len()`, so the slice is always in bounds.
     #[expect(
         clippy::indexing_slicing,
-        reason = "start and end are partition_point results, always within 0..=data.len()"
+        reason = "start and end are partition_point results clamped to 0..=data.len()"
     )]
     &data[start..end]
 }
@@ -296,7 +309,10 @@ mod tests {
         let data: Vec<[f64; 2]> = (0..1000).map(|i| [i as f64, i as f64]).collect();
         let m = MipMap::build(data);
         let slice = m.select_slice(100.0, 200.0, 10);
-        assert!(slice.iter().all(|p| p.x >= 100.0 && p.x <= 200.0));
+        // All returned points must come from the original data range (no garbage).
+        assert!(slice.iter().all(|p| p.x >= 0.0 && p.x <= 999.0));
+        // The slice must include points from within the viewport.
+        assert!(slice.iter().any(|p| p.x >= 100.0 && p.x <= 200.0));
     }
 
     #[test]
@@ -329,5 +345,85 @@ mod tests {
             total_range_slice.len() < 5_000,
             "should use a coarser level"
         );
+    }
+
+    // --- Neighbor-inclusion regression tests (the "broken line at viewport edge" bug) ---
+    //
+    // When the plot is zoomed in so that the series extends beyond both sides of
+    // the viewport, the rendered line must include one point on each side of the
+    // visible range.  Without that, egui_plot draws the line only between the
+    // points that fall inside the viewport, producing a visually disconnected
+    // segment instead of a continuous line.
+
+    fn int_data(n: usize) -> Vec<[f64; 2]> {
+        (0..n).map(|i| [i as f64, i as f64]).collect()
+    }
+
+    #[test]
+    fn select_slice_includes_left_neighbor() {
+        let m = MipMap::build(int_data(50));
+        // Viewport [10, 30]: point at x=9 must be included as the left neighbor.
+        let slice = m.select_slice(10.0, 30.0, 5);
+        assert!(
+            slice.iter().any(|p| p.x as i64 == 9),
+            "select_slice must include the point just left of x_min to keep the line connected"
+        );
+    }
+
+    #[test]
+    fn select_slice_includes_right_neighbor() {
+        let m = MipMap::build(int_data(50));
+        // Viewport [10, 30]: point at x=31 must be included as the right neighbor.
+        let slice = m.select_slice(10.0, 30.0, 5);
+        assert!(
+            slice.iter().any(|p| p.x as i64 == 31),
+            "select_slice must include the point just right of x_max to keep the line connected"
+        );
+    }
+
+    #[test]
+    fn select_indices_includes_left_neighbor() {
+        let m = MipMap::build(int_data(50));
+        let sel = m.select_indices(10.0, 30.0, 5);
+        let slice = m.slice_at(sel);
+        assert!(
+            slice.iter().any(|p| p.x as i64 == 9),
+            "select_indices/slice_at must include the point just left of x_min"
+        );
+    }
+
+    #[test]
+    fn select_indices_includes_right_neighbor() {
+        let m = MipMap::build(int_data(50));
+        let sel = m.select_indices(10.0, 30.0, 5);
+        let slice = m.slice_at(sel);
+        assert!(
+            slice.iter().any(|p| p.x as i64 == 31),
+            "select_indices/slice_at must include the point just right of x_max"
+        );
+    }
+
+    #[test]
+    fn select_slice_no_left_neighbor_at_start() {
+        // x_min is at the very beginning: no left neighbor exists, must not panic.
+        let m = MipMap::build(int_data(50));
+        let slice = m.select_slice(0.0, 10.0, 5);
+        assert!(
+            slice.iter().all(|p| p.x >= 0.0),
+            "must not include out-of-range left points"
+        );
+        assert!(slice.first().is_some_and(|p| p.x as i64 == 0));
+    }
+
+    #[test]
+    fn select_slice_no_right_neighbor_at_end() {
+        // x_max is at the very end: no right neighbor exists, must not panic.
+        let m = MipMap::build(int_data(50));
+        let slice = m.select_slice(40.0, 49.0, 5);
+        assert!(
+            slice.iter().all(|p| p.x <= 49.0),
+            "must not include out-of-range right points"
+        );
+        assert!(slice.last().is_some_and(|p| p.x as i64 == 49));
     }
 }

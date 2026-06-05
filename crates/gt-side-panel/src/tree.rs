@@ -442,6 +442,35 @@ impl TreeState {
         self.rebuild_visibility();
     }
 
+    /// Show only the given tracks; hide everything else. All listed tracks must
+    /// belong to the same file as each other (any file structure is fine, but
+    /// each `TrackRef` identifies a file+track pair). Tracks from files not
+    /// mentioned in `tracks` are hidden; within a mentioned file, only the
+    /// listed tracks are shown.
+    pub fn show_only_tracks(&mut self, tracks: &[TrackRef]) {
+        for (i, file_node) in self.files.iter_mut().enumerate() {
+            let fi = FileIdx::new(i);
+            let any_shown = tracks.iter().any(|t| t.fi == fi);
+            if !any_shown {
+                file_node.check = CheckState::Off;
+                for track_node in &mut file_node.tracks {
+                    track_node.check = CheckState::Off;
+                }
+            } else {
+                for (j, track_node) in file_node.tracks.iter_mut().enumerate() {
+                    let ti = TrackIdx::new(j);
+                    track_node.check = if tracks.iter().any(|t| t.fi == fi && t.index == ti) {
+                        CheckState::On
+                    } else {
+                        CheckState::Off
+                    };
+                }
+                file_node.recompute_check();
+            }
+        }
+        self.rebuild_visibility();
+    }
+
     pub fn show_only_track(&mut self, track: TrackRef) {
         for (i, file_node) in self.files.iter_mut().enumerate() {
             if FileIdx::new(i) == track.fi {

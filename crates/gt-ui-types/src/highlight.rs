@@ -38,4 +38,11 @@ pub struct MapHighlight {
     /// `TpvRenderer` reads this directly instead of re-scanning all points.
     /// `None` when `plot_hover_time` is `None`.
     pub plot_hover_point: Option<(FileIdx, TrackIdx, PointIdx)>,
+    /// When `true`, renderers must not draw their individual hover labels.
+    ///
+    /// Set by `NavMap` in two situations: when the disambiguation popup is open
+    /// (the popup occupies that screen region) and when multiple hover candidates
+    /// are active simultaneously (the map layer draws a single compact stacked
+    /// label instead of having each renderer place one near the cursor).
+    pub suppress_hover_labels: bool,
 }

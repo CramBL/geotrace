@@ -17,7 +17,7 @@ const SCHEMA_VERSION_ATTR: &str = "schema_version";
 /// the existing file is read into memory, a new file is constructed with
 /// the changes applied, and the result is written back atomically.
 ///
-/// # HDF5 feature status (hdf5-pure 0.6)
+/// # HDF5 feature status (hdf5-pure 0.7)
 ///
 /// | Feature | Status |
 /// |---|---|
@@ -25,12 +25,14 @@ const SCHEMA_VERSION_ATTR: &str = "schema_version";
 /// | Shuffle + deflate compression | ✅ supported |
 /// | Scale-offset filter | ✅ supported |
 /// | Fletcher32 checksum | ✅ supported |
-/// | SWMR (concurrent read + write) | ❌ not supported |
+/// | SWMR (concurrent read + write) | ✅ supported (0.7+), not applicable here |
 /// | Free-space management (space reclaim on delete) | ❌ not supported |
 /// | zstd codec | ❌ not supported |
 ///
-/// Workarounds: write exclusion via a lock file instead of SWMR; deleted
-/// recordings leave space until the database is compacted (future work).
+/// SWMR is designed for 1D append-only datasets; it does not help the
+/// read-modify-write pattern used here.  Write exclusion via a lock file
+/// remains the correct workaround.  Deleted recordings leave space until
+/// the database is compacted (future work).
 /// See `docs/storage-roadmap.md` for details.
 pub struct Database {
     path: PathBuf,
@@ -528,5 +530,95 @@ mod tests {
         let existing = vec!["1970-01-01T00:00:00Z".to_owned()];
         let name = make_group_name(0, 1300, &existing);
         assert_eq!(name, "1970-01-01T00:00:00Z_1.3k");
+    }
+
+    #[test]
+    fn history_round_trip_preserves_root_attrs() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Build a minimal GTD file with known attrs AND an extra unknown attr
+        // (`meta_future_field`) that simulates a new NVD field added later.
+        // All of them must survive the round-trip unchanged.
+        let gtd_path = dir.path().join("source.gtd");
+        {
+            let mut fb = FileBuilder::new();
+            fb.set_attr("geotrace_version", AttrValue::String("1".into()));
+            fb.set_attr("meta_title", AttrValue::String("Round-trip test".into()));
+            fb.set_attr("meta_future_field", AttrValue::String("preserved".into()));
+            let mut nav_gb = fb.create_group("nav_points");
+            let time_ds = nav_gb.create_dataset("time");
+            time_ds.with_shape(&[1]);
+            time_ds.with_i64_data(&[1_000_000_i64]);
+            time_ds.with_chunks(&[1]);
+            time_ds.with_deflate(6);
+            fb.add_group(nav_gb.finish());
+            fb.write(&gtd_path).unwrap();
+        }
+        let gtd_bytes = std::fs::read(&gtd_path).unwrap();
+
+        // Insert into a fresh database.
+        let db_path = dir.path().join("geotrace.h5");
+        let mut db = Database::open_or_create(&db_path).unwrap();
+        let meta = RecordingMeta::from_gtd_bytes(&gtd_bytes).unwrap();
+        let db_ref = db.insert("test-identity", &meta, &gtd_bytes).unwrap();
+
+        // Load back and verify all root attributes survived the round-trip,
+        // including the unrecognised future field.
+        let loaded_bytes = db.load_nvd_bytes(&db_ref).unwrap();
+        let loaded_file = hdf5_pure::File::from_bytes(loaded_bytes).unwrap();
+        let attrs = loaded_file.root().attrs().unwrap();
+        assert_eq!(
+            attrs.get("geotrace_version"),
+            Some(&AttrValue::String("1".into())),
+            "geotrace_version must survive the history round-trip"
+        );
+        assert_eq!(
+            attrs.get("meta_title"),
+            Some(&AttrValue::String("Round-trip test".into())),
+            "meta_title must survive the history round-trip"
+        );
+        assert_eq!(
+            attrs.get("meta_future_field"),
+            Some(&AttrValue::String("preserved".into())),
+            "unrecognised NVD root attrs must survive the round-trip without being listed explicitly"
+        );
+    }
+
+    #[test]
+    fn history_round_trip_legacy_missing_version_gets_fallback() {
+        // Simulate a recording stored by old code that did not preserve NVD root
+        // attrs: load_recording_bytes should fall back to geotrace_version="1".
+        let dir = tempfile::tempdir().unwrap();
+
+        // Build GTD bytes with no geotrace_version attr (old-format source).
+        let gtd_path = dir.path().join("old.gtd");
+        {
+            let mut fb = FileBuilder::new();
+            // Intentionally omit geotrace_version to simulate pre-fix behaviour.
+            fb.set_attr("meta_title", AttrValue::String("Legacy file".into()));
+            let mut nav_gb = fb.create_group("nav_points");
+            let time_ds = nav_gb.create_dataset("time");
+            time_ds.with_shape(&[1]);
+            time_ds.with_i64_data(&[2_000_000_i64]);
+            time_ds.with_chunks(&[1]);
+            time_ds.with_deflate(6);
+            fb.add_group(nav_gb.finish());
+            fb.write(&gtd_path).unwrap();
+        }
+        let gtd_bytes = std::fs::read(&gtd_path).unwrap();
+
+        let db_path = dir.path().join("geotrace.h5");
+        let mut db = Database::open_or_create(&db_path).unwrap();
+        let meta = RecordingMeta::from_gtd_bytes(&gtd_bytes).unwrap();
+        let db_ref = db.insert("test-identity", &meta, &gtd_bytes).unwrap();
+
+        let loaded_bytes = db.load_nvd_bytes(&db_ref).unwrap();
+        let loaded_file = hdf5_pure::File::from_bytes(loaded_bytes).unwrap();
+        let attrs = loaded_file.root().attrs().unwrap();
+        assert_eq!(
+            attrs.get("geotrace_version"),
+            Some(&AttrValue::String("1".into())),
+            "missing geotrace_version must fall back to '1'"
+        );
     }
 }

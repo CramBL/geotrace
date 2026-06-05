@@ -99,6 +99,7 @@ impl Plugin for EventMarkerRenderer<'_> {
         if let Some(r) = self.highlight.hover_candidates[1]
             && self.highlight.sticky != Some(r)
             && !ui.ctx().any_popup_open()
+            && !self.highlight.suppress_hover_labels
             && let Some(file) = r.track.fi.get(self.files)
             && let Some(track) = r.track.index.get(&file.tracks)
             && let Some(marker) = r.point_index.get(&track.event_markers)

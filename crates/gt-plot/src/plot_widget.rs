@@ -275,6 +275,8 @@ pub struct PlotState {
     pub metric_vis: MetricVisibility,
     /// Whether the plot grid lines are visible.
     pub show_grid: bool,
+    /// When true, the plot x-range tracks the map viewport.
+    pub sync_to_map: bool,
     /// Mipmap cascade for every track in every loaded file.
     pub(crate) series_cache: Vec<TrackSeries>,
     /// Cached level selections, one entry per series.
@@ -297,6 +299,7 @@ impl Default for PlotState {
             hovered_time: None,
             metric_vis: MetricVisibility::default(),
             show_grid: true,
+            sync_to_map: true,
             series_cache: Vec::new(),
             level_cache: Vec::new(),
             last_computed_bounds: None,
@@ -389,7 +392,12 @@ pub fn show_track_plot(
 
     // Draw the per-metric filter row before the plot so it consumes vertical
     // space first; `ui.available_height()` below then gives the remainder.
-    let hovered_chip = metric_filter_row(ui, &mut state.metric_vis, &mut state.show_grid);
+    let hovered_chip = metric_filter_row(
+        ui,
+        &mut state.metric_vis,
+        &mut state.show_grid,
+        &mut state.sync_to_map,
+    );
 
     // Number of data points to request from the mipmap per frame.
     // Twice the pixel width gives ≥2 samples per screen pixel, which is enough
@@ -578,12 +586,26 @@ fn metric_filter_row(
     ui: &mut egui::Ui,
     vis: &mut MetricVisibility,
     show_grid: &mut bool,
+    sync_to_map: &mut bool,
 ) -> Option<MetricKind> {
     let all_on = vis.all_enabled();
     let mut show_only = None;
     let mut hovered_chip = None;
 
     ui.horizontal_wrapped(|ui| {
+        // Sync toggle - placed first, to the left of the grid button.
+        if ui
+            .selectable_label(*sync_to_map, egui_phosphor::regular::LINK)
+            .on_hover_text(if *sync_to_map {
+                "Syncing plot time range to map viewport — click to disable"
+            } else {
+                "Sync plot time range to map viewport"
+            })
+            .clicked()
+        {
+            *sync_to_map = !*sync_to_map;
+        }
+
         // Grid toggle - icon button with tooltip.
         if ui
             .small_button(egui_phosphor::regular::GRID_FOUR)

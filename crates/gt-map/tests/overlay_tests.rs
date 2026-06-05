@@ -198,6 +198,71 @@ fn generated_marker_tooltip_shown_when_primary_hover_is_non_tpv() {
     );
 }
 
+/// Mirrors the full renderer tooltip guard (items 14/15), which now also checks
+/// `suppress_hover_labels` so that individual tooltips are suppressed both when
+/// the disambiguation popup is open and when multiple candidates are hovered.
+fn tooltip_guard_passes_full(
+    highlight: &MapHighlight,
+    r: DataPointRef,
+    any_popup_open: bool,
+) -> bool {
+    highlight.sticky != Some(r) && !any_popup_open && !highlight.suppress_hover_labels
+}
+
+/// With no popup open and a single hover, the tooltip should show.
+#[test]
+fn tooltip_shows_when_single_hover_no_popup() {
+    let p = tpv_point(0);
+    let h = MapHighlight {
+        hover: Some(HighlightScope::Point(p)),
+        suppress_hover_labels: false,
+        ..Default::default()
+    };
+    assert!(tooltip_guard_passes_full(&h, p, false));
+}
+
+/// When `suppress_hover_labels` is set (multiple candidates hovered simultaneously),
+/// individual renderer tooltips must not appear so they don't pile on top of each other.
+#[test]
+fn tooltip_suppressed_when_suppress_hover_labels_set() {
+    let p = tpv_point(0);
+    let other = gen_marker_point(0);
+    let h = MapHighlight {
+        hover: Some(HighlightScope::Point(p)),
+        hover_candidates: [Some(p), None, None, Some(other)],
+        suppress_hover_labels: true,
+        ..Default::default()
+    };
+    assert!(
+        !tooltip_guard_passes_full(&h, p, false),
+        "tooltip must be suppressed when suppress_hover_labels is true"
+    );
+}
+
+/// When the disambiguation popup is open, individual renderer tooltips must not
+/// appear so they don't overlap the popup (item 14).
+#[test]
+fn tooltip_suppressed_when_disambig_popup_open() {
+    let p = tpv_point(0);
+    let h = MapHighlight {
+        hover: Some(HighlightScope::Point(p)),
+        suppress_hover_labels: true,
+        ..Default::default()
+    };
+    assert!(
+        !tooltip_guard_passes_full(&h, p, false),
+        "tooltip must be suppressed when disambiguation popup is open"
+    );
+}
+
+/// `suppress_hover_labels` defaults to false — renderers show tooltips normally
+/// when nothing special is active.
+#[test]
+fn suppress_hover_labels_defaults_false() {
+    let h = MapHighlight::default();
+    assert!(!h.suppress_hover_labels);
+}
+
 /// Verifies that `any_popup_open()` returns false when no popup has been opened -
 /// confirming the egui baseline the guard relies on.
 #[test]

@@ -43,9 +43,6 @@ struct SharedAppState {
     popup_pos_request: Option<egui::Pos2>,
     /// When `true`, `NavMap::draw` zooms the map to fit all currently visible data.
     zoom_to_visible_request: bool,
-    /// When `true`, the plot automatically pans to show the time range of TPV
-    /// points visible in the current map viewport.
-    sync_plot_to_map: bool,
     /// Filename and warnings for the currently open data quality warnings dialog, if any.
     warnings_popup: Option<(String, Vec<LoadWarning>)>,
     /// Set by the side panel when the user chooses "Unload" on a file that has a db_ref.
@@ -186,7 +183,6 @@ impl App {
                 map_center_request: None,
                 popup_pos_request: None,
                 zoom_to_visible_request: false,
-                sync_plot_to_map: true,
                 warnings_popup: None,
                 unload_request: None,
             })),
@@ -407,7 +403,7 @@ impl App {
 
         {
             let mut shared = self.shared.borrow_mut();
-            shared.sync_plot_to_map = s.map.sync_to_map;
+            shared.plot_state.sync_to_map = s.map.sync_to_map;
             shared.plot_state.show_grid = s.plot.show_grid;
             let vis = &mut shared.plot_state.metric_vis;
             let get_metric = |k| s.plot.metric.get(&k).copied().unwrap_or(true);
@@ -466,7 +462,7 @@ impl App {
             metric_clock_delta_ms: vis.clock_delta_ms,
             layer: map_layer_to_setting(self.map.layer()),
             mapbox_token: self.map.mapbox_token().to_owned(),
-            sync_to_map: s.sync_plot_to_map,
+            sync_to_map: s.plot_state.sync_to_map,
             theme,
             track_split_gap_seconds: self
                 .processing_config
@@ -515,7 +511,7 @@ impl App {
             map: crate::settings::MapSettings {
                 layer: map_layer_to_setting(self.map.layer()),
                 mapbox_token: self.map.mapbox_token().to_owned(),
-                sync_to_map: s.sync_plot_to_map,
+                sync_to_map: s.plot_state.sync_to_map,
             },
             ui: crate::settings::UiSettings { theme },
             processing: crate::settings::ProcessingSettings {
@@ -817,17 +813,6 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
             MainPane::Plot => {
                 egui::Panel::top("plot_header").show_inside(ui, |ui| {
                     ui.horizontal(|ui| {
-                        let s = &mut *self.state;
-                        if ui
-                            .selectable_label(
-                                s.sync_plot_to_map,
-                                format!("{} Sync", egui_phosphor::regular::LINK),
-                            )
-                            .on_hover_text("Sync plot time range to map viewport")
-                            .clicked()
-                        {
-                            s.sync_plot_to_map = !s.sync_plot_to_map;
-                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
                                 .button(egui_phosphor::regular::CARET_DOWN)
@@ -840,7 +825,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     });
                 });
                 let s = &mut *self.state;
-                let map_sync_x_range = if s.sync_plot_to_map {
+                let map_sync_x_range = if s.plot_state.sync_to_map {
                     self.map.viewport_geo_bounds().and_then(|b| {
                         tpv_time_range_in_bounds(&s.loaded_files, s.tree.visibility(), b)
                     })

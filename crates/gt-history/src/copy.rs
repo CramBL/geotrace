@@ -70,6 +70,27 @@ macro_rules! write_dataset_into {
     }};
 }
 
+/// Returns true for attribute keys that belong to the database's recording
+/// metadata (as opposed to NVD file-format root attributes).
+///
+/// Used as a denylist when reconstructing an NVD file from stored data: every
+/// attribute on the recording group that is NOT a DB attr is treated as an NVD
+/// root attribute and written back to the file root.  New NVD root attributes
+/// are therefore preserved automatically without touching this function.
+fn is_db_recording_attr(key: &str) -> bool {
+    matches!(
+        key,
+        "identity"
+            | "start_us"
+            | "end_us"
+            | "nav_point_count"
+            | "sat_report_count"
+            | "marker_count"
+            | "event_marker_count"
+            | "gtd_size_bytes"
+    )
+}
+
 fn snapshot_group(src: &hdf5_pure::Group<'_>, name: &str) -> Result<GroupNode, DbError> {
     let mut node = GroupNode {
         name: name.to_owned(),
@@ -174,6 +195,13 @@ fn build_new_recording(
     for grp_name in nvd_root.groups()? {
         let data_src = nvd_root.group(&grp_name)?;
         rec.groups.push(snapshot_group(&data_src, &grp_name)?);
+    }
+
+    // Preserve all NVD root attributes so they are restored when the recording
+    // is loaded back.  Copying unconditionally means new attributes added to the
+    // NVD format are carried through without any change to this function.
+    for (k, v) in nvd_root.attrs()? {
+        rec.attrs.push((k, v));
     }
 
     Ok(rec)
@@ -333,6 +361,26 @@ pub(crate) fn load_recording_bytes(
     // Snapshot all child data groups (nav_points, sat_reports, etc.) and
     // write them as a fresh NVD-format HDF5 file.
     let mut fb = FileBuilder::new();
+
+    // Restore NVD root attributes.  Every attr on the recording group that is
+    // not a DB-internal field is an NVD root attr and belongs on the file root.
+    // Using a denylist (rather than an allowlist) means new NVD attrs are
+    // restored automatically.  Fall back to geotrace_version="1" for recordings
+    // stored by older code that predates attr preservation.
+    let rec_attrs = rec_grp.attrs()?;
+    let mut has_version = false;
+    for (k, v) in &rec_attrs {
+        if !is_db_recording_attr(k) {
+            fb.set_attr(k, v.clone());
+            if k == "geotrace_version" {
+                has_version = true;
+            }
+        }
+    }
+    if !has_version {
+        fb.set_attr("geotrace_version", AttrValue::String("1".into()));
+    }
+
     for child_name in rec_grp.groups()? {
         let child = rec_grp.group(&child_name)?;
         let node = snapshot_group(&child, &child_name)?;

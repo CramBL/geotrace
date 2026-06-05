@@ -7,7 +7,7 @@ use std::{
 use egui_kittest::Harness;
 use geotrace_sdk::{Angle, DateTime, Duration, NavFileBuilder, NavFix, Utc};
 use gt_test_utils::TestHarness;
-use gt_types::LoadWarning;
+use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
 
 use super::App;
 
@@ -219,6 +219,90 @@ fn settings_window_closes_on_esc() {
         !harness.state().settings_open,
         "ESC must close the settings window"
     );
+}
+
+/// Snapshot of the app with the gold dataset loaded. Captures the side panel,
+/// the map area, and the plot with the metric filter row (including the Sync
+/// button, grid toggle, and metric chips).
+#[test]
+fn snapshot_app_with_file_loaded() {
+    let gold_bytes: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/gold_dataset/gold.gtd"
+    ));
+
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .with_size(egui::vec2(1280.0, 800.0))
+        .build_eframe(|cc| App::new(cc));
+    harness.step();
+
+    harness.input_mut().dropped_files.push(egui::DroppedFile {
+        bytes: Some(Arc::from(gold_bytes)),
+        name: "gold.gtd".to_owned(),
+        ..Default::default()
+    });
+    harness.step();
+    step_until_loaded(&mut harness);
+    // The app repaints continuously (map + background jobs). Run many frames
+    // so the map zoom and plot layout converge before we snapshot.
+    harness.run_steps(60);
+
+    // Use snapshot_loose: the live map/plot rendering can produce minor
+    // pixel-level variance across runs due to floating-point layout.
+    TestHarness::from_harness(harness).snapshot_loose("app_with_file_loaded");
+}
+
+/// Snapshot of the app zoomed into the cluster of Sahara desert tracks from
+/// the gold dataset. All other tracks (antimeridian, southern hemisphere, etc.)
+/// are hidden so only the closely-spaced Sahara tracks fill the map.
+#[test]
+fn snapshot_app_sahara_tracks() {
+    let gold_bytes: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/gold_dataset/gold.gtd"
+    ));
+
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .with_size(egui::vec2(1280.0, 800.0))
+        .build_eframe(|cc| App::new(cc));
+    harness.step();
+
+    harness.input_mut().dropped_files.push(egui::DroppedFile {
+        bytes: Some(Arc::from(gold_bytes)),
+        name: "gold.gtd".to_owned(),
+        ..Default::default()
+    });
+    harness.step();
+    step_until_loaded(&mut harness);
+
+    // Identify the Sahara tracks by latitude: they are all centred around
+    // 23°N 13°E. The bounding_box is in (lon, lat) geo-types order, so
+    // min.y / max.y are the south/north latitudes.
+    let sahara_tracks: Vec<TrackRef> = {
+        let state = harness.state().shared.borrow();
+        state.loaded_files[0]
+            .tracks
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.metadata.bounding_box.min().y > 20.0)
+            .map(|(i, _)| TrackRef {
+                fi: FileIdx::new(0),
+                index: TrackIdx::new(i),
+            })
+            .collect()
+    };
+
+    {
+        let mut state = harness.state().shared.borrow_mut();
+        state.tree.show_only_tracks(&sahara_tracks);
+        state.zoom_to_visible_request = true;
+    }
+
+    harness.run_steps(60);
+
+    TestHarness::from_harness(harness).snapshot_loose("app_sahara_tracks");
 }
 
 #[test]

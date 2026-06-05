@@ -6,7 +6,7 @@ mod tests {
     fn enforce_architecture() {
         let mut builder = LintBuilder::new();
 
-        // 1. gt_geo_math Isolation (Whitelist)
+        // gt_geo_math Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_geo_math_isolation")
@@ -29,7 +29,7 @@ mod tests {
             )
             .build();
 
-        // 2. gt_ui_theme Isolation (Whitelist)
+        // gt_ui_theme Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_ui_theme_isolation")
@@ -50,7 +50,7 @@ mod tests {
             )
             .build();
 
-        // 2b. gt_fmt Isolation (Whitelist)
+        // gt_fmt Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_fmt_isolation")
@@ -71,7 +71,7 @@ mod tests {
             )
             .build();
 
-        // 3. gt_types Isolation (Whitelist)
+        // gt_types Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_types_isolation")
@@ -107,7 +107,7 @@ mod tests {
             )
             .build();
 
-        // 3a-i. gt_ui_types Isolation (Whitelist)
+        // gt_ui_types Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_ui_types_isolation")
@@ -132,7 +132,7 @@ mod tests {
             )
             .build();
 
-        // 3a. gt_filter Isolation (Whitelist)
+        // gt_filter Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_filter_isolation")
@@ -155,7 +155,7 @@ mod tests {
             )
             .build();
 
-        // 3b. gt_test_utils Isolation (Whitelist)
+        // gt_test_utils Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_test_utils_isolation")
@@ -183,7 +183,7 @@ mod tests {
             )
             .build();
 
-        // 3c. gt_track_builder Isolation (Whitelist)
+        // gt_track_builder Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_track_builder_isolation")
@@ -211,7 +211,7 @@ mod tests {
             )
             .build();
 
-        // 3. gt_map Isolation (Whitelist)
+        // gt_map Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_map_isolation")
@@ -251,7 +251,7 @@ mod tests {
             )
             .build();
 
-        // 4. gt_egui_mipmap Isolation (Whitelist)
+        // gt_egui_mipmap Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_egui_mipmap_isolation")
@@ -271,7 +271,7 @@ mod tests {
             )
             .build();
 
-        // 5. gt_plot Isolation (Whitelist)
+        // gt_plot Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_plot_isolation")
@@ -304,7 +304,7 @@ mod tests {
             )
             .build();
 
-        // 6. Application Root Isolation (Whitelist)
+        // Application Root Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("geotrace_isolation")
@@ -353,7 +353,7 @@ mod tests {
             )
             .build();
 
-        // 12. gt_history Isolation (Whitelist)
+        // gt_history Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_history_isolation")
@@ -378,7 +378,7 @@ mod tests {
             )
             .build();
 
-        // 11. gt_side_panel Isolation (Whitelist)
+        // gt_side_panel Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_side_panel_isolation")
@@ -411,7 +411,7 @@ mod tests {
             )
             .build();
 
-        // 7. gt_logfile Isolation (Whitelist)
+        // gt_logfile Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_logfile_isolation")
@@ -436,7 +436,7 @@ mod tests {
             )
             .build();
 
-        // 8. geotrace_sdk_macros Isolation (Whitelist) - proc-macro support crates only
+        // geotrace_sdk_macros Isolation (Whitelist) - proc-macro support crates only
         builder
             .module_lint()
             .lint_named("geotrace_sdk_macros_isolation")
@@ -456,7 +456,7 @@ mod tests {
             )
             .build();
 
-        // 9. geotrace_sdk Isolation (Whitelist) - no workspace-internal crates allowed
+        // geotrace_sdk Isolation (Whitelist) - no workspace-internal crates allowed
         builder
             .module_lint()
             .lint_named("geotrace_sdk_isolation")
@@ -491,7 +491,7 @@ mod tests {
             )
             .build();
 
-        // 10. geotrace_c Isolation (Whitelist) - FFI layer; only touches geotrace_sdk and std
+        // geotrace_c Isolation (Whitelist) - FFI layer; only touches geotrace_sdk and std
         builder
             .module_lint()
             .lint_named("geotrace_c_isolation")
@@ -518,7 +518,7 @@ mod tests {
             )
             .build();
 
-        // 11. gt_loader Isolation (Whitelist)
+        // gt_loader Isolation (Whitelist)
         builder
             .module_lint()
             .lint_named("gt_loader_isolation")

@@ -52,4 +52,17 @@ impl<'a, State> TestHarness<'a, State> {
         self.inner
             .snapshot_options(snap_name(name), &snapshot_options());
     }
+
+    /// Like [`snapshot`] but with a higher pixel-diff tolerance.
+    ///
+    /// Use this for snapshots that include live-rendered content (plots, maps)
+    /// where minor floating-point layout differences produce a small number of
+    /// differing pixels across runs.
+    pub fn snapshot_loose(&mut self, name: &str) {
+        if on_non_macos_ci() {
+            return;
+        }
+        self.inner
+            .snapshot_options(snap_name(name), &SnapshotOptions::new().threshold(4.0));
+    }
 }

@@ -498,8 +498,13 @@ impl NavMap {
         // Detect newly loaded files → zoom to fit all data + start blink animation.
         if files.len() > self.last_file_count {
             self.new_file_boundary = self.last_file_count;
+            let had_tracks = self.last_file_count > 0;
             self.last_file_count = files.len();
-            self.blink.trigger();
+            // Only blink when adding to existing content; the first load needs no
+            // visual callout because there is nothing else to differentiate from.
+            if had_tracks {
+                self.blink.trigger();
+            }
             if let Some(bbox) = compute_bounding_box(files) {
                 zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
             }
@@ -511,6 +516,14 @@ impl NavMap {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(16));
         }
+
+        // Suppress individual renderer hover labels when:
+        // - the disambiguation popup is currently open (it occupies the cursor area), or
+        // - multiple hover candidates were active last frame (the map layer draws a single
+        //   stacked label instead, avoiding overlapping labels from independent renderers).
+        let disambig_open = self.disambiguation_candidates.iter().any(|c| c.is_some());
+        let prev_multi_hover = highlight.hover_candidates.iter().flatten().count() > 1;
+        highlight.suppress_hover_labels = disambig_open || prev_multi_hover;
 
         let map_rect_estimate = ui.max_rect();
         let map_center = self
@@ -741,14 +754,13 @@ impl NavMap {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.set_min_width(160.0);
                         for candidate in disambig_candidates.iter().flatten().copied() {
-                            let icon = category_icon(candidate.category);
-                            let label = candidate_label(candidate, files);
-                            if ui
-                                .selectable_label(
-                                    highlight.sticky == Some(candidate),
-                                    format!("{icon}  {label}"),
-                                )
-                                .clicked()
+                            if draw_disambig_row(
+                                ui,
+                                candidate,
+                                files,
+                                highlight.sticky == Some(candidate),
+                            )
+                            .clicked()
                             {
                                 if highlight.sticky == Some(candidate) {
                                     highlight.sticky = None;
@@ -811,6 +823,24 @@ impl NavMap {
             show_sticky_popup(ui.ctx(), files, sticky_ref, self.sticky_pos);
         }
 
+        // When multiple different item types are hovered simultaneously, draw a
+        // single compact stacked label near the cursor instead of letting each
+        // renderer place its own label (which would all overlap at the same spot).
+        let current_multi_hover = hover_candidates.iter().flatten().count() > 1;
+        if current_multi_hover
+            && !disambig_open
+            && let Some(cursor_pos) = ui.input(|i| i.pointer.hover_pos())
+        {
+            egui::Area::new(egui::Id::new("map_multi_hover_labels"))
+                .fixed_pos(cursor_pos + egui::vec2(15.0, 10.0))
+                .order(egui::Order::Tooltip)
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        draw_multi_hover_label_contents(ui, &hover_candidates, files);
+                    });
+                });
+        }
+
         highlight.hover = hover_point_ref.map(HighlightScope::Point);
         highlight.hover_candidates = hover_candidates;
 
@@ -818,7 +848,58 @@ impl NavMap {
     }
 }
 
-fn category_icon(cat: DataCategory) -> &'static str {
+/// Renders the rows of a multi-hover stacked label into `ui`.
+///
+/// Callers wrap this in `egui::Frame::popup` to get the border and padding.
+pub(crate) fn draw_multi_hover_label_contents(
+    ui: &mut egui::Ui,
+    candidates: &[Option<DataPointRef>; 4],
+    files: &[LoadedFile],
+) {
+    for candidate in candidates.iter().flatten().copied() {
+        let icon = category_icon(candidate.category);
+        let label = candidate_label(candidate, files);
+        ui.label(format!("{icon}  {label}"));
+    }
+}
+
+/// Renders a single row of the disambiguation popup.
+///
+/// Returns the response from `selectable_label` so the caller can check `.clicked()`.
+pub(crate) fn draw_disambig_row(
+    ui: &mut egui::Ui,
+    candidate: DataPointRef,
+    files: &[LoadedFile],
+    is_selected: bool,
+) -> egui::Response {
+    let icon = category_icon(candidate.category);
+    let label = candidate_label(candidate, files);
+    let mut job = egui::text::LayoutJob::default();
+    let text_color = ui.visuals().text_color();
+    job.append(
+        icon,
+        0.0,
+        egui::TextFormat {
+            font_id: egui::FontId::proportional(20.0),
+            color: text_color,
+            valign: egui::Align::Center,
+            ..Default::default()
+        },
+    );
+    job.append(
+        &format!("  {label}"),
+        0.0,
+        egui::TextFormat {
+            font_id: egui::FontId::proportional(13.0),
+            color: text_color,
+            valign: egui::Align::Center,
+            ..Default::default()
+        },
+    );
+    ui.selectable_label(is_selected, job)
+}
+
+pub(crate) fn category_icon(cat: DataCategory) -> &'static str {
     match cat {
         DataCategory::Tpv | DataCategory::SatelliteReport => egui_phosphor::regular::CROSSHAIR,
         DataCategory::EventMarker => egui_phosphor::regular::FLAG,
@@ -828,7 +909,7 @@ fn category_icon(cat: DataCategory) -> &'static str {
     }
 }
 
-fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> String {
+pub(crate) fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> String {
     let Some(file) = candidate.track.fi.get(files) else {
         return String::new();
     };
@@ -1490,5 +1571,162 @@ mod tests {
             map.all_tree_indices_valid(&files_after),
             "spatial index has stale entries after file deletion"
         );
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    use crate::test_harness::TestHarness;
+    use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
+    use gt_ui_types::DataPointRef;
+
+    fn tpv_ref() -> DataPointRef {
+        DataPointRef {
+            track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            category: DataCategory::Tpv,
+            point_index: PointIdx::new(0),
+        }
+    }
+
+    fn event_ref() -> DataPointRef {
+        DataPointRef {
+            track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            category: DataCategory::EventMarker,
+            point_index: PointIdx::new(0),
+        }
+    }
+
+    fn custom_ref() -> DataPointRef {
+        DataPointRef {
+            track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            category: DataCategory::CustomMarker,
+            point_index: PointIdx::new(0),
+        }
+    }
+
+    fn install_phosphor(ui: &egui::Ui) {
+        let mut fonts = egui::FontDefinitions::default();
+        egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+        ui.ctx().set_fonts(fonts);
+    }
+
+    /// Builds a single `LoadedFile` that has one TPV point, one event marker,
+    /// and one custom marker, all at index 0.  Used by snapshot tests so
+    /// `candidate_label` produces real human-readable text.
+    fn make_snapshot_file() -> gt_types::LoadedFile {
+        use gt_types::{
+            CustomMarker, EventMarker, FileMetadata, Latitude, LoadedFile, LoadedTrack, Longitude,
+            MarkerIcon, TimeRange, TrackMetadata, merc_bounds_for_rect,
+        };
+        use uom::si::f64::Length;
+        use uom::si::length::kilometer;
+
+        let points = gt_test_utils::nav_test_data();
+        let t0 = points[0].tpv.time().utc();
+        let lat = Latitude::new(55.686_7);
+        let lon = Longitude::new(12.563_8);
+
+        let event_marker = EventMarker::new(
+            t0,
+            "Lap/Start".to_string(),
+            Some("Lap start point".to_string()),
+            lat,
+            lon,
+        );
+        let custom_marker = CustomMarker::new(
+            t0,
+            "Coffee stop".to_string(),
+            MarkerIcon::Pin,
+            lat,
+            lon,
+            None,
+        );
+
+        let bb = gt_types::Rect::new(
+            gt_types::Coord { x: 12.55, y: 55.67 },
+            gt_types::Coord { x: 12.59, y: 55.69 },
+        );
+        let n = points.len();
+        let track = LoadedTrack {
+            metadata: TrackMetadata {
+                index: 0,
+                distance_km: Length::new::<kilometer>(5.0),
+                duration: chrono::Duration::seconds(n as i64),
+                time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
+                bounding_box: bb,
+                merc_bounds: merc_bounds_for_rect(bb),
+                point_set_diameter_m: Length::new::<uom::si::length::meter>(500.0),
+                has_custom_markers: true,
+                tpv_count: n,
+                satellite_report_count: 0,
+                custom_marker_count: 1,
+                generated_marker_count: 0,
+                event_marker_count: 1,
+            },
+            points,
+            custom_markers: vec![custom_marker],
+            generated_markers: vec![],
+            event_markers: vec![event_marker],
+        };
+
+        LoadedFile {
+            metadata: FileMetadata {
+                filename: "snapshot_test.gtd".to_string(),
+                total_distance_km: Length::new::<kilometer>(5.0),
+                total_duration: chrono::Duration::seconds(n as i64),
+                time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
+            },
+            identity: "auto:snapshot_test.gtd".to_string(),
+            tracks: vec![track],
+            event_marker_styles: std::collections::HashMap::new(),
+            orphaned_event_markers: vec![],
+            source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("snapshot_test.gtd")),
+            load_warnings: vec![],
+            db_ref: None,
+        }
+    }
+
+    /// Snapshot: the stacked multi-hover label popup that appears when multiple
+    /// item types are simultaneously within cursor radius (item 15). Calls the
+    /// real production function so the test stays in sync with the code.
+    #[test]
+    fn snap_multi_hover_stacked_label() {
+        let files = vec![make_snapshot_file()];
+        let candidates = [Some(tpv_ref()), Some(event_ref()), Some(custom_ref()), None];
+
+        let mut harness = TestHarness::new_wgpu(egui::vec2(280.0, 110.0), move |ui| {
+            install_phosphor(ui);
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                draw_multi_hover_label_contents(ui, &candidates, &files);
+            });
+        });
+
+        harness.run();
+        harness.snapshot("multi_hover_stacked_label");
+    }
+
+    /// Snapshot: the disambiguation popup (item 16) with large icons via
+    /// LayoutJob. Calls the real `draw_disambig_row` so the test stays in sync
+    /// with the production code. Verifies that the icon renders at a visually
+    /// larger size than the label text.
+    #[test]
+    fn snap_disambig_popup_big_icons() {
+        let files = vec![make_snapshot_file()];
+        let candidates = [Some(tpv_ref()), Some(event_ref()), None, None];
+        let sticky = Some(tpv_ref());
+
+        let mut harness = TestHarness::new_wgpu(egui::vec2(300.0, 90.0), move |ui| {
+            install_phosphor(ui);
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_min_width(200.0);
+                for candidate in candidates.iter().flatten().copied() {
+                    draw_disambig_row(ui, candidate, &files, sticky == Some(candidate));
+                }
+            });
+        });
+
+        harness.run();
+        harness.snapshot("disambig_popup_big_icons");
     }
 }

@@ -274,6 +274,7 @@ impl Plugin for TpvRenderer<'_> {
             && r.category == DataCategory::Tpv
             && self.highlight.sticky != Some(r)
             && !ui.ctx().any_popup_open()
+            && !self.highlight.suppress_hover_labels
         {
             self.show_tooltip(ui, r);
         }
@@ -317,6 +318,23 @@ pub(crate) fn show_hover_table(ui: &mut Ui, p: &NavPoint) {
         .show(ui, |ui| {
             ui.label("Time");
             ui.label(p.tpv.time().utc().format("%Y-%m-%d %H:%M:%S").to_string());
+            ui.end_row();
+
+            let lat = p.tpv.lat().as_degrees();
+            let lon = p.tpv.lon().as_degrees();
+            ui.label("Lat");
+            ui.label(format!(
+                "{:.6}{DEGREE_SIGN} {}",
+                lat.abs(),
+                if lat >= 0.0 { "N" } else { "S" }
+            ));
+            ui.end_row();
+            ui.label("Lon");
+            ui.label(format!(
+                "{:.6}{DEGREE_SIGN} {}",
+                lon.abs(),
+                if lon >= 0.0 { "E" } else { "W" }
+            ));
             ui.end_row();
 
             ui.label("Speed");
