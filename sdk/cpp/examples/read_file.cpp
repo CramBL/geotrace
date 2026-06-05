@@ -2,7 +2,7 @@
 
 #include <iostream>
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     using namespace geotrace;
 
     if (argc < 2) {
@@ -22,9 +22,7 @@ int main(int argc, char** argv) {
 
         for (std::size_t i = 0; i < file.nav_point_count(); ++i) {
             auto p = file.nav_point(i);
-            std::cout << "  [" << i << "] "
-                      << p.lat.as_degrees() << ", "
-                      << p.lon.as_degrees();
+            std::cout << "  [" << i << "] " << p.lat.as_degrees() << ", " << p.lon.as_degrees();
             if (p.speed) {
                 std::cout << "  speed=" << p.speed->as_kmh() << " km/h";
             }
@@ -49,7 +47,7 @@ int main(int argc, char** argv) {
                 std::cout << "\n";
             }
         }
-    } catch (const Error& e) {
+    } catch (const Error &e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }

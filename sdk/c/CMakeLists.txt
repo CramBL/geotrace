@@ -11,8 +11,8 @@ if(DEFINED GEOTRACE_C_LIB_DIR)
     set(_gtc_lib_search "${GEOTRACE_C_LIB_DIR}/lib" "${GEOTRACE_C_LIB_DIR}")
 else()
     set(_gtc_lib_search
-        "${CMAKE_CURRENT_SOURCE_DIR}/../../rust/geotrace-c/target/release"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../../rust/geotrace-c/target/debug"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../target/release"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../target/debug"
     )
 endif()
 

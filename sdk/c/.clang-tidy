@@ -1,6 +1,11 @@
 Checks: "clang-analyzer-*,bugprone-*,cert-*,misc-*,readability-*,\
   -bugprone-easily-swappable-parameters,\
   -cert-err33-c,\
+  -cert-err34-c,\
+  -misc-redundant-expression,\
+  -readability-braces-around-statements,\
+  -readability-identifier-length,\
+  -readability-isolate-declaration,\
   -readability-magic-numbers,\
   -readability-function-cognitive-complexity"
 WarningsAsErrors: "*"

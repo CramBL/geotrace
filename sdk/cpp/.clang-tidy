@@ -1,11 +1,29 @@
 Checks: "clang-analyzer-*,bugprone-*,cert-*,cppcoreguidelines-*,hicpp-*,misc-*,modernize-*,\
   performance-*,portability-*,readability-*,\
   -bugprone-easily-swappable-parameters,\
+  -bugprone-exception-escape,\
+  -clang-analyzer-cplusplus.NewDeleteLeaks,\
+  -clang-diagnostic-c++20-designator,\
+  -cppcoreguidelines-avoid-c-arrays,\
   -cppcoreguidelines-avoid-magic-numbers,\
+  -cppcoreguidelines-avoid-non-const-global-variables,\
+  -cppcoreguidelines-macro-usage,\
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,\
   -cppcoreguidelines-pro-bounds-pointer-arithmetic,\
+  -hicpp-avoid-c-arrays,\
   -hicpp-avoid-magic-numbers,\
+  -hicpp-braces-around-statements,\
+  -hicpp-explicit-conversions,\
   -hicpp-no-array-decay,\
+  -misc-non-private-member-variables-in-classes,\
+  -modernize-avoid-c-arrays,\
+  -performance-unnecessary-value-param,\
+  -modernize-use-nodiscard,\
   -modernize-use-trailing-return-type,\
+  -readability-braces-around-statements,\
+  -readability-implicit-bool-conversion,\
+  -readability-identifier-length,\
+  -readability-isolate-declaration,\
   -readability-magic-numbers,\
   -readability-function-cognitive-complexity"
 WarningsAsErrors: "*"

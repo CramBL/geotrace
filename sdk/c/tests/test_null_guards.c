@@ -7,18 +7,17 @@
 
 static void test_builder_null(void **state) {
     (void)state;
-    assert_int_equal(gtd_builder_set_title(NULL, "x"),   GTD_ERR_NULL_ARGUMENT);
-    assert_int_equal(gtd_builder_set_device(NULL, "x"),  GTD_ERR_NULL_ARGUMENT);
-    assert_int_equal(gtd_builder_set_notes(NULL, "x"),   GTD_ERR_NULL_ARGUMENT);
+    assert_int_equal(gtd_builder_set_title(NULL, "x"), GTD_ERR_NULL_ARGUMENT);
+    assert_int_equal(gtd_builder_set_device(NULL, "x"), GTD_ERR_NULL_ARGUMENT);
+    assert_int_equal(gtd_builder_set_notes(NULL, "x"), GTD_ERR_NULL_ARGUMENT);
     assert_int_equal(gtd_builder_set_identity(NULL, "x"), GTD_ERR_NULL_ARGUMENT);
 
     GtdTimestamp t = gtd_ts_from_seconds(0);
-    assert_int_equal(gtd_builder_add_nav_fix(
-        NULL, t, t, 0.0, 0.0, GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64
-    ), GTD_ERR_NULL_ARGUMENT);
+    assert_int_equal(
+        gtd_builder_add_nav_fix(NULL, t, t, 0.0, 0.0, GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64),
+        GTD_ERR_NULL_ARGUMENT);
 
-    assert_int_equal(gtd_builder_add_satellite_report(NULL, t, t, NULL, 0),
-                     GTD_ERR_NULL_ARGUMENT);
+    assert_int_equal(gtd_builder_add_satellite_report(NULL, t, t, NULL, 0), GTD_ERR_NULL_ARGUMENT);
 
     GtdNavFile *out = NULL;
     assert_int_equal(gtd_builder_finish(NULL, &out), GTD_ERR_NULL_ARGUMENT);
@@ -65,7 +64,8 @@ static void test_from_bytes_empty_slice(void **state) {
     GtdStatus s = gtd_nav_file_from_bytes(NULL, 0, &f);
     /* it won't succeed (not a valid gtd file), but must not segfault */
     (void)s;
-    if (f) gtd_nav_file_destroy(f);
+    if (f)
+        gtd_nav_file_destroy(f);
 }
 
 static void test_out_of_range_index(void **state) {
@@ -73,8 +73,8 @@ static void test_out_of_range_index(void **state) {
 
     GtdFileBuilder *b = gtd_builder_create();
     GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
-    gtd_builder_add_nav_fix(b, t, gtd_ts_none(), 0.0, 0.0,
-                            GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64);
+    gtd_builder_add_nav_fix(b, t, gtd_ts_none(), 0.0, 0.0, GTD_NONE_F64, GTD_NONE_F64,
+                            GTD_NONE_F64);
 
     GtdNavFile *f = NULL;
     gtd_builder_finish(b, &f);
@@ -93,12 +93,9 @@ static void test_out_of_range_index(void **state) {
 
 int main(void) {
     const struct CMUnitTest tests[] = {
-        cmocka_unit_test(test_builder_null),
-        cmocka_unit_test(test_nav_file_null),
-        cmocka_unit_test(test_open_null_path),
-        cmocka_unit_test(test_from_bytes_null_data),
-        cmocka_unit_test(test_from_bytes_empty_slice),
-        cmocka_unit_test(test_out_of_range_index),
+        cmocka_unit_test(test_builder_null),           cmocka_unit_test(test_nav_file_null),
+        cmocka_unit_test(test_open_null_path),         cmocka_unit_test(test_from_bytes_null_data),
+        cmocka_unit_test(test_from_bytes_empty_slice), cmocka_unit_test(test_out_of_range_index),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }

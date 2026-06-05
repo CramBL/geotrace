@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-foreach(example write_basic read_file)
+foreach(example write_basic read_file gold_dataset)
     add_executable(${example} ${example}.cpp)
     target_link_libraries(${example} PRIVATE GeoTrace::Cpp)
 

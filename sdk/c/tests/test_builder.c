@@ -4,8 +4,11 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <cmocka.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
+
+#define assert_near(a, b, eps) assert_true(fabs((a) - (b)) < (eps))
 
 static void test_builder_basic_write(void **state) {
     (void)state;
@@ -18,13 +21,10 @@ static void test_builder_basic_write(void **state) {
 
     GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
 
-    assert_int_equal(gtd_builder_add_nav_fix(
-        b, t, gtd_ts_none(),
-        51.5074, -0.1278,
-        GTD_SOME_F64(180.0),
-        GTD_SOME_F64(3.0),
-        GTD_SOME_F64(5.0)
-    ), GTD_OK);
+    assert_int_equal(gtd_builder_add_nav_fix(b, t, gtd_ts_none(), 51.5074, -0.1278,
+                                             GTD_SOME_F64(180.0), GTD_SOME_F64(3.0),
+                                             GTD_SOME_F64(5.0)),
+                     GTD_OK);
 
     GtdNavFile *f = NULL;
     assert_int_equal(gtd_builder_finish(b, &f), GTD_OK);
@@ -34,10 +34,10 @@ static void test_builder_basic_write(void **state) {
 
     GtdNavPointInfo p;
     assert_int_equal(gtd_nav_file_get_nav_point(f, 0, &p), GTD_OK);
-    assert_double_equal(p.lat_deg, 51.5074, 1e-9);
-    assert_double_equal(p.lon_deg, -0.1278, 1e-9);
+    assert_near(p.lat_deg, 51.5074, 1e-9);
+    assert_near(p.lon_deg, -0.1278, 1e-9);
     assert_int_equal(p.speed_mps.present, 1);
-    assert_double_equal(p.speed_mps.value, 3.0, 1e-9);
+    assert_near(p.speed_mps.value, 3.0, 1e-9);
 
     gtd_nav_file_destroy(f);
 }
@@ -49,17 +49,15 @@ static void test_builder_to_bytes_round_trip(void **state) {
     assert_non_null(b);
 
     GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
-    assert_int_equal(gtd_builder_add_nav_fix(
-        b, t, gtd_ts_none(),
-        48.8566, 2.3522,
-        GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64
-    ), GTD_OK);
+    assert_int_equal(gtd_builder_add_nav_fix(b, t, gtd_ts_none(), 48.8566, 2.3522, GTD_NONE_F64,
+                                             GTD_NONE_F64, GTD_NONE_F64),
+                     GTD_OK);
 
     GtdNavFile *f = NULL;
     assert_int_equal(gtd_builder_finish(b, &f), GTD_OK);
 
     uint8_t *buf = NULL;
-    size_t   len = 0;
+    size_t len = 0;
     assert_int_equal(gtd_nav_file_to_bytes(f, &buf, &len), GTD_OK);
     assert_non_null(buf);
     assert_true(len > 0);
@@ -72,7 +70,7 @@ static void test_builder_to_bytes_round_trip(void **state) {
 
     GtdNavPointInfo p;
     assert_int_equal(gtd_nav_file_get_nav_point(f2, 0, &p), GTD_OK);
-    assert_double_equal(p.lat_deg, 48.8566, 1e-6);
+    assert_near(p.lat_deg, 48.8566, 1e-6);
 
     gtd_nav_file_destroy(f2);
     gtd_free_bytes(buf, len);
@@ -83,6 +81,12 @@ static void test_builder_no_fixes_error(void **state) {
 
     GtdFileBuilder *b = gtd_builder_create();
     assert_non_null(b);
+
+    /* NoNavFixes is only returned when there are annotations but no fixes;
+       an empty builder (no fixes, no annotations) is valid and returns OK. */
+    assert_int_equal(
+        gtd_builder_add_annotation(b, gtd_ts_from_seconds(1700000000ULL), "note", GTD_ICON_AUTO),
+        GTD_OK);
 
     GtdNavFile *f = NULL;
     GtdStatus s = gtd_builder_finish(b, &f);
@@ -100,20 +104,15 @@ static void test_builder_satellite_report(void **state) {
     GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
 
     GtdSatellite sats[] = {
-        { GTD_CONSTELLATION_GPS, 7, 1,
-          GTD_SOME_F64(55.0), GTD_SOME_F64(120.0), GTD_SOME_F64(40.0) },
-        { GTD_CONSTELLATION_GLONASS, 2, 0,
-          GTD_NONE_F64, GTD_NONE_F64, GTD_SOME_F64(28.0) },
+        {GTD_CONSTELLATION_GPS, 7, 1, GTD_SOME_F64(55.0), GTD_SOME_F64(120.0), GTD_SOME_F64(40.0)},
+        {GTD_CONSTELLATION_GLONASS, 2, 0, GTD_NONE_F64, GTD_NONE_F64, GTD_SOME_F64(28.0)},
     };
 
-    assert_int_equal(gtd_builder_add_nav_fix(
-        b, t, gtd_ts_none(), 40.7128, -74.0060,
-        GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64
-    ), GTD_OK);
+    assert_int_equal(gtd_builder_add_nav_fix(b, t, gtd_ts_none(), 40.7128, -74.0060, GTD_NONE_F64,
+                                             GTD_NONE_F64, GTD_NONE_F64),
+                     GTD_OK);
 
-    assert_int_equal(gtd_builder_add_satellite_report(
-        b, t, gtd_ts_none(), sats, 2
-    ), GTD_OK);
+    assert_int_equal(gtd_builder_add_satellite_report(b, t, gtd_ts_none(), sats, 2), GTD_OK);
 
     GtdNavFile *f = NULL;
     assert_int_equal(gtd_builder_finish(b, &f), GTD_OK);
@@ -127,7 +126,7 @@ static void test_builder_satellite_report(void **state) {
     assert_int_equal(s0.prn, 7);
     assert_int_equal(s0.in_fix, 1);
     assert_int_equal(s0.snr_dbhz.present, 1);
-    assert_double_equal(s0.snr_dbhz.value, 40.0, 1e-6);
+    assert_near(s0.snr_dbhz.value, 40.0, 1e-6);
 
     gtd_nav_file_destroy(f);
 }
@@ -140,18 +139,15 @@ static void test_builder_event_marker(void **state) {
 
     GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
 
-    assert_int_equal(gtd_builder_add_nav_fix(
-        b, t, gtd_ts_none(), 35.6762, 139.6503,
-        GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64
-    ), GTD_OK);
+    assert_int_equal(gtd_builder_add_nav_fix(b, t, gtd_ts_none(), 35.6762, 139.6503, GTD_NONE_F64,
+                                             GTD_NONE_F64, GTD_NONE_F64),
+                     GTD_OK);
 
-    assert_int_equal(gtd_builder_add_event_marker(
-        b, "system/startup", t, "Device started"
-    ), GTD_OK);
+    assert_int_equal(gtd_builder_add_event_marker(b, "system/startup", t, "Device started"),
+                     GTD_OK);
 
-    assert_int_equal(gtd_builder_add_event_marker_style(
-        b, "system/startup", GTD_ICON_GEAR, "#00FF00"
-    ), GTD_OK);
+    assert_int_equal(
+        gtd_builder_add_event_marker_style(b, "system/startup", GTD_ICON_GEAR, "#00FF00"), GTD_OK);
 
     GtdNavFile *f = NULL;
     assert_int_equal(gtd_builder_finish(b, &f), GTD_OK);

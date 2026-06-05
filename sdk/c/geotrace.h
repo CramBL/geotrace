@@ -55,16 +55,16 @@ typedef struct GtdNavFile GtdNavFile;
  * On failure, call `gtd_last_error()` for a human-readable description.
  */
 typedef enum {
-    GTD_OK                  = 0,  /**< Success. */
-    GTD_ERR_NULL_ARGUMENT   = 1,  /**< A required pointer argument was NULL. */
-    GTD_ERR_INVALID_PATH    = 2,  /**< Malformed event-marker variant path. */
-    GTD_ERR_NO_NAV_FIXES    = 3,  /**< Builder finished with no nav fixes. */
-    GTD_ERR_ANNOTATIONS_OOB = 4,  /**< Annotation(s) outside the nav fix time range. */
-    GTD_ERR_IO              = 5,  /**< I/O error (file not found, permission denied, etc.). */
-    GTD_ERR_HDF5            = 6,  /**< HDF5 library error. */
-    GTD_ERR_VERSION         = 7,  /**< Unsupported file format version. */
-    GTD_ERR_UTF8            = 8,  /**< String argument contained invalid UTF-8. */
-    GTD_ERR_INTERNAL        = 99, /**< Internal error (bug in the SDK). */
+    GTD_OK = 0,                  /**< Success. */
+    GTD_ERR_NULL_ARGUMENT = 1,   /**< A required pointer argument was NULL. */
+    GTD_ERR_INVALID_PATH = 2,    /**< Malformed event-marker variant path. */
+    GTD_ERR_NO_NAV_FIXES = 3,    /**< Builder finished with no nav fixes. */
+    GTD_ERR_ANNOTATIONS_OOB = 4, /**< Annotation(s) outside the nav fix time range. */
+    GTD_ERR_IO = 5,              /**< I/O error (file not found, permission denied, etc.). */
+    GTD_ERR_HDF5 = 6,            /**< HDF5 library error. */
+    GTD_ERR_VERSION = 7,         /**< Unsupported file format version. */
+    GTD_ERR_UTF8 = 8,            /**< String argument contained invalid UTF-8. */
+    GTD_ERR_INTERNAL = 99,       /**< Internal error (bug in the SDK). */
 } GtdStatus;
 
 /**
@@ -86,7 +86,9 @@ const char *gtd_last_error(void);
  *
  * Use `gtd_ts_none()` to represent an absent timestamp.
  */
-typedef struct { int64_t unix_micros; } GtdTimestamp;
+typedef struct {
+    int64_t unix_micros;
+} GtdTimestamp;
 
 /** Construct a timestamp from whole seconds since the Unix epoch. */
 GtdTimestamp gtd_ts_from_seconds(uint64_t secs);
@@ -114,13 +116,16 @@ uint8_t gtd_ts_is_none(GtdTimestamp ts);
  */
 
 /** An optional `double` value. Use the macros below to construct values. */
-typedef struct { double value; uint8_t present; } GtdOptF64;
+typedef struct {
+    double value;
+    uint8_t present;
+} GtdOptF64;
 
 /** An absent optional double. */
-#define GTD_NONE_F64      ((GtdOptF64){ .value = 0.0, .present = 0 })
+#define GTD_NONE_F64 ((GtdOptF64){.value = 0.0, .present = 0})
 
 /** An optional double with value @p v. */
-#define GTD_SOME_F64(v)   ((GtdOptF64){ .value = (v), .present = 1 })
+#define GTD_SOME_F64(v) ((GtdOptF64){.value = (v), .present = 1})
 
 /** @} */
 
@@ -131,10 +136,10 @@ typedef struct { double value; uint8_t present; } GtdOptF64;
 
 /** GNSS constellation identifier. */
 typedef enum {
-    GTD_CONSTELLATION_GPS     = 0, /**< GPS (USA). */
+    GTD_CONSTELLATION_GPS = 0,     /**< GPS (USA). */
     GTD_CONSTELLATION_GLONASS = 1, /**< GLONASS (Russia). */
     GTD_CONSTELLATION_GALILEO = 2, /**< Galileo (EU). */
-    GTD_CONSTELLATION_BEIDOU  = 3, /**< BeiDou (China). */
+    GTD_CONSTELLATION_BEIDOU = 3,  /**< BeiDou (China). */
 } GtdConstellation;
 
 /** @} */
@@ -146,21 +151,21 @@ typedef enum {
 
 /** Icon for map markers. Use `GTD_ICON_AUTO` to let the application choose. */
 typedef enum {
-    GTD_ICON_PIN            = 0,   /**< Map pin. */
-    GTD_ICON_CROSS          = 1,   /**< Cross / X mark. */
-    GTD_ICON_CIRCLE         = 2,   /**< Circle. */
-    GTD_ICON_LIGHTNING      = 3,   /**< Lightning bolt. */
-    GTD_ICON_WARNING        = 4,   /**< Warning triangle. */
-    GTD_ICON_ERROR          = 5,   /**< Error indicator. */
-    GTD_ICON_CHECK          = 6,   /**< Check mark. */
-    GTD_ICON_SATELLITE      = 7,   /**< Satellite with signal. */
-    GTD_ICON_SATELLITE_LOST = 8,   /**< Satellite without signal. */
-    GTD_ICON_GEAR           = 9,   /**< Gear / settings. */
-    GTD_ICON_REFRESH        = 10,  /**< Refresh / reload. */
-    GTD_ICON_DOWNLOAD       = 11,  /**< Download arrow. */
-    GTD_ICON_UPLOAD         = 12,  /**< Upload arrow. */
-    GTD_ICON_WRENCH         = 13,  /**< Wrench / tool. */
-    GTD_ICON_AUTO           = 255, /**< Use the application default for this variant. */
+    GTD_ICON_PIN = 0,            /**< Map pin. */
+    GTD_ICON_CROSS = 1,          /**< Cross / X mark. */
+    GTD_ICON_CIRCLE = 2,         /**< Circle. */
+    GTD_ICON_LIGHTNING = 3,      /**< Lightning bolt. */
+    GTD_ICON_WARNING = 4,        /**< Warning triangle. */
+    GTD_ICON_ERROR = 5,          /**< Error indicator. */
+    GTD_ICON_CHECK = 6,          /**< Check mark. */
+    GTD_ICON_SATELLITE = 7,      /**< Satellite with signal. */
+    GTD_ICON_SATELLITE_LOST = 8, /**< Satellite without signal. */
+    GTD_ICON_GEAR = 9,           /**< Gear / settings. */
+    GTD_ICON_REFRESH = 10,       /**< Refresh / reload. */
+    GTD_ICON_DOWNLOAD = 11,      /**< Download arrow. */
+    GTD_ICON_UPLOAD = 12,        /**< Upload arrow. */
+    GTD_ICON_WRENCH = 13,        /**< Wrench / tool. */
+    GTD_ICON_AUTO = 255,         /**< Use the application default for this variant. */
 } GtdMarkerIcon;
 
 /** @} */
@@ -177,11 +182,11 @@ typedef enum {
  */
 typedef struct {
     GtdConstellation constellation; /**< GNSS constellation. */
-    uint32_t         prn;           /**< Pseudo-random noise number (satellite ID). */
-    uint8_t          in_fix;        /**< Non-zero if this satellite contributed to the position fix. */
-    GtdOptF64        elevation_deg; /**< Elevation above the horizon in degrees [0, 90]. */
-    GtdOptF64        azimuth_deg;   /**< Azimuth from true north in degrees [0, 360). */
-    GtdOptF64        snr_dbhz;      /**< Signal-to-noise ratio in dB·Hz. */
+    uint32_t prn;                   /**< Pseudo-random noise number (satellite ID). */
+    uint8_t in_fix;          /**< Non-zero if this satellite contributed to the position fix. */
+    GtdOptF64 elevation_deg; /**< Elevation above the horizon in degrees [0, 90]. */
+    GtdOptF64 azimuth_deg;   /**< Azimuth from true north in degrees [0, 360). */
+    GtdOptF64 snr_dbhz;      /**< Signal-to-noise ratio in dB·Hz. */
 } GtdSatellite;
 
 /** @} */
@@ -197,14 +202,14 @@ typedef struct {
  * All fields are caller-owned (no pointers to SDK memory).
  */
 typedef struct {
-    GtdTimestamp gps_time;     /**< GPS time of the fix. Use `gtd_ts_is_none()` to check. */
-    GtdTimestamp sys_time;     /**< System (wall-clock) time of the fix. */
-    double       lat_deg;      /**< WGS-84 latitude in degrees. */
-    double       lon_deg;      /**< WGS-84 longitude in degrees. */
-    GtdOptF64    heading_deg;  /**< Compass heading in degrees [0, 360), if known. */
-    GtdOptF64    speed_mps;    /**< Ground speed in m/s, if known. */
-    GtdOptF64    eph_m;        /**< Estimated horizontal position error in metres, if known. */
-    size_t       sat_count;    /**< Number of tracked satellites (0 when no satellite report present). */
+    GtdTimestamp gps_time; /**< GPS time of the fix. Use `gtd_ts_is_none()` to check. */
+    GtdTimestamp sys_time; /**< System (wall-clock) time of the fix. */
+    double lat_deg;        /**< WGS-84 latitude in degrees. */
+    double lon_deg;        /**< WGS-84 longitude in degrees. */
+    GtdOptF64 heading_deg; /**< Compass heading in degrees [0, 360), if known. */
+    GtdOptF64 speed_mps;   /**< Ground speed in m/s, if known. */
+    GtdOptF64 eph_m;       /**< Estimated horizontal position error in metres, if known. */
+    size_t sat_count; /**< Number of tracked satellites (0 when no satellite report present). */
 } GtdNavPointInfo;
 
 /** @} */
@@ -219,11 +224,11 @@ typedef struct {
  */
 typedef struct {
     GtdConstellation constellation; /**< GNSS constellation. */
-    uint32_t         prn;           /**< Pseudo-random noise number. */
-    uint8_t          in_fix;        /**< Non-zero if this satellite contributed to the fix. */
-    GtdOptF64        elevation_deg; /**< Elevation in degrees, if available. */
-    GtdOptF64        azimuth_deg;   /**< Azimuth in degrees, if available. */
-    GtdOptF64        snr_dbhz;      /**< SNR in dB·Hz, if available. */
+    uint32_t prn;                   /**< Pseudo-random noise number. */
+    uint8_t in_fix;                 /**< Non-zero if this satellite contributed to the fix. */
+    GtdOptF64 elevation_deg;        /**< Elevation in degrees, if available. */
+    GtdOptF64 azimuth_deg;          /**< Azimuth in degrees, if available. */
+    GtdOptF64 snr_dbhz;             /**< SNR in dB·Hz, if available. */
 } GtdSatInfo;
 
 /** @} */
@@ -239,12 +244,12 @@ typedef struct {
  * All string fields are null-terminated.
  */
 typedef struct {
-    char         variant_path[257]; /**< Hierarchical event type path, e.g. `"system/startup"`. */
-    GtdTimestamp sys_time;          /**< System time when the event occurred. */
-    double       lat_deg;           /**< WGS-84 latitude of the event. */
-    double       lon_deg;           /**< WGS-84 longitude of the event. */
-    uint8_t      has_annotation;    /**< Non-zero if @ref annotation is set. */
-    char         annotation[1024];  /**< Human-readable annotation text, when @ref has_annotation. */
+    char variant_path[257]; /**< Hierarchical event type path, e.g. `"system/startup"`. */
+    GtdTimestamp sys_time;  /**< System time when the event occurred. */
+    double lat_deg;         /**< WGS-84 latitude of the event. */
+    double lon_deg;         /**< WGS-84 longitude of the event. */
+    uint8_t has_annotation; /**< Non-zero if @ref annotation is set. */
+    char annotation[1024];  /**< Human-readable annotation text, when @ref has_annotation. */
 } GtdEventMarkerInfo;
 
 /** @} */
@@ -332,16 +337,9 @@ void gtd_builder_set_lenient(GtdFileBuilder *b);
  * @param speed_mps   Ground speed in m/s, or `GTD_NONE_F64`.
  * @param eph_m       Estimated horizontal position error in metres, or `GTD_NONE_F64`.
  */
-GtdStatus gtd_builder_add_nav_fix(
-    GtdFileBuilder *b,
-    GtdTimestamp    gps_time,
-    GtdTimestamp    sys_time,
-    double          lat_deg,
-    double          lon_deg,
-    GtdOptF64       heading_deg,
-    GtdOptF64       speed_mps,
-    GtdOptF64       eph_m
-);
+GtdStatus gtd_builder_add_nav_fix(GtdFileBuilder *b, GtdTimestamp gps_time, GtdTimestamp sys_time,
+                                  double lat_deg, double lon_deg, GtdOptF64 heading_deg,
+                                  GtdOptF64 speed_mps, GtdOptF64 eph_m);
 
 /**
  * Add a satellite visibility report.
@@ -355,13 +353,9 @@ GtdStatus gtd_builder_add_nav_fix(
  * @param sats     Array of @p n_sats satellite entries.
  * @param n_sats   Number of elements in @p sats.
  */
-GtdStatus gtd_builder_add_satellite_report(
-    GtdFileBuilder     *b,
-    GtdTimestamp        gps_time,
-    GtdTimestamp        sys_time,
-    const GtdSatellite *sats,
-    size_t              n_sats
-);
+GtdStatus gtd_builder_add_satellite_report(GtdFileBuilder *b, GtdTimestamp gps_time,
+                                           GtdTimestamp sys_time, const GtdSatellite *sats,
+                                           size_t n_sats);
 
 /**
  * Add a legacy map-pin annotation (optional label + icon).
@@ -373,12 +367,8 @@ GtdStatus gtd_builder_add_satellite_report(
  * @param label Human-readable label, or NULL for no label.
  * @param icon  Icon to display.  `GTD_ICON_AUTO` uses the application default (Pin).
  */
-GtdStatus gtd_builder_add_annotation(
-    GtdFileBuilder *b,
-    GtdTimestamp    time,
-    const char     *label,
-    GtdMarkerIcon   icon
-);
+GtdStatus gtd_builder_add_annotation(GtdFileBuilder *b, GtdTimestamp time, const char *label,
+                                     GtdMarkerIcon icon);
 
 /**
  * Add a structured event marker.
@@ -394,12 +384,8 @@ GtdStatus gtd_builder_add_annotation(
  *
  * @return `GTD_ERR_INVALID_PATH` if @p variant_path is malformed.
  */
-GtdStatus gtd_builder_add_event_marker(
-    GtdFileBuilder *b,
-    const char     *variant_path,
-    GtdTimestamp    sys_time,
-    const char     *annotation
-);
+GtdStatus gtd_builder_add_event_marker(GtdFileBuilder *b, const char *variant_path,
+                                       GtdTimestamp sys_time, const char *annotation);
 
 /**
  * Register a display style for an event marker variant.
@@ -408,16 +394,13 @@ GtdStatus gtd_builder_add_event_marker(
  * the same path overwrites the previous style.
  *
  * @param b            Builder handle.
- * @param variant_path Hierarchical event type path (same format as in `gtd_builder_add_event_marker()`).
+ * @param variant_path Hierarchical event type path (same format as in
+ * `gtd_builder_add_event_marker()`).
  * @param icon         Icon to display.  `GTD_ICON_AUTO` uses the application default.
  * @param color_hex    Color as an `"#RRGGBB"` string, or NULL for automatic.
  */
-GtdStatus gtd_builder_add_event_marker_style(
-    GtdFileBuilder *b,
-    const char     *variant_path,
-    GtdMarkerIcon   icon,
-    const char     *color_hex
-);
+GtdStatus gtd_builder_add_event_marker_style(GtdFileBuilder *b, const char *variant_path,
+                                             GtdMarkerIcon icon, const char *color_hex);
 
 /**
  * Finalise the builder and produce a `GtdNavFile` handle.
@@ -463,11 +446,7 @@ GtdStatus gtd_nav_file_write_to_path(const GtdNavFile *f, const char *path);
  * @param buf Output: pointer to the allocated buffer.
  * @param len Output: number of bytes in the buffer.
  */
-GtdStatus gtd_nav_file_to_bytes(
-    const GtdNavFile  *f,
-    uint8_t          **buf,
-    size_t            *len
-);
+GtdStatus gtd_nav_file_to_bytes(const GtdNavFile *f, uint8_t **buf, size_t *len);
 
 /**
  * Free a byte buffer returned by `gtd_nav_file_to_bytes()`.
@@ -516,11 +495,7 @@ GtdStatus gtd_nav_file_open(const char *path, GtdNavFile **out);
  * @param len  Length of the data in bytes.
  * @param out  Output parameter for the file handle.
  */
-GtdStatus gtd_nav_file_from_bytes(
-    const uint8_t  *data,
-    size_t          len,
-    GtdNavFile    **out
-);
+GtdStatus gtd_nav_file_from_bytes(const uint8_t *data, size_t len, GtdNavFile **out);
 
 /**
  * Return the number of navigation fixes in the file.
@@ -538,11 +513,7 @@ size_t gtd_nav_file_nav_point_count(const GtdNavFile *f);
  *
  * @return `GTD_ERR_NULL_ARGUMENT` if @p idx is out of range.
  */
-GtdStatus gtd_nav_file_get_nav_point(
-    const GtdNavFile *f,
-    size_t            idx,
-    GtdNavPointInfo  *out
-);
+GtdStatus gtd_nav_file_get_nav_point(const GtdNavFile *f, size_t idx, GtdNavPointInfo *out);
 
 /**
  * Fill @p out with satellite data for a specific satellite within a nav fix.
@@ -552,14 +523,11 @@ GtdStatus gtd_nav_file_get_nav_point(
  * @param sat_idx Satellite index within that fix.  Must be less than `GtdNavPointInfo::sat_count`.
  * @param out     Caller-allocated struct to fill.
  *
- * @return `GTD_ERR_NULL_ARGUMENT` if either index is out of range, or the nav fix has no satellite report.
+ * @return `GTD_ERR_NULL_ARGUMENT` if either index is out of range, or the nav fix has no satellite
+ * report.
  */
-GtdStatus gtd_nav_file_get_satellite(
-    const GtdNavFile *f,
-    size_t            nav_idx,
-    size_t            sat_idx,
-    GtdSatInfo       *out
-);
+GtdStatus gtd_nav_file_get_satellite(const GtdNavFile *f, size_t nav_idx, size_t sat_idx,
+                                     GtdSatInfo *out);
 
 /**
  * Return the file title, or NULL if not set.
@@ -605,11 +573,7 @@ size_t gtd_nav_file_event_marker_count(const GtdNavFile *f);
  *
  * @return `GTD_ERR_NULL_ARGUMENT` if @p idx is out of range.
  */
-GtdStatus gtd_nav_file_get_event_marker(
-    const GtdNavFile   *f,
-    size_t              idx,
-    GtdEventMarkerInfo *out
-);
+GtdStatus gtd_nav_file_get_event_marker(const GtdNavFile *f, size_t idx, GtdEventMarkerInfo *out);
 
 /** @} */
 

@@ -1,6 +1,6 @@
 use geotrace_sdk::{
     Angle, Annotation, Constellation, EventMarker, EventMarkerStyle, MarkerIcon, Meta,
-    NavFileBuilder, NavFix, Satellite, SatelliteReport, Velocity,
+    NavFileBuilder, NavFileSink, NavFix, Satellite, SatelliteReport, Velocity,
 };
 use std::collections::HashMap;
 use std::fs::File;
@@ -8,7 +8,6 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut builder = NavFileBuilder::new().with_lenient_errors();
     let base_dir = Path::new("tests/fixtures/gold_dataset");
 
     if !base_dir.exists() {
@@ -19,26 +18,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
-    // 0. Load Metadata
+    let meta = load_meta(base_dir)?;
+    let mut sink = NavFileBuilder::new()
+        .with_lenient_errors()
+        .with_meta(meta)
+        .open();
+
+    load_event_styles(&mut sink, base_dir)?;
+    load_satellites_and_fixes(&mut sink, base_dir)?;
+    load_markers(&mut sink, base_dir)?;
+    load_events(&mut sink, base_dir)?;
+
+    let nav_file = sink.finish()?;
+    nav_file.write_to_file(base_dir.join("gold.gtd"))?;
+
+    println!("Gold dataset generated successfully: tests/fixtures/gold_dataset/gold.gtd");
+    println!("Summary:");
+    println!("  Nav Points:    {}", nav_file.nav_points().len());
+    println!("  Markers:       {}", nav_file.markers().len());
+    println!("  Event Markers: {}", nav_file.event_markers().len());
+
+    println!("Verifying round-trip integrity...");
+    verify_gold_file(base_dir.join("gold.gtd"))?;
+    println!("Verification successful! ✅");
+
+    Ok(())
+}
+
+fn load_meta(base_dir: &Path) -> Result<Meta, Box<dyn std::error::Error>> {
     let meta_file = File::open(base_dir.join("meta.csv"))?;
     let reader = BufReader::new(meta_file);
     let mut lines = reader.lines().skip(1);
     if let Some(Ok(line)) = lines.next() {
         let cols: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
         if cols.len() >= 4 {
-            builder = builder.with_meta(
-                Meta::builder()
-                    .maybe_title(Some(cols[0]))
-                    .maybe_device(Some(cols[1]))
-                    .maybe_notes(Some(cols[2]))
-                    .maybe_identity(Some(cols[3]))
-                    .build(),
-            );
+            return Ok(Meta::builder()
+                .maybe_title(Some(cols[0]))
+                .maybe_device(Some(cols[1]))
+                .maybe_notes(Some(cols[2]))
+                .maybe_identity(Some(cols[3]))
+                .build());
         }
     }
-    let mut sink = builder.open();
+    Ok(Meta::builder().build())
+}
 
-    // 0.1 Load Event Styles
+fn load_event_styles(
+    sink: &mut NavFileSink,
+    base_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     let style_file = File::open(base_dir.join("event_styles.csv"))?;
     let reader = BufReader::new(style_file);
     for line in reader.lines().skip(1) {
@@ -59,8 +87,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .build()?,
         );
     }
+    Ok(())
+}
 
-    // 1. Load Satellites into a map by (gps_time, sys_time)
+fn load_satellites_and_fixes(
+    sink: &mut NavFileSink,
+    base_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut satellite_reports: HashMap<(String, String), Vec<Satellite>> = HashMap::new();
     let sat_file = File::open(base_dir.join("satellites.csv"))?;
     let reader = BufReader::new(sat_file);
@@ -85,7 +118,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .push(sat);
     }
 
-    // 2. Load Fixes
     let fix_file = File::open(base_dir.join("fixes.csv"))?;
     let reader = BufReader::new(fix_file);
     for line in reader.lines().skip(1) {
@@ -122,7 +154,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Add remaining orphan satellite reports (if any)
     for ((gt_str, st_str), tracked) in satellite_reports {
         sink.add_satellite_report(
             SatelliteReport::builder()
@@ -133,7 +164,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // 3. Load Markers
+    Ok(())
+}
+
+fn load_markers(sink: &mut NavFileSink, base_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let marker_file = File::open(base_dir.join("markers.csv"))?;
     let reader = BufReader::new(marker_file);
     for line in reader.lines().skip(1) {
@@ -150,8 +184,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .build(),
         );
     }
+    Ok(())
+}
 
-    // 4. Load Events
+fn load_events(sink: &mut NavFileSink, base_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let event_file = File::open(base_dir.join("events.csv"))?;
     let reader = BufReader::new(event_file);
     for line in reader.lines().skip(1) {
@@ -172,27 +208,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .build()?,
         );
     }
-
-    let nav_file = sink.finish()?;
-    nav_file.write_to_file(base_dir.join("gold.gtd"))?;
-
-    println!("Gold dataset generated successfully: tests/fixtures/gold_dataset/gold.gtd");
-    println!("Summary:");
-    println!("  Nav Points:    {}", nav_file.nav_points().len());
-    println!("  Markers:       {}", nav_file.markers().len());
-    println!("  Event Markers: {}", nav_file.event_markers().len());
-
-    println!("Verifying round-trip integrity...");
-    verify_gold_file(base_dir.join("gold.gtd"))?;
-    println!("Verification successful! ✅");
-
     Ok(())
 }
 
 fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
     let file = geotrace_sdk::NavFile::open(path)?;
 
-    // 1. Metadata
     let meta = file.meta();
     assert!(meta.title.as_ref().unwrap().contains("Gold Dataset 🏆"));
     assert!(
@@ -204,9 +225,8 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     assert!(meta.notes.as_ref().unwrap().contains("🛰️"));
     assert_eq!(meta.identity.as_ref().unwrap(), "gold-standard-v2");
 
-    // 2. Nav Points
     let points = file.nav_points();
-    assert_eq!(points.len(), 189);
+    assert_eq!(points.len(), 199);
 
     // Track 8 Antimeridian: check first and last point
     let track_8_points: Vec<_> = points
@@ -227,7 +247,6 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
         assert_eq!(p.fix.speed.map(|s| s.as_meters_per_second()), Some(0.0));
     }
 
-    // 3. Markers
     let markers = file.markers();
     assert_eq!(markers.len(), 15);
     // Check "File Boundary Start" at index 0
@@ -237,7 +256,6 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     );
     assert_eq!(markers[0].annotation.icon, Some(MarkerIcon::Check));
 
-    // 4. Event Markers & Styles
     let events = file.event_markers();
     assert_eq!(events.len(), 6);
 

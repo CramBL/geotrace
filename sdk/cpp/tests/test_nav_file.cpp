@@ -1,14 +1,20 @@
 #include <doctest/doctest.h>
 #include <geotrace/geotrace.hpp>
 
-using namespace geotrace;
+using geotrace::Angle;
+using geotrace::Error;
+using geotrace::FileBuilder;
+using geotrace::IoError;
+using geotrace::NavFile;
+using geotrace::NavFix;
+using geotrace::Timestamp;
 
 static NavFile make_minimal() {
     return FileBuilder{}
         .add_nav_fix(NavFix{
             .gps_time = Timestamp::from_seconds(1700000000ULL),
-            .lat      = Angle::degrees(51.5074),
-            .lon      = Angle::degrees(-0.1278),
+            .lat = Angle::degrees(51.5074),
+            .lon = Angle::degrees(-0.1278),
         })
         .finish();
 }
@@ -24,7 +30,7 @@ TEST_CASE("NavFile: nav_point out-of-range throws std::out_of_range") {
 
 TEST_CASE("NavFile: satellite out-of-range throws std::out_of_range") {
     auto file = make_minimal();
-    CHECK_THROWS_AS(file.satellite(0, 0), std::out_of_range);   // no satellite report
+    CHECK_THROWS_AS(file.satellite(0, 0), std::out_of_range);    // no satellite report
     CHECK_THROWS_AS(file.satellite(9999, 0), std::out_of_range); // nav idx out of range
 }
 
@@ -35,35 +41,38 @@ TEST_CASE("NavFile: event_marker out-of-range throws std::out_of_range") {
 
 TEST_CASE("NavFile: absent metadata returns empty string_view") {
     auto file = make_minimal();
-    CHECK(file.title()    == "");
-    CHECK(file.device()   == "");
-    CHECK(file.notes()    == "");
+    CHECK(file.title() == "");
+    CHECK(file.device() == "");
+    CHECK(file.notes() == "");
     CHECK(file.identity() == "");
     CHECK(file.title().empty());
 }
 
 TEST_CASE("NavFile: nav_point_count returns correct value") {
     auto file = FileBuilder{}
-        .add_nav_fix(NavFix{
-            .gps_time = Timestamp::from_seconds(1700000000ULL),
-            .lat = Angle::degrees(0.0), .lon = Angle::degrees(0.0),
-        })
-        .add_nav_fix(NavFix{
-            .gps_time = Timestamp::from_seconds(1700000010ULL),
-            .lat = Angle::degrees(0.1), .lon = Angle::degrees(0.1),
-        })
-        .add_nav_fix(NavFix{
-            .gps_time = Timestamp::from_seconds(1700000020ULL),
-            .lat = Angle::degrees(0.2), .lon = Angle::degrees(0.2),
-        })
-        .finish();
+                    .add_nav_fix(NavFix{
+                        .gps_time = Timestamp::from_seconds(1700000000ULL),
+                        .lat = Angle::degrees(0.0),
+                        .lon = Angle::degrees(0.0),
+                    })
+                    .add_nav_fix(NavFix{
+                        .gps_time = Timestamp::from_seconds(1700000010ULL),
+                        .lat = Angle::degrees(0.1),
+                        .lon = Angle::degrees(0.1),
+                    })
+                    .add_nav_fix(NavFix{
+                        .gps_time = Timestamp::from_seconds(1700000020ULL),
+                        .lat = Angle::degrees(0.2),
+                        .lon = Angle::degrees(0.2),
+                    })
+                    .finish();
 
     CHECK(file.nav_point_count() == 3);
 }
 
 TEST_CASE("NavFile: move semantics work") {
-    auto f1  = make_minimal();
-    auto f2  = std::move(f1);
+    auto f1 = make_minimal();
+    auto f2 = std::move(f1);
     CHECK(f2.nav_point_count() == 1);
 }
 
@@ -76,7 +85,7 @@ TEST_CASE("NavFile: from_bytes with invalid data throws") {
 TEST_CASE("NavFile: open fixture file succeeds") {
     auto file = NavFile::open(GTD_FIXTURE_PATH);
     CHECK(file.nav_point_count() >= 1);
-    CHECK(file.title()  == "minimal fixture");
+    CHECK(file.title() == "minimal fixture");
     CHECK(file.device() == "gen_fixture");
 
     auto p0 = file.nav_point(0);

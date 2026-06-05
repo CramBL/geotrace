@@ -1101,15 +1101,14 @@ impl PyNavFileBuilder {
             sink.add_event_marker_style(
                 EventMarkerStyle::builder()
                     .variant_path(style.variant_path.clone())
-                    .icon(match style.icon {
-                        None => EventMarkerIconChoice::Auto,
-                        Some(i) => EventMarkerIconChoice::Icon(MarkerIcon::from(i)),
-                    })
-                    .color(match &style.color {
-                        None => EventMarkerColor::Auto,
-                        Some(h) => EventMarkerColor::Hex(h.clone()),
-                    })
-                    .build(),
+                    .maybe_icon(
+                        style
+                            .icon
+                            .map(|i| EventMarkerIconChoice::Icon(MarkerIcon::from(i))),
+                    )
+                    .maybe_color(style.color.clone())
+                    .build()
+                    .map_err(io_err)?,
             );
         }
         Ok(slf.unbind())
