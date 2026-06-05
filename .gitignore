@@ -16,3 +16,17 @@ sdk/python/geotrace-py/**/*.egg-info/
 # Compiled extension modules produced by maturin (all platforms)
 sdk/python/geotrace-py/**/*.so
 sdk/python/geotrace-py/**/*.pyd
+
+# Build directories
+build/
+sdk/c/build/
+sdk/cpp/build/
+
+# CMake artifacts
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+Makefile
+install_manifest.txt
+compile_commands.json
