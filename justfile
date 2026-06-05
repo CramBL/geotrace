@@ -72,10 +72,10 @@ setup-pup:
     cargo +nightly-2026-01-22 install cargo_pup
 
 [group("ci")]
-ci: build-images ci-essentials ci-extras python-sdk osv-scanner
+ci: build-images ci-essentials ci-extras python-sdk test-c test-cpp osv-scanner
 
 [group("ci")]
-ci-essentials: fmt-check clippy check test examples qa::qa-lint qa::check-em-dash qa::check-floating-comments qa::check-narrative-comments
+ci-essentials: fmt-check clippy check test examples lint-c lint-cpp qa::qa-lint qa::check-em-dash qa::check-floating-comments qa::check-narrative-comments
 
 [group("ci")]
 ci-extras: sort-check shear typos pup msrv sdk-msrv sdk-doc
