@@ -15,6 +15,7 @@ from geotrace_sdk import (
     NavFix,
     event_kind,
 )
+
 T0 = datetime(2024, 6, 1, 9, 0, 0, tzinfo=UTC)
 T1 = datetime(2024, 6, 1, 9, 1, 0, tzinfo=UTC)
 T2 = datetime(2024, 6, 1, 9, 2, 0, tzinfo=UTC)

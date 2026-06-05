@@ -24,6 +24,7 @@ from geotrace_sdk import (
     NavFileBuilder,
     NavFix,
 )
+
 START = datetime(2024, 6, 1, 8, 0, 0, tzinfo=UTC)
 
 FIXES = [

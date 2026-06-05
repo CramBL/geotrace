@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from geotrace_sdk import EventMarker, NavFileBuilder, NavFix, event_kind
+
 START = datetime(2024, 6, 1, 8, 0, 0, tzinfo=UTC)
 
 

@@ -127,6 +127,7 @@ jobs:
         if: runner.os == 'Linux'
         run: >
           cmake -S sdk/c -B build/c
+          -DCMAKE_BUILD_TYPE=Release
           -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release
           -DGEOTRACE_C_BUILD_TESTS=ON
 
@@ -134,6 +135,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           cmake -S sdk/c -B build/c \
+            -DCMAKE_BUILD_TYPE=Release \
             -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release \
             -DGEOTRACE_C_BUILD_TESTS=ON \
             -DCMAKE_PREFIX_PATH="$(brew --prefix)"
@@ -204,6 +206,7 @@ jobs:
           cmake -S sdk/cpp -B build/cpp \
             -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install \
             -DBUILD_TESTING=ON \
+            -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }}
 
       - name: Configure C++ SDK tests (Windows)
@@ -218,7 +221,12 @@ jobs:
       - name: Build C++ SDK tests
         run: cmake --build build/cpp --config Release
 
-      - name: Run C++ SDK tests
+      - name: Run C++ SDK tests (Unix)
+        if: runner.os != 'Windows'
+        run: ctest --test-dir build/cpp --output-on-failure
+
+      - name: Run C++ SDK tests (Windows)
+        if: runner.os == 'Windows'
         run: ctest --test-dir build/cpp --config Release --output-on-failure
 
   python-sdk:

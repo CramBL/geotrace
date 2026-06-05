@@ -19,6 +19,7 @@ from geotrace_sdk import (
     Satellite,
     SatelliteReport,
 )
+
 START = datetime(2024, 3, 10, 14, 0, 0, tzinfo=UTC)
 
 # Short urban loop - roughly Southwark, London.

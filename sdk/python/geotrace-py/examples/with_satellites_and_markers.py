@@ -24,6 +24,7 @@ from geotrace_sdk import (
     Satellite,
     SatelliteReport,
 )
+
 START = datetime(2024, 7, 22, 8, 30, 0, tzinfo=UTC)
 
 # A stretch of the A3 southbound from Elephant & Castle toward Kennington.
