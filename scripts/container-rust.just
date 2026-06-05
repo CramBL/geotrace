@@ -5,7 +5,7 @@ typos: (_dev "typos")
 sort: (_dev "cargo" "sort" "--workspace")
 
 [group("container-rust")]
-sort-check: (_dev "cargo" "sort" "--workspace" "--check")
+sort-check: (_dev "cargo sort --workspace --check")
 
 [group("container-rust")]
 shear *ARGS: (_dev "cargo shear --check-test-targets --deny-warnings " + ARGS)

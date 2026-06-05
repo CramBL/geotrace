@@ -45,3 +45,16 @@ fmt-c: (_sdk "bash" "scripts/fmt-c.sh")
 # Apply clang-format in-place to C++ SDK sources.
 [group("container-sdk")]
 fmt-cpp: (_sdk "bash" "scripts/fmt-cpp.sh")
+
+[group("container-sdk")]
+test-gold-all: test-gold-rs test-gold-c test-gold-cpp
+    @echo "TODO: Run Python SDK gold dataset example"
+
+[group("container-sdk")]
+test-gold-rs: (_sdk "cargo run --example gold_dataset -p geotrace-sdk")
+
+[group("container-sdk")]
+test-gold-c: (_sdk "bash" "scripts/gold-c.sh")
+
+[group("container-sdk")]
+test-gold-cpp: (_sdk "bash" "scripts/gold-cpp.sh")

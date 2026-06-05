@@ -58,24 +58,19 @@ gen-fixture:
 sdk-doc:
     RUSTDOCFLAGS="-D warnings" cargo doc -p geotrace-sdk --no-deps
 
-[group("test-gold")]
-generate-gold:
-    just qa::generate-gold
-
-[group("test-gold")]
-test-gold:
-    just qa::test-gold
-
 [group("utils")]
 setup-pup:
     rustup component add --toolchain nightly-2026-01-22 rust-src rustc-dev llvm-tools-preview
     cargo +nightly-2026-01-22 install cargo_pup
 
 [group("ci")]
-ci: build-images ci-essentials ci-extras python-sdk test-c test-cpp osv-scanner
+ci: build-images ci-essentials ci-extras ci-sdks
 
 [group("ci")]
-ci-essentials: fmt-check clippy check test examples lint-c lint-cpp qa::qa-lint qa::check-em-dash qa::check-floating-comments qa::check-narrative-comments
+ci-essentials: fmt-check clippy check test examples qa::qa-lint qa::check-all
 
 [group("ci")]
-ci-extras: sort-check shear typos pup msrv sdk-msrv sdk-doc
+ci-extras: osv-scanner sort-check shear typos pup msrv sdk-msrv sdk-doc
+
+[group("ci")]
+ci-sdks: python-sdk fmt-c lint-c test-c fmt-cpp lint-cpp test-cpp qa::generate-gold test-gold-all
