@@ -1,17 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-find_package(cmocka REQUIRED)
-# cmocka < 1.1.6 ships only variables, not an imported target.
-if(NOT TARGET cmocka::cmocka)
-    add_library(cmocka::cmocka SHARED IMPORTED)
-    set_target_properties(cmocka::cmocka PROPERTIES
-        IMPORTED_LOCATION "${CMOCKA_LIBRARY}"
-        INTERFACE_INCLUDE_DIRECTORIES "${CMOCKA_INCLUDE_DIR}"
-    )
-endif()
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(Criterion REQUIRED IMPORTED_TARGET criterion)
 
 foreach(test test_builder test_null_guards test_thread_local)
     add_executable(${test} ${test}.c)
-    target_link_libraries(${test} PRIVATE GeoTrace::C cmocka::cmocka)
+    target_link_libraries(${test} PRIVATE GeoTrace::C PkgConfig::Criterion)
 
     if(MSVC)
         target_compile_options(${test} PRIVATE /W4 /WX)
