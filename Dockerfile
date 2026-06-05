@@ -81,9 +81,10 @@ RUN cargo binstall --no-confirm \
 # binary distribution, so we compile it from source with the pinned nightly.
 RUN cargo +nightly-2026-01-22 install cargo_pup
 
-# Make the Rust toolchain and installed binaries readable by any user so that
-# containers can be run with --user $(id -u):$(id -g) without permission errors.
-RUN chmod -R a+rX "$CARGO_HOME" "$RUSTUP_HOME"
+# Make the Rust toolchain and installed binaries writable by any user so that
+# containers can be run with --user $(id -u):$(id -g) and still allow tools
+# like cargo-msrv to install temporary toolchains.
+RUN chmod -R a+rwX "$CARGO_HOME" "$RUSTUP_HOME"
 
 # Warm up the Rust compiler cache for the workspace dependencies.
 # This layer is intentionally placed last so that changes to source files
