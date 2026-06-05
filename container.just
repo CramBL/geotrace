@@ -16,7 +16,11 @@ _dev *args:
     [[ "${IN_GEOTRACE_CONTAINER:-}" == "1" ]] && { {{ args }}; exit; }
     just _require-runner
     {{ RUNNER }} run --rm \
+        --user "$(id -u):$(id -g)" \
         -e IN_GEOTRACE_CONTAINER=1 \
+        -e HOME=/tmp \
+        -e RUSTUP_HOME=/root/.rustup \
+        -e CARGO_HOME=/root/.cargo \
         -v "{{justfile_directory()}}:/workspace" \
         -v "$HOME/.cargo/registry:/root/.cargo/registry" \
         -v "$HOME/.cargo/git:/root/.cargo/git" \
@@ -33,6 +37,7 @@ _sdk *args:
     [[ "${IN_GEOTRACE_CONTAINER:-}" == "1" ]] && { {{ args }}; exit; }
     just _require-runner
     {{ RUNNER }} run --rm \
+        --user "$(id -u):$(id -g)" \
         -e IN_GEOTRACE_CONTAINER=1 \
         -v "{{justfile_directory()}}:/workspace" \
         -v "$HOME/.cargo/registry:/root/.cargo/registry" \
@@ -48,7 +53,11 @@ _sdk *args:
 [group("shells")]
 dev-shell: _require-runner
     {{ RUNNER }} run --rm -it \
+        --user "$(id -u):$(id -g)" \
         -e IN_GEOTRACE_CONTAINER=1 \
+        -e HOME=/tmp \
+        -e RUSTUP_HOME=/root/.rustup \
+        -e CARGO_HOME=/root/.cargo \
         -v "{{justfile_directory()}}:/workspace" \
         -v "$HOME/.cargo/registry:/root/.cargo/registry" \
         -v "$HOME/.cargo/git:/root/.cargo/git" \
@@ -61,6 +70,7 @@ dev-shell: _require-runner
 [group("shells")]
 dev-shell-sdk: _require-runner
     {{ RUNNER }} run --rm -it \
+        --user "$(id -u):$(id -g)" \
         -e IN_GEOTRACE_CONTAINER=1 \
         -v "{{justfile_directory()}}:/workspace" \
         -v "$HOME/.cargo/registry:/root/.cargo/registry" \

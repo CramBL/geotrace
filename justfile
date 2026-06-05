@@ -75,7 +75,7 @@ setup-pup:
 ci: build-images ci-essentials ci-extras python-sdk osv-scanner
 
 [group("ci")]
-ci-essentials: fmt-check clippy check test examples qa::qa-lint qa::check-em-dash qa::check-floating-comments
+ci-essentials: fmt-check clippy check test examples qa::qa-lint qa::check-em-dash qa::check-floating-comments qa::check-narrative-comments
 
 [group("ci")]
 ci-extras: sort-check shear typos pup msrv sdk-msrv sdk-doc
