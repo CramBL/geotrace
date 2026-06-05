@@ -1,8 +1,14 @@
+use std::fmt::Write;
+
+use uom::si::{
+    f64,
+    length::{kilometer, meter},
+};
+
 /// Format a distance as a compact human-readable string.
 ///
 /// Uses metres for distances under 1 km, kilometres otherwise.
-pub fn format_distance(d: uom::si::f64::Length) -> String {
-    use uom::si::length::{kilometer, meter};
+pub fn format_distance(d: f64::Length) -> String {
     let km = d.get::<kilometer>();
     if km < 1.0 {
         format!("{:.0} m", d.get::<meter>())
@@ -23,13 +29,14 @@ pub fn format_distance(d: uom::si::f64::Length) -> String {
 /// Examples: `"20m"`, `"1h28m"`, `"3h"`, `"1m30s"`, `"45s"`, `"2d5h"`.
 pub fn format_human_terse_duration(d: chrono::Duration) -> String {
     let total_secs = d.num_seconds();
+
+    if total_secs == 0 {
+        return "0s".to_owned();
+    }
+
     let h = d.num_hours();
     let m = d.num_minutes() % 60;
     let s = total_secs % 60;
-
-    if h == 0 && m == 0 && s == 0 {
-        return "0s".to_owned();
-    }
 
     if h >= 48 {
         let days = h / 24;
@@ -44,19 +51,19 @@ pub fn format_human_terse_duration(d: chrono::Duration) -> String {
     let show_s = total_secs < 120;
     let show_m = h < 3;
 
-    let mut out = String::new();
+    // Pre-allocate enough capacity to avoid reallocations.
+    let mut out = String::with_capacity(16);
+
     if h > 0 {
-        out.push_str(&h.to_string());
-        out.push('h');
+        write!(out, "{h}h").unwrap();
     }
     if show_m && m > 0 {
-        out.push_str(&m.to_string());
-        out.push('m');
+        write!(out, "{m}m").unwrap();
     }
     if show_s && s > 0 {
-        out.push_str(&s.to_string());
-        out.push('s');
+        write!(out, "{s}s").unwrap();
     }
+
     out
 }
 
