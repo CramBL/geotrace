@@ -19,11 +19,11 @@ _dev *args:
         --user "$(id -u):$(id -g)" \
         -e IN_GEOTRACE_CONTAINER=1 \
         -e HOME=/tmp \
-        -e RUSTUP_HOME=/root/.rustup \
-        -e CARGO_HOME=/root/.cargo \
+        -e RUSTUP_HOME=/usr/local/rustup \
+        -e CARGO_HOME=/usr/local/cargo \
         -v "{{justfile_directory()}}:/workspace" \
-        -v "$HOME/.cargo/registry:/root/.cargo/registry" \
-        -v "$HOME/.cargo/git:/root/.cargo/git" \
+        -v "$HOME/.cargo/registry:/usr/local/cargo/registry" \
+        -v "$HOME/.cargo/git:/usr/local/cargo/git" \
         -v "geotrace-target:/workspace/target" \
         -w /workspace \
         {{ IMAGE }} \
@@ -39,9 +39,11 @@ _sdk *args:
     {{ RUNNER }} run --rm \
         --user "$(id -u):$(id -g)" \
         -e IN_GEOTRACE_CONTAINER=1 \
+        -e RUSTUP_HOME=/usr/local/rustup \
+        -e CARGO_HOME=/usr/local/cargo \
         -v "{{justfile_directory()}}:/workspace" \
-        -v "$HOME/.cargo/registry:/root/.cargo/registry" \
-        -v "$HOME/.cargo/git:/root/.cargo/git" \
+        -v "$HOME/.cargo/registry:/usr/local/cargo/registry" \
+        -v "$HOME/.cargo/git:/usr/local/cargo/git" \
         -v "geotrace-target:/workspace/target" \
         -v "geotrace-cmake-c:/workspace/sdk/c/build" \
         -v "geotrace-cmake-cpp:/workspace/sdk/cpp/build" \
@@ -56,11 +58,11 @@ dev-shell: _require-runner
         --user "$(id -u):$(id -g)" \
         -e IN_GEOTRACE_CONTAINER=1 \
         -e HOME=/tmp \
-        -e RUSTUP_HOME=/root/.rustup \
-        -e CARGO_HOME=/root/.cargo \
+        -e RUSTUP_HOME=/usr/local/rustup \
+        -e CARGO_HOME=/usr/local/cargo \
         -v "{{justfile_directory()}}:/workspace" \
-        -v "$HOME/.cargo/registry:/root/.cargo/registry" \
-        -v "$HOME/.cargo/git:/root/.cargo/git" \
+        -v "$HOME/.cargo/registry:/usr/local/cargo/registry" \
+        -v "$HOME/.cargo/git:/usr/local/cargo/git" \
         -v "geotrace-target:/workspace/target" \
         -w /workspace \
         {{ IMAGE }} \
@@ -72,9 +74,11 @@ dev-shell-sdk: _require-runner
     {{ RUNNER }} run --rm -it \
         --user "$(id -u):$(id -g)" \
         -e IN_GEOTRACE_CONTAINER=1 \
+        -e RUSTUP_HOME=/usr/local/rustup \
+        -e CARGO_HOME=/usr/local/cargo \
         -v "{{justfile_directory()}}:/workspace" \
-        -v "$HOME/.cargo/registry:/root/.cargo/registry" \
-        -v "$HOME/.cargo/git:/root/.cargo/git" \
+        -v "$HOME/.cargo/registry:/usr/local/cargo/registry" \
+        -v "$HOME/.cargo/git:/usr/local/cargo/git" \
         -v "geotrace-target:/workspace/target" \
         -v "geotrace-cmake-c:/workspace/sdk/c/build" \
         -v "geotrace-cmake-cpp:/workspace/sdk/cpp/build" \
@@ -92,9 +96,9 @@ build-image: _require-runner
 build-sdk-image: _require-runner
     {{ RUNNER }} build --target sdk-dev -t {{ SDK_IMAGE }} .
 
-# Build both images (stage 2 implicitly builds stage 1 first).
+# Build both images.
 [group("images")]
-build-images: build-sdk-image
+build-images: build-image build-sdk-image
 
 [group("utils")]
 osv-scanner: _require-runner

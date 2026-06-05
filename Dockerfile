@@ -38,11 +38,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install rustup without pinning a toolchain version here.
-# rust-toolchain.toml is the single source of truth for the Rust version.
+# Install rustup into a shared location so it's accessible by non-root users.
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:${PATH}
+
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain none --no-modify-path
-ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Copy the toolchain pin before any Rust commands so rustup installs the
 # version declared in rust-toolchain.toml rather than whatever "stable"
@@ -57,8 +59,7 @@ RUN rustup toolchain install nightly-2026-01-22 \
     --component rust-src,rustc-dev,llvm-tools-preview
 
 # uv — Python package manager used by the Python SDK.
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:${PATH}"
+RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
 
 # Install just, cargo-nextest, and extra lint tools via cargo-binstall where
 # available for speed; fall back to cargo install for the rest.
@@ -82,7 +83,7 @@ RUN cargo +nightly-2026-01-22 install cargo_pup
 
 # Make the Rust toolchain and installed binaries readable by any user so that
 # containers can be run with --user $(id -u):$(id -g) without permission errors.
-RUN chmod -R a+rX /root/.cargo /root/.rustup
+RUN chmod -R a+rX "$CARGO_HOME" "$RUSTUP_HOME"
 
 # Warm up the Rust compiler cache for the workspace dependencies.
 # This layer is intentionally placed last so that changes to source files
