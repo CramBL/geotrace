@@ -8,7 +8,7 @@
 //! everything by time and interpolates each annotation's map position from the
 //! surrounding GPS fixes.
 
-use std::{env, error::Error, fs};
+use std::{error::Error, fs};
 
 use geotrace_sdk::{Angle, Annotation, DateTime, MarkerIcon, NavFileBuilder, NavFix, Utc};
 
@@ -61,7 +61,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let nav_file = sink.finish()?;
 
-    let out = env::temp_dir().join("geotrace_from_multiple_sources.gtd");
+    let temp_dir = tempfile::tempdir()?;
+    let out = temp_dir.path().join("geotrace_from_multiple_sources.gtd");
     nav_file.write_to_file(&out)?;
     println!("Written {out:?}");
     fs::remove_file(&out)?;

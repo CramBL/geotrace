@@ -171,14 +171,10 @@ pub fn settings_path() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join("geotrace").join("config.toml"))
 }
 
-/// Load settings from disk, falling back to defaults on any error.
-pub fn load_settings() -> Settings {
-    let Some(path) = settings_path() else {
-        log::warn!("Config directory unavailable - using defaults");
-        return Settings::default();
-    };
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return Settings::default(); // absent on first run; not an error
+/// Load settings from a specific file path, falling back to defaults on any error.
+pub fn load_settings_from(path: &std::path::Path) -> Settings {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Settings::default(); // absent on first run or read error; not an error
     };
     match toml::from_str::<Settings>(&text) {
         Ok(s) => s,
@@ -187,4 +183,13 @@ pub fn load_settings() -> Settings {
             Settings::default()
         }
     }
+}
+
+/// Load settings from disk, falling back to defaults on any error.
+pub fn load_settings() -> Settings {
+    let Some(path) = settings_path() else {
+        log::warn!("Config directory unavailable - using defaults");
+        return Settings::default();
+    };
+    load_settings_from(&path)
 }

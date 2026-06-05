@@ -2200,11 +2200,13 @@ name = "gt-test-utils"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "eframe",
  "egui",
  "egui_kittest",
  "geo",
  "geo-types",
  "gt-types",
+ "tempfile",
  "uom",
 ]
 

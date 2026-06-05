@@ -67,7 +67,7 @@ fn drag_drop_nvd_path_loads_file() {
 
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| App::new_with_config(cc, &[], None));
     harness.input_mut().dropped_files.push(egui::DroppedFile {
         path: Some(tmp_path),
         ..Default::default()
@@ -84,7 +84,7 @@ fn drag_drop_nvd_bytes_loads_file() {
 
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| App::new_with_config(cc, &[], None));
     harness.input_mut().dropped_files.push(egui::DroppedFile {
         bytes: Some(Arc::from(nvd_bytes.as_slice())),
         name: "test.gtd".to_owned(),
@@ -100,7 +100,7 @@ fn drag_drop_nvd_bytes_loads_file() {
 fn drag_drop_unknown_bytes_sets_error() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| App::new_with_config(cc, &[], None));
     // \xff is not valid UTF-8 and doesn't match the HDF5 magic, so the error
     // is detected synchronously without spawning a background thread.
     harness.input_mut().dropped_files.push(egui::DroppedFile {
@@ -118,7 +118,7 @@ fn drag_drop_unknown_bytes_sets_error() {
 fn panel_detached_renders_without_panic() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| App::new_with_config(cc, &[], None));
     harness.step();
     assert!(!harness.state().shared.borrow().tree.detached);
 
@@ -155,7 +155,7 @@ fn panel_detached_renders_without_panic() {
 fn detached_panel_steps_complete_within_time_budget() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| App::new_with_config(cc, &[], None));
     harness.step();
 
     harness.state_mut().shared.borrow_mut().tree.detached = true;
@@ -184,7 +184,7 @@ fn detached_panel_steps_complete_within_time_budget() {
 fn settings_window_stays_open_after_step() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| App::new_with_config(cc, &[], None));
     harness.step(); // initial render
     harness.state_mut().settings_open = true;
     harness.step(); // frame where window is first shown
@@ -203,7 +203,7 @@ fn settings_window_stays_open_after_step() {
 fn settings_window_closes_on_esc() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| App::new_with_config(cc, &[], None));
     harness.step();
     harness.state_mut().settings_open = true;
     harness.step(); // window open
@@ -231,26 +231,30 @@ fn snapshot_app_with_file_loaded() {
         "/tests/fixtures/gold_dataset/gold.gtd"
     ));
 
-    let mut harness = Harness::builder()
-        .with_wait_for_pending_images(false)
-        .with_size(egui::vec2(1280.0, 800.0))
-        .build_eframe(|cc| App::new(cc));
-    harness.step();
+    let (mut harness, _config_path) =
+        TestHarness::new_eframe(Some(egui::vec2(1280.0, 800.0)), |cc, path| {
+            App::new_with_config(cc, &[], Some(path.to_path_buf()))
+        });
+    harness.inner.step();
 
-    harness.input_mut().dropped_files.push(egui::DroppedFile {
-        bytes: Some(Arc::from(gold_bytes)),
-        name: "gold.gtd".to_owned(),
-        ..Default::default()
-    });
-    harness.step();
-    step_until_loaded(&mut harness);
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(gold_bytes)),
+            name: "gold.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
     // The app repaints continuously (map + background jobs). Run many frames
     // so the map zoom and plot layout converge before we snapshot.
-    harness.run_steps(60);
+    harness.inner.run_steps(60);
 
     // Use snapshot_loose: the live map/plot rendering can produce minor
     // pixel-level variance across runs due to floating-point layout.
-    TestHarness::from_harness(harness).snapshot_loose("app_with_file_loaded");
+    harness.snapshot_loose("app_with_file_loaded");
 }
 
 /// Snapshot of the app zoomed into the cluster of Sahara desert tracks from
@@ -263,25 +267,29 @@ fn snapshot_app_sahara_tracks() {
         "/tests/fixtures/gold_dataset/gold.gtd"
     ));
 
-    let mut harness = Harness::builder()
-        .with_wait_for_pending_images(false)
-        .with_size(egui::vec2(1280.0, 800.0))
-        .build_eframe(|cc| App::new(cc));
-    harness.step();
+    let (mut harness, _config_path) =
+        TestHarness::new_eframe(Some(egui::vec2(1280.0, 800.0)), |cc, path| {
+            App::new_with_config(cc, &[], Some(path.to_path_buf()))
+        });
+    harness.inner.step();
 
-    harness.input_mut().dropped_files.push(egui::DroppedFile {
-        bytes: Some(Arc::from(gold_bytes)),
-        name: "gold.gtd".to_owned(),
-        ..Default::default()
-    });
-    harness.step();
-    step_until_loaded(&mut harness);
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(gold_bytes)),
+            name: "gold.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
 
     // Identify the Sahara tracks by latitude: they are all centred around
     // 23°N 13°E. The bounding_box is in (lon, lat) geo-types order, so
     // min.y / max.y are the south/north latitudes.
     let sahara_tracks: Vec<TrackRef> = {
-        let state = harness.state().shared.borrow();
+        let state = harness.inner.state().shared.borrow();
         state.loaded_files[0]
             .tracks
             .iter()
@@ -295,36 +303,36 @@ fn snapshot_app_sahara_tracks() {
     };
 
     {
-        let mut state = harness.state().shared.borrow_mut();
+        let mut state = harness.inner.state().shared.borrow_mut();
         state.tree.show_only_tracks(&sahara_tracks);
         state.zoom_to_visible_request = true;
     }
 
-    harness.run_steps(60);
+    harness.inner.run_steps(60);
 
-    TestHarness::from_harness(harness).snapshot_loose("app_sahara_tracks");
+    harness.snapshot_loose("app_sahara_tracks");
 }
 
 #[test]
 fn snapshot_settings_window() {
-    let mut harness = Harness::builder()
-        .with_wait_for_pending_images(false)
-        .with_size(egui::vec2(600.0, 400.0))
-        .build_eframe(|cc| App::new(cc));
-    harness.step();
-    harness.state_mut().settings_open = true;
+    let (mut harness, _config_path) =
+        TestHarness::new_eframe(Some(egui::vec2(600.0, 400.0)), |cc, path| {
+            App::new_with_config(cc, &[], Some(path.to_path_buf()))
+        });
+    harness.inner.step();
+    harness.inner.state_mut().settings_open = true;
     harness.run();
-    TestHarness::from_harness(harness).snapshot("settings_window");
+    harness.snapshot("settings_window");
 }
 
 #[test]
 fn snapshot_load_warnings_dialog() {
-    let mut harness = Harness::builder()
-        .with_wait_for_pending_images(false)
-        .with_size(egui::vec2(1024.0, 768.0))
-        .build_eframe(|cc| App::new(cc));
-    harness.step();
-    harness.state().shared.borrow_mut().warnings_popup = Some((
+    let (mut harness, _config_path) =
+        TestHarness::new_eframe(Some(egui::vec2(1024.0, 768.0)), |cc, path| {
+            App::new_with_config(cc, &[], Some(path.to_path_buf()))
+        });
+    harness.inner.step();
+    harness.inner.state().shared.borrow_mut().warnings_popup = Some((
         "ride_2025-05-23.gtd".to_owned(),
         vec![
             LoadWarning {
@@ -346,5 +354,5 @@ fn snapshot_load_warnings_dialog() {
         ],
     ));
     harness.run();
-    TestHarness::from_harness(harness).snapshot("load_warnings_dialog");
+    harness.snapshot("load_warnings_dialog");
 }

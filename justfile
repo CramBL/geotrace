@@ -43,7 +43,11 @@ clippy:
 
 [group("native")]
 test *ARGS:
-    cargo nextest run --workspace {{ ARGS }}
+    GEOTRACE_OFFLINE=1 cargo nextest run --workspace {{ ARGS }}
+
+[group("native")]
+test-snapshots *ARGS:
+    GEOTRACE_OFFLINE=1 cargo nextest run --workspace -E "test(snapshot) or test(snap)" {{ ARGS }}
 
 [group("native")]
 examples:

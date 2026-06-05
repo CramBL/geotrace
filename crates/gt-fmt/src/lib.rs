@@ -22,11 +22,12 @@ pub fn format_distance(d: f64::Length) -> String {
 /// Rules:
 /// - Durations ≥ 48 h are shown as `"Xd"` or `"XdYh"` (e.g. `"2d5h"`).
 /// - Seconds are shown only when the total duration is under 2 minutes.
-/// - Minutes are shown only when the total whole hours is less than 3.
+/// - Minutes are shown only when the whole hours is less than 3.
 /// - Zero-valued components are omitted entirely.
 /// - Zero duration returns `"0s"` to avoid an empty string.
 ///
 /// Examples: `"20m"`, `"1h28m"`, `"3h"`, `"1m30s"`, `"45s"`, `"2d5h"`.
+#[expect(clippy::let_underscore_must_use, reason = "writing to String cannot fail")]
 pub fn format_human_terse_duration(d: chrono::Duration) -> String {
     let total_secs = d.num_seconds();
 
@@ -55,13 +56,13 @@ pub fn format_human_terse_duration(d: chrono::Duration) -> String {
     let mut out = String::with_capacity(16);
 
     if h > 0 {
-        write!(out, "{h}h").unwrap();
+        let _ = write!(out, "{h}h");
     }
     if show_m && m > 0 {
-        write!(out, "{m}m").unwrap();
+        let _ = write!(out, "{m}m");
     }
     if show_s && s > 0 {
-        write!(out, "{s}s").unwrap();
+        let _ = write!(out, "{s}s");
     }
 
     out

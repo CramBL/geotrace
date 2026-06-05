@@ -1,4 +1,5 @@
 use egui_kittest::{Harness, SnapshotOptions};
+use std::path::{Path, PathBuf};
 
 fn snapshot_options() -> SnapshotOptions {
     SnapshotOptions::new().threshold(0.6)
@@ -22,7 +23,8 @@ fn snap_name(name: &str) -> String {
 /// GPU backends that produce slightly different pixel output vs the Metal baseline).
 /// Auto-prefixes snapshot names with `snap_` if not already present.
 pub struct TestHarness<'a, State = ()> {
-    inner: Harness<'a, State>,
+    pub inner: Harness<'a, State>,
+    _temp_dir: Option<tempfile::TempDir>,
 }
 
 impl<'a> TestHarness<'a> {
@@ -32,13 +34,50 @@ impl<'a> TestHarness<'a> {
             .with_options(snapshot_options())
             .wgpu()
             .build_ui(f);
-        Self { inner }
+        Self {
+            inner,
+            _temp_dir: None,
+        }
     }
 }
 
 impl<'a, State> TestHarness<'a, State> {
     pub fn from_harness(inner: Harness<'a, State>) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            _temp_dir: None,
+        }
+    }
+
+    /// Builds a new eframe snapshot test harness with a temporary configuration directory.
+    #[expect(
+        clippy::expect_used,
+        reason = "fatal setup failure in test harness should panic"
+    )]
+    pub fn new_eframe<F>(size: Option<egui::Vec2>, build_app: F) -> (Self, PathBuf)
+    where
+        F: FnOnce(&eframe::CreationContext<'_>, &Path) -> State,
+        State: eframe::App + 'static,
+    {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp config dir");
+        let config_path = temp_dir.path().join("config.toml");
+        let config_path_clone = config_path.clone();
+
+        let mut builder = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .with_options(snapshot_options());
+        if let Some(sz) = size {
+            builder = builder.with_size(sz);
+        }
+        let inner = builder.build_eframe(move |cc| build_app(cc, &config_path_clone));
+
+        (
+            Self {
+                inner,
+                _temp_dir: Some(temp_dir),
+            },
+            config_path,
+        )
     }
 
     pub fn run(&mut self) {

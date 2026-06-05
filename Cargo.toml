@@ -60,6 +60,7 @@ serde = { version = "1", features = ["derive"] }
 smallvec = { version = "1", features = ["union"] }
 strum = { version = "0.28", features = ["derive"] }
 syn = "2"
+tempfile = "3"
 thiserror = "2"
 uom = "0.38.0"
 vec1 = "1"
@@ -219,7 +220,7 @@ uom.workspace = true
 egui_kittest = { version = "0.34.3", features = ["eframe", "wgpu", "snapshot"] }
 geotrace-sdk = { path = "sdk/rust/geotrace-sdk" }
 gt-test-utils = { path = "crates/gt-test-utils", features = ["snapshot"] }
-tempfile = "3"
+tempfile.workspace = true
 
 [profile.release]
 opt-level = 3

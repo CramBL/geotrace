@@ -7,15 +7,17 @@ license.workspace = true
 authors.workspace = true
 
 [features]
-snapshot = ["dep:egui", "dep:egui_kittest"]
+snapshot = ["dep:egui", "dep:egui_kittest", "dep:tempfile", "dep:eframe"]
 
 [dependencies]
 chrono.workspace = true
+eframe = { workspace = true, optional = true }
 egui = { workspace = true, optional = true }
 egui_kittest = { version = "0.34.3", features = ["wgpu", "snapshot"], optional = true }
 geo.workspace = true
 geo-types.workspace = true
 gt-types = { path = "../gt-types" }
+tempfile = { workspace = true, optional = true }
 uom.workspace = true
 
 [lints]

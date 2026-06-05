@@ -567,24 +567,29 @@ impl NavMap {
             (tpv, custom, generated, event)
         };
 
-        let use_mapbox = self.layer == MapLayer::Satellite && self.mapbox_tiles.is_some();
-        let map = if use_mapbox {
-            let tiles: Option<&mut dyn walkers::Tiles> = self.mapbox_tiles.as_mut().map(|t| {
-                let r: &mut dyn walkers::Tiles = t;
-                r
-            });
-            Map::new(
-                tiles,
-                &mut self.map_memory,
-                walkers::lat_lon(55.676, 12.565),
-            )
+        let is_offline = std::env::var("GEOTRACE_OFFLINE").is_ok();
+        let map = if is_offline {
+            Map::new(None, &mut self.map_memory, walkers::lat_lon(55.676, 12.565))
         } else {
-            let tiles: &mut dyn walkers::Tiles = &mut self.osm_tiles;
-            Map::new(
-                Some(tiles),
-                &mut self.map_memory,
-                walkers::lat_lon(55.676, 12.565),
-            )
+            let use_mapbox = self.layer == MapLayer::Satellite && self.mapbox_tiles.is_some();
+            if use_mapbox {
+                let tiles: Option<&mut dyn walkers::Tiles> = self.mapbox_tiles.as_mut().map(|t| {
+                    let r: &mut dyn walkers::Tiles = t;
+                    r
+                });
+                Map::new(
+                    tiles,
+                    &mut self.map_memory,
+                    walkers::lat_lon(55.676, 12.565),
+                )
+            } else {
+                let tiles: &mut dyn walkers::Tiles = &mut self.osm_tiles;
+                Map::new(
+                    Some(tiles),
+                    &mut self.map_memory,
+                    walkers::lat_lon(55.676, 12.565),
+                )
+            }
         };
         let map = map
             .with_plugin(TrackRenderer::new(

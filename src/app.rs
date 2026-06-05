@@ -71,6 +71,8 @@ pub struct App {
 
     /// Detects settings changes and drives debounced write-through to disk.
     config: ConfigManager,
+    /// Path to config file - if None, settings are not loaded from or saved to disk.
+    config_path: Option<PathBuf>,
 
     /// Whether the Settings window is currently open.
     settings_open: bool,
@@ -107,6 +109,15 @@ impl App {
     }
 
     pub fn new_with_files(cc: &eframe::CreationContext<'_>, paths: &[PathBuf]) -> Self {
+        let default_path = crate::settings::settings_path();
+        Self::new_with_config(cc, paths, default_path)
+    }
+
+    pub fn new_with_config(
+        cc: &eframe::CreationContext<'_>,
+        paths: &[PathBuf],
+        config_path: Option<PathBuf>,
+    ) -> Self {
         let mut fonts = egui::FontDefinitions::default();
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
         cc.egui_ctx.set_fonts(fonts);
@@ -117,11 +128,15 @@ impl App {
         // can serve them without any per-frame heap allocation.
         gt_map::register_marker_icons(&cc.egui_ctx);
 
-        let mut loaded_settings = crate::settings::load_settings();
+        let mut loaded_settings = config_path
+            .as_ref()
+            .map(|p| crate::settings::load_settings_from(p))
+            .unwrap_or_default();
 
         // One-time migration: pick up mapbox_token and map_layer from the old
         // eframe storage when config.toml doesn't exist yet.
-        if crate::settings::settings_path().is_none_or(|p| !p.exists()) {
+        let path_exists = config_path.as_ref().is_some_and(|p| p.exists());
+        if !path_exists {
             if let Some(token) = cc.storage.and_then(|s| s.get_string("mapbox_token"))
                 && loaded_settings.map.mapbox_token.is_empty()
             {
@@ -196,6 +211,7 @@ impl App {
             map_tile_id,
             plot_tile_id,
             config: ConfigManager::new(AppSnapshot::default()),
+            config_path,
             settings_open: false,
             processing_config: SegmentationConfig::default(),
             assoc_config: AssociationConfig::default(),
@@ -532,7 +548,7 @@ impl App {
     }
 
     fn flush_settings(&self) {
-        let Some(path) = crate::settings::settings_path() else {
+        let Some(path) = self.config_path.as_ref() else {
             log::warn!("Config directory unavailable - settings not saved");
             return;
         };
@@ -558,7 +574,7 @@ impl App {
             log::warn!("Failed to write config to {tmp:?}: {e:#}");
             return;
         }
-        if let Err(e) = std::fs::rename(&tmp, &path) {
+        if let Err(e) = std::fs::rename(&tmp, path) {
             log::warn!("Failed to rename config file: {e:#}");
         }
     }
