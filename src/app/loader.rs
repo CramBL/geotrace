@@ -179,7 +179,8 @@ impl LoaderManager {
                         let series = gt_plot::prepare_file_series(0, &file);
                         let db_ref = db_path.as_deref().and_then(|p| {
                             let bytes = std::fs::read(&path).ok()?;
-                            let meta = gt_history::RecordingMeta::from_gtd_bytes(&bytes).ok()?;
+                            let meta = gt_history::extract_meta(&bytes).ok()?;
+                            use gt_history::HistoryDatabase;
                             let mut db = gt_history::Database::open_or_create(p).ok()?;
                             match db.insert(&file.identity, &meta, &bytes) {
                                 Ok(r) => Some(r),
@@ -250,7 +251,8 @@ impl LoaderManager {
                             let series = gt_plot::prepare_file_series(0, &file);
                             let db_ref = db_path.as_deref().and_then(|p| {
                                 let meta =
-                                    gt_history::RecordingMeta::from_gtd_bytes(&bytes).ok()?;
+                                    gt_history::extract_meta(&bytes).ok()?;
+                                use gt_history::HistoryDatabase;
                                 let mut db = gt_history::Database::open_or_create(p).ok()?;
                                 match db.insert(&file.identity, &meta, &bytes) {
                                     Ok(r) => Some(r),

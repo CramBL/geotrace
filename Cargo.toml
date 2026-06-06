@@ -13,6 +13,8 @@ members = [
     "crates/gt-fmt",
     "crates/gt-geo-math",
     "crates/gt-history",
+    "crates/gt-history-backend-pure",
+    "crates/gt-history-backend-sys",
     "crates/gt-loader",
     "crates/gt-logfile",
     "crates/gt-map",

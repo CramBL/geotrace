@@ -11,15 +11,19 @@ authors.workspace = true
 doctest = false
 
 [dependencies]
-chrono.workspace = true
 dirs.workspace = true
 gt-types = { path = "../gt-types" }
-hdf5-pure.workspace = true
-log.workspace = true
-thiserror.workspace = true
+gt-history-backend-pure = { path = "../gt-history-backend-pure", optional = true }
+gt-history-backend-sys = { path = "../gt-history-backend-sys", optional = true }
+
+[features]
+default = ["backend-pure"]
+backend-pure = ["dep:gt-history-backend-pure"]
+backend-sys = ["dep:gt-history-backend-sys"]
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
+hdf5-pure.workspace = true
 
 [lints]
 workspace = true

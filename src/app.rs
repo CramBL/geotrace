@@ -174,8 +174,11 @@ impl App {
         // `None` and is populated by `sync_db_path` (called from
         // `apply_startup_settings`) only in non-test builds.
         #[cfg(not(test))]
-        let db = match gt_history::Database::default_path()
-            .and_then(|p| gt_history::Database::open_or_create(&p))
+        let db = match gt_history::default_path()
+            .and_then(|p| {
+                use gt_history::HistoryDatabase;
+                gt_history::Database::open_or_create(&p)
+            })
         {
             Ok(db) => Some(db),
             Err(e) => {
@@ -704,6 +707,7 @@ impl App {
     }
 
     fn sync_db_path(&mut self) {
+        use gt_history::HistoryDatabase;
         self.loader.db_path = if self.storage_enabled {
             self.db.as_ref().map(|db| db.path().to_owned())
         } else {
@@ -737,9 +741,13 @@ impl App {
     }
 
     fn handle_history_action(&mut self, action: history::HistoryAction, ctx: &egui::Context) {
-        let Some(db) = self.db.as_mut() else { return };
+        use gt_history::HistoryDatabase;
+        let Some(db) = self.db.as_mut() else {
+            return;
+        };
+
         match action {
-            history::HistoryAction::Open(db_ref) => match db.load_gtd_bytes(&db_ref) {
+            history::HistoryAction::Open(db_ref) => match db.load_bytes(&db_ref) {
                 Ok(bytes) => {
                     let filename = format!("{}/{}", db_ref.identity, db_ref.group_name);
                     self.loader
@@ -1300,6 +1308,7 @@ impl eframe::App for App {
             if do_prune {
                 let candidates = self.pending_auto_prune.take().unwrap_or_default();
                 if let Some(db) = self.db.as_mut() {
+                    use gt_history::HistoryDatabase;
                     match db.delete_batch(&candidates) {
                         Ok(()) => {
                             self.history_window.invalidate();

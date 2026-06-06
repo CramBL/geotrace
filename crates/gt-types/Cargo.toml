@@ -16,6 +16,7 @@ geo-types.workspace = true
 rstar.workspace = true
 serde.workspace = true
 strum.workspace = true
+thiserror.workspace = true
 uom.workspace = true
 
 [dev-dependencies]

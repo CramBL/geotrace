@@ -1,4 +1,5 @@
 pub mod coordinates;
+pub mod history;
 pub mod highlight;
 pub mod markers;
 pub mod mercator;

@@ -1,4 +1,4 @@
-use gt_history::{Database, RecordingMeta};
+use gt_history::{Database, HistoryDatabase, RecordingMeta, extract_meta};
 
 #[expect(
     clippy::expect_used,
@@ -90,7 +90,7 @@ fn insert_creates_recording_group() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(1_000_000, 10);
-    let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("parse meta");
+    let meta = extract_meta(&bytes).expect("parse meta");
     let db_ref = db.insert("test_device", &meta, &bytes).expect("insert");
 
     assert_eq!(db_ref.identity, "test_device");
@@ -113,7 +113,7 @@ fn insert_duplicate_returns_same_group_name() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(2_000_000, 5);
-    let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("parse meta");
+    let meta = extract_meta(&bytes).expect("parse meta");
 
     let first = db.insert("device_a", &meta, &bytes).expect("first insert");
     let second = db.insert("device_a", &meta, &bytes).expect("second insert");
@@ -142,8 +142,8 @@ fn insert_different_identities_are_independent() {
 
     let bytes_a = make_gtd_bytes(3_000_000, 8);
     let bytes_b = make_gtd_bytes(4_000_000, 12);
-    let meta_a = RecordingMeta::from_gtd_bytes(&bytes_a).expect("meta a");
-    let meta_b = RecordingMeta::from_gtd_bytes(&bytes_b).expect("meta b");
+    let meta_a = extract_meta(&bytes_a).expect("meta a");
+    let meta_b = extract_meta(&bytes_b).expect("meta b");
 
     db.insert("alpha", &meta_a, &bytes_a).expect("insert a");
     db.insert("beta", &meta_b, &bytes_b).expect("insert b");
@@ -163,7 +163,7 @@ fn is_duplicate_matches_only_exact_meta() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(5_000_000, 20);
-    let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("parse meta");
+    let meta = extract_meta(&bytes).expect("parse meta");
 
     assert!(
         !db.is_duplicate("sensor_1", &meta)
@@ -205,7 +205,7 @@ fn nav_point_data_round_trips() {
     let expected: Vec<i64> = (0..n as i64).map(|i| start_us + i).collect();
 
     let bytes = make_gtd_bytes(start_us, n);
-    let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("parse meta");
+    let meta = extract_meta(&bytes).expect("parse meta");
     let db_ref = db.insert("round_trip_test", &meta, &bytes).expect("insert");
 
     // Verify the stored timestamps round-trip correctly.
@@ -234,8 +234,8 @@ fn list_recordings_returns_entries_sorted_descending() {
 
     let bytes_a = make_gtd_bytes(1_000, 3);
     let bytes_b = make_gtd_bytes(2_000, 5);
-    let meta_a = RecordingMeta::from_gtd_bytes(&bytes_a).expect("meta a");
-    let meta_b = RecordingMeta::from_gtd_bytes(&bytes_b).expect("meta b");
+    let meta_a = extract_meta(&bytes_a).expect("meta a");
+    let meta_b = extract_meta(&bytes_b).expect("meta b");
 
     db.insert("dev", &meta_a, &bytes_a).expect("insert a");
     db.insert("dev", &meta_b, &bytes_b).expect("insert b");
@@ -265,7 +265,7 @@ fn delete_removes_recording() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     let bytes = make_gtd_bytes(3_000, 4);
-    let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("meta");
+    let meta = extract_meta(&bytes).expect("meta");
     let db_ref = db.insert("dev", &meta, &bytes).expect("insert");
 
     assert_eq!(db.list_recordings().expect("list before").len(), 1);
@@ -301,10 +301,10 @@ fn load_gtd_bytes_round_trips_nav_point_timestamps() {
     let expected: Vec<i64> = (0..n as i64).map(|i| start_us + i).collect();
 
     let bytes = make_gtd_bytes(start_us, n);
-    let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("meta");
+    let meta = extract_meta(&bytes).expect("meta");
     let db_ref = db.insert("reload_test", &meta, &bytes).expect("insert");
 
-    let loaded_bytes = db.load_gtd_bytes(&db_ref).expect("load_gtd_bytes");
+    let loaded_bytes = db.load_bytes(&db_ref).expect("load_gtd_bytes");
     let loaded_file = hdf5_pure::File::from_bytes(loaded_bytes).expect("parse loaded bytes");
     let times = loaded_file
         .group("nav_points")
@@ -323,7 +323,7 @@ fn prune_by_count_keeps_most_recent() {
 
     for i in 0..5_u64 {
         let bytes = make_gtd_bytes((i * 1_000_000) as i64, 2);
-        let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("meta");
+        let meta = extract_meta(&bytes).expect("meta");
         db.insert("dev", &meta, &bytes).expect("insert");
     }
 
@@ -341,8 +341,8 @@ fn prune_by_total_size_removes_oldest_first() {
 
     let bytes_a = make_gtd_bytes(1_000, 2);
     let bytes_b = make_gtd_bytes(2_000, 2);
-    let meta_a = RecordingMeta::from_gtd_bytes(&bytes_a).expect("meta a");
-    let meta_b = RecordingMeta::from_gtd_bytes(&bytes_b).expect("meta b");
+    let meta_a = extract_meta(&bytes_a).expect("meta a");
+    let meta_b = extract_meta(&bytes_b).expect("meta b");
 
     db.insert("dev", &meta_a, &bytes_a).expect("insert a");
     db.insert("dev", &meta_b, &bytes_b).expect("insert b");
@@ -370,9 +370,9 @@ fn delete_batch_removes_multiple_in_one_pass() {
     let bytes_a = make_gtd_bytes(10_000, 2);
     let bytes_b = make_gtd_bytes(20_000, 3);
     let bytes_c = make_gtd_bytes(30_000, 4);
-    let meta_a = RecordingMeta::from_gtd_bytes(&bytes_a).expect("meta a");
-    let meta_b = RecordingMeta::from_gtd_bytes(&bytes_b).expect("meta b");
-    let meta_c = RecordingMeta::from_gtd_bytes(&bytes_c).expect("meta c");
+    let meta_a = extract_meta(&bytes_a).expect("meta a");
+    let meta_b = extract_meta(&bytes_b).expect("meta b");
+    let meta_c = extract_meta(&bytes_c).expect("meta c");
 
     let ref_a = db.insert("dev", &meta_a, &bytes_a).expect("insert a");
     let ref_b = db.insert("dev", &meta_b, &bytes_b).expect("insert b");
@@ -393,7 +393,7 @@ fn open_with_older_schema_version_migrates_data() {
     {
         let mut db = Database::open_or_create(&db_path).expect("create");
         let bytes = make_gtd_bytes(7_000_000, 3);
-        let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("meta");
+        let meta = extract_meta(&bytes).expect("meta");
         db.insert("dev", &meta, &bytes).expect("insert");
     }
 
@@ -426,7 +426,7 @@ fn open_with_older_schema_version_migrates_data() {
 #[test]
 fn meta_end_us_and_size_bytes_are_populated() {
     let bytes = make_gtd_bytes(5_000, 10);
-    let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("meta");
+    let meta = extract_meta(&bytes).expect("meta");
 
     assert_eq!(meta.start_us, 5_000);
     assert_eq!(meta.end_us, 5_009, "end_us should be start + (n-1)");

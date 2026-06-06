@@ -2107,12 +2107,31 @@ dependencies = [
 name = "gt-history"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "dirs",
+ "gt-history-backend-pure",
+ "gt-history-backend-sys",
+ "gt-types",
+ "hdf5-pure",
+ "tempfile",
+]
+
+[[package]]
+name = "gt-history-backend-pure"
+version = "0.1.0"
+dependencies = [
+ "chrono",
  "gt-types",
  "hdf5-pure",
  "log",
- "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "gt-history-backend-sys"
+version = "0.1.0"
+dependencies = [
+ "gt-types",
+ "log",
  "thiserror 2.0.18",
 ]
 
@@ -2234,6 +2253,7 @@ dependencies = [
  "rstar 0.13.0",
  "serde",
  "strum",
+ "thiserror 2.0.18",
  "uom",
 ]
 

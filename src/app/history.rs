@@ -1,5 +1,5 @@
 use chrono::{DateTime, NaiveDate, Utc};
-use gt_history::{DatabaseRef, PruneMode, RecordingEntry};
+use gt_history::{DatabaseRef, HistoryDatabase, PruneMode, RecordingEntry};
 use gt_ui_theme::WARNING_AMBER;
 
 pub enum HistoryAction {

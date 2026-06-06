@@ -15,6 +15,7 @@ pub enum AutoPruneOutcome {
 /// When `confirm` is `true` the database is not touched - candidates are
 /// returned so the caller can ask for confirmation first.
 pub fn run(db: &mut Database, max_bytes: u64, confirm: bool) -> Result<AutoPruneOutcome, DbError> {
+    use gt_history::HistoryDatabase;
     let candidates = db.prune_candidates(&PruneMode::ByTotalSize { max_bytes })?;
     if candidates.is_empty() {
         return Ok(AutoPruneOutcome::NotNeeded);
@@ -31,7 +32,7 @@ pub fn run(db: &mut Database, max_bytes: u64, confirm: bool) -> Result<AutoPrune
 mod tests {
     use super::*;
     use geotrace_sdk::{Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix};
-    use gt_history::{Database, RecordingMeta};
+    use gt_history::{Database, HistoryDatabase};
 
     fn make_gtd(start_secs: i64, n: u32) -> Vec<u8> {
         let t0 = DateTime::from_timestamp(start_secs, 0).expect("valid timestamp");
@@ -53,7 +54,8 @@ mod tests {
     }
 
     fn insert(db: &mut Database, identity: &str, bytes: &[u8]) {
-        let meta = RecordingMeta::from_gtd_bytes(bytes).expect("parse meta");
+        use gt_history::HistoryDatabase;
+        let meta = gt_history::extract_meta(bytes).expect("parse meta");
         db.insert(identity, &meta, bytes).expect("insert");
     }
 
