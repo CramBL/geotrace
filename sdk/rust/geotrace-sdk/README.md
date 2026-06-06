@@ -1,6 +1,6 @@
 # geotrace-sdk
 
-The official Rust SDK for generating and reading `.nvd` data files compatible with the Naview ecosystem.
+The official Rust SDK for generating and reading `.gtd` data files compatible with the Naview ecosystem.
 
 ```rust
 use geotrace_sdk::{Angle, NavFileBuilder, NavFix, Utc, degree};
@@ -15,13 +15,13 @@ builder.add_nav_fix(
         .build(),
 );
 let nav_file = builder.finish()?;
-nav_file.write_to_file("track.nvd")?;
+nav_file.write_to_file("track.gtd")?;
 ```
 
 ## Examples
 
-- [**from_csv.rs**](examples/from_csv.rs) - Convert GPS data exported as CSV rows into a `.nvd` file.
-- [**from_multiple_sources.rs**](examples/from_multiple_sources.rs) - Aggregate a GPS track and event annotations from separate sources into a single `.nvd` file.
+- [**from_csv.rs**](examples/from_csv.rs) - Convert GPS data exported as CSV rows into a `.gtd` file.
+- [**from_multiple_sources.rs**](examples/from_multiple_sources.rs) - Aggregate a GPS track and event annotations from separate sources into a single `.gtd` file.
 
 ## License
 

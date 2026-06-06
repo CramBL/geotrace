@@ -27,7 +27,10 @@ pub fn format_distance(d: f64::Length) -> String {
 /// - Zero duration returns `"0s"` to avoid an empty string.
 ///
 /// Examples: `"20m"`, `"1h28m"`, `"3h"`, `"1m30s"`, `"45s"`, `"2d5h"`.
-#[expect(clippy::let_underscore_must_use, reason = "writing to String cannot fail")]
+#[expect(
+    clippy::let_underscore_must_use,
+    reason = "writing to String cannot fail"
+)]
 pub fn format_human_terse_duration(d: chrono::Duration) -> String {
     let total_secs = d.num_seconds();
 

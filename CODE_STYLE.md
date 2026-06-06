@@ -222,7 +222,7 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 
 | Term | Meaning | Examples in code |
 |------|---------|-----------------|
-| **file** | A single loaded `.nvd` file; maps to one `LoadedFile`. | `FileIdx`, `FileNode`, `fi` |
+| **file** | A single loaded `.gtd` file; maps to one `LoadedFile`. | `FileIdx`, `FileNode`, `fi` |
 | **track** | A contiguous GPS recording within a file (what the user calls a "track"). | `LoadedTrack`, `TrackIdx`, `TrackRef`, `ti` |
 | **point** | A single data point within a track. | `PointIdx`, `SpatialPoint`, `pi` |
 | **track ref** (`TrackRef`) | Typed (file-index, track-index) pair that uniquely addresses a track. Fields: `fi: FileIdx`, `index: TrackIdx`. | `TrackRef::new(fi, ti)` |

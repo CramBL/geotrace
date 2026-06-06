@@ -205,7 +205,7 @@ class Annotation:
 
 @final
 class Meta:
-    """Optional file-level metadata for a ``.nvd`` file.
+    """Optional file-level metadata for a ``.gtd`` file.
 
     Args:
         title: File title, or ``None``.
@@ -383,7 +383,7 @@ class EventMarkerPoint:
 
 @final
 class NavFile:
-    """A parsed ``.nvd`` navigation data file.
+    """A parsed ``.gtd`` navigation data file.
 
     Construct via :meth:`NavFileBuilder.finish` to write, or
     :meth:`NavFile.open` to read.
@@ -391,16 +391,16 @@ class NavFile:
 
     @staticmethod
     def open(path: StrPath) -> NavFile:
-        """Open and parse a ``.nvd`` file at *path*."""
+        """Open and parse a ``.gtd`` file at *path*."""
         ...
 
     @staticmethod
     def from_bytes(data: bytes) -> NavFile:
-        """Parse a ``.nvd`` file from raw bytes."""
+        """Parse a ``.gtd`` file from raw bytes."""
         ...
 
     def write_to_file(self, path: StrPath) -> None:
-        """Write this file to *path*. Appends ``.nvd`` if *path* has no extension."""
+        """Write this file to *path*. Appends ``.gtd`` if *path* has no extension."""
         ...
 
     def to_bytes(self) -> bytes:
@@ -444,7 +444,7 @@ class NavFileBuilder:
             .add(NavFix(lat=51.5, lon=-0.1, gps_time=...))
             .finish()
         )
-        nav_file.write_to_file("track.nvd")
+        nav_file.write_to_file("track.gtd")
 
     Calling :meth:`finish` consumes the builder; further method calls raise
     :class:`RuntimeError`.

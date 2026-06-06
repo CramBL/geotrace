@@ -42,7 +42,7 @@ builder.add(EventMarker(PowerEvent.Sleep, START + timedelta(seconds=115)))
 
 nav_file = builder.finish()
 
-out = Path(tempfile.gettempdir()) / "geotrace_event_markers_flat.nvd"
+out = Path(tempfile.gettempdir()) / "geotrace_event_markers_flat.gtd"
 nav_file.write_to_file(out)
 
 loaded = nav_file.__class__.open(out)

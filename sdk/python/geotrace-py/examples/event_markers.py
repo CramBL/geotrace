@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write and read back a .nvd file containing event markers.
+"""Write and read back a .gtd file containing event markers.
 
 Scenario: a device logs structured events alongside its GPS track.
 Each event has a slash-separated variant path that places it in a
@@ -65,7 +65,7 @@ builder.add_event_marker_style(
 
 nav_file = builder.finish()
 
-out = Path(tempfile.gettempdir()) / "geotrace_event_markers.nvd"
+out = Path(tempfile.gettempdir()) / "geotrace_event_markers.gtd"
 nav_file.write_to_file(out)
 
 loaded = nav_file.__class__.open(out)

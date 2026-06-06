@@ -33,7 +33,7 @@ mod tests {
     use geotrace_sdk::{Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix};
     use gt_history::{Database, RecordingMeta};
 
-    fn make_nvd(start_secs: i64, n: u32) -> Vec<u8> {
+    fn make_gtd(start_secs: i64, n: u32) -> Vec<u8> {
         let t0 = DateTime::from_timestamp(start_secs, 0).expect("valid timestamp");
         let mut sink = NavFileBuilder::new().open();
         for i in 0..n {
@@ -61,7 +61,7 @@ mod tests {
     fn not_needed_when_under_limit() {
         let dir = tempfile::tempdir().expect("temp dir");
         let mut db = Database::open_or_create(&dir.path().join("h.h5")).expect("db");
-        let bytes = make_nvd(1_000_000, 2);
+        let bytes = make_gtd(1_000_000, 2);
         insert(&mut db, "dev", &bytes);
 
         let outcome = run(&mut db, bytes.len() as u64 * 10, false).expect("run");
@@ -82,8 +82,8 @@ mod tests {
     fn prunes_silently_when_over_limit() {
         let dir = tempfile::tempdir().expect("temp dir");
         let mut db = Database::open_or_create(&dir.path().join("h.h5")).expect("db");
-        let bytes_a = make_nvd(1_000_000, 2);
-        let bytes_b = make_nvd(2_000_000, 2);
+        let bytes_a = make_gtd(1_000_000, 2);
+        let bytes_b = make_gtd(2_000_000, 2);
         insert(&mut db, "dev", &bytes_a);
         insert(&mut db, "dev", &bytes_b);
         let total = bytes_a.len() as u64 + bytes_b.len() as u64;
@@ -105,8 +105,8 @@ mod tests {
     fn returns_candidates_when_confirm_true() {
         let dir = tempfile::tempdir().expect("temp dir");
         let mut db = Database::open_or_create(&dir.path().join("h.h5")).expect("db");
-        let bytes_a = make_nvd(1_000_000, 2);
-        let bytes_b = make_nvd(2_000_000, 2);
+        let bytes_a = make_gtd(1_000_000, 2);
+        let bytes_b = make_gtd(2_000_000, 2);
         insert(&mut db, "dev", &bytes_a);
         insert(&mut db, "dev", &bytes_b);
         let total = bytes_a.len() as u64 + bytes_b.len() as u64;
@@ -128,8 +128,8 @@ mod tests {
     fn prunes_all_when_limit_is_zero() {
         let dir = tempfile::tempdir().expect("temp dir");
         let mut db = Database::open_or_create(&dir.path().join("h.h5")).expect("db");
-        let bytes_a = make_nvd(1_000_000, 2);
-        let bytes_b = make_nvd(2_000_000, 2);
+        let bytes_a = make_gtd(1_000_000, 2);
+        let bytes_b = make_gtd(2_000_000, 2);
         insert(&mut db, "dev", &bytes_a);
         insert(&mut db, "dev", &bytes_b);
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write a basic .nvd file from a hardcoded GPS track.
+"""Write a basic .gtd file from a hardcoded GPS track.
 
 This example shows the minimal workflow: create a NavFileBuilder,
 add a series of NavFix objects, call finish(), and write to disk.
@@ -46,6 +46,6 @@ for i, (lat, lon, heading, speed) in enumerate(TRACK):
 
 nav_file = builder.finish()
 
-out = Path(tempfile.gettempdir()) / "write_basic.nvd"
+out = Path(tempfile.gettempdir()) / "write_basic.gtd"
 nav_file.write_to_file(out)
 print(f"Written {len(nav_file.points)} nav points to {out}")

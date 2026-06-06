@@ -4,12 +4,12 @@ use gt_history::{Database, RecordingMeta};
     clippy::expect_used,
     reason = "test helper; panicking on I/O failure is the right behaviour"
 )]
-/// Build a minimal NVD file and return its raw bytes.
+/// Build a minimal GTD file and return its raw bytes.
 ///
 /// The file has a single `nav_points/time` dataset with `n` entries starting
 /// at `start_us`.  All other data groups (sat_reports, markers, event_markers)
 /// are absent so their counts default to zero.
-fn make_nvd_bytes(start_us: i64, n: u64) -> Vec<u8> {
+fn make_gtd_bytes(start_us: i64, n: u64) -> Vec<u8> {
     let tmp = tempfile::NamedTempFile::new().expect("temp file");
     let timestamps: Vec<i64> = (0..n).map(|i| start_us + i as i64).collect();
     let shape = [n];
@@ -20,9 +20,9 @@ fn make_nvd_bytes(start_us: i64, n: u64) -> Vec<u8> {
     ds.with_shape(&shape);
     ds.with_i64_data(&timestamps);
     fb.add_group(nav_gb.finish());
-    fb.write(tmp.path()).expect("write temp nvd");
+    fb.write(tmp.path()).expect("write temp gtd");
 
-    std::fs::read(tmp.path()).expect("read temp nvd")
+    std::fs::read(tmp.path()).expect("read temp gtd")
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn insert_creates_recording_group() {
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
-    let bytes = make_nvd_bytes(1_000_000, 10);
+    let bytes = make_gtd_bytes(1_000_000, 10);
     let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("parse meta");
     let db_ref = db.insert("test_device", &meta, &bytes).expect("insert");
 
@@ -112,7 +112,7 @@ fn insert_duplicate_returns_same_group_name() {
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
-    let bytes = make_nvd_bytes(2_000_000, 5);
+    let bytes = make_gtd_bytes(2_000_000, 5);
     let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("parse meta");
 
     let first = db.insert("device_a", &meta, &bytes).expect("first insert");
@@ -140,8 +140,8 @@ fn insert_different_identities_are_independent() {
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
-    let bytes_a = make_nvd_bytes(3_000_000, 8);
-    let bytes_b = make_nvd_bytes(4_000_000, 12);
+    let bytes_a = make_gtd_bytes(3_000_000, 8);
+    let bytes_b = make_gtd_bytes(4_000_000, 12);
     let meta_a = RecordingMeta::from_gtd_bytes(&bytes_a).expect("meta a");
     let meta_b = RecordingMeta::from_gtd_bytes(&bytes_b).expect("meta b");
 
@@ -162,7 +162,7 @@ fn is_duplicate_matches_only_exact_meta() {
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
-    let bytes = make_nvd_bytes(5_000_000, 20);
+    let bytes = make_gtd_bytes(5_000_000, 20);
     let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("parse meta");
 
     assert!(
@@ -204,7 +204,7 @@ fn nav_point_data_round_trips() {
     let n = 5_u64;
     let expected: Vec<i64> = (0..n as i64).map(|i| start_us + i).collect();
 
-    let bytes = make_nvd_bytes(start_us, n);
+    let bytes = make_gtd_bytes(start_us, n);
     let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("parse meta");
     let db_ref = db.insert("round_trip_test", &meta, &bytes).expect("insert");
 
@@ -232,8 +232,8 @@ fn list_recordings_returns_entries_sorted_descending() {
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
-    let bytes_a = make_nvd_bytes(1_000, 3);
-    let bytes_b = make_nvd_bytes(2_000, 5);
+    let bytes_a = make_gtd_bytes(1_000, 3);
+    let bytes_b = make_gtd_bytes(2_000, 5);
     let meta_a = RecordingMeta::from_gtd_bytes(&bytes_a).expect("meta a");
     let meta_b = RecordingMeta::from_gtd_bytes(&bytes_b).expect("meta b");
 
@@ -264,7 +264,7 @@ fn delete_removes_recording() {
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
-    let bytes = make_nvd_bytes(3_000, 4);
+    let bytes = make_gtd_bytes(3_000, 4);
     let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("meta");
     let db_ref = db.insert("dev", &meta, &bytes).expect("insert");
 
@@ -291,7 +291,7 @@ fn delete_nonexistent_is_noop() {
 }
 
 #[test]
-fn load_nvd_bytes_round_trips_nav_point_timestamps() {
+fn load_gtd_bytes_round_trips_nav_point_timestamps() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
@@ -300,11 +300,11 @@ fn load_nvd_bytes_round_trips_nav_point_timestamps() {
     let n = 6_u64;
     let expected: Vec<i64> = (0..n as i64).map(|i| start_us + i).collect();
 
-    let bytes = make_nvd_bytes(start_us, n);
+    let bytes = make_gtd_bytes(start_us, n);
     let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("meta");
     let db_ref = db.insert("reload_test", &meta, &bytes).expect("insert");
 
-    let loaded_bytes = db.load_nvd_bytes(&db_ref).expect("load_nvd_bytes");
+    let loaded_bytes = db.load_gtd_bytes(&db_ref).expect("load_gtd_bytes");
     let loaded_file = hdf5_pure::File::from_bytes(loaded_bytes).expect("parse loaded bytes");
     let times = loaded_file
         .group("nav_points")
@@ -322,7 +322,7 @@ fn prune_by_count_keeps_most_recent() {
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
     for i in 0..5_u64 {
-        let bytes = make_nvd_bytes((i * 1_000_000) as i64, 2);
+        let bytes = make_gtd_bytes((i * 1_000_000) as i64, 2);
         let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("meta");
         db.insert("dev", &meta, &bytes).expect("insert");
     }
@@ -339,8 +339,8 @@ fn prune_by_total_size_removes_oldest_first() {
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
-    let bytes_a = make_nvd_bytes(1_000, 2);
-    let bytes_b = make_nvd_bytes(2_000, 2);
+    let bytes_a = make_gtd_bytes(1_000, 2);
+    let bytes_b = make_gtd_bytes(2_000, 2);
     let meta_a = RecordingMeta::from_gtd_bytes(&bytes_a).expect("meta a");
     let meta_b = RecordingMeta::from_gtd_bytes(&bytes_b).expect("meta b");
 
@@ -367,9 +367,9 @@ fn delete_batch_removes_multiple_in_one_pass() {
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
-    let bytes_a = make_nvd_bytes(10_000, 2);
-    let bytes_b = make_nvd_bytes(20_000, 3);
-    let bytes_c = make_nvd_bytes(30_000, 4);
+    let bytes_a = make_gtd_bytes(10_000, 2);
+    let bytes_b = make_gtd_bytes(20_000, 3);
+    let bytes_c = make_gtd_bytes(30_000, 4);
     let meta_a = RecordingMeta::from_gtd_bytes(&bytes_a).expect("meta a");
     let meta_b = RecordingMeta::from_gtd_bytes(&bytes_b).expect("meta b");
     let meta_c = RecordingMeta::from_gtd_bytes(&bytes_c).expect("meta c");
@@ -392,7 +392,7 @@ fn open_with_older_schema_version_migrates_data() {
     // Create a db then manually lower the schema_version to simulate an older file.
     {
         let mut db = Database::open_or_create(&db_path).expect("create");
-        let bytes = make_nvd_bytes(7_000_000, 3);
+        let bytes = make_gtd_bytes(7_000_000, 3);
         let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("meta");
         db.insert("dev", &meta, &bytes).expect("insert");
     }
@@ -425,7 +425,7 @@ fn open_with_older_schema_version_migrates_data() {
 
 #[test]
 fn meta_end_us_and_size_bytes_are_populated() {
-    let bytes = make_nvd_bytes(5_000, 10);
+    let bytes = make_gtd_bytes(5_000, 10);
     let meta = RecordingMeta::from_gtd_bytes(&bytes).expect("meta");
 
     assert_eq!(meta.start_us, 5_000);

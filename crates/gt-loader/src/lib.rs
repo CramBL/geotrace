@@ -1,7 +1,7 @@
 mod error;
 pub use error::LoadError;
 
-/// Derive a stable grouping identity from NVD file metadata.
+/// Derive a stable grouping identity from GTD file metadata.
 ///
 /// Priority:
 /// 1. Explicit SDK-supplied identity - returned as-is.
@@ -130,7 +130,7 @@ pub fn load_bytes_with_progress(
     let (points, markers, event_markers, event_marker_styles) = from_nav_file(&nav_file)?;
     let load_warnings = satellite_warnings_from_nav_file(&nav_file);
     progress(0.90, STAGE_SEGMENTING);
-    let source = FileSource::NvdBytes(Arc::from(bytes));
+    let source = FileSource::GtdBytes(Arc::from(bytes));
     let identity = derive_identity(
         nav_file.meta().identity.as_deref(),
         nav_file.meta().title.as_deref(),

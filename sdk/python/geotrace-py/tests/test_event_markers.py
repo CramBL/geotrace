@@ -148,7 +148,7 @@ def test_event_marker_style_round_trips(tmp_path: Path) -> None:
         EventMarkerStyle("sensor/gps", icon=MarkerIcon.CHECK, color="#FF0000")
     )
     f = b.finish()
-    path = tmp_path / "style_roundtrip.nvd"
+    path = tmp_path / "style_roundtrip.gtd"
     f.write_to_file(path)
     from geotrace_sdk import NavFile
 

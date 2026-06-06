@@ -42,7 +42,7 @@ builder.add(EventMarker(DiagEvent.shutdown, START + timedelta(seconds=110)))
 
 nav_file = builder.finish()
 
-out = Path(tempfile.gettempdir()) / "geotrace_event_markers_skip.nvd"
+out = Path(tempfile.gettempdir()) / "geotrace_event_markers_skip.gtd"
 nav_file.write_to_file(out)
 
 loaded = nav_file.__class__.open(out)

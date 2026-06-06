@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write a .nvd file that includes satellite visibility reports.
+"""Write a .gtd file that includes satellite visibility reports.
 
 Each nav fix is paired with a satellite report captured at the same moment.
 The builder associates each report to the nearest fix within the default
@@ -79,7 +79,7 @@ for secs, lat, lon, heading, speed, eph in FIXES:
 
 nav_file = builder.finish()
 
-out = Path(tempfile.gettempdir()) / "with_satellites.nvd"
+out = Path(tempfile.gettempdir()) / "with_satellites.gtd"
 nav_file.write_to_file(out)
 
 in_fix_count = sum(

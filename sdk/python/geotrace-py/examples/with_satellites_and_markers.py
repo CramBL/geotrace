@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write a .nvd file with satellite reports and custom map annotations.
+"""Write a .gtd file with satellite reports and custom map annotations.
 
 Scenario: a field test drive where the engineer annotates points of interest
 (a pothole, a speed-camera location, a junction) while the GPS and satellite
@@ -102,7 +102,7 @@ for secs, label, icon in ANNOTATIONS:
 
 nav_file = builder.finish()
 
-out = Path(tempfile.gettempdir()) / "with_satellites_and_markers.nvd"
+out = Path(tempfile.gettempdir()) / "with_satellites_and_markers.gtd"
 nav_file.write_to_file(out)
 
 print(f"Written to {out}")

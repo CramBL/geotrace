@@ -15,7 +15,7 @@ fn base_time() -> DateTime<Utc> {
     DateTime::from_timestamp(1_748_000_000, 0).expect("fixed timestamp is valid")
 }
 
-fn minimal_nvd_bytes() -> Vec<u8> {
+fn minimal_gtd_bytes() -> Vec<u8> {
     let mut sink = NavFileBuilder::new().open();
     let t0 = base_time();
     let t1 = t0 + Duration::seconds(60);
@@ -59,10 +59,10 @@ fn step_until_loaded(harness: &mut Harness<App>) {
 }
 
 #[test]
-fn drag_drop_nvd_path_loads_file() {
-    let nvd_bytes = minimal_nvd_bytes();
+fn drag_drop_gtd_path_loads_file() {
+    let gtd_bytes = minimal_gtd_bytes();
     let tmp = tempfile::NamedTempFile::with_suffix(".gtd").expect("create temp file");
-    std::io::Write::write_all(&mut tmp.as_file(), &nvd_bytes).expect("write temp nvd");
+    std::io::Write::write_all(&mut tmp.as_file(), &gtd_bytes).expect("write temp gtd");
     let tmp_path = tmp.path().to_path_buf();
 
     let mut harness = Harness::builder()
@@ -79,14 +79,14 @@ fn drag_drop_nvd_path_loads_file() {
 }
 
 #[test]
-fn drag_drop_nvd_bytes_loads_file() {
-    let nvd_bytes = minimal_nvd_bytes();
+fn drag_drop_gtd_bytes_loads_file() {
+    let gtd_bytes = minimal_gtd_bytes();
 
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(|cc| App::new_with_config(cc, &[], None));
     harness.input_mut().dropped_files.push(egui::DroppedFile {
-        bytes: Some(Arc::from(nvd_bytes.as_slice())),
+        bytes: Some(Arc::from(gtd_bytes.as_slice())),
         name: "test.gtd".to_owned(),
         ..Default::default()
     });

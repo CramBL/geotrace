@@ -27,7 +27,6 @@ const SCHEMA_VERSION_ATTR: &str = "schema_version";
 /// | Fletcher32 checksum | ✅ supported |
 /// | SWMR (concurrent read + write) | ✅ supported (0.7+), not applicable here |
 /// | Free-space management (space reclaim on delete) | ❌ not supported |
-/// | zstd codec | ❌ not supported |
 ///
 /// SWMR is designed for 1D append-only datasets; it does not help the
 /// read-modify-write pattern used here.  Write exclusion via a lock file
@@ -49,7 +48,7 @@ pub struct RecordingMeta {
     pub sat_report_count: u64,
     pub marker_count: u64,
     pub event_marker_count: u64,
-    /// Size of the original NVD bytes at import time.
+    /// Size of the original GTD bytes at import time.
     pub gtd_size_bytes: u64,
 }
 
@@ -114,9 +113,9 @@ impl PruneMode {
 }
 
 impl RecordingMeta {
-    /// Extract recording metadata from raw NVD file bytes.
+    /// Extract recording metadata from raw GTD file bytes.
     ///
-    /// The bytes must be a valid NVD/HDF5 file.  Returns an error if the
+    /// The bytes must be a valid GTD/HDF5 file.  Returns an error if the
     /// file is corrupt or does not contain nav-point data.
     pub fn from_gtd_bytes(bytes: &[u8]) -> Result<Self, DbError> {
         let file = hdf5_pure::File::from_bytes(bytes.to_vec())?;
@@ -312,15 +311,15 @@ impl Database {
     /// If the recording already exists (same `identity` and `meta`), returns the
     /// `DatabaseRef` of the existing entry without inserting a duplicate.
     ///
-    /// The `nvd_bytes` must be the complete serialised NVD/HDF5 file; the data
+    /// The `gtd_bytes` must be the complete serialised GTD/HDF5 file; the data
     /// groups are re-encoded as native HDF5 datasets with deflate compression.
     pub fn insert(
         &mut self,
         identity: &str,
         meta: &RecordingMeta,
-        nvd_bytes: &[u8],
+        gtd_bytes: &[u8],
     ) -> Result<DatabaseRef, DbError> {
-        copy::insert_recording(&self.path, identity, meta, nvd_bytes).map(|rec_name| DatabaseRef {
+        copy::insert_recording(&self.path, identity, meta, gtd_bytes).map(|rec_name| DatabaseRef {
             identity: identity.to_owned(),
             group_name: rec_name,
         })
@@ -367,11 +366,11 @@ impl Database {
         copy::delete_recording(&self.path, &db_ref.identity, &db_ref.group_name)
     }
 
-    /// Read a recording back out of the database as NVD-format bytes.
+    /// Read a recording back out of the database as GTD-format bytes.
     ///
     /// The returned bytes can be passed to `spawn_gtd_bytes` to load the
     /// recording into the app without re-reading the original source file.
-    pub fn load_nvd_bytes(&self, db_ref: &DatabaseRef) -> Result<Vec<u8>, DbError> {
+    pub fn load_gtd_bytes(&self, db_ref: &DatabaseRef) -> Result<Vec<u8>, DbError> {
         copy::load_recording_bytes(&self.path, &db_ref.identity, &db_ref.group_name)
     }
 
@@ -537,7 +536,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         // Build a minimal GTD file with known attrs AND an extra unknown attr
-        // (`meta_future_field`) that simulates a new NVD field added later.
+        // (`meta_future_field`) that simulates a new GTD field added later.
         // All of them must survive the round-trip unchanged.
         let gtd_path = dir.path().join("source.gtd");
         {
@@ -564,7 +563,7 @@ mod tests {
 
         // Load back and verify all root attributes survived the round-trip,
         // including the unrecognised future field.
-        let loaded_bytes = db.load_nvd_bytes(&db_ref).unwrap();
+        let loaded_bytes = db.load_gtd_bytes(&db_ref).unwrap();
         let loaded_file = hdf5_pure::File::from_bytes(loaded_bytes).unwrap();
         let attrs = loaded_file.root().attrs().unwrap();
         assert_eq!(
@@ -580,13 +579,13 @@ mod tests {
         assert_eq!(
             attrs.get("meta_future_field"),
             Some(&AttrValue::String("preserved".into())),
-            "unrecognised NVD root attrs must survive the round-trip without being listed explicitly"
+            "unrecognised GTD root attrs must survive the round-trip without being listed explicitly"
         );
     }
 
     #[test]
     fn history_round_trip_legacy_missing_version_gets_fallback() {
-        // Simulate a recording stored by old code that did not preserve NVD root
+        // Simulate a recording stored by old code that did not preserve GTD root
         // attrs: load_recording_bytes should fall back to geotrace_version="1".
         let dir = tempfile::tempdir().unwrap();
 
@@ -612,7 +611,7 @@ mod tests {
         let meta = RecordingMeta::from_gtd_bytes(&gtd_bytes).unwrap();
         let db_ref = db.insert("test-identity", &meta, &gtd_bytes).unwrap();
 
-        let loaded_bytes = db.load_nvd_bytes(&db_ref).unwrap();
+        let loaded_bytes = db.load_gtd_bytes(&db_ref).unwrap();
         let loaded_file = hdf5_pure::File::from_bytes(loaded_bytes).unwrap();
         let attrs = loaded_file.root().attrs().unwrap();
         assert_eq!(

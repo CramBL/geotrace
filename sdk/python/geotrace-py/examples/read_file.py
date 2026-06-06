@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Read and print a summary of a .nvd file.
+"""Read and print a summary of a .gtd file.
 
 Usage:
-    python read_file.py <path-to-file.nvd>
+    python read_file.py <path-to-file.gtd>
 
 If no path is supplied the script first runs write_basic.py to produce a
 temp file, then reads that.
@@ -54,7 +54,7 @@ if __name__ == "__main__":
     if len(sys.argv) >= 2:
         summarise(Path(sys.argv[1]))
     else:
-        demo_path = Path(tempfile.gettempdir()) / "write_basic.nvd"
+        demo_path = Path(tempfile.gettempdir()) / "write_basic.gtd"
         if not demo_path.exists():
             script = Path(__file__).parent / "write_basic.py"
             subprocess.run([sys.executable, str(script)], check=True)

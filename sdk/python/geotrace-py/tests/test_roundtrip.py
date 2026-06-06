@@ -1,4 +1,4 @@
-"""Round-trip tests: write a .nvd file then read it back and verify the data."""
+"""Round-trip tests: write a .gtd file then read it back and verify the data."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ T1 = datetime(2024, 6, 1, 9, 1, 0, tzinfo=UTC)
 T2 = datetime(2024, 6, 1, 9, 2, 0, tzinfo=UTC)
 
 
-def _write_and_read(builder: NavFileBuilder, suffix: str = ".nvd") -> NavFile:
+def _write_and_read(builder: NavFileBuilder, suffix: str = ".gtd") -> NavFile:
     """Serialise to a temp file and re-open it."""
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
         path = f.name
@@ -159,7 +159,7 @@ def test_roundtrip_to_bytes() -> None:
     data = nav_file.to_bytes()
     assert len(data) > 0
 
-    with tempfile.NamedTemporaryFile(suffix=".nvd", delete=False) as f:
+    with tempfile.NamedTemporaryFile(suffix=".gtd", delete=False) as f:
         f.write(data)
         path = f.name
     try:
@@ -172,4 +172,4 @@ def test_roundtrip_to_bytes() -> None:
 
 def test_open_missing_file_raises() -> None:
     with pytest.raises(OSError):
-        NavFile.open("/nonexistent/path/that/does/not/exist.nvd")
+        NavFile.open("/nonexistent/path/that/does/not/exist.gtd")

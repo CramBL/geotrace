@@ -1,4 +1,4 @@
-"""Python bindings for geotrace-sdk - read and write .nvd navigation data files.
+"""Python bindings for geotrace-sdk - read and write .gtd navigation data files.
 
 Quick start - writing a track::
 
@@ -13,13 +13,13 @@ Quick start - writing a track::
         heading=90.0,
     ))
     nav_file = builder.finish()
-    nav_file.write_to_file("track.nvd")
+    nav_file.write_to_file("track.gtd")
 
 Quick start - reading a file::
 
     from geotrace_sdk import NavFile
 
-    nav_file = NavFile.open("track.nvd")
+    nav_file = NavFile.open("track.gtd")
     for point in nav_file.points:
         print(point.lat, point.lon, point.gps_time)
 """

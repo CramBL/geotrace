@@ -211,10 +211,10 @@ impl Default for AssociationConfig {
 /// re-processing when association settings change.
 #[derive(Debug, Clone)]
 pub enum FileSource {
-    /// Loaded from a path on disk (NVD file).
+    /// Loaded from a path on disk (GTD file).
     GtdPath(PathBuf),
-    /// Loaded from bytes delivered via drag-and-drop (NVD file).
-    NvdBytes(Arc<[u8]>),
+    /// Loaded from bytes delivered via drag-and-drop (GTD file).
+    GtdBytes(Arc<[u8]>),
     /// Loaded from a log file on disk.
     LogPath(PathBuf),
     /// Loaded from in-memory log text (e.g. dropped bytes decoded to UTF-8).
@@ -255,13 +255,13 @@ pub struct LoadedFile {
     pub load_warnings: Vec<LoadWarning>,
     /// Grouping key used by the history database.
     ///
-    /// For NVD files this is the explicit SDK-supplied identity or a value
-    /// derived from file metadata. For non-NVD sources (e.g. log files) it
+    /// For GTD files this is the explicit SDK-supplied identity or a value
+    /// derived from file metadata. For non-GTD sources (e.g. log files) it
     /// defaults to the filename.
     pub identity: String,
     /// Reference to the copy of this recording stored in the history database.
     ///
     /// `None` for files that were not imported (storage disabled, DB error, or
-    /// non-NVD sources such as log files).
+    /// non-GTD sources such as log files).
     pub db_ref: Option<DatabaseRef>,
 }

@@ -29,7 +29,7 @@ impl Default for Settings {
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct StorageSettings {
-    /// When `false`, NVD files are not automatically stored in the history
+    /// When `false`, GTD files are not automatically stored in the history
     /// database on load.  Existing data is not affected.
     pub enabled: bool,
     /// When `true`, the oldest recordings are automatically pruned after each

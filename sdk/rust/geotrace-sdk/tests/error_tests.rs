@@ -6,7 +6,7 @@ fn base() -> DateTime<Utc> {
     DateTime::from_timestamp(1_748_000_000, 0).expect("valid")
 }
 
-fn minimal_nvd_bytes() -> Vec<u8> {
+fn minimal_gtd_bytes() -> Vec<u8> {
     let t = base();
     let mut sink = NavFileBuilder::new().open();
     sink.add_nav_fix(
@@ -61,9 +61,9 @@ fn read_truncated_hdf5_magic_returns_error() {
 }
 
 #[test]
-fn valid_nvd_round_trips_without_error() {
-    let bytes = minimal_nvd_bytes();
-    let nav_file = NavFile::read(bytes.as_slice()).expect("valid .nvd bytes must parse");
+fn valid_gtd_round_trips_without_error() {
+    let bytes = minimal_gtd_bytes();
+    let nav_file = NavFile::read(bytes.as_slice()).expect("valid .gtd bytes must parse");
     assert_eq!(nav_file.nav_points().len(), 2);
 }
 

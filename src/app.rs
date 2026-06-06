@@ -84,7 +84,7 @@ pub struct App {
     /// History database - `None` if the database could not be opened at startup.
     db: Option<gt_history::Database>,
 
-    /// When `false`, NVD files are not stored in the history database on load.
+    /// When `false`, GTD files are not stored in the history database on load.
     storage_enabled: bool,
     /// When `true`, the oldest recordings are pruned after each import if the
     /// total stored size exceeds `auto_prune_max_bytes`.
@@ -712,7 +712,7 @@ impl App {
     }
 
     /// Check whether auto-pruning is needed and either enqueue a confirmation
-    /// or prune silently.  Called after each successful NVD insert.
+    /// or prune silently.  Called after each successful GTD insert.
     fn check_auto_prune(&mut self) {
         if !self.auto_prune_enabled {
             return;
@@ -739,7 +739,7 @@ impl App {
     fn handle_history_action(&mut self, action: history::HistoryAction, ctx: &egui::Context) {
         let Some(db) = self.db.as_mut() else { return };
         match action {
-            history::HistoryAction::Open(db_ref) => match db.load_nvd_bytes(&db_ref) {
+            history::HistoryAction::Open(db_ref) => match db.load_gtd_bytes(&db_ref) {
                 Ok(bytes) => {
                     let filename = format!("{}/{}", db_ref.identity, db_ref.group_name);
                     self.loader

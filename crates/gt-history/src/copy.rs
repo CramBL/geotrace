@@ -71,11 +71,11 @@ macro_rules! write_dataset_into {
 }
 
 /// Returns true for attribute keys that belong to the database's recording
-/// metadata (as opposed to NVD file-format root attributes).
+/// metadata (as opposed to GTD file-format root attributes).
 ///
-/// Used as a denylist when reconstructing an NVD file from stored data: every
-/// attribute on the recording group that is NOT a DB attr is treated as an NVD
-/// root attribute and written back to the file root.  New NVD root attributes
+/// Used as a denylist when reconstructing an GTD file from stored data: every
+/// attribute on the recording group that is NOT a DB attr is treated as an GTD
+/// root attribute and written back to the file root.  New GTD root attributes
 /// are therefore preserved automatically without touching this function.
 fn is_db_recording_attr(key: &str) -> bool {
     matches!(
@@ -155,12 +155,12 @@ fn snapshot_by_identity(file: &hdf5_pure::File) -> Result<Vec<GroupNode>, DbErro
 }
 
 fn build_new_recording(
-    nvd_file: &hdf5_pure::File,
+    gtd_file: &hdf5_pure::File,
     rec_name: &str,
     meta: &RecordingMeta,
     identity: &str,
 ) -> Result<GroupNode, DbError> {
-    let nvd_root = nvd_file.root();
+    let gtd_root = gtd_file.root();
     let mut rec = GroupNode {
         name: rec_name.to_owned(),
         attrs: vec![
@@ -192,15 +192,15 @@ fn build_new_recording(
         groups: Vec::new(),
     };
 
-    for grp_name in nvd_root.groups()? {
-        let data_src = nvd_root.group(&grp_name)?;
+    for grp_name in gtd_root.groups()? {
+        let data_src = gtd_root.group(&grp_name)?;
         rec.groups.push(snapshot_group(&data_src, &grp_name)?);
     }
 
-    // Preserve all NVD root attributes so they are restored when the recording
+    // Preserve all GTD root attributes so they are restored when the recording
     // is loaded back.  Copying unconditionally means new attributes added to the
-    // NVD format are carried through without any change to this function.
-    for (k, v) in nvd_root.attrs()? {
+    // GTD format are carried through without any change to this function.
+    for (k, v) in gtd_root.attrs()? {
         rec.attrs.push((k, v));
     }
 
@@ -250,7 +250,7 @@ pub(crate) fn insert_recording(
     db_path: &std::path::Path,
     identity: &str,
     meta: &RecordingMeta,
-    nvd_bytes: &[u8],
+    gtd_bytes: &[u8],
 ) -> Result<String, DbError> {
     let existing_db = hdf5_pure::File::open(db_path)?;
 
@@ -283,9 +283,9 @@ pub(crate) fn insert_recording(
         .unwrap_or_default();
     let rec_name = make_group_name(meta.start_us, meta.total_count(), &existing_for_identity);
 
-    // Build the new recording node from the NVD file.
-    let nvd_file = hdf5_pure::File::from_bytes(nvd_bytes.to_vec())?;
-    let new_recording = build_new_recording(&nvd_file, &rec_name, meta, identity)?;
+    // Build the new recording node from the GTD file.
+    let gtd_file = hdf5_pure::File::from_bytes(gtd_bytes.to_vec())?;
+    let new_recording = build_new_recording(&gtd_file, &rec_name, meta, identity)?;
 
     // Insert or create the identity group.
     match identity_nodes.iter_mut().find(|n| n.name == identity) {
@@ -347,7 +347,7 @@ pub(crate) fn delete_recording(
     Ok(())
 }
 
-/// Read a recording back from the database and return it as NVD-format bytes.
+/// Read a recording back from the database and return it as GTD-format bytes.
 pub(crate) fn load_recording_bytes(
     db_path: &std::path::Path,
     identity: &str,
@@ -359,12 +359,12 @@ pub(crate) fn load_recording_bytes(
     let rec_grp = id_grp.group(group_name)?;
 
     // Snapshot all child data groups (nav_points, sat_reports, etc.) and
-    // write them as a fresh NVD-format HDF5 file.
+    // write them as a fresh GTD-format HDF5 file.
     let mut fb = FileBuilder::new();
 
-    // Restore NVD root attributes.  Every attr on the recording group that is
-    // not a DB-internal field is an NVD root attr and belongs on the file root.
-    // Using a denylist (rather than an allowlist) means new NVD attrs are
+    // Restore GTD root attributes.  Every attr on the recording group that is
+    // not a DB-internal field is an GTD root attr and belongs on the file root.
+    // Using a denylist (rather than an allowlist) means new GTD attrs are
     // restored automatically.  Fall back to geotrace_version="1" for recordings
     // stored by older code that predates attr preservation.
     let rec_attrs = rec_grp.attrs()?;

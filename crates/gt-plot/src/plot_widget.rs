@@ -379,7 +379,7 @@ pub fn show_track_plot(
     if visible_count == 0 {
         ui.centered_and_justified(|ui| {
             ui.label(
-                egui::RichText::new("Load a .nvd file to see track metrics")
+                egui::RichText::new("Load a .gtd file to see track metrics")
                     .weak()
                     .italics(),
             );

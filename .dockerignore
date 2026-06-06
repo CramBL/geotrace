@@ -9,7 +9,6 @@ sdk/python/geotrace-py/uv.lock
 tests/tmp/
 .git/
 docs/
-*.nvd
 *.gtd
 *.md
 !README.md
