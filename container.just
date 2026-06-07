@@ -1,12 +1,53 @@
 IMAGE := "geotrace-dev"
 SDK_IMAGE := "geotrace-sdk-dev"
+CACHE_DIR := ".just-cache/images"
 
+# Replace with this when just stabilizes 'which'
+# RUNNER := if which("podman") != "" { "podman" } else if which("docker") != "" { "docker" } else { error("neither docker nor podman found; install one to use container recipes") }
 [private]
 RUNNER := `if command -v podman >/dev/null 2>&1; then printf "podman"; elif command -v docker >/dev/null 2>&1; then printf "docker"; fi`
 
 [private]
 _require-runner:
     @[ -n "{{ RUNNER }}" ] || { echo "error: neither docker nor podman found; install one to use container recipes" >&2; exit 1; }
+
+[private]
+_do-build-image: _require-runner
+    {{ RUNNER }} build --target rust-dev -t {{ IMAGE }} .
+
+[private]
+_do-build-sdk-image: _require-runner
+    {{ RUNNER }} build --target sdk-dev -t {{ SDK_IMAGE }} .
+
+[private]
+_build_if_needed IMAGE BUILD_RECIPE:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    [[ "{{ path_exists(CACHE_DIR) }}" == "true" ]] || mkdir -p "{{ CACHE_DIR }}"
+    STAMP="{{ CACHE_DIR }}/{{ IMAGE }}.stamp"
+
+    CURRENT_TIME="{{ datetime_utc('%s') }}"
+    BUILD_NEEDED=0
+    # Image exist locally?
+    if ! {{ RUNNER }} image inspect {{ IMAGE }} >/dev/null 2>&1; then
+        BUILD_NEEDED=1
+    # Dockerfile modified since last build?
+    elif [[ Dockerfile -nt "$STAMP" ]]; then
+        BUILD_NEEDED=1
+    # Cache older than 30 days (2,592,000 seconds)?
+    else
+        read -r LAST_BUILD < "$STAMP" || LAST_BUILD=0
+        if (( CURRENT_TIME - LAST_BUILD > 2592000 )); then
+            BUILD_NEEDED=1
+        fi
+    fi
+
+    if [[ "$BUILD_NEEDED" -eq 1 ]]; then
+        echo "{{ YELLOW }}Building {{ IMAGE }}{{ NORMAL }} (Cache missed, modified, or expired)"
+        {{ just_executable() }} {{ BUILD_RECIPE }}
+        echo "${CURRENT_TIME}" > "${STAMP}"
+    fi
 
 # Podman requires userns=keep-id to map host rootless volumes correctly.
 USER_ARGS := if RUNNER == "podman" { "--userns=keep-id" } else { "--user $(id -u):$(id -g)" }
@@ -29,6 +70,7 @@ COMMON_RUN_ARGS := "--rm --init " + USER_ARGS + " \
     -w /workspace"
 
 # Run a command inside the Rust dev container, or directly if already in one.
+[no-exit-message]
 [private]
 _dev *args:
     #!/usr/bin/env bash
@@ -39,6 +81,7 @@ _dev *args:
     {{ RUNNER }} run {{ COMMON_RUN_ARGS }} {{ IMAGE }} {{ args }}
 
 # Run a command inside the SDK dev container (adds cmake build volumes), or directly if already in one.
+[no-exit-message]
 [private]
 _sdk *args:
     #!/usr/bin/env bash
@@ -60,13 +103,11 @@ dev-shell-sdk: _require-runner
 
 # Build the Rust dev image (stage 1).
 [group("images")]
-build-image: _require-runner
-    {{ RUNNER }} build --target rust-dev -t {{ IMAGE }} .
+build-image: (_build_if_needed IMAGE "_do-build-image")
 
 # Build the SDK dev image (stage 2 - extends the Rust image).
 [group("images")]
-build-sdk-image: _require-runner
-    {{ RUNNER }} build --target sdk-dev -t {{ SDK_IMAGE }} .
+build-sdk-image: build-image (_build_if_needed SDK_IMAGE "_do-build-sdk-image")
 
 # Build both images.
 [group("images")]

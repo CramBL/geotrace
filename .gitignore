@@ -30,3 +30,6 @@ cmake_install.cmake
 Makefile
 install_manifest.txt
 compile_commands.json
+
+# Just is becoming GNU Make here because the podman/docker caching is painfully slow
+.just-cache
