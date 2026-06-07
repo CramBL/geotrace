@@ -1,5 +1,8 @@
 # GeoTrace
 
+> [!WARNING]
+> **Pre-Alpha Status:** This project is in early development. It is highly experimental, prone to bugs or breaking changes, and **not yet ready for general usage**.
+
 GeoTrace is a desktop application for visualizing GPS/GNSS navigation data.
 It reads `.gtd` recording files and renders Time-Position-Velocity traces on an interactive map with satellite signal quality overlays, event markers, and filtering tools.
 
