@@ -40,6 +40,17 @@ use egui::Context;
 /// small number (≤ ~0.05 for any visible point), so no large-magnitude
 /// arithmetic occurs anywhere. The final cast to f32 is applied only to the
 /// already-small screen coordinate, where f32 ULP < 0.001 px.
+/// Wrap a longitude in degrees into `Longitude`'s valid `[-180, 180]` range.
+///
+/// At low zoom the viewport can span more than 360° of longitude, so the
+/// pixel column at the viewport centre may sit past the antimeridian wrap and
+/// `Projector::unproject` returns e.g. 185° instead of the equivalent -175°.
+/// Longitude is periodic with period 360°, so the wrapped value names the same
+/// meridian and is the correct input for [`Longitude::new`].
+fn wrap_longitude_degrees(deg: f64) -> f64 {
+    ((deg + 180.0).rem_euclid(360.0)) - 180.0
+}
+
 pub(crate) struct MercTransform {
     clip_center_x: f64,
     clip_center_y: f64,
@@ -64,8 +75,13 @@ impl MercTransform {
         // viewport centre using f64 arithmetic throughout.
         // In walkers: Position.x() = longitude, Position.y() = latitude.
         let center_ll = projector.unproject(clip_center.to_vec2());
-        let merc_center =
-            mercator::normalize(Latitude::new(center_ll.y()), Longitude::new(center_ll.x()));
+        // Latitude from `unproject` is always within ±90° (it comes from
+        // `atan`), but longitude can land outside ±180° - see
+        // `wrap_longitude_degrees`.
+        let merc_center = mercator::normalize(
+            Latitude::new(center_ll.y()),
+            Longitude::new(wrap_longitude_degrees(center_ll.x())),
+        );
         Self {
             clip_center_x: clip_center.x as f64,
             clip_center_y: clip_center.y as f64,
@@ -571,7 +587,19 @@ impl NavMap {
         let map = if is_offline {
             Map::new(None, &mut self.map_memory, walkers::lat_lon(55.676, 12.565))
         } else {
-            let use_mapbox = self.layer == MapLayer::Satellite && self.mapbox_tiles.is_some();
+            // Mapbox serves 512px tiles, and walkers' `tile_id` adjusts the
+            // integer zoom level by `log2(tile_size / 256)` - 1 for 512px
+            // tiles - by plain `u8` subtraction with no underflow check
+            // (walkers 0.53.0 `mercator::tile_id`, src/mercator.rs:50). That
+            // panics with "attempt to subtract with overflow" once the zoom
+            // rounds down to 0, i.e. once it drops below 0.5. OSM's 256px
+            // tiles need no adjustment (`log2(256/256) == 0`) and so are
+            // immune at any zoom. Stay on OSM with enough margin below that
+            // line that no single frame's zoom delta can cross it.
+            const MAPBOX_MIN_SAFE_ZOOM: f64 = 2.0;
+            let use_mapbox = self.layer == MapLayer::Satellite
+                && self.mapbox_tiles.is_some()
+                && self.map_memory.zoom() >= MAPBOX_MIN_SAFE_ZOOM;
             if use_mapbox {
                 let tiles: Option<&mut dyn walkers::Tiles> = self.mapbox_tiles.as_mut().map(|t| {
                     let r: &mut dyn walkers::Tiles = t;
@@ -1448,6 +1476,42 @@ mod tests {
                 tracks: vec![TrackVisibility::all_visible()],
             }],
         }
+    }
+
+    /// Asserts `a` and `b` are within `1e-9` of each other - tight enough to
+    /// catch a wrong wrap while tolerating ordinary `f64` rounding noise.
+    fn assert_deg_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9, "expected {a} ≈ {b}");
+    }
+
+    /// Regression test: values already inside `Longitude`'s range must pass
+    /// through unchanged (the wrap must be a no-op for ordinary positions).
+    #[test]
+    fn wrap_longitude_degrees_is_identity_in_range() {
+        for deg in [-180.0, -179.999, -90.0, 0.0, 12.5638, 90.0, 179.999] {
+            assert_deg_close(wrap_longitude_degrees(deg), deg);
+        }
+    }
+
+    /// Regression test: longitudes past the antimeridian - as `unproject` can
+    /// return at low zoom - must wrap to the equivalent meridian inside
+    /// `Longitude`'s `[-180, 180]` range rather than panic in `Longitude::new`.
+    #[test]
+    fn wrap_longitude_degrees_wraps_past_antimeridian() {
+        assert_deg_close(
+            wrap_longitude_degrees(195.925_437_518_683_45),
+            -164.074_562_481_316_55,
+        );
+        assert_deg_close(
+            wrap_longitude_degrees(184.015_191_562_275_4),
+            -175.984_808_437_724_6,
+        );
+        // A full extra revolution must wrap back to the same meridian.
+        assert_deg_close(wrap_longitude_degrees(540.0), wrap_longitude_degrees(180.0));
+        assert_deg_close(
+            wrap_longitude_degrees(-541.0),
+            wrap_longitude_degrees(-181.0),
+        );
     }
 
     /// Regression test: a point in a visible track must be hoverable.
