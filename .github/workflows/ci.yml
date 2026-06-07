@@ -51,7 +51,7 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
         with:
-          tool: just,nextest
+          tool: nextest
 
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -66,7 +66,7 @@ jobs:
           echo "WGPU_BACKEND=gl" >> "$GITHUB_ENV"
 
       - name: Check formatting
-        run: just fmt-check
+        run: cargo fmt --all --check
 
       - name: Clippy
         run: |
@@ -74,13 +74,20 @@ jobs:
           cargo clippy --workspace --no-deps --tests -- -D warnings
 
       - name: Type-check
-        run: just check
+        run: cargo check
 
       - name: Tests
-        run: just test --profile ci
+        run: cargo nextest run --workspace --profile ci
+        env:
+          GEOTRACE_OFFLINE: 1
 
       - name: Examples
-        run: just examples
+        run: bash scripts/examples.sh
 
       - name: QA checks
-        run: just qa::qa-lint qa::check-em-dash qa::check-floating-comments
+        run: |
+          uv run --project scripts/qa ruff check scripts/qa/src
+          uv run --project scripts/qa mypy --strict scripts/qa/src
+          uv run --project scripts/qa check-em-dash
+          uv run --project scripts/qa check-floating-comments
+          uv run --project scripts/qa check-narrative-comments
