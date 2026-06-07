@@ -13,7 +13,7 @@ snapshot = ["dep:egui", "dep:egui_kittest", "dep:tempfile", "dep:eframe"]
 chrono.workspace = true
 eframe = { workspace = true, optional = true }
 egui = { workspace = true, optional = true }
-egui_kittest = { version = "0.34.3", features = ["wgpu", "snapshot"], optional = true }
+egui_kittest = { workspace = true, optional = true }
 geo.workspace = true
 geo-types.workspace = true
 gt-types = { path = "../gt-types" }
