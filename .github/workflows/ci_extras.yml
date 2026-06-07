@@ -50,7 +50,7 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
         with:
-          tool: just,typos,cargo-sort,cargo-shear,zizmor
+          tool: just,typos,cargo-sort,cargo-shear,cargo-msrv,zizmor
 
       - name: Install cargo-pup
         run: cargo +nightly-2026-01-22 install cargo_pup
@@ -66,6 +66,9 @@ jobs:
 
       - name: Architecture (cargo-pup)
         run: just pup
+
+      - name: Check MSRV
+        run: just msrv
 
       - name: Vulnerability scan (osv-scanner)
         run: just osv-scanner
