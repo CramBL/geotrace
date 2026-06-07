@@ -10,7 +10,6 @@ use crate::types::{
 };
 use crate::variant_path::EventKind;
 
-//
 // User-supplied `NavFix` and `SatelliteReport` structs carry `DateTime<Utc>` for
 // public-API simplicity.  Immediately on intake the builder converts them into
 // these internal types so that all internal processing distinguishes GPS-receiver
@@ -19,7 +18,6 @@ use crate::variant_path::EventKind;
 // The final output (`NavPoint` / `NavFile`) converts back to the public types with
 // plain `DateTime<Utc>` fields so downstream callers (`gt-io`, external readers)
 // see no change.
-
 /// Builder-internal representation of a nav fix with typed clock domains.
 struct InternalFix {
     gps_time: Option<GpsTime>,

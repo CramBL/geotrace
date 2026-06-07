@@ -28,8 +28,6 @@
 //! | `build`          | O(n)          | O(n)       |
 //! | `select_slice`   | O(log n)      | O(1)       |
 
-use std::cmp::Ordering;
-
 use egui_plot::PlotPoint;
 
 /// Minimum number of points in a mipmap level.
@@ -128,9 +126,18 @@ impl MipMap {
     /// the lifetime of `&self`.
     /// Pass it to [`egui_plot::PlotPoints::Borrowed`] for zero-copy rendering.
     pub fn select_slice(&self, x_min: f64, x_max: f64, target_count: usize) -> &[PlotPoint] {
-        let idx = self.select_level_idx(x_min, x_max, target_count);
-        let level = self.levels.get(idx).map_or(&[][..], Vec::as_slice);
-        clip_to_range(level, x_min, x_max)
+        let (level_idx, inner_start, inner_end) =
+            self.select_level_bounds(x_min, x_max, target_count);
+        let level = self.levels.get(level_idx).map_or(&[][..], Vec::as_slice);
+        let start = inner_start.saturating_sub(1);
+        let end = (inner_end + 1).min(level.len());
+        // `start` and `end` are derived from `partition_point` results on this
+        // same level, clamped to `0..=level.len()`, so the slice is in bounds.
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "start and end are partition_point results clamped to 0..=level.len()"
+        )]
+        &level[start..end]
     }
 
     /// Compute a `LevelSelection` that records which level and which sub-range
@@ -148,10 +155,9 @@ impl MipMap {
         if self.levels.is_empty() {
             return LevelSelection::default();
         }
-        let level_idx = self.select_level_idx(x_min, x_max, target_count);
+        let (level_idx, inner_start, inner_end) =
+            self.select_level_bounds(x_min, x_max, target_count);
         let level = self.levels.get(level_idx).map_or(&[][..], Vec::as_slice);
-        let inner_start = level.partition_point(|p| p.x < x_min);
-        let inner_end = level.partition_point(|p| p.x <= x_max);
         let clip_start = inner_start.saturating_sub(1);
         let clip_end = (inner_end + 1).min(level.len());
         LevelSelection {
@@ -182,17 +188,35 @@ impl MipMap {
         &level[start..end]
     }
 
-    /// Index of the coarsest level with enough points in `[x_min, x_max]`.
-    /// Returns `0` (finest) when no level meets the target.
-    fn select_level_idx(&self, x_min: f64, x_max: f64, target_count: usize) -> usize {
+    /// Find the coarsest level with enough points in `[x_min, x_max]`, and
+    /// return `(level_idx, inner_start, inner_end)` where `inner_start`/
+    /// `inner_end` are that level's `partition_point` bounds for the range.
+    ///
+    /// Returning the bounds alongside the index lets [`Self::select_slice`]
+    /// and [`Self::select_indices`] reuse them directly instead of repeating
+    /// the same two binary searches on the chosen level.
+    ///
+    /// Falls back to `(0, inner_start, inner_end)` for the finest level when
+    /// no level meets the target - the reverse iteration always visits level 0
+    /// last, so its bounds are already on hand to serve as that fallback.
+    fn select_level_bounds(
+        &self,
+        x_min: f64,
+        x_max: f64,
+        target_count: usize,
+    ) -> (usize, usize, usize) {
         // Try from coarsest → finest; use the coarsest level that is dense
         // enough for the target count in the visible range.
+        let mut bounds = (0, 0, 0);
         for (i, level) in self.levels.iter().enumerate().rev() {
-            if count_in_range(level, x_min, x_max) >= target_count {
-                return i;
+            let inner_start = level.partition_point(|p| p.x < x_min);
+            let inner_end = level.partition_point(|p| p.x <= x_max);
+            bounds = (i, inner_start, inner_end);
+            if inner_end.saturating_sub(inner_start) >= target_count {
+                return bounds;
             }
         }
-        0
+        bounds
     }
 }
 
@@ -205,28 +229,19 @@ impl MipMap {
 fn downsample(data: &[PlotPoint]) -> Vec<PlotPoint> {
     let mut out = Vec::with_capacity(data.len() / DOWNSAMPLE_WINDOW * 2 + 2);
     for chunk in data.chunks(DOWNSAMPLE_WINDOW) {
-        let Some(min_pt) = chunk
-            .iter()
-            .min_by(|a, b| a.y.partial_cmp(&b.y).unwrap_or(Ordering::Equal))
-        else {
+        let Some(min_pt) = chunk.iter().min_by(|a, b| a.y.total_cmp(&b.y)) else {
             continue;
         };
-        let Some(max_pt) = chunk
-            .iter()
-            .max_by(|a, b| a.y.partial_cmp(&b.y).unwrap_or(Ordering::Equal))
-        else {
+        let Some(max_pt) = chunk.iter().max_by(|a, b| a.y.total_cmp(&b.y)) else {
             continue;
         };
 
         // Emit in chronological order so the rendered line follows the
         // correct time direction and the max/min shape is preserved.
-        #[expect(
-            clippy::float_cmp,
-            reason = "comparing time coordinates that came from the same source data; \
-                      NaN-free and exact equality is intentional to detect same-point min/max"
-        )]
-        if min_pt.x == max_pt.x {
-            // Same timestamp - one representative point.
+        // Compare by identity rather than `x` equality: a vertical line (two
+        // distinct points sharing one timestamp) must still emit both ends.
+        if std::ptr::eq(min_pt, max_pt) {
+            // Same point - one representative.
             out.push(*min_pt);
         } else if min_pt.x < max_pt.x {
             out.push(*min_pt);
@@ -237,33 +252,6 @@ fn downsample(data: &[PlotPoint]) -> Vec<PlotPoint> {
         }
     }
     out
-}
-
-/// Count points in `data` (sorted by x) within the closed interval `[x_min, x_max]`.
-fn count_in_range(data: &[PlotPoint], x_min: f64, x_max: f64) -> usize {
-    let start = data.partition_point(|p| p.x < x_min);
-    let end = data.partition_point(|p| p.x <= x_max);
-    end.saturating_sub(start)
-}
-
-/// Return the sub-slice of `data` that covers `[x_min, x_max]`, extended by
-/// one point on each side when those neighbors exist.
-///
-/// The extra neighbor points keep the rendered line connected to the data that
-/// lies just outside the visible viewport, preventing the line from appearing
-/// as a disconnected segment at the viewport edges.
-fn clip_to_range(data: &[PlotPoint], x_min: f64, x_max: f64) -> &[PlotPoint] {
-    let inner_start = data.partition_point(|p| p.x < x_min);
-    let inner_end = data.partition_point(|p| p.x <= x_max);
-    let start = inner_start.saturating_sub(1);
-    let end = (inner_end + 1).min(data.len());
-    // `start` and `end` are derived from `partition_point` results clamped to
-    // `0..=data.len()`, so the slice is always in bounds.
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "start and end are partition_point results clamped to 0..=data.len()"
-    )]
-    &data[start..end]
 }
 
 #[cfg(test)]
@@ -354,7 +342,6 @@ mod tests {
     // visible range.  Without that, egui_plot draws the line only between the
     // points that fall inside the viewport, producing a visually disconnected
     // segment instead of a continuous line.
-
     fn int_data(n: usize) -> Vec<[f64; 2]> {
         (0..n).map(|i| [i as f64, i as f64]).collect()
     }
@@ -425,5 +412,94 @@ mod tests {
             "must not include out-of-range right points"
         );
         assert!(slice.last().is_some_and(|p| p.x as i64 == 49));
+    }
+
+    /// Smallest input length for which `MipMap::build` is guaranteed to append
+    /// a real downsampled level as `levels[1]`, regardless of the current
+    /// values of `MIN_LEVEL_POINTS` / `DOWNSAMPLE_WINDOW`.
+    fn cascading_input_len() -> usize {
+        MIN_LEVEL_POINTS * DOWNSAMPLE_WINDOW
+    }
+
+    /// Guards against using `min_pt.x == max_pt.x` to detect "min and max are
+    /// the same point": a vertical line - two distinct points that share a
+    /// timestamp but have different `y` values - also satisfies that
+    /// equality, so the comparison wrongly collapses both ends down to one
+    /// and silently drops the other.
+    #[test]
+    fn vertical_line_min_and_max_both_survive_downsampling() {
+        let n = cascading_input_len();
+        let mut data: Vec<[f64; 2]> = (0..n).map(|i| [i as f64, i as f64]).collect();
+
+        // Plant a vertical line - two distinct points sharing one timestamp,
+        // far outside the background range - in the second window so they
+        // become that window's unique min and max.
+        let t = DOWNSAMPLE_WINDOW;
+        data[t] = [t as f64, 1.0e6]; // spike: this window's max
+        data[t + 1] = [t as f64, -1.0e6]; // dip: this window's min, same timestamp
+
+        let m = MipMap::build(data);
+        assert!(
+            m.level_count() >= 2,
+            "a {n}-point input must produce a downsampled level (got {})",
+            m.level_count()
+        );
+
+        let downsampled = &m.levels[1];
+        #[expect(
+            clippy::float_cmp,
+            reason = "checking that planted constants survive the pipeline by \
+                      copy, bit-for-bit - exact equality is intentional"
+        )]
+        {
+            assert!(
+                downsampled.iter().any(|p| p.y == 1.0e6),
+                "spike lost: a vertical line's max must survive downsampling even \
+                 though min and max share a timestamp"
+            );
+            assert!(
+                downsampled.iter().any(|p| p.y == -1.0e6),
+                "dip lost: a vertical line's min must survive downsampling even \
+                 though min and max share a timestamp"
+            );
+        }
+    }
+
+    /// Guards against using `partial_cmp(...).unwrap_or(Ordering::Equal)` to
+    /// rank `y` values: `partial_cmp` returns `None` for any comparison
+    /// involving NaN, which the `unwrap_or` turns into `Equal`. A NaN that
+    /// becomes `min_by`'s running accumulator then compares `Equal` to every
+    /// later candidate, so `min_by` keeps it as the "winner" forever and the
+    /// window's genuine minimum never displaces it.
+    #[test]
+    fn nan_does_not_corrupt_min_tracking() {
+        let n = cascading_input_len();
+        let mut data: Vec<[f64; 2]> = (0..n).map(|i| [i as f64, 0.0]).collect();
+
+        // Place NaN as the first element of a window and a genuine dip later
+        // in the same window so the corruption above would manifest.
+        let t = DOWNSAMPLE_WINDOW;
+        data[t] = [t as f64, f64::NAN];
+        data[t + 3] = [(t + 3) as f64, -1.0e6]; // this window's genuine min
+
+        let m = MipMap::build(data);
+        assert!(
+            m.level_count() >= 2,
+            "a {n}-point input must produce a downsampled level (got {})",
+            m.level_count()
+        );
+
+        let downsampled = &m.levels[1];
+        #[expect(
+            clippy::float_cmp,
+            reason = "checking that a planted constant survives the pipeline by \
+                      copy, bit-for-bit - exact equality is intentional"
+        )]
+        {
+            assert!(
+                downsampled.iter().any(|p| p.y == -1.0e6),
+                "dip lost: a NaN sample elsewhere in the window must not corrupt min-tracking"
+            );
+        }
     }
 }
