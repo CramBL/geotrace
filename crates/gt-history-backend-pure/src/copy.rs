@@ -1,3 +1,9 @@
+use crate::matches_attrs;
+use gt_types::history::{
+    ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
+    ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION, DbError,
+    RecordingMeta, SCHEMA_VERSION_ATTR, is_db_recording_attr, make_group_name,
+};
 /// Internal read-modify-write machinery for the history database.
 ///
 /// `hdf5_pure::GroupBuilder` is not publicly exported by name. This module
@@ -5,12 +11,6 @@
 /// owned Rust types, manipulating that tree, then writing the whole thing to a
 /// new `FileBuilder` in one pass.
 use hdf5_pure::{AttrValue, DType, FileBuilder};
-use gt_types::history::{
-    DbError, RecordingMeta, ATTR_IDENTITY, ATTR_START_US, ATTR_END_US, ATTR_NAV_POINT_COUNT,
-    ATTR_SAT_REPORT_COUNT, ATTR_MARKER_COUNT, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES,
-    CURRENT_SCHEMA_VERSION, SCHEMA_VERSION_ATTR, is_db_recording_attr, make_group_name,
-};
-use crate::matches_attrs;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -93,7 +93,6 @@ macro_rules! write_dataset_into {
 }
 
 /// Write `identity_nodes` (the full `by_identity` tree) to a new database file at `db_path`.
-
 fn snapshot_group(src: &hdf5_pure::Group<'_>, name: &str) -> Result<GroupNode, InternalError> {
     let mut node = GroupNode {
         name: name.to_owned(),
@@ -181,7 +180,10 @@ fn build_new_recording(
                 ATTR_SAT_REPORT_COUNT.to_owned(),
                 AttrValue::U64(meta.sat_report_count),
             ),
-            (ATTR_MARKER_COUNT.to_owned(), AttrValue::U64(meta.marker_count)),
+            (
+                ATTR_MARKER_COUNT.to_owned(),
+                AttrValue::U64(meta.marker_count),
+            ),
             (
                 ATTR_EVENT_MARKER_COUNT.to_owned(),
                 AttrValue::U64(meta.event_marker_count),
@@ -260,16 +262,18 @@ pub(crate) fn insert_recording(
     // Check for duplicate; return existing name if found.
     {
         let root = existing_db.root();
-        if let Ok(by_id) = root.group("by_identity")
-            && let Ok(id_grp) = by_id.group(identity)
-        {
-            for rec_name in id_grp.groups()? {
-                if let Ok(rec_grp) = id_grp.group(&rec_name)
-                    && let Ok(attrs) = rec_grp.attrs()
-                    && matches_attrs(meta, &attrs)
-                {
-                    log::debug!("Skipping duplicate recording '{identity}/{rec_name}'");
-                    return Ok(rec_name);
+        if let Ok(by_id) = root.group("by_identity") {
+            for id_name in by_id.groups()? {
+                if let Ok(id_grp) = by_id.group(&id_name) {
+                    for rec_name in id_grp.groups()? {
+                        if let Ok(rec_grp) = id_grp.group(&rec_name)
+                            && let Ok(attrs) = rec_grp.attrs()
+                            && matches_attrs(meta, &attrs)
+                        {
+                            log::debug!("Skipping duplicate recording '{id_name}/{rec_name}'");
+                            return Ok(rec_name);
+                        }
+                    }
                 }
             }
         }

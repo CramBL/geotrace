@@ -63,7 +63,10 @@ smallvec = { version = "1", features = ["union"] }
 strum = { version = "0.28", features = ["derive"] }
 syn = "2"
 tempfile = "3"
+test-log = "0.2"
 thiserror = "2"
+parking_lot = "0.12"
+rstest = "0.26"
 uom = "0.38.0"
 vec1 = "1"
 walkers = "0.53.0"

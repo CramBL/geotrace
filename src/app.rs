@@ -174,12 +174,10 @@ impl App {
         // `None` and is populated by `sync_db_path` (called from
         // `apply_startup_settings`) only in non-test builds.
         #[cfg(not(test))]
-        let db = match gt_history::default_path()
-            .and_then(|p| {
-                use gt_history::HistoryDatabase;
-                gt_history::Database::open_or_create(&p)
-            })
-        {
+        let db = match gt_history::default_path().and_then(|p| {
+            use gt_history::HistoryDatabase;
+            gt_history::Database::open_or_create(&p)
+        }) {
             Ok(db) => Some(db),
             Err(e) => {
                 log::error!("Failed to open history database: {e}");

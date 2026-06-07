@@ -1,6 +1,6 @@
+use crate::DatabaseRef;
 use std::path::Path;
 use thiserror::Error;
-use crate::DatabaseRef;
 
 pub const CURRENT_SCHEMA_VERSION: i64 = 0;
 pub const SCHEMA_VERSION_ATTR: &str = "schema_version";
@@ -143,7 +143,12 @@ pub trait HistoryDatabase {
     fn open_or_create(path: &Path) -> Result<Self, DbError>
     where
         Self: Sized;
-    fn insert(&mut self, identity: &str, meta: &RecordingMeta, bytes: &[u8]) -> Result<DatabaseRef, DbError>;
+    fn insert(
+        &mut self,
+        identity: &str,
+        meta: &RecordingMeta,
+        bytes: &[u8],
+    ) -> Result<DatabaseRef, DbError>;
     fn delete(&mut self, db_ref: &DatabaseRef) -> Result<(), DbError>;
     fn load_bytes(&self, db_ref: &DatabaseRef) -> Result<Vec<u8>, DbError>;
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError>;
@@ -165,14 +170,14 @@ pub fn format_count_suffix(n: u64) -> String {
     }
     if n < 1_000_000 {
         let tenths = (n * 10 + 500) / 1_000;
-        return if tenths % 10 == 0 {
+        return if tenths.is_multiple_of(10) {
             format!("{}k", tenths / 10)
         } else {
             format!("{}.{}k", tenths / 10, tenths % 10)
         };
     }
     let tenths = (n * 10 + 500_000) / 1_000_000;
-    if tenths % 10 == 0 {
+    if tenths.is_multiple_of(10) {
         format!("{}m", tenths / 10)
     } else {
         format!("{}.{}m", tenths / 10, tenths % 10)

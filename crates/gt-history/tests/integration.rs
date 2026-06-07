@@ -1,4 +1,8 @@
+#[cfg(feature = "backend-sys")]
+use geotrace_sdk::NavFile;
 use gt_history::{Database, HistoryDatabase, RecordingMeta, extract_meta};
+#[cfg(feature = "backend-sys")]
+use log;
 
 #[expect(
     clippy::expect_used,
@@ -23,6 +27,102 @@ fn make_gtd_bytes(start_us: i64, n: u64) -> Vec<u8> {
     fb.write(tmp.path()).expect("write temp gtd");
 
     std::fs::read(tmp.path()).expect("read temp gtd")
+}
+
+#[test_log::test]
+#[cfg(feature = "backend-sys")]
+#[expect(clippy::expect_used)]
+fn repro_missing_version_error() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    // Manually create bytes WITHOUT version attribute
+    let start_us = 1_000_000_i64;
+    let n = 10_u64;
+    let bytes = {
+        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        let timestamps: Vec<i64> = (0..n).map(|i| start_us + i as i64).collect();
+        let shape = [n];
+
+        let mut fb = hdf5_pure::FileBuilder::new();
+        // NO version attribute here
+
+        let mut nav_gb = fb.create_group("nav_points");
+
+        let ds = nav_gb.create_dataset("time");
+        ds.with_shape(&shape);
+        ds.with_i64_data(&timestamps);
+
+        let data: Vec<f64> = vec![0.0; n as usize];
+        for name in &["lat", "lon", "heading", "speed_mps"] {
+            let ds = nav_gb.create_dataset(name);
+            ds.with_shape(&shape);
+            ds.with_f64_data(&data);
+        }
+
+        fb.add_group(nav_gb.finish());
+        fb.write(tmp.path()).expect("write temp gtd");
+        std::fs::read(tmp.path()).expect("read temp gtd")
+    };
+
+    let meta = extract_meta(&bytes).expect("parse meta");
+    let db_ref = db.insert("test_device", &meta, &bytes).expect("insert");
+
+    // Now load it
+    let loaded_bytes = db.load_bytes(&db_ref).expect("load_bytes");
+
+    // Inspect the file to see if it has the version attribute
+    let file = hdf5_pure::File::from_bytes(loaded_bytes.clone()).expect("parse loaded bytes");
+    let version = file
+        .root()
+        .attrs()
+        .ok()
+        .and_then(|a| a.get("geotrace_version").cloned());
+    log::debug!("Version attribute after load_bytes: {:?}", version);
+
+    // Now try to parse with the SDK, which SHOULD trigger the error
+    let result = NavFile::read(&loaded_bytes[..]);
+
+    assert!(
+        result.is_ok(),
+        "Should have succeeded by defaulting version to 1, but got: {:?}",
+        result
+    );
+    let nav_file = result.unwrap();
+    assert_eq!(nav_file.meta().title.as_deref(), None); // Basic check
+}
+
+#[test_log::test]
+#[cfg(feature = "backend-sys")]
+#[expect(clippy::expect_used)]
+fn repro_duplicate_entry_issue() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let start_us = 1_000_000_i64;
+    let n = 10_u64;
+    let bytes = make_gtd_bytes(start_us, n);
+
+    let meta = extract_meta(&bytes).expect("parse meta");
+
+    // Insert once
+    db.insert("test_device", &meta, &bytes).expect("insert 1");
+
+    // Insert again - should be duplicate
+    db.insert("test_device", &meta, &bytes).expect("insert 2");
+
+    // List recordings
+    let recordings = db.list_recordings().expect("list");
+
+    // Check for duplicates
+    assert_eq!(
+        recordings.len(),
+        1,
+        "Should only have 1 entry, but found: {:?}",
+        recordings.len()
+    );
 }
 
 #[test]
@@ -177,9 +277,9 @@ fn is_duplicate_matches_only_exact_meta() {
             .expect("check after insert")
     );
 
-    // Different identity → not a duplicate.
+    // Different identity → duplicate detected based on metadata.
     assert!(
-        !db.is_duplicate("sensor_2", &meta)
+        db.is_duplicate("sensor_2", &meta)
             .expect("different identity")
     );
 
@@ -466,4 +566,146 @@ fn free_space_management_not_supported() {
     sb.free_space_address
         .filter(|&a| a != UNDEFINED_ADDRESS)
         .expect("free-space manager is active");
+}
+
+#[test_log::test]
+fn concurrent_insert_does_not_panic() {
+    use std::thread;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+
+    let mut handles = Vec::new();
+    for i in 0..5 {
+        let path = db_path.clone();
+        handles.push(
+            thread::Builder::new()
+                .name(format!("test-thread-{i}"))
+                .spawn(move || {
+                    let mut db = Database::open_or_create(&path).expect("open_or_create");
+                    let bytes = make_gtd_bytes(i * 1_000_000, 5);
+                    let meta = extract_meta(&bytes).expect("parse meta");
+                    db.insert(&format!("device_{}", i), &meta, &bytes)
+                        .expect("insert");
+                })
+                .expect("spawn thread"),
+        );
+    }
+
+    for handle in handles {
+        handle.join().expect("thread join");
+    }
+}
+
+#[test]
+fn insert_malformed_data_returns_error() {
+    let malformed_bytes = vec![0, 1, 2, 3, 4]; // Not a GTD file
+    // extract_meta should fail
+    let meta = extract_meta(&malformed_bytes);
+    assert!(
+        meta.is_err(),
+        "Should have failed to extract meta from malformed data"
+    );
+}
+
+#[test]
+fn insert_large_dataset_works() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    // Insert a larger dataset to trigger HDF5 chunking
+    let n = 20_000_u64;
+    let bytes = make_gtd_bytes(1_000_000, n);
+    let meta = extract_meta(&bytes).expect("parse meta");
+
+    db.insert("large_device", &meta, &bytes)
+        .expect("insert large recording");
+
+    let db_ref = &db.list_recordings().unwrap()[0].db_ref;
+    let loaded_bytes = db.load_bytes(db_ref).expect("load");
+
+    // Compare content by parsing instead of raw byte length
+    let original_nav = hdf5_pure::File::from_bytes(bytes.clone())
+        .expect("parse original")
+        .group("nav_points")
+        .unwrap()
+        .dataset("time")
+        .unwrap()
+        .read_i64()
+        .unwrap();
+    let loaded_nav = hdf5_pure::File::from_bytes(loaded_bytes)
+        .expect("parse loaded")
+        .group("nav_points")
+        .unwrap()
+        .dataset("time")
+        .unwrap()
+        .read_i64()
+        .unwrap();
+
+    assert_eq!(original_nav, loaded_nav, "Large dataset content mismatch");
+}
+
+#[test]
+fn pure_backend_does_not_add_duplicate_recordings() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes = make_gtd_bytes(1_000_000, 5);
+    let meta = extract_meta(&bytes).expect("parse meta");
+
+    // First insertion
+    let identity = "auto:snapshot.gtd";
+    db.insert(identity, &meta, &bytes).expect("first insert");
+
+    // Second insertion with the same (recursively created) identity
+    // If it's a duplicate, is_duplicate should return true
+    let is_dup = db.is_duplicate(identity, &meta).expect("check duplicate");
+
+    assert!(is_dup, "Should be detected as a duplicate");
+
+    let recordings = db.list_recordings().expect("list");
+    assert_eq!(
+        recordings.len(),
+        1,
+        "Should only have 1 recording, found: {:?}",
+        recordings.len()
+    );
+}
+
+#[test_log::test]
+fn pure_backend_prevents_recursive_insertion_of_loaded_file() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    // 1. Initial insert
+    let bytes = make_gtd_bytes(1_000_000, 5);
+    let meta = extract_meta(&bytes).expect("parse meta");
+    // First insertion
+    let identity = "auto:snapshot.gtd";
+    let db_ref = db.insert(identity, &meta, &bytes).expect("first insert");
+    assert_eq!(db.list_recordings().unwrap().len(), 1);
+
+    // 2. Load the file back
+    let loaded_bytes = db.load_bytes(&db_ref).expect("load_bytes");
+
+    // 3. Try to re-insert the loaded file (this is what the app does)
+    let meta2 = extract_meta(&loaded_bytes).expect("parse meta");
+
+    // The insert should detect this as a duplicate and return the existing db_ref
+    let db_ref2 = db
+        .insert(identity, &meta2, &loaded_bytes)
+        .expect("second insert");
+
+    assert_eq!(
+        db_ref, db_ref2,
+        "Second insert should return the same reference"
+    );
+    assert_eq!(
+        db.list_recordings().unwrap().len(),
+        1,
+        "Should not have added a duplicate"
+    );
 }

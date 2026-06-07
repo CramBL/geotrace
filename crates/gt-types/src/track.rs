@@ -224,7 +224,7 @@ pub enum FileSource {
 /// A reference to a specific recording stored in the history database.
 ///
 /// Identifies the HDF5 group at `by_identity/{identity}/{group_name}`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabaseRef {
     pub identity: String,
     pub group_name: String,

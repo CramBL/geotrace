@@ -1,19 +1,19 @@
-use std::path::PathBuf;
-pub use gt_types::history::{
-    format_count_suffix, make_group_name, DbError, HistoryDatabase, PruneMode, RecordingEntry,
-    RecordingMeta,
-};
 pub use gt_types::DatabaseRef;
+pub use gt_types::history::{
+    DbError, HistoryDatabase, PruneMode, RecordingEntry, RecordingMeta, format_count_suffix,
+    make_group_name,
+};
+use std::path::PathBuf;
 
 // Compile and export the pure Rust implementation
 #[cfg(feature = "backend-pure")]
 pub mod pure_impl {
-    pub use gt_history_backend_pure::{extract_meta, PureDb};
+    pub use gt_history_backend_pure::{PureDb, extract_meta};
 }
 #[cfg(feature = "backend-pure")]
 pub type ActiveDb = pure_impl::PureDb;
 
-// Compile and export the C-backed implementation (placeholder)
+// Compile and export the C-backed implementation
 #[cfg(feature = "backend-sys")]
 pub mod sys_impl {
     pub use gt_history_backend_sys::SysDb;
@@ -41,4 +41,7 @@ pub fn default_path() -> Result<PathBuf, DbError> {
 
 /// Re-export helpers from the active backend.
 #[cfg(feature = "backend-pure")]
-pub use pure_impl::extract_meta;
+pub use gt_history_backend_pure::extract_meta;
+
+#[cfg(feature = "backend-sys")]
+pub use gt_history_backend_pure::extract_meta;

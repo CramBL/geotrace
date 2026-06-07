@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
-use gt_types::history::{DbError, HistoryDatabase, RecordingEntry, RecordingMeta};
 use gt_types::DatabaseRef;
+use gt_types::history::{DbError, HistoryDatabase, RecordingEntry, RecordingMeta};
+use std::path::{Path, PathBuf};
 
 pub struct SysDb {
     path: PathBuf,

@@ -12,3 +12,4 @@ gt-types = { path = "../gt-types" }
 hdf5-pure.workspace = true
 log.workspace = true
 thiserror.workspace = true
+parking_lot.workspace = true

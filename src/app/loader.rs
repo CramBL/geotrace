@@ -158,10 +158,10 @@ impl LoaderManager {
             .spawn(move || {
                 let r_tx = tx.clone();
                 let r_ctx = ctx.clone();
-                let report = move |frac: f32, stage: &'static str| {
+                let report = move |fraction: f32, stage: &'static str| {
                     r_tx.send(LoadMessage::Progress {
                         id,
-                        fraction: frac,
+                        fraction,
                         stage,
                     })
                     .ok();
@@ -250,8 +250,7 @@ impl LoaderManager {
                             ctx.request_repaint();
                             let series = gt_plot::prepare_file_series(0, &file);
                             let db_ref = db_path.as_deref().and_then(|p| {
-                                let meta =
-                                    gt_history::extract_meta(&bytes).ok()?;
+                                let meta = gt_history::extract_meta(&bytes).ok()?;
                                 use gt_history::HistoryDatabase;
                                 let mut db = gt_history::Database::open_or_create(p).ok()?;
                                 match db.insert(&file.identity, &meta, &bytes) {

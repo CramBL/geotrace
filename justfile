@@ -46,6 +46,13 @@ test *ARGS:
     GEOTRACE_OFFLINE=1 cargo nextest run --workspace {{ ARGS }}
 
 [group("native")]
+test-all-backends:
+    @echo "Running tests for pure backend"
+    GEOTRACE_OFFLINE=1 cargo nextest run -p gt-history --test integration --no-default-features --features backend-pure
+    @echo "Running tests for sys backend"
+    GEOTRACE_OFFLINE=1 cargo nextest run -p gt-history --test integration --no-default-features --features backend-sys
+
+[group("native")]
 test-snapshots *ARGS:
     GEOTRACE_OFFLINE=1 cargo nextest run --workspace -E "test(snapshot) or test(snap)" {{ ARGS }}
 

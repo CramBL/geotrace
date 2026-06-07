@@ -17,6 +17,13 @@ pub fn derive_identity(
     if let Some(id) = explicit {
         return id.to_owned();
     }
+
+    // If filename already starts with auto:, use it as-is or strip the prefix before reapplying.
+    // For simplicity, just use the provided filename if it's already "auto:".
+    if filename.starts_with("auto:") {
+        return filename.to_owned();
+    }
+
     match (title, device) {
         (Some(t), Some(d)) => format!("auto:{t}::{d}"),
         (Some(t), None) => format!("auto:{t}"),

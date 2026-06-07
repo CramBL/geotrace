@@ -1,6 +1,6 @@
 pub mod coordinates;
-pub mod history;
 pub mod highlight;
+pub mod history;
 pub mod markers;
 pub mod mercator;
 pub mod nav_point;
