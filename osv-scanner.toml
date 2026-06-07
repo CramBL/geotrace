@@ -1,3 +1,7 @@
 [[IgnoredVulns]]
 id = "RUSTSEC-2025-0141"
 reason = "No fix available; transitive dependency via walkers → http-cache-reqwest → http-cache → bincode"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+reason = "blocked by https://github.com/metno/hdf5-rust/pull/179"

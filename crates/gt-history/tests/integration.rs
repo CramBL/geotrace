@@ -294,7 +294,7 @@ fn is_duplicate_matches_only_exact_meta() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn nav_point_data_round_trips() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
@@ -708,4 +708,83 @@ fn pure_backend_prevents_recursive_insertion_of_loaded_file() {
         1,
         "Should not have added a duplicate"
     );
+}
+
+#[test]
+fn sys_backend_structural_parity_repro() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace_sys.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes = make_gtd_bytes(1_000_000, 5);
+    let meta = extract_meta(&bytes).expect("parse meta");
+
+    // Insert using the sys backend
+    let _db_ref = db.insert("device", &meta, &bytes).expect("insert");
+
+    // Attempt to verify structure using the hdf5-pure reader
+    // This is what the pure backend does. If sys backend is parity-compatible,
+    // this should work.
+    let file = hdf5_pure::File::open(&db_path).expect("open");
+    let root = file.root();
+
+    let by_id = root.group("by_identity").expect("by_identity missing");
+    let id_grp = by_id.group("device").expect("identity group missing");
+
+    let rec_names = id_grp.groups().expect("recording names missing");
+    assert!(!rec_names.is_empty(), "No recordings found under 'device'");
+
+    let rec_grp = id_grp
+        .group(&rec_names[0])
+        .expect("recording group missing");
+    assert!(
+        rec_grp.group("nav_points").is_ok(),
+        "nav_points group missing in sys-backend database"
+    );
+}
+
+#[test_log::test]
+#[cfg(feature = "backend-sys")]
+fn debug_sys_backend_structure() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes = make_gtd_bytes(1_000_000, 5);
+    let meta = extract_meta(&bytes).expect("parse meta");
+
+    let _db_ref = db.insert("device", &meta, &bytes).expect("insert");
+    let loaded_bytes = db.load_bytes(&_db_ref).expect("load_bytes");
+
+    let tmp_path = dir.path().join("reconstructed.h5");
+    std::fs::write(&tmp_path, loaded_bytes).expect("write");
+
+    let file = hdf5::File::open(&tmp_path).expect("parse loaded bytes");
+    println!("--- Root members ---");
+    for name in file.group("/").expect("root").member_names().unwrap() {
+        println!("Member: {}", name);
+    }
+}
+
+#[test]
+fn test_hdf5_pure_self_compatibility() {
+    let tmp = tempfile::NamedTempFile::new().expect("temp file");
+    let mut fb = hdf5_pure::FileBuilder::new();
+    fb.set_attr("version", hdf5_pure::AttrValue::String("1".into()));
+    fb.write(tmp.path()).expect("write");
+
+    let file = hdf5_pure::File::open(tmp.path()).expect("open pure");
+    file.root().attrs().unwrap();
+}
+
+#[test]
+fn test_hdf5_pure_file_openable_by_metno() {
+    let tmp = tempfile::NamedTempFile::new().expect("temp file");
+    let mut fb = hdf5_pure::FileBuilder::new();
+    fb.set_attr("version", hdf5_pure::AttrValue::String("1".into()));
+    fb.write(tmp.path()).expect("write");
+
+    // Try to open with hdf5 (metno)
+    let res = hdf5::File::open(tmp.path());
+    assert!(res.is_ok(), "Failed to open: {:?}", res.err());
 }

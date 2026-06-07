@@ -99,6 +99,7 @@ mod tests {
                     "mercator.*".into(),
                     "nav_point.*".into(),
                     "satellites.*".into(),
+                    "thiserror.*".into(),
                     "time_types.*".into(),
                     "track.*".into(),
                     "tpv.*".into(),
@@ -373,6 +374,7 @@ mod tests {
                     "thiserror.*".into(),
                     "crate.*".into(),
                     "gt_history.*".into(),
+                    "parking_lot.*".into(),
                 ]),
                 None,
             )
