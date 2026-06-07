@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 
 from qa._allow import is_exempt
-from qa._check import Violation, c_family_files, rs_files, run_check
+from qa._check import Violation, c_family_files, repo_root, rs_files, run_check
 
 CHECK = "check-narrative-comments"
 
@@ -63,4 +63,4 @@ def _collect(root: Path) -> list[Violation]:
 
 
 def main() -> None:
-    run_check(CHECK, "numbered narrative comments found", _collect(Path(".")), _NOTE, _HELP)
+    run_check(CHECK, "numbered narrative comments found", _collect(repo_root()), _NOTE, _HELP)

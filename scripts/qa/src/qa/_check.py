@@ -10,6 +10,18 @@ Violation = tuple[Path, int, str]
 _EXCLUDED = frozenset({"target", ".venv", "build"})
 
 
+def repo_root() -> Path:
+    """Repository root, resolved from this file's location rather than the
+    current working directory.
+
+    `just` runs recipes from imported submodules (such as this `qa` module)
+    with the submodule's directory as the working directory, not the repo
+    root or the invocation directory — so checks that scanned `Path(".")`
+    silently scanned `scripts/qa` instead of the repo, finding nothing.
+    """
+    return Path(__file__).resolve().parent.parent.parent.parent.parent
+
+
 def _is_excluded(path: Path) -> bool:
     return any(part in _EXCLUDED for part in path.parts)
 

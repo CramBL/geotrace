@@ -680,18 +680,14 @@ fn pure_backend_prevents_recursive_insertion_of_loaded_file() {
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
 
-    // 1. Initial insert
     let bytes = make_gtd_bytes(1_000_000, 5);
     let meta = extract_meta(&bytes).expect("parse meta");
-    // First insertion
     let identity = "auto:snapshot.gtd";
     let db_ref = db.insert(identity, &meta, &bytes).expect("first insert");
     assert_eq!(db.list_recordings().unwrap().len(), 1);
 
-    // 2. Load the file back
+    // Load the file back and try to re-insert it, as the app does on restart.
     let loaded_bytes = db.load_bytes(&db_ref).expect("load_bytes");
-
-    // 3. Try to re-insert the loaded file (this is what the app does)
     let meta2 = extract_meta(&loaded_bytes).expect("parse meta");
 
     // The insert should detect this as a duplicate and return the existing db_ref

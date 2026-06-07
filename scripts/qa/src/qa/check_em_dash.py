@@ -13,7 +13,14 @@ from itertools import chain
 from pathlib import Path
 
 from qa._allow import is_exempt
-from qa._check import Violation, c_family_files, hash_comment_files, rs_files, run_check
+from qa._check import (
+    Violation,
+    c_family_files,
+    hash_comment_files,
+    repo_root,
+    rs_files,
+    run_check,
+)
 
 CHECK = "check-em-dash"
 _EMDASH = re.compile(r"^\s*(//|#|/\*).*[─═]")
@@ -37,7 +44,7 @@ def main() -> None:
     run_check(
         CHECK,
         "em-dash / box-drawing section header comments found",
-        _collect(Path(".")),
+        _collect(repo_root()),
         _NOTE,
         _HELP,
     )
