@@ -154,7 +154,23 @@ impl Annotation {
 }
 
 /// Icon displayed for a map marker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `Display`/`FromStr` (via `strum`) give the lower snake_case wire form used by
+/// [`MarkerIcon::name`] and [`MarkerIcon::try_from_lower_case`] - the variant name
+/// and its string form are derived from a single definition, so adding, renaming,
+/// or removing a variant cannot desync the two.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::EnumIter,
+)]
+#[strum(serialize_all = "snake_case")]
 pub enum MarkerIcon {
     Pin,
     Cross,
@@ -212,44 +228,57 @@ impl MarkerIcon {
         }
     }
 
+    /// Lower snake_case wire form, e.g. `MarkerIcon::SatelliteLost.name() == "satellite_lost"`.
+    ///
+    /// Inverse of [`MarkerIcon::try_from_lower_case`]; both are derived from the
+    /// variant names via `strum`, so they always agree.
     pub(crate) fn name(self) -> &'static str {
-        match self {
-            MarkerIcon::Pin => "pin",
-            MarkerIcon::Cross => "cross",
-            MarkerIcon::Circle => "circle",
-            MarkerIcon::Lightning => "lightning",
-            MarkerIcon::Warning => "warning",
-            MarkerIcon::Error => "error",
-            MarkerIcon::Check => "check",
-            MarkerIcon::Satellite => "satellite",
-            MarkerIcon::SatelliteLost => "satellite_lost",
-            MarkerIcon::Gear => "gear",
-            MarkerIcon::Refresh => "refresh",
-            MarkerIcon::Download => "download",
-            MarkerIcon::Upload => "upload",
-            MarkerIcon::Wrench => "wrench",
+        self.into()
+    }
+
+    /// Parses the lower snake_case wire form produced by [`MarkerIcon::name`].
+    pub fn try_from_lower_case(s: impl AsRef<str>) -> Result<Self, Error> {
+        let s = s.as_ref();
+        // strum::ParseError carries no information beyond "no variant matched" -
+        // not worth threading through as a `source`.
+        s.parse()
+            .map_err(|_err: strum::ParseError| Error::UnknownMarkerIcon { name: s.to_owned() })
+    }
+}
+
+#[cfg(test)]
+mod marker_icon_tests {
+    use strum::IntoEnumIterator;
+
+    use super::*;
+
+    /// `name()`/`try_from_lower_case` are derived from the same variant list, so
+    /// every variant must round-trip through its wire form back to itself.
+    #[test]
+    fn name_and_try_from_lower_case_round_trip() {
+        for icon in MarkerIcon::iter() {
+            let wire = icon.name();
+            let parsed = MarkerIcon::try_from_lower_case(wire)
+                .unwrap_or_else(|err| panic!("{wire:?} should parse back to {icon:?}: {err}"));
+            assert_eq!(parsed, icon);
         }
     }
 
-    pub fn try_from_lower_case(s: impl AsRef<str>) -> Result<Self, Error> {
-        let s = s.as_ref();
-        match s {
-            "pin" => Ok(MarkerIcon::Pin),
-            "cross" => Ok(MarkerIcon::Cross),
-            "circle" => Ok(MarkerIcon::Circle),
-            "lightning" => Ok(MarkerIcon::Lightning),
-            "warning" => Ok(MarkerIcon::Warning),
-            "error" => Ok(MarkerIcon::Error),
-            "check" => Ok(MarkerIcon::Check),
-            "satellite" => Ok(MarkerIcon::Satellite),
-            "satellite_lost" => Ok(MarkerIcon::SatelliteLost),
-            "gear" => Ok(MarkerIcon::Gear),
-            "refresh" => Ok(MarkerIcon::Refresh),
-            "download" => Ok(MarkerIcon::Download),
-            "upload" => Ok(MarkerIcon::Upload),
-            "wrench" => Ok(MarkerIcon::Wrench),
-            _ => Err(Error::UnknownMarkerIcon { name: s.to_owned() }),
-        }
+    /// The wire form is part of the on-disk `.gtd` format
+    /// (`Annotation::icon`/`EventMarkerIconChoice::Icon`); pin it down so a
+    /// rename of a variant - which would silently change `strum`'s derived
+    /// snake_case form - is caught here rather than at file-read time.
+    #[test]
+    fn name_is_stable_wire_form() {
+        assert_eq!(MarkerIcon::Pin.name(), "pin");
+        assert_eq!(MarkerIcon::SatelliteLost.name(), "satellite_lost");
+        assert_eq!(MarkerIcon::Wrench.name(), "wrench");
+    }
+
+    #[test]
+    fn try_from_lower_case_rejects_unknown_strings() {
+        let err = MarkerIcon::try_from_lower_case("not_an_icon").unwrap_err();
+        assert!(matches!(err, Error::UnknownMarkerIcon { name } if name == "not_an_icon"));
     }
 }
 

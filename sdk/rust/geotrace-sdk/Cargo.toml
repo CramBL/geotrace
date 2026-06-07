@@ -17,6 +17,7 @@ chrono.workspace = true
 geotrace-sdk-macros = { path = "../geotrace-sdk-macros" }
 hdf5-pure.workspace = true
 log.workspace = true
+strum.workspace = true
 thiserror.workspace = true
 uom.workspace = true
 
