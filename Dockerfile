@@ -1,12 +1,8 @@
 # Stage 1  geotrace-dev     Rust toolchain + CI lint tools.
 #                           Used by: just check / clippy / test / ci-extras / ...
 #
-# Stage 2  geotrace-sdk-dev Extends stage 1 with cmake, cmocka, vcpkg.
+# Stage 2  geotrace-sdk-dev Extends stage 1 with cmake, criterion, vcpkg.
 #                           Used by: just test-c / test-cpp / test-install / ...
-#
-# Note: the container does not include GPU drivers, so snapshot tests that
-# require a hardware renderer must run natively or with a software renderer
-# (LIBGL_ALWAYS_SOFTWARE=1 + WGPU_BACKEND=gl on Linux).
 
 ### Stage 1: Rust dev ###
 FROM debian:bookworm-slim AS rust-dev
@@ -83,7 +79,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     clang-format \
     clang-tidy \
     cmake \
-    libcmocka-dev \
     libcriterion-dev \
     ninja-build \
     tar \
