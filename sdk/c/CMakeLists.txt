@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.21)
 project(GeoTraceC VERSION 0.1.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 99)
@@ -60,13 +60,24 @@ else()
     )
 endif()
 
-configure_file(
+include(CMakePackageConfigHelpers)
+
+configure_package_config_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/GeoTraceCConfig.cmake.in"
     "${CMAKE_CURRENT_BINARY_DIR}/GeoTraceCConfig.cmake"
-    @ONLY
+    INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/GeoTraceC"
+    PATH_VARS CMAKE_INSTALL_LIBDIR CMAKE_INSTALL_INCLUDEDIR
 )
 
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/GeoTraceCConfig.cmake"
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/GeoTraceCConfigVersion.cmake"
+    VERSION "${PROJECT_VERSION}"
+    COMPATIBILITY SameMajorVersion
+)
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/GeoTraceCConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/GeoTraceCConfigVersion.cmake"
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/GeoTraceC"
 )
 

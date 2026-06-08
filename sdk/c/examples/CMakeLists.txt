@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.21)
 
 foreach(example write_basic read_file gold_dataset)
     add_executable(${example} ${example}.c)

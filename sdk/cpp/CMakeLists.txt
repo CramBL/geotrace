@@ -27,13 +27,24 @@ install(DIRECTORY include/
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
 )
 
-configure_file(
+include(CMakePackageConfigHelpers)
+
+configure_package_config_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/GeoTraceCppConfig.cmake.in"
     "${CMAKE_CURRENT_BINARY_DIR}/GeoTraceCppConfig.cmake"
-    @ONLY
+    INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/GeoTraceCpp"
+    PATH_VARS CMAKE_INSTALL_LIBDIR CMAKE_INSTALL_INCLUDEDIR
 )
 
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/GeoTraceCppConfig.cmake"
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/GeoTraceCppConfigVersion.cmake"
+    VERSION "${PROJECT_VERSION}"
+    COMPATIBILITY SameMajorVersion
+)
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/GeoTraceCppConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/GeoTraceCppConfigVersion.cmake"
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/GeoTraceCpp"
 )
 

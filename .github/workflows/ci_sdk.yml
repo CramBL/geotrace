@@ -40,9 +40,12 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Install clang tools and cmake
-        run: |
-          sudo apt-get install -y --no-install-recommends \
-            clang-format clang-tidy cmake ninja-build
+        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+        with:
+          clang-format: true
+          clang-tidy: true
+          cmake: true
+          ninja: true
 
       - name: Build geotrace-c
         run: cargo build -p geotrace-c --release

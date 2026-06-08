@@ -47,11 +47,13 @@ Examples: [`sdk/rust/geotrace-sdk/examples/`](sdk/rust/geotrace-sdk/examples/)
 
 A C API wrapping the core encoder/decoder, suitable for embedding in any language with a C FFI.
 See [`sdk/c/geotrace.h`](sdk/c/geotrace.h) for the full API surface.
+Building or consuming it via CMake requires CMake 3.21+.
 
 ### C++ SDK
 
 A header-only C++17 wrapper around the C SDK with RAII types and range-based iteration.
 See [`sdk/cpp/include/`](sdk/cpp/include/).
+Building or consuming it via CMake requires CMake 3.21+.
 
 ### Python SDK
 
