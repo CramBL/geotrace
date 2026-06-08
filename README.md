@@ -49,6 +49,30 @@ A C API wrapping the core encoder/decoder, suitable for embedding in any languag
 See [`sdk/c/geotrace.h`](sdk/c/geotrace.h) for the full API surface.
 Building or consuming it via CMake requires CMake 3.21+.
 
+**find_package** (from a local build or a prebuilt release archive):
+
+```cmake
+find_package(GeoTraceC REQUIRED)
+target_link_libraries(my_target PRIVATE GeoTrace::C)
+```
+
+**FetchContent** (from a release archive URL — no Rust toolchain required):
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(geotrace_c
+    URL     https://github.com/example/geotrace/releases/download/v0.1.0/geotrace-c-linux.tar.gz
+    URL_HASH SHA256=<hash>)
+FetchContent_MakeAvailable(geotrace_c)
+list(APPEND CMAKE_PREFIX_PATH "${geotrace_c_SOURCE_DIR}")
+find_package(GeoTraceC REQUIRED)
+target_link_libraries(my_target PRIVATE GeoTrace::C)
+```
+
+Replace the URL and hash with those from the [Releases](../../releases) page.
+The archive contains the same relocatable install tree produced by `cmake --install`,
+so `find_package` resolves it correctly after adding the extracted root to `CMAKE_PREFIX_PATH`.
+
 ### C++ SDK
 
 A header-only C++17 wrapper around the C SDK with RAII types and range-based iteration.

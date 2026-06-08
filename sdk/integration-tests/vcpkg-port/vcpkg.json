@@ -1,0 +1,5 @@
+{
+  "name": "geotrace-c",
+  "version": "0.1.0",
+  "description": "GeoTrace C SDK — read and write .gtd navigation recording files"
+}

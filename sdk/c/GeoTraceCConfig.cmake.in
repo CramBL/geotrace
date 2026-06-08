@@ -3,27 +3,52 @@
 
 @PACKAGE_INIT@
 
+# Whether the installed library is static (.a / .lib); baked in at install time.
+set(_geotrace_c_static @_gtc_config_static@)
+
+# Prefer the matching library type when both static and shared exist.
+if(_geotrace_c_static)
+    set(_gtc_saved_suffixes "${CMAKE_FIND_LIBRARY_SUFFIXES}")
+    if(WIN32)
+        set(CMAKE_FIND_LIBRARY_SUFFIXES ".lib")
+    else()
+        set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+    endif()
+endif()
+
 find_library(GEOTRACE_C_LIBRARY
     NAMES geotrace_c
     HINTS "@PACKAGE_CMAKE_INSTALL_LIBDIR@"
     NO_DEFAULT_PATH
 )
 
+if(_geotrace_c_static)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES "${_gtc_saved_suffixes}")
+endif()
+
 if(NOT GEOTRACE_C_LIBRARY)
     set(GeoTraceC_FOUND FALSE)
     return()
 endif()
 
-# On Windows we install and link against the static library.
-if(WIN32)
+if(_geotrace_c_static)
     add_library(GeoTrace::C STATIC IMPORTED)
 else()
     add_library(GeoTrace::C SHARED IMPORTED)
 endif()
 
+set(_geotrace_c_iface_libs "")
+if(_geotrace_c_static AND UNIX AND NOT APPLE)
+    # When statically linking the Rust archive, the downstream consumer must
+    # pull in the system libraries that Rust's code depends on.  macOS and
+    # Windows link them implicitly; Linux requires explicit -l flags.
+    list(APPEND _geotrace_c_iface_libs m dl pthread)
+endif()
+
 set_target_properties(GeoTrace::C PROPERTIES
     IMPORTED_LOCATION "${GEOTRACE_C_LIBRARY}"
     INTERFACE_INCLUDE_DIRECTORIES "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@"
+    INTERFACE_LINK_LIBRARIES "${_geotrace_c_iface_libs}"
 )
 
 set(GeoTraceC_FOUND TRUE)

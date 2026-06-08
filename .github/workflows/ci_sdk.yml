@@ -134,6 +134,19 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
+      - name: Install pinned compiler
+        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+        with:
+          compiler: llvm-20
+
+      - name: Install criterion (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libcriterion-dev
+
+      - name: Install criterion (macOS)
+        if: runner.os == 'macOS'
+        run: brew install criterion
+
       - name: Build geotrace-c
         run: cargo build -p geotrace-c --release
 
@@ -193,6 +206,11 @@ jobs:
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install pinned compiler
+        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+        with:
+          compiler: ${{ matrix.os == 'windows-latest' && 'msvc' || 'llvm-20' }}
 
       - name: Build geotrace-c
         run: cargo build -p geotrace-c --release
@@ -312,3 +330,58 @@ jobs:
             echo "running example: ${filename}"
             uv run python "${file}"
           done
+
+  # Install the C SDK via a local vcpkg overlay port and verify a downstream
+  # consumer project builds and runs correctly.  This validates the portfile
+  # and the integration-test consumer in sdk/integration-tests/vcpkg/.
+  vcpkg-sdk:
+    name: vcpkg overlay port
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install cmake and ninja
+        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+        with:
+          cmake: true
+          ninja: true
+
+      - name: Bootstrap vcpkg
+        run: |
+          git clone --depth=1 https://github.com/microsoft/vcpkg "${{ github.workspace }}/vcpkg"
+          "${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: Install geotrace-c via overlay port
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: |
+          "${{ github.workspace }}/vcpkg/vcpkg" install geotrace-c \
+            --overlay-ports=sdk/integration-tests/vcpkg-port \
+            --triplet x64-linux \
+            --no-print-usage
+
+      - name: Configure vcpkg consumer
+        run: |
+          cmake -S sdk/integration-tests/vcpkg -B build/vcpkg-smoke \
+            -GNinja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-linux
+
+      - name: Build vcpkg consumer
+        run: cmake --build build/vcpkg-smoke
+
+      - name: Run vcpkg smoke test
+        run: build/vcpkg-smoke/smoke_c
