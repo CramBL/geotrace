@@ -2166,6 +2166,7 @@ dependencies = [
  "gt-test-utils",
  "gt-track-builder",
  "gt-types",
+ "strum",
  "tempfile",
  "thiserror 2.0.18",
  "uom",
@@ -2415,9 +2416,9 @@ dependencies = [
 
 [[package]]
 name = "hdf5-pure"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f1f1c2923d2c4b6d7cd5d6983b976860bc567e74aedc1b5074030991bdc6501"
+checksum = "1220510a181ea658c393807b6302dac8d6d09381d9153a40f87a2baf190610b3"
 dependencies = [
  "byteorder",
  "flate2",
