@@ -265,6 +265,7 @@ mod tests {
                     "core.*".into(),
                     "alloc.*".into(),
                     "egui_plot.*".into(),
+                    "proptest.*".into(),
                     "crate.*".into(),
                     "gt_egui_mipmap.*".into(),
                 ]),

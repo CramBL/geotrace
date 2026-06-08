@@ -199,12 +199,19 @@ impl MipMap {
     /// Falls back to `(0, inner_start, inner_end)` for the finest level when
     /// no level meets the target - the reverse iteration always visits level 0
     /// last, so its bounds are already on hand to serve as that fallback.
+    ///
+    /// Normalizes an inverted range (`x_min > x_max`) by raising `x_max` to
+    /// `x_min`, restoring the `inner_start <= inner_end` invariant
+    /// [`Self::select_slice`] / [`Self::select_indices`] rely on - see
+    /// `select_handles_inverted_and_disjoint_ranges_without_panic` for why
+    /// callers can end up passing such a range.
     fn select_level_bounds(
         &self,
         x_min: f64,
         x_max: f64,
         target_count: usize,
     ) -> (usize, usize, usize) {
+        let x_max = x_max.max(x_min);
         // Try from coarsest → finest; use the coarsest level that is dense
         // enough for the target count in the visible range.
         let mut bounds = (0, 0, 0);
@@ -412,6 +419,97 @@ mod tests {
             "must not include out-of-range right points"
         );
         assert!(slice.last().is_some_and(|p| p.x as i64 == 49));
+    }
+
+    // Inverted-range regression tests.
+    //
+    // Callers sometimes derive `[x_min, x_max]` as the intersection of two
+    // ranges that may not overlap at all - e.g. an active time filter and the
+    // plot's visible viewport.  A naive per-side clamp of such an
+    // intersection (`viewport.0.max(filter.0)`, `viewport.1.min(filter.1)`)
+    // can yield `x_min > x_max` when the two ranges are disjoint.  `MipMap`
+    // must treat that as a (legitimately empty) range rather than panicking
+    // on an inverted slice index - see the `slice index starts at .. but ends
+    // at ..` panic this guards against.
+    //
+    // Each case below pins both halves of the fix: `select_level_bounds`
+    // must restore `clip_start <= clip_end` (the invariant `slice_at` relies
+    // on - see [`Self::select_level_bounds`]), and the resulting slice must
+    // stay within the original dataset.
+    #[test]
+    fn select_handles_inverted_and_disjoint_ranges_without_panic() {
+        let small = MipMap::build(int_data(50));
+        let large_n = cascading_input_len() * 4;
+        let large = MipMap::build(int_data(large_n));
+        let cases: [(&MipMap, f64, f64, usize, f64, &str); 3] = [
+            (
+                &small,
+                30.0,
+                10.0,
+                5,
+                49.0,
+                "inverted range collapses to a point",
+            ),
+            (
+                &small,
+                1_000.0,
+                2_000.0,
+                5,
+                49.0,
+                "disjoint range entirely past the data",
+            ),
+            (
+                // A multi-level cascade, so `select_level_bounds` walks
+                // several levels before settling - the shape produced by
+                // `viewport.max(filter_min)` / `viewport.min(filter_max)`
+                // when a filter window precedes the current viewport.
+                &large,
+                large_n as f64 / 2.0,
+                5.0,
+                50,
+                large_n as f64,
+                "inverted range on a multi-level cascade",
+            ),
+        ];
+        for (m, x_min, x_max, target_count, x_upper_bound, what) in cases {
+            let sel = m.select_indices(x_min, x_max, target_count);
+            assert!(
+                sel.clip_start <= sel.clip_end,
+                "{what}: select_indices must restore clip_start <= clip_end, got {sel:?}"
+            );
+            for slice in [m.select_slice(x_min, x_max, target_count), m.slice_at(sel)] {
+                assert!(
+                    slice.iter().all(|p| p.x >= 0.0 && p.x <= x_upper_bound),
+                    "{what}: must not return out-of-range points, got {slice:?}"
+                );
+            }
+        }
+    }
+
+    proptest::proptest! {
+        /// `select_slice` and `select_indices`/`slice_at` must never panic and
+        /// must never return points outside the original dataset, for any
+        /// `(x_min, x_max)` pair - including reversed (`x_min > x_max`) and
+        /// wildly out-of-range ones. This is the property that the
+        /// inverted-range panic violated: two independent `.min()`/`.max()`
+        /// clamps on `x_min`/`x_max` don't compose into `inner_start <=
+        /// inner_end` on their own. Both APIs are driven here since
+        /// `slice_at` re-clamps `clip_start`/`clip_end` independently
+        /// (`.min(level.len())`) and could regress on its own.
+        #[test]
+        fn select_never_panics_for_arbitrary_ranges(
+            x_min in -1.0e6_f64..1.0e6_f64,
+            x_max in -1.0e6_f64..1.0e6_f64,
+            target_count in 1_usize..100,
+        ) {
+            let m = MipMap::build(int_data(50));
+            for slice in [
+                m.select_slice(x_min, x_max, target_count),
+                m.slice_at(m.select_indices(x_min, x_max, target_count)),
+            ] {
+                proptest::prop_assert!(slice.iter().all(|p| p.x >= 0.0 && p.x <= 49.0));
+            }
+        }
     }
 
     /// Smallest input length for which `MipMap::build` is guaranteed to append

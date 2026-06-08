@@ -460,6 +460,10 @@ pub fn show_track_plot(
         let plot_x_max = bounds.max()[0];
 
         // Intersect the visible plot range with the active time filter.
+        //
+        // `eff_x_min`/`eff_x_max` may end up inverted when the active filter
+        // and the visible viewport don't overlap; `MipMap` normalizes that
+        // into an empty-range query (see `select_level_bounds`).
         let eff_x_min = filter_x_min.map_or(plot_x_min, |f| plot_x_min.max(f));
         let eff_x_max = filter_x_max.map_or(plot_x_max, |f| plot_x_max.min(f));
 
