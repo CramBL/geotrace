@@ -38,11 +38,14 @@ else()
 endif()
 
 set(_geotrace_c_iface_libs "")
-if(_geotrace_c_static AND UNIX AND NOT APPLE)
-    # When statically linking the Rust archive, the downstream consumer must
-    # pull in the system libraries that Rust's code depends on.  macOS and
-    # Windows link them implicitly; Linux requires explicit -l flags.
-    list(APPEND _geotrace_c_iface_libs m dl pthread)
+if(_geotrace_c_static)
+    if(UNIX AND NOT APPLE)
+        # Rust's archive on Linux depends on these system libraries.
+        list(APPEND _geotrace_c_iface_libs m dl pthread)
+    elseif(WIN32)
+        # Rust's archive on Windows uses NT I/O and Win32 APIs not auto-linked by MSVC.
+        list(APPEND _geotrace_c_iface_libs ntdll userenv ws2_32 advapi32 bcrypt)
+    endif()
 endif()
 
 set_target_properties(GeoTrace::C PROPERTIES

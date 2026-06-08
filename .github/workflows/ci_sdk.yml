@@ -47,6 +47,9 @@ jobs:
           cmake: true
           ninja: true
 
+      - name: Install criterion
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libcriterion-dev
+
       - name: Build geotrace-c
         run: cargo build -p geotrace-c --release
 

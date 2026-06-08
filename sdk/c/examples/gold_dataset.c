@@ -9,6 +9,7 @@
 
 #include "../geotrace.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -87,7 +88,7 @@ static GtdTimestamp parse_ts(const char *s) {
         days += month_days(m, Y);
     days += D - 1;
 
-    long secs = days * 86400L + H * 3600L + Mi * 60L + S;
+    long secs = (days * 86400L) + (H * 3600L) + (Mi * 60L) + S;
     long tz = ((long)tz_h * 60L + tz_m) * 60L;
     secs += (sign == '-') ? tz : -tz;
 

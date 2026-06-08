@@ -77,6 +77,18 @@ else()
     install(IMPORTED_RUNTIME_ARTIFACTS GeoTrace::C
         DESTINATION "${CMAKE_INSTALL_LIBDIR}"
     )
+    # Rust sets the dylib's embedded install name (LC_ID_DYLIB) to the absolute
+    # path of the cargo output directory.  Fix it to @rpath/... so the installed
+    # dylib is relocatable and consumers can find it via their RPATH.
+    if(APPLE)
+        install(CODE "
+            execute_process(
+                COMMAND install_name_tool
+                    -id \"@rpath/libgeotrace_c.dylib\"
+                    \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/libgeotrace_c.dylib\"
+            )
+        ")
+    endif()
 endif()
 
 include(CMakePackageConfigHelpers)

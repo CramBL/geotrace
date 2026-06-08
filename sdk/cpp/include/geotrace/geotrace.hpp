@@ -206,15 +206,18 @@ struct Timestamp {
 class Angle {
   public:
     static Angle degrees(double deg) noexcept { return Angle{deg}; }
-    static Angle radians(double rad) noexcept { return Angle{rad * (180.0 / M_PI)}; }
+    static Angle radians(double rad) noexcept { return Angle{rad * (180.0 / kPi)}; }
 
     double as_degrees() const noexcept { return deg_; }
-    double as_radians() const noexcept { return deg_ * (M_PI / 180.0); }
+    double as_radians() const noexcept { return deg_ * (kPi / 180.0); }
 
     bool operator==(Angle other) const noexcept { return deg_ == other.deg_; }
     bool operator!=(Angle other) const noexcept { return !(*this == other); }
 
   private:
+    // M_PI is a POSIX extension not guaranteed by the C++ standard (absent on MSVC
+    // without _USE_MATH_DEFINES), so we use our own constant instead.
+    static constexpr double kPi = 3.141592653589793238462643383279502884;
     explicit Angle(double deg) noexcept : deg_(deg) {}
     double deg_ = 0.0;
 };
@@ -598,7 +601,10 @@ class NavFile {
      */
     static NavFile open(const std::filesystem::path &p) {
         GtdNavFile *out = nullptr;
-        detail::check(::gtd_nav_file_open(p.c_str(), &out));
+        // path::c_str() returns wchar_t* on Windows; .string() gives a narrow string
+        // on all platforms that the C API (const char*) can accept.
+        const auto path_str = p.string();
+        detail::check(::gtd_nav_file_open(path_str.c_str(), &out));
         return NavFile(out);
     }
 
@@ -623,7 +629,8 @@ class NavFile {
      * @throws IoError, Hdf5Error on failure.
      */
     void write_to_file(const std::filesystem::path &p) const {
-        detail::check(::gtd_nav_file_write_to_path(impl_, p.c_str()));
+        const auto path_str = p.string();
+        detail::check(::gtd_nav_file_write_to_path(impl_, path_str.c_str()));
     }
 
     /**
