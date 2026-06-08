@@ -1,13 +1,8 @@
 name: CI / SDK Prebuilt Libraries
-
 # Demonstrates that the C SDK can be consumed WITHOUT the Rust toolchain by:
 #   1. Building the library with Rust and uploading it as a CI artifact.
 #   2. Downloading only the artifact in a separate job and building + running
-#      a C consumer against it.
-#
-# This mirrors what a real GitHub Releases workflow would look like: publish
-# prebuilt .so/.dylib/.lib files so downstream users never need rustup.
-
+#      a C consumer against it — mirroring a real GitHub Releases pipeline.
 on:
   push:
     branches: [trunk]
@@ -28,10 +23,6 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Phase 2 — shared library
-  # ---------------------------------------------------------------------------
-
   build-shared:
     name: Build shared / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -93,7 +84,6 @@ jobs:
 
       # Intentionally no Rust toolchain — this job proves that downstream
       # users can build against a prebuilt library without rustup.
-
       - name: Install cmake and C compiler
         uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
         with:
@@ -117,10 +107,6 @@ jobs:
 
       - name: Run prebuilt smoke consumer (proves no Rust toolchain needed)
         run: ctest --test-dir build/smoke --output-on-failure
-
-  # ---------------------------------------------------------------------------
-  # Phase 3 — static library
-  # ---------------------------------------------------------------------------
 
   build-static:
     name: Build static / ${{ matrix.os }}
@@ -161,10 +147,11 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           cmake -S sdk/c -B build/c `
+            -G "Visual Studio 17 2022" -A x64 `
             -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release `
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install `
             -DGEOTRACE_C_STATIC=ON
-          cmake --install build/c
+          cmake --install build/c --config Release
         shell: pwsh
 
       - name: Upload static-library artifact
@@ -192,7 +179,6 @@ jobs:
 
       # Intentionally no Rust toolchain — this job proves that downstream
       # users can build against a prebuilt library without rustup.
-
       - name: Install cmake and C compiler
         uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
         with:
@@ -216,6 +202,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           cmake -S sdk/integration-tests/prebuilt -B build/smoke `
+            -G "Visual Studio 17 2022" -A x64 `
             -DCMAKE_PREFIX_PATH=${{ github.workspace }}/sdk-artifact
         shell: pwsh
 

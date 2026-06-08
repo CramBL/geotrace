@@ -52,6 +52,16 @@ def c_family_files(root: Path) -> Iterator[Path]:
     yield from sorted(seen)
 
 
+def yaml_files(root: Path) -> Iterator[Path]:
+    """Yield YAML files (workflow definitions, configuration)."""
+    seen: set[Path] = set()
+    for pattern in ("*.yml", "*.yaml"):
+        for path in root.rglob(pattern):
+            if not _is_excluded(path) and path not in seen:
+                seen.add(path)
+    yield from sorted(seen)
+
+
 def _labelled_lines(tag: str, lines: list[str]) -> None:
     for i, text in enumerate(lines):
         prefix = f"  = {tag}: " if i == 0 else "          "
