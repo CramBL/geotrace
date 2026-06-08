@@ -45,24 +45,17 @@ pub fn event_marker_fallback_color(variant_path: &str) -> MarkerColor {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeneratedMarkerKind {
-    GpsFixLost,
-    GpsFixRegained,
+    GnssFixLost,
+    GnssFixRegained,
 }
 
 impl std::fmt::Display for GeneratedMarkerKind {
-    /// Canonical human-readable label - call sites should format through this
-    /// rather than re-typing it, so "GPS"/"GNSS"/"Fix" wording can't drift
-    /// out of sync across the side panel, map tooltips, sticky info card, and
-    /// test fixtures the way it previously did (each had picked a different
-    /// one of the three).
-    ///
-    /// `GpsFixRegained`'s tooltip additionally appends a measured duration
-    /// ("... after 3.2s"); that's runtime data, so it stays a call-site
-    /// concern layered on top of this base label rather than living here.
+    /// Canonical human-readable label; format through this rather than
+    /// re-typing the wording at each call site.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::GpsFixLost => "GNSS fix lost",
-            Self::GpsFixRegained => "GNSS fix regained",
+            Self::GnssFixLost => "GNSS fix lost",
+            Self::GnssFixRegained => "GNSS fix regained",
         })
     }
 }
@@ -73,7 +66,7 @@ pub struct GeneratedMarker {
     pub kind: GeneratedMarkerKind,
     pub lat: Latitude,
     pub lon: Longitude,
-    /// For `GpsFixRegained`: how long the fix was lost. None for `GpsFixLost`.
+    /// For `GnssFixRegained`: how long the fix was lost. None for `GnssFixLost`.
     pub fix_lost_duration: Option<Duration>,
     /// Pre-computed normalized Mercator coordinates, see [`crate::mercator`].
     pub merc: MercPoint,
@@ -90,9 +83,12 @@ mod generated_marker_kind_tests {
     /// downstream label, tooltip, and test fixture will pick it up.
     #[test]
     fn label_is_canonical_wording() {
-        assert_eq!(GeneratedMarkerKind::GpsFixLost.to_string(), "GNSS fix lost");
         assert_eq!(
-            GeneratedMarkerKind::GpsFixRegained.to_string(),
+            GeneratedMarkerKind::GnssFixLost.to_string(),
+            "GNSS fix lost"
+        );
+        assert_eq!(
+            GeneratedMarkerKind::GnssFixRegained.to_string(),
             "GNSS fix regained"
         );
     }

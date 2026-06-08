@@ -393,6 +393,7 @@ mod tests {
         Angle, Annotation, Constellation as SdkConst, DateTime, Duration, MarkerIcon as SdkIcon,
         NavFile, NavFileBuilder, NavFix, Satellite as SdkSat, SatelliteReport, Utc, Velocity,
     };
+    use strum::EnumCount;
     use uom::si::velocity::meter_per_second as uom_mps;
 
     fn base() -> DateTime<Utc> {
@@ -571,6 +572,9 @@ mod tests {
         // correspondence is defined (see its doc comment), so this is a full
         // exhaustiveness check rather than a sample: a wrong mapping for any
         // variant fails here even though the match still compiles.
+        //
+        // (Internal `MarkerIcon` has one extra variant, `Log`, with no SDK
+        // counterpart, so the table is checked against `SdkIcon::COUNT` only.)
         let pairs = [
             (SdkIcon::Pin, MarkerIcon::Pin),
             (SdkIcon::Cross, MarkerIcon::Cross),
@@ -587,6 +591,7 @@ mod tests {
             (SdkIcon::Upload, MarkerIcon::Upload),
             (SdkIcon::Wrench, MarkerIcon::Wrench),
         ];
+        assert_eq!(pairs.len(), SdkIcon::COUNT);
         for (sdk, expected) in pairs {
             assert_eq!(convert_icon(sdk), expected);
         }

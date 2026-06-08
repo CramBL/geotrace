@@ -21,9 +21,9 @@
 ///
 /// Track 0 – 12 points at 30 s intervals, all with satellite reports.
 ///   Points 0-4: GPS fix held (5 satellites in fix).
-///   Point 5:    fix lost (0 in fix)   → generates GpsFixLost marker.
+///   Point 5:    fix lost (0 in fix)   → generates GnssFixLost marker.
 ///   Point 6:    still lost.
-///   Point 7:    fix regained (4 in fix) → generates GpsFixRegained marker.
+///   Point 7:    fix regained (4 in fix) → generates GnssFixRegained marker.
 ///   Points 8-11: fix maintained.
 ///   Custom markers at t+75 ("Bike lock spot") and t+225 ("Coffee stop").
 ///
@@ -257,7 +257,7 @@ fn generate_and_verify_snapshot_fixture() {
     assert_eq!(
         t0.generated_markers.len(),
         2,
-        "track 0: GpsFixLost + GpsFixRegained"
+        "track 0: GnssFixLost + GnssFixRegained"
     );
     assert_eq!(t0.metadata.duration.num_seconds(), 330, "track 0: 5m30s");
     assert!(
@@ -272,8 +272,8 @@ fn generate_and_verify_snapshot_fixture() {
     assert_matches_sequence!(
         gen_kinds,
         [
-            GeneratedMarkerKind::GpsFixLost,
-            GeneratedMarkerKind::GpsFixRegained
+            GeneratedMarkerKind::GnssFixLost,
+            GeneratedMarkerKind::GnssFixRegained
         ]
     );
 

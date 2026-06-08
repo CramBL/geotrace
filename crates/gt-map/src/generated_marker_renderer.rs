@@ -63,7 +63,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
             egui::Sense::hover(),
         );
         response.show_tooltip_ui(|ui| match marker.kind {
-            gt_types::GeneratedMarkerKind::GpsFixLost => {
+            gt_types::GeneratedMarkerKind::GnssFixLost => {
                 ui.strong(marker.kind.to_string());
                 let corresponding = track
                     .points
@@ -74,7 +74,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
                     crate::tpv_renderer::show_hover_table(ui, point);
                 }
             }
-            gt_types::GeneratedMarkerKind::GpsFixRegained => {
+            gt_types::GeneratedMarkerKind::GnssFixRegained => {
                 let label = match marker.fix_lost_duration {
                     Some(dur) => {
                         format!(
@@ -191,10 +191,10 @@ fn draw_generated_marker(
 ) {
     let painter = ui.painter();
     let (bg, stroke_color) = match kind {
-        gt_types::GeneratedMarkerKind::GpsFixLost => {
+        gt_types::GeneratedMarkerKind::GnssFixLost => {
             (Color32::from_rgb(219, 68, 55), Color32::WHITE)
         }
-        gt_types::GeneratedMarkerKind::GpsFixRegained => {
+        gt_types::GeneratedMarkerKind::GnssFixRegained => {
             (Color32::from_rgb(15, 157, 88), Color32::WHITE)
         }
     };
@@ -210,12 +210,12 @@ fn draw_generated_marker(
     }
     let s = 4.0;
     match kind {
-        gt_types::GeneratedMarkerKind::GpsFixLost => {
+        gt_types::GeneratedMarkerKind::GnssFixLost => {
             let st = Stroke::new(2.0, stroke_color);
             painter.line_segment([center - egui::vec2(s, s), center + egui::vec2(s, s)], st);
             painter.line_segment([center + egui::vec2(-s, s), center + egui::vec2(s, -s)], st);
         }
-        gt_types::GeneratedMarkerKind::GpsFixRegained => {
+        gt_types::GeneratedMarkerKind::GnssFixRegained => {
             let st = Stroke::new(2.0, stroke_color);
             painter.line_segment(
                 [

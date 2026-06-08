@@ -7,7 +7,16 @@
 /// this enum kept in sync by hand; a single definition here removes that
 /// drift risk entirely.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, strum::EnumIter, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::EnumCount,
+    strum::EnumIter,
+    serde::Serialize,
+    serde::Deserialize,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum MetricKind {
@@ -33,10 +42,15 @@ mod tests {
     use serde::Deserialize;
     use serde::de::IntoDeserializer;
     use serde::de::value::{Error as DeError, StrDeserializer};
+    use strum::EnumCount;
 
     /// Locks the on-disk spelling of every variant. `Settings` files persist
     /// these strings under `[plot.metric]`; a silent rename here would orphan
     /// every user's saved metric-visibility preferences on their next launch.
+    ///
+    /// Asserts the table is exhaustive (`expected.len() == MetricKind::COUNT`)
+    /// so adding a variant without adding its wire-name entry fails here
+    /// rather than silently leaving it unchecked.
     #[test]
     fn wire_names_are_stable() {
         let expected = [
@@ -55,6 +69,7 @@ mod tests {
             (MetricKind::HeadingDeg, "heading_deg"),
             (MetricKind::ClockDeltaMs, "clock_delta_ms"),
         ];
+        assert_eq!(expected.len(), MetricKind::COUNT);
         for (kind, wire) in expected {
             let de: StrDeserializer<'_, DeError> = wire.into_deserializer();
             assert_eq!(

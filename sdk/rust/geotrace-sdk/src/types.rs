@@ -191,6 +191,7 @@ impl Annotation {
     strum::Display,
     strum::EnumString,
     strum::IntoStaticStr,
+    strum::EnumCount,
     strum::EnumIter,
 )]
 #[strum(serialize_all = "snake_case")]

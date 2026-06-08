@@ -273,7 +273,7 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
                 if let Some(last_point) = nav_points.get(last_idx) {
                     markers.push(CustomMarker::new(
                         last_point.tpv.time().utc(),
-                        GeneratedMarkerKind::GpsFixLost.to_string(),
+                        GeneratedMarkerKind::GnssFixLost.to_string(),
                         MarkerIcon::Warning,
                         last_point.tpv.lat(),
                         last_point.tpv.lon(),
@@ -304,7 +304,7 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
                         p.tpv.time().utc(),
                         format!(
                             "{} after {duration_str}",
-                            GeneratedMarkerKind::GpsFixRegained
+                            GeneratedMarkerKind::GnssFixRegained
                         ),
                         MarkerIcon::Check,
                         p.tpv.lat(),
@@ -435,7 +435,7 @@ mod tests {
         let regain_marker = markers.iter().find(|m| m.icon == MarkerIcon::Check);
         assert!(regain_marker.is_some_and(|m| {
             m.label
-                .contains(&GeneratedMarkerKind::GpsFixRegained.to_string())
+                .contains(&GeneratedMarkerKind::GnssFixRegained.to_string())
         }));
     }
 

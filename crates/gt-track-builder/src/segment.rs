@@ -87,7 +87,7 @@ impl GpsFixTracker {
     /// Advance the state machine by one satellite report.
     ///
     /// Returns `Some(marker)` when a transition emits a generated marker
-    /// (`GpsFixLost` or `GpsFixRegained`), or `None` for silent transitions.
+    /// (`GnssFixLost` or `GnssFixRegained`), or `None` for silent transitions.
     fn update(&mut self, point: &NavPoint, fix_count: u32) -> Option<GeneratedMarker> {
         let result;
         self.state = match self.state {
@@ -109,10 +109,10 @@ impl GpsFixTracker {
                 last_lon,
             } => {
                 if fix_count == 0 {
-                    // Fix just dropped - emit GpsFixLost at the last known fix position.
+                    // Fix just dropped - emit GnssFixLost at the last known fix position.
                     result = Some(GeneratedMarker::new(
                         last_time.utc(),
-                        GeneratedMarkerKind::GpsFixLost,
+                        GeneratedMarkerKind::GnssFixLost,
                         last_lat,
                         last_lon,
                         None,
@@ -129,11 +129,11 @@ impl GpsFixTracker {
             }
             GpsFixState::LostFix { lost_at } => {
                 if fix_count > 0 {
-                    // Fix regained - emit GpsFixRegained with gap duration.
+                    // Fix regained - emit GnssFixRegained with gap duration.
                     let duration = point.tpv.time().signed_duration_since(lost_at);
                     result = Some(GeneratedMarker::new(
                         point.tpv.time().utc(),
-                        GeneratedMarkerKind::GpsFixRegained,
+                        GeneratedMarkerKind::GnssFixRegained,
                         point.tpv.lat(),
                         point.tpv.lon(),
                         Some(duration),
