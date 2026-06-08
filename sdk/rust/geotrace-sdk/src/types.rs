@@ -179,7 +179,7 @@ impl Annotation {
 /// Icon displayed for a map marker.
 ///
 /// `Display`/`FromStr` (via `strum`) give the lower snake_case wire form used by
-/// [`MarkerIcon::name`] and [`MarkerIcon::try_from_lower_case`] - the variant name
+/// `MarkerIcon::name` and [`MarkerIcon::try_from_lower_case`] - the variant name
 /// and its string form are derived from a single definition, so adding, renaming,
 /// or removing a variant cannot desync the two.
 #[derive(
@@ -260,7 +260,7 @@ impl MarkerIcon {
         self.into()
     }
 
-    /// Parses the lower snake_case wire form produced by [`MarkerIcon::name`].
+    /// Parses the lower snake_case wire form produced by `MarkerIcon::name`.
     pub fn try_from_lower_case(s: impl AsRef<str>) -> Result<Self, Error> {
         let s = s.as_ref();
         // strum::ParseError carries no information beyond "no variant matched" -
