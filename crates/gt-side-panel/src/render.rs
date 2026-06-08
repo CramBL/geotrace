@@ -779,18 +779,13 @@ fn render_generated_marker_items(
     map_center_request: &mut Option<(f64, f64)>,
     popup_pos_request: &mut Option<egui::Pos2>,
 ) {
-    use gt_types::GeneratedMarkerKind;
     for (pi, marker) in track.generated_markers.iter().enumerate() {
         let point_ref = DataPointRef {
             track: track_ref,
             category: DataCategory::GeneratedMarker,
             point_index: PointIdx::new(pi),
         };
-        let kind_str = match marker.kind {
-            GeneratedMarkerKind::GpsFixLost => "GPS fix lost",
-            GeneratedMarkerKind::GpsFixRegained => "GPS fix regained",
-        };
-        let label = format!("{}  {kind_str}", marker.time.format("%H:%M:%S"));
+        let label = format!("{}  {}", marker.time.format("%H:%M:%S"), marker.kind);
         let lat_lon = (marker.lat.as_degrees(), marker.lon.as_degrees());
         point_item_row(
             ui,

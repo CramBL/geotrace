@@ -64,7 +64,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
         );
         response.show_tooltip_ui(|ui| match marker.kind {
             gt_types::GeneratedMarkerKind::GpsFixLost => {
-                ui.strong("GNSS fix lost");
+                ui.strong(marker.kind.to_string());
                 let corresponding = track
                     .points
                     .iter()
@@ -78,11 +78,12 @@ impl<'a> GeneratedMarkerRenderer<'a> {
                 let label = match marker.fix_lost_duration {
                     Some(dur) => {
                         format!(
-                            "GNSS fix regained after {}",
+                            "{} after {}",
+                            marker.kind,
                             format_fix_duration(dur.num_milliseconds())
                         )
                     }
-                    None => "GNSS fix regained".to_owned(),
+                    None => marker.kind.to_string(),
                 };
                 ui.strong(label);
             }

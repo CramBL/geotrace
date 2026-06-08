@@ -978,12 +978,7 @@ pub(crate) fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> 
         }
         DataCategory::GeneratedMarker => {
             if let Some(m) = candidate.point_index.get(&track.generated_markers) {
-                match m.kind {
-                    gt_types::GeneratedMarkerKind::GpsFixLost => "GNSS fix lost".to_string(),
-                    gt_types::GeneratedMarkerKind::GpsFixRegained => {
-                        "GNSS fix regained".to_string()
-                    }
-                }
+                m.kind.to_string()
             } else {
                 "Generated marker".to_string()
             }
@@ -1000,7 +995,7 @@ fn show_sticky_popup(
     default_pos: egui::Pos2,
 ) {
     use crate::tpv_renderer::show_sticky_tpv_content;
-    use gt_types::{DataCategory, GeneratedMarkerKind};
+    use gt_types::DataCategory;
 
     // For TPV points, satellite reports, and generated-marker events the window
     // title is the point's datetime; for everything else fall back to a generic label.
@@ -1124,10 +1119,7 @@ fn show_sticky_popup(
                     .and_then(|f| sticky_ref.track.index.get(&f.tracks))
                     .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
                 {
-                    let kind_str = match marker.kind {
-                        GeneratedMarkerKind::GpsFixLost => "GNSS fix lost",
-                        GeneratedMarkerKind::GpsFixRegained => "GNSS fix regained",
-                    };
+                    let kind_str = marker.kind.to_string();
                     egui::Grid::new("sticky_gen_grid")
                         .num_columns(2)
                         .show(ui, |ui| {

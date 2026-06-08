@@ -49,6 +49,24 @@ pub enum GeneratedMarkerKind {
     GpsFixRegained,
 }
 
+impl std::fmt::Display for GeneratedMarkerKind {
+    /// Canonical human-readable label - call sites should format through this
+    /// rather than re-typing it, so "GPS"/"GNSS"/"Fix" wording can't drift
+    /// out of sync across the side panel, map tooltips, sticky info card, and
+    /// test fixtures the way it previously did (each had picked a different
+    /// one of the three).
+    ///
+    /// `GpsFixRegained`'s tooltip additionally appends a measured duration
+    /// ("... after 3.2s"); that's runtime data, so it stays a call-site
+    /// concern layered on top of this base label rather than living here.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::GpsFixLost => "GNSS fix lost",
+            Self::GpsFixRegained => "GNSS fix regained",
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct GeneratedMarker {
     pub time: DateTime<Utc>,
@@ -59,6 +77,25 @@ pub struct GeneratedMarker {
     pub fix_lost_duration: Option<Duration>,
     /// Pre-computed normalized Mercator coordinates, see [`crate::mercator`].
     pub merc: MercPoint,
+}
+
+#[cfg(test)]
+mod generated_marker_kind_tests {
+    use super::*;
+
+    /// Single source of truth for the "GPS"/"GNSS"/"Fix" wording question
+    /// that every call site previously answered independently (and
+    /// inconsistently - three different spellings across five copies). Pin
+    /// it down so a future edit has to change it here, where every
+    /// downstream label, tooltip, and test fixture will pick it up.
+    #[test]
+    fn label_is_canonical_wording() {
+        assert_eq!(GeneratedMarkerKind::GpsFixLost.to_string(), "GNSS fix lost");
+        assert_eq!(
+            GeneratedMarkerKind::GpsFixRegained.to_string(),
+            "GNSS fix regained"
+        );
+    }
 }
 
 impl GeneratedMarker {

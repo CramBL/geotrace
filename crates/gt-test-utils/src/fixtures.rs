@@ -9,7 +9,8 @@ use uom::si::velocity::kilometer_per_hour;
 
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::{
-    CustomMarker, GpsTime, Latitude, Longitude, MarkerIcon, NavPoint, TimePositionVelocity,
+    CustomMarker, GeneratedMarkerKind, GpsTime, Latitude, Longitude, MarkerIcon, NavPoint,
+    TimePositionVelocity,
 };
 
 struct RouteSegment {
@@ -272,7 +273,7 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
                 if let Some(last_point) = nav_points.get(last_idx) {
                     markers.push(CustomMarker::new(
                         last_point.tpv.time().utc(),
-                        "Fix Lost".to_string(),
+                        GeneratedMarkerKind::GpsFixLost.to_string(),
                         MarkerIcon::Warning,
                         last_point.tpv.lat(),
                         last_point.tpv.lon(),
@@ -301,7 +302,10 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
 
                     markers.push(CustomMarker::new(
                         p.tpv.time().utc(),
-                        format!("Fix Regained after {duration_str}"),
+                        format!(
+                            "{} after {duration_str}",
+                            GeneratedMarkerKind::GpsFixRegained
+                        ),
                         MarkerIcon::Check,
                         p.tpv.lat(),
                         p.tpv.lon(),
@@ -429,10 +433,10 @@ mod tests {
         assert!(check_count >= 2);
 
         let regain_marker = markers.iter().find(|m| m.icon == MarkerIcon::Check);
-        assert!(
-            regain_marker
-                .is_some_and(|m| m.label.contains("2s") || m.label.contains("Fix Regained"))
-        );
+        assert!(regain_marker.is_some_and(|m| {
+            m.label
+                .contains(&GeneratedMarkerKind::GpsFixRegained.to_string())
+        }));
     }
 
     #[test]

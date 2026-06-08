@@ -57,7 +57,11 @@ mod tests {
         ];
         for (kind, wire) in expected {
             let de: StrDeserializer<'_, DeError> = wire.into_deserializer();
-            assert_eq!(MetricKind::deserialize(de), Ok(kind), "deserializing {wire:?}");
+            assert_eq!(
+                MetricKind::deserialize(de),
+                Ok(kind),
+                "deserializing {wire:?}"
+            );
         }
     }
 }
