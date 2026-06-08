@@ -1,6 +1,16 @@
 #include <doctest/doctest.h>
 #include <geotrace/geotrace.hpp>
 
+#if defined(__GNUC__) && !defined(__clang__)
+// False positive: once add_nav_fix() and detail::to_c() get inlined across
+// this file's many FileBuilder chains, GCC's -Wmaybe-uninitialized loses
+// track of std::optional's engaged/payload invariant for `heading`/`speed`/
+// `eph_m` and flags reads of NavFix's default-constructed (empty) optionals.
+// File-scoped because the false positive recurs at nearly every call site.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
+
 using geotrace::Angle;
 using geotrace::Annotation;
 using geotrace::Constellation;
@@ -208,3 +218,7 @@ TEST_CASE("FileBuilder: move semantics work") {
     auto file = std::move(b2).finish();
     CHECK(file.nav_point_count() == 1);
 }
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif

@@ -8,7 +8,14 @@ FetchContent_Declare(
     GIT_TAG        v2.4.11
     GIT_SHALLOW    TRUE
 )
+
+# doctest v2.4.11's cmake_minimum_required predates 3.5, which CMake >= 4
+# refuses to evaluate at all ("Compatibility with CMake < 3.5 has been
+# removed"). This is the documented escape hatch for vendored dependencies
+# we don't control.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 FetchContent_MakeAvailable(doctest)
+unset(CMAKE_POLICY_VERSION_MINIMUM)
 
 set(GEOTRACE_CPP_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/../../c/tests/fixtures/minimal.gtd")
 

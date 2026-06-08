@@ -161,7 +161,15 @@ inline void check_range(GtdStatus s) {
 }
 
 inline GtdOptF64 to_c(std::optional<double> v) noexcept {
-    return v ? GTD_SOME_F64(*v) : GTD_NONE_F64;
+    // Plain aggregate construction rather than GTD_SOME_F64/GTD_NONE_F64: those
+    // macros expand to C99 compound-literal + designated-initializer syntax,
+    // which MSVC rejects in C++ mode (errors C4576/C7555).
+    GtdOptF64 result{};
+    if (v) {
+        result.value = *v;
+        result.present = 1;
+    }
+    return result;
 }
 
 } // namespace detail
@@ -485,11 +493,14 @@ class FileBuilder {
     ///@{
 
     FileBuilder &add_nav_fix(NavFix fix) {
-        GtdOptF64 heading = fix.heading ? GTD_SOME_F64(fix.heading->as_degrees()) : GTD_NONE_F64;
-        GtdOptF64 speed = fix.speed ? GTD_SOME_F64(fix.speed->as_mps()) : GTD_NONE_F64;
-        detail::check(::gtd_builder_add_nav_fix(
-            impl_, detail::to_c(fix.gps_time), detail::to_c(fix.sys_time), fix.lat.as_degrees(),
-            fix.lon.as_degrees(), heading, speed, detail::to_c(fix.eph_m)));
+        const std::optional<double> heading_deg =
+            fix.heading ? std::optional<double>{fix.heading->as_degrees()} : std::nullopt;
+        const std::optional<double> speed_mps =
+            fix.speed ? std::optional<double>{fix.speed->as_mps()} : std::nullopt;
+        detail::check(::gtd_builder_add_nav_fix(impl_, detail::to_c(fix.gps_time),
+                                                detail::to_c(fix.sys_time), fix.lat.as_degrees(),
+                                                fix.lon.as_degrees(), detail::to_c(heading_deg),
+                                                detail::to_c(speed_mps), detail::to_c(fix.eph_m)));
         return *this;
     }
 
