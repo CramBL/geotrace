@@ -187,14 +187,19 @@ jobs:
   #   3. Configure and build the C++ SDK with BUILD_TESTING=ON.
   #   4. Run ctest.
   cpp-sdk:
-    name: C++ SDK / ${{ matrix.os }} / C++${{ matrix.cxx_std }}
+    name: C++ SDK / ${{ matrix.os }} / C++${{ matrix.cxx_std }}${{ matrix.generator && format(' / {0}', matrix.generator) || '' }}
     runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
         cxx_std: ["17", "20"]
+        include:
+          - { os: windows-latest, cxx_std: "17", generator: "Visual Studio 17 2022", arch: x64 }
+          - { os: windows-latest, cxx_std: "17", generator: Ninja }
+          - { os: windows-latest, cxx_std: "20", generator: "Visual Studio 17 2022", arch: x64 }
+          - { os: windows-latest, cxx_std: "20", generator: Ninja }
 
     steps:
       - name: Checkout
@@ -214,6 +219,7 @@ jobs:
         uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
         with:
           compiler: ${{ matrix.os == 'windows-latest' && 'msvc' || 'llvm-20' }}
+          ninja: true
 
       - name: Build geotrace-c
         run: cargo build -p geotrace-c --release
@@ -233,10 +239,11 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           cmake -S sdk/c -B build/c `
-            -G "Visual Studio 17 2022" -A x64 `
+            -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
             -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release `
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
-          cmake --install build/c --config Release
+          cmake --install build/c
         shell: pwsh
 
       - name: Configure C++ SDK tests (Unix)
@@ -248,11 +255,22 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }}
 
-      - name: Configure C++ SDK tests (Windows)
-        if: runner.os == 'Windows'
+      - name: Configure C++ SDK tests (Windows, Visual Studio)
+        if: runner.os == 'Windows' && matrix.generator == 'Visual Studio 17 2022'
         run: |
           cmake -S sdk/cpp -B build/cpp `
             -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install `
+            -DBUILD_TESTING=ON `
+            -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }}
+        shell: pwsh
+
+      - name: Configure C++ SDK tests (Windows, Ninja)
+        if: runner.os == 'Windows' && matrix.generator == 'Ninja'
+        run: |
+          cmake -S sdk/cpp -B build/cpp `
+            -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install `
             -DBUILD_TESTING=ON `
             -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }}
@@ -267,7 +285,9 @@ jobs:
 
       - name: Run C++ SDK tests (Windows)
         if: runner.os == 'Windows'
-        run: ctest --test-dir build/cpp --config Release --output-on-failure
+        working-directory: build/cpp
+        shell: pwsh
+        run: ctest -C Release --output-on-failure
 
   python-sdk:
     name: Python SDK / ${{ matrix.os }} / Python ${{ matrix.python-version }}
