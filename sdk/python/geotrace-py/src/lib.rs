@@ -70,6 +70,29 @@ impl From<PyConstellation> for Constellation {
     }
 }
 
+#[cfg(test)]
+mod py_constellation_tests {
+    use super::*;
+
+    /// `Satellite::__repr__` derives the Python member name from
+    /// `PyConstellation`'s `Debug` output (upper-cased) instead of re-typing
+    /// it; this pins down that the result still matches the literal
+    /// `#[pyo3(name = "...")]` strings declared on `PyConstellation` above; a
+    /// rename of one without the other - the exact desync this issue is
+    /// about - fails here.
+    #[test]
+    fn repr_name_matches_pyo3_name() {
+        for (variant, pyo3_name) in [
+            (PyConstellation::Gps, "GPS"),
+            (PyConstellation::Glonass, "GLONASS"),
+            (PyConstellation::Galileo, "GALILEO"),
+            (PyConstellation::Beidou, "BEIDOU"),
+        ] {
+            assert_eq!(format!("{variant:?}").to_uppercase(), pyo3_name);
+        }
+    }
+}
+
 
 
 /// Visual icon for a map annotation marker.
@@ -226,13 +249,12 @@ impl PySatellite {
     }
 
     fn __repr__(&self) -> String {
-        let c = match self.inner.constellation {
-            Constellation::Gps => "GPS",
-            Constellation::Glonass => "GLONASS",
-            Constellation::Galileo => "GALILEO",
-            Constellation::Beidou => "BEIDOU",
-        };
-        format!("Satellite(constellation=Constellation.{c}, prn={})", self.inner.prn)
+        // Upper-cased `Debug` of the *Python-facing* enum's variant identifier -
+        // derived from the same identifiers `#[pyo3(name = "...")]` spells out
+        // below, so a rename can't desync `__repr__` from the actual Python
+        // member name (see `py_constellation_repr_name_matches_pyo3_name`).
+        let name = format!("{:?}", PyConstellation::from(self.inner.constellation)).to_uppercase();
+        format!("Satellite(constellation=Constellation.{name}, prn={})", self.inner.prn)
     }
 }
 

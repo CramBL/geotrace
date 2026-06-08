@@ -4,12 +4,13 @@ use std::path::Path;
 use crate::builder::{micros_to_datetime, u64_to_opt_datetime};
 use crate::error::Error;
 use crate::types::{
-    Annotation, EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix,
-    NavPoint, Satellite, SatelliteReport,
+    Annotation, Constellation, EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon, Meta,
+    NavFile, NavFix, NavPoint, Satellite, SatelliteReport,
 };
 use crate::write;
 use crate::{Angle, Velocity};
 use hdf5_pure::File;
+use strum::IntoEnumIterator;
 
 pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
     let file = File::from_bytes(bytes)?;
@@ -677,11 +678,9 @@ fn constellation_names(codes: &[u8]) -> Vec<&'static str> {
             *slot = true;
         }
     }
-    let names: &[&str] = &["GPS", "GLONASS", "Galileo", "BeiDou"];
-    seen.iter()
-        .enumerate()
-        .filter(|&(_, &s)| s)
-        .filter_map(|(i, _)| names.get(i).copied())
+    Constellation::iter()
+        .filter(|c| seen.get(c.to_u8() as usize) == Some(&true))
+        .map(Constellation::display_name)
         .collect()
 }
 

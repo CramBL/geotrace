@@ -478,19 +478,19 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
         // Collect non-empty constellations up-front. `Satellite` is `Copy` so
         // we own the data and can borrow-free inside the layout closures.
         let groups: Vec<(usize, &str, &str, Vec<gt_types::satellites::Satellite>)> = [
-            (0usize, "GPS", "G", Constellation::Gps),
-            (1, "Galileo", "E", Constellation::Galileo),
-            (2, "GLONASS", "R", Constellation::Glonass),
-            (3, "BeiDou", "C", Constellation::Beidou),
+            (0usize, "G", Constellation::Gps),
+            (1, "E", Constellation::Galileo),
+            (2, "R", Constellation::Glonass),
+            (3, "C", Constellation::Beidou),
         ]
         .iter()
-        .filter_map(|&(id, name, prefix, constellation)| {
+        .filter_map(|&(id, prefix, constellation)| {
             let mut const_sats: Vec<_> = sats.by_constellation(constellation).copied().collect();
             if const_sats.is_empty() {
                 return None;
             }
             const_sats.sort_by_key(|s| s.prn());
-            Some((id, name, prefix, const_sats))
+            Some((id, constellation.display_name(), prefix, const_sats))
         })
         .collect();
 
@@ -602,13 +602,7 @@ fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
             .satellites_with_fix()
             .filter(|s| s.constellation() == constellation)
             .count() as u32;
-        let label = match constellation {
-            Constellation::Gps => "GPS",
-            Constellation::Galileo => "Galileo",
-            Constellation::Glonass => "GLONASS",
-            Constellation::Beidou => "BeiDou",
-        };
-        ui.label(label);
+        ui.label(constellation.display_name());
         ui.horizontal(|ui| {
             ui.colored_label(fix_count_color(const_fix), const_fix.to_string());
             ui.label("/");

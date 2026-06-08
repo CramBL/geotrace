@@ -80,7 +80,16 @@ pub struct Satellite {
 }
 
 /// GNSS constellation identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `EnumString` (via `strum`) gives the lowercase wire form used by
+/// [`Constellation::try_from_lower_case`], derived from the variant names so it
+/// can't desync from them. [`Constellation::display_name`] is a separate,
+/// deliberately-exhaustive `match` - it is the single place that answers the
+/// "BeiDou" vs "Beidou" vs "BEIDOU" spelling question, and the compiler forces
+/// it to be updated whenever a variant is added, unlike a derived
+/// `#[strum(message = ...)]` (which would silently fall back to `None` instead).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString, strum::EnumIter)]
+#[strum(serialize_all = "lowercase")]
 pub enum Constellation {
     Gps,
     Glonass,
@@ -112,15 +121,27 @@ impl Constellation {
         }
     }
 
+    /// Canonical human-readable name, e.g. `Constellation::Beidou.display_name() == "BeiDou"`.
+    ///
+    /// Single source of truth for the constellation's display spelling - every
+    /// other call site (UI labels, `read::constellation_names`, Python bindings)
+    /// should format through this rather than re-typing the name.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Constellation::Gps => "GPS",
+            Constellation::Glonass => "GLONASS",
+            Constellation::Galileo => "Galileo",
+            Constellation::Beidou => "BeiDou",
+        }
+    }
+
+    /// Parses the lowercase wire form, e.g. `"beidou"`.
     pub fn try_from_lower_case(s: impl AsRef<str>) -> Result<Self, Error> {
         let s = s.as_ref();
-        match s {
-            "gps" => Ok(Constellation::Gps),
-            "glonass" => Ok(Constellation::Glonass),
-            "galileo" => Ok(Constellation::Galileo),
-            "beidou" => Ok(Constellation::Beidou),
-            _ => Err(Error::UnknownConstellationName { name: s.to_owned() }),
-        }
+        // strum::ParseError carries no information beyond "no variant matched" -
+        // not worth threading through as a `source`.
+        s.parse()
+            .map_err(|_err: strum::ParseError| Error::UnknownConstellationName { name: s.to_owned() })
     }
 }
 
@@ -279,6 +300,59 @@ mod marker_icon_tests {
     fn try_from_lower_case_rejects_unknown_strings() {
         let err = MarkerIcon::try_from_lower_case("not_an_icon").unwrap_err();
         assert!(matches!(err, Error::UnknownMarkerIcon { name } if name == "not_an_icon"));
+    }
+}
+
+#[cfg(test)]
+mod constellation_tests {
+    use strum::IntoEnumIterator;
+
+    use super::*;
+
+    /// `try_from_lower_case` is derived from the variant list (via `EnumString`),
+    /// so every variant's lowercase wire form must parse back to itself.
+    #[test]
+    fn try_from_lower_case_round_trips_through_display_name() {
+        for c in Constellation::iter() {
+            let lower = c.display_name().to_lowercase();
+            let parsed = Constellation::try_from_lower_case(&lower)
+                .unwrap_or_else(|err| panic!("{lower:?} should parse back to {c:?}: {err}"));
+            assert_eq!(parsed, c);
+        }
+    }
+
+    /// The display name is the single source of truth for the "BeiDou" vs
+    /// "Beidou" vs "BEIDOU" spelling that was previously re-typed independently
+    /// at every call site (UI labels, `read::constellation_names`, Python
+    /// bindings); pin it down so a future edit has to change it here.
+    #[test]
+    fn display_name_is_canonical_spelling() {
+        assert_eq!(Constellation::Gps.display_name(), "GPS");
+        assert_eq!(Constellation::Glonass.display_name(), "GLONASS");
+        assert_eq!(Constellation::Galileo.display_name(), "Galileo");
+        assert_eq!(Constellation::Beidou.display_name(), "BeiDou");
+    }
+
+    /// The lowercase wire form is part of the on-disk `.gtd` format
+    /// (`tracked_sats/constellation` group attributes); pin it down so a rename
+    /// of a variant - which would silently change `strum`'s derived lowercase
+    /// form - is caught here rather than at file-read time.
+    #[test]
+    fn try_from_lower_case_accepts_stable_wire_form() {
+        for (lower, expected) in [
+            ("gps", Constellation::Gps),
+            ("glonass", Constellation::Glonass),
+            ("galileo", Constellation::Galileo),
+            ("beidou", Constellation::Beidou),
+        ] {
+            assert_eq!(Constellation::try_from_lower_case(lower).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn try_from_lower_case_rejects_unknown_strings() {
+        let err = Constellation::try_from_lower_case("not_a_constellation").unwrap_err();
+        assert!(matches!(err, Error::UnknownConstellationName { name } if name == "not_a_constellation"));
     }
 }
 

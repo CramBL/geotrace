@@ -84,6 +84,24 @@ pub enum Constellation {
     Beidou,
 }
 
+impl Constellation {
+    /// Canonical human-readable name, e.g. `Constellation::Beidou.display_name() == "BeiDou"`.
+    ///
+    /// Single source of truth for this type's display spelling - call sites
+    /// (e.g. `gt-map`'s satellite panel) should format through this rather than
+    /// re-typing the name. Mirrors `geotrace_sdk::Constellation::display_name`,
+    /// which answers the same "BeiDou" vs "Beidou" vs "BEIDOU" question for the
+    /// structurally-identical SDK/wire-format type; keep the two in sync.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Constellation::Gps => "GPS",
+            Constellation::Glonass => "GLONASS",
+            Constellation::Galileo => "Galileo",
+            Constellation::Beidou => "BeiDou",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Satellite {
     constellation: Constellation,
@@ -250,5 +268,22 @@ impl Satellites {
         self.satellites
             .iter()
             .any(|s| s.in_fix && s.constellation == constellation && s.prn == prn)
+    }
+}
+
+#[cfg(test)]
+mod constellation_tests {
+    use super::*;
+
+    /// Single source of truth for the "BeiDou" vs "Beidou" vs "BEIDOU" spelling
+    /// that was previously re-typed independently at every UI call site; pin it
+    /// down so a future edit has to change it here. Keep in sync with
+    /// `geotrace_sdk::Constellation::display_name`'s identical assertions.
+    #[test]
+    fn display_name_is_canonical_spelling() {
+        assert_eq!(Constellation::Gps.display_name(), "GPS");
+        assert_eq!(Constellation::Glonass.display_name(), "GLONASS");
+        assert_eq!(Constellation::Galileo.display_name(), "Galileo");
+        assert_eq!(Constellation::Beidou.display_name(), "BeiDou");
     }
 }
