@@ -247,6 +247,7 @@
                         "core.*",
                         "alloc.*",
                         "egui_plot.*",
+                        "proptest.*",
                         "crate.*",
                         "gt_egui_mipmap.*",
                     ]),
