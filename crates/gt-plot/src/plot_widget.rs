@@ -4,51 +4,28 @@ use egui::Color32;
 use egui_plot::{Line, PlotPoints, VLine};
 use gt_egui_mipmap::{LevelSelection, MipMap};
 use gt_filter::GlobalFilter;
-use gt_types::{FileIdx, LoadedFile, PointIdx, TrackIdx};
+use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx};
 use gt_ui_types::TrackDataVisibility;
 use rayon::prelude::*;
+use strum::IntoEnumIterator;
 
-/// Identifies one of the 14 per-metric plot series.
+/// Chip color, label, and optional hover tooltip for each [`MetricKind`].
 ///
-/// Replaces the previous positional `u8` index, making chip interaction,
-/// color lookup, label lookup, and mipmap dispatch all go through one type
-/// rather than parallel arrays and magic-number match arms.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MetricKind {
-    SatsSeen,
-    SatsFix,
-    GpsSeen,
-    GpsFix,
-    GlonassSeen,
-    GlonassFix,
-    GalileoSeen,
-    GalileoFix,
-    BeidouSeen,
-    BeidouFix,
-    Velocity,
-    Eph,
-    HeadingDeg,
-    ClockDeltaMs,
+/// `MetricKind` lives in `gt_types` (shared with the persisted settings, see
+/// `geotrace::settings::PlotSettings::metric`); these are presentation
+/// details specific to this widget, so they live here as an extension trait
+/// rather than on the type itself. Together with the `match` in
+/// [`MetricVisibility::field`] and [`MetricVisibility::field_mut`], adding a
+/// variant forces a compile error here until every arm is filled in — chip
+/// interaction, color lookup, label lookup, and mipmap dispatch all go
+/// through one type rather than parallel arrays and magic-number match arms.
+trait MetricKindUi {
+    fn color(self) -> Color32;
+    fn label(self) -> &'static str;
+    fn hover_text(self) -> Option<&'static str>;
 }
 
-impl MetricKind {
-    const ALL: [Self; 14] = [
-        Self::SatsSeen,
-        Self::SatsFix,
-        Self::GpsSeen,
-        Self::GpsFix,
-        Self::GlonassSeen,
-        Self::GlonassFix,
-        Self::GalileoSeen,
-        Self::GalileoFix,
-        Self::BeidouSeen,
-        Self::BeidouFix,
-        Self::Velocity,
-        Self::Eph,
-        Self::HeadingDeg,
-        Self::ClockDeltaMs,
-    ];
-
+impl MetricKindUi for MetricKind {
     fn color(self) -> Color32 {
         match self {
             Self::SatsSeen => Color32::from_rgb(80, 200, 255), // powder blue
@@ -190,12 +167,12 @@ impl MetricVisibility {
 
     /// Returns `true` when every metric is enabled.
     fn all_enabled(self) -> bool {
-        MetricKind::ALL.iter().all(|&k| self.field(k))
+        MetricKind::iter().all(|k| self.field(k))
     }
 
     /// Set every metric to `enabled`.
     fn set_all(&mut self, enabled: bool) {
-        for k in MetricKind::ALL {
+        for k in MetricKind::iter() {
             *self.field_mut(k) = enabled;
         }
     }
@@ -818,7 +795,7 @@ fn add_series_lines<'a>(
         String::new()
     };
 
-    for kind in MetricKind::ALL {
+    for kind in MetricKind::iter() {
         if !metric_vis.field(kind) {
             continue;
         }

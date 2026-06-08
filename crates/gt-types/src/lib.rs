@@ -3,6 +3,7 @@ pub mod highlight;
 pub mod history;
 pub mod markers;
 pub mod mercator;
+pub mod metrics;
 pub mod nav_point;
 pub mod satellites;
 pub use satellites::{Prn, SignalQuality, Snr};
@@ -18,6 +19,7 @@ pub use markers::{
     MarkerIcon, event_marker_fallback_color,
 };
 pub use mercator::MercPoint;
+pub use metrics::MetricKind;
 pub use nav_point::NavPoint;
 pub use time_types::{GpsTime, SysTime};
 pub use tpv::TimePositionVelocity;

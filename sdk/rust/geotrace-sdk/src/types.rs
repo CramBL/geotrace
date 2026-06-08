@@ -141,7 +141,9 @@ impl Constellation {
         // strum::ParseError carries no information beyond "no variant matched" -
         // not worth threading through as a `source`.
         s.parse()
-            .map_err(|_err: strum::ParseError| Error::UnknownConstellationName { name: s.to_owned() })
+            .map_err(|_err: strum::ParseError| Error::UnknownConstellationName {
+                name: s.to_owned(),
+            })
     }
 }
 
@@ -352,7 +354,9 @@ mod constellation_tests {
     #[test]
     fn try_from_lower_case_rejects_unknown_strings() {
         let err = Constellation::try_from_lower_case("not_a_constellation").unwrap_err();
-        assert!(matches!(err, Error::UnknownConstellationName { name } if name == "not_a_constellation"));
+        assert!(
+            matches!(err, Error::UnknownConstellationName { name } if name == "not_a_constellation")
+        );
     }
 }
 

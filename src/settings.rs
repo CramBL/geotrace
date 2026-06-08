@@ -79,24 +79,11 @@ impl Default for PlotSettings {
 ///
 /// New variants can be added freely; old config files simply won't have the key,
 /// and the apply step treats a missing entry as `true` (the default).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MetricKind {
-    SatsSeen,
-    SatsFix,
-    GpsSeen,
-    GpsFix,
-    GlonassSeen,
-    GlonassFix,
-    GalileoSeen,
-    GalileoFix,
-    BeidouSeen,
-    BeidouFix,
-    Velocity,
-    Eph,
-    HeadingDeg,
-    ClockDeltaMs,
-}
+///
+/// Re-exported from `gt_types` rather than defined here, so the persisted
+/// settings and the plot widget (`gt_plot::plot_widget`) share one definition
+/// instead of maintaining matching copies by hand.
+pub use gt_types::MetricKind;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
