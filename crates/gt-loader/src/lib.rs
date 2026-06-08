@@ -240,7 +240,7 @@ fn convert_event_marker(m: &EventMarkerPoint) -> EventMarker {
 fn convert_event_marker_style(s: &SdkEventMarkerStyle) -> EventMarkerStyle {
     let icon = match s.icon {
         SdkEventMarkerIconChoice::Auto => MarkerIcon::Pin,
-        SdkEventMarkerIconChoice::Icon(i) => sdk_icon_to_marker_icon(i),
+        SdkEventMarkerIconChoice::Icon(i) => convert_icon(i),
     };
     let color = match &s.color {
         SdkEventMarkerColor::Auto => {
@@ -254,25 +254,6 @@ fn convert_event_marker_style(s: &SdkEventMarkerStyle) -> EventMarkerStyle {
         variant_path: s.variant_path.clone(),
         icon,
         color,
-    }
-}
-
-fn sdk_icon_to_marker_icon(i: SdkMarkerIcon) -> MarkerIcon {
-    match i {
-        SdkMarkerIcon::Pin => MarkerIcon::Pin,
-        SdkMarkerIcon::Cross => MarkerIcon::Cross,
-        SdkMarkerIcon::Circle => MarkerIcon::Circle,
-        SdkMarkerIcon::Lightning => MarkerIcon::Lightning,
-        SdkMarkerIcon::Warning => MarkerIcon::Warning,
-        SdkMarkerIcon::Error => MarkerIcon::Error,
-        SdkMarkerIcon::Check => MarkerIcon::Check,
-        SdkMarkerIcon::Satellite => MarkerIcon::Satellite,
-        SdkMarkerIcon::SatelliteLost => MarkerIcon::SatelliteLost,
-        SdkMarkerIcon::Gear => MarkerIcon::Gear,
-        SdkMarkerIcon::Refresh => MarkerIcon::Refresh,
-        SdkMarkerIcon::Download => MarkerIcon::Download,
-        SdkMarkerIcon::Upload => MarkerIcon::Upload,
-        SdkMarkerIcon::Wrench => MarkerIcon::Wrench,
     }
 }
 
@@ -328,6 +309,12 @@ fn convert_marker(m: &SdkMarker) -> CustomMarker {
     )
 }
 
+/// Converts the SDK's wire-format icon to the app's internal `MarkerIcon`.
+///
+/// The internal type has one variant the SDK doesn't (`Log`, never produced
+/// here); this is the only place that maps between the two, so a rename on
+/// either side fails to compile here rather than silently desyncing a second,
+/// copy-pasted match elsewhere.
 fn convert_icon(icon: SdkMarkerIcon) -> MarkerIcon {
     match icon {
         SdkMarkerIcon::Pin => MarkerIcon::Pin,
@@ -579,6 +566,11 @@ mod tests {
 
     #[test]
     fn marker_icon_some() {
+        // Every `SdkMarkerIcon` variant, paired with the internal `MarkerIcon`
+        // it must convert to - `convert_icon` is the only place this
+        // correspondence is defined (see its doc comment), so this is a full
+        // exhaustiveness check rather than a sample: a wrong mapping for any
+        // variant fails here even though the match still compiles.
         let pairs = [
             (SdkIcon::Pin, MarkerIcon::Pin),
             (SdkIcon::Cross, MarkerIcon::Cross),
@@ -587,6 +579,13 @@ mod tests {
             (SdkIcon::Warning, MarkerIcon::Warning),
             (SdkIcon::Error, MarkerIcon::Error),
             (SdkIcon::Check, MarkerIcon::Check),
+            (SdkIcon::Satellite, MarkerIcon::Satellite),
+            (SdkIcon::SatelliteLost, MarkerIcon::SatelliteLost),
+            (SdkIcon::Gear, MarkerIcon::Gear),
+            (SdkIcon::Refresh, MarkerIcon::Refresh),
+            (SdkIcon::Download, MarkerIcon::Download),
+            (SdkIcon::Upload, MarkerIcon::Upload),
+            (SdkIcon::Wrench, MarkerIcon::Wrench),
         ];
         for (sdk, expected) in pairs {
             assert_eq!(convert_icon(sdk), expected);
