@@ -64,7 +64,10 @@ impl<'a> GeneratedMarkerRenderer<'a> {
         );
         response.show_tooltip_ui(|ui| match marker.kind {
             gt_types::GeneratedMarkerKind::GnssFixLost => {
-                ui.strong(marker.kind.to_string());
+                ui.strong(generated_marker_header(
+                    marker.kind,
+                    marker.fix_lost_duration,
+                ));
                 let corresponding = track
                     .points
                     .iter()
@@ -75,17 +78,10 @@ impl<'a> GeneratedMarkerRenderer<'a> {
                 }
             }
             gt_types::GeneratedMarkerKind::GnssFixRegained => {
-                let label = match marker.fix_lost_duration {
-                    Some(dur) => {
-                        format!(
-                            "{} after {}",
-                            marker.kind,
-                            format_fix_duration(dur.num_milliseconds())
-                        )
-                    }
-                    None => marker.kind.to_string(),
-                };
-                ui.strong(label);
+                ui.strong(generated_marker_header(
+                    marker.kind,
+                    marker.fix_lost_duration,
+                ));
             }
         });
     }
@@ -161,7 +157,29 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
     }
 }
 
-/// Formats a duration (given in milliseconds) for display in "fix regained" tooltips.
+/// Returns the header string for a generated-marker tooltip or hover section.
+///
+/// Centralises the "GNSS fix regained after Xs" formatting so both the live
+/// tooltip (`show_tooltip`) and the multi-hover compound label
+/// (`draw_candidate_section`) always produce identical text.
+pub(crate) fn generated_marker_header(
+    kind: gt_types::GeneratedMarkerKind,
+    fix_lost_duration: Option<chrono::Duration>,
+) -> String {
+    match kind {
+        gt_types::GeneratedMarkerKind::GnssFixRegained => match fix_lost_duration {
+            Some(dur) => format!(
+                "{kind} after {}",
+                format_fix_duration(dur.num_milliseconds())
+            ),
+            None => kind.to_string(),
+        },
+        gt_types::GeneratedMarkerKind::GnssFixLost => kind.to_string(),
+    }
+}
+
+/// Formats `total_ms` milliseconds as a human-readable duration string (e.g. `"12.3s"`, `"1m30s"`).
+/// Negative values are clamped to zero.
 fn format_fix_duration(total_ms: i64) -> String {
     let total_ms = total_ms.max(0);
     let secs = total_ms / 1000;

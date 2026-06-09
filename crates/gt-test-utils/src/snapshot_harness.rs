@@ -84,6 +84,13 @@ impl<'a, State> TestHarness<'a, State> {
         self.inner.run();
     }
 
+    /// Resize the harness viewport to exactly fit the rendered content,
+    /// then re-run to stabilise.  Use this instead of a hard-coded size
+    /// when the content dimensions aren't known up front.
+    pub fn fit_contents(&mut self) {
+        self.inner.fit_contents();
+    }
+
     pub fn snapshot(&mut self, name: &str) {
         if on_non_macos_ci() {
             return;
