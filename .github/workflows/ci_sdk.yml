@@ -158,7 +158,7 @@ jobs:
         run: |
           choco install --yes --no-progress pkgconfiglite
           pip install meson
-          git clone --depth=1 https://github.com/Snaipe/Criterion criterion-src
+          git clone --depth=1 --branch v2.4.3 https://github.com/Snaipe/Criterion criterion-src
           meson setup criterion-src/build criterion-src --prefix=C:/criterion --buildtype=release `
             --wrap-mode=nofallback `
             --force-fallback-for=boxfort,libffi,klib,nanomsg,nanopb,debugbreak
