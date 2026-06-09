@@ -156,8 +156,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          vcpkg install criterion:x64-windows
-          choco install pkgconfiglite --yes --no-progress
+          choco install --yes --no-progress pkgconfiglite
+          pip install meson
+          git clone --depth=1 https://github.com/Snaipe/Criterion criterion-src
+          meson setup criterion-src/build criterion-src --prefix=C:/criterion --buildtype=release
+          meson compile -C criterion-src/build
+          meson install -C criterion-src/build
 
       - name: Build geotrace-c
         run: cargo build -p geotrace-c --release
@@ -199,7 +203,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $env:PATH = "C:\vcpkg\installed\x64-windows\bin;" + $env:PATH
+          $env:PATH = "C:\criterion\bin;" + $env:PATH
           ctest --test-dir build/c --output-on-failure
 
   # C++ SDK tests - Linux, macOS, and Windows; C++17 and C++20.
