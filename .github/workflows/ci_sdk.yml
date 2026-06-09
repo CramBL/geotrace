@@ -159,7 +159,7 @@ jobs:
           choco install --yes --no-progress pkgconfiglite
           pip install meson
           git clone --depth=1 https://github.com/Snaipe/Criterion criterion-src
-          meson setup criterion-src/build criterion-src --prefix=C:/criterion --buildtype=release
+          meson setup criterion-src/build criterion-src --prefix=C:/criterion --buildtype=release -Dgit_support=disabled
           meson compile -C criterion-src/build
           meson install -C criterion-src/build
 
