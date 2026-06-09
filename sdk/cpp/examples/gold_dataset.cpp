@@ -10,7 +10,10 @@
 #include <geotrace/geotrace.hpp>
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -19,17 +22,20 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
 
-static std::string rtrim(std::string s) {
+namespace {
+
+std::string rtrim(std::string s) {
     while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' '))
         s.pop_back();
     return s;
 }
 
-static std::vector<std::string> split_csv(const std::string &line) {
+std::vector<std::string> split_csv(const std::string &line) {
     std::vector<std::string> cols;
     std::istringstream ss(line);
     std::string col;
@@ -41,17 +47,17 @@ static std::vector<std::string> split_csv(const std::string &line) {
     return cols;
 }
 
-static bool is_leap(int y) noexcept {
+bool is_leap(int y) noexcept {
     return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
 }
 
-static int month_days(int m, int y) noexcept {
+int month_days(int m, int y) noexcept {
     static constexpr std::array<int, 12> dom = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
     return (m == 2 && is_leap(y)) ? 29 : dom.at(static_cast<std::size_t>(m - 1));
 }
 
 /* Parse "YYYY-MM-DDTHH:MM:SS+HH:MM" to a Timestamp, or nullopt on failure. */
-static std::optional<geotrace::Timestamp> parse_ts(const std::string &s) {
+std::optional<geotrace::Timestamp> parse_ts(const std::string &s) {
     if (s.size() < 19)
         return std::nullopt;
     try {
@@ -61,7 +67,7 @@ static std::optional<geotrace::Timestamp> parse_ts(const std::string &s) {
         auto H = std::stoi(s.substr(11, 2));
         auto Mi = std::stoi(s.substr(14, 2));
         auto S = std::stoi(s.substr(17, 2));
-        char sign = (s.size() > 19) ? s[19] : '+';
+        const char sign = (s.size() > 19) ? s[19] : '+';
         int tz_h = 0, tz_m = 0;
         if (s.size() >= 25) {
             tz_h = std::stoi(s.substr(20, 2));
@@ -73,8 +79,8 @@ static std::optional<geotrace::Timestamp> parse_ts(const std::string &s) {
         for (int m = 1; m < Mo; m++)
             days += month_days(m, Y);
         days += D - 1;
-        long secs = days * 86400L + H * 3600L + Mi * 60L + S;
-        long tz = (static_cast<long>(tz_h) * 60L + tz_m) * 60L;
+        long secs = (days * 86400L) + (H * 3600L) + (Mi * 60L) + S;
+        const long tz = (static_cast<long>(tz_h) * 60L + tz_m) * 60L;
         secs += (sign == '-') ? tz : -tz;
         return geotrace::Timestamp::from_seconds(static_cast<std::uint64_t>(secs));
     } catch (const std::exception &) {
@@ -82,7 +88,7 @@ static std::optional<geotrace::Timestamp> parse_ts(const std::string &s) {
     }
 }
 
-static geotrace::Constellation parse_constellation(const std::string &s) {
+geotrace::Constellation parse_constellation(const std::string &s) {
     if (s == "gps")
         return geotrace::Constellation::Gps;
     if (s == "glonass")
@@ -94,7 +100,7 @@ static geotrace::Constellation parse_constellation(const std::string &s) {
     throw std::invalid_argument("unknown constellation: " + s);
 }
 
-static geotrace::MarkerIcon parse_icon(const std::string &s) {
+geotrace::MarkerIcon parse_icon(const std::string &s) {
     if (s.empty() || s == "auto")
         return geotrace::MarkerIcon::Auto;
     if (s == "pin")
@@ -128,7 +134,7 @@ static geotrace::MarkerIcon parse_icon(const std::string &s) {
     return geotrace::MarkerIcon::Auto;
 }
 
-static std::optional<double> parse_opt_double(const std::string &s) {
+std::optional<double> parse_opt_double(const std::string &s) {
     if (s.empty())
         return std::nullopt;
     try {
@@ -146,7 +152,7 @@ struct SatRow {
     geotrace::Satellite sat;
 };
 
-static std::ifstream open_csv(const fs::path &base, const std::string &name) {
+std::ifstream open_csv(const fs::path &base, const std::string &name) {
     auto path = base / name;
     std::ifstream f(path);
     if (!f.is_open())
@@ -154,7 +160,7 @@ static std::ifstream open_csv(const fs::path &base, const std::string &name) {
     return f;
 }
 
-static void load_meta(geotrace::FileBuilder &b, const fs::path &base) {
+void load_meta(geotrace::FileBuilder &b, const fs::path &base) {
     auto f = open_csv(base, "meta.csv");
     std::string line;
     std::getline(f, line); // skip header
@@ -166,7 +172,7 @@ static void load_meta(geotrace::FileBuilder &b, const fs::path &base) {
     b.title(cols[0]).device(cols[1]).notes(cols[2]).identity(cols[3]);
 }
 
-static void load_event_styles(geotrace::FileBuilder &b, const fs::path &base) {
+void load_event_styles(geotrace::FileBuilder &b, const fs::path &base) {
     auto f = open_csv(base, "event_styles.csv");
     std::string line;
     std::getline(f, line); // skip header
@@ -181,7 +187,7 @@ static void load_event_styles(geotrace::FileBuilder &b, const fs::path &base) {
     }
 }
 
-static std::vector<SatRow> load_satellites(const fs::path &base) {
+std::vector<SatRow> load_satellites(const fs::path &base) {
     auto f = open_csv(base, "satellites.csv");
     std::string line;
     std::getline(f, line); // skip header
@@ -209,8 +215,8 @@ static std::vector<SatRow> load_satellites(const fs::path &base) {
     return rows;
 }
 
-static void load_fixes(geotrace::FileBuilder &b, const fs::path &base,
-                       const std::vector<SatRow> &sats) {
+void load_fixes(geotrace::FileBuilder &b, const fs::path &base,
+                const std::vector<SatRow> &sats) {
     auto f = open_csv(base, "fixes.csv");
     std::string line;
     std::getline(f, line); // skip header
@@ -252,7 +258,7 @@ static void load_fixes(geotrace::FileBuilder &b, const fs::path &base,
     }
 }
 
-static void load_markers(geotrace::FileBuilder &b, const fs::path &base) {
+void load_markers(geotrace::FileBuilder &b, const fs::path &base) {
     auto f = open_csv(base, "markers.csv");
     std::string line;
     std::getline(f, line); // skip header
@@ -270,7 +276,7 @@ static void load_markers(geotrace::FileBuilder &b, const fs::path &base) {
     }
 }
 
-static void load_events(geotrace::FileBuilder &b, const fs::path &base) {
+void load_events(geotrace::FileBuilder &b, const fs::path &base) {
     auto f = open_csv(base, "events.csv");
     std::string line;
     std::getline(f, line); // skip header
@@ -288,7 +294,7 @@ static void load_events(geotrace::FileBuilder &b, const fs::path &base) {
     }
 }
 
-static void verify_counts(const geotrace::NavFile &file) {
+void verify_counts(const geotrace::NavFile &file) {
     auto check = [](bool cond, const char *msg) {
         if (!cond)
             throw std::runtime_error(std::string("FAIL: ") + msg);
@@ -317,10 +323,12 @@ static void verify_counts(const geotrace::NavFile &file) {
         throw std::runtime_error("expected 6 event markers, got " + std::to_string(em));
 }
 
+} // namespace
+
 int main(int argc, char **argv) {
     try {
-        fs::path base = (argc >= 2) ? argv[1] : "tests/fixtures/gold_dataset";
-        fs::path out = base / "gold_cpp.gtd";
+        const fs::path base = (argc >= 2) ? argv[1] : "tests/fixtures/gold_dataset";
+        const fs::path out = base / "gold_cpp.gtd";
 
         geotrace::FileBuilder b;
         b.lenient();

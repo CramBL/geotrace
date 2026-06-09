@@ -1,5 +1,6 @@
 #include <geotrace/geotrace.hpp>
 
+#include <cstdint>
 #include <ctime>
 #include <iostream>
 

@@ -1,5 +1,6 @@
 #include <geotrace/geotrace.hpp>
 
+#include <cstddef>
 #include <iostream>
 
 int main(int argc, char **argv) {
