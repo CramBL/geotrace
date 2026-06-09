@@ -1,3 +1,9 @@
+# Build libgeotrace_c (release) inside the SDK container.
+# Must run before lint-c, test-c, lint-cpp, and test-cpp, which all require the
+# library to be present in the target volume.
+[group("container-sdk")]
+build-c: (_sdk "cargo build -p geotrace-c --release")
+
 # Build and run the C SDK unit/integration tests.
 [group("container-sdk")]
 test-c: (_sdk "bash" "scripts/test-c.sh")

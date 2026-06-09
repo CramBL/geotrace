@@ -84,4 +84,4 @@ ci-essentials: fmt-check clippy check test examples qa::qa-lint qa::check-all sd
 ci-extras: osv-scanner sort-check shear typos pup msrv sdk-msrv sdk-doc
 
 [group("ci")]
-ci-sdks: python-sdk fmt-c lint-c test-c fmt-cpp lint-cpp test-cpp qa::generate-gold test-gold-all
+ci-sdks: python-sdk build-c fmt-c lint-c test-c fmt-cpp lint-cpp test-cpp qa::generate-gold test-gold-all
