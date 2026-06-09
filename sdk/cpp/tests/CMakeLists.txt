@@ -9,11 +9,10 @@ FetchContent_Declare(
     GIT_SHALLOW    TRUE
 )
 
-# doctest v2.4.11's cmake_minimum_required predates 3.5, which CMake >= 4
-# refuses to evaluate at all ("Compatibility with CMake < 3.5 has been
-# removed"). This is the documented escape hatch for vendored dependencies
-# we don't control.
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+# doctest v2.4.11's cmake_minimum_required predates 3.10, which recent CMake
+# versions warn about. This is the documented escape hatch for vendored
+# dependencies we don't control.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
 FetchContent_MakeAvailable(doctest)
 unset(CMAKE_POLICY_VERSION_MINIMUM)
 
