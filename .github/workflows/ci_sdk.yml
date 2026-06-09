@@ -121,7 +121,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - name: Checkout
@@ -140,7 +140,9 @@ jobs:
       - name: Install pinned compiler
         uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
         with:
-          compiler: llvm-20
+          compiler: ${{ matrix.os == 'windows-latest' && 'msvc' || 'llvm-20' }}
+          cmake: ${{ matrix.os == 'windows-latest' }}
+          ninja: ${{ matrix.os == 'windows-latest' }}
 
       - name: Install criterion (Linux)
         if: runner.os == 'Linux'
@@ -173,11 +175,28 @@ jobs:
             -DGEOTRACE_C_BUILD_TESTS=ON \
             -DCMAKE_PREFIX_PATH="$(brew --prefix)"
 
-      - name: Build C SDK tests
+      - name: Configure C SDK examples (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -S sdk/c -B build/c `
+            -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release `
+            -DGEOTRACE_C_BUILD_EXAMPLES=ON
+        shell: pwsh
+
+      - name: Build C SDK
         run: cmake --build build/c
 
-      - name: Run C SDK tests
+      - name: Run C SDK tests (Linux, macOS)
+        if: runner.os != 'Windows'
         run: ctest --test-dir build/c --output-on-failure
+
+      - name: Run C SDK examples (Windows)
+        if: runner.os == 'Windows'
+        working-directory: build/c/examples
+        shell: pwsh
+        run: .\write_basic.exe
 
   # C++ SDK tests - Linux, macOS, and Windows; C++17 and C++20.
   #
@@ -196,10 +215,10 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         cxx_std: ["17", "20"]
         include:
-          - { os: windows-latest, cxx_std: "17", generator: "Visual Studio 17 2022", arch: x64 }
-          - { os: windows-latest, cxx_std: "17", generator: Ninja }
-          - { os: windows-latest, cxx_std: "20", generator: "Visual Studio 17 2022", arch: x64 }
-          - { os: windows-latest, cxx_std: "20", generator: Ninja }
+          - { os: windows-latest, cxx_std: "17", generator: "Visual Studio 17 2022", cmake_extra_args: "-A x64" }
+          - { os: windows-latest, cxx_std: "17", generator: Ninja, cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release" }
+          - { os: windows-latest, cxx_std: "20", generator: "Visual Studio 17 2022", cmake_extra_args: "-A x64" }
+          - { os: windows-latest, cxx_std: "20", generator: Ninja, cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release" }
 
     steps:
       - name: Checkout
@@ -255,22 +274,11 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }}
 
-      - name: Configure C++ SDK tests (Windows, Visual Studio)
-        if: runner.os == 'Windows' && matrix.generator == 'Visual Studio 17 2022'
+      - name: Configure C++ SDK tests (Windows)
+        if: runner.os == 'Windows'
         run: |
           cmake -S sdk/cpp -B build/cpp `
-            -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install `
-            -DBUILD_TESTING=ON `
-            -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }}
-        shell: pwsh
-
-      - name: Configure C++ SDK tests (Windows, Ninja)
-        if: runner.os == 'Windows' && matrix.generator == 'Ninja'
-        run: |
-          cmake -S sdk/cpp -B build/cpp `
-            -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
+            -G "${{ matrix.generator }}" ${{ matrix.cmake_extra_args }} `
             -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install `
             -DBUILD_TESTING=ON `
             -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }}
