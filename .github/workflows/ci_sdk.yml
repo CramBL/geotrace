@@ -22,7 +22,7 @@ env:
 jobs:
   # clang-format and clang-tidy for the C and C++ SDKs.
   lint-sdk:
-    name: SDK Lint / C + C++
+    name: SDK Lint / C & C++
     runs-on: ubuntu-latest
 
     steps:
@@ -40,9 +40,15 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Install clang tools and cmake
-        run: |
-          sudo apt-get install -y --no-install-recommends \
-            clang-format clang-tidy cmake ninja-build
+        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+        with:
+          clang-format: true
+          clang-tidy: true
+          cmake: true
+          ninja: true
+
+      - name: Install criterion
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libcriterion-dev
 
       - name: Build geotrace-c
         run: cargo build -p geotrace-c --release
@@ -115,7 +121,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - name: Checkout
@@ -131,34 +137,91 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
+      - name: Install pinned compiler (Linux, macOS)
+        if: runner.os != 'Windows'
+        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+        with:
+          compiler: llvm-20
+
+      - name: Install cmake and ninja (Windows)
+        if: runner.os == 'Windows'
+        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+        with:
+          cmake: true
+          ninja: true
+
+      - name: Set Cargo build target (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          rustup target add x86_64-pc-windows-gnu
+          echo "CARGO_BUILD_TARGET=x86_64-pc-windows-gnu" >> "$GITHUB_ENV"
+
+      - name: Install criterion (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libcriterion-dev
+
+      - name: Install criterion (macOS)
+        if: runner.os == 'macOS'
+        run: brew install criterion
+
+      - name: Install criterion (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          pip install meson
+          git clone --depth=1 --branch v2.4.3 https://github.com/Snaipe/Criterion criterion-src
+          meson setup criterion-src/build criterion-src --prefix=C:/criterion --buildtype=release `
+            -Ddiffs=disabled `
+            "-Dc_args=-Wno-incompatible-pointer-types"
+          meson compile -C criterion-src/build
+          meson install -C criterion-src/build
+          # MSYS2 pkgconf lets cmake's FindPkgConfig locate the installed criterion.pc
+          C:\msys64\usr\bin\pacman.exe --noconfirm -S mingw-w64-x86_64-pkgconf
+          Add-Content $env:GITHUB_PATH "C:\msys64\mingw64\bin"
+
       - name: Build geotrace-c
         run: cargo build -p geotrace-c --release
 
       - name: Generate fixture
         run: cargo run -p geotrace-c --bin gen_fixture --release
 
-      - name: Configure C SDK tests (Linux)
-        if: runner.os == 'Linux'
-        run: >
-          cmake -S sdk/c -B build/c
-          -DCMAKE_BUILD_TYPE=Release
-          -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release
-          -DGEOTRACE_C_BUILD_TESTS=ON
-
-      - name: Configure C SDK tests (macOS)
-        if: runner.os == 'macOS'
+      - name: Configure C SDK tests (Linux, macOS)
+        if: runner.os != 'Windows'
         run: |
+          EXTRA=""
+          [ "$RUNNER_OS" = "macOS" ] && EXTRA="-DCMAKE_PREFIX_PATH=$(brew --prefix)"
           cmake -S sdk/c -B build/c \
             -DCMAKE_BUILD_TYPE=Release \
             -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release \
             -DGEOTRACE_C_BUILD_TESTS=ON \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+            $EXTRA
 
-      - name: Build C SDK tests
+      - name: Configure C SDK tests (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PKG_CONFIG_PATH: C:\criterion\lib\pkgconfig
+        run: |
+          cmake -S sdk/c -B build/c `
+            -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/x86_64-pc-windows-gnu/release `
+            -DGEOTRACE_C_BUILD_TESTS=ON
+
+      - name: Build C SDK
         run: cmake --build build/c
 
-      - name: Run C SDK tests
+      - name: Run C SDK tests (Linux, macOS)
+        if: runner.os != 'Windows'
         run: ctest --test-dir build/c --output-on-failure
+
+      - name: Run C SDK tests (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\criterion\bin;" + $env:PATH
+          ctest --test-dir build/c --output-on-failure
 
   # C++ SDK tests - Linux, macOS, and Windows; C++17 and C++20.
   #
@@ -168,14 +231,39 @@ jobs:
   #   3. Configure and build the C++ SDK with BUILD_TESTING=ON.
   #   4. Run ctest.
   cpp-sdk:
-    name: C++ SDK / ${{ matrix.os }} / C++${{ matrix.cxx_std }}
+    name: C++ SDK / ${{ matrix.os }} / C++${{ matrix.cxx_std }}${{ matrix.generator && format(' / {0}', matrix.generator) || '' }}
     runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
         cxx_std: ["17", "20"]
+        include:
+          - {
+              os: windows-latest,
+              cxx_std: "17",
+              generator: "Visual Studio 17 2022",
+              cmake_extra_args: "-A x64",
+            }
+          - {
+              os: windows-latest,
+              cxx_std: "17",
+              generator: Ninja,
+              cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release",
+            }
+          - {
+              os: windows-latest,
+              cxx_std: "20",
+              generator: "Visual Studio 17 2022",
+              cmake_extra_args: "-A x64",
+            }
+          - {
+              os: windows-latest,
+              cxx_std: "20",
+              generator: Ninja,
+              cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release",
+            }
 
     steps:
       - name: Checkout
@@ -190,6 +278,12 @@ jobs:
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install pinned compiler
+        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+        with:
+          compiler: ${{ matrix.os == 'windows-latest' && 'msvc' || 'llvm-20' }}
+          ninja: true
 
       - name: Build geotrace-c
         run: cargo build -p geotrace-c --release
@@ -209,6 +303,8 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           cmake -S sdk/c -B build/c `
+            -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
             -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release `
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
           cmake --install build/c
@@ -227,6 +323,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           cmake -S sdk/cpp -B build/cpp `
+            -G "${{ matrix.generator }}" ${{ matrix.cmake_extra_args }} `
             -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install `
             -DBUILD_TESTING=ON `
             -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }}
@@ -241,7 +338,9 @@ jobs:
 
       - name: Run C++ SDK tests (Windows)
         if: runner.os == 'Windows'
-        run: ctest --test-dir build/cpp --config Release --output-on-failure
+        working-directory: build/cpp
+        shell: pwsh
+        run: ctest -C Release --output-on-failure
 
   python-sdk:
     name: Python SDK / ${{ matrix.os }} / Python ${{ matrix.python-version }}
@@ -309,3 +408,58 @@ jobs:
             echo "running example: ${filename}"
             uv run python "${file}"
           done
+
+  # Install the C SDK via a local vcpkg overlay port and verify a downstream
+  # consumer project builds and runs correctly.  This validates the portfile
+  # and the integration-test consumer in sdk/integration-tests/vcpkg/.
+  vcpkg-sdk:
+    name: vcpkg overlay port
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install cmake and ninja
+        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+        with:
+          cmake: true
+          ninja: true
+
+      - name: Bootstrap vcpkg
+        run: |
+          git clone --depth=1 https://github.com/microsoft/vcpkg "${{ github.workspace }}/vcpkg"
+          "${{ github.workspace }}/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: Install geotrace-c via overlay port
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: |
+          "${{ github.workspace }}/vcpkg/vcpkg" install geotrace-c \
+            --overlay-ports=sdk/integration-tests/vcpkg-port \
+            --triplet x64-linux \
+            --no-print-usage
+
+      - name: Configure vcpkg consumer
+        run: |
+          cmake -S sdk/integration-tests/vcpkg -B build/vcpkg-smoke \
+            -GNinja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-linux
+
+      - name: Build vcpkg consumer
+        run: cmake --build build/vcpkg-smoke
+
+      - name: Run vcpkg smoke test
+        run: build/vcpkg-smoke/smoke_c

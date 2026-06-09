@@ -8,7 +8,13 @@ FetchContent_Declare(
     GIT_TAG        v2.4.11
     GIT_SHALLOW    TRUE
 )
+
+# doctest v2.4.11's cmake_minimum_required predates 3.10, which recent CMake
+# versions warn about. This is the documented escape hatch for vendored
+# dependencies we don't control.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
 FetchContent_MakeAvailable(doctest)
+unset(CMAKE_POLICY_VERSION_MINIMUM)
 
 set(GEOTRACE_CPP_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/../../c/tests/fixtures/minimal.gtd")
 
@@ -23,6 +29,7 @@ function(add_cpp_test name)
             -Wall -Wextra -Wpedantic
             -Wshadow -Wnon-virtual-dtor -Woverloaded-virtual
             -Wcast-qual -Wformat=2 -Wmissing-declarations
+            -Wconversion -Wold-style-cast
             -Wno-missing-field-initializers
             -Werror
         )

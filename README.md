@@ -18,6 +18,9 @@ It reads `.gtd` recording files and renders Time-Position-Velocity traces on an 
 
 ## SDKs
 
+> [!WARNING]
+> No release has been tagged yet, these install instruction does not apply before the first published version
+
 GeoTrace defines an open binary format (`.gtd`) for storing navigation recordings.
 SDKs are available so you can produce `.gtd` files from any data source and open them in GeoTrace.
 
@@ -47,11 +50,37 @@ Examples: [`sdk/rust/geotrace-sdk/examples/`](sdk/rust/geotrace-sdk/examples/)
 
 A C API wrapping the core encoder/decoder, suitable for embedding in any language with a C FFI.
 See [`sdk/c/geotrace.h`](sdk/c/geotrace.h) for the full API surface.
+Building or consuming it via CMake requires CMake 3.21+.
+
+**find_package** (from a local build or a prebuilt release archive):
+
+```cmake
+find_package(GeoTraceC REQUIRED)
+target_link_libraries(my_target PRIVATE GeoTrace::C)
+```
+
+**FetchContent** (from a release archive URL — no Rust toolchain required):
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(geotrace_c
+    URL     https://github.com/example/geotrace/releases/download/v0.1.0/geotrace-c-linux.tar.gz
+    URL_HASH SHA256=<hash>)
+FetchContent_MakeAvailable(geotrace_c)
+list(APPEND CMAKE_PREFIX_PATH "${geotrace_c_SOURCE_DIR}")
+find_package(GeoTraceC REQUIRED)
+target_link_libraries(my_target PRIVATE GeoTrace::C)
+```
+
+Replace the URL and hash with those from the [Releases](../../releases) page.
+The archive contains the same relocatable install tree produced by `cmake --install`,
+so `find_package` resolves it correctly after adding the extracted root to `CMAKE_PREFIX_PATH`.
 
 ### C++ SDK
 
 A header-only C++17 wrapper around the C SDK with RAII types and range-based iteration.
 See [`sdk/cpp/include/`](sdk/cpp/include/).
+Building or consuming it via CMake requires CMake 3.21+.
 
 ### Python SDK
 

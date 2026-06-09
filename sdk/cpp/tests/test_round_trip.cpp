@@ -1,6 +1,9 @@
 #include <doctest/doctest.h>
 #include <geotrace/geotrace.hpp>
 
+#include <cstdint>
+#include <vector>
+
 using geotrace::Angle;
 using geotrace::Constellation;
 using geotrace::EventMarker;
@@ -48,11 +51,11 @@ TEST_CASE("round-trip: nav fix fields survive write → from_bytes → read") {
     CHECK(p0.lat.as_degrees() == doctest::Approx(LAT).epsilon(1e-6));
     CHECK(p0.lon.as_degrees() == doctest::Approx(LON).epsilon(1e-6));
     REQUIRE(p0.heading.has_value());
-    CHECK(p0.heading->as_degrees() == doctest::Approx(270.0).epsilon(1e-4));
+    CHECK(p0.heading.value().as_degrees() == doctest::Approx(270.0).epsilon(1e-4));
     REQUIRE(p0.speed.has_value());
-    CHECK(p0.speed->as_mps() == doctest::Approx(5.5).epsilon(1e-4));
+    CHECK(p0.speed.value().as_mps() == doctest::Approx(5.5).epsilon(1e-4));
     REQUIRE(p0.eph_m.has_value());
-    CHECK(*p0.eph_m == doctest::Approx(3.2).epsilon(1e-4));
+    CHECK(p0.eph_m.value() == doctest::Approx(3.2).epsilon(1e-4));
     CHECK_FALSE(p0.gps_time.is_none());
     CHECK(p0.gps_time.unix_micros == T0.unix_micros);
 
@@ -99,9 +102,9 @@ TEST_CASE("round-trip: satellite report survives write → from_bytes → read")
     CHECK(s0_out.prn == 12);
     CHECK(s0_out.in_fix);
     REQUIRE(s0_out.elevation_deg.has_value());
-    CHECK(*s0_out.elevation_deg == doctest::Approx(60.0).epsilon(0.5));
+    CHECK(s0_out.elevation_deg.value() == doctest::Approx(60.0).epsilon(0.5));
     REQUIRE(s0_out.snr_dbhz.has_value());
-    CHECK(*s0_out.snr_dbhz == doctest::Approx(42.0).epsilon(0.5));
+    CHECK(s0_out.snr_dbhz.value() == doctest::Approx(42.0).epsilon(0.5));
 
     auto s1_out = file2.satellite(0, 1);
     CHECK(s1_out.constellation == Constellation::Galileo);
@@ -161,7 +164,8 @@ TEST_CASE("round-trip: velocity unit conversions are consistent") {
 
     auto p = file2.nav_point(0);
     REQUIRE(p.speed.has_value());
-    CHECK(p.speed->as_mps() == doctest::Approx(20.0).epsilon(0.01));
-    CHECK(p.speed->as_kmh() == doctest::Approx(72.0).epsilon(0.05));
-    CHECK(p.speed->as_knots() == doctest::Approx(38.88).epsilon(0.1));
+    const auto speed = p.speed.value();
+    CHECK(speed.as_mps() == doctest::Approx(20.0).epsilon(0.01));
+    CHECK(speed.as_kmh() == doctest::Approx(72.0).epsilon(0.05));
+    CHECK(speed.as_knots() == doctest::Approx(38.88).epsilon(0.1));
 }

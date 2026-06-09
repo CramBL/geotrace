@@ -1,7 +1,9 @@
 #include <geotrace/geotrace.hpp>
 
+#include <cstdint>
 #include <ctime>
 #include <iostream>
+#include <utility>
 
 int main() {
     using namespace geotrace;
@@ -58,7 +60,7 @@ int main() {
         ann.icon = MarkerIcon::Pin;
         builder.add_annotation(ann);
 
-        NavFile file = std::move(builder).finish();
+        const NavFile file = std::move(builder).finish();
 
         file.write_to_file("output.gtd");
         std::cout << "wrote output.gtd\n";

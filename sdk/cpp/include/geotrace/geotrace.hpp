@@ -127,7 +127,7 @@ namespace detail {
 
 [[noreturn]] inline void throw_status(GtdStatus s) {
     const char *raw = ::gtd_last_error();
-    std::string msg = (raw != nullptr) ? raw : "unknown error";
+    const std::string msg = (raw != nullptr) ? raw : "unknown error";
     switch (s) {
     case GTD_ERR_NO_NAV_FIXES:
         throw NoNavFixesError(msg);
@@ -161,7 +161,15 @@ inline void check_range(GtdStatus s) {
 }
 
 inline GtdOptF64 to_c(std::optional<double> v) noexcept {
-    return v ? GTD_SOME_F64(*v) : GTD_NONE_F64;
+    // Plain aggregate construction rather than GTD_SOME_F64/GTD_NONE_F64: those
+    // macros expand to C99 compound-literal + designated-initializer syntax,
+    // which MSVC rejects in C++ mode (errors C4576/C7555).
+    GtdOptF64 result{};
+    if (v) {
+        result.value = *v;
+        result.present = 1;
+    }
+    return result;
 }
 
 } // namespace detail
@@ -198,15 +206,18 @@ struct Timestamp {
 class Angle {
   public:
     static Angle degrees(double deg) noexcept { return Angle{deg}; }
-    static Angle radians(double rad) noexcept { return Angle{rad * (180.0 / M_PI)}; }
+    static Angle radians(double rad) noexcept { return Angle{rad * (180.0 / kPi)}; }
 
     double as_degrees() const noexcept { return deg_; }
-    double as_radians() const noexcept { return deg_ * (M_PI / 180.0); }
+    double as_radians() const noexcept { return deg_ * (kPi / 180.0); }
 
     bool operator==(Angle other) const noexcept { return deg_ == other.deg_; }
     bool operator!=(Angle other) const noexcept { return !(*this == other); }
 
   private:
+    // M_PI is a POSIX extension not guaranteed by the C++ standard (absent on MSVC
+    // without _USE_MATH_DEFINES), so we use our own constant instead.
+    static constexpr double kPi = 3.141592653589793238462643383279502884;
     explicit Angle(double deg) noexcept : deg_(deg) {}
     double deg_ = 0.0;
 };
@@ -230,9 +241,9 @@ class Velocity {
     double mps_ = 0.0;
 };
 
-enum class Constellation { Gps, Glonass, Galileo, Beidou };
+enum class Constellation : std::uint8_t { Gps, Glonass, Galileo, Beidou };
 
-enum class MarkerIcon {
+enum class MarkerIcon : std::uint8_t {
     Pin,
     Cross,
     Circle,
@@ -485,11 +496,14 @@ class FileBuilder {
     ///@{
 
     FileBuilder &add_nav_fix(NavFix fix) {
-        GtdOptF64 heading = fix.heading ? GTD_SOME_F64(fix.heading->as_degrees()) : GTD_NONE_F64;
-        GtdOptF64 speed = fix.speed ? GTD_SOME_F64(fix.speed->as_mps()) : GTD_NONE_F64;
-        detail::check(::gtd_builder_add_nav_fix(
-            impl_, detail::to_c(fix.gps_time), detail::to_c(fix.sys_time), fix.lat.as_degrees(),
-            fix.lon.as_degrees(), heading, speed, detail::to_c(fix.eph_m)));
+        const std::optional<double> heading_deg =
+            fix.heading ? std::optional<double>{fix.heading->as_degrees()} : std::nullopt;
+        const std::optional<double> speed_mps =
+            fix.speed ? std::optional<double>{fix.speed->as_mps()} : std::nullopt;
+        detail::check(::gtd_builder_add_nav_fix(impl_, detail::to_c(fix.gps_time),
+                                                detail::to_c(fix.sys_time), fix.lat.as_degrees(),
+                                                fix.lon.as_degrees(), detail::to_c(heading_deg),
+                                                detail::to_c(speed_mps), detail::to_c(fix.eph_m)));
         return *this;
     }
 
@@ -587,7 +601,10 @@ class NavFile {
      */
     static NavFile open(const std::filesystem::path &p) {
         GtdNavFile *out = nullptr;
-        detail::check(::gtd_nav_file_open(p.c_str(), &out));
+        // path::c_str() returns wchar_t* on Windows; .string() gives a narrow string
+        // on all platforms that the C API (const char*) can accept.
+        const auto path_str = p.string();
+        detail::check(::gtd_nav_file_open(path_str.c_str(), &out));
         return NavFile(out);
     }
 
@@ -612,7 +629,8 @@ class NavFile {
      * @throws IoError, Hdf5Error on failure.
      */
     void write_to_file(const std::filesystem::path &p) const {
-        detail::check(::gtd_nav_file_write_to_path(impl_, p.c_str()));
+        const auto path_str = p.string();
+        detail::check(::gtd_nav_file_write_to_path(impl_, path_str.c_str()));
     }
 
     /**
@@ -729,7 +747,7 @@ class NavFile {
 
 inline NavFile FileBuilder::finish() {
     GtdNavFile *out = nullptr;
-    GtdStatus s = ::gtd_builder_finish(impl_, &out);
+    const GtdStatus s = ::gtd_builder_finish(impl_, &out);
     impl_ = nullptr; // builder is consumed regardless of success or failure
     detail::check(s);
     return NavFile(out);

@@ -9,7 +9,9 @@ foreach(example write_basic read_file gold_dataset)
     else()
         target_compile_options(${example} PRIVATE
             -Wall -Wextra -Wpedantic
-            -Wshadow -Wnon-virtual-dtor -Wcast-qual -Wformat=2
+            -Wshadow -Wnon-virtual-dtor -Woverloaded-virtual
+            -Wcast-qual -Wformat=2 -Wmissing-declarations
+            -Wconversion -Wold-style-cast
             -Werror
         )
     endif()

@@ -1,12 +1,13 @@
-"""Forbid floating comments (blank line both before and after) in Rust and C/C++ source files.
+"""Forbid floating comments in Rust, C/C++, and YAML source files.
 
-A floating comment is a run of consecutive // or /* */ comment lines with a blank
-line above the run and a blank line below it — a section label detached from its
-code, whether it's one line or a whole paragraph of them.
+A floating comment is a run of consecutive comment lines with a blank line above
+the run and a blank line below it — a section label detached from its code, whether
+it's one line or a whole paragraph of them.
 
 Fix by removing the blank line between the comment and the code below it, converting
-to ///, or exempting with a qa-allow comment on the run's first line:
+to /// (Rust), or exempting with a qa-allow comment on the run's first line:
     // Floating label // [qa-allow-check-floating-comments, reason = "why"]
+    # Floating label # [qa-allow-check-floating-comments, reason = "why"]
 Multiple checks may share one comment:
     // Label // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "why"]
 """
@@ -16,7 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from qa._allow import is_exempt
-from qa._check import Violation, c_family_files, repo_root, rs_files, run_check
+from qa._check import Violation, c_family_files, repo_root, rs_files, run_check, yaml_files
 
 CHECK = "check-floating-comments"
 # `(?:[^/!]|$)` also matches bare `//` continuation lines (no trailing text),
@@ -24,10 +25,11 @@ CHECK = "check-floating-comments"
 _RS_COMMENT = re.compile(r"^\s*//(?:[^/!]|$)")
 _C_LINE_COMMENT = re.compile(r"^\s*//(?:[^/]|$)")
 _C_BLOCK_COMMENT = re.compile(r"^\s*/\*[^*].*\*/\s*$")
+_YAML_COMMENT = re.compile(r"^\s*#")
 _NOTE = ["this comment is surrounded by blank lines and not attached to any code"]
 _HELP = [
-    "remove the blank line between the comment and the code below it,",
-    "convert to ///, or exempt with:",
+    "remove the blank line between the comment and the content below it,",
+    "convert to /// (Rust), or exempt with:",
 ]
 
 
@@ -68,6 +70,12 @@ def _collect(root: Path) -> list[Violation]:
             return bool(_C_LINE_COMMENT.match(line) or _C_BLOCK_COMMENT.match(line))
 
         for start, end in _comment_runs(lines, _is_c_comment):
+            if _is_floating_run(lines, start, end) and not is_exempt(lines[start], CHECK):
+                violations.append((path, start + 1, lines[start].strip()))
+
+    for path in yaml_files(root):
+        lines = path.read_text(errors="replace").splitlines()
+        for start, end in _comment_runs(lines, lambda line: bool(_YAML_COMMENT.match(line))):
             if _is_floating_run(lines, start, end) and not is_exempt(lines[start], CHECK):
                 violations.append((path, start + 1, lines[start].strip()))
 
