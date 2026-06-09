@@ -5,7 +5,10 @@ foreach(example write_basic read_file gold_dataset)
     target_link_libraries(${example} PRIVATE GeoTrace::C)
 
     if(MSVC)
-        target_compile_options(${example} PRIVATE /W4 /WX /D_CRT_SECURE_NO_WARNINGS)
+        target_compile_options(${example} PRIVATE /W4 /WX
+            /D_CRT_SECURE_NO_WARNINGS
+            /wd4702  # unreachable code: dummy returns after exit() in FAILF macro
+        )
     else()
         target_compile_options(${example} PRIVATE
             -Wall -Wextra -Wpedantic

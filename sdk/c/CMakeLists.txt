@@ -56,9 +56,20 @@ else()
     add_library(GeoTrace::C SHARED IMPORTED GLOBAL)
 endif()
 
+if(WIN32)
+    # Rust's static archive on Windows uses NT I/O and Win32 APIs that MSVC
+    # doesn't auto-link; consumers must pull these in explicitly.
+    set(_gtc_iface_libs ntdll userenv ws2_32 advapi32 bcrypt)
+elseif(UNIX AND NOT APPLE AND (GEOTRACE_C_STATIC OR WIN32))
+    set(_gtc_iface_libs m dl pthread)
+else()
+    set(_gtc_iface_libs "")
+endif()
+
 set_target_properties(GeoTrace::C PROPERTIES
     IMPORTED_LOCATION "${GEOTRACE_C_LIBRARY}"
     INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+    INTERFACE_LINK_LIBRARIES "${_gtc_iface_libs}"
 )
 
 include(GNUInstallDirs)
