@@ -13,6 +13,7 @@ foreach(example write_basic read_file gold_dataset)
         target_compile_options(${example} PRIVATE
             -Wall -Wextra -Wpedantic
             -Wshadow -Wstrict-prototypes -Wcast-qual -Wformat=2
+            -Wmissing-declarations -Wconversion
             -Werror
         )
     endif()

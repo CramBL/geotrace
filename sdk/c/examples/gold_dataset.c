@@ -245,7 +245,7 @@ static void load_satellites(const char *base) {
 
         row->sat.constellation = parse_constellation(cols[2]);
         row->sat.prn = (uint32_t)prn;
-        row->sat.in_fix = (strcmp(cols[4], "true") == 0) ? 1 : 0;
+        row->sat.in_fix = (uint8_t)(strcmp(cols[4], "true") == 0);
         row->sat.elevation_deg = parse_opt_f64(cols[5]);
         row->sat.azimuth_deg = parse_opt_f64(cols[6]);
         row->sat.snr_dbhz = parse_opt_f64(cols[7]);

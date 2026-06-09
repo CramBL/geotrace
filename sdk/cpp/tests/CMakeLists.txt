@@ -29,6 +29,7 @@ function(add_cpp_test name)
             -Wall -Wextra -Wpedantic
             -Wshadow -Wnon-virtual-dtor -Woverloaded-virtual
             -Wcast-qual -Wformat=2 -Wmissing-declarations
+            -Wconversion -Wold-style-cast
             -Wno-missing-field-initializers
             -Werror
         )

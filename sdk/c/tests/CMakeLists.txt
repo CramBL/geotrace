@@ -13,7 +13,7 @@ foreach(test test_builder test_null_guards test_thread_local)
         target_compile_options(${test} PRIVATE
             -Wall -Wextra -Wpedantic
             -Wshadow -Wstrict-prototypes -Wmissing-prototypes
-            -Wcast-qual -Wformat=2 -Wmissing-declarations
+            -Wcast-qual -Wformat=2 -Wmissing-declarations -Wconversion
             -Werror
         )
     endif()

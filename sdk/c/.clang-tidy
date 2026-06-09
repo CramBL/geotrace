@@ -1,4 +1,4 @@
-Checks: "clang-analyzer-*,bugprone-*,cert-*,misc-*,readability-*,\
+Checks: "clang-analyzer-*,bugprone-*,cert-*,misc-*,performance-*,portability-*,readability-*,\
   -bugprone-easily-swappable-parameters,\
   -cert-err33-c,\
   -cert-err34-c,\
