@@ -215,8 +215,7 @@ std::vector<SatRow> load_satellites(const fs::path &base) {
     return rows;
 }
 
-void load_fixes(geotrace::FileBuilder &b, const fs::path &base,
-                const std::vector<SatRow> &sats) {
+void load_fixes(geotrace::FileBuilder &b, const fs::path &base, const std::vector<SatRow> &sats) {
     auto f = open_csv(base, "fixes.csv");
     std::string line;
     std::getline(f, line); // skip header
