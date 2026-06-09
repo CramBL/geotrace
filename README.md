@@ -18,6 +18,9 @@ It reads `.gtd` recording files and renders Time-Position-Velocity traces on an 
 
 ## SDKs
 
+> [!WARNING]
+> No release has been tagged yet, these install instruction does not apply before the first published version
+
 GeoTrace defines an open binary format (`.gtd`) for storing navigation recordings.
 SDKs are available so you can produce `.gtd` files from any data source and open them in GeoTrace.
 

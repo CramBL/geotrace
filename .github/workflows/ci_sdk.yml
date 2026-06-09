@@ -22,7 +22,7 @@ env:
 jobs:
   # clang-format and clang-tidy for the C and C++ SDKs.
   lint-sdk:
-    name: SDK Lint / C + C++
+    name: SDK Lint / C & C++
     runs-on: ubuntu-latest
 
     steps:
@@ -153,7 +153,9 @@ jobs:
       - name: Set Cargo build target (Windows)
         if: runner.os == 'Windows'
         shell: bash
-        run: echo "CARGO_BUILD_TARGET=x86_64-pc-windows-gnu" >> "$GITHUB_ENV"
+        run: |
+          rustup target add x86_64-pc-windows-gnu
+          echo "CARGO_BUILD_TARGET=x86_64-pc-windows-gnu" >> "$GITHUB_ENV"
 
       - name: Install criterion (Linux)
         if: runner.os == 'Linux'
@@ -238,10 +240,30 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         cxx_std: ["17", "20"]
         include:
-          - { os: windows-latest, cxx_std: "17", generator: "Visual Studio 17 2022", cmake_extra_args: "-A x64" }
-          - { os: windows-latest, cxx_std: "17", generator: Ninja, cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release" }
-          - { os: windows-latest, cxx_std: "20", generator: "Visual Studio 17 2022", cmake_extra_args: "-A x64" }
-          - { os: windows-latest, cxx_std: "20", generator: Ninja, cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release" }
+          - {
+              os: windows-latest,
+              cxx_std: "17",
+              generator: "Visual Studio 17 2022",
+              cmake_extra_args: "-A x64",
+            }
+          - {
+              os: windows-latest,
+              cxx_std: "17",
+              generator: Ninja,
+              cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release",
+            }
+          - {
+              os: windows-latest,
+              cxx_std: "20",
+              generator: "Visual Studio 17 2022",
+              cmake_extra_args: "-A x64",
+            }
+          - {
+              os: windows-latest,
+              cxx_std: "20",
+              generator: Ninja,
+              cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release",
+            }
 
     steps:
       - name: Checkout
