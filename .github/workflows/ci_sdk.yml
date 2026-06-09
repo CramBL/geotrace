@@ -137,12 +137,23 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
-      - name: Install pinned compiler
+      - name: Install pinned compiler (Linux, macOS)
+        if: runner.os != 'Windows'
         uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
         with:
-          compiler: ${{ matrix.os == 'windows-latest' && 'msvc' || 'llvm-20' }}
-          cmake: ${{ matrix.os == 'windows-latest' }}
-          ninja: ${{ matrix.os == 'windows-latest' }}
+          compiler: llvm-20
+
+      - name: Install cmake and ninja (Windows)
+        if: runner.os == 'Windows'
+        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+        with:
+          cmake: true
+          ninja: true
+
+      - name: Set Cargo build target (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "CARGO_BUILD_TARGET=x86_64-pc-windows-gnu" >> "$GITHUB_ENV"
 
       - name: Install criterion (Linux)
         if: runner.os == 'Linux'
@@ -184,12 +195,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          PKG_CONFIG_PATH: C:\vcpkg\installed\x64-windows\lib\pkgconfig
+          PKG_CONFIG_PATH: C:\criterion\lib\pkgconfig
         run: |
           cmake -S sdk/c -B build/c `
             -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
-            -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release `
+            -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/x86_64-pc-windows-gnu/release `
             -DGEOTRACE_C_BUILD_TESTS=ON
 
       - name: Build C SDK

@@ -25,7 +25,7 @@ endif()
 # find_library doesn't inadvertently pick up a shared library if both exist.
 if(GEOTRACE_C_STATIC OR WIN32)
     set(_gtc_saved_suffixes "${CMAKE_FIND_LIBRARY_SUFFIXES}")
-    if(WIN32)
+    if(MSVC)
         set(CMAKE_FIND_LIBRARY_SUFFIXES ".lib")
     else()
         set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
