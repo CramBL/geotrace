@@ -141,9 +141,9 @@ fn disambig_closes_on_esc() {
     );
 }
 
-/// Mirrors the hover-suppression guard added to GeneratedMarkerRenderer to prevent
-/// a second, overlapping tooltip when a TPV point and a generated marker share the
-/// same map position:
+/// Mirrors the hover-suppression guard in `GeneratedMarkerRenderer` that prevents a
+/// redundant tooltip from appearing during the one-frame transition into multi-hover
+/// mode (when `suppress_hover_labels` hasn't yet caught up):
 /// ```ignore
 /// let primary_is_tpv = matches!(
 ///     highlight.hover,
@@ -151,6 +151,8 @@ fn disambig_closes_on_esc() {
 /// );
 /// if !primary_is_tpv && ... { show_tooltip(…) }
 /// ```
+/// From the second frame onward `suppress_hover_labels` is true and individual
+/// tooltips are already suppressed; the compound label takes over.
 fn generated_marker_tooltip_allowed(highlight: &MapHighlight) -> bool {
     !matches!(
         highlight.hover,

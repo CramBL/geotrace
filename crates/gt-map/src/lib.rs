@@ -271,8 +271,10 @@ pub(crate) fn draw_rotated_cached_icon(
 use gt_filter::GlobalFilter;
 use gt_types::mercator;
 use gt_types::{
-    DataCategory, FileIdx, Latitude, LoadedFile, Longitude, MercPoint, SpatialPoint, TrackRef,
+    CustomMarker, DataCategory, EventMarker, FileIdx, GeneratedMarker, Latitude, LoadedFile,
+    Longitude, MercPoint, NavPoint, SpatialPoint, TrackRef,
 };
+use gt_ui_theme::EM_DASH;
 use gt_ui_types::{
     DataPointRef, EventMarkerVisibility, HighlightScope, MapHighlight, TrackDataVisibility,
 };
@@ -286,6 +288,8 @@ use crate::generated_marker_renderer::GeneratedMarkerRenderer;
 use crate::marker_renderer::MarkerRenderer;
 use crate::tpv_renderer::TpvRenderer;
 use crate::track_renderer::TrackRenderer;
+
+const ICON_GAP: &str = "  ";
 
 /// Which tile source to use for the background map.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -857,20 +861,26 @@ impl NavMap {
         }
 
         // When multiple different item types are hovered simultaneously, draw a
-        // single compact stacked label near the cursor instead of letting each
-        // renderer place its own label (which would all overlap at the same spot).
+        // single stacked label near the cursor instead of letting each renderer
+        // place its own label (which would all overlap at the same spot).
+        //
+        // Guard on `suppress_hover_labels` (set from the previous frame's candidate
+        // count) so that on the first frame of a multi-hover transition the
+        // individual renderer tooltips show normally. From the second frame onward
+        // `suppress_hover_labels` is true, individual tooltips are suppressed, and
+        // the compound label takes over — preventing the two from appearing at once.
         let current_multi_hover = hover_candidates.iter().flatten().count() > 1;
-        if current_multi_hover
-            && !disambig_open
-            && let Some(cursor_pos) = ui.input(|i| i.pointer.hover_pos())
+        if should_show_compound_label(
+            current_multi_hover,
+            disambig_open,
+            highlight.suppress_hover_labels,
+        ) && let Some(cursor_pos) = ui.input(|i| i.pointer.hover_pos())
         {
             egui::Area::new(egui::Id::new("map_multi_hover_labels"))
                 .fixed_pos(cursor_pos + egui::vec2(15.0, 10.0))
                 .order(egui::Order::Tooltip)
                 .show(ui.ctx(), |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        draw_multi_hover_label_contents(ui, &hover_candidates, files);
-                    });
+                    draw_multi_hover_label_contents(ui, &hover_candidates, files);
                 });
         }
 
@@ -881,18 +891,121 @@ impl NavMap {
     }
 }
 
-/// Renders the rows of a multi-hover stacked label into `ui`.
+/// Returns `true` when the multi-hover compound label should be drawn.
 ///
-/// Callers wrap this in `egui::Frame::popup` to get the border and padding.
+/// `current_multi_hover` — more than one candidate hovered this frame.
+/// `disambig_open` — the disambiguation popup is open.
+/// `suppress_hover_labels` — set from the previous frame's candidate count;
+///   false on the transition frame so the compound label and individual
+///   renderer tooltips never appear simultaneously.
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "three independent boolean inputs to the guard"
+)]
+pub(crate) fn should_show_compound_label(
+    current_multi_hover: bool,
+    disambig_open: bool,
+    suppress_hover_labels: bool,
+) -> bool {
+    current_multi_hover && !disambig_open && suppress_hover_labels
+}
+
+/// Renders the sections of a multi-hover stacked label into `ui`.
+///
+/// Each section is wrapped in its own `Frame::popup` so the items appear as
+/// visually distinct, opaque cards with spacing between them rather than a
+/// single fused block.  The caller should NOT wrap this in an outer frame —
+/// the popup frames provide all the visual containment needed.
 pub(crate) fn draw_multi_hover_label_contents(
     ui: &mut egui::Ui,
     candidates: &[Option<DataPointRef>; 4],
     files: &[LoadedFile],
 ) {
     for candidate in candidates.iter().flatten().copied() {
-        let icon = category_icon(candidate.category);
-        let label = candidate_label(candidate, files);
-        ui.label(format!("{icon}  {label}"));
+        egui::Frame::popup(ui.style()).show(ui, |ui| {
+            draw_candidate_section(ui, candidate, files);
+        });
+    }
+}
+
+enum ResolvedCandidate<'a> {
+    Tpv(&'a NavPoint),
+    GeneratedMarker(&'a GeneratedMarker),
+    EventMarker(&'a EventMarker),
+    CustomMarker(&'a CustomMarker),
+}
+
+fn resolve_candidate<'a>(
+    candidate: DataPointRef,
+    files: &'a [LoadedFile],
+) -> Option<ResolvedCandidate<'a>> {
+    let file = candidate.track.fi.get(files)?;
+    let track = candidate.track.index.get(&file.tracks)?;
+    Some(match candidate.category {
+        DataCategory::Tpv | DataCategory::SatelliteReport => {
+            ResolvedCandidate::Tpv(candidate.point_index.get(&track.points)?)
+        }
+        DataCategory::GeneratedMarker => {
+            ResolvedCandidate::GeneratedMarker(candidate.point_index.get(&track.generated_markers)?)
+        }
+        DataCategory::EventMarker => {
+            ResolvedCandidate::EventMarker(candidate.point_index.get(&track.event_markers)?)
+        }
+        DataCategory::CustomMarker => {
+            ResolvedCandidate::CustomMarker(candidate.point_index.get(&track.custom_markers)?)
+        }
+        DataCategory::Track => return None,
+    })
+}
+
+/// Renders a single candidate's section inside the multi-hover label.
+///
+/// Shows a header line (icon + summary) for every type, plus type-specific body
+/// content: the full hover table for TPV points, and the duration for GNSS-fix-
+/// regained markers.
+fn draw_candidate_section(ui: &mut egui::Ui, candidate: DataPointRef, files: &[LoadedFile]) {
+    let icon = category_icon(candidate.category);
+    match resolve_candidate(candidate, files) {
+        None => {
+            let fallback = match candidate.category {
+                DataCategory::Tpv | DataCategory::SatelliteReport => "GNSS fix",
+                DataCategory::EventMarker => "Event marker",
+                DataCategory::CustomMarker => "Custom marker",
+                DataCategory::GeneratedMarker => "Generated marker",
+                DataCategory::Track => "",
+            };
+            ui.strong(format!("{icon}{ICON_GAP}{fallback}"));
+        }
+        Some(ResolvedCandidate::Tpv(point)) => {
+            ui.strong(format!(
+                "{icon}{ICON_GAP}GNSS fix{ICON_GAP}{}",
+                point.tpv.time().utc().format("%H:%M:%S")
+            ));
+            crate::tpv_renderer::show_hover_table(ui, point);
+        }
+        Some(ResolvedCandidate::GeneratedMarker(marker)) => {
+            ui.strong(format!(
+                "{icon}{ICON_GAP}{}",
+                crate::generated_marker_renderer::generated_marker_header(
+                    marker.kind,
+                    marker.fix_lost_duration
+                )
+            ));
+        }
+        Some(ResolvedCandidate::EventMarker(m)) => match &m.annotation {
+            Some(note) if !note.is_empty() => {
+                ui.label(format!(
+                    "{icon}{ICON_GAP}{}{ICON_GAP}{EM_DASH}{ICON_GAP}{note}",
+                    m.variant_path
+                ));
+            }
+            _ => {
+                ui.label(format!("{icon}{ICON_GAP}{}", m.variant_path));
+            }
+        },
+        Some(ResolvedCandidate::CustomMarker(m)) => {
+            ui.label(format!("{icon}{ICON_GAP}{}", m.label));
+        }
     }
 }
 
@@ -920,7 +1033,7 @@ pub(crate) fn draw_disambig_row(
         },
     );
     job.append(
-        &format!("  {label}"),
+        &format!("{ICON_GAP}{label}"),
         0.0,
         egui::TextFormat {
             font_id: egui::FontId::proportional(13.0),
@@ -943,47 +1056,30 @@ pub(crate) fn category_icon(cat: DataCategory) -> &'static str {
 }
 
 pub(crate) fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> String {
-    let Some(file) = candidate.track.fi.get(files) else {
-        return String::new();
-    };
-    let Some(track) = candidate.track.index.get(&file.tracks) else {
-        return String::new();
-    };
-    match candidate.category {
-        DataCategory::Tpv | DataCategory::SatelliteReport => {
-            if let Some(p) = candidate.point_index.get(&track.points) {
-                p.tpv.time().utc().format("GNSS fix  %H:%M:%S").to_string()
-            } else {
-                "GNSS fix".to_string()
-            }
+    match resolve_candidate(candidate, files) {
+        None => match candidate.category {
+            DataCategory::Tpv | DataCategory::SatelliteReport => "GNSS fix".to_owned(),
+            DataCategory::EventMarker => "Event marker".to_owned(),
+            DataCategory::CustomMarker => "Custom marker".to_owned(),
+            DataCategory::GeneratedMarker => "Generated marker".to_owned(),
+            DataCategory::Track => String::new(),
+        },
+        Some(ResolvedCandidate::Tpv(p)) => {
+            format!(
+                "GNSS fix{ICON_GAP}{}",
+                p.tpv.time().utc().format("%H:%M:%S")
+            )
         }
-        DataCategory::EventMarker => {
-            if let Some(m) = candidate.point_index.get(&track.event_markers) {
-                match &m.annotation {
-                    Some(note) if !note.is_empty() => {
-                        format!("{}  -  {note}", m.variant_path)
-                    }
-                    _ => m.variant_path.clone(),
-                }
-            } else {
-                "Event marker".to_string()
+        Some(ResolvedCandidate::EventMarker(m)) => match &m.annotation {
+            Some(note) if !note.is_empty() => {
+                format!("{}{ICON_GAP}{EM_DASH}{ICON_GAP}{note}", m.variant_path)
             }
+            _ => m.variant_path.clone(),
+        },
+        Some(ResolvedCandidate::CustomMarker(m)) => m.label.clone(),
+        Some(ResolvedCandidate::GeneratedMarker(m)) => {
+            crate::generated_marker_renderer::generated_marker_header(m.kind, m.fix_lost_duration)
         }
-        DataCategory::CustomMarker => {
-            if let Some(m) = candidate.point_index.get(&track.custom_markers) {
-                m.label.clone()
-            } else {
-                "Custom marker".to_string()
-            }
-        }
-        DataCategory::GeneratedMarker => {
-            if let Some(m) = candidate.point_index.get(&track.generated_markers) {
-                m.kind.to_string()
-            } else {
-                "Generated marker".to_string()
-            }
-        }
-        DataCategory::Track => String::new(),
     }
 }
 
@@ -994,9 +1090,6 @@ fn show_sticky_popup(
     sticky_ref: DataPointRef,
     default_pos: egui::Pos2,
 ) {
-    use crate::tpv_renderer::show_sticky_tpv_content;
-    use gt_types::DataCategory;
-
     // For TPV points, satellite reports, and generated-marker events the window
     // title is the point's datetime; for everything else fall back to a generic label.
     let title: String = if sticky_ref.category == DataCategory::Tpv {
@@ -1086,7 +1179,7 @@ fn show_sticky_popup(
                     egui::ScrollArea::vertical()
                         .max_height(max_h)
                         .show(ui, |ui| {
-                            show_sticky_tpv_content(ui, point);
+                            crate::tpv_renderer::show_sticky_tpv_content(ui, point);
                         });
                     ui.add_space(4.0);
                     ui.label(egui::RichText::new("Click to deselect").small().weak());
@@ -1161,7 +1254,7 @@ fn show_sticky_popup(
                     egui::ScrollArea::vertical()
                         .max_height(max_h)
                         .show(ui, |ui| {
-                            show_sticky_tpv_content(ui, point);
+                            crate::tpv_renderer::show_sticky_tpv_content(ui, point);
                         });
                     ui.add_space(4.0);
                     ui.label(egui::RichText::new("Click to deselect").small().weak());
@@ -1633,6 +1726,96 @@ mod tests {
             "spatial index has stale entries after file deletion"
         );
     }
+
+    #[test]
+    fn compound_label_guard_truth_table() {
+        for (multi, disambig, suppress, expected) in [
+            (true, false, false, false), // first frame — suppress not yet set
+            (true, false, true, true),   // settled multi-hover
+            (false, false, true, false), // single hover
+            (true, true, true, false),   // disambiguation popup open
+        ] {
+            assert_eq!(
+                should_show_compound_label(multi, disambig, suppress),
+                expected,
+                "multi={multi} disambig={disambig} suppress={suppress}"
+            );
+        }
+    }
+
+    /// candidate_label for a GnssFixRegained marker with a known duration must
+    /// produce the same string as generated_marker_header — both surfaces share
+    /// the same text so the disambiguation popup and the compound hover label agree.
+    #[test]
+    fn candidate_label_generated_marker_matches_header() {
+        use gt_types::{
+            GeneratedMarker, GeneratedMarkerKind, Latitude, LoadedTrack, Longitude, mercator,
+        };
+
+        let now = chrono::Utc::now();
+        let dur = chrono::Duration::milliseconds(12_300);
+        let lat = Latitude::new(55.686_7);
+        let lon = Longitude::new(12.563_8);
+        let bb = Rect::new(Coord { x: 12.55, y: 55.67 }, Coord { x: 12.59, y: 55.69 });
+        let track = LoadedTrack {
+            metadata: TrackMetadata {
+                index: 0,
+                distance_km: uom::si::f64::Length::new::<uom::si::length::kilometer>(1.0),
+                duration: chrono::Duration::seconds(1),
+                time_range: TimeRange::new(now, now + chrono::Duration::seconds(1)),
+                bounding_box: bb,
+                merc_bounds: merc_bounds_for_rect(bb),
+                point_set_diameter_m: uom::si::f64::Length::new::<uom::si::length::meter>(10.0),
+                has_custom_markers: false,
+                tpv_count: 0,
+                satellite_report_count: 0,
+                custom_marker_count: 0,
+                generated_marker_count: 1,
+                event_marker_count: 0,
+            },
+            points: vec![],
+            custom_markers: vec![],
+            generated_markers: vec![GeneratedMarker {
+                time: now,
+                kind: GeneratedMarkerKind::GnssFixRegained,
+                lat,
+                lon,
+                fix_lost_duration: Some(dur),
+                merc: mercator::normalize(lat, lon),
+            }],
+            event_markers: vec![],
+        };
+        let file = LoadedFile {
+            metadata: FileMetadata {
+                filename: "test.gtd".to_string(),
+                total_distance_km: uom::si::f64::Length::new::<uom::si::length::kilometer>(1.0),
+                total_duration: chrono::Duration::seconds(1),
+                time_range: TimeRange::new(now, now + chrono::Duration::seconds(1)),
+            },
+            identity: "auto:test.gtd".to_string(),
+            tracks: vec![track],
+            event_marker_styles: std::collections::HashMap::new(),
+            orphaned_event_markers: vec![],
+            source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
+            load_warnings: vec![],
+            db_ref: None,
+        };
+
+        let candidate = gt_ui_types::DataPointRef {
+            track: gt_types::TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            category: DataCategory::GeneratedMarker,
+            point_index: PointIdx::new(0),
+        };
+        let expected = crate::generated_marker_renderer::generated_marker_header(
+            GeneratedMarkerKind::GnssFixRegained,
+            Some(dur),
+        );
+        assert_eq!(
+            candidate_label(candidate, &[file]),
+            expected,
+            "candidate_label must delegate to generated_marker_header"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1666,19 +1849,28 @@ mod snapshot_tests {
         }
     }
 
+    fn gen_ref() -> DataPointRef {
+        DataPointRef {
+            track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            category: DataCategory::GeneratedMarker,
+            point_index: PointIdx::new(0),
+        }
+    }
+
     fn install_phosphor(ui: &egui::Ui) {
         let mut fonts = egui::FontDefinitions::default();
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
         ui.ctx().set_fonts(fonts);
     }
 
-    /// Builds a single `LoadedFile` that has one TPV point, one event marker,
-    /// and one custom marker, all at index 0.  Used by snapshot tests so
-    /// `candidate_label` produces real human-readable text.
+    /// Builds a single `LoadedFile` with one TPV point, one event marker, one custom
+    /// marker, and one `GnssFixRegained` generated marker, all at index 0.  Used by
+    /// snapshot tests so each candidate type produces real human-readable text.
     fn make_snapshot_file() -> gt_types::LoadedFile {
         use gt_types::{
-            CustomMarker, EventMarker, FileMetadata, Latitude, LoadedFile, LoadedTrack, Longitude,
-            MarkerIcon, TimeRange, TrackMetadata, merc_bounds_for_rect,
+            CustomMarker, EventMarker, FileMetadata, GeneratedMarker, GeneratedMarkerKind,
+            Latitude, LoadedFile, LoadedTrack, Longitude, MarkerIcon, TimeRange, TrackMetadata,
+            merc_bounds_for_rect, mercator,
         };
         use uom::si::f64::Length;
         use uom::si::length::kilometer;
@@ -1703,6 +1895,14 @@ mod snapshot_tests {
             lon,
             None,
         );
+        let generated_marker = GeneratedMarker {
+            time: t0,
+            kind: GeneratedMarkerKind::GnssFixRegained,
+            lat,
+            lon,
+            fix_lost_duration: Some(chrono::Duration::milliseconds(12_300)),
+            merc: mercator::normalize(lat, lon),
+        };
 
         let bb = gt_types::Rect::new(
             gt_types::Coord { x: 12.55, y: 55.67 },
@@ -1722,12 +1922,12 @@ mod snapshot_tests {
                 tpv_count: n,
                 satellite_report_count: 0,
                 custom_marker_count: 1,
-                generated_marker_count: 0,
+                generated_marker_count: 1,
                 event_marker_count: 1,
             },
             points,
             custom_markers: vec![custom_marker],
-            generated_markers: vec![],
+            generated_markers: vec![generated_marker],
             event_markers: vec![event_marker],
         };
 
@@ -1748,23 +1948,39 @@ mod snapshot_tests {
         }
     }
 
-    /// Snapshot: the stacked multi-hover label popup that appears when multiple
-    /// item types are simultaneously within cursor radius (item 15). Calls the
-    /// real production function so the test stays in sync with the code.
+    /// Snapshot: the stacked multi-hover label popup for TPV + event marker +
+    /// custom marker simultaneously within cursor radius.  Calls the real
+    /// production function so the test stays in sync with the code.
     #[test]
     fn snap_multi_hover_stacked_label() {
         let files = vec![make_snapshot_file()];
         let candidates = [Some(tpv_ref()), Some(event_ref()), Some(custom_ref()), None];
 
-        let mut harness = TestHarness::new_wgpu(egui::vec2(280.0, 110.0), move |ui| {
+        let mut harness = TestHarness::new_wgpu(egui::vec2(400.0, 800.0), move |ui| {
             install_phosphor(ui);
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
-                draw_multi_hover_label_contents(ui, &candidates, &files);
-            });
+            draw_multi_hover_label_contents(ui, &candidates, &files);
         });
 
-        harness.run();
+        harness.fit_contents();
         harness.snapshot("multi_hover_stacked_label");
+    }
+
+    /// Snapshot: the stacked multi-hover label for the common case where a TPV
+    /// fix point and a GNSS-fix-regained generated marker share the same map
+    /// position.  The TPV section shows the full hover table; the generated-marker
+    /// section shows the kind and the fix-lost duration.
+    #[test]
+    fn snap_multi_hover_tpv_and_generated_marker() {
+        let files = vec![make_snapshot_file()];
+        let candidates = [Some(tpv_ref()), None, None, Some(gen_ref())];
+
+        let mut harness = TestHarness::new_wgpu(egui::vec2(400.0, 800.0), move |ui| {
+            install_phosphor(ui);
+            draw_multi_hover_label_contents(ui, &candidates, &files);
+        });
+
+        harness.fit_contents();
+        harness.snapshot("multi_hover_tpv_and_generated_marker");
     }
 
     /// Snapshot: the disambiguation popup (item 16) with large icons via
