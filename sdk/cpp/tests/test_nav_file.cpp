@@ -1,6 +1,11 @@
 #include <doctest/doctest.h>
 #include <geotrace/geotrace.hpp>
 
+#include <cstdint>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
 using geotrace::Angle;
 using geotrace::Error;
 using geotrace::FileBuilder;
@@ -74,7 +79,7 @@ TEST_CASE("NavFile: move semantics work") {
 }
 
 TEST_CASE("NavFile: from_bytes with invalid data throws") {
-    std::vector<std::uint8_t> garbage = {0x00, 0xFF, 0xAB, 0xCD};
+    const std::vector<std::uint8_t> garbage = {0x00, 0xFF, 0xAB, 0xCD};
     CHECK_THROWS_AS(NavFile::from_bytes(garbage), Error);
 }
 

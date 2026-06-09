@@ -1,6 +1,8 @@
 #include <doctest/doctest.h>
 #include <geotrace/geotrace.hpp>
 
+#include <utility>
+
 #if defined(__GNUC__) && !defined(__clang__)
 // False positive: once add_nav_fix() and detail::to_c() get inlined across
 // this file's many FileBuilder chains, GCC's -Wmaybe-uninitialized loses
@@ -36,7 +38,7 @@ TEST_CASE("FileBuilder: single nav fix produces a valid NavFile") {
     fix.lat = Angle::degrees(51.5074);
     fix.lon = Angle::degrees(-0.1278);
 
-    NavFile file = FileBuilder{}.add_nav_fix(fix).finish();
+    const NavFile file = FileBuilder{}.add_nav_fix(fix).finish();
 
     CHECK(file.nav_point_count() == 1);
     auto p = file.nav_point(0);
@@ -50,13 +52,13 @@ TEST_CASE("FileBuilder: metadata is preserved") {
     fix.lat = Angle::degrees(0.0);
     fix.lon = Angle::degrees(0.0);
 
-    NavFile file = FileBuilder{}
-                       .title("my track")
-                       .device("test device")
-                       .notes("some notes")
-                       .identity("unit-test")
-                       .add_nav_fix(fix)
-                       .finish();
+    const NavFile file = FileBuilder{}
+                             .title("my track")
+                             .device("test device")
+                             .notes("some notes")
+                             .identity("unit-test")
+                             .add_nav_fix(fix)
+                             .finish();
 
     CHECK(file.title() == "my track");
     CHECK(file.device() == "test device");
@@ -73,7 +75,7 @@ TEST_CASE("FileBuilder: optional fields round-trip") {
     fix.speed = Velocity::mps(10.0);
     fix.eph_m = 5.0;
 
-    NavFile file = FileBuilder{}.add_nav_fix(fix).finish();
+    const NavFile file = FileBuilder{}.add_nav_fix(fix).finish();
 
     auto p = file.nav_point(0);
     REQUIRE(p.heading.has_value());
@@ -90,7 +92,7 @@ TEST_CASE("FileBuilder: no-optional nav fix has nullopt fields") {
     fix.lat = Angle::degrees(0.0);
     fix.lon = Angle::degrees(0.0);
 
-    NavFile file = FileBuilder{}.add_nav_fix(fix).finish();
+    const NavFile file = FileBuilder{}.add_nav_fix(fix).finish();
 
     auto p = file.nav_point(0);
     CHECK_FALSE(p.heading.has_value());
@@ -123,7 +125,7 @@ TEST_CASE("FileBuilder: satellite report round-trips") {
     report.tracked.push_back(s1);
     report.tracked.push_back(s2);
 
-    NavFile file = FileBuilder{}.add_nav_fix(fix).add_satellite_report(report).finish();
+    const NavFile file = FileBuilder{}.add_nav_fix(fix).add_satellite_report(report).finish();
 
     auto p = file.nav_point(0);
     CHECK(p.satellite_count == 2);
@@ -156,7 +158,7 @@ TEST_CASE("FileBuilder: event marker round-trips") {
     style.icon = MarkerIcon::Gear;
     style.color_hex = "#00FF00";
 
-    NavFile file =
+    const NavFile file =
         FileBuilder{}.add_nav_fix(fix).add_event_marker(m1).add_event_marker_style(style).finish();
 
     REQUIRE(file.event_marker_count() == 1);

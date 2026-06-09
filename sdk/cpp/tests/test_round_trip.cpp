@@ -1,6 +1,9 @@
 #include <doctest/doctest.h>
 #include <geotrace/geotrace.hpp>
 
+#include <cstdint>
+#include <vector>
+
 using geotrace::Angle;
 using geotrace::Constellation;
 using geotrace::EventMarker;

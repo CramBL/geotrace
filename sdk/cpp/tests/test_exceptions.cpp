@@ -1,7 +1,10 @@
 #include <doctest/doctest.h>
 #include <geotrace/geotrace.hpp>
 
+#include <exception>
+#include <stdexcept>
 #include <type_traits>
+#include <utility>
 
 using geotrace::Angle;
 using geotrace::Annotation;
@@ -20,17 +23,17 @@ using geotrace::Timestamp;
 using geotrace::UnsupportedVersionError;
 
 TEST_CASE("exception hierarchy: all types derive from geotrace::Error") {
-    CHECK(std::is_base_of<Error, BuildError>::value);
-    CHECK(std::is_base_of<Error, IoError>::value);
-    CHECK(std::is_base_of<Error, Hdf5Error>::value);
-    CHECK(std::is_base_of<Error, UnsupportedVersionError>::value);
-    CHECK(std::is_base_of<Error, InvalidPathError>::value);
-    CHECK(std::is_base_of<BuildError, NoNavFixesError>::value);
-    CHECK(std::is_base_of<BuildError, AnnotationsOutOfRangeError>::value);
+    CHECK(std::is_base_of_v<Error, BuildError>);
+    CHECK(std::is_base_of_v<Error, IoError>);
+    CHECK(std::is_base_of_v<Error, Hdf5Error>);
+    CHECK(std::is_base_of_v<Error, UnsupportedVersionError>);
+    CHECK(std::is_base_of_v<Error, InvalidPathError>);
+    CHECK(std::is_base_of_v<BuildError, NoNavFixesError>);
+    CHECK(std::is_base_of_v<BuildError, AnnotationsOutOfRangeError>);
 }
 
 TEST_CASE("exception hierarchy: all types derive from std::exception") {
-    CHECK(std::is_base_of<std::exception, Error>::value);
+    CHECK(std::is_base_of_v<std::exception, Error>);
 }
 
 TEST_CASE("exception: NoNavFixesError is catchable as BuildError and Error") {
@@ -51,7 +54,7 @@ TEST_CASE("exception: NoNavFixesError is catchable as BuildError and Error") {
 TEST_CASE("exception: InvalidPathError is catchable as Error") {
     auto throw_it = [] {
         FileBuilder b;
-        Timestamp t = Timestamp::from_seconds(1700000000ULL);
+        const Timestamp t = Timestamp::from_seconds(1700000000ULL);
         NavFix fix;
         fix.gps_time = t;
         fix.lat = Angle::degrees(0.0);
@@ -91,9 +94,9 @@ TEST_CASE("exception: out_of_range from nav_point is std::out_of_range, not geot
 TEST_CASE("exception: AnnotationsOutOfRangeError carries a count field") {
     // Create a file where an annotation falls outside the nav fix time range.
     // Two nav fixes from T1 to T2; annotation at T0 (before T1) - out of range.
-    Timestamp t1 = Timestamp::from_seconds(1700000100ULL);
-    Timestamp t2 = Timestamp::from_seconds(1700000200ULL);
-    Timestamp t0 = Timestamp::from_seconds(1700000000ULL); // before t1
+    const Timestamp t1 = Timestamp::from_seconds(1700000100ULL);
+    const Timestamp t2 = Timestamp::from_seconds(1700000200ULL);
+    const Timestamp t0 = Timestamp::from_seconds(1700000000ULL); // before t1
 
     try {
         NavFix f1;

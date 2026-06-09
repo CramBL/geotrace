@@ -7,7 +7,9 @@ Checks: "clang-analyzer-*,bugprone-*,cert-*,cppcoreguidelines-*,hicpp-*,misc-*,m
   -cppcoreguidelines-avoid-c-arrays,\
   -cppcoreguidelines-avoid-magic-numbers,\
   -cppcoreguidelines-avoid-non-const-global-variables,\
+  -cppcoreguidelines-macro-to-enum,\
   -cppcoreguidelines-macro-usage,\
+  -modernize-macro-to-enum,\
   -cppcoreguidelines-pro-bounds-array-to-pointer-decay,\
   -cppcoreguidelines-pro-bounds-pointer-arithmetic,\
   -hicpp-avoid-c-arrays,\

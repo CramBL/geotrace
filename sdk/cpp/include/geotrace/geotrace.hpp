@@ -127,7 +127,7 @@ namespace detail {
 
 [[noreturn]] inline void throw_status(GtdStatus s) {
     const char *raw = ::gtd_last_error();
-    std::string msg = (raw != nullptr) ? raw : "unknown error";
+    const std::string msg = (raw != nullptr) ? raw : "unknown error";
     switch (s) {
     case GTD_ERR_NO_NAV_FIXES:
         throw NoNavFixesError(msg);
@@ -241,9 +241,9 @@ class Velocity {
     double mps_ = 0.0;
 };
 
-enum class Constellation { Gps, Glonass, Galileo, Beidou };
+enum class Constellation : std::uint8_t { Gps, Glonass, Galileo, Beidou };
 
-enum class MarkerIcon {
+enum class MarkerIcon : std::uint8_t {
     Pin,
     Cross,
     Circle,
@@ -747,7 +747,7 @@ class NavFile {
 
 inline NavFile FileBuilder::finish() {
     GtdNavFile *out = nullptr;
-    GtdStatus s = ::gtd_builder_finish(impl_, &out);
+    const GtdStatus s = ::gtd_builder_finish(impl_, &out);
     impl_ = nullptr; // builder is consumed regardless of success or failure
     detail::check(s);
     return NavFile(out);
