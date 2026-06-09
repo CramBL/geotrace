@@ -77,6 +77,7 @@ _dev *args:
     set -euo pipefail
     [[ "${IN_GEOTRACE_CONTAINER:-}" == "1" ]] && { {{ args }}; exit; }
     just _require-runner
+    mkdir -p "$HOME/.cargo/registry" "$HOME/.cargo/git"
     echo "{{ GREEN }}{{ BOLD }}{{ args }}{{ NORMAL }}"
     {{ RUNNER }} run {{ COMMON_RUN_ARGS }} {{ IMAGE }} {{ args }}
 
