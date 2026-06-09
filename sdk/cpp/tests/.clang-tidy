@@ -1,7 +1,5 @@
 InheritParentConfig: true
 # Doctest macros generate static functions (misc-use-anonymous-namespace) and
 # do-while loops (cppcoreguidelines-avoid-do-while) that can't be fixed in user
-# code.  bugprone-unchecked-optional-access fires after REQUIRE(.has_value())
-# calls because clang-tidy's flow analysis doesn't see through doctest's REQUIRE
-# macro that the guarded dereferences are safe.
-Checks: "-cppcoreguidelines-avoid-do-while,-misc-use-anonymous-namespace,-bugprone-unchecked-optional-access"
+# code.
+Checks: "-cppcoreguidelines-avoid-do-while,-misc-use-anonymous-namespace"

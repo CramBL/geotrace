@@ -79,11 +79,11 @@ TEST_CASE("FileBuilder: optional fields round-trip") {
 
     auto p = file.nav_point(0);
     REQUIRE(p.heading.has_value());
-    CHECK(p.heading->as_degrees() == doctest::Approx(180.0));
+    CHECK(p.heading.value().as_degrees() == doctest::Approx(180.0));
     REQUIRE(p.speed.has_value());
-    CHECK(p.speed->as_mps() == doctest::Approx(10.0));
+    CHECK(p.speed.value().as_mps() == doctest::Approx(10.0));
     REQUIRE(p.eph_m.has_value());
-    CHECK(*p.eph_m == doctest::Approx(5.0));
+    CHECK(p.eph_m.value() == doctest::Approx(5.0));
 }
 
 TEST_CASE("FileBuilder: no-optional nav fix has nullopt fields") {
@@ -135,7 +135,7 @@ TEST_CASE("FileBuilder: satellite report round-trips") {
     CHECK(s0.prn == 7);
     CHECK(s0.in_fix);
     REQUIRE(s0.snr_dbhz.has_value());
-    CHECK(*s0.snr_dbhz == doctest::Approx(40.0));
+    CHECK(s0.snr_dbhz.value() == doctest::Approx(40.0));
 
     auto s1_out = file.satellite(0, 1);
     CHECK(s1_out.constellation == Constellation::Glonass);
