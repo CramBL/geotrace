@@ -158,22 +158,16 @@ jobs:
       - name: Generate fixture
         run: cargo run -p geotrace-c --bin gen_fixture --release
 
-      - name: Configure C SDK tests (Linux)
-        if: runner.os == 'Linux'
-        run: >
-          cmake -S sdk/c -B build/c
-          -DCMAKE_BUILD_TYPE=Release
-          -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release
-          -DGEOTRACE_C_BUILD_TESTS=ON
-
-      - name: Configure C SDK tests (macOS)
-        if: runner.os == 'macOS'
+      - name: Configure C SDK tests (Linux, macOS)
+        if: runner.os != 'Windows'
         run: |
+          EXTRA=""
+          [ "$RUNNER_OS" = "macOS" ] && EXTRA="-DCMAKE_PREFIX_PATH=$(brew --prefix)"
           cmake -S sdk/c -B build/c \
             -DCMAKE_BUILD_TYPE=Release \
             -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release \
             -DGEOTRACE_C_BUILD_TESTS=ON \
-            -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+            $EXTRA
 
       - name: Configure C SDK examples (Windows)
         if: runner.os == 'Windows'

@@ -172,8 +172,8 @@ jobs:
         include:
           - os: ubuntu-latest
           - os: macos-latest
-          - { os: windows-latest, generator: "Visual Studio 17 2022", arch: x64 }
-          - { os: windows-latest, generator: Ninja }
+          - { os: windows-latest, generator: "Visual Studio 17 2022", cmake_extra_args: "-A x64" }
+          - { os: windows-latest, generator: Ninja, cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release" }
 
     steps:
       - name: Checkout
@@ -203,20 +203,11 @@ jobs:
             -DCMAKE_PREFIX_PATH=${{ github.workspace }}/sdk-artifact \
             -DCMAKE_BUILD_TYPE=Release
 
-      - name: Configure prebuilt smoke consumer (Windows, Visual Studio)
-        if: runner.os == 'Windows' && matrix.generator == 'Visual Studio 17 2022'
+      - name: Configure prebuilt smoke consumer (Windows)
+        if: runner.os == 'Windows'
         run: |
           cmake -S sdk/integration-tests/prebuilt -B build/smoke `
-            -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_PREFIX_PATH=${{ github.workspace }}/sdk-artifact
-        shell: pwsh
-
-      - name: Configure prebuilt smoke consumer (Windows, Ninja)
-        if: runner.os == 'Windows' && matrix.generator == 'Ninja'
-        run: |
-          cmake -S sdk/integration-tests/prebuilt -B build/smoke `
-            -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
+            -G "${{ matrix.generator }}" ${{ matrix.cmake_extra_args }} `
             -DCMAKE_PREFIX_PATH=${{ github.workspace }}/sdk-artifact
         shell: pwsh
 
