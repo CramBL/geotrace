@@ -2106,6 +2106,7 @@ name = "gt-fmt"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "gt-types",
  "uom",
 ]
 
@@ -2263,6 +2264,7 @@ dependencies = [
  "geo-types",
  "gt-geo-math",
  "gt-types",
+ "proptest",
  "rstar 0.13.0",
  "uom",
  "vec1",

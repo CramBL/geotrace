@@ -87,6 +87,45 @@ pub fn snr_color(quality: gt_types::SignalQuality) -> Color32 {
     }
 }
 
+/// Maps a GNSS fix-quality percentage to a colour on a green -> yellow -> red
+/// scale.
+///
+/// `100%` is green, `95..=99%` is a flat yellow, and below `95%` the colour
+/// gradually shifts from yellow toward red, reaching maximum red at `80%`
+/// and staying there for any lower percentage.
+pub fn fix_quality_color(pct: u32) -> Color32 {
+    const GREEN: Color32 = Color32::from_rgb(0, 200, 0);
+    const YELLOW: Color32 = Color32::from_rgb(220, 200, 0);
+    const RED: Color32 = Color32::from_rgb(220, 60, 0);
+    const YELLOW_FROM_PCT: u32 = 95;
+    const RED_AT_PCT: u32 = 80;
+
+    if pct >= 100 {
+        GREEN
+    } else if pct >= YELLOW_FROM_PCT {
+        YELLOW
+    } else if pct <= RED_AT_PCT {
+        RED
+    } else {
+        let num = i32::try_from(YELLOW_FROM_PCT - pct).unwrap_or(0);
+        let den = i32::try_from(YELLOW_FROM_PCT - RED_AT_PCT).unwrap_or(1);
+        Color32::from_rgb(
+            lerp_channel(YELLOW.r(), RED.r(), num, den),
+            lerp_channel(YELLOW.g(), RED.g(), num, den),
+            lerp_channel(YELLOW.b(), RED.b(), num, den),
+        )
+    }
+}
+
+/// Linearly interpolates a colour channel from `a` toward `b` by `num/den`
+/// (where `0 <= num <= den`), clamped to `[0, 255]`.
+fn lerp_channel(a: u8, b: u8, num: i32, den: i32) -> u8 {
+    let a = i32::from(a);
+    let b = i32::from(b);
+    let value = a + (b - a) * num / den;
+    u8::try_from(value.clamp(0, 255)).unwrap_or(0)
+}
+
 /// Colors used for log-entry markers, cycling over the marker's log index.
 pub const LOG_COLORS: [Color32; 8] = [
     Color32::from_rgb(230, 57, 70),
@@ -98,3 +137,44 @@ pub const LOG_COLORS: [Color32; 8] = [
     Color32::from_rgb(255, 45, 85),
     Color32::from_rgb(238, 66, 102),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fix_quality_color_full_is_green() {
+        assert_eq!(fix_quality_color(100), Color32::from_rgb(0, 200, 0));
+    }
+
+    #[test]
+    fn fix_quality_color_near_full_is_flat_yellow() {
+        assert_eq!(fix_quality_color(99), Color32::from_rgb(220, 200, 0));
+        assert_eq!(fix_quality_color(95), Color32::from_rgb(220, 200, 0));
+    }
+
+    #[test]
+    fn fix_quality_color_at_and_below_red_threshold_is_red() {
+        assert_eq!(fix_quality_color(80), Color32::from_rgb(220, 60, 0));
+        assert_eq!(fix_quality_color(0), Color32::from_rgb(220, 60, 0));
+    }
+
+    #[test]
+    fn fix_quality_color_blends_between_yellow_and_red() {
+        let c = fix_quality_color(88); // partway between 95% (yellow) and 80% (red)
+        assert_eq!(c.r(), 220, "red channel constant across yellow/red");
+        assert_eq!(c.b(), 0, "blue channel constant across yellow/red");
+        assert!(
+            c.g() > 60 && c.g() < 200,
+            "green channel should blend: {c:?}"
+        );
+    }
+
+    #[test]
+    fn fix_quality_color_green_channel_decreases_toward_red() {
+        let g95 = fix_quality_color(95).g();
+        let g88 = fix_quality_color(88).g();
+        let g80 = fix_quality_color(80).g();
+        assert!(g95 > g88 && g88 > g80);
+    }
+}

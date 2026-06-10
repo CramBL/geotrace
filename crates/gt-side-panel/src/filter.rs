@@ -419,6 +419,7 @@ mod tests {
                     Utc.timestamp_opt(0, 0).single().expect("valid"),
                     Utc.timestamp_opt(60, 0).single().expect("valid"),
                 ),
+                ..FileMetadata::default()
             },
             identity: "auto:test.gtd".to_owned(),
             tracks: vec![],

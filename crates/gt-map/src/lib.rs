@@ -1519,6 +1519,7 @@ mod tests {
                 custom_marker_count: 0,
                 generated_marker_count: 0,
                 event_marker_count: 0,
+                ..TrackMetadata::default()
             },
             points,
             custom_markers: vec![],
@@ -1531,6 +1532,7 @@ mod tests {
                 total_distance_km: Length::new::<kilometer>(1.0),
                 total_duration: chrono::Duration::seconds(n as i64),
                 time_range: TimeRange::new(now, now + chrono::Duration::seconds(n as i64)),
+                ..FileMetadata::default()
             },
             identity: format!("auto:test_{n}.gtd"),
             tracks: vec![track],
@@ -1772,6 +1774,7 @@ mod tests {
                 custom_marker_count: 0,
                 generated_marker_count: 1,
                 event_marker_count: 0,
+                ..TrackMetadata::default()
             },
             points: vec![],
             custom_markers: vec![],
@@ -1791,6 +1794,7 @@ mod tests {
                 total_distance_km: uom::si::f64::Length::new::<uom::si::length::kilometer>(1.0),
                 total_duration: chrono::Duration::seconds(1),
                 time_range: TimeRange::new(now, now + chrono::Duration::seconds(1)),
+                ..FileMetadata::default()
             },
             identity: "auto:test.gtd".to_string(),
             tracks: vec![track],
@@ -1924,6 +1928,7 @@ mod snapshot_tests {
                 custom_marker_count: 1,
                 generated_marker_count: 1,
                 event_marker_count: 1,
+                ..TrackMetadata::default()
             },
             points,
             custom_markers: vec![custom_marker],
@@ -1937,6 +1942,7 @@ mod snapshot_tests {
                 total_distance_km: Length::new::<kilometer>(5.0),
                 total_duration: chrono::Duration::seconds(n as i64),
                 time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
+                ..FileMetadata::default()
             },
             identity: "auto:snapshot_test.gtd".to_string(),
             tracks: vec![track],

@@ -1,9 +1,62 @@
 use std::fmt::Write;
 
+use gt_types::track::FixStats;
 use uom::si::{
     f64,
     length::{kilometer, meter},
 };
+
+/// Two spaces, U+00B7 MIDDLE DOT, two spaces — joins fields inside tooltip strings.
+const TOOLTIP_JOINER: &str = "  ·  ";
+
+/// Returns the percentage of time spent with a satellite fix, rounded to the
+/// nearest integer in `[0, 100]`.
+///
+/// Returns `0` when `time_with_fix + time_without_fix` is zero or negative.
+pub fn fix_percentage(stats: FixStats) -> u32 {
+    let total_ms = (stats.time_with_fix + stats.time_without_fix).num_milliseconds();
+    if total_ms <= 0 {
+        return 0;
+    }
+    let fix_ms = stats.time_with_fix.num_milliseconds().max(0);
+    u32::try_from((fix_ms * 100 + total_ms / 2) / total_ms).unwrap_or(100)
+}
+
+/// Formats just the fix-percentage portion of the tooltip, e.g. `"85% fix"`.
+pub fn format_fix_percentage(stats: FixStats) -> String {
+    format!("{}% fix", fix_percentage(stats))
+}
+
+/// Formats the remaining tooltip details (time without fix, loss count, max
+/// continuous gap), each prefixed by [`TOOLTIP_JOINER`].
+///
+/// Returns an empty string when there is nothing to add beyond the
+/// percentage, e.g. for `"100% fix"` with no losses.
+pub fn format_fix_tooltip_details(stats: FixStats) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if stats.time_without_fix > chrono::Duration::zero() {
+        parts.push(format!(
+            "{} w/o fix",
+            format_human_terse_duration(stats.time_without_fix)
+        ));
+    }
+    if stats.fix_loss_count == 1 {
+        parts.push("1 loss".to_owned());
+    } else if stats.fix_loss_count > 1 {
+        parts.push(format!("{} losses", stats.fix_loss_count));
+    }
+    if stats.max_continuous_no_fix > chrono::Duration::zero() {
+        parts.push(format!(
+            "max gap {}",
+            format_human_terse_duration(stats.max_continuous_no_fix)
+        ));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("{TOOLTIP_JOINER}{}", parts.join(TOOLTIP_JOINER))
+    }
+}
 
 /// Format a distance as a compact human-readable string.
 ///
@@ -78,6 +131,57 @@ mod tests {
 
     fn dur(h: i64, m: i64, s: i64) -> Duration {
         Duration::seconds(h * 3600 + m * 60 + s)
+    }
+
+    fn fix_stats(
+        with_fix_s: i64,
+        without_fix_s: i64,
+        fix_loss_count: u32,
+        max_no_fix_s: i64,
+    ) -> FixStats {
+        FixStats {
+            time_with_fix: Duration::seconds(with_fix_s),
+            time_without_fix: Duration::seconds(without_fix_s),
+            fix_loss_count,
+            max_continuous_no_fix: Duration::seconds(max_no_fix_s),
+        }
+    }
+
+    #[test]
+    fn fix_percentage_rounds_to_nearest() {
+        assert_eq!(fix_percentage(fix_stats(85, 15, 0, 15)), 85);
+        assert_eq!(fix_percentage(fix_stats(4800, 0, 0, 0)), 100);
+        assert_eq!(fix_percentage(fix_stats(0, 0, 0, 0)), 0);
+    }
+
+    #[test]
+    fn format_fix_percentage_appends_suffix() {
+        assert_eq!(format_fix_percentage(fix_stats(85, 15, 0, 15)), "85% fix");
+    }
+
+    #[test]
+    fn format_fix_tooltip_details_empty_for_full_fix() {
+        assert_eq!(format_fix_tooltip_details(fix_stats(4800, 0, 0, 0)), "");
+    }
+
+    #[test]
+    fn format_fix_tooltip_details_includes_all_parts() {
+        let d = format_fix_tooltip_details(fix_stats(4800, 900, 3, 480));
+        assert_eq!(d, "  ·  15m w/o fix  ·  3 losses  ·  max gap 8m");
+    }
+
+    #[test]
+    fn percentage_and_details_combine_into_expected_tooltip() {
+        let stats = fix_stats(4800, 900, 3, 480);
+        let combined = format!(
+            "{}{}",
+            format_fix_percentage(stats),
+            format_fix_tooltip_details(stats)
+        );
+        assert_eq!(
+            combined,
+            "84% fix  ·  15m w/o fix  ·  3 losses  ·  max gap 8m"
+        );
     }
 
     #[test]

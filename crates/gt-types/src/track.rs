@@ -3,11 +3,12 @@ use crate::markers::{CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarke
 use crate::mercator::MercPoint;
 use crate::nav_point::NavPoint;
 use chrono::{DateTime, Duration, Utc};
-use geo_types::Rect;
+use geo_types::{Coord, Rect};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use uom::si::f64::Length;
+use uom::si::length::{kilometer, meter};
 
 /// Normalised Web Mercator bounding box, with all values in `[0.0, 1.0]`.
 ///
@@ -88,6 +89,23 @@ pub enum MarkerRequirement {
     CustomMarker,
 }
 
+/// Aggregate GNSS fix-quality statistics computed from satellite reports.
+///
+/// Covers only intervals between consecutive satellite-report points; periods
+/// without satellite data do not contribute to any field.
+/// `None` on a track or file means no satellite reports were present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixStats {
+    /// Total elapsed time while `fix_count > 0` in satellite reports.
+    pub time_with_fix: Duration,
+    /// Total elapsed time while `fix_count == 0` in satellite reports.
+    pub time_without_fix: Duration,
+    /// Number of transitions from fix to no-fix.
+    pub fix_loss_count: u32,
+    /// Longest contiguous stretch with `fix_count == 0`.
+    pub max_continuous_no_fix: Duration,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct TrackMetadata {
     pub index: usize,
@@ -106,12 +124,45 @@ pub struct TrackMetadata {
     pub custom_marker_count: usize,
     pub generated_marker_count: usize,
     pub event_marker_count: usize,
+    /// `None` when the track has no satellite reports.
+    pub fix_stats: Option<FixStats>,
 }
 
 impl TrackMetadata {
     /// Returns `true` when the track has at least one custom, event, or generated marker.
     pub fn has_any_marker(&self) -> bool {
         self.has_custom_markers || self.generated_marker_count > 0 || self.event_marker_count > 0
+    }
+}
+
+/// Sentinel default for use in test helpers via struct-update syntax (`..TrackMetadata::default()`).
+///
+/// All numeric fields are zero, bounding box is a point at the origin, and
+/// `fix_stats` is `None`. Not intended for production construction — callers
+/// should set all semantically meaningful fields explicitly.
+impl Default for TrackMetadata {
+    fn default() -> Self {
+        Self {
+            index: 0,
+            distance_km: Length::new::<kilometer>(0.0),
+            duration: Duration::zero(),
+            time_range: TimeRange::new(DateTime::<Utc>::UNIX_EPOCH, DateTime::<Utc>::UNIX_EPOCH),
+            bounding_box: Rect::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 0.0, y: 0.0 }),
+            merc_bounds: MercBounds {
+                x_min: 0.0,
+                x_max: 0.0,
+                y_min: 0.0,
+                y_max: 0.0,
+            },
+            point_set_diameter_m: Length::new::<meter>(0.0),
+            has_custom_markers: false,
+            tpv_count: 0,
+            satellite_report_count: 0,
+            custom_marker_count: 0,
+            generated_marker_count: 0,
+            event_marker_count: 0,
+            fix_stats: None,
+        }
     }
 }
 
@@ -184,6 +235,24 @@ pub struct FileMetadata {
     pub total_distance_km: Length,
     pub total_duration: Duration,
     pub time_range: TimeRange,
+    /// Aggregated fix stats across all tracks; `None` when no track has satellite reports.
+    pub fix_stats: Option<FixStats>,
+}
+
+/// Sentinel default for use in test helpers via struct-update syntax (`..FileMetadata::default()`).
+///
+/// Filename is empty, all durations and distances are zero, and `fix_stats` is `None`.
+/// Not intended for production construction.
+impl Default for FileMetadata {
+    fn default() -> Self {
+        Self {
+            filename: String::new(),
+            total_distance_km: Length::new::<kilometer>(0.0),
+            total_duration: Duration::zero(),
+            time_range: TimeRange::new(DateTime::<Utc>::UNIX_EPOCH, DateTime::<Utc>::UNIX_EPOCH),
+            fix_stats: None,
+        }
+    }
 }
 
 /// Configuration for log-marker and satellite association.
