@@ -91,3 +91,14 @@ jobs:
           uv run --project scripts/qa check-em-dash
           uv run --project scripts/qa check-floating-comments
           uv run --project scripts/qa check-narrative-comments
+
+  ci-essentials:
+    runs-on: ubuntu-latest
+    needs: [ci]
+    permissions:
+      contents: none
+    if: always()
+    steps:
+      - name: Fail if any dependency failed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: exit 1
