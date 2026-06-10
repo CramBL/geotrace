@@ -11,7 +11,7 @@ sort-check: (_dev "cargo sort --workspace --check")
 shear *ARGS: (_dev "cargo shear --check-test-targets --deny-warnings " + ARGS)
 
 [group("container-rust")]
-pup: (_dev "bash" "scripts/pup.sh")
+pup: (_dev "cargo" "test" "-p" "gt-arch")
 
 [group("container-rust")]
 msrv: (_dev "cargo" "msrv" "verify" "--manifest-path" "Cargo.toml")

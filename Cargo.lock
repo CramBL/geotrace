@@ -762,9 +762,9 @@ dependencies = [
 
 [[package]]
 name = "cargo_pup_common"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0faadbc2a656876ad3183433b9034a650890e7ff1d8b649173299aad5cdfd662"
+checksum = "d36ae1bfffc3255bf144d7c15044567e475c5ff004084ecf2a0c23387c1fa3d2"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -775,9 +775,9 @@ dependencies = [
 
 [[package]]
 name = "cargo_pup_lint_config"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58a695e0d2bc4ac905db4f9cb113e92f9790094616ea0558f91a29d49e97f297"
+checksum = "d9f8c50e781327e7e0bace1f09b85206f6e2c9b360cad84d0557dfad78a95f19"
 dependencies = [
  "anyhow",
  "cargo_pup_common",

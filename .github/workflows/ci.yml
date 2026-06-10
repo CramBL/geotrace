@@ -45,6 +45,18 @@ jobs:
         with:
           toolchain: stable
 
+      # cargo-pup is a compiler-plugin architecture linter that must be built
+      # with the specific nightly version the workspace's pup.ron targets.
+      # The gt-arch crate's test suite (part of the Tests step below) invokes
+      # `cargo pup check` directly, so only the platform that runs that
+      # package's tests needs this toolchain.
+      - name: Install Rust nightly (for cargo-pup)
+        if: runner.os == 'Linux'
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: nightly-2026-01-22
+          components: rust-src,rustc-dev,llvm-tools-preview
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
@@ -55,6 +67,10 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+      - name: Install cargo-pup
+        if: runner.os == 'Linux'
+        run: cargo +nightly-2026-01-22 install cargo_pup
 
       # wgpu requires a GPU or a software renderer for headless test rendering.
       # Ubuntu GitHub runners have no GPU; force Mesa's OpenGL software rasteriser.
@@ -77,7 +93,16 @@ jobs:
         run: cargo check
 
       - name: Tests
+        if: runner.os == 'Linux'
         run: cargo nextest run --workspace --profile ci
+        env:
+          GEOTRACE_OFFLINE: 1
+
+      # gt-arch's test invokes `cargo pup check`, which needs the nightly
+      # toolchain installed only on Linux (see above) - exclude it elsewhere.
+      - name: Tests (excluding gt-arch architecture check)
+        if: runner.os != 'Linux'
+        run: cargo nextest run --workspace --exclude gt-arch --profile ci
         env:
           GEOTRACE_OFFLINE: 1
 
