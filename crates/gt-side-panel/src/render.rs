@@ -6,7 +6,9 @@ use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 
 use crate::filter::{FilterPanelState, render_filter_panel};
 use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState};
-use crate::widgets::{expand_arrow, paint_map_hover_bg, point_item_row, tri_checkbox};
+use crate::widgets::{
+    expand_arrow, fix_stats_tooltip_row, paint_map_hover_bg, point_item_row, tri_checkbox,
+};
 
 pub struct PanelContext<'a> {
     pub files: &'a [LoadedFile],
@@ -160,9 +162,15 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
         let dur = gt_fmt::format_human_terse_duration(file.metadata.total_duration);
         let label = format!("{arrow} {}  {dist}  {dur}", file.metadata.filename);
         let is_selected = ctx.tree.selection.contains(&file_key);
-        let resp = ui
-            .selectable_label(is_selected, egui::RichText::new(label))
-            .on_hover_text(&file.metadata.filename);
+        let resp = ui.selectable_label(is_selected, egui::RichText::new(label));
+        let resp = if let Some(stats) = file.metadata.fix_stats {
+            resp.on_hover_ui(|ui| {
+                ui.label(file.metadata.filename.as_str());
+                fix_stats_tooltip_row(ui, stats);
+            })
+        } else {
+            resp.on_hover_text(file.metadata.filename.as_str())
+        };
         if !file.load_warnings.is_empty() {
             let icon = egui::RichText::new(egui_phosphor::regular::WARNING)
                 .color(gt_ui_theme::WARNING_AMBER);
@@ -294,7 +302,13 @@ fn render_track_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Pane
             text = text.color(gt_ui_theme::HIGHLIGHT_BLUE);
         }
         let is_selected = ctx.tree.selection.contains(&key);
-        (ui.selectable_label(is_selected, text), newly_enabled)
+        let resp = ui.selectable_label(is_selected, text);
+        let resp = if let Some(stats) = track.metadata.fix_stats {
+            resp.on_hover_ui(|ui| fix_stats_tooltip_row(ui, stats))
+        } else {
+            resp.on_hover_text("No satellite data")
+        };
+        (resp, newly_enabled)
     });
 
     if map_hovered {

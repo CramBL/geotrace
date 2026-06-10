@@ -9,7 +9,8 @@ use gt_types::mercator::{self, MercPoint};
 use gt_types::nav_point::NavPoint;
 use gt_types::time_types::GpsTime;
 use gt_types::track::{
-    FileMetadata, FileSource, LoadWarning, LoadedFile, LoadedTrack, TimeRange, TrackMetadata,
+    FileMetadata, FileSource, FixStats, LoadWarning, LoadedFile, LoadedTrack, TimeRange,
+    TrackMetadata,
 };
 use std::ops::Range;
 use uom::si::f64::Length;
@@ -166,6 +167,63 @@ fn detect_generated_markers(points: &[NavPoint]) -> Vec<GeneratedMarker> {
     markers
 }
 
+/// Computes GNSS fix-quality statistics from a slice of nav points.
+///
+/// Returns `None` when there are fewer than two points with satellite reports
+/// (not enough consecutive pairs to measure any interval).
+pub fn compute_fix_stats(points: &[NavPoint]) -> Option<FixStats> {
+    let sat_points: Vec<&NavPoint> = points.iter().filter(|p| p.satellites.is_some()).collect();
+
+    if sat_points.len() < 2 {
+        return None;
+    }
+
+    let mut time_with_fix = Duration::zero();
+    let mut time_without_fix = Duration::zero();
+    let mut fix_loss_count: u32 = 0;
+    let mut max_continuous_no_fix = Duration::zero();
+    let mut current_no_fix_streak = Duration::zero();
+
+    for pair in sat_points.windows(2) {
+        if let [a, b] = pair {
+            let interval = b.tpv.time() - a.tpv.time();
+            let a_has_fix = a.fix_count() > 0;
+            let b_has_fix = b.fix_count() > 0;
+
+            if a_has_fix {
+                time_with_fix += interval;
+                if current_no_fix_streak > Duration::zero() {
+                    if current_no_fix_streak > max_continuous_no_fix {
+                        max_continuous_no_fix = current_no_fix_streak;
+                    }
+                    current_no_fix_streak = Duration::zero();
+                }
+            } else {
+                time_without_fix += interval;
+                current_no_fix_streak += interval;
+            }
+
+            // Count the fix→no-fix transition here. The no-fix duration itself
+            // is accumulated in the next iteration when this `b` becomes the
+            // new `a` (and `a_has_fix` will be false).
+            if a_has_fix && !b_has_fix {
+                fix_loss_count = fix_loss_count.saturating_add(1);
+            }
+        }
+    }
+
+    if current_no_fix_streak > max_continuous_no_fix {
+        max_continuous_no_fix = current_no_fix_streak;
+    }
+
+    Some(FixStats {
+        time_with_fix,
+        time_without_fix,
+        fix_loss_count,
+        max_continuous_no_fix,
+    })
+}
+
 /// Computes `TrackMetadata` from a non-empty slice of points.
 pub fn compute_track_metadata(
     index: usize,
@@ -229,6 +287,7 @@ pub fn compute_track_metadata(
         custom_marker_count: custom_markers.len(),
         generated_marker_count: generated_markers.len(),
         event_marker_count: 0, // filled in by build_loaded_file after event marker assignment
+        fix_stats: compute_fix_stats(points),
     }
 }
 
@@ -332,6 +391,35 @@ pub fn build_loaded_file(
         .iter()
         .fold(Duration::zero(), |acc, t| acc + t.metadata.duration);
 
+    let file_fix_stats = {
+        let mut time_with_fix = Duration::zero();
+        let mut time_without_fix = Duration::zero();
+        let mut fix_loss_count: u32 = 0;
+        let mut max_continuous_no_fix = Duration::zero();
+        let mut has_any = false;
+        for track in &loaded_tracks {
+            if let Some(s) = track.metadata.fix_stats {
+                has_any = true;
+                time_with_fix += s.time_with_fix;
+                time_without_fix += s.time_without_fix;
+                fix_loss_count = fix_loss_count.saturating_add(s.fix_loss_count);
+                if s.max_continuous_no_fix > max_continuous_no_fix {
+                    max_continuous_no_fix = s.max_continuous_no_fix;
+                }
+            }
+        }
+        if has_any {
+            Some(FixStats {
+                time_with_fix,
+                time_without_fix,
+                fix_loss_count,
+                max_continuous_no_fix,
+            })
+        } else {
+            None
+        }
+    };
+
     let fallback = DateTime::<Utc>::UNIX_EPOCH;
     let file_time_range = match (loaded_tracks.first(), loaded_tracks.last()) {
         (Some(first), Some(last)) => TimeRange::new(
@@ -347,6 +435,7 @@ pub fn build_loaded_file(
             total_distance_km,
             total_duration,
             time_range: file_time_range,
+            fix_stats: file_fix_stats,
         },
         identity,
         tracks: loaded_tracks,
@@ -600,6 +689,120 @@ mod tests {
         assert_eq!(f.tracks[1].metadata.index, 2);
     }
 
+    fn make_point_with_fix(t: i64, fix_count_positive: bool) -> NavPoint {
+        let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
+        let tpv = TimePositionVelocity::builder()
+            .time(time)
+            .lat(Latitude::new(55.0))
+            .lon(gt_types::coordinates::Longitude::new(12.0))
+            .heading(Angle::new::<degree>(0.0))
+            .build();
+        let sats = Satellites::new(
+            Some(time),
+            None,
+            vec![Satellite::new(
+                Constellation::Gps,
+                1,
+                None,
+                None,
+                None,
+                fix_count_positive,
+            )],
+        );
+        NavPoint::new(tpv, Some(sats))
+    }
+
+    #[test]
+    fn compute_fix_stats_empty() {
+        assert!(compute_fix_stats(&[]).is_none());
+    }
+
+    #[test]
+    fn compute_fix_stats_no_satellite_reports() {
+        // make_point_at produces points with no satellite data (NavPoint::new(tpv, None))
+        let pts = vec![make_point_at(0), make_point_at(60)];
+        assert!(compute_fix_stats(&pts).is_none());
+    }
+
+    #[test]
+    fn compute_fix_stats_single_sat_point_is_none() {
+        let pts = vec![make_point_with_fix(0, true)];
+        assert!(compute_fix_stats(&pts).is_none());
+    }
+
+    #[test]
+    fn compute_fix_stats_all_with_fix() {
+        // Two consecutive sat points, both in fix → all time_with_fix, no losses
+        let pts = vec![make_point_with_fix(0, true), make_point_with_fix(60, true)];
+        let stats = compute_fix_stats(&pts).expect("has satellite data");
+        assert_eq!(stats.time_with_fix, Duration::seconds(60));
+        assert_eq!(stats.time_without_fix, Duration::zero());
+        assert_eq!(stats.fix_loss_count, 0);
+        assert_eq!(stats.max_continuous_no_fix, Duration::zero());
+    }
+
+    #[test]
+    fn compute_fix_stats_all_without_fix() {
+        let pts = vec![
+            make_point_with_fix(0, false),
+            make_point_with_fix(120, false),
+        ];
+        let stats = compute_fix_stats(&pts).expect("has satellite data");
+        assert_eq!(stats.time_with_fix, Duration::zero());
+        assert_eq!(stats.time_without_fix, Duration::seconds(120));
+        assert_eq!(stats.fix_loss_count, 0);
+        assert_eq!(stats.max_continuous_no_fix, Duration::seconds(120));
+    }
+
+    #[test]
+    fn compute_fix_stats_fix_then_lost() {
+        // fix 0→60, lost 60→180 → one loss, 120s without fix
+        let pts = vec![
+            make_point_with_fix(0, true),
+            make_point_with_fix(60, false),
+            make_point_with_fix(180, false),
+        ];
+        let stats = compute_fix_stats(&pts).expect("has satellite data");
+        assert_eq!(stats.time_with_fix, Duration::seconds(60));
+        assert_eq!(stats.time_without_fix, Duration::seconds(120));
+        assert_eq!(stats.fix_loss_count, 1);
+        assert_eq!(stats.max_continuous_no_fix, Duration::seconds(120));
+    }
+
+    #[test]
+    fn compute_fix_stats_multiple_losses() {
+        // fix→lost→fix→lost pattern; two separate no-fix stretches
+        let pts = vec![
+            make_point_with_fix(0, true),    // fix
+            make_point_with_fix(100, false), // lost (100s with fix)
+            make_point_with_fix(200, false), // still lost (100s without fix, streak=100)
+            make_point_with_fix(300, true),  // regained (100s more without fix, streak=200)
+            make_point_with_fix(400, false), // lost again (100s with fix)
+            make_point_with_fix(450, false), // still lost (50s without fix, streak=50)
+        ];
+        let stats = compute_fix_stats(&pts).expect("has satellite data");
+        assert_eq!(stats.time_with_fix, Duration::seconds(200));
+        assert_eq!(stats.time_without_fix, Duration::seconds(250));
+        assert_eq!(stats.fix_loss_count, 2);
+        assert_eq!(stats.max_continuous_no_fix, Duration::seconds(200));
+    }
+
+    #[test]
+    fn compute_fix_stats_ignores_points_without_sat_data() {
+        // Gaps between sat-report points (no satellite data) are not counted in either bucket
+        let pts = vec![
+            make_point_with_fix(0, true),
+            make_point_at(30), // no satellite data - ignored
+            make_point_at(60), // no satellite data - ignored
+            make_point_with_fix(90, true),
+        ];
+        let stats = compute_fix_stats(&pts).expect("has satellite data");
+        // Interval 0→90 attributed to first sat point (has fix) = 90s with fix
+        assert_eq!(stats.time_with_fix, Duration::seconds(90));
+        assert_eq!(stats.time_without_fix, Duration::zero());
+        assert_eq!(stats.fix_loss_count, 0);
+    }
+
     fn make_real_fix(t: i64, lat: Latitude, lon: Longitude) -> NavPoint {
         let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
         let tpv = TimePositionVelocity::builder()
@@ -713,5 +916,83 @@ mod tests {
         precompute_ghost_positions(&mut points);
         let after: Vec<_> = points.iter().map(|p| p.merc).collect();
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn build_loaded_file_file_fix_stats_aggregates_tracks() {
+        // Default split gap is 300 s, so consecutive points must be < 300 s apart to stay in
+        // the same track. Track 1: t=0 (fix)→t=60 (no-fix)→t=180 (no-fix); one loss, max=120s.
+        // Track 2 (after a 9820s gap): t=10000 (fix)→t=10060 (no-fix)→t=10120 (fix); one loss,
+        // max=60s.
+        // sum(120, 60) = 180s != max(120, 60) = 120s, so the assertion below distinguishes
+        // "max across tracks" from "sum across tracks".
+        let pts = vec![
+            make_point_with_fix(0, true),
+            make_point_with_fix(60, false),
+            make_point_with_fix(180, false),   // end of track 1
+            make_point_with_fix(10_000, true), // large gap → new track 2
+            make_point_with_fix(10_060, false),
+            make_point_with_fix(10_120, true),
+        ];
+        let f = build_loaded_file(
+            "test.gtd".to_owned(),
+            "auto:test.gtd".to_owned(),
+            &pts,
+            &[],
+            vec![],
+            vec![],
+            &SegmentationConfig::default(),
+            FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
+            vec![],
+        );
+        assert_eq!(f.tracks.len(), 2, "expected two tracks");
+        let stats = f.metadata.fix_stats.expect("fix stats should be present");
+        assert_eq!(stats.time_with_fix, Duration::seconds(60 + 60));
+        assert_eq!(stats.time_without_fix, Duration::seconds(120 + 60));
+        assert_eq!(stats.fix_loss_count, 2);
+        // max taken across tracks, not summed
+        assert_eq!(stats.max_continuous_no_fix, Duration::seconds(120));
+    }
+
+    proptest::proptest! {
+        /// Invariant: `time_with_fix + time_without_fix` equals the sum of all
+        /// intervals between consecutive satellite-report points, regardless of
+        /// fix pattern or gap sizes.
+        #[test]
+        fn fix_stats_durations_sum_to_total_interval(
+            deltas_and_fixes in proptest::collection::vec(
+                (1i64..300i64, proptest::bool::ANY),
+                2..20usize,
+            )
+        ) {
+            let mut t: i64 = 0;
+            let points: Vec<NavPoint> = deltas_and_fixes
+                .iter()
+                .map(|(dt, has_fix)| {
+                    t += dt;
+                    make_point_with_fix(t, *has_fix)
+                })
+                .collect();
+
+            // All points have satellite data, so fix stats must be Some.
+            let stats = compute_fix_stats(&points).expect("all points have satellite data");
+
+            // Compute expected total: sum of intervals between consecutive sat-report points.
+            let expected_total = points
+                .windows(2)
+                .map(|pair| {
+                    if let [a, b] = pair {
+                        b.tpv.time() - a.tpv.time()
+                    } else {
+                        Duration::zero()
+                    }
+                })
+                .fold(Duration::zero(), |acc, d| acc + d);
+
+            proptest::prop_assert_eq!(
+                stats.time_with_fix + stats.time_without_fix,
+                expected_total,
+            );
+        }
     }
 }

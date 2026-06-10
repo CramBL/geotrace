@@ -2,7 +2,7 @@ use egui_kittest::Harness;
 use gt_filter::GlobalFilter;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
 use gt_test_utils::TestHarness;
-use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
+use gt_types::{FileIdx, FixStats, LoadWarning, TrackIdx, TrackRef};
 use gt_ui_types::MapHighlight;
 
 struct State {
@@ -150,6 +150,64 @@ fn expand_file_is_reflected_in_tree_state() {
     harness.state_mut().tree.toggle_expand_file(FileIdx::new(0));
     harness.run();
     assert!(harness.state().tree.files[0].expanded);
+}
+
+#[test]
+fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
+    let points = gt_test_utils::stationary_nav_data(10);
+    let file = gt_track_builder::build_loaded_file(
+        "no_sats.gtd".to_owned(),
+        "auto:no_sats.gtd".to_owned(),
+        &points,
+        &[],
+        vec![],
+        vec![],
+        &gt_track_builder::SegmentationConfig::default(),
+        gt_types::FileSource::GtdPath(std::path::PathBuf::from("no_sats.gtd")),
+        vec![],
+    );
+    assert_eq!(file.tracks.len(), 1);
+    assert!(
+        file.tracks[0].metadata.fix_stats.is_none(),
+        "track with no satellite reports should have fix_stats == None"
+    );
+
+    let mut tree = TreeState::new();
+    tree.sync_from_loaded_files(std::slice::from_ref(&file));
+    tree.toggle_expand_file(FileIdx::new(0));
+
+    let state = State {
+        files: vec![file],
+        tree,
+        filter: GlobalFilter::default(),
+        filter_state: FilterPanelState::default(),
+        highlight: MapHighlight::default(),
+        map_center: None,
+        popup_pos: None,
+        zoom_to_visible: false,
+        warnings_request: None,
+        unload_request: None,
+    };
+    // Renders the expanded track row, exercising the `fix_stats == None` fallback
+    // (`.on_hover_text("No satellite data")`) instead of the colored tooltip.
+    let mut harness = make_harness(state);
+    harness.run();
+}
+
+#[test]
+fn snapshot_fix_stats_tooltip_content() {
+    let stats = FixStats {
+        time_with_fix: chrono::Duration::seconds(4800), // 1h20m
+        time_without_fix: chrono::Duration::seconds(900), // 15m
+        fix_loss_count: 3,
+        max_continuous_no_fix: chrono::Duration::seconds(480), // 8m
+    };
+    let mut h = TestHarness::new_wgpu(egui::vec2(480.0, 30.0), move |ui| {
+        ui.add_space(4.0);
+        gt_side_panel::widgets::fix_stats_tooltip_row(ui, stats);
+    });
+    h.run();
+    h.snapshot("fix_stats_tooltip_content");
 }
 
 #[test]
