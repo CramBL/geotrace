@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use cargo_pup_lint_config::{LintBuilder, ModuleLintExt, Severity};
+    use cargo_pup_lint_config::{LintBuilder, LintBuilderExt, ModuleLintExt, Severity};
 
     #[test]
     fn enforce_architecture() {
@@ -556,5 +556,12 @@ mod tests {
         builder
             .write_to_file("../../pup.ron")
             .expect("Failed to sync pup.ron");
+
+        // Run cargo-pup itself, so `cargo test -p gt-arch` is the single
+        // source of truth for the architecture check (no separate `cargo
+        // pup check` invocation needed).
+        builder
+            .assert_lints(Some("../../Cargo.toml"))
+            .expect("cargo pup architecture checks failed");
     }
 }
