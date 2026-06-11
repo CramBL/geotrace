@@ -252,9 +252,9 @@ fn snapshot_app_with_file_loaded() {
     // so the map zoom and plot layout converge before we snapshot.
     harness.inner.run_steps(60);
 
-    // Use snapshot_loose: the live map/plot rendering can produce minor
-    // pixel-level variance across runs due to floating-point layout.
-    harness.snapshot_loose("app_with_file_loaded");
+    // Use per-test tolerance: this snapshot includes live map/plot rendering,
+    // so allow tiny pixel-level variance across runs and platforms.
+    harness.snapshot_with_tolerance("app_with_file_loaded", 2.5, 4);
 }
 
 /// Snapshot of the app zoomed into the cluster of Sahara desert tracks from

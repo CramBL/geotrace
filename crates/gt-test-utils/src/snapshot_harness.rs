@@ -105,10 +105,27 @@ impl<'a, State> TestHarness<'a, State> {
     /// where minor floating-point layout differences produce a small number of
     /// differing pixels across runs.
     pub fn snapshot_loose(&mut self, name: &str) {
+        self.snapshot_with_threshold(name, 4.0);
+    }
+
+    pub fn snapshot_with_threshold(&mut self, name: &str, threshold: f32) {
+        self.snapshot_with_tolerance(name, threshold, 0);
+    }
+
+    pub fn snapshot_with_tolerance(
+        &mut self,
+        name: &str,
+        threshold: f32,
+        failed_pixel_count_threshold: usize,
+    ) {
         if on_non_macos_ci() {
             return;
         }
-        self.inner
-            .snapshot_options(snap_name(name), &SnapshotOptions::new().threshold(4.0));
+        self.inner.snapshot_options(
+            snap_name(name),
+            &SnapshotOptions::new()
+                .threshold(threshold)
+                .failed_pixel_count_threshold(failed_pixel_count_threshold),
+        );
     }
 }
