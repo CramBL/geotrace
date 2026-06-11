@@ -190,6 +190,9 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
     if file_map_hovered {
         paint_map_hover_bg(ui, row_response.response.rect, map_hover_bg);
     }
+    if file_label_resp.hovered() {
+        ctx.highlight.hover = Some(HighlightScope::File { file_index: fi });
+    }
     let modifiers = ui.ctx().input(|i| i.modifiers);
     if file_label_resp.double_clicked() {
         if let Some(center) = file_bounding_center(fi.get(ctx.files)) {

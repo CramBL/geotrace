@@ -5,7 +5,7 @@ use egui_plot::{Line, PlotPoints, VLine};
 use gt_egui_mipmap::{LevelSelection, MipMap};
 use gt_filter::GlobalFilter;
 use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx};
-use gt_ui_types::TrackDataVisibility;
+use gt_ui_types::{HighlightScope, TrackDataVisibility};
 use rayon::prelude::*;
 use strum::IntoEnumIterator;
 
@@ -330,11 +330,16 @@ impl PlotState {
 ///   frame.  The caller should forward this to `MapHighlight::plot_hover_time`
 ///   before drawing the map so the renderer can cross-highlight the nearest
 ///   TPV arrow.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "plot rendering needs files, visibility/filter state, cross-highlight inputs, map-sync range, and mutable plot state"
+)]
 pub fn show_track_plot(
     ui: &mut egui::Ui,
     files: &[LoadedFile],
     visibility: &TrackDataVisibility,
     filter: &GlobalFilter,
+    hover_scope: Option<HighlightScope>,
     map_hover_time: Option<DateTime<Utc>>,
     // When map→plot sync is enabled, this carries the Unix-second x range
     // computed from TPV points visible in the current map viewport.
@@ -517,6 +522,7 @@ pub fn show_track_plot(
                 cache,
                 metric_vis,
                 hovered_chip,
+                hover_scope,
             );
         }
 
@@ -792,29 +798,45 @@ fn add_series_lines<'a>(
     cache: &TripLevelCache,
     metric_vis: &MetricVisibility,
     hovered_chip: Option<MetricKind>,
+    hover_scope: Option<HighlightScope>,
 ) {
     let prefix = if multi_track {
         format!("{}: ", series.label)
     } else {
         String::new()
     };
+    let focused = series_matches_hover_scope(series, hover_scope);
+    let has_track_focus = hover_scope.is_some();
 
     for kind in MetricKind::iter() {
         if !metric_vis.field(kind) {
             continue;
         }
-        let (color, highlighted) = match hovered_chip {
+        let (mut color, metric_highlighted) = match hovered_chip {
             Some(h) if h == kind => (kind.color(), true),
             Some(_) => (kind.color().gamma_multiply(0.2), false),
             None => (kind.color(), false),
         };
+        if has_track_focus && !focused {
+            color = color.gamma_multiply(0.2);
+        }
         add_line(
             plot_ui,
             series.mipmap_for(kind).slice_at(cache.level_for(kind)),
             format!("{prefix}{}", kind.label()),
             color,
-            highlighted,
+            metric_highlighted || (has_track_focus && focused),
         );
+    }
+}
+
+fn series_matches_hover_scope(series: &TrackSeries, hover_scope: Option<HighlightScope>) -> bool {
+    match hover_scope {
+        Some(HighlightScope::File { file_index }) => file_index.as_usize() == series.fi,
+        Some(HighlightScope::Track(track)) | Some(HighlightScope::TrackCategory { track, .. }) => {
+            track.fi.as_usize() == series.fi && track.index.as_usize() == series.ti
+        }
+        Some(HighlightScope::Point(_)) | None => true,
     }
 }
 

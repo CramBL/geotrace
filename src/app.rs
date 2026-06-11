@@ -799,6 +799,7 @@ impl App {
 struct MainBehavior<'a> {
     map: &'a mut NavMap,
     state: &'a mut SharedAppState,
+    plot_hover_scope: Option<HighlightScope>,
     map_hover_time: Option<chrono::DateTime<chrono::Utc>>,
     toggle_plot_request: bool,
 }
@@ -859,6 +860,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     &s.loaded_files,
                     s.tree.visibility(),
                     &s.filter,
+                    self.plot_hover_scope,
                     self.map_hover_time,
                     map_sync_x_range,
                     &mut s.plot_state,
@@ -1031,6 +1033,12 @@ impl eframe::App for App {
         egui::CentralPanel::default().show_inside(ui, |ui| {
             let panel_rect = ui.max_rect();
             let mut s = self.shared.borrow_mut();
+            let plot_hover_scope = match s.highlight.hover {
+                Some(HighlightScope::File { .. })
+                | Some(HighlightScope::Track(_))
+                | Some(HighlightScope::TrackCategory { .. }) => s.highlight.hover,
+                Some(HighlightScope::Point(_)) | None => None,
+            };
             let map_hover_time = extract_map_hover_time(&s.loaded_files, &s.highlight);
 
             // Render the tiles tree (map on top, optional plot on bottom).
@@ -1043,6 +1051,7 @@ impl eframe::App for App {
                 let mut behavior = MainBehavior {
                     map,
                     state: &mut s,
+                    plot_hover_scope,
                     map_hover_time,
                     toggle_plot_request: false,
                 };
