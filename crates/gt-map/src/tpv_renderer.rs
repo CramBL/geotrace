@@ -1,9 +1,10 @@
 use egui::epaint::{PathShape, PathStroke};
 use egui::{Color32, PopupAnchor, Pos2, Response, Stroke, Ui, Vec2};
 use gt_filter::{self as filter, GlobalFilter};
+use gt_types::coordinates::Latitude;
 use gt_types::satellites::Constellation;
 use gt_types::{
-    DataCategory, FileIdx, LoadedFile, LoadedTrack, NavPoint, PointIdx, SpatialPoint, TrackIdx,
+    DataCategory, FileIdx, LoadedFile, LoadedTrack, MercBounds, NavPoint, PointIdx, TrackIdx,
     TrackRef,
 };
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH, MINUS_SIGN};
@@ -11,30 +12,88 @@ use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, TrackDataVisibilit
 use std::collections::HashMap;
 use uom::si::angle::{degree, radian};
 use uom::si::f64::Angle;
+use uom::si::length::meter;
 use walkers::{MapMemory, Plugin, Projector};
+
+use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
+
+/// Local on-screen fix spacing, in units of the icon size, at which a fix
+/// icon is fully opaque (`HI`) respectively fully transparent (`LO`).
+/// Between the two, the icon crossfades with the continuous quality line.
+///
+/// Icons are deliberately kept while they merely overlap - partially
+/// overlapping arrows are still readable. Fading starts only below half an
+/// icon size of spacing and completes when neighbouring arrows share almost
+/// all of their pixels, at which point skipping them also keeps the
+/// tessellated vertex count bounded by screen content instead of recording
+/// size.
+///
+/// The spacing is measured per fix (see [`local_fix_spacing_px`]), not per
+/// track, so a parked phase fades out without dragging down the rest of the
+/// track.
+const ICON_FADE_HI_SPACING_FACTOR: f32 = 0.5;
+const ICON_FADE_LO_SPACING_FACTOR: f32 = 0.2;
+
+/// Absolute floors for the fade band, in pixels. At low zoom the icons
+/// shrink to a few pixels and the proportional thresholds collapse below
+/// one pixel of spacing - but a 3 px arrow packed within a few pixels of
+/// its neighbours is already unreadable, and worth replacing with the
+/// quality line. The floors keep the band meaningful at every icon size:
+/// fading always completes below [`ICON_FADE_LO_MIN_SPACING_PX`] of spacing
+/// and starts below [`ICON_FADE_HI_MIN_SPACING_PX`]. The HI floor exceeding
+/// the LO floor (like the HI factor exceeding the LO factor) keeps the band
+/// non-empty for any icon size.
+const ICON_FADE_LO_MIN_SPACING_PX: f32 = 2.0;
+const ICON_FADE_HI_MIN_SPACING_PX: f32 = 5.0;
+
+/// Number of discrete opacity steps for the quality line's crossfade.
+/// Per-point line alphas are quantized to this many levels so that long
+/// stretches share one key and stay mergeable into single polyline spans.
+const QUALITY_LINE_ALPHA_STEPS: u8 = 3;
+
+/// Stroke width of the continuous fix-quality line that stands in for the
+/// fix icons when they fade out - slightly thicker than the 3 px trackline
+/// underneath so the quality colors stay readable on top of it.
+const QUALITY_LINE_WIDTH: f32 = 5.0;
+
+/// Accuracy circles with a smaller pixel radius than this are skipped - they
+/// would be invisible at that size.
+const MIN_ACCURACY_CIRCLE_RADIUS_PX: f32 = 2.0;
+
+/// An accuracy circle smaller than this fraction of the directional icon's
+/// size is entirely covered by the icon, so drawing it is wasted geometry.
+const ACCURACY_CIRCLE_MIN_VISIBLE_FACTOR: f32 = 0.5;
+
+/// Fix-quality palette shared by the per-fix icons and the continuous
+/// quality line.
+const FIX_STRONG_BLUE: Color32 = Color32::from_rgb(66, 133, 244);
+const FIX_MARGINAL_YELLOW: Color32 = Color32::from_rgb(244, 180, 0);
+const FIX_LOST_RED: Color32 = Color32::from_rgb(219, 68, 55);
 
 pub struct TpvRenderer<'a> {
     files: &'a [LoadedFile],
     visibility: &'a TrackDataVisibility,
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
-    visible_tpv: Vec<SpatialPoint>,
+    /// Indices of the real fixes inside the viewport, grouped per track by
+    /// the collection pass so render_track gets O(k/tracks) per track.
+    tpv_by_track: HashMap<TrackRef, Vec<usize>>,
 }
 
 impl<'a> TpvRenderer<'a> {
-    pub fn new(
+    pub(crate) fn new(
         files: &'a [LoadedFile],
         visibility: &'a TrackDataVisibility,
         highlight: &'a MapHighlight,
         filter: &'a GlobalFilter,
-        visible_tpv: Vec<SpatialPoint>,
+        tpv_by_track: HashMap<TrackRef, Vec<usize>>,
     ) -> Self {
         Self {
             files,
             visibility,
             highlight,
             filter,
-            visible_tpv,
+            tpv_by_track,
         }
     }
 
@@ -65,7 +124,8 @@ impl<'a> TpvRenderer<'a> {
         track: &LoadedTrack,
         real_fix_indices: Option<&Vec<usize>>,
         style: &TpvDrawStyle,
-        transform: &crate::MercTransform,
+        fade: TrackIconFade,
+        transform: &crate::transform::MercTransform,
     ) {
         let mut last_label_pos: Option<Pos2> = None;
 
@@ -84,10 +144,25 @@ impl<'a> TpvRenderer<'a> {
                     continue;
                 };
                 // Fix-lost points (0 satellites in fix) are drawn by the ghost loop.
-                if is_ghost_fix(point) {
+                if point.is_ghost_fix() {
                     continue;
                 }
                 let screen_pos = transform.to_screen(point.merc);
+                let icon_alpha = fix_icon_alpha(
+                    fade,
+                    track,
+                    pi,
+                    screen_pos,
+                    style.base_arrow_size,
+                    transform,
+                );
+                if icon_alpha <= 0.0 {
+                    continue;
+                }
+                let point_style = TpvDrawStyle {
+                    icon_alpha,
+                    ..*style
+                };
                 let point_ref = DataPointRef {
                     track: TrackRef::new(fi, ti),
                     category: DataCategory::Tpv,
@@ -110,7 +185,7 @@ impl<'a> TpvRenderer<'a> {
                     pixels_per_meter,
                     point.satellites.as_ref(),
                     self.is_arrow_highlighted(point_ref),
-                    style,
+                    &point_style,
                     &mut last_label_pos,
                 );
             }
@@ -120,8 +195,10 @@ impl<'a> TpvRenderer<'a> {
         // The latter covers devices that continue outputting positions and headings
         // during fix loss - the heading field is present but unreliable as a
         // "real" direction indicator, so we still show a hollow chevron.
-        for (pi, point) in track.points.iter().enumerate() {
-            if !is_ghost_fix(point) {
+        // LOD-sourced: ghost/real transitions survive every level, so faded
+        // stretches lose only sub-pixel interior chevrons.
+        for (pi, point) in crate::transform::lod_points(track, transform) {
+            if !point.is_ghost_fix() {
                 continue;
             }
             if !filter::point_passes_time_filter(point.tpv.time().utc(), self.filter) {
@@ -131,6 +208,21 @@ impl<'a> TpvRenderer<'a> {
             if !view_rect.contains(screen_pos) {
                 continue;
             }
+            let icon_alpha = fix_icon_alpha(
+                fade,
+                track,
+                pi,
+                screen_pos,
+                style.base_arrow_size,
+                transform,
+            );
+            if icon_alpha <= 0.0 {
+                continue;
+            }
+            let point_style = TpvDrawStyle {
+                icon_alpha,
+                ..*style
+            };
             // Direction for the chevron:
             // - If the GPS reported a heading (fix-lost but device maintained estimate),
             //   use it - it is more accurate than deriving from neighbour positions.
@@ -160,9 +252,69 @@ impl<'a> TpvRenderer<'a> {
                 0.0,
                 None,
                 self.is_arrow_highlighted(point_ref),
-                style,
+                &point_style,
                 &mut last_label_pos,
             );
+        }
+    }
+
+    /// Draw the continuous fix-quality line that stands in for individual
+    /// fix icons where they fade out: the track's shape as a slightly
+    /// thicker polyline, with each edge colored by the fix quality at its
+    /// starting point - so e.g. a stretch of marginal fixes is visible as a
+    /// yellow segment.
+    ///
+    /// The line crossfades inversely with the icons per point, so it covers
+    /// exactly the faded stretches (e.g. a parked cluster) while staying
+    /// invisible alongside fully opaque icons. Per-point alphas are
+    /// quantized into buckets that take part in the polyline key, keeping
+    /// same-quality same-alpha stretches as single spans.
+    fn draw_quality_line(
+        &self,
+        ui: &Ui,
+        track: &LoadedTrack,
+        fade: TrackIconFade,
+        icon_size_px: f32,
+        transform: &crate::transform::MercTransform,
+    ) {
+        let cull_rect = ui.max_rect().expand(CULL_MARGIN_PX);
+        let pts = crate::transform::lod_points(track, transform)
+            .filter(|(_, p)| filter::point_passes_time_filter(p.tpv.time().utc(), self.filter))
+            .map(|(pi, p)| {
+                let screen_pos = transform.to_screen(p.merc);
+                let icon_alpha =
+                    fix_icon_alpha(fade, track, pi, screen_pos, icon_size_px, transform);
+                let bucket = line_alpha_bucket(1.0 - icon_alpha);
+                ((quality_line_color(p), bucket), screen_pos)
+            });
+        let painter = ui.painter();
+        match visible_path(pts, cull_rect) {
+            VisiblePath::OffScreen => {}
+            VisiblePath::Dot((color, bucket), pos) => {
+                if bucket > 0 {
+                    painter.circle_filled(
+                        pos,
+                        QUALITY_LINE_WIDTH,
+                        color.gamma_multiply(bucket_alpha(bucket)),
+                    );
+                }
+            }
+            VisiblePath::Spans(spans) => {
+                for span in spans.iter() {
+                    for ((color, bucket), sub_span) in split_key_spans(span) {
+                        if bucket == 0 {
+                            continue;
+                        }
+                        painter.add(egui::Shape::line(
+                            sub_span,
+                            Stroke::new(
+                                QUALITY_LINE_WIDTH,
+                                color.gamma_multiply(bucket_alpha(bucket)),
+                            ),
+                        ));
+                    }
+                }
+            }
         }
     }
 
@@ -203,36 +355,35 @@ impl Plugin for TpvRenderer<'_> {
     ) {
         let view_rect = ui.max_rect().expand(50.0);
 
-        // Scale icon sizes and outline alpha with zoom level.
-        //
-        // At low zoom (≤ 12) icons are reduced to small dots so that dense
-        // clusters of points - e.g. highway driving at 1-second resolution -
-        // have visible air between them instead of blending into a solid mass.
-        // At high zoom (≥ 18) icons reach their full design size.
-        //
-        // The outline alpha fades out below zoom 14 separately, following the
-        // same principle: avoid a white mass at low zoom.
+        // Scale icon sizes (see base_arrow_size) and outline alpha with the
+        // zoom level; the outline fades out below zoom 14 so dense clusters
+        // don't blend into a white mass.
         let zoom = map_memory.zoom();
-        let size_factor = ((zoom - 12.0) / 6.0).clamp(0.0, 1.0) as f32;
+        let size_factor = zoom_size_factor(zoom);
         let style = TpvDrawStyle {
-            base_arrow_size: 3.0 + size_factor * 9.0, // 3 px at zoom ≤ 12, 12 px at zoom ≥ 18
+            base_arrow_size: base_arrow_size(zoom),
             // Require more pixel separation between satellite-count labels when
             // zoomed out so the label count doesn't explode at dense clusters.
             min_label_dist: 60.0 + (1.0 - size_factor) * 120.0, // 180 px at low zoom, 60 at high
             outline_alpha: ((zoom - 10.0) / 4.0).clamp(0.0, 1.0) as f32,
+            icon_alpha: 1.0,
         };
 
         // Build the per-frame coordinate transform once.
-        let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
+        let transform =
+            crate::transform::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
-        // Group visible real fixes by track so render_track gets O(k/tracks) per track.
-        let mut by_track: HashMap<TrackRef, Vec<usize>> = HashMap::new();
-        for sp in &self.visible_tpv {
-            by_track
-                .entry(sp.track_ref())
-                .or_default()
-                .push(sp.point_index.as_usize());
-        }
+        // Viewport bounds in Mercator space - used to skip tracks that are
+        // entirely outside the visible area without iterating any points
+        // (the quality-line pass would otherwise project every LOD point of
+        // every loaded track just to cull it again).
+        let max_rect = ui.max_rect();
+        let vp_bounds = MercBounds {
+            x_min: transform.merc_x_from_screen(max_rect.min.x),
+            x_max: transform.merc_x_from_screen(max_rect.max.x),
+            y_min: transform.merc_y_from_screen(max_rect.min.y),
+            y_max: transform.merc_y_from_screen(max_rect.max.y),
+        };
 
         for (fi, file) in self.files.iter().enumerate() {
             let fi = FileIdx::new(fi);
@@ -253,16 +404,30 @@ impl Plugin for TpvRenderer<'_> {
                 if !filter::track_passes_filter(&track.metadata, self.filter) {
                     continue;
                 }
-                self.render_track(
-                    ui,
-                    view_rect,
-                    fi,
-                    ti,
-                    track,
-                    by_track.get(&TrackRef::new(fi, ti)),
-                    &style,
-                    &transform,
-                );
+                if !track.metadata.merc_bounds.intersects(vp_bounds) {
+                    continue;
+                }
+                // Crossfade per-fix icons against the continuous quality line
+                // based on how densely the fixes pack on screen at this zoom.
+                // Hover and click stay available throughout: hit-testing goes
+                // through the spatial index, not the painted geometry.
+                let fade = classify_icon_fade(track, &transform, style.base_arrow_size);
+                if fade != TrackIconFade::AllVisible {
+                    self.draw_quality_line(ui, track, fade, style.base_arrow_size, &transform);
+                }
+                if fade != TrackIconFade::AllHidden {
+                    self.render_track(
+                        ui,
+                        view_rect,
+                        fi,
+                        ti,
+                        track,
+                        self.tpv_by_track.get(&TrackRef::new(fi, ti)),
+                        &style,
+                        fade,
+                        &transform,
+                    );
+                }
             }
         }
 
@@ -681,10 +846,210 @@ fn seen_count_color(count: u32) -> Color32 {
 
 /// Zoom-derived visual parameters computed once per frame and shared across
 /// all points in all tracks.
+#[derive(Clone, Copy)]
 struct TpvDrawStyle {
     outline_alpha: f32,
     base_arrow_size: f32,
     min_label_dist: f32,
+    /// Opacity of the fix icon currently being drawn, in (0.0, 1.0].
+    /// Decided per fix from its local on-screen spacing (see
+    /// [`fix_icon_alpha`]); below 1.0 the icon is crossfading into the
+    /// continuous quality line, and fully transparent icons are skipped
+    /// before drawing.
+    icon_alpha: f32,
+}
+
+/// Zoom range over which the fix icons scale from dot size up to their
+/// full design size: dots at low zoom keep dense clusters from blending
+/// into a solid mass.
+const ICON_MIN_SIZE_ZOOM: f64 = 12.0;
+const ICON_MAX_SIZE_ZOOM: f64 = 18.0;
+
+/// Fix-icon size at [`ICON_MIN_SIZE_ZOOM`] and below respectively
+/// [`ICON_MAX_SIZE_ZOOM`] and above.
+const MIN_ARROW_SIZE_PX: f32 = 3.0;
+const MAX_ARROW_SIZE_PX: f32 = 12.0;
+
+/// Zoom interpolation factor for icon sizing: 0.0 at
+/// [`ICON_MIN_SIZE_ZOOM`] and below, 1.0 at [`ICON_MAX_SIZE_ZOOM`] and
+/// above, linear in between.
+fn zoom_size_factor(zoom: f64) -> f32 {
+    ((zoom - ICON_MIN_SIZE_ZOOM) / (ICON_MAX_SIZE_ZOOM - ICON_MIN_SIZE_ZOOM)).clamp(0.0, 1.0) as f32
+}
+
+/// Zoom-scaled base size of the per-fix icons. Shared with viewport
+/// collection so fade is classified with the renderer's exact size.
+pub(crate) fn base_arrow_size(zoom: f64) -> f32 {
+    MIN_ARROW_SIZE_PX + zoom_size_factor(zoom) * (MAX_ARROW_SIZE_PX - MIN_ARROW_SIZE_PX)
+}
+
+/// How a track's fix icons fade this frame, decided O(1) from the track's
+/// precomputed segment-length range before any per-point work.
+///
+/// At a given map scale every fix's local spacing lies between the track's
+/// shortest and longest segment in pixels, so when the whole range falls on
+/// one side of the fade band the per-fix computation can be skipped: a dense
+/// zoomed-out track costs nothing per point, and a well-spaced zoomed-in
+/// track skips the quality line entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrackIconFade {
+    /// Even the longest segment is below the fade-out spacing: every icon
+    /// is fully transparent and the quality line stands in alone.
+    AllHidden,
+    /// Even the shortest segment is at or above the fade-in spacing: every
+    /// icon is fully opaque and the quality line is not needed.
+    AllVisible,
+    /// Spacing crosses the fade band (e.g. parked phases on an otherwise
+    /// moving track): opacity is decided per fix from its local spacing.
+    PerFix,
+}
+
+/// Classify how `track`'s icons fade at the current map scale.
+///
+/// A track without segments (a lone fix) has nothing to overlap with and is
+/// always [`TrackIconFade::AllVisible`] - a spacing of zero would hide it at
+/// every zoom.
+pub(crate) fn classify_icon_fade(
+    track: &LoadedTrack,
+    transform: &crate::transform::MercTransform,
+    icon_size_px: f32,
+) -> TrackIconFade {
+    let Some(range) = track.metadata.segment_length_range else {
+        return TrackIconFade::AllVisible;
+    };
+    let bbox = track.metadata.bounding_box;
+    let mid_lat = Latitude::new((bbox.min().y + bbox.max().y) / 2.0);
+    let ppm = transform.pixels_per_meter(mid_lat);
+    let min_px = (range.min.get::<meter>() * ppm) as f32;
+    let max_px = (range.max.get::<meter>() * ppm) as f32;
+    let (lo, hi) = fade_band(icon_size_px);
+    if max_px < lo {
+        TrackIconFade::AllHidden
+    } else if min_px >= hi {
+        TrackIconFade::AllVisible
+    } else {
+        TrackIconFade::PerFix
+    }
+}
+
+/// The fade band for a given icon size: local spacings at or below the
+/// first bound render fully transparent icons, at or above the second fully
+/// opaque ones. Proportional to the icon size, floored in absolute pixels
+/// (see [`ICON_FADE_LO_MIN_SPACING_PX`]).
+fn fade_band(icon_size_px: f32) -> (f32, f32) {
+    (
+        (icon_size_px * ICON_FADE_LO_SPACING_FACTOR).max(ICON_FADE_LO_MIN_SPACING_PX),
+        (icon_size_px * ICON_FADE_HI_SPACING_FACTOR).max(ICON_FADE_HI_MIN_SPACING_PX),
+    )
+}
+
+/// Local on-screen spacing of the fix at `pi`: the larger of the screen
+/// distances to its temporal neighbours. `None` when the fix has no
+/// neighbours at all (lone fix).
+///
+/// Taking the larger distance keeps cluster boundaries visible: the
+/// departure arrow of a parked phase has a far next-neighbour even though
+/// its previous neighbour sits on top of it. Endpoints of the track have
+/// only one neighbour, so a track that starts or ends parked fades its
+/// first/last arrow with the rest of the cluster.
+fn local_fix_spacing_px(
+    track: &LoadedTrack,
+    pi: usize,
+    screen_pos: Pos2,
+    transform: &crate::transform::MercTransform,
+) -> Option<f32> {
+    let dist_to = |i: usize| {
+        track
+            .points
+            .get(i)
+            .map(|p| (transform.to_screen(p.merc) - screen_pos).length())
+    };
+    let prev = pi.checked_sub(1).and_then(dist_to);
+    let next = dist_to(pi + 1);
+    match (prev, next) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(d), None) | (None, Some(d)) => Some(d),
+        (None, None) => None,
+    }
+}
+
+/// Opacity of a fix icon for a given local on-screen spacing: 1.0 at or
+/// above the [`fade_band`]'s upper bound, 0.0 at or below its lower bound,
+/// linear in between.
+fn icon_fade_alpha(spacing_px: f32, icon_size_px: f32) -> f32 {
+    let (lo, hi) = fade_band(icon_size_px);
+    if hi <= lo {
+        // Unreachable while the HI floor and factor exceed their LO
+        // counterparts; kept so a future constant change degrades to opaque
+        // icons instead of dividing by zero.
+        return 1.0;
+    }
+    ((spacing_px - lo) / (hi - lo)).clamp(0.0, 1.0)
+}
+
+/// Opacity of the fix at `pi` under the given per-track fade mode.
+fn fix_icon_alpha(
+    fade: TrackIconFade,
+    track: &LoadedTrack,
+    pi: usize,
+    screen_pos: Pos2,
+    icon_size_px: f32,
+    transform: &crate::transform::MercTransform,
+) -> f32 {
+    match fade {
+        TrackIconFade::AllHidden => 0.0,
+        TrackIconFade::AllVisible => 1.0,
+        TrackIconFade::PerFix => local_fix_spacing_px(track, pi, screen_pos, transform)
+            .map_or(1.0, |spacing| icon_fade_alpha(spacing, icon_size_px)),
+    }
+}
+
+/// Quantize a quality-line alpha into one of [`QUALITY_LINE_ALPHA_STEPS`]+1
+/// discrete levels (0 = invisible, max = fully opaque).
+fn line_alpha_bucket(line_alpha: f32) -> u8 {
+    #[expect(
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation,
+        reason = "clamped to [0, 1] so the product is in [0, QUALITY_LINE_ALPHA_STEPS]"
+    )]
+    let bucket = (line_alpha.clamp(0.0, 1.0) * f32::from(QUALITY_LINE_ALPHA_STEPS)).round() as u8;
+    bucket
+}
+
+/// The drawable alpha for a quantized quality-line bucket.
+fn bucket_alpha(bucket: u8) -> f32 {
+    f32::from(bucket) / f32::from(QUALITY_LINE_ALPHA_STEPS)
+}
+
+/// Color of the continuous quality line at a given point. Same palette as
+/// the icons: ghost fixes match the red ghost chevron, real fixes use the
+/// satellite-count tiers of [`tpv_point_color`].
+fn quality_line_color(point: &NavPoint) -> Color32 {
+    if point.is_ghost_fix() {
+        FIX_LOST_RED
+    } else {
+        tpv_point_color(point)
+    }
+}
+
+/// Split a key-styled polyline span into maximal same-key sub-spans.
+///
+/// Each edge takes the key of its starting point, so e.g. a stretch of
+/// marginal fixes shows as one yellow segment up to the first good fix.
+/// Boundary points are shared between adjacent sub-spans to keep the line
+/// continuous.
+fn split_key_spans<K: Copy + PartialEq>(span: &[(K, Pos2)]) -> Vec<(K, Vec<Pos2>)> {
+    let mut out: Vec<(K, Vec<Pos2>)> = Vec::new();
+    for w in span.windows(2) {
+        let [(key, pos_a), (_, pos_b)] = w else {
+            continue;
+        };
+        match out.last_mut() {
+            Some((k, pts)) if k == key => pts.push(*pos_b),
+            _ => out.push((*key, vec![*pos_a, *pos_b])),
+        }
+    }
+    out
 }
 
 /// Renders the three visual layers for a single on-screen GPS point:
@@ -708,19 +1073,27 @@ fn draw_tpv_point(
     style: &TpvDrawStyle,
     last_label_pos: &mut Option<Pos2>,
 ) {
-    // Accuracy circle - rendered beneath the icon.
+    // Accuracy circle - rendered beneath the icon. Skipped when too small to
+    // see at all, and when small enough to be entirely covered by the icon.
     if let Some(eph_m) = eph_m {
         let radius = (f64::from(eph_m) * pixels_per_meter) as f32;
-        if radius >= 2.0 {
+        let min_visible_radius = (style.base_arrow_size * ACCURACY_CIRCLE_MIN_VISIBLE_FACTOR)
+            .max(MIN_ACCURACY_CIRCLE_RADIUS_PX);
+        if radius >= min_visible_radius {
             ui.painter().circle_filled(
                 screen_pos,
                 radius,
-                egui::Color32::from_rgba_unmultiplied(30, 120, 255, 20),
+                egui::Color32::from_rgba_unmultiplied(30, 120, 255, 20)
+                    .gamma_multiply(style.icon_alpha),
             );
             ui.painter().circle_stroke(
                 screen_pos,
                 radius,
-                egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(30, 120, 255, 60)),
+                egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(30, 120, 255, 60)
+                        .gamma_multiply(style.icon_alpha),
+                ),
             );
         }
     }
@@ -732,9 +1105,9 @@ fn draw_tpv_point(
                 ui,
                 screen_pos,
                 *heading,
-                *color,
+                color.gamma_multiply(style.icon_alpha),
                 highlighted,
-                style.outline_alpha,
+                style.outline_alpha * style.icon_alpha,
                 style.base_arrow_size,
             );
         }
@@ -745,6 +1118,7 @@ fn draw_tpv_point(
                 *direction,
                 highlighted,
                 style.base_arrow_size,
+                style.icon_alpha,
             );
         }
     }
@@ -757,11 +1131,10 @@ fn draw_tpv_point(
             let label = format!("{}/{}", sats.fix_count(), sats.satellite_count());
             let text_pos =
                 screen_pos + egui::vec2(style.base_arrow_size + 3.0, -style.base_arrow_size);
-            let galley = ui.painter().layout_no_wrap(
-                label,
-                egui::FontId::proportional(12.0),
-                Color32::WHITE,
-            );
+            let text_color = Color32::WHITE.gamma_multiply(style.icon_alpha);
+            let galley =
+                ui.painter()
+                    .layout_no_wrap(label, egui::FontId::proportional(12.0), text_color);
             let text_rect = egui::Rect::from_min_size(
                 egui::pos2(text_pos.x, text_pos.y - galley.size().y),
                 galley.size(),
@@ -769,31 +1142,25 @@ fn draw_tpv_point(
             ui.painter().rect_filled(
                 text_rect.expand(2.0),
                 2.0,
-                Color32::from_rgba_unmultiplied(0, 0, 0, 160),
+                Color32::from_rgba_unmultiplied(0, 0, 0, 160).gamma_multiply(style.icon_alpha),
             );
-            ui.painter().galley(text_rect.min, galley, Color32::WHITE);
+            ui.painter().galley(text_rect.min, galley, text_color);
             *last_label_pos = Some(screen_pos);
         }
     }
 }
 
-/// Map a real (non-ghost) GPS point to its arrow colour based on satellite fix quality.
-///
-/// Three-tier scheme:
-/// - **Blue** - strong fix (≥ 10 satellites) or no satellite report attached (unknown quality).
-/// - **Yellow** - marginal fix (1–9 satellites in fix).
-/// - **Red** - fix lost: satellite report present but zero satellites are in the fix.
+/// Map a real (non-ghost) GPS point to its arrow colour from its canonical
+/// [`gt_types::FixQuality`] tier: blue for strong or unknown quality, yellow
+/// for marginal, red for lost.
 ///
 /// Ghost fixes (no heading, or fix count zero) are rendered as red hollow chevrons
 /// by `draw_ghost_chevron` and never reach this function.
 fn tpv_point_color(point: &NavPoint) -> Color32 {
-    match &point.satellites {
-        None => Color32::from_rgb(66, 133, 244), // no satellite data - assume fine, show blue
-        Some(sats) => match sats.fix_count() {
-            n if n >= 10 => Color32::from_rgb(66, 133, 244), // blue: strong fix
-            n if n > 0 => Color32::from_rgb(244, 180, 0),    // yellow: marginal fix
-            _ => Color32::from_rgb(219, 68, 55),             // red: fix lost
-        },
+    match point.fix_quality() {
+        gt_types::FixQuality::Unknown | gt_types::FixQuality::Strong => FIX_STRONG_BLUE,
+        gt_types::FixQuality::Marginal => FIX_MARGINAL_YELLOW,
+        gt_types::FixQuality::Lost => FIX_LOST_RED,
     }
 }
 
@@ -808,22 +1175,6 @@ enum PointKind {
     /// travel direction. When the GPS reported a heading it is converted directly;
     /// otherwise it is derived from the surrounding fixes' Mercator positions.
     Ghost { direction: Vec2 },
-}
-
-/// Returns `true` when a point should be rendered as a ghost hollow chevron rather than a
-/// filled navigation arrow.
-///
-/// Two cases qualify:
-/// - No heading from the GPS receiver (position only, direction entirely unknown).
-/// - Satellite fix count dropped to zero: the GPS may still output position and heading
-///   estimates, but those are internal dead-reckoning guesses, not real fixes. We want
-///   the icon to signal this clearly rather than pretending it is a normal arrow.
-fn is_ghost_fix(point: &NavPoint) -> bool {
-    point.tpv.heading().is_none()
-        || point
-            .satellites
-            .as_ref()
-            .is_some_and(|s| s.fix_count() == 0)
 }
 
 /// Compute the travel direction for a ghost fix from its neighbouring Mercator positions.
@@ -844,7 +1195,14 @@ fn ghost_direction(prev: gt_types::MercPoint, next: gt_types::MercPoint) -> Vec2
 /// The chevron tip points in `direction` (the inferred travel direction).
 /// The icon is rendered as a rotated mesh quad so a single SVG asset handles
 /// all orientations without re-rasterising.
-fn draw_ghost_chevron(ui: &Ui, center: Pos2, direction: Vec2, highlighted: bool, base_size: f32) {
+fn draw_ghost_chevron(
+    ui: &Ui,
+    center: Pos2,
+    direction: Vec2,
+    highlighted: bool,
+    base_size: f32,
+    icon_alpha: f32,
+) {
     let size = if highlighted {
         base_size + 3.0
     } else {
@@ -853,9 +1211,17 @@ fn draw_ghost_chevron(ui: &Ui, center: Pos2, direction: Vec2, highlighted: bool,
     let tint = if highlighted {
         Color32::from_rgb(100, 200, 255)
     } else {
-        Color32::from_rgb(219, 68, 55)
-    };
-    crate::draw_rotated_cached_icon(ui, crate::ICON_URI_GHOST_FIX, center, direction, size, tint);
+        FIX_LOST_RED
+    }
+    .gamma_multiply(icon_alpha);
+    crate::icons::draw_rotated_cached_icon(
+        ui,
+        crate::icons::ICON_URI_GHOST_FIX,
+        center,
+        direction,
+        size,
+        tint,
+    );
 }
 
 fn draw_navigation_arrow(
@@ -954,7 +1320,7 @@ mod tests {
     use gt_types::time_types::GpsTime;
     use gt_types::tpv::TimePositionVelocity;
     use uom::si::angle::degree;
-    use uom::si::f64::Angle;
+    use uom::si::f64::{Angle, Length};
 
     fn make_point(satellites: Option<Satellites>) -> NavPoint {
         let tpv = TimePositionVelocity::builder()
@@ -971,6 +1337,17 @@ mod tests {
             .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, prn <= fix_count))
             .collect();
         Satellites::new(None, None, satellites)
+    }
+
+    fn track_with_points(points: Vec<NavPoint>) -> LoadedTrack {
+        LoadedTrack {
+            metadata: gt_types::TrackMetadata::default(),
+            points,
+            lod: gt_types::TrackLod::default(),
+            custom_markers: Vec::new(),
+            generated_markers: Vec::new(),
+            event_markers: Vec::new(),
+        }
     }
 
     fn make_tpv(lat: f64, lon: f64, heading: Option<f64>) -> TimePositionVelocity {
@@ -1030,7 +1407,7 @@ mod tests {
     fn no_heading_is_ghost() {
         let tpv = make_tpv(51.5, -0.1, None);
         let point = NavPoint::new(tpv, None);
-        assert!(is_ghost_fix(&point));
+        assert!(point.is_ghost_fix());
     }
 
     /// A point with heading and no satellite report → classified as Real (blue arrow).
@@ -1038,7 +1415,7 @@ mod tests {
     fn heading_no_satellite_report_is_real() {
         let tpv = make_tpv(51.5, -0.1, Some(90.0));
         let point = NavPoint::new(tpv, None);
-        assert!(!is_ghost_fix(&point));
+        assert!(!point.is_ghost_fix());
     }
 
     /// Fix count > 0 with heading → classified as Real (filled arrow, good fix).
@@ -1049,7 +1426,7 @@ mod tests {
     fn heading_with_good_fix_is_real() {
         let tpv = make_tpv(51.5, -0.1, Some(225.0));
         let point = NavPoint::new(tpv, Some(sats_with_fix(5)));
-        assert!(!is_ghost_fix(&point));
+        assert!(!point.is_ghost_fix());
     }
 
     /// Fix count == 0 → ghost even when heading is present.
@@ -1061,7 +1438,7 @@ mod tests {
     fn heading_with_fix_lost_is_ghost() {
         let tpv = make_tpv(51.5, -0.1, Some(180.0));
         let point = NavPoint::new(tpv, Some(sats_with_fix(0)));
-        assert!(is_ghost_fix(&point));
+        assert!(point.is_ghost_fix());
     }
 
     /// Ghost chevron points east when the surrounding fixes move eastward.
@@ -1131,5 +1508,366 @@ mod tests {
         assert_eq!(format_signed_delta(60_000), "+1m");
         assert_eq!(format_signed_delta(69_000), "+1m9s");
         assert_eq!(format_signed_delta(3_661_000), "+1h1m1s");
+    }
+
+    // With a 12 px icon, the fade band spans local spacings of 2.4 px
+    // (LO, 0.2 icon sizes - arrows share almost all pixels) to 6 px
+    // (HI, 0.5 icon sizes - arrows overlap but stay readable).
+    const TEST_ICON_PX: f32 = 12.0;
+
+    #[test]
+    fn icon_fade_is_opaque_while_arrows_merely_overlap() {
+        assert!(icon_fade_alpha(100.0, TEST_ICON_PX) >= 1.0);
+        assert!(icon_fade_alpha(12.0, TEST_ICON_PX) >= 1.0); // fully side by side
+        assert!(icon_fade_alpha(8.0, TEST_ICON_PX) >= 1.0); // overlapping a bit
+        assert!(icon_fade_alpha(6.0, TEST_ICON_PX) >= 1.0); // exactly at the HI bound
+    }
+
+    #[test]
+    fn icon_fade_is_transparent_when_arrows_blend_together() {
+        assert!(icon_fade_alpha(2.4, TEST_ICON_PX) <= 0.0); // exactly at the LO bound
+        assert!(icon_fade_alpha(0.0, TEST_ICON_PX) <= 0.0); // stacked on one point
+    }
+
+    #[test]
+    fn icon_fade_is_linear_between_the_bounds() {
+        let alpha = icon_fade_alpha(4.2, TEST_ICON_PX); // midway between 2.4 and 6
+        assert!((alpha - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn icon_fade_stays_opaque_for_degenerate_icon_size() {
+        assert!(icon_fade_alpha(10.0, 0.0) >= 1.0);
+        assert!(icon_fade_alpha(10.0, -1.0) >= 1.0);
+    }
+
+    // At low zoom icons shrink to 3 px and the proportional band would be
+    // 0.6-1.5 px; the absolute floors widen it to 2-5 px so dot-sized
+    // arrows stacked a couple of pixels apart fade into the quality line.
+    const SMALL_ICON_PX: f32 = 3.0;
+
+    #[test]
+    fn icon_fade_band_is_floored_for_small_icons() {
+        assert!(icon_fade_alpha(1.2, SMALL_ICON_PX) <= 0.0); // below the 2 px floor
+        assert!(icon_fade_alpha(2.0, SMALL_ICON_PX) <= 0.0); // exactly at the LO floor
+        assert!(icon_fade_alpha(5.0, SMALL_ICON_PX) >= 1.0); // exactly at the HI floor
+        let alpha = icon_fade_alpha(3.5, SMALL_ICON_PX); // midway between 2 and 5
+        assert!((alpha - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn classify_uses_the_floored_band_for_small_icons() {
+        // 1.9 m segments at 1 px/m: below the 2 px floor, fully hidden even
+        // though 1.9 px is well above 0.2 x 3 px.
+        let track = track_with_segment_range(0.0, 1.9);
+        assert_eq!(
+            classify_icon_fade(&track, &unit_transform(), SMALL_ICON_PX),
+            TrackIconFade::AllHidden
+        );
+        let track = track_with_segment_range(5.0, 50.0);
+        assert_eq!(
+            classify_icon_fade(&track, &unit_transform(), SMALL_ICON_PX),
+            TrackIconFade::AllVisible
+        );
+        let track = track_with_segment_range(3.0, 4.0);
+        assert_eq!(
+            classify_icon_fade(&track, &unit_transform(), SMALL_ICON_PX),
+            TrackIconFade::PerFix
+        );
+    }
+
+    #[test]
+    fn icon_fade_stays_opaque_for_infinite_spacing() {
+        // Spacing can overflow to infinity when a long track meets an
+        // extreme zoom; the result must clamp to opaque, not turn NaN.
+        assert!(icon_fade_alpha(f32::INFINITY, TEST_ICON_PX) >= 1.0);
+    }
+
+    /// Same value as `MercTransform::pixels_per_meter`'s internal constant;
+    /// with `for_test(EARTH_CIRCUMFERENCE_M)` the map scale is 1 px/m at the
+    /// equator, so test geometry can be written directly in metres.
+    const EARTH_CIRCUMFERENCE_M: f64 = 40_030_173.0;
+
+    fn unit_transform() -> crate::transform::MercTransform {
+        crate::transform::MercTransform::for_test(EARTH_CIRCUMFERENCE_M)
+    }
+
+    /// A real fix on the equator, `x_m` metres east of the origin.
+    fn nav_point_at_meters(x_m: f64) -> NavPoint {
+        let lon_deg = x_m * 360.0 / EARTH_CIRCUMFERENCE_M;
+        NavPoint::new(make_tpv(0.0, lon_deg, Some(90.0)), None)
+    }
+
+    fn track_with_segment_range(min_m: f64, max_m: f64) -> LoadedTrack {
+        LoadedTrack {
+            metadata: gt_types::TrackMetadata {
+                segment_length_range: Some(gt_types::SegmentLengthRange {
+                    min: Length::new::<meter>(min_m),
+                    max: Length::new::<meter>(max_m),
+                }),
+                ..gt_types::TrackMetadata::default()
+            },
+            points: Vec::new(),
+            lod: gt_types::TrackLod::default(),
+            custom_markers: Vec::new(),
+            generated_markers: Vec::new(),
+            event_markers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn classify_keeps_lone_fix_visible_at_every_zoom() {
+        // No segments means nothing can overlap; a spacing of zero would
+        // hide the lone fix forever.
+        let track = track_with_points(Vec::new());
+        assert_eq!(
+            classify_icon_fade(&track, &unit_transform(), TEST_ICON_PX),
+            TrackIconFade::AllVisible
+        );
+    }
+
+    #[test]
+    fn classify_hides_all_icons_when_even_the_longest_segment_blends() {
+        // Longest segment 2 m = 2 px, below the 2.4 px fade-out bound.
+        let track = track_with_segment_range(0.0, 2.0);
+        assert_eq!(
+            classify_icon_fade(&track, &unit_transform(), TEST_ICON_PX),
+            TrackIconFade::AllHidden
+        );
+    }
+
+    #[test]
+    fn classify_shows_all_icons_when_even_the_shortest_segment_is_spaced() {
+        // Shortest segment 6 m = 6 px, exactly the fade-in bound.
+        let track = track_with_segment_range(6.0, 100.0);
+        assert_eq!(
+            classify_icon_fade(&track, &unit_transform(), TEST_ICON_PX),
+            TrackIconFade::AllVisible
+        );
+    }
+
+    #[test]
+    fn classify_mixed_spacing_decides_per_fix() {
+        // Parked-then-highway: zero-length segments next to 100 m hops.
+        let track = track_with_segment_range(0.0, 100.0);
+        assert_eq!(
+            classify_icon_fade(&track, &unit_transform(), TEST_ICON_PX),
+            TrackIconFade::PerFix
+        );
+        // A range entirely inside the fade band is also per-fix.
+        let track = track_with_segment_range(3.0, 5.0);
+        assert_eq!(
+            classify_icon_fade(&track, &unit_transform(), TEST_ICON_PX),
+            TrackIconFade::PerFix
+        );
+    }
+
+    fn spacing_at(track: &LoadedTrack, pi: usize) -> Option<f32> {
+        let transform = unit_transform();
+        let screen_pos = transform.to_screen(track.points[pi].merc);
+        local_fix_spacing_px(track, pi, screen_pos, &transform)
+    }
+
+    #[test]
+    fn local_spacing_is_none_for_a_lone_fix() {
+        let track = track_with_points(vec![nav_point_at_meters(0.0)]);
+        assert_eq!(spacing_at(&track, 0), None);
+    }
+
+    #[test]
+    fn local_spacing_of_endpoints_uses_their_single_neighbour() {
+        let track = track_with_points(vec![nav_point_at_meters(0.0), nav_point_at_meters(100.0)]);
+        let first = spacing_at(&track, 0).expect("has a neighbour");
+        let last = spacing_at(&track, 1).expect("has a neighbour");
+        assert!((first - 100.0).abs() < 1.0, "got {first} px");
+        assert!((last - 100.0).abs() < 1.0, "got {last} px");
+    }
+
+    #[test]
+    fn local_spacing_keeps_cluster_boundary_visible() {
+        // Three stacked fixes (parked), then a 100 m hop: the interior
+        // parked fixes have zero spacing, but the departure fix sees its
+        // far next-neighbour and must stay visible.
+        let track = track_with_points(vec![
+            nav_point_at_meters(0.0),
+            nav_point_at_meters(0.0),
+            nav_point_at_meters(0.0),
+            nav_point_at_meters(100.0),
+        ]);
+        let interior = spacing_at(&track, 1).expect("has neighbours");
+        let departure = spacing_at(&track, 2).expect("has neighbours");
+        assert!(interior < f32::EPSILON, "got {interior} px");
+        assert!((departure - 100.0).abs() < 1.0, "got {departure} px");
+    }
+
+    #[test]
+    fn fix_icon_alpha_short_circuits_uniform_tracks() {
+        let track = track_with_points(vec![nav_point_at_meters(0.0), nav_point_at_meters(0.0)]);
+        let transform = unit_transform();
+        let pos = transform.to_screen(track.points[0].merc);
+        // AllHidden / AllVisible ignore local spacing entirely.
+        let hidden = fix_icon_alpha(
+            TrackIconFade::AllHidden,
+            &track,
+            0,
+            pos,
+            TEST_ICON_PX,
+            &transform,
+        );
+        let visible = fix_icon_alpha(
+            TrackIconFade::AllVisible,
+            &track,
+            0,
+            pos,
+            TEST_ICON_PX,
+            &transform,
+        );
+        assert!(hidden <= 0.0);
+        assert!(visible >= 1.0);
+    }
+
+    #[test]
+    fn per_fix_alpha_handles_parked_highway_parked() {
+        // The shape from the bug report: parked (stacked fixes), then
+        // highway (100 m hops), then parked again. Parked interiors fade,
+        // every highway fix and both cluster boundary fixes stay opaque.
+        let track = track_with_points(vec![
+            nav_point_at_meters(0.0),
+            nav_point_at_meters(0.0),
+            nav_point_at_meters(0.0), // departure: next neighbour is far
+            nav_point_at_meters(100.0),
+            nav_point_at_meters(200.0),
+            nav_point_at_meters(300.0), // arrival: prev neighbour is far
+            nav_point_at_meters(300.0),
+            nav_point_at_meters(300.0),
+        ]);
+        let transform = unit_transform();
+        let alpha_at = |pi: usize| {
+            let pos = transform.to_screen(track.points[pi].merc);
+            fix_icon_alpha(
+                TrackIconFade::PerFix,
+                &track,
+                pi,
+                pos,
+                TEST_ICON_PX,
+                &transform,
+            )
+        };
+        // Parked interiors (including the track ends) are fully faded.
+        assert!(alpha_at(0) <= 0.0);
+        assert!(alpha_at(1) <= 0.0);
+        assert!(alpha_at(6) <= 0.0);
+        assert!(alpha_at(7) <= 0.0);
+        // Departure, highway, and arrival fixes are fully opaque.
+        for pi in 2..=5 {
+            assert!(alpha_at(pi) >= 1.0, "fix {pi} should be opaque");
+        }
+    }
+
+    #[test]
+    fn line_alpha_buckets_quantize_the_crossfade() {
+        assert_eq!(line_alpha_bucket(0.0), 0);
+        assert_eq!(line_alpha_bucket(0.16), 0); // rounds down: still invisible
+        assert_eq!(line_alpha_bucket(0.34), 1);
+        assert_eq!(line_alpha_bucket(0.5), 2); // rounds half away from zero
+        assert_eq!(line_alpha_bucket(1.0), QUALITY_LINE_ALPHA_STEPS);
+        // Out-of-range inputs clamp instead of wrapping.
+        assert_eq!(line_alpha_bucket(-1.0), 0);
+        assert_eq!(line_alpha_bucket(2.0), QUALITY_LINE_ALPHA_STEPS);
+        assert!((bucket_alpha(QUALITY_LINE_ALPHA_STEPS) - 1.0).abs() < f32::EPSILON);
+        assert!(bucket_alpha(0) < f32::EPSILON);
+    }
+
+    #[test]
+    fn quality_line_color_marks_ghost_fixes_red() {
+        // No heading and no satellite report: tpv_point_color alone would say
+        // blue, but the point is a ghost fix and must show as red.
+        let tpv = make_tpv(51.5, -0.1, None);
+        let point = NavPoint::new(tpv, None);
+        assert_eq!(quality_line_color(&point), FIX_LOST_RED);
+    }
+
+    #[test]
+    fn quality_line_color_follows_fix_quality_for_real_fixes() {
+        let marginal = make_point(Some(sats_with_fix(4)));
+        assert_eq!(quality_line_color(&marginal), FIX_MARGINAL_YELLOW);
+        let strong = make_point(Some(sats_with_fix(12)));
+        assert_eq!(quality_line_color(&strong), FIX_STRONG_BLUE);
+    }
+
+    #[test]
+    fn split_key_spans_single_key_is_one_sub_span() {
+        use egui::pos2;
+        let span = [
+            (Color32::BLUE, pos2(0.0, 0.0)),
+            (Color32::BLUE, pos2(10.0, 0.0)),
+            (Color32::BLUE, pos2(20.0, 0.0)),
+        ];
+        let subs = split_key_spans(&span);
+        assert_eq!(
+            subs,
+            vec![(
+                Color32::BLUE,
+                vec![pos2(0.0, 0.0), pos2(10.0, 0.0), pos2(20.0, 0.0)]
+            )]
+        );
+    }
+
+    #[test]
+    fn split_key_spans_edge_takes_key_of_its_starting_point() {
+        use egui::pos2;
+        let span = [
+            (Color32::BLUE, pos2(0.0, 0.0)),
+            (Color32::YELLOW, pos2(10.0, 0.0)),
+            (Color32::YELLOW, pos2(20.0, 0.0)),
+        ];
+        let subs = split_key_spans(&span);
+        // The blue->yellow edge is blue (starting point's quality); the
+        // boundary point is shared so the line stays continuous.
+        assert_eq!(
+            subs,
+            vec![
+                (Color32::BLUE, vec![pos2(0.0, 0.0), pos2(10.0, 0.0)]),
+                (Color32::YELLOW, vec![pos2(10.0, 0.0), pos2(20.0, 0.0)]),
+            ]
+        );
+    }
+
+    #[test]
+    fn split_key_spans_splits_on_alpha_bucket_within_one_color() {
+        use egui::pos2;
+        // Same quality color but different crossfade buckets: the line must
+        // split so an opaque stretch (a parked cluster, bucket 3) and an
+        // invisible stretch (well-spaced fixes, bucket 0) get separate
+        // strokes - this is what localizes the quality line to the cluster.
+        // Each edge takes its starting point's bucket, so the transition
+        // edge still belongs to the cluster.
+        let span = [
+            ((Color32::BLUE, 3_u8), pos2(0.0, 0.0)),
+            ((Color32::BLUE, 3_u8), pos2(10.0, 0.0)),
+            ((Color32::BLUE, 0_u8), pos2(20.0, 0.0)),
+            ((Color32::BLUE, 0_u8), pos2(30.0, 0.0)),
+        ];
+        let subs = split_key_spans(&span);
+        assert_eq!(
+            subs,
+            vec![
+                (
+                    (Color32::BLUE, 3_u8),
+                    vec![pos2(0.0, 0.0), pos2(10.0, 0.0), pos2(20.0, 0.0)]
+                ),
+                (
+                    (Color32::BLUE, 0_u8),
+                    vec![pos2(20.0, 0.0), pos2(30.0, 0.0)]
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn split_key_spans_too_short_span_is_empty() {
+        use egui::pos2;
+        assert!(split_key_spans::<Color32>(&[]).is_empty());
+        assert!(split_key_spans(&[(Color32::BLUE, pos2(0.0, 0.0))]).is_empty());
     }
 }

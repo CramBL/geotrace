@@ -1,0 +1,203 @@
+//! Per-frame projection from normalised Mercator coordinates to screen
+//! pixels, and the LOD-aware point iteration built on top of it.
+
+use gt_types::coordinates::{Latitude, Longitude};
+use gt_types::{LoadedTrack, MercPoint, NavPoint, mercator};
+use walkers::MapMemory;
+
+use crate::polyline::MAX_LOD_ERROR_PX;
+
+/// Wrap a longitude in degrees into `Longitude`'s valid `[-180, 180]` range.
+///
+/// At low zoom the viewport can span more than 360° of longitude, so the
+/// pixel column at the viewport centre may sit past the antimeridian wrap and
+/// `Projector::unproject` returns e.g. 185° instead of the equivalent -175°.
+/// Longitude is periodic with period 360°, so the wrapped value names the same
+/// meridian and is the correct input for [`Longitude::new`].
+fn wrap_longitude_degrees(deg: f64) -> f64 {
+    ((deg + 180.0).rem_euclid(360.0)) - 180.0
+}
+
+/// Per-frame transform context for projecting pre-computed normalised Mercator
+/// coordinates to screen pixel positions with full f64 precision.
+///
+/// ## Why not `projector.project()`?
+///
+/// Walkers' `Projector::project()` computes the screen position of an arbitrary
+/// geographic point by subtracting two large pixel values (the point's Mercator
+/// pixel position and the map centre's) in f64, then calling `.to_vec2()` which
+/// truncates the result to f32. At zoom ≥ 17 and for data far from the origin
+/// (e.g. Denmark: lat 55° N, lon 12° E), the y-component of this difference is
+/// ≈ 12 M px, where f32 ULP = 1 px. The anchor obtained this way has ≈ ±0.5 px
+/// constant error per frame, which appears as snapping during smooth zoom
+/// animations. Additionally, viewport culling arithmetic done in f32 before
+/// casting to f64 has the same issue.
+///
+/// ## Solution
+///
+/// This transform uses `projector.unproject(clip_center)` to obtain the map
+/// centre's geographic coordinates. Walkers' `unproject` performs all arithmetic
+/// in f64 and returns a high-precision `Position`. We then compute the normalised
+/// Mercator coordinates of the map centre in f64, and express every point's
+/// screen position as:
+///
+/// ```text
+/// screen = clip_center + (merc_point − merc_center) × total_px
+/// ```
+///
+/// `clip_center` is a small, exact f32 value (the pixel centre of the map
+/// widget, typically around 800–1000 px). `merc_point − merc_center` is a
+/// small number (≤ ~0.05 for any visible point), so no large-magnitude
+/// arithmetic occurs anywhere. The final cast to f32 is applied only to the
+/// already-small screen coordinate, where f32 ULP < 0.001 px.
+pub(crate) struct MercTransform {
+    clip_center_x: f64,
+    clip_center_y: f64,
+    merc_center: MercPoint,
+    total_px: f64,
+}
+
+impl MercTransform {
+    /// Build the transform for the current frame.
+    ///
+    /// `clip_center` must be `ui.max_rect().center()` inside a plugin's
+    /// `run()` method - walkers sets the child UI rect to the map widget rect,
+    /// which is also `projector`'s clip rect, so `clip_center` equals
+    /// `projector.clip_rect.center()`.
+    pub(crate) fn new(
+        projector: &walkers::Projector,
+        map_memory: &MapMemory,
+        clip_center: egui::Pos2,
+    ) -> Self {
+        let total_px = 2_f64.powf(map_memory.zoom()) * 256.0;
+        // unproject(clip_center) returns the geographic position at the
+        // viewport centre using f64 arithmetic throughout.
+        // In walkers: Position.x() = longitude, Position.y() = latitude.
+        let center_ll = projector.unproject(clip_center.to_vec2());
+        // Latitude from `unproject` is always within ±90° (it comes from
+        // `atan`), but longitude can land outside ±180° - see
+        // `wrap_longitude_degrees`.
+        let merc_center = mercator::normalize(
+            Latitude::new(center_ll.y()),
+            Longitude::new(wrap_longitude_degrees(center_ll.x())),
+        );
+        Self {
+            clip_center_x: clip_center.x as f64,
+            clip_center_y: clip_center.y as f64,
+            merc_center,
+            total_px,
+        }
+    }
+
+    /// A fixed transform for unit tests: viewport centred on the geographic
+    /// origin, with the world `total_px` pixels wide.
+    #[cfg(test)]
+    pub(crate) fn for_test(total_px: f64) -> Self {
+        Self {
+            clip_center_x: 0.0,
+            clip_center_y: 0.0,
+            merc_center: mercator::normalize(Latitude::new(0.0), Longitude::new(0.0)),
+            total_px,
+        }
+    }
+
+    /// Project a pre-computed normalised Mercator coordinate to a screen position.
+    #[inline]
+    pub(crate) fn to_screen(&self, merc: MercPoint) -> egui::Pos2 {
+        egui::pos2(
+            (self.clip_center_x + (merc.x - self.merc_center.x) * self.total_px) as f32,
+            (self.clip_center_y + (merc.y - self.merc_center.y) * self.total_px) as f32,
+        )
+    }
+
+    /// Convert a screen-space x-coordinate to a normalised Mercator x value.
+    #[inline]
+    pub(crate) fn merc_x_from_screen(&self, screen_x: f32) -> f64 {
+        (screen_x as f64 - self.clip_center_x) / self.total_px + self.merc_center.x
+    }
+
+    /// Convert a screen-space y-coordinate to a normalised Mercator y value.
+    #[inline]
+    pub(crate) fn merc_y_from_screen(&self, screen_y: f32) -> f64 {
+        (screen_y as f64 - self.clip_center_y) / self.total_px + self.merc_center.y
+    }
+
+    /// Pixels per metre at the given latitude.
+    ///
+    /// Uses the Web Mercator scale factor: the equatorial circumference
+    /// (≈ 40 030 km) shrinks by cos(lat) at a given latitude.
+    #[inline]
+    pub(crate) fn pixels_per_meter(&self, lat: Latitude) -> f64 {
+        // At zoom z the world is 256·2^z pixels wide at the equator.
+        // 1 Mercator tile column = Earth circumference / 2^z metres at the equator,
+        // scaled by cos(lat) at higher latitudes.
+        const EARTH_CIRCUMFERENCE_M: f64 = 40_030_173.0;
+        self.total_px / (EARTH_CIRCUMFERENCE_M * lat.as_degrees().to_radians().cos())
+    }
+
+    /// Pixels per Mercator unit (the whole world spans one Mercator unit).
+    /// This is the exact scale factor of [`MercTransform::to_screen`], so
+    /// tolerances expressed in Mercator units convert losslessly to pixels.
+    #[inline]
+    pub(crate) fn px_per_merc(&self) -> f64 {
+        self.total_px
+    }
+}
+
+/// Iterate `(index, point)` over the track's LOD level appropriate for the
+/// current map scale, or over the full point list when no stored level is
+/// fine enough (zoomed in, or no LOD built). Bounds polyline-pass iteration
+/// by on-screen detail instead of recording size.
+pub(crate) fn lod_points<'a>(
+    track: &'a LoadedTrack,
+    transform: &MercTransform,
+) -> Box<dyn Iterator<Item = (usize, &'a NavPoint)> + 'a> {
+    match track.lod.select(transform.px_per_merc(), MAX_LOD_ERROR_PX) {
+        Some(indices) => Box::new(indices.iter().filter_map(move |&i| {
+            let pi = usize::try_from(i).ok()?;
+            Some((pi, track.points.get(pi)?))
+        })),
+        None => Box::new(track.points.iter().enumerate()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_longitude_degrees;
+
+    /// Asserts `a` and `b` are within `1e-9` of each other - tight enough to
+    /// catch a wrong wrap while tolerating ordinary `f64` rounding noise.
+    fn assert_deg_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9, "expected {a} ≈ {b}");
+    }
+
+    /// Regression test: values already inside `Longitude`'s range must pass
+    /// through unchanged (the wrap must be a no-op for ordinary positions).
+    #[test]
+    fn wrap_longitude_degrees_is_identity_in_range() {
+        for deg in [-180.0, -179.999, -90.0, 0.0, 12.5638, 90.0, 179.999] {
+            assert_deg_close(wrap_longitude_degrees(deg), deg);
+        }
+    }
+
+    /// Regression test: longitudes past the antimeridian - as `unproject` can
+    /// return at low zoom - must wrap to the equivalent meridian inside
+    /// `Longitude`'s `[-180, 180]` range rather than panic in `Longitude::new`.
+    #[test]
+    fn wrap_longitude_degrees_wraps_past_antimeridian() {
+        assert_deg_close(
+            wrap_longitude_degrees(195.925_437_518_683_45),
+            -164.074_562_481_316_55,
+        );
+        assert_deg_close(
+            wrap_longitude_degrees(184.015_191_562_275_4),
+            -175.984_808_437_724_6,
+        );
+        // A full extra revolution must wrap back to the same meridian.
+        assert_deg_close(wrap_longitude_degrees(540.0), wrap_longitude_degrees(180.0));
+        assert_deg_close(
+            wrap_longitude_degrees(-541.0),
+            wrap_longitude_degrees(-181.0),
+        );
+    }
+}

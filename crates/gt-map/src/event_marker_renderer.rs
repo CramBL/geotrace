@@ -45,7 +45,8 @@ impl Plugin for EventMarkerRenderer<'_> {
         projector: &Projector,
         map_memory: &MapMemory,
     ) {
-        let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
+        let transform =
+            crate::transform::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         for sp in &self.visible_event {
             let Some(file_vis) = sp.file_index.get(&self.visibility.files) else {
@@ -194,40 +195,72 @@ fn is_highlighted(highlight: &MapHighlight, point_ref: DataPointRef) -> bool {
 fn draw_event_marker(ui: &Ui, center: Pos2, icon: MarkerIcon, color: Color32, highlighted: bool) {
     match icon {
         MarkerIcon::Pin | MarkerIcon::Log => draw_diamond(ui, center, color, highlighted),
-        MarkerIcon::Cross => draw_event_icon(ui, center, crate::ICON_URI_CROSS, 20.0, highlighted),
-        MarkerIcon::Circle => {
-            draw_event_icon(ui, center, crate::ICON_URI_CIRCLE_MARKER, 20.0, highlighted)
+        MarkerIcon::Cross => {
+            draw_event_icon(ui, center, crate::icons::ICON_URI_CROSS, 20.0, highlighted)
         }
-        MarkerIcon::Lightning => {
-            draw_event_icon(ui, center, crate::ICON_URI_LIGHTNING, 20.0, highlighted)
-        }
-        MarkerIcon::Warning => {
-            draw_event_icon(ui, center, crate::ICON_URI_WARNING, 24.0, highlighted)
-        }
-        MarkerIcon::Error => draw_event_icon(ui, center, crate::ICON_URI_ERROR, 20.0, highlighted),
-        MarkerIcon::Check => draw_event_icon(ui, center, crate::ICON_URI_CHECK, 20.0, highlighted),
-        MarkerIcon::Satellite => {
-            draw_event_icon(ui, center, crate::ICON_URI_SATELLITE, 24.0, highlighted)
-        }
-        MarkerIcon::SatelliteLost => draw_event_icon(
+        MarkerIcon::Circle => draw_event_icon(
             ui,
             center,
-            crate::ICON_URI_SATELLITE_LOST,
+            crate::icons::ICON_URI_CIRCLE_MARKER,
+            20.0,
+            highlighted,
+        ),
+        MarkerIcon::Lightning => draw_event_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_LIGHTNING,
+            20.0,
+            highlighted,
+        ),
+        MarkerIcon::Warning => draw_event_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_WARNING,
             24.0,
             highlighted,
         ),
-        MarkerIcon::Gear => draw_event_icon(ui, center, crate::ICON_URI_GEAR, 20.0, highlighted),
-        MarkerIcon::Refresh => {
-            draw_event_icon(ui, center, crate::ICON_URI_REFRESH, 20.0, highlighted)
+        MarkerIcon::Error => {
+            draw_event_icon(ui, center, crate::icons::ICON_URI_ERROR, 20.0, highlighted)
         }
-        MarkerIcon::Download => {
-            draw_event_icon(ui, center, crate::ICON_URI_DOWNLOAD, 20.0, highlighted)
+        MarkerIcon::Check => {
+            draw_event_icon(ui, center, crate::icons::ICON_URI_CHECK, 20.0, highlighted)
         }
+        MarkerIcon::Satellite => draw_event_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_SATELLITE,
+            24.0,
+            highlighted,
+        ),
+        MarkerIcon::SatelliteLost => draw_event_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_SATELLITE_LOST,
+            24.0,
+            highlighted,
+        ),
+        MarkerIcon::Gear => {
+            draw_event_icon(ui, center, crate::icons::ICON_URI_GEAR, 20.0, highlighted)
+        }
+        MarkerIcon::Refresh => draw_event_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_REFRESH,
+            20.0,
+            highlighted,
+        ),
+        MarkerIcon::Download => draw_event_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_DOWNLOAD,
+            20.0,
+            highlighted,
+        ),
         MarkerIcon::Upload => {
-            draw_event_icon(ui, center, crate::ICON_URI_UPLOAD, 20.0, highlighted)
+            draw_event_icon(ui, center, crate::icons::ICON_URI_UPLOAD, 20.0, highlighted)
         }
         MarkerIcon::Wrench => {
-            draw_event_icon(ui, center, crate::ICON_URI_WRENCH, 20.0, highlighted)
+            draw_event_icon(ui, center, crate::icons::ICON_URI_WRENCH, 20.0, highlighted)
         }
     }
 }
@@ -266,7 +299,7 @@ fn draw_event_icon(ui: &Ui, center: Pos2, uri: &'static str, size: f32, highligh
         ui.painter()
             .circle_stroke(center, (size / 2.0) + 4.0, Stroke::new(2.0, HIGHLIGHT_BLUE));
     }
-    crate::draw_cached_icon(
+    crate::icons::draw_cached_icon(
         ui,
         uri,
         egui::Rect::from_center_size(center, egui::vec2(size, size)),

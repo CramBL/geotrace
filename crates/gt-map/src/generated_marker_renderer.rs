@@ -95,7 +95,8 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
         projector: &Projector,
         map_memory: &MapMemory,
     ) {
-        let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
+        let transform =
+            crate::transform::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         for sp in &self.visible_generated {
             let Some(file_vis) = sp.file_index.get(&self.visibility.files) else {

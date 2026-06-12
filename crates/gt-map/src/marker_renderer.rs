@@ -53,7 +53,8 @@ impl Plugin for MarkerRenderer<'_> {
         projector: &Projector,
         map_memory: &MapMemory,
     ) {
-        let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
+        let transform =
+            crate::transform::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         for sp in &self.visible_custom {
             let Some(file_vis) = sp.file_index.get(&self.visibility.files) else {
@@ -205,15 +206,15 @@ fn draw_marker_icon(ui: &Ui, center: Pos2, marker: &CustomMarker, highlighted: b
         MarkerIcon::Error => draw_error_sign(ui, center, color),
         MarkerIcon::Check => draw_check(ui, center, color),
         MarkerIcon::Log => draw_log_pin(ui, center, color),
-        MarkerIcon::Satellite => draw_svg_icon(ui, center, crate::ICON_URI_SATELLITE, 24.0),
+        MarkerIcon::Satellite => draw_svg_icon(ui, center, crate::icons::ICON_URI_SATELLITE, 24.0),
         MarkerIcon::SatelliteLost => {
-            draw_svg_icon(ui, center, crate::ICON_URI_SATELLITE_LOST, 24.0)
+            draw_svg_icon(ui, center, crate::icons::ICON_URI_SATELLITE_LOST, 24.0)
         }
-        MarkerIcon::Gear => draw_svg_icon(ui, center, crate::ICON_URI_GEAR, 20.0),
-        MarkerIcon::Refresh => draw_svg_icon(ui, center, crate::ICON_URI_REFRESH, 20.0),
-        MarkerIcon::Download => draw_svg_icon(ui, center, crate::ICON_URI_DOWNLOAD, 20.0),
-        MarkerIcon::Upload => draw_svg_icon(ui, center, crate::ICON_URI_UPLOAD, 20.0),
-        MarkerIcon::Wrench => draw_svg_icon(ui, center, crate::ICON_URI_WRENCH, 20.0),
+        MarkerIcon::Gear => draw_svg_icon(ui, center, crate::icons::ICON_URI_GEAR, 20.0),
+        MarkerIcon::Refresh => draw_svg_icon(ui, center, crate::icons::ICON_URI_REFRESH, 20.0),
+        MarkerIcon::Download => draw_svg_icon(ui, center, crate::icons::ICON_URI_DOWNLOAD, 20.0),
+        MarkerIcon::Upload => draw_svg_icon(ui, center, crate::icons::ICON_URI_UPLOAD, 20.0),
+        MarkerIcon::Wrench => draw_svg_icon(ui, center, crate::icons::ICON_URI_WRENCH, 20.0),
     }
 }
 
@@ -222,65 +223,65 @@ fn draw_pin(ui: &Ui, center: Pos2, _color: Color32) {
         center - egui::vec2(9.0, 24.0),
         center + egui::vec2(9.0, 0.0),
     );
-    crate::draw_cached_icon(ui, crate::ICON_URI_PIN, icon_rect, Color32::WHITE);
+    crate::icons::draw_cached_icon(ui, crate::icons::ICON_URI_PIN, icon_rect, Color32::WHITE);
 }
 
 fn draw_cross(ui: &Ui, center: Pos2, _color: Color32) {
-    crate::draw_cached_icon(
+    crate::icons::draw_cached_icon(
         ui,
-        crate::ICON_URI_CROSS,
+        crate::icons::ICON_URI_CROSS,
         egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
         Color32::WHITE,
     );
 }
 
 fn draw_circle(ui: &Ui, center: Pos2, _color: Color32) {
-    crate::draw_cached_icon(
+    crate::icons::draw_cached_icon(
         ui,
-        crate::ICON_URI_CIRCLE_MARKER,
+        crate::icons::ICON_URI_CIRCLE_MARKER,
         egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
         Color32::WHITE,
     );
 }
 
 fn draw_lightning(ui: &Ui, center: Pos2, _color: Color32) {
-    crate::draw_cached_icon(
+    crate::icons::draw_cached_icon(
         ui,
-        crate::ICON_URI_LIGHTNING,
+        crate::icons::ICON_URI_LIGHTNING,
         egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
         Color32::WHITE,
     );
 }
 
 fn draw_warning(ui: &Ui, center: Pos2, _color: Color32) {
-    crate::draw_cached_icon(
+    crate::icons::draw_cached_icon(
         ui,
-        crate::ICON_URI_WARNING,
+        crate::icons::ICON_URI_WARNING,
         egui::Rect::from_center_size(center, egui::vec2(24.0, 24.0)),
         Color32::WHITE,
     );
 }
 
 fn draw_error_sign(ui: &Ui, center: Pos2, _color: Color32) {
-    crate::draw_cached_icon(
+    crate::icons::draw_cached_icon(
         ui,
-        crate::ICON_URI_ERROR,
+        crate::icons::ICON_URI_ERROR,
         egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
         Color32::WHITE,
     );
 }
 
 fn draw_check(ui: &Ui, center: Pos2, _color: Color32) {
-    crate::draw_cached_icon(
+    crate::icons::draw_cached_icon(
         ui,
-        crate::ICON_URI_CHECK,
+        crate::icons::ICON_URI_CHECK,
         egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
         Color32::WHITE,
     );
 }
 
 fn draw_svg_icon(ui: &Ui, center: Pos2, uri: &'static str, size: f32) {
-    crate::draw_cached_icon(
+    crate::icons::draw_cached_icon(
         ui,
         uri,
         egui::Rect::from_center_size(center, egui::vec2(size, size)),
@@ -293,5 +294,5 @@ fn draw_log_pin(ui: &Ui, center: Pos2, color: Color32) {
         center - egui::vec2(9.0, 24.0),
         center + egui::vec2(9.0, 0.0),
     );
-    crate::draw_cached_icon(ui, crate::ICON_URI_LOG_PIN, icon_rect, color);
+    crate::icons::draw_cached_icon(ui, crate::icons::ICON_URI_LOG_PIN, icon_rect, color);
 }

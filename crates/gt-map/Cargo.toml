@@ -19,6 +19,7 @@ gt-types = { path = "../gt-types" }
 gt-ui-theme = { path = "../gt-ui-theme" }
 gt-ui-types = { path = "../gt-ui-types" }
 rstar.workspace = true
+smallvec.workspace = true
 uom.workspace = true
 walkers.workspace = true
 
@@ -26,6 +27,7 @@ walkers.workspace = true
 egui_extras.workspace = true
 egui_kittest.workspace = true
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
+proptest.workspace = true
 strum.workspace = true
 
 [lints]

@@ -527,6 +527,8 @@ pub(super) fn build_log_loaded_file(
         },
     );
     let track = LoadedTrack {
+        // No nav points, so no LOD to build.
+        lod: gt_types::TrackLod::default(),
         metadata: TrackMetadata {
             index: 0,
             distance_km: Length::new::<kilometer>(0.0),
@@ -535,6 +537,7 @@ pub(super) fn build_log_loaded_file(
             bounding_box,
             merc_bounds: merc_bounds_for_rect(bounding_box),
             point_set_diameter_m: Length::new::<meter>(0.0),
+            segment_length_range: None,
             has_custom_markers: true,
             tpv_count: 0,
             satellite_report_count: 0,

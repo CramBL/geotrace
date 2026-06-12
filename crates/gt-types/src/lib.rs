@@ -20,12 +20,12 @@ pub use markers::{
 };
 pub use mercator::MercPoint;
 pub use metrics::MetricKind;
-pub use nav_point::NavPoint;
+pub use nav_point::{FixQuality, NavPoint};
 pub use time_types::{GpsTime, SysTime};
 pub use tpv::TimePositionVelocity;
 pub use tpv::TimePositionVelocityBuilder;
 pub use track::{
-    AssociationConfig, DatabaseRef, FileMetadata, FileSource, FixStats, LoadWarning, LoadedFile,
-    LoadedTrack, MarkerRequirement, MercBounds, SpatialPoint, TimeRange, TrackMetadata,
-    merc_bounds_for_rect,
+    AssociationConfig, DatabaseRef, FileMetadata, FileSource, FixStats, LOD_BASE_TOLERANCE_MERC,
+    LoadWarning, LoadedFile, LoadedTrack, MarkerRequirement, MercBounds, SegmentLengthRange,
+    SpatialPoint, TimeRange, TrackLod, TrackMetadata, merc_bounds_for_rect,
 };

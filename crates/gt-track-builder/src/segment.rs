@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 use geo_types::{Coord, Rect};
-use gt_geo_math::{path_distance_km, point_set_diameter_m};
+use gt_geo_math::{path_distance_km, point_set_diameter_m, segment_length_range_m};
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
@@ -9,8 +9,8 @@ use gt_types::mercator::{self, MercPoint};
 use gt_types::nav_point::NavPoint;
 use gt_types::time_types::GpsTime;
 use gt_types::track::{
-    FileMetadata, FileSource, FixStats, LoadWarning, LoadedFile, LoadedTrack, TimeRange,
-    TrackMetadata,
+    FileMetadata, FileSource, FixStats, LoadWarning, LoadedFile, LoadedTrack, SegmentLengthRange,
+    TimeRange, TrackMetadata,
 };
 use std::ops::Range;
 use uom::si::f64::Length;
@@ -265,6 +265,11 @@ pub fn compute_track_metadata(
 
     let distance_km = Length::new::<kilometer>(path_distance_km(points));
     let diameter_m = Length::new::<meter>(point_set_diameter_m(points));
+    let segment_length_range =
+        segment_length_range_m(points).map(|(min_m, max_m)| SegmentLengthRange {
+            min: Length::new::<meter>(min_m),
+            max: Length::new::<meter>(max_m),
+        });
 
     let time_range = TimeRange::new(first.tpv.time().utc(), last.tpv.time().utc());
     let duration = if points.len() >= 2 {
@@ -281,6 +286,7 @@ pub fn compute_track_metadata(
         bounding_box,
         merc_bounds,
         point_set_diameter_m: diameter_m,
+        segment_length_range,
         has_custom_markers: !custom_markers.is_empty(),
         tpv_count: points.len(),
         satellite_report_count: points.iter().filter(|p| p.satellites.is_some()).count(),
@@ -345,10 +351,14 @@ pub fn build_loaded_file(
 
             let mut track_points_vec = track_points.into_vec();
             precompute_ghost_positions(&mut track_points_vec);
+            // After ghost-position precomputation: LOD distances must see
+            // the same Mercator coordinates the renderers will project.
+            let lod = crate::lod::build_track_lod(&track_points_vec);
 
             LoadedTrack {
                 metadata,
                 points: track_points_vec,
+                lod,
                 custom_markers: track_custom,
                 generated_markers: track_generated,
                 event_markers: Vec::new(),

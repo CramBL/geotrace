@@ -106,6 +106,92 @@ pub struct FixStats {
     pub max_continuous_no_fix: Duration,
 }
 
+/// Great-circle length range of a track's consecutive-fix segments, in the
+/// order the fixes were recorded. Lets renderers reason O(1) about the whole
+/// track's on-screen fix spacing: at a given map scale, every spacing lies
+/// between `min` and `max` scaled by pixels-per-metre.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SegmentLengthRange {
+    pub min: Length,
+    pub max: Length,
+}
+
+/// Mercator-space radial tolerance of a track LOD's finest stored level
+/// before the per-track level offset is applied: ≈ 0.6 m at the equator.
+/// Stored level `i` of a [`TrackLod`] with offset `e` has tolerance
+/// `LOD_BASE_TOLERANCE_MERC × 2^(e + i)`.
+pub const LOD_BASE_TOLERANCE_MERC: f64 = 1.0 / (1u64 << 26) as f64;
+
+/// Multi-resolution decimation of a track's points for rendering.
+///
+/// Each level holds the indices (into `LoadedTrack::points`) that survive a
+/// Mercator-space radial-distance filter: a point is kept when it is at
+/// least the level's tolerance away from the previously kept point, or when
+/// its [`NavPoint::render_class`] differs (so ghost stretches and
+/// fix-quality transitions can never be erased by downsampling). The first
+/// and last point always survive.
+///
+/// Renderers call [`TrackLod::select`] with the current map scale to get
+/// the coarsest level whose tolerance is still sub-pixel, bounding per-frame
+/// iteration by on-screen detail instead of recording size. Mercator space
+/// is used because screen space is a pure scaling of it: a tolerance checked
+/// in Mercator units holds exactly in pixels at every latitude.
+#[derive(Debug, Clone, Default)]
+pub struct TrackLod {
+    /// Tolerance exponent of `levels[0]`; level `i` has tolerance
+    /// `LOD_BASE_TOLERANCE_MERC × 2^(first_level_exp + i)`. Lets sparse
+    /// recordings skip storing fine levels that would not drop any points.
+    first_level_exp: u32,
+    levels: Vec<Vec<u32>>,
+}
+
+impl TrackLod {
+    pub fn new(first_level_exp: u32, levels: Vec<Vec<u32>>) -> Self {
+        Self {
+            first_level_exp,
+            levels,
+        }
+    }
+
+    /// Tolerance, in Mercator units, of stored level `i`. An exponent
+    /// overflow (impossible for the level counts the builder produces)
+    /// yields an infinite tolerance, which `select` never accepts.
+    fn level_tolerance_merc(&self, i: usize) -> f64 {
+        u32::try_from(i)
+            .ok()
+            .and_then(|i| self.first_level_exp.checked_add(i))
+            .and_then(|exp| i32::try_from(exp).ok())
+            .map_or(f64::INFINITY, |exp| {
+                LOD_BASE_TOLERANCE_MERC * 2_f64.powi(exp)
+            })
+    }
+
+    /// The coarsest level whose decimation error stays below `max_error_px`
+    /// at the given scale (`px_per_merc` = pixels per Mercator unit, i.e.
+    /// the world's width in pixels). `None` when no stored level is fine
+    /// enough - render from the full point list.
+    ///
+    /// A level built from its predecessor accumulates at most twice its own
+    /// tolerance of error (a geometric series of halving tolerances), so the
+    /// bound uses `2 × tolerance`.
+    pub fn select(&self, px_per_merc: f64, max_error_px: f32) -> Option<&[u32]> {
+        self.select_level(px_per_merc, max_error_px)
+            .and_then(|i| self.level(i))
+    }
+
+    /// Index of the level [`TrackLod::select`] would return.
+    pub fn select_level(&self, px_per_merc: f64, max_error_px: f32) -> Option<usize> {
+        (0..self.levels.len())
+            .rev()
+            .find(|&i| 2.0 * self.level_tolerance_merc(i) * px_per_merc <= f64::from(max_error_px))
+    }
+
+    /// The point indices of stored level `i`.
+    pub fn level(&self, i: usize) -> Option<&[u32]> {
+        self.levels.get(i).map(Vec::as_slice)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct TrackMetadata {
     pub index: usize,
@@ -118,6 +204,8 @@ pub struct TrackMetadata {
     /// Used by map renderers for O(1) viewport intersection tests without trigonometry.
     pub merc_bounds: MercBounds,
     pub point_set_diameter_m: Length,
+    /// `None` when the track has fewer than two points (no segments).
+    pub segment_length_range: Option<SegmentLengthRange>,
     pub has_custom_markers: bool,
     pub tpv_count: usize,
     pub satellite_report_count: usize,
@@ -155,6 +243,7 @@ impl Default for TrackMetadata {
                 y_max: 0.0,
             },
             point_set_diameter_m: Length::new::<meter>(0.0),
+            segment_length_range: None,
             has_custom_markers: false,
             tpv_count: 0,
             satellite_report_count: 0,
@@ -224,6 +313,9 @@ pub struct LoadedTrack {
     pub metadata: TrackMetadata,
     /// TPV points, each optionally paired with a satellite report.
     pub points: Vec<NavPoint>,
+    /// Multi-resolution decimation of `points` for rendering; empty (the
+    /// default) makes renderers fall back to the full point list.
+    pub lod: TrackLod,
     pub custom_markers: Vec<CustomMarker>,
     pub generated_markers: Vec<GeneratedMarker>,
     pub event_markers: Vec<EventMarker>,
