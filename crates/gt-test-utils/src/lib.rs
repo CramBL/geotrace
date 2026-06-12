@@ -9,6 +9,15 @@ pub use fixtures::{
 #[cfg(feature = "snapshot")]
 pub use snapshot_harness::TestHarness;
 
+pub const GOLD_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/gold_dataset/gold.gtd"
+));
+pub const DEMO_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/fixtures/demo_trip/demo_trip.gtd"
+));
+
 /// Asserts that a slice or Vec exactly matches a sequence of patterns, one per element.
 ///
 /// Fails if the length doesn't match or any element fails its pattern.
