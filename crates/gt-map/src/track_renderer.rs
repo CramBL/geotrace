@@ -5,6 +5,8 @@ use gt_ui_theme::{HIGHLIGHT_BLUE, track_color};
 use gt_ui_types::{HighlightScope, MapHighlight, TrackDataVisibility};
 use walkers::{MapMemory, Plugin, Projector};
 
+use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
+
 pub struct TrackRenderer<'a> {
     files: &'a [LoadedFile],
     visibility: &'a TrackDataVisibility,
@@ -18,7 +20,7 @@ pub struct TrackRenderer<'a> {
 }
 
 impl<'a> TrackRenderer<'a> {
-    pub fn new(
+    pub(crate) fn new(
         files: &'a [LoadedFile],
         visibility: &'a TrackDataVisibility,
         highlight: &'a MapHighlight,
@@ -70,7 +72,8 @@ impl Plugin for TrackRenderer<'_> {
     ) {
         // Build the per-frame coordinate transform once; all per-point calls are
         // then two f64 multiplies + two f64 adds with no large-value cancellation.
-        let transform = crate::MercTransform::new(projector, map_memory, ui.max_rect().center());
+        let transform =
+            crate::transform::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         // Viewport bounds in Mercator space - used to skip tracks that are
         // entirely outside the visible area without iterating any points.
@@ -81,6 +84,7 @@ impl Plugin for TrackRenderer<'_> {
             y_min: transform.merc_y_from_screen(view_rect.min.y),
             y_max: transform.merc_y_from_screen(view_rect.max.y),
         };
+        let icon_size = crate::tpv_renderer::base_arrow_size(map_memory.zoom());
 
         for (fi, file) in self.files.iter().enumerate() {
             let fi = FileIdx::new(fi);
@@ -106,42 +110,59 @@ impl Plugin for TrackRenderer<'_> {
                 if !track.metadata.merc_bounds.intersects(vp_bounds) {
                     continue;
                 }
-                let stroke = self.track_stroke(fi, ti);
 
-                // Collect (is_ghost, screen_pos) for each visible point.
-                // Ghost fixes (heading == None) are dead-reckoned post-last-fix
-                // positions rendered as dashed segments.
-                let pts: Vec<(bool, egui::Pos2)> = track
-                    .points
-                    .iter()
-                    .filter(|p| {
-                        gt_filter::point_passes_time_filter(p.tpv.time().utc(), self.filter)
-                    })
-                    .map(|p| (p.tpv.heading().is_none(), transform.to_screen(p.merc)))
-                    .collect();
+                // Blink overlay: a bright pulsing stroke on top of newly
+                // loaded tracks for the first 3 seconds after load. It uses
+                // the same path without ghost distinction.
+                let need_blink = self.blink_alpha > 0.0 && fi.as_usize() >= self.new_file_boundary;
 
-                if pts.len() < 2 {
+                let fade = crate::tpv_renderer::classify_icon_fade(track, &transform, icon_size);
+                if skip_trackline(trip_vis.tpv_visible, fade, need_blink) {
                     continue;
                 }
+                let stroke = self.track_stroke(fi, ti);
 
-                // Blink overlay uses the full path without ghost distinction.
-                let need_blink = self.blink_alpha > 0.0 && fi.as_usize() >= self.new_file_boundary;
-                let blink_path: Option<Vec<egui::Pos2>> =
-                    need_blink.then(|| pts.iter().map(|(_, pos)| *pos).collect());
+                // (is_ghost, screen_pos) for each visible point - sourced
+                // from the LOD level matching the current scale, split into
+                // on-screen polyline spans, and decimated to screen resolution.
+                // Ghost fixes (heading == None) are dead-reckoned post-last-fix
+                // positions rendered as dashed segments.
+                let pts = crate::transform::lod_points(track, &transform)
+                    .filter(|(_, p)| {
+                        gt_filter::point_passes_time_filter(p.tpv.time().utc(), self.filter)
+                    })
+                    .map(|(_, p)| (p.tpv.heading().is_none(), transform.to_screen(p.merc)));
 
-                draw_track_with_ghost(ui.painter(), &pts, stroke);
-
-                // Blink overlay: draw a bright pulsing stroke on top of
-                // newly loaded tracks for the first 3 seconds after load.
-                if let Some(bp) = blink_path {
+                let blink_stroke = need_blink.then(|| {
                     #[expect(
                         clippy::cast_sign_loss,
                         reason = "blink_alpha is clamped to [0,1] in NavMap::draw so product is non-negative"
                     )]
                     let blink_a = (self.blink_alpha * 200.0) as u8;
-                    let blink_color = Color32::from_rgba_unmultiplied(255, 230, 80, blink_a);
-                    let blink_stroke = Stroke::new(6.0, blink_color);
-                    ui.painter().add(egui::Shape::line(bp, blink_stroke));
+                    Stroke::new(6.0, Color32::from_rgba_unmultiplied(255, 230, 80, blink_a))
+                });
+
+                match visible_path(pts, view_rect.expand(CULL_MARGIN_PX)) {
+                    VisiblePath::OffScreen => {}
+                    // The ghost/real key is ignored: a dot has no edge to
+                    // render dashed, so it uses the normal stroke either way.
+                    VisiblePath::Dot(_, pos) => {
+                        ui.painter().circle_filled(pos, stroke.width, stroke.color);
+                        if let Some(blink_stroke) = blink_stroke {
+                            ui.painter()
+                                .circle_filled(pos, blink_stroke.width, blink_stroke.color);
+                        }
+                    }
+                    VisiblePath::Spans(spans) => {
+                        for span in spans.iter() {
+                            draw_track_with_ghost(ui.painter(), span, stroke);
+                            if let Some(blink_stroke) = blink_stroke {
+                                let bp: Vec<egui::Pos2> =
+                                    span.iter().map(|&(_, pos)| pos).collect();
+                                ui.painter().add(egui::Shape::line(bp, blink_stroke));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -159,8 +180,8 @@ fn draw_track_with_ghost(painter: &egui::Painter, pts: &[(bool, egui::Pos2)], st
         return;
     }
 
-    let mut solid_run: Vec<egui::Pos2> = Vec::new();
-    let mut ghost_run: Vec<egui::Pos2> = Vec::new();
+    let mut solid_span: Vec<egui::Pos2> = Vec::new();
+    let mut ghost_span: Vec<egui::Pos2> = Vec::new();
 
     for w in pts.windows(2) {
         let [(ghost_a, pos_a), (ghost_b, pos_b)] = w else {
@@ -170,32 +191,32 @@ fn draw_track_with_ghost(painter: &egui::Painter, pts: &[(bool, egui::Pos2)], st
         let edge_is_ghost = ghost_a || ghost_b;
 
         if edge_is_ghost {
-            if solid_run.len() >= 2 {
-                painter.add(egui::Shape::line(std::mem::take(&mut solid_run), stroke));
+            if solid_span.len() >= 2 {
+                painter.add(egui::Shape::line(std::mem::take(&mut solid_span), stroke));
             } else {
-                solid_run.clear();
+                solid_span.clear();
             }
-            if ghost_run.is_empty() {
-                ghost_run.push(pos_a);
+            if ghost_span.is_empty() {
+                ghost_span.push(pos_a);
             }
-            ghost_run.push(pos_b);
+            ghost_span.push(pos_b);
         } else {
-            if ghost_run.len() >= 2 {
-                draw_dashed_line(painter, &ghost_run, stroke, 8.0, 5.0);
+            if ghost_span.len() >= 2 {
+                draw_dashed_line(painter, &ghost_span, stroke, 8.0, 5.0);
             }
-            ghost_run.clear();
-            if solid_run.is_empty() {
-                solid_run.push(pos_a);
+            ghost_span.clear();
+            if solid_span.is_empty() {
+                solid_span.push(pos_a);
             }
-            solid_run.push(pos_b);
+            solid_span.push(pos_b);
         }
     }
 
-    if solid_run.len() >= 2 {
-        painter.add(egui::Shape::line(solid_run, stroke));
+    if solid_span.len() >= 2 {
+        painter.add(egui::Shape::line(solid_span, stroke));
     }
-    if ghost_run.len() >= 2 {
-        draw_dashed_line(painter, &ghost_run, stroke, 8.0, 5.0);
+    if ghost_span.len() >= 2 {
+        draw_dashed_line(painter, &ghost_span, stroke, 8.0, 5.0);
     }
 }
 
@@ -262,5 +283,39 @@ fn draw_dashed_line(
         && let Some(&last) = points.last()
     {
         painter.line_segment([start, last], stroke);
+    }
+}
+
+/// True when this track's trackline pass should not paint at all: the fix
+/// icons are fully faded, so the TPV renderer paints its thicker quality
+/// line exactly over this track's geometry and the plain trackline
+/// (highlight stroke included) would be entirely occluded. The blink
+/// overlay draws on top of everything and still needs the pass.
+fn skip_trackline(
+    tpv_visible: bool,
+    fade: crate::tpv_renderer::TrackIconFade,
+    need_blink: bool,
+) -> bool {
+    tpv_visible && fade == crate::tpv_renderer::TrackIconFade::AllHidden && !need_blink
+}
+
+#[cfg(test)]
+mod tests {
+    use super::skip_trackline;
+    use crate::tpv_renderer::TrackIconFade;
+
+    #[test]
+    fn trackline_is_replaced_only_when_the_quality_line_covers_it() {
+        // Fully faded icons with the TPV layer on: the quality line paints
+        // over the trackline, so the pass is skipped.
+        assert!(skip_trackline(true, TrackIconFade::AllHidden, false));
+        // TPV layer hidden: no quality line exists, the trackline must stay.
+        assert!(!skip_trackline(false, TrackIconFade::AllHidden, false));
+        // Icons partially or fully visible: the quality line is transparent
+        // or absent along opaque stretches, the trackline must stay.
+        assert!(!skip_trackline(true, TrackIconFade::PerFix, false));
+        assert!(!skip_trackline(true, TrackIconFade::AllVisible, false));
+        // A blinking (newly loaded) track draws its overlay in this pass.
+        assert!(!skip_trackline(true, TrackIconFade::AllHidden, true));
     }
 }

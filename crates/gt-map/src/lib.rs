@@ -1,280 +1,23 @@
 pub mod event_marker_renderer;
 pub mod generated_marker_renderer;
+mod hover_labels;
+mod icons;
 pub mod marker_renderer;
+mod polyline;
 #[cfg(test)]
 mod test_harness;
 pub mod tpv_renderer;
 pub mod track_renderer;
+mod transform;
+mod viewport;
+
+pub use icons::register_marker_icons;
+pub use viewport::GeoBounds;
 
 use egui::Context;
 
-/// Per-frame transform context for projecting pre-computed normalised Mercator
-/// coordinates to screen pixel positions with full f64 precision.
-///
-/// ## Why not `projector.project()`?
-///
-/// Walkers' `Projector::project()` computes the screen position of an arbitrary
-/// geographic point by subtracting two large pixel values (the point's Mercator
-/// pixel position and the map centre's) in f64, then calling `.to_vec2()` which
-/// truncates the result to f32. At zoom ≥ 17 and for data far from the origin
-/// (e.g. Denmark: lat 55° N, lon 12° E), the y-component of this difference is
-/// ≈ 12 M px, where f32 ULP = 1 px. The anchor obtained this way has ≈ ±0.5 px
-/// constant error per frame, which appears as snapping during smooth zoom
-/// animations. Additionally, viewport culling arithmetic done in f32 before
-/// casting to f64 has the same issue.
-///
-/// ## Solution
-///
-/// This transform uses `projector.unproject(clip_center)` to obtain the map
-/// centre's geographic coordinates. Walkers' `unproject` performs all arithmetic
-/// in f64 and returns a high-precision `Position`. We then compute the normalised
-/// Mercator coordinates of the map centre in f64, and express every point's
-/// screen position as:
-///
-/// ```text
-/// screen = clip_center + (merc_point − merc_center) × total_px
-/// ```
-///
-/// `clip_center` is a small, exact f32 value (the pixel centre of the map
-/// widget, typically around 800–1000 px). `merc_point − merc_center` is a
-/// small number (≤ ~0.05 for any visible point), so no large-magnitude
-/// arithmetic occurs anywhere. The final cast to f32 is applied only to the
-/// already-small screen coordinate, where f32 ULP < 0.001 px.
-/// Wrap a longitude in degrees into `Longitude`'s valid `[-180, 180]` range.
-///
-/// At low zoom the viewport can span more than 360° of longitude, so the
-/// pixel column at the viewport centre may sit past the antimeridian wrap and
-/// `Projector::unproject` returns e.g. 185° instead of the equivalent -175°.
-/// Longitude is periodic with period 360°, so the wrapped value names the same
-/// meridian and is the correct input for [`Longitude::new`].
-fn wrap_longitude_degrees(deg: f64) -> f64 {
-    ((deg + 180.0).rem_euclid(360.0)) - 180.0
-}
-
-pub(crate) struct MercTransform {
-    clip_center_x: f64,
-    clip_center_y: f64,
-    merc_center: MercPoint,
-    total_px: f64,
-}
-
-impl MercTransform {
-    /// Build the transform for the current frame.
-    ///
-    /// `clip_center` must be `ui.max_rect().center()` inside a plugin's
-    /// `run()` method - walkers sets the child UI rect to the map widget rect,
-    /// which is also `projector`'s clip rect, so `clip_center` equals
-    /// `projector.clip_rect.center()`.
-    pub(crate) fn new(
-        projector: &walkers::Projector,
-        map_memory: &MapMemory,
-        clip_center: egui::Pos2,
-    ) -> Self {
-        let total_px = 2_f64.powf(map_memory.zoom()) * 256.0;
-        // unproject(clip_center) returns the geographic position at the
-        // viewport centre using f64 arithmetic throughout.
-        // In walkers: Position.x() = longitude, Position.y() = latitude.
-        let center_ll = projector.unproject(clip_center.to_vec2());
-        // Latitude from `unproject` is always within ±90° (it comes from
-        // `atan`), but longitude can land outside ±180° - see
-        // `wrap_longitude_degrees`.
-        let merc_center = mercator::normalize(
-            Latitude::new(center_ll.y()),
-            Longitude::new(wrap_longitude_degrees(center_ll.x())),
-        );
-        Self {
-            clip_center_x: clip_center.x as f64,
-            clip_center_y: clip_center.y as f64,
-            merc_center,
-            total_px,
-        }
-    }
-
-    /// Project a pre-computed normalised Mercator coordinate to a screen position.
-    #[inline]
-    pub(crate) fn to_screen(&self, merc: MercPoint) -> egui::Pos2 {
-        egui::pos2(
-            (self.clip_center_x + (merc.x - self.merc_center.x) * self.total_px) as f32,
-            (self.clip_center_y + (merc.y - self.merc_center.y) * self.total_px) as f32,
-        )
-    }
-
-    /// Convert a screen-space x-coordinate to a normalised Mercator x value.
-    #[inline]
-    pub(crate) fn merc_x_from_screen(&self, screen_x: f32) -> f64 {
-        (screen_x as f64 - self.clip_center_x) / self.total_px + self.merc_center.x
-    }
-
-    /// Convert a screen-space y-coordinate to a normalised Mercator y value.
-    #[inline]
-    pub(crate) fn merc_y_from_screen(&self, screen_y: f32) -> f64 {
-        (screen_y as f64 - self.clip_center_y) / self.total_px + self.merc_center.y
-    }
-
-    /// Pixels per metre at the given latitude.
-    ///
-    /// Uses the Web Mercator scale factor: the equatorial circumference
-    /// (≈ 40 030 km) shrinks by cos(lat) at a given latitude.
-    #[inline]
-    pub(crate) fn pixels_per_meter(&self, lat: Latitude) -> f64 {
-        // At zoom z the world is 256·2^z pixels wide at the equator.
-        // 1 Mercator tile column = Earth circumference / 2^z metres at the equator,
-        // scaled by cos(lat) at higher latitudes.
-        const EARTH_CIRCUMFERENCE_M: f64 = 40_030_173.0;
-        self.total_px / (EARTH_CIRCUMFERENCE_M * lat.as_degrees().to_radians().cos())
-    }
-}
-
-// URI constants used by the marker renderer and the startup registration call.
-pub(crate) const ICON_URI_LIGHTNING: &str = "bytes://gt-map/icons/lightning.svg";
-pub(crate) const ICON_URI_WARNING: &str = "bytes://gt-map/icons/warning.svg";
-pub(crate) const ICON_URI_ERROR: &str = "bytes://gt-map/icons/error.svg";
-pub(crate) const ICON_URI_LOG_PIN: &str = "bytes://gt-map/icons/log_pin.svg";
-pub(crate) const ICON_URI_PIN: &str = "bytes://gt-map/icons/pin.svg";
-pub(crate) const ICON_URI_CROSS: &str = "bytes://gt-map/icons/cross.svg";
-pub(crate) const ICON_URI_CIRCLE_MARKER: &str = "bytes://gt-map/icons/circle_marker.svg";
-pub(crate) const ICON_URI_CHECK: &str = "bytes://gt-map/icons/check.svg";
-pub(crate) const ICON_URI_SATELLITE: &str = "bytes://gt-map/icons/satellite.svg";
-pub(crate) const ICON_URI_SATELLITE_LOST: &str = "bytes://gt-map/icons/satellite_lost.svg";
-pub(crate) const ICON_URI_GEAR: &str = "bytes://gt-map/icons/gear.svg";
-pub(crate) const ICON_URI_REFRESH: &str = "bytes://gt-map/icons/refresh.svg";
-pub(crate) const ICON_URI_DOWNLOAD: &str = "bytes://gt-map/icons/download.svg";
-pub(crate) const ICON_URI_UPLOAD: &str = "bytes://gt-map/icons/upload.svg";
-pub(crate) const ICON_URI_WRENCH: &str = "bytes://gt-map/icons/wrench.svg";
-pub(crate) const ICON_URI_GHOST_FIX: &str = "bytes://gt-map/icons/ghost_fix.svg";
-
-/// Register the embedded SVG marker icons with the egui context.
-///
-/// Call this once at startup (before the first frame) from your `App::new`
-/// implementation, **after** [`egui_extras::install_image_loaders`] has been
-/// called. The icons are compiled into the binary via `include_bytes!` and
-/// cached by egui's texture system after their first rasterisation; subsequent
-/// frames pay only a GPU quad draw - no CPU tessellation, no heap allocation.
-macro_rules! icon_bytes {
-    ($name:literal) => {
-        include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../assets/icons/",
-            $name
-        ))
-        .as_slice()
-    };
-}
-
-pub fn register_marker_icons(ctx: &egui::Context) {
-    ctx.include_bytes(ICON_URI_LIGHTNING, icon_bytes!("lightning.svg"));
-    ctx.include_bytes(ICON_URI_WARNING, icon_bytes!("warning.svg"));
-    ctx.include_bytes(ICON_URI_ERROR, icon_bytes!("error.svg"));
-    ctx.include_bytes(ICON_URI_LOG_PIN, icon_bytes!("log_pin.svg"));
-    ctx.include_bytes(ICON_URI_PIN, icon_bytes!("pin.svg"));
-    ctx.include_bytes(ICON_URI_CROSS, icon_bytes!("cross.svg"));
-    ctx.include_bytes(ICON_URI_CIRCLE_MARKER, icon_bytes!("circle_marker.svg"));
-    ctx.include_bytes(ICON_URI_CHECK, icon_bytes!("check.svg"));
-    ctx.include_bytes(ICON_URI_SATELLITE, icon_bytes!("satellite.svg"));
-    ctx.include_bytes(ICON_URI_SATELLITE_LOST, icon_bytes!("satellite_lost.svg"));
-    ctx.include_bytes(ICON_URI_GEAR, icon_bytes!("gear.svg"));
-    ctx.include_bytes(ICON_URI_REFRESH, icon_bytes!("refresh.svg"));
-    ctx.include_bytes(ICON_URI_DOWNLOAD, icon_bytes!("download.svg"));
-    ctx.include_bytes(ICON_URI_UPLOAD, icon_bytes!("upload.svg"));
-    ctx.include_bytes(ICON_URI_WRENCH, icon_bytes!("wrench.svg"));
-    ctx.include_bytes(ICON_URI_GHOST_FIX, icon_bytes!("ghost_fix.svg"));
-}
-/// Draw an SVG marker icon at `rect`, with optional `tint`.
-///
-/// The resolved `TextureId` is cached in egui's context data store after the
-/// first successful load so that subsequent frames skip the URI hash and image
-/// cache lookup and go directly to `painter.add(Shape::image(...))`.
-pub(crate) fn draw_cached_icon(
-    ui: &egui::Ui,
-    uri: &'static str,
-    rect: egui::Rect,
-    tint: egui::Color32,
-) {
-    let cache_key = egui::Id::new(("gt_icon_tex", uri));
-    if let Some(tex_id) = ui.ctx().data(|d| d.get_temp::<egui::TextureId>(cache_key)) {
-        ui.painter().add(egui::Shape::image(
-            tex_id,
-            rect,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            tint,
-        ));
-        return;
-    }
-    if let Ok(egui::load::TexturePoll::Ready { texture }) = ui.ctx().try_load_texture(
-        uri,
-        egui::TextureOptions::LINEAR,
-        egui::load::SizeHint::default(),
-    ) {
-        ui.ctx().data_mut(|d| d.insert_temp(cache_key, texture.id));
-        ui.painter().add(egui::Shape::image(
-            texture.id,
-            rect,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            tint,
-        ));
-    }
-}
-
-/// Draw a rotated SVG icon centred on `center`, with the icon's "up" direction aligned to
-/// `direction`.
-///
-/// The icon is rendered as a rotated [`egui::epaint::Mesh`] quad so it can be oriented to any
-/// travel direction without re-rasterising the SVG. `size` is the half-extent: the quad spans
-/// `2*size × 2*size` pixels. The white SVG stroke is multiplied by `tint` at render time so a
-/// single texture serves all colours.
-pub(crate) fn draw_rotated_cached_icon(
-    ui: &egui::Ui,
-    uri: &'static str,
-    center: egui::Pos2,
-    direction: egui::Vec2,
-    size: f32,
-    tint: egui::Color32,
-) {
-    let cache_key = egui::Id::new(("gt_icon_tex", uri));
-    let tex_id = if let Some(id) = ui.ctx().data(|d| d.get_temp::<egui::TextureId>(cache_key)) {
-        id
-    } else if let Ok(egui::load::TexturePoll::Ready { texture }) = ui.ctx().try_load_texture(
-        uri,
-        egui::TextureOptions::LINEAR,
-        egui::load::SizeHint::default(),
-    ) {
-        ui.ctx().data_mut(|d| d.insert_temp(cache_key, texture.id));
-        texture.id
-    } else {
-        return;
-    };
-
-    // Rotate the four corners of a [-size, size]² quad so the SVG's "up" direction (0, −1)
-    // aligns with `direction`. Rotation matrix R where R*(0,−1) = (dx,dy):
-    //   R*[px, py] = (−px·dy − py·dx,  px·dx − py·dy)
-    let dx = direction.x;
-    let dy = direction.y;
-    let corner_offsets: [([f32; 2], egui::Pos2); 4] = [
-        ([-size, -size], egui::pos2(0.0, 0.0)), // top-left    → UV (0,0)
-        ([size, -size], egui::pos2(1.0, 0.0)),  // top-right   → UV (1,0)
-        ([size, size], egui::pos2(1.0, 1.0)),   // bottom-right → UV (1,1)
-        ([-size, size], egui::pos2(0.0, 1.0)),  // bottom-left → UV (0,1)
-    ];
-
-    let mut mesh = egui::epaint::Mesh::with_texture(tex_id);
-    for ([px, py], uv) in corner_offsets {
-        mesh.vertices.push(egui::epaint::Vertex {
-            pos: center + egui::vec2(-px * dy - py * dx, px * dx - py * dy),
-            uv,
-            color: tint,
-        });
-    }
-    mesh.indices = vec![0, 1, 2, 0, 2, 3];
-    ui.painter().add(egui::Shape::Mesh(mesh.into()));
-}
-
 use gt_filter::GlobalFilter;
-use gt_types::mercator;
-use gt_types::{
-    CustomMarker, DataCategory, EventMarker, FileIdx, GeneratedMarker, Latitude, LoadedFile,
-    Longitude, MercPoint, NavPoint, SpatialPoint, TrackRef,
-};
-use gt_ui_theme::EM_DASH;
+use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
     DataPointRef, EventMarkerVisibility, HighlightScope, MapHighlight, TrackDataVisibility,
 };
@@ -285,11 +28,17 @@ use walkers::{HttpTiles, Map, MapMemory};
 
 use crate::event_marker_renderer::EventMarkerRenderer;
 use crate::generated_marker_renderer::GeneratedMarkerRenderer;
+use crate::hover_labels::{
+    draw_disambig_row, draw_multi_hover_label_contents, should_show_compound_label,
+};
 use crate::marker_renderer::MarkerRenderer;
 use crate::tpv_renderer::TpvRenderer;
 use crate::track_renderer::TrackRenderer;
-
-const ICON_GAP: &str = "  ";
+use crate::transform::MercTransform;
+use crate::viewport::{
+    compute_bounding_box, compute_viewport_bounds, compute_visible_bounding_box,
+    is_spatial_point_visible, zoom_to_fit,
+};
 
 /// Which tile source to use for the background map.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -345,15 +94,6 @@ impl BlinkState {
     fn is_active(&self) -> bool {
         self.start.is_some()
     }
-}
-
-/// Geographic bounding box of the currently visible map viewport.
-#[derive(Debug, Clone, Copy)]
-pub struct GeoBounds {
-    pub lat_min: f64,
-    pub lat_max: f64,
-    pub lon_min: f64,
-    pub lon_max: f64,
 }
 
 pub struct NavMap {
@@ -558,34 +298,15 @@ impl NavMap {
             map_rect_estimate.center(),
         );
 
-        let (visible_tpv, visible_custom, visible_generated, visible_event) = {
-            let lt = map_rect_estimate.left_top();
-            let rb = map_rect_estimate.right_bottom();
-            let aabb = rstar::AABB::from_corners(
-                [
-                    transform_estimate.merc_x_from_screen(lt.x),
-                    transform_estimate.merc_y_from_screen(lt.y),
-                ],
-                [
-                    transform_estimate.merc_x_from_screen(rb.x),
-                    transform_estimate.merc_y_from_screen(rb.y),
-                ],
-            );
-            let mut tpv: Vec<SpatialPoint> = Vec::new();
-            let mut custom: Vec<SpatialPoint> = Vec::new();
-            let mut generated: Vec<SpatialPoint> = Vec::new();
-            let mut event: Vec<SpatialPoint> = Vec::new();
-            for sp in self.global_tree.locate_in_envelope(aabb) {
-                match sp.category {
-                    DataCategory::Tpv => tpv.push(*sp),
-                    DataCategory::CustomMarker => custom.push(*sp),
-                    DataCategory::GeneratedMarker => generated.push(*sp),
-                    DataCategory::EventMarker => event.push(*sp),
-                    _ => {}
-                }
-            }
-            (tpv, custom, generated, event)
-        };
+        let visible = viewport::collect_visible_points(
+            &self.global_tree,
+            files,
+            visibility,
+            filter,
+            &transform_estimate,
+            map_rect_estimate,
+            self.map_memory.zoom(),
+        );
 
         let is_offline = std::env::var("GEOTRACE_OFFLINE").is_ok();
         let map = if is_offline {
@@ -637,21 +358,21 @@ impl NavMap {
                 visibility,
                 highlight,
                 filter,
-                visible_tpv,
+                visible.tpv_by_track,
             ))
             .with_plugin(MarkerRenderer::new(
                 files,
                 visibility,
                 highlight,
                 filter,
-                visible_custom,
+                visible.custom,
             ))
             .with_plugin(GeneratedMarkerRenderer::new(
                 files,
                 visibility,
                 highlight,
                 filter,
-                visible_generated,
+                visible.generated,
             ))
             .with_plugin(EventMarkerRenderer::new(
                 files,
@@ -659,10 +380,17 @@ impl NavMap {
                 highlight,
                 filter,
                 event_marker_visibility,
-                visible_event,
+                visible.event,
             ));
 
         let map_response = ui.add(map);
+
+        // Double-click anywhere on the map: zoom out to fit all loaded data.
+        if map_response.double_clicked()
+            && let Some(bbox) = compute_bounding_box(files)
+        {
+            zoom_to_fit(&mut self.map_memory, map_response.rect, bbox);
+        }
 
         // Compute and cache the current viewport's geographic bounds so callers
         // can query them via `viewport_geo_bounds()` after each draw call.
@@ -891,198 +619,6 @@ impl NavMap {
     }
 }
 
-/// Returns `true` when the multi-hover compound label should be drawn.
-///
-/// `current_multi_hover` — more than one candidate hovered this frame.
-/// `disambig_open` — the disambiguation popup is open.
-/// `suppress_hover_labels` — set from the previous frame's candidate count;
-///   false on the transition frame so the compound label and individual
-///   renderer tooltips never appear simultaneously.
-#[expect(
-    clippy::fn_params_excessive_bools,
-    reason = "three independent boolean inputs to the guard"
-)]
-pub(crate) fn should_show_compound_label(
-    current_multi_hover: bool,
-    disambig_open: bool,
-    suppress_hover_labels: bool,
-) -> bool {
-    current_multi_hover && !disambig_open && suppress_hover_labels
-}
-
-/// Renders the sections of a multi-hover stacked label into `ui`.
-///
-/// Each section is wrapped in its own `Frame::popup` so the items appear as
-/// visually distinct, opaque cards with spacing between them rather than a
-/// single fused block.  The caller should NOT wrap this in an outer frame —
-/// the popup frames provide all the visual containment needed.
-pub(crate) fn draw_multi_hover_label_contents(
-    ui: &mut egui::Ui,
-    candidates: &[Option<DataPointRef>; 4],
-    files: &[LoadedFile],
-) {
-    for candidate in candidates.iter().flatten().copied() {
-        egui::Frame::popup(ui.style()).show(ui, |ui| {
-            draw_candidate_section(ui, candidate, files);
-        });
-    }
-}
-
-enum ResolvedCandidate<'a> {
-    Tpv(&'a NavPoint),
-    GeneratedMarker(&'a GeneratedMarker),
-    EventMarker(&'a EventMarker),
-    CustomMarker(&'a CustomMarker),
-}
-
-fn resolve_candidate<'a>(
-    candidate: DataPointRef,
-    files: &'a [LoadedFile],
-) -> Option<ResolvedCandidate<'a>> {
-    let file = candidate.track.fi.get(files)?;
-    let track = candidate.track.index.get(&file.tracks)?;
-    Some(match candidate.category {
-        DataCategory::Tpv | DataCategory::SatelliteReport => {
-            ResolvedCandidate::Tpv(candidate.point_index.get(&track.points)?)
-        }
-        DataCategory::GeneratedMarker => {
-            ResolvedCandidate::GeneratedMarker(candidate.point_index.get(&track.generated_markers)?)
-        }
-        DataCategory::EventMarker => {
-            ResolvedCandidate::EventMarker(candidate.point_index.get(&track.event_markers)?)
-        }
-        DataCategory::CustomMarker => {
-            ResolvedCandidate::CustomMarker(candidate.point_index.get(&track.custom_markers)?)
-        }
-        DataCategory::Track => return None,
-    })
-}
-
-/// Renders a single candidate's section inside the multi-hover label.
-///
-/// Shows a header line (icon + summary) for every type, plus type-specific body
-/// content: the full hover table for TPV points, and the duration for GNSS-fix-
-/// regained markers.
-fn draw_candidate_section(ui: &mut egui::Ui, candidate: DataPointRef, files: &[LoadedFile]) {
-    let icon = category_icon(candidate.category);
-    match resolve_candidate(candidate, files) {
-        None => {
-            let fallback = match candidate.category {
-                DataCategory::Tpv | DataCategory::SatelliteReport => "GNSS fix",
-                DataCategory::EventMarker => "Event marker",
-                DataCategory::CustomMarker => "Custom marker",
-                DataCategory::GeneratedMarker => "Generated marker",
-                DataCategory::Track => "",
-            };
-            ui.strong(format!("{icon}{ICON_GAP}{fallback}"));
-        }
-        Some(ResolvedCandidate::Tpv(point)) => {
-            ui.strong(format!(
-                "{icon}{ICON_GAP}GNSS fix{ICON_GAP}{}",
-                point.tpv.time().utc().format("%H:%M:%S")
-            ));
-            crate::tpv_renderer::show_hover_table(ui, point);
-        }
-        Some(ResolvedCandidate::GeneratedMarker(marker)) => {
-            ui.strong(format!(
-                "{icon}{ICON_GAP}{}",
-                crate::generated_marker_renderer::generated_marker_header(
-                    marker.kind,
-                    marker.fix_lost_duration
-                )
-            ));
-        }
-        Some(ResolvedCandidate::EventMarker(m)) => match &m.annotation {
-            Some(note) if !note.is_empty() => {
-                ui.label(format!(
-                    "{icon}{ICON_GAP}{}{ICON_GAP}{EM_DASH}{ICON_GAP}{note}",
-                    m.variant_path
-                ));
-            }
-            _ => {
-                ui.label(format!("{icon}{ICON_GAP}{}", m.variant_path));
-            }
-        },
-        Some(ResolvedCandidate::CustomMarker(m)) => {
-            ui.label(format!("{icon}{ICON_GAP}{}", m.label));
-        }
-    }
-}
-
-/// Renders a single row of the disambiguation popup.
-///
-/// Returns the response from `selectable_label` so the caller can check `.clicked()`.
-pub(crate) fn draw_disambig_row(
-    ui: &mut egui::Ui,
-    candidate: DataPointRef,
-    files: &[LoadedFile],
-    is_selected: bool,
-) -> egui::Response {
-    let icon = category_icon(candidate.category);
-    let label = candidate_label(candidate, files);
-    let mut job = egui::text::LayoutJob::default();
-    let text_color = ui.visuals().text_color();
-    job.append(
-        icon,
-        0.0,
-        egui::TextFormat {
-            font_id: egui::FontId::proportional(20.0),
-            color: text_color,
-            valign: egui::Align::Center,
-            ..Default::default()
-        },
-    );
-    job.append(
-        &format!("{ICON_GAP}{label}"),
-        0.0,
-        egui::TextFormat {
-            font_id: egui::FontId::proportional(13.0),
-            color: text_color,
-            valign: egui::Align::Center,
-            ..Default::default()
-        },
-    );
-    ui.selectable_label(is_selected, job)
-}
-
-pub(crate) fn category_icon(cat: DataCategory) -> &'static str {
-    match cat {
-        DataCategory::Tpv | DataCategory::SatelliteReport => egui_phosphor::regular::CROSSHAIR,
-        DataCategory::EventMarker => egui_phosphor::regular::FLAG,
-        DataCategory::CustomMarker => egui_phosphor::regular::MAP_PIN,
-        DataCategory::GeneratedMarker => egui_phosphor::regular::ARROWS_SPLIT,
-        DataCategory::Track => "",
-    }
-}
-
-pub(crate) fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> String {
-    match resolve_candidate(candidate, files) {
-        None => match candidate.category {
-            DataCategory::Tpv | DataCategory::SatelliteReport => "GNSS fix".to_owned(),
-            DataCategory::EventMarker => "Event marker".to_owned(),
-            DataCategory::CustomMarker => "Custom marker".to_owned(),
-            DataCategory::GeneratedMarker => "Generated marker".to_owned(),
-            DataCategory::Track => String::new(),
-        },
-        Some(ResolvedCandidate::Tpv(p)) => {
-            format!(
-                "GNSS fix{ICON_GAP}{}",
-                p.tpv.time().utc().format("%H:%M:%S")
-            )
-        }
-        Some(ResolvedCandidate::EventMarker(m)) => match &m.annotation {
-            Some(note) if !note.is_empty() => {
-                format!("{}{ICON_GAP}{EM_DASH}{ICON_GAP}{note}", m.variant_path)
-            }
-            _ => m.variant_path.clone(),
-        },
-        Some(ResolvedCandidate::CustomMarker(m)) => m.label.clone(),
-        Some(ResolvedCandidate::GeneratedMarker(m)) => {
-            crate::generated_marker_renderer::generated_marker_header(m.kind, m.fix_lost_duration)
-        }
-    }
-}
-
 /// Shows a draggable, text-selectable egui window with data for the given sticky element.
 fn show_sticky_popup(
     ctx: &egui::Context,
@@ -1288,200 +824,10 @@ fn show_sticky_popup(
         });
 }
 
-/// Bounding box over only the currently **visible** tracks (those with both their
-/// file and track enabled). Returns `None` if no visible data exists.
-fn compute_visible_bounding_box(
-    files: &[LoadedFile],
-    visibility: &TrackDataVisibility,
-) -> Option<(f64, f64, f64, f64)> {
-    let mut min_lat = f64::MAX;
-    let mut max_lat = f64::MIN;
-    let mut min_lon = f64::MAX;
-    let mut max_lon = f64::MIN;
-    let mut any = false;
-
-    for (fi, file) in files.iter().enumerate() {
-        let Some(file_vis) = visibility.files.get(fi) else {
-            continue;
-        };
-        if !file_vis.enabled {
-            continue;
-        }
-        for (ti, track) in file.tracks.iter().enumerate() {
-            let Some(trip_vis) = file_vis.tracks.get(ti) else {
-                continue;
-            };
-            if !trip_vis.enabled {
-                continue;
-            }
-            for point in &track.points {
-                let lat = point.tpv.lat().as_degrees();
-                let lon = point.tpv.lon().as_degrees();
-                min_lat = min_lat.min(lat);
-                max_lat = max_lat.max(lat);
-                min_lon = min_lon.min(lon);
-                max_lon = max_lon.max(lon);
-                any = true;
-            }
-            for marker in &track.custom_markers {
-                let lat = marker.lat.as_degrees();
-                let lon = marker.lon.as_degrees();
-                min_lat = min_lat.min(lat);
-                max_lat = max_lat.max(lat);
-                min_lon = min_lon.min(lon);
-                max_lon = max_lon.max(lon);
-                any = true;
-            }
-        }
-    }
-
-    if any {
-        Some((min_lat, max_lat, min_lon, max_lon))
-    } else {
-        None
-    }
-}
-
-/// Bounding box (min_lat, max_lat, min_lon, max_lon) over all GPS points and
-/// custom markers in every loaded file. Returns `None` if there is no data.
-fn compute_bounding_box(files: &[LoadedFile]) -> Option<(f64, f64, f64, f64)> {
-    let mut min_lat = f64::MAX;
-    let mut max_lat = f64::MIN;
-    let mut min_lon = f64::MAX;
-    let mut max_lon = f64::MIN;
-    let mut any = false;
-
-    for file in files {
-        for track in &file.tracks {
-            for point in &track.points {
-                let lat = point.tpv.lat().as_degrees();
-                let lon = point.tpv.lon().as_degrees();
-                min_lat = min_lat.min(lat);
-                max_lat = max_lat.max(lat);
-                min_lon = min_lon.min(lon);
-                max_lon = max_lon.max(lon);
-                any = true;
-            }
-            for marker in &track.custom_markers {
-                let lat = marker.lat.as_degrees();
-                let lon = marker.lon.as_degrees();
-                min_lat = min_lat.min(lat);
-                max_lat = max_lat.max(lat);
-                min_lon = min_lon.min(lon);
-                max_lon = max_lon.max(lon);
-                any = true;
-            }
-        }
-    }
-
-    if any {
-        Some((min_lat, max_lat, min_lon, max_lon))
-    } else {
-        None
-    }
-}
-
-/// Compute the geographic bounding box of the given map viewport rect.
-///
-/// Uses the walkers `Projector` to unproject the four corners of `map_rect`
-/// into geographic positions and returns their bounding envelope.
-fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Rect) -> GeoBounds {
-    // `my_position` is only used as a fallback when the map is in GPS-follow mode;
-    // since we always call `center_at()` explicitly, `detached()` provides the
-    // actual center.  Fall back to (0, 0) if `detached()` is unset.
-    let center = map_memory
-        .detached()
-        .unwrap_or_else(|| walkers::lat_lon(0.0, 0.0));
-    let projector = walkers::Projector::new(map_rect, map_memory, center);
-
-    let corners = [
-        map_rect.left_top(),
-        map_rect.right_top(),
-        map_rect.left_bottom(),
-        map_rect.right_bottom(),
-    ];
-
-    let mut lat_min = f64::INFINITY;
-    let mut lat_max = f64::NEG_INFINITY;
-    let mut lon_min = f64::INFINITY;
-    let mut lon_max = f64::NEG_INFINITY;
-
-    for corner in corners {
-        let pos = projector.unproject(corner.to_vec2());
-        let lat = pos.y();
-        let lon = pos.x();
-        lat_min = lat_min.min(lat);
-        lat_max = lat_max.max(lat);
-        lon_min = lon_min.min(lon);
-        lon_max = lon_max.max(lon);
-    }
-
-    GeoBounds {
-        lat_min,
-        lat_max,
-        lon_min,
-        lon_max,
-    }
-}
-
-/// Returns `true` when a spatial point should participate in hover and click detection.
-///
-/// The renderers already suppress invisible elements from being drawn; this function
-/// ensures the hit-test layer applies the same rules so that hidden tracks cannot be
-/// accidentally hovered or clicked.
-fn is_spatial_point_visible(sp: &SpatialPoint, visibility: &TrackDataVisibility) -> bool {
-    let Some(file_vis) = sp.file_index.get(&visibility.files) else {
-        return false;
-    };
-    if !file_vis.enabled {
-        return false;
-    }
-    let Some(trip_vis) = sp.track_index.get(&file_vis.tracks) else {
-        return false;
-    };
-    if !trip_vis.enabled {
-        return false;
-    }
-    match sp.category {
-        DataCategory::Tpv => trip_vis.tpv_visible,
-        DataCategory::CustomMarker => trip_vis.custom_markers_visible,
-        DataCategory::GeneratedMarker => trip_vis.generated_markers_visible,
-        DataCategory::EventMarker => trip_vis.event_markers_visible,
-        DataCategory::Track | DataCategory::SatelliteReport => false,
-    }
-}
-
-/// Center the map and set the zoom so the given bounding box fills ~80 % of the
-/// viewport. Respects walkers' valid zoom range [1, 18].
-fn zoom_to_fit(
-    map_memory: &mut MapMemory,
-    viewport: egui::Rect,
-    (min_lat, max_lat, min_lon, max_lon): (f64, f64, f64, f64),
-) {
-    let center_lat = (min_lat + max_lat) / 2.0;
-    let center_lon = (min_lon + max_lon) / 2.0;
-    map_memory.center_at(walkers::lat_lon(center_lat, center_lon));
-
-    let lat_range = (max_lat - min_lat).max(0.001);
-    let lon_range = (max_lon - min_lon).max(0.001);
-    let vw = viewport.width() as f64;
-    let vh = viewport.height() as f64;
-
-    // At zoom z the world is 256·2^z pixels wide (equatorial Mercator).
-    // Fill 80 % of the viewport with the bounding box:
-    //   lon_range · (256·2^z / 360) = vw · 0.8
-    //   → z = log2(vw · 0.8 · 360 / (256 · lon_range))
-    let z_lon = (vw * 0.8 * 360.0 / (256.0 * lon_range)).log2();
-    let z_lat = (vh * 0.8 * 360.0 / (256.0 * lat_range)).log2();
-    let zoom = z_lon.min(z_lat).clamp(1.0, 18.0);
-    // zoom is already clamped to [1, 18], so set_zoom can only fail if the
-    // walkers library's valid range narrows further - ignore silently.
-    let _ignored = map_memory.set_zoom(zoom);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hover_labels::candidate_label;
     use gt_test_utils::nav_test_data;
     use gt_types::{
         Coord, DataCategory, FileIdx, FileMetadata, LoadedFile, LoadedTrack, MercPoint, PointIdx,
@@ -1522,6 +868,7 @@ mod tests {
                 ..TrackMetadata::default()
             },
             points,
+            lod: gt_types::TrackLod::default(),
             custom_markers: vec![],
             generated_markers: vec![],
             event_markers: vec![],
@@ -1563,42 +910,6 @@ mod tests {
                 tracks: vec![TrackVisibility::all_visible()],
             }],
         }
-    }
-
-    /// Asserts `a` and `b` are within `1e-9` of each other - tight enough to
-    /// catch a wrong wrap while tolerating ordinary `f64` rounding noise.
-    fn assert_deg_close(a: f64, b: f64) {
-        assert!((a - b).abs() < 1e-9, "expected {a} ≈ {b}");
-    }
-
-    /// Regression test: values already inside `Longitude`'s range must pass
-    /// through unchanged (the wrap must be a no-op for ordinary positions).
-    #[test]
-    fn wrap_longitude_degrees_is_identity_in_range() {
-        for deg in [-180.0, -179.999, -90.0, 0.0, 12.5638, 90.0, 179.999] {
-            assert_deg_close(wrap_longitude_degrees(deg), deg);
-        }
-    }
-
-    /// Regression test: longitudes past the antimeridian - as `unproject` can
-    /// return at low zoom - must wrap to the equivalent meridian inside
-    /// `Longitude`'s `[-180, 180]` range rather than panic in `Longitude::new`.
-    #[test]
-    fn wrap_longitude_degrees_wraps_past_antimeridian() {
-        assert_deg_close(
-            wrap_longitude_degrees(195.925_437_518_683_45),
-            -164.074_562_481_316_55,
-        );
-        assert_deg_close(
-            wrap_longitude_degrees(184.015_191_562_275_4),
-            -175.984_808_437_724_6,
-        );
-        // A full extra revolution must wrap back to the same meridian.
-        assert_deg_close(wrap_longitude_degrees(540.0), wrap_longitude_degrees(180.0));
-        assert_deg_close(
-            wrap_longitude_degrees(-541.0),
-            wrap_longitude_degrees(-181.0),
-        );
     }
 
     /// Regression test: a point in a visible track must be hoverable.
@@ -1777,6 +1088,7 @@ mod tests {
                 ..TrackMetadata::default()
             },
             points: vec![],
+            lod: gt_types::TrackLod::default(),
             custom_markers: vec![],
             generated_markers: vec![GeneratedMarker {
                 time: now,
@@ -1931,6 +1243,7 @@ mod snapshot_tests {
                 ..TrackMetadata::default()
             },
             points,
+            lod: gt_types::TrackLod::default(),
             custom_markers: vec![custom_marker],
             generated_markers: vec![generated_marker],
             event_markers: vec![event_marker],

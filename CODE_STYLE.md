@@ -232,6 +232,7 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **generated marker** | A marker derived automatically from data (e.g. trip start/end). | `GeneratedMarker`, `generated_markers` |
 | **visibility** | Whether a file/track/marker is shown on the map. Controlled via `Visibility` / `GlobalFilter`. | `track_visible`, `show_only_track` |
 | **highlight** | Transient hover or sticky selection state. | `MapHighlight`, `HighlightScope` |
+| **polyline span** | A maximal stretch of consecutive on-screen track points painted as one unbroken polyline; viewport culling splits a track into spans, and key changes (e.g. fix-quality color) split spans into sub-spans. Renderer-internal to `gt-map`. | `PolylineSpans`, `VisiblePath::Spans`, `split_key_spans` |
 
 Terms to avoid and their replacements:
 

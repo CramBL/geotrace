@@ -29,6 +29,18 @@ pub fn path_distance_km(points: &[NavPoint]) -> f64 {
         .sum()
 }
 
+/// Minimum and maximum haversine length, in metres, over the segments
+/// between consecutive points. `None` for fewer than 2 points (no segments).
+pub fn segment_length_range_m(points: &[NavPoint]) -> Option<(f64, f64)> {
+    let mut range: Option<(f64, f64)> = None;
+    for w in points.windows(2) {
+        let [a, b] = w else { continue };
+        let m = haversine_m(a.tpv.lat(), a.tpv.lon(), b.tpv.lat(), b.tpv.lon());
+        range = Some(range.map_or((m, m), |(min, max)| (min.min(m), max.max(m))));
+    }
+    range
+}
+
 /// Maximum haversine distance between any two points in the set, in metres.
 /// Returns `0.0` for fewer than 2 points.
 ///
@@ -109,6 +121,39 @@ mod tests {
         let km = haversine_km(lat(55.0), lon(12.0), lat(56.0), lon(12.0));
         let m = haversine_m(lat(55.0), lon(12.0), lat(56.0), lon(12.0));
         assert!((m - km * 1_000.0).abs() < 0.01, "km={km}, m={m}");
+    }
+
+    #[test]
+    fn segment_length_range_none_without_segments() {
+        assert_eq!(segment_length_range_m(&[]), None);
+        assert_eq!(segment_length_range_m(&[make_point(55.0, 12.0)]), None);
+    }
+
+    #[test]
+    fn segment_length_range_single_segment_has_equal_min_and_max() {
+        let pts = [make_point(0.0, 0.0), make_point(0.0, 1.0)];
+        let Some((min, max)) = segment_length_range_m(&pts) else {
+            panic!("expected a range for 2 points");
+        };
+        assert!((min - max).abs() < f64::EPSILON, "min={min}, max={max}");
+        // 1 degree of longitude ≈ 111.195 km at the equator.
+        assert!((max - 111_195.0).abs() < TOLERANCE_M, "got {max} m");
+    }
+
+    #[test]
+    fn segment_length_range_spans_shortest_and_longest_segment() {
+        // Stationary pair (zero-length segment), then a ~111 km hop:
+        // exactly the parked-then-highway shape the range must capture.
+        let pts = [
+            make_point(0.0, 0.0),
+            make_point(0.0, 0.0),
+            make_point(0.0, 1.0),
+        ];
+        let Some((min, max)) = segment_length_range_m(&pts) else {
+            panic!("expected a range for 3 points");
+        };
+        assert!(min < f64::EPSILON, "expected 0.0 min, got {min}");
+        assert!((max - 111_195.0).abs() < TOLERANCE_M, "got {max} m");
     }
 
     #[test]
