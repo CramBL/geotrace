@@ -1,9 +1,13 @@
 [package]
 name = "geotrace"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 rust-version.workspace = true
-license = "AGPL-3.0-only"
+license.workspace = true
+exclude = [".github", "scripts"]
+homepage.workspace = true
+repository.workspace = true
+readme.workspace = true
 
 [workspace]
 members = [
@@ -37,6 +41,9 @@ edition = "2024"
 rust-version = "1.92"
 license = "AGPL-3.0-only"
 authors = ["Marc Beck König <mgit@tuta.io>"]
+homepage = "https://github.com/CramBL/geotrace"
+repository = "https://github.com/CramBL/geotrace"
+readme = "README.md"
 
 [workspace.dependencies]
 bon = "3"
