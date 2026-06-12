@@ -1,0 +1,5 @@
+variant_path,icon,color
+demo/recording-started,check,#4CAF50
+demo/battery-low,lightning,#F44336
+demo/tunnel-entered,warning,#FF9800
+demo/fix-reacquired,satellite,#2196F3

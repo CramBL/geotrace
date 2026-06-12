@@ -1,0 +1,5 @@
+sys_time,variant_path,annotation
+2026-02-01T14:00:00+00:00,demo/recording-started,Recorder armed and logging at 1 Hz
+2026-02-01T14:00:40+00:00,demo/battery-low,Battery at 15 percent
+2026-02-01T14:01:20+00:00,demo/tunnel-entered,Entering the tunnel - GNSS obstructed
+2026-02-01T14:02:19+00:00,demo/fix-reacquired,Back under open sky - solution converging

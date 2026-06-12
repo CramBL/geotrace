@@ -313,6 +313,47 @@ fn snapshot_app_sahara_tracks() {
     harness.snapshot_loose("app_sahara_tracks");
 }
 
+/// Snapshot of the demo trip along the Paris quays: a single track with a
+/// 59 s tunnel fix-loss rendered as a dashed ghost stretch, custom and
+/// event markers, and multi-constellation satellite data driving the
+/// fix-quality colors. This is the screenshot embedded in README.md.
+#[test]
+fn snapshot_app_demo_trip() {
+    let demo_bytes: &[u8] = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/demo_trip/demo_trip.gtd"
+    ));
+
+    let (mut harness, _config_path) =
+        TestHarness::new_eframe(Some(egui::vec2(1280.0, 800.0)), |cc, path| {
+            App::new_with_config(cc, &[], Some(path.to_path_buf()))
+        });
+    harness.inner.step();
+
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(demo_bytes)),
+            name: "demo_trip.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+
+    {
+        let mut state = harness.inner.state().shared.borrow_mut();
+        state.zoom_to_visible_request = true;
+    }
+
+    // The app repaints continuously (map + background jobs). Run many frames
+    // so the map zoom and plot layout converge before we snapshot.
+    harness.inner.run_steps(60);
+
+    harness.snapshot_loose("app_demo_trip");
+}
+
 #[test]
 fn snapshot_settings_window() {
     let (mut harness, _config_path) =
