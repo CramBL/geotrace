@@ -24,7 +24,7 @@ uom.workspace = true
 [dev-dependencies]
 hdf5-pure.workspace = true
 proptest.workspace = true
-tempfile = "3"
+tempfile.workspace = true
 
 [lints]
 workspace = true

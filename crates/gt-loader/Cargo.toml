@@ -19,7 +19,7 @@ uom.workspace = true
 [dev-dependencies]
 gt-test-utils = { path = "../gt-test-utils" }
 strum.workspace = true
-tempfile = "3"
+tempfile.workspace = true
 
 [lints]
 workspace = true
