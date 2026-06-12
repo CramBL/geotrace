@@ -16,7 +16,7 @@ readme = "README.md"
 [dependencies]
 bon.workspace = true
 chrono.workspace = true
-geotrace-sdk-macros = { path = "../geotrace-sdk-macros", version = "*" }
+geotrace-sdk-macros = { path = "../geotrace-sdk-macros", version = "0.1.0" }
 hdf5-pure.workspace = true
 log.workspace = true
 strum.workspace = true
