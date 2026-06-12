@@ -1,3 +1,12 @@
+//! Generate the demo-trip fixture: a short scripted ride along the Paris
+//! quays with a 59 s tunnel fix-loss and a gradual reacquisition.
+//!
+//! Reads the CSV inputs in `tests/fixtures/demo_trip/` (same schemas as the
+//! gold dataset - the loaders deliberately mirror `gold_dataset.rs`, which
+//! stays untouched as the cross-SDK reference) and writes `demo_trip.gtd`
+//! next to them. The 59 missing seconds carry satellite reports without
+//! fixes; the builder turns those into ghost nav points, which is what the
+//! app renders as a dashed fix-lost stretch.
 use geotrace_sdk::{
     Angle, Annotation, Constellation, EventMarker, EventMarkerStyle, MarkerIcon, Meta,
     NavFileBuilder, NavFileSink, NavFix, Satellite, SatelliteReport, Velocity,
@@ -8,7 +17,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let base_dir = Path::new("tests/fixtures/gold_dataset");
+    let base_dir = Path::new("tests/fixtures/demo_trip");
 
     if !base_dir.exists() {
         return Err(format!(
@@ -30,16 +39,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_events(&mut sink, base_dir)?;
 
     let nav_file = sink.finish()?;
-    nav_file.write_to_file(base_dir.join("gold.gtd"))?;
+    nav_file.write_to_file(base_dir.join("demo_trip.gtd"))?;
 
-    println!("Gold dataset generated successfully: tests/fixtures/gold_dataset/gold.gtd");
-    println!("Summary:");
+    println!("Demo trip generated: tests/fixtures/demo_trip/demo_trip.gtd");
     println!("  Nav Points:    {}", nav_file.nav_points().len());
     println!("  Markers:       {}", nav_file.markers().len());
     println!("  Event Markers: {}", nav_file.event_markers().len());
 
-    println!("Verifying round-trip integrity...");
-    verify_gold_file(base_dir.join("gold.gtd"))?;
+    println!("Verifying the demo-trip storyline...");
+    verify_demo_file(base_dir.join("demo_trip.gtd"))?;
     println!("Verified!");
 
     Ok(())
@@ -141,7 +149,6 @@ fn load_satellites_and_fixes(
                 .build(),
         );
 
-        // Associated satellite report?
         let key = (cols[1].to_string(), cols[2].to_string());
         if let Some(tracked) = satellite_reports.remove(&key) {
             sink.add_satellite_report(
@@ -154,6 +161,8 @@ fn load_satellites_and_fixes(
         }
     }
 
+    // The remaining reports are the tunnel seconds with no position fix:
+    // the builder turns them into ghost nav points.
     for ((gt_str, st_str), tracked) in satellite_reports {
         sink.add_satellite_report(
             SatelliteReport::builder()
@@ -211,75 +220,51 @@ fn load_events(sink: &mut NavFileSink, base_dir: &Path) -> Result<(), Box<dyn st
     Ok(())
 }
 
-fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
+/// Assert the storyline facts the demo trip exists to provide: the 60 s
+/// fix gap covered second-by-second with satellite reports, the collapse
+/// before the tunnel, and the gradual reacquisition after it.
+fn verify_demo_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
     let file = geotrace_sdk::NavFile::open(path)?;
 
-    let meta = file.meta();
-    assert!(meta.title.as_ref().unwrap().contains("Gold Dataset 🏆"));
-    assert!(
-        meta.device
-            .as_ref()
-            .unwrap()
-            .contains("Synthetic Generator 🧬")
-    );
-    assert!(meta.notes.as_ref().unwrap().contains("🛰️"));
-    assert_eq!(meta.identity.as_ref().unwrap(), "gold-standard-v2");
+    assert_eq!(file.meta().identity.as_deref(), Some("demo-trip-v1"));
+    assert_eq!(file.markers().len(), 3);
+    assert_eq!(file.event_markers().len(), 4);
+    assert_eq!(file.event_marker_styles().len(), 4);
 
+    // 92 real fixes plus 59 ghost points (one per missing tunnel second).
+    // Ghost points are the fixes the builder synthesizes for orphaned
+    // satellite reports: interpolated position and heading, but no
+    // measured accuracy - the missing eph is what tells them apart.
     let points = file.nav_points();
-    assert_eq!(points.len(), 199);
+    assert_eq!(points.len(), 151);
+    let is_ghost = |p: &&geotrace_sdk::NavPoint| p.fix.eph_m.is_none();
+    let ghost_points = points.iter().filter(is_ghost).count();
+    assert_eq!(ghost_points, 59, "one ghost nav point per tunnel second");
 
-    // Track 8 Antimeridian: check first and last point
-    let track_8_points: Vec<_> = points
-        .iter()
-        .filter(|p| p.fix.lon.as_degrees() > 179.9 || p.fix.lon.as_degrees() < -179.9)
-        .collect();
-    assert_eq!(track_8_points.len(), 10);
-    assert!((track_8_points[0].fix.lon.as_degrees() - 179.95).abs() < 1e-6);
-    assert!((track_8_points[9].fix.lon.as_degrees() - (-179.96)).abs() < 1e-6);
+    // Every point of the trip carries a satellite report, gap included.
+    assert!(points.iter().all(|p| p.satellites.is_some()));
 
-    // Track 9 Stationary
-    let track_9_points: Vec<_> = points
-        .iter()
-        .filter(|p| (p.fix.lat.as_degrees() - (-10.0)).abs() < 1e-6)
-        .collect();
-    assert_eq!(track_9_points.len(), 20);
-    for p in track_9_points {
-        assert_eq!(p.fix.speed.map(|s| s.as_meters_per_second()), Some(0.0));
+    // The tunnel seconds never contain a satellite contributing to a fix.
+    for p in points.iter().filter(is_ghost) {
+        let sats = p.satellites.as_ref().unwrap();
+        assert!(sats.tracked.iter().all(|s| !s.in_fix));
     }
 
-    let markers = file.markers();
-    assert_eq!(markers.len(), 15);
-    // Check "File Boundary Start" at index 0
-    assert_eq!(
-        markers[0].annotation.label.as_ref().unwrap(),
-        "File Boundary Start"
-    );
-    assert_eq!(markers[0].annotation.icon, Some(MarkerIcon::Check));
-
-    let events = file.event_markers();
-    assert_eq!(events.len(), 6);
-
-    let styles = file.event_marker_styles();
-    let icon_style = styles
-        .iter()
-        .find(|s| s.variant_path == "style/custom-icon")
-        .unwrap();
-    assert_eq!(
-        icon_style.icon,
-        geotrace_sdk::EventMarkerIconChoice::Icon(MarkerIcon::Lightning)
-    );
-
-    let color_style = styles
-        .iter()
-        .find(|s| s.variant_path == "style/custom-color")
-        .unwrap();
-    assert!(matches!(
-        color_style.color,
-        geotrace_sdk::EventMarkerColor::Hex(_)
-    ));
-    if let geotrace_sdk::EventMarkerColor::Hex(hex) = &color_style.color {
-        assert_eq!(hex, "#FF00FF");
-    }
+    // Recovery: the first restored fix has the minimal 4-satellite
+    // geometry and a large eph that converges by the end of the trip.
+    let recovery: Vec<_> = points.iter().filter(|p| !is_ghost(p)).skip(80).collect();
+    assert_eq!(recovery.len(), 12);
+    let first = recovery.first().unwrap();
+    let last = recovery.last().unwrap();
+    let in_fix = |p: &&geotrace_sdk::NavPoint| {
+        p.satellites
+            .as_ref()
+            .map_or(0, |s| s.tracked.iter().filter(|t| t.in_fix).count())
+    };
+    assert_eq!(in_fix(first), 4);
+    assert!(in_fix(last) >= 10);
+    assert!(first.fix.eph_m.unwrap() > 20.0);
+    assert!(last.fix.eph_m.unwrap() < 5.0);
 
     Ok(())
 }

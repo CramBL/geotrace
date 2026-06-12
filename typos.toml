@@ -1,5 +1,5 @@
 [files]
-extend-exclude = ["sdk/python/geotrace-py/target"]
+extend-exclude = ["sdk/python/geotrace-py/target", "tests/fixtures/demo_trip/markers.csv"]
 
 [default.extend-words]
 # Level of Detail - standard graphics acronym, not a misspelling of "LOAD"

@@ -6,7 +6,7 @@ use std::{
 
 use egui_kittest::Harness;
 use geotrace_sdk::{Angle, DateTime, Duration, NavFileBuilder, NavFix, Utc};
-use gt_test_utils::TestHarness;
+use gt_test_utils::{DEMO_BYTES, GOLD_BYTES, TestHarness};
 use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
 
 use super::App;
@@ -226,11 +226,6 @@ fn settings_window_closes_on_esc() {
 /// button, grid toggle, and metric chips).
 #[test]
 fn snapshot_app_with_file_loaded() {
-    let gold_bytes: &[u8] = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/gold_dataset/gold.gtd"
-    ));
-
     let (mut harness, _config_path) =
         TestHarness::new_eframe(Some(egui::vec2(1280.0, 800.0)), |cc, path| {
             App::new_with_config(cc, &[], Some(path.to_path_buf()))
@@ -242,7 +237,7 @@ fn snapshot_app_with_file_loaded() {
         .input_mut()
         .dropped_files
         .push(egui::DroppedFile {
-            bytes: Some(Arc::from(gold_bytes)),
+            bytes: Some(Arc::from(GOLD_BYTES)),
             name: "gold.gtd".to_owned(),
             ..Default::default()
         });
@@ -262,11 +257,6 @@ fn snapshot_app_with_file_loaded() {
 /// are hidden so only the closely-spaced Sahara tracks fill the map.
 #[test]
 fn snapshot_app_sahara_tracks() {
-    let gold_bytes: &[u8] = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/gold_dataset/gold.gtd"
-    ));
-
     let (mut harness, _config_path) =
         TestHarness::new_eframe(Some(egui::vec2(1280.0, 800.0)), |cc, path| {
             App::new_with_config(cc, &[], Some(path.to_path_buf()))
@@ -278,7 +268,7 @@ fn snapshot_app_sahara_tracks() {
         .input_mut()
         .dropped_files
         .push(egui::DroppedFile {
-            bytes: Some(Arc::from(gold_bytes)),
+            bytes: Some(Arc::from(GOLD_BYTES)),
             name: "gold.gtd".to_owned(),
             ..Default::default()
         });
@@ -311,6 +301,44 @@ fn snapshot_app_sahara_tracks() {
     harness.inner.run_steps(60);
 
     harness.snapshot_loose("app_sahara_tracks");
+}
+
+/// Snapshot of the demo trip along the Paris quays: a single track with a
+/// 59 s tunnel fix-loss rendered as a dashed ghost stretch, custom and
+/// event markers, and multi-constellation satellite data driving the
+/// fix-quality colors. This is the screenshot embedded in README.md.
+#[test]
+fn snapshot_app_demo_trip() {
+    let (mut harness, _config_path) =
+        TestHarness::new_eframe(Some(egui::vec2(1280.0, 800.0)), |cc, path| {
+            App::new_with_config(cc, &[], Some(path.to_path_buf()))
+        });
+    harness.inner.step();
+
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(DEMO_BYTES)),
+            name: "demo_trip.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+
+    {
+        let mut state = harness.inner.state().shared.borrow_mut();
+        state.zoom_to_visible_request = true;
+    }
+
+    harness.inner.hover_at(egui::Pos2 { x: 480., y: 200. });
+
+    // The app repaints continuously (map + background jobs). Run many frames
+    // so the map zoom and plot layout converge before we snapshot.
+    harness.inner.run_steps(60);
+
+    harness.snapshot_loose("app_demo_trip");
 }
 
 #[test]

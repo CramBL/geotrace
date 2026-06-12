@@ -6,6 +6,11 @@
 GeoTrace is a desktop application for visualizing GPS/GNSS navigation data.
 It reads `.gtd` recording files and renders Time-Position-Velocity traces on an interactive map with satellite signal quality overlays, event markers, and filtering tools.
 
+![GeoTrace showing the demo trip: a ride along the Paris quays with per-fix satellite counts, custom and event markers, a tunnel fix-loss rendered in red, and the satellite metrics plot below](tests/snapshots/snap_app_demo_trip.png)
+
+*(offline map) A short ride with multi-constellation satellite data, custom and event markers, and a 59-second tunnel fix-loss followed by gradual signal reacquisition.
+The screenshot is the UI snapshot test baseline (with map tiles off), so it always matches the current build.*
+
 ## Features
 
 - Drag-and-drop `.gtd` file loading
