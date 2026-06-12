@@ -54,7 +54,47 @@ pub(crate) struct MercTransform {
     clip_center_x: f64,
     clip_center_y: f64,
     merc_center: MercPoint,
+    scale: MapScale,
+}
+
+/// The map's scale at a given zoom level: how many pixels the world spans.
+///
+/// Unlike [`MercTransform`] this carries no viewport anchoring, so it can be
+/// derived before egui lays the map widget out - which makes it the right
+/// input for per-frame decisions (icon-fade classification, LOD selection)
+/// that must agree between the pre-layout planning pass and the renderers.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MapScale {
     total_px: f64,
+}
+
+impl MapScale {
+    pub(crate) fn from_zoom(zoom: f64) -> Self {
+        // At zoom z the world is 256·2^z pixels wide at the equator.
+        Self {
+            total_px: 2_f64.powf(zoom) * 256.0,
+        }
+    }
+
+    /// Pixels per metre at the given latitude.
+    ///
+    /// Uses the Web Mercator scale factor: the equatorial circumference
+    /// (≈ 40 030 km) shrinks by cos(lat) at a given latitude.
+    #[inline]
+    pub(crate) fn pixels_per_meter(self, lat: Latitude) -> f64 {
+        // 1 Mercator tile column = Earth circumference / 2^z metres at the
+        // equator, scaled by cos(lat) at higher latitudes.
+        const EARTH_CIRCUMFERENCE_M: f64 = 40_030_173.0;
+        self.total_px / (EARTH_CIRCUMFERENCE_M * lat.as_degrees().to_radians().cos())
+    }
+
+    /// Pixels per Mercator unit (the whole world spans one Mercator unit).
+    /// This is the exact scale factor of [`MercTransform::to_screen`], so
+    /// tolerances expressed in Mercator units convert losslessly to pixels.
+    #[inline]
+    pub(crate) fn px_per_merc(self) -> f64 {
+        self.total_px
+    }
 }
 
 impl MercTransform {
@@ -69,7 +109,7 @@ impl MercTransform {
         map_memory: &MapMemory,
         clip_center: egui::Pos2,
     ) -> Self {
-        let total_px = 2_f64.powf(map_memory.zoom()) * 256.0;
+        let scale = MapScale::from_zoom(map_memory.zoom());
         // unproject(clip_center) returns the geographic position at the
         // viewport centre using f64 arithmetic throughout.
         // In walkers: Position.x() = longitude, Position.y() = latitude.
@@ -85,7 +125,7 @@ impl MercTransform {
             clip_center_x: clip_center.x as f64,
             clip_center_y: clip_center.y as f64,
             merc_center,
-            total_px,
+            scale,
         }
     }
 
@@ -97,50 +137,49 @@ impl MercTransform {
             clip_center_x: 0.0,
             clip_center_y: 0.0,
             merc_center: mercator::normalize(Latitude::new(0.0), Longitude::new(0.0)),
-            total_px,
+            scale: MapScale { total_px },
         }
     }
 
     /// Project a pre-computed normalised Mercator coordinate to a screen position.
     #[inline]
     pub(crate) fn to_screen(&self, merc: MercPoint) -> egui::Pos2 {
+        let total_px = self.scale.px_per_merc();
         egui::pos2(
-            (self.clip_center_x + (merc.x - self.merc_center.x) * self.total_px) as f32,
-            (self.clip_center_y + (merc.y - self.merc_center.y) * self.total_px) as f32,
+            (self.clip_center_x + (merc.x - self.merc_center.x) * total_px) as f32,
+            (self.clip_center_y + (merc.y - self.merc_center.y) * total_px) as f32,
         )
     }
 
     /// Convert a screen-space x-coordinate to a normalised Mercator x value.
     #[inline]
     pub(crate) fn merc_x_from_screen(&self, screen_x: f32) -> f64 {
-        (screen_x as f64 - self.clip_center_x) / self.total_px + self.merc_center.x
+        (screen_x as f64 - self.clip_center_x) / self.scale.px_per_merc() + self.merc_center.x
     }
 
     /// Convert a screen-space y-coordinate to a normalised Mercator y value.
     #[inline]
     pub(crate) fn merc_y_from_screen(&self, screen_y: f32) -> f64 {
-        (screen_y as f64 - self.clip_center_y) / self.total_px + self.merc_center.y
+        (screen_y as f64 - self.clip_center_y) / self.scale.px_per_merc() + self.merc_center.y
     }
 
-    /// Pixels per metre at the given latitude.
-    ///
-    /// Uses the Web Mercator scale factor: the equatorial circumference
-    /// (≈ 40 030 km) shrinks by cos(lat) at a given latitude.
+    /// The viewport-independent scale component of this transform; lets
+    /// tests derive a [`MapScale`] from a [`MercTransform::for_test`].
+    #[cfg(test)]
+    pub(crate) fn scale(&self) -> MapScale {
+        self.scale
+    }
+
+    /// Pixels per metre at the given latitude; see [`MapScale`].
     #[inline]
     pub(crate) fn pixels_per_meter(&self, lat: Latitude) -> f64 {
-        // At zoom z the world is 256·2^z pixels wide at the equator.
-        // 1 Mercator tile column = Earth circumference / 2^z metres at the equator,
-        // scaled by cos(lat) at higher latitudes.
-        const EARTH_CIRCUMFERENCE_M: f64 = 40_030_173.0;
-        self.total_px / (EARTH_CIRCUMFERENCE_M * lat.as_degrees().to_radians().cos())
+        self.scale.pixels_per_meter(lat)
     }
 
-    /// Pixels per Mercator unit (the whole world spans one Mercator unit).
-    /// This is the exact scale factor of [`MercTransform::to_screen`], so
-    /// tolerances expressed in Mercator units convert losslessly to pixels.
+    /// Pixels per Mercator unit; see [`MapScale`].
     #[inline]
     pub(crate) fn px_per_merc(&self) -> f64 {
-        self.total_px
+        self.scale.px_per_merc()
     }
 }
 

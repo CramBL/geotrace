@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use walkers::MapMemory;
 
 use crate::tpv_renderer::{self, TrackIconFade};
-use crate::transform::MercTransform;
+use crate::transform::{MapScale, MercTransform};
 
 /// Geographic bounding box of the currently visible map viewport.
 #[derive(Debug, Clone, Copy)]
@@ -23,7 +23,7 @@ pub struct GeoBounds {
 
 /// The spatial points inside the viewport, split by category, ready for
 /// the render plugins. TPV fixes arrive pre-grouped per track (point
-/// indices), which is the shape `TpvRenderer` consumes.
+/// indices), which is the shape `TrackLayers` consumes.
 pub(crate) struct VisiblePoints {
     pub(crate) tpv_by_track: HashMap<TrackRef, Vec<usize>>,
     pub(crate) custom: Vec<SpatialPoint>,
@@ -34,23 +34,17 @@ pub(crate) struct VisiblePoints {
 /// Collect the spatial points inside the current viewport from the global
 /// R-tree, one list per category.
 ///
-/// TPV points are additionally gated per track: fix icons of tracks that
-/// are disabled, filtered out, TPV-layer-hidden, or classified
+/// TPV points are gated by the frame's [`TrackPlan`]: fix icons of tracks
+/// that are disabled, filtered out, TPV-layer-hidden, or classified
 /// [`TrackIconFade::AllHidden`] (the quality line stands in) are never
 /// drawn, so collecting their viewport points - potentially the entire
-/// recording when zoomed out - would be pure allocation waste. The fade
-/// classification matches `TpvRenderer::run` exactly: same zoom-derived
-/// icon size, same per-frame map scale.
+/// recording when zoomed out - would be pure allocation waste.
 pub(crate) fn collect_visible_points(
     tree: &rstar::RTree<SpatialPoint>,
-    files: &[LoadedFile],
-    visibility: &TrackDataVisibility,
-    filter: &GlobalFilter,
+    plan: &TrackPlan,
     transform: &MercTransform,
     map_rect: egui::Rect,
-    zoom: f64,
 ) -> VisiblePoints {
-    let collectable = TpvCollectable::compute(files, visibility, filter, transform, zoom);
     let lt = map_rect.left_top();
     let rb = map_rect.right_bottom();
     let aabb = rstar::AABB::from_corners(
@@ -72,7 +66,12 @@ pub(crate) fn collect_visible_points(
     for sp in tree.locate_in_envelope(aabb) {
         match sp.category {
             DataCategory::Tpv => {
-                if collectable.is_collectable(sp.track_ref()) {
+                // Unknown tracks default to collectable, so a stale index
+                // can only cost wasted collection, never hidden data.
+                if plan
+                    .entry(sp.track_ref())
+                    .is_none_or(TrackEntry::tpv_collectable)
+                {
                     visible
                         .tpv_by_track
                         .entry(sp.track_ref())
@@ -89,58 +88,87 @@ pub(crate) fn collect_visible_points(
     visible
 }
 
-/// Per-track "may this track's TPV icons draw this frame" flags, flattened
-/// into one inline buffer (`flags[offsets[fi] + ti]`, with `offsets`
-/// carrying one trailing end entry), so computing them allocates nothing
-/// for typical workspace sizes.
-struct TpvCollectable {
-    flags: SmallVec<[bool; 128]>,
+/// What the renderers will do for one track this frame, derived once per
+/// frame in [`TrackPlan::compute`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TrackEntry {
+    /// The plain trackline layer is drawn (file and track enabled, track
+    /// layer visible, filter passed).
+    pub(crate) trackline: bool,
+    /// Icon-fade classification of the TPV layer; `None` when that layer
+    /// is hidden or the track is disabled or filtered out.
+    pub(crate) fade: Option<TrackIconFade>,
+}
+
+impl TrackEntry {
+    /// TPV viewport points are worth collecting only when icons can draw.
+    fn tpv_collectable(self) -> bool {
+        self.fade.is_some_and(|f| f != TrackIconFade::AllHidden)
+    }
+
+    /// Neither layer draws; the renderer can skip the track outright.
+    pub(crate) fn draws_nothing(self) -> bool {
+        !self.trackline && self.fade.is_none()
+    }
+}
+
+/// Per-track drawing decisions for one frame, derived once from the zoom
+/// level and the visibility/filter state, then shared by viewport
+/// collection and the track-layer renderer - a single derivation point, so
+/// the decisions cannot drift between consumers.
+///
+/// Entries are flattened into one inline buffer
+/// (`entries[offsets[fi] + ti]`, with `offsets` carrying one trailing end
+/// entry), so computing the plan allocates nothing for typical workspace
+/// sizes.
+pub(crate) struct TrackPlan {
+    entries: SmallVec<[TrackEntry; 128]>,
     offsets: SmallVec<[usize; 9]>,
 }
 
-impl TpvCollectable {
-    fn compute(
+impl TrackPlan {
+    pub(crate) fn compute(
         files: &[LoadedFile],
         visibility: &TrackDataVisibility,
         filter: &GlobalFilter,
-        transform: &MercTransform,
         zoom: f64,
     ) -> Self {
+        let scale = MapScale::from_zoom(zoom);
         let icon_size = tpv_renderer::base_arrow_size(zoom);
-        let mut flags: SmallVec<[bool; 128]> = SmallVec::new();
+        let mut entries: SmallVec<[TrackEntry; 128]> = SmallVec::new();
         let mut offsets: SmallVec<[usize; 9]> = SmallVec::new();
         for (fi, file) in files.iter().enumerate() {
-            offsets.push(flags.len());
+            offsets.push(entries.len());
             let file_vis = FileIdx::new(fi).get(&visibility.files);
+            let file_enabled = file_vis.is_some_and(|fv| fv.enabled);
             for (ti, track) in file.tracks.iter().enumerate() {
                 let trip_vis = file_vis.and_then(|fv| TrackIdx::new(ti).get(&fv.tracks));
+                let enabled = file_enabled
+                    && trip_vis.is_some_and(|tv| tv.enabled)
+                    && track_passes_filter(&track.metadata, filter);
                 // The fade classification runs last so it is skipped for
                 // tracks that are hidden or filtered out anyway.
-                let drawable = file_vis.is_some_and(|fv| fv.enabled)
-                    && trip_vis.is_some_and(|tv| tv.enabled && tv.tpv_visible)
-                    && track_passes_filter(&track.metadata, filter)
-                    && tpv_renderer::classify_icon_fade(track, transform, icon_size)
-                        != TrackIconFade::AllHidden;
-                flags.push(drawable);
+                let fade = (enabled && trip_vis.is_some_and(|tv| tv.tpv_visible))
+                    .then(|| tpv_renderer::classify_icon_fade(track, scale, icon_size));
+                entries.push(TrackEntry {
+                    trackline: enabled && trip_vis.is_some_and(|tv| tv.track_visible),
+                    fade,
+                });
             }
         }
-        offsets.push(flags.len());
-        Self { flags, offsets }
+        offsets.push(entries.len());
+        Self { entries, offsets }
     }
 
-    /// Whether the track's icons may draw. Unknown tracks default to
-    /// collectable, so a stale index can only cost wasted collection, never
-    /// hidden data.
-    fn is_collectable(&self, track: TrackRef) -> bool {
+    /// The decisions for `track`; `None` for indices outside the plan.
+    pub(crate) fn entry(&self, track: TrackRef) -> Option<TrackEntry> {
         let fi = track.fi.as_usize();
-        let (Some(&start), Some(&end)) = (self.offsets.get(fi), self.offsets.get(fi + 1)) else {
-            return true;
-        };
+        let (&start, &end) = (self.offsets.get(fi)?, self.offsets.get(fi + 1)?);
         let idx = start + track.index.as_usize();
         if idx >= end {
-            return true;
+            return None;
         }
-        self.flags.get(idx).copied().unwrap_or(true)
+        self.entries.get(idx).copied()
     }
 }
 
