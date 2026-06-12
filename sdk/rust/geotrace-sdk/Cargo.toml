@@ -1,8 +1,10 @@
 [package]
 name = "geotrace-sdk"
-description.workspace = true
+description = "SDK for generating geotrace (.gtd) files"
 version.workspace = true
 edition.workspace = true
+homepage.workspace = true
+repository.workspace = true
 rust-version = "1.88"
 
 authors.workspace = true
@@ -14,7 +16,7 @@ readme = "README.md"
 [dependencies]
 bon.workspace = true
 chrono.workspace = true
-geotrace-sdk-macros = { path = "../geotrace-sdk-macros" }
+geotrace-sdk-macros = { path = "../geotrace-sdk-macros", version = "*" }
 hdf5-pure.workspace = true
 log.workspace = true
 strum.workspace = true

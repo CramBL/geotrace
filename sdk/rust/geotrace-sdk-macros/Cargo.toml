@@ -1,9 +1,11 @@
 [package]
 name = "geotrace-sdk-macros"
-description.workspace = true
+description = "Proc macro for Geotrace SDK ergonomics"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
 license = "MIT"
 
 [lib]
