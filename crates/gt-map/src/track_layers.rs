@@ -1,0 +1,402 @@
+//! The unified per-track map layers: trackline, fix-quality line, and
+//! per-fix icons.
+//!
+//! Layer order is explicit here: every trackline first (under everything),
+//! then per track the quality line and the icons. The line geometry (LOD
+//! selection, time filter, projection, culling) is computed once per track
+//! and shared by both line layers through [`LinePointKey`], where the two
+//! previous plugins each walked the points themselves.
+
+use std::collections::HashMap;
+
+use egui::{Color32, Response, Stroke, Ui};
+use gt_filter::GlobalFilter;
+use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, MercBounds, TrackIdx, TrackRef};
+use gt_ui_types::{HighlightScope, MapHighlight};
+use walkers::{MapMemory, Plugin, Projector};
+
+use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
+use crate::tpv_renderer::{
+    self, QUALITY_LINE_WIDTH, TpvDrawStyle, TrackIconFade, bucket_alpha, fix_icon_alpha,
+    line_alpha_bucket, quality_line_color, split_spans_by,
+};
+use crate::track_renderer::{blink_stroke, draw_track_with_ghost, skip_trackline, track_stroke};
+use crate::transform::{MercTransform, lod_points};
+use crate::viewport::{TrackEntry, TrackPlan};
+
+/// Margin around the viewport inside which per-fix icons are still drawn,
+/// so icons whose shape extends past the edge are not clipped visibly.
+const ICON_VIEW_MARGIN_PX: f32 = 50.0;
+
+/// Per-point styling key for the unified line passes: the trackline dashes
+/// ghost stretches; the quality line colors by fix quality and crossfade
+/// bucket. One key drives both layers, so each track's points are
+/// LOD-selected, projected, and culled exactly once per frame.
+///
+/// The combined key merges sub-pixel points only when all components
+/// match, where the two previous passes each merged on their own narrower
+/// key. The painted pixels are the same through occasional extra collinear
+/// vertices - and in one edge case a different primitive: a sub-pixel
+/// cluster with mixed quality keeps >= 2 points and paints as a short span
+/// where the old trackline-only reduction collapsed to a dot (pinned by
+/// `sub_pixel_quality_transition_yields_spans_not_dot`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LinePointKey {
+    ghost: bool,
+    quality: Color32,
+    bucket: u8,
+}
+
+/// One visible track's prepared geometry and paint decisions for this
+/// frame, produced by [`TrackLayers::prepare_track_geometries`] and
+/// consumed by the paint methods.
+struct TrackGeometry<'a> {
+    fi: FileIdx,
+    ti: TrackIdx,
+    track: &'a LoadedTrack,
+    entry: TrackEntry,
+    paint_trackline: bool,
+    need_blink: bool,
+    path: VisiblePath<LinePointKey>,
+    /// Original indices of the LOD level's ghost fixes (hollow chevrons),
+    /// collected during the geometry walk.
+    ghost_points: Vec<usize>,
+}
+
+impl TrackGeometry<'_> {
+    fn paints_quality_line(&self) -> bool {
+        matches!(
+            self.entry.fade,
+            Some(TrackIconFade::PerFix | TrackIconFade::AllHidden)
+        )
+    }
+
+    /// The fade to draw icons with; `None` when no icons draw this frame.
+    fn icon_fade(&self) -> Option<TrackIconFade> {
+        self.entry
+            .fade
+            .filter(|&fade| fade != TrackIconFade::AllHidden)
+    }
+}
+
+pub struct TrackLayers<'a> {
+    files: &'a [LoadedFile],
+    plan: &'a TrackPlan,
+    highlight: &'a MapHighlight,
+    filter: &'a GlobalFilter,
+    /// Indices of the real fixes inside the viewport, grouped per track by
+    /// the collection pass.
+    tpv_by_track: HashMap<TrackRef, Vec<usize>>,
+    /// First file index that is considered "newly loaded";
+    /// files[new_file_boundary..] receive a blinking overlay while
+    /// `blink_alpha > 0`.
+    new_file_boundary: usize,
+    /// Current blink intensity in [0.0, 1.0]. Zero means no overlay.
+    blink_alpha: f32,
+}
+
+impl<'a> TrackLayers<'a> {
+    pub(crate) fn new(
+        files: &'a [LoadedFile],
+        plan: &'a TrackPlan,
+        highlight: &'a MapHighlight,
+        filter: &'a GlobalFilter,
+        tpv_by_track: HashMap<TrackRef, Vec<usize>>,
+        new_file_boundary: usize,
+        blink_alpha: f32,
+    ) -> Self {
+        Self {
+            files,
+            plan,
+            highlight,
+            filter,
+            tpv_by_track,
+            new_file_boundary,
+            blink_alpha,
+        }
+    }
+}
+
+impl Plugin for TrackLayers<'_> {
+    fn run(
+        self: Box<Self>,
+        ui: &mut Ui,
+        _response: &Response,
+        projector: &Projector,
+        map_memory: &MapMemory,
+    ) {
+        // Build the per-frame coordinate transform once; all per-point calls
+        // are then two f64 multiplies + two f64 adds with no large-value
+        // cancellation.
+        let transform = MercTransform::new(projector, map_memory, ui.max_rect().center());
+        let style = tpv_renderer::frame_style(map_memory.zoom());
+
+        let geometries = self.prepare_track_geometries(ui.max_rect(), &style, &transform);
+        self.paint_tracklines(ui, &geometries);
+        self.paint_tpv_layers(ui, &geometries, &style, &transform, ui.max_rect());
+        self.show_hover_overlays(ui, &style, &transform);
+    }
+}
+
+impl TrackLayers<'_> {
+    /// The single geometry walk for every visible track: LOD selection,
+    /// time filter, projection, culling, and the per-point styling key,
+    /// plus the ghost-fix indices for the chevron pass. The quality color
+    /// is keyed even when only the trackline draws - it is a cheap match,
+    /// and constant key components never split spans.
+    fn prepare_track_geometries(
+        &self,
+        max_rect: egui::Rect,
+        style: &TpvDrawStyle,
+        transform: &MercTransform,
+    ) -> Vec<TrackGeometry<'_>> {
+        let cull_rect = max_rect.expand(CULL_MARGIN_PX);
+        // Viewport bounds in Mercator space - used to skip tracks that are
+        // entirely outside the visible area without iterating any points.
+        let vp_bounds = MercBounds {
+            x_min: transform.merc_x_from_screen(max_rect.min.x),
+            x_max: transform.merc_x_from_screen(max_rect.max.x),
+            y_min: transform.merc_y_from_screen(max_rect.min.y),
+            y_max: transform.merc_y_from_screen(max_rect.max.y),
+        };
+
+        let mut geometries: Vec<TrackGeometry> = Vec::new();
+        for (fi, file) in self.files.iter().enumerate() {
+            let fi = FileIdx::new(fi);
+            for (ti, track) in file.tracks.iter().enumerate() {
+                let ti = TrackIdx::new(ti);
+                let Some(entry) = self.plan.entry(TrackRef::new(fi, ti)) else {
+                    continue;
+                };
+                if entry.draws_nothing() {
+                    continue;
+                }
+                if !track.metadata.merc_bounds.intersects(vp_bounds) {
+                    continue;
+                }
+                // Blink overlay: a bright pulsing stroke on top of newly
+                // loaded tracks for the first 3 seconds after load.
+                let need_blink = self.blink_alpha > 0.0 && fi.as_usize() >= self.new_file_boundary;
+                let paint_trackline = entry.trackline && !skip_trackline(entry.fade, need_blink);
+                let paint_icons = matches!(
+                    entry.fade,
+                    Some(TrackIconFade::PerFix | TrackIconFade::AllVisible)
+                );
+                let paint_quality = matches!(
+                    entry.fade,
+                    Some(TrackIconFade::PerFix | TrackIconFade::AllHidden)
+                );
+                if !paint_trackline && !paint_quality && !paint_icons {
+                    continue;
+                }
+
+                let mut ghost_points: Vec<usize> = Vec::new();
+                let fade = entry.fade;
+                let pts = lod_points(track, transform)
+                    .filter(|(_, p)| {
+                        gt_filter::point_passes_time_filter(p.tpv.time().utc(), self.filter)
+                    })
+                    .map(|(pi, p)| {
+                        let screen_pos = transform.to_screen(p.merc);
+                        if paint_icons && p.is_ghost_fix() {
+                            ghost_points.push(pi);
+                        }
+                        let bucket = match fade {
+                            None | Some(TrackIconFade::AllVisible) => 0,
+                            Some(fade) => line_alpha_bucket(
+                                1.0 - fix_icon_alpha(
+                                    fade,
+                                    track,
+                                    pi,
+                                    screen_pos,
+                                    style.base_arrow_size,
+                                    transform,
+                                ),
+                            ),
+                        };
+                        let key = LinePointKey {
+                            ghost: p.tpv.heading().is_none(),
+                            quality: quality_line_color(p),
+                            bucket,
+                        };
+                        (key, screen_pos)
+                    });
+                let path = visible_path(pts, cull_rect);
+                geometries.push(TrackGeometry {
+                    fi,
+                    ti,
+                    track,
+                    entry,
+                    paint_trackline,
+                    need_blink,
+                    path,
+                    ghost_points,
+                });
+            }
+        }
+        geometries
+    }
+
+    /// Paint every track's plain line (and blink overlay) first, so all
+    /// tracklines lie under all quality lines and icons.
+    fn paint_tracklines(&self, ui: &Ui, geometries: &[TrackGeometry]) {
+        for geo in geometries {
+            if !geo.paint_trackline {
+                continue;
+            }
+            let stroke = track_stroke(self.highlight, geo.fi, geo.ti);
+            let blink = geo.need_blink.then(|| blink_stroke(self.blink_alpha));
+            paint_trackline_path(ui, &geo.path, stroke, blink);
+        }
+    }
+
+    /// Paint the TPV layer per track - the fix-quality line, then the fix
+    /// icons on top - over every trackline.
+    fn paint_tpv_layers(
+        &self,
+        ui: &Ui,
+        geometries: &[TrackGeometry],
+        style: &TpvDrawStyle,
+        transform: &MercTransform,
+        max_rect: egui::Rect,
+    ) {
+        let icon_view_rect = max_rect.expand(ICON_VIEW_MARGIN_PX);
+        for geo in geometries {
+            if geo.paints_quality_line() {
+                paint_quality_path(ui, &geo.path);
+            }
+            if let Some(fade) = geo.icon_fade() {
+                tpv_renderer::draw_track_icons(
+                    ui,
+                    icon_view_rect,
+                    geo.fi,
+                    geo.ti,
+                    geo.track,
+                    self.tpv_by_track.get(&TrackRef::new(geo.fi, geo.ti)),
+                    &geo.ghost_points,
+                    style,
+                    fade,
+                    transform,
+                    self.highlight,
+                    self.filter,
+                );
+            }
+        }
+    }
+
+    /// Show the hover artifacts that sit on top of all layers: the TPV
+    /// tooltip for the hovered point (set by NavMap the previous frame) and
+    /// the plot-cursor cross-highlight ring.
+    fn show_hover_overlays(&self, ui: &Ui, style: &TpvDrawStyle, transform: &MercTransform) {
+        // Suppressed when the sticky popup is already showing this exact
+        // point and when any popup is open.
+        if let Some(HighlightScope::Point(r)) = self.highlight.hover
+            && r.category == DataCategory::Tpv
+            && self.highlight.sticky != Some(r)
+            && !ui.ctx().any_popup_open()
+            && !self.highlight.suppress_hover_labels
+        {
+            tpv_renderer::show_tooltip(ui, self.files, r);
+        }
+
+        tpv_renderer::draw_plot_hover_ring(ui, self.files, self.highlight, style, transform);
+    }
+}
+
+/// Paint a track's plain (track-colored) line from its prepared geometry,
+/// with the optional blink overlay on top.
+fn paint_trackline_path(
+    ui: &Ui,
+    path: &VisiblePath<LinePointKey>,
+    stroke: Stroke,
+    blink: Option<Stroke>,
+) {
+    match path {
+        VisiblePath::OffScreen => {}
+        // The key is ignored: a dot has no edge to render dashed or color.
+        VisiblePath::Dot(_, pos) => {
+            ui.painter().circle_filled(*pos, stroke.width, stroke.color);
+            if let Some(blink) = blink {
+                ui.painter().circle_filled(*pos, blink.width, blink.color);
+            }
+        }
+        VisiblePath::Spans(spans) => {
+            for span in spans.iter() {
+                draw_track_with_ghost(ui.painter(), span, stroke, |key| key.ghost);
+                if let Some(blink) = blink {
+                    let bp: Vec<egui::Pos2> = span.iter().map(|&(_, pos)| pos).collect();
+                    ui.painter().add(egui::Shape::line(bp, blink));
+                }
+            }
+        }
+    }
+}
+
+/// Paint a track's fix-quality line from its prepared geometry: each edge
+/// colored by the fix quality at its starting point and faded by the
+/// crossfade bucket, with fully transparent stretches skipped.
+fn paint_quality_path(ui: &Ui, path: &VisiblePath<LinePointKey>) {
+    let painter = ui.painter();
+    match path {
+        VisiblePath::OffScreen => {}
+        VisiblePath::Dot(key, pos) => {
+            if key.bucket > 0 {
+                painter.circle_filled(
+                    *pos,
+                    QUALITY_LINE_WIDTH,
+                    key.quality.gamma_multiply(bucket_alpha(key.bucket)),
+                );
+            }
+        }
+        VisiblePath::Spans(spans) => {
+            for span in spans.iter() {
+                for ((quality, bucket), sub_span) in
+                    split_spans_by(span, |key| (key.quality, key.bucket))
+                {
+                    if bucket == 0 {
+                        continue;
+                    }
+                    painter.add(egui::Shape::line(
+                        sub_span,
+                        Stroke::new(
+                            QUALITY_LINE_WIDTH,
+                            quality.gamma_multiply(bucket_alpha(bucket)),
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::{Color32, Rect, pos2};
+
+    use super::LinePointKey;
+    use crate::polyline::{VisiblePath, visible_path};
+
+    /// A parked cluster with mixed fix quality at sub-pixel distance: the
+    /// quality transition forces point retention, so the unified key paints
+    /// a short span where the old trackline-only reduction (keyed on ghost
+    /// alone) collapsed to a dot. Pins this intentional divergence of the
+    /// unified geometry walk.
+    #[test]
+    fn sub_pixel_quality_transition_yields_spans_not_dot() {
+        let rect = Rect {
+            min: pos2(0.0, 0.0),
+            max: pos2(100.0, 100.0),
+        };
+        let key = |quality| LinePointKey {
+            ghost: false,
+            quality,
+            bucket: 3,
+        };
+        let pts = vec![
+            (key(Color32::BLUE), pos2(10.0, 10.0)),
+            (key(Color32::YELLOW), pos2(10.2, 10.0)),
+        ];
+        let path = visible_path(pts.into_iter(), rect);
+        assert!(matches!(path, VisiblePath::Spans(_)));
+    }
+}

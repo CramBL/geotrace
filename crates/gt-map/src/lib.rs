@@ -7,6 +7,7 @@ mod polyline;
 #[cfg(test)]
 mod test_harness;
 pub mod tpv_renderer;
+mod track_layers;
 pub mod track_renderer;
 mod transform;
 mod viewport;
@@ -32,9 +33,8 @@ use crate::hover_labels::{
     draw_disambig_row, draw_multi_hover_label_contents, should_show_compound_label,
 };
 use crate::marker_renderer::MarkerRenderer;
-use crate::tpv_renderer::TpvRenderer;
-use crate::track_renderer::TrackRenderer;
-use crate::transform::MercTransform;
+use crate::track_layers::TrackLayers;
+use crate::transform::{MapScale, MercTransform};
 use crate::viewport::{
     compute_bounding_box, compute_viewport_bounds, compute_visible_bounding_box,
     is_spatial_point_visible, zoom_to_fit,
@@ -298,14 +298,14 @@ impl NavMap {
             map_rect_estimate.center(),
         );
 
+        // All per-track drawing decisions for this frame, derived once and
+        // shared by viewport collection and the renderers.
+        let plan = viewport::TrackPlan::compute(files, visibility, filter, self.map_memory.zoom());
         let visible = viewport::collect_visible_points(
             &self.global_tree,
-            files,
-            visibility,
-            filter,
+            &plan,
             &transform_estimate,
             map_rect_estimate,
-            self.map_memory.zoom(),
         );
 
         let is_offline = std::env::var("GEOTRACE_OFFLINE").is_ok();
@@ -345,20 +345,14 @@ impl NavMap {
             }
         };
         let map = map
-            .with_plugin(TrackRenderer::new(
+            .with_plugin(TrackLayers::new(
                 files,
-                visibility,
-                highlight,
-                filter,
-                self.new_file_boundary,
-                blink_alpha,
-            ))
-            .with_plugin(TpvRenderer::new(
-                files,
-                visibility,
+                &plan,
                 highlight,
                 filter,
                 visible.tpv_by_track,
+                self.new_file_boundary,
+                blink_alpha,
             ))
             .with_plugin(MarkerRenderer::new(
                 files,
@@ -408,8 +402,8 @@ impl NavMap {
             ui.input(|i| i.pointer.hover_pos()).and_then(|screen_pos| {
                 let merc_x = transform.merc_x_from_screen(screen_pos.x);
                 let merc_y = transform.merc_y_from_screen(screen_pos.y);
-                let total_px = 2_f64.powf(self.map_memory.zoom()) * 256.0;
-                let threshold_merc_sq = (20.0_f64 / total_px).powi(2);
+                let px_per_merc = MapScale::from_zoom(self.map_memory.zoom()).px_per_merc();
+                let threshold_merc_sq = (20.0_f64 / px_per_merc).powi(2);
                 // First pass: one candidate per slot, in nearest-first order.
                 for sp in self
                     .global_tree
