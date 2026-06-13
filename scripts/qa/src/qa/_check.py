@@ -1,13 +1,12 @@
 """Shared infrastructure for QA checks: file iteration, reporting, and exit logic."""
 
+import subprocess
 import sys
 from collections.abc import Iterator
+from functools import lru_cache
 from pathlib import Path
 
 Violation = tuple[Path, int, str]
-
-
-_EXCLUDED = frozenset({"target", ".venv", "build"})
 
 
 def repo_root() -> Path:
@@ -22,8 +21,27 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent.parent.parent
 
 
+@lru_cache(maxsize=1)
+def _tracked_files() -> frozenset[Path]:
+    """Absolute paths of files git does not ignore: tracked files plus
+    untracked files that aren't matched by `.gitignore`.
+
+    Keeps the checks below from scanning build artifacts, virtualenvs, and
+    other generated files that happen to match a checked file pattern.
+    """
+    root = repo_root()
+    output = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=root,
+        capture_output=True,
+        check=True,
+        text=True,
+    ).stdout
+    return frozenset(root / p for p in output.split("\0") if p)
+
+
 def _is_excluded(path: Path) -> bool:
-    return any(part in _EXCLUDED for part in path.parts)
+    return path not in _tracked_files()
 
 
 def rs_files(root: Path) -> Iterator[Path]:
