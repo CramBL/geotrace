@@ -4,9 +4,9 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 
-use egui_kittest::Harness;
-use geotrace_sdk::{Angle, DateTime, Duration, NavFileBuilder, NavFix, Utc};
-use gt_test_utils::{DEMO_BYTES, GOLD_BYTES, TestHarness};
+use egui_kittest::{Harness, kittest::Queryable as _};
+use geotrace_sdk::{DateTime, Utc};
+use gt_test_utils::{DEMO_BYTES, GOLD_BYTES, SyntheticGtdSpec, TestHarness, synthetic_gtd_bytes};
 use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
 
 use super::App;
@@ -16,29 +16,20 @@ fn base_time() -> DateTime<Utc> {
 }
 
 fn minimal_gtd_bytes() -> Vec<u8> {
-    let mut sink = NavFileBuilder::new().open();
-    let t0 = base_time();
-    let t1 = t0 + Duration::seconds(60);
-    sink.add_nav_fix(
-        NavFix::builder()
-            .gps_time(t0)
-            .lat(Angle::degrees(51.5))
-            .lon(Angle::degrees(-0.1))
-            .heading(Angle::degrees(270.0))
-            .build(),
-    );
-    sink.add_nav_fix(
-        NavFix::builder()
-            .gps_time(t1)
-            .lat(Angle::degrees(51.6))
-            .lon(Angle::degrees(-0.2))
-            .heading(Angle::degrees(90.0))
-            .build(),
-    );
-    let nav_file = sink.finish().expect("valid nav file");
-    let mut bytes = Vec::new();
-    nav_file.write(&mut bytes).expect("write succeeds");
-    bytes
+    synthetic_gtd_bytes(SyntheticGtdSpec {
+        start: base_time(),
+        point_count: 61,
+        step_secs: 1,
+        start_lat_deg: 51.5,
+        start_lon_deg: -0.1,
+        lat_step_deg: 0.0002,
+        lon_step_deg: -0.00015,
+        heading_deg: 270.0,
+        speed_kmh: 22.0,
+        eph_m: 2.4,
+        sats_seen: 10,
+        sats_in_fix: 7,
+    })
 }
 
 /// Step the harness repeatedly until all background load jobs have finished.
@@ -56,6 +47,73 @@ fn step_until_loaded(harness: &mut Harness<App>) {
     }
     // One final step in case the last drain hadn't run yet.
     harness.step();
+}
+
+fn load_three_overlapping_files(harness: &mut Harness<App>) {
+    let t0 = base_time();
+    let overlapping_files = [
+        (
+            "overlap_a.gtd",
+            synthetic_gtd_bytes(SyntheticGtdSpec {
+                start: t0,
+                point_count: 240,
+                step_secs: 1,
+                start_lat_deg: 55.0000,
+                start_lon_deg: 12.0000,
+                lat_step_deg: 0.00005,
+                lon_step_deg: 0.00008,
+                heading_deg: 20.0,
+                speed_kmh: 28.0,
+                eph_m: 1.8,
+                sats_seen: 14,
+                sats_in_fix: 11,
+            }),
+        ),
+        (
+            "overlap_b.gtd",
+            synthetic_gtd_bytes(SyntheticGtdSpec {
+                start: t0,
+                point_count: 240,
+                step_secs: 1,
+                start_lat_deg: 55.0003,
+                start_lon_deg: 12.0002,
+                lat_step_deg: 0.00006,
+                lon_step_deg: 0.00007,
+                heading_deg: 32.0,
+                speed_kmh: 31.0,
+                eph_m: 2.1,
+                sats_seen: 13,
+                sats_in_fix: 10,
+            }),
+        ),
+        (
+            "overlap_c.gtd",
+            synthetic_gtd_bytes(SyntheticGtdSpec {
+                start: t0,
+                point_count: 240,
+                step_secs: 1,
+                start_lat_deg: 54.9998,
+                start_lon_deg: 11.9997,
+                lat_step_deg: 0.00004,
+                lon_step_deg: 0.00009,
+                heading_deg: 14.0,
+                speed_kmh: 26.0,
+                eph_m: 2.6,
+                sats_seen: 12,
+                sats_in_fix: 9,
+            }),
+        ),
+    ];
+
+    for (name, bytes) in overlapping_files {
+        harness.input_mut().dropped_files.push(egui::DroppedFile {
+            bytes: Some(Arc::from(bytes)),
+            name: name.to_owned(),
+            ..Default::default()
+        });
+        harness.step();
+        step_until_loaded(harness);
+    }
 }
 
 #[test]
@@ -221,6 +279,151 @@ fn settings_window_closes_on_esc() {
     );
 }
 
+/// Builds a harness with three overlapping files loaded and the plot settled,
+/// shared setup for the legend drag/redock tests below.
+fn harness_with_three_files_loaded() -> Harness<'static, App> {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .with_size(egui::vec2(1280.0, 800.0))
+        .build_eframe(|cc| App::new_with_config(cc, &[], None));
+    harness.step();
+    load_three_overlapping_files(&mut harness);
+    harness.run_steps(20);
+    assert_eq!(harness.state().shared.borrow().loaded_files.len(), 3);
+    harness
+}
+
+/// Moves the legend overlay away from its docked position and expands it,
+/// for tests that exercise dragging it back.
+fn detach_legend(harness: &mut Harness<App>, offset: egui::Vec2) {
+    {
+        let mut shared = harness.state_mut().shared.borrow_mut();
+        shared.plot_state.file_legend_offset = offset;
+        shared.plot_state.file_legend_collapsed = false;
+    }
+    harness.step();
+}
+
+#[test]
+fn legend_redock_icon_resets_offset_to_default() {
+    let mut harness = harness_with_three_files_loaded();
+    detach_legend(&mut harness, egui::vec2(220.0, 120.0));
+
+    harness
+        .get_by_label(egui_phosphor::regular::ARROW_LINE_UP_LEFT)
+        .click();
+    harness.step();
+
+    let offset = harness
+        .state()
+        .shared
+        .borrow()
+        .plot_state
+        .file_legend_offset;
+    assert!(
+        gt_plot::legend_is_docked(offset),
+        "expected legend to re-dock at {:?}, got ({:.2},{:.2})",
+        gt_plot::LEGEND_DOCK_OFFSET,
+        offset.x,
+        offset.y
+    );
+}
+
+#[test]
+fn dragging_files_header_moves_legend_overlay() {
+    let mut harness = harness_with_three_files_loaded();
+
+    let before = harness
+        .state()
+        .shared
+        .borrow()
+        .plot_state
+        .file_legend_offset;
+    let drag_handle = harness.get_by_label(egui_phosphor::regular::DOTS_SIX);
+    let start = drag_handle.rect().center();
+    let end = start + egui::vec2(120.0, 70.0);
+    harness.drag_at(start);
+    harness.hover_at(end);
+    harness.drop_at(end);
+    harness.step();
+
+    let after = harness
+        .state()
+        .shared
+        .borrow()
+        .plot_state
+        .file_legend_offset;
+    assert!(
+        (after.x - before.x).abs() > 5.0 || (after.y - before.y).abs() > 5.0,
+        "expected dragging Files header to move legend: before=({:.2},{:.2}) after=({:.2},{:.2})",
+        before.x,
+        before.y,
+        after.x,
+        after.y
+    );
+}
+
+#[test]
+fn dragging_files_header_far_across_many_frames_does_not_snap_back() {
+    let mut harness = harness_with_three_files_loaded();
+
+    let drag_handle = harness.get_by_label(egui_phosphor::regular::DOTS_SIX);
+    let start = drag_handle.rect().center();
+    harness.drag_at(start);
+    harness.step();
+
+    let mut pos = start;
+    for _ in 0..10 {
+        pos += egui::vec2(20.0, 15.0);
+        harness.hover_at(pos);
+        harness.step();
+    }
+
+    harness.drop_at(pos);
+    harness.step();
+
+    let offset = harness
+        .state()
+        .shared
+        .borrow()
+        .plot_state
+        .file_legend_offset;
+    assert!(
+        !gt_plot::legend_is_docked(offset),
+        "expected legend dragged far away to stay detached, got ({:.2},{:.2})",
+        offset.x,
+        offset.y
+    );
+}
+
+#[test]
+fn dragging_legend_near_top_left_redocks_automatically() {
+    let mut harness = harness_with_three_files_loaded();
+    detach_legend(&mut harness, egui::vec2(220.0, 120.0));
+
+    let drag_handle = harness.get_by_label(egui_phosphor::regular::DOTS_SIX);
+    let start = drag_handle.rect().center();
+    let end = start - egui::vec2(210.0, 110.0);
+    harness.drag_at(start);
+    harness.hover_at(end);
+    harness.drop_at(end);
+    harness.step();
+
+    let offset = harness
+        .state()
+        .shared
+        .borrow()
+        .plot_state
+        .file_legend_offset;
+    assert!(
+        gt_plot::legend_is_docked(offset),
+        "expected legend dropped near top-left to auto-redock at {:?}, got ({:.2},{:.2})",
+        gt_plot::LEGEND_DOCK_OFFSET,
+        offset.x,
+        offset.y
+    );
+}
+
 /// Snapshot of the app with the gold dataset loaded. Captures the side panel,
 /// the map area, and the plot with the metric filter row (including the Sync
 /// button, grid toggle, and metric chips).
@@ -339,6 +542,24 @@ fn snapshot_app_demo_trip() {
     harness.inner.run_steps(60);
 
     harness.snapshot_loose("app_demo_trip");
+}
+
+#[test]
+fn snapshot_app_three_overlapping_files() {
+    let (mut harness, _config_path) =
+        TestHarness::new_eframe(Some(egui::vec2(1280.0, 800.0)), |cc, path| {
+            App::new_with_config(cc, &[], Some(path.to_path_buf()))
+        });
+    harness.inner.step();
+    load_three_overlapping_files(&mut harness.inner);
+    assert_eq!(harness.inner.state().shared.borrow().loaded_files.len(), 3);
+
+    {
+        let mut state = harness.inner.state().shared.borrow_mut();
+        state.zoom_to_visible_request = true;
+    }
+    harness.inner.run_steps(70);
+    harness.snapshot_with_tolerance("app_three_overlapping_files", 4.0, 16);
 }
 
 #[test]

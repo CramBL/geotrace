@@ -16,6 +16,7 @@ egui = { workspace = true, optional = true }
 egui_kittest = { workspace = true, optional = true }
 geo.workspace = true
 geo-types.workspace = true
+geotrace-sdk = { path = "../../sdk/rust/geotrace-sdk" }
 gt-types = { path = "../gt-types" }
 tempfile = { workspace = true, optional = true }
 uom.workspace = true

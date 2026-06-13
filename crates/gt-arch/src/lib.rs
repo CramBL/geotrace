@@ -175,6 +175,7 @@ mod tests {
                     "egui_kittest.*".into(),
                     "geo.*".into(),
                     "geo_types.*".into(),
+                    "geotrace_sdk.*".into(),
                     "gt_types.*".into(),
                     "uom.*".into(),
                     "crate.*".into(),

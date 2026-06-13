@@ -1,7 +1,9 @@
 mod plot_widget;
 mod series;
 
-pub use plot_widget::{PlotState, find_closest_tpv, show_track_plot};
+pub use plot_widget::{
+    LEGEND_DOCK_OFFSET, PlotState, find_closest_tpv, legend_is_docked, show_track_plot,
+};
 
 /// Precomputed mipmap series for all tracks in one file.
 ///

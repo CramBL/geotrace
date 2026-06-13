@@ -1,6 +1,7 @@
 use chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use geo::{Bearing, Distance, Haversine};
 use geo_types::Point;
+use geotrace_sdk as sdk;
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Length, Time as UomTime, Velocity};
 use uom::si::length::meter;
@@ -355,6 +356,88 @@ fn format_duration(duration: Duration) -> String {
     parts.concat()
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SyntheticGtdSpec {
+    pub start: chrono::DateTime<chrono::Utc>,
+    pub point_count: usize,
+    pub step_secs: i64,
+    pub start_lat_deg: f64,
+    pub start_lon_deg: f64,
+    pub lat_step_deg: f64,
+    pub lon_step_deg: f64,
+    pub heading_deg: f64,
+    pub speed_kmh: f64,
+    pub eph_m: f64,
+    pub sats_seen: u32,
+    pub sats_in_fix: u32,
+}
+
+/// Build synthetic `.gtd` bytes with both nav fixes and satellite reports.
+///
+/// This is intentionally generic so snapshot and integration tests can create
+/// overlapping tracks with controlled timing and metric values.
+#[expect(
+    clippy::expect_used,
+    reason = "Fixture generation should fail loudly when test input is invalid"
+)]
+pub fn synthetic_gtd_bytes(spec: SyntheticGtdSpec) -> Vec<u8> {
+    let mut sink = sdk::NavFileBuilder::new().open();
+    for i in 0..spec.point_count {
+        let i_i64 = i64::try_from(i).unwrap_or(0);
+        let time = spec.start + Duration::seconds(i_i64 * spec.step_secs);
+
+        sink.add_nav_fix(
+            sdk::NavFix::builder()
+                .gps_time(time)
+                .lat(sdk::Angle::degrees(
+                    spec.start_lat_deg + i as f64 * spec.lat_step_deg,
+                ))
+                .lon(sdk::Angle::degrees(
+                    spec.start_lon_deg + i as f64 * spec.lon_step_deg,
+                ))
+                .heading(sdk::Angle::degrees(spec.heading_deg))
+                .speed(sdk::Velocity::kilometer_per_hour(spec.speed_kmh))
+                .eph_m(spec.eph_m)
+                .build(),
+        );
+
+        sink.add_satellite_report(
+            sdk::SatelliteReport::builder()
+                .gps_time(time)
+                .tracked(synthetic_satellites(spec.sats_seen, spec.sats_in_fix))
+                .build(),
+        );
+    }
+
+    let nav_file = sink.finish().expect("synthetic test data must be valid");
+    let mut bytes = Vec::new();
+    nav_file
+        .write(&mut bytes)
+        .expect("writing synthetic test file must succeed");
+    bytes
+}
+
+fn synthetic_satellites(sats_seen: u32, sats_in_fix: u32) -> Vec<sdk::Satellite> {
+    (1..=sats_seen)
+        .map(|prn| {
+            let constellation = match prn % 4 {
+                0 => sdk::Constellation::Gps,
+                1 => sdk::Constellation::Glonass,
+                2 => sdk::Constellation::Galileo,
+                _ => sdk::Constellation::Beidou,
+            };
+            sdk::Satellite::builder()
+                .constellation(constellation)
+                .prn(prn)
+                .in_fix(prn <= sats_in_fix)
+                .elevation(30.0 + (prn % 20) as f32)
+                .azimuth((prn * 27 % 360) as f32)
+                .snr(28.0 + (prn % 12) as f32)
+                .build()
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -446,5 +529,30 @@ mod tests {
         assert_eq!(format_duration(Duration::seconds(3665)), "1h1m5s");
         assert_eq!(format_duration(Duration::milliseconds(40210)), "40.21s");
         assert_eq!(format_duration(Duration::milliseconds(0)), "0s");
+    }
+
+    #[test]
+    fn synthetic_gtd_bytes_generates_non_empty_file() {
+        let spec = SyntheticGtdSpec {
+            start: chrono::DateTime::from_timestamp(1_748_000_000, 0)
+                .expect("fixed timestamp is valid"),
+            point_count: 4,
+            step_secs: 1,
+            start_lat_deg: 55.0,
+            start_lon_deg: 12.0,
+            lat_step_deg: 0.001,
+            lon_step_deg: 0.001,
+            heading_deg: 90.0,
+            speed_kmh: 25.0,
+            eph_m: 2.0,
+            sats_seen: 10,
+            sats_in_fix: 7,
+        };
+        let bytes = synthetic_gtd_bytes(spec);
+        assert!(
+            bytes.len() > 64,
+            "expected a non-trivial .gtd payload, got {} bytes",
+            bytes.len()
+        );
     }
 }

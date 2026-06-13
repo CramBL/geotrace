@@ -23,7 +23,6 @@ use gt_ui_types::{
     DataPointRef, EventMarkerVisibility, HighlightScope, MapHighlight, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
-use std::time::Instant;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
 use walkers::{HttpTiles, Map, MapMemory};
 
@@ -64,23 +63,25 @@ pub enum MapContextAction {
 ///
 /// Tracks when the animation started and provides the per-frame alpha value.
 /// Once expired it clears itself so callers can avoid unnecessary repaints.
+/// Timestamps are egui clock seconds (`InputState::time`) rather than wall
+/// time, so the pulse is deterministic under `egui_kittest`'s simulated time.
 struct BlinkState {
-    start: Option<Instant>,
+    start: Option<f64>,
 }
 
 impl BlinkState {
-    fn trigger(&mut self) {
-        self.start = Some(Instant::now());
+    fn trigger(&mut self, now: f64) {
+        self.start = Some(now);
     }
 
     /// Returns alpha in `[0.0, 1.0]` for the current frame.
     /// Resets the timer when the animation expires so `is_active` returns
     /// `false` on the same frame the last pulse ends.
-    fn tick(&mut self) -> f32 {
+    fn tick(&mut self, now: f64) -> f32 {
         let Some(start) = self.start else {
             return 0.0;
         };
-        let elapsed = start.elapsed().as_secs_f32();
+        let elapsed = (now - start) as f32;
         if elapsed >= 3.0 {
             self.start = None;
             0.0
@@ -255,6 +256,8 @@ impl NavMap {
             zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
         }
 
+        let now = ui.ctx().input(|i| i.time);
+
         // Detect newly loaded files → zoom to fit all data + start blink animation.
         if files.len() > self.last_file_count {
             self.new_file_boundary = self.last_file_count;
@@ -263,7 +266,7 @@ impl NavMap {
             // Only blink when adding to existing content; the first load needs no
             // visual callout because there is nothing else to differentiate from.
             if had_tracks {
-                self.blink.trigger();
+                self.blink.trigger(now);
             }
             if let Some(bbox) = compute_bounding_box(files) {
                 zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
@@ -271,7 +274,7 @@ impl NavMap {
             self.global_tree = gt_track_builder::build_global_tree(files);
         }
 
-        let blink_alpha = self.blink.tick();
+        let blink_alpha = self.blink.tick(now);
         if self.blink.is_active() {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(16));
