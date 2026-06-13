@@ -1,8 +1,8 @@
 name: CI / SDK Prebuilt Libraries
-# Demonstrates that the C SDK can be consumed WITHOUT the Rust toolchain by:
-#   1. Building the library with Rust and uploading it as a CI artifact.
-#   2. Downloading only the artifact in a separate job and building + running
-#      a C consumer against it — mirroring a real GitHub Releases pipeline.
+# Demonstrates that the C SDK can be consumed WITHOUT the Rust toolchain: one
+# job builds the library with Rust and uploads it as a CI artifact, and a
+# separate job downloads only that artifact and builds + runs a C consumer
+# against it — mirroring a real GitHub Releases pipeline.
 on:
   push:
     branches: [trunk]

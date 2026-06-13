@@ -9,11 +9,13 @@ Multiple checks may share one comment:
 """
 
 import re
+import sys
 from itertools import chain
 from pathlib import Path
 
 from qa._allow import is_exempt
 from qa._check import (
+    Check,
     Violation,
     c_family_files,
     hash_comment_files,
@@ -40,11 +42,15 @@ def _collect(root: Path) -> list[Violation]:
     return violations
 
 
+DEFINITION = Check(
+    name=CHECK,
+    title="em-dash / box-drawing section header comments found",
+    collect=_collect,
+    note=_NOTE,
+    help=_HELP,
+)
+
+
 def main() -> None:
-    run_check(
-        CHECK,
-        "em-dash / box-drawing section header comments found",
-        _collect(repo_root()),
-        _NOTE,
-        _HELP,
-    )
+    if run_check(DEFINITION, repo_root()):
+        sys.exit(1)

@@ -2,7 +2,8 @@
 _QA := "uv run --project " + source_directory()
 
 [group("qa")]
-check-all: check-em-dash check-floating-comments check-narrative-comments
+check-all:
+    {{ _QA }} check-all
 
 [group("qa")]
 check-em-dash:

@@ -225,11 +225,9 @@ jobs:
 
   # C++ SDK tests - Linux, macOS, and Windows; C++17 and C++20.
   #
-  # Strategy:
-  #   1. Build geotrace-c with Cargo (produces shared lib on Unix, static lib on Windows).
-  #   2. Install the C SDK to a local prefix so find_package(GeoTraceC) works.
-  #   3. Configure and build the C++ SDK with BUILD_TESTING=ON.
-  #   4. Run ctest.
+  # Builds geotrace-c with Cargo (shared lib on Unix, static lib on Windows),
+  # installs the C SDK to a local prefix so find_package(GeoTraceC) works,
+  # configures and builds the C++ SDK with BUILD_TESTING=ON, then runs ctest.
   cpp-sdk:
     name: C++ SDK / ${{ matrix.os }} / C++${{ matrix.cxx_std }}${{ matrix.generator && format(' / {0}', matrix.generator) || '' }}
     runs-on: ${{ matrix.os }}
