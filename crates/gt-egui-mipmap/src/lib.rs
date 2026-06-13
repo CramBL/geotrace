@@ -30,14 +30,20 @@
 
 use egui_plot::PlotPoint;
 
-/// Minimum number of points in a mipmap level.
-/// Levels smaller than this are not added to the cascade.
-const MIN_LEVEL_POINTS: usize = 200;
+/// Smallest mipmap level the cascade builds down to: two points, i.e. a single
+/// line segment.  Driving the cascade all the way down lets a track that only
+/// occupies a few screen pixels be drawn with a handful of points instead of
+/// its full resolution - the key to keeping many short tracks cheap when zoomed
+/// out.  (A 2-point level downsamples to itself, so [`MipMap::build`] also stops
+/// when a level stops shrinking.)
+const MIN_LEVEL_POINTS: usize = 2;
 
 /// Number of input points grouped into one output pair (min + max) at each
 /// downsampling step.
-/// This gives a ~4× point-count reduction per level.
-const DOWNSAMPLE_WINDOW: usize = 8;
+/// A window of 4 emits 2 points, giving a ~2× point-count reduction per level -
+/// fine-grained enough that level selection can closely match the target sample
+/// count rather than overshooting it by up to 4×.
+const DOWNSAMPLE_WINDOW: usize = 4;
 
 /// A cached level selection produced by [`MipMap::select_indices`].
 ///
@@ -69,9 +75,9 @@ impl MipMap {
     /// Build a mipmap cascade from a time-sorted dataset.
     ///
     /// `data` must be sorted by `x` (ascending).
-    /// If it has fewer than `MIN_LEVEL_POINTS` points no downsampling is
-    /// performed and the cascade contains only the original data as its single
-    /// level.
+    /// Downsampling continues by ~2× per level until a level reaches the
+    /// [`MIN_LEVEL_POINTS`] floor (or stops shrinking), so all but the very
+    /// smallest inputs gain coarse levels down to a single segment.
     pub fn build(data: Vec<[f64; 2]>) -> Self {
         if data.is_empty() {
             return Self { levels: Vec::new() };
@@ -83,8 +89,12 @@ impl MipMap {
             // and we only append.  `map_or` avoids an `expect` while remaining
             // correct: an empty fallback produces an empty downsample, which has
             // len < MIN_LEVEL_POINTS and immediately breaks.
+            let last_len = levels.last().map_or(0, Vec::len);
             let next = downsample(levels.last().map_or(&[][..], Vec::as_slice));
-            if next.len() < MIN_LEVEL_POINTS {
+            // Stop at the floor, and also when a level stops shrinking: a
+            // 2-point window downsamples back to 2 points, so without this guard
+            // the cascade would loop forever once it reaches the bottom.
+            if next.len() < MIN_LEVEL_POINTS || next.len() >= last_len {
                 break;
             }
             levels.push(next);
@@ -279,11 +289,30 @@ mod tests {
     }
 
     #[test]
-    fn small_data_no_downsampling() {
-        let data = seq(50);
-        let m = MipMap::build(data.clone());
+    fn moderate_data_downsamples_to_coarse_levels() {
+        // 50 points used to stay a single level under the old 200-point floor.
+        // The cascade now continues down so a short track that occupies only a
+        // few pixels when zoomed out can be drawn with a handful of points.
+        let m = MipMap::build(seq(50));
+        assert!(
+            m.level_count() > 1,
+            "moderate input should now produce coarse levels"
+        );
+        let coarsest = m.levels.last().expect("at least one level");
+        assert!(
+            coarsest.len() <= DOWNSAMPLE_WINDOW,
+            "cascade should reduce down toward a single segment, got {}",
+            coarsest.len()
+        );
+    }
+
+    #[test]
+    fn tiny_data_stays_single_level() {
+        // Two points cannot be downsampled further (a 2-point window maps to
+        // itself), so the cascade stops immediately at a lone level.
+        let m = MipMap::build(vec![[0.0, 1.0], [1.0, 2.0]]);
         assert_eq!(m.level_count(), 1);
-        assert_eq!(m.original_len(), 50);
+        assert_eq!(m.original_len(), 2);
     }
 
     #[test]
@@ -294,9 +323,13 @@ mod tests {
             m.level_count() > 1,
             "should have at least 2 levels for 10K points"
         );
-        // Coarsest level should have >= MIN_LEVEL_POINTS points
         let coarsest = m.levels.last().expect("at least one level");
         assert!(coarsest.len() >= MIN_LEVEL_POINTS);
+        assert!(
+            coarsest.len() <= DOWNSAMPLE_WINDOW,
+            "cascade should reduce down toward a single segment, got {}",
+            coarsest.len()
+        );
     }
 
     #[test]
@@ -333,9 +366,8 @@ mod tests {
         let data: Vec<[f64; 2]> = (0..10_000).map(|i| [i as f64, 1.0]).collect();
         let m = MipMap::build(data);
         let total_range_slice = m.select_slice(0.0, 9_999.0, 50);
-        // With a small target (50), the coarsest level should be selected.
-        // The coarsest level has MIN_LEVEL_POINTS ≥ 200 points total,
-        // but in the full range that's still < 10_000.
+        // With a small target (50) over the full range, a coarse level is
+        // selected - far fewer than the 10_000 original points.
         assert!(
             total_range_slice.len() < 5_000,
             "should use a coarser level"
@@ -349,15 +381,23 @@ mod tests {
     // visible range.  Without that, egui_plot draws the line only between the
     // points that fall inside the viewport, producing a visually disconnected
     // segment instead of a continuous line.
+    //
+    // These use a target larger than the data length so the finest level is
+    // selected (no coarse level can meet it), making the exact integer
+    // neighbours deterministic while still exercising the ±1 edge extension.
     fn int_data(n: usize) -> Vec<[f64; 2]> {
         (0..n).map(|i| [i as f64, i as f64]).collect()
     }
+
+    /// Target that exceeds every `int_data` fixture below, forcing finest-level
+    /// selection.
+    const FINEST: usize = 100;
 
     #[test]
     fn select_slice_includes_left_neighbor() {
         let m = MipMap::build(int_data(50));
         // Viewport [10, 30]: point at x=9 must be included as the left neighbor.
-        let slice = m.select_slice(10.0, 30.0, 5);
+        let slice = m.select_slice(10.0, 30.0, FINEST);
         assert!(
             slice.iter().any(|p| p.x as i64 == 9),
             "select_slice must include the point just left of x_min to keep the line connected"
@@ -368,7 +408,7 @@ mod tests {
     fn select_slice_includes_right_neighbor() {
         let m = MipMap::build(int_data(50));
         // Viewport [10, 30]: point at x=31 must be included as the right neighbor.
-        let slice = m.select_slice(10.0, 30.0, 5);
+        let slice = m.select_slice(10.0, 30.0, FINEST);
         assert!(
             slice.iter().any(|p| p.x as i64 == 31),
             "select_slice must include the point just right of x_max to keep the line connected"
@@ -378,7 +418,7 @@ mod tests {
     #[test]
     fn select_indices_includes_left_neighbor() {
         let m = MipMap::build(int_data(50));
-        let sel = m.select_indices(10.0, 30.0, 5);
+        let sel = m.select_indices(10.0, 30.0, FINEST);
         let slice = m.slice_at(sel);
         assert!(
             slice.iter().any(|p| p.x as i64 == 9),
@@ -389,7 +429,7 @@ mod tests {
     #[test]
     fn select_indices_includes_right_neighbor() {
         let m = MipMap::build(int_data(50));
-        let sel = m.select_indices(10.0, 30.0, 5);
+        let sel = m.select_indices(10.0, 30.0, FINEST);
         let slice = m.slice_at(sel);
         assert!(
             slice.iter().any(|p| p.x as i64 == 31),
@@ -401,7 +441,7 @@ mod tests {
     fn select_slice_no_left_neighbor_at_start() {
         // x_min is at the very beginning: no left neighbor exists, must not panic.
         let m = MipMap::build(int_data(50));
-        let slice = m.select_slice(0.0, 10.0, 5);
+        let slice = m.select_slice(0.0, 10.0, FINEST);
         assert!(
             slice.iter().all(|p| p.x >= 0.0),
             "must not include out-of-range left points"
@@ -413,7 +453,7 @@ mod tests {
     fn select_slice_no_right_neighbor_at_end() {
         // x_max is at the very end: no right neighbor exists, must not panic.
         let m = MipMap::build(int_data(50));
-        let slice = m.select_slice(40.0, 49.0, 5);
+        let slice = m.select_slice(40.0, 49.0, FINEST);
         assert!(
             slice.iter().all(|p| p.x <= 49.0),
             "must not include out-of-range right points"

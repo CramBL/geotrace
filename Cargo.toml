@@ -242,6 +242,11 @@ strip = true
 lto = true
 codegen-units = 1
 
+[profile.fast-release]
+inherits = "release"
+lto = false
+codegen-units = 16
+
 [profile.dev]
 debug = "line-tables-only"
 

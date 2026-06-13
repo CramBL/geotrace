@@ -126,8 +126,71 @@ const SWATCH_STROKE_WIDTH: f32 = 2.0;
 const SWATCH_DASH_GAP_RATIO: f32 = 0.62;
 const SWATCH_DOT_RADIUS: f32 = 1.7;
 
+/// Overlap budget expressed as a multiple of the single-track target
+/// (`≈ 2 × plot_width_px`).  Tracks that overlap in time each span the full
+/// width; this many of them can do so at full resolution before [`budget_cap`]
+/// starts sharing the budget between them.  See [`budget_cap`].
+const BUDGET_TRACK_MULTIPLE: usize = 8;
+
 fn metric_line_color(kind: MetricKind, file_index: usize) -> Color32 {
     shade_color(kind.color(), file_shade_factor(file_index))
+}
+
+/// Full-resolution sample target for a single track filling the plot width:
+/// ~2 samples per pixel, floored so a very narrow plot still has usable detail.
+fn single_target(available_width: f32) -> usize {
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "available_width is always ≥ 0 in practice; .max(0.0) makes it explicit"
+    )]
+    let px = available_width.max(0.0) as usize;
+    (px * 2).max(400)
+}
+
+/// Upper bound on any single track's sample target.
+///
+/// Tracks that overlap in time all span the full plot width, so without a cap
+/// N of them would each request [`single_target`] points.  Sharing a budget of
+/// `single × BUDGET_TRACK_MULTIPLE` across the visible tracks bounds the total
+/// handed to egui_plot in that worst case.  Tracks that occupy only part of the
+/// width get far less via [`track_target`]; this cap only bites when many tracks
+/// pile up in the same time range.
+fn budget_cap(available_width: f32, visible_count: usize) -> usize {
+    let single = single_target(available_width);
+    let count = visible_count.max(1);
+    (single.saturating_mul(BUDGET_TRACK_MULTIPLE) / count).clamp(2, single)
+}
+
+/// Sample target for one track: ~2 points per pixel of the track's *visible*
+/// width within the current view, capped by `cap` and floored at 2 (a single
+/// segment).
+///
+/// A track that occupies only a few pixels when zoomed out therefore hands only
+/// a few points to the plot.  Paired with the mipmap cascading down to 2 points
+/// (so a coarse-enough level actually exists), this is what keeps many short
+/// tracks cheap - the fixed per-track target it replaces always pulled hundreds
+/// of points per track regardless of on-screen size.
+fn track_target(
+    x_range: Option<(f64, f64)>,
+    x_min: f64,
+    x_max: f64,
+    available_width: f32,
+    cap: usize,
+) -> usize {
+    let view = x_max - x_min;
+    let Some((lo, hi)) = x_range else { return 2 };
+    if !view.is_finite() || view <= 0.0 {
+        return cap;
+    }
+    let visible = (hi.min(x_max) - lo.max(x_min)).max(0.0);
+    let pixels = f64::from(available_width) * (visible / view);
+    #[expect(
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation,
+        reason = "pixels is finite and ≥ 0; truncating a ~2-per-pixel count to an integer is intended"
+    )]
+    let want = (2.0 * pixels) as usize;
+    want.clamp(2, cap)
 }
 
 fn file_shade_factor(file_index: usize) -> i16 {
@@ -377,11 +440,12 @@ pub struct PlotState {
     /// Cached level selections, one entry per series.
     /// Invalidated when the effective plot bounds or target sample count changes.
     level_cache: Vec<TripLevelCache>,
-    /// The `(eff_x_min, eff_x_max, target_count)` at which the current
-    /// `level_cache` was computed.  `None` forces a recompute on the next frame.
-    /// Used for hysteresis: the cache is reused as long as the view has not
-    /// moved by more than 10 pixels since the last recompute.
-    last_computed_bounds: Option<(f64, f64, usize)>,
+    /// The `(eff_x_min, eff_x_max, plot_width_bits, sample_cap)` at which the
+    /// current `level_cache` was computed.  `None` forces a recompute on the
+    /// next frame.  Used for hysteresis: the cache is reused as long as the view
+    /// has not moved by more than ~10 pixels and neither the plot width nor the
+    /// per-track sample cap has changed since the last recompute.
+    last_computed_bounds: Option<(f64, f64, u32, usize)>,
     /// The map x-range (encoded as bit-pattern pairs) most recently applied to
     /// the plot via `set_plot_bounds_x`.  Used to detect changes and avoid
     /// re-applying the same range every frame (which would prevent manual zoom).
@@ -514,16 +578,14 @@ pub fn show_track_plot(
         &mut state.sync_to_map,
     );
 
-    // Number of data points to request from the mipmap per frame.
-    // Twice the pixel width gives ≥2 samples per screen pixel, which is enough
-    // for faithful peak/trough rendering without over-sampling.
-    // `available_width()` returns a positive f32; `.max(0.0)` makes this explicit
-    // before casting, which the sign-loss lint cannot track statically.
-    #[expect(
-        clippy::cast_sign_loss,
-        reason = "available_width is always ≥ 0 in practice; .max(0.0) makes it explicit"
-    )]
-    let target_count = (ui.available_width().max(0.0) as usize * 2).max(400);
+    // Sample budgeting: each track requests ~2 points per pixel of its *visible*
+    // width (`track_target`, computed per series below), so a track that only
+    // occupies a few pixels when zoomed out hands over only a few points.  The
+    // cap bounds the worst case where many tracks overlap in the same time range
+    // and each spans the full width.  Together with the mipmap now cascading
+    // down to 2 points, this is what keeps a screen full of short tracks cheap.
+    let available_width = ui.available_width();
+    let sample_cap = budget_cap(available_width, visible_count);
 
     // Filter time range → x-axis bounds for mipmap slice clamping.
     let filter_x_min: Option<f64> = filter.time_start.map(|t| t.timestamp() as f64);
@@ -584,7 +646,7 @@ pub fn show_track_plot(
     let need_map_sync = map_x_key.is_some_and(|k| state.applied_map_x_range != Some(k));
 
     let mut new_hovered_time: Option<DateTime<Utc>> = None;
-    let mut new_computed_bounds: Option<(f64, f64, usize)> = None;
+    let mut new_computed_bounds: Option<(f64, f64, u32, usize)> = None;
     let mut new_level_cache: Option<Vec<TripLevelCache>> = None;
     let mut new_applied_map_x_range: Option<Option<(u64, u64)>> = None;
 
@@ -612,13 +674,17 @@ pub fn show_track_plot(
         let eff_x_min = filter_x_min.map_or(plot_x_min, |f| plot_x_min.max(f));
         let eff_x_max = filter_x_max.map_or(plot_x_max, |f| plot_x_max.min(f));
 
-        // Hysteresis: skip recompute when the view has moved less than 10 px
+        // Hysteresis: skip recompute when the view has moved less than ~10 px
         // since the last cache fill.  Converting to data space:
-        //   10 px × (data_range / plot_width_px) = 20 × data_range / target_count
-        // (target_count ≈ 2 × plot_width_px, always ≥ 400).
-        let threshold = 20.0 * (eff_x_max - eff_x_min) / target_count as f64;
-        let cache_valid = last_computed_bounds.is_some_and(|(lx_min, lx_max, lt_count)| {
-            lt_count == target_count
+        //   10 px × (data_range / plot_width_px) = 20 × data_range / single
+        // (single ≈ 2 × plot_width_px, always ≥ 400).  The cache also depends on
+        // the plot width and visible count (both feed the per-track targets), so
+        // those are part of the validity check, not just the view bounds.
+        let single = single_target(available_width);
+        let threshold = 20.0 * (eff_x_max - eff_x_min) / single as f64;
+        let cache_valid = last_computed_bounds.is_some_and(|(lx_min, lx_max, lw, lcap)| {
+            lw == available_width.to_bits()
+                && lcap == sample_cap
                 && level_cache.len() == series_cache.len()
                 && (eff_x_min - lx_min).abs() <= threshold
                 && (eff_x_max - lx_max).abs() <= threshold
@@ -631,10 +697,10 @@ pub fn show_track_plot(
         } else {
             let fresh: Vec<TripLevelCache> = series_cache
                 .par_iter()
-                .map(|s| compute_level_cache(s, eff_x_min, eff_x_max, target_count))
+                .map(|s| compute_level_cache(s, eff_x_min, eff_x_max, available_width, sample_cap))
                 .collect();
-            new_computed_bounds = Some((eff_x_min, eff_x_max, target_count));
-            new_level_cache = Some(fresh.clone());
+            new_computed_bounds =
+                Some((eff_x_min, eff_x_max, available_width.to_bits(), sample_cap));
             std::borrow::Cow::Owned(fresh)
         };
 
@@ -664,6 +730,12 @@ pub fn show_track_plot(
                 hovered_chip,
                 effective_hover_scope,
             );
+        }
+
+        // Persist a freshly computed cache by moving it out of the Cow now that
+        // the render loop is done borrowing it - no per-frame clone.
+        if let std::borrow::Cow::Owned(owned) = resolved {
+            new_level_cache = Some(owned);
         }
 
         // Vertical cursor from map hover.
@@ -1033,14 +1105,20 @@ fn metric_chip(
     (show_only, response.hovered())
 }
 
-/// Compute fresh level selections for all 12 metrics of one track's series.
+/// Compute fresh level selections for all metrics of one track's series.
+///
+/// The sample target is derived per track from how many pixels the track
+/// occupies in the current view ([`track_target`]), so a track that is only a
+/// few pixels wide selects a coarse mipmap level with just a few points.
 fn compute_level_cache(
     series: &TrackSeries,
     x_min: f64,
     x_max: f64,
-    target_count: usize,
+    available_width: f32,
+    sample_cap: usize,
 ) -> TripLevelCache {
-    let sel = |mm: &MipMap| mm.select_indices(x_min, x_max, target_count);
+    let target = track_target(series.x_range, x_min, x_max, available_width, sample_cap);
+    let sel = |mm: &MipMap| mm.select_indices(x_min, x_max, target);
     TripLevelCache {
         total_seen: sel(&series.total_seen),
         total_fix: sel(&series.total_fix),
@@ -1232,6 +1310,57 @@ pub fn find_closest_tpv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn track_target_scales_with_visible_pixels() {
+        let width = 1000.0;
+        let cap = single_target(width);
+
+        // A track spanning the whole view gets ~2 points per pixel (width is
+        // 1000 px, so a full-width track should exceed that).
+        let full = track_target(Some((0.0, 100.0)), 0.0, 100.0, width, cap);
+        assert!(full > 1000, "full-width track should be ~2 pts/pixel");
+        assert!(full <= cap);
+
+        // A track occupying ~1% of the view (~10 px) hands over only a handful
+        // of points - the old fixed target pulled hundreds regardless.
+        let tiny = track_target(Some((0.0, 1.0)), 0.0, 100.0, width, cap);
+        assert!(tiny >= 2);
+        assert!(
+            tiny <= 32,
+            "few-pixel track must hand over few points, got {tiny}"
+        );
+
+        // An empty track stays minimal; a degenerate (zero-width) view never
+        // divides by zero and falls back to the cap.
+        assert_eq!(track_target(None, 0.0, 100.0, width, cap), 2);
+        assert_eq!(track_target(Some((0.0, 1.0)), 5.0, 5.0, width, cap), cap);
+    }
+
+    #[test]
+    fn budget_cap_bounds_overlapping_tracks() {
+        let width = 1000.0;
+        let single = single_target(width);
+        let budget = single * BUDGET_TRACK_MULTIPLE;
+
+        // Up to BUDGET_TRACK_MULTIPLE overlapping tracks keep full resolution.
+        assert_eq!(budget_cap(width, 1), single);
+        assert_eq!(budget_cap(width, BUDGET_TRACK_MULTIPLE), single);
+
+        // Beyond that the cap shares the budget so total full-width points stay
+        // bounded (allowing the integer-division remainder).
+        for count in [BUDGET_TRACK_MULTIPLE + 1, 50, 500] {
+            let cap = budget_cap(width, count);
+            assert!((2..=single).contains(&cap));
+            assert!(
+                cap * count <= budget + count,
+                "cap {cap} × {count} exceeds budget {budget}"
+            );
+        }
+
+        // Zero visible count must not divide by zero.
+        assert_eq!(budget_cap(width, 0), single);
+    }
 
     #[test]
     fn file_shading_distinguishes_adjacent_files() {
