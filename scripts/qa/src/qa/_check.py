@@ -1,10 +1,10 @@
 """Shared infrastructure for QA checks: file iteration, reporting, and exit logic."""
 
 import subprocess
-import sys
-from collections.abc import Iterator
-from functools import lru_cache
+from collections.abc import Callable, Iterator
+from functools import cache
 from pathlib import Path
+from typing import NamedTuple
 
 Violation = tuple[Path, int, str]
 
@@ -21,15 +21,14 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent.parent.parent
 
 
-@lru_cache(maxsize=1)
-def _tracked_files() -> frozenset[Path]:
-    """Absolute paths of files git does not ignore: tracked files plus
-    untracked files that aren't matched by `.gitignore`.
+@cache
+def _tracked_files(root: Path) -> frozenset[Path]:
+    """Absolute paths of files git does not ignore under `root`: tracked files
+    plus untracked files that aren't matched by `.gitignore`.
 
     Keeps the checks below from scanning build artifacts, virtualenvs, and
     other generated files that happen to match a checked file pattern.
     """
-    root = repo_root()
     output = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=root,
@@ -40,13 +39,13 @@ def _tracked_files() -> frozenset[Path]:
     return frozenset(root / p for p in output.split("\0") if p)
 
 
-def _is_excluded(path: Path) -> bool:
-    return path not in _tracked_files()
+def _is_excluded(root: Path, path: Path) -> bool:
+    return path not in _tracked_files(root)
 
 
 def rs_files(root: Path) -> Iterator[Path]:
     for path in sorted(root.rglob("*.rs")):
-        if not _is_excluded(path):
+        if not _is_excluded(root, path):
             yield path
 
 
@@ -55,7 +54,7 @@ def hash_comment_files(root: Path) -> Iterator[Path]:
     seen: set[Path] = set()
     for pattern in ("*.py", "*.just", "justfile", "CMakeLists.txt", "*.cmake"):
         for path in root.rglob(pattern):
-            if not _is_excluded(path) and path not in seen:
+            if not _is_excluded(root, path) and path not in seen:
                 seen.add(path)
     yield from sorted(seen)
 
@@ -65,7 +64,7 @@ def c_family_files(root: Path) -> Iterator[Path]:
     seen: set[Path] = set()
     for pattern in ("*.c", "*.h", "*.cpp", "*.hpp"):
         for path in root.rglob(pattern):
-            if not _is_excluded(path) and path not in seen:
+            if not _is_excluded(root, path) and path not in seen:
                 seen.add(path)
     yield from sorted(seen)
 
@@ -75,7 +74,7 @@ def yaml_files(root: Path) -> Iterator[Path]:
     seen: set[Path] = set()
     for pattern in ("*.yml", "*.yaml"):
         for path in root.rglob(pattern):
-            if not _is_excluded(path) and path not in seen:
+            if not _is_excluded(root, path) and path not in seen:
                 seen.add(path)
     yield from sorted(seen)
 
@@ -103,13 +102,23 @@ def report(
     _labelled_lines("help", help + [f'// [qa-allow-{check}, reason = "why this is acceptable"]'])
 
 
-def run_check(
-    check: str,
-    title: str,
-    violations: list[Violation],
-    note: list[str],
-    help: list[str],
-) -> None:
+class Check(NamedTuple):
+    """A single QA check: how to find its violations and how to report them."""
+
+    name: str
+    title: str
+    collect: Callable[[Path], list[Violation]]
+    note: list[str]
+    help: list[str]
+
+
+def run_check(check: Check, root: Path) -> bool:
+    """Run `check` against `root`, printing a report if it finds violations.
+
+    Returns `True` if any violations were found.
+    """
+    violations = check.collect(root)
     if violations:
-        report(check, title, violations, note, help)
-        sys.exit(1)
+        report(check.name, check.title, violations, check.note, check.help)
+        return True
+    return False

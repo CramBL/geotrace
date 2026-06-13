@@ -13,11 +13,12 @@ Multiple checks may share one comment:
 """
 
 import re
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
 from qa._allow import is_exempt
-from qa._check import Violation, c_family_files, repo_root, rs_files, run_check, yaml_files
+from qa._check import Check, Violation, c_family_files, repo_root, rs_files, run_check, yaml_files
 
 CHECK = "check-floating-comments"
 # `(?:[^/!]|$)` also matches bare `//` continuation lines (no trailing text),
@@ -82,5 +83,15 @@ def _collect(root: Path) -> list[Violation]:
     return violations
 
 
+DEFINITION = Check(
+    name=CHECK,
+    title="floating comments found",
+    collect=_collect,
+    note=_NOTE,
+    help=_HELP,
+)
+
+
 def main() -> None:
-    run_check(CHECK, "floating comments found", _collect(repo_root()), _NOTE, _HELP)
+    if run_check(DEFINITION, repo_root()):
+        sys.exit(1)
