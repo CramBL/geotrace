@@ -43,10 +43,26 @@ pub fn event_marker_fallback_color(variant_path: &str) -> MarkerColor {
     EVENT_FALLBACK_COLORS[hash as usize % EVENT_FALLBACK_COLORS.len()]
 }
 
+/// An automatically-detected GNSS event, with the per-event payload carried in
+/// the variant that needs it (so a `match` stays exhaustive and there are no
+/// "valid only for kind X" optional fields hanging off the marker).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeneratedMarkerKind {
     GnssFixLost,
-    GnssFixRegained,
+    GnssFixRegained {
+        /// How long the fix was lost before being regained.
+        fix_lost_duration: Duration,
+    },
+    /// The GPS−system clock offset jumped abruptly at this sample relative to
+    /// the previous one - e.g. a device resuming from suspend, where a stale
+    /// pre-suspend GPS timestamp meets a post-wake system timestamp.  Surfaced
+    /// (never hidden) because such clock discontinuities are exactly the kind of
+    /// anomaly engineers use GeoTrace to find.
+    ClockDiscontinuity {
+        /// Signed change in the GPS−system offset from the previous sample (the
+        /// size of the jump).
+        step: Duration,
+    },
 }
 
 impl std::fmt::Display for GeneratedMarkerKind {
@@ -55,7 +71,8 @@ impl std::fmt::Display for GeneratedMarkerKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::GnssFixLost => "GNSS fix lost",
-            Self::GnssFixRegained => "GNSS fix regained",
+            Self::GnssFixRegained { .. } => "GNSS fix regained",
+            Self::ClockDiscontinuity { .. } => "Clock discontinuity",
         })
     }
 }
@@ -66,8 +83,6 @@ pub struct GeneratedMarker {
     pub kind: GeneratedMarkerKind,
     pub lat: Latitude,
     pub lon: Longitude,
-    /// For `GnssFixRegained`: how long the fix was lost. None for `GnssFixLost`.
-    pub fix_lost_duration: Option<Duration>,
     /// Pre-computed normalized Mercator coordinates, see [`crate::mercator`].
     pub merc: MercPoint,
 }
@@ -88,8 +103,18 @@ mod generated_marker_kind_tests {
             "GNSS fix lost"
         );
         assert_eq!(
-            GeneratedMarkerKind::GnssFixRegained.to_string(),
+            GeneratedMarkerKind::GnssFixRegained {
+                fix_lost_duration: Duration::zero()
+            }
+            .to_string(),
             "GNSS fix regained"
+        );
+        assert_eq!(
+            GeneratedMarkerKind::ClockDiscontinuity {
+                step: Duration::zero()
+            }
+            .to_string(),
+            "Clock discontinuity"
         );
     }
 }
@@ -100,7 +125,6 @@ impl GeneratedMarker {
         kind: GeneratedMarkerKind,
         lat: Latitude,
         lon: Longitude,
-        fix_lost_duration: Option<Duration>,
     ) -> Self {
         let merc = crate::mercator::normalize(lat, lon);
         Self {
@@ -108,7 +132,6 @@ impl GeneratedMarker {
             kind,
             lat,
             lon,
-            fix_lost_duration,
             merc,
         }
     }

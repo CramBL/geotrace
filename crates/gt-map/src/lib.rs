@@ -1089,10 +1089,11 @@ mod tests {
             custom_markers: vec![],
             generated_markers: vec![GeneratedMarker {
                 time: now,
-                kind: GeneratedMarkerKind::GnssFixRegained,
+                kind: GeneratedMarkerKind::GnssFixRegained {
+                    fix_lost_duration: dur,
+                },
                 lat,
                 lon,
-                fix_lost_duration: Some(dur),
                 merc: mercator::normalize(lat, lon),
             }],
             event_markers: vec![],
@@ -1120,8 +1121,9 @@ mod tests {
             point_index: PointIdx::new(0),
         };
         let expected = crate::generated_marker_renderer::generated_marker_header(
-            GeneratedMarkerKind::GnssFixRegained,
-            Some(dur),
+            GeneratedMarkerKind::GnssFixRegained {
+                fix_lost_duration: dur,
+            },
         );
         assert_eq!(
             candidate_label(candidate, &[file]),
@@ -1210,10 +1212,11 @@ mod snapshot_tests {
         );
         let generated_marker = GeneratedMarker {
             time: t0,
-            kind: GeneratedMarkerKind::GnssFixRegained,
+            kind: GeneratedMarkerKind::GnssFixRegained {
+                fix_lost_duration: chrono::Duration::milliseconds(12_300),
+            },
             lat,
             lon,
-            fix_lost_duration: Some(chrono::Duration::milliseconds(12_300)),
             merc: mercator::normalize(lat, lon),
         };
 

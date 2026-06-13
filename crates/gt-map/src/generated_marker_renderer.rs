@@ -62,26 +62,24 @@ impl<'a> GeneratedMarkerRenderer<'a> {
                 .with(point_ref.point_index),
             egui::Sense::hover(),
         );
-        response.show_tooltip_ui(|ui| match marker.kind {
-            gt_types::GeneratedMarkerKind::GnssFixLost => {
-                ui.strong(generated_marker_header(
-                    marker.kind,
-                    marker.fix_lost_duration,
-                ));
-                let corresponding = track
+        response.show_tooltip_ui(|ui| {
+            ui.strong(generated_marker_header(marker.kind));
+            // Fix-lost and clock-discontinuity markers sit on a specific
+            // anomalous sample, so also show that point's data; fix-regained is
+            // a transition with no single underlying point to detail.
+            let show_point = match marker.kind {
+                gt_types::GeneratedMarkerKind::GnssFixLost
+                | gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. } => true,
+                gt_types::GeneratedMarkerKind::GnssFixRegained { .. } => false,
+            };
+            if show_point
+                && let Some(point) = track
                     .points
                     .iter()
-                    .find(|p| p.tpv.time().utc() == marker.time);
-                if let Some(point) = corresponding {
-                    ui.separator();
-                    crate::tpv_renderer::show_hover_table(ui, point);
-                }
-            }
-            gt_types::GeneratedMarkerKind::GnssFixRegained => {
-                ui.strong(generated_marker_header(
-                    marker.kind,
-                    marker.fix_lost_duration,
-                ));
+                    .find(|p| p.tpv.time().utc() == marker.time)
+            {
+                ui.separator();
+                crate::tpv_renderer::show_hover_table(ui, point);
             }
         });
     }
@@ -163,18 +161,22 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
 /// Centralises the "GNSS fix regained after Xs" formatting so both the live
 /// tooltip (`show_tooltip`) and the multi-hover compound label
 /// (`draw_candidate_section`) always produce identical text.
-pub(crate) fn generated_marker_header(
-    kind: gt_types::GeneratedMarkerKind,
-    fix_lost_duration: Option<chrono::Duration>,
-) -> String {
+pub(crate) fn generated_marker_header(kind: gt_types::GeneratedMarkerKind) -> String {
     match kind {
-        gt_types::GeneratedMarkerKind::GnssFixRegained => match fix_lost_duration {
-            Some(dur) => format!(
-                "{kind} after {}",
-                format_fix_duration(dur.num_milliseconds())
-            ),
-            None => kind.to_string(),
-        },
+        gt_types::GeneratedMarkerKind::GnssFixRegained { fix_lost_duration } => format!(
+            "{kind} after {}",
+            format_fix_duration(fix_lost_duration.num_milliseconds())
+        ),
+        gt_types::GeneratedMarkerKind::ClockDiscontinuity { step } => {
+            let ms = step.num_milliseconds();
+            let sign = if ms < 0 { "-" } else { "+" };
+            // saturating_abs, not abs: avoids the i64::MIN panic surface, matching
+            // the structural .abs() avoidance in the detector.
+            format!(
+                "{kind} ({sign}{})",
+                format_fix_duration(ms.saturating_abs())
+            )
+        }
         gt_types::GeneratedMarkerKind::GnssFixLost => kind.to_string(),
     }
 }
@@ -213,8 +215,11 @@ fn draw_generated_marker(
         gt_types::GeneratedMarkerKind::GnssFixLost => {
             (Color32::from_rgb(219, 68, 55), Color32::WHITE)
         }
-        gt_types::GeneratedMarkerKind::GnssFixRegained => {
+        gt_types::GeneratedMarkerKind::GnssFixRegained { .. } => {
             (Color32::from_rgb(15, 157, 88), Color32::WHITE)
+        }
+        gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. } => {
+            (Color32::from_rgb(255, 149, 0), Color32::WHITE)
         }
     };
     let radius = if highlighted { 11.0 } else { 8.0 };
@@ -234,7 +239,7 @@ fn draw_generated_marker(
             painter.line_segment([center - egui::vec2(s, s), center + egui::vec2(s, s)], st);
             painter.line_segment([center + egui::vec2(-s, s), center + egui::vec2(s, -s)], st);
         }
-        gt_types::GeneratedMarkerKind::GnssFixRegained => {
+        gt_types::GeneratedMarkerKind::GnssFixRegained { .. } => {
             let st = Stroke::new(2.0, stroke_color);
             painter.line_segment(
                 [
@@ -247,6 +252,18 @@ fn draw_generated_marker(
                 [center + egui::vec2(-s * 0.3, s), center + egui::vec2(s, -s)],
                 st,
             );
+        }
+        gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. } => {
+            // Exclamation mark: an anomaly to inspect.
+            let st = Stroke::new(2.0, stroke_color);
+            painter.line_segment(
+                [
+                    center - egui::vec2(0.0, s),
+                    center + egui::vec2(0.0, s * 0.2),
+                ],
+                st,
+            );
+            painter.circle_filled(center + egui::vec2(0.0, s * 0.85), 1.3, stroke_color);
         }
     }
 }

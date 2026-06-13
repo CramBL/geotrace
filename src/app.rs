@@ -375,6 +375,54 @@ impl App {
                         });
                         self.assoc_config.log_marker_window_s = window_s;
                         ui.end_row();
+
+                        ui.label(format!(
+                            "{} Clock discontinuities",
+                            egui_phosphor::regular::WARNING
+                        ))
+                        .on_hover_text(
+                            "Flag abrupt jumps in the GPS/system clock offset - e.g. a device \
+                             resuming from suspend, where a stale GPS timestamp meets a fresh \
+                             system timestamp - as markers. These are surfaced for inspection; \
+                             the underlying data is never altered.",
+                        );
+                        ui.checkbox(&mut self.processing_config.detect_clock_discontinuities, "");
+                        ui.end_row();
+
+                        // Always render the sensitivity row; gray it out when
+                        // detection is off rather than hiding it (DESIGN.md: keep
+                        // the layout stable and the feature discoverable).
+                        let detect_on = self.processing_config.detect_clock_discontinuities;
+                        let sigmas = self.processing_config.clock_discontinuity_sigmas;
+                        let floor_s = gt_track_builder::clock_discontinuity_floor_seconds(sigmas);
+                        ui.label(format!(
+                            "{} Clock jump sensitivity",
+                            egui_phosphor::regular::SLIDERS_HORIZONTAL
+                        ))
+                        .on_hover_text(format!(
+                            "How far a jump must stand out from the track's normal clock \
+                             variation to be flagged, in robust standard deviations. Lower \
+                             flags more (smaller) jumps; higher flags only the most extreme.\n\n\
+                             For example, on a steady recording {sigmas:.1} σ flags jumps \
+                             larger than about {floor_s:.1} s; on a noisier one the bar rises \
+                             with the track's own variation.",
+                        ));
+                        let sensitivity = ui.add_enabled(
+                            detect_on,
+                            egui::DragValue::new(
+                                &mut self.processing_config.clock_discontinuity_sigmas,
+                            )
+                            .range(1.0..=20.0)
+                            .speed(0.1)
+                            .fixed_decimals(1)
+                            .suffix(" σ"),
+                        );
+                        if !detect_on {
+                            sensitivity.on_hover_text(
+                                "Enable \"Clock discontinuities\" to adjust the sensitivity",
+                            );
+                        }
+                        ui.end_row();
                     });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -392,6 +440,10 @@ impl App {
                         self.processing_config.track_split_gap =
                             chrono::Duration::seconds(defaults.track_split_gap_seconds as i64);
                         self.assoc_config.log_marker_window_s = defaults.log_marker_window_s;
+                        self.processing_config.detect_clock_discontinuities =
+                            defaults.detect_clock_discontinuities;
+                        self.processing_config.clock_discontinuity_sigmas =
+                            defaults.clock_discontinuity_sigmas;
                     }
                 });
             });
@@ -412,6 +464,8 @@ impl App {
         self.map.set_layer(map_layer_from_setting(s.map.layer));
         self.processing_config = SegmentationConfig {
             track_split_gap: chrono::Duration::seconds(s.processing.track_split_gap_seconds as i64),
+            detect_clock_discontinuities: s.processing.detect_clock_discontinuities,
+            clock_discontinuity_sigmas: s.processing.clock_discontinuity_sigmas,
         };
         self.assoc_config = AssociationConfig {
             log_marker_window_s: s.processing.log_marker_window_s,
@@ -487,6 +541,8 @@ impl App {
                 .to_std()
                 .map_or(300, |d| d.as_secs()),
             log_marker_window_s: self.assoc_config.log_marker_window_s,
+            detect_clock_discontinuities: self.processing_config.detect_clock_discontinuities,
+            clock_discontinuity_sigmas: self.processing_config.clock_discontinuity_sigmas.into(),
             storage_enabled: self.storage_enabled,
             auto_prune_enabled: self.auto_prune_enabled,
             auto_prune_max_bytes: self.auto_prune_max_bytes,
@@ -538,6 +594,8 @@ impl App {
                     .to_std()
                     .map_or(300, |d| d.as_secs()),
                 log_marker_window_s: self.assoc_config.log_marker_window_s,
+                detect_clock_discontinuities: self.processing_config.detect_clock_discontinuities,
+                clock_discontinuity_sigmas: self.processing_config.clock_discontinuity_sigmas,
             },
             storage: crate::settings::StorageSettings {
                 enabled: self.storage_enabled,
