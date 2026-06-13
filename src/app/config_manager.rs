@@ -17,6 +17,21 @@ impl From<StableF32> for f32 {
     }
 }
 
+/// `f64` stored as its bit pattern so `AppSnapshot` can derive `PartialEq`
+/// without triggering the `float_cmp` lint.
+///
+/// Dirty-check helper only: it compares raw bits, so it does not treat
+/// `+0.0`/`-0.0` as equal or canonicalise `NaN`.  Inputs here are range-clamped
+/// finite settings values, so neither case arises.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct StableF64(u64);
+
+impl From<f64> for StableF64 {
+    fn from(v: f64) -> Self {
+        Self(v.to_bits())
+    }
+}
+
 /// Compact snapshot of all settings-relevant app state.
 #[derive(PartialEq)]
 pub(super) struct AppSnapshot {
@@ -43,6 +58,8 @@ pub(super) struct AppSnapshot {
     pub theme: crate::settings::ThemeSetting,
     pub track_split_gap_seconds: u64,
     pub log_marker_window_s: u64,
+    pub detect_clock_discontinuities: bool,
+    pub clock_discontinuity_sigmas: StableF64,
     pub storage_enabled: bool,
     pub auto_prune_enabled: bool,
     pub auto_prune_max_bytes: u64,
@@ -51,6 +68,9 @@ pub(super) struct AppSnapshot {
 
 impl Default for AppSnapshot {
     fn default() -> Self {
+        // The clock-discontinuity defaults are sourced from the persisted
+        // settings so this dirty-check baseline cannot drift from what is loaded.
+        let processing = crate::settings::ProcessingSettings::default();
         Self {
             show_grid: true,
             panel_visible: true,
@@ -75,6 +95,8 @@ impl Default for AppSnapshot {
             theme: crate::settings::ThemeSetting::System,
             track_split_gap_seconds: 300,
             log_marker_window_s: 60,
+            detect_clock_discontinuities: processing.detect_clock_discontinuities,
+            clock_discontinuity_sigmas: StableF64::from(processing.clock_discontinuity_sigmas),
             storage_enabled: true,
             auto_prune_enabled: false,
             auto_prune_max_bytes: 10 * 1024 * 1024 * 1024,

@@ -141,6 +141,11 @@ pub struct ProcessingSettings {
     pub track_split_gap_seconds: u64,
     /// Max seconds between a log entry timestamp and the nearest GPS fix for association.
     pub log_marker_window_s: u64,
+    /// Whether to flag abrupt GPS/system clock-offset jumps as clock-discontinuity markers.
+    pub detect_clock_discontinuities: bool,
+    /// Sensitivity of the clock-discontinuity test, in robust standard deviations
+    /// from the track's median step.  Lower is more sensitive.
+    pub clock_discontinuity_sigmas: f64,
 }
 
 impl Default for ProcessingSettings {
@@ -148,6 +153,8 @@ impl Default for ProcessingSettings {
         Self {
             track_split_gap_seconds: 300,
             log_marker_window_s: 60,
+            detect_clock_discontinuities: true,
+            clock_discontinuity_sigmas: gt_track_builder::DEFAULT_CLOCK_OUTLIER_SIGMAS,
         }
     }
 }

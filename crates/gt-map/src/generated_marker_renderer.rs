@@ -170,7 +170,12 @@ pub(crate) fn generated_marker_header(kind: gt_types::GeneratedMarkerKind) -> St
         gt_types::GeneratedMarkerKind::ClockDiscontinuity { step } => {
             let ms = step.num_milliseconds();
             let sign = if ms < 0 { "-" } else { "+" };
-            format!("{kind} ({sign}{})", format_fix_duration(ms.abs()))
+            // saturating_abs, not abs: avoids the i64::MIN panic surface, matching
+            // the structural .abs() avoidance in the detector.
+            format!(
+                "{kind} ({sign}{})",
+                format_fix_duration(ms.saturating_abs())
+            )
         }
         gt_types::GeneratedMarkerKind::GnssFixLost => kind.to_string(),
     }
