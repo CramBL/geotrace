@@ -273,7 +273,7 @@ fn generate_and_verify_snapshot_fixture() {
         gen_kinds,
         [
             GeneratedMarkerKind::GnssFixLost,
-            GeneratedMarkerKind::GnssFixRegained
+            GeneratedMarkerKind::GnssFixRegained { .. }
         ]
     );
 

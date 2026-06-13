@@ -305,7 +305,9 @@ pub fn marker_test_data() -> Vec<CustomMarker> {
                         p.tpv.time().utc(),
                         format!(
                             "{} after {duration_str}",
-                            GeneratedMarkerKind::GnssFixRegained
+                            GeneratedMarkerKind::GnssFixRegained {
+                                fix_lost_duration: duration
+                            }
                         ),
                         MarkerIcon::Check,
                         p.tpv.lat(),
@@ -517,8 +519,12 @@ mod tests {
 
         let regain_marker = markers.iter().find(|m| m.icon == MarkerIcon::Check);
         assert!(regain_marker.is_some_and(|m| {
-            m.label
-                .contains(&GeneratedMarkerKind::GnssFixRegained.to_string())
+            m.label.contains(
+                &GeneratedMarkerKind::GnssFixRegained {
+                    fix_lost_duration: chrono::Duration::zero(),
+                }
+                .to_string(),
+            )
         }));
     }
 

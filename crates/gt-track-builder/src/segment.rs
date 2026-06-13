@@ -116,7 +116,6 @@ impl GpsFixTracker {
                         GeneratedMarkerKind::GnssFixLost,
                         last_lat,
                         last_lon,
-                        None,
                     ));
                     GpsFixState::LostFix { lost_at: last_time }
                 } else {
@@ -134,10 +133,11 @@ impl GpsFixTracker {
                     let duration = point.tpv.time().signed_duration_since(lost_at);
                     result = Some(GeneratedMarker::new(
                         point.tpv.time().utc(),
-                        GeneratedMarkerKind::GnssFixRegained,
+                        GeneratedMarkerKind::GnssFixRegained {
+                            fix_lost_duration: duration,
+                        },
                         point.tpv.lat(),
                         point.tpv.lon(),
-                        Some(duration),
                     ));
                     GpsFixState::HasFix {
                         last_time: point.tpv.time(),
@@ -164,7 +164,117 @@ fn detect_generated_markers(points: &[NavPoint]) -> Vec<GeneratedMarker> {
             markers.push(marker);
         }
     }
+    markers.extend(detect_clock_discontinuities(points));
+    markers.sort_by_key(|m| m.time);
     markers
+}
+
+/// Fewest with-system-timestamp samples a track needs before clock-outlier
+/// detection runs.  Detection works on the step series (one shorter), and the
+/// median/MAD must survive a single outlier step, so at least three steps - four
+/// samples - are required; below that, detection is skipped to avoid a spurious
+/// marker from an unstable estimate.
+const MIN_CLOCK_SAMPLES: usize = 4;
+
+/// Scales the median absolute deviation to an estimate of the standard
+/// deviation for normally-distributed data (the usual robust-statistics
+/// constant, `1 / Φ⁻¹(3/4)`).
+const MAD_TO_SIGMA: f64 = 1.4826;
+
+/// How many robust standard deviations from the median an offset must lie to
+/// count as a clock discontinuity.
+const CLOCK_OUTLIER_SIGMAS: f64 = 5.0;
+
+/// Floor on the robust spread of the step series, in milliseconds.  A healthy
+/// clock has near-zero step-to-step change and thus a near-zero MAD; without a
+/// floor, ordinary sub-second jitter would register as an outlier.  This is a
+/// noise gate, not the detection threshold - on a track with genuinely jittery
+/// clock steps the MAD dominates and the bar rises with the data.
+const MIN_CLOCK_SPREAD_MS: f64 = 200.0;
+
+/// Emit a [`GeneratedMarkerKind::ClockDiscontinuity`] for each sample where the
+/// GPS−system offset *jumps* abruptly from the previous sample.
+///
+/// Detection runs on the first-difference (step) series - the change in offset
+/// between consecutive with-system-timestamp samples - rather than on the offset
+/// itself.  Two passes: the first measures the track's typical step size (median
+/// and median absolute deviation, both near zero for a healthy clock); the
+/// second flags any step more than [`CLOCK_OUTLIER_SIGMAS`] robust standard
+/// deviations from that.  Working on jumps (not levels) means a discontinuity is
+/// flagged once, at the transition, instead of once per sample of a shifted
+/// plateau - and a genuine large-but-steady offset (e.g. a host clock that
+/// drifted while parked underground) produces no jumps and so no markers.
+/// Deriving the bar from the track's own behaviour - not a fixed magnitude -
+/// is what keeps it device-agnostic.  Detection only; no data is altered.
+fn detect_clock_discontinuities(points: &[NavPoint]) -> Vec<GeneratedMarker> {
+    // Pass 1: offset (ms) and source index for each with-system-timestamp
+    // sample, then the step (first difference) between consecutive samples.
+    let samples: Vec<(usize, i64)> = points
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| {
+            let sys = p.tpv.sys_time()?;
+            Some((i, p.tpv.time().offset_from_sys(sys).num_milliseconds()))
+        })
+        .collect();
+    if samples.len() < MIN_CLOCK_SAMPLES {
+        return Vec::new();
+    }
+    let steps: Vec<i64> = samples
+        .windows(2)
+        .filter_map(|w| match w {
+            [a, b] => Some(b.1 - a.1),
+            _ => None,
+        })
+        .collect();
+
+    let median = median_i64(steps.clone());
+    let mad = median_i64(steps.iter().map(|&s| (s - median).abs()).collect());
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "clock offsets are bounded (ms to hours); exact in f64"
+    )]
+    let threshold = (mad as f64 * MAD_TO_SIGMA).max(MIN_CLOCK_SPREAD_MS) * CLOCK_OUTLIER_SIGMAS;
+
+    // Pass 2: flag the later sample of each outlier step.
+    let mut markers = Vec::new();
+    for pair in samples.windows(2) {
+        let [a, b] = pair else { continue };
+        let step = b.1 - a.1;
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "clock offsets are bounded (ms to hours); exact in f64"
+        )]
+        let is_outlier = ((step - median).abs() as f64) > threshold;
+        if is_outlier && let Some(point) = points.get(b.0) {
+            markers.push(GeneratedMarker::new(
+                point.tpv.time().utc(),
+                GeneratedMarkerKind::ClockDiscontinuity {
+                    step: Duration::milliseconds(step),
+                },
+                point.tpv.lat(),
+                point.tpv.lon(),
+            ));
+        }
+    }
+    markers
+}
+
+/// Median of `values` (averaging the two central elements for an even count).
+/// Returns 0 for an empty input; callers guard against that.
+fn median_i64(mut values: Vec<i64>) -> i64 {
+    if values.is_empty() {
+        return 0;
+    }
+    values.sort_unstable();
+    let mid = values.len() / 2;
+    let hi = values.get(mid).copied().unwrap_or(0);
+    if values.len() % 2 == 1 {
+        hi
+    } else {
+        let lo = values.get(mid - 1).copied().unwrap_or(0);
+        (lo + hi) / 2
+    }
 }
 
 /// Computes GNSS fix-quality statistics from a slice of nav points.
@@ -552,10 +662,96 @@ mod tests {
     use chrono::TimeZone;
     use gt_types::coordinates::{Latitude, Longitude};
     use gt_types::satellites::{Constellation, Satellite, Satellites};
-    use gt_types::time_types::GpsTime;
+    use gt_types::time_types::{GpsTime, SysTime};
     use gt_types::tpv::TimePositionVelocity;
     use uom::si::angle::degree;
     use uom::si::f64::Angle;
+
+    /// A point at GPS second `gps_secs` whose system clock is `sys_ahead_ms`
+    /// ahead of GPS (so the GPS−system offset is `-sys_ahead_ms`).
+    fn point_with_sys(gps_secs: i64, sys_ahead_ms: i64) -> NavPoint {
+        let gps = GpsTime::from_utc(Utc.timestamp_opt(gps_secs, 0).single().expect("valid"));
+        let sys = SysTime::from_utc(
+            Utc.timestamp_millis_opt(gps_secs * 1000 + sys_ahead_ms)
+                .single()
+                .expect("valid"),
+        );
+        let tpv = TimePositionVelocity::builder()
+            .time(gps)
+            .lat(Latitude::new(55.0))
+            .lon(Longitude::new(12.0))
+            .sys_time(sys)
+            .build();
+        NavPoint::new(tpv, None)
+    }
+
+    #[test]
+    fn clock_discontinuity_flags_suspend_boundary_once() {
+        // Steady ~300 ms offset, then one sample whose system clock has jumped
+        // ~2 h ahead (the device resumed from suspend) - the mortmobil.gtd case.
+        let two_hours_ms = 2 * 3600 * 1000;
+        let points = vec![
+            point_with_sys(1000, 300),
+            point_with_sys(1001, 300),
+            point_with_sys(1002, 300),
+            point_with_sys(1003, 300),
+            point_with_sys(1004, 300 + two_hours_ms),
+        ];
+        let markers = detect_clock_discontinuities(&points);
+        assert_eq!(
+            markers.len(),
+            1,
+            "exactly one discontinuity at the boundary"
+        );
+        let marker = markers.first().expect("one marker");
+        assert!(matches!(
+            marker.kind,
+            GeneratedMarkerKind::ClockDiscontinuity { .. }
+        ));
+        if let GeneratedMarkerKind::ClockDiscontinuity { step } = marker.kind {
+            // System clock jumped 2 h ahead, so GPS−system dropped by 2 h.
+            assert_eq!(step.num_milliseconds(), -two_hours_ms);
+        }
+        assert_eq!(
+            marker.time,
+            Utc.timestamp_opt(1004, 0).single().expect("valid")
+        );
+    }
+
+    #[test]
+    fn clock_discontinuity_ignores_normal_jitter() {
+        let points = vec![
+            point_with_sys(1000, 300),
+            point_with_sys(1001, 305),
+            point_with_sys(1002, 298),
+            point_with_sys(1003, 302),
+        ];
+        assert!(detect_clock_discontinuities(&points).is_empty());
+    }
+
+    #[test]
+    fn clock_discontinuity_ignores_large_but_steady_offset() {
+        // A host clock that drifted far (e.g. parked underground for days) but
+        // is internally consistent across the track is NOT an outlier - the
+        // data-aware median makes that the norm, so nothing is flagged.
+        let big = 5 * 60 * 1000; // 5 minutes of steady offset
+        let points = vec![
+            point_with_sys(1000, big),
+            point_with_sys(1001, big + 4),
+            point_with_sys(1002, big - 3),
+            point_with_sys(1003, big + 2),
+            point_with_sys(1004, big - 5),
+        ];
+        assert!(detect_clock_discontinuities(&points).is_empty());
+    }
+
+    #[test]
+    fn median_i64_handles_odd_and_even() {
+        assert_eq!(median_i64(vec![3, 1, 2]), 2);
+        assert_eq!(median_i64(vec![1, 2, 3, 4]), 2); // (2 + 3) / 2, truncated
+        assert_eq!(median_i64(vec![]), 0);
+        assert_eq!(median_i64(vec![7]), 7);
+    }
 
     fn make_point_at(t: i64) -> NavPoint {
         let time = GpsTime::from_utc(Utc.timestamp_opt(t, 0).single().expect("valid timestamp"));
