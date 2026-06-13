@@ -1,12 +1,13 @@
 use crate::series::{TrackSeries, build_all_series, closest_point_index};
 use chrono::{DateTime, Utc};
 use egui::Color32;
-use egui_plot::{Line, PlotPoints, VLine};
+use egui_plot::{Line, LineStyle, PlotPoints, VLine};
 use gt_egui_mipmap::{LevelSelection, MipMap};
 use gt_filter::GlobalFilter;
 use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx};
 use gt_ui_types::{HighlightScope, TrackDataVisibility};
 use rayon::prelude::*;
+use std::collections::BTreeSet;
 use strum::IntoEnumIterator;
 
 /// Chip color, label, and optional hover tooltip for each [`MetricKind`].
@@ -79,6 +80,113 @@ impl MetricKindUi for MetricKind {
             _ => None,
         }
     }
+}
+
+/// Per-file shade offsets applied to each metric's base colour.
+///
+/// Keeping hue fixed and only shifting value/lightness preserves metric identity
+/// while still making overlapping lines from different files distinguishable.
+///
+/// Unlike [`gt_ui_theme::track_color`], which cycles a full colour palette per
+/// (file, track) for the map (where hue *is* the identity signal), the plot
+/// needs hue to stay tied to the metric - so files are distinguished by
+/// lightness shift and line style ([`FILE_LINE_STYLES`]) instead.
+const FILE_SHADE_FACTORS: [i16; 7] = [0, 22, -22, 12, -12, 32, -32];
+
+/// File-level line styles to keep perfectly overlapping lines distinguishable.
+///
+/// Color still carries metric identity; style only disambiguates file source.
+const FILE_LINE_STYLES: [LineStyle; 5] = [
+    LineStyle::Solid,
+    LineStyle::Dashed { length: 6.0 },
+    LineStyle::Dotted { spacing: 5.0 },
+    LineStyle::Dashed { length: 10.0 },
+    LineStyle::Dotted { spacing: 8.0 },
+];
+/// Default legend overlay position, anchored just inside the plot's top-left
+/// corner.
+pub const LEGEND_DOCK_OFFSET: egui::Vec2 = egui::vec2(10.0, 10.0);
+/// Sub-pixel tolerance for [`legend_is_docked`]'s "is this exactly the dock
+/// position" check - not to be confused with [`LEGEND_DOCK_SNAP_RADIUS`],
+/// the much larger radius used to *move* the legend onto the dock position.
+const LEGEND_DOCK_POSITION_TOLERANCE: f32 = 1.0;
+/// Background opacity of the file-style legend overlay, matching the default
+/// `background_alpha` of egui_plot's built-in legend.
+const LEGEND_BACKGROUND_ALPHA: f32 = 0.75;
+/// Minimum distance the dragged legend keeps from the plot edges.
+const LEGEND_EDGE_MARGIN: f32 = 6.0;
+/// Distance from the docked top-left position within which a dragged legend
+/// snaps back to docking, so dropping it near the corner re-docks it without
+/// requiring a click on the re-dock button.
+const LEGEND_DOCK_SNAP_RADIUS: f32 = 32.0;
+/// Dimensions of the line-style swatch painted next to each legend entry.
+const SWATCH_SIZE: egui::Vec2 = egui::vec2(26.0, 10.0);
+const SWATCH_STROKE_WIDTH: f32 = 2.0;
+/// Gap between dashes as a fraction of the dash length.
+const SWATCH_DASH_GAP_RATIO: f32 = 0.62;
+const SWATCH_DOT_RADIUS: f32 = 1.7;
+
+fn metric_line_color(kind: MetricKind, file_index: usize) -> Color32 {
+    shade_color(kind.color(), file_shade_factor(file_index))
+}
+
+fn file_shade_factor(file_index: usize) -> i16 {
+    let idx = file_index % FILE_SHADE_FACTORS.len();
+    FILE_SHADE_FACTORS.get(idx).copied().unwrap_or(0)
+}
+
+fn file_line_style(file_index: usize) -> LineStyle {
+    let idx = file_index % FILE_LINE_STYLES.len();
+    FILE_LINE_STYLES
+        .get(idx)
+        .copied()
+        .unwrap_or(LineStyle::Solid)
+}
+
+fn paint_line_style_swatch(ui: &mut egui::Ui, style: LineStyle, color: Color32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(SWATCH_SIZE, egui::Sense::hover());
+    let y = rect.center().y;
+    let start = egui::pos2(rect.left(), y);
+    let end = egui::pos2(rect.right(), y);
+    let painter = ui.painter();
+    match style {
+        LineStyle::Solid => {
+            painter.line_segment([start, end], egui::Stroke::new(SWATCH_STROKE_WIDTH, color));
+        }
+        LineStyle::Dashed { length } => {
+            painter.extend(egui::Shape::dashed_line(
+                &[start, end],
+                egui::Stroke::new(SWATCH_STROKE_WIDTH, color),
+                length,
+                length * SWATCH_DASH_GAP_RATIO,
+            ));
+        }
+        LineStyle::Dotted { spacing } => {
+            painter.extend(egui::Shape::dotted_line(
+                &[start, end],
+                color,
+                spacing,
+                SWATCH_DOT_RADIUS,
+            ));
+        }
+    }
+    response
+}
+
+/// Shifts a color toward white (positive `factor_pct`) or black (negative)
+/// by the given percentage.
+fn shade_color(color: Color32, factor_pct: i16) -> Color32 {
+    let (target, amount_pct) = if factor_pct >= 0 {
+        (255, factor_pct)
+    } else {
+        (0, -factor_pct)
+    };
+    let num = i32::from(amount_pct.clamp(0, 100));
+    Color32::from_rgb(
+        gt_ui_theme::lerp_channel(color.r(), target, num, 100),
+        gt_ui_theme::lerp_channel(color.g(), target, num, 100),
+        gt_ui_theme::lerp_channel(color.b(), target, num, 100),
+    )
 }
 
 /// Global per-metric visibility flags.
@@ -254,6 +362,16 @@ pub struct PlotState {
     pub show_grid: bool,
     /// When true, the plot x-range tracks the map viewport.
     pub sync_to_map: bool,
+    /// Whether the file-style legend body is collapsed.
+    pub file_legend_collapsed: bool,
+    /// Legend overlay position offset from the plot's top-left corner.
+    pub file_legend_offset: egui::Vec2,
+    /// Legend overlay size measured on the previous frame.
+    /// Used to size this frame's drag-sensing background before the
+    /// legend's content is laid out.
+    file_legend_size: egui::Vec2,
+    /// File index currently hovered in the legend overlay.
+    pub legend_hover_file: Option<usize>,
     /// Mipmap cascade for every track in every loaded file.
     pub(crate) series_cache: Vec<TrackSeries>,
     /// Cached level selections, one entry per series.
@@ -277,6 +395,10 @@ impl Default for PlotState {
             metric_vis: MetricVisibility::default(),
             show_grid: true,
             sync_to_map: true,
+            file_legend_collapsed: false,
+            file_legend_offset: LEGEND_DOCK_OFFSET,
+            file_legend_size: egui::Vec2::ZERO,
+            legend_hover_file: None,
             series_cache: Vec::new(),
             level_cache: Vec::new(),
             last_computed_bounds: None,
@@ -370,7 +492,18 @@ pub fn show_track_plot(
         return;
     }
 
+    // Per-series count, for the line-name prefix; distinct from the
+    // per-file count below, which gates the file legend overlay.
     let multi_track = visible_count > 1;
+    let visible_files: Vec<usize> = {
+        let mut file_indices = BTreeSet::new();
+        for (series, &is_vis) in state.series_cache.iter().zip(visible.iter()) {
+            if is_vis {
+                file_indices.insert(series.fi);
+            }
+        }
+        file_indices.into_iter().collect()
+    };
 
     // Draw the per-metric filter row before the plot so it consumes vertical
     // space first; `ui.available_height()` below then gives the remainder.
@@ -422,6 +555,7 @@ pub fn show_track_plot(
         if !is_vis {
             continue;
         }
+
         if let Some((lo, hi)) = series.x_range {
             full_x_min = full_x_min.min(lo);
             full_x_max = full_x_max.max(hi);
@@ -437,6 +571,12 @@ pub fn show_track_plot(
     let level_cache = &state.level_cache;
     let last_computed_bounds = state.last_computed_bounds;
     let metric_vis = &state.metric_vis;
+    let effective_hover_scope = state
+        .legend_hover_file
+        .map(|fi| HighlightScope::File {
+            file_index: FileIdx::new(fi),
+        })
+        .or(hover_scope);
 
     // Encode the incoming map sync range as bit patterns so we can compare
     // without float equality warnings.
@@ -522,7 +662,7 @@ pub fn show_track_plot(
                 cache,
                 metric_vis,
                 hovered_chip,
-                hover_scope,
+                effective_hover_scope,
             );
         }
 
@@ -551,6 +691,13 @@ pub fn show_track_plot(
     if let Some(applied) = new_applied_map_x_range {
         state.applied_map_x_range = applied;
     }
+    state.legend_hover_file = show_file_legend_overlay(
+        ui,
+        files,
+        &visible_files,
+        plot_response.response.rect,
+        state,
+    );
 
     // Clear the hovered time when the cursor leaves the plot area.
     state.hovered_time = if plot_response.response.hovered() {
@@ -558,6 +705,165 @@ pub fn show_track_plot(
     } else {
         None
     };
+}
+
+fn show_file_legend_overlay(
+    ui: &egui::Ui,
+    files: &[LoadedFile],
+    visible_files: &[usize],
+    plot_rect: egui::Rect,
+    state: &mut PlotState,
+) -> Option<usize> {
+    if visible_files.len() < 2 {
+        return None;
+    }
+
+    let mut redock_requested = false;
+    let show_redock_icon = !legend_is_docked(state.file_legend_offset);
+    let legend_id = ui.id().with("plot_file_legend_overlay");
+    let drag_bg_size = state.file_legend_size;
+    let area = egui::Area::new(legend_id)
+        .order(egui::Order::Foreground)
+        .movable(false)
+        .current_pos(plot_rect.min + state.file_legend_offset)
+        .show(ui.ctx(), |ui| {
+            // Selectable labels also sense drag (for text selection) and
+            // would win the hit-test over `drag_response` below.
+            ui.style_mut().interaction.selectable_labels = false;
+
+            // Drag-sense the whole body first (bottom z-order) so buttons
+            // on top still get their clicks.
+            let drag_rect = egui::Rect::from_min_size(ui.cursor().min, drag_bg_size);
+            let drag_response =
+                ui.interact(drag_rect, legend_id.with("drag_bg"), egui::Sense::drag());
+
+            let hovered_file = egui::Frame::default()
+                .inner_margin(egui::Margin::symmetric(8, 4))
+                .corner_radius(ui.visuals().window_corner_radius)
+                .fill(ui.visuals().extreme_bg_color)
+                .stroke(ui.visuals().window_stroke())
+                .multiply_with_opacity(LEGEND_BACKGROUND_ALPHA)
+                .show(ui, |ui| {
+                    let mut hovered_file = None;
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            let dock_btn_size = egui::vec2(
+                                ui.spacing().interact_size.y,
+                                ui.spacing().interact_size.y,
+                            );
+                            if show_redock_icon
+                                && ui
+                                    .add_sized(
+                                        dock_btn_size,
+                                        egui::Button::new(
+                                            egui_phosphor::regular::ARROW_LINE_UP_LEFT,
+                                        ),
+                                    )
+                                    .on_hover_text("Re-dock legend to top-left")
+                                    .clicked()
+                            {
+                                redock_requested = true;
+                            }
+                            ui.add_sized(
+                                dock_btn_size,
+                                egui::Label::new(
+                                    egui::RichText::new(egui_phosphor::regular::DOTS_SIX).weak(),
+                                ),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::Grab)
+                            .on_hover_text("Drag to move legend");
+                            let fold_icon = if state.file_legend_collapsed {
+                                egui_phosphor::regular::CARET_RIGHT
+                            } else {
+                                egui_phosphor::regular::CARET_DOWN
+                            };
+                            if ui
+                                .small_button(fold_icon)
+                                .on_hover_text(if state.file_legend_collapsed {
+                                    "Expand legend"
+                                } else {
+                                    "Collapse legend"
+                                })
+                                .clicked()
+                            {
+                                state.file_legend_collapsed = !state.file_legend_collapsed;
+                            }
+                        });
+                        if !state.file_legend_collapsed {
+                            for &fi in visible_files {
+                                let row = ui.horizontal(|ui| {
+                                    let style = file_line_style(fi);
+                                    let file_name = files
+                                        .get(fi)
+                                        .map_or("Unknown file", |f| f.metadata.filename.as_str());
+                                    let swatch = paint_line_style_swatch(
+                                        ui,
+                                        style,
+                                        ui.visuals().text_color(),
+                                    );
+                                    let name = ui.label(egui::RichText::new(file_name).small());
+                                    swatch.hovered() || name.hovered()
+                                });
+                                if row.response.hovered() || row.inner {
+                                    hovered_file = Some(fi);
+                                }
+                            }
+                        }
+                    });
+                    hovered_file
+                })
+                .inner;
+
+            (hovered_file, drag_response)
+        });
+
+    let (hovered_file, drag_response) = area.inner;
+    state.file_legend_size = area.response.rect.size();
+
+    if drag_response.dragged() {
+        state.file_legend_offset += ui.ctx().input(|i| i.pointer.delta());
+    }
+
+    state.file_legend_offset = resolve_legend_offset(
+        state.file_legend_offset,
+        state.file_legend_size,
+        plot_rect,
+        redock_requested,
+        drag_response.drag_stopped(),
+    );
+    hovered_file
+}
+
+/// Clamps `offset` to the plot's edges, then snaps it to [`LEGEND_DOCK_OFFSET`]
+/// if redocking was requested or the drag just ended near that corner.
+fn resolve_legend_offset(
+    offset: egui::Vec2,
+    legend_size: egui::Vec2,
+    plot_rect: egui::Rect,
+    redock_requested: bool,
+    drag_released: bool,
+) -> egui::Vec2 {
+    let max_x = (plot_rect.width() - legend_size.x - LEGEND_EDGE_MARGIN).max(LEGEND_EDGE_MARGIN);
+    let max_y = (plot_rect.height() - legend_size.y - LEGEND_EDGE_MARGIN).max(LEGEND_EDGE_MARGIN);
+    let clamped = egui::vec2(
+        offset.x.clamp(LEGEND_EDGE_MARGIN, max_x),
+        offset.y.clamp(LEGEND_EDGE_MARGIN, max_y),
+    );
+    // Snap only on release, so dragging away from the dock isn't pulled
+    // straight back mid-drag.
+    let near_dock =
+        drag_released && (clamped - LEGEND_DOCK_OFFSET).length() < LEGEND_DOCK_SNAP_RADIUS;
+    if redock_requested || near_dock {
+        LEGEND_DOCK_OFFSET
+    } else {
+        clamped
+    }
+}
+
+/// Whether `offset` is close enough to [`LEGEND_DOCK_OFFSET`] to be considered docked.
+pub fn legend_is_docked(offset: egui::Vec2) -> bool {
+    (offset.x - LEGEND_DOCK_OFFSET.x).abs() < LEGEND_DOCK_POSITION_TOLERANCE
+        && (offset.y - LEGEND_DOCK_OFFSET.y).abs() < LEGEND_DOCK_POSITION_TOLERANCE
 }
 
 /// Draw the per-metric filter controls above the track plot.
@@ -812,10 +1118,14 @@ fn add_series_lines<'a>(
         if !metric_vis.field(kind) {
             continue;
         }
+        let line_style = file_line_style(series.fi);
         let (mut color, metric_highlighted) = match hovered_chip {
-            Some(h) if h == kind => (kind.color(), true),
-            Some(_) => (kind.color().gamma_multiply(0.2), false),
-            None => (kind.color(), false),
+            Some(h) if h == kind => (metric_line_color(kind, series.fi), true),
+            Some(_) => (
+                metric_line_color(kind, series.fi).gamma_multiply(0.2),
+                false,
+            ),
+            None => (metric_line_color(kind, series.fi), false),
         };
         if has_track_focus && !focused {
             color = color.gamma_multiply(0.2);
@@ -825,6 +1135,7 @@ fn add_series_lines<'a>(
             series.mipmap_for(kind).slice_at(cache.level_for(kind)),
             format!("{prefix}{}", kind.label()),
             color,
+            line_style,
             metric_highlighted || (has_track_focus && focused),
         );
     }
@@ -854,6 +1165,7 @@ fn add_line<'a>(
     data: &'a [egui_plot::PlotPoint],
     name: String,
     color: Color32,
+    style: LineStyle,
     highlighted: bool,
 ) {
     if data.len() < 2 {
@@ -862,6 +1174,7 @@ fn add_line<'a>(
     plot_ui.line(
         Line::new(name, PlotPoints::Borrowed(data))
             .color(color)
+            .style(style)
             .highlight(highlighted),
     );
 }
@@ -914,4 +1227,94 @@ pub fn find_closest_tpv(
     }
 
     best.map(|(fi, ti, pi, _)| (fi, ti, pi))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_shading_distinguishes_adjacent_files() {
+        let a = metric_line_color(MetricKind::SatsSeen, 0);
+        let b = metric_line_color(MetricKind::SatsSeen, 1);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn sats_seen_and_sats_fix_stay_visually_separate_across_files() {
+        for fi in 0..FILE_SHADE_FACTORS.len() * 5 {
+            let seen = metric_line_color(MetricKind::SatsSeen, fi);
+            let fix = metric_line_color(MetricKind::SatsFix, fi);
+            assert!(
+                seen.g() > fix.g(),
+                "Sats seen should remain the lighter blue family: fi={fi}, seen={seen:?}, fix={fix:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn file_line_styles_are_pairwise_distinct() {
+        for (i, a) in FILE_LINE_STYLES.iter().enumerate() {
+            for (j, b) in FILE_LINE_STYLES.iter().enumerate().skip(i + 1) {
+                assert_ne!(
+                    a, b,
+                    "FILE_LINE_STYLES[{i}] duplicates FILE_LINE_STYLES[{j}]"
+                );
+            }
+        }
+    }
+
+    fn test_plot_rect() -> egui::Rect {
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))
+    }
+
+    #[test]
+    fn resolve_legend_offset_clamps_to_plot_edges() {
+        let legend_size = egui::vec2(100.0, 50.0);
+        let offset = resolve_legend_offset(
+            egui::vec2(-50.0, 1000.0),
+            legend_size,
+            test_plot_rect(),
+            false,
+            false,
+        );
+        assert!((offset.x - LEGEND_EDGE_MARGIN).abs() < f32::EPSILON);
+        assert!((offset.y - (300.0 - legend_size.y - LEGEND_EDGE_MARGIN)).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn resolve_legend_offset_redocks_on_explicit_request() {
+        let offset = resolve_legend_offset(
+            egui::vec2(200.0, 150.0),
+            egui::vec2(100.0, 50.0),
+            test_plot_rect(),
+            true,
+            false,
+        );
+        assert_eq!(offset, LEGEND_DOCK_OFFSET);
+    }
+
+    #[test]
+    fn resolve_legend_offset_snaps_to_dock_on_release_near_corner_only() {
+        let legend_size = egui::vec2(100.0, 50.0);
+        let near_dock = LEGEND_DOCK_OFFSET + egui::vec2(LEGEND_DOCK_SNAP_RADIUS - 1.0, 0.0);
+
+        let mid_drag =
+            resolve_legend_offset(near_dock, legend_size, test_plot_rect(), false, false);
+        assert_eq!(mid_drag, near_dock, "must not snap before drag release");
+
+        let released = resolve_legend_offset(near_dock, legend_size, test_plot_rect(), false, true);
+        assert_eq!(
+            released, LEGEND_DOCK_OFFSET,
+            "must snap once released near the dock"
+        );
+    }
+
+    #[test]
+    fn resolve_legend_offset_does_not_snap_when_far_from_dock() {
+        let legend_size = egui::vec2(100.0, 50.0);
+        let far = egui::vec2(200.0, 150.0);
+        let offset = resolve_legend_offset(far, legend_size, test_plot_rect(), false, true);
+        assert_eq!(offset, far);
+    }
 }

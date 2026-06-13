@@ -160,6 +160,7 @@
                         "egui_kittest.*",
                         "geo.*",
                         "geo_types.*",
+                        "geotrace_sdk.*",
                         "gt_types.*",
                         "uom.*",
                         "crate.*",

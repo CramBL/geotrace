@@ -15,7 +15,7 @@ use gt_map::{MapContextAction, MapLayer, NavMap};
 use gt_plot::PlotState;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
 use gt_track_builder::SegmentationConfig;
-use gt_types::{AssociationConfig, DataCategory, LoadWarning, LoadedFile, NavPoint};
+use gt_types::{AssociationConfig, DataCategory, FileIdx, LoadWarning, LoadedFile, NavPoint};
 use gt_ui_types::{HighlightScope, MapHighlight, TrackDataVisibility};
 use loader::{CompletedLoad, FinishedJob, LoadOutcome, LoaderManager};
 
@@ -966,6 +966,21 @@ impl eframe::App for App {
                 });
             });
         });
+
+        {
+            // Forward the previous frame's plot-legend hover so NavMap::draw's
+            // track layers highlight the matching file on the map this frame.
+            // NavMap overwrites `highlight.hover` with its own pointer-hover at
+            // the end of draw(), which is fine: the plot re-derives its line
+            // highlight from `legend_hover_file` directly, so this write only
+            // needs to survive until the map has rendered.
+            let mut s = self.shared.borrow_mut();
+            if let Some(fi) = s.plot_state.legend_hover_file {
+                s.highlight.hover = Some(HighlightScope::File {
+                    file_index: FileIdx::new(fi),
+                });
+            }
+        }
 
         let detached = self.shared.borrow().tree.detached;
         if !detached {

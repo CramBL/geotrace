@@ -2253,6 +2253,7 @@ dependencies = [
  "egui_kittest",
  "geo",
  "geo-types",
+ "geotrace-sdk",
  "gt-types",
  "tempfile",
  "uom",

@@ -119,7 +119,7 @@ pub fn fix_quality_color(pct: u32) -> Color32 {
 
 /// Linearly interpolates a colour channel from `a` toward `b` by `num/den`
 /// (where `0 <= num <= den`), clamped to `[0, 255]`.
-fn lerp_channel(a: u8, b: u8, num: i32, den: i32) -> u8 {
+pub fn lerp_channel(a: u8, b: u8, num: i32, den: i32) -> u8 {
     let a = i32::from(a);
     let b = i32::from(b);
     let value = a + (b - a) * num / den;
