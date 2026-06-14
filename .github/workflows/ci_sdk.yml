@@ -148,54 +148,19 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
-      # macOS preinstalls and links llvm@18, which blocks Homebrew from linking
-      # the pinned llvm; unlink it first so it links cleanly. No-op elsewhere.
-      - name: Unlink preinstalled llvm (macOS, llvm row)
-        if: runner.os == 'macOS' && matrix.cc == 'llvm-20'
-        run: brew unlink llvm@18 || true
-
-      # AppleClang rows use the runner's system clang + cmake; only the pinned
-      # llvm rows install a compiler.
-      - name: Install pinned compiler (Linux, macOS)
-        if: runner.os != 'Windows' && matrix.cc != 'appleclang'
-        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+      - name: Set up SDK toolchain
+        uses: ./.github/actions/setup-sdk-toolchain
         with:
           compiler: ${{ matrix.cc }}
-
-      - name: Install cmake and ninja (Windows)
-        if: runner.os == 'Windows'
-        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
-        with:
-          cmake: true
-          ninja: true
+          cmake: ${{ runner.os == 'Windows' }}
+          ninja: ${{ runner.os == 'Windows' }}
+          criterion: true
 
       - name: Set Cargo build target (Windows)
         if: runner.os == 'Windows'
         run: |
           rustup target add x86_64-pc-windows-gnu
           echo "CARGO_BUILD_TARGET=x86_64-pc-windows-gnu" >> "$GITHUB_ENV"
-
-      - name: Install criterion (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libcriterion-dev
-
-      - name: Install criterion (macOS)
-        if: runner.os == 'macOS'
-        run: brew install criterion
-
-      - name: Install criterion (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          pip install meson
-          git clone --depth=1 --branch v2.4.3 https://github.com/Snaipe/Criterion criterion-src
-          meson setup criterion-src/build criterion-src --prefix=C:/criterion --buildtype=release \
-            -Ddiffs=disabled \
-            "-Dc_args=-Wno-incompatible-pointer-types"
-          meson compile -C criterion-src/build
-          meson install -C criterion-src/build
-          # MSYS2 pkgconf lets cmake's FindPkgConfig locate the installed criterion.pc
-          /c/msys64/usr/bin/pacman --noconfirm -S mingw-w64-x86_64-pkgconf
-          echo 'C:\msys64\mingw64\bin' >> "$GITHUB_PATH"
 
       - name: Build geotrace-c
         run: cargo build -p geotrace-c --release
@@ -283,28 +248,11 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
-      # macOS preinstalls and links llvm@18, which blocks Homebrew from linking
-      # the pinned llvm; unlink it first so the pinned compiler links cleanly
-      # (avoids the "not linked" warning). No-op on the AppleClang rows.
-      - name: Unlink preinstalled llvm (macOS, llvm row)
-        if: runner.os == 'macOS' && matrix.cc == 'llvm-20'
-        run: brew unlink llvm@18 || true
-
-      # AppleClang rows skip setup-cpp entirely and use the runner's system
-      # clang + cmake; only the pinned-compiler rows install one.
-      - name: Install pinned compiler
-        if: matrix.cc != 'appleclang'
-        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+      - name: Set up SDK toolchain
+        uses: ./.github/actions/setup-sdk-toolchain
         with:
           compiler: ${{ matrix.cc }}
-          ninja: true
-
-      # Git Bash ships a coreutils `link.exe` that shadows the MSVC linker on
-      # PATH; with the MSVC env active that breaks Rust's MSVC linking. Remove
-      # the shim so cargo finds the real link.exe.
-      - name: Remove Git Bash link.exe shim (Windows)
-        if: runner.os == 'Windows'
-        run: rm -f /usr/bin/link.exe
+          ninja: ${{ matrix.cc != 'appleclang' }}
 
       - name: Build geotrace-c
         run: cargo build -p geotrace-c --release
@@ -454,8 +402,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
-      - name: Install cmake and ninja
-        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+      - name: Set up SDK toolchain
+        uses: ./.github/actions/setup-sdk-toolchain
         with:
           cmake: true
           ninja: true

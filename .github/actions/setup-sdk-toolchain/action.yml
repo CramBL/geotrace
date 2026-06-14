@@ -1,0 +1,80 @@
+name: Set up SDK toolchain
+description: >
+  Install the C/C++ build toolchain a GeoTrace SDK job needs and apply the
+  platform-specific workarounds in one place: the macOS llvm link conflict,
+  Git Bash's link.exe shadowing the MSVC linker, and the Criterion install.
+
+inputs:
+  compiler:
+    description: "Pinned compiler: llvm-20 | msvc | appleclang | mingw (empty for none). appleclang/mingw use the runner's toolchain."
+    default: ""
+  cmake:
+    description: "Install cmake via setup-cpp (true/false)."
+    default: "false"
+  ninja:
+    description: "Install ninja via setup-cpp (true/false)."
+    default: "false"
+  criterion:
+    description: "Install the Criterion test framework, platform-aware (true/false)."
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    # macOS preinstalls and links llvm@18, which blocks Homebrew from linking
+    # the pinned llvm; unlink it first so the pinned compiler links cleanly
+    # (avoids the "installed but not linked" warning).
+    - name: Unlink preinstalled llvm (macOS)
+      if: runner.os == 'macOS' && inputs.compiler == 'llvm-20'
+      shell: bash
+      run: brew unlink llvm@18 || true
+
+    # Only llvm-20 / msvc are pinned as a compiler. appleclang and mingw use the
+    # runner's system / MSYS toolchain, so those rows install at most cmake/ninja
+    # (and never pass an empty compiler to setup-cpp).
+    - name: Install pinned compiler
+      if: inputs.compiler == 'llvm-20' || inputs.compiler == 'msvc'
+      uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+      with:
+        compiler: ${{ inputs.compiler }}
+        cmake: ${{ inputs.cmake }}
+        ninja: ${{ inputs.ninja }}
+
+    - name: Install cmake and ninja
+      if: (inputs.compiler == 'appleclang' || inputs.compiler == 'mingw' || inputs.compiler == '') && (inputs.cmake == 'true' || inputs.ninja == 'true')
+      uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+      with:
+        cmake: ${{ inputs.cmake }}
+        ninja: ${{ inputs.ninja }}
+
+    # Git Bash ships a coreutils link.exe that shadows the MSVC linker on PATH;
+    # remove it so cargo and cmake find the real one. No-op for non-MSVC builds.
+    - name: Remove Git Bash link.exe shim (Windows)
+      if: runner.os == 'Windows'
+      shell: bash
+      run: rm -f /usr/bin/link.exe
+
+    - name: Install Criterion
+      if: inputs.criterion == 'true'
+      shell: bash
+      run: |
+        case "$RUNNER_OS" in
+          Linux)
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends libcriterion-dev
+            ;;
+          macOS)
+            brew install criterion
+            ;;
+          Windows)
+            pip install meson
+            git clone --depth=1 --branch v2.4.3 https://github.com/Snaipe/Criterion criterion-src
+            meson setup criterion-src/build criterion-src --prefix=C:/criterion --buildtype=release \
+              -Ddiffs=disabled \
+              "-Dc_args=-Wno-incompatible-pointer-types"
+            meson compile -C criterion-src/build
+            meson install -C criterion-src/build
+            # MSYS2 pkgconf lets cmake's FindPkgConfig locate the installed criterion.pc
+            /c/msys64/usr/bin/pacman --noconfirm -S mingw-w64-x86_64-pkgconf
+            echo 'C:\msys64\mingw64\bin' >> "$GITHUB_PATH"
+            ;;
+        esac
