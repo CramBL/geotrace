@@ -190,7 +190,7 @@ TEST_CASE("FileBuilder: NoNavFixesError thrown when annotations exist but no fix
     ann.time = t0;
     ann.label = "unreachable";
     b.add_annotation(ann);
-    CHECK_THROWS_AS(std::move(b).finish(), NoNavFixesError);
+    CHECK_THROWS_AS(b.finish(), NoNavFixesError);
 }
 
 TEST_CASE("FileBuilder: InvalidPathError thrown for malformed variant path") {
@@ -217,7 +217,7 @@ TEST_CASE("FileBuilder: move semantics work") {
     b1.add_nav_fix(fix);
 
     FileBuilder b2 = std::move(b1);
-    auto file = std::move(b2).finish();
+    auto file = b2.finish();
     CHECK(file.nav_point_count() == 1);
 }
 

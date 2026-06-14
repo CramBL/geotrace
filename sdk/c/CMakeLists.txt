@@ -132,14 +132,18 @@ install(FILES
 )
 
 option(GEOTRACE_C_BUILD_EXAMPLES "Build C SDK examples" OFF)
+option(GEOTRACE_C_BUILD_TESTS "Build C SDK tests" OFF)
+
+# Enable testing before recursing so the examples can register ctest smoke
+# tests even when only GEOTRACE_C_BUILD_EXAMPLES is set.
+if(GEOTRACE_C_BUILD_EXAMPLES OR GEOTRACE_C_BUILD_TESTS)
+    enable_testing()
+endif()
 
 if(GEOTRACE_C_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
-option(GEOTRACE_C_BUILD_TESTS "Build C SDK tests" OFF)
-
 if(GEOTRACE_C_BUILD_TESTS)
-    enable_testing()
     add_subdirectory(tests)
 endif()

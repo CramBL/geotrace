@@ -23,7 +23,11 @@ function(add_cpp_test name)
     target_link_libraries(${name} PRIVATE GeoTrace::Cpp doctest::doctest)
 
     if(MSVC)
-        target_compile_options(${name} PRIVATE /W4 /WX /wd4100)
+        # /wd5285: doctest v2.4.11 forward-declares std::tuple, which newer MSVC
+        # (VS 2026 / cl 14.51) flags as C5285 (specializing a std template).
+        # Under /WX that becomes an error, so silence this one third-party
+        # diagnostic without weakening warnings for our own code.
+        target_compile_options(${name} PRIVATE /W4 /WX /wd4100 /wd5285)
     else()
         target_compile_options(${name} PRIVATE
             -Wall -Wextra -Wpedantic
@@ -70,3 +74,4 @@ add_cpp_test(test_file_builder)
 add_cpp_test(test_nav_file)
 add_cpp_test(test_round_trip)
 add_cpp_test(test_exceptions)
+add_cpp_test(test_event_kind)

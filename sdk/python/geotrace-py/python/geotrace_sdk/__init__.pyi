@@ -29,6 +29,13 @@ class MarkerIcon(Enum):
     WARNING = 4
     ERROR = 5
     CHECK = 6
+    SATELLITE = 7
+    SATELLITE_LOST = 8
+    GEAR = 9
+    REFRESH = 10
+    DOWNLOAD = 11
+    UPLOAD = 12
+    WRENCH = 13
 
 @final
 class Satellite:

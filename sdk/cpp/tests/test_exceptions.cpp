@@ -4,7 +4,6 @@
 #include <exception>
 #include <stdexcept>
 #include <type_traits>
-#include <utility>
 
 using geotrace::Angle;
 using geotrace::Annotation;
@@ -43,7 +42,7 @@ TEST_CASE("exception: NoNavFixesError is catchable as BuildError and Error") {
         ann.time = Timestamp::from_seconds(1700000000ULL);
         ann.label = "no fixes";
         b.add_annotation(ann);
-        std::move(b).finish();
+        b.finish();
     };
     CHECK_THROWS_AS(throw_it(), NoNavFixesError);
     CHECK_THROWS_AS(throw_it(), BuildError);
@@ -129,7 +128,7 @@ TEST_CASE("exception: what() returns a non-empty string") {
         ann.time = Timestamp::from_seconds(1700000000ULL);
         ann.label = "no fixes";
         b.add_annotation(ann);
-        std::move(b).finish();
+        b.finish();
     } catch (const Error &e) {
         CHECK(std::string{e.what()}.size() > 0);
     }

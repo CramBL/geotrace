@@ -35,6 +35,19 @@ jobs:
         with:
           tool: just,nextest
 
+      # `just ci` runs the `test` recipe natively on this host (not in the
+      # container), and `cargo nextest run --workspace` includes gt-arch, whose
+      # architecture test shells out to `cargo pup`. cargo-pup must be built
+      # with the pinned nightly the workspace's pup.ron targets.
+      - name: Install Rust nightly (for cargo-pup)
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: nightly-2026-01-22
+          components: rust-src,rustc-dev,llvm-tools-preview
+
+      - name: Install cargo-pup
+        run: cargo +nightly-2026-01-22 install cargo_pup
+
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 

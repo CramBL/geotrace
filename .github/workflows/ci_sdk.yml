@@ -19,6 +19,12 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# Use bash on every runner (Git Bash on Windows) so there is a single shell to
+# read and maintain instead of a mix of bash and PowerShell.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   # clang-format and clang-tidy for the C and C++ SDKs.
   lint-sdk:
@@ -115,13 +121,18 @@ jobs:
         run: cargo doc -p geotrace-sdk --no-deps
 
   c-sdk:
-    name: C SDK / ${{ matrix.os }}
+    name: C SDK / ${{ matrix.os }} / ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
+      # macOS is built under both the system AppleClang and Homebrew llvm.
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - { os: ubuntu-latest, cc: llvm-20, label: llvm-20 }
+          - { os: macos-latest, cc: appleclang, label: appleclang }
+          - { os: macos-latest, cc: llvm-20, label: llvm-20 }
+          - { os: windows-latest, cc: mingw, label: mingw }
 
     steps:
       - name: Checkout
@@ -137,48 +148,19 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
-      - name: Install pinned compiler (Linux, macOS)
-        if: runner.os != 'Windows'
-        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+      - name: Set up SDK toolchain
+        uses: ./.github/actions/setup-sdk-toolchain
         with:
-          compiler: llvm-20
-
-      - name: Install cmake and ninja (Windows)
-        if: runner.os == 'Windows'
-        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
-        with:
-          cmake: true
-          ninja: true
+          compiler: ${{ matrix.cc }}
+          cmake: ${{ runner.os == 'Windows' }}
+          ninja: ${{ runner.os == 'Windows' }}
+          criterion: true
 
       - name: Set Cargo build target (Windows)
         if: runner.os == 'Windows'
-        shell: bash
         run: |
           rustup target add x86_64-pc-windows-gnu
           echo "CARGO_BUILD_TARGET=x86_64-pc-windows-gnu" >> "$GITHUB_ENV"
-
-      - name: Install criterion (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libcriterion-dev
-
-      - name: Install criterion (macOS)
-        if: runner.os == 'macOS'
-        run: brew install criterion
-
-      - name: Install criterion (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          pip install meson
-          git clone --depth=1 --branch v2.4.3 https://github.com/Snaipe/Criterion criterion-src
-          meson setup criterion-src/build criterion-src --prefix=C:/criterion --buildtype=release `
-            -Ddiffs=disabled `
-            "-Dc_args=-Wno-incompatible-pointer-types"
-          meson compile -C criterion-src/build
-          meson install -C criterion-src/build
-          # MSYS2 pkgconf lets cmake's FindPkgConfig locate the installed criterion.pc
-          C:\msys64\usr\bin\pacman.exe --noconfirm -S mingw-w64-x86_64-pkgconf
-          Add-Content $env:GITHUB_PATH "C:\msys64\mingw64\bin"
 
       - name: Build geotrace-c
         run: cargo build -p geotrace-c --release
@@ -195,19 +177,20 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release \
             -DGEOTRACE_C_BUILD_TESTS=ON \
+            -DGEOTRACE_C_BUILD_EXAMPLES=ON \
             $EXTRA
 
       - name: Configure C SDK tests (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
         env:
           PKG_CONFIG_PATH: C:\criterion\lib\pkgconfig
         run: |
-          cmake -S sdk/c -B build/c `
-            -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/x86_64-pc-windows-gnu/release `
-            -DGEOTRACE_C_BUILD_TESTS=ON
+          cmake -S sdk/c -B build/c \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGEOTRACE_C_LIB_DIR="${{ github.workspace }}/target/x86_64-pc-windows-gnu/release" \
+            -DGEOTRACE_C_BUILD_TESTS=ON \
+            -DGEOTRACE_C_BUILD_EXAMPLES=ON
 
       - name: Build C SDK
         run: cmake --build build/c
@@ -218,9 +201,8 @@ jobs:
 
       - name: Run C SDK tests (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
         run: |
-          $env:PATH = "C:\criterion\bin;" + $env:PATH
+          export PATH="/c/criterion/bin:$PATH"
           ctest --test-dir build/c --output-on-failure
 
   # C++ SDK tests - Linux, macOS, and Windows; C++17 and C++20.
@@ -229,39 +211,28 @@ jobs:
   # installs the C SDK to a local prefix so find_package(GeoTraceC) works,
   # configures and builds the C++ SDK with BUILD_TESTING=ON, then runs ctest.
   cpp-sdk:
-    name: C++ SDK / ${{ matrix.os }} / C++${{ matrix.cxx_std }}${{ matrix.generator && format(' / {0}', matrix.generator) || '' }}
+    name: C++ SDK / ${{ matrix.os }} / C++${{ matrix.cxx_std }} / ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
+      # Fully enumerated so macOS can be tested under both the system AppleClang
+      # and Homebrew llvm. `cc` drives the compiler setup; `label` is the job
+      # name suffix; the Windows rows also carry the CMake generator settings.
+      # An empty `generator` means "let CMake pick the default Visual Studio
+      # generator" so this survives the runner's VS version bumps.
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        cxx_std: ["17", "20"]
         include:
-          - {
-              os: windows-latest,
-              cxx_std: "17",
-              generator: "Visual Studio 17 2022",
-              cmake_extra_args: "-A x64",
-            }
-          - {
-              os: windows-latest,
-              cxx_std: "17",
-              generator: Ninja,
-              cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release",
-            }
-          - {
-              os: windows-latest,
-              cxx_std: "20",
-              generator: "Visual Studio 17 2022",
-              cmake_extra_args: "-A x64",
-            }
-          - {
-              os: windows-latest,
-              cxx_std: "20",
-              generator: Ninja,
-              cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release",
-            }
+          - { os: ubuntu-latest, cxx_std: "17", cc: llvm-20, label: llvm-20 }
+          - { os: ubuntu-latest, cxx_std: "20", cc: llvm-20, label: llvm-20 }
+          - { os: macos-latest, cxx_std: "17", cc: appleclang, label: appleclang }
+          - { os: macos-latest, cxx_std: "20", cc: appleclang, label: appleclang }
+          - { os: macos-latest, cxx_std: "17", cc: llvm-20, label: llvm-20 }
+          - { os: macos-latest, cxx_std: "20", cc: llvm-20, label: llvm-20 }
+          - { os: windows-latest, cxx_std: "17", cc: msvc, label: MSBuild, generator: "", cmake_extra_args: "-A x64" }
+          - { os: windows-latest, cxx_std: "17", cc: msvc, label: Ninja, generator: Ninja, cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release" }
+          - { os: windows-latest, cxx_std: "20", cc: msvc, label: MSBuild, generator: "", cmake_extra_args: "-A x64" }
+          - { os: windows-latest, cxx_std: "20", cc: msvc, label: Ninja, generator: Ninja, cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release" }
 
     steps:
       - name: Checkout
@@ -277,11 +248,11 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
-      - name: Install pinned compiler
-        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+      - name: Set up SDK toolchain
+        uses: ./.github/actions/setup-sdk-toolchain
         with:
-          compiler: ${{ matrix.os == 'windows-latest' && 'msvc' || 'llvm-20' }}
-          ninja: true
+          compiler: ${{ matrix.cc }}
+          ninja: ${{ matrix.cc != 'appleclang' }}
 
       - name: Build geotrace-c
         run: cargo build -p geotrace-c --release
@@ -300,13 +271,12 @@ jobs:
       - name: Install C SDK to local prefix (Windows)
         if: runner.os == 'Windows'
         run: |
-          cmake -S sdk/c -B build/c `
-            -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DGEOTRACE_C_LIB_DIR=${{ github.workspace }}/target/release `
-            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
+          cmake -S sdk/c -B build/c \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGEOTRACE_C_LIB_DIR="${{ github.workspace }}/target/release" \
+            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/install"
           cmake --install build/c
-        shell: pwsh
 
       - name: Configure C++ SDK tests (Unix)
         if: runner.os != 'Windows'
@@ -314,18 +284,24 @@ jobs:
           cmake -S sdk/cpp -B build/cpp \
             -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install \
             -DBUILD_TESTING=ON \
+            -DGEOTRACE_CPP_BUILD_EXAMPLES=ON \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }}
 
       - name: Configure C++ SDK tests (Windows)
         if: runner.os == 'Windows'
         run: |
-          cmake -S sdk/cpp -B build/cpp `
-            -G "${{ matrix.generator }}" ${{ matrix.cmake_extra_args }} `
-            -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install `
-            -DBUILD_TESTING=ON `
+          # An empty matrix.generator selects CMake's default VS generator.
+          # GEN/cmake_extra_args are unquoted on purpose so they word-split into
+          # separate cmake arguments (e.g. "-A x64" -> two args).
+          GEN=""
+          [ -n "${{ matrix.generator }}" ] && GEN="-G ${{ matrix.generator }}"
+          cmake -S sdk/cpp -B build/cpp \
+            $GEN ${{ matrix.cmake_extra_args }} \
+            -DCMAKE_PREFIX_PATH="${{ github.workspace }}/install" \
+            -DBUILD_TESTING=ON \
+            -DGEOTRACE_CPP_BUILD_EXAMPLES=ON \
             -DCMAKE_CXX_STANDARD=${{ matrix.cxx_std }}
-        shell: pwsh
 
       - name: Build C++ SDK tests
         run: cmake --build build/cpp --config Release
@@ -337,7 +313,6 @@ jobs:
       - name: Run C++ SDK tests (Windows)
         if: runner.os == 'Windows'
         working-directory: build/cpp
-        shell: pwsh
         run: ctest -C Release --output-on-failure
 
   python-sdk:
@@ -398,7 +373,6 @@ jobs:
 
       - name: Run examples
         working-directory: sdk/python/geotrace-py
-        shell: bash
         run: |
           set -euo pipefail
           for file in examples/*.py; do
@@ -428,8 +402,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
-      - name: Install cmake and ninja
-        uses: aminya/setup-cpp@1f17f92d6a52bfcb1a25348e2c526c2e5cbb1134 # v1.8.0
+      - name: Set up SDK toolchain
+        uses: ./.github/actions/setup-sdk-toolchain
         with:
           cmake: true
           ninja: true
