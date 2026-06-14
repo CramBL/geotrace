@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.21)
 
-foreach(example write_basic read_file gold_dataset)
+set(GEOTRACE_CPP_EXAMPLES
+    write_basic
+    read_file
+    with_satellites
+    event_markers
+    typed_events
+    from_csv
+    from_multiple_sources
+    gold_dataset
+)
+
+foreach(example ${GEOTRACE_CPP_EXAMPLES})
     add_executable(${example} ${example}.cpp)
     target_link_libraries(${example} PRIVATE GeoTrace::Cpp)
 
@@ -15,4 +26,21 @@ foreach(example write_basic read_file gold_dataset)
             -Werror
         )
     endif()
+
+    # On Unix, GeoTrace::C is a shared library; embed an RPATH so the example
+    # binaries find it when run via ctest without LD_LIBRARY_PATH.
+    if(NOT WIN32)
+        set_target_properties(${example} PROPERTIES
+            BUILD_RPATH "$<TARGET_FILE_DIR:GeoTrace::C>"
+        )
+    endif()
+endforeach()
+
+# Register self-contained examples as ctest smoke tests so CI runs them.
+# read_file needs an input path and gold_dataset needs the CSV fixtures and
+# writes into the source tree, so both are exercised separately (test-gold-cpp)
+# and excluded here.
+foreach(example write_basic with_satellites event_markers typed_events from_csv
+                from_multiple_sources)
+    add_test(NAME example_${example} COMMAND ${example})
 endforeach()

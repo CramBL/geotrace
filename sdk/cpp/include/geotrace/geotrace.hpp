@@ -24,6 +24,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -422,10 +423,110 @@ struct EventMarkerView {
 };
 
 /**
+ * @name Type-safe event kinds
+ *
+ * Model an event taxonomy as `enum class` levels and specialise `EventEnum<E>`
+ * to give each level a path segment.  `event_path()` composes a slash-separated
+ * `variant_path` at the call site, and `FileBuilder::add_event()` accepts the
+ * enum values directly - the compiler rejects anything that is not a known
+ * event enum.
+ *
+ * @code
+ * enum class Power { Boot, Sleep, BatteryLow };
+ * template <> struct geotrace::EventEnum<Power> {
+ *     static constexpr std::string_view base = "power";
+ *     static constexpr std::string_view seg(Power p) {
+ *         switch (p) {
+ *         case Power::Boot:       return "boot";
+ *         case Power::Sleep:      return "sleep";
+ *         case Power::BatteryLow: return "battery_low";
+ *         }
+ *         return "";
+ *     }
+ * };
+ *
+ * builder.add_event(Power::Boot, ts, "cold start");          // "power/boot"
+ * builder.add_event(event_path(Connectivity::Agps, Agps::Request), ts);
+ * @endcode
+ * @{
+ */
+
+/**
+ * Trait describing one level of an event taxonomy.
+ *
+ * Specialise for each `enum class` level with two members:
+ *  - `static constexpr std::string_view base` - the segment naming this level.
+ *  - `static constexpr std::string_view seg(E)` - the leaf segment per value.
+ *
+ * `seg()` must return a non-empty segment for **every** enumerator. Write it as
+ * a `switch` with no `default` so that adding an enumerator without a matching
+ * case is a compile error under `-Wswitch`/`-Werror` (the SDK examples and
+ * tests build that way). A value that falls through would compose a malformed
+ * path such as `"power/"`, surfacing only as a runtime `InvalidPathError`.
+ *
+ * The primary template is left undefined so that only specialised enums are
+ * accepted by `event_path()` and `FileBuilder::add_event()`.
+ */
+template <class E> struct EventEnum;
+
+namespace detail {
+template <class E, class = void> struct is_event_enum : std::false_type {};
+template <class E>
+struct is_event_enum<E, std::void_t<decltype(EventEnum<E>::base)>> : std::true_type {};
+} // namespace detail
+
+/**
+ * A composed, slash-separated event `variant_path`.
+ *
+ * Produced by `event_path()`. Use `str()` for the owned string (e.g. to set
+ * `EventMarkerStyle::variant_path`). The `std::string_view` conversion is
+ * `explicit` so the owning temporary can't silently dangle behind a view.
+ */
+class EventPath {
+  public:
+    explicit EventPath(std::string path) noexcept : path_(std::move(path)) {}
+
+    const std::string &str() const noexcept { return path_; }
+    explicit operator std::string_view() const noexcept { return path_; }
+
+  private:
+    std::string path_;
+};
+
+namespace detail {
+template <class E> void append_event_seg(std::string &out, E v, bool with_base) {
+    if (with_base)
+        out += EventEnum<E>::base;
+    out += '/';
+    out += EventEnum<E>::seg(v);
+}
+} // namespace detail
+
+/**
+ * Compose an event path from one or more taxonomy levels.
+ *
+ * The first value contributes `base + "/" + seg`; each further value appends
+ * `"/" + seg`, so `event_path(Connectivity::Agps, Agps::Request)` yields
+ * `"connectivity/agps/request"`.
+ */
+template <class E, class... Es> EventPath event_path(E v0, Es... vs) {
+    static_assert(detail::is_event_enum<E>::value,
+                  "event_path: no EventEnum<> specialisation for this type");
+    static_assert((detail::is_event_enum<Es>::value && ...),
+                  "event_path: no EventEnum<> specialisation for a nested type");
+    std::string out;
+    detail::append_event_seg(out, v0, true);
+    (detail::append_event_seg(out, vs, false), ...);
+    return EventPath{std::move(out)};
+}
+
+/** @} */
+
+/**
  * Constructs a GeoTrace navigation file.
  *
- * Call `add_nav_fix()` (at least once), then `std::move(builder).finish()`
- * to produce a `NavFile`.
+ * Call `add_nav_fix()` (at least once), then `builder.finish()` to produce a
+ * `NavFile`. `finish()` consumes the builder; do not reuse it afterwards.
  *
  * **Non-copyable; movable.**  Destroyed automatically if `finish()` is never called.
  */
@@ -549,6 +650,26 @@ class FileBuilder {
         detail::check(::gtd_builder_add_event_marker_style(impl_, style.variant_path.c_str(),
                                                            detail::to_c(style.icon), color));
         return *this;
+    }
+
+    /**
+     * Add a type-safe event marker from an event-taxonomy value.
+     *
+     * Accepts any `enum class` with an `EventEnum<>` specialisation; the path is
+     * `base + "/" + seg(v)`.  Use `event_path()` for nested taxonomies.
+     * @throws InvalidPathError if the composed path is malformed.
+     */
+    template <class E, std::enable_if_t<detail::is_event_enum<E>::value, int> = 0>
+    FileBuilder &add_event(E v, Timestamp sys_time, std::string note = {}) {
+        return add_event(event_path(v), sys_time, std::move(note));
+    }
+
+    /**
+     * Add a type-safe event marker from a composed `EventPath`.
+     * @throws InvalidPathError if the path is malformed.
+     */
+    FileBuilder &add_event(const EventPath &path, Timestamp sys_time, std::string note = {}) {
+        return add_event_marker(EventMarker{path.str(), sys_time, std::move(note)});
     }
 
     ///@}

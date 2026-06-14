@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tempfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -173,3 +173,39 @@ def test_roundtrip_to_bytes() -> None:
 def test_open_missing_file_raises() -> None:
     with pytest.raises(OSError):
         NavFile.open("/nonexistent/path/that/does/not/exist.gtd")
+
+
+# Every icon the .gtd format defines must be exposed by the Python SDK and
+# round-trip unchanged - this guards against the binding (or the .pyi stub
+# that mypy checks against) drifting away from the canonical 14-icon set.
+ALL_MARKER_ICONS = [
+    MarkerIcon.PIN,
+    MarkerIcon.CROSS,
+    MarkerIcon.CIRCLE,
+    MarkerIcon.LIGHTNING,
+    MarkerIcon.WARNING,
+    MarkerIcon.ERROR,
+    MarkerIcon.CHECK,
+    MarkerIcon.SATELLITE,
+    MarkerIcon.SATELLITE_LOST,
+    MarkerIcon.GEAR,
+    MarkerIcon.REFRESH,
+    MarkerIcon.DOWNLOAD,
+    MarkerIcon.UPLOAD,
+    MarkerIcon.WRENCH,
+]
+
+
+def test_roundtrip_all_marker_icons() -> None:
+    b = NavFileBuilder()
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    b.add(NavFix(lat=51.6, lon=-0.2, gps_time=T0 + timedelta(seconds=1000)))
+    for i, icon in enumerate(ALL_MARKER_ICONS):
+        b.add(Annotation(T0 + timedelta(seconds=10 * (i + 1)), label=str(i), icon=icon))
+
+    nav_file = _write_and_read(b)
+
+    assert len(nav_file.markers) == len(ALL_MARKER_ICONS)
+    by_label = {m.label: m.icon for m in nav_file.markers}
+    for i, icon in enumerate(ALL_MARKER_ICONS):
+        assert by_label[str(i)] == icon, f"icon {icon} did not round-trip"

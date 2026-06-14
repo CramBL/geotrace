@@ -49,14 +49,17 @@ install(FILES
 )
 
 option(GEOTRACE_CPP_BUILD_EXAMPLES "Build C++ SDK examples" OFF)
+option(BUILD_TESTING "Build C++ SDK tests" OFF)
+
+# Enable testing before recursing so examples can register ctest smoke tests.
+if(GEOTRACE_CPP_BUILD_EXAMPLES OR BUILD_TESTING)
+    enable_testing()
+endif()
 
 if(GEOTRACE_CPP_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
-option(BUILD_TESTING "Build C++ SDK tests" OFF)
-
 if(BUILD_TESTING)
-    enable_testing()
     add_subdirectory(tests)
 endif()
