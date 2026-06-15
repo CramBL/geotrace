@@ -45,8 +45,6 @@ struct SharedAppState {
     zoom_to_visible_request: bool,
     /// Filename and warnings for the currently open data quality warnings dialog, if any.
     warnings_popup: Option<(String, Vec<LoadWarning>)>,
-    /// Set by the side panel when the user chooses "Unload" on a file that has a db_ref.
-    unload_request: Option<gt_types::FileIdx>,
 }
 
 pub struct App {
@@ -200,7 +198,6 @@ impl App {
                 popup_pos_request: None,
                 zoom_to_visible_request: false,
                 warnings_popup: None,
-                unload_request: None,
             })),
             load_error: None,
             unassociated_log_lines: None,
@@ -1059,7 +1056,6 @@ impl eframe::App for App {
                             popup_pos_request: &mut s.popup_pos_request,
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
-                            unload_request: &mut s.unload_request,
                         },
                     );
                 });
@@ -1094,7 +1090,6 @@ impl eframe::App for App {
                             popup_pos_request: &mut s.popup_pos_request,
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
-                            unload_request: &mut s.unload_request,
                         },
                     );
                 });
@@ -1294,30 +1289,6 @@ impl eframe::App for App {
             deleted
         };
         if delete_happened {
-            let s = self.shared.borrow();
-            self.map.rebuild_spatial_index(&s.loaded_files);
-        }
-
-        let unload_happened = {
-            let mut refmut = self.shared.borrow_mut();
-            let s = &mut *refmut;
-            if let Some(fi) = s.unload_request.take() {
-                let idx = fi.as_usize();
-                if idx < s.loaded_files.len() {
-                    s.loaded_files.remove(idx);
-                    let files = std::mem::take(&mut s.loaded_files);
-                    s.tree.sync_from_loaded_files(&files);
-                    s.loaded_files = files;
-                    s.plot_state.rebuild_all(&s.loaded_files);
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        };
-        if unload_happened {
             let s = self.shared.borrow();
             self.map.rebuild_spatial_index(&s.loaded_files);
         }

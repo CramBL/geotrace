@@ -30,7 +30,7 @@ pub fn show_delete_confirmation(
     let mut do_cancel = escape_pressed;
 
     let item_label = if count == 1 { "item" } else { "items" };
-    egui::Window::new(format!("Delete {count} {item_label}?"))
+    egui::Window::new(format!("Remove {count} {item_label}?"))
         .collapsible(false)
         .resizable(true)
         .min_width(420.0)
@@ -70,8 +70,8 @@ pub fn show_delete_confirmation(
                 });
             ui.separator();
             ui.label(
-                egui::RichText::new("This action cannot be undone.")
-                    .color(ui.visuals().error_fg_color)
+                egui::RichText::new("This only removes them from the current view.")
+                    .weak()
                     .small(),
             );
             ui.add_space(4.0);
@@ -80,15 +80,7 @@ pub fn show_delete_confirmation(
                     do_cancel = true;
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                egui::RichText::new("Delete").color(gt_ui_theme::DANGER_FG),
-                            )
-                            .fill(gt_ui_theme::DANGER_HOVER),
-                        )
-                        .clicked()
-                    {
+                    if ui.button("Remove").clicked() {
                         do_delete = true;
                     }
                 });

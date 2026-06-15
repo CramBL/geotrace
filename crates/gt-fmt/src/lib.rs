@@ -1,5 +1,6 @@
 use std::fmt::Write;
 
+use chrono::{DateTime, Utc};
 use gt_types::track::FixStats;
 use uom::si::{
     f64,
@@ -124,6 +125,18 @@ pub fn format_human_terse_duration(d: chrono::Duration) -> String {
     out
 }
 
+/// Formats a time span for a tooltip header: the start date and time, then the
+/// end time - including the end date as well when the span crosses midnight
+/// into a different day. Times are UTC, matching the rest of the UI.
+pub fn format_time_range(start: DateTime<Utc>, end: DateTime<Utc>) -> String {
+    let start_str = start.format("%Y-%m-%d %H:%M:%S");
+    if start.date_naive() == end.date_naive() {
+        format!("{start_str} – {}", end.format("%H:%M:%S"))
+    } else {
+        format!("{start_str} – {}", end.format("%Y-%m-%d %H:%M:%S"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,5 +257,27 @@ mod tests {
     #[test]
     fn below_forty_eight_hours_shows_plain_hours() {
         assert_eq!(format_human_terse_duration(dur(47, 0, 0)), "47h");
+    }
+
+    fn dt(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s)
+            .expect("valid rfc3339")
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn time_range_same_day_omits_end_date() {
+        assert_eq!(
+            format_time_range(dt("2024-01-05T12:00:00Z"), dt("2024-01-05T12:30:45Z")),
+            "2024-01-05 12:00:00 – 12:30:45"
+        );
+    }
+
+    #[test]
+    fn time_range_across_midnight_includes_end_date() {
+        assert_eq!(
+            format_time_range(dt("2024-01-05T23:50:00Z"), dt("2024-01-06T00:10:00Z")),
+            "2024-01-05 23:50:00 – 2024-01-06 00:10:00"
+        );
     }
 }
