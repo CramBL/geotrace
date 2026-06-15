@@ -16,7 +16,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub(crate) enum InternalError {
     #[error(transparent)]
-    Hdf5(#[from] hdf5_pure::error::Error),
+    Hdf5(#[from] hdf5_pure::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
