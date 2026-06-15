@@ -1,4 +1,5 @@
 use crate::highlight::{DataCategory, FileIdx, PointIdx, TrackIdx};
+use crate::history::RecordingMeta;
 use crate::markers::{CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker};
 use crate::mercator::MercPoint;
 use crate::nav_point::NavPoint;
@@ -425,4 +426,11 @@ pub struct LoadedFile {
     /// `None` for files that were not imported (storage disabled, DB error, or
     /// non-GTD sources such as log files).
     pub db_ref: Option<DatabaseRef>,
+    /// Content fingerprint of the source recording, used to recognise when the
+    /// same recording is already loaded (e.g. to disable re-opening it from the
+    /// history window).
+    ///
+    /// Populated for GTD files regardless of whether storage is enabled; `None`
+    /// for non-GTD sources such as log files, which never enter history.
+    pub recording_meta: Option<RecordingMeta>,
 }

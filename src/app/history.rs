@@ -1,5 +1,5 @@
 use chrono::{DateTime, NaiveDate, Utc};
-use gt_history::{DatabaseRef, HistoryDatabase, PruneMode, RecordingEntry};
+use gt_history::{DatabaseRef, HistoryDatabase, PruneMode, RecordingEntry, RecordingMeta};
 use gt_ui_theme::WARNING_AMBER;
 
 pub enum HistoryAction {
@@ -245,10 +245,17 @@ impl HistoryWindow {
     /// Show the History window and return any action the user triggered.
     ///
     /// `db` is `None` if the database failed to open at startup.
+    /// `loaded_metas` are the content fingerprints of the files currently loaded
+    /// in the app, used to disable re-opening a recording that is already open.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the window drives several independent pieces of persisted app state plus the loaded-file set; bundling them would obscure rather than clarify"
+    )]
     pub fn show(
         &mut self,
         ctx: &egui::Context,
         db: Option<&gt_history::Database>,
+        loaded_metas: &[RecordingMeta],
         storage_enabled: &mut bool,
         auto_prune_enabled: &mut bool,
         auto_prune_max_bytes: &mut u64,
@@ -491,7 +498,10 @@ impl HistoryWindow {
                                 ui.end_row();
 
                                 for entry in &visible {
-                                    render_row(ui, entry, &mut action);
+                                    let already_loaded = loaded_metas
+                                        .iter()
+                                        .any(|m| m.same_recording(&entry.meta));
+                                    render_row(ui, entry, already_loaded, &mut action);
                                 }
                             });
                     });
@@ -523,7 +533,12 @@ impl HistoryWindow {
     }
 }
 
-fn render_row(ui: &mut egui::Ui, entry: &RecordingEntry, action: &mut Option<HistoryAction>) {
+fn render_row(
+    ui: &mut egui::Ui,
+    entry: &RecordingEntry,
+    already_loaded: bool,
+    action: &mut Option<HistoryAction>,
+) {
     let identity = &entry.db_ref.identity;
     let (display_name, is_auto) = match identity.strip_prefix("auto:") {
         Some(name) => (name, true),
@@ -557,7 +572,10 @@ fn render_row(ui: &mut egui::Ui, entry: &RecordingEntry, action: &mut Option<His
     ui.label(format_size(entry.meta.gtd_size_bytes));
 
     ui.horizontal(|ui| {
-        if ui.small_button("Open").clicked() {
+        let open = ui.add_enabled(!already_loaded, egui::Button::new("Open").small());
+        if already_loaded {
+            open.on_hover_text("Already loaded");
+        } else if open.clicked() {
             *action = Some(HistoryAction::Open(entry.db_ref.clone()));
         }
         if ui.small_button("Delete").clicked() {

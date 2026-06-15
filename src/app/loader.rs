@@ -168,7 +168,7 @@ impl LoaderManager {
                     r_ctx.request_repaint();
                 };
                 let outcome = gt_loader::load_file_with_progress(&path, report, &config)
-                    .map(|file| {
+                    .map(|mut file| {
                         tx.send(LoadMessage::Progress {
                             id,
                             fraction: 0.95,
@@ -177,12 +177,18 @@ impl LoaderManager {
                         .ok();
                         ctx.request_repaint();
                         let series = gt_plot::prepare_file_series(0, &file);
+                        // Read the bytes once for both the content fingerprint
+                        // and the optional history insert.
+                        let bytes = std::fs::read(&path).ok();
+                        file.recording_meta = bytes
+                            .as_deref()
+                            .and_then(|b| gt_history::extract_meta(b).ok());
                         let db_ref = db_path.as_deref().and_then(|p| {
-                            let bytes = std::fs::read(&path).ok()?;
-                            let meta = gt_history::extract_meta(&bytes).ok()?;
+                            let meta = file.recording_meta.as_ref()?;
+                            let bytes = bytes.as_deref()?;
                             use gt_history::HistoryDatabase;
                             let mut db = gt_history::Database::open_or_create(p).ok()?;
-                            match db.insert(&file.identity, &meta, &bytes) {
+                            match db.insert(&file.identity, meta, bytes) {
                                 Ok(r) => Some(r),
                                 Err(e) => {
                                     log::warn!("Failed to store recording in history: {e}");
@@ -240,7 +246,7 @@ impl LoaderManager {
                 };
                 let outcome =
                     gt_loader::load_bytes_with_progress(&bytes, filename, report, &config)
-                        .map(|file| {
+                        .map(|mut file| {
                             tx.send(LoadMessage::Progress {
                                 id,
                                 fraction: 0.95,
@@ -249,11 +255,12 @@ impl LoaderManager {
                             .ok();
                             ctx.request_repaint();
                             let series = gt_plot::prepare_file_series(0, &file);
+                            file.recording_meta = gt_history::extract_meta(&bytes).ok();
                             let db_ref = db_path.as_deref().and_then(|p| {
-                                let meta = gt_history::extract_meta(&bytes).ok()?;
+                                let meta = file.recording_meta.as_ref()?;
                                 use gt_history::HistoryDatabase;
                                 let mut db = gt_history::Database::open_or_create(p).ok()?;
-                                match db.insert(&file.identity, &meta, &bytes) {
+                                match db.insert(&file.identity, meta, &bytes) {
                                     Ok(r) => Some(r),
                                     Err(e) => {
                                         log::warn!("Failed to store recording in history: {e}");
@@ -568,6 +575,7 @@ pub(super) fn build_log_loaded_file(
         source,
         load_warnings: Vec::new(),
         db_ref: None,
+        recording_meta: None,
     })
 }
 

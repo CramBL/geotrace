@@ -888,6 +888,7 @@ mod tests {
             ))),
             load_warnings: vec![],
             db_ref: None,
+            recording_meta: None,
         }
     }
 
@@ -962,6 +963,7 @@ mod tests {
             source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
             load_warnings: vec![],
             db_ref: None,
+            recording_meta: None,
         }
     }
 
@@ -1173,6 +1175,7 @@ mod tests {
             source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
             load_warnings: vec![],
             db_ref: None,
+            recording_meta: None,
         };
 
         let candidate = gt_ui_types::DataPointRef {
@@ -1324,6 +1327,7 @@ mod snapshot_tests {
             source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("snapshot_test.gtd")),
             load_warnings: vec![],
             db_ref: None,
+            recording_meta: None,
         }
     }
 

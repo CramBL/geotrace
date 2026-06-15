@@ -615,6 +615,7 @@ pub fn build_loaded_file(
         source,
         load_warnings,
         db_ref: None,
+        recording_meta: None,
     }
 }
 

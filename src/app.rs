@@ -1327,9 +1327,17 @@ impl eframe::App for App {
         show_load_warnings_dialog(ui, &mut self.shared.borrow_mut().warnings_popup);
 
         let prev_storage = self.storage_enabled;
+        let loaded_metas: Vec<gt_history::RecordingMeta> = {
+            let s = self.shared.borrow();
+            s.loaded_files
+                .iter()
+                .filter_map(|f| f.recording_meta)
+                .collect()
+        };
         if let Some(action) = self.history_window.show(
             ui.ctx(),
             self.db.as_ref(),
+            &loaded_metas,
             &mut self.storage_enabled,
             &mut self.auto_prune_enabled,
             &mut self.auto_prune_max_bytes,
