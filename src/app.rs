@@ -376,52 +376,56 @@ impl App {
                         self.assoc_config.log_marker_window_s = window_s;
                         ui.end_row();
 
+                        let clock_discontinuities_help =
+                            "Flag abrupt jumps in the GPS/system clock offset - e.g. a device \
+                             resuming from suspend, where a stale GPS timestamp meets a fresh \
+                             system timestamp - as markers. These are surfaced for inspection; \
+                             the underlying data is never altered.";
                         ui.label(format!(
                             "{} Clock discontinuities",
                             egui_phosphor::regular::WARNING
                         ))
-                        .on_hover_text(
-                            "Flag abrupt jumps in the GPS/system clock offset - e.g. a device \
-                             resuming from suspend, where a stale GPS timestamp meets a fresh \
-                             system timestamp - as markers. These are surfaced for inspection; \
-                             the underlying data is never altered.",
-                        );
-                        ui.checkbox(&mut self.processing_config.detect_clock_discontinuities, "");
-                        ui.end_row();
-
-                        // Always render the sensitivity row; gray it out when
-                        // detection is off rather than hiding it (DESIGN.md: keep
+                        .on_hover_text(clock_discontinuities_help);
+                        // Detection toggle and its jump sensitivity share one row.
+                        // The sensitivity stays visible but grays out when
+                        // detection is off rather than hiding (DESIGN.md: keep
                         // the layout stable and the feature discoverable).
-                        let detect_on = self.processing_config.detect_clock_discontinuities;
-                        let sigmas = self.processing_config.clock_discontinuity_sigmas;
-                        let floor_s = gt_track_builder::clock_discontinuity_floor_seconds(sigmas);
-                        ui.label(format!(
-                            "{} Clock jump sensitivity",
-                            egui_phosphor::regular::SLIDERS_HORIZONTAL
-                        ))
-                        .on_hover_text(format!(
-                            "How far a jump must stand out from the track's normal clock \
-                             variation to be flagged, in robust standard deviations. Lower \
-                             flags more (smaller) jumps; higher flags only the most extreme.\n\n\
-                             For example, on a steady recording {sigmas:.1} σ flags jumps \
-                             larger than about {floor_s:.1} s; on a noisier one the bar rises \
-                             with the track's own variation.",
-                        ));
-                        let sensitivity = ui.add_enabled(
-                            detect_on,
-                            egui::DragValue::new(
-                                &mut self.processing_config.clock_discontinuity_sigmas,
+                        ui.horizontal(|ui| {
+                            ui.checkbox(
+                                &mut self.processing_config.detect_clock_discontinuities,
+                                "",
                             )
-                            .range(1.0..=20.0)
-                            .speed(0.1)
-                            .fixed_decimals(1)
-                            .suffix(" σ"),
-                        );
-                        if !detect_on {
-                            sensitivity.on_hover_text(
-                                "Enable \"Clock discontinuities\" to adjust the sensitivity",
+                            .on_hover_text(clock_discontinuities_help);
+                            let detect_on = self.processing_config.detect_clock_discontinuities;
+                            let sigmas = self.processing_config.clock_discontinuity_sigmas;
+                            let floor_s =
+                                gt_track_builder::clock_discontinuity_floor_seconds(sigmas);
+                            let sensitivity = ui.add_enabled(
+                                detect_on,
+                                egui::DragValue::new(
+                                    &mut self.processing_config.clock_discontinuity_sigmas,
+                                )
+                                .range(1.0..=20.0)
+                                .speed(0.1)
+                                .fixed_decimals(1)
+                                .suffix(" σ"),
                             );
-                        }
+                            if detect_on {
+                                sensitivity.on_hover_text(format!(
+                                    "Jump sensitivity: how far a jump must stand out from the \
+                                     track's normal clock variation to be flagged, in robust \
+                                     standard deviations. Lower flags more (smaller) jumps; \
+                                     higher flags only the most extreme.\n\n\
+                                     For example, on a steady recording {sigmas:.1} σ flags \
+                                     jumps larger than about {floor_s:.1} s; on a noisier one \
+                                     the bar rises with the track's own variation.",
+                                ));
+                            } else {
+                                sensitivity.on_hover_text(
+                                    "Enable clock discontinuities to adjust the jump sensitivity",
+                                );
+                            }
+                        });
                         ui.end_row();
                     });
                 ui.add_space(8.0);
