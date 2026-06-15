@@ -226,45 +226,6 @@ pub(crate) fn compute_visible_bounding_box(
     }
 }
 
-/// Bounding box (min_lat, max_lat, min_lon, max_lon) over all GPS points and
-/// custom markers in every loaded file. Returns `None` if there is no data.
-pub(crate) fn compute_bounding_box(files: &[LoadedFile]) -> Option<(f64, f64, f64, f64)> {
-    let mut min_lat = f64::MAX;
-    let mut max_lat = f64::MIN;
-    let mut min_lon = f64::MAX;
-    let mut max_lon = f64::MIN;
-    let mut any = false;
-
-    for file in files {
-        for track in &file.tracks {
-            for point in &track.points {
-                let lat = point.tpv.lat().as_degrees();
-                let lon = point.tpv.lon().as_degrees();
-                min_lat = min_lat.min(lat);
-                max_lat = max_lat.max(lat);
-                min_lon = min_lon.min(lon);
-                max_lon = max_lon.max(lon);
-                any = true;
-            }
-            for marker in &track.custom_markers {
-                let lat = marker.lat.as_degrees();
-                let lon = marker.lon.as_degrees();
-                min_lat = min_lat.min(lat);
-                max_lat = max_lat.max(lat);
-                min_lon = min_lon.min(lon);
-                max_lon = max_lon.max(lon);
-                any = true;
-            }
-        }
-    }
-
-    if any {
-        Some((min_lat, max_lat, min_lon, max_lon))
-    } else {
-        None
-    }
-}
-
 /// Compute the geographic bounding box of the given map viewport rect.
 ///
 /// Uses the walkers `Projector` to unproject the four corners of `map_rect`

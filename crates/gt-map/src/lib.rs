@@ -35,8 +35,7 @@ use crate::marker_renderer::MarkerRenderer;
 use crate::track_layers::TrackLayers;
 use crate::transform::{MapScale, MercTransform};
 use crate::viewport::{
-    compute_bounding_box, compute_viewport_bounds, compute_visible_bounding_box,
-    is_spatial_point_visible, zoom_to_fit,
+    compute_viewport_bounds, compute_visible_bounding_box, is_spatial_point_visible, zoom_to_fit,
 };
 
 /// Which tile source to use for the background map.
@@ -258,7 +257,9 @@ impl NavMap {
 
         let now = ui.ctx().input(|i| i.time);
 
-        // Detect newly loaded files → zoom to fit all data + start blink animation.
+        // Detect newly loaded files → zoom to fit the visible tracks + start
+        // blink animation. The new file is visible by default, so it is always
+        // framed; existing files honor their current visibility.
         if files.len() > self.last_file_count {
             self.new_file_boundary = self.last_file_count;
             let had_tracks = self.last_file_count > 0;
@@ -268,7 +269,7 @@ impl NavMap {
             if had_tracks {
                 self.blink.trigger(now);
             }
-            if let Some(bbox) = compute_bounding_box(files) {
+            if let Some(bbox) = compute_visible_bounding_box(files, visibility) {
                 zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
             }
             self.global_tree = gt_track_builder::build_global_tree(files);
@@ -382,9 +383,9 @@ impl NavMap {
 
         let map_response = ui.add(map);
 
-        // Double-click anywhere on the map: zoom out to fit all loaded data.
+        // Double-click anywhere on the map: zoom out to fit the visible tracks.
         if map_response.double_clicked()
-            && let Some(bbox) = compute_bounding_box(files)
+            && let Some(bbox) = compute_visible_bounding_box(files, visibility)
         {
             zoom_to_fit(&mut self.map_memory, map_response.rect, bbox);
         }
@@ -933,6 +934,65 @@ mod tests {
         let mut vis = vis_all_visible();
         vis.files[0].tracks[0].enabled = false;
         assert!(!is_spatial_point_visible(&sp, &vis));
+    }
+
+    fn track_at(lat: f64, lon: f64) -> LoadedTrack {
+        let tpv = gt_types::TimePositionVelocity::builder()
+            .time(gt_types::GpsTime::from_utc(chrono::Utc::now()))
+            .lat(gt_types::Latitude::new(lat))
+            .lon(gt_types::Longitude::new(lon))
+            .build();
+        LoadedTrack {
+            metadata: TrackMetadata::default(),
+            points: vec![gt_types::NavPoint::new(tpv, None)],
+            lod: gt_types::TrackLod::default(),
+            custom_markers: vec![],
+            generated_markers: vec![],
+            event_markers: vec![],
+        }
+    }
+
+    fn file_with_tracks(tracks: Vec<LoadedTrack>) -> LoadedFile {
+        LoadedFile {
+            metadata: FileMetadata::default(),
+            identity: "auto:test.gtd".to_string(),
+            tracks,
+            event_marker_styles: std::collections::HashMap::new(),
+            orphaned_event_markers: vec![],
+            source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
+            load_warnings: vec![],
+            db_ref: None,
+        }
+    }
+
+    /// Regression test: "zoom to fit" frames only the visible tracks. Hiding a
+    /// track must drop its corner from `compute_visible_bounding_box`.
+    #[test]
+    fn visible_bounding_box_excludes_hidden_tracks() {
+        // Track 0 sits south-west; track 1 sits far north-east.
+        let files = vec![file_with_tracks(vec![
+            track_at(55.0, 12.0),
+            track_at(56.0, 13.0),
+        ])];
+        let mut vis = TrackDataVisibility {
+            files: vec![FileVisibility {
+                enabled: true,
+                tracks: vec![
+                    TrackVisibility::all_visible(),
+                    TrackVisibility::all_visible(),
+                ],
+            }],
+        };
+
+        // Everything visible: the box spans both tracks (min_lat, max_lat, min_lon, max_lon).
+        let all_visible =
+            compute_visible_bounding_box(&files, &vis).expect("visible data has a bbox");
+        assert_eq!(all_visible, (55.0, 56.0, 12.0, 13.0));
+
+        // Hide the north-east track: its corner drops out of the box.
+        vis.files[0].tracks[1].enabled = false;
+        let only_first = compute_visible_bounding_box(&files, &vis).expect("track 0 still visible");
+        assert_eq!(only_first, (55.0, 55.0, 12.0, 12.0));
     }
 
     /// Regression test: turning off the TPV layer must prevent hover on TPV points.
