@@ -40,6 +40,7 @@ build *ARGS:
 clippy:
     cargo clippy --workspace --no-deps -- -D warnings
     cargo clippy --workspace --no-deps --tests -- -D warnings
+    cargo clippy --workspace --no-deps --examples -- -D warnings
 
 [group("native")]
 test *ARGS:

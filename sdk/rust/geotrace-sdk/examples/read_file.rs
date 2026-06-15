@@ -9,6 +9,17 @@
 //! With no argument the example first writes a small file to a temp directory
 //! and then reads that back, so it is runnable on its own.
 
+// Examples favour brevity: the core's robustness restriction lints (no
+// unwrap/expect/panic/indexing, no std::env::temp_dir) are not enforced on
+// demonstration code, mirroring how clippy.toml relaxes them inside tests.
+#![allow(
+    clippy::restriction,
+    clippy::cognitive_complexity,
+    clippy::disallowed_methods,
+    clippy::allow_attributes,
+    reason = "SDK example: demonstration code"
+)]
+
 use std::{env, error::Error, fs};
 
 use geotrace_sdk::{Angle, DateTime, NavFile, NavFileBuilder, NavFix, Utc};

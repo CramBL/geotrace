@@ -8,6 +8,17 @@
 //! The example writes the file, reads it back, and prints the per-fix satellite
 //! counts - the data GeoTrace shows in its sky view.
 
+// Examples favour brevity: the core's robustness restriction lints (no
+// unwrap/expect/panic/indexing, no std::env::temp_dir) are not enforced on
+// demonstration code, mirroring how clippy.toml relaxes them inside tests.
+#![allow(
+    clippy::restriction,
+    clippy::cognitive_complexity,
+    clippy::disallowed_methods,
+    clippy::allow_attributes,
+    reason = "SDK example: demonstration code"
+)]
+
 use std::{env, error::Error, fs};
 
 use geotrace_sdk::{
