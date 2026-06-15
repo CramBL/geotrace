@@ -428,6 +428,7 @@ mod tests {
             source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
             load_warnings: vec![],
             db_ref: None,
+            recording_meta: None,
         };
         let range = compute_full_time_range(&[file]);
         assert!(range.is_some());

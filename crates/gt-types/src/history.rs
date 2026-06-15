@@ -65,6 +65,22 @@ impl RecordingMeta {
             && self.marker_count == marker_count
             && self.event_marker_count == event_marker_count
     }
+
+    /// Whether `other` describes the same recording as `self`.
+    ///
+    /// Uses the same content-identity fields as the database's duplicate
+    /// detection (`matches`), so two recordings are "the same" exactly when the
+    /// history database would deduplicate them - independent of which identity
+    /// they were filed under.
+    pub fn same_recording(&self, other: &RecordingMeta) -> bool {
+        self.matches(
+            other.start_us,
+            other.nav_point_count,
+            other.sat_report_count,
+            other.marker_count,
+            other.event_marker_count,
+        )
+    }
 }
 
 /// One entry in the History window list.
@@ -196,4 +212,62 @@ pub fn make_group_name(start_us: i64, total_count: u64, existing_names: &[String
         return ts;
     }
     format!("{}_{}", ts, format_count_suffix(total_count))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta() -> RecordingMeta {
+        RecordingMeta {
+            start_us: 1_000,
+            end_us: 5_000,
+            nav_point_count: 100,
+            sat_report_count: 20,
+            marker_count: 3,
+            event_marker_count: 1,
+            gtd_size_bytes: 4_096,
+        }
+    }
+
+    #[test]
+    fn same_recording_ignores_size_and_end() {
+        // end_us and gtd_size_bytes are not part of the content identity, so a
+        // recording re-read from history (which can differ in stored size or a
+        // recomputed end) still counts as the same recording.
+        let a = meta();
+        let b = RecordingMeta {
+            end_us: 9_999,
+            gtd_size_bytes: 1,
+            ..a
+        };
+        assert!(a.same_recording(&b));
+        assert!(b.same_recording(&a));
+    }
+
+    #[test]
+    fn same_recording_distinguishes_content() {
+        let a = meta();
+        for b in [
+            RecordingMeta { start_us: 2, ..a },
+            RecordingMeta {
+                nav_point_count: 101,
+                ..a
+            },
+            RecordingMeta {
+                sat_report_count: 0,
+                ..a
+            },
+            RecordingMeta {
+                marker_count: 0,
+                ..a
+            },
+            RecordingMeta {
+                event_marker_count: 0,
+                ..a
+            },
+        ] {
+            assert!(!a.same_recording(&b));
+        }
+    }
 }

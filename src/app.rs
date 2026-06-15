@@ -45,8 +45,6 @@ struct SharedAppState {
     zoom_to_visible_request: bool,
     /// Filename and warnings for the currently open data quality warnings dialog, if any.
     warnings_popup: Option<(String, Vec<LoadWarning>)>,
-    /// Set by the side panel when the user chooses "Unload" on a file that has a db_ref.
-    unload_request: Option<gt_types::FileIdx>,
 }
 
 pub struct App {
@@ -200,7 +198,6 @@ impl App {
                 popup_pos_request: None,
                 zoom_to_visible_request: false,
                 warnings_popup: None,
-                unload_request: None,
             })),
             load_error: None,
             unassociated_log_lines: None,
@@ -1063,7 +1060,6 @@ impl eframe::App for App {
                             popup_pos_request: &mut s.popup_pos_request,
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
-                            unload_request: &mut s.unload_request,
                         },
                     );
                 });
@@ -1098,7 +1094,6 @@ impl eframe::App for App {
                             popup_pos_request: &mut s.popup_pos_request,
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
-                            unload_request: &mut s.unload_request,
                         },
                     );
                 });
@@ -1302,38 +1297,22 @@ impl eframe::App for App {
             self.map.rebuild_spatial_index(&s.loaded_files);
         }
 
-        let unload_happened = {
-            let mut refmut = self.shared.borrow_mut();
-            let s = &mut *refmut;
-            if let Some(fi) = s.unload_request.take() {
-                let idx = fi.as_usize();
-                if idx < s.loaded_files.len() {
-                    s.loaded_files.remove(idx);
-                    let files = std::mem::take(&mut s.loaded_files);
-                    s.tree.sync_from_loaded_files(&files);
-                    s.loaded_files = files;
-                    s.plot_state.rebuild_all(&s.loaded_files);
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        };
-        if unload_happened {
-            let s = self.shared.borrow();
-            self.map.rebuild_spatial_index(&s.loaded_files);
-        }
-
         show_unassociated_popup(ui, &mut self.unassociated_log_lines);
         show_orphaned_event_markers_popup(ui, &mut self.orphaned_event_markers);
         show_load_warnings_dialog(ui, &mut self.shared.borrow_mut().warnings_popup);
 
         let prev_storage = self.storage_enabled;
+        let loaded_metas: Vec<gt_history::RecordingMeta> = {
+            let s = self.shared.borrow();
+            s.loaded_files
+                .iter()
+                .filter_map(|f| f.recording_meta)
+                .collect()
+        };
         if let Some(action) = self.history_window.show(
             ui.ctx(),
             self.db.as_ref(),
+            &loaded_metas,
             &mut self.storage_enabled,
             &mut self.auto_prune_enabled,
             &mut self.auto_prune_max_bytes,

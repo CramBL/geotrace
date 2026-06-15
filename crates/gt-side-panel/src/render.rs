@@ -21,9 +21,6 @@ pub struct PanelContext<'a> {
     pub zoom_to_visible_request: &'a mut bool,
     /// Set by clicking the ⚠ icon on a file row; consumed by the app to show a centered dialog.
     pub warnings_request: &'a mut Option<(String, Vec<LoadWarning>)>,
-    /// Set when the user clicks "Unload" on a file that has a database reference.
-    /// Consumed by the app to drop the file from memory without deleting it from the database.
-    pub unload_request: &'a mut Option<FileIdx>,
 }
 
 pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
@@ -212,25 +209,20 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
             ctx.tree.show_only_file(fi);
             ui.close();
         }
-        let has_db_ref = fi.get(ctx.files).is_some_and(|f| f.db_ref.is_some());
-        if has_db_ref {
-            ui.separator();
-            let btn = ui
-                .button("Unload")
-                .on_hover_text("Removes this recording from memory; it stays available in History");
-            if btn.clicked() {
-                *ctx.unload_request = Some(fi);
-                ui.close();
-            }
-        }
         ui.separator();
-        if ui.button("Delete").clicked() {
+        let has_db_ref = fi.get(ctx.files).is_some_and(|f| f.db_ref.is_some());
+        let remove = ui.button("Remove").on_hover_text(if has_db_ref {
+            "Removes this recording from the current view; it stays available in History"
+        } else {
+            "Removes this recording from the current view"
+        });
+        if remove.clicked() {
             ctx.tree.delete_confirm = Some(DeleteConfirmState {
                 items: vec![file_key],
             });
             ui.close();
         }
-        if ctx.tree.selection.len() >= 2 && ui.button("Delete selected").clicked() {
+        if ctx.tree.selection.len() >= 2 && ui.button("Remove selected").clicked() {
             ctx.tree.delete_confirm = Some(DeleteConfirmState {
                 items: ctx.tree.selection.iter().cloned().collect(),
             });
@@ -306,11 +298,20 @@ fn render_track_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Pane
         }
         let is_selected = ctx.tree.selection.contains(&key);
         let resp = ui.selectable_label(is_selected, text);
-        let resp = if let Some(stats) = track.metadata.fix_stats {
-            resp.on_hover_ui(|ui| fix_stats_tooltip_row(ui, stats))
-        } else {
-            resp.on_hover_text("No satellite data")
-        };
+        let time_header = gt_fmt::format_time_range(
+            track.metadata.time_range.start,
+            track.metadata.time_range.end,
+        );
+        let fix_stats = track.metadata.fix_stats;
+        let resp = resp.on_hover_ui(|ui| {
+            ui.label(egui::RichText::new(&time_header).strong());
+            match fix_stats {
+                Some(stats) => fix_stats_tooltip_row(ui, stats),
+                None => {
+                    ui.label("No satellite data");
+                }
+            }
+        });
         (resp, newly_enabled)
     });
 
@@ -345,11 +346,11 @@ fn render_track_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Pane
             ui.close();
         }
         ui.separator();
-        if ui.button("Delete").clicked() {
+        if ui.button("Remove").clicked() {
             ctx.tree.delete_confirm = Some(DeleteConfirmState { items: vec![key] });
             ui.close();
         }
-        if ctx.tree.selection.len() >= 2 && ui.button("Delete selected").clicked() {
+        if ctx.tree.selection.len() >= 2 && ui.button("Remove selected").clicked() {
             ctx.tree.delete_confirm = Some(DeleteConfirmState {
                 items: ctx.tree.selection.iter().cloned().collect(),
             });
