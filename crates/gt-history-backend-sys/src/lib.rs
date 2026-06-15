@@ -11,6 +11,58 @@ use std::path::{Path, PathBuf};
 static DB_LOCK: Mutex<()> = Mutex::new(());
 
 pub mod copy;
+
+/// Extract recording metadata from raw GTD file bytes.
+///
+/// libhdf5 reads from a path rather than a byte slice, so the bytes are staged
+/// in a temporary file. Counts come from the relevant datasets' shapes; the
+/// time bounds from the first and last `nav_points/time` entries.
+pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
+    let tmp = tempfile::NamedTempFile::new()?;
+    std::fs::write(tmp.path(), bytes)?;
+    let file = hdf5::File::open(tmp.path()).map_err(|e| DbError::Backend(e.to_string()))?;
+
+    let nav = file
+        .group("nav_points")
+        .map_err(|e| DbError::Backend(e.to_string()))?;
+    let time = nav
+        .dataset("time")
+        .map_err(|e| DbError::Backend(e.to_string()))?;
+    let nav_point_count = time.shape().first().copied().unwrap_or(0) as u64;
+
+    let (start_us, end_us) = if nav_point_count > 0 {
+        let times: Vec<i64> = time
+            .read_raw()
+            .map_err(|e| DbError::Backend(e.to_string()))?;
+        (
+            times.first().copied().unwrap_or(0),
+            times.last().copied().unwrap_or(0),
+        )
+    } else {
+        (0, 0)
+    };
+
+    // Count rows in an optional data group's index dataset; absent groups
+    // contribute zero.
+    let count_rows = |group: &str, dataset: &str| -> u64 {
+        file.group(group)
+            .ok()
+            .and_then(|g| g.dataset(dataset).ok())
+            .map(|d| d.shape().first().copied().unwrap_or(0) as u64)
+            .unwrap_or(0)
+    };
+
+    Ok(RecordingMeta {
+        start_us,
+        end_us,
+        nav_point_count,
+        sat_report_count: count_rows("sat_reports", "nav_point_idx"),
+        marker_count: count_rows("markers", "time"),
+        event_marker_count: count_rows("event_markers", "sys_time_us"),
+        gtd_size_bytes: bytes.len() as u64,
+    })
+}
+
 pub struct SysDb {
     path: PathBuf,
 }

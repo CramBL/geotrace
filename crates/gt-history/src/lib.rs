@@ -39,9 +39,10 @@ pub fn default_path() -> Result<PathBuf, DbError> {
         .ok_or(DbError::NoDataDir)
 }
 
-/// Re-export helpers from the active backend.
+/// Re-export `extract_meta` from the active backend so the default build does
+/// not pull in the pure backend (and `hdf5-pure`) just for it.
 #[cfg(feature = "backend-pure")]
 pub use gt_history_backend_pure::extract_meta;
 
 #[cfg(feature = "backend-sys")]
-pub use gt_history_backend_pure::extract_meta;
+pub use gt_history_backend_sys::extract_meta;
