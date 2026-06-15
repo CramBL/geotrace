@@ -1,8 +1,6 @@
 #[cfg(feature = "backend-sys")]
 use geotrace_sdk::NavFile;
 use gt_history::{Database, HistoryDatabase, RecordingMeta, extract_meta};
-#[cfg(feature = "backend-sys")]
-use log;
 
 #[expect(
     clippy::expect_used,
@@ -31,7 +29,6 @@ fn make_gtd_bytes(start_us: i64, n: u64) -> Vec<u8> {
 
 #[test_log::test]
 #[cfg(feature = "backend-sys")]
-#[expect(clippy::expect_used)]
 fn repro_missing_version_error() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
@@ -95,7 +92,6 @@ fn repro_missing_version_error() {
 
 #[test_log::test]
 #[cfg(feature = "backend-sys")]
-#[expect(clippy::expect_used)]
 fn repro_duplicate_entry_issue() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
@@ -413,6 +409,71 @@ fn load_gtd_bytes_round_trips_nav_point_timestamps() {
         .expect("read timestamps");
 
     assert_eq!(times, expected, "loaded timestamps should match original");
+}
+
+#[test_log::test]
+fn nav_point_f64_data_round_trips() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let start_us = 12_000_000_i64;
+    let n = 4_u64;
+    let lat: Vec<f64> = (0..n).map(|i| 50.0 + i as f64 * 0.001).collect();
+    let lon: Vec<f64> = (0..n).map(|i| 8.0 - i as f64 * 0.002).collect();
+
+    // A GTD file mixing i64 (time) and f64 (lat/lon) datasets. Storing then
+    // reloading must preserve the f64 values exactly - an earlier hand-rolled
+    // copy in the sys backend reinterpreted non-i64 datasets as raw bytes and
+    // silently corrupted coordinates.
+    let bytes = {
+        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        let times: Vec<i64> = (0..n as i64).map(|i| start_us + i).collect();
+        let mut fb = hdf5_pure::FileBuilder::new();
+        let mut nav = fb.create_group("nav_points");
+        let t = nav.create_dataset("time");
+        t.with_shape(&[n]);
+        t.with_i64_data(&times);
+        let dlat = nav.create_dataset("lat");
+        dlat.with_shape(&[n]);
+        dlat.with_f64_data(&lat);
+        let dlon = nav.create_dataset("lon");
+        dlon.with_shape(&[n]);
+        dlon.with_f64_data(&lon);
+        fb.add_group(nav.finish());
+        fb.write(tmp.path()).expect("write gtd");
+        std::fs::read(tmp.path()).expect("read gtd")
+    };
+
+    let meta = extract_meta(&bytes).expect("meta");
+    let db_ref = db.insert("f64_round_trip", &meta, &bytes).expect("insert");
+
+    let loaded = db.load_bytes(&db_ref).expect("load_bytes");
+    let file = hdf5_pure::File::from_bytes(loaded).expect("parse loaded bytes");
+    let nav = file.group("nav_points").expect("nav_points group");
+    let got_lat = nav
+        .dataset("lat")
+        .and_then(|d| d.read_f64())
+        .expect("read lat");
+    let got_lon = nav
+        .dataset("lon")
+        .and_then(|d| d.read_f64())
+        .expect("read lon");
+
+    assert!(
+        got_lat
+            .iter()
+            .zip(&lat)
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "f64 lat must round-trip exactly: got {got_lat:?}, want {lat:?}"
+    );
+    assert!(
+        got_lon
+            .iter()
+            .zip(&lon)
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "f64 lon must round-trip exactly: got {got_lon:?}, want {lon:?}"
+    );
 }
 
 #[test]

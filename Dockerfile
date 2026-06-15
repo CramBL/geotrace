@@ -1,7 +1,8 @@
-# Stage 1  geotrace-dev     Rust toolchain + CI lint tools.
+# Stage 1  geotrace-dev     Rust toolchain + CI lint tools + cmake (the default
+#                           history backend builds libhdf5 from source).
 #                           Used by: just check / clippy / test / ci-extras / ...
 #
-# Stage 2  geotrace-sdk-dev Extends stage 1 with cmake, criterion, vcpkg.
+# Stage 2  geotrace-sdk-dev Extends stage 1 with clang, criterion, vcpkg.
 #                           Used by: just test-c / test-cpp / test-install / ...
 
 ### Stage 1: Rust dev ###
@@ -11,6 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
+    cmake \
     curl \
     git \
     libssl-dev \
@@ -74,11 +76,12 @@ FROM rust-dev AS sdk-dev
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# cmake is already provided by the Rust dev stage (the default history backend
+# builds libhdf5), so it is not repeated here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     clang \
     clang-format \
     clang-tidy \
-    cmake \
     libcriterion-dev \
     ninja-build \
     tar \

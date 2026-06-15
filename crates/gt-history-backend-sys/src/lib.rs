@@ -20,7 +20,19 @@ impl SysDb {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = hdf5::File::create(path).map_err(|e| DbError::Backend(e.to_string()))?;
+        // Create with a persistent free-space manager so the space vacated by
+        // deleting recordings is tracked across sessions and reused by later
+        // inserts, rather than left as permanent dead space in the file.
+        let file = hdf5::File::with_options()
+            .with_fcpl(|fcpl| {
+                fcpl.file_space_strategy(hdf5::file::FileSpaceStrategy::FreeSpaceManager {
+                    paged: false,
+                    persist: true,
+                    threshold: 1,
+                })
+            })
+            .create(path)
+            .map_err(|e| DbError::Backend(e.to_string()))?;
         file.new_attr::<i64>()
             .create(SCHEMA_VERSION_ATTR)
             .map_err(|e| DbError::Backend(e.to_string()))?
@@ -69,18 +81,12 @@ impl HistoryDatabase for SysDb {
         gtd_bytes: &[u8],
     ) -> Result<DatabaseRef, DbError> {
         let _guard = DB_LOCK.lock();
-        println!("SysDb::insert called");
-        println!("Calling insert_recording");
-        let res = crate::copy::insert_recording(&self.path, identity, meta, gtd_bytes);
-        match &res {
-            Ok(_) => println!("insert_recording succeeded"),
-            Err(e) => println!("insert_recording failed: {:?}", e),
-        }
-        res.map(|rec_name| DatabaseRef {
-            identity: identity.to_owned(),
-            group_name: rec_name,
-        })
-        .map_err(Into::into)
+        crate::copy::insert_recording(&self.path, identity, meta, gtd_bytes)
+            .map(|rec_name| DatabaseRef {
+                identity: identity.to_owned(),
+                group_name: rec_name,
+            })
+            .map_err(Into::into)
     }
 
     fn delete(&mut self, db_ref: &DatabaseRef) -> Result<(), DbError> {

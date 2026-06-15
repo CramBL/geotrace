@@ -1,7 +1,7 @@
 use gt_types::history::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, DbError, RecordingEntry,
-    RecordingMeta, make_group_name,
+    RecordingMeta, is_db_recording_attr, make_group_name,
 };
 use hdf5::Group;
 use std::path::Path;
@@ -107,16 +107,20 @@ pub(crate) fn insert_recording(
     let group_name = make_group_name(meta.start_us, meta.total_count(), &existing_names);
     let rec_grp = id_grp.create_group(&group_name)?;
 
-    // Write meta/copy group
+    // Record the database metadata as recording-group attributes.
     write_meta_attrs(&rec_grp, identity, meta)?;
 
-    // Temporary file for GTD data
-    let tmp = tempfile::NamedTempFile::new_in(db_path.parent().unwrap_or(Path::new(".")))?;
+    // libhdf5's object copy works between open files, so stage the GTD bytes in
+    // a temporary file and copy its objects straight into the recording group.
+    let tmp = tempfile::NamedTempFile::new_in(db_path.parent().unwrap_or_else(|| Path::new(".")))?;
     std::fs::write(tmp.path(), gtd_bytes)?;
     let gtd_file = hdf5::File::open(tmp.path())?;
 
-    // Copy content
-    copy_group_hdf5(&gtd_file, &rec_grp)?;
+    // Preserve the GTD file's root attributes, then faithfully copy each data
+    // group/dataset (datatypes, attributes, chunking, and compression) into the
+    // recording group.
+    copy_attrs(&gtd_file, &rec_grp, |_| true)?;
+    copy_members(&gtd_file, &rec_grp)?;
 
     Ok(group_name)
 }
@@ -133,9 +137,9 @@ fn write_meta_attrs(
         let attr = group
             .new_attr::<hdf5::types::VarLenUnicode>()
             .create(name)?;
-        let v = val
-            .parse::<hdf5::types::VarLenUnicode>()
-            .map_err(|_| InternalError::Hdf5(hdf5::Error::from("parse error".to_string())))?;
+        let v = val.parse::<hdf5::types::VarLenUnicode>().map_err(|e| {
+            InternalError::Hdf5(hdf5::Error::from(format!("invalid attribute string: {e}")))
+        })?;
         attr.write_scalar(&v)?;
         Ok(())
     };
@@ -168,59 +172,55 @@ fn write_meta_attrs(
     Ok(())
 }
 
-fn copy_group_hdf5(src: &Group, dst: &Group) -> Result<(), InternalError> {
-    // Copy attributes
-    for attr_name in src.attr_names()? {
-        if dst.attr(&attr_name).is_ok() {
-            continue;
-        }
-        copy_attr(src, dst, &attr_name)?;
-    }
-    // Copy members
+/// Faithfully copy every member object of `src` into `dst` using the HDF5
+/// object-copy primitive (`H5Ocopy`).
+///
+/// Unlike a hand-rolled dataset copy, this preserves every member's datatype,
+/// shape, attributes, chunking, and compression for the whole subtree - and it
+/// copies across open files, so it works for both storing a GTD file into the
+/// database and extracting a recording back out.
+fn copy_members(src: &Group, dst: &Group) -> Result<(), InternalError> {
     for name in src.member_names()? {
-        if let Ok(ds) = src.dataset(&name) {
-            let dtype = ds.dtype()?;
-            use hdf5::types::TypeDescriptor;
-            match dtype
-                .to_descriptor()
-                .map_err(|e| InternalError::Hdf5(hdf5::Error::from(e.to_string())))?
-            {
-                TypeDescriptor::Integer(hdf5::types::IntSize::U8) => {
-                    let data: Vec<i64> = ds.read_raw().unwrap_or_default();
-                    let new_ds = dst
-                        .new_dataset::<i64>()
-                        .shape(ds.shape())
-                        .create(name.as_str())?;
-                    new_ds.write_raw(&data)?;
-                }
-                _ => {
-                    let data: Vec<u8> = ds.read_raw().unwrap_or_default();
-                    let new_ds = dst
-                        .new_dataset::<u8>()
-                        .shape(ds.shape())
-                        .create(name.as_str())?;
-                    new_ds.write_raw(&data)?;
-                }
-            }
-        } else if let Ok(child_src) = src.group(&name) {
-            let child_dst = dst.create_group(name.as_str())?;
-            copy_group_hdf5(&child_src, &child_dst)?;
+        if let Ok(grp) = src.group(&name) {
+            grp.copy_to(dst, &name)?;
+        } else if let Ok(ds) = src.dataset(&name) {
+            ds.copy_to(dst, &name)?;
         }
     }
     Ok(())
 }
 
-fn copy_attr(src: &Group, dst: &Group, name: &str) -> Result<(), InternalError> {
-    let attr = src.attr(name)?;
-    let dtype = attr.dtype()?;
+/// Copy the group-level attributes of `src` onto `dst`, skipping any whose name
+/// `keep` rejects and any already present on `dst`.
+fn copy_attrs(src: &Group, dst: &Group, keep: impl Fn(&str) -> bool) -> Result<(), InternalError> {
+    for attr_name in src.attr_names()? {
+        if !keep(&attr_name) || dst.attr(&attr_name).is_ok() {
+            continue;
+        }
+        copy_attr(src, dst, &attr_name)?;
+    }
+    Ok(())
+}
 
+fn copy_attr(src: &Group, dst: &Group, name: &str) -> Result<(), InternalError> {
     use hdf5::types::TypeDescriptor;
-    match dtype
+    let attr = src.attr(name)?;
+    let descriptor = attr
+        .dtype()?
         .to_descriptor()
-        .map_err(|e| InternalError::Hdf5(hdf5::Error::from(e.to_string())))?
-    {
-        TypeDescriptor::VarLenUnicode | TypeDescriptor::FixedUnicode(_) => {
-            let v: hdf5::types::VarLenUnicode = attr.read_scalar()?;
+        .map_err(|e| InternalError::Hdf5(hdf5::Error::from(e.to_string())))?;
+
+    match descriptor {
+        TypeDescriptor::VarLenUnicode
+        | TypeDescriptor::VarLenAscii
+        | TypeDescriptor::FixedUnicode(_)
+        | TypeDescriptor::FixedAscii(_) => {
+            // Normalise every string attribute to variable-length unicode on the
+            // way in; reading the original is the subtle part (see read_string_attr).
+            let s = read_string_attr(&attr, &descriptor)?;
+            let v: hdf5::types::VarLenUnicode = s.parse().map_err(|e| {
+                InternalError::Hdf5(hdf5::Error::from(format!("invalid attribute string: {e}")))
+            })?;
             dst.new_attr::<hdf5::types::VarLenUnicode>()
                 .create(name)?
                 .write_scalar(&v)?;
@@ -233,9 +233,55 @@ fn copy_attr(src: &Group, dst: &Group, name: &str) -> Result<(), InternalError> 
             let v: u64 = attr.read_scalar()?;
             dst.new_attr::<u64>().create(name)?.write_scalar(&v)?;
         }
-        _ => log::warn!("Skipping attribute '{}' with unsupported type", name),
+        _ => log::warn!("Skipping attribute '{name}' with unsupported type"),
     }
     Ok(())
+}
+
+/// Read a string attribute (fixed- or variable-length, unicode or ASCII) into an
+/// owned `String`.
+///
+/// libhdf5 converts between fixed string sizes but offers no fixed -> variable
+/// conversion path, so a fixed-length attribute (how the SDK writes the GTD root
+/// strings) cannot be read straight into `VarLenUnicode` - it must be read into
+/// a fixed buffer at least as large as the on-disk length. The ladder picks the
+/// smallest compile-time capacity that covers it.
+fn read_string_attr(
+    attr: &hdf5::Attribute,
+    descriptor: &hdf5::types::TypeDescriptor,
+) -> Result<String, InternalError> {
+    use hdf5::types::{FixedAscii, FixedUnicode, TypeDescriptor, VarLenAscii, VarLenUnicode};
+
+    macro_rules! read_fixed {
+        ($fixed:ident, $len:expr) => {{
+            let len = $len;
+            if len < 64 {
+                attr.read_scalar::<$fixed<64>>()?.as_str().to_owned()
+            } else if len < 256 {
+                attr.read_scalar::<$fixed<256>>()?.as_str().to_owned()
+            } else if len < 1024 {
+                attr.read_scalar::<$fixed<1024>>()?.as_str().to_owned()
+            } else if len < 8192 {
+                attr.read_scalar::<$fixed<8192>>()?.as_str().to_owned()
+            } else {
+                return Err(InternalError::Hdf5(hdf5::Error::from(format!(
+                    "string attribute too long to copy in place ({len} bytes)"
+                ))));
+            }
+        }};
+    }
+
+    Ok(match descriptor {
+        TypeDescriptor::VarLenUnicode => attr.read_scalar::<VarLenUnicode>()?.as_str().to_owned(),
+        TypeDescriptor::VarLenAscii => attr.read_scalar::<VarLenAscii>()?.as_str().to_owned(),
+        TypeDescriptor::FixedUnicode(n) => read_fixed!(FixedUnicode, *n),
+        TypeDescriptor::FixedAscii(n) => read_fixed!(FixedAscii, *n),
+        other => {
+            return Err(InternalError::Hdf5(hdf5::Error::from(format!(
+                "attribute is not a string type: {other:?}"
+            ))));
+        }
+    })
 }
 
 pub(crate) fn load_recording_bytes(
@@ -249,28 +295,25 @@ pub(crate) fn load_recording_bytes(
         .group(identity)?
         .group(group_name)?;
 
-    let tmp = tempfile::NamedTempFile::new_in(db_path.parent().unwrap_or(Path::new(".")))?;
+    let tmp = tempfile::NamedTempFile::new_in(db_path.parent().unwrap_or_else(|| Path::new(".")))?;
     let out = hdf5::File::create(tmp.path())?;
+    let root = out.group("/")?;
 
-    // Copy everything from rec_grp to out root
-    let root = out
-        .group("/")
-        .map_err(|_| hdf5::Error::from("failed to open root"))?;
-    copy_group_hdf5(&rec_grp, &root)?;
+    // Reconstruct the GTD file: copy the data groups/datasets back to the root,
+    // and restore the original GTD root attributes (skipping the database's own
+    // recording metadata, which is not part of the GTD format).
+    copy_members(&rec_grp, &root)?;
+    copy_attrs(&rec_grp, &root, |name| !is_db_recording_attr(name))?;
 
-    // Copy attributes of rec_grp to root
-    for attr_name in rec_grp.attr_names()? {
-        if root.attr(&attr_name).is_ok() {
-            continue;
-        }
-        copy_attr(&rec_grp, &root, &attr_name)?;
-    }
-
-    // Ensure version exists
+    // Fall back to geotrace_version="1" for recordings stored before attribute
+    // preservation existed.
     if root.attr("geotrace_version").is_err() {
+        let version: hdf5::types::VarLenUnicode = "1".parse().map_err(|e| {
+            InternalError::Hdf5(hdf5::Error::from(format!("invalid version literal: {e}")))
+        })?;
         root.new_attr::<hdf5::types::VarLenUnicode>()
             .create("geotrace_version")?
-            .write_scalar(&"1".parse::<hdf5::types::VarLenUnicode>().unwrap())?;
+            .write_scalar(&version)?;
     }
 
     out.flush().map_err(InternalError::Hdf5)?;
@@ -283,10 +326,7 @@ pub(crate) fn list_recordings(
     db_path: &std::path::Path,
 ) -> Result<Vec<RecordingEntry>, InternalError> {
     let file = hdf5::File::open(db_path)?;
-    let root = file
-        .group("/")
-        .map_err(|_| hdf5::Error::from("failed to open root"))?;
-    let by_id = root.group("by_identity")?;
+    let by_id = file.group("by_identity")?;
     let mut entries = Vec::new();
     for identity in by_id.member_names()? {
         if let Ok(id_grp) = by_id.group(&identity) {

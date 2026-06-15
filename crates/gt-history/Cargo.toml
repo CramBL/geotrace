@@ -12,7 +12,10 @@ doctest = false
 test = false
 
 [features]
-default = ["backend-pure"]
+# The system-HDF5 backend is the default: it edits the history file in place
+# (insert/delete without rewriting the whole file) and tracks free space. The
+# pure-Rust backend stays available as a zero-C-dependency fallback.
+default = ["backend-sys"]
 backend-pure = []
 backend-sys = ["dep:gt-history-backend-sys"]
 
