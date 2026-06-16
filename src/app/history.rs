@@ -6,6 +6,8 @@ pub enum HistoryAction {
     Open(DatabaseRef),
     Delete(DatabaseRef),
     Prune(Vec<DatabaseRef>),
+    /// Permanently delete all hidden (soft-deleted) recordings.
+    DeleteHidden(Vec<DatabaseRef>),
 }
 
 /// Which pruning mode is selected in the Prune dialog.
@@ -151,7 +153,7 @@ impl PruneDialog {
                         ui.label("Nothing to prune");
                     } else {
                         let n = refs.len();
-                        let rec_label = if n == 1 { "recording" } else { "recordings" };
+                        let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
                         ui.label(format!("{n} {rec_label} will be deleted"));
                         egui::ScrollArea::vertical()
                             .max_height(200.0)
@@ -212,6 +214,8 @@ pub struct HistoryWindow {
     /// Error from the last operation, if any.
     error: Option<String>,
     prune: PruneDialog,
+    /// Whether the "delete hidden data" confirmation dialog is open.
+    confirm_delete_hidden: bool,
 }
 
 impl HistoryWindow {
@@ -226,6 +230,7 @@ impl HistoryWindow {
             filter_date_to: String::new(),
             error: None,
             prune: PruneDialog::new(),
+            confirm_delete_hidden: false,
         }
     }
 
@@ -280,10 +285,29 @@ impl HistoryWindow {
             return Some(HistoryAction::Prune(refs));
         }
 
+        // Hidden (soft-deleted) recordings: collected up front so the toolbar can
+        // offer a "Delete hidden data" action and the list can exclude them.
+        let hidden_refs: Vec<DatabaseRef> = self
+            .entries
+            .as_ref()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter(|e| e.hidden)
+                    .map(|e| e.db_ref.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let hidden_count = hidden_refs.len();
+
         let mut action = None;
         let mut open = self.open;
 
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        // While the confirmation dialog is up, let Escape dismiss it rather than
+        // the whole History window.
+        if !self.confirm_delete_hidden
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
             open = false;
         }
 
@@ -325,6 +349,21 @@ impl HistoryWindow {
                     );
                     ui.text_edit_singleline(&mut self.filter_text);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let delete_hidden_label = if hidden_count > 0 {
+                            format!("Delete hidden data ({hidden_count})…")
+                        } else {
+                            "Delete hidden data…".to_owned()
+                        };
+                        let delete_hidden = ui
+                            .add_enabled(hidden_count > 0, egui::Button::new(delete_hidden_label))
+                            .on_hover_text(if hidden_count > 0 {
+                                "Permanently delete recordings that were hidden by 'remove'"
+                            } else {
+                                "No hidden recordings to delete"
+                            });
+                        if delete_hidden.clicked() {
+                            self.confirm_delete_hidden = true;
+                        }
                         if ui.button("Prune…").clicked() {
                             self.prune.open = true;
                             self.prune.reset();
@@ -440,6 +479,11 @@ impl HistoryWindow {
                 let visible: Vec<&RecordingEntry> = entries
                     .iter()
                     .filter(|e| {
+                        // Hidden recordings are soft-deleted; the "Delete hidden
+                        // data" button is the only place they surface.
+                        if e.hidden {
+                            return false;
+                        }
                         if !filter_identity.is_empty()
                             && !e
                                 .db_ref
@@ -507,26 +551,77 @@ impl HistoryWindow {
                     });
 
                 ui.separator();
-                let total_count = entries.len();
-                let total_size: u64 = entries.iter().map(|e| e.meta.gtd_size_bytes).sum();
+                // Footer stats cover the stored (non-hidden) recordings; hidden
+                // ones are reported separately since they are pending deletion.
+                let stored_count = entries.iter().filter(|e| !e.hidden).count();
+                let total_size: u64 = entries
+                    .iter()
+                    .filter(|e| !e.hidden)
+                    .map(|e| e.meta.gtd_size_bytes)
+                    .sum();
                 ui.horizontal(|ui| {
-                    let rec_label = if total_count == 1 {
-                        "recording"
-                    } else {
-                        "recordings"
-                    };
+                    let rec_label = gt_fmt::pluralize(stored_count, "recording", "recordings");
                     ui.label(format!(
-                        "{total_count} {rec_label} - {}",
+                        "{stored_count} {rec_label} - {}",
                         format_size(total_size)
                     ));
-                    if filter_active && visible.len() != total_count {
+                    if filter_active && visible.len() != stored_count {
                         ui.weak(format!("({} shown)", visible.len()));
+                    }
+                    if hidden_count > 0 {
+                        ui.weak(format!("- {hidden_count} hidden"));
                     }
                 });
                 if let Some(path) = db.map(|d| d.path().display().to_string()) {
                     ui.weak(path);
                 }
             });
+
+        // Confirmation for the destructive "delete hidden data" action, mirroring
+        // the prune/auto-prune confirm flow (no permanent delete without a prompt).
+        if self.confirm_delete_hidden {
+            if hidden_count == 0 {
+                self.confirm_delete_hidden = false;
+            } else {
+                let mut do_delete = false;
+                let mut cancel =
+                    ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+                egui::Window::new("Delete hidden data?")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                    .show(ctx, |ui| {
+                        let rec_label = gt_fmt::pluralize(hidden_count, "recording", "recordings");
+                        ui.label(format!(
+                            "{hidden_count} hidden {rec_label} will be permanently deleted."
+                        ));
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(
+                                    egui::RichText::new("Delete these recordings")
+                                        .color(WARNING_AMBER),
+                                )
+                                .on_hover_text(
+                                    "This cannot be undone. The original source files are unaffected.",
+                                )
+                                .clicked()
+                            {
+                                do_delete = true;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                cancel = true;
+                            }
+                        });
+                    });
+                if do_delete {
+                    action = Some(HistoryAction::DeleteHidden(hidden_refs.clone()));
+                    self.confirm_delete_hidden = false;
+                } else if cancel {
+                    self.confirm_delete_hidden = false;
+                }
+            }
+        }
 
         self.open = open;
         action

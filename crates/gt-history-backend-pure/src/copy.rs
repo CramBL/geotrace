@@ -1,8 +1,9 @@
 use crate::matches_attrs;
 use gt_types::history::{
-    ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
-    ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION, DbError,
-    RecordingMeta, SCHEMA_VERSION_ATTR, is_db_recording_attr, make_group_name,
+    ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_HIDDEN, ATTR_IDENTITY,
+    ATTR_MARKER_COUNT, ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US,
+    CURRENT_SCHEMA_VERSION, DbError, RecordingMeta, SCHEMA_VERSION_ATTR, is_db_recording_attr,
+    make_group_name,
 };
 /// Internal read-modify-write machinery for the history database.
 ///
@@ -331,6 +332,38 @@ pub(crate) fn delete_batch(
 
     write_db(&identity_nodes, db_path)?;
     log::info!("Deleted {} recording(s) in batch prune", refs.len());
+    Ok(())
+}
+
+/// Mark or unmark recordings as hidden via a read-modify-write cycle.
+///
+/// Sets each matched recording's [`ATTR_HIDDEN`] attribute to `1` (hidden) or
+/// `0` (visible). Unknown refs are skipped.
+pub(crate) fn set_hidden(
+    db_path: &std::path::Path,
+    refs: &[gt_types::DatabaseRef],
+    hidden: bool,
+) -> Result<(), InternalError> {
+    let existing_db = hdf5_pure::File::open(db_path)?;
+    let mut identity_nodes = snapshot_by_identity(&existing_db)?;
+    drop(existing_db);
+
+    let value = AttrValue::U64(u64::from(hidden));
+    for db_ref in refs {
+        if let Some(id_node) = identity_nodes
+            .iter_mut()
+            .find(|n| n.name == db_ref.identity)
+            && let Some(rec) = id_node
+                .groups
+                .iter_mut()
+                .find(|r| r.name == db_ref.group_name)
+        {
+            rec.attrs.retain(|(k, _)| k != ATTR_HIDDEN);
+            rec.attrs.push((ATTR_HIDDEN.to_owned(), value.clone()));
+        }
+    }
+
+    write_db(&identity_nodes, db_path)?;
     Ok(())
 }
 

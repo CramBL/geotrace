@@ -19,6 +19,9 @@ pub enum NodeKey {
 
 pub struct DeleteConfirmState {
     pub items: Vec<NodeKey>,
+    /// When set, removal also permanently deletes the affected recordings from
+    /// the history database instead of only hiding them.
+    pub delete_permanently: bool,
 }
 
 /// Tracks which data categories are currently expanded in the track row.

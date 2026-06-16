@@ -1,6 +1,6 @@
 use gt_types::DatabaseRef;
 use gt_types::history::{
-    ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_MARKER_COUNT,
+    ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_HIDDEN, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION, DbError,
     HistoryDatabase, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR,
 };
@@ -49,6 +49,14 @@ impl HistoryDatabase for PureDb {
         copy::delete_recording(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
     }
 
+    fn set_hidden(&mut self, refs: &[DatabaseRef], hidden: bool) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        if refs.is_empty() {
+            return Ok(());
+        }
+        copy::set_hidden(&self.path, refs, hidden).map_err(Into::into)
+    }
+
     fn load_bytes(&self, db_ref: &DatabaseRef) -> Result<Vec<u8>, DbError> {
         let _guard = DB_LOCK.lock();
         copy::load_recording_bytes(&self.path, &db_ref.identity, &db_ref.group_name)
@@ -82,12 +90,15 @@ impl HistoryDatabase for PureDb {
                     continue;
                 };
                 if let Some(meta) = from_attrs(&attrs) {
+                    let hidden =
+                        matches!(attrs.get(ATTR_HIDDEN), Some(AttrValue::U64(v)) if *v != 0);
                     entries.push(RecordingEntry {
                         db_ref: DatabaseRef {
                             identity: identity.clone(),
                             group_name: rec_name,
                         },
                         meta,
+                        hidden,
                     });
                 }
             }

@@ -94,7 +94,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
             ui.add_enabled(
                 has_filtered,
                 egui::Button::new(format!(
-                    "{} Delete all filtered data",
+                    "{} Remove filtered data",
                     egui_phosphor::regular::TRASH
                 )),
             )
@@ -104,6 +104,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     if clicked {
         ctx.tree.delete_confirm = Some(DeleteConfirmState {
             items: filtered_out,
+            delete_permanently: false,
         });
     }
 
@@ -212,19 +213,21 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
         ui.separator();
         let has_db_ref = fi.get(ctx.files).is_some_and(|f| f.db_ref.is_some());
         let remove = ui.button("Remove").on_hover_text(if has_db_ref {
-            "Removes this recording from the current view; it stays available in History"
+            "Removes this recording from the view and hides it in History"
         } else {
             "Removes this recording from the current view"
         });
         if remove.clicked() {
             ctx.tree.delete_confirm = Some(DeleteConfirmState {
                 items: vec![file_key],
+                delete_permanently: false,
             });
             ui.close();
         }
         if ctx.tree.selection.len() >= 2 && ui.button("Remove selected").clicked() {
             ctx.tree.delete_confirm = Some(DeleteConfirmState {
                 items: ctx.tree.selection.iter().cloned().collect(),
+                delete_permanently: false,
             });
             ui.close();
         }
@@ -347,12 +350,16 @@ fn render_track_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Pane
         }
         ui.separator();
         if ui.button("Remove").clicked() {
-            ctx.tree.delete_confirm = Some(DeleteConfirmState { items: vec![key] });
+            ctx.tree.delete_confirm = Some(DeleteConfirmState {
+                items: vec![key],
+                delete_permanently: false,
+            });
             ui.close();
         }
         if ctx.tree.selection.len() >= 2 && ui.button("Remove selected").clicked() {
             ctx.tree.delete_confirm = Some(DeleteConfirmState {
                 items: ctx.tree.selection.iter().cloned().collect(),
+                delete_permanently: false,
             });
             ui.close();
         }

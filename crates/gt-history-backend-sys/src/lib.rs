@@ -1,7 +1,7 @@
 use crate::copy::{list_recordings, load_recording_bytes};
 use gt_types::DatabaseRef;
 use gt_types::history::{
-    CURRENT_SCHEMA_VERSION, DbError, HistoryDatabase, RecordingEntry, RecordingMeta,
+    ATTR_HIDDEN, CURRENT_SCHEMA_VERSION, DbError, HistoryDatabase, RecordingEntry, RecordingMeta,
     SCHEMA_VERSION_ATTR,
 };
 
@@ -147,6 +147,32 @@ impl HistoryDatabase for SysDb {
         let path = format!("by_identity/{}/{}", db_ref.identity, db_ref.group_name);
         if file.link_exists(&path) {
             file.unlink(&path)
+                .map_err(|e| DbError::Backend(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn set_hidden(&mut self, refs: &[DatabaseRef], hidden: bool) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        if refs.is_empty() {
+            return Ok(());
+        }
+        // Editing an attribute in place avoids rewriting the whole file.
+        let file = hdf5::File::open_rw(&self.path).map_err(|e| DbError::Backend(e.to_string()))?;
+        let value = u64::from(hidden);
+        for db_ref in refs {
+            let path = format!("by_identity/{}/{}", db_ref.identity, db_ref.group_name);
+            let Ok(grp) = file.group(&path) else {
+                continue;
+            };
+            let attr = match grp.attr(ATTR_HIDDEN) {
+                Ok(attr) => attr,
+                Err(_) => grp
+                    .new_attr::<u64>()
+                    .create(ATTR_HIDDEN)
+                    .map_err(|e| DbError::Backend(e.to_string()))?,
+            };
+            attr.write_scalar(&value)
                 .map_err(|e| DbError::Backend(e.to_string()))?;
         }
         Ok(())

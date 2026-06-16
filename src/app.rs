@@ -783,17 +783,49 @@ impl App {
             Ok(auto_prune::AutoPruneOutcome::NotNeeded) => {}
             Ok(auto_prune::AutoPruneOutcome::PrunedSilently(n)) => {
                 self.history_window.invalidate();
+                let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
                 self.toasts
-                    .info(format!(
-                        "Auto-pruned {n} {}",
-                        if n == 1 { "recording" } else { "recordings" }
-                    ))
+                    .info(format!("Auto-pruned {n} {rec_label}"))
                     .duration(Some(std::time::Duration::from_secs(4)));
             }
             Ok(auto_prune::AutoPruneOutcome::NeedsConfirmation(candidates)) => {
                 self.pending_auto_prune = Some(candidates);
             }
             Err(e) => log::error!("Auto-prune failed: {e}"),
+        }
+    }
+
+    /// Apply the history side of a "remove" confirmation: hide the affected
+    /// recordings, or permanently delete them when the user opted in.
+    fn apply_remove_outcome(&mut self, outcome: &modals::RemoveOutcome) {
+        use gt_history::HistoryDatabase;
+        if outcome.affected.is_empty() {
+            return;
+        }
+        let Some(db) = self.db.as_mut() else {
+            return;
+        };
+        let count = outcome.affected.len();
+        let rec_label = gt_fmt::pluralize(count, "recording", "recordings");
+        let result = if outcome.permanent {
+            db.delete_batch(&outcome.affected)
+        } else {
+            db.set_hidden(&outcome.affected, true)
+        };
+        match result {
+            Ok(()) => {
+                self.history_window.invalidate();
+                let msg = if outcome.permanent {
+                    format!("Deleted {count} {rec_label} from history")
+                } else {
+                    format!("Hid {count} {rec_label} in history")
+                };
+                self.toasts.info(msg);
+            }
+            Err(e) => {
+                log::error!("Failed to update history on remove: {e}");
+                self.toasts.error(format!("Could not update history: {e}"));
+            }
         }
     }
 
@@ -832,21 +864,32 @@ impl App {
             }
             history::HistoryAction::Prune(refs) => {
                 let count = refs.len();
+                let rec_label = gt_fmt::pluralize(count, "recording", "recordings");
                 match db.delete_batch(&refs) {
                     Ok(()) => {
-                        self.toasts.info(format!(
-                            "Pruned {count} {} from history",
-                            if count == 1 {
-                                "recording"
-                            } else {
-                                "recordings"
-                            }
-                        ));
+                        self.toasts
+                            .info(format!("Pruned {count} {rec_label} from history"));
                         self.history_window.invalidate();
                     }
                     Err(e) => {
                         log::error!("Batch prune failed: {e}");
                         self.toasts.error(format!("Prune failed: {e}"));
+                    }
+                }
+            }
+            history::HistoryAction::DeleteHidden(refs) => {
+                let count = refs.len();
+                let rec_label = gt_fmt::pluralize(count, "recording", "recordings");
+                match db.delete_batch(&refs) {
+                    Ok(()) => {
+                        self.toasts
+                            .info(format!("Deleted {count} hidden {rec_label} from history"));
+                        self.history_window.invalidate();
+                    }
+                    Err(e) => {
+                        log::error!("Failed to delete hidden recordings: {e}");
+                        self.toasts
+                            .error(format!("Could not delete hidden data: {e}"));
                     }
                 }
             }
@@ -986,7 +1029,10 @@ impl eframe::App for App {
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete));
             if delete_pressed && !s.tree.selection.is_empty() && s.tree.delete_confirm.is_none() {
                 let items = s.tree.selection.iter().cloned().collect();
-                s.tree.delete_confirm = Some(gt_side_panel::DeleteConfirmState { items });
+                s.tree.delete_confirm = Some(gt_side_panel::DeleteConfirmState {
+                    items,
+                    delete_permanently: false,
+                });
             }
         }
 
@@ -1283,18 +1329,21 @@ impl eframe::App for App {
             self.load_error = None;
         }
 
-        let delete_happened = {
+        let remove_outcome = {
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
-            let deleted = show_delete_confirmation(ui, &mut s.tree, &mut s.loaded_files);
-            if deleted {
+            let outcome = show_delete_confirmation(ui, &mut s.tree, &mut s.loaded_files);
+            if outcome.is_some() {
                 s.plot_state.rebuild_all(&s.loaded_files);
             }
-            deleted
+            outcome
         };
-        if delete_happened {
-            let s = self.shared.borrow();
-            self.map.rebuild_spatial_index(&s.loaded_files);
+        if let Some(outcome) = remove_outcome {
+            {
+                let s = self.shared.borrow();
+                self.map.rebuild_spatial_index(&s.loaded_files);
+            }
+            self.apply_remove_outcome(&outcome);
         }
 
         show_unassociated_popup(ui, &mut self.unassociated_log_lines);
@@ -1337,7 +1386,7 @@ impl eframe::App for App {
                 .collapsible(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .show(ui.ctx(), |ui| {
-                    let rec_label = if n == 1 { "recording" } else { "recordings" };
+                    let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
                     ui.label(format!(
                         "{n} {rec_label} will be deleted to keep storage under {max_gb:.1} GB"
                     ));
@@ -1375,16 +1424,10 @@ impl eframe::App for App {
                     match db.delete_batch(&candidates) {
                         Ok(()) => {
                             self.history_window.invalidate();
+                            let count = candidates.len();
+                            let rec_label = gt_fmt::pluralize(count, "recording", "recordings");
                             self.toasts
-                                .info(format!(
-                                    "Auto-pruned {} {}",
-                                    candidates.len(),
-                                    if candidates.len() == 1 {
-                                        "recording"
-                                    } else {
-                                        "recordings"
-                                    }
-                                ))
+                                .info(format!("Auto-pruned {count} {rec_label}"))
                                 .duration(Some(std::time::Duration::from_secs(4)));
                         }
                         Err(e) => log::error!("Auto-prune failed: {e}"),

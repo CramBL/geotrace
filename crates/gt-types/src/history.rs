@@ -13,6 +13,11 @@ pub const ATTR_SAT_REPORT_COUNT: &str = "sat_report_count";
 pub const ATTR_MARKER_COUNT: &str = "marker_count";
 pub const ATTR_EVENT_MARKER_COUNT: &str = "event_marker_count";
 pub const ATTR_GTD_SIZE_BYTES: &str = "gtd_size_bytes";
+/// Soft-delete marker: a recording with this attribute set to `1` is hidden from
+/// the normal history listing and is a candidate for "delete hidden data".
+/// Stored as `u64` (`1` = hidden) so both backends can read/write it with the
+/// integer attribute handling they already have.
+pub const ATTR_HIDDEN: &str = "hidden";
 
 /// Returns true for attribute keys that belong to the database's recording
 /// metadata (as opposed to GTD file-format root attributes).
@@ -27,6 +32,7 @@ pub fn is_db_recording_attr(key: &str) -> bool {
             | ATTR_MARKER_COUNT
             | ATTR_EVENT_MARKER_COUNT
             | ATTR_GTD_SIZE_BYTES
+            | ATTR_HIDDEN
     )
 }
 
@@ -87,6 +93,8 @@ impl RecordingMeta {
 pub struct RecordingEntry {
     pub db_ref: DatabaseRef,
     pub meta: RecordingMeta,
+    /// Whether this recording has been soft-deleted (see [`ATTR_HIDDEN`]).
+    pub hidden: bool,
 }
 
 /// Criteria for selecting recordings to prune.
@@ -166,6 +174,11 @@ pub trait HistoryDatabase {
         bytes: &[u8],
     ) -> Result<DatabaseRef, DbError>;
     fn delete(&mut self, db_ref: &DatabaseRef) -> Result<(), DbError>;
+    /// Mark or unmark the given recordings as hidden (soft-delete) in place,
+    /// without removing their data. Hidden recordings are excluded from the
+    /// normal listing but can later be permanently removed with [`Self::delete_batch`].
+    /// Missing recordings are skipped silently.
+    fn set_hidden(&mut self, refs: &[DatabaseRef], hidden: bool) -> Result<(), DbError>;
     fn load_bytes(&self, db_ref: &DatabaseRef) -> Result<Vec<u8>, DbError>;
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError>;
     fn is_duplicate(&self, identity: &str, meta: &RecordingMeta) -> Result<bool, DbError>;

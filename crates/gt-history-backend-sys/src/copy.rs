@@ -1,7 +1,7 @@
 use gt_types::history::{
-    ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
-    ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, DbError, RecordingEntry,
-    RecordingMeta, is_db_recording_attr, make_group_name,
+    ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_HIDDEN, ATTR_IDENTITY,
+    ATTR_MARKER_COUNT, ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, DbError,
+    RecordingEntry, RecordingMeta, is_db_recording_attr, make_group_name,
 };
 use hdf5::Group;
 use std::path::Path;
@@ -347,6 +347,7 @@ pub(crate) fn list_recordings(
                         event_marker_count: read_u64(ATTR_EVENT_MARKER_COUNT).unwrap_or(0),
                         gtd_size_bytes: read_u64(ATTR_GTD_SIZE_BYTES).unwrap_or(0),
                     };
+                    let hidden = read_u64(ATTR_HIDDEN).unwrap_or(0) != 0;
 
                     entries.push(RecordingEntry {
                         db_ref: gt_types::DatabaseRef {
@@ -354,6 +355,7 @@ pub(crate) fn list_recordings(
                             group_name: rec_name,
                         },
                         meta,
+                        hidden,
                     });
                 }
             }

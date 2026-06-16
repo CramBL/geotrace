@@ -137,10 +137,23 @@ pub fn format_time_range(start: DateTime<Utc>, end: DateTime<Utc>) -> String {
     }
 }
 
+/// Picks the singular or plural word for a count: `singular` when `count == 1`,
+/// otherwise `plural`. Keeps count-dependent labels consistent across the UI.
+pub fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
+    if count == 1 { singular } else { plural }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::Duration;
+
+    #[test]
+    fn pluralize_picks_singular_only_for_one() {
+        assert_eq!(pluralize(1, "recording", "recordings"), "recording");
+        assert_eq!(pluralize(0, "recording", "recordings"), "recordings");
+        assert_eq!(pluralize(2, "recording", "recordings"), "recordings");
+    }
 
     fn dur(h: i64, m: i64, s: i64) -> Duration {
         Duration::seconds(h * 3600 + m * 60 + s)

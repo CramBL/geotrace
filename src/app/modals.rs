@@ -6,19 +6,35 @@ use gt_side_panel::{NodeKey, TreeState};
 use gt_types::{LoadWarning, LoadedFile, TrackRef};
 use gt_ui_theme::WARNING_AMBER;
 
+/// What the remove-confirmation dialog asks the app to do, in the one frame
+/// after the user confirms.
+pub struct RemoveOutcome {
+    /// Recordings to act on in history - one per fully-removed file that exists
+    /// in the history database. Empty when nothing removed was stored.
+    pub affected: Vec<gt_types::DatabaseRef>,
+    /// `true` to permanently delete the affected recordings; `false` to hide them.
+    pub permanent: bool,
+}
+
 /// Show the delete-confirmation dialog.
 ///
-/// Returns `true` in the one frame when items were actually deleted so the
-/// caller can rebuild any caches that depend on file indices.
+/// Returns `Some` in the one frame when items were actually removed, so the
+/// caller can rebuild caches that depend on file indices and apply the chosen
+/// history operation (hide or permanent delete) to `affected`.
 pub fn show_delete_confirmation(
     ui: &egui::Ui,
     tree: &mut TreeState,
     loaded_files: &mut Vec<LoadedFile>,
-) -> bool {
+) -> Option<RemoveOutcome> {
     let Some(confirm) = &tree.delete_confirm else {
-        return false;
+        return None;
     };
     let count = confirm.items.len();
+    let mut permanent = confirm.delete_permanently;
+    // How many of the to-be-removed files are stored in history; this drives the
+    // wording and whether the "delete permanently" option is even relevant.
+    let history_affected = affected_recordings(&confirm.items, loaded_files).len();
+
     let enter_pressed = ui
         .ctx()
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
@@ -69,11 +85,26 @@ pub fn show_delete_confirmation(
                     }
                 });
             ui.separator();
-            ui.label(
-                egui::RichText::new("This only removes them from the current view.")
-                    .weak()
-                    .small(),
-            );
+            if history_affected == 0 {
+                ui.label(
+                    egui::RichText::new("This only removes them from the current view.")
+                        .weak()
+                        .small(),
+                );
+            } else {
+                ui.checkbox(&mut permanent, "Also delete permanently from history");
+                let rec_label = gt_fmt::pluralize(history_affected, "recording", "recordings");
+                let detail = if permanent {
+                    format!(
+                        "Removes them from the view and permanently deletes {history_affected} {rec_label} from history."
+                    )
+                } else {
+                    format!(
+                        "Removes them from the view and hides {history_affected} {rec_label} in history."
+                    )
+                };
+                ui.label(egui::RichText::new(detail).weak().small());
+            }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 if ui.button("Cancel").clicked() {
@@ -89,60 +120,115 @@ pub fn show_delete_confirmation(
 
     if do_cancel {
         tree.delete_confirm = None;
-        return false;
-    } else if do_delete {
+        return None;
+    }
+    if do_delete {
         let items = tree
             .delete_confirm
             .take()
             .map(|c| c.items)
             .unwrap_or_default();
-        execute_delete(&items, loaded_files, tree);
-        return true;
+        let affected = execute_delete(&items, loaded_files, tree);
+        return Some(RemoveOutcome {
+            affected,
+            permanent,
+        });
     }
-    false
+    // Keep the checkbox state across frames while the dialog stays open.
+    if let Some(c) = tree.delete_confirm.as_mut() {
+        c.delete_permanently = permanent;
+    }
+    None
 }
 
-pub fn execute_delete(keys: &[NodeKey], loaded_files: &mut Vec<LoadedFile>, tree: &mut TreeState) {
-    let mut file_indices_to_remove: BTreeSet<usize> = BTreeSet::new();
-    let mut trips_to_remove: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
-
+/// Indices of files that removing `keys` would empty entirely - either selected
+/// directly, or because every one of their tracks is in the removal set.
+fn files_fully_removed(keys: &[NodeKey], loaded_files: &[LoadedFile]) -> BTreeSet<usize> {
+    let mut files: BTreeSet<usize> = BTreeSet::new();
+    let mut tracks: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
     for key in keys {
         match key {
             NodeKey::File(fi) => {
-                file_indices_to_remove.insert(fi.as_usize());
+                files.insert(fi.as_usize());
             }
             NodeKey::Track(TrackRef { fi, index: ti }) => {
-                trips_to_remove
+                tracks
                     .entry(fi.as_usize())
                     .or_default()
                     .insert(ti.as_usize());
             }
         }
     }
+    for (fi, track_set) in &tracks {
+        if files.contains(fi) {
+            continue;
+        }
+        if let Some(file) = loaded_files.get(*fi)
+            && !file.tracks.is_empty()
+            && (0..file.tracks.len()).all(|ti| track_set.contains(&ti))
+        {
+            files.insert(*fi);
+        }
+    }
+    files
+}
 
-    for (fi, trip_set) in &trips_to_remove {
-        if file_indices_to_remove.contains(fi) {
+/// History references for the files that removing `keys` would empty entirely.
+fn affected_recordings(
+    keys: &[NodeKey],
+    loaded_files: &[LoadedFile],
+) -> Vec<gt_types::DatabaseRef> {
+    files_fully_removed(keys, loaded_files)
+        .iter()
+        .filter_map(|fi| loaded_files.get(*fi).and_then(|f| f.db_ref.clone()))
+        .collect()
+}
+
+/// Remove `keys` from the view and return the history references of the files
+/// that were removed entirely (so the caller can hide or delete them).
+pub fn execute_delete(
+    keys: &[NodeKey],
+    loaded_files: &mut Vec<LoadedFile>,
+    tree: &mut TreeState,
+) -> Vec<gt_types::DatabaseRef> {
+    let fully_removed = files_fully_removed(keys, loaded_files);
+    // Derived from the set we already computed, rather than recomputing it.
+    let affected: Vec<gt_types::DatabaseRef> = fully_removed
+        .iter()
+        .filter_map(|fi| loaded_files.get(*fi).and_then(|f| f.db_ref.clone()))
+        .collect();
+
+    // Drop individual tracks from files that survive (are not removed wholesale).
+    let mut tracks_to_remove: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+    for key in keys {
+        if let NodeKey::Track(TrackRef { fi, index: ti }) = key {
+            tracks_to_remove
+                .entry(fi.as_usize())
+                .or_default()
+                .insert(ti.as_usize());
+        }
+    }
+    for (fi, track_set) in &tracks_to_remove {
+        if fully_removed.contains(fi) {
             continue;
         }
         if let Some(file) = loaded_files.get_mut(*fi) {
             for ti in (0..file.tracks.len()).rev() {
-                if trip_set.contains(&ti) {
+                if track_set.contains(&ti) {
                     file.tracks.remove(ti);
                 }
-            }
-            if file.tracks.is_empty() {
-                file_indices_to_remove.insert(*fi);
             }
         }
     }
 
     for fi in (0..loaded_files.len()).rev() {
-        if file_indices_to_remove.contains(&fi) {
+        if fully_removed.contains(&fi) {
             loaded_files.remove(fi);
         }
     }
 
     tree.reset_for_files(loaded_files);
+    affected
 }
 
 pub fn show_unassociated_popup(ui: &egui::Ui, lines: &mut Option<Vec<(DateTime<Utc>, String)>>) {
@@ -317,5 +403,137 @@ pub fn show_mapbox_token_dialog(ui: &egui::Ui, map: &mut NavMap, token_input: &m
     if !open {
         map.set_layer(MapLayer::OpenStreetMap);
         token_input.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    use gt_types::{
+        DatabaseRef, FileIdx, FileMetadata, FileSource, LoadedFile, LoadedTrack, TrackIdx,
+        TrackLod, TrackMetadata,
+    };
+
+    use super::{NodeKey, TrackRef, affected_recordings, files_fully_removed};
+
+    fn make_file(track_count: usize, has_db_ref: bool, idx: usize) -> LoadedFile {
+        LoadedFile {
+            metadata: FileMetadata::default(),
+            tracks: (0..track_count)
+                .map(|_| LoadedTrack {
+                    metadata: TrackMetadata::default(),
+                    points: Vec::new(),
+                    lod: TrackLod::default(),
+                    custom_markers: Vec::new(),
+                    generated_markers: Vec::new(),
+                    event_markers: Vec::new(),
+                })
+                .collect(),
+            event_marker_styles: HashMap::new(),
+            orphaned_event_markers: Vec::new(),
+            source: FileSource::GtdPath(PathBuf::new()),
+            load_warnings: Vec::new(),
+            identity: String::new(),
+            db_ref: has_db_ref.then(|| DatabaseRef {
+                identity: "id".to_owned(),
+                group_name: format!("rec{idx}"),
+            }),
+            recording_meta: None,
+        }
+    }
+
+    fn track_key(fi: usize, ti: usize) -> NodeKey {
+        NodeKey::Track(TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti)))
+    }
+
+    fn file_key(fi: usize) -> NodeKey {
+        NodeKey::File(FileIdx::new(fi))
+    }
+
+    #[test]
+    fn fully_removed_and_affected_cover_the_key_cases() {
+        struct Case {
+            name: &'static str,
+            /// One `(track_count, has_db_ref)` per file in the fixture.
+            files: Vec<(usize, bool)>,
+            keys: Vec<NodeKey>,
+            /// File indices expected to be removed wholesale (ascending).
+            expect_removed: Vec<usize>,
+            /// Number of removed files that carry a history `db_ref`.
+            expect_affected: usize,
+        }
+
+        let cases = [
+            Case {
+                name: "no keys removes nothing",
+                files: vec![(2, true)],
+                keys: vec![],
+                expect_removed: vec![],
+                expect_affected: 0,
+            },
+            Case {
+                name: "file key removes the whole file",
+                files: vec![(2, true)],
+                keys: vec![file_key(0)],
+                expect_removed: vec![0],
+                expect_affected: 1,
+            },
+            Case {
+                name: "all tracks selected promotes to full removal",
+                files: vec![(2, true)],
+                keys: vec![track_key(0, 0), track_key(0, 1)],
+                expect_removed: vec![0],
+                expect_affected: 1,
+            },
+            Case {
+                name: "partial track selection does not remove the file",
+                files: vec![(3, true)],
+                keys: vec![track_key(0, 0), track_key(0, 1)],
+                expect_removed: vec![],
+                expect_affected: 0,
+            },
+            Case {
+                name: "removed file without db_ref is not in affected",
+                files: vec![(1, false)],
+                keys: vec![file_key(0)],
+                expect_removed: vec![0],
+                expect_affected: 0,
+            },
+            Case {
+                name: "removes one file and leaves the other",
+                files: vec![(1, true), (2, true)],
+                keys: vec![file_key(1)],
+                expect_removed: vec![1],
+                expect_affected: 1,
+            },
+        ];
+
+        for case in cases {
+            let files: Vec<LoadedFile> = case
+                .files
+                .iter()
+                .enumerate()
+                .map(|(i, &(tracks, has_ref))| make_file(tracks, has_ref, i))
+                .collect();
+
+            let removed: Vec<usize> = files_fully_removed(&case.keys, &files)
+                .into_iter()
+                .collect();
+            assert_eq!(
+                removed, case.expect_removed,
+                "removed set for '{}'",
+                case.name
+            );
+
+            let affected = affected_recordings(&case.keys, &files);
+            assert_eq!(
+                affected.len(),
+                case.expect_affected,
+                "affected count for '{}'",
+                case.name
+            );
+        }
     }
 }

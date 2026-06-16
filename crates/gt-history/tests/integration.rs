@@ -545,6 +545,101 @@ fn delete_batch_removes_multiple_in_one_pass() {
     assert_eq!(remaining.len(), 1, "only one recording should remain");
 }
 
+#[test_log::test]
+fn set_hidden_flags_recording_and_is_reversible() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes = make_gtd_bytes(8_000, 6);
+    let meta = extract_meta(&bytes).expect("meta");
+    let db_ref = db.insert("dev", &meta, &bytes).expect("insert");
+
+    // Freshly inserted recordings are visible.
+    let entries = db.list_recordings().expect("list");
+    assert_eq!(entries.len(), 1);
+    assert!(!entries[0].hidden, "new recording should not be hidden");
+
+    // Hiding sets the flag; the recording is still listed (flagged), not gone.
+    db.set_hidden(std::slice::from_ref(&db_ref), true)
+        .expect("hide");
+    let entries = db.list_recordings().expect("list after hide");
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].hidden, "recording should be hidden");
+
+    // The data still round-trips after the in-place hide edit.
+    let loaded = db.load_bytes(&db_ref).expect("load after hide");
+    let file = hdf5_pure::File::from_bytes(loaded).expect("parse loaded");
+    let nav = file.group("nav_points").expect("nav_points group");
+    let times = nav
+        .dataset("time")
+        .and_then(|d| d.read_i64())
+        .expect("read times");
+    assert_eq!(times.len(), 6, "hidden recording must keep its data");
+
+    // Unhiding clears the flag.
+    db.set_hidden(std::slice::from_ref(&db_ref), false)
+        .expect("unhide");
+    assert!(
+        !db.list_recordings().expect("list")[0].hidden,
+        "recording should be visible again"
+    );
+}
+
+#[test]
+fn set_hidden_marks_only_the_given_recordings() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let ref_a = {
+        let bytes = make_gtd_bytes(1_000, 2);
+        let meta = extract_meta(&bytes).expect("meta a");
+        db.insert("dev", &meta, &bytes).expect("insert a")
+    };
+    let ref_b = {
+        let bytes = make_gtd_bytes(2_000, 3);
+        let meta = extract_meta(&bytes).expect("meta b");
+        db.insert("dev", &meta, &bytes).expect("insert b")
+    };
+    let ref_c = {
+        let bytes = make_gtd_bytes(3_000, 4);
+        let meta = extract_meta(&bytes).expect("meta c");
+        db.insert("dev", &meta, &bytes).expect("insert c")
+    };
+
+    db.set_hidden(&[ref_a.clone(), ref_c.clone()], true)
+        .expect("hide a and c");
+
+    let hidden: std::collections::BTreeSet<String> = db
+        .list_recordings()
+        .expect("list")
+        .into_iter()
+        .filter(|e| e.hidden)
+        .map(|e| e.db_ref.group_name)
+        .collect();
+
+    assert!(hidden.contains(&ref_a.group_name));
+    assert!(hidden.contains(&ref_c.group_name));
+    assert_eq!(hidden.len(), 2, "only the two requested are hidden");
+
+    // The untouched recording B must keep its data intact: the pure backend
+    // rewrites the whole database to set the flag, so a regression there could
+    // silently drop or corrupt other recordings' datasets.
+    let loaded = db.load_bytes(&ref_b).expect("load b after hiding a and c");
+    let file = hdf5_pure::File::from_bytes(loaded).expect("parse b");
+    let nav = file.group("nav_points").expect("nav_points group");
+    let times = nav
+        .dataset("time")
+        .and_then(|d| d.read_i64())
+        .expect("read b times");
+    assert_eq!(
+        times,
+        vec![2_000, 2_001, 2_002],
+        "recording B's nav data must survive an unrelated hide"
+    );
+}
+
 #[test]
 fn open_with_older_schema_version_migrates_data() {
     let dir = tempfile::tempdir().expect("temp dir");
