@@ -366,6 +366,9 @@ pub(crate) fn insert_recording(
         }),
     }
 
+    // Release the in-memory snapshot of the old file before writing the new one,
+    // matching the other mutators (delete_batch, set_tracks, set_tracks_hidden).
+    drop(existing_db);
     write_db(&identity_nodes, db_path)?;
     log::info!("Stored recording '{identity}/{rec_name}' in history database");
     Ok(rec_name)

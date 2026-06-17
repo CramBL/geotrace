@@ -703,38 +703,48 @@ pub(crate) fn load_recording(
     identity: &str,
     group_name: &str,
 ) -> Result<StoredRecording, InternalError> {
-    let db = hdf5::File::open(db_path)?;
-    let rec_grp = db
-        .group("by_identity")?
-        .group(identity)?
-        .group(group_name)?;
-
-    let tracks = read_track_table(&rec_grp);
-    let segmentation = read_segmentation(&rec_grp);
-
     let tmp = tempfile::NamedTempFile::new_in(db_path.parent().unwrap_or_else(|| Path::new(".")))?;
-    let out = hdf5::File::create(tmp.path())?;
-    let root = out.group("/")?;
 
-    // Reconstruct the GTD file: copy the data groups/datasets back to the root
-    // (the track table is skipped by `copy_members`), and restore the original
-    // GTD root attributes (skipping the database's own recording metadata).
-    copy_members(&rec_grp, &root)?;
-    copy_attrs(&rec_grp, &root, |name| !is_db_recording_attr(name))?;
+    // Reconstruct the GTD file in the sibling temp file, then read it back below.
+    // Every libhdf5 handle on the temp file (`out` and its `root` group) must be
+    // closed before `std::fs::read`: on Windows libhdf5 holds a mandatory
+    // byte-range lock for as long as any handle to the file is open, so reading a
+    // locked range otherwise fails with ERROR_LOCK_VIOLATION. The enclosing scope
+    // drops every handle before the read.
+    let (tracks, segmentation) = {
+        let db = hdf5::File::open(db_path)?;
+        let rec_grp = db
+            .group("by_identity")?
+            .group(identity)?
+            .group(group_name)?;
 
-    // Fall back to the default version for recordings stored before attribute
-    // preservation existed.
-    if root.attr(GTD_VERSION_ATTR).is_err() {
-        let version: hdf5::types::VarLenUnicode = GTD_VERSION_FALLBACK.parse().map_err(|e| {
-            InternalError::Hdf5(hdf5::Error::from(format!("invalid version literal: {e}")))
-        })?;
-        root.new_attr::<hdf5::types::VarLenUnicode>()
-            .create(GTD_VERSION_ATTR)?
-            .write_scalar(&version)?;
-    }
+        let tracks = read_track_table(&rec_grp);
+        let segmentation = read_segmentation(&rec_grp);
 
-    out.flush().map_err(InternalError::Hdf5)?;
-    drop(out);
+        let out = hdf5::File::create(tmp.path())?;
+        let root = out.group("/")?;
+
+        // Copy the data groups/datasets back to the root (the track table is
+        // skipped by `copy_members`), and restore the original GTD root
+        // attributes (skipping the database's own recording metadata).
+        copy_members(&rec_grp, &root)?;
+        copy_attrs(&rec_grp, &root, |name| !is_db_recording_attr(name))?;
+
+        // Fall back to the default version for recordings stored before
+        // attribute preservation existed.
+        if root.attr(GTD_VERSION_ATTR).is_err() {
+            let version: hdf5::types::VarLenUnicode =
+                GTD_VERSION_FALLBACK.parse().map_err(|e| {
+                    InternalError::Hdf5(hdf5::Error::from(format!("invalid version literal: {e}")))
+                })?;
+            root.new_attr::<hdf5::types::VarLenUnicode>()
+                .create(GTD_VERSION_ATTR)?
+                .write_scalar(&version)?;
+        }
+
+        out.flush().map_err(InternalError::Hdf5)?;
+        (tracks, segmentation)
+    };
 
     Ok(StoredRecording {
         bytes: std::fs::read(tmp.path())?,
