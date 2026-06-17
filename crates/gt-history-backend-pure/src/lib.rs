@@ -1,8 +1,9 @@
 use gt_types::DatabaseRef;
 use gt_types::history::{
-    ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_HIDDEN, ATTR_MARKER_COUNT,
+    ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION, DbError,
-    HistoryDatabase, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR,
+    HistoryDatabase, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR, StoredRecording,
+    StoredSegmentation, TrackRange,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 use parking_lot::Mutex;
@@ -33,10 +34,12 @@ impl HistoryDatabase for PureDb {
         &mut self,
         identity: &str,
         meta: &RecordingMeta,
+        tracks: &[TrackRange],
+        settings: StoredSegmentation,
         gtd_bytes: &[u8],
     ) -> Result<DatabaseRef, DbError> {
         let _guard = DB_LOCK.lock();
-        copy::insert_recording(&self.path, identity, meta, gtd_bytes)
+        copy::insert_recording(&self.path, identity, meta, tracks, settings, gtd_bytes)
             .map(|rec_name| DatabaseRef {
                 identity: identity.to_owned(),
                 group_name: rec_name,
@@ -44,23 +47,43 @@ impl HistoryDatabase for PureDb {
             .map_err(Into::into)
     }
 
-    fn delete(&mut self, db_ref: &DatabaseRef) -> Result<(), DbError> {
+    fn load(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError> {
         let _guard = DB_LOCK.lock();
-        copy::delete_recording(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
+        copy::load_recording(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
     }
 
-    fn set_hidden(&mut self, refs: &[DatabaseRef], hidden: bool) -> Result<(), DbError> {
+    fn set_tracks(
+        &mut self,
+        db_ref: &DatabaseRef,
+        tracks: &[TrackRange],
+        settings: StoredSegmentation,
+    ) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
-        if refs.is_empty() {
-            return Ok(());
-        }
-        copy::set_hidden(&self.path, refs, hidden).map_err(Into::into)
+        copy::set_tracks(
+            &self.path,
+            &db_ref.identity,
+            &db_ref.group_name,
+            tracks,
+            settings,
+        )
+        .map_err(Into::into)
     }
 
-    fn load_bytes(&self, db_ref: &DatabaseRef) -> Result<Vec<u8>, DbError> {
+    fn set_tracks_hidden(
+        &mut self,
+        db_ref: &DatabaseRef,
+        track_indices: &[usize],
+        hidden: bool,
+    ) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
-        copy::load_recording_bytes(&self.path, &db_ref.identity, &db_ref.group_name)
-            .map_err(Into::into)
+        copy::set_tracks_hidden(
+            &self.path,
+            &db_ref.identity,
+            &db_ref.group_name,
+            track_indices,
+            hidden,
+        )
+        .map_err(Into::into)
     }
 
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {
@@ -90,15 +113,16 @@ impl HistoryDatabase for PureDb {
                     continue;
                 };
                 if let Some(meta) = from_attrs(&attrs) {
-                    let hidden =
-                        matches!(attrs.get(ATTR_HIDDEN), Some(AttrValue::U64(v)) if *v != 0);
+                    let tracks = copy::read_track_table(&rec_grp);
+                    let hidden_tracks = tracks.iter().filter(|t| t.hidden).count();
                     entries.push(RecordingEntry {
                         db_ref: DatabaseRef {
                             identity: identity.clone(),
                             group_name: rec_name,
                         },
                         meta,
-                        hidden,
+                        total_tracks: tracks.len(),
+                        hidden_tracks,
                     });
                 }
             }
@@ -107,7 +131,7 @@ impl HistoryDatabase for PureDb {
         Ok(entries)
     }
 
-    fn is_duplicate(&self, _identity: &str, meta: &RecordingMeta) -> Result<bool, DbError> {
+    fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError> {
         let _guard = DB_LOCK.lock();
         let file =
             hdf5_pure::File::open(&self.path).map_err(|e| DbError::Backend(e.to_string()))?;

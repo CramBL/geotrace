@@ -339,6 +339,7 @@
                         "geo_types.*",
                         "app.*",
                         "config_manager.*",
+                        "history_db.*",
                         "loader.*",
                         "modals.*",
                     ]),

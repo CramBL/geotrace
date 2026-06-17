@@ -360,6 +360,7 @@ mod tests {
                     "geo_types.*".into(),
                     "app.*".into(),
                     "config_manager.*".into(),
+                    "history_db.*".into(),
                     "loader.*".into(),
                     "modals.*".into(),
                 ]),

@@ -16,3 +16,4 @@ hdf5-pure.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 thiserror.workspace = true
+uuid.workspace = true

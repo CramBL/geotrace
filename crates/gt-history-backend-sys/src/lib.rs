@@ -1,8 +1,8 @@
-use crate::copy::{list_recordings, load_recording_bytes};
+use crate::copy::list_recordings;
 use gt_types::DatabaseRef;
 use gt_types::history::{
-    ATTR_HIDDEN, CURRENT_SCHEMA_VERSION, DbError, HistoryDatabase, RecordingEntry, RecordingMeta,
-    SCHEMA_VERSION_ATTR,
+    CURRENT_SCHEMA_VERSION, DbError, HistoryDatabase, RecordingEntry, RecordingMeta,
+    SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange,
 };
 
 use parking_lot::Mutex;
@@ -63,6 +63,19 @@ pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
     })
 }
 
+/// Map libhdf5's "file is already open for write" / consistency-flags open
+/// failure to the recoverable [`DbError::WriteLocked`]; pass other errors through.
+fn into_write_lock(e: DbError) -> DbError {
+    if let DbError::Backend(msg) = &e
+        && (msg.contains("already open for write")
+            || msg.contains("h5clear")
+            || msg.contains("consistency flags"))
+    {
+        return DbError::WriteLocked;
+    }
+    e
+}
+
 pub struct SysDb {
     path: PathBuf,
 }
@@ -117,7 +130,19 @@ impl HistoryDatabase for SysDb {
     fn open_or_create(path: &Path) -> Result<Self, DbError> {
         let _guard = DB_LOCK.lock();
         if path.exists() {
-            Self::validate_existing(path)?;
+            // Surface a stale "open for write" lock as a distinct error so the
+            // app can offer to clear it (see `clear_write_lock`).
+            Self::validate_existing(path).map_err(into_write_lock)?;
+            // A database written by the pure-Rust backend can be read but not
+            // extended by libhdf5; migrate it to a native file once so inserts
+            // and deletes work.
+            if !crate::copy::is_native_writable(path) {
+                log::info!(
+                    "Migrating history database at {} to the native HDF5 format",
+                    path.display()
+                );
+                crate::copy::migrate_to_native(path)?;
+            }
         } else {
             Self::create_new(path)?;
         }
@@ -126,14 +151,27 @@ impl HistoryDatabase for SysDb {
         })
     }
 
+    fn clear_write_lock(path: &Path) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        if crate::copy::clear_write_lock(path)? {
+            log::warn!(
+                "Cleared a stale write lock on history database at {}",
+                path.display()
+            );
+        }
+        Ok(())
+    }
+
     fn insert(
         &mut self,
         identity: &str,
         meta: &RecordingMeta,
+        tracks: &[TrackRange],
+        settings: StoredSegmentation,
         gtd_bytes: &[u8],
     ) -> Result<DatabaseRef, DbError> {
         let _guard = DB_LOCK.lock();
-        crate::copy::insert_recording(&self.path, identity, meta, gtd_bytes)
+        crate::copy::insert_recording(&self.path, identity, meta, tracks, settings, gtd_bytes)
             .map(|rec_name| DatabaseRef {
                 identity: identity.to_owned(),
                 group_name: rec_name,
@@ -141,46 +179,44 @@ impl HistoryDatabase for SysDb {
             .map_err(Into::into)
     }
 
-    fn delete(&mut self, db_ref: &DatabaseRef) -> Result<(), DbError> {
+    fn load(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError> {
         let _guard = DB_LOCK.lock();
-        let file = hdf5::File::open_rw(&self.path).map_err(|e| DbError::Backend(e.to_string()))?;
-        let path = format!("by_identity/{}/{}", db_ref.identity, db_ref.group_name);
-        if file.link_exists(&path) {
-            file.unlink(&path)
-                .map_err(|e| DbError::Backend(e.to_string()))?;
-        }
-        Ok(())
+        crate::copy::load_recording(&self.path, &db_ref.identity, &db_ref.group_name)
+            .map_err(Into::into)
     }
 
-    fn set_hidden(&mut self, refs: &[DatabaseRef], hidden: bool) -> Result<(), DbError> {
+    fn set_tracks(
+        &mut self,
+        db_ref: &DatabaseRef,
+        tracks: &[TrackRange],
+        settings: StoredSegmentation,
+    ) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
-        if refs.is_empty() {
-            return Ok(());
-        }
-        // Editing an attribute in place avoids rewriting the whole file.
-        let file = hdf5::File::open_rw(&self.path).map_err(|e| DbError::Backend(e.to_string()))?;
-        let value = u64::from(hidden);
-        for db_ref in refs {
-            let path = format!("by_identity/{}/{}", db_ref.identity, db_ref.group_name);
-            let Ok(grp) = file.group(&path) else {
-                continue;
-            };
-            let attr = match grp.attr(ATTR_HIDDEN) {
-                Ok(attr) => attr,
-                Err(_) => grp
-                    .new_attr::<u64>()
-                    .create(ATTR_HIDDEN)
-                    .map_err(|e| DbError::Backend(e.to_string()))?,
-            };
-            attr.write_scalar(&value)
-                .map_err(|e| DbError::Backend(e.to_string()))?;
-        }
-        Ok(())
+        crate::copy::set_tracks(
+            &self.path,
+            &db_ref.identity,
+            &db_ref.group_name,
+            tracks,
+            settings,
+        )
+        .map_err(Into::into)
     }
 
-    fn load_bytes(&self, db_ref: &DatabaseRef) -> Result<Vec<u8>, DbError> {
+    fn set_tracks_hidden(
+        &mut self,
+        db_ref: &DatabaseRef,
+        track_indices: &[usize],
+        hidden: bool,
+    ) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
-        load_recording_bytes(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
+        crate::copy::set_tracks_hidden(
+            &self.path,
+            &db_ref.identity,
+            &db_ref.group_name,
+            track_indices,
+            hidden,
+        )
+        .map_err(Into::into)
     }
 
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {
@@ -188,14 +224,20 @@ impl HistoryDatabase for SysDb {
         list_recordings(&self.path).map_err(Into::into)
     }
 
-    fn is_duplicate(&self, identity: &str, meta: &RecordingMeta) -> Result<bool, DbError> {
+    fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError> {
         let _guard = DB_LOCK.lock();
-        crate::copy::is_duplicate(&self.path, identity, meta).map_err(Into::into)
+        crate::copy::is_duplicate(&self.path, meta).map_err(Into::into)
     }
 
     fn delete_batch(&mut self, refs: &[DatabaseRef]) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        let file = hdf5::File::open_rw(&self.path).map_err(|e| DbError::Backend(e.to_string()))?;
         for db_ref in refs {
-            self.delete(db_ref)?;
+            let path = format!("by_identity/{}/{}", db_ref.identity, db_ref.group_name);
+            if file.link_exists(&path) {
+                file.unlink(&path)
+                    .map_err(|e| DbError::Backend(e.to_string()))?;
+            }
         }
         Ok(())
     }

@@ -42,10 +42,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use geotrace_sdk::{
-    Constellation as SdkConstellation, EventMarkerColor as SdkEventMarkerColor,
-    EventMarkerIconChoice as SdkEventMarkerIconChoice, EventMarkerPoint,
-    EventMarkerStyle as SdkEventMarkerStyle, Marker as SdkMarker, MarkerIcon as SdkMarkerIcon,
-    NavFile, Satellite as SdkSatellite, SatelliteReport, collect_satellite_warnings,
+    Constellation as SdkConstellation, EventMarker as SdkEventMarker,
+    EventMarkerColor as SdkEventMarkerColor, EventMarkerIconChoice as SdkEventMarkerIconChoice,
+    EventMarkerPoint, EventMarkerStyle as SdkEventMarkerStyle, Marker as SdkMarker,
+    MarkerIcon as SdkMarkerIcon, NavFile, NavFileBuilder, Satellite as SdkSatellite,
+    SatelliteReport, collect_satellite_warnings,
 };
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::{GpsTime, SysTime};
@@ -156,6 +157,74 @@ pub fn load_bytes_with_progress(
         load_warnings,
     );
     Ok(loaded)
+}
+
+/// Re-encode a `.gtd` recording with the nav points in `drop_ranges` removed.
+///
+/// Each range is a half-open `[start, end)` slice of the original nav-point
+/// sequence - the same index ranges that track segmentation produces (see
+/// [`gt_track_builder::segment_tracks`]). The fixes in those ranges and their
+/// satellite reports are dropped; file metadata, markers, event markers, and
+/// their styles are all preserved. Marker and event-marker positions are
+/// re-interpolated from the surviving fixes by the SDK builder, in lenient mode
+/// so a marker that ends up outside the surviving time range is clamped with a
+/// warning rather than failing the whole re-encode.
+///
+/// This is the persisted half of a permanent per-track delete: once the new
+/// bytes replace the old recording, the dropped points cannot be recovered.
+pub fn reencode_dropping_ranges(
+    bytes: &[u8],
+    drop_ranges: &[std::ops::Range<usize>],
+) -> Result<Vec<u8>, LoadError> {
+    let nav_file = NavFile::read(bytes)?;
+    let point_count = nav_file.nav_points().len();
+
+    // Mark every index that falls inside a dropped range. Ranges past the end
+    // are clamped so a stale range can never panic the re-encode.
+    let mut dropped = vec![false; point_count];
+    for range in drop_ranges {
+        let end = range.end.min(point_count);
+        for slot in dropped.iter_mut().take(end).skip(range.start) {
+            *slot = true;
+        }
+    }
+
+    let mut sink = NavFileBuilder::new()
+        .with_meta(nav_file.meta().clone())
+        .with_lenient_errors()
+        .open();
+
+    for (point, drop) in nav_file.nav_points().iter().zip(&dropped) {
+        if *drop {
+            continue;
+        }
+        sink.add_nav_fix(point.fix);
+        if let Some(report) = &point.satellites {
+            sink.add_satellite_report(report.clone());
+        }
+    }
+
+    for marker in nav_file.markers() {
+        sink.add_annotation(marker.annotation.clone());
+    }
+
+    for event in nav_file.event_markers() {
+        let marker = SdkEventMarker::builder()
+            .variant_path(event.variant_path.clone())
+            .sys_time(event.sys_time)
+            .maybe_annotation(event.annotation.clone())
+            .build()?;
+        sink.add_event_marker(marker);
+    }
+
+    for style in nav_file.event_marker_styles() {
+        sink.add_event_marker_style(style.clone());
+    }
+
+    let rebuilt = sink.finish()?;
+    let mut out = Vec::new();
+    rebuilt.write(&mut out)?;
+    Ok(out)
 }
 
 fn satellite_warnings_from_nav_file(nav_file: &NavFile) -> Vec<LoadWarning> {
@@ -393,6 +462,7 @@ mod tests {
         Angle, Annotation, Constellation as SdkConst, DateTime, Duration, MarkerIcon as SdkIcon,
         NavFile, NavFileBuilder, NavFix, Satellite as SdkSat, SatelliteReport, Utc, Velocity,
     };
+    use proptest::prelude::*;
     use strum::EnumCount;
     use uom::si::velocity::meter_per_second as uom_mps;
 
@@ -411,6 +481,118 @@ mod tests {
 
     fn build(nav_file: &NavFile) -> Result<(Vec<NavPoint>, Vec<CustomMarker>), LoadError> {
         from_nav_file(nav_file).map(|(pts, markers, _, _)| (pts, markers))
+    }
+
+    #[test]
+    fn reencode_drops_only_the_given_ranges() {
+        let t0 = base();
+        // Five fixes one second apart, each at a distinct longitude so we can
+        // tell which ones survived.
+        let mut sink = NavFileBuilder::new().open();
+        for i in 0..5i64 {
+            sink.add_nav_fix(
+                NavFix::builder()
+                    .gps_time(t0 + Duration::seconds(i))
+                    .lat(Angle::degrees(55.0))
+                    .lon(Angle::degrees(i as f64))
+                    .heading(Angle::degrees(0.0))
+                    .build(),
+            );
+        }
+        let mut bytes = Vec::new();
+        sink.finish().unwrap().write(&mut bytes).unwrap();
+
+        // Drop the middle two points (indices 1 and 2).
+        let reencoded =
+            reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..3))).unwrap();
+
+        let nav_file = NavFile::read(reencoded.as_slice()).unwrap();
+        let lons: Vec<f64> = nav_file
+            .nav_points()
+            .iter()
+            .map(|p| p.fix.lon.as_degrees().round())
+            .collect();
+        assert_eq!(lons, vec![0.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn reencode_clamps_ranges_past_the_end() {
+        let t0 = base();
+        let mut sink = NavFileBuilder::new().open();
+        sink.add_nav_fix(minimal_fix(t0));
+        sink.add_nav_fix(minimal_fix(t0 + Duration::seconds(1)));
+        let mut bytes = Vec::new();
+        sink.finish().unwrap().write(&mut bytes).unwrap();
+
+        // A range that runs past the end must not panic and must keep the rest.
+        let reencoded =
+            reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..99))).unwrap();
+        let nav_file = NavFile::read(reencoded.as_slice()).unwrap();
+        assert_eq!(nav_file.nav_points().len(), 1);
+    }
+
+    proptest! {
+        /// Permanent delete is irreversible, so pin down the drop-range handling
+        /// against arbitrary ranges - including reversed, overlapping, and
+        /// out-of-bounds ones. Survivors must be exactly the points no (clamped)
+        /// range covers. The all-dropped case is a don't-care (the worker deletes
+        /// the whole recording instead of re-encoding), so we only require it not
+        /// to invent points.
+        #[test]
+        fn reencode_keeps_exactly_the_undropped_points(
+            raw in proptest::collection::vec((0usize..14, 0usize..14), 0..6),
+        ) {
+            const N: usize = 10;
+            // N points with distinct longitudes 0..N, so survivors are identifiable.
+            let mut sink = NavFileBuilder::new().open();
+            for i in 0..N {
+                sink.add_nav_fix(
+                    NavFix::builder()
+                        .gps_time(base() + Duration::seconds(i as i64))
+                        .lat(Angle::degrees(55.0))
+                        .lon(Angle::degrees(i as f64))
+                        .heading(Angle::degrees(0.0))
+                        .build(),
+                );
+            }
+            let mut bytes = Vec::new();
+            sink.finish().unwrap().write(&mut bytes).unwrap();
+
+            let ranges: Vec<std::ops::Range<usize>> = raw.iter().map(|&(a, b)| a..b).collect();
+
+            // Independently compute which indices a range covers (half-open, clamped
+            // to the point count; reversed/out-of-bounds ranges cover nothing).
+            let mut dropped = [false; N];
+            for r in &ranges {
+                let end = r.end.min(N);
+                for slot in dropped.iter_mut().take(end).skip(r.start) {
+                    *slot = true;
+                }
+            }
+            let expected: Vec<f64> = (0..N)
+                .filter(|&i| !dropped[i])
+                .map(|i| i as f64)
+                .collect();
+
+            let result = reencode_dropping_ranges(&bytes, &ranges);
+            if expected.is_empty() {
+                // Every point dropped: either re-encode errors, or it yields a file
+                // with no nav points - never one that resurrects dropped points.
+                if let Ok(reencoded) = result {
+                    let nav = NavFile::read(reencoded.as_slice()).expect("read back");
+                    prop_assert!(nav.nav_points().is_empty());
+                }
+            } else {
+                let reencoded = result.expect("re-encode");
+                let nav = NavFile::read(reencoded.as_slice()).expect("read back");
+                let lons: Vec<f64> = nav
+                    .nav_points()
+                    .iter()
+                    .map(|p| p.fix.lon.as_degrees().round())
+                    .collect();
+                prop_assert_eq!(lons, expected);
+            }
+        }
     }
 
     #[test]

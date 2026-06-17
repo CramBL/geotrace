@@ -153,12 +153,16 @@ impl LoaderManager {
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
         let db_path = self.db_path.clone();
+        let log_name = filename.clone();
+        log::info!("Loading file '{filename}'");
         thread::Builder::new()
             .name(format!("load-{filename}"))
             .spawn(move || {
                 let r_tx = tx.clone();
                 let r_ctx = ctx.clone();
+                let r_name = log_name.clone();
                 let report = move |fraction: f32, stage: &'static str| {
+                    log::debug!("'{r_name}': {stage} ({:.0}%)", fraction * 100.0);
                     r_tx.send(LoadMessage::Progress {
                         id,
                         fraction,
@@ -183,19 +187,14 @@ impl LoaderManager {
                         file.recording_meta = bytes
                             .as_deref()
                             .and_then(|b| gt_history::extract_meta(b).ok());
-                        let db_ref = db_path.as_deref().and_then(|p| {
-                            let meta = file.recording_meta.as_ref()?;
-                            let bytes = bytes.as_deref()?;
-                            use gt_history::HistoryDatabase;
-                            let mut db = gt_history::Database::open_or_create(p).ok()?;
-                            match db.insert(&file.identity, meta, bytes) {
-                                Ok(r) => Some(r),
-                                Err(e) => {
-                                    log::warn!("Failed to store recording in history: {e}");
-                                    None
-                                }
-                            }
-                        });
+                        log::debug!("Parsed '{log_name}': {} track(s)", file.tracks.len());
+                        let db_ref = store_in_history(
+                            db_path.as_deref(),
+                            &file,
+                            &config,
+                            bytes.as_deref(),
+                            &log_name,
+                        );
                         LoadOutcome::GtdFile {
                             file,
                             series,
@@ -230,12 +229,16 @@ impl LoaderManager {
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
         let db_path = self.db_path.clone();
+        let log_name = filename.clone();
+        log::info!("Loading file '{filename}'");
         thread::Builder::new()
             .name(format!("load-{filename}"))
             .spawn(move || {
                 let r_tx = tx.clone();
                 let r_ctx = ctx.clone();
+                let r_name = log_name.clone();
                 let report = move |frac: f32, stage: &'static str| {
+                    log::debug!("'{r_name}': {stage} ({:.0}%)", frac * 100.0);
                     r_tx.send(LoadMessage::Progress {
                         id,
                         fraction: frac,
@@ -256,18 +259,14 @@ impl LoaderManager {
                             ctx.request_repaint();
                             let series = gt_plot::prepare_file_series(0, &file);
                             file.recording_meta = gt_history::extract_meta(&bytes).ok();
-                            let db_ref = db_path.as_deref().and_then(|p| {
-                                let meta = file.recording_meta.as_ref()?;
-                                use gt_history::HistoryDatabase;
-                                let mut db = gt_history::Database::open_or_create(p).ok()?;
-                                match db.insert(&file.identity, meta, &bytes) {
-                                    Ok(r) => Some(r),
-                                    Err(e) => {
-                                        log::warn!("Failed to store recording in history: {e}");
-                                        None
-                                    }
-                                }
-                            });
+                            log::debug!("Parsed '{log_name}': {} track(s)", file.tracks.len());
+                            let db_ref = store_in_history(
+                                db_path.as_deref(),
+                                &file,
+                                &config,
+                                Some(&bytes),
+                                &log_name,
+                            );
                             LoadOutcome::GtdFile {
                                 file,
                                 series,
@@ -625,4 +624,220 @@ fn finish_log_load(
     })
     .ok();
     ctx.request_repaint();
+}
+
+/// Convert the live segmentation settings into the form persisted alongside a
+/// recording, so that re-opening can detect when the app's current settings
+/// differ from those the stored tracks were built with.
+pub(crate) fn stored_segmentation_from_config(
+    config: &SegmentationConfig,
+) -> gt_history::StoredSegmentation {
+    gt_history::StoredSegmentation {
+        track_split_gap_us: config
+            .track_split_gap
+            .num_microseconds()
+            .unwrap_or(i64::MAX),
+        detect_clock_discontinuities: config.detect_clock_discontinuities,
+        clock_discontinuity_sigmas: config.clock_discontinuity_sigmas,
+    }
+}
+
+/// Insert a freshly-loaded recording into the history database, logging the
+/// outcome at each branch. Returns the stored reference, or `None` when storage
+/// is disabled, metadata is missing, or the insert failed.
+fn store_in_history(
+    db_path: Option<&std::path::Path>,
+    file: &LoadedFile,
+    config: &SegmentationConfig,
+    bytes: Option<&[u8]>,
+    filename: &str,
+) -> Option<gt_history::DatabaseRef> {
+    use gt_history::HistoryDatabase;
+
+    let Some(path) = db_path else {
+        log::debug!("Storage disabled; not storing '{filename}' in history");
+        return None;
+    };
+    let (Some(meta), Some(bytes)) = (file.recording_meta.as_ref(), bytes) else {
+        log::warn!("No recording metadata for '{filename}'; not storing in history");
+        return None;
+    };
+
+    // Track ranges from cumulative point counts: segmentation produces contiguous
+    // ranges and the loader builds nav points 1:1 with the original file.
+    let mut start = 0_u64;
+    let tracks: Vec<gt_history::TrackRange> = file
+        .tracks
+        .iter()
+        .map(|t| {
+            let end = start + t.points.len() as u64;
+            let range = gt_history::TrackRange {
+                start,
+                end,
+                hidden: false,
+            };
+            start = end;
+            range
+        })
+        .collect();
+    // The cumulative end must cover exactly the recording's nav points (tracks
+    // are a contiguous 1:1 partition); otherwise the derivation is unsound.
+    debug_assert_eq!(
+        start, meta.nav_point_count,
+        "track ranges must cover all nav points"
+    );
+    let settings = stored_segmentation_from_config(config);
+
+    let mut db = match gt_history::Database::open_or_create(path) {
+        Ok(db) => db,
+        Err(e) => {
+            log::warn!("Could not open history database at {}: {e}", path.display());
+            return None;
+        }
+    };
+    match db.insert(&file.identity, meta, &tracks, settings, bytes) {
+        Ok(db_ref) => {
+            log::info!(
+                "Stored '{filename}' in history as {}/{} ({} track(s))",
+                db_ref.identity,
+                db_ref.group_name,
+                tracks.len()
+            );
+            Some(db_ref)
+        }
+        Err(e) => {
+            log::warn!("Failed to store '{filename}' in history: {e}");
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use chrono::DateTime;
+    use gt_history::{Database, HistoryDatabase};
+    use gt_test_utils::{SyntheticGtdSpec, synthetic_gtd_bytes};
+
+    use super::*;
+
+    fn write_sample_gtd(dir: &std::path::Path) -> PathBuf {
+        let bytes = synthetic_gtd_bytes(SyntheticGtdSpec {
+            start: DateTime::from_timestamp(1_748_000_000, 0).expect("valid timestamp"),
+            point_count: 20,
+            step_secs: 1,
+            start_lat_deg: 51.5,
+            start_lon_deg: -0.1,
+            lat_step_deg: 0.0002,
+            lon_step_deg: -0.00015,
+            heading_deg: 270.0,
+            speed_kmh: 22.0,
+            eph_m: 2.4,
+            sats_seen: 10,
+            sats_in_fix: 7,
+        });
+        let path = dir.join("sample.gtd");
+        std::fs::write(&path, &bytes).expect("write gtd");
+        path
+    }
+
+    /// Block until a background load finishes, or time out.
+    fn drain_until_complete(manager: &mut LoaderManager) -> CompletedLoad {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(done) = manager.drain().into_iter().next() {
+                return done;
+            }
+            assert!(Instant::now() < deadline, "load did not finish in time");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Regression: opening a `.gtd` file with storage enabled must insert it into
+    /// the history database and report the resulting `db_ref`.
+    #[test]
+    fn loading_a_gtd_file_stores_it_in_history() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let gtd_path = write_sample_gtd(dir.path());
+        let db_path = dir.path().join("history.h5");
+
+        let mut manager = LoaderManager::new(egui::Context::default());
+        manager.db_path = Some(db_path.clone());
+        manager.spawn_gtd_path(gtd_path, SegmentationConfig::default());
+
+        let completed = drain_until_complete(&mut manager);
+        let outcome = completed.outcome.expect("load should succeed");
+        let LoadOutcome::GtdFile { db_ref, .. } = outcome else {
+            panic!("expected a GtdFile outcome");
+        };
+        assert!(
+            db_ref.is_some(),
+            "loading with storage enabled must produce a history db_ref"
+        );
+
+        let db = Database::open_or_create(&db_path).expect("open history db");
+        let entries = db.list_recordings().expect("list recordings");
+        assert_eq!(
+            entries.len(),
+            1,
+            "the loaded recording must be stored in history"
+        );
+    }
+
+    /// With no database path (storage disabled) the file still loads, but nothing
+    /// is written to history.
+    #[test]
+    fn loading_without_db_path_does_not_store() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let gtd_path = write_sample_gtd(dir.path());
+
+        let mut manager = LoaderManager::new(egui::Context::default());
+        manager.db_path = None;
+        manager.spawn_gtd_path(gtd_path, SegmentationConfig::default());
+
+        let completed = drain_until_complete(&mut manager);
+        let outcome = completed.outcome.expect("load should succeed");
+        let LoadOutcome::GtdFile { db_ref, .. } = outcome else {
+            panic!("expected a GtdFile outcome");
+        };
+        assert!(db_ref.is_none(), "no db_ref without a database path");
+    }
+
+    /// A loaded recording is stored with a per-track table, and those tracks can
+    /// be hidden (what "Remove filtered data" does), surfacing in the listing so
+    /// "Delete hidden data" enables.
+    #[test]
+    fn loaded_recording_stores_tracks_and_supports_hiding() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let gtd_path = write_sample_gtd(dir.path());
+        let db_path = dir.path().join("history.h5");
+
+        let mut manager = LoaderManager::new(egui::Context::default());
+        manager.db_path = Some(db_path.clone());
+        manager.spawn_gtd_path(gtd_path, SegmentationConfig::default());
+        let completed = drain_until_complete(&mut manager);
+        let LoadOutcome::GtdFile { db_ref, .. } = completed.outcome.expect("load should succeed")
+        else {
+            panic!("expected a GtdFile outcome");
+        };
+        let db_ref = db_ref.expect("loaded file must be stored in history");
+
+        let mut db = Database::open_or_create(&db_path).expect("open db");
+        let stored = db.load(&db_ref).expect("load stored recording");
+        assert!(
+            !stored.tracks.is_empty(),
+            "the loaded recording must store a track table"
+        );
+
+        // Hide every track (as removing all filtered data would).
+        let all: Vec<usize> = (0..stored.tracks.len()).collect();
+        db.set_tracks_hidden(&db_ref, &all, true).expect("hide");
+        let entries = db.list_recordings().expect("list");
+        assert_eq!(
+            entries.first().map(|e| e.hidden_tracks),
+            Some(stored.tracks.len()),
+            "all tracks should now be hidden"
+        );
+    }
 }

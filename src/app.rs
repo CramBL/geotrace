@@ -1,6 +1,7 @@
 mod auto_prune;
 mod config_manager;
 mod history;
+mod history_db;
 mod loader;
 mod modals;
 
@@ -79,8 +80,12 @@ pub struct App {
     /// Active association config - applied to all new log loads.
     assoc_config: AssociationConfig,
 
-    /// History database - `None` if the database could not be opened at startup.
-    db: Option<gt_history::Database>,
+    /// Background worker that owns the history database; all reads and edits go
+    /// through it so the UI thread never blocks on disk I/O.
+    history: history_db::HistoryManager,
+    /// Set when the database could not be opened because it is marked as locked
+    /// (open for write); drives a confirmation dialog offering to clear it.
+    pending_history_unlock: Option<PathBuf>,
 
     /// When `false`, GTD files are not stored in the history database on load.
     storage_enabled: bool,
@@ -172,18 +177,37 @@ impl App {
         // `None` and is populated by `sync_db_path` (called from
         // `apply_startup_settings`) only in non-test builds.
         #[cfg(not(test))]
-        let db = match gt_history::default_path().and_then(|p| {
-            use gt_history::HistoryDatabase;
-            gt_history::Database::open_or_create(&p)
-        }) {
-            Ok(db) => Some(db),
-            Err(e) => {
-                log::error!("Failed to open history database: {e}");
-                None
+        let (history, pending_history_unlock) = {
+            use gt_history::{DbError, HistoryDatabase};
+            match gt_history::default_path() {
+                Ok(path) => match gt_history::Database::open_or_create(&path) {
+                    Ok(db) => (
+                        history_db::HistoryManager::spawn(db, cc.egui_ctx.clone()),
+                        None,
+                    ),
+                    Err(DbError::WriteLocked) => {
+                        log::warn!(
+                            "History database at {} is locked (marked open for write)",
+                            path.display()
+                        );
+                        (history_db::HistoryManager::disabled(), Some(path))
+                    }
+                    Err(e) => {
+                        log::error!("Failed to open history database: {e}");
+                        (history_db::HistoryManager::disabled(), None)
+                    }
+                },
+                Err(e) => {
+                    log::error!("Failed to locate history database: {e}");
+                    (history_db::HistoryManager::disabled(), None)
+                }
             }
         };
         #[cfg(test)]
-        let db: Option<gt_history::Database> = None;
+        let (history, pending_history_unlock): (
+            history_db::HistoryManager,
+            Option<PathBuf>,
+        ) = (history_db::HistoryManager::disabled(), None);
 
         let mut app = Self {
             map,
@@ -213,7 +237,8 @@ impl App {
             settings_open: false,
             processing_config: SegmentationConfig::default(),
             assoc_config: AssociationConfig::default(),
-            db,
+            history,
+            pending_history_unlock,
             storage_enabled: true,
             auto_prune_enabled: false,
             auto_prune_max_bytes: 10 * 1024 * 1024 * 1024,
@@ -705,6 +730,11 @@ impl App {
                 db_ref,
             }) => {
                 let was_stored = db_ref.is_some();
+                log::info!(
+                    "Loaded '{}': {} track(s), stored in history: {was_stored}",
+                    completed.filename,
+                    file.tracks.len()
+                );
                 file.db_ref = db_ref;
                 let orphans: Vec<(chrono::DateTime<chrono::Utc>, String)> = file
                     .orphaned_event_markers
@@ -729,6 +759,8 @@ impl App {
                     completed_at: std::time::Instant::now(),
                 });
                 if was_stored {
+                    // The recording list now has a new entry; refresh it.
+                    self.history_window.invalidate();
                     self.check_auto_prune();
                 }
             }
@@ -764,134 +796,144 @@ impl App {
     }
 
     fn sync_db_path(&mut self) {
-        use gt_history::HistoryDatabase;
         self.loader.db_path = if self.storage_enabled {
-            self.db.as_ref().map(|db| db.path().to_owned())
+            self.history.path().map(std::path::Path::to_owned)
         } else {
             None
         };
     }
 
-    /// Check whether auto-pruning is needed and either enqueue a confirmation
-    /// or prune silently.  Called after each successful GTD insert.
-    fn check_auto_prune(&mut self) {
+    /// Clear a stale write lock and bring the history database online, after the
+    /// user confirmed no other process is using it.
+    fn recover_history_database(&mut self, path: &std::path::Path, ctx: &egui::Context) {
+        use gt_history::HistoryDatabase;
+        let result = gt_history::Database::clear_write_lock(path)
+            .and_then(|()| gt_history::Database::open_or_create(path));
+        match result {
+            Ok(db) => {
+                self.history = history_db::HistoryManager::spawn(db, ctx.clone());
+                self.sync_db_path();
+                self.history_window.invalidate();
+                self.toasts.info("Recovered the history database");
+            }
+            Err(e) => {
+                log::error!("Failed to recover history database: {e}");
+                self.toasts
+                    .error(format!("Could not recover history database: {e}"));
+            }
+        }
+    }
+
+    /// Ask the history worker whether auto-pruning is needed; the result comes
+    /// back as a [`history_db::Response::AutoPruned`]. Called after each
+    /// successful GTD insert.
+    fn check_auto_prune(&self) {
         if !self.auto_prune_enabled {
             return;
         }
-        let Some(db) = self.db.as_mut() else { return };
-        match auto_prune::run(db, self.auto_prune_max_bytes, self.auto_prune_confirm) {
-            Ok(auto_prune::AutoPruneOutcome::NotNeeded) => {}
-            Ok(auto_prune::AutoPruneOutcome::PrunedSilently(n)) => {
-                self.history_window.invalidate();
-                let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
-                self.toasts
-                    .info(format!("Auto-pruned {n} {rec_label}"))
-                    .duration(Some(std::time::Duration::from_secs(4)));
-            }
-            Ok(auto_prune::AutoPruneOutcome::NeedsConfirmation(candidates)) => {
-                self.pending_auto_prune = Some(candidates);
-            }
-            Err(e) => log::error!("Auto-prune failed: {e}"),
-        }
+        self.history
+            .auto_prune(self.auto_prune_max_bytes, self.auto_prune_confirm);
     }
 
     /// Apply the history side of a "remove" confirmation: hide the affected
-    /// recordings, or permanently delete them when the user opted in.
-    fn apply_remove_outcome(&mut self, outcome: &modals::RemoveOutcome) {
-        use gt_history::HistoryDatabase;
-        if outcome.affected.is_empty() {
-            return;
-        }
-        let Some(db) = self.db.as_mut() else {
-            return;
-        };
-        let count = outcome.affected.len();
-        let rec_label = gt_fmt::pluralize(count, "recording", "recordings");
-        let result = if outcome.permanent {
-            db.delete_batch(&outcome.affected)
-        } else {
-            db.set_hidden(&outcome.affected, true)
-        };
-        match result {
-            Ok(()) => {
-                self.history_window.invalidate();
-                let msg = if outcome.permanent {
-                    format!("Deleted {count} {rec_label} from history")
-                } else {
-                    format!("Hid {count} {rec_label} in history")
-                };
-                self.toasts.info(msg);
-            }
-            Err(e) => {
-                log::error!("Failed to update history on remove: {e}");
-                self.toasts.error(format!("Could not update history: {e}"));
+    /// recordings, or permanently delete them when the user opted in. The toast
+    /// is shown when the worker confirms via [`Self::handle_history_response`].
+    fn apply_remove_outcome(&self, outcome: &modals::RemoveOutcome) {
+        for removal in &outcome.affected {
+            if outcome.permanent {
+                self.history
+                    .delete_tracks(removal.db_ref.clone(), removal.track_indices.clone());
+            } else {
+                self.history.set_tracks_hidden(
+                    removal.db_ref.clone(),
+                    removal.track_indices.clone(),
+                    true,
+                );
             }
         }
     }
 
-    fn handle_history_action(&mut self, action: history::HistoryAction, ctx: &egui::Context) {
-        use gt_history::HistoryDatabase;
-        let Some(db) = self.db.as_mut() else {
-            return;
-        };
-
-        match action {
-            history::HistoryAction::Open(db_ref) => match db.load_bytes(&db_ref) {
-                Ok(bytes) => {
-                    let filename = format!("{}/{}", db_ref.identity, db_ref.group_name);
-                    self.loader
-                        .spawn_gtd_bytes(bytes.into(), filename, self.processing_config);
-                    ctx.request_repaint();
+    /// Apply a result delivered by the history worker thread.
+    fn handle_history_response(&mut self, resp: history_db::Response) {
+        use history_db::Response;
+        match resp {
+            Response::Listed(Ok(entries)) => self.history_window.set_entries(entries),
+            Response::Listed(Err(e)) => {
+                self.history_window
+                    .set_error(format!("Failed to load history: {e}"));
+            }
+            Response::Opened { db_ref, result } => match result {
+                Ok(stored) => {
+                    // Reuse the original filename: the identity is the filename
+                    // (with an "auto:" prefix for auto-derived ones).
+                    let filename = db_ref
+                        .identity
+                        .strip_prefix("auto:")
+                        .unwrap_or(&db_ref.identity)
+                        .to_owned();
+                    // The recording re-segments with the current settings on load.
+                    // Stored per-track hidden flags remain recorded in the database
+                    // (and drive the History window and "Delete hidden data"); they
+                    // are not yet re-applied to the freshly loaded view.
+                    self.loader.spawn_gtd_bytes(
+                        stored.bytes.into(),
+                        filename,
+                        self.processing_config,
+                    );
                 }
                 Err(e) => {
                     log::error!("Failed to load recording from history: {e}");
                     self.toasts.error(format!("Could not open recording: {e}"));
                 }
             },
-            history::HistoryAction::Delete(db_ref) => {
-                let label = format!("{}/{}", db_ref.identity, db_ref.group_name);
-                match db.delete(&db_ref) {
-                    Ok(()) => {
-                        log::info!("Deleted recording '{label}' from history");
-                        self.history_window.invalidate();
-                    }
-                    Err(e) => {
-                        log::error!("Failed to delete recording '{label}': {e}");
-                        self.toasts
-                            .error(format!("Could not delete recording: {e}"));
-                    }
+            Response::Mutated { op, result } => match result {
+                Ok(()) => {
+                    self.history_window.invalidate();
+                    self.toasts.info(mutation_toast(&op));
                 }
+                Err(e) => {
+                    log::error!("History update failed: {e}");
+                    self.toasts.error(format!("History update failed: {e}"));
+                }
+            },
+            Response::PrunePreview(Ok(refs)) => self.history_window.set_prune_preview(refs),
+            Response::PrunePreview(Err(e)) => log::error!("Prune preview failed: {e}"),
+            Response::AutoPruned(Ok(auto_prune::AutoPruneOutcome::NotNeeded)) => {}
+            Response::AutoPruned(Ok(auto_prune::AutoPruneOutcome::PrunedSilently(n))) => {
+                self.history_window.invalidate();
+                let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
+                self.toasts
+                    .info(format!("Auto-pruned {n} {rec_label}"))
+                    .duration(Some(std::time::Duration::from_secs(4)));
             }
-            history::HistoryAction::Prune(refs) => {
-                let count = refs.len();
-                let rec_label = gt_fmt::pluralize(count, "recording", "recordings");
-                match db.delete_batch(&refs) {
-                    Ok(()) => {
-                        self.toasts
-                            .info(format!("Pruned {count} {rec_label} from history"));
-                        self.history_window.invalidate();
-                    }
-                    Err(e) => {
-                        log::error!("Batch prune failed: {e}");
-                        self.toasts.error(format!("Prune failed: {e}"));
-                    }
-                }
+            Response::AutoPruned(Ok(auto_prune::AutoPruneOutcome::NeedsConfirmation(
+                candidates,
+            ))) => {
+                self.pending_auto_prune = Some(candidates);
             }
-            history::HistoryAction::DeleteHidden(refs) => {
-                let count = refs.len();
-                let rec_label = gt_fmt::pluralize(count, "recording", "recordings");
-                match db.delete_batch(&refs) {
-                    Ok(()) => {
-                        self.toasts
-                            .info(format!("Deleted {count} hidden {rec_label} from history"));
-                        self.history_window.invalidate();
-                    }
-                    Err(e) => {
-                        log::error!("Failed to delete hidden recordings: {e}");
-                        self.toasts
-                            .error(format!("Could not delete hidden data: {e}"));
-                    }
-                }
+            Response::AutoPruned(Err(e)) => log::error!("Auto-prune failed: {e}"),
+        }
+    }
+}
+
+/// Build the completion toast for a finished history mutation.
+fn mutation_toast(op: &history_db::DbOp) -> String {
+    use history_db::{DbOp, DeleteReason};
+    match op {
+        DbOp::TracksHidden { count } => {
+            let tracks = gt_fmt::pluralize(*count, "track", "tracks");
+            format!("Hid {count} {tracks} in history")
+        }
+        DbOp::TracksDeleted { count } => {
+            let tracks = gt_fmt::pluralize(*count, "track", "tracks");
+            format!("Permanently deleted {count} {tracks} from history")
+        }
+        DbOp::RecordingsDeleted { count, reason } => {
+            let rec = gt_fmt::pluralize(*count, "recording", "recordings");
+            match reason {
+                DeleteReason::Manual => format!("Deleted {count} {rec} from history"),
+                DeleteReason::Prune => format!("Pruned {count} {rec} from history"),
+                DeleteReason::AutoPrune => format!("Auto-pruned {count} {rec}"),
             }
         }
     }
@@ -1008,6 +1050,11 @@ impl eframe::App for App {
             self.handle_completed_load(completed);
         }
 
+        // Apply any results the history worker has finished since last frame.
+        for resp in self.history.poll() {
+            self.handle_history_response(resp);
+        }
+
         // Consume a pending file-picker result and dispatch the chosen path.
         if let Some(path) = self.loader.drain_file_dialog() {
             self.spawn_load_path(path);
@@ -1027,12 +1074,10 @@ impl eframe::App for App {
             let delete_pressed = ui
                 .ctx()
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete));
-            if delete_pressed && !s.tree.selection.is_empty() && s.tree.delete_confirm.is_none() {
-                let items = s.tree.selection.iter().cloned().collect();
-                s.tree.delete_confirm = Some(gt_side_panel::DeleteConfirmState {
-                    items,
-                    delete_permanently: false,
-                });
+            if delete_pressed && !s.tree.selection.is_empty() && s.tree.pending_unload.is_none() {
+                // Delete key unloads the selection from the view (non-destructive;
+                // recordings stay in history).
+                s.tree.pending_unload = Some(s.tree.selection.iter().cloned().collect());
             }
         }
 
@@ -1329,6 +1374,27 @@ impl eframe::App for App {
             self.load_error = None;
         }
 
+        // Unload (context menu / Delete key): remove items from the view only;
+        // the recordings stay in history, so no confirmation is needed.
+        let unloaded = {
+            let mut refmut = self.shared.borrow_mut();
+            let s = &mut *refmut;
+            if let Some(items) = s.tree.pending_unload.take() {
+                modals::execute_delete(&items, &mut s.loaded_files, &mut s.tree);
+                s.plot_state.rebuild_all(&s.loaded_files);
+                Some(items.len())
+            } else {
+                None
+            }
+        };
+        if let Some(count) = unloaded {
+            {
+                let s = self.shared.borrow();
+                self.map.rebuild_spatial_index(&s.loaded_files);
+            }
+            log::info!("Unloaded {count} item(s) from view");
+        }
+
         let remove_outcome = {
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
@@ -1358,19 +1424,65 @@ impl eframe::App for App {
                 .filter_map(|f| f.recording_meta)
                 .collect()
         };
-        if let Some(action) = self.history_window.show(
+        self.history_window.show(
             ui.ctx(),
-            self.db.as_ref(),
+            &self.history,
             &loaded_metas,
             &mut self.storage_enabled,
             &mut self.auto_prune_enabled,
             &mut self.auto_prune_max_bytes,
             &mut self.auto_prune_confirm,
-        ) {
-            self.handle_history_action(action, ui.ctx());
-        }
+        );
         if self.storage_enabled != prev_storage {
             self.sync_db_path();
+        }
+
+        // Locked-database recovery prompt: the file is marked open for write
+        // (usually a stale flag from an unclean exit). Clearing it is destructive
+        // if another process really is using it, so it requires confirmation.
+        if let Some(path) = self.pending_history_unlock.clone() {
+            let mut do_clear = false;
+            let mut cancel = ui
+                .ctx()
+                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            egui::Window::new("History database locked")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ui.ctx(), |ui| {
+                    ui.label("The recording history is marked as open for write.");
+                    ui.label(
+                        "This usually means GeoTrace did not shut down cleanly, but another program may still have the database open.",
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(
+                            "Only continue if no other program is using the database - otherwise it could be corrupted.",
+                        )
+                        .color(gt_ui_theme::WARNING_AMBER),
+                    );
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(
+                                egui::RichText::new("Clear lock and open")
+                                    .color(gt_ui_theme::WARNING_AMBER),
+                            )
+                            .clicked()
+                        {
+                            do_clear = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if do_clear {
+                self.recover_history_database(&path, ui.ctx());
+                self.pending_history_unlock = None;
+            } else if cancel {
+                self.pending_history_unlock = None;
+            }
         }
 
         // Auto-prune confirmation dialog.
@@ -1419,20 +1531,8 @@ impl eframe::App for App {
                 });
             if do_prune {
                 let candidates = self.pending_auto_prune.take().unwrap_or_default();
-                if let Some(db) = self.db.as_mut() {
-                    use gt_history::HistoryDatabase;
-                    match db.delete_batch(&candidates) {
-                        Ok(()) => {
-                            self.history_window.invalidate();
-                            let count = candidates.len();
-                            let rec_label = gt_fmt::pluralize(count, "recording", "recordings");
-                            self.toasts
-                                .info(format!("Auto-pruned {count} {rec_label}"))
-                                .duration(Some(std::time::Duration::from_secs(4)));
-                        }
-                        Err(e) => log::error!("Auto-prune failed: {e}"),
-                    }
-                }
+                self.history
+                    .delete_recordings(candidates, history_db::DeleteReason::AutoPrune);
             } else if cancel {
                 self.pending_auto_prune = None;
             }

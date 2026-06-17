@@ -575,6 +575,19 @@ fn snapshot_settings_window() {
 }
 
 #[test]
+fn snapshot_history_locked_dialog() {
+    let (mut harness, _config_path) =
+        TestHarness::new_eframe(Some(egui::vec2(640.0, 420.0)), |cc, path| {
+            App::new_with_config(cc, &[], Some(path.to_path_buf()))
+        });
+    harness.inner.step();
+    harness.inner.state_mut().pending_history_unlock =
+        Some(std::path::PathBuf::from("geotrace.h5"));
+    harness.run();
+    harness.snapshot("history_locked_dialog");
+}
+
+#[test]
 fn snapshot_load_warnings_dialog() {
     let (mut harness, _config_path) =
         TestHarness::new_eframe(Some(egui::vec2(1024.0, 768.0)), |cc, path| {
