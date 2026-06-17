@@ -12,13 +12,22 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
-    cmake \
     curl \
     git \
     libssl-dev \
     pkg-config \
     python3 \
     && rm -rf /var/lib/apt/lists/*
+
+# Debian bookworm ships CMake 3.25, but vcpkg (cloned at HEAD in stage 2) now
+# requires >= 3.26. Install a pinned modern 3.x release from Kitware instead.
+# Staying on the 3.x line avoids CMake 4.0 rejecting the bundled libhdf5's old
+# `cmake_minimum_required`. /usr/local/bin precedes /usr/bin on PATH.
+ENV CMAKE_VERSION=3.31.12
+RUN arch="$(uname -m)" \
+    && curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${arch}.tar.gz" \
+       | tar -xz --strip-components=1 -C /usr/local \
+    && cmake --version
 
 # Install rustup into a shared location so it's accessible by non-root users.
 ENV RUSTUP_HOME=/usr/local/rustup \
