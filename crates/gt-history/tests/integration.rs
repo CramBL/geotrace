@@ -1384,6 +1384,48 @@ fn file_size_stays_bounded_across_delete_reinsert_cycles() {
     );
 }
 
+/// Deleting an *older* recording while newer ones remain leaves an interior hole
+/// that cannot be truncated away (live data sits after it). Inserting fresh
+/// recordings afterwards must reuse that freed space rather than only appending,
+/// so the file stays near its full size instead of growing by the inserts.
+#[test_log::test]
+fn interior_delete_then_insert_reuses_freed_space() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    const N: usize = 40;
+    let file_size = |path: &std::path::Path| std::fs::metadata(path).expect("metadata").len();
+    let start_for = |i: usize| 1_000_000_000_i64 + i as i64 * 1_000_000;
+
+    // Fill the file with N recordings laid out in insertion order.
+    let mut refs: Vec<DatabaseRef> = (0..N)
+        .map(|i| insert_two_track(&mut db, "dev", start_for(i), 50))
+        .collect();
+    let full = file_size(&db_path);
+
+    // Delete the older half (indices 0..N/2); the newer half stays physically
+    // after them, so the freed regions are interior holes.
+    let old: Vec<DatabaseRef> = refs.drain(0..N / 2).collect();
+    db.delete_batch(&old).expect("delete older half");
+    assert_eq!(db.list_recordings().expect("list").len(), N / 2);
+
+    // Insert a fresh half. Reuse of the interior holes keeps the file near `full`.
+    for i in N..(N + N / 2) {
+        insert_two_track(&mut db, "dev", start_for(i), 50);
+    }
+    assert_eq!(db.list_recordings().expect("list").len(), N);
+    let after = file_size(&db_path);
+
+    // With no reuse the file would grow to ~1.5x full (the deleted half lingers as
+    // dead bytes and the new half is appended). Reuse keeps it near 1x (measured
+    // ~1.01 on the sys backend, 1.00 on pure); a 1.25x ceiling is a robust guard.
+    assert!(
+        after <= full + full / 4,
+        "interior freed space was not reused: full {full} bytes, after delete+insert {after} bytes"
+    );
+}
+
 /// `set_tracks` must wholly replace the stored track table and segmentation
 /// settings, not merge with or append to the previous ones (including dropping
 /// stale hidden marks).
