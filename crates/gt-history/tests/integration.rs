@@ -78,6 +78,48 @@ fn make_gtd_bytes(start_us: i64, n: u64) -> Vec<u8> {
     std::fs::read(tmp.path()).expect("read temp gtd")
 }
 
+/// Like [`make_gtd_bytes`] but stores **chunked, deflate-compressed** datasets
+/// (time + lat + lon), matching how real recordings are encoded - so the
+/// free-space tests exercise reclaiming chunked/filtered storage, not just
+/// contiguous data.
+#[expect(
+    clippy::expect_used,
+    reason = "test helper; panicking on I/O failure is the right behaviour"
+)]
+fn make_chunked_gtd_bytes(start_us: i64, n: u64) -> Vec<u8> {
+    let timestamps: Vec<i64> = (0..n as i64).map(|i| start_us + i).collect();
+    let lat: Vec<f64> = (0..n).map(|i| 55.0 + i as f64 * 1e-5).collect();
+    let lon: Vec<f64> = (0..n).map(|i| 12.0 + i as f64 * 1e-5).collect();
+    let shape = [n];
+    let chunk = [n.clamp(1, 64)];
+
+    let mut fb = hdf5_pure::FileBuilder::new();
+    let mut nav = fb.create_group("nav_points");
+    {
+        let ds = nav.create_dataset("time");
+        ds.with_shape(&shape);
+        ds.with_i64_data(&timestamps);
+        ds.with_chunks(&chunk);
+        ds.with_deflate(6);
+    }
+    {
+        let ds = nav.create_dataset("lat");
+        ds.with_shape(&shape);
+        ds.with_f64_data(&lat);
+        ds.with_chunks(&chunk);
+        ds.with_deflate(6);
+    }
+    {
+        let ds = nav.create_dataset("lon");
+        ds.with_shape(&shape);
+        ds.with_f64_data(&lon);
+        ds.with_chunks(&chunk);
+        ds.with_deflate(6);
+    }
+    fb.add_group(nav.finish());
+    fb.finish().expect("serialize chunked gtd")
+}
+
 #[test_log::test]
 #[cfg(feature = "backend-sys")]
 fn repro_missing_version_error() {
@@ -1423,6 +1465,102 @@ fn interior_delete_then_insert_reuses_freed_space() {
     assert!(
         after <= full + full / 4,
         "interior freed space was not reused: full {full} bytes, after delete+insert {after} bytes"
+    );
+}
+
+/// Strictly-interior churn: delete a middle range of recordings (recordings
+/// remain at *both* ends, so the freed regions are bracketed by live data and
+/// cannot be truncated), then insert the same number of fresh recordings. The
+/// file must barely change - the inserts reuse the interior holes rather than
+/// growing it linearly.
+#[test_log::test]
+fn interior_range_delete_keeps_file_bounded() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    const N: usize = 40;
+    let file_size = |p: &std::path::Path| std::fs::metadata(p).expect("metadata").len();
+    let start_for = |i: usize| 1_000_000_000_i64 + i as i64 * 1_000_000;
+
+    let refs: Vec<DatabaseRef> = (0..N)
+        .map(|i| insert_two_track(&mut db, "dev", start_for(i), 50))
+        .collect();
+    let full = file_size(&db_path);
+
+    // Delete the strictly interior range [9, 29): 0..9 and 29..40 stay live.
+    db.delete_batch(&refs[9..29])
+        .expect("delete interior range");
+    assert_eq!(db.list_recordings().expect("list").len(), N - 20);
+
+    // Insert 20 fresh recordings; reuse returns the count to 40 with little growth.
+    for i in N..(N + 20) {
+        insert_two_track(&mut db, "dev", start_for(i), 50);
+    }
+    assert_eq!(db.list_recordings().expect("list").len(), N);
+    let after = file_size(&db_path);
+
+    // Linear growth (no reuse) would reach ~1.5x full; reuse keeps it ~1x
+    // (measured ~1.007 on sys, 1.000 on pure). The size is deterministic within a
+    // run, so a tight 1.05x ceiling reliably catches any real regression.
+    assert!(
+        after <= full + full / 20,
+        "interior holes not reused: full {full} bytes, after {after} bytes"
+    );
+}
+
+/// Chunked/filtered storage variant: recordings are stored chunked +
+/// deflate-compressed (as real recordings are). After a strictly-interior delete
+/// and reinsert, the freed chunk blocks must be reused so the file does not grow
+/// linearly with the inserts.
+#[test_log::test]
+fn chunked_recordings_reuse_freed_space_on_interior_delete() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    const N: usize = 40;
+    let file_size = |p: &std::path::Path| std::fs::metadata(p).expect("metadata").len();
+    let start_for = |i: usize| 1_000_000_000_i64 + i as i64 * 1_000_000;
+    let insert = |db: &mut Database, i: usize| -> DatabaseRef {
+        let bytes = make_chunked_gtd_bytes(start_for(i), 500);
+        let meta = extract_meta(&bytes).expect("meta");
+        let half = meta.nav_point_count / 2;
+        let tracks = [
+            TrackRange {
+                start: 0,
+                end: half,
+                hidden: false,
+            },
+            TrackRange {
+                start: half,
+                end: meta.nav_point_count,
+                hidden: false,
+            },
+        ];
+        db.insert("dev", &meta, &tracks, test_settings(), &bytes)
+            .expect("insert chunked")
+    };
+
+    let refs: Vec<DatabaseRef> = (0..N).map(|i| insert(&mut db, i)).collect();
+    let full = file_size(&db_path);
+
+    db.delete_batch(&refs[9..29])
+        .expect("delete interior range");
+    assert_eq!(db.list_recordings().expect("list").len(), N - 20);
+
+    for i in N..(N + 20) {
+        insert(&mut db, i);
+    }
+    assert_eq!(db.list_recordings().expect("list").len(), N);
+    let after = file_size(&db_path);
+
+    // libhdf5's free-space manager reclaims chunked block storage too: measured
+    // ~1.001 on sys, 1.000 on pure (vs ~1.5x with no reuse). The size is
+    // deterministic within a run, so a tight 1.05x ceiling guards it.
+    assert!(
+        after <= full + full / 20,
+        "chunked interior holes not reused: full {full} bytes, after {after} bytes"
     );
 }
 
