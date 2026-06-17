@@ -1,0 +1,7 @@
+---
+source: crates/gt-history/tests/integration.rs
+expression: "format!(\"baseline: {baseline}\\nafter:    {after}\\ndelta:    {}\", after as i64\n- baseline as i64)"
+---
+baseline: 154428
+after:    156572
+delta:    2144

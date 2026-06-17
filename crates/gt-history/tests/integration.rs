@@ -120,6 +120,34 @@ fn make_chunked_gtd_bytes(start_us: i64, n: u64) -> Vec<u8> {
     fb.finish().expect("serialize chunked gtd")
 }
 
+/// The active backend, used to suffix free-space snapshots: the two backends
+/// encode differently and so produce different file sizes.
+fn backend_name() -> &'static str {
+    if cfg!(feature = "backend-sys") {
+        "sys"
+    } else {
+        "pure"
+    }
+}
+
+/// Snapshot the exact baseline/after database file sizes (and their delta) with
+/// `insta`, so any change in the space behaviour is caught precisely and shown for
+/// review. The size is deterministic for a given backend toolchain (static
+/// libhdf5 / pure Rust, fixed-length group names), so the snapshot is stable.
+fn assert_size_snapshot(name: &str, baseline: u64, after: u64) {
+    let mut settings = insta::Settings::clone_current();
+    settings.set_snapshot_suffix(backend_name());
+    settings.bind(|| {
+        insta::assert_snapshot!(
+            name,
+            format!(
+                "baseline: {baseline}\nafter:    {after}\ndelta:    {}",
+                after as i64 - baseline as i64
+            )
+        );
+    });
+}
+
 #[test_log::test]
 #[cfg(feature = "backend-sys")]
 fn repro_missing_version_error() {
@@ -1419,11 +1447,9 @@ fn file_size_stays_bounded_across_delete_reinsert_cycles() {
     let dir = tempfile::tempdir().expect("temp dir");
     let (baseline, after) = delete_reinsert_size_trajectory(&dir.path().join("geotrace.h5"));
     assert!(baseline > 0, "the filled database has a non-zero size");
-    assert!(
-        after <= baseline * 2,
-        "history file grew across delete/reinsert cycles: baseline {baseline} bytes, \
-         after 4 cycles {after} bytes (expected <= 2x). Freed space is not being reused."
-    );
+    // Reuse keeps `after` at `baseline`; a regression that stops reclaiming space
+    // would grow it by ~one fill per cycle, which the snapshot shows exactly.
+    assert_size_snapshot("delete_all_refill", baseline, after);
 }
 
 /// Deleting an *older* recording while newer ones remain leaves an interior hole
@@ -1459,13 +1485,9 @@ fn interior_delete_then_insert_reuses_freed_space() {
     assert_eq!(db.list_recordings().expect("list").len(), N);
     let after = file_size(&db_path);
 
-    // With no reuse the file would grow to ~1.5x full (the deleted half lingers as
-    // dead bytes and the new half is appended). Reuse keeps it near 1x (measured
-    // ~1.01 on the sys backend, 1.00 on pure); a 1.25x ceiling is a robust guard.
-    assert!(
-        after <= full + full / 4,
-        "interior freed space was not reused: full {full} bytes, after delete+insert {after} bytes"
-    );
+    // Reuse keeps the file near `full` (the deleted half's space is reused by the
+    // new inserts). The snapshot pins the exact sizes so any regression shows up.
+    assert_size_snapshot("interior_delete_older_half", full, after);
 }
 
 /// Strictly-interior churn: delete a middle range of recordings (recordings
@@ -1500,13 +1522,9 @@ fn interior_range_delete_keeps_file_bounded() {
     assert_eq!(db.list_recordings().expect("list").len(), N);
     let after = file_size(&db_path);
 
-    // Linear growth (no reuse) would reach ~1.5x full; reuse keeps it ~1x
-    // (measured ~1.007 on sys, 1.000 on pure). The size is deterministic within a
-    // run, so a tight 1.05x ceiling reliably catches any real regression.
-    assert!(
-        after <= full + full / 20,
-        "interior holes not reused: full {full} bytes, after {after} bytes"
-    );
+    // The 20 inserts reuse the 20 interior holes, so the file barely changes;
+    // linear growth would push it to ~1.5x. The snapshot pins the exact sizes.
+    assert_size_snapshot("interior_range_delete", full, after);
 }
 
 /// Chunked/filtered storage variant: recordings are stored chunked +
@@ -1555,13 +1573,9 @@ fn chunked_recordings_reuse_freed_space_on_interior_delete() {
     assert_eq!(db.list_recordings().expect("list").len(), N);
     let after = file_size(&db_path);
 
-    // libhdf5's free-space manager reclaims chunked block storage too: measured
-    // ~1.001 on sys, 1.000 on pure (vs ~1.5x with no reuse). The size is
-    // deterministic within a run, so a tight 1.05x ceiling guards it.
-    assert!(
-        after <= full + full / 20,
-        "chunked interior holes not reused: full {full} bytes, after {after} bytes"
-    );
+    // libhdf5's free-space manager reclaims chunked block storage too, so the
+    // file barely changes (vs ~1.5x with no reuse). The snapshot pins the sizes.
+    assert_size_snapshot("chunked_interior_delete", full, after);
 }
 
 /// `set_tracks` must wholly replace the stored track table and segmentation
