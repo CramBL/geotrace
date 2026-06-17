@@ -224,7 +224,10 @@ fn track_removals(keys: &[NodeKey], loaded_files: &[LoadedFile]) -> Vec<Recordin
         };
         let track_indices: Vec<usize> = positions
             .iter()
-            .filter_map(|ti| file.tracks.get(*ti).map(|t| t.metadata.index))
+            .filter_map(|ti| file.tracks.get(*ti))
+            // `metadata.index` is the 1-based display index; the stored track
+            // table is 0-based, so shift down by one.
+            .map(|t| t.metadata.index.saturating_sub(1))
             .collect();
         if !track_indices.is_empty() {
             removals.push(RecordingTrackRemoval {
@@ -473,7 +476,8 @@ mod tests {
             tracks: (0..track_count)
                 .map(|ti| LoadedTrack {
                     metadata: TrackMetadata {
-                        index: ti,
+                        // 1-based display index, as `build_loaded_file` assigns.
+                        index: ti + 1,
                         ..TrackMetadata::default()
                     },
                     points: Vec::new(),

@@ -94,6 +94,17 @@ pub(super) struct CompletedLoad {
     pub outcome: Result<LoadOutcome, String>,
 }
 
+/// What to do, beyond a plain load, with a recording opened from history.
+pub(super) enum HistoryOpen {
+    /// Remove these track positions (0-based, segmentation order) from the loaded
+    /// view - the recording's hidden tracks. The stored table is left unchanged.
+    ApplyHidden(Vec<usize>),
+    /// Overwrite the recording's stored track table and segmentation settings with
+    /// a fresh segmentation under the load config (recalculation), discarding the
+    /// previous hidden marks.
+    Recalculate(gt_history::DatabaseRef),
+}
+
 /// Manages the file-loading channel and all background load threads.
 ///
 /// `loading_jobs` and `finishing_jobs` are public for the progress overlay UI.
@@ -208,15 +219,38 @@ impl LoaderManager {
             .expect("failed to spawn gtd-path loader thread");
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "thread spawn can only fail under extreme system resource exhaustion"
-    )]
     pub fn spawn_gtd_bytes(
         &mut self,
         bytes: Arc<[u8]>,
         filename: String,
         config: SegmentationConfig,
+    ) {
+        self.spawn_bytes_job(bytes, filename, config, None);
+    }
+
+    /// Load a recording opened from the history database, applying the chosen
+    /// open behaviour (re-apply the recording's hidden tracks, or recalculate and
+    /// overwrite its stored track table) once it is parsed.
+    pub fn spawn_gtd_from_history(
+        &mut self,
+        bytes: Arc<[u8]>,
+        filename: String,
+        config: SegmentationConfig,
+        open: HistoryOpen,
+    ) {
+        self.spawn_bytes_job(bytes, filename, config, Some(open));
+    }
+
+    #[expect(
+        clippy::expect_used,
+        reason = "thread spawn can only fail under extreme system resource exhaustion"
+    )]
+    fn spawn_bytes_job(
+        &mut self,
+        bytes: Arc<[u8]>,
+        filename: String,
+        config: SegmentationConfig,
+        open: Option<HistoryOpen>,
     ) {
         let id = self.alloc_id();
         self.loading_jobs.push(LoadingJob {
@@ -250,6 +284,31 @@ impl LoaderManager {
                 let outcome =
                     gt_loader::load_bytes_with_progress(&bytes, filename, report, &config)
                         .map(|mut file| {
+                            file.recording_meta = gt_history::extract_meta(&bytes).ok();
+                            log::debug!("Parsed '{log_name}': {} track(s)", file.tracks.len());
+                            // Store first (de-duplicates against the existing
+                            // recording, keeping its stored track table) while the
+                            // freshly segmented tracks are still in stored order.
+                            let db_ref = store_in_history(
+                                db_path.as_deref(),
+                                &file,
+                                &config,
+                                Some(&bytes),
+                                &log_name,
+                            );
+                            match &open {
+                                Some(HistoryOpen::Recalculate(rec)) => {
+                                    if let Some(path) = db_path.as_deref() {
+                                        recalculate_stored_tracks(path, rec, &file, &config);
+                                    }
+                                }
+                                Some(HistoryOpen::ApplyHidden(positions)) => {
+                                    drop_tracks(&mut file, positions);
+                                }
+                                None => {}
+                            }
+                            // Build the plot series after any hidden-track removal
+                            // so the series matches the visible tracks.
                             tx.send(LoadMessage::Progress {
                                 id,
                                 fraction: 0.95,
@@ -258,15 +317,6 @@ impl LoaderManager {
                             .ok();
                             ctx.request_repaint();
                             let series = gt_plot::prepare_file_series(0, &file);
-                            file.recording_meta = gt_history::extract_meta(&bytes).ok();
-                            log::debug!("Parsed '{log_name}': {} track(s)", file.tracks.len());
-                            let db_ref = store_in_history(
-                                db_path.as_deref(),
-                                &file,
-                                &config,
-                                Some(&bytes),
-                                &log_name,
-                            );
                             LoadOutcome::GtdFile {
                                 file,
                                 series,
@@ -642,6 +692,89 @@ pub(crate) fn stored_segmentation_from_config(
     }
 }
 
+/// Rebuild a [`SegmentationConfig`] from the settings stored alongside a
+/// recording, so re-opening can reproduce the exact tracks it was stored with.
+/// The inverse of [`stored_segmentation_from_config`]; `SegmentationConfig` has
+/// no fields beyond the three persisted, so the round trip is lossless.
+pub(crate) fn config_from_stored_segmentation(
+    settings: &gt_history::StoredSegmentation,
+) -> SegmentationConfig {
+    SegmentationConfig {
+        track_split_gap: chrono::Duration::microseconds(settings.track_split_gap_us),
+        detect_clock_discontinuities: settings.detect_clock_discontinuities,
+        clock_discontinuity_sigmas: settings.clock_discontinuity_sigmas,
+    }
+}
+
+/// Derive contiguous per-track index ranges from a loaded file's tracks.
+///
+/// Segmentation produces contiguous ranges and the loader builds nav points 1:1
+/// with the original file, so the cumulative point counts reconstruct the exact
+/// `[start, end)` ranges into the recording's nav points.
+fn track_ranges_from_file(file: &LoadedFile) -> Vec<gt_history::TrackRange> {
+    let mut start = 0_u64;
+    file.tracks
+        .iter()
+        .map(|t| {
+            let end = start + t.points.len() as u64;
+            let range = gt_history::TrackRange {
+                start,
+                end,
+                hidden: false,
+            };
+            start = end;
+            range
+        })
+        .collect()
+}
+
+/// Remove the tracks at the given 0-based positions (segmentation order) from a
+/// loaded file's view - used to re-apply a recording's stored hidden tracks when
+/// it is opened from history.
+fn drop_tracks(file: &mut LoadedFile, positions: &[usize]) {
+    if positions.is_empty() {
+        return;
+    }
+    let drop: std::collections::HashSet<usize> = positions.iter().copied().collect();
+    file.tracks = std::mem::take(&mut file.tracks)
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !drop.contains(i))
+        .map(|(_, t)| t)
+        .collect();
+    log::debug!("Applied {} hidden track(s) on open", drop.len());
+}
+
+/// Overwrite a recording's stored track table and segmentation settings with a
+/// fresh segmentation of `file` under `config` (the recalculation path). Logs and
+/// continues on failure - the recording is still loaded into the view.
+fn recalculate_stored_tracks(
+    db_path: &std::path::Path,
+    db_ref: &gt_history::DatabaseRef,
+    file: &LoadedFile,
+    config: &SegmentationConfig,
+) {
+    use gt_history::HistoryDatabase;
+    let tracks = track_ranges_from_file(file);
+    let settings = stored_segmentation_from_config(config);
+    match gt_history::Database::open_or_create(db_path) {
+        Ok(mut db) => match db.set_tracks(db_ref, &tracks, settings) {
+            Ok(()) => log::info!(
+                "Recalculated stored tracks for {}/{} ({} track(s))",
+                db_ref.identity,
+                db_ref.group_name,
+                tracks.len()
+            ),
+            Err(e) => log::warn!(
+                "Failed to recalculate stored tracks for {}/{}: {e}",
+                db_ref.identity,
+                db_ref.group_name
+            ),
+        },
+        Err(e) => log::warn!("Could not open history database to recalculate tracks: {e}"),
+    }
+}
+
 /// Insert a freshly-loaded recording into the history database, logging the
 /// outcome at each branch. Returns the stored reference, or `None` when storage
 /// is disabled, metadata is missing, or the insert failed.
@@ -663,27 +796,12 @@ fn store_in_history(
         return None;
     };
 
-    // Track ranges from cumulative point counts: segmentation produces contiguous
-    // ranges and the loader builds nav points 1:1 with the original file.
-    let mut start = 0_u64;
-    let tracks: Vec<gt_history::TrackRange> = file
-        .tracks
-        .iter()
-        .map(|t| {
-            let end = start + t.points.len() as u64;
-            let range = gt_history::TrackRange {
-                start,
-                end,
-                hidden: false,
-            };
-            start = end;
-            range
-        })
-        .collect();
+    let tracks = track_ranges_from_file(file);
     // The cumulative end must cover exactly the recording's nav points (tracks
     // are a contiguous 1:1 partition); otherwise the derivation is unsound.
     debug_assert_eq!(
-        start, meta.nav_point_count,
+        tracks.last().map_or(0, |t| t.end),
+        meta.nav_point_count,
         "track ranges must cover all nav points"
     );
     let settings = stored_segmentation_from_config(config);
@@ -721,6 +839,32 @@ mod tests {
     use gt_test_utils::{SyntheticGtdSpec, synthetic_gtd_bytes};
 
     use super::*;
+
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "exact lossless round-trip of stored values"
+    )]
+    fn segmentation_config_round_trips_through_stored() {
+        let config = SegmentationConfig {
+            track_split_gap: chrono::Duration::milliseconds(42_500),
+            detect_clock_discontinuities: false,
+            clock_discontinuity_sigmas: 3.5,
+        };
+        let stored = stored_segmentation_from_config(&config);
+        let back = config_from_stored_segmentation(&stored);
+        assert_eq!(back.track_split_gap, config.track_split_gap);
+        assert_eq!(
+            back.detect_clock_discontinuities,
+            config.detect_clock_discontinuities
+        );
+        assert_eq!(
+            back.clock_discontinuity_sigmas,
+            config.clock_discontinuity_sigmas
+        );
+        // And the stored form round-trips back to itself.
+        assert_eq!(stored_segmentation_from_config(&back), stored);
+    }
 
     fn write_sample_gtd(dir: &std::path::Path) -> PathBuf {
         let bytes = synthetic_gtd_bytes(SyntheticGtdSpec {

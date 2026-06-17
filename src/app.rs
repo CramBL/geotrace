@@ -48,6 +48,20 @@ struct SharedAppState {
     warnings_popup: Option<(String, Vec<LoadWarning>)>,
 }
 
+/// A recording opened from history whose stored segmentation settings differ
+/// from the app's current ones. The user must choose to recalculate the tracks
+/// (current settings) or use the stored tracks (previous settings).
+struct ResegmentPrompt {
+    db_ref: gt_history::DatabaseRef,
+    filename: String,
+    bytes: std::sync::Arc<[u8]>,
+    /// Settings the stored tracks were built with.
+    stored: gt_history::StoredSegmentation,
+    /// 0-based positions of the recording's hidden tracks, re-applied to the view
+    /// when the user keeps the stored tracks.
+    hidden_positions: Vec<usize>,
+}
+
 pub struct App {
     map: NavMap,
     shared: Rc<RefCell<SharedAppState>>,
@@ -86,6 +100,16 @@ pub struct App {
     /// Set when the database could not be opened because it is marked as locked
     /// (open for write); drives a confirmation dialog offering to clear it.
     pending_history_unlock: Option<PathBuf>,
+    /// Set when the database could not be opened because it is corrupted; drives a
+    /// dialog offering to recreate it (optionally keeping a backup).
+    pending_db_corruption: Option<PathBuf>,
+    /// "Keep a backup of the original database" tickbox state for the corruption
+    /// recreate dialog.
+    keep_db_backup: bool,
+    /// Set when a recording is opened from history whose stored segmentation
+    /// settings differ from the current ones; drives the recalculate/use-stored
+    /// prompt.
+    pending_resegment: Option<ResegmentPrompt>,
 
     /// When `false`, GTD files are not stored in the history database on load.
     storage_enabled: bool,
@@ -177,12 +201,13 @@ impl App {
         // `None` and is populated by `sync_db_path` (called from
         // `apply_startup_settings`) only in non-test builds.
         #[cfg(not(test))]
-        let (history, pending_history_unlock) = {
+        let (history, pending_history_unlock, pending_db_corruption) = {
             use gt_history::{DbError, HistoryDatabase};
             match gt_history::default_path() {
                 Ok(path) => match gt_history::Database::open_or_create(&path) {
                     Ok(db) => (
                         history_db::HistoryManager::spawn(db, cc.egui_ctx.clone()),
+                        None,
                         None,
                     ),
                     Err(DbError::WriteLocked) => {
@@ -190,24 +215,25 @@ impl App {
                             "History database at {} is locked (marked open for write)",
                             path.display()
                         );
-                        (history_db::HistoryManager::disabled(), Some(path))
+                        (history_db::HistoryManager::disabled(), Some(path), None)
                     }
                     Err(e) => {
-                        log::error!("Failed to open history database: {e}");
-                        (history_db::HistoryManager::disabled(), None)
+                        log::error!("History database at {} is unusable: {e}", path.display());
+                        (history_db::HistoryManager::disabled(), None, Some(path))
                     }
                 },
                 Err(e) => {
                     log::error!("Failed to locate history database: {e}");
-                    (history_db::HistoryManager::disabled(), None)
+                    (history_db::HistoryManager::disabled(), None, None)
                 }
             }
         };
         #[cfg(test)]
-        let (history, pending_history_unlock): (
+        let (history, pending_history_unlock, pending_db_corruption): (
             history_db::HistoryManager,
             Option<PathBuf>,
-        ) = (history_db::HistoryManager::disabled(), None);
+            Option<PathBuf>,
+        ) = (history_db::HistoryManager::disabled(), None, None);
 
         let mut app = Self {
             map,
@@ -239,6 +265,9 @@ impl App {
             assoc_config: AssociationConfig::default(),
             history,
             pending_history_unlock,
+            pending_db_corruption,
+            keep_db_backup: true,
+            pending_resegment: None,
             storage_enabled: true,
             auto_prune_enabled: false,
             auto_prune_max_bytes: 10 * 1024 * 1024 * 1024,
@@ -824,6 +853,46 @@ impl App {
         }
     }
 
+    /// Recreate a corrupted history database from scratch, optionally renaming the
+    /// unreadable original to `<name>.corrupt.bak` first.
+    fn recreate_history_database(
+        &mut self,
+        path: &std::path::Path,
+        keep_backup: bool,
+        ctx: &egui::Context,
+    ) {
+        use gt_history::HistoryDatabase;
+        if keep_backup {
+            let backup = corrupt_backup_path(path);
+            if let Err(e) = std::fs::rename(path, &backup) {
+                log::error!("Failed to back up corrupted database: {e}");
+                self.toasts
+                    .error(format!("Could not back up the database: {e}"));
+                return;
+            }
+            log::info!("Backed up corrupted database to {}", backup.display());
+        } else if let Err(e) = std::fs::remove_file(path) {
+            log::error!("Failed to remove corrupted database: {e}");
+            self.toasts
+                .error(format!("Could not remove the database: {e}"));
+            return;
+        }
+
+        match gt_history::Database::open_or_create(path) {
+            Ok(db) => {
+                self.history = history_db::HistoryManager::spawn(db, ctx.clone());
+                self.sync_db_path();
+                self.history_window.invalidate();
+                self.toasts.info("Created a fresh history database");
+            }
+            Err(e) => {
+                log::error!("Failed to recreate history database: {e}");
+                self.toasts
+                    .error(format!("Could not recreate the database: {e}"));
+            }
+        }
+    }
+
     /// Ask the history worker whether auto-pruning is needed; the result comes
     /// back as a [`history_db::Response::AutoPruned`]. Called after each
     /// successful GTD insert.
@@ -853,6 +922,66 @@ impl App {
         }
     }
 
+    /// Begin opening a recording from history. Reproduces the stored tracks and
+    /// re-applies the hidden ones; when the stored segmentation settings differ
+    /// from the current ones it raises a prompt instead (recalculate vs. use the
+    /// stored tracks).
+    fn begin_history_open(
+        &mut self,
+        db_ref: gt_history::DatabaseRef,
+        stored: gt_history::StoredRecording,
+    ) {
+        // Reuse the original filename: the identity is the filename (with an
+        // "auto:" prefix for auto-derived ones).
+        let filename = db_ref
+            .identity
+            .strip_prefix("auto:")
+            .unwrap_or(&db_ref.identity)
+            .to_owned();
+
+        let hidden_positions: Vec<usize> = stored
+            .tracks
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.hidden)
+            .map(|(i, _)| i)
+            .collect();
+
+        let current = loader::stored_segmentation_from_config(&self.processing_config);
+
+        match stored.segmentation {
+            // Stored settings differ from the current ones: let the user choose.
+            Some(stored_settings) if stored_settings != current && !stored.tracks.is_empty() => {
+                self.pending_resegment = Some(ResegmentPrompt {
+                    db_ref,
+                    filename,
+                    bytes: stored.bytes.into(),
+                    stored: stored_settings,
+                    hidden_positions,
+                });
+            }
+            // Settings match: reproduce the stored tracks and re-apply hidden ones.
+            Some(stored_settings) => {
+                let config = loader::config_from_stored_segmentation(&stored_settings);
+                self.loader.spawn_gtd_from_history(
+                    stored.bytes.into(),
+                    filename,
+                    config,
+                    loader::HistoryOpen::ApplyHidden(hidden_positions),
+                );
+            }
+            // Older recording with no stored settings: load with current settings.
+            None => {
+                self.loader.spawn_gtd_from_history(
+                    stored.bytes.into(),
+                    filename,
+                    self.processing_config,
+                    loader::HistoryOpen::ApplyHidden(hidden_positions),
+                );
+            }
+        }
+    }
+
     /// Apply a result delivered by the history worker thread.
     fn handle_history_response(&mut self, resp: history_db::Response) {
         use history_db::Response;
@@ -863,24 +992,7 @@ impl App {
                     .set_error(format!("Failed to load history: {e}"));
             }
             Response::Opened { db_ref, result } => match result {
-                Ok(stored) => {
-                    // Reuse the original filename: the identity is the filename
-                    // (with an "auto:" prefix for auto-derived ones).
-                    let filename = db_ref
-                        .identity
-                        .strip_prefix("auto:")
-                        .unwrap_or(&db_ref.identity)
-                        .to_owned();
-                    // The recording re-segments with the current settings on load.
-                    // Stored per-track hidden flags remain recorded in the database
-                    // (and drive the History window and "Delete hidden data"); they
-                    // are not yet re-applied to the freshly loaded view.
-                    self.loader.spawn_gtd_bytes(
-                        stored.bytes.into(),
-                        filename,
-                        self.processing_config,
-                    );
-                }
+                Ok(stored) => self.begin_history_open(db_ref, stored),
                 Err(e) => {
                     log::error!("Failed to load recording from history: {e}");
                     self.toasts.error(format!("Could not open recording: {e}"));
@@ -914,6 +1026,17 @@ impl App {
             Response::AutoPruned(Err(e)) => log::error!("Auto-prune failed: {e}"),
         }
     }
+}
+
+/// Backup path for a corrupted database: appends `.corrupt.bak` to the file name
+/// (e.g. `geotrace.h5` -> `geotrace.h5.corrupt.bak`).
+fn corrupt_backup_path(path: &std::path::Path) -> PathBuf {
+    let mut name = path
+        .file_name()
+        .map(std::ffi::OsString::from)
+        .unwrap_or_default();
+    name.push(".corrupt.bak");
+    path.with_file_name(name)
 }
 
 /// Build the completion toast for a finished history mutation.
@@ -1482,6 +1605,136 @@ impl eframe::App for App {
                 self.pending_history_unlock = None;
             } else if cancel {
                 self.pending_history_unlock = None;
+            }
+        }
+
+        // Corrupted-database prompt: the file exists but could not be opened.
+        // Offer to recreate it, optionally keeping a backup of the original.
+        if let Some(path) = self.pending_db_corruption.clone() {
+            let mut do_recreate = false;
+            let mut cancel = ui
+                .ctx()
+                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            egui::Window::new("History database is corrupted")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ui.ctx(), |ui| {
+                    ui.label("The recording history database could not be opened.");
+                    ui.label("You can try to recover it manually, or recreate a fresh one.");
+                    ui.add_space(4.0);
+                    ui.checkbox(
+                        &mut self.keep_db_backup,
+                        "Keep a backup of the original database",
+                    );
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(
+                                egui::RichText::new("Recreate database")
+                                    .color(gt_ui_theme::WARNING_AMBER),
+                            )
+                            .clicked()
+                        {
+                            do_recreate = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if do_recreate {
+                self.recreate_history_database(&path, self.keep_db_backup, ui.ctx());
+                self.pending_db_corruption = None;
+            } else if cancel {
+                self.pending_db_corruption = None;
+            }
+        }
+
+        // Re-segment prompt: a recording opened from history was stored with
+        // different track-splitting settings than the current ones.
+        if let Some(prompt) = self.pending_resegment.take() {
+            let current = loader::stored_segmentation_from_config(&self.processing_config);
+            let mut recalculate = false;
+            let mut use_stored = false;
+            let mut cancel = ui
+                .ctx()
+                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            let fmt_gap = |us: i64| format!("{} s", us / 1_000_000);
+            let yes_no = |b: bool| if b { "yes" } else { "no" };
+            egui::Window::new("Segmentation settings differ")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ui.ctx(), |ui| {
+                    ui.label(format!(
+                        "'{}' was stored with different track-splitting settings than the current ones.",
+                        prompt.filename
+                    ));
+                    ui.add_space(4.0);
+                    egui::Grid::new("resegment_settings")
+                        .num_columns(3)
+                        .spacing([16.0, 4.0])
+                        .show(ui, |ui| {
+                            ui.label("");
+                            ui.strong("Stored");
+                            ui.strong("Current");
+                            ui.end_row();
+                            ui.label("Split gap");
+                            ui.label(fmt_gap(prompt.stored.track_split_gap_us));
+                            ui.label(fmt_gap(current.track_split_gap_us));
+                            ui.end_row();
+                            ui.label("Detect clock jumps");
+                            ui.label(yes_no(prompt.stored.detect_clock_discontinuities));
+                            ui.label(yes_no(current.detect_clock_discontinuities));
+                            ui.end_row();
+                            ui.label("Sensitivity (σ)");
+                            ui.label(format!("{:.1}", prompt.stored.clock_discontinuity_sigmas));
+                            ui.label(format!("{:.1}", current.clock_discontinuity_sigmas));
+                            ui.end_row();
+                        });
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button("Use stored tracks")
+                            .on_hover_text("Open the tracks as stored, with their previous settings")
+                            .clicked()
+                        {
+                            use_stored = true;
+                        }
+                        if ui
+                            .button("Recalculate with current settings")
+                            .on_hover_text(
+                                "Re-split the recording with the current settings, replacing the stored tracks",
+                            )
+                            .clicked()
+                        {
+                            recalculate = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if recalculate {
+                self.loader.spawn_gtd_from_history(
+                    prompt.bytes,
+                    prompt.filename,
+                    self.processing_config,
+                    loader::HistoryOpen::Recalculate(prompt.db_ref),
+                );
+                self.history_window.invalidate();
+            } else if use_stored {
+                let config = loader::config_from_stored_segmentation(&prompt.stored);
+                self.loader.spawn_gtd_from_history(
+                    prompt.bytes,
+                    prompt.filename,
+                    config,
+                    loader::HistoryOpen::ApplyHidden(prompt.hidden_positions),
+                );
+            } else if !cancel {
+                // No choice yet: keep the prompt open for the next frame.
+                self.pending_resegment = Some(prompt);
             }
         }
 
