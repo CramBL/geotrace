@@ -25,7 +25,6 @@ uom.workspace = true
 walkers.workspace = true
 
 [dev-dependencies]
-egui_extras.workspace = true
 egui_kittest.workspace = true
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 proptest.workspace = true

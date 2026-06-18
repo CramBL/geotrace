@@ -5,6 +5,12 @@ fn snapshot_options() -> SnapshotOptions {
     SnapshotOptions::new().threshold(0.6)
 }
 
+/// Pixel-count tolerance for [`TestHarness::snapshot_loose`]. Live map/plot
+/// snapshots differ by a handful of pixels between GPU backends (the baselines
+/// are committed from Linux but CI compares them on the macOS runner), so a
+/// small allowance keeps those tests stable without masking real regressions.
+const LOOSE_PIXEL_COUNT_TOLERANCE: usize = 32;
+
 /// Installs the Phosphor icon font and image loaders into the test context so
 /// snapshots render real glyphs and SVG marker icons instead of fallback boxes.
 ///
@@ -92,9 +98,10 @@ impl<'a, State> TestHarness<'a, State> {
     ///
     /// Use this for snapshots that include live-rendered content (plots, maps)
     /// where minor floating-point layout differences produce a small number of
-    /// differing pixels across runs.
+    /// differing pixels across runs and across GPU backends (the committed
+    /// baselines are compared against the macOS runner).
     pub fn snapshot_loose(&mut self, name: &str) {
-        self.snapshot_with_threshold(name, 4.0);
+        self.snapshot_with_tolerance(name, 4.0, LOOSE_PIXEL_COUNT_TOLERANCE);
     }
 
     pub fn snapshot_with_threshold(&mut self, name: &str, threshold: f32) {
