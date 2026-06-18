@@ -1,7 +1,8 @@
-# Stage 1  geotrace-dev     Rust toolchain + CI lint tools.
+# Stage 1  geotrace-dev     Rust toolchain + CI lint tools + cmake (the default
+#                           history backend builds libhdf5 from source).
 #                           Used by: just check / clippy / test / ci-extras / ...
 #
-# Stage 2  geotrace-sdk-dev Extends stage 1 with cmake, criterion, vcpkg.
+# Stage 2  geotrace-sdk-dev Extends stage 1 with clang, criterion, vcpkg.
 #                           Used by: just test-c / test-cpp / test-install / ...
 
 ### Stage 1: Rust dev ###
@@ -17,6 +18,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     python3 \
     && rm -rf /var/lib/apt/lists/*
+
+# Debian bookworm ships CMake 3.25, but vcpkg (cloned at HEAD in stage 2) now
+# requires >= 3.26. Install a pinned modern 3.x release from Kitware instead.
+# Staying on the 3.x line avoids CMake 4.0 rejecting the bundled libhdf5's old
+# `cmake_minimum_required`. /usr/local/bin precedes /usr/bin on PATH.
+ENV CMAKE_VERSION=3.31.12
+RUN arch="$(uname -m)" \
+    && curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${arch}.tar.gz" \
+       | tar -xz --strip-components=1 -C /usr/local \
+    && cmake --version
 
 # Install rustup into a shared location so it's accessible by non-root users.
 ENV RUSTUP_HOME=/usr/local/rustup \
@@ -74,11 +85,12 @@ FROM rust-dev AS sdk-dev
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# cmake is already provided by the Rust dev stage (the default history backend
+# builds libhdf5), so it is not repeated here.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     clang \
     clang-format \
     clang-tidy \
-    cmake \
     libcriterion-dev \
     ninja-build \
     tar \

@@ -72,7 +72,7 @@ jobs:
   # Verify that geotrace-sdk compiles and its tests pass on its declared MSRV.
   # The SDK is a separately published crate with a lower MSRV than the main app.
   sdk-msrv:
-    name: SDK MSRV (Rust 1.88)
+    name: SDK MSRV (Rust 1.89)
     runs-on: ubuntu-latest
 
     steps:
@@ -81,19 +81,19 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust 1.88
+      - name: Install Rust 1.89
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
         with:
-          toolchain: "1.88"
+          toolchain: "1.89"
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Check
-        run: cargo +1.88 check -p geotrace-sdk -p geotrace-sdk-macros
+        run: cargo +1.89 check -p geotrace-sdk -p geotrace-sdk-macros
 
       - name: Test
-        run: cargo +1.88 test -p geotrace-sdk
+        run: cargo +1.89 test -p geotrace-sdk
 
   # Ensure the published SDK docs build cleanly with no warnings (broken
   # intra-doc links, missing docs on public items, etc).

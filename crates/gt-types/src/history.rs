@@ -13,6 +13,31 @@ pub const ATTR_SAT_REPORT_COUNT: &str = "sat_report_count";
 pub const ATTR_MARKER_COUNT: &str = "marker_count";
 pub const ATTR_EVENT_MARKER_COUNT: &str = "event_marker_count";
 pub const ATTR_GTD_SIZE_BYTES: &str = "gtd_size_bytes";
+/// Soft-delete marker: a recording with this attribute set to `1` is hidden from
+/// the normal history listing and is a candidate for "delete hidden data".
+/// Stored as `u64` (`1` = hidden) so both backends can read/write it with the
+/// integer attribute handling they already have.
+pub const ATTR_HIDDEN: &str = "hidden";
+
+/// Segmentation settings the stored tracks were produced with. `track_split_gap`
+/// is stored in microseconds.
+pub const ATTR_SEG_GAP_US: &str = "seg_track_split_gap_us";
+pub const ATTR_SEG_DETECT_CLOCK: &str = "seg_detect_clock_discontinuities";
+pub const ATTR_SEG_CLOCK_SIGMAS: &str = "seg_clock_discontinuity_sigmas";
+
+/// DB-internal subgroup (under each recording group) holding the stored track
+/// ranges as parallel `start`/`end`/`hidden` datasets. The name is prefixed so
+/// it cannot collide with a GTD data group, and is skipped when reconstructing
+/// the original GTD file on load.
+pub const TRACKS_GROUP: &str = "__geotrace_tracks__";
+pub const TRACK_START_DATASET: &str = "start";
+pub const TRACK_END_DATASET: &str = "end";
+pub const TRACK_HIDDEN_DATASET: &str = "hidden";
+
+/// The GTD file-format root attribute carrying the format version, and the
+/// value assumed for recordings stored before it was preserved.
+pub const GTD_VERSION_ATTR: &str = "geotrace_version";
+pub const GTD_VERSION_FALLBACK: &str = "1";
 
 /// Returns true for attribute keys that belong to the database's recording
 /// metadata (as opposed to GTD file-format root attributes).
@@ -27,7 +52,74 @@ pub fn is_db_recording_attr(key: &str) -> bool {
             | ATTR_MARKER_COUNT
             | ATTR_EVENT_MARKER_COUNT
             | ATTR_GTD_SIZE_BYTES
+            | ATTR_HIDDEN
+            | ATTR_SEG_GAP_US
+            | ATTR_SEG_DETECT_CLOCK
+            | ATTR_SEG_CLOCK_SIGMAS
     )
+}
+
+/// Returns true for recording child-group names that are GeoTrace history
+/// bookkeeping (not part of the GTD file), so they are skipped when
+/// reconstructing the original GTD file on load.
+pub fn is_db_internal_group(name: &str) -> bool {
+    name == TRACKS_GROUP
+}
+
+/// One stored track: a half-open index range `[start, end)` into the recording's
+/// nav points, plus whether it is hidden.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrackRange {
+    pub start: u64,
+    pub end: u64,
+    pub hidden: bool,
+}
+
+/// The segmentation settings a recording's stored tracks were produced with.
+///
+/// Mirrors `gt_track_builder::SegmentationConfig` using primitives, because
+/// `gt-types` cannot depend on `gt-track-builder`. `track_split_gap` is in
+/// microseconds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StoredSegmentation {
+    pub track_split_gap_us: i64,
+    pub detect_clock_discontinuities: bool,
+    pub clock_discontinuity_sigmas: f64,
+}
+
+/// Split track ranges into the parallel on-disk columns (`start`/`end`/`hidden`).
+pub fn track_columns(tracks: &[TrackRange]) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
+    let starts = tracks.iter().map(|t| t.start).collect();
+    let ends = tracks.iter().map(|t| t.end).collect();
+    let hidden = tracks.iter().map(|t| u64::from(t.hidden)).collect();
+    (starts, ends, hidden)
+}
+
+/// Reconstruct track ranges from the on-disk columns, validating consistency.
+///
+/// Returns `None` when the columns are inconsistent - mismatched lengths or a
+/// `start > end` range - so the caller can treat the table as absent (and
+/// recompute tracks from the original) rather than using corrupt geometry.
+pub fn track_ranges_from_columns(
+    starts: &[u64],
+    ends: &[u64],
+    hidden: &[u64],
+) -> Option<Vec<TrackRange>> {
+    if starts.len() != ends.len() || starts.len() != hidden.len() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(starts.len());
+    for ((&start, &end), &h) in starts.iter().zip(ends).zip(hidden) {
+        if start > end {
+            return None;
+        }
+        out.push(TrackRange {
+            start,
+            end,
+            hidden: h != 0,
+        });
+    }
+    Some(out)
 }
 
 /// Metadata for a recording - used for duplicate detection and indexing.
@@ -46,11 +138,6 @@ pub struct RecordingMeta {
 }
 
 impl RecordingMeta {
-    /// Total number of data points across all data types.
-    pub fn total_count(&self) -> u64 {
-        self.nav_point_count + self.sat_report_count + self.marker_count + self.event_marker_count
-    }
-
     pub fn matches(
         &self,
         start_us: i64,
@@ -87,6 +174,21 @@ impl RecordingMeta {
 pub struct RecordingEntry {
     pub db_ref: DatabaseRef,
     pub meta: RecordingMeta,
+    /// Total number of stored tracks for this recording.
+    pub total_tracks: usize,
+    /// How many of those tracks are currently hidden.
+    pub hidden_tracks: usize,
+}
+
+/// A recording read back from history: the reconstructed GTD bytes plus the
+/// stored per-track ranges and the segmentation settings they were built with.
+///
+/// `tracks`/`segmentation` are empty/`None` for recordings stored before
+/// per-track storage existed; the caller recomputes tracks from `bytes` then.
+pub struct StoredRecording {
+    pub bytes: Vec<u8>,
+    pub tracks: Vec<TrackRange>,
+    pub segmentation: Option<StoredSegmentation>,
 }
 
 /// Criteria for selecting recordings to prune.
@@ -111,6 +213,11 @@ pub enum DbError {
     SchemaTooNew { found: i64, supported: i64 },
     #[error("no platform data directory available")]
     NoDataDir,
+    /// The database is marked as open for write - typically a stale flag left by
+    /// an unclean shutdown. Recoverable via [`HistoryDatabase::clear_write_lock`]
+    /// once the user confirms no other process is using it.
+    #[error("database is marked as open for write (it may not have been closed cleanly)")]
+    WriteLocked,
 }
 
 impl PruneMode {
@@ -159,16 +266,59 @@ pub trait HistoryDatabase {
     fn open_or_create(path: &Path) -> Result<Self, DbError>
     where
         Self: Sized;
+
+    /// Forcibly clear a stale "open for write" lock left by an unclean shutdown
+    /// so the database can be opened again.
+    ///
+    /// Only safe to call once the user has confirmed no other process has the
+    /// file open. The default implementation is a no-op, for backends that
+    /// cannot get into this state.
+    fn clear_write_lock(path: &Path) -> Result<(), DbError>
+    where
+        Self: Sized,
+    {
+        let _ = path;
+        Ok(())
+    }
+    /// Store a recording: the original GTD `bytes`, the segmentation `settings`,
+    /// and the resulting `tracks` (index ranges, none hidden initially).
     fn insert(
         &mut self,
         identity: &str,
         meta: &RecordingMeta,
+        tracks: &[TrackRange],
+        settings: StoredSegmentation,
         bytes: &[u8],
     ) -> Result<DatabaseRef, DbError>;
-    fn delete(&mut self, db_ref: &DatabaseRef) -> Result<(), DbError>;
-    fn load_bytes(&self, db_ref: &DatabaseRef) -> Result<Vec<u8>, DbError>;
+
+    /// Read a recording back: reconstructed GTD bytes plus its stored tracks and
+    /// segmentation settings.
+    fn load(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError>;
+
+    /// Replace a recording's stored tracks and segmentation settings (e.g. after
+    /// recalculating from the original with new settings). Discards prior hidden
+    /// marks - the supplied `tracks` carry the new hidden state.
+    fn set_tracks(
+        &mut self,
+        db_ref: &DatabaseRef,
+        tracks: &[TrackRange],
+        settings: StoredSegmentation,
+    ) -> Result<(), DbError>;
+
+    /// Mark or unmark individual tracks (by index) of a recording as hidden.
+    fn set_tracks_hidden(
+        &mut self,
+        db_ref: &DatabaseRef,
+        track_indices: &[usize],
+        hidden: bool,
+    ) -> Result<(), DbError>;
+
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError>;
-    fn is_duplicate(&self, identity: &str, meta: &RecordingMeta) -> Result<bool, DbError>;
+    /// Whether a recording with the same content already exists (content-addressed
+    /// across all identities).
+    fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError>;
+
+    /// Delete whole recordings (used by pruning).
     fn delete_batch(&mut self, refs: &[DatabaseRef]) -> Result<(), DbError>;
     fn path(&self) -> &Path;
 
@@ -200,18 +350,22 @@ pub fn format_count_suffix(n: u64) -> String {
     }
 }
 
-/// Generate a recording group name from the start timestamp.
-pub fn make_group_name(start_us: i64, total_count: u64, existing_names: &[String]) -> String {
+/// Build a recording group name from the start timestamp and a caller-supplied
+/// unique token.
+///
+/// The timestamp prefix (whole-second `%Y-%m-%dT%H:%M:%SZ`) keeps names readable
+/// when the file is inspected directly, but is not unique on its own - two
+/// recordings can start within the same second. `unique` (a UUID generated by the
+/// backend) guarantees the name is collision-free; the backends do not rely on
+/// scanning existing names. Pass a stable, already-unique string such as
+/// `uuid::Uuid::new_v4().to_string()`.
+pub fn make_group_name(start_us: i64, unique: &str) -> String {
     use chrono::{DateTime, Utc};
     let ts = DateTime::<Utc>::from_timestamp_micros(start_us)
         .unwrap_or_default()
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
-
-    if !existing_names.iter().any(|n| n == &ts) {
-        return ts;
-    }
-    format!("{}_{}", ts, format_count_suffix(total_count))
+    format!("{ts}_{unique}")
 }
 
 #[cfg(test)]
@@ -268,6 +422,97 @@ mod tests {
             },
         ] {
             assert!(!a.same_recording(&b));
+        }
+    }
+}
+
+#[cfg(test)]
+mod track_column_properties {
+    use proptest::prelude::*;
+
+    use super::{TrackRange, track_columns, track_ranges_from_columns};
+
+    /// Build valid (`start <= end`) ranges from arbitrary input.
+    fn valid_ranges(raw: &[(u64, u64, bool)]) -> Vec<TrackRange> {
+        raw.iter()
+            .map(|&(a, b, hidden)| {
+                let (start, end) = if a <= b { (a, b) } else { (b, a) };
+                TrackRange { start, end, hidden }
+            })
+            .collect()
+    }
+
+    proptest! {
+        /// The on-disk column split is lossless for any valid track table: the
+        /// exact ranges (including hidden flags) come back.
+        #[test]
+        fn columns_round_trip(
+            raw in proptest::collection::vec((any::<u64>(), any::<u64>(), any::<bool>()), 0..64),
+        ) {
+            let tracks = valid_ranges(&raw);
+            let (starts, ends, hidden) = track_columns(&tracks);
+            prop_assert_eq!(track_ranges_from_columns(&starts, &ends, &hidden), Some(tracks));
+        }
+
+        /// Any column with a `hidden` value other than 0/1 still decodes to a
+        /// boolean (non-zero is hidden), so a stray on-disk value never corrupts
+        /// the table.
+        #[test]
+        fn nonzero_hidden_decodes_as_true(
+            rows in proptest::collection::vec((0u64..1_000, 0u64..1_000, any::<u64>()), 1..32),
+        ) {
+            let mut starts = Vec::with_capacity(rows.len());
+            let mut ends = Vec::with_capacity(rows.len());
+            let mut hidden = Vec::with_capacity(rows.len());
+            for &(a, b, h) in &rows {
+                let (s, e) = if a <= b { (a, b) } else { (b, a) };
+                starts.push(s);
+                ends.push(e);
+                hidden.push(h);
+            }
+            let decoded = track_ranges_from_columns(&starts, &ends, &hidden)
+                .expect("valid geometry decodes");
+            for (range, &h) in decoded.iter().zip(&hidden) {
+                prop_assert_eq!(range.hidden, h != 0);
+            }
+        }
+
+        /// Mismatched column lengths are rejected, so a partially-written table is
+        /// treated as absent rather than silently truncated.
+        #[test]
+        fn mismatched_lengths_reject(
+            starts in proptest::collection::vec(any::<u64>(), 0..16),
+            ends in proptest::collection::vec(any::<u64>(), 0..16),
+            hidden in proptest::collection::vec(any::<u64>(), 0..16),
+        ) {
+            prop_assume!(!(starts.len() == ends.len() && starts.len() == hidden.len()));
+            prop_assert_eq!(track_ranges_from_columns(&starts, &ends, &hidden), None);
+        }
+
+        /// A single inverted range (`start > end`) rejects the whole table.
+        #[test]
+        fn one_inverted_range_rejects_table(
+            pairs in proptest::collection::vec((0u64..1_000, 0u64..1_000), 1..32),
+            bad in any::<usize>(),
+        ) {
+            let n = pairs.len();
+            let mut starts = Vec::with_capacity(n);
+            let mut ends = Vec::with_capacity(n);
+            for &(a, b) in &pairs {
+                let (s, e) = if a <= b { (a, b) } else { (b, a) };
+                starts.push(s);
+                ends.push(e);
+            }
+            // Force range `i` to have start strictly greater than end.
+            let i = bad % n;
+            if starts[i] == 0 {
+                starts[i] = 1;
+                ends[i] = 0;
+            } else {
+                ends[i] = starts[i] - 1;
+            }
+            let hidden = vec![0u64; n];
+            prop_assert_eq!(track_ranges_from_columns(&starts, &ends, &hidden), None);
         }
     }
 }

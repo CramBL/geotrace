@@ -19,6 +19,9 @@ pub enum NodeKey {
 
 pub struct DeleteConfirmState {
     pub items: Vec<NodeKey>,
+    /// When set, removal also permanently deletes the affected recordings from
+    /// the history database instead of only hiding them.
+    pub delete_permanently: bool,
 }
 
 /// Tracks which data categories are currently expanded in the track row.
@@ -216,6 +219,9 @@ pub struct TreeState {
     pub selection: BTreeSet<NodeKey>,
     pub selection_anchor: Option<NodeKey>,
     pub delete_confirm: Option<DeleteConfirmState>,
+    /// Items the user asked to unload from the view (non-destructive; the
+    /// recordings stay in history). Consumed by the app each frame.
+    pub pending_unload: Option<Vec<NodeKey>>,
     pub detached: bool,
     /// Derived from tree state, kept in sync.  Passed to gt-map renderers.
     visibility: TrackDataVisibility,
@@ -236,6 +242,7 @@ impl TreeState {
             selection: BTreeSet::new(),
             selection_anchor: None,
             delete_confirm: None,
+            pending_unload: None,
             detached: false,
             visibility: TrackDataVisibility { files: Vec::new() },
             event_marker_visibility: EventMarkerVisibility::new(),

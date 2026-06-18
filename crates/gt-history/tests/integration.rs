@@ -1,8 +1,57 @@
 #[cfg(feature = "backend-sys")]
 use geotrace_sdk::NavFile;
-use gt_history::{Database, HistoryDatabase, RecordingMeta, extract_meta};
-#[cfg(feature = "backend-sys")]
-use log;
+use gt_history::{
+    Database, DatabaseRef, DbError, HistoryDatabase, RecordingMeta, StoredRecording,
+    StoredSegmentation, TrackRange, extract_meta,
+};
+
+/// Default segmentation settings for tests (mirrors `SegmentationConfig::default`).
+fn test_settings() -> StoredSegmentation {
+    StoredSegmentation {
+        track_split_gap_us: 300_000_000,
+        detect_clock_discontinuities: true,
+        clock_discontinuity_sigmas: 5.0,
+    }
+}
+
+/// Test conveniences mapping the old single-recording API onto the per-track one.
+trait TestDbExt {
+    /// Insert a recording with a single track spanning all nav points.
+    fn insert_simple(
+        &mut self,
+        identity: &str,
+        meta: &RecordingMeta,
+        bytes: &[u8],
+    ) -> Result<DatabaseRef, DbError>;
+    /// Load just the reconstructed GTD bytes.
+    fn load_bytes(&self, db_ref: &DatabaseRef) -> Result<Vec<u8>, DbError>;
+    /// Load the full stored recording (bytes + tracks + settings).
+    fn load_full(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError>;
+}
+
+impl TestDbExt for Database {
+    fn insert_simple(
+        &mut self,
+        identity: &str,
+        meta: &RecordingMeta,
+        bytes: &[u8],
+    ) -> Result<DatabaseRef, DbError> {
+        let tracks = [TrackRange {
+            start: 0,
+            end: meta.nav_point_count,
+            hidden: false,
+        }];
+        self.insert(identity, meta, &tracks, test_settings(), bytes)
+    }
+
+    fn load_bytes(&self, db_ref: &DatabaseRef) -> Result<Vec<u8>, DbError> {
+        self.load(db_ref).map(|r| r.bytes)
+    }
+
+    fn load_full(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError> {
+        self.load(db_ref)
+    }
+}
 
 #[expect(
     clippy::expect_used,
@@ -29,9 +78,78 @@ fn make_gtd_bytes(start_us: i64, n: u64) -> Vec<u8> {
     std::fs::read(tmp.path()).expect("read temp gtd")
 }
 
+/// Like [`make_gtd_bytes`] but stores **chunked, deflate-compressed** datasets
+/// (time + lat + lon), matching how real recordings are encoded - so the
+/// free-space tests exercise reclaiming chunked/filtered storage, not just
+/// contiguous data.
+#[expect(
+    clippy::expect_used,
+    reason = "test helper; panicking on I/O failure is the right behaviour"
+)]
+fn make_chunked_gtd_bytes(start_us: i64, n: u64) -> Vec<u8> {
+    let timestamps: Vec<i64> = (0..n as i64).map(|i| start_us + i).collect();
+    let lat: Vec<f64> = (0..n).map(|i| 55.0 + i as f64 * 1e-5).collect();
+    let lon: Vec<f64> = (0..n).map(|i| 12.0 + i as f64 * 1e-5).collect();
+    let shape = [n];
+    let chunk = [n.clamp(1, 64)];
+
+    let mut fb = hdf5_pure::FileBuilder::new();
+    let mut nav = fb.create_group("nav_points");
+    {
+        let ds = nav.create_dataset("time");
+        ds.with_shape(&shape);
+        ds.with_i64_data(&timestamps);
+        ds.with_chunks(&chunk);
+        ds.with_deflate(6);
+    }
+    {
+        let ds = nav.create_dataset("lat");
+        ds.with_shape(&shape);
+        ds.with_f64_data(&lat);
+        ds.with_chunks(&chunk);
+        ds.with_deflate(6);
+    }
+    {
+        let ds = nav.create_dataset("lon");
+        ds.with_shape(&shape);
+        ds.with_f64_data(&lon);
+        ds.with_chunks(&chunk);
+        ds.with_deflate(6);
+    }
+    fb.add_group(nav.finish());
+    fb.finish().expect("serialize chunked gtd")
+}
+
+/// The active backend, used to suffix free-space snapshots: the two backends
+/// encode differently and so produce different file sizes.
+fn backend_name() -> &'static str {
+    if cfg!(feature = "backend-sys") {
+        "sys"
+    } else {
+        "pure"
+    }
+}
+
+/// Snapshot the exact baseline/after database file sizes (and their delta) with
+/// `insta`, so any change in the space behaviour is caught precisely and shown for
+/// review. The size is deterministic for a given backend toolchain (static
+/// libhdf5 / pure Rust, fixed-length group names), so the snapshot is stable.
+fn assert_size_snapshot(name: &str, baseline: u64, after: u64) {
+    let mut settings = insta::Settings::clone_current();
+    settings.set_snapshot_suffix(backend_name());
+    settings.bind(|| {
+        insta::assert_snapshot!(
+            name,
+            format!(
+                "baseline: {baseline}\nafter:    {after}\ndelta:    {}",
+                after as i64 - baseline as i64
+            )
+        );
+    });
+}
+
 #[test_log::test]
 #[cfg(feature = "backend-sys")]
-#[expect(clippy::expect_used)]
 fn repro_missing_version_error() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
@@ -67,7 +185,9 @@ fn repro_missing_version_error() {
     };
 
     let meta = extract_meta(&bytes).expect("parse meta");
-    let db_ref = db.insert("test_device", &meta, &bytes).expect("insert");
+    let db_ref = db
+        .insert_simple("test_device", &meta, &bytes)
+        .expect("insert");
 
     // Now load it
     let loaded_bytes = db.load_bytes(&db_ref).expect("load_bytes");
@@ -95,7 +215,6 @@ fn repro_missing_version_error() {
 
 #[test_log::test]
 #[cfg(feature = "backend-sys")]
-#[expect(clippy::expect_used)]
 fn repro_duplicate_entry_issue() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
@@ -108,10 +227,12 @@ fn repro_duplicate_entry_issue() {
     let meta = extract_meta(&bytes).expect("parse meta");
 
     // Insert once
-    db.insert("test_device", &meta, &bytes).expect("insert 1");
+    db.insert_simple("test_device", &meta, &bytes)
+        .expect("insert 1");
 
     // Insert again - should be duplicate
-    db.insert("test_device", &meta, &bytes).expect("insert 2");
+    db.insert_simple("test_device", &meta, &bytes)
+        .expect("insert 2");
 
     // List recordings
     let recordings = db.list_recordings().expect("list");
@@ -191,7 +312,9 @@ fn insert_creates_recording_group() {
 
     let bytes = make_gtd_bytes(1_000_000, 10);
     let meta = extract_meta(&bytes).expect("parse meta");
-    let db_ref = db.insert("test_device", &meta, &bytes).expect("insert");
+    let db_ref = db
+        .insert_simple("test_device", &meta, &bytes)
+        .expect("insert");
 
     assert_eq!(db_ref.identity, "test_device");
 
@@ -215,8 +338,12 @@ fn insert_duplicate_returns_same_group_name() {
     let bytes = make_gtd_bytes(2_000_000, 5);
     let meta = extract_meta(&bytes).expect("parse meta");
 
-    let first = db.insert("device_a", &meta, &bytes).expect("first insert");
-    let second = db.insert("device_a", &meta, &bytes).expect("second insert");
+    let first = db
+        .insert_simple("device_a", &meta, &bytes)
+        .expect("first insert");
+    let second = db
+        .insert_simple("device_a", &meta, &bytes)
+        .expect("second insert");
 
     assert_eq!(
         first.group_name, second.group_name,
@@ -245,8 +372,10 @@ fn insert_different_identities_are_independent() {
     let meta_a = extract_meta(&bytes_a).expect("meta a");
     let meta_b = extract_meta(&bytes_b).expect("meta b");
 
-    db.insert("alpha", &meta_a, &bytes_a).expect("insert a");
-    db.insert("beta", &meta_b, &bytes_b).expect("insert b");
+    db.insert_simple("alpha", &meta_a, &bytes_a)
+        .expect("insert a");
+    db.insert_simple("beta", &meta_b, &bytes_b)
+        .expect("insert b");
 
     let file = hdf5_pure::File::open(&db_path).expect("open file");
     let by_id = file.root().group("by_identity").expect("by_identity");
@@ -265,33 +394,21 @@ fn is_duplicate_matches_only_exact_meta() {
     let bytes = make_gtd_bytes(5_000_000, 20);
     let meta = extract_meta(&bytes).expect("parse meta");
 
-    assert!(
-        !db.is_duplicate("sensor_1", &meta)
-            .expect("check before insert")
-    );
+    assert!(!db.is_duplicate(&meta).expect("check before insert"));
 
-    db.insert("sensor_1", &meta, &bytes).expect("insert");
+    db.insert_simple("sensor_1", &meta, &bytes).expect("insert");
 
-    assert!(
-        db.is_duplicate("sensor_1", &meta)
-            .expect("check after insert")
-    );
+    assert!(db.is_duplicate(&meta).expect("check after insert"));
 
     // Different identity → duplicate detected based on metadata.
-    assert!(
-        db.is_duplicate("sensor_2", &meta)
-            .expect("different identity")
-    );
+    assert!(db.is_duplicate(&meta).expect("different identity"));
 
     // Different nav_point_count → not a duplicate.
     let other_meta = RecordingMeta {
         nav_point_count: meta.nav_point_count + 1,
         ..meta
     };
-    assert!(
-        !db.is_duplicate("sensor_1", &other_meta)
-            .expect("different count")
-    );
+    assert!(!db.is_duplicate(&other_meta).expect("different count"));
 }
 
 #[test_log::test]
@@ -306,7 +423,9 @@ fn nav_point_data_round_trips() {
 
     let bytes = make_gtd_bytes(start_us, n);
     let meta = extract_meta(&bytes).expect("parse meta");
-    let db_ref = db.insert("round_trip_test", &meta, &bytes).expect("insert");
+    let db_ref = db
+        .insert_simple("round_trip_test", &meta, &bytes)
+        .expect("insert");
 
     // Verify the stored timestamps round-trip correctly.
     let file = hdf5_pure::File::open(&db_path).expect("open file");
@@ -337,8 +456,10 @@ fn list_recordings_returns_entries_sorted_descending() {
     let meta_a = extract_meta(&bytes_a).expect("meta a");
     let meta_b = extract_meta(&bytes_b).expect("meta b");
 
-    db.insert("dev", &meta_a, &bytes_a).expect("insert a");
-    db.insert("dev", &meta_b, &bytes_b).expect("insert b");
+    db.insert_simple("dev", &meta_a, &bytes_a)
+        .expect("insert a");
+    db.insert_simple("dev", &meta_b, &bytes_b)
+        .expect("insert b");
 
     let entries = db.list_recordings().expect("list");
     assert_eq!(entries.len(), 2);
@@ -366,11 +487,12 @@ fn delete_removes_recording() {
 
     let bytes = make_gtd_bytes(3_000, 4);
     let meta = extract_meta(&bytes).expect("meta");
-    let db_ref = db.insert("dev", &meta, &bytes).expect("insert");
+    let db_ref = db.insert_simple("dev", &meta, &bytes).expect("insert");
 
     assert_eq!(db.list_recordings().expect("list before").len(), 1);
 
-    db.delete(&db_ref).expect("delete");
+    db.delete_batch(std::slice::from_ref(&db_ref))
+        .expect("delete");
 
     assert_eq!(db.list_recordings().expect("list after").len(), 0);
 }
@@ -385,7 +507,7 @@ fn delete_nonexistent_is_noop() {
         identity: "nobody".to_owned(),
         group_name: "2000-01-01T00:00:00Z".to_owned(),
     };
-    db.delete(&missing)
+    db.delete_batch(std::slice::from_ref(&missing))
         .expect("delete of nonexistent should not error");
     assert_eq!(db.list_recordings().expect("list").len(), 0);
 }
@@ -402,7 +524,9 @@ fn load_gtd_bytes_round_trips_nav_point_timestamps() {
 
     let bytes = make_gtd_bytes(start_us, n);
     let meta = extract_meta(&bytes).expect("meta");
-    let db_ref = db.insert("reload_test", &meta, &bytes).expect("insert");
+    let db_ref = db
+        .insert_simple("reload_test", &meta, &bytes)
+        .expect("insert");
 
     let loaded_bytes = db.load_bytes(&db_ref).expect("load_gtd_bytes");
     let loaded_file = hdf5_pure::File::from_bytes(loaded_bytes).expect("parse loaded bytes");
@@ -415,6 +539,73 @@ fn load_gtd_bytes_round_trips_nav_point_timestamps() {
     assert_eq!(times, expected, "loaded timestamps should match original");
 }
 
+#[test_log::test]
+fn nav_point_f64_data_round_trips() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let start_us = 12_000_000_i64;
+    let n = 4_u64;
+    let lat: Vec<f64> = (0..n).map(|i| 50.0 + i as f64 * 0.001).collect();
+    let lon: Vec<f64> = (0..n).map(|i| 8.0 - i as f64 * 0.002).collect();
+
+    // A GTD file mixing i64 (time) and f64 (lat/lon) datasets. Storing then
+    // reloading must preserve the f64 values exactly - an earlier hand-rolled
+    // copy in the sys backend reinterpreted non-i64 datasets as raw bytes and
+    // silently corrupted coordinates.
+    let bytes = {
+        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        let times: Vec<i64> = (0..n as i64).map(|i| start_us + i).collect();
+        let mut fb = hdf5_pure::FileBuilder::new();
+        let mut nav = fb.create_group("nav_points");
+        let t = nav.create_dataset("time");
+        t.with_shape(&[n]);
+        t.with_i64_data(&times);
+        let dlat = nav.create_dataset("lat");
+        dlat.with_shape(&[n]);
+        dlat.with_f64_data(&lat);
+        let dlon = nav.create_dataset("lon");
+        dlon.with_shape(&[n]);
+        dlon.with_f64_data(&lon);
+        fb.add_group(nav.finish());
+        fb.write(tmp.path()).expect("write gtd");
+        std::fs::read(tmp.path()).expect("read gtd")
+    };
+
+    let meta = extract_meta(&bytes).expect("meta");
+    let db_ref = db
+        .insert_simple("f64_round_trip", &meta, &bytes)
+        .expect("insert");
+
+    let loaded = db.load_bytes(&db_ref).expect("load_bytes");
+    let file = hdf5_pure::File::from_bytes(loaded).expect("parse loaded bytes");
+    let nav = file.group("nav_points").expect("nav_points group");
+    let got_lat = nav
+        .dataset("lat")
+        .and_then(|d| d.read_f64())
+        .expect("read lat");
+    let got_lon = nav
+        .dataset("lon")
+        .and_then(|d| d.read_f64())
+        .expect("read lon");
+
+    assert!(
+        got_lat
+            .iter()
+            .zip(&lat)
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "f64 lat must round-trip exactly: got {got_lat:?}, want {lat:?}"
+    );
+    assert!(
+        got_lon
+            .iter()
+            .zip(&lon)
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "f64 lon must round-trip exactly: got {got_lon:?}, want {lon:?}"
+    );
+}
+
 #[test]
 fn prune_by_count_keeps_most_recent() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -424,7 +615,7 @@ fn prune_by_count_keeps_most_recent() {
     for i in 0..5_u64 {
         let bytes = make_gtd_bytes((i * 1_000_000) as i64, 2);
         let meta = extract_meta(&bytes).expect("meta");
-        db.insert("dev", &meta, &bytes).expect("insert");
+        db.insert_simple("dev", &meta, &bytes).expect("insert");
     }
 
     let candidates = db
@@ -444,8 +635,10 @@ fn prune_by_total_size_removes_oldest_first() {
     let meta_a = extract_meta(&bytes_a).expect("meta a");
     let meta_b = extract_meta(&bytes_b).expect("meta b");
 
-    db.insert("dev", &meta_a, &bytes_a).expect("insert a");
-    db.insert("dev", &meta_b, &bytes_b).expect("insert b");
+    db.insert_simple("dev", &meta_a, &bytes_a)
+        .expect("insert a");
+    db.insert_simple("dev", &meta_b, &bytes_b)
+        .expect("insert b");
 
     let total: u64 = meta_a.gtd_size_bytes + meta_b.gtd_size_bytes;
 
@@ -474,14 +667,290 @@ fn delete_batch_removes_multiple_in_one_pass() {
     let meta_b = extract_meta(&bytes_b).expect("meta b");
     let meta_c = extract_meta(&bytes_c).expect("meta c");
 
-    let ref_a = db.insert("dev", &meta_a, &bytes_a).expect("insert a");
-    let ref_b = db.insert("dev", &meta_b, &bytes_b).expect("insert b");
-    db.insert("dev", &meta_c, &bytes_c).expect("insert c");
+    let ref_a = db
+        .insert_simple("dev", &meta_a, &bytes_a)
+        .expect("insert a");
+    let ref_b = db
+        .insert_simple("dev", &meta_b, &bytes_b)
+        .expect("insert b");
+    db.insert_simple("dev", &meta_c, &bytes_c)
+        .expect("insert c");
 
     db.delete_batch(&[ref_a, ref_b]).expect("batch delete");
 
     let remaining = db.list_recordings().expect("list");
     assert_eq!(remaining.len(), 1, "only one recording should remain");
+}
+
+#[test_log::test]
+fn set_tracks_hidden_flags_tracks_and_is_reversible() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    // A recording with two tracks.
+    let bytes = make_gtd_bytes(8_000, 6);
+    let meta = extract_meta(&bytes).expect("meta");
+    let tracks = [
+        TrackRange {
+            start: 0,
+            end: 3,
+            hidden: false,
+        },
+        TrackRange {
+            start: 3,
+            end: 6,
+            hidden: false,
+        },
+    ];
+    let db_ref = db
+        .insert("dev", &meta, &tracks, test_settings(), &bytes)
+        .expect("insert");
+
+    let entries = db.list_recordings().expect("list");
+    assert_eq!(entries[0].total_tracks, 2);
+    assert_eq!(entries[0].hidden_tracks, 0, "new tracks are visible");
+
+    // Hide the first track; the recording stays, with one hidden track.
+    db.set_tracks_hidden(&db_ref, &[0], true).expect("hide");
+    let entries = db.list_recordings().expect("list after hide");
+    assert_eq!(entries[0].hidden_tracks, 1);
+    let stored = db.load_full(&db_ref).expect("load");
+    assert!(stored.tracks[0].hidden, "track 0 should be hidden");
+    assert!(!stored.tracks[1].hidden, "track 1 should be visible");
+
+    // The recording's data still round-trips after the hide edit.
+    let file = hdf5_pure::File::from_bytes(stored.bytes).expect("parse loaded");
+    let nav = file.group("nav_points").expect("nav_points group");
+    let times = nav
+        .dataset("time")
+        .and_then(|d| d.read_i64())
+        .expect("read times");
+    assert_eq!(
+        times.len(),
+        6,
+        "hidden tracks must keep the recording's data"
+    );
+
+    // Unhiding clears it.
+    db.set_tracks_hidden(&db_ref, &[0], false).expect("unhide");
+    assert_eq!(db.list_recordings().expect("list")[0].hidden_tracks, 0);
+}
+
+#[cfg(feature = "backend-sys")]
+#[test_log::test]
+fn sys_insert_with_colon_identity_into_fresh_db() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("fresh.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let bytes = make_gtd_bytes(1_000, 5);
+    let meta = extract_meta(&bytes).expect("meta");
+    db.insert_simple("auto:p3.gtd", &meta, &bytes)
+        .expect("insert colon identity into fresh db");
+    assert_eq!(db.list_recordings().expect("list").len(), 1);
+}
+
+/// Regression: a stale "open for write" superblock flag (e.g. from a crash)
+/// makes libhdf5 refuse the file. `clear_write_lock` must repair it so the
+/// database opens again with all recordings intact.
+#[cfg(feature = "backend-sys")]
+#[test_log::test]
+fn clear_write_lock_recovers_a_locked_database() {
+    use std::io::{Seek, SeekFrom, Write};
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("locked.h5");
+
+    {
+        let mut db = Database::open_or_create(&db_path).expect("create");
+        let bytes = make_gtd_bytes(1_000, 5);
+        let meta = extract_meta(&bytes).expect("meta");
+        db.insert_simple("dev", &meta, &bytes).expect("insert");
+    }
+
+    // Set the superblock status-flags byte (offset 11) to mark it open for write.
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&db_path)
+            .expect("raw open");
+        f.seek(SeekFrom::Start(11)).expect("seek");
+        f.write_all(&[0x01]).expect("set flag");
+    }
+    assert!(
+        hdf5::File::open(&db_path).is_err(),
+        "libhdf5 should refuse the locked file before recovery"
+    );
+
+    // Clearing the lock recomputes the superblock checksum so the file opens.
+    Database::clear_write_lock(&db_path).expect("clear lock");
+
+    let db = Database::open_or_create(&db_path).expect("open after clearing the lock");
+    assert_eq!(db.list_recordings().expect("list").len(), 1);
+}
+
+/// Write a database the way the old pure-Rust backend did, seeding one recording
+/// (`identity`/`rec_name`) with an `n`-point `nav_points/time` dataset.
+#[cfg(feature = "backend-sys")]
+#[expect(
+    clippy::expect_used,
+    reason = "test helper; panicking on I/O failure is the right behaviour"
+)]
+fn write_pure_db_with_recording(db_path: &std::path::Path, identity: &str, rec_name: &str, n: u64) {
+    use hdf5_pure::AttrValue;
+
+    let times: Vec<i64> = (0..n as i64).map(|i| 1_000 + i).collect();
+    let mut fb = hdf5_pure::FileBuilder::new();
+    fb.set_attr("schema_version", AttrValue::I64(0));
+
+    let meta = fb.create_group("meta");
+    fb.add_group(meta.finish());
+
+    let mut by_id = fb.create_group("by_identity");
+    let mut id_grp = by_id.create_group(identity);
+    let mut rec = id_grp.create_group(rec_name);
+    rec.set_attr("identity", AttrValue::String(identity.to_owned()));
+    rec.set_attr("start_us", AttrValue::I64(1_000));
+    rec.set_attr("end_us", AttrValue::I64(1_000 + n as i64 - 1));
+    rec.set_attr("nav_point_count", AttrValue::U64(n));
+    rec.set_attr("sat_report_count", AttrValue::U64(0));
+    rec.set_attr("marker_count", AttrValue::U64(0));
+    rec.set_attr("event_marker_count", AttrValue::U64(0));
+    rec.set_attr("gtd_size_bytes", AttrValue::U64(0));
+    rec.set_attr("geotrace_version", AttrValue::String("1".to_owned()));
+
+    let mut nav = rec.create_group("nav_points");
+    let ds = nav.create_dataset("time");
+    ds.with_shape(&[n]);
+    ds.with_i64_data(&times);
+    rec.add_group(nav.finish());
+
+    id_grp.add_group(rec.finish());
+    by_id.add_group(id_grp.finish());
+    fb.add_group(by_id.finish());
+    fb.write(db_path).expect("write pure db");
+}
+
+/// Regression: a database written by the old pure-Rust backend cannot be
+/// extended by libhdf5. Opening it must migrate it in place so existing
+/// recordings survive and new edits (insert, hide, delete) work.
+#[cfg(feature = "backend-sys")]
+#[test_log::test]
+fn sys_migrates_and_writes_a_pure_created_database() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("legacy.h5");
+    write_pure_db_with_recording(&db_path, "auto:old.gtd", "2024-01-01T00:00:00Z", 5);
+
+    let mut db = Database::open_or_create(&db_path).expect("open + migrate");
+
+    // The seeded recording survives migration with its data intact.
+    let entries = db.list_recordings().expect("list");
+    assert_eq!(
+        entries.len(),
+        1,
+        "seeded recording should survive migration"
+    );
+    let seeded = entries[0].db_ref.clone();
+    assert_eq!(seeded.identity, "auto:old.gtd");
+    let loaded = db.load_bytes(&seeded).expect("load migrated recording");
+    let file = hdf5_pure::File::from_bytes(loaded).expect("parse loaded");
+    let nav = file.group("nav_points").expect("nav_points");
+    let times = nav
+        .dataset("time")
+        .and_then(|d| d.read_i64())
+        .expect("read times");
+    assert_eq!(times.len(), 5, "migrated recording keeps its nav data");
+
+    // A brand-new recording inserts into the migrated database.
+    let bytes = make_gtd_bytes(9_000, 4);
+    let meta = extract_meta(&bytes).expect("meta");
+    db.insert_simple("auto:new.gtd", &meta, &bytes)
+        .expect("insert into a migrated database");
+
+    assert_eq!(
+        db.list_recordings().expect("list").len(),
+        2,
+        "migrated recording plus the new one"
+    );
+}
+
+#[test_log::test]
+fn reinserting_a_recording_keeps_its_track_table() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes = make_gtd_bytes(4_000, 6);
+    let meta = extract_meta(&bytes).expect("meta");
+    let tracks = [
+        TrackRange {
+            start: 0,
+            end: 3,
+            hidden: false,
+        },
+        TrackRange {
+            start: 3,
+            end: 6,
+            hidden: false,
+        },
+    ];
+    let db_ref = db
+        .insert("dev", &meta, &tracks, test_settings(), &bytes)
+        .expect("insert");
+    db.set_tracks_hidden(&db_ref, &[0], true).expect("hide");
+
+    // Re-storing the same recording dedups, and must not clobber the track
+    // table (the hidden mark is preserved).
+    let db_ref2 = db
+        .insert("dev", &meta, &tracks, test_settings(), &bytes)
+        .expect("reinsert");
+    assert_eq!(db_ref, db_ref2, "re-insert returns the existing reference");
+    assert_eq!(db.list_recordings().expect("list").len(), 1, "no duplicate");
+    assert_eq!(
+        db.list_recordings().expect("list")[0].hidden_tracks,
+        1,
+        "the hidden track must survive a re-insert"
+    );
+}
+
+#[test]
+fn set_tracks_hidden_marks_only_the_given_tracks() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes = make_gtd_bytes(1_000, 9);
+    let meta = extract_meta(&bytes).expect("meta");
+    let tracks = [
+        TrackRange {
+            start: 0,
+            end: 3,
+            hidden: false,
+        },
+        TrackRange {
+            start: 3,
+            end: 6,
+            hidden: false,
+        },
+        TrackRange {
+            start: 6,
+            end: 9,
+            hidden: false,
+        },
+    ];
+    let db_ref = db
+        .insert("dev", &meta, &tracks, test_settings(), &bytes)
+        .expect("insert");
+
+    db.set_tracks_hidden(&db_ref, &[0, 2], true)
+        .expect("hide 0 and 2");
+
+    let stored = db.load_full(&db_ref).expect("load");
+    assert!(stored.tracks[0].hidden, "track 0 hidden");
+    assert!(!stored.tracks[1].hidden, "track 1 visible");
+    assert!(stored.tracks[2].hidden, "track 2 hidden");
+    assert_eq!(db.list_recordings().expect("list")[0].hidden_tracks, 2);
 }
 
 #[test]
@@ -494,7 +963,7 @@ fn open_with_older_schema_version_migrates_data() {
         let mut db = Database::open_or_create(&db_path).expect("create");
         let bytes = make_gtd_bytes(7_000_000, 3);
         let meta = extract_meta(&bytes).expect("meta");
-        db.insert("dev", &meta, &bytes).expect("insert");
+        db.insert_simple("dev", &meta, &bytes).expect("insert");
     }
 
     // Rewrite schema_version to -1 to simulate an older file.
@@ -585,7 +1054,7 @@ fn concurrent_insert_does_not_panic() {
                     let mut db = Database::open_or_create(&path).expect("open_or_create");
                     let bytes = make_gtd_bytes(i * 1_000_000, 5);
                     let meta = extract_meta(&bytes).expect("parse meta");
-                    db.insert(&format!("device_{}", i), &meta, &bytes)
+                    db.insert_simple(&format!("device_{}", i), &meta, &bytes)
                         .expect("insert");
                 })
                 .expect("spawn thread"),
@@ -619,7 +1088,7 @@ fn insert_large_dataset_works() {
     let bytes = make_gtd_bytes(1_000_000, n);
     let meta = extract_meta(&bytes).expect("parse meta");
 
-    db.insert("large_device", &meta, &bytes)
+    db.insert_simple("large_device", &meta, &bytes)
         .expect("insert large recording");
 
     let db_ref = &db.list_recordings().unwrap()[0].db_ref;
@@ -657,11 +1126,12 @@ fn pure_backend_does_not_add_duplicate_recordings() {
 
     // First insertion
     let identity = "auto:snapshot.gtd";
-    db.insert(identity, &meta, &bytes).expect("first insert");
+    db.insert_simple(identity, &meta, &bytes)
+        .expect("first insert");
 
     // Second insertion with the same (recursively created) identity
     // If it's a duplicate, is_duplicate should return true
-    let is_dup = db.is_duplicate(identity, &meta).expect("check duplicate");
+    let is_dup = db.is_duplicate(&meta).expect("check duplicate");
 
     assert!(is_dup, "Should be detected as a duplicate");
 
@@ -683,7 +1153,9 @@ fn pure_backend_prevents_recursive_insertion_of_loaded_file() {
     let bytes = make_gtd_bytes(1_000_000, 5);
     let meta = extract_meta(&bytes).expect("parse meta");
     let identity = "auto:snapshot.gtd";
-    let db_ref = db.insert(identity, &meta, &bytes).expect("first insert");
+    let db_ref = db
+        .insert_simple(identity, &meta, &bytes)
+        .expect("first insert");
     assert_eq!(db.list_recordings().unwrap().len(), 1);
 
     // Load the file back and try to re-insert it, as the app does on restart.
@@ -692,7 +1164,7 @@ fn pure_backend_prevents_recursive_insertion_of_loaded_file() {
 
     // The insert should detect this as a duplicate and return the existing db_ref
     let db_ref2 = db
-        .insert(identity, &meta2, &loaded_bytes)
+        .insert_simple(identity, &meta2, &loaded_bytes)
         .expect("second insert");
 
     assert_eq!(
@@ -716,7 +1188,7 @@ fn sys_backend_structural_parity_repro() {
     let meta = extract_meta(&bytes).expect("parse meta");
 
     // Insert using the sys backend
-    let _db_ref = db.insert("device", &meta, &bytes).expect("insert");
+    let _db_ref = db.insert_simple("device", &meta, &bytes).expect("insert");
 
     // Attempt to verify structure using the hdf5-pure reader
     // This is what the pure backend does. If sys backend is parity-compatible,
@@ -749,7 +1221,7 @@ fn debug_sys_backend_structure() {
     let bytes = make_gtd_bytes(1_000_000, 5);
     let meta = extract_meta(&bytes).expect("parse meta");
 
-    let _db_ref = db.insert("device", &meta, &bytes).expect("insert");
+    let _db_ref = db.insert_simple("device", &meta, &bytes).expect("insert");
     let loaded_bytes = db.load_bytes(&_db_ref).expect("load_bytes");
 
     let tmp_path = dir.path().join("reconstructed.h5");
@@ -783,4 +1255,401 @@ fn test_hdf5_pure_file_openable_by_metno() {
     // Try to open with hdf5 (metno)
     let res = hdf5::File::open(tmp.path());
     assert!(res.is_ok(), "Failed to open: {:?}", res.err());
+}
+
+/// Regression: two distinct recordings that start within the same second and have
+/// the same point count used to derive the same (second-resolution) group name and
+/// collide on insert (`H5Gcreate2: name already exists`). The UUID suffix in
+/// `make_group_name` must keep them distinct.
+#[test_log::test]
+fn recordings_in_the_same_second_get_distinct_group_names() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    // Same whole second, same point count, different microsecond start: distinct
+    // content (so not deduplicated) but an identical legacy group name.
+    let bytes_a = make_gtd_bytes(1_000_000, 5);
+    let bytes_b = make_gtd_bytes(1_000_500, 5);
+    let meta_a = extract_meta(&bytes_a).expect("meta a");
+    let meta_b = extract_meta(&bytes_b).expect("meta b");
+    assert!(
+        !meta_a.same_recording(&meta_b),
+        "the two must not be duplicates"
+    );
+
+    let ref_a = db
+        .insert_simple("dev", &meta_a, &bytes_a)
+        .expect("insert a");
+    let ref_b = db
+        .insert_simple("dev", &meta_b, &bytes_b)
+        .expect("insert b");
+
+    assert_ne!(
+        ref_a.group_name, ref_b.group_name,
+        "same-second recordings must get distinct group names"
+    );
+    assert_eq!(
+        db.list_recordings().expect("list").len(),
+        2,
+        "both recordings must be stored"
+    );
+}
+
+/// Insert a two-track recording with `n` nav points starting at `start_us`.
+#[expect(
+    clippy::expect_used,
+    reason = "test helper; panicking on failure is the right behaviour"
+)]
+fn insert_two_track(db: &mut Database, identity: &str, start_us: i64, n: u64) -> DatabaseRef {
+    let bytes = make_gtd_bytes(start_us, n);
+    let meta = extract_meta(&bytes).expect("meta");
+    let half = meta.nav_point_count / 2;
+    let tracks = [
+        TrackRange {
+            start: 0,
+            end: half,
+            hidden: false,
+        },
+        TrackRange {
+            start: half,
+            end: meta.nav_point_count,
+            hidden: false,
+        },
+    ];
+    db.insert(identity, &meta, &tracks, test_settings(), &bytes)
+        .expect("insert")
+}
+
+/// Exercises the whole API at scale: hundreds of recordings inserted, then
+/// listed, read back, partially hidden, batch-deleted, and re-opened. We do not
+/// trust that HDF5 keeps a large number of sibling groups consistent - we verify
+/// it end to end on whichever backend is active.
+#[test_log::test]
+fn many_recordings_support_list_read_hide_and_delete() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    const N: usize = 200;
+    let mut refs: Vec<(DatabaseRef, u64)> = Vec::with_capacity(N);
+    for i in 0..N {
+        // Distinct start timestamps give each a distinct content fingerprint (so
+        // they are not deduplicated); group-name uniqueness is handled by the UUID
+        // suffix regardless of spacing.
+        let start = 1_000_000_000 + i as i64 * 1_000_000;
+        let n = 6 + (i as u64 % 7);
+        let db_ref = insert_two_track(&mut db, "dev", start, n);
+        refs.push((db_ref, n));
+    }
+
+    let entries = db.list_recordings().expect("list");
+    assert_eq!(entries.len(), N, "every distinct recording is listed");
+    assert!(
+        entries.iter().all(|e| e.total_tracks == 2),
+        "each recording keeps its two-track table"
+    );
+
+    // Read a sampling and confirm the stored tracks cover exactly the recording.
+    for (db_ref, n) in refs.iter().step_by(37) {
+        let stored = db.load_full(db_ref).expect("load");
+        let covered: u64 = stored.tracks.iter().map(|t| t.end - t.start).sum();
+        assert_eq!(covered, *n, "track ranges must cover all nav points");
+    }
+
+    // Hide the first track of every third recording.
+    let mut expected_hidden = 0;
+    for (db_ref, _) in refs.iter().step_by(3) {
+        db.set_tracks_hidden(db_ref, &[0], true).expect("hide");
+        expected_hidden += 1;
+    }
+    let hidden_total: usize = db
+        .list_recordings()
+        .expect("list")
+        .iter()
+        .map(|e| e.hidden_tracks)
+        .sum();
+    assert_eq!(
+        hidden_total, expected_hidden,
+        "hidden marks persist across the whole set"
+    );
+
+    // Batch-delete the first half.
+    let to_delete: Vec<DatabaseRef> = refs.iter().take(N / 2).map(|(r, _)| r.clone()).collect();
+    db.delete_batch(&to_delete).expect("batch delete");
+    assert_eq!(
+        db.list_recordings().expect("list").len(),
+        N / 2,
+        "half the recordings remain after the batch delete"
+    );
+
+    // Re-open from disk and confirm the survivors persisted.
+    drop(db);
+    let db = Database::open_or_create(&db_path).expect("reopen");
+    let survivors = db.list_recordings().expect("list");
+    assert_eq!(survivors.len(), N / 2);
+    let survivor_ref = survivors[0].db_ref.clone();
+    let stored = db.load_full(&survivor_ref).expect("load survivor");
+    assert_eq!(stored.tracks.len(), 2, "a survivor keeps its track table");
+}
+
+/// Insert 40 recordings, then run 4 delete-all + refill cycles, returning
+/// `(size_after_first_fill, size_after_cycles)`. With perfect space reuse the two
+/// sizes are equal; without any reuse the file grows by one fill per cycle.
+#[expect(
+    clippy::expect_used,
+    reason = "test helper; panicking on failure is the right behaviour"
+)]
+fn delete_reinsert_size_trajectory(db_path: &std::path::Path) -> (u64, u64) {
+    const N: usize = 40;
+    let fill = |db: &mut Database| {
+        for i in 0..N {
+            // Distinct start timestamps give distinct content fingerprints (so the
+            // inserts are not deduplicated); group-name uniqueness comes from the
+            // UUID suffix.
+            let start = 1_000_000_000 + i as i64 * 1_000_000;
+            insert_two_track(db, "dev", start, 50);
+        }
+    };
+    let file_size = |path: &std::path::Path| std::fs::metadata(path).expect("metadata").len();
+
+    let mut db = Database::open_or_create(db_path).expect("open_or_create");
+    fill(&mut db);
+    let baseline = file_size(db_path);
+
+    for _ in 0..4 {
+        let refs: Vec<DatabaseRef> = db
+            .list_recordings()
+            .expect("list")
+            .iter()
+            .map(|e| e.db_ref.clone())
+            .collect();
+        db.delete_batch(&refs).expect("delete all");
+        assert_eq!(db.list_recordings().expect("list").len(), 0);
+        fill(&mut db);
+        assert_eq!(db.list_recordings().expect("list").len(), N);
+    }
+    (baseline, file_size(db_path))
+}
+
+/// Repeatedly deleting every recording and reinserting must not grow the database
+/// file without bound - freed space has to be reused.
+///
+/// The pure backend gets this for free by rewriting the whole tree on every
+/// mutation. The sys backend relies on libhdf5's free-space manager, which only
+/// reuses object-header and raw-data space - not the global heap that backs
+/// variable-length strings - so the backend stores all string attributes
+/// fixed-length (see `write_string_attr`). Both backends therefore keep the file
+/// flat; a 2x ceiling leaves generous slack while still catching the unbounded
+/// (one-fill-per-cycle) growth that variable-length strings used to cause.
+#[test_log::test]
+fn file_size_stays_bounded_across_delete_reinsert_cycles() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (baseline, after) = delete_reinsert_size_trajectory(&dir.path().join("geotrace.h5"));
+    assert!(baseline > 0, "the filled database has a non-zero size");
+    // Reuse keeps `after` at `baseline`; a regression that stops reclaiming space
+    // would grow it by ~one fill per cycle, which the snapshot shows exactly.
+    assert_size_snapshot("delete_all_refill", baseline, after);
+}
+
+/// Deleting an *older* recording while newer ones remain leaves an interior hole
+/// that cannot be truncated away (live data sits after it). Inserting fresh
+/// recordings afterwards must reuse that freed space rather than only appending,
+/// so the file stays near its full size instead of growing by the inserts.
+#[test_log::test]
+fn interior_delete_then_insert_reuses_freed_space() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    const N: usize = 40;
+    let file_size = |path: &std::path::Path| std::fs::metadata(path).expect("metadata").len();
+    let start_for = |i: usize| 1_000_000_000_i64 + i as i64 * 1_000_000;
+
+    // Fill the file with N recordings laid out in insertion order.
+    let mut refs: Vec<DatabaseRef> = (0..N)
+        .map(|i| insert_two_track(&mut db, "dev", start_for(i), 50))
+        .collect();
+    let full = file_size(&db_path);
+
+    // Delete the older half (indices 0..N/2); the newer half stays physically
+    // after them, so the freed regions are interior holes.
+    let old: Vec<DatabaseRef> = refs.drain(0..N / 2).collect();
+    db.delete_batch(&old).expect("delete older half");
+    assert_eq!(db.list_recordings().expect("list").len(), N / 2);
+
+    // Insert a fresh half. Reuse of the interior holes keeps the file near `full`.
+    for i in N..(N + N / 2) {
+        insert_two_track(&mut db, "dev", start_for(i), 50);
+    }
+    assert_eq!(db.list_recordings().expect("list").len(), N);
+    let after = file_size(&db_path);
+
+    // Reuse keeps the file near `full` (the deleted half's space is reused by the
+    // new inserts). The snapshot pins the exact sizes so any regression shows up.
+    assert_size_snapshot("interior_delete_older_half", full, after);
+}
+
+/// Strictly-interior churn: delete a middle range of recordings (recordings
+/// remain at *both* ends, so the freed regions are bracketed by live data and
+/// cannot be truncated), then insert the same number of fresh recordings. The
+/// file must barely change - the inserts reuse the interior holes rather than
+/// growing it linearly.
+#[test_log::test]
+fn interior_range_delete_keeps_file_bounded() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    const N: usize = 40;
+    let file_size = |p: &std::path::Path| std::fs::metadata(p).expect("metadata").len();
+    let start_for = |i: usize| 1_000_000_000_i64 + i as i64 * 1_000_000;
+
+    let refs: Vec<DatabaseRef> = (0..N)
+        .map(|i| insert_two_track(&mut db, "dev", start_for(i), 50))
+        .collect();
+    let full = file_size(&db_path);
+
+    // Delete the strictly interior range [9, 29): 0..9 and 29..40 stay live.
+    db.delete_batch(&refs[9..29])
+        .expect("delete interior range");
+    assert_eq!(db.list_recordings().expect("list").len(), N - 20);
+
+    // Insert 20 fresh recordings; reuse returns the count to 40 with little growth.
+    for i in N..(N + 20) {
+        insert_two_track(&mut db, "dev", start_for(i), 50);
+    }
+    assert_eq!(db.list_recordings().expect("list").len(), N);
+    let after = file_size(&db_path);
+
+    // The 20 inserts reuse the 20 interior holes, so the file barely changes;
+    // linear growth would push it to ~1.5x. The snapshot pins the exact sizes.
+    assert_size_snapshot("interior_range_delete", full, after);
+}
+
+/// Chunked/filtered storage variant: recordings are stored chunked +
+/// deflate-compressed (as real recordings are). After a strictly-interior delete
+/// and reinsert, the freed chunk blocks must be reused so the file does not grow
+/// linearly with the inserts.
+#[test_log::test]
+fn chunked_recordings_reuse_freed_space_on_interior_delete() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    const N: usize = 40;
+    let file_size = |p: &std::path::Path| std::fs::metadata(p).expect("metadata").len();
+    let start_for = |i: usize| 1_000_000_000_i64 + i as i64 * 1_000_000;
+    let insert = |db: &mut Database, i: usize| -> DatabaseRef {
+        let bytes = make_chunked_gtd_bytes(start_for(i), 500);
+        let meta = extract_meta(&bytes).expect("meta");
+        let half = meta.nav_point_count / 2;
+        let tracks = [
+            TrackRange {
+                start: 0,
+                end: half,
+                hidden: false,
+            },
+            TrackRange {
+                start: half,
+                end: meta.nav_point_count,
+                hidden: false,
+            },
+        ];
+        db.insert("dev", &meta, &tracks, test_settings(), &bytes)
+            .expect("insert chunked")
+    };
+
+    let refs: Vec<DatabaseRef> = (0..N).map(|i| insert(&mut db, i)).collect();
+    let full = file_size(&db_path);
+
+    db.delete_batch(&refs[9..29])
+        .expect("delete interior range");
+    assert_eq!(db.list_recordings().expect("list").len(), N - 20);
+
+    for i in N..(N + 20) {
+        insert(&mut db, i);
+    }
+    assert_eq!(db.list_recordings().expect("list").len(), N);
+    let after = file_size(&db_path);
+
+    // libhdf5's free-space manager reclaims chunked block storage too, so the
+    // file barely changes (vs ~1.5x with no reuse). The snapshot pins the sizes.
+    assert_size_snapshot("chunked_interior_delete", full, after);
+}
+
+/// `set_tracks` must wholly replace the stored track table and segmentation
+/// settings, not merge with or append to the previous ones (including dropping
+/// stale hidden marks).
+#[test_log::test]
+fn set_tracks_replaces_the_table_and_settings() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes = make_gtd_bytes(1_000, 9);
+    let meta = extract_meta(&bytes).expect("meta");
+    let two = [
+        TrackRange {
+            start: 0,
+            end: 4,
+            hidden: false,
+        },
+        TrackRange {
+            start: 4,
+            end: 9,
+            hidden: true,
+        },
+    ];
+    let db_ref = db
+        .insert("dev", &meta, &two, test_settings(), &bytes)
+        .expect("insert");
+    {
+        let entry = &db.list_recordings().expect("list")[0];
+        assert_eq!(entry.total_tracks, 2);
+        assert_eq!(entry.hidden_tracks, 1);
+    }
+
+    let three = [
+        TrackRange {
+            start: 0,
+            end: 3,
+            hidden: false,
+        },
+        TrackRange {
+            start: 3,
+            end: 6,
+            hidden: false,
+        },
+        TrackRange {
+            start: 6,
+            end: 9,
+            hidden: false,
+        },
+    ];
+    let new_settings = StoredSegmentation {
+        track_split_gap_us: 42_000_000,
+        detect_clock_discontinuities: false,
+        clock_discontinuity_sigmas: 2.5,
+    };
+    db.set_tracks(&db_ref, &three, new_settings)
+        .expect("set_tracks");
+
+    let stored = db.load_full(&db_ref).expect("load");
+    assert_eq!(
+        stored.tracks,
+        three.to_vec(),
+        "the old two-track table is fully replaced"
+    );
+    assert_eq!(
+        stored.segmentation,
+        Some(new_settings),
+        "segmentation settings are replaced too"
+    );
+    let entry = &db.list_recordings().expect("list")[0];
+    assert_eq!(entry.total_tracks, 3);
+    assert_eq!(
+        entry.hidden_tracks, 0,
+        "the replacement clears the old hidden mark"
+    );
 }

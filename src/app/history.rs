@@ -1,12 +1,8 @@
 use chrono::{DateTime, NaiveDate, Utc};
-use gt_history::{DatabaseRef, HistoryDatabase, PruneMode, RecordingEntry, RecordingMeta};
+use gt_history::{DatabaseRef, PruneMode, RecordingEntry, RecordingMeta};
 use gt_ui_theme::WARNING_AMBER;
 
-pub enum HistoryAction {
-    Open(DatabaseRef),
-    Delete(DatabaseRef),
-    Prune(Vec<DatabaseRef>),
-}
+use crate::app::history_db::{DeleteReason, HistoryManager};
 
 /// Which pruning mode is selected in the Prune dialog.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -27,8 +23,8 @@ struct PruneDialog {
     keep_count: u32,
     /// Preview of which refs would be pruned.
     preview: Option<Vec<DatabaseRef>>,
-    /// Whether the user has confirmed and the prune should proceed.
-    confirmed: bool,
+    /// Whether a preview has been requested and is still being computed.
+    preview_pending: bool,
 }
 
 impl PruneDialog {
@@ -40,13 +36,19 @@ impl PruneDialog {
             size_limit_mb: 500,
             keep_count: 10,
             preview: None,
-            confirmed: false,
+            preview_pending: false,
         }
     }
 
     fn reset(&mut self) {
         self.preview = None;
-        self.confirmed = false;
+        self.preview_pending = false;
+    }
+
+    /// Apply a preview result that arrived from the worker.
+    fn set_preview(&mut self, refs: Vec<DatabaseRef>) {
+        self.preview = Some(refs);
+        self.preview_pending = false;
     }
 
     fn to_prune_mode(&self) -> PruneMode {
@@ -63,18 +65,17 @@ impl PruneDialog {
         }
     }
 
-    /// Show the Prune dialog.  Returns `Some(refs)` when the user confirms.
-    fn show(
-        &mut self,
-        ctx: &egui::Context,
-        db: Option<&gt_history::Database>,
-    ) -> Option<Vec<DatabaseRef>> {
+    /// Show the Prune dialog. Sends preview/delete requests to `manager`; the
+    /// results arrive asynchronously via [`HistoryWindow::set_prune_preview`].
+    fn show(&mut self, ctx: &egui::Context, manager: &HistoryManager) {
         if !self.open {
-            return None;
+            return;
         }
 
         let mut open = self.open;
         let mut do_prune = false;
+        let mut do_preview = false;
+        let mut do_cancel_preview = false;
 
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             open = false;
@@ -132,26 +133,22 @@ impl PruneDialog {
                 };
 
                 if params_changed {
+                    // A preview for the old parameters is now stale; drop any
+                    // in-flight request so its result is ignored.
                     self.preview = None;
+                    self.preview_pending = false;
                 }
 
                 ui.add_space(4.0);
                 ui.separator();
 
-                // Preview button / computed preview
-                if self.preview.is_none() && ui.button("Preview").clicked() {
-                    if let Some(db) = db {
-                        match db.prune_candidates(&self.to_prune_mode()) {
-                            Ok(refs) => self.preview = Some(refs),
-                            Err(e) => log::error!("Prune preview failed: {e}"),
-                        }
-                    }
-                } else if let Some(refs) = &self.preview {
+                // Preview button / spinner / computed preview
+                if let Some(refs) = &self.preview {
                     if refs.is_empty() {
                         ui.label("Nothing to prune");
                     } else {
                         let n = refs.len();
-                        let rec_label = if n == 1 { "recording" } else { "recordings" };
+                        let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
                         ui.label(format!("{n} {rec_label} will be deleted"));
                         egui::ScrollArea::vertical()
                             .max_height(200.0)
@@ -176,22 +173,34 @@ impl PruneDialog {
                                 do_prune = true;
                             }
                             if ui.button("Cancel").clicked() {
-                                self.reset();
+                                do_cancel_preview = true;
                             }
                         });
                     }
+                } else if self.preview_pending {
+                    ui.spinner();
+                } else if ui.button("Preview").clicked() {
+                    do_preview = true;
                 }
             });
 
         self.open = open;
 
+        if do_preview {
+            manager.prune_preview(self.to_prune_mode());
+            self.preview_pending = true;
+        }
+        if do_cancel_preview {
+            self.reset();
+        }
         if do_prune {
             let refs = self.preview.take().unwrap_or_default();
             self.open = false;
-            return Some(refs);
+            self.reset();
+            if !refs.is_empty() {
+                manager.delete_recordings(refs, DeleteReason::Prune);
+            }
         }
-
-        None
     }
 }
 
@@ -212,6 +221,11 @@ pub struct HistoryWindow {
     /// Error from the last operation, if any.
     error: Option<String>,
     prune: PruneDialog,
+    /// Whether the "delete hidden data" confirmation dialog is open.
+    confirm_delete_hidden: bool,
+    /// Whether a recording-list request is in flight (drives the spinner and
+    /// prevents re-requesting every frame while waiting).
+    list_pending: bool,
 }
 
 impl HistoryWindow {
@@ -226,6 +240,8 @@ impl HistoryWindow {
             filter_date_to: String::new(),
             error: None,
             prune: PruneDialog::new(),
+            confirm_delete_hidden: false,
+            list_pending: false,
         }
     }
 
@@ -237,14 +253,34 @@ impl HistoryWindow {
             || !self.filter_date_to.is_empty()
     }
 
-    /// Call after a delete or successful open to force a list refresh.
+    /// Call after a mutation to force a list refresh next time the window shows.
     pub fn invalidate(&mut self) {
         self.entries = None;
+        self.list_pending = false;
     }
 
-    /// Show the History window and return any action the user triggered.
+    /// Apply a recording list that arrived from the worker.
+    pub fn set_entries(&mut self, entries: Vec<RecordingEntry>) {
+        self.entries = Some(entries);
+        self.list_pending = false;
+        self.error = None;
+    }
+
+    /// Record an error from a failed list request.
+    pub fn set_error(&mut self, message: String) {
+        self.error = Some(message);
+        self.list_pending = false;
+    }
+
+    /// Apply a prune-preview result that arrived from the worker.
+    pub fn set_prune_preview(&mut self, refs: Vec<DatabaseRef>) {
+        self.prune.set_preview(refs);
+    }
+
+    /// Show the History window. All database work is sent to `manager`; results
+    /// arrive asynchronously and are applied via [`HistoryWindow::set_entries`]
+    /// and friends.
     ///
-    /// `db` is `None` if the database failed to open at startup.
     /// `loaded_metas` are the content fingerprints of the files currently loaded
     /// in the app, used to disable re-opening a recording that is already open.
     #[expect(
@@ -254,36 +290,43 @@ impl HistoryWindow {
     pub fn show(
         &mut self,
         ctx: &egui::Context,
-        db: Option<&gt_history::Database>,
+        manager: &HistoryManager,
         loaded_metas: &[RecordingMeta],
         storage_enabled: &mut bool,
         auto_prune_enabled: &mut bool,
         auto_prune_max_bytes: &mut u64,
         auto_prune_confirm: &mut bool,
-    ) -> Option<HistoryAction> {
+    ) {
         if !self.open {
-            return None;
+            return;
         }
 
-        if let (None, Some(db)) = (&self.entries, db) {
-            match db.list_recordings() {
-                Ok(entries) => self.entries = Some(entries),
-                Err(e) => self.error = Some(format!("Failed to load history: {e}")),
-            }
+        // Request the recording list once when it is missing; the worker replies
+        // via `set_entries`. A spinner shows until then.
+        if self.entries.is_none() && !self.list_pending && manager.available() {
+            manager.list();
+            self.list_pending = true;
         }
 
         // Show Prune dialog (a separate window).
-        if let Some(refs) = self.prune.show(ctx, db)
-            && !refs.is_empty()
-        {
-            self.invalidate();
-            return Some(HistoryAction::Prune(refs));
-        }
+        self.prune.show(ctx, manager);
 
-        let mut action = None;
+        // Hidden tracks live inside otherwise-visible recordings (there is no
+        // recording-level hide). Count them across all recordings so the toolbar
+        // can offer a "Delete hidden data" action that permanently drops them.
+        let hidden_count: usize = self
+            .entries
+            .as_ref()
+            .map(|entries| entries.iter().map(|e| e.hidden_tracks).sum())
+            .unwrap_or_default();
+
         let mut open = self.open;
 
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        // While the confirmation dialog is up, let Escape dismiss it rather than
+        // the whole History window.
+        if !self.confirm_delete_hidden
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
             open = false;
         }
 
@@ -293,7 +336,7 @@ impl HistoryWindow {
             .default_width(640.0)
             .default_height(480.0)
             .show(ctx, |ui| {
-                if db.is_none() {
+                if !manager.available() {
                     ui.label(
                         egui::RichText::new("History database is unavailable.")
                             .color(WARNING_AMBER),
@@ -325,6 +368,21 @@ impl HistoryWindow {
                     );
                     ui.text_edit_singleline(&mut self.filter_text);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let delete_hidden_label = if hidden_count > 0 {
+                            format!("Delete hidden data ({hidden_count})…")
+                        } else {
+                            "Delete hidden data…".to_owned()
+                        };
+                        let delete_hidden = ui
+                            .add_enabled(hidden_count > 0, egui::Button::new(delete_hidden_label))
+                            .on_hover_text(if hidden_count > 0 {
+                                "Permanently delete every hidden track from the original recordings"
+                            } else {
+                                "No hidden tracks to delete"
+                            });
+                        if delete_hidden.clicked() {
+                            self.confirm_delete_hidden = true;
+                        }
                         if ui.button("Prune…").clicked() {
                             self.prune.open = true;
                             self.prune.reset();
@@ -501,35 +559,82 @@ impl HistoryWindow {
                                     let already_loaded = loaded_metas
                                         .iter()
                                         .any(|m| m.same_recording(&entry.meta));
-                                    render_row(ui, entry, already_loaded, &mut action);
+                                    render_row(ui, entry, already_loaded, manager);
                                 }
                             });
                     });
 
                 ui.separator();
-                let total_count = entries.len();
+                // Footer stats cover every stored recording; hidden tracks are
+                // reported separately since they are pending permanent deletion.
+                let stored_count = entries.len();
                 let total_size: u64 = entries.iter().map(|e| e.meta.gtd_size_bytes).sum();
                 ui.horizontal(|ui| {
-                    let rec_label = if total_count == 1 {
-                        "recording"
-                    } else {
-                        "recordings"
-                    };
+                    let rec_label = gt_fmt::pluralize(stored_count, "recording", "recordings");
                     ui.label(format!(
-                        "{total_count} {rec_label} - {}",
+                        "{stored_count} {rec_label} - {}",
                         format_size(total_size)
                     ));
-                    if filter_active && visible.len() != total_count {
+                    if filter_active && visible.len() != stored_count {
                         ui.weak(format!("({} shown)", visible.len()));
                     }
+                    if hidden_count > 0 {
+                        let track_label = gt_fmt::pluralize(hidden_count, "track", "tracks");
+                        ui.weak(format!("- {hidden_count} hidden {track_label}"));
+                    }
                 });
-                if let Some(path) = db.map(|d| d.path().display().to_string()) {
-                    ui.weak(path);
+                if let Some(path) = manager.path() {
+                    ui.weak(path.display().to_string());
                 }
             });
 
+        // Confirmation for the destructive "delete hidden data" action, mirroring
+        // the prune/auto-prune confirm flow (no permanent delete without a prompt).
+        if self.confirm_delete_hidden {
+            if hidden_count == 0 {
+                self.confirm_delete_hidden = false;
+            } else {
+                let mut do_delete = false;
+                let mut cancel =
+                    ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+                egui::Window::new("Delete hidden data?")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                    .show(ctx, |ui| {
+                        let track_label = gt_fmt::pluralize(hidden_count, "track", "tracks");
+                        ui.label(format!(
+                            "{hidden_count} hidden {track_label} will be permanently removed from their recordings."
+                        ));
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button(
+                                    egui::RichText::new("Delete hidden tracks")
+                                        .color(WARNING_AMBER),
+                                )
+                                .on_hover_text(
+                                    "This cannot be undone. The original source files are unaffected.",
+                                )
+                                .clicked()
+                            {
+                                do_delete = true;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                cancel = true;
+                            }
+                        });
+                    });
+                if do_delete {
+                    manager.delete_hidden_tracks();
+                    self.confirm_delete_hidden = false;
+                } else if cancel {
+                    self.confirm_delete_hidden = false;
+                }
+            }
+        }
+
         self.open = open;
-        action
     }
 }
 
@@ -537,7 +642,7 @@ fn render_row(
     ui: &mut egui::Ui,
     entry: &RecordingEntry,
     already_loaded: bool,
-    action: &mut Option<HistoryAction>,
+    manager: &HistoryManager,
 ) {
     let identity = &entry.db_ref.identity;
     let (display_name, is_auto) = match identity.strip_prefix("auto:") {
@@ -567,7 +672,15 @@ fn render_row(
     ui.label(format_duration(dur));
 
     let count = gt_history::format_count_suffix(entry.meta.nav_point_count);
-    ui.label(count);
+    ui.horizontal(|ui| {
+        ui.label(count);
+        if entry.hidden_tracks > 0 {
+            ui.weak(format!("({}/{} hidden)", entry.hidden_tracks, entry.total_tracks))
+                .on_hover_text(
+                    "Tracks hidden by 'remove filtered data'; use 'Delete hidden data' to drop them permanently",
+                );
+        }
+    });
 
     ui.label(format_size(entry.meta.gtd_size_bytes));
 
@@ -576,10 +689,10 @@ fn render_row(
         if already_loaded {
             open.on_hover_text("Already loaded");
         } else if open.clicked() {
-            *action = Some(HistoryAction::Open(entry.db_ref.clone()));
+            manager.open(entry.db_ref.clone());
         }
         if ui.small_button("Delete").clicked() {
-            *action = Some(HistoryAction::Delete(entry.db_ref.clone()));
+            manager.delete_recordings(vec![entry.db_ref.clone()], DeleteReason::Manual);
         }
     });
 

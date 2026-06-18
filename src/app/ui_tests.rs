@@ -575,6 +575,56 @@ fn snapshot_settings_window() {
 }
 
 #[test]
+fn snapshot_history_locked_dialog() {
+    let (mut harness, _config_path) =
+        TestHarness::new_eframe(Some(egui::vec2(640.0, 420.0)), |cc, path| {
+            App::new_with_config(cc, &[], Some(path.to_path_buf()))
+        });
+    harness.inner.step();
+    harness.inner.state_mut().pending_history_unlock =
+        Some(std::path::PathBuf::from("geotrace.h5"));
+    harness.run();
+    harness.snapshot("history_locked_dialog");
+}
+
+#[test]
+fn snapshot_history_corrupt_dialog() {
+    let (mut harness, _config_path) =
+        TestHarness::new_eframe(Some(egui::vec2(640.0, 420.0)), |cc, path| {
+            App::new_with_config(cc, &[], Some(path.to_path_buf()))
+        });
+    harness.inner.step();
+    harness.inner.state_mut().pending_db_corruption = Some(std::path::PathBuf::from("geotrace.h5"));
+    harness.run();
+    harness.snapshot("history_corrupt_dialog");
+}
+
+#[test]
+fn snapshot_history_resegment_dialog() {
+    let (mut harness, _config_path) =
+        TestHarness::new_eframe(Some(egui::vec2(640.0, 420.0)), |cc, path| {
+            App::new_with_config(cc, &[], Some(path.to_path_buf()))
+        });
+    harness.inner.step();
+    harness.inner.state_mut().pending_resegment = Some(super::ResegmentPrompt {
+        db_ref: gt_history::DatabaseRef {
+            identity: "auto:ride.gtd".to_owned(),
+            group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
+        },
+        filename: "ride.gtd".to_owned(),
+        bytes: std::sync::Arc::from(Vec::<u8>::new()),
+        stored: gt_history::StoredSegmentation {
+            track_split_gap_us: 60_000_000,
+            detect_clock_discontinuities: false,
+            clock_discontinuity_sigmas: 4.0,
+        },
+        hidden_positions: Vec::new(),
+    });
+    harness.run();
+    harness.snapshot("history_resegment_dialog");
+}
+
+#[test]
 fn snapshot_load_warnings_dialog() {
     let (mut harness, _config_path) =
         TestHarness::new_eframe(Some(egui::vec2(1024.0, 768.0)), |cc, path| {

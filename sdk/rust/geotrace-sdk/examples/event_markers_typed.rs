@@ -20,6 +20,17 @@
 //! Use `#[event_kind(note = none)]` on an enum to opt out entirely, or
 //! `#[event_kind(note = display)]` to use the `Display` implementation instead.
 
+// Examples favour brevity: the core's robustness restriction lints (no
+// unwrap/expect/panic/indexing, no std::env::temp_dir) are not enforced on
+// demonstration code, mirroring how clippy.toml relaxes them inside tests.
+#![allow(
+    clippy::restriction,
+    clippy::cognitive_complexity,
+    clippy::disallowed_methods,
+    clippy::allow_attributes,
+    reason = "SDK example: demonstration code"
+)]
+
 use std::{env, error::Error, fs};
 
 use geotrace_sdk::{

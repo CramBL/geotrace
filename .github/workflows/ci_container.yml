@@ -53,6 +53,7 @@ jobs:
 
       - name: Set up software GPU rendering
         run: |
+          sudo apt-get update
           sudo apt-get install -y --no-install-recommends libgl1-mesa-dev
           echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
           echo "WGPU_BACKEND=gl" >> "$GITHUB_ENV"

@@ -54,9 +54,21 @@ mod tests {
     }
 
     fn insert(db: &mut Database, identity: &str, bytes: &[u8]) {
-        use gt_history::HistoryDatabase;
+        use gt_history::{StoredSegmentation, TrackRange};
         let meta = gt_history::extract_meta(bytes).expect("parse meta");
-        db.insert(identity, &meta, bytes).expect("insert");
+        // One track spanning the whole recording is enough for prune tests.
+        let tracks = [TrackRange {
+            start: 0,
+            end: meta.nav_point_count,
+            hidden: false,
+        }];
+        let settings = StoredSegmentation {
+            track_split_gap_us: 300_000_000,
+            detect_clock_discontinuities: false,
+            clock_discontinuity_sigmas: 5.0,
+        };
+        db.insert(identity, &meta, &tracks, settings, bytes)
+            .expect("insert");
     }
 
     #[test]

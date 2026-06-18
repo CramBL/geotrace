@@ -1,8 +1,11 @@
 use crate::matches_attrs;
 use gt_types::history::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
-    ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION, DbError,
-    RecordingMeta, SCHEMA_VERSION_ATTR, is_db_recording_attr, make_group_name,
+    ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
+    ATTR_SEG_GAP_US, ATTR_START_US, CURRENT_SCHEMA_VERSION, DbError, GTD_VERSION_ATTR,
+    GTD_VERSION_FALLBACK, RecordingMeta, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation,
+    TRACK_END_DATASET, TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange,
+    is_db_internal_group, is_db_recording_attr, make_group_name,
 };
 /// Internal read-modify-write machinery for the history database.
 ///
@@ -16,7 +19,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub(crate) enum InternalError {
     #[error(transparent)]
-    Hdf5(#[from] hdf5_pure::error::Error),
+    Hdf5(#[from] hdf5_pure::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -92,7 +95,8 @@ macro_rules! write_dataset_into {
     }};
 }
 
-/// Write `identity_nodes` (the full `by_identity` tree) to a new database file at `db_path`.
+/// Recursively read an HDF5 group (its attrs, datasets, and subgroups) into an
+/// owned `GroupNode`.
 fn snapshot_group(src: &hdf5_pure::Group<'_>, name: &str) -> Result<GroupNode, InternalError> {
     let mut node = GroupNode {
         name: name.to_owned(),
@@ -156,11 +160,45 @@ fn snapshot_by_identity(file: &hdf5_pure::File) -> Result<Vec<GroupNode>, Intern
     Ok(identity_nodes)
 }
 
+/// Build the DB-internal `__geotrace_tracks__` subgroup node holding the track
+/// ranges as parallel `start`/`end`/`hidden` u64 datasets.
+fn track_table_node(tracks: &[TrackRange]) -> GroupNode {
+    let n = tracks.len() as u64;
+    let (starts, ends, hidden) = gt_types::history::track_columns(tracks);
+    GroupNode {
+        name: TRACKS_GROUP.to_owned(),
+        attrs: Vec::new(),
+        datasets: vec![
+            DatasetNode {
+                name: TRACK_START_DATASET.to_owned(),
+                shape: vec![n],
+                data: DatasetData::U64(starts),
+                attrs: Vec::new(),
+            },
+            DatasetNode {
+                name: TRACK_END_DATASET.to_owned(),
+                shape: vec![n],
+                data: DatasetData::U64(ends),
+                attrs: Vec::new(),
+            },
+            DatasetNode {
+                name: TRACK_HIDDEN_DATASET.to_owned(),
+                shape: vec![n],
+                data: DatasetData::U64(hidden),
+                attrs: Vec::new(),
+            },
+        ],
+        groups: Vec::new(),
+    }
+}
+
 fn build_new_recording(
     gtd_file: &hdf5_pure::File,
     rec_name: &str,
     meta: &RecordingMeta,
     identity: &str,
+    tracks: &[TrackRange],
+    settings: StoredSegmentation,
 ) -> Result<GroupNode, InternalError> {
     let gtd_root = gtd_file.root();
     let mut rec = GroupNode {
@@ -192,6 +230,18 @@ fn build_new_recording(
                 ATTR_GTD_SIZE_BYTES.to_owned(),
                 AttrValue::U64(meta.gtd_size_bytes),
             ),
+            (
+                ATTR_SEG_GAP_US.to_owned(),
+                AttrValue::I64(settings.track_split_gap_us),
+            ),
+            (
+                ATTR_SEG_DETECT_CLOCK.to_owned(),
+                AttrValue::U64(u64::from(settings.detect_clock_discontinuities)),
+            ),
+            (
+                ATTR_SEG_CLOCK_SIGMAS.to_owned(),
+                AttrValue::F64(settings.clock_discontinuity_sigmas),
+            ),
         ],
         datasets: Vec::new(),
         groups: Vec::new(),
@@ -208,6 +258,9 @@ fn build_new_recording(
     for (k, v) in gtd_root.attrs()? {
         rec.attrs.push((k, v));
     }
+
+    // Store the track ranges in the DB-internal subgroup.
+    rec.groups.push(track_table_node(tracks));
 
     Ok(rec)
 }
@@ -255,44 +308,52 @@ pub(crate) fn insert_recording(
     db_path: &std::path::Path,
     identity: &str,
     meta: &RecordingMeta,
+    tracks: &[TrackRange],
+    settings: StoredSegmentation,
     gtd_bytes: &[u8],
 ) -> Result<String, InternalError> {
     let existing_db = hdf5_pure::File::open(db_path)?;
 
-    // Check for duplicate; return existing name if found.
-    {
+    // Duplicate check: re-storing a recording already present returns its
+    // existing group unchanged (keeping its current track table).
+    let duplicate = {
         let root = existing_db.root();
+        let mut found = None;
         if let Ok(by_id) = root.group("by_identity") {
-            for id_name in by_id.groups()? {
-                if let Ok(id_grp) = by_id.group(&id_name) {
-                    for rec_name in id_grp.groups()? {
-                        if let Ok(rec_grp) = id_grp.group(&rec_name)
-                            && let Ok(attrs) = rec_grp.attrs()
-                            && matches_attrs(meta, &attrs)
-                        {
-                            log::debug!("Skipping duplicate recording '{id_name}/{rec_name}'");
-                            return Ok(rec_name);
-                        }
+            'search: for id_name in by_id.groups()? {
+                let Ok(id_grp) = by_id.group(&id_name) else {
+                    continue;
+                };
+                for rec_name in id_grp.groups()? {
+                    if let Ok(rec_grp) = id_grp.group(&rec_name)
+                        && let Ok(attrs) = rec_grp.attrs()
+                        && matches_attrs(meta, &attrs)
+                    {
+                        found = Some((id_name.clone(), rec_name));
+                        break 'search;
                     }
                 }
             }
         }
+        found
+    };
+
+    if let Some((id_name, rec_name)) = duplicate {
+        log::debug!("Recording '{id_name}/{rec_name}' already in history");
+        return Ok(rec_name);
     }
 
     // Read all existing identity data into memory.
     let mut identity_nodes = snapshot_by_identity(&existing_db)?;
 
-    // Determine the new recording name.
-    let existing_for_identity: Vec<String> = identity_nodes
-        .iter()
-        .find(|n| n.name == identity)
-        .map(|n| n.groups.iter().map(|r| r.name.clone()).collect())
-        .unwrap_or_default();
-    let rec_name = make_group_name(meta.start_us, meta.total_count(), &existing_for_identity);
+    // Determine the new recording name. A UUID makes the name collision-free even
+    // for recordings that start within the same second.
+    let rec_name = make_group_name(meta.start_us, &uuid::Uuid::new_v4().to_string());
 
     // Build the new recording node from the GTD file.
     let gtd_file = hdf5_pure::File::from_bytes(gtd_bytes.to_vec())?;
-    let new_recording = build_new_recording(&gtd_file, &rec_name, meta, identity)?;
+    let new_recording =
+        build_new_recording(&gtd_file, &rec_name, meta, identity, tracks, settings)?;
 
     // Insert or create the identity group.
     match identity_nodes.iter_mut().find(|n| n.name == identity) {
@@ -305,6 +366,9 @@ pub(crate) fn insert_recording(
         }),
     }
 
+    // Release the in-memory snapshot of the old file before writing the new one,
+    // matching the other mutators (delete_batch, set_tracks, set_tracks_hidden).
+    drop(existing_db);
     write_db(&identity_nodes, db_path)?;
     log::info!("Stored recording '{identity}/{rec_name}' in history database");
     Ok(rec_name)
@@ -334,36 +398,138 @@ pub(crate) fn delete_batch(
     Ok(())
 }
 
-/// Remove one recording group from the database using a read-modify-write cycle.
-pub(crate) fn delete_recording(
+/// Set or clear the hidden flag on the given tracks (by index) of a recording,
+/// via a read-modify-write cycle.
+pub(crate) fn set_tracks_hidden(
     db_path: &std::path::Path,
     identity: &str,
     group_name: &str,
+    track_indices: &[usize],
+    hidden: bool,
 ) -> Result<(), InternalError> {
     let existing_db = hdf5_pure::File::open(db_path)?;
     let mut identity_nodes = snapshot_by_identity(&existing_db)?;
+    drop(existing_db);
 
-    if let Some(id_node) = identity_nodes.iter_mut().find(|n| n.name == identity) {
-        id_node.groups.retain(|r| r.name != group_name);
+    let value = u64::from(hidden);
+    let mut found_table = false;
+    if let Some(id_node) = identity_nodes.iter_mut().find(|n| n.name == identity)
+        && let Some(rec) = id_node.groups.iter_mut().find(|r| r.name == group_name)
+        && let Some(tracks_grp) = rec.groups.iter_mut().find(|g| g.name == TRACKS_GROUP)
+        && let Some(ds) = tracks_grp
+            .datasets
+            .iter_mut()
+            .find(|d| d.name == TRACK_HIDDEN_DATASET)
+        && let DatasetData::U64(flags) = &mut ds.data
+    {
+        found_table = true;
+        for &i in track_indices {
+            match flags.get_mut(i) {
+                Some(slot) => *slot = value,
+                None => log::warn!("track index {i} out of range for {identity}/{group_name}"),
+            }
+        }
     }
-    // Drop empty identity groups.
-    identity_nodes.retain(|n| !n.groups.is_empty());
+    if !found_table {
+        log::warn!("set_tracks_hidden on {identity}/{group_name} which has no track table");
+    }
 
     write_db(&identity_nodes, db_path)?;
-    log::info!("Deleted recording '{identity}/{group_name}' from history database");
     Ok(())
 }
 
-/// Read a recording back from the database and return it as GTD-format bytes.
-pub(crate) fn load_recording_bytes(
+/// Replace a recording's track table and segmentation settings.
+pub(crate) fn set_tracks(
     db_path: &std::path::Path,
     identity: &str,
     group_name: &str,
-) -> Result<Vec<u8>, InternalError> {
+    tracks: &[TrackRange],
+    settings: StoredSegmentation,
+) -> Result<(), InternalError> {
+    let existing_db = hdf5_pure::File::open(db_path)?;
+    let mut identity_nodes = snapshot_by_identity(&existing_db)?;
+    drop(existing_db);
+
+    if let Some(id_node) = identity_nodes.iter_mut().find(|n| n.name == identity)
+        && let Some(rec) = id_node.groups.iter_mut().find(|r| r.name == group_name)
+    {
+        rec.groups.retain(|g| g.name != TRACKS_GROUP);
+        rec.groups.push(track_table_node(tracks));
+        rec.attrs.retain(|(k, _)| {
+            k != ATTR_SEG_GAP_US && k != ATTR_SEG_DETECT_CLOCK && k != ATTR_SEG_CLOCK_SIGMAS
+        });
+        rec.attrs.push((
+            ATTR_SEG_GAP_US.to_owned(),
+            AttrValue::I64(settings.track_split_gap_us),
+        ));
+        rec.attrs.push((
+            ATTR_SEG_DETECT_CLOCK.to_owned(),
+            AttrValue::U64(u64::from(settings.detect_clock_discontinuities)),
+        ));
+        rec.attrs.push((
+            ATTR_SEG_CLOCK_SIGMAS.to_owned(),
+            AttrValue::F64(settings.clock_discontinuity_sigmas),
+        ));
+    }
+
+    write_db(&identity_nodes, db_path)?;
+    Ok(())
+}
+
+/// Read the stored track ranges from a recording group (empty if absent).
+pub(crate) fn read_track_table(rec_grp: &hdf5_pure::Group<'_>) -> Vec<TrackRange> {
+    let Ok(grp) = rec_grp.group(TRACKS_GROUP) else {
+        return Vec::new();
+    };
+    let read = |name: &str| -> Vec<u64> {
+        grp.dataset(name)
+            .and_then(|d| d.read_u64())
+            .unwrap_or_default()
+    };
+    let starts = read(TRACK_START_DATASET);
+    let ends = read(TRACK_END_DATASET);
+    let hidden = read(TRACK_HIDDEN_DATASET);
+    gt_types::history::track_ranges_from_columns(&starts, &ends, &hidden).unwrap_or_else(|| {
+        log::warn!("Inconsistent track table; ignoring it (tracks will be recomputed)");
+        Vec::new()
+    })
+}
+
+/// Read the stored segmentation settings from a recording's attrs, if present.
+fn read_segmentation(
+    attrs: &std::collections::HashMap<String, AttrValue>,
+) -> Option<StoredSegmentation> {
+    let gap = match attrs.get(ATTR_SEG_GAP_US)? {
+        AttrValue::I64(v) => *v,
+        _ => return None,
+    };
+    let detect = match attrs.get(ATTR_SEG_DETECT_CLOCK)? {
+        AttrValue::U64(v) => *v != 0,
+        _ => return None,
+    };
+    let sigmas = match attrs.get(ATTR_SEG_CLOCK_SIGMAS)? {
+        AttrValue::F64(v) => *v,
+        _ => return None,
+    };
+    Some(StoredSegmentation {
+        track_split_gap_us: gap,
+        detect_clock_discontinuities: detect,
+        clock_discontinuity_sigmas: sigmas,
+    })
+}
+
+/// Read a recording back: reconstructed GTD bytes plus its stored tracks/settings.
+pub(crate) fn load_recording(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+) -> Result<StoredRecording, InternalError> {
     let db = hdf5_pure::File::open(db_path)?;
     let by_id = db.root().group("by_identity")?;
     let id_grp = by_id.group(identity)?;
     let rec_grp = id_grp.group(group_name)?;
+
+    let tracks = read_track_table(&rec_grp);
 
     // Snapshot all child data groups (nav_points, sat_reports, etc.) and
     // write them as a fresh GTD-format HDF5 file.
@@ -375,20 +541,28 @@ pub(crate) fn load_recording_bytes(
     // restored automatically.  Fall back to geotrace_version="1" for recordings
     // stored by older code that predates attr preservation.
     let rec_attrs = rec_grp.attrs()?;
+    let segmentation = read_segmentation(&rec_attrs);
     let mut has_version = false;
     for (k, v) in &rec_attrs {
         if !is_db_recording_attr(k) {
             fb.set_attr(k, v.clone());
-            if k == "geotrace_version" {
+            if k == GTD_VERSION_ATTR {
                 has_version = true;
             }
         }
     }
     if !has_version {
-        fb.set_attr("geotrace_version", AttrValue::String("1".into()));
+        fb.set_attr(
+            GTD_VERSION_ATTR,
+            AttrValue::String(GTD_VERSION_FALLBACK.to_owned()),
+        );
     }
 
     for child_name in rec_grp.groups()? {
+        // Skip the DB-internal track table; it is not part of the GTD file.
+        if is_db_internal_group(&child_name) {
+            continue;
+        }
         let child = rec_grp.group(&child_name)?;
         let node = snapshot_group(&child, &child_name)?;
         let mut gb = fb.create_group(&node.name);
@@ -417,7 +591,11 @@ pub(crate) fn load_recording_bytes(
     fb.write(&tmp_path)?;
     let bytes = std::fs::read(&tmp_path)?;
     std::fs::remove_file(&tmp_path).ok();
-    Ok(bytes)
+    Ok(StoredRecording {
+        bytes,
+        tracks,
+        segmentation,
+    })
 }
 
 /// Rewrite the database preserving all data but updating the `schema_version`

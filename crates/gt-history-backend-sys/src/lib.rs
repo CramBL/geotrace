@@ -1,8 +1,8 @@
-use crate::copy::{list_recordings, load_recording_bytes};
+use crate::copy::list_recordings;
 use gt_types::DatabaseRef;
 use gt_types::history::{
     CURRENT_SCHEMA_VERSION, DbError, HistoryDatabase, RecordingEntry, RecordingMeta,
-    SCHEMA_VERSION_ATTR,
+    SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange,
 };
 
 use parking_lot::Mutex;
@@ -11,6 +11,71 @@ use std::path::{Path, PathBuf};
 static DB_LOCK: Mutex<()> = Mutex::new(());
 
 pub mod copy;
+
+/// Extract recording metadata from raw GTD file bytes.
+///
+/// libhdf5 reads from a path rather than a byte slice, so the bytes are staged
+/// in a temporary file. Counts come from the relevant datasets' shapes; the
+/// time bounds from the first and last `nav_points/time` entries.
+pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
+    let tmp = tempfile::NamedTempFile::new()?;
+    std::fs::write(tmp.path(), bytes)?;
+    let file = hdf5::File::open(tmp.path()).map_err(|e| DbError::Backend(e.to_string()))?;
+
+    let nav = file
+        .group("nav_points")
+        .map_err(|e| DbError::Backend(e.to_string()))?;
+    let time = nav
+        .dataset("time")
+        .map_err(|e| DbError::Backend(e.to_string()))?;
+    let nav_point_count = time.shape().first().copied().unwrap_or(0) as u64;
+
+    let (start_us, end_us) = if nav_point_count > 0 {
+        let times: Vec<i64> = time
+            .read_raw()
+            .map_err(|e| DbError::Backend(e.to_string()))?;
+        (
+            times.first().copied().unwrap_or(0),
+            times.last().copied().unwrap_or(0),
+        )
+    } else {
+        (0, 0)
+    };
+
+    // Count rows in an optional data group's index dataset; absent groups
+    // contribute zero.
+    let count_rows = |group: &str, dataset: &str| -> u64 {
+        file.group(group)
+            .ok()
+            .and_then(|g| g.dataset(dataset).ok())
+            .map(|d| d.shape().first().copied().unwrap_or(0) as u64)
+            .unwrap_or(0)
+    };
+
+    Ok(RecordingMeta {
+        start_us,
+        end_us,
+        nav_point_count,
+        sat_report_count: count_rows("sat_reports", "nav_point_idx"),
+        marker_count: count_rows("markers", "time"),
+        event_marker_count: count_rows("event_markers", "sys_time_us"),
+        gtd_size_bytes: bytes.len() as u64,
+    })
+}
+
+/// Map libhdf5's "file is already open for write" / consistency-flags open
+/// failure to the recoverable [`DbError::WriteLocked`]; pass other errors through.
+fn into_write_lock(e: DbError) -> DbError {
+    if let DbError::Backend(msg) = &e
+        && (msg.contains("already open for write")
+            || msg.contains("h5clear")
+            || msg.contains("consistency flags"))
+    {
+        return DbError::WriteLocked;
+    }
+    e
+}
+
 pub struct SysDb {
     path: PathBuf,
 }
@@ -20,7 +85,19 @@ impl SysDb {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = hdf5::File::create(path).map_err(|e| DbError::Backend(e.to_string()))?;
+        // Create with a persistent free-space manager so the space vacated by
+        // deleting recordings is tracked across sessions and reused by later
+        // inserts, rather than left as permanent dead space in the file.
+        let file = hdf5::File::with_options()
+            .with_fcpl(|fcpl| {
+                fcpl.file_space_strategy(hdf5::file::FileSpaceStrategy::FreeSpaceManager {
+                    paged: false,
+                    persist: true,
+                    threshold: 1,
+                })
+            })
+            .create(path)
+            .map_err(|e| DbError::Backend(e.to_string()))?;
         file.new_attr::<i64>()
             .create(SCHEMA_VERSION_ATTR)
             .map_err(|e| DbError::Backend(e.to_string()))?
@@ -53,7 +130,19 @@ impl HistoryDatabase for SysDb {
     fn open_or_create(path: &Path) -> Result<Self, DbError> {
         let _guard = DB_LOCK.lock();
         if path.exists() {
-            Self::validate_existing(path)?;
+            // Surface a stale "open for write" lock as a distinct error so the
+            // app can offer to clear it (see `clear_write_lock`).
+            Self::validate_existing(path).map_err(into_write_lock)?;
+            // A database written by the pure-Rust backend can be read but not
+            // extended by libhdf5; migrate it to a native file once so inserts
+            // and deletes work.
+            if !crate::copy::is_native_writable(path) {
+                log::info!(
+                    "Migrating history database at {} to the native HDF5 format",
+                    path.display()
+                );
+                crate::copy::migrate_to_native(path)?;
+            }
         } else {
             Self::create_new(path)?;
         }
@@ -62,41 +151,72 @@ impl HistoryDatabase for SysDb {
         })
     }
 
-    fn insert(
-        &mut self,
-        identity: &str,
-        meta: &RecordingMeta,
-        gtd_bytes: &[u8],
-    ) -> Result<DatabaseRef, DbError> {
+    fn clear_write_lock(path: &Path) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
-        println!("SysDb::insert called");
-        println!("Calling insert_recording");
-        let res = crate::copy::insert_recording(&self.path, identity, meta, gtd_bytes);
-        match &res {
-            Ok(_) => println!("insert_recording succeeded"),
-            Err(e) => println!("insert_recording failed: {:?}", e),
-        }
-        res.map(|rec_name| DatabaseRef {
-            identity: identity.to_owned(),
-            group_name: rec_name,
-        })
-        .map_err(Into::into)
-    }
-
-    fn delete(&mut self, db_ref: &DatabaseRef) -> Result<(), DbError> {
-        let _guard = DB_LOCK.lock();
-        let file = hdf5::File::open_rw(&self.path).map_err(|e| DbError::Backend(e.to_string()))?;
-        let path = format!("by_identity/{}/{}", db_ref.identity, db_ref.group_name);
-        if file.link_exists(&path) {
-            file.unlink(&path)
-                .map_err(|e| DbError::Backend(e.to_string()))?;
+        if crate::copy::clear_write_lock(path)? {
+            log::warn!(
+                "Cleared a stale write lock on history database at {}",
+                path.display()
+            );
         }
         Ok(())
     }
 
-    fn load_bytes(&self, db_ref: &DatabaseRef) -> Result<Vec<u8>, DbError> {
+    fn insert(
+        &mut self,
+        identity: &str,
+        meta: &RecordingMeta,
+        tracks: &[TrackRange],
+        settings: StoredSegmentation,
+        gtd_bytes: &[u8],
+    ) -> Result<DatabaseRef, DbError> {
         let _guard = DB_LOCK.lock();
-        load_recording_bytes(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
+        crate::copy::insert_recording(&self.path, identity, meta, tracks, settings, gtd_bytes)
+            .map(|rec_name| DatabaseRef {
+                identity: identity.to_owned(),
+                group_name: rec_name,
+            })
+            .map_err(Into::into)
+    }
+
+    fn load(&self, db_ref: &DatabaseRef) -> Result<StoredRecording, DbError> {
+        let _guard = DB_LOCK.lock();
+        crate::copy::load_recording(&self.path, &db_ref.identity, &db_ref.group_name)
+            .map_err(Into::into)
+    }
+
+    fn set_tracks(
+        &mut self,
+        db_ref: &DatabaseRef,
+        tracks: &[TrackRange],
+        settings: StoredSegmentation,
+    ) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        crate::copy::set_tracks(
+            &self.path,
+            &db_ref.identity,
+            &db_ref.group_name,
+            tracks,
+            settings,
+        )
+        .map_err(Into::into)
+    }
+
+    fn set_tracks_hidden(
+        &mut self,
+        db_ref: &DatabaseRef,
+        track_indices: &[usize],
+        hidden: bool,
+    ) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        crate::copy::set_tracks_hidden(
+            &self.path,
+            &db_ref.identity,
+            &db_ref.group_name,
+            track_indices,
+            hidden,
+        )
+        .map_err(Into::into)
     }
 
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {
@@ -104,14 +224,20 @@ impl HistoryDatabase for SysDb {
         list_recordings(&self.path).map_err(Into::into)
     }
 
-    fn is_duplicate(&self, identity: &str, meta: &RecordingMeta) -> Result<bool, DbError> {
+    fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError> {
         let _guard = DB_LOCK.lock();
-        crate::copy::is_duplicate(&self.path, identity, meta).map_err(Into::into)
+        crate::copy::is_duplicate(&self.path, meta).map_err(Into::into)
     }
 
     fn delete_batch(&mut self, refs: &[DatabaseRef]) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        let file = hdf5::File::open_rw(&self.path).map_err(|e| DbError::Backend(e.to_string()))?;
         for db_ref in refs {
-            self.delete(db_ref)?;
+            let path = format!("by_identity/{}/{}", db_ref.identity, db_ref.group_name);
+            if file.link_exists(&path) {
+                file.unlink(&path)
+                    .map_err(|e| DbError::Backend(e.to_string()))?;
+            }
         }
         Ok(())
     }

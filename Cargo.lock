@@ -904,6 +904,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "console"
+version = "0.16.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d64e8af5551369d19cf50138de61f1c42074ab970f74e99be916646777f8fc87"
+dependencies = [
+ "encode_unicode",
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1396,6 +1407,12 @@ dependencies = [
  "bytemuck",
  "serde",
 ]
+
+[[package]]
+name = "encode_unicode"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
 name = "endi"
@@ -2132,6 +2149,7 @@ dependencies = [
  "gt-types",
  "hdf5-metno",
  "hdf5-pure",
+ "insta",
  "log",
  "tempfile",
  "test-log",
@@ -2146,6 +2164,7 @@ dependencies = [
  "log",
  "parking_lot",
  "thiserror 2.0.18",
+ "uuid",
 ]
 
 [[package]]
@@ -2158,6 +2177,7 @@ dependencies = [
  "parking_lot",
  "tempfile",
  "thiserror 2.0.18",
+ "uuid",
 ]
 
 [[package]]
@@ -2168,6 +2188,7 @@ dependencies = [
  "gt-test-utils",
  "gt-track-builder",
  "gt-types",
+ "proptest",
  "strum",
  "tempfile",
  "thiserror 2.0.18",
@@ -2422,9 +2443,9 @@ dependencies = [
 
 [[package]]
 name = "hdf5-pure"
-version = "0.8.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1220510a181ea658c393807b6302dac8d6d09381d9153a40f87a2baf190610b3"
+checksum = "cd1a65c42fe02930a3fd0b6cd124d72a9eb9462968619353012a9381af67e7ef"
 dependencies = [
  "byteorder",
  "flate2",
@@ -2840,6 +2861,18 @@ dependencies = [
  "hashbrown 0.17.1",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "insta"
+version = "1.48.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86f0f8fee8c926415c58d6ae43a08523a26faccb2323f5e6b644fe7dd4ef6b82"
+dependencies = [
+ "console",
+ "once_cell",
+ "similar",
+ "tempfile",
 ]
 
 [[package]]
@@ -4985,6 +5018,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
+
+[[package]]
 name = "simplecss"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5800,6 +5839,7 @@ version = "1.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d258b83ceec21034727ecee8c382cfa6c3e133699b0742c64571814fb420c9f7"
 dependencies = [
+ "getrandom 0.4.2",
  "js-sys",
  "serde_core",
  "wasm-bindgen",

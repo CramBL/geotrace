@@ -12,13 +12,17 @@ doctest = false
 test = false
 
 [features]
-default = ["backend-pure"]
-backend-pure = []
+# The system-HDF5 backend is the default: it edits the history file in place
+# (insert/delete without rewriting the whole file) and tracks free space. The
+# pure-Rust backend stays available as an opt-in, zero-C-dependency fallback;
+# it is not pulled into the default build.
+default = ["backend-sys"]
+backend-pure = ["dep:gt-history-backend-pure"]
 backend-sys = ["dep:gt-history-backend-sys"]
 
 [dependencies]
 dirs.workspace = true
-gt-history-backend-pure = { path = "../gt-history-backend-pure" }
+gt-history-backend-pure = { path = "../gt-history-backend-pure", optional = true }
 gt-history-backend-sys = { path = "../gt-history-backend-sys", optional = true }
 gt-types = { path = "../gt-types" }
 
@@ -26,6 +30,7 @@ gt-types = { path = "../gt-types" }
 geotrace-sdk = { path = "../../sdk/rust/geotrace-sdk" }
 hdf5 = { package = "hdf5-metno", version = "0.12.5" }
 hdf5-pure.workspace = true
+insta.workspace = true
 log.workspace = true
 tempfile.workspace = true
 test-log.workspace = true
