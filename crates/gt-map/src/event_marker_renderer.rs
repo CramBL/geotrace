@@ -378,32 +378,33 @@ mod snapshot_tests {
         let width = margin * 2.0 + (cols - 1) as f32 * spacing;
         let height = margin * 2.0 + (rows - 1) as f32 * spacing;
 
-        let mut harness = TestHarness::new_wgpu(egui::vec2(width, height), move |ui| {
-            egui_extras::install_image_loaders(ui.ctx());
-            crate::register_marker_icons(ui.ctx());
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(width, height))
+            .ui(move |ui| {
+                crate::register_marker_icons(ui.ctx());
 
-            ui.painter()
-                .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(30, 30, 30));
+                ui.painter()
+                    .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(30, 30, 30));
 
-            for (i, &icon) in icons.iter().enumerate() {
-                let row = i / cols;
-                let col = if row.is_multiple_of(2) {
-                    i % cols
-                } else {
-                    cols - 1 - (i % cols)
-                };
-                let x = margin + col as f32 * spacing;
-                let y = margin + row as f32 * spacing;
-                draw_event_marker(
-                    ui,
-                    egui::pos2(x, y),
-                    icon,
-                    egui::Color32::from_rgb(230, 150, 50),
-                    false,
-                    1.0,
-                );
-            }
-        });
+                for (i, &icon) in icons.iter().enumerate() {
+                    let row = i / cols;
+                    let col = if row.is_multiple_of(2) {
+                        i % cols
+                    } else {
+                        cols - 1 - (i % cols)
+                    };
+                    let x = margin + col as f32 * spacing;
+                    let y = margin + row as f32 * spacing;
+                    draw_event_marker(
+                        ui,
+                        egui::pos2(x, y),
+                        icon,
+                        egui::Color32::from_rgb(230, 150, 50),
+                        false,
+                        1.0,
+                    );
+                }
+            });
 
         harness.run();
         harness.snapshot("all_marker_icons");

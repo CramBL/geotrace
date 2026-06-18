@@ -1,4 +1,3 @@
-use egui_kittest::Harness;
 use gt_filter::GlobalFilter;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
 use gt_test_utils::TestHarness;
@@ -63,11 +62,10 @@ fn make_state_with_warnings_on(
     }
 }
 
-fn make_harness(state: State) -> Harness<'static, State> {
-    Harness::builder()
-        .with_size(egui::vec2(280.0, 600.0))
-        .wgpu()
-        .build_ui_state(
+fn make_harness(state: State) -> TestHarness<'static, State> {
+    TestHarness::builder()
+        .size(egui::vec2(280.0, 600.0))
+        .ui_state(
             |ui, s: &mut State| {
                 let mut ctx = PanelContext {
                     files: &s.files,
@@ -90,7 +88,7 @@ fn make_harness(state: State) -> Harness<'static, State> {
 fn snapshot_collapsed_files() {
     let mut harness = make_harness(make_state(2));
     harness.run();
-    TestHarness::from_harness(harness).snapshot("side_panel_collapsed");
+    harness.snapshot("side_panel_collapsed");
 }
 
 #[test]
@@ -99,7 +97,7 @@ fn snapshot_one_file_expanded() {
     state.tree.toggle_expand_file(FileIdx::new(0));
     let mut harness = make_harness(state);
     harness.run();
-    TestHarness::from_harness(harness).snapshot("side_panel_file_expanded");
+    harness.snapshot("side_panel_file_expanded");
 }
 
 #[test]
@@ -198,10 +196,12 @@ fn snapshot_fix_stats_tooltip_content() {
         fix_loss_count: 3,
         max_continuous_no_fix: chrono::Duration::seconds(480), // 8m
     };
-    let mut h = TestHarness::new_wgpu(egui::vec2(480.0, 30.0), move |ui| {
-        ui.add_space(4.0);
-        gt_side_panel::widgets::fix_stats_tooltip_row(ui, stats);
-    });
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(480.0, 30.0))
+        .ui(move |ui| {
+            ui.add_space(4.0);
+            gt_side_panel::widgets::fix_stats_tooltip_row(ui, stats);
+        });
     h.run();
     h.snapshot("fix_stats_tooltip_content");
 }
@@ -223,5 +223,5 @@ fn snapshot_file_with_warnings() {
     let state = make_state_with_warnings_on(2, 0, &warnings);
     let mut harness = make_harness(state);
     harness.run();
-    TestHarness::from_harness(harness).snapshot("side_panel_file_with_warnings");
+    harness.snapshot("side_panel_file_with_warnings");
 }
