@@ -1,9 +1,13 @@
 [package]
 name = "geotrace-c"
+authors.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license = "MIT"
 
 [lib]
 crate-type = ["cdylib", "staticlib"]
