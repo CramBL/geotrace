@@ -47,7 +47,7 @@ fn is_trip_highlighted(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> b
 /// - `highlight.hover` — a map pointer hover (any [`HighlightScope`]).
 /// - `highlight.plot_hover_point` — the plot cursor snapping to a TPV point.
 pub(crate) fn track_fade_alpha(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> f32 {
-    if !hover_is_active(highlight) {
+    if !highlight.fading_enabled || !hover_is_active(highlight) {
         return 1.0;
     }
     if is_track_in_focus(highlight, fi, ti) {

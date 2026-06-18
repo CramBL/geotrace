@@ -21,7 +21,7 @@ pub enum HighlightScope {
     Point(DataPointRef),
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct MapHighlight {
     pub hover: Option<HighlightScope>,
     pub sticky: Option<DataPointRef>,
@@ -52,4 +52,22 @@ pub struct MapHighlight {
     /// are active simultaneously (the map layer draws a single compact stacked
     /// label instead of having each renderer place one near the cursor).
     pub suppress_hover_labels: bool,
+    /// When `false`, the track/map fading animation and background dimming are
+    /// disabled.
+    pub fading_enabled: bool,
+}
+
+impl Default for MapHighlight {
+    fn default() -> Self {
+        Self {
+            hover: None,
+            sticky: None,
+            hover_candidates: [None; 4],
+            plot_hover_time: None,
+            plot_hover_point: None,
+            plot_hover_snapped: false,
+            suppress_hover_labels: false,
+            fading_enabled: true,
+        }
+    }
 }

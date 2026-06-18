@@ -375,15 +375,20 @@ impl NavMap {
 
         // Advance the hover-fade animation using the previous frame's highlight,
         // which is what the renderers will see this frame.
-        let hover_fade_progress = self.hover_fade.tick(
-            now,
-            track_renderer::hover_is_active(highlight),
-            track_renderer::focused_track_from_highlight(highlight),
-        );
-        if self.hover_fade.is_animating() {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(16));
-        }
+        let hover_fade_progress = if highlight.fading_enabled {
+            let progress = self.hover_fade.tick(
+                now,
+                track_renderer::hover_is_active(highlight),
+                track_renderer::focused_track_from_highlight(highlight),
+            );
+            if self.hover_fade.is_animating() {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(16));
+            }
+            progress
+        } else {
+            0.0
+        };
 
         // Suppress individual renderer hover labels when:
         // - the disambiguation popup is currently open (it occupies the cursor area), or
@@ -1342,12 +1347,6 @@ mod snapshot_tests {
         }
     }
 
-    fn install_phosphor(ui: &egui::Ui) {
-        let mut fonts = egui::FontDefinitions::default();
-        egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
-        ui.ctx().set_fonts(fonts);
-    }
-
     /// Builds a single `LoadedFile` with one TPV point, one event marker, one custom
     /// marker, and one `GnssFixRegained` generated marker, all at index 0.  Used by
     /// snapshot tests so each candidate type produces real human-readable text.
@@ -1446,10 +1445,11 @@ mod snapshot_tests {
         let files = vec![make_snapshot_file()];
         let candidates = [Some(tpv_ref()), Some(event_ref()), Some(custom_ref()), None];
 
-        let mut harness = TestHarness::new_wgpu(egui::vec2(400.0, 800.0), move |ui| {
-            install_phosphor(ui);
-            draw_multi_hover_label_contents(ui, &candidates, &files);
-        });
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(400.0, 800.0))
+            .ui(move |ui| {
+                draw_multi_hover_label_contents(ui, &candidates, &files);
+            });
 
         harness.fit_contents();
         harness.snapshot("multi_hover_stacked_label");
@@ -1464,10 +1464,11 @@ mod snapshot_tests {
         let files = vec![make_snapshot_file()];
         let candidates = [Some(tpv_ref()), None, None, Some(gen_ref())];
 
-        let mut harness = TestHarness::new_wgpu(egui::vec2(400.0, 800.0), move |ui| {
-            install_phosphor(ui);
-            draw_multi_hover_label_contents(ui, &candidates, &files);
-        });
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(400.0, 800.0))
+            .ui(move |ui| {
+                draw_multi_hover_label_contents(ui, &candidates, &files);
+            });
 
         harness.fit_contents();
         harness.snapshot("multi_hover_tpv_and_generated_marker");
@@ -1483,15 +1484,16 @@ mod snapshot_tests {
         let candidates = [Some(tpv_ref()), Some(event_ref()), None, None];
         let sticky = Some(tpv_ref());
 
-        let mut harness = TestHarness::new_wgpu(egui::vec2(300.0, 90.0), move |ui| {
-            install_phosphor(ui);
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.set_min_width(200.0);
-                for candidate in candidates.iter().flatten().copied() {
-                    draw_disambig_row(ui, candidate, &files, sticky == Some(candidate));
-                }
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(300.0, 90.0))
+            .ui(move |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(200.0);
+                    for candidate in candidates.iter().flatten().copied() {
+                        draw_disambig_row(ui, candidate, &files, sticky == Some(candidate));
+                    }
+                });
             });
-        });
 
         harness.run();
         harness.snapshot("disambig_popup_big_icons");

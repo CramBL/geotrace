@@ -124,7 +124,8 @@ impl Plugin for TrackLayers<'_> {
 
         let geometries = self.prepare_track_geometries(max_rect, &style, &transform);
 
-        let hover_active = track_renderer::hover_is_active(self.highlight);
+        let hover_active =
+            self.highlight.fading_enabled && track_renderer::hover_is_active(self.highlight);
         let fade = self.hover_fade_alpha;
 
         if fade > FADE_VISIBLE_THRESHOLD || hover_active {
