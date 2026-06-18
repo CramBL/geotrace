@@ -5,6 +5,9 @@ use gt_ui_theme::{HIGHLIGHT_BLUE, LOG_COLORS};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, TrackDataVisibility};
 use walkers::{MapMemory, Plugin, Projector};
 
+use crate::icons;
+use crate::track_renderer;
+
 pub struct MarkerRenderer<'a> {
     files: &'a [LoadedFile],
     visibility: &'a TrackDataVisibility,
@@ -91,7 +94,9 @@ impl Plugin for MarkerRenderer<'_> {
             };
             let screen_pos = transform.to_screen(sp.merc);
             let highlighted = self.is_marker_highlighted(point_ref);
-            draw_marker_icon(ui, screen_pos, marker, highlighted);
+            let fade =
+                track_renderer::track_fade_alpha(self.highlight, sp.file_index, sp.track_index);
+            draw_marker_icon(ui, screen_pos, marker, highlighted, fade);
         }
 
         // Show hover label for the hovered custom marker. Uses hover_candidates[2]
@@ -169,7 +174,7 @@ fn show_marker_hover_label(ui: &Ui, marker: &CustomMarker, pos: Pos2, tpv_also_h
     ui.painter().galley(text_origin, galley, Color32::WHITE);
 }
 
-fn draw_marker_icon(ui: &Ui, center: Pos2, marker: &CustomMarker, highlighted: bool) {
+fn draw_marker_icon(ui: &Ui, center: Pos2, marker: &CustomMarker, highlighted: bool, fade: f32) {
     let color = match marker.icon {
         MarkerIcon::Pin | MarkerIcon::Cross => Color32::from_rgb(219, 68, 55),
         MarkerIcon::Circle
@@ -197,102 +202,149 @@ fn draw_marker_icon(ui: &Ui, center: Pos2, marker: &CustomMarker, highlighted: b
         ui.painter()
             .circle_stroke(center, 14.0, Stroke::new(2.0, HIGHLIGHT_BLUE));
     }
+    // Apply the hover-fade by reducing the tint alpha so non-focused icons
+    // recede against the map tiles instead of merely darkening.
+    let white_tint = track_renderer::apply_fade_alpha(Color32::WHITE, fade);
+    let color_tint = track_renderer::apply_fade_alpha(color, fade);
     match marker.icon {
-        MarkerIcon::Pin => draw_pin(ui, center, color),
-        MarkerIcon::Cross => draw_cross(ui, center, color),
-        MarkerIcon::Circle => draw_circle(ui, center, color),
-        MarkerIcon::Lightning => draw_lightning(ui, center, color),
-        MarkerIcon::Warning => draw_warning(ui, center, color),
-        MarkerIcon::Error => draw_error_sign(ui, center, color),
-        MarkerIcon::Check => draw_check(ui, center, color),
-        MarkerIcon::Log => draw_log_pin(ui, center, color),
-        MarkerIcon::Satellite => draw_svg_icon(ui, center, crate::icons::ICON_URI_SATELLITE, 24.0),
-        MarkerIcon::SatelliteLost => {
-            draw_svg_icon(ui, center, crate::icons::ICON_URI_SATELLITE_LOST, 24.0)
-        }
-        MarkerIcon::Gear => draw_svg_icon(ui, center, crate::icons::ICON_URI_GEAR, 20.0),
-        MarkerIcon::Refresh => draw_svg_icon(ui, center, crate::icons::ICON_URI_REFRESH, 20.0),
-        MarkerIcon::Download => draw_svg_icon(ui, center, crate::icons::ICON_URI_DOWNLOAD, 20.0),
-        MarkerIcon::Upload => draw_svg_icon(ui, center, crate::icons::ICON_URI_UPLOAD, 20.0),
-        MarkerIcon::Wrench => draw_svg_icon(ui, center, crate::icons::ICON_URI_WRENCH, 20.0),
+        MarkerIcon::Pin => draw_pin(ui, center, white_tint),
+        MarkerIcon::Cross => draw_cross(ui, center, white_tint),
+        MarkerIcon::Circle => draw_circle(ui, center, white_tint),
+        MarkerIcon::Lightning => draw_lightning(ui, center, white_tint),
+        MarkerIcon::Warning => draw_warning(ui, center, white_tint),
+        MarkerIcon::Error => draw_error_sign(ui, center, white_tint),
+        MarkerIcon::Check => draw_check(ui, center, white_tint),
+        MarkerIcon::Log => draw_log_pin(ui, center, color_tint),
+        MarkerIcon::Satellite => draw_svg_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_SATELLITE,
+            icons::ICON_SIZE_LARGE_PX,
+            white_tint,
+        ),
+        MarkerIcon::SatelliteLost => draw_svg_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_SATELLITE_LOST,
+            icons::ICON_SIZE_LARGE_PX,
+            white_tint,
+        ),
+        MarkerIcon::Gear => draw_svg_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_GEAR,
+            icons::ICON_SIZE_PX,
+            white_tint,
+        ),
+        MarkerIcon::Refresh => draw_svg_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_REFRESH,
+            icons::ICON_SIZE_PX,
+            white_tint,
+        ),
+        MarkerIcon::Download => draw_svg_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_DOWNLOAD,
+            20.0,
+            white_tint,
+        ),
+        MarkerIcon::Upload => draw_svg_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_UPLOAD,
+            icons::ICON_SIZE_PX,
+            white_tint,
+        ),
+        MarkerIcon::Wrench => draw_svg_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_WRENCH,
+            icons::ICON_SIZE_PX,
+            white_tint,
+        ),
     }
 }
 
-fn draw_pin(ui: &Ui, center: Pos2, _color: Color32) {
+fn draw_pin(ui: &Ui, center: Pos2, tint: Color32) {
     let icon_rect = egui::Rect::from_min_max(
-        center - egui::vec2(9.0, 24.0),
+        center - egui::vec2(9.0, icons::ICON_SIZE_LARGE_PX),
         center + egui::vec2(9.0, 0.0),
     );
-    crate::icons::draw_cached_icon(ui, crate::icons::ICON_URI_PIN, icon_rect, Color32::WHITE);
+    crate::icons::draw_cached_icon(ui, crate::icons::ICON_URI_PIN, icon_rect, tint);
 }
 
-fn draw_cross(ui: &Ui, center: Pos2, _color: Color32) {
+fn draw_cross(ui: &Ui, center: Pos2, tint: Color32) {
     crate::icons::draw_cached_icon(
         ui,
         crate::icons::ICON_URI_CROSS,
-        egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
-        Color32::WHITE,
+        egui::Rect::from_center_size(center, egui::vec2(icons::ICON_SIZE_PX, icons::ICON_SIZE_PX)),
+        tint,
     );
 }
 
-fn draw_circle(ui: &Ui, center: Pos2, _color: Color32) {
+fn draw_circle(ui: &Ui, center: Pos2, tint: Color32) {
     crate::icons::draw_cached_icon(
         ui,
         crate::icons::ICON_URI_CIRCLE_MARKER,
-        egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
-        Color32::WHITE,
+        egui::Rect::from_center_size(center, egui::vec2(icons::ICON_SIZE_PX, icons::ICON_SIZE_PX)),
+        tint,
     );
 }
 
-fn draw_lightning(ui: &Ui, center: Pos2, _color: Color32) {
+fn draw_lightning(ui: &Ui, center: Pos2, tint: Color32) {
     crate::icons::draw_cached_icon(
         ui,
         crate::icons::ICON_URI_LIGHTNING,
-        egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
-        Color32::WHITE,
+        egui::Rect::from_center_size(center, egui::vec2(icons::ICON_SIZE_PX, icons::ICON_SIZE_PX)),
+        tint,
     );
 }
 
-fn draw_warning(ui: &Ui, center: Pos2, _color: Color32) {
+fn draw_warning(ui: &Ui, center: Pos2, tint: Color32) {
     crate::icons::draw_cached_icon(
         ui,
         crate::icons::ICON_URI_WARNING,
-        egui::Rect::from_center_size(center, egui::vec2(24.0, 24.0)),
-        Color32::WHITE,
+        egui::Rect::from_center_size(
+            center,
+            egui::vec2(icons::ICON_SIZE_LARGE_PX, icons::ICON_SIZE_LARGE_PX),
+        ),
+        tint,
     );
 }
 
-fn draw_error_sign(ui: &Ui, center: Pos2, _color: Color32) {
+fn draw_error_sign(ui: &Ui, center: Pos2, tint: Color32) {
     crate::icons::draw_cached_icon(
         ui,
         crate::icons::ICON_URI_ERROR,
-        egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
-        Color32::WHITE,
+        egui::Rect::from_center_size(center, egui::vec2(icons::ICON_SIZE_PX, icons::ICON_SIZE_PX)),
+        tint,
     );
 }
 
-fn draw_check(ui: &Ui, center: Pos2, _color: Color32) {
+fn draw_check(ui: &Ui, center: Pos2, tint: Color32) {
     crate::icons::draw_cached_icon(
         ui,
         crate::icons::ICON_URI_CHECK,
-        egui::Rect::from_center_size(center, egui::vec2(20.0, 20.0)),
-        Color32::WHITE,
+        egui::Rect::from_center_size(center, egui::vec2(icons::ICON_SIZE_PX, icons::ICON_SIZE_PX)),
+        tint,
     );
 }
 
-fn draw_svg_icon(ui: &Ui, center: Pos2, uri: &'static str, size: f32) {
+fn draw_svg_icon(ui: &Ui, center: Pos2, uri: &'static str, size: f32, tint: Color32) {
     crate::icons::draw_cached_icon(
         ui,
         uri,
         egui::Rect::from_center_size(center, egui::vec2(size, size)),
-        Color32::WHITE,
+        tint,
     );
 }
 
-fn draw_log_pin(ui: &Ui, center: Pos2, color: Color32) {
+fn draw_log_pin(ui: &Ui, center: Pos2, tint: Color32) {
     let icon_rect = egui::Rect::from_min_max(
-        center - egui::vec2(9.0, 24.0),
+        center - egui::vec2(9.0, icons::ICON_SIZE_LARGE_PX),
         center + egui::vec2(9.0, 0.0),
     );
-    crate::icons::draw_cached_icon(ui, crate::icons::ICON_URI_LOG_PIN, icon_rect, color);
+    crate::icons::draw_cached_icon(ui, crate::icons::ICON_URI_LOG_PIN, icon_rect, tint);
 }

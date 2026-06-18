@@ -3,8 +3,17 @@ use gt_types::{DataCategory, FileIdx, TrackIdx, TrackRef};
 use gt_ui_theme::{HIGHLIGHT_BLUE, track_color};
 use gt_ui_types::{HighlightScope, MapHighlight};
 
+/// Alpha multiplier for elements on non-focused tracks while hover is active.
+///
+/// Used both by marker renderers (which draw after the overlay) and to compute
+/// the overlay's opacity: `overlay_alpha = 1.0 - HOVER_FADE_ALPHA`.
+pub(crate) const HOVER_FADE_ALPHA: f32 = 0.15;
+
 /// Stroke for a track's plain line: thicker highlight blue when the track
-/// is hovered or sticky-selected, its palette color otherwise.
+/// is hovered or sticky-selected, its palette color at full opacity otherwise.
+///
+/// Dimming of non-focused tracks is handled by the fade overlay in
+/// [`crate::track_layers`], not by modifying the stroke color here.
 pub(crate) fn track_stroke(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> Stroke {
     if is_trip_highlighted(highlight, fi, ti) {
         Stroke::new(4.0, HIGHLIGHT_BLUE)
@@ -25,6 +34,101 @@ fn is_trip_highlighted(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> b
             t == track && matches!(category, DataCategory::Track | DataCategory::Tpv)
         }
         Some(HighlightScope::Point(_)) | None => false,
+    }
+}
+
+/// Returns the alpha multiplier to use when painting this track's elements.
+///
+/// Returns `1.0` when no hover is active or when this track is in focus.
+/// Returns [`HOVER_FADE_ALPHA`] for every other track while a hover is active,
+/// so the focused track stands out and all others are almost hidden.
+///
+/// Two hover sources are considered:
+/// - `highlight.hover` — a map pointer hover (any [`HighlightScope`]).
+/// - `highlight.plot_hover_point` — the plot cursor snapping to a TPV point.
+pub(crate) fn track_fade_alpha(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> f32 {
+    if !hover_is_active(highlight) {
+        return 1.0;
+    }
+    if is_track_in_focus(highlight, fi, ti) {
+        return 1.0;
+    }
+    HOVER_FADE_ALPHA
+}
+
+/// Apply a hover-fade by scaling the color's alpha channel rather than its RGB
+/// values, so the element fades to transparent against the map tiles instead
+/// of darkening toward black.
+///
+/// `fade` is expected to be in `[0.0, 1.0]`; values outside that range are
+/// clamped.
+pub(crate) fn apply_fade_alpha(color: Color32, fade: f32) -> Color32 {
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "fade is clamped to [0, 1] so the product is non-negative"
+    )]
+    let a = ((color.a() as f32) * fade.clamp(0.0, 1.0)) as u8;
+    Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), a)
+}
+
+/// Returns `true` when any hover source is currently active, meaning non-focused
+/// tracks should be dimmed.
+///
+/// For map hover (`highlight.hover`) any active scope qualifies.
+/// For plot hover only [`MapHighlight::plot_hover_snapped`] qualifies — the
+/// cursor must be within snap-distance of an actual data point so that moving
+/// the cursor into the plot area does not immediately trigger the overlay.
+pub(crate) fn hover_is_active(highlight: &MapHighlight) -> bool {
+    highlight.hover.is_some() || highlight.plot_hover_snapped
+}
+
+/// Returns `true` when the given track is the focus of the current hover.
+pub(crate) fn is_track_in_focus(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> bool {
+    let track = TrackRef::new(fi, ti);
+    let from_map_hover = match highlight.hover {
+        Some(HighlightScope::File { file_index }) => file_index == fi,
+        Some(HighlightScope::Track(t)) | Some(HighlightScope::TrackCategory { track: t, .. }) => {
+            t == track
+        }
+        Some(HighlightScope::Point(r)) => r.track == track,
+        None => false,
+    };
+    if from_map_hover {
+        return true;
+    }
+    // Only treat the plot hover as a focus source when the cursor has actually
+    // snapped close to a data point; otherwise moving into the plot area would
+    // immediately change which track is "in focus" on the map.
+    if highlight.plot_hover_snapped
+        && let Some((phfi, phti, _)) = highlight.plot_hover_point
+    {
+        return phfi == fi && phti == ti;
+    }
+    false
+}
+
+/// Returns the single [`TrackRef`] currently in focus, or `None` when no
+/// specific track has focus (hover inactive, or a file-level scope).
+///
+/// Used by [`crate::NavMap`] to detect when the focused track changes and to
+/// drive the hysteresis/animation logic in `HoverFadeState`.
+pub(crate) fn focused_track_from_highlight(highlight: &MapHighlight) -> Option<TrackRef> {
+    match highlight.hover {
+        Some(HighlightScope::Track(t)) | Some(HighlightScope::TrackCategory { track: t, .. }) => {
+            Some(t)
+        }
+        Some(HighlightScope::Point(r)) => Some(r.track),
+        Some(HighlightScope::File { .. }) | None => {
+            // Only return a plot-hover track when the cursor has actually
+            // snapped to a data point; entering the plot area does not count.
+            if highlight.plot_hover_snapped {
+                highlight
+                    .plot_hover_point
+                    .map(|(fi, ti, _)| TrackRef::new(fi, ti))
+            } else {
+                None
+            }
+        }
     }
 }
 

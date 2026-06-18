@@ -2209,6 +2209,7 @@ dependencies = [
 name = "gt-map"
 version = "0.1.0"
 dependencies = [
+ "bon",
  "chrono",
  "egui",
  "egui-phosphor",

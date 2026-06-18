@@ -450,6 +450,15 @@ pub struct PlotState {
     /// the plot via `set_plot_bounds_x`.  Used to detect changes and avoid
     /// re-applying the same range every frame (which would prevent manual zoom).
     applied_map_x_range: Option<(u64, u64)>,
+    /// Whether the plot cursor was snapped close to a data point on the most
+    /// recently rendered frame.
+    ///
+    /// Set by [`show_track_plot`] using a 2-D screen-space distance check
+    /// against every enabled metric line.  The app layer forwards this to
+    /// [`gt_ui_types::MapHighlight::plot_hover_snapped`] so the map overlay
+    /// activates only when the cursor is genuinely near a plotted value, not
+    /// just anywhere inside the plot area.
+    pub plot_cursor_snapped: bool,
 }
 
 impl Default for PlotState {
@@ -467,6 +476,7 @@ impl Default for PlotState {
             level_cache: Vec::new(),
             last_computed_bounds: None,
             applied_map_x_range: None,
+            plot_cursor_snapped: false,
         }
     }
 }
@@ -732,13 +742,9 @@ pub fn show_track_plot(
             );
         }
 
-        // Persist a freshly computed cache by moving it out of the Cow now that
-        // the render loop is done borrowing it - no per-frame clone.
         if let std::borrow::Cow::Owned(owned) = resolved {
             new_level_cache = Some(owned);
         }
-
-        // Vertical cursor from map hover.
         if let Some(t) = map_hover_time {
             let x = t.timestamp() as f64;
             plot_ui.vline(
@@ -763,6 +769,12 @@ pub fn show_track_plot(
     if let Some(applied) = new_applied_map_x_range {
         state.applied_map_x_range = applied;
     }
+    // `hovered_plot_item` is set by egui_plot when the cursor is within its own
+    // interact radius of a plotted item — the exact condition that causes
+    // egui_plot to show a hover label.  Use it directly so the map overlay
+    // activates at precisely the same moment, with no custom approximation.
+    state.plot_cursor_snapped =
+        plot_response.response.hovered() && plot_response.hovered_plot_item.is_some();
     state.legend_hover_file = show_file_legend_overlay(
         ui,
         files,

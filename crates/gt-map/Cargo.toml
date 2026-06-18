@@ -10,6 +10,7 @@ authors.workspace = true
 doctest = false
 
 [dependencies]
+bon.workspace = true
 chrono.workspace = true
 egui.workspace = true
 egui-phosphor.workspace = true

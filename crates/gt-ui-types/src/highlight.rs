@@ -38,6 +38,13 @@ pub struct MapHighlight {
     /// `TpvRenderer` reads this directly instead of re-scanning all points.
     /// `None` when `plot_hover_time` is `None`.
     pub plot_hover_point: Option<(FileIdx, TrackIdx, PointIdx)>,
+    /// `true` when the plot cursor is within the snap-distance threshold of
+    /// `plot_hover_point` (approximately 25 px in time on-screen).
+    ///
+    /// Only when this is `true` does the map overlay activate for plot hover —
+    /// prevents the map from dimming the moment the cursor crosses the plot
+    /// boundary, before it is actually near any data.
+    pub plot_hover_snapped: bool,
     /// When `true`, renderers must not draw their individual hover labels.
     ///
     /// Set by `NavMap` in two situations: when the disambiguation popup is open

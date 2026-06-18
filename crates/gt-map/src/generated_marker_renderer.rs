@@ -4,6 +4,8 @@ use gt_types::{DataCategory, LoadedFile, SpatialPoint};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, TrackDataVisibility};
 use walkers::{MapMemory, Plugin, Projector};
 
+use crate::track_renderer;
+
 pub struct GeneratedMarkerRenderer<'a> {
     files: &'a [LoadedFile],
     visibility: &'a TrackDataVisibility,
@@ -131,7 +133,9 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             };
             let screen_pos = transform.to_screen(sp.merc);
             let highlighted = self.is_point_highlighted(point_ref);
-            draw_generated_marker(ui, screen_pos, marker.kind, highlighted);
+            let fade =
+                track_renderer::track_fade_alpha(self.highlight, sp.file_index, sp.track_index);
+            draw_generated_marker(ui, screen_pos, marker.kind, highlighted, fade);
         }
 
         // Show tooltip for the hovered generated marker. Suppressed when the primary
@@ -209,6 +213,7 @@ fn draw_generated_marker(
     center: Pos2,
     kind: gt_types::GeneratedMarkerKind,
     highlighted: bool,
+    fade: f32,
 ) {
     let painter = ui.painter();
     let (bg, stroke_color) = match kind {
@@ -222,9 +227,11 @@ fn draw_generated_marker(
             (Color32::from_rgb(255, 149, 0), Color32::WHITE)
         }
     };
+    let faded_bg = track_renderer::apply_fade_alpha(bg, fade);
+    let faded_stroke = track_renderer::apply_fade_alpha(stroke_color, fade);
     let radius = if highlighted { 11.0 } else { 8.0 };
-    painter.circle_filled(center, radius, bg);
-    painter.circle_stroke(center, radius, Stroke::new(1.5, stroke_color));
+    painter.circle_filled(center, radius, faded_bg);
+    painter.circle_stroke(center, radius, Stroke::new(1.5, faded_stroke));
     if highlighted {
         painter.circle_stroke(
             center,
@@ -235,12 +242,12 @@ fn draw_generated_marker(
     let s = 4.0;
     match kind {
         gt_types::GeneratedMarkerKind::GnssFixLost => {
-            let st = Stroke::new(2.0, stroke_color);
+            let st = Stroke::new(2.0, faded_stroke);
             painter.line_segment([center - egui::vec2(s, s), center + egui::vec2(s, s)], st);
             painter.line_segment([center + egui::vec2(-s, s), center + egui::vec2(s, -s)], st);
         }
         gt_types::GeneratedMarkerKind::GnssFixRegained { .. } => {
-            let st = Stroke::new(2.0, stroke_color);
+            let st = Stroke::new(2.0, faded_stroke);
             painter.line_segment(
                 [
                     center + egui::vec2(-s, 0.0),
@@ -255,7 +262,7 @@ fn draw_generated_marker(
         }
         gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. } => {
             // Exclamation mark: an anomaly to inspect.
-            let st = Stroke::new(2.0, stroke_color);
+            let st = Stroke::new(2.0, faded_stroke);
             painter.line_segment(
                 [
                     center - egui::vec2(0.0, s),
@@ -263,7 +270,7 @@ fn draw_generated_marker(
                 ],
                 st,
             );
-            painter.circle_filled(center + egui::vec2(0.0, s * 0.85), 1.3, stroke_color);
+            painter.circle_filled(center + egui::vec2(0.0, s * 0.85), 1.3, faded_stroke);
         }
     }
 }

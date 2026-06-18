@@ -8,6 +8,8 @@ use gt_ui_types::{
 use std::collections::HashMap;
 use walkers::{MapMemory, Plugin, Projector};
 
+use crate::track_renderer;
+
 pub struct EventMarkerRenderer<'a> {
     files: &'a [LoadedFile],
     visibility: &'a TrackDataVisibility,
@@ -92,7 +94,9 @@ impl Plugin for EventMarkerRenderer<'_> {
             let color = resolve_color(marker, style_map);
             let icon = resolve_icon(&marker.variant_path, style_map);
             let highlighted = is_highlighted(self.highlight, point_ref);
-            draw_event_marker(ui, screen_pos, icon, color, highlighted);
+            let fade =
+                track_renderer::track_fade_alpha(self.highlight, sp.file_index, sp.track_index);
+            draw_event_marker(ui, screen_pos, icon, color, highlighted, fade);
         }
 
         // Show tooltip for the hovered event marker. Uses hover_candidates[1] so
@@ -192,80 +196,124 @@ fn is_highlighted(highlight: &MapHighlight, point_ref: DataPointRef) -> bool {
     }
 }
 
-fn draw_event_marker(ui: &Ui, center: Pos2, icon: MarkerIcon, color: Color32, highlighted: bool) {
+fn draw_event_marker(
+    ui: &Ui,
+    center: Pos2,
+    icon: MarkerIcon,
+    color: Color32,
+    highlighted: bool,
+    fade: f32,
+) {
     match icon {
-        MarkerIcon::Pin | MarkerIcon::Log => draw_diamond(ui, center, color, highlighted),
-        MarkerIcon::Cross => {
-            draw_event_icon(ui, center, crate::icons::ICON_URI_CROSS, 20.0, highlighted)
-        }
+        MarkerIcon::Pin | MarkerIcon::Log => draw_diamond(ui, center, color, highlighted, fade),
+        MarkerIcon::Cross => draw_event_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_CROSS,
+            crate::icons::ICON_SIZE_PX,
+            highlighted,
+            fade,
+        ),
         MarkerIcon::Circle => draw_event_icon(
             ui,
             center,
             crate::icons::ICON_URI_CIRCLE_MARKER,
-            20.0,
+            crate::icons::ICON_SIZE_PX,
             highlighted,
+            fade,
         ),
         MarkerIcon::Lightning => draw_event_icon(
             ui,
             center,
             crate::icons::ICON_URI_LIGHTNING,
-            20.0,
+            crate::icons::ICON_SIZE_PX,
             highlighted,
+            fade,
         ),
         MarkerIcon::Warning => draw_event_icon(
             ui,
             center,
             crate::icons::ICON_URI_WARNING,
-            24.0,
+            crate::icons::ICON_SIZE_LARGE_PX,
             highlighted,
+            fade,
         ),
-        MarkerIcon::Error => {
-            draw_event_icon(ui, center, crate::icons::ICON_URI_ERROR, 20.0, highlighted)
-        }
-        MarkerIcon::Check => {
-            draw_event_icon(ui, center, crate::icons::ICON_URI_CHECK, 20.0, highlighted)
-        }
+        MarkerIcon::Error => draw_event_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_ERROR,
+            crate::icons::ICON_SIZE_PX,
+            highlighted,
+            fade,
+        ),
+        MarkerIcon::Check => draw_event_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_CHECK,
+            crate::icons::ICON_SIZE_PX,
+            highlighted,
+            fade,
+        ),
         MarkerIcon::Satellite => draw_event_icon(
             ui,
             center,
             crate::icons::ICON_URI_SATELLITE,
-            24.0,
+            crate::icons::ICON_SIZE_LARGE_PX,
             highlighted,
+            fade,
         ),
         MarkerIcon::SatelliteLost => draw_event_icon(
             ui,
             center,
             crate::icons::ICON_URI_SATELLITE_LOST,
-            24.0,
+            crate::icons::ICON_SIZE_LARGE_PX,
             highlighted,
+            fade,
         ),
-        MarkerIcon::Gear => {
-            draw_event_icon(ui, center, crate::icons::ICON_URI_GEAR, 20.0, highlighted)
-        }
+        MarkerIcon::Gear => draw_event_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_GEAR,
+            crate::icons::ICON_SIZE_PX,
+            highlighted,
+            fade,
+        ),
         MarkerIcon::Refresh => draw_event_icon(
             ui,
             center,
             crate::icons::ICON_URI_REFRESH,
-            20.0,
+            crate::icons::ICON_SIZE_PX,
             highlighted,
+            fade,
         ),
         MarkerIcon::Download => draw_event_icon(
             ui,
             center,
             crate::icons::ICON_URI_DOWNLOAD,
-            20.0,
+            crate::icons::ICON_SIZE_PX,
             highlighted,
+            fade,
         ),
-        MarkerIcon::Upload => {
-            draw_event_icon(ui, center, crate::icons::ICON_URI_UPLOAD, 20.0, highlighted)
-        }
-        MarkerIcon::Wrench => {
-            draw_event_icon(ui, center, crate::icons::ICON_URI_WRENCH, 20.0, highlighted)
-        }
+        MarkerIcon::Upload => draw_event_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_UPLOAD,
+            crate::icons::ICON_SIZE_PX,
+            highlighted,
+            fade,
+        ),
+        MarkerIcon::Wrench => draw_event_icon(
+            ui,
+            center,
+            crate::icons::ICON_URI_WRENCH,
+            crate::icons::ICON_SIZE_PX,
+            highlighted,
+            fade,
+        ),
     }
 }
 
-fn draw_diamond(ui: &Ui, center: Pos2, color: Color32, highlighted: bool) {
+fn draw_diamond(ui: &Ui, center: Pos2, color: Color32, highlighted: bool, fade: f32) {
     let painter = ui.painter();
     let size = if highlighted { 10.0 } else { 7.0 };
     let points = [
@@ -276,8 +324,8 @@ fn draw_diamond(ui: &Ui, center: Pos2, color: Color32, highlighted: bool) {
     ];
     painter.add(egui::Shape::convex_polygon(
         points.to_vec(),
-        color,
-        Stroke::new(1.5, Color32::WHITE),
+        track_renderer::apply_fade_alpha(color, fade),
+        Stroke::new(1.5, track_renderer::apply_fade_alpha(Color32::WHITE, fade)),
     ));
     if highlighted {
         painter.add(egui::Shape::convex_polygon(
@@ -294,7 +342,14 @@ fn draw_diamond(ui: &Ui, center: Pos2, color: Color32, highlighted: bool) {
     }
 }
 
-fn draw_event_icon(ui: &Ui, center: Pos2, uri: &'static str, size: f32, highlighted: bool) {
+fn draw_event_icon(
+    ui: &Ui,
+    center: Pos2,
+    uri: &'static str,
+    size: f32,
+    highlighted: bool,
+    fade: f32,
+) {
     if highlighted {
         ui.painter()
             .circle_stroke(center, (size / 2.0) + 4.0, Stroke::new(2.0, HIGHLIGHT_BLUE));
@@ -303,7 +358,7 @@ fn draw_event_icon(ui: &Ui, center: Pos2, uri: &'static str, size: f32, highligh
         ui,
         uri,
         egui::Rect::from_center_size(center, egui::vec2(size, size)),
-        egui::Color32::WHITE,
+        track_renderer::apply_fade_alpha(Color32::WHITE, fade),
     );
 }
 
@@ -345,6 +400,7 @@ mod snapshot_tests {
                     icon,
                     egui::Color32::from_rgb(230, 150, 50),
                     false,
+                    1.0,
                 );
             }
         });
@@ -355,7 +411,13 @@ mod snapshot_tests {
 }
 
 fn show_tooltip(ui: &Ui, point_ref: DataPointRef, marker: &gt_types::EventMarker, pos: Pos2) {
-    let hit_rect = egui::Rect::from_center_size(pos, egui::vec2(24.0, 24.0));
+    let hit_rect = egui::Rect::from_center_size(
+        pos,
+        egui::vec2(
+            crate::icons::ICON_SIZE_LARGE_PX,
+            crate::icons::ICON_SIZE_LARGE_PX,
+        ),
+    );
     let response = ui.interact(
         hit_rect,
         ui.id()
