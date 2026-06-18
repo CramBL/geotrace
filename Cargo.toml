@@ -1,11 +1,13 @@
 [package]
 name = "geotrace"
-version = "0.1.0"
+version.workspace = true
+description.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 exclude = [".github", "scripts"]
 homepage.workspace = true
+authors.workspace = true
 repository.workspace = true
 readme.workspace = true
 
@@ -35,7 +37,7 @@ members = [
 ]
 
 [workspace.package]
-description = ""
+description = "High-performance GNSS data visualizer, with advanced debugging and anomaly detection capabitilies"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.92"
