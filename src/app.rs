@@ -62,6 +62,19 @@ struct ResegmentPrompt {
     hidden_positions: Vec<usize>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct StartupOptions {
+    pub fading_enabled: bool,
+}
+
+impl Default for StartupOptions {
+    fn default() -> Self {
+        Self {
+            fading_enabled: true,
+        }
+    }
+}
+
 pub struct App {
     map: NavMap,
     shared: Rc<RefCell<SharedAppState>>,
@@ -132,18 +145,23 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        Self::new_with_files(cc, &[])
+        Self::new_with_files(cc, &[], StartupOptions::default())
     }
 
-    pub fn new_with_files(cc: &eframe::CreationContext<'_>, paths: &[PathBuf]) -> Self {
+    pub fn new_with_files(
+        cc: &eframe::CreationContext<'_>,
+        paths: &[PathBuf],
+        options: StartupOptions,
+    ) -> Self {
         let default_path = crate::settings::settings_path();
-        Self::new_with_config(cc, paths, default_path)
+        Self::new_with_config(cc, paths, default_path, options)
     }
 
     pub fn new_with_config(
         cc: &eframe::CreationContext<'_>,
         paths: &[PathBuf],
         config_path: Option<PathBuf>,
+        options: StartupOptions,
     ) -> Self {
         let mut fonts = egui::FontDefinitions::default();
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
@@ -240,7 +258,10 @@ impl App {
             shared: Rc::new(RefCell::new(SharedAppState {
                 loaded_files: Vec::new(),
                 tree: TreeState::new(),
-                highlight: MapHighlight::default(),
+                highlight: MapHighlight {
+                    fading_enabled: options.fading_enabled,
+                    ..Default::default()
+                },
                 filter: GlobalFilter::default(),
                 filter_state: FilterPanelState::default(),
                 plot_state: PlotState::default(),
@@ -1354,23 +1375,30 @@ impl eframe::App for App {
             // closest point in O(1) instead of re-scanning all track points.
             let plot_visible = self.plot_is_visible();
             if plot_visible {
-                if let Some(t) = s.plot_state.hovered_time {
+                if let Some(cursor_time) = s.plot_state.hovered_time {
                     let closest = gt_plot::find_closest_tpv(
                         &s.loaded_files,
                         s.tree.visibility(),
                         &s.filter,
-                        t,
+                        cursor_time,
                     );
-                    s.highlight.plot_hover_time = closest.map(|_| t);
+                    s.highlight.plot_hover_time = closest.map(|_| cursor_time);
                     s.highlight.plot_hover_point = closest;
+                    // `plot_cursor_snapped` is computed inside `show_track_plot`
+                    // using a 2-D screen-space check (both time and metric value)
+                    // so the overlay only triggers when egui_plot would also
+                    // show a hover label.
+                    s.highlight.plot_hover_snapped = s.plot_state.plot_cursor_snapped;
                 } else {
                     s.highlight.plot_hover_time = None;
                     s.highlight.plot_hover_point = None;
+                    s.highlight.plot_hover_snapped = false;
                 }
             } else {
                 s.plot_state.hovered_time = None;
                 s.highlight.plot_hover_time = None;
                 s.highlight.plot_hover_point = None;
+                s.highlight.plot_hover_snapped = false;
 
                 let btn_size = egui::vec2(28.0, 22.0);
                 let btn_rect = egui::Rect::from_min_size(

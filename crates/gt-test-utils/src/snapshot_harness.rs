@@ -5,6 +5,25 @@ fn snapshot_options() -> SnapshotOptions {
     SnapshotOptions::new().threshold(0.6)
 }
 
+/// Pixel-count tolerance for [`TestHarness::snapshot_loose`]. Live map/plot
+/// snapshots differ by a handful of pixels between GPU backends (the baselines
+/// are committed from Linux but CI compares them on the macOS runner), so a
+/// small allowance keeps those tests stable without masking real regressions.
+const LOOSE_PIXEL_COUNT_TOLERANCE: usize = 32;
+
+/// Installs the Phosphor icon font and image loaders into the test context so
+/// snapshots render real glyphs and SVG marker icons instead of fallback boxes.
+///
+/// Mirrors the production setup in `App::new_with_config`. `register_marker_icons`
+/// is deliberately not called here: it lives in `gt-map` and is invoked by that
+/// crate's own tests (calling it from here would invert the dependency direction).
+fn install_icon_assets(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    ctx.set_fonts(fonts);
+    egui_extras::install_image_loaders(ctx);
+}
+
 fn on_non_macos_ci() -> bool {
     std::env::var("CI").is_ok() && !cfg!(target_os = "macos")
 }
@@ -27,17 +46,12 @@ pub struct TestHarness<'a, State = ()> {
     _temp_dir: Option<tempfile::TempDir>,
 }
 
-impl<'a> TestHarness<'a> {
-    pub fn new_wgpu(size: egui::Vec2, f: impl FnMut(&mut egui::Ui) + 'a) -> Self {
-        let inner = Harness::builder()
-            .with_size(size)
-            .with_options(snapshot_options())
-            .wgpu()
-            .build_ui(f);
-        Self {
-            inner,
-            _temp_dir: None,
-        }
+impl<'a> TestHarness<'a, ()> {
+    /// Entry point for all snapshot harnesses. Lives on the `State = ()` impl so
+    /// `TestHarness::builder()` resolves without a turbofish; the builder's
+    /// `ui_state`/`eframe` methods then pick the real `State`.
+    pub fn builder() -> TestHarnessBuilder<'a> {
+        TestHarnessBuilder::default()
     }
 }
 
@@ -49,39 +63,20 @@ impl<'a, State> TestHarness<'a, State> {
         }
     }
 
-    /// Builds a new eframe snapshot test harness with a temporary configuration directory.
-    #[expect(
-        clippy::expect_used,
-        reason = "fatal setup failure in test harness should panic"
-    )]
-    pub fn new_eframe<F>(size: Option<egui::Vec2>, build_app: F) -> (Self, PathBuf)
-    where
-        F: FnOnce(&eframe::CreationContext<'_>, &Path) -> State,
-        State: eframe::App + 'static,
-    {
-        let temp_dir = tempfile::tempdir().expect("failed to create temp config dir");
-        let config_path = temp_dir.path().join("config.toml");
-        let config_path_clone = config_path.clone();
-
-        let mut builder = Harness::builder()
-            .with_wait_for_pending_images(false)
-            .with_options(snapshot_options());
-        if let Some(sz) = size {
-            builder = builder.with_size(sz);
-        }
-        let inner = builder.build_eframe(move |cc| build_app(cc, &config_path_clone));
-
-        (
-            Self {
-                inner,
-                _temp_dir: Some(temp_dir),
-            },
-            config_path,
-        )
-    }
-
     pub fn run(&mut self) {
         self.inner.run();
+    }
+
+    pub fn step(&mut self) {
+        self.inner.step();
+    }
+
+    pub fn state(&self) -> &State {
+        self.inner.state()
+    }
+
+    pub fn state_mut(&mut self) -> &mut State {
+        self.inner.state_mut()
     }
 
     /// Resize the harness viewport to exactly fit the rendered content,
@@ -103,9 +98,10 @@ impl<'a, State> TestHarness<'a, State> {
     ///
     /// Use this for snapshots that include live-rendered content (plots, maps)
     /// where minor floating-point layout differences produce a small number of
-    /// differing pixels across runs.
+    /// differing pixels across runs and across GPU backends (the committed
+    /// baselines are compared against the macOS runner).
     pub fn snapshot_loose(&mut self, name: &str) {
-        self.snapshot_with_threshold(name, 4.0);
+        self.snapshot_with_tolerance(name, 4.0, LOOSE_PIXEL_COUNT_TOLERANCE);
     }
 
     pub fn snapshot_with_threshold(&mut self, name: &str, threshold: f32) {
@@ -127,5 +123,100 @@ impl<'a, State> TestHarness<'a, State> {
                 .threshold(threshold)
                 .failed_pixel_count_threshold(failed_pixel_count_threshold),
         );
+    }
+}
+
+pub struct TestHarnessBuilder<'a> {
+    size: Option<egui::Vec2>,
+    fading_enabled: bool,
+    _marker: std::marker::PhantomData<&'a ()>,
+}
+
+impl Default for TestHarnessBuilder<'_> {
+    fn default() -> Self {
+        Self {
+            size: None,
+            fading_enabled: false,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'a> TestHarnessBuilder<'a> {
+    pub fn size(mut self, size: egui::Vec2) -> Self {
+        self.size = Some(size);
+        self
+    }
+
+    pub fn fading_enabled(mut self, enabled: bool) -> Self {
+        self.fading_enabled = enabled;
+        self
+    }
+
+    /// Build a harness for a simple UI closure.
+    pub fn ui<F>(self, f: F) -> TestHarness<'a>
+    where
+        F: FnMut(&mut egui::Ui) + 'a,
+    {
+        let mut builder = Harness::builder().with_options(snapshot_options()).wgpu();
+        if let Some(sz) = self.size {
+            builder = builder.with_size(sz);
+        }
+        let inner = builder.build_ui(f);
+        install_icon_assets(&inner.ctx);
+        TestHarness {
+            inner,
+            _temp_dir: None,
+        }
+    }
+
+    /// Build a harness for a UI closure with custom state.
+    pub fn ui_state<F, State>(self, f: F, state: State) -> TestHarness<'a, State>
+    where
+        F: FnMut(&mut egui::Ui, &mut State) + 'a,
+        State: 'static,
+    {
+        let mut builder = Harness::builder().with_options(snapshot_options()).wgpu();
+        if let Some(sz) = self.size {
+            builder = builder.with_size(sz);
+        }
+        let inner = builder.build_ui_state(f, state);
+        install_icon_assets(&inner.ctx);
+        TestHarness {
+            inner,
+            _temp_dir: None,
+        }
+    }
+
+    /// Build a harness for a full `eframe::App`, creating a temporary configuration directory.
+    #[expect(
+        clippy::expect_used,
+        reason = "fatal setup failure in test harness should panic"
+    )]
+    pub fn eframe<F, State>(self, build_app: F) -> (TestHarness<'a, State>, PathBuf)
+    where
+        F: FnOnce(&eframe::CreationContext<'_>, &Path, bool) -> State,
+        State: eframe::App + 'static,
+    {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp config dir");
+        let config_path = temp_dir.path().join("config.toml");
+        let config_path_clone = config_path.clone();
+
+        let mut builder = Harness::builder()
+            .with_wait_for_pending_images(false)
+            .with_options(snapshot_options());
+        if let Some(sz) = self.size {
+            builder = builder.with_size(sz);
+        }
+        let inner =
+            builder.build_eframe(move |cc| build_app(cc, &config_path_clone, self.fading_enabled));
+
+        (
+            TestHarness {
+                inner,
+                _temp_dir: Some(temp_dir),
+            },
+            config_path,
+        )
     }
 }

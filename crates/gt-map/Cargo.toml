@@ -10,6 +10,7 @@ authors.workspace = true
 doctest = false
 
 [dependencies]
+bon.workspace = true
 chrono.workspace = true
 egui.workspace = true
 egui-phosphor.workspace = true
@@ -24,7 +25,6 @@ uom.workspace = true
 walkers.workspace = true
 
 [dev-dependencies]
-egui_extras.workspace = true
 egui_kittest.workspace = true
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 proptest.workspace = true

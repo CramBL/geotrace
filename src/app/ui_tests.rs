@@ -11,6 +11,33 @@ use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
 
 use super::App;
 
+/// App constructor for snapshot harnesses, persisting settings at the harness's
+/// temp config path. `fading` is supplied by the harness (off by default) so
+/// snapshots don't capture mid-animation hover fades.
+fn build_app(cc: &eframe::CreationContext<'_>, config_path: &std::path::Path, fading: bool) -> App {
+    App::new_with_config(
+        cc,
+        &[],
+        Some(config_path.to_path_buf()),
+        super::StartupOptions {
+            fading_enabled: fading,
+        },
+    )
+}
+
+/// App constructor for the functional (non-snapshot) tests that don't touch a
+/// config file. Fading stays off so frame counts are deterministic.
+fn transient_app(cc: &mut eframe::CreationContext<'_>) -> App {
+    App::new_with_config(
+        cc,
+        &[],
+        None,
+        super::StartupOptions {
+            fading_enabled: false,
+        },
+    )
+}
+
 fn base_time() -> DateTime<Utc> {
     DateTime::from_timestamp(1_748_000_000, 0).expect("fixed timestamp is valid")
 }
@@ -125,7 +152,7 @@ fn drag_drop_gtd_path_loads_file() {
 
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(|cc| App::new_with_config(cc, &[], None));
+        .build_eframe(transient_app);
     harness.input_mut().dropped_files.push(egui::DroppedFile {
         path: Some(tmp_path),
         ..Default::default()
@@ -142,7 +169,7 @@ fn drag_drop_gtd_bytes_loads_file() {
 
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(|cc| App::new_with_config(cc, &[], None));
+        .build_eframe(transient_app);
     harness.input_mut().dropped_files.push(egui::DroppedFile {
         bytes: Some(Arc::from(gtd_bytes.as_slice())),
         name: "test.gtd".to_owned(),
@@ -158,7 +185,7 @@ fn drag_drop_gtd_bytes_loads_file() {
 fn drag_drop_unknown_bytes_sets_error() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(|cc| App::new_with_config(cc, &[], None));
+        .build_eframe(transient_app);
     // \xff is not valid UTF-8 and doesn't match the HDF5 magic, so the error
     // is detected synchronously without spawning a background thread.
     harness.input_mut().dropped_files.push(egui::DroppedFile {
@@ -176,7 +203,7 @@ fn drag_drop_unknown_bytes_sets_error() {
 fn panel_detached_renders_without_panic() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(|cc| App::new_with_config(cc, &[], None));
+        .build_eframe(transient_app);
     harness.step();
     assert!(!harness.state().shared.borrow().tree.detached);
 
@@ -213,7 +240,7 @@ fn panel_detached_renders_without_panic() {
 fn detached_panel_steps_complete_within_time_budget() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(|cc| App::new_with_config(cc, &[], None));
+        .build_eframe(transient_app);
     harness.step();
 
     harness.state_mut().shared.borrow_mut().tree.detached = true;
@@ -242,7 +269,7 @@ fn detached_panel_steps_complete_within_time_budget() {
 fn settings_window_stays_open_after_step() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(|cc| App::new_with_config(cc, &[], None));
+        .build_eframe(transient_app);
     harness.step(); // initial render
     harness.state_mut().settings_open = true;
     harness.step(); // frame where window is first shown
@@ -261,7 +288,7 @@ fn settings_window_stays_open_after_step() {
 fn settings_window_closes_on_esc() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
-        .build_eframe(|cc| App::new_with_config(cc, &[], None));
+        .build_eframe(transient_app);
     harness.step();
     harness.state_mut().settings_open = true;
     harness.step(); // window open
@@ -285,7 +312,7 @@ fn harness_with_three_files_loaded() -> Harness<'static, App> {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .with_size(egui::vec2(1280.0, 800.0))
-        .build_eframe(|cc| App::new_with_config(cc, &[], None));
+        .build_eframe(transient_app);
     harness.step();
     load_three_overlapping_files(&mut harness);
     harness.run_steps(20);
@@ -429,10 +456,9 @@ fn dragging_legend_near_top_left_redocks_automatically() {
 /// button, grid toggle, and metric chips).
 #[test]
 fn snapshot_app_with_file_loaded() {
-    let (mut harness, _config_path) =
-        TestHarness::new_eframe(Some(egui::vec2(1280.0, 800.0)), |cc, path| {
-            App::new_with_config(cc, &[], Some(path.to_path_buf()))
-        });
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
     harness.inner.step();
 
     harness
@@ -460,10 +486,9 @@ fn snapshot_app_with_file_loaded() {
 /// are hidden so only the closely-spaced Sahara tracks fill the map.
 #[test]
 fn snapshot_app_sahara_tracks() {
-    let (mut harness, _config_path) =
-        TestHarness::new_eframe(Some(egui::vec2(1280.0, 800.0)), |cc, path| {
-            App::new_with_config(cc, &[], Some(path.to_path_buf()))
-        });
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
     harness.inner.step();
 
     harness
@@ -512,10 +537,9 @@ fn snapshot_app_sahara_tracks() {
 /// fix-quality colors. This is the screenshot embedded in README.md.
 #[test]
 fn snapshot_app_demo_trip() {
-    let (mut harness, _config_path) =
-        TestHarness::new_eframe(Some(egui::vec2(1280.0, 800.0)), |cc, path| {
-            App::new_with_config(cc, &[], Some(path.to_path_buf()))
-        });
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
     harness.inner.step();
 
     harness
@@ -546,10 +570,9 @@ fn snapshot_app_demo_trip() {
 
 #[test]
 fn snapshot_app_three_overlapping_files() {
-    let (mut harness, _config_path) =
-        TestHarness::new_eframe(Some(egui::vec2(1280.0, 800.0)), |cc, path| {
-            App::new_with_config(cc, &[], Some(path.to_path_buf()))
-        });
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
     harness.inner.step();
     load_three_overlapping_files(&mut harness.inner);
     assert_eq!(harness.inner.state().shared.borrow().loaded_files.len(), 3);
@@ -564,10 +587,9 @@ fn snapshot_app_three_overlapping_files() {
 
 #[test]
 fn snapshot_settings_window() {
-    let (mut harness, _config_path) =
-        TestHarness::new_eframe(Some(egui::vec2(600.0, 400.0)), |cc, path| {
-            App::new_with_config(cc, &[], Some(path.to_path_buf()))
-        });
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(600.0, 400.0))
+        .eframe(build_app);
     harness.inner.step();
     harness.inner.state_mut().settings_open = true;
     harness.run();
@@ -576,10 +598,9 @@ fn snapshot_settings_window() {
 
 #[test]
 fn snapshot_history_locked_dialog() {
-    let (mut harness, _config_path) =
-        TestHarness::new_eframe(Some(egui::vec2(640.0, 420.0)), |cc, path| {
-            App::new_with_config(cc, &[], Some(path.to_path_buf()))
-        });
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(640.0, 420.0))
+        .eframe(build_app);
     harness.inner.step();
     harness.inner.state_mut().pending_history_unlock =
         Some(std::path::PathBuf::from("geotrace.h5"));
@@ -589,10 +610,9 @@ fn snapshot_history_locked_dialog() {
 
 #[test]
 fn snapshot_history_corrupt_dialog() {
-    let (mut harness, _config_path) =
-        TestHarness::new_eframe(Some(egui::vec2(640.0, 420.0)), |cc, path| {
-            App::new_with_config(cc, &[], Some(path.to_path_buf()))
-        });
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(640.0, 420.0))
+        .eframe(build_app);
     harness.inner.step();
     harness.inner.state_mut().pending_db_corruption = Some(std::path::PathBuf::from("geotrace.h5"));
     harness.run();
@@ -601,10 +621,9 @@ fn snapshot_history_corrupt_dialog() {
 
 #[test]
 fn snapshot_history_resegment_dialog() {
-    let (mut harness, _config_path) =
-        TestHarness::new_eframe(Some(egui::vec2(640.0, 420.0)), |cc, path| {
-            App::new_with_config(cc, &[], Some(path.to_path_buf()))
-        });
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(640.0, 420.0))
+        .eframe(build_app);
     harness.inner.step();
     harness.inner.state_mut().pending_resegment = Some(super::ResegmentPrompt {
         db_ref: gt_history::DatabaseRef {
@@ -626,10 +645,9 @@ fn snapshot_history_resegment_dialog() {
 
 #[test]
 fn snapshot_load_warnings_dialog() {
-    let (mut harness, _config_path) =
-        TestHarness::new_eframe(Some(egui::vec2(1024.0, 768.0)), |cc, path| {
-            App::new_with_config(cc, &[], Some(path.to_path_buf()))
-        });
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1024.0, 768.0))
+        .eframe(build_app);
     harness.inner.step();
     harness.inner.state().shared.borrow_mut().warnings_popup = Some((
         "ride_2025-05-23.gtd".to_owned(),

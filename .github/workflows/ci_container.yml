@@ -30,15 +30,25 @@ jobs:
         with:
           persist-credentials: false
 
+      # `just ci` builds the dev container images and runs the SDK suites with
+      # vcpkg, which together exhaust the default runner disk. Reclaim the space
+      # taken by toolchains this job never uses (~25 GB).
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+            /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+          sudo docker image prune --all --force || true
+          df -h /
+
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
         with:
-          tool: just,nextest
+          tool: just,nextest,cargo-msrv
 
-      # `just ci` runs the `test` recipe natively on this host (not in the
-      # container), and `cargo nextest run --workspace` includes gt-arch, whose
-      # architecture test shells out to `cargo pup`. cargo-pup must be built
-      # with the pinned nightly the workspace's pup.ron targets.
+      # The dev image no longer ships cargo-pup or cargo-msrv, so the `pup`,
+      # `msrv`, and `sdk-msrv` recipes run natively on this host (as does the
+      # `test` recipe, whose gt-arch test shells out to `cargo pup`). cargo-pup
+      # must be built with the pinned nightly the workspace's pup.ron targets.
       - name: Install Rust nightly (for cargo-pup)
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
         with:

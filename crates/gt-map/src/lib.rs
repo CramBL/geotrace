@@ -96,6 +96,95 @@ impl BlinkState {
     }
 }
 
+/// Minimum time (seconds) the cursor must hold the same focused track before
+/// the fade-in begins.
+const HOVER_HYSTERESIS_SEC: f64 = 0.15;
+/// Fade-in rate in overlay-progress units per second (0→1 in ≈ 330 ms).
+const HOVER_FADE_IN_RATE: f32 = 3.0;
+/// Fade-out rate when the overlay is near-opaque (start of departure).
+const HOVER_FADE_OUT_SLOW: f32 = 0.1;
+/// Fade-out rate when the overlay is near-transparent (end of departure).
+/// Combined with `HOVER_FADE_OUT_SLOW` the overlay stays ≈ 78 % visible
+/// after 1 s and reaches zero in ≈ 2 s — a quadratic ease-in curve.
+const HOVER_FADE_OUT_FAST: f32 = 1.5;
+
+/// Manages the smooth fade animation for the hover-focus overlay.
+///
+/// Applies a hysteresis delay before starting the fade, and resets the delay
+/// whenever the focused track changes — so fast cursor movement across many
+/// tracks never triggers the overlay.
+struct HoverFadeState {
+    /// Current overlay progress in [0.0, 1.0]; 0 = no overlay, 1 = full overlay.
+    progress: f32,
+    /// egui clock time when the current focused track was first established.
+    /// Cleared when hover ends or the focused track changes.
+    hover_since: Option<f64>,
+    /// egui clock time of the previous `tick` call; used to compute `dt`.
+    prev_time: f64,
+    /// The focused track at the last `tick`, used to detect changes.
+    focused_track: Option<TrackRef>,
+}
+
+impl HoverFadeState {
+    /// Advance the animation by one frame and return the current progress.
+    ///
+    /// - **Track changed while hovering**: resets the delay timer and
+    ///   *freezes* `progress` — the overlay holds its current opacity while
+    ///   the cursor moves, eliminating the "light-up then dim" oscillation
+    ///   between adjacent tracks.
+    /// - **Same track held for ≥ [`HOVER_HYSTERESIS_SEC`]**: fades in.
+    /// - **Hover ended**: ease-in fade-out starting very slowly and
+    ///   accelerating, so the overlay is still ≈ 78 % visible after 1 s
+    ///   and fully gone after ≈ 2 s.
+    fn tick(&mut self, now: f64, hover_active: bool, current_focused: Option<TrackRef>) -> f32 {
+        let dt = (now - self.prev_time).clamp(0.0, 0.1) as f32;
+        self.prev_time = now;
+
+        if hover_active {
+            if current_focused != self.focused_track {
+                // Track changed: restart delay but freeze progress so the
+                // overlay does not oscillate while the cursor is moving.
+                self.focused_track = current_focused;
+                self.hover_since = Some(now);
+            } else if self.hover_since.is_none() {
+                self.hover_since = Some(now);
+            }
+
+            let delay_expired = self
+                .hover_since
+                .is_some_and(|t| now - t >= HOVER_HYSTERESIS_SEC);
+            if delay_expired {
+                self.progress = (self.progress + dt * HOVER_FADE_IN_RATE).min(1.0);
+            }
+            // Delay not expired: keep progress frozen — no fade-in, no fade-out.
+        } else {
+            self.focused_track = None;
+            self.hover_since = None;
+            // Variable-rate ease-in: slow start → fast end over ≈ 2 s.
+            let rate = HOVER_FADE_OUT_SLOW
+                + (HOVER_FADE_OUT_FAST - HOVER_FADE_OUT_SLOW) * (1.0 - self.progress);
+            self.progress = (self.progress - dt * rate).max(0.0);
+        }
+
+        self.progress
+    }
+
+    fn is_animating(&self) -> bool {
+        self.progress > 0.0 || self.hover_since.is_some()
+    }
+}
+
+impl Default for HoverFadeState {
+    fn default() -> Self {
+        Self {
+            progress: 0.0,
+            hover_since: None,
+            prev_time: 0.0,
+            focused_track: None,
+        }
+    }
+}
+
 pub struct NavMap {
     egui_ctx: Context,
     osm_tiles: HttpTiles,
@@ -113,6 +202,8 @@ pub struct NavMap {
     blink: BlinkState,
     /// Index of the first newly loaded file; files[new_file_boundary..] are new.
     new_file_boundary: usize,
+    /// Smooth fade animation for the hover-focus overlay.
+    hover_fade: HoverFadeState,
     /// Geographic bounds of the last rendered viewport.
     /// `None` before the first draw call.
     last_viewport_bounds: Option<GeoBounds>,
@@ -140,6 +231,7 @@ impl NavMap {
             last_file_count: 0,
             blink: BlinkState { start: None },
             new_file_boundary: 0,
+            hover_fade: HoverFadeState::default(),
             last_viewport_bounds: None,
             right_click_ref: None,
             disambiguation_candidates: [None; 4],
@@ -281,6 +373,23 @@ impl NavMap {
                 .request_repaint_after(std::time::Duration::from_millis(16));
         }
 
+        // Advance the hover-fade animation using the previous frame's highlight,
+        // which is what the renderers will see this frame.
+        let hover_fade_progress = if highlight.fading_enabled {
+            let progress = self.hover_fade.tick(
+                now,
+                track_renderer::hover_is_active(highlight),
+                track_renderer::focused_track_from_highlight(highlight),
+            );
+            if self.hover_fade.is_animating() {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(16));
+            }
+            progress
+        } else {
+            0.0
+        };
+
         // Suppress individual renderer hover labels when:
         // - the disambiguation popup is currently open (it occupies the cursor area), or
         // - multiple hover candidates were active last frame (the map layer draws a single
@@ -349,15 +458,18 @@ impl NavMap {
             }
         };
         let map = map
-            .with_plugin(TrackLayers::new(
-                files,
-                &plan,
-                highlight,
-                filter,
-                visible.tpv_by_track,
-                self.new_file_boundary,
-                blink_alpha,
-            ))
+            .with_plugin(
+                TrackLayers::builder()
+                    .files(files)
+                    .plan(&plan)
+                    .highlight(highlight)
+                    .filter(filter)
+                    .tpv_by_track(visible.tpv_by_track)
+                    .new_file_boundary(self.new_file_boundary)
+                    .blink_alpha(blink_alpha)
+                    .hover_fade_alpha(hover_fade_progress)
+                    .build(),
+            )
             .with_plugin(MarkerRenderer::new(
                 files,
                 visibility,
@@ -1235,12 +1347,6 @@ mod snapshot_tests {
         }
     }
 
-    fn install_phosphor(ui: &egui::Ui) {
-        let mut fonts = egui::FontDefinitions::default();
-        egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
-        ui.ctx().set_fonts(fonts);
-    }
-
     /// Builds a single `LoadedFile` with one TPV point, one event marker, one custom
     /// marker, and one `GnssFixRegained` generated marker, all at index 0.  Used by
     /// snapshot tests so each candidate type produces real human-readable text.
@@ -1339,10 +1445,11 @@ mod snapshot_tests {
         let files = vec![make_snapshot_file()];
         let candidates = [Some(tpv_ref()), Some(event_ref()), Some(custom_ref()), None];
 
-        let mut harness = TestHarness::new_wgpu(egui::vec2(400.0, 800.0), move |ui| {
-            install_phosphor(ui);
-            draw_multi_hover_label_contents(ui, &candidates, &files);
-        });
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(400.0, 800.0))
+            .ui(move |ui| {
+                draw_multi_hover_label_contents(ui, &candidates, &files);
+            });
 
         harness.fit_contents();
         harness.snapshot("multi_hover_stacked_label");
@@ -1357,10 +1464,11 @@ mod snapshot_tests {
         let files = vec![make_snapshot_file()];
         let candidates = [Some(tpv_ref()), None, None, Some(gen_ref())];
 
-        let mut harness = TestHarness::new_wgpu(egui::vec2(400.0, 800.0), move |ui| {
-            install_phosphor(ui);
-            draw_multi_hover_label_contents(ui, &candidates, &files);
-        });
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(400.0, 800.0))
+            .ui(move |ui| {
+                draw_multi_hover_label_contents(ui, &candidates, &files);
+            });
 
         harness.fit_contents();
         harness.snapshot("multi_hover_tpv_and_generated_marker");
@@ -1376,15 +1484,16 @@ mod snapshot_tests {
         let candidates = [Some(tpv_ref()), Some(event_ref()), None, None];
         let sticky = Some(tpv_ref());
 
-        let mut harness = TestHarness::new_wgpu(egui::vec2(300.0, 90.0), move |ui| {
-            install_phosphor(ui);
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.set_min_width(200.0);
-                for candidate in candidates.iter().flatten().copied() {
-                    draw_disambig_row(ui, candidate, &files, sticky == Some(candidate));
-                }
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(300.0, 90.0))
+            .ui(move |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(200.0);
+                    for candidate in candidates.iter().flatten().copied() {
+                        draw_disambig_row(ui, candidate, &files, sticky == Some(candidate));
+                    }
+                });
             });
-        });
 
         harness.run();
         harness.snapshot("disambig_popup_big_icons");

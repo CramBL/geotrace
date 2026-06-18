@@ -2209,6 +2209,7 @@ dependencies = [
 name = "gt-map"
 version = "0.1.0"
 dependencies = [
+ "bon",
  "chrono",
  "egui",
  "egui-phosphor",
@@ -2271,6 +2272,8 @@ dependencies = [
  "chrono",
  "eframe",
  "egui",
+ "egui-phosphor",
+ "egui_extras",
  "egui_kittest",
  "geo",
  "geo-types",

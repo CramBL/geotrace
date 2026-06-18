@@ -44,10 +44,12 @@ WORKDIR /workspace
 COPY rust-toolchain.toml ./
 RUN rustup show
 
-# Install the nightly toolchain required by cargo-pup.
-# The exact version is pinned in justfile / pup.ron.
-RUN rustup toolchain install nightly-2026-01-22 \
-    --component rust-src,rustc-dev,llvm-tools-preview
+# cargo-pup (architecture lints) and cargo-msrv are intentionally NOT installed
+# here. cargo-pup needs a pinned nightly with rustc-dev/llvm-tools and is
+# compiled from source; cargo-msrv downloads many toolchains at runtime. Both
+# bloat the image, so the `pup`, `msrv`, and `sdk-msrv` recipes run natively
+# (see scripts/container-rust.just) with the tools installed via cached CI
+# actions instead.
 
 # Python package manager used by the Python SDK.
 RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
@@ -61,20 +63,14 @@ RUN curl -L --proto '=https' --tlsv1.2 -sSf \
 
 RUN cargo binstall --no-confirm \
     just \
-    cargo-msrv \
     cargo-nextest \
     typos-cli \
     cargo-sort \
     cargo-shear \
     zizmor
 
-# cargo-pup must be built against the nightly compiler; there is no pre-built
-# binary distribution, so we compile it from source with the pinned nightly.
-RUN cargo +nightly-2026-01-22 install cargo_pup
-
 # Make the Rust toolchain and installed binaries writable by any user so that
-# containers can be run with --user $(id -u):$(id -g) and still allow tools
-# like cargo-msrv to install temporary toolchains.
+# containers can be run with --user $(id -u):$(id -g).
 RUN chmod -R a+rwX "$CARGO_HOME" "$RUSTUP_HOME"
 
 ### Stage 2: C/C++ SDK dev ###

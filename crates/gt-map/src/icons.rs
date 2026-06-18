@@ -19,6 +19,11 @@ pub(crate) const ICON_URI_UPLOAD: &str = "bytes://gt-map/icons/upload.svg";
 pub(crate) const ICON_URI_WRENCH: &str = "bytes://gt-map/icons/wrench.svg";
 pub(crate) const ICON_URI_GHOST_FIX: &str = "bytes://gt-map/icons/ghost_fix.svg";
 
+/// Standard icon size in pixels used for most marker SVG icons.
+pub(crate) const ICON_SIZE_PX: f32 = 20.0;
+/// Larger icon size in pixels used for satellite and warning markers.
+pub(crate) const ICON_SIZE_LARGE_PX: f32 = 24.0;
+
 /// Register the embedded SVG marker icons with the egui context.
 ///
 /// Call this once at startup (before the first frame) from your `App::new`

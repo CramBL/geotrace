@@ -20,9 +20,15 @@ use crate::tpv_renderer::{
     self, QUALITY_LINE_WIDTH, TpvDrawStyle, TrackIconFade, bucket_alpha, fix_icon_alpha,
     line_alpha_bucket, quality_line_color, split_spans_by,
 };
-use crate::track_renderer::{blink_stroke, draw_track_with_ghost, skip_trackline, track_stroke};
+use crate::track_renderer::{
+    self, blink_stroke, draw_track_with_ghost, skip_trackline, track_stroke,
+};
 use crate::transform::{MercTransform, lod_points};
 use crate::viewport::{TrackEntry, TrackPlan};
+
+/// Minimum animated progress at which the overlay and three-phase rendering
+/// are active.  Below this the overlay is invisible and the normal path runs.
+const FADE_VISIBLE_THRESHOLD: f32 = 0.01;
 
 /// Margin around the viewport inside which per-fix icons are still drawn,
 /// so icons whose shape extends past the edge are not clipped visibly.
@@ -79,6 +85,7 @@ impl TrackGeometry<'_> {
     }
 }
 
+#[derive(bon::Builder)]
 pub struct TrackLayers<'a> {
     files: &'a [LoadedFile],
     plan: &'a TrackPlan,
@@ -93,29 +100,12 @@ pub struct TrackLayers<'a> {
     new_file_boundary: usize,
     /// Current blink intensity in [0.0, 1.0]. Zero means no overlay.
     blink_alpha: f32,
+    /// Animated hover-fade progress in [0.0, 1.0].
+    /// Driven by [`crate::HoverFadeState`]: 0 = no overlay, 1 = full overlay.
+    hover_fade_alpha: f32,
 }
 
-impl<'a> TrackLayers<'a> {
-    pub(crate) fn new(
-        files: &'a [LoadedFile],
-        plan: &'a TrackPlan,
-        highlight: &'a MapHighlight,
-        filter: &'a GlobalFilter,
-        tpv_by_track: HashMap<TrackRef, Vec<usize>>,
-        new_file_boundary: usize,
-        blink_alpha: f32,
-    ) -> Self {
-        Self {
-            files,
-            plan,
-            highlight,
-            filter,
-            tpv_by_track,
-            new_file_boundary,
-            blink_alpha,
-        }
-    }
-}
+impl<'a> TrackLayers<'a> {}
 
 impl Plugin for TrackLayers<'_> {
     fn run(
@@ -130,10 +120,52 @@ impl Plugin for TrackLayers<'_> {
         // cancellation.
         let transform = MercTransform::new(projector, map_memory, ui.max_rect().center());
         let style = tpv_renderer::frame_style(map_memory.zoom());
+        let max_rect = ui.max_rect();
 
-        let geometries = self.prepare_track_geometries(ui.max_rect(), &style, &transform);
-        self.paint_tracklines(ui, &geometries);
-        self.paint_tpv_layers(ui, &geometries, &style, &transform, ui.max_rect());
+        let geometries = self.prepare_track_geometries(max_rect, &style, &transform);
+
+        let hover_active =
+            self.highlight.fading_enabled && track_renderer::hover_is_active(self.highlight);
+        let fade = self.hover_fade_alpha;
+
+        if fade > FADE_VISIBLE_THRESHOLD || hover_active {
+            if hover_active {
+                // Three-phase rendering: non-focused tracks → animated overlay →
+                // focused track on top.  A single overlay rect covers accumulated
+                // non-focused track geometry uniformly, preventing the
+                // overlap-accumulation artifact where N independently-faded
+                // tracks at alpha 1/N become prominent together.  The overlay
+                // also covers satellite-count labels so they vanish for free.
+                let focused: Vec<bool> = geometries
+                    .iter()
+                    .map(|geo| track_renderer::is_track_in_focus(self.highlight, geo.fi, geo.ti))
+                    .collect();
+
+                self.paint_tracklines(ui, &geometries, |i| {
+                    !focused.get(i).copied().unwrap_or(false)
+                });
+                self.paint_tpv_layers(ui, &geometries, &style, &transform, max_rect, |i| {
+                    !focused.get(i).copied().unwrap_or(false)
+                });
+                paint_fade_overlay(ui, max_rect, fade);
+                self.paint_tracklines(ui, &geometries, |i| {
+                    focused.get(i).copied().unwrap_or(false)
+                });
+                self.paint_tpv_layers(ui, &geometries, &style, &transform, max_rect, |i| {
+                    focused.get(i).copied().unwrap_or(false)
+                });
+            } else {
+                // No current hover target (fade-out): all tracks under the
+                // fading overlay, no focused track in Phase 3.
+                self.paint_tracklines(ui, &geometries, |_| true);
+                self.paint_tpv_layers(ui, &geometries, &style, &transform, max_rect, |_| true);
+                paint_fade_overlay(ui, max_rect, fade);
+            }
+        } else {
+            self.paint_tracklines(ui, &geometries, |_| true);
+            self.paint_tpv_layers(ui, &geometries, &style, &transform, max_rect, |_| true);
+        }
+
         self.show_hover_overlays(ui, &style, &transform);
     }
 }
@@ -237,11 +269,14 @@ impl TrackLayers<'_> {
         geometries
     }
 
-    /// Paint every track's plain line (and blink overlay) first, so all
-    /// tracklines lie under all quality lines and icons.
-    fn paint_tracklines(&self, ui: &Ui, geometries: &[TrackGeometry]) {
-        for geo in geometries {
-            if !geo.paint_trackline {
+    /// Paint every track's plain line (and blink overlay) for the entries
+    /// that pass the `filter(index)` predicate.
+    fn paint_tracklines<F>(&self, ui: &Ui, geometries: &[TrackGeometry], filter: F)
+    where
+        F: Fn(usize) -> bool,
+    {
+        for (i, geo) in geometries.iter().enumerate() {
+            if !filter(i) || !geo.paint_trackline {
                 continue;
             }
             let stroke = track_stroke(self.highlight, geo.fi, geo.ti);
@@ -250,18 +285,24 @@ impl TrackLayers<'_> {
         }
     }
 
-    /// Paint the TPV layer per track - the fix-quality line, then the fix
-    /// icons on top - over every trackline.
-    fn paint_tpv_layers(
+    /// Paint the TPV layer per track — the fix-quality line, then the fix
+    /// icons on top — for the entries that pass the `filter(index)` predicate.
+    fn paint_tpv_layers<F>(
         &self,
         ui: &Ui,
         geometries: &[TrackGeometry],
         style: &TpvDrawStyle,
         transform: &MercTransform,
         max_rect: egui::Rect,
-    ) {
+        filter: F,
+    ) where
+        F: Fn(usize) -> bool,
+    {
         let icon_view_rect = max_rect.expand(ICON_VIEW_MARGIN_PX);
-        for geo in geometries {
+        for (i, geo) in geometries.iter().enumerate() {
+            if !filter(i) {
+                continue;
+            }
             if geo.paints_quality_line() {
                 paint_quality_path(ui, &geo.path);
             }
@@ -330,6 +371,31 @@ fn paint_trackline_path(
             }
         }
     }
+}
+
+/// Draw a flat semi-transparent rectangle over the map viewport to dim all
+/// track geometry drawn before this call.
+///
+/// `progress` is the animated fade value in [0.0, 1.0] produced by
+/// [`crate::HoverFadeState`].  The overlay's opacity is scaled so that at
+/// `progress = 1.0` the tracks visible beneath it appear at approximately
+/// `HOVER_FADE_ALPHA` brightness.
+/// Using a single rect rather than per-track alpha prevents the accumulation
+/// artifact where N overlapping faded tracks at alpha `1/N` each would sum to
+/// full visibility at busy intersections.
+fn paint_fade_overlay(ui: &Ui, max_rect: egui::Rect, progress: f32) {
+    let max_alpha = (1.0 - track_renderer::HOVER_FADE_ALPHA) * 255.0;
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "max_alpha and progress.clamp(0,1) are both non-negative"
+    )]
+    let alpha = (max_alpha * progress.clamp(0.0, 1.0)) as u8;
+    let bg = ui.visuals().extreme_bg_color;
+    ui.painter().rect_filled(
+        max_rect,
+        0.0,
+        egui::Color32::from_rgba_unmultiplied(bg.r(), bg.g(), bg.b(), alpha),
+    );
 }
 
 /// Paint a track's fix-quality line from its prepared geometry: each edge

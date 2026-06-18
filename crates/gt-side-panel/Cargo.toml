@@ -21,7 +21,6 @@ gt-ui-types = { path = "../gt-ui-types" }
 uom.workspace = true
 
 [dev-dependencies]
-egui_kittest.workspace = true
 gt-filter = { path = "../gt-filter" }
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 gt-track-builder = { path = "../gt-track-builder" }
