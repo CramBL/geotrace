@@ -66,6 +66,7 @@ jobs:
           tool: nextest,just
 
       - name: Install uv
+        if: runner.os == 'Linux'
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 
       - name: Install cargo-pup
@@ -83,16 +84,17 @@ jobs:
           echo "WGPU_BACKEND=gl" >> "$GITHUB_ENV"
 
       - name: Check formatting
+        if: runner.os == 'Linux'
         run: cargo fmt --all --check
+
+      - name: check
+        run: cargo check --workspace
 
       - name: Clippy
         run: |
           cargo clippy --workspace --no-deps -- -D warnings
           cargo clippy --workspace --no-deps --tests -- -D warnings
           cargo clippy --workspace --no-deps --examples -- -D warnings
-
-      - name: Type-check
-        run: cargo check
 
       - name: Tests
         if: runner.os == 'Linux'
@@ -112,6 +114,7 @@ jobs:
         run: bash scripts/examples.sh
 
       - name: QA checks
+        if: runner.os == 'Linux'
         run: |
           just qa::qa-lint
           just qa::check-all

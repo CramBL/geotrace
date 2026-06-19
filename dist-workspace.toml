@@ -22,7 +22,7 @@ tap = "CramBL/homebrew-tap"
 # Publish jobs to run in CI
 publish-jobs = ["homebrew"]
 # Target platforms to build apps for (Rust target-triple syntax)
-targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "aarch64-pc-windows-msvc", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 # Which actions to run on pull requests
 pr-run-mode = "upload"
 # Whether to install an updater program
@@ -43,6 +43,7 @@ github-attestations = true
 # pushing `app/vX.Y.Z` (the namespace cannot be the `geotrace` package name, or
 # dist parses it as a per-package tag).
 tag-namespace = "app"
+github-build-setup = "../dist/build-setup.yml"
 
 # Use native ARM runners instead of cross/QEMU for the aarch64 targets.
 [dist.github-custom-runners]
