@@ -27,6 +27,9 @@ targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "aarch64-pc-wind
 pr-run-mode = "upload"
 # Whether to install an updater program
 install-updater = false
+# Build the released binaries with the dist-only features (the in-app self-update
+# check). Builds from source / package managers omit these (see Cargo.toml).
+features = ["dist"]
 # Where the shell/PowerShell installers place the binary. GeoTrace targets
 # general desktop users (not only Rust developers), so install to the XDG/local
 # bin dir rather than CARGO_HOME, with fallbacks (uv-style).

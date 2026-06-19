@@ -4,6 +4,7 @@ mod history;
 mod history_db;
 mod loader;
 mod modals;
+#[cfg(feature = "self-update")]
 mod update;
 
 use std::{cell::RefCell, env, path::PathBuf, rc::Rc, str, sync::Arc};
@@ -144,6 +145,8 @@ pub struct App {
     toasts: egui_notify::Toasts,
 
     /// Background startup check for a newer GeoTrace release, plus its prompt.
+    /// Only present in dist builds (the `self-update` feature).
+    #[cfg(feature = "self-update")]
     update_checker: update::UpdateChecker,
     /// When `true`, check for updates on startup (also gated on release build and
     /// `GEOTRACE_OFFLINE` being unset). Mirrors `settings.update.check_on_startup`.
@@ -306,6 +309,7 @@ impl App {
             pending_auto_prune: None,
             history_window: history::HistoryWindow::new(),
             toasts: egui_notify::Toasts::default(),
+            #[cfg(feature = "self-update")]
             update_checker: update::UpdateChecker::new(),
             update_check_on_startup: true,
             skipped_version: None,
@@ -536,16 +540,21 @@ impl App {
                     }
                 });
 
-                ui.add_space(12.0);
-                ui.separator();
-                ui.checkbox(
-                    &mut self.update_check_on_startup,
-                    "Check for updates on startup",
-                )
-                .on_hover_text(
-                    "Check for a newer GeoTrace release on startup and prompt to install it. \
-                     Always off in development builds and when GEOTRACE_OFFLINE is set.",
-                );
+                // Only meaningful in dist builds; builds without the self-update
+                // feature carry no update check to toggle.
+                #[cfg(feature = "self-update")]
+                {
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.checkbox(
+                        &mut self.update_check_on_startup,
+                        "Check for updates on startup",
+                    )
+                    .on_hover_text(
+                        "Check for a newer GeoTrace release on startup and prompt to install it. \
+                         Always off in development builds and when GEOTRACE_OFFLINE is set.",
+                    );
+                }
             });
 
         if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -610,6 +619,7 @@ impl App {
 
     /// Whether to run the startup update check: enabled in settings, a release
     /// build (avoids hitting GitHub during development), and not offline.
+    #[cfg(feature = "self-update")]
     fn should_check_for_updates(&self) -> bool {
         self.update_check_on_startup
             && !cfg!(debug_assertions)
@@ -1229,6 +1239,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // Kick off the one-shot startup update check (no-op after the first
         // frame, and only when enabled / release build / not offline).
+        #[cfg(feature = "self-update")]
         if self.should_check_for_updates() {
             self.update_checker.start(ui.ctx());
         }
@@ -1302,6 +1313,28 @@ impl eframe::App for App {
                     {
                         self.history_window.open = !self.history_window.open;
                         self.history_window.invalidate();
+                    }
+
+                    // A subtle "update available" hint for builds that can't
+                    // self-update (Homebrew, MSI, manual download). Self-updatable
+                    // installs get the prompt instead of this badge.
+                    #[cfg(feature = "self-update")]
+                    if let Some(new_version) = self.update_checker.badge_version() {
+                        ui.separator();
+                        let text = egui::RichText::new("Update available")
+                            .color(gt_ui_theme::WARNING_AMBER);
+                        if ui
+                            .add(egui::Label::new(text).sense(egui::Sense::click()))
+                            .on_hover_text(format!(
+                                "GeoTrace {new_version} is available (current: {}). Update \
+                                 through your package manager, or open the releases page.",
+                                env!("CARGO_PKG_VERSION")
+                            ))
+                            .clicked()
+                        {
+                            ui.ctx()
+                                .open_url(egui::OpenUrl::new_tab(update::RELEASES_URL));
+                        }
                     }
                 });
             });
@@ -1865,7 +1898,9 @@ impl eframe::App for App {
             }
         }
 
-        // Show the update prompt (if a newer release was found and not skipped).
+        // Show the self-update prompt (if an in-place update was found and not
+        // skipped). Package-manager/manual builds show the menu-bar badge instead.
+        #[cfg(feature = "self-update")]
         if let Some(event) = self
             .update_checker
             .ui(ui.ctx(), self.skipped_version.as_deref())

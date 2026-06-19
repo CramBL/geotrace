@@ -597,7 +597,8 @@ fn snapshot_settings_window() {
 }
 
 /// The update prompt as a user installed via the shell/PowerShell installer
-/// sees it: a one-click "Update and restart" plus Later / Skip.
+/// sees it: a prominent "Update and restart" plus lower-key Later / Skip.
+#[cfg(feature = "self-update")]
 #[test]
 fn snapshot_update_prompt_self_update() {
     let (mut harness, _config_path) = TestHarness::builder()
@@ -610,18 +611,16 @@ fn snapshot_update_prompt_self_update() {
     harness.snapshot("update_prompt_self_update");
 }
 
-/// The update prompt as a user who installed via a package manager or a manual
-/// download sees it: guidance to upgrade (no in-app self-replace).
+/// A non-self-updatable build (Homebrew / MSI / manual download) shows no dialog;
+/// it exposes the available version for the subtle menu-bar badge instead.
+#[cfg(feature = "self-update")]
 #[test]
-fn snapshot_update_prompt_manual() {
-    let (mut harness, _config_path) = TestHarness::builder()
-        .size(egui::vec2(640.0, 400.0))
-        .eframe(build_app);
-    harness.inner.step();
-    harness.inner.state_mut().update_checker =
-        super::update::UpdateChecker::available_for_test("0.2.0", false);
-    harness.run();
-    harness.snapshot("update_prompt_manual");
+fn non_self_update_uses_badge_not_dialog() {
+    let badge = super::update::UpdateChecker::available_for_test("0.2.0", false);
+    assert_eq!(badge.badge_version().as_deref(), Some("0.2.0"));
+
+    let self_updatable = super::update::UpdateChecker::available_for_test("0.2.0", true);
+    assert_eq!(self_updatable.badge_version(), None);
 }
 
 #[test]

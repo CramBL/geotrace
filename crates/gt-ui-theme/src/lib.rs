@@ -32,6 +32,10 @@ pub const ERROR_INDICATOR: Color32 = Color32::from_rgb(220, 70, 50);
 /// Amber colour used for data quality warning icons and indicators.
 pub const WARNING_AMBER: Color32 = Color32::from_rgb(255, 180, 0);
 
+/// Affirmative green for a primary call-to-action, e.g. the "Update and restart"
+/// button in the update prompt.
+pub const SUCCESS_GREEN: Color32 = Color32::from_rgb(46, 160, 67);
+
 /// Background colour used to indicate that the corresponding map element is hovered.
 ///
 /// Pass `ui.visuals().dark_mode` to select the appropriate variant.
