@@ -131,7 +131,33 @@
                     </Directory>
                 </Directory>
             </Directory>
+
+            <!-- System folders that host the application shortcuts. -->
+            <Directory Id='ProgramMenuFolder'/>
+            <Directory Id='DesktopFolder'/>
         </Directory>
+
+        <!-- Start Menu and Desktop shortcuts, both using the product icon. The
+             executable also embeds the icon (winres), so the shortcuts show it. -->
+        <DirectoryRef Id='APPLICATIONFOLDER'>
+            <Component Id='Shortcuts' Guid='5D041502-E6BD-4AE5-B82F-EA84D073479C'>
+                <Shortcut Id='StartMenuShortcut'
+                    Directory='ProgramMenuFolder'
+                    Name='GeoTrace'
+                    Description='GNSS navigation data visualizer'
+                    Target='[#exe0]'
+                    WorkingDirectory='Bin'
+                    Icon='Geotrace.ico'/>
+                <Shortcut Id='DesktopShortcut'
+                    Directory='DesktopFolder'
+                    Name='GeoTrace'
+                    Description='GNSS navigation data visualizer'
+                    Target='[#exe0]'
+                    WorkingDirectory='Bin'
+                    Icon='Geotrace.ico'/>
+                <RegistryValue Root='HKCU' Key='Software\GeoTrace' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
+            </Component>
+        </DirectoryRef>
 
         <Feature
             Id='Binaries'
@@ -150,6 +176,7 @@
             <!--<ComponentRef Id='License'/>-->
 
             <ComponentRef Id='binary0'/>
+            <ComponentRef Id='Shortcuts'/>
 
             <Feature
                 Id='Environment'
@@ -170,8 +197,8 @@
           The product icon is the graphic that appears in the Add/Remove
           Programs control panel for the application.
         -->
-        <!--<Icon Id='ProductICO' SourceFile='wix\Product.ico'/>-->
-        <!--<Property Id='ARPPRODUCTICON' Value='ProductICO' />-->
+        <Icon Id='Geotrace.ico' SourceFile='assets\geotrace_icon.ico'/>
+        <Property Id='ARPPRODUCTICON' Value='Geotrace.ico'/>
 
         <Property Id='ARPHELPLINK' Value='https://github.com/CramBL/geotrace'/>
         

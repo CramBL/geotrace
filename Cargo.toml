@@ -251,6 +251,11 @@ geotrace-sdk = { path = "sdk/rust/geotrace-sdk" }
 gt-test-utils = { path = "crates/gt-test-utils", features = ["snapshot"] }
 tempfile.workspace = true
 
+# Embeds the app icon into the Windows executable (see build.rs). Windows-only;
+# a no-op on every other host.
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1.12"
+
 [profile.release]
 opt-level = 3
 debug = false

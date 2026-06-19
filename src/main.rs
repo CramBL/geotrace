@@ -93,11 +93,19 @@ fn main() -> eframe::Result {
         }
     });
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([800.0, 600.0])
+        .with_min_inner_size([400.0, 320.0])
+        .with_drag_and_drop(true);
+    // The window/taskbar icon. The Windows executable also embeds it via winres
+    // (build.rs) so Explorer and the installer's shortcuts show it too.
+    match eframe::icon_data::from_png_bytes(include_bytes!("../assets/geotrace_icon.png")) {
+        Ok(icon) => viewport = viewport.with_icon(icon),
+        Err(error) => log::warn!("could not load the app icon: {error}"),
+    }
+
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([800.0, 600.0])
-            .with_min_inner_size([400.0, 320.0])
-            .with_drag_and_drop(true),
+        viewport,
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
             wgpu_setup: wgpu_setup.into(),
             ..Default::default()
@@ -115,4 +123,17 @@ fn main() -> eframe::Result {
             )))
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    // The window icon is embedded at compile time and decoded at startup, so a
+    // corrupt asset would only surface when someone launches the GUI. Decode it
+    // here so CI fails loudly instead.
+    #[test]
+    fn embedded_app_icon_is_a_valid_png() {
+        let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/geotrace_icon.png"))
+            .expect("embedded app icon (assets/geotrace_icon.png) must be a valid PNG");
+        assert!(icon.width > 0 && icon.height > 0);
+    }
 }

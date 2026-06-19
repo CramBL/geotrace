@@ -1,0 +1,13 @@
+<svg width="64" height="64" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+ <title id="title">GeoTrace icon</title>
+
+ <desc id="desc">Minimal GNSS visualizer icon: globe grid with traced signal path and precise target point.</desc>
+ <g>
+  <title>Layer 1</title>
+  <circle cx="32" cy="32" r="21" fill="none" stroke="#7DD3FC" stroke-width="3" id="svg_2"/>
+  <path d="m13,32l38,0m-19,-21c-7,7 -7,35 0,42m0,-42c7,7 7,35 0,42" fill="none" stroke="#7DD3FC" stroke-width="2" stroke-linecap="round" opacity="0.55" id="svg_3"/>
+  <path d="m18,41l9,-8l8,5l12,-15" fill="none" stroke="#A3E635" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" id="svg_4"/>
+  <circle cx="47" cy="23" r="5" fill="#0B1220" stroke="#f8fafc" stroke-width="3" id="svg_5"/>
+  <path fill="#F8FAFC" d="m47,14l0,4m0,10l0,4m-9,-9l4,0m10,0l4,0" stroke="#ce1c1c" stroke-width="3" stroke-linecap="round" id="svg_6"/>
+ </g>
+</svg>

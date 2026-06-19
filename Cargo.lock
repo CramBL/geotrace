@@ -1452,7 +1452,7 @@ dependencies = [
  "pollster",
  "serde",
  "tempfile",
- "toml",
+ "toml 1.1.2+spec-1.1.0",
  "wgpu",
 ]
 
@@ -1984,8 +1984,9 @@ dependencies = [
  "serde",
  "tempfile",
  "tokio",
- "toml",
+ "toml 1.1.2+spec-1.1.0",
  "uom",
+ "winres",
 ]
 
 [[package]]
@@ -5808,6 +5809,15 @@ dependencies = [
 
 [[package]]
 name = "toml"
+version = "0.5.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4f7f0dd8d50a853a531c426359045b1998f04219d88799810762cd4ad314234"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "toml"
 version = "1.1.2+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81f3d15e84cbcd896376e6730314d59fb5a87f31e4b038454184435cd57defee"
@@ -7153,6 +7163,15 @@ dependencies = [
  "cfg-if",
  "serde",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "winres"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b68db261ef59e9e52806f688020631e987592bd83619edccda9c47d42cde4f6c"
+dependencies = [
+ "toml 0.5.11",
 ]
 
 [[package]]
