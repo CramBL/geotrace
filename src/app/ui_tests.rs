@@ -596,6 +596,34 @@ fn snapshot_settings_window() {
     harness.snapshot("settings_window");
 }
 
+/// The update prompt as a user installed via the shell/PowerShell installer
+/// sees it: a one-click "Update and restart" plus Later / Skip.
+#[test]
+fn snapshot_update_prompt_self_update() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(640.0, 400.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness.inner.state_mut().update_checker =
+        super::update::UpdateChecker::available_for_test("0.2.0", true);
+    harness.run();
+    harness.snapshot("update_prompt_self_update");
+}
+
+/// The update prompt as a user who installed via a package manager or a manual
+/// download sees it: guidance to upgrade (no in-app self-replace).
+#[test]
+fn snapshot_update_prompt_manual() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(640.0, 400.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness.inner.state_mut().update_checker =
+        super::update::UpdateChecker::available_for_test("0.2.0", false);
+    harness.run();
+    harness.snapshot("update_prompt_manual");
+}
+
 #[test]
 fn snapshot_history_locked_dialog() {
     let (mut harness, _config_path) = TestHarness::builder()

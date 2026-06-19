@@ -1,12 +1,19 @@
 [package]
 name = "geotrace-sdk-macros"
 description = "Proc macro for Geotrace SDK ergonomics"
-version.workspace = true
+# SDK version line, independent of the GUI app. Keep in lockstep with
+# geotrace-sdk / geotrace-c / geotrace-py (see geotrace-sdk/Cargo.toml).
+version = "0.1.0"
 edition.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 license = "MIT"
+
+[package.metadata.dist]
+# The SDKs are released on their own track (geotrace-sdk-v* tags); dist manages
+# only the GUI app, so every SDK crate is excluded from dist.
+dist = false
 
 [lib]
 proc-macro = true

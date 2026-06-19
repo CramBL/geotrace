@@ -4,6 +4,7 @@ mod history;
 mod history_db;
 mod loader;
 mod modals;
+mod update;
 
 use std::{cell::RefCell, env, path::PathBuf, rc::Rc, str, sync::Arc};
 
@@ -141,6 +142,15 @@ pub struct App {
 
     /// Toast notification queue - rendered every frame over the top of all content.
     toasts: egui_notify::Toasts,
+
+    /// Background startup check for a newer GeoTrace release, plus its prompt.
+    update_checker: update::UpdateChecker,
+    /// When `true`, check for updates on startup (also gated on release build and
+    /// `GEOTRACE_OFFLINE` being unset). Mirrors `settings.update.check_on_startup`.
+    update_check_on_startup: bool,
+    /// A release version the user chose to skip; suppresses the update prompt for
+    /// exactly this version. Mirrors `settings.update.skipped_version`.
+    skipped_version: Option<String>,
 }
 
 impl App {
@@ -296,6 +306,9 @@ impl App {
             pending_auto_prune: None,
             history_window: history::HistoryWindow::new(),
             toasts: egui_notify::Toasts::default(),
+            update_checker: update::UpdateChecker::new(),
+            update_check_on_startup: true,
+            skipped_version: None,
         };
 
         app.apply_startup_settings(&loaded_settings);
@@ -522,6 +535,17 @@ impl App {
                             defaults.clock_discontinuity_sigmas;
                     }
                 });
+
+                ui.add_space(12.0);
+                ui.separator();
+                ui.checkbox(
+                    &mut self.update_check_on_startup,
+                    "Check for updates on startup",
+                )
+                .on_hover_text(
+                    "Check for a newer GeoTrace release on startup and prompt to install it. \
+                     Always off in development builds and when GEOTRACE_OFFLINE is set.",
+                );
             });
 
         if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -579,7 +603,17 @@ impl App {
         self.auto_prune_enabled = s.storage.auto_prune_enabled;
         self.auto_prune_max_bytes = s.storage.auto_prune_max_bytes;
         self.auto_prune_confirm = s.storage.auto_prune_confirm;
+        self.update_check_on_startup = s.update.check_on_startup;
+        self.skipped_version = s.update.skipped_version.clone();
         self.sync_db_path();
+    }
+
+    /// Whether to run the startup update check: enabled in settings, a release
+    /// build (avoids hitting GitHub during development), and not offline.
+    fn should_check_for_updates(&self) -> bool {
+        self.update_check_on_startup
+            && !cfg!(debug_assertions)
+            && env::var_os("GEOTRACE_OFFLINE").is_none()
     }
 
     /// Snapshot of all settings-relevant state for change detection.
@@ -623,6 +657,8 @@ impl App {
             auto_prune_enabled: self.auto_prune_enabled,
             auto_prune_max_bytes: self.auto_prune_max_bytes,
             auto_prune_confirm: self.auto_prune_confirm,
+            update_check_on_startup: self.update_check_on_startup,
+            skipped_version: self.skipped_version.clone(),
         }
     }
 
@@ -678,6 +714,10 @@ impl App {
                 auto_prune_enabled: self.auto_prune_enabled,
                 auto_prune_max_bytes: self.auto_prune_max_bytes,
                 auto_prune_confirm: self.auto_prune_confirm,
+            },
+            update: crate::settings::UpdateSettings {
+                check_on_startup: self.update_check_on_startup,
+                skipped_version: self.skipped_version.clone(),
             },
         }
     }
@@ -1187,6 +1227,12 @@ impl eframe::App for App {
         reason = "egui immediate-mode UI rendering is inherently sequential; splitting artificially hurts readability"
     )]
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Kick off the one-shot startup update check (no-op after the first
+        // frame, and only when enabled / release build / not offline).
+        if self.should_check_for_updates() {
+            self.update_checker.start(ui.ctx());
+        }
+
         // Drain background load results first so newly loaded data is
         // visible in the same frame that it arrives.
         let completed_loads: Vec<CompletedLoad> = self.loader.drain();
@@ -1816,6 +1862,16 @@ impl eframe::App for App {
                     .delete_recordings(candidates, history_db::DeleteReason::AutoPrune);
             } else if cancel {
                 self.pending_auto_prune = None;
+            }
+        }
+
+        // Show the update prompt (if a newer release was found and not skipped).
+        if let Some(event) = self
+            .update_checker
+            .ui(ui.ctx(), self.skipped_version.as_deref())
+        {
+            match event {
+                update::UpdateEvent::Skip(version) => self.skipped_version = Some(version),
             }
         }
 

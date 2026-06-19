@@ -24,6 +24,9 @@ Quick start - reading a file::
         print(point.lat, point.lon, point.gps_time)
 """
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _dist_version
+
 from geotrace_sdk._geotrace_sdk import (
     Annotation,
     Constellation,
@@ -42,7 +45,13 @@ from geotrace_sdk._geotrace_sdk import (
 )
 from geotrace_sdk.event_kind import event_kind
 
+try:
+    __version__ = _dist_version("geotrace-sdk")
+except PackageNotFoundError:  # running from a source tree, not an installed dist
+    __version__ = "0.0.0+unknown"
+
 __all__ = [
+    "__version__",
     "Annotation",
     "Constellation",
     "EventMarker",

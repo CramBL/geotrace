@@ -11,6 +11,7 @@ pub struct Settings {
     pub ui: UiSettings,
     pub processing: ProcessingSettings,
     pub storage: StorageSettings,
+    pub update: UpdateSettings,
 }
 
 impl Default for Settings {
@@ -22,6 +23,29 @@ impl Default for Settings {
             ui: UiSettings::default(),
             processing: ProcessingSettings::default(),
             storage: StorageSettings::default(),
+            update: UpdateSettings::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// When `true`, GeoTrace checks for a newer release on startup and prompts
+    /// the user. The check is also skipped in debug builds and when
+    /// `GEOTRACE_OFFLINE` is set.
+    pub check_on_startup: bool,
+    /// A specific version the user chose to skip; the prompt stays hidden for
+    /// exactly this version. Cleared automatically once a newer version appears.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skipped_version: Option<String>,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self {
+            check_on_startup: true,
+            skipped_version: None,
         }
     }
 }

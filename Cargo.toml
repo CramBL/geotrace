@@ -11,6 +11,12 @@ authors.workspace = true
 repository.workspace = true
 readme.workspace = true
 
+[package.metadata.wix]
+upgrade-guid = "C0EAD23B-6B78-4C08-A4C4-2AF5EF829B92"
+path-guid = "746A35A9-07E9-463D-9C4C-6A2A5E7A24F0"
+license = false
+eula = false
+
 [workspace]
 members = [
     "crates/gt-arch",
@@ -204,6 +210,9 @@ needless_raw_string_hashes = "warn"
 ignored_unit_patterns = "warn"
 
 [dependencies]
+# Used as a library (not the standalone updater binary) for the startup update
+# check. Driven via its async API on a small tokio runtime (see src/app/update.rs).
+axoupdater = "0.10"
 chrono.workspace = true
 dirs.workspace = true
 eframe.workspace = true
@@ -227,8 +236,12 @@ gt-ui-theme = { path = "crates/gt-ui-theme" }
 gt-ui-types = { path = "crates/gt-ui-types" }
 log.workspace = true
 mimalloc = { version = "0.1.48", features = ["v3"] }
+parking_lot.workspace = true
 rfd = "0.17.2"
+semver = "1"
 serde.workspace = true
+# Current-thread runtime for driving axoupdater's async API off the UI thread.
+tokio = { version = "1", features = ["rt", "net", "time"] }
 toml = "1"
 uom.workspace = true
 
@@ -270,6 +283,11 @@ opt-level = 3
 
 [profile.dev.package.egui_plot]
 opt-level = 3
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 
 [lints]
 workspace = true

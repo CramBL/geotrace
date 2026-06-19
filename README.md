@@ -21,10 +21,47 @@ The screenshot is the UI snapshot test baseline (with map tiles off), so it alwa
 - Track filtering by time range, duration, and position
 - Recording history with import and re-load support
 
+## Install
+
+> [!NOTE]
+> Installers and packages are published with each tagged release.
+> Until the first release is tagged, build from source with `just run`.
+
+GeoTrace is a desktop app for Linux, macOS, and Windows (x86-64 and ARM64).
+
+Linux / macOS (shell):
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/CramBL/geotrace/releases/latest/download/geotrace-installer.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://github.com/CramBL/geotrace/releases/latest/download/geotrace-installer.ps1 | iex
+```
+
+Homebrew (Linux / macOS):
+
+```sh
+brew install CramBL/homebrew-tap/geotrace
+```
+
+Windows installer: download the `.msi` for your architecture from the [latest release](https://github.com/CramBL/geotrace/releases/latest).
+
+GeoTrace checks for a newer release on startup and offers to update.
+Installs from the shell/PowerShell installer update in place; any other install is pointed at the downloads page.
+The check can be turned off under Settings.
+
+> [!NOTE]
+> Releases are currently **unsigned**.
+> On macOS, the first launch needs right-click &rarr; **Open** (or `xattr -d com.apple.quarantine /path/to/geotrace`).
+> On Windows, SmartScreen shows **More info &rarr; Run anyway**.
+
 ## SDKs
 
-> [!WARNING]
-> No release has been tagged yet, these install instruction does not apply before the first published version
+> [!NOTE]
+> SDK packages are published on their own release cadence (separate from the app), starting with the first SDK release.
 
 GeoTrace defines an open binary format (`.gtd`) for storing navigation recordings.
 SDKs are available so you can produce `.gtd` files from any data source and open them in GeoTrace.
@@ -32,6 +69,10 @@ SDKs are available so you can produce `.gtd` files from any data source and open
 All SDKs are MIT licensed and can be embedded in proprietary applications.
 
 ### Rust SDK
+
+```sh
+cargo add geotrace-sdk
+```
 
 ```rust
 use geotrace_sdk::{Angle, DateTime, NavFileBuilder, NavFix, Utc};
@@ -56,8 +97,15 @@ Examples: [`sdk/rust/geotrace-sdk/examples/`](sdk/rust/geotrace-sdk/examples/)
 A C API wrapping the core encoder/decoder, suitable for embedding in any language with a C FFI.
 See [`sdk/c/geotrace.h`](sdk/c/geotrace.h) for the full API surface.
 Building or consuming it via CMake requires CMake 3.21+.
+On Windows the released library is built with MSVC.
 
-**find_package** (from a local build or a prebuilt release archive):
+Homebrew (Linux / macOS), installs headers, the static library, and the CMake package config:
+
+```sh
+brew install CramBL/homebrew-tap/geotrace-c
+```
+
+**find_package** (from a local build, a Homebrew install, or a prebuilt release archive):
 
 ```cmake
 find_package(GeoTraceC REQUIRED)
@@ -69,7 +117,7 @@ target_link_libraries(my_target PRIVATE GeoTrace::C)
 ```cmake
 include(FetchContent)
 FetchContent_Declare(geotrace_c
-    URL     https://github.com/example/geotrace/releases/download/v0.1.0/geotrace-c-linux.tar.gz
+    URL     https://github.com/CramBL/geotrace/releases/download/geotrace-sdk-v0.1.0/geotrace-sdk-x86_64-unknown-linux-gnu.tar.gz
     URL_HASH SHA256=<hash>)
 FetchContent_MakeAvailable(geotrace_c)
 list(APPEND CMAKE_PREFIX_PATH "${geotrace_c_SOURCE_DIR}")

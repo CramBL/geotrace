@@ -33,6 +33,7 @@ int main(void) {
         return 1;
     }
 
-    puts("smoke OK");
+    // Surface the SDK version the header was compiled against.
+    printf("smoke OK, geotrace-c %s\n", GEOTRACE_C_VERSION);
     return 0;
 }

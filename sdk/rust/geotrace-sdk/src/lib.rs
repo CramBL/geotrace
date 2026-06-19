@@ -23,6 +23,10 @@
 //! # }
 //! ```
 
+/// The version of this SDK, e.g. `"0.1.0"` (the crate version). Consumers can
+/// surface it, for example `println!("geotrace-sdk {}", geotrace_sdk::VERSION)`.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 mod builder;
 mod error;
 mod read;

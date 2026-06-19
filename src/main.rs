@@ -11,6 +11,32 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 const MIN_TEXTURE_DIMENSION_2D: u32 = 8192;
 
 fn main() -> eframe::Result {
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+
+    // CLI flags that must not open a window. Release smoke tests run
+    // `geotrace --version` to confirm the installed binary launches and reports
+    // the expected version without bringing up the GUI. On Windows the release
+    // build has no attached console, so stdout may not reach the terminal; a
+    // clean exit code is the cross-platform signal and the printed version is
+    // checked on Unix.
+    if raw_args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("geotrace {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if raw_args.iter().any(|a| a == "--help" || a == "-h") {
+        println!(
+            "GeoTrace {} - GNSS navigation data visualizer\n\n\
+             Usage: geotrace [FILES]...\n\n\
+             Arguments:\n  \
+             [FILES]...  .gtd recordings or .log files to open on startup\n\n\
+             Options:\n  \
+             -V, --version  Print version and exit\n  \
+             -h, --help     Print help and exit",
+            env!("CARGO_PKG_VERSION")
+        );
+        return Ok(());
+    }
+
     // Dependencies whose debug logging floods the output with per-frame or
     // per-request noise, capped at warn so `RUST_LOG=debug` stays readable
     // for GeoTrace's own logs:
@@ -39,10 +65,8 @@ fn main() -> eframe::Result {
     }
     log_builder.init();
 
-    let initial_paths: Vec<std::path::PathBuf> = std::env::args()
-        .skip(1)
-        .map(std::path::PathBuf::from)
-        .collect();
+    let initial_paths: Vec<std::path::PathBuf> =
+        raw_args.iter().map(std::path::PathBuf::from).collect();
 
     // Safety net for very large recordings: egui packs the whole frame into
     // one vertex buffer, and eframe's default device limits cap buffers at

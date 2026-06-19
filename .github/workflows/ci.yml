@@ -63,7 +63,7 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
         with:
-          tool: nextest
+          tool: nextest,just
 
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -113,11 +113,9 @@ jobs:
 
       - name: QA checks
         run: |
-          uv run --project scripts/qa ruff check scripts/qa/src
-          uv run --project scripts/qa mypy --strict scripts/qa/src
-          uv run --project scripts/qa check-em-dash
-          uv run --project scripts/qa check-floating-comments
-          uv run --project scripts/qa check-narrative-comments
+          just qa::qa-lint
+          just qa::check-all
+          just qa::check-versions
 
   ci-essentials:
     runs-on: ubuntu-latest

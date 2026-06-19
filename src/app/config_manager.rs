@@ -64,6 +64,8 @@ pub(super) struct AppSnapshot {
     pub auto_prune_enabled: bool,
     pub auto_prune_max_bytes: u64,
     pub auto_prune_confirm: bool,
+    pub update_check_on_startup: bool,
+    pub skipped_version: Option<String>,
 }
 
 impl Default for AppSnapshot {
@@ -101,6 +103,8 @@ impl Default for AppSnapshot {
             auto_prune_enabled: false,
             auto_prune_max_bytes: 10 * 1024 * 1024 * 1024,
             auto_prune_confirm: true,
+            update_check_on_startup: true,
+            skipped_version: None,
         }
     }
 }
