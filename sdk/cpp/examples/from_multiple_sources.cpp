@@ -24,12 +24,10 @@ constexpr std::uint64_t kBase = 1717228800;
 } // namespace
 
 int main() {
-    using namespace geotrace;
-
-    auto at = [](std::uint64_t secs) { return Timestamp::from_seconds(kBase + secs); };
+    auto at = [](std::uint64_t secs) { return geotrace::Timestamp::from_seconds(kBase + secs); };
 
     try {
-        FileBuilder builder;
+        geotrace::FileBuilder builder{};
         builder.title("Merged GPS + annotations").device("Aggregator v1.0");
 
         // Source 1: GPS track (lat, lon, heading), one fix every 10 s.
@@ -44,11 +42,11 @@ int main() {
         };
         std::size_t idx = 0;
         for (const auto &point : gps) {
-            NavFix fix{};
+            geotrace::NavFix fix{};
             fix.gps_time = at(idx * 10);
-            fix.lat = Angle::degrees(point.lat);
-            fix.lon = Angle::degrees(point.lon);
-            fix.heading = Angle::degrees(point.heading);
+            fix.lat = geotrace::Angle::degrees(point.lat);
+            fix.lon = geotrace::Angle::degrees(point.lon);
+            fix.heading = geotrace::Angle::degrees(point.heading);
             builder.add_nav_fix(fix);
             ++idx;
         }
@@ -58,16 +56,16 @@ int main() {
         struct Marker {
             std::uint64_t offset;
             std::string_view label;
-            MarkerIcon icon;
+            geotrace::MarkerIcon icon;
         };
         const Marker markers[] = {
-            {5, "Pothole", MarkerIcon::Warning},
-            {15, "Speed camera", MarkerIcon::Circle},
-            {25, "Junction", MarkerIcon::Pin},
+            {5, "Pothole", geotrace::MarkerIcon::Warning},
+            {15, "Speed camera", geotrace::MarkerIcon::Circle},
+            {25, "Junction", geotrace::MarkerIcon::Pin},
         };
         std::size_t marker_count = 0;
         for (const auto &m : markers) {
-            Annotation ann{};
+            geotrace::Annotation ann{};
             ann.time = at(m.offset);
             ann.label = std::string(m.label);
             ann.icon = m.icon;
@@ -75,7 +73,7 @@ int main() {
             ++marker_count;
         }
 
-        const NavFile file = builder.finish();
+        const geotrace::NavFile file = builder.finish();
 
         const std::filesystem::path out =
             std::filesystem::temp_directory_path() / "geotrace_from_multiple_sources.gtd";
@@ -86,7 +84,7 @@ int main() {
         std::cout << "Annotations were interpolated onto the track by timestamp.\n";
 
         std::filesystem::remove(out);
-    } catch (const Error &e) {
+    } catch (const geotrace::Error &e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }

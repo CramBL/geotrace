@@ -329,7 +329,7 @@ int main(int argc, char **argv) {
         const fs::path base = (argc >= 2) ? argv[1] : "tests/fixtures/gold_dataset";
         const fs::path out = base / "gold_cpp.gtd";
 
-        geotrace::FileBuilder b;
+        geotrace::FileBuilder b{};
         b.lenient();
         load_meta(b, base);
         load_event_styles(b, base);

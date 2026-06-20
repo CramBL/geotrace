@@ -33,6 +33,3 @@ compile_commands.json
 
 # Just is becoming GNU Make here because the podman/docker caching is painfully slow
 .just-cache
-
-# Stray output from running the prebuilt-cpp SDK smoke consumer from the repo root
-/smoke_cpp_out.gtd

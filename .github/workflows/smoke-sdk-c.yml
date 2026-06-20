@@ -1,9 +1,9 @@
 name: Smoke / C SDK
 
-# Install the published C SDK and build + run a consumer against it via
-# find_package(GeoTraceC). The consumer (sdk/integration-tests/prebuilt) builds
-# a one-fix file and prints GEOTRACE_C_VERSION. Each step is one command so the
-# workflow reads as a step-by-step guide.
+# Install the published C SDK and build + run a small consumer against it via
+# find_package(GeoTraceC). The consumer (defined inline below in CONSUMER_SRC)
+# builds a one-fix file and prints GEOTRACE_C_VERSION. Each step is one command
+# so the workflow reads as a step-by-step guide.
 #
 # Install paths, one job each:
 #   - tarball-unix (Linux + macOS): download the release archive and point CMake
@@ -30,6 +30,56 @@ permissions:
 env:
   REPO: CramBL/geotrace
   TAP: CramBL/homebrew-tap
+  # The consumer project, written to ./consumer by each job and built with
+  # find_package(GeoTraceC). Defined once here so every install path builds the
+  # identical program — what a downstream project does with the installed SDK.
+  CONSUMER_CMAKE: |
+    cmake_minimum_required(VERSION 3.21)
+    project(consumer C)
+    find_package(GeoTraceC REQUIRED)
+    add_executable(smoke_c smoke_c.c)
+    target_link_libraries(smoke_c PRIVATE GeoTrace::C)
+    # RPATH so the binary finds a shared GeoTrace::C without LD_LIBRARY_PATH
+    # (harmless for a static library).
+    set_target_properties(smoke_c PROPERTIES BUILD_RPATH "$<TARGET_FILE_DIR:GeoTrace::C>")
+  CONSUMER_SRC: |
+    #include <geotrace.h>
+    #include <stdio.h>
+    #include <stdlib.h>
+
+    int main(void) {
+        GtdFileBuilder *b = gtd_builder_create();
+        if (!b) {
+            fputs("gtd_builder_create returned NULL\n", stderr);
+            return 1;
+        }
+
+        GtdStatus s = gtd_builder_add_nav_fix(b, gtd_ts_from_seconds(1700000000U),
+                                              gtd_ts_none(), 51.5074, -0.1278,
+                                              GTD_NONE_F64, GTD_NONE_F64, GTD_NONE_F64);
+        if (s != GTD_OK) {
+            fprintf(stderr, "gtd_builder_add_nav_fix: %d (%s)\n", s, gtd_last_error());
+            gtd_builder_destroy(b);
+            return 1;
+        }
+
+        GtdNavFile *f = NULL;
+        s = gtd_builder_finish(b, &f);
+        if (s != GTD_OK) {
+            fprintf(stderr, "gtd_builder_finish: %d (%s)\n", s, gtd_last_error());
+            return 1;
+        }
+
+        size_t n = gtd_nav_file_nav_point_count(f);
+        gtd_nav_file_destroy(f);
+        if (n != 1) {
+            fprintf(stderr, "expected 1 nav point, got %zu\n", n);
+            return 1;
+        }
+
+        printf("smoke OK, geotrace-c %s\n", GEOTRACE_C_VERSION);
+        return 0;
+    }
 
 defaults:
   run:
@@ -50,10 +100,11 @@ jobs:
     env:
       ARCHIVE: geotrace-sdk-${{ matrix.target }}.tar.gz
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.tag }}
-          persist-credentials: false
+      - name: Write the consumer
+        run: |
+          mkdir -p consumer
+          printf '%s' "$CONSUMER_CMAKE" > consumer/CMakeLists.txt
+          printf '%s' "$CONSUMER_SRC" > consumer/smoke_c.c
 
       - name: Download the SDK archive
         env:
@@ -67,7 +118,7 @@ jobs:
           tar -xzf "$ARCHIVE" -C prefix
 
       - name: Configure the consumer
-        run: cmake -S sdk/integration-tests/prebuilt -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$PWD/prefix"
+        run: cmake -S consumer -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$PWD/prefix"
 
       - name: Build the consumer
         run: cmake --build build
@@ -89,16 +140,17 @@ jobs:
       matrix:
         runner: [ubuntu-22.04, macos-15-intel, macos-14]
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.tag }}
-          persist-credentials: false
+      - name: Write the consumer
+        run: |
+          mkdir -p consumer
+          printf '%s' "$CONSUMER_CMAKE" > consumer/CMakeLists.txt
+          printf '%s' "$CONSUMER_SRC" > consumer/smoke_c.c
 
       - name: Install the C SDK with Homebrew
         run: brew install "${TAP}/geotrace-c"
 
       - name: Configure the consumer
-        run: cmake -S sdk/integration-tests/prebuilt -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+        run: cmake -S consumer -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix)"
 
       - name: Build the consumer
         run: cmake --build build
@@ -116,10 +168,11 @@ jobs:
     env:
       ARCHIVE: geotrace-sdk-x86_64-pc-windows-msvc.zip
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.tag }}
-          persist-credentials: false
+      - name: Write the consumer
+        run: |
+          mkdir -p consumer
+          printf '%s' "$CONSUMER_CMAKE" > consumer/CMakeLists.txt
+          printf '%s' "$CONSUMER_SRC" > consumer/smoke_c.c
 
       - name: Download the Windows archive
         env:
@@ -131,7 +184,7 @@ jobs:
         run: 7z x -y -oprefix "$ARCHIVE" >/dev/null
 
       - name: Configure the consumer (MSVC)
-        run: cmake -S sdk/integration-tests/prebuilt -B build -A x64 -DCMAKE_PREFIX_PATH="$(cygpath -m "$PWD/prefix")"
+        run: cmake -S consumer -B build -A x64 -DCMAKE_PREFIX_PATH="$(cygpath -m "$PWD/prefix")"
 
       - name: Build the consumer
         run: cmake --build build --config Release

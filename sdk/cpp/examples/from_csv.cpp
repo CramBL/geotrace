@@ -53,10 +53,8 @@ bool parse_row(const std::string &line, geotrace::NavFix &fix) {
 } // namespace
 
 int main() {
-    using namespace geotrace;
-
     try {
-        FileBuilder builder;
+        geotrace::FileBuilder builder{};
         builder.title("Imported from CSV").device("CSV importer v1.0");
 
         std::istringstream csv{std::string(kCsvData)};
@@ -67,14 +65,14 @@ int main() {
         while (std::getline(csv, line)) {
             if (line.empty())
                 continue;
-            NavFix fix{};
+            geotrace::NavFix fix{};
             if (parse_row(line, fix)) {
                 builder.add_nav_fix(fix);
                 ++rows;
             }
         }
 
-        const NavFile file = builder.finish();
+        const geotrace::NavFile file = builder.finish();
 
         const std::filesystem::path out =
             std::filesystem::temp_directory_path() / "geotrace_from_csv.gtd";
@@ -84,7 +82,7 @@ int main() {
                   << " nav points -> " << out.string() << "\n";
 
         std::filesystem::remove(out);
-    } catch (const Error &e) {
+    } catch (const geotrace::Error &e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }

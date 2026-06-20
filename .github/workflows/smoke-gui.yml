@@ -69,7 +69,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [windows-latest, windows-11-arm]
+        runner: [windows-latest]
     steps:
       - name: Install GeoTrace via the PowerShell installer
         shell: pwsh

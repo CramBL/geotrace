@@ -1,7 +1,7 @@
 name: Smoke / C++ SDK
 
-# Install the published C++ SDK and build + run a consumer against it via
-# find_package(GeoTraceCpp). The consumer (sdk/integration-tests/prebuilt-cpp)
+# Install the published C++ SDK and build + run a small consumer against it via
+# find_package(GeoTraceCpp). The consumer (defined inline below in CONSUMER_SRC)
 # builds a one-fix file and prints GEOTRACE_CPP_VERSION. Each step is one command
 # so the workflow reads as a step-by-step guide.
 #
@@ -30,6 +30,49 @@ permissions:
 env:
   REPO: CramBL/geotrace
   TAP: CramBL/homebrew-tap
+  # The consumer project, written to ./consumer by each job and built with
+  # find_package(GeoTraceCpp). Defined once here so every install path builds the
+  # identical program — what a downstream project does with the installed SDK.
+  CONSUMER_CMAKE: |
+    cmake_minimum_required(VERSION 3.21)
+    project(consumer CXX)
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    # GeoTraceCpp's package config pulls in GeoTraceC via find_dependency, so the
+    # consumer only needs to find the C++ package.
+    find_package(GeoTraceCpp REQUIRED)
+    add_executable(smoke_cpp smoke_cpp.cpp)
+    target_link_libraries(smoke_cpp PRIVATE GeoTrace::Cpp)
+    # RPATH so the binary finds a shared GeoTrace::C without LD_LIBRARY_PATH
+    # (harmless for a static library).
+    set_target_properties(smoke_cpp PROPERTIES BUILD_RPATH "$<TARGET_FILE_DIR:GeoTrace::C>")
+  CONSUMER_SRC: |
+    #include <geotrace/geotrace.hpp>
+
+    #include <cstdint>
+    #include <iostream>
+
+    int main() {
+        try {
+            geotrace::FileBuilder builder{};
+            builder.title("smoke");
+
+            geotrace::NavFix fix{};
+            fix.gps_time = geotrace::Timestamp::from_seconds(1700000000U);
+            fix.lat = geotrace::Angle::degrees(51.5074);
+            fix.lon = geotrace::Angle::degrees(-0.1278);
+            builder.add_nav_fix(fix);
+
+            const geotrace::NavFile file = builder.finish();
+            file.write_to_file("smoke_cpp_out.gtd");
+        } catch (const geotrace::Error &e) {
+            std::cerr << "error: " << e.what() << "\n";
+            return 1;
+        }
+
+        std::cout << "smoke OK, geotrace-cpp " << GEOTRACE_CPP_VERSION << "\n";
+        return 0;
+    }
 
 defaults:
   run:
@@ -50,10 +93,11 @@ jobs:
     env:
       ARCHIVE: geotrace-sdk-${{ matrix.target }}.tar.gz
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.tag }}
-          persist-credentials: false
+      - name: Write the consumer
+        run: |
+          mkdir -p consumer
+          printf '%s' "$CONSUMER_CMAKE" > consumer/CMakeLists.txt
+          printf '%s' "$CONSUMER_SRC" > consumer/smoke_cpp.cpp
 
       - name: Download the SDK archive
         env:
@@ -67,7 +111,7 @@ jobs:
           tar -xzf "$ARCHIVE" -C prefix
 
       - name: Configure the consumer
-        run: cmake -S sdk/integration-tests/prebuilt-cpp -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$PWD/prefix"
+        run: cmake -S consumer -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$PWD/prefix"
 
       - name: Build the consumer
         run: cmake --build build
@@ -89,16 +133,17 @@ jobs:
       matrix:
         runner: [ubuntu-22.04, macos-15-intel, macos-14]
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.tag }}
-          persist-credentials: false
+      - name: Write the consumer
+        run: |
+          mkdir -p consumer
+          printf '%s' "$CONSUMER_CMAKE" > consumer/CMakeLists.txt
+          printf '%s' "$CONSUMER_SRC" > consumer/smoke_cpp.cpp
 
       - name: Install the C/C++ SDK with Homebrew
         run: brew install "${TAP}/geotrace-c"
 
       - name: Configure the consumer
-        run: cmake -S sdk/integration-tests/prebuilt-cpp -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+        run: cmake -S consumer -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix)"
 
       - name: Build the consumer
         run: cmake --build build
@@ -116,10 +161,11 @@ jobs:
     env:
       ARCHIVE: geotrace-sdk-x86_64-pc-windows-msvc.zip
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.tag }}
-          persist-credentials: false
+      - name: Write the consumer
+        run: |
+          mkdir -p consumer
+          printf '%s' "$CONSUMER_CMAKE" > consumer/CMakeLists.txt
+          printf '%s' "$CONSUMER_SRC" > consumer/smoke_cpp.cpp
 
       - name: Download the Windows archive
         env:
@@ -131,7 +177,7 @@ jobs:
         run: 7z x -y -oprefix "$ARCHIVE" >/dev/null
 
       - name: Configure the consumer (MSVC)
-        run: cmake -S sdk/integration-tests/prebuilt-cpp -B build -A x64 -DCMAKE_PREFIX_PATH="$(cygpath -m "$PWD/prefix")"
+        run: cmake -S consumer -B build -A x64 -DCMAKE_PREFIX_PATH="$(cygpath -m "$PWD/prefix")"
 
       - name: Build the consumer
         run: cmake --build build --config Release
