@@ -14,7 +14,7 @@ int main() {
         FileBuilder builder;
         builder.title("Quick tour").device("Example GPS v1.0");
 
-        NavFix f0;
+        NavFix f0{};
         f0.gps_time = now;
         f0.lat = Angle::degrees(51.5074);
         f0.lon = Angle::degrees(-0.1278);
@@ -23,10 +23,10 @@ int main() {
         f0.eph_m = 3.2;
         builder.add_nav_fix(f0);
 
-        SatelliteReport report;
+        SatelliteReport report{};
         report.gps_time = now;
 
-        Satellite s1;
+        Satellite s1{};
         s1.constellation = Constellation::Gps;
         s1.prn = 1;
         s1.in_fix = true;
@@ -35,7 +35,7 @@ int main() {
         s1.snr_dbhz = 38.0;
         report.tracked.push_back(s1);
 
-        Satellite s2;
+        Satellite s2{};
         s2.constellation = Constellation::Galileo;
         s2.prn = 3;
         s2.in_fix = false;
@@ -44,7 +44,7 @@ int main() {
 
         builder.add_satellite_report(report);
 
-        NavFix f1;
+        NavFix f1{};
         f1.gps_time = t1;
         f1.lat = Angle::degrees(51.5080);
         f1.lon = Angle::degrees(-0.1265);
@@ -53,7 +53,7 @@ int main() {
         f1.eph_m = 2.9;
         builder.add_nav_fix(f1);
 
-        Annotation ann;
+        Annotation ann{};
         ann.time = now;
         ann.label = "Start point";
         ann.icon = MarkerIcon::Pin;

@@ -46,7 +46,7 @@ int main() {
         for (const auto &point : track) {
             const Timestamp t = at(idx);
 
-            NavFix fix;
+            NavFix fix{};
             fix.gps_time = t;
             fix.lat = Angle::degrees(point.lat);
             fix.lon = Angle::degrees(point.lon);
@@ -57,10 +57,10 @@ int main() {
             // SNR climbs slightly each second as the receiver settles.
             const double snr = 36.0 + static_cast<double>(idx);
 
-            SatelliteReport report;
+            SatelliteReport report{};
             report.gps_time = t;
 
-            Satellite g1;
+            Satellite g1{};
             g1.constellation = Constellation::Gps;
             g1.prn = 1;
             g1.in_fix = true;
@@ -69,14 +69,14 @@ int main() {
             g1.snr_dbhz = snr;
             report.tracked.push_back(g1);
 
-            Satellite g5;
+            Satellite g5{};
             g5.constellation = Constellation::Gps;
             g5.prn = 5;
             g5.in_fix = true;
             g5.snr_dbhz = snr - 2.0;
             report.tracked.push_back(g5);
 
-            Satellite e3;
+            Satellite e3{};
             e3.constellation = Constellation::Galileo;
             e3.prn = 3;
             e3.in_fix = false;

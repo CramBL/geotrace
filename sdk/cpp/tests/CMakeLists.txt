@@ -5,16 +5,13 @@ include(FetchContent)
 FetchContent_Declare(
     doctest
     GIT_REPOSITORY https://github.com/doctest/doctest.git
-    GIT_TAG        v2.4.11
+    GIT_TAG        v2.5.2
     GIT_SHALLOW    TRUE
 )
 
-# doctest v2.4.11's cmake_minimum_required predates 3.10, which recent CMake
-# versions warn about. This is the documented escape hatch for vendored
-# dependencies we don't control.
-set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
+# doctest v2.5.0+ declares cmake_minimum_required(VERSION 3.14), so no policy
+# escape hatch is needed for the vendored dependency.
 FetchContent_MakeAvailable(doctest)
-unset(CMAKE_POLICY_VERSION_MINIMUM)
 
 set(GEOTRACE_CPP_FIXTURE "${CMAKE_CURRENT_SOURCE_DIR}/../../c/tests/fixtures/minimal.gtd")
 
@@ -23,7 +20,7 @@ function(add_cpp_test name)
     target_link_libraries(${name} PRIVATE GeoTrace::Cpp doctest::doctest)
 
     if(MSVC)
-        # /wd5285: doctest v2.4.11 forward-declares std::tuple, which newer MSVC
+        # /wd5285: doctest forward-declares std::tuple, which newer MSVC
         # (VS 2026 / cl 14.51) flags as C5285 (specializing a std template).
         # Under /WX that becomes an error, so silence this one third-party
         # diagnostic without weakening warnings for our own code.

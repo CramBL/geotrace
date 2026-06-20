@@ -44,7 +44,7 @@ int main() {
         };
         std::size_t idx = 0;
         for (const auto &point : track) {
-            NavFix fix;
+            NavFix fix{};
             fix.gps_time = at(idx * 30);
             fix.lat = Angle::degrees(point.lat);
             fix.lon = Angle::degrees(point.lon);

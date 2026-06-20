@@ -245,7 +245,7 @@ void load_fixes(geotrace::FileBuilder &b, const fs::path &base, const std::vecto
             parse_opt_double(cols[7]),
         });
 
-        geotrace::SatelliteReport report;
+        geotrace::SatelliteReport report{};
         report.gps_time = gps_ts.value_or(geotrace::Timestamp::none());
         report.sys_time = sys_ts.value_or(geotrace::Timestamp::none());
         for (const auto &row : sats) {
@@ -253,7 +253,7 @@ void load_fixes(geotrace::FileBuilder &b, const fs::path &base, const std::vecto
                 report.tracked.push_back(row.sat);
         }
         if (!report.tracked.empty())
-            b.add_satellite_report(std::move(report));
+            b.add_satellite_report(report);
     }
 }
 

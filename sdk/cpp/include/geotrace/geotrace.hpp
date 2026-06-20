@@ -15,11 +15,18 @@
 
 #pragma once
 
+#if __has_include(<version>)
+#include <version>
+#endif
+#if __has_include(<compare>)
+#include <compare>
+#endif
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -57,10 +64,17 @@ template <typename T> class span {
 
     template <std::size_t N> constexpr span(T (&arr)[N]) noexcept : data_(arr), size_(N) {}
 
-    template <typename Container>
+    template <typename Container,
+              typename = std::enable_if_t<
+                  !std::is_same_v<std::decay_t<Container>, span> &&
+                  std::is_convertible_v<decltype(std::declval<Container &>().data()), pointer>>>
     constexpr span(Container &c) noexcept : data_(c.data()), size_(c.size()) {}
 
-    template <typename Container>
+    template <
+        typename Container,
+        typename = std::enable_if_t<
+            !std::is_same_v<std::decay_t<Container>, span> &&
+            std::is_convertible_v<decltype(std::declval<const Container &>().data()), const T *>>>
     constexpr span(const Container &c) noexcept : data_(c.data()), size_(c.size()) {}
 
     constexpr pointer data() const noexcept { return data_; }
@@ -173,6 +187,14 @@ inline GtdOptF64 to_c(std::optional<double> v) noexcept {
     return result;
 }
 
+struct BuilderDeleter {
+    void operator()(GtdFileBuilder *p) const noexcept { ::gtd_builder_destroy(p); }
+};
+
+struct NavFileDeleter {
+    void operator()(GtdNavFile *p) const noexcept { ::gtd_nav_file_destroy(p); }
+};
+
 } // namespace detail
 
 /**
@@ -183,7 +205,9 @@ inline GtdOptF64 to_c(std::optional<double> v) noexcept {
 struct Timestamp {
     std::int64_t unix_micros = 0;
 
-    static Timestamp none() noexcept { return Timestamp{::gtd_ts_none().unix_micros}; }
+    static constexpr std::int64_t kNoneVal = -9223372036854775807LL - 1;
+
+    static constexpr Timestamp none() noexcept { return Timestamp{kNoneVal}; }
     static Timestamp from_seconds(std::uint64_t s) noexcept {
         return Timestamp{::gtd_ts_from_seconds(s).unix_micros};
     }
@@ -197,10 +221,18 @@ struct Timestamp {
         return Timestamp{::gtd_ts_from_nanos(ns).unix_micros};
     }
 
-    bool is_none() const noexcept { return ::gtd_ts_is_none(GtdTimestamp{unix_micros}) != 0; }
+    bool is_none() const noexcept { return unix_micros == kNoneVal; }
 
+#if defined(__cpp_impl_three_way_comparison) && __cpp_impl_three_way_comparison >= 201907L
+    auto operator<=>(const Timestamp &) const = default;
+#else
     bool operator==(Timestamp other) const noexcept { return unix_micros == other.unix_micros; }
     bool operator!=(Timestamp other) const noexcept { return !(*this == other); }
+    bool operator<(Timestamp other) const noexcept { return unix_micros < other.unix_micros; }
+    bool operator<=(Timestamp other) const noexcept { return unix_micros <= other.unix_micros; }
+    bool operator>(Timestamp other) const noexcept { return unix_micros > other.unix_micros; }
+    bool operator>=(Timestamp other) const noexcept { return unix_micros >= other.unix_micros; }
+#endif
 };
 
 /** Angular measurement stored in degrees. */
@@ -212,8 +244,16 @@ class Angle {
     double as_degrees() const noexcept { return deg_; }
     double as_radians() const noexcept { return deg_ * (kPi / 180.0); }
 
+#if defined(__cpp_impl_three_way_comparison) && __cpp_impl_three_way_comparison >= 201907L
+    auto operator<=>(const Angle &) const = default;
+#else
     bool operator==(Angle other) const noexcept { return deg_ == other.deg_; }
     bool operator!=(Angle other) const noexcept { return !(*this == other); }
+    bool operator<(Angle other) const noexcept { return deg_ < other.deg_; }
+    bool operator<=(Angle other) const noexcept { return deg_ <= other.deg_; }
+    bool operator>(Angle other) const noexcept { return deg_ > other.deg_; }
+    bool operator>=(Angle other) const noexcept { return deg_ >= other.deg_; }
+#endif
 
   private:
     // M_PI is a POSIX extension not guaranteed by the C++ standard (absent on MSVC
@@ -234,8 +274,16 @@ class Velocity {
     double as_kmh() const noexcept { return mps_ * 3.6; }
     double as_knots() const noexcept { return mps_ / 0.514444; }
 
+#if defined(__cpp_impl_three_way_comparison) && __cpp_impl_three_way_comparison >= 201907L
+    auto operator<=>(const Velocity &) const = default;
+#else
     bool operator==(Velocity other) const noexcept { return mps_ == other.mps_; }
     bool operator!=(Velocity other) const noexcept { return !(*this == other); }
+    bool operator<(Velocity other) const noexcept { return mps_ < other.mps_; }
+    bool operator<=(Velocity other) const noexcept { return mps_ <= other.mps_; }
+    bool operator>(Velocity other) const noexcept { return mps_ > other.mps_; }
+    bool operator>=(Velocity other) const noexcept { return mps_ >= other.mps_; }
+#endif
 
   private:
     explicit Velocity(double mps) noexcept : mps_(mps) {}
@@ -472,8 +520,26 @@ template <class E> struct EventEnum;
 namespace detail {
 template <class E, class = void> struct is_event_enum : std::false_type {};
 template <class E>
-struct is_event_enum<E, std::void_t<decltype(EventEnum<E>::base)>> : std::true_type {};
+struct is_event_enum<
+    E, std::void_t<decltype(EventEnum<E>::base), decltype(EventEnum<E>::seg(std::declval<E>()))>>
+    : std::true_type {};
 } // namespace detail
+
+#if defined(__cpp_concepts) && __cpp_concepts >= 201907L
+/**
+ * C++20 Concept for a fully-formed EventEnum specialisation.
+ *
+ * Constrains `event_path()` and `FileBuilder::add_event()` on C++20 builds,
+ * giving a clear "constraint not satisfied" diagnostic when a type lacks a
+ * proper EventEnum<> specialisation, rather than the cryptic substitution
+ * failure that the C++17 SFINAE path produces.
+ */
+template <typename E>
+concept EventEnumValue = requires(E val) {
+    { EventEnum<E>::base } -> std::convertible_to<std::string_view>;
+    { EventEnum<E>::seg(val) } -> std::convertible_to<std::string_view>;
+};
+#endif
 
 /**
  * A composed, slash-separated event `variant_path`.
@@ -509,11 +575,15 @@ template <class E> void append_event_seg(std::string &out, E v, bool with_base) 
  * `"/" + seg`, so `event_path(Connectivity::Agps, Agps::Request)` yields
  * `"connectivity/agps/request"`.
  */
+#if defined(__cpp_concepts) && __cpp_concepts >= 201907L
+template <EventEnumValue E, EventEnumValue... Es> EventPath event_path(E v0, Es... vs) {
+#else
 template <class E, class... Es> EventPath event_path(E v0, Es... vs) {
     static_assert(detail::is_event_enum<E>::value,
                   "event_path: no EventEnum<> specialisation for this type");
     static_assert((detail::is_event_enum<Es>::value && ...),
                   "event_path: no EventEnum<> specialisation for a nested type");
+#endif
     std::string out;
     detail::append_event_seg(out, v0, true);
     (detail::append_event_seg(out, vs, false), ...);
@@ -542,52 +612,40 @@ class FileBuilder {
             throw std::bad_alloc{};
     }
 
-    ~FileBuilder() {
-        if (impl_)
-            ::gtd_builder_destroy(impl_);
-    }
-
     FileBuilder(const FileBuilder &) = delete;
     FileBuilder &operator=(const FileBuilder &) = delete;
 
-    FileBuilder(FileBuilder &&other) noexcept : impl_(other.impl_) { other.impl_ = nullptr; }
+    FileBuilder(FileBuilder &&) noexcept = default;
+    FileBuilder &operator=(FileBuilder &&) noexcept = default;
 
-    FileBuilder &operator=(FileBuilder &&other) noexcept {
-        if (this != &other) {
-            if (impl_)
-                ::gtd_builder_destroy(impl_);
-            impl_ = other.impl_;
-            other.impl_ = nullptr;
-        }
-        return *this;
-    }
+    ~FileBuilder() = default;
 
     /** @name Metadata setters (must be called before the first `add_*` call). */
     ///@{
 
-    FileBuilder &title(std::string v) {
-        detail::check(::gtd_builder_set_title(impl_, v.c_str()));
+    FileBuilder &title(const std::string &v) {
+        detail::check(::gtd_builder_set_title(impl_.get(), v.c_str()));
         return *this;
     }
 
-    FileBuilder &device(std::string v) {
-        detail::check(::gtd_builder_set_device(impl_, v.c_str()));
+    FileBuilder &device(const std::string &v) {
+        detail::check(::gtd_builder_set_device(impl_.get(), v.c_str()));
         return *this;
     }
 
-    FileBuilder &notes(std::string v) {
-        detail::check(::gtd_builder_set_notes(impl_, v.c_str()));
+    FileBuilder &notes(const std::string &v) {
+        detail::check(::gtd_builder_set_notes(impl_.get(), v.c_str()));
         return *this;
     }
 
-    FileBuilder &identity(std::string v) {
-        detail::check(::gtd_builder_set_identity(impl_, v.c_str()));
+    FileBuilder &identity(const std::string &v) {
+        detail::check(::gtd_builder_set_identity(impl_.get(), v.c_str()));
         return *this;
     }
 
     /** Downgrade out-of-range annotation errors to warnings. */
     FileBuilder &lenient() noexcept {
-        ::gtd_builder_set_lenient(impl_);
+        ::gtd_builder_set_lenient(impl_.get());
         return *this;
     }
 
@@ -596,19 +654,19 @@ class FileBuilder {
     /** @name Data ingestion */
     ///@{
 
-    FileBuilder &add_nav_fix(NavFix fix) {
+    FileBuilder &add_nav_fix(const NavFix &fix) {
         const std::optional<double> heading_deg =
             fix.heading ? std::optional<double>{fix.heading->as_degrees()} : std::nullopt;
         const std::optional<double> speed_mps =
             fix.speed ? std::optional<double>{fix.speed->as_mps()} : std::nullopt;
-        detail::check(::gtd_builder_add_nav_fix(impl_, detail::to_c(fix.gps_time),
+        detail::check(::gtd_builder_add_nav_fix(impl_.get(), detail::to_c(fix.gps_time),
                                                 detail::to_c(fix.sys_time), fix.lat.as_degrees(),
                                                 fix.lon.as_degrees(), detail::to_c(heading_deg),
                                                 detail::to_c(speed_mps), detail::to_c(fix.eph_m)));
         return *this;
     }
 
-    FileBuilder &add_satellite_report(SatelliteReport report) {
+    FileBuilder &add_satellite_report(const SatelliteReport &report) {
         std::vector<GtdSatellite> sats;
         sats.reserve(report.tracked.size());
         for (const auto &s : report.tracked) {
@@ -621,15 +679,15 @@ class FileBuilder {
                 detail::to_c(s.snr_dbhz),
             });
         }
-        detail::check(::gtd_builder_add_satellite_report(impl_, detail::to_c(report.gps_time),
+        detail::check(::gtd_builder_add_satellite_report(impl_.get(), detail::to_c(report.gps_time),
                                                          detail::to_c(report.sys_time), sats.data(),
                                                          sats.size()));
         return *this;
     }
 
-    FileBuilder &add_annotation(Annotation ann) {
+    FileBuilder &add_annotation(const Annotation &ann) {
         const char *label = ann.label.empty() ? nullptr : ann.label.c_str();
-        detail::check(::gtd_builder_add_annotation(impl_, detail::to_c(ann.time), label,
+        detail::check(::gtd_builder_add_annotation(impl_.get(), detail::to_c(ann.time), label,
                                                    detail::to_c(ann.icon)));
         return *this;
     }
@@ -638,16 +696,16 @@ class FileBuilder {
      * Add a structured event marker.
      * @throws InvalidPathError if `variant_path` is malformed.
      */
-    FileBuilder &add_event_marker(EventMarker marker) {
+    FileBuilder &add_event_marker(const EventMarker &marker) {
         const char *ann = marker.annotation.empty() ? nullptr : marker.annotation.c_str();
-        detail::check(::gtd_builder_add_event_marker(impl_, marker.variant_path.c_str(),
+        detail::check(::gtd_builder_add_event_marker(impl_.get(), marker.variant_path.c_str(),
                                                      detail::to_c(marker.sys_time), ann));
         return *this;
     }
 
-    FileBuilder &add_event_marker_style(EventMarkerStyle style) {
+    FileBuilder &add_event_marker_style(const EventMarkerStyle &style) {
         const char *color = style.color_hex.empty() ? nullptr : style.color_hex.c_str();
-        detail::check(::gtd_builder_add_event_marker_style(impl_, style.variant_path.c_str(),
+        detail::check(::gtd_builder_add_event_marker_style(impl_.get(), style.variant_path.c_str(),
                                                            detail::to_c(style.icon), color));
         return *this;
     }
@@ -659,8 +717,13 @@ class FileBuilder {
      * `base + "/" + seg(v)`.  Use `event_path()` for nested taxonomies.
      * @throws InvalidPathError if the composed path is malformed.
      */
+#if defined(__cpp_concepts) && __cpp_concepts >= 201907L
+    template <EventEnumValue E>
+    FileBuilder &add_event(E v, Timestamp sys_time, std::string note = {}) {
+#else
     template <class E, std::enable_if_t<detail::is_event_enum<E>::value, int> = 0>
     FileBuilder &add_event(E v, Timestamp sys_time, std::string note = {}) {
+#endif
         return add_event(event_path(v), sys_time, std::move(note));
     }
 
@@ -686,7 +749,7 @@ class FileBuilder {
     NavFile finish();
 
   private:
-    GtdFileBuilder *impl_;
+    std::unique_ptr<GtdFileBuilder, detail::BuilderDeleter> impl_;
 };
 
 /**
@@ -696,25 +759,13 @@ class FileBuilder {
  */
 class NavFile {
   public:
-    ~NavFile() {
-        if (impl_)
-            ::gtd_nav_file_destroy(impl_);
-    }
-
     NavFile(const NavFile &) = delete;
     NavFile &operator=(const NavFile &) = delete;
 
-    NavFile(NavFile &&other) noexcept : impl_(other.impl_) { other.impl_ = nullptr; }
+    NavFile(NavFile &&) noexcept = default;
+    NavFile &operator=(NavFile &&) noexcept = default;
 
-    NavFile &operator=(NavFile &&other) noexcept {
-        if (this != &other) {
-            if (impl_)
-                ::gtd_nav_file_destroy(impl_);
-            impl_ = other.impl_;
-            other.impl_ = nullptr;
-        }
-        return *this;
-    }
+    ~NavFile() = default;
 
     /**
      * Open and parse a `.gtd` file.
@@ -722,9 +773,13 @@ class NavFile {
      */
     static NavFile open(const std::filesystem::path &p) {
         GtdNavFile *out = nullptr;
-        // path::c_str() returns wchar_t* on Windows; .string() gives a narrow string
-        // on all platforms that the C API (const char*) can accept.
-        const auto path_str = p.string();
+        std::string path_str;
+#if defined(__cpp_lib_char8_t)
+        auto u8str = p.u8string();
+        path_str = std::string(u8str.begin(), u8str.end());
+#else
+        path_str = p.u8string();
+#endif
         detail::check(::gtd_nav_file_open(path_str.c_str(), &out));
         return NavFile(out);
     }
@@ -750,8 +805,14 @@ class NavFile {
      * @throws IoError, Hdf5Error on failure.
      */
     void write_to_file(const std::filesystem::path &p) const {
-        const auto path_str = p.string();
-        detail::check(::gtd_nav_file_write_to_path(impl_, path_str.c_str()));
+        std::string path_str;
+#if defined(__cpp_lib_char8_t)
+        auto u8str = p.u8string();
+        path_str = std::string(u8str.begin(), u8str.end());
+#else
+        path_str = p.u8string();
+#endif
+        detail::check(::gtd_nav_file_write_to_path(impl_.get(), path_str.c_str()));
     }
 
     /**
@@ -761,36 +822,38 @@ class NavFile {
     std::vector<std::uint8_t> to_bytes() const {
         std::uint8_t *buf = nullptr;
         std::size_t len = 0;
-        detail::check(::gtd_nav_file_to_bytes(impl_, &buf, &len));
-        std::vector<std::uint8_t> result(buf, buf + len);
-        ::gtd_free_bytes(buf, len);
-        return result;
+        detail::check(::gtd_nav_file_to_bytes(impl_.get(), &buf, &len));
+        auto deleter = [len](std::uint8_t *p) noexcept { ::gtd_free_bytes(p, len); };
+        const std::unique_ptr<std::uint8_t, decltype(deleter)> guard(buf, deleter);
+        return {buf, buf + len};
     }
 
     /** @name Metadata (returns empty string_view when field is absent). */
     ///@{
 
     std::string_view title() const noexcept {
-        const char *s = ::gtd_nav_file_title(impl_);
+        const char *s = ::gtd_nav_file_title(impl_.get());
         return s ? std::string_view{s} : std::string_view{};
     }
     std::string_view device() const noexcept {
-        const char *s = ::gtd_nav_file_device(impl_);
+        const char *s = ::gtd_nav_file_device(impl_.get());
         return s ? std::string_view{s} : std::string_view{};
     }
     std::string_view notes() const noexcept {
-        const char *s = ::gtd_nav_file_notes(impl_);
+        const char *s = ::gtd_nav_file_notes(impl_.get());
         return s ? std::string_view{s} : std::string_view{};
     }
     std::string_view identity() const noexcept {
-        const char *s = ::gtd_nav_file_identity(impl_);
+        const char *s = ::gtd_nav_file_identity(impl_.get());
         return s ? std::string_view{s} : std::string_view{};
     }
 
     ///@}
 
     /** Number of navigation fixes in the file. */
-    std::size_t nav_point_count() const noexcept { return ::gtd_nav_file_nav_point_count(impl_); }
+    std::size_t nav_point_count() const noexcept {
+        return ::gtd_nav_file_nav_point_count(impl_.get());
+    }
 
     /**
      * Return the navigation fix at @p idx.
@@ -798,9 +861,9 @@ class NavFile {
      */
     NavPointView nav_point(std::size_t idx) const {
         GtdNavPointInfo info{};
-        detail::check_range(::gtd_nav_file_get_nav_point(impl_, idx, &info));
+        detail::check_range(::gtd_nav_file_get_nav_point(impl_.get(), idx, &info));
 
-        NavPointView v;
+        NavPointView v{};
         v.gps_time = detail::from_c(info.gps_time);
         v.sys_time = detail::from_c(info.sys_time);
         v.lat = Angle::degrees(info.lat_deg);
@@ -822,9 +885,9 @@ class NavFile {
      */
     SatelliteView satellite(std::size_t nav_idx, std::size_t sat_idx) const {
         GtdSatInfo info{};
-        detail::check_range(::gtd_nav_file_get_satellite(impl_, nav_idx, sat_idx, &info));
+        detail::check_range(::gtd_nav_file_get_satellite(impl_.get(), nav_idx, sat_idx, &info));
 
-        SatelliteView v;
+        SatelliteView v{};
         v.constellation = detail::from_c(info.constellation);
         v.prn = info.prn;
         v.in_fix = info.in_fix != 0;
@@ -840,7 +903,7 @@ class NavFile {
 
     /** Number of event markers in the file. */
     std::size_t event_marker_count() const noexcept {
-        return ::gtd_nav_file_event_marker_count(impl_);
+        return ::gtd_nav_file_event_marker_count(impl_.get());
     }
 
     /**
@@ -849,9 +912,9 @@ class NavFile {
      */
     EventMarkerView event_marker(std::size_t idx) const {
         GtdEventMarkerInfo info{};
-        detail::check_range(::gtd_nav_file_get_event_marker(impl_, idx, &info));
+        detail::check_range(::gtd_nav_file_get_event_marker(impl_.get(), idx, &info));
 
-        EventMarkerView v;
+        EventMarkerView v{};
         v.variant_path = info.variant_path;
         v.sys_time = detail::from_c(info.sys_time);
         v.lat = Angle::degrees(info.lat_deg);
@@ -863,13 +926,12 @@ class NavFile {
   private:
     friend class FileBuilder;
     explicit NavFile(GtdNavFile *impl) noexcept : impl_(impl) {}
-    GtdNavFile *impl_;
+    std::unique_ptr<GtdNavFile, detail::NavFileDeleter> impl_;
 };
 
 inline NavFile FileBuilder::finish() {
     GtdNavFile *out = nullptr;
-    const GtdStatus s = ::gtd_builder_finish(impl_, &out);
-    impl_ = nullptr; // builder is consumed regardless of success or failure
+    const GtdStatus s = ::gtd_builder_finish(impl_.release(), &out);
     detail::check(s);
     return NavFile(out);
 }

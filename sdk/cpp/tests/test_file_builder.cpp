@@ -33,7 +33,7 @@ static Timestamp t0 = Timestamp::from_seconds(1700000000ULL);
 static Timestamp t1 = Timestamp::from_seconds(1700000010ULL);
 
 TEST_CASE("FileBuilder: single nav fix produces a valid NavFile") {
-    NavFix fix;
+    NavFix fix{};
     fix.gps_time = t0;
     fix.lat = Angle::degrees(51.5074);
     fix.lon = Angle::degrees(-0.1278);
@@ -47,7 +47,7 @@ TEST_CASE("FileBuilder: single nav fix produces a valid NavFile") {
 }
 
 TEST_CASE("FileBuilder: metadata is preserved") {
-    NavFix fix;
+    NavFix fix{};
     fix.gps_time = t0;
     fix.lat = Angle::degrees(0.0);
     fix.lon = Angle::degrees(0.0);
@@ -67,7 +67,7 @@ TEST_CASE("FileBuilder: metadata is preserved") {
 }
 
 TEST_CASE("FileBuilder: optional fields round-trip") {
-    NavFix fix;
+    NavFix fix{};
     fix.gps_time = t0;
     fix.lat = Angle::degrees(48.8566);
     fix.lon = Angle::degrees(2.3522);
@@ -87,7 +87,7 @@ TEST_CASE("FileBuilder: optional fields round-trip") {
 }
 
 TEST_CASE("FileBuilder: no-optional nav fix has nullopt fields") {
-    NavFix fix;
+    NavFix fix{};
     fix.gps_time = t0;
     fix.lat = Angle::degrees(0.0);
     fix.lon = Angle::degrees(0.0);
@@ -101,12 +101,12 @@ TEST_CASE("FileBuilder: no-optional nav fix has nullopt fields") {
 }
 
 TEST_CASE("FileBuilder: satellite report round-trips") {
-    NavFix fix;
+    NavFix fix{};
     fix.gps_time = t0;
     fix.lat = Angle::degrees(40.7128);
     fix.lon = Angle::degrees(-74.0060);
 
-    Satellite s1;
+    Satellite s1{};
     s1.constellation = Constellation::Gps;
     s1.prn = 7;
     s1.in_fix = true;
@@ -114,13 +114,13 @@ TEST_CASE("FileBuilder: satellite report round-trips") {
     s1.azimuth_deg = 120.0;
     s1.snr_dbhz = 40.0;
 
-    Satellite s2;
+    Satellite s2{};
     s2.constellation = Constellation::Glonass;
     s2.prn = 2;
     s2.in_fix = false;
     s2.snr_dbhz = 28.0;
 
-    SatelliteReport report;
+    SatelliteReport report{};
     report.gps_time = t0;
     report.tracked.push_back(s1);
     report.tracked.push_back(s2);
@@ -143,17 +143,17 @@ TEST_CASE("FileBuilder: satellite report round-trips") {
 }
 
 TEST_CASE("FileBuilder: event marker round-trips") {
-    NavFix fix;
+    NavFix fix{};
     fix.gps_time = t0;
     fix.lat = Angle::degrees(35.6762);
     fix.lon = Angle::degrees(139.6503);
 
-    EventMarker m1;
+    EventMarker m1{};
     m1.variant_path = "system/startup";
     m1.sys_time = t0;
     m1.annotation = "Device started";
 
-    EventMarkerStyle style;
+    EventMarkerStyle style{};
     style.variant_path = "system/startup";
     style.icon = MarkerIcon::Gear;
     style.color_hex = "#00FF00";
@@ -168,12 +168,12 @@ TEST_CASE("FileBuilder: event marker round-trips") {
 }
 
 TEST_CASE("FileBuilder: fluent chain works end-to-end") {
-    NavFix f1;
+    NavFix f1{};
     f1.gps_time = t0;
     f1.lat = Angle::degrees(1.0);
     f1.lon = Angle::degrees(2.0);
 
-    NavFix f2;
+    NavFix f2{};
     f2.gps_time = t1;
     f2.lat = Angle::degrees(1.1);
     f2.lon = Angle::degrees(2.1);
@@ -186,7 +186,7 @@ TEST_CASE("FileBuilder: fluent chain works end-to-end") {
 
 TEST_CASE("FileBuilder: NoNavFixesError thrown when annotations exist but no fixes") {
     FileBuilder b;
-    Annotation ann;
+    Annotation ann{};
     ann.time = t0;
     ann.label = "unreachable";
     b.add_annotation(ann);
@@ -195,13 +195,13 @@ TEST_CASE("FileBuilder: NoNavFixesError thrown when annotations exist but no fix
 
 TEST_CASE("FileBuilder: InvalidPathError thrown for malformed variant path") {
     FileBuilder b;
-    NavFix fix;
+    NavFix fix{};
     fix.gps_time = t0;
     fix.lat = Angle::degrees(0.0);
     fix.lon = Angle::degrees(0.0);
     b.add_nav_fix(fix);
 
-    EventMarker marker;
+    EventMarker marker{};
     marker.variant_path = "bad path with spaces!";
     marker.sys_time = t0;
 
@@ -210,7 +210,7 @@ TEST_CASE("FileBuilder: InvalidPathError thrown for malformed variant path") {
 
 TEST_CASE("FileBuilder: move semantics work") {
     FileBuilder b1;
-    NavFix fix;
+    NavFix fix{};
     fix.gps_time = t0;
     fix.lat = Angle::degrees(0.0);
     fix.lon = Angle::degrees(0.0);

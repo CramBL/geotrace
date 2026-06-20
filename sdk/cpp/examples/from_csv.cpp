@@ -67,7 +67,7 @@ int main() {
         while (std::getline(csv, line)) {
             if (line.empty())
                 continue;
-            NavFix fix;
+            NavFix fix{};
             if (parse_row(line, fix)) {
                 builder.add_nav_fix(fix);
                 ++rows;

@@ -44,7 +44,7 @@ int main() {
         };
         std::size_t idx = 0;
         for (const auto &point : gps) {
-            NavFix fix;
+            NavFix fix{};
             fix.gps_time = at(idx * 10);
             fix.lat = Angle::degrees(point.lat);
             fix.lon = Angle::degrees(point.lon);
@@ -67,7 +67,7 @@ int main() {
         };
         std::size_t marker_count = 0;
         for (const auto &m : markers) {
-            Annotation ann;
+            Annotation ann{};
             ann.time = at(m.offset);
             ann.label = std::string(m.label);
             ann.icon = m.icon;
