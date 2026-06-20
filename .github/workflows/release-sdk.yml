@@ -201,7 +201,12 @@ jobs:
 
   # Create the GitHub release for the tag and attach every archive + checksum.
   github-release:
-    needs: [meta, verify-versions, build-archives, build-wheels, build-sdist]
+    needs: 
+      - meta
+      - verify-versions
+      - build-archives
+      - build-wheels
+      - build-sdist
     if: needs.meta.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -252,7 +257,9 @@ jobs:
 
   # Publish the Rust SDK crates to crates.io, in dependency order.
   publish-crates:
-    needs: [meta, verify-versions]
+    needs: 
+      - meta
+      - verify-versions
     if: needs.meta.outputs.publish == 'true' && needs.meta.outputs.prerelease == 'false'
     runs-on: ubuntu-latest
     steps:
@@ -365,7 +372,11 @@ jobs:
   # Requires the PyPI project to be configured with this repo + workflow as a
   # trusted publisher.
   publish-pypi:
-    needs: [meta, verify-versions, build-wheels, build-sdist]
+    needs: 
+      - meta
+      - verify-versions
+      - build-wheels
+      - build-sdist
     if: needs.meta.outputs.publish == 'true' && needs.meta.outputs.prerelease == 'false'
     runs-on: ubuntu-latest
     environment: pypi
@@ -389,7 +400,9 @@ jobs:
   # archives. dist's built-in homebrew job only generates the GUI app formula, so
   # this library formula is maintained here.
   publish-homebrew:
-    needs: [meta, github-release]
+    needs: 
+      - meta
+      - github-release
     if: needs.meta.outputs.publish == 'true' && needs.meta.outputs.prerelease == 'false'
     runs-on: ubuntu-latest
     steps:

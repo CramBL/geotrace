@@ -39,6 +39,7 @@ env:
     find_package(GeoTraceC REQUIRED)
     add_executable(smoke_c smoke_c.c)
     target_link_libraries(smoke_c PRIVATE GeoTrace::C)
+
     # RPATH so the binary finds a shared GeoTrace::C without LD_LIBRARY_PATH
     # (harmless for a static library).
     set_target_properties(smoke_c PROPERTIES BUILD_RPATH "$<TARGET_FILE_DIR:GeoTrace::C>")

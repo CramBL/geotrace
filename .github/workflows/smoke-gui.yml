@@ -141,7 +141,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libgl1 libxkbcommon0 libwayland-client0 libx11-6 libxcursor1 libxi6 libxrandr2 libxcb1
+            libgl1 \
+            libxkbcommon0 \
+            libwayland-client0 \
+            libx11-6 \
+            libxcursor1 \
+            libxi6 \
+            libxrandr2 \
+            libxcb1
 
       - name: Install GeoTrace with Homebrew
         run: brew install "${TAP}/geotrace"

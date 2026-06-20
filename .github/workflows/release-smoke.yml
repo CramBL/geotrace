@@ -100,7 +100,12 @@ jobs:
       prerelease: ${{ needs.meta.outputs.prerelease }}
 
   smoke:
-    needs: [gui, rust, python, c, cpp]
+    needs:
+      - gui
+      - rust
+      - python
+      - c
+      - cpp
     if: always()
     runs-on: ubuntu-latest
     steps:

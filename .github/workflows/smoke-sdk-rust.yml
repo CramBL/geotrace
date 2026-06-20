@@ -34,7 +34,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-22.04, macos-14, windows-latest]
+        runner:
+          - ubuntu-22.04
+          - macos-14
+          - windows-latest
     steps:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27

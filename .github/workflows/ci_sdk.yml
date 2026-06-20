@@ -438,7 +438,14 @@ jobs:
 
   ci-sdk:
     runs-on: ubuntu-latest
-    needs: [lint-sdk, sdk-msrv, sdk-doc, c-sdk, cpp-sdk, python-sdk, vcpkg-sdk]
+    needs: 
+      - lint-sdk
+      - sdk-msrv
+      - sdk-doc
+      - c-sdk
+      - cpp-sdk
+      - python-sdk
+      - vcpkg-sdk
     permissions:
       contents: none
     if: always()
