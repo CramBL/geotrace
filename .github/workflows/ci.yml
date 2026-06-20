@@ -88,17 +88,18 @@ jobs:
         run: cargo fmt --all --check
 
       - name: check
-        run: cargo check --workspace
+        run: cargo check --workspace --features geotrace/self-update
 
       - name: Clippy
         run: |
           cargo clippy --workspace --no-deps -- -D warnings
           cargo clippy --workspace --no-deps --tests -- -D warnings
           cargo clippy --workspace --no-deps --examples -- -D warnings
+          cargo clippy --workspace --no-deps --features geotrace/self-update --tests -- -D warnings
 
       - name: Tests
         if: runner.os == 'Linux'
-        run: cargo nextest run --workspace --profile ci
+        run: cargo nextest run --workspace --features geotrace/self-update --profile ci
         env:
           GEOTRACE_OFFLINE: 1
 
@@ -106,9 +107,16 @@ jobs:
       # toolchain installed only on Linux (see above) - exclude it elsewhere.
       - name: Tests (excluding gt-arch architecture check)
         if: runner.os != 'Linux'
-        run: cargo nextest run --workspace --exclude gt-arch --profile ci
+        run: cargo nextest run --workspace --exclude gt-arch --features geotrace/self-update --profile ci
         env:
           GEOTRACE_OFFLINE: 1
+
+      - name: Upload snapshots
+        uses: actions/upload-artifact@v7
+        if: matrix.os == 'macos-latest' && always()
+        with:
+          name: test-results
+          path: "**/tests/snapshots"
 
       - name: Examples
         run: bash scripts/examples.sh
