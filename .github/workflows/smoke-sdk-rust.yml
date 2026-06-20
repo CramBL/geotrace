@@ -48,14 +48,18 @@ jobs:
       - name: Add the geotrace-sdk dependency (crates.io)
         if: inputs.prerelease == 'false'
         working-directory: consumer
-        run: cargo add "geotrace-sdk@=${{ inputs.version }}"
+        env:
+          VERSION: ${{ inputs.version }}
+        run: cargo add "geotrace-sdk@=$VERSION"
 
       # A prerelease is not, so depend on the tagged source from git instead (the
       # same source crates.io would receive).
       - name: Add the geotrace-sdk dependency (git tag)
         if: inputs.prerelease == 'true'
         working-directory: consumer
-        run: cargo add geotrace-sdk --git "https://github.com/${REPO}" --tag "${{ inputs.tag }}"
+        env:
+          TAG: ${{ inputs.tag }}
+        run: cargo add geotrace-sdk --git "https://github.com/${REPO}" --tag "${TAG}"
 
       - name: Write a program that uses the SDK
         working-directory: consumer
@@ -83,4 +87,6 @@ jobs:
 
       - name: Check the version it printed
         working-directory: consumer
-        run: grep -qw "${{ inputs.version }}" output.txt
+        env:
+          VERSION: ${{ inputs.version }}
+        run: grep -qw "$VERSION" output.txt

@@ -58,7 +58,8 @@ jobs:
       - name: Download the SDK archive
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download "${{ inputs.tag }}" --repo "$REPO" --pattern "$ARCHIVE"
+          TAG: ${{ inputs.tag }}
+        run: gh release download "$TAG" --repo "$REPO" --pattern "$ARCHIVE"
 
       - name: Extract it into a prefix
         run: |
@@ -72,9 +73,11 @@ jobs:
         run: cmake --build build
 
       - name: Run it and check the version
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           ./build/smoke_c | tee output.txt
-          grep -qw "${{ inputs.version }}" output.txt
+          grep -qw "$VERSION" output.txt
 
   brew:
     name: brew / ${{ matrix.runner }}
@@ -101,9 +104,11 @@ jobs:
         run: cmake --build build
 
       - name: Run it and check the version
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           ./build/smoke_c | tee output.txt
-          grep -qw "${{ inputs.version }}" output.txt
+          grep -qw "$VERSION" output.txt
 
   tarball-windows:
     name: tarball / windows
@@ -119,7 +124,8 @@ jobs:
       - name: Download the Windows archive
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download "${{ inputs.tag }}" --repo "$REPO" --pattern "$ARCHIVE"
+          TAG: ${{ inputs.tag }}
+        run: gh release download "$TAG" --repo "$REPO" --pattern "$ARCHIVE"
 
       - name: Extract it into a prefix
         run: 7z x -y -oprefix "$ARCHIVE" >/dev/null
@@ -131,6 +137,8 @@ jobs:
         run: cmake --build build --config Release
 
       - name: Run it and check the version
+        env:
+          VERSION: ${{ inputs.version }}
         run: |
           ./build/Release/smoke_c.exe | tee output.txt
-          grep -qw "${{ inputs.version }}" output.txt
+          grep -qw "$VERSION" output.txt

@@ -60,6 +60,9 @@ The check can be turned off under Settings.
 
 ## SDKs
 
+> [!WARNING]
+> No release has been tagged yet, these install instruction does not apply before the first published version
+
 > [!NOTE]
 > SDK packages are published on their own release cadence (separate from the app), starting with the first SDK release.
 

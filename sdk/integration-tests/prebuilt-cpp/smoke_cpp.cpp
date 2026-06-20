@@ -10,7 +10,7 @@ int main() {
     using namespace geotrace;
 
     try {
-        FileBuilder builder;
+        FileBuilder{} builder;
         builder.title("smoke");
 
         NavFix fix;

@@ -45,9 +45,3 @@ The GUI updater ignores prereleases.
 
 `.github/workflows/release-smoke.yml` runs automatically on every release, including prereleases, and installs every artifact on every platform — running `geotrace --version` and building SDK consumers — to catch a broken release fast.
 Re-run it for any tag from the Actions tab (`Run workflow`) if needed.
-
-## One-time setup
-
-- Repository secrets: `CARGO_REGISTRY_TOKEN` and `HOMEBREW_TAP_TOKEN` (push access to `CramBL/homebrew-tap`).
-- A GitHub environment named `pypi`, with this repository registered as a PyPI Trusted Publisher.
-- Releases are currently unsigned; see the install notes in [`README.md`](README.md) for the Gatekeeper / SmartScreen workaround.

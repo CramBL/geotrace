@@ -10,7 +10,7 @@ name: Release SDK
 on:
   push:
     tags:
-      - 'geotrace-sdk-v[0-9]+.[0-9]+.[0-9]+*'
+      - "geotrace-sdk-v[0-9]+.[0-9]+.[0-9]+*"
   workflow_dispatch: {}
 
 # Read-only by default; publish jobs elevate their own permissions.
@@ -69,14 +69,22 @@ jobs:
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          # This job only runs a version-consistency check (no Python build), so
+          # the dependency cache buys nothing; disabling it also clears zizmor's
+          # cache-poisoning finding for this release-triggered workflow.
+          enable-cache: false
       - uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
         with:
           tool: just
       - name: Check SDK version consistency
+        env:
+          PUBLISH: ${{ needs.meta.outputs.publish }}
+          VERSION: ${{ needs.meta.outputs.version }}
         run: |
           set -euo pipefail
-          if [ "${{ needs.meta.outputs.publish }}" = "true" ]; then
-            just qa::check-versions --expect "${{ needs.meta.outputs.version }}"
+          if [ "$PUBLISH" = "true" ]; then
+            just qa::check-versions --expect "$VERSION"
           else
             just qa::check-versions
           fi
@@ -95,8 +103,16 @@ jobs:
           - { target: aarch64-unknown-linux-gnu, runner: ubuntu-24.04-arm }
           - { target: x86_64-apple-darwin, runner: macos-15-intel }
           - { target: aarch64-apple-darwin, runner: macos-14 }
-          - { target: x86_64-pc-windows-msvc, runner: windows-latest, win_arch: x64 }
-          - { target: aarch64-pc-windows-msvc, runner: windows-11-arm, win_arch: ARM64 }
+          - {
+              target: x86_64-pc-windows-msvc,
+              runner: windows-latest,
+              win_arch: x64,
+            }
+          - {
+              target: aarch64-pc-windows-msvc,
+              runner: windows-11-arm,
+              win_arch: ARM64,
+            }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -108,7 +124,12 @@ jobs:
           toolchain: stable
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        # This workflow runs only on `geotrace-sdk-v*` tag pushes and manual
+        # dispatch, both of which require repository write access; no pull-request
+        # or fork event can populate this cache, so an untrusted actor cannot
+        # poison it. zizmor flags caching in any artifact-publishing workflow
+        # regardless, so the (unreachable) finding is suppressed.
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1 # zizmor: ignore[cache-poisoning]
         with:
           key: ${{ matrix.target }}
 
@@ -208,9 +229,13 @@ jobs:
 
       - name: Create release and upload artifacts
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A repo-scoped PAT, not the built-in GITHUB_TOKEN: releases created
+          # with GITHUB_TOKEN do not emit a `release: published` event, so this
+          # is what lets release-smoke.yml run automatically on the new release.
+          GH_TOKEN: ${{ secrets.GEOTRACE_WITH_REPO_SCOPE }}
           IS_PRERELEASE: ${{ needs.meta.outputs.prerelease }}
           PRERELEASE: ${{ needs.meta.outputs.prerelease == 'true' && '--prerelease' || '' }}
+          VERSION: ${{ needs.meta.outputs.version }}
         run: |
           set -euo pipefail
           assets=(archives/*)
@@ -220,8 +245,8 @@ jobs:
           fi
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "GeoTrace SDK ${{ needs.meta.outputs.version }}" \
-            --notes "C, C++, Rust, and Python SDK release ${{ needs.meta.outputs.version }}." \
+            --title "GeoTrace SDK $VERSION" \
+            --notes "C, C++, Rust, and Python SDK release $VERSION." \
             $PRERELEASE \
             "${assets[@]}"
 
@@ -240,9 +265,13 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Publish crates
+      # Token-based publish. crates.io Trusted Publishing (OIDC, like the PyPI
+      # job below) would be the token-free alternative, but it must first be
+      # configured for this repo on crates.io; until then the registry token is
+      # intentional, so zizmor's trusted-publishing suggestion is suppressed.
+      - name: Publish crates # zizmor: ignore[use-trusted-publishing]
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_GEOTRACE_PUBLISH }}
           VERSION: ${{ needs.meta.outputs.version }}
         run: |
           set -euo pipefail
@@ -269,8 +298,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-22.04, manylinux: auto }
-          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-24.04-arm, manylinux: auto }
+          - {
+              target: x86_64-unknown-linux-gnu,
+              runner: ubuntu-22.04,
+              manylinux: auto,
+            }
+          - {
+              target: aarch64-unknown-linux-gnu,
+              runner: ubuntu-24.04-arm,
+              manylinux: auto,
+            }
           - { target: x86_64-apple-darwin, runner: macos-15-intel }
           - { target: aarch64-apple-darwin, runner: macos-14 }
           - { target: x86_64-pc-windows-msvc, runner: windows-latest }

@@ -47,7 +47,9 @@ jobs:
       - name: Add the geotrace-sdk dependency (PyPI)
         if: inputs.prerelease == 'false'
         working-directory: consumer
-        run: uv add "geotrace-sdk==${{ inputs.version }}"
+        env:
+          VERSION: ${{ inputs.version }}
+        run: uv add "geotrace-sdk==$VERSION"
 
       # A prerelease is not, so download the wheel attached to the release and
       # add it from there (uv picks the one matching this platform + Python).
@@ -55,12 +57,15 @@ jobs:
         if: inputs.prerelease == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download "${{ inputs.tag }}" --repo "$REPO" --pattern '*.whl' --dir wheelhouse
+          TAG: ${{ inputs.tag }}
+        run: gh release download "$TAG" --repo "$REPO" --pattern '*.whl' --dir wheelhouse
 
       - name: Add the geotrace-sdk dependency (prerelease wheel)
         if: inputs.prerelease == 'true'
         working-directory: consumer
-        run: uv add --no-index --find-links ../wheelhouse "geotrace-sdk==${{ inputs.version }}"
+        env:
+          VERSION: ${{ inputs.version }}
+        run: uv add --no-index --find-links ../wheelhouse "geotrace-sdk==$VERSION"
 
       - name: Write a program that uses the SDK
         working-directory: consumer
