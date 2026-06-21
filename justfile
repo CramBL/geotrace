@@ -10,6 +10,7 @@ import 'container.just'
 import 'scripts/container-rust.just'
 import 'scripts/sdk.just'
 mod qa 'scripts/qa/qa.just'
+mod release 'scripts/release.just'
 
 [default]
 [private]

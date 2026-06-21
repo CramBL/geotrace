@@ -5,8 +5,12 @@ name: Release smoke test
 # to install and use that piece of the release on each platform, so a developer
 # can open e.g. smoke-sdk-c.yml and replicate it.
 #
-# Runs when a GitHub Release is published (by dist for the GUI, by
-# release-sdk.yml for the SDK) and can be re-run manually for any tag.
+# Triggered three ways. The SDK release (release-sdk.yml) creates its GitHub
+# release with a repo-scoped PAT, whose `release: published` event runs this
+# directly. The GUI release (dist) instead calls this as a post-announce job,
+# because dist creates its release with the built-in GITHUB_TOKEN and that token
+# does not emit a `release: published` event. It can also be re-run manually for
+# any tag via workflow_dispatch.
 on:
   release:
     types: [published]
@@ -15,12 +19,19 @@ on:
       tag:
         description: "Release tag to smoke-test (e.g. app/v0.1.0 or geotrace-sdk-v0.1.0)"
         required: true
+        type: string
+  workflow_call:
+    inputs:
+      plan:
+        description: "dist plan JSON; the release tag is read from its announcement_tag field"
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.release.tag_name || inputs.tag }}
+  group: ${{ github.workflow }}-${{ inputs.plan != '' && fromJson(inputs.plan).announcement_tag || github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -34,9 +45,21 @@ jobs:
     steps:
       - id: meta
         env:
-          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+          # Three callers, three tag sources, in precedence order: dist's
+          # post-announce hook passes the plan JSON, a manual run passes `tag`,
+          # and a release event carries it on the release payload.
+          PLAN_TAG: ${{ inputs.plan != '' && fromJson(inputs.plan).announcement_tag || '' }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
+          TAG="${PLAN_TAG:-}"
+          [ -n "$TAG" ] || TAG="${DISPATCH_TAG:-}"
+          [ -n "$TAG" ] || TAG="${RELEASE_TAG:-}"
+          if [ -z "$TAG" ]; then
+            echo "error: could not resolve a release tag" >&2
+            exit 1
+          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           case "$TAG" in
             app/v*) echo "kind=gui" >> "$GITHUB_OUTPUT"; version="${TAG#app/v}" ;;

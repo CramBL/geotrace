@@ -357,3 +357,12 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+
+  custom-release-smoke:
+    needs:
+      - plan
+      - announce
+    uses: ./.github/workflows/release-smoke.yml
+    with:
+      plan: ${{ needs.plan.outputs.val }}
+    secrets: inherit
