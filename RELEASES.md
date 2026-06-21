@@ -11,6 +11,15 @@ Two rules hold for both tracks:
   So a prerelease is not just a tag suffix — the manifest must carry the `-rc.N` suffix too, which means the prerelease and the final release are *different commits*.
 - **Bump on a branch, merge via PR, then tag the merged commit** — never commit a version bump straight to `trunk`.
 
+## Scripted flow
+
+The `just release::*` recipes walk these steps interactively from an up-to-date, clean `trunk`, printing each command as `<command> ?` and running it when you press Enter (`s` skips, `q` quits):
+
+- `just release::app X.Y.Z` / `just release::sdk X.Y.Z` — regular release (bump, PR, then tag the merged commit; it pauses for you to merge the PR).
+- `just release::app-prerelease X.Y.Z-rc.N` / `just release::sdk-prerelease X.Y.Z-rc.N` — prerelease dry run (linear, no PR).
+
+The sections below document what each step does, for running it by hand.
+
 ## GUI app
 
 Bump on a branch and open a PR:
