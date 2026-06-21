@@ -3,13 +3,30 @@
 GeoTrace has two independent release tracks: the **GUI app** and the **SDKs** (Rust, Python, C/C++).
 They version and ship separately, so bump and tag only the track you are releasing.
 
-Tags drive everything; the GitHub release and all publishing are automated.
+A pushed tag drives the release: the GitHub release and all publishing are automated off it.
+Two rules hold for both tracks:
+
+- **The manifest version must exactly equal the tag's version.**
+  cargo-dist (GUI) and the SDK version guard both refuse to release a tag whose version does not match the version in the manifests.
+  So a prerelease is not just a tag suffix — the manifest must carry the `-rc.N` suffix too, which means the prerelease and the final release are *different commits*.
+- **Bump on a branch, merge via PR, then tag the merged commit** — never commit a version bump straight to `trunk`.
 
 ## GUI app
 
+Bump on a branch and open a PR:
+
 ```sh
+git switch -c release/app-vX.Y.Z
 just qa::bump-app X.Y.Z      # edits the workspace version
 git commit -am "release app vX.Y.Z"
+git push -u origin release/app-vX.Y.Z
+```
+
+Opening the PR runs CI and a cargo-dist plan dry-run (`pr-run-mode = "upload"` builds the installers too, without releasing).
+Merge when green, then tag the merged commit:
+
+```sh
+git switch trunk && git pull
 git tag app/vX.Y.Z
 git push origin app/vX.Y.Z
 ```
@@ -17,13 +34,20 @@ git push origin app/vX.Y.Z
 `.github/workflows/app-release.yml` (cargo dist) builds the shell/PowerShell installers, the MSI, and the Homebrew formula, then publishes the GitHub release.
 Apps installed via the shell/PowerShell installer offer the update on next launch.
 
+If the manifest already carries the version you are releasing (e.g. the very first release, where `trunk` is already at it), there is nothing to bump — skip the PR and tag `trunk` directly.
+
 ## SDKs
 
 The Rust, Python, and C/C++ SDKs version in lockstep.
+Same shape — bump on a branch, PR, merge, then tag:
 
 ```sh
+git switch -c release/sdk-vX.Y.Z
 just qa::bump-sdk X.Y.Z      # edits every SDK version spot (fails if it can't)
 git commit -am "release sdk vX.Y.Z"
+git push -u origin release/sdk-vX.Y.Z
+# open the PR, merge, then:
+git switch trunk && git pull
 git tag geotrace-sdk-vX.Y.Z
 git push origin geotrace-sdk-vX.Y.Z
 ```
@@ -34,14 +58,33 @@ Publishing is idempotent, so a partially failed run can be re-run safely.
 
 ## Prereleases
 
-Add a suffix: `app/vX.Y.Z-rc.1` or `geotrace-sdk-vX.Y.Z-alpha.1`.
-The GitHub release is flagged as a prerelease, and the smoke tests below run against it — so a prerelease tag is a full dry run of the release before you cut the real one.
+A prerelease is a full dry run of the real release: the GitHub release is flagged as a prerelease and the smoke tests run, but nothing is published to a public channel.
+Because the manifest version must match the tag, cut it from the release branch *before* promoting to the final version:
 
+```sh
+# on the release branch
+just qa::bump-app X.Y.Z-rc.1     # or: just qa::bump-sdk X.Y.Z-rc.1
+git commit -am "release app vX.Y.Z-rc.1"
+git push -u origin release/app-vX.Y.Z
+git tag app/vX.Y.Z-rc.1          # or geotrace-sdk-vX.Y.Z-rc.1
+git push origin app/vX.Y.Z-rc.1
+# when the prerelease + smoke are green, promote to the final version:
+just qa::bump-app X.Y.Z
+git commit -am "release app vX.Y.Z"
+# open the PR, merge, then tag the final version (see above)
+```
+
+The prerelease tag points at the `-rc.N` commit on the branch; only the final, clean-version commit is merged to `trunk` and tagged there.
 To keep the public channels clean, a prerelease publishes to none of them: the GUI skips the Homebrew formula, and the SDK skips crates.io, PyPI, and Homebrew.
 The smoke tests still verify every artifact by consuming it directly: the GUI installers and the C/C++ archives from the prerelease itself, the Rust crate from the tagged git source, and the Python wheel attached to the prerelease (installed with `pip --find-links`).
 The GUI updater ignores prereleases.
 
 ## After a release
 
-`.github/workflows/release-smoke.yml` runs automatically on every release, including prereleases, and installs every artifact on every platform — running `geotrace --version` and building SDK consumers — to catch a broken release fast.
-Re-run it for any tag from the Actions tab (`Run workflow`) if needed.
+`.github/workflows/release-smoke.yml` installs every artifact on every platform — running `geotrace --version` and building SDK consumers — to catch a broken release fast.
+It runs automatically on every release, including prereleases, but the two tracks trigger it differently because of a GitHub rule: a release created with the built-in `GITHUB_TOKEN` does not emit a `release: published` event that can start another workflow.
+
+- The **SDK** release creates its GitHub release with a repo-scoped PAT (`GEOTRACE_WITH_REPO_SCOPE`), so its `release: published` event triggers the smoke workflow directly.
+- The **GUI** release is created by cargo-dist with `GITHUB_TOKEN`, so dist instead calls the smoke workflow as a post-announce job in the same run (`post-announce-jobs` in `dist-workspace.toml`).
+
+Re-run it for any tag from the Actions tab — `Run workflow` dispatches `release-smoke.yml` with a `tag` input.
