@@ -7,23 +7,29 @@ name: Release smoke test
 #
 # Triggered three ways. The SDK release (release-sdk.yml) creates its GitHub
 # release with a repo-scoped PAT, whose `release: published` event runs this
-# directly. The GUI release (dist) instead calls this as a post-announce job,
-# because dist creates its release with the built-in GITHUB_TOKEN and that token
-# does not emit a `release: published` event. It can also be re-run manually for
-# any tag via workflow_dispatch.
-on:
+# directly. The GUI release (dist) creates its release with the built-in
+# GITHUB_TOKEN, which emits no triggering `release: published` event, so instead
+# we run when its "Release" workflow completes (`workflow_run`); this fires from
+# a separate run regardless of token, and unlike a dist post-announce job it is
+# not skipped on prereleases (where dist skips the Homebrew publish job). It can
+# also be re-run manually for any tag via workflow_dispatch.
+#
+# zizmor flags workflow_run as a dangerous trigger, but this use is safe: the
+# `branches: ['app/**']` filter only matches a "Release" run for a maintainer-
+# pushed release tag (a fork PR cannot push one), the job is gated to a
+# successful run, the token is read-only, and we only install the already-
+# published release artifacts — no untrusted PR code is ever checked out.
+on: # zizmor: ignore[dangerous-triggers]
   release:
     types: [published]
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+    branches: ['app/**']
   workflow_dispatch:
     inputs:
       tag:
         description: "Release tag to smoke-test (e.g. app/v0.1.0 or geotrace-sdk-v0.1.0)"
-        required: true
-        type: string
-  workflow_call:
-    inputs:
-      plan:
-        description: "dist plan JSON; the release tag is read from its announcement_tag field"
         required: true
         type: string
 
@@ -31,11 +37,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.plan != '' && fromJson(inputs.plan).announcement_tag || github.event.release.tag_name || inputs.tag }}
+  group: ${{ github.workflow }}-${{ github.event.release.tag_name || inputs.tag || github.event.workflow_run.head_branch }}
   cancel-in-progress: false
 
 jobs:
   meta:
+    # A workflow_run fires for completed "Release" runs regardless of outcome;
+    # only smoke-test one that actually succeeded. The release and dispatch
+    # paths always proceed.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
@@ -45,17 +55,17 @@ jobs:
     steps:
       - id: meta
         env:
-          # Three callers, three tag sources, in precedence order: dist's
-          # post-announce hook passes the plan JSON, a manual run passes `tag`,
-          # and a release event carries it on the release payload.
-          PLAN_TAG: ${{ inputs.plan != '' && fromJson(inputs.plan).announcement_tag || '' }}
-          DISPATCH_TAG: ${{ inputs.tag }}
+          # Three triggers, three tag sources, in precedence order: a release
+          # event carries it on the payload, a manual run passes `tag`, and a
+          # GUI "Release" run exposes the tag as its head_branch.
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
         run: |
           set -euo pipefail
-          TAG="${PLAN_TAG:-}"
+          TAG="${RELEASE_TAG:-}"
           [ -n "$TAG" ] || TAG="${DISPATCH_TAG:-}"
-          [ -n "$TAG" ] || TAG="${RELEASE_TAG:-}"
+          [ -n "$TAG" ] || TAG="${RUN_TAG:-}"
           if [ -z "$TAG" ]; then
             echo "error: could not resolve a release tag" >&2
             exit 1

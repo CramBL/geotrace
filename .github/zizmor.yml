@@ -4,10 +4,9 @@
 # hand-edited — any change is overwritten on the next regeneration. Its findings
 # are inherent to dist's generated output: a workflow-level `contents: write`
 # permission, template expansion of dist's own plan/matrix values, an unpinned
-# cache action, a matrix-driven container image, and the post-announce job that
-# calls release-smoke.yml with `secrets: inherit` (dist hardcodes that for custom
-# jobs). They are ignored here by file (so the entries survive regeneration)
-# rather than with inline comments, which regeneration would strip.
+# cache action, and a matrix-driven container image. They are ignored here by
+# file (so the entries survive regeneration) rather than with inline comments,
+# which regeneration would strip.
 rules:
   excessive-permissions:
     ignore:
@@ -22,8 +21,5 @@ rules:
     ignore:
       - app-release.yml
   cache-poisoning:
-    ignore:
-      - app-release.yml
-  secrets-inherit:
     ignore:
       - app-release.yml
