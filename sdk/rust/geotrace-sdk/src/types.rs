@@ -20,7 +20,7 @@ use crate::error::{Error, EventMarkerError};
 /// Providing it allows the builder to compute the GPS/system-clock delta, which
 /// is used to convert satellite report system-clock timestamps into the GPS time
 /// domain for accurate ghost-fix interpolation during no-fix periods.
-#[derive(bon::Builder, Debug, Clone, Copy)]
+#[derive(bon::Builder, Debug, Clone, Copy, PartialEq)]
 pub struct NavFix {
     /// GPS-receiver timestamp; `None` when the receiver had no active lock.
     #[builder(into)]
@@ -50,7 +50,7 @@ pub struct NavFix {
 /// - `sys_time`: the system-clock timestamp, available whenever the host OS can
 ///   read the clock. This is used together with the GPS/system-clock delta derived
 ///   from surrounding NavFixes to place orphan reports in the GPS time domain.
-#[derive(bon::Builder, Debug, Clone)]
+#[derive(bon::Builder, Debug, Clone, PartialEq)]
 pub struct SatelliteReport {
     /// GPS-domain timestamp; present when the receiver had an active fix.
     #[builder(into)]
@@ -63,7 +63,7 @@ pub struct SatelliteReport {
 }
 
 /// One tracked satellite with optional signal metrics.
-#[derive(bon::Builder, Debug, Clone, Copy)]
+#[derive(bon::Builder, Debug, Clone, Copy, PartialEq)]
 pub struct Satellite {
     #[builder(into)]
     pub constellation: Constellation,
@@ -148,7 +148,7 @@ impl Constellation {
 }
 
 /// A user-defined map annotation with an optional label and icon.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Annotation {
     /// Display label; `None` or empty string renders as unlabelled.
     pub label: Option<String>,
@@ -362,7 +362,7 @@ mod constellation_tests {
 }
 
 /// Optional file-level metadata.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Meta {
     pub title: Option<String>,
     /// Sensor or device that produced the data.
@@ -410,14 +410,14 @@ impl NavFix {
 }
 
 /// A nav fix combined with its associated satellite report (if any).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NavPoint {
     pub fix: NavFix,
     pub satellites: Option<SatelliteReport>,
 }
 
 /// A map annotation with its interpolated position on the nav track.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Marker {
     pub annotation: Annotation,
     /// Latitude interpolated from the surrounding nav fixes.
@@ -433,7 +433,7 @@ pub struct Marker {
 ///
 /// Construct via `EventMarker::builder().build()` - it validates the variant path and returns
 /// `Err` immediately if it is malformed.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EventMarker {
     pub(crate) variant_path: String,
     pub(crate) sys_time: chrono::DateTime<chrono::Utc>,
@@ -539,7 +539,7 @@ impl From<Option<MarkerIcon>> for EventMarkerIconChoice {
 }
 
 /// Per-variant icon and color override stored in the file.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EventMarkerStyle {
     /// Must exactly match a `variant_path` used in the event markers.
     pub variant_path: String,
@@ -573,7 +573,7 @@ impl EventMarkerStyle {
 }
 
 /// An event marker after position interpolation, stored in [`NavFile`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EventMarkerPoint {
     pub variant_path: String,
     pub sys_time: chrono::DateTime<chrono::Utc>,
@@ -584,8 +584,8 @@ pub struct EventMarkerPoint {
 
 /// A complete, validated GeoTrace data file ready for serialisation.
 ///
-/// Construct via [`NavFileSink::finish`](crate::NavFileSink::finish).
-#[derive(Debug, Clone)]
+/// Construct via [`NavRecorder::finish`](crate::NavRecorder::finish).
+#[derive(Debug, Clone, PartialEq)]
 pub struct NavFile {
     pub(crate) meta: Meta,
     pub(crate) nav_points: Vec<NavPoint>,

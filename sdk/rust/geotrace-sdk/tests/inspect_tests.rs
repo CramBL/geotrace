@@ -24,12 +24,12 @@ fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
     let t1 = t0 + Duration::seconds(1);
     let tmid = t0 + Duration::milliseconds(500);
 
-    let mut sink = NavFileBuilder::new()
+    let mut recorder = NavFileBuilder::new()
         .with_title("Inspect test")
         .with_device("test-device")
         .open();
 
-    sink.add_nav_fix(
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t0)
             .lat(Angle::degrees(51.5))
@@ -38,7 +38,7 @@ fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
             .speed(Velocity::meter_per_second(10.0))
             .build(),
     );
-    sink.add_nav_fix(
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t1)
             .lat(Angle::degrees(51.6))
@@ -47,7 +47,7 @@ fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
             .build(),
     );
 
-    sink.add_satellite_report(
+    recorder.add_satellite_report(
         SatelliteReport::builder()
             .gps_time(t0)
             .tracked(vec![
@@ -61,7 +61,7 @@ fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
             .build(),
     );
 
-    sink.add_annotation(
+    recorder.add_annotation(
         Annotation::builder()
             .time(tmid)
             .label("midpoint")
@@ -69,7 +69,7 @@ fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
             .build(),
     );
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     nav_file.write(tmp.as_file())?;
 
@@ -104,9 +104,9 @@ fn empty_file() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn file_with_no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = base();
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
     for i in 0..3i64 {
-        sink.add_nav_fix(
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(t0 + Duration::seconds(i))
                 .lat(Angle::degrees(55.0))
@@ -116,7 +116,7 @@ fn file_with_no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     nav_file.write(tmp.as_file())?;
 
@@ -132,8 +132,8 @@ fn file_with_no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn file_with_no_markers() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = base();
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t0)
             .lat(Angle::degrees(55.0))
@@ -142,7 +142,7 @@ fn file_with_no_markers() -> Result<(), Box<dyn std::error::Error>> {
             .build(),
     );
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     nav_file.write(tmp.as_file())?;
 

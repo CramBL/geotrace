@@ -75,13 +75,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn generate_sample() -> Result<std::path::PathBuf, Box<dyn Error>> {
     let t = |s: &str| s.parse::<DateTime<Utc>>().expect("valid timestamp");
 
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
     for (ts, lat, lon) in [
         ("2024-06-01T08:00:00Z", 51.5074, -0.1278),
         ("2024-06-01T08:00:30Z", 51.5088, -0.1248),
         ("2024-06-01T08:01:00Z", 51.5103, -0.1217),
     ] {
-        sink.add_nav_fix(
+        recorder.add(
             NavFix::builder()
                 .gps_time(t(ts))
                 .lat(Angle::degrees(lat))
@@ -90,7 +90,7 @@ fn generate_sample() -> Result<std::path::PathBuf, Box<dyn Error>> {
         );
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let path = env::temp_dir().join("geotrace_read_file_sample.gtd");
     nav_file.write_to_file(&path)?;
     Ok(path)

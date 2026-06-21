@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use geotrace_sdk::{
     Angle, Annotation, BuildError, Constellation, EventMarker, EventMarkerColor,
     EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon, Meta,
-    NavFile, NavFileBuilder, NavFileSink, NavFix, NavPoint, Satellite, SatelliteReport, Velocity,
+    NavFile, NavFileBuilder, NavRecorder, NavFix, NavPoint, Satellite, SatelliteReport, Velocity,
 };
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -982,20 +982,20 @@ enum AddItem<'py> {
 /// Calling `finish()` consumes the builder; further calls raise `RuntimeError`.
 #[pyclass(skip_from_py_object, name = "NavFileBuilder")]
 pub struct PyNavFileBuilder {
-    /// Pre-open config; None once the sink has been opened.
+    /// Pre-open config; None once the recorder has been opened.
     config: Option<NavFileBuilder>,
-    /// Opened data sink; None until the first add() or finish().
-    sink: Option<NavFileSink>,
+    /// Opened data recorder; None until the first add() or finish().
+    recorder: Option<NavRecorder>,
 }
 
 impl PyNavFileBuilder {
-    /// Ensure the sink is open, opening it from config if needed.
-    fn ensure_sink(&mut self) -> PyResult<&mut NavFileSink> {
-        if self.sink.is_none() {
+    /// Ensure the recorder is open, opening it from config if needed.
+    fn ensure_recorder(&mut self) -> PyResult<&mut NavRecorder> {
+        if self.recorder.is_none() {
             let config = self.config.take().ok_or_else(consumed_err)?;
-            self.sink = Some(config.open());
+            self.recorder = Some(config.open());
         }
-        self.sink.as_mut().ok_or_else(consumed_err)
+        self.recorder.as_mut().ok_or_else(consumed_err)
     }
 }
 
@@ -1005,7 +1005,7 @@ impl PyNavFileBuilder {
     fn new() -> Self {
         Self {
             config: Some(NavFileBuilder::new()),
-            sink: None,
+            recorder: None,
         }
     }
 
@@ -1015,7 +1015,7 @@ impl PyNavFileBuilder {
     fn with_meta(slf: Bound<'_, Self>, meta: &PyMeta) -> PyResult<Py<Self>> {
         {
             let mut b = slf.borrow_mut();
-            if b.sink.is_some() {
+            if b.recorder.is_some() {
                 return Err(PyRuntimeError::new_err(
                     "with_meta() must be called before adding data",
                 ));
@@ -1030,7 +1030,7 @@ impl PyNavFileBuilder {
     fn with_title(slf: Bound<'_, Self>, title: String) -> PyResult<Py<Self>> {
         {
             let mut b = slf.borrow_mut();
-            if b.sink.is_some() {
+            if b.recorder.is_some() {
                 return Err(PyRuntimeError::new_err(
                     "with_title() must be called before adding data",
                 ));
@@ -1045,7 +1045,7 @@ impl PyNavFileBuilder {
     fn with_device(slf: Bound<'_, Self>, device: String) -> PyResult<Py<Self>> {
         {
             let mut b = slf.borrow_mut();
-            if b.sink.is_some() {
+            if b.recorder.is_some() {
                 return Err(PyRuntimeError::new_err(
                     "with_device() must be called before adding data",
                 ));
@@ -1060,7 +1060,7 @@ impl PyNavFileBuilder {
     fn with_notes(slf: Bound<'_, Self>, notes: String) -> PyResult<Py<Self>> {
         {
             let mut b = slf.borrow_mut();
-            if b.sink.is_some() {
+            if b.recorder.is_some() {
                 return Err(PyRuntimeError::new_err(
                     "with_notes() must be called before adding data",
                 ));
@@ -1081,16 +1081,16 @@ impl PyNavFileBuilder {
     fn add(slf: Bound<'_, Self>, item: AddItem<'_>) -> PyResult<Py<Self>> {
         {
             let mut b = slf.borrow_mut();
-            let sink = b.ensure_sink()?;
+            let recorder = b.ensure_recorder()?;
             match item {
                 AddItem::Fix(f) => {
-                    sink.add_nav_fix(f.borrow().inner);
+                    recorder.add_nav_fix(f.borrow().inner);
                 }
                 AddItem::Report(r) => {
-                    sink.add_satellite_report(r.borrow().inner.clone());
+                    recorder.add_satellite_report(r.borrow().inner.clone());
                 }
                 AddItem::Annotation(a) => {
-                    sink.add_annotation(a.borrow().inner.clone());
+                    recorder.add_annotation(a.borrow().inner.clone());
                 }
                 AddItem::EventMarker(em) => {
                     let m = em.borrow();
@@ -1103,7 +1103,7 @@ impl PyNavFileBuilder {
                         .maybe_annotation(m.annotation.clone())
                         .build()
                         .map_err(|e| PyValueError::new_err(e.to_string()))?;
-                    sink.add_event_marker(marker);
+                    recorder.add_event_marker(marker);
                 }
             }
         }
@@ -1119,8 +1119,8 @@ impl PyNavFileBuilder {
     ) -> PyResult<Py<Self>> {
         {
             let mut b = slf.borrow_mut();
-            let sink = b.ensure_sink()?;
-            sink.add_event_marker_style(
+            let recorder = b.ensure_recorder()?;
+            recorder.add_event_marker_style(
                 EventMarkerStyle::builder()
                     .variant_path(style.variant_path.clone())
                     .maybe_icon(
@@ -1140,12 +1140,12 @@ impl PyNavFileBuilder {
     ///
     /// Consumes the builder - calling `finish()` again raises `RuntimeError`.
     fn finish(&mut self) -> PyResult<PyNavFile> {
-        let sink = if let Some(sink) = self.sink.take() {
-            sink
+        let recorder = if let Some(recorder) = self.recorder.take() {
+            recorder
         } else {
             self.config.take().ok_or_else(consumed_err)?.open()
         };
-        sink.finish()
+        recorder.finish()
             .map(|f| PyNavFile { inner: f })
             .map_err(build_err)
     }

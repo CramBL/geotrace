@@ -735,6 +735,26 @@ class FileBuilder {
         return add_event_marker(EventMarker{path.str(), sys_time, std::move(note)});
     }
 
+    /**
+     * @name add() — dispatch by type
+     *
+     * Convenience sugar that forwards to the matching `add_*` method, chosen at
+     * compile time by overload resolution. Pass a constructed timeline object:
+     *
+     * @code
+     * builder.add(fix).add(report).add(annotation);
+     * @endcode
+     *
+     * Per-variant styling stays on `add_event_marker_style()`, and the typed
+     * event helpers stay on `add_event()`; neither is an `add()` overload.
+     */
+    ///@{
+    FileBuilder &add(const NavFix &fix) { return add_nav_fix(fix); }
+    FileBuilder &add(const SatelliteReport &report) { return add_satellite_report(report); }
+    FileBuilder &add(const Annotation &ann) { return add_annotation(ann); }
+    FileBuilder &add(const EventMarker &marker) { return add_event_marker(marker); }
+    ///@}
+
     ///@}
 
     /**

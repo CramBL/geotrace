@@ -81,15 +81,16 @@ cargo add geotrace-sdk
 use geotrace_sdk::{Angle, DateTime, NavFileBuilder, NavFix, Utc};
 
 let t = "2024-01-15T09:00:00Z".parse::<DateTime<Utc>>()?;
-let mut sink = NavFileBuilder::new().open();
-sink.add_nav_fix(
+let mut recorder = NavFileBuilder::new().open();
+// add() dispatches by type: NavFix, SatelliteReport, Annotation, or EventMarker.
+recorder.add(
     NavFix::builder()
         .gps_time(t)
         .lat(Angle::degrees(51.5074))
         .lon(Angle::degrees(-0.1278))
         .build(),
 );
-let nav_file = sink.finish()?;
+let nav_file = recorder.finish()?;
 nav_file.write_to_file("track.gtd")?;
 ```
 
@@ -144,9 +145,9 @@ Building or consuming it via CMake requires CMake 3.21+.
 from datetime import UTC, datetime
 from geotrace_sdk import NavFileBuilder, NavFix
 
-sink = NavFileBuilder()
-sink.add(NavFix(lat=51.5074, lon=-0.1278, gps_time=datetime(2024, 1, 15, 9, 0, 0, tzinfo=UTC)))
-sink.finish().write_to_file("track.gtd")
+recorder = NavFileBuilder()
+recorder.add(NavFix(lat=51.5074, lon=-0.1278, gps_time=datetime(2024, 1, 15, 9, 0, 0, tzinfo=UTC)))
+recorder.finish().write_to_file("track.gtd")
 ```
 
 Install with uv: `uv add geotrace-sdk`

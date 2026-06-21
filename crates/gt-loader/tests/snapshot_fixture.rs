@@ -99,7 +99,7 @@ fn satellite_report(
 
 fn build_snapshot_bytes() -> Vec<u8> {
     let base = base();
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
 
     // Track 0: 12 points, Copenhagen area moving NE, all with satellite data
     let trip0_lats = [
@@ -149,7 +149,7 @@ fn build_snapshot_bytes() -> Vec<u8> {
 
     for i in 0..12_usize {
         let pt_time = offset(base, i as i64 * 30);
-        sink.add_nav_fix(
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(pt_time)
                 .lat(a(trip0_lats[i]))
@@ -158,18 +158,18 @@ fn build_snapshot_bytes() -> Vec<u8> {
                 .speed(v(2.6))
                 .build(),
         );
-        sink.add_satellite_report(satellite_report(pt_time, &tracked_prns, fix_prn_sets[i]));
+        recorder.add_satellite_report(satellite_report(pt_time, &tracked_prns, fix_prn_sets[i]));
     }
 
     // Custom markers within Track 0 time range [t+0, t+330]
-    sink.add_annotation(
+    recorder.add_annotation(
         Annotation::builder()
             .time(offset(base, 75))
             .icon(SdkIcon::Pin)
             .maybe_label(Some("Bike lock spot".to_owned()))
             .build(),
     );
-    sink.add_annotation(
+    recorder.add_annotation(
         Annotation::builder()
             .time(offset(base, 225))
             .icon(SdkIcon::Circle)
@@ -202,7 +202,7 @@ fn build_snapshot_bytes() -> Vec<u8> {
 
     for i in 0..8_usize {
         let pt_time = offset(base, 750 + i as i64 * 30);
-        sink.add_nav_fix(
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(pt_time)
                 .lat(a(trip1_lats[i]))
@@ -215,7 +215,7 @@ fn build_snapshot_bytes() -> Vec<u8> {
     }
 
     // Custom marker within Trip 1 time range [t+750, t+960]
-    sink.add_annotation(
+    recorder.add_annotation(
         Annotation::builder()
             .time(offset(base, 780))
             .icon(SdkIcon::Check)
@@ -223,7 +223,9 @@ fn build_snapshot_bytes() -> Vec<u8> {
             .build(),
     );
 
-    let nav_file = sink.finish().expect("all builder constraints satisfied");
+    let nav_file = recorder
+        .finish()
+        .expect("all builder constraints satisfied");
     let mut bytes = Vec::new();
     nav_file
         .write(&mut bytes)

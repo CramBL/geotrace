@@ -11,7 +11,7 @@
 
 use geotrace_sdk::{
     Angle, Annotation, Constellation, EventMarker, EventMarkerStyle, MarkerIcon, Meta,
-    NavFileBuilder, NavFileSink, NavFix, Satellite, SatelliteReport, Velocity,
+    NavFileBuilder, NavFix, NavRecorder, Satellite, SatelliteReport, Velocity,
 };
 use std::collections::HashMap;
 use std::fs::File;
@@ -30,17 +30,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let meta = load_meta(base_dir)?;
-    let mut sink = NavFileBuilder::new()
+    let mut recorder = NavFileBuilder::new()
         .with_lenient_errors()
         .with_meta(meta)
         .open();
 
-    load_event_styles(&mut sink, base_dir)?;
-    load_satellites_and_fixes(&mut sink, base_dir)?;
-    load_markers(&mut sink, base_dir)?;
-    load_events(&mut sink, base_dir)?;
+    load_event_styles(&mut recorder, base_dir)?;
+    load_satellites_and_fixes(&mut recorder, base_dir)?;
+    load_markers(&mut recorder, base_dir)?;
+    load_events(&mut recorder, base_dir)?;
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     nav_file.write_to_file(base_dir.join("gold.gtd"))?;
 
     println!("Gold dataset generated successfully: tests/fixtures/gold_dataset/gold.gtd");
@@ -75,7 +75,7 @@ fn load_meta(base_dir: &Path) -> Result<Meta, Box<dyn std::error::Error>> {
 }
 
 fn load_event_styles(
-    sink: &mut NavFileSink,
+    recorder: &mut NavRecorder,
     base_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let style_file = File::open(base_dir.join("event_styles.csv"))?;
@@ -86,7 +86,7 @@ fn load_event_styles(
         if cols.len() < 3 {
             continue;
         }
-        sink.add_event_marker_style(
+        recorder.add_event_marker_style(
             EventMarkerStyle::builder()
                 .variant_path(cols[0])
                 .maybe_icon(
@@ -102,7 +102,7 @@ fn load_event_styles(
 }
 
 fn load_satellites_and_fixes(
-    sink: &mut NavFileSink,
+    recorder: &mut NavRecorder,
     base_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut satellite_reports: HashMap<(String, String), Vec<Satellite>> = HashMap::new();
@@ -140,7 +140,7 @@ fn load_satellites_and_fixes(
         let gps_time = parse_time(cols[1]);
         let sys_time = parse_time(cols[2]);
 
-        sink.add_nav_fix(
+        recorder.add(
             NavFix::builder()
                 .maybe_gps_time(gps_time)
                 .maybe_sys_time(sys_time)
@@ -155,7 +155,7 @@ fn load_satellites_and_fixes(
         // Associated satellite report?
         let key = (cols[1].to_string(), cols[2].to_string());
         if let Some(tracked) = satellite_reports.remove(&key) {
-            sink.add_satellite_report(
+            recorder.add(
                 SatelliteReport::builder()
                     .maybe_gps_time(gps_time)
                     .maybe_sys_time(sys_time)
@@ -166,7 +166,7 @@ fn load_satellites_and_fixes(
     }
 
     for ((gt_str, st_str), tracked) in satellite_reports {
-        sink.add_satellite_report(
+        recorder.add(
             SatelliteReport::builder()
                 .maybe_gps_time(parse_time(&gt_str))
                 .maybe_sys_time(parse_time(&st_str))
@@ -178,7 +178,10 @@ fn load_satellites_and_fixes(
     Ok(())
 }
 
-fn load_markers(sink: &mut NavFileSink, base_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn load_markers(
+    recorder: &mut NavRecorder,
+    base_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     let marker_file = File::open(base_dir.join("markers.csv"))?;
     let reader = BufReader::new(marker_file);
     for line in reader.lines().skip(1) {
@@ -187,7 +190,7 @@ fn load_markers(sink: &mut NavFileSink, base_dir: &Path) -> Result<(), Box<dyn s
         if cols.len() < 3 {
             continue;
         }
-        sink.add_annotation(
+        recorder.add(
             Annotation::builder()
                 .time(parse_time(cols[0]).expect("Marker time required"))
                 .maybe_label(Some(cols[1]))
@@ -198,7 +201,10 @@ fn load_markers(sink: &mut NavFileSink, base_dir: &Path) -> Result<(), Box<dyn s
     Ok(())
 }
 
-fn load_events(sink: &mut NavFileSink, base_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn load_events(
+    recorder: &mut NavRecorder,
+    base_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     let event_file = File::open(base_dir.join("events.csv"))?;
     let reader = BufReader::new(event_file);
     for line in reader.lines().skip(1) {
@@ -207,7 +213,7 @@ fn load_events(sink: &mut NavFileSink, base_dir: &Path) -> Result<(), Box<dyn st
         if cols.len() < 3 {
             continue;
         }
-        sink.add_event_marker(
+        recorder.add(
             EventMarker::builder()
                 .variant_path(cols[1])
                 .sys_time(parse_time(cols[0]).expect("Event sys_time required"))

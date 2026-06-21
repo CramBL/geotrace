@@ -1,7 +1,7 @@
 //! Convert GPS data from a CSV file into a `.gtd` GeoTrace data file.
 //!
 //! **Scenario**: your GPS logger exports fixes as CSV rows.
-//! Parse each row, feed them to [`NavFileSink`], then call [`NavFileSink::finish`]
+//! Parse each row, feed them to [`NavRecorder`], then call [`NavRecorder::finish`]
 //! to produce a validated file ready for GeoTrace to open.
 //!
 //! In a real workflow you would replace the inline `CSV_DATA` constant with a
@@ -33,7 +33,7 @@ timestamp,lat,lon,heading,speed_mps
 ";
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
 
     for line in CSV_DATA.lines().skip(1) {
         if line.trim().is_empty() {
@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             continue;
         };
         let time = timestamp.parse::<DateTime<Utc>>()?;
-        sink.add_nav_fix(
+        recorder.add(
             NavFix::builder()
                 .gps_time(time)
                 .lat(Angle::degrees(lat.parse::<f64>()?))
@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
 
     let out = env::temp_dir().join("geotrace_from_csv.gtd");
     nav_file.write_to_file(&out)?;

@@ -50,7 +50,7 @@ int main() {
             fix.lon = geotrace::Angle::degrees(point.lon);
             fix.heading = geotrace::Angle::degrees(90.0);
             fix.speed = geotrace::Velocity::mps(5.5);
-            builder.add_nav_fix(fix);
+            builder.add(fix);
 
             // SNR climbs slightly each second as the receiver settles.
             const double snr = 36.0 + static_cast<double>(idx);
@@ -81,7 +81,7 @@ int main() {
             e3.snr_dbhz = 21.0;
             report.tracked.push_back(e3);
 
-            builder.add_satellite_report(report);
+            builder.add(report);
             ++idx;
         }
 

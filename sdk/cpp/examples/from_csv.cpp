@@ -67,7 +67,7 @@ int main() {
                 continue;
             geotrace::NavFix fix{};
             if (parse_row(line, fix)) {
-                builder.add_nav_fix(fix);
+                builder.add(fix);
                 ++rows;
             }
         }

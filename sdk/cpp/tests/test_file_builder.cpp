@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 #include <geotrace/geotrace.hpp>
 
+#include <cstddef>
 #include <utility>
 
 #if defined(__GNUC__) && !defined(__clang__)
@@ -219,6 +220,50 @@ TEST_CASE("FileBuilder: move semantics work") {
     FileBuilder b2 = std::move(b1);
     auto file = b2.finish();
     CHECK(file.nav_point_count() == 1);
+}
+
+TEST_CASE("FileBuilder: add() dispatches by argument type") {
+    // Two fixes bracket the annotation and event marker so both fall in range.
+    NavFix f0{};
+    f0.gps_time = t0;
+    f0.lat = Angle::degrees(51.5074);
+    f0.lon = Angle::degrees(-0.1278);
+
+    NavFix f1{};
+    f1.gps_time = t1;
+    f1.lat = Angle::degrees(51.5080);
+    f1.lon = Angle::degrees(-0.1265);
+
+    SatelliteReport report{};
+    report.gps_time = t0;
+    Satellite sat{};
+    sat.constellation = Constellation::Gps;
+    sat.prn = 1;
+    sat.in_fix = true;
+    report.tracked.push_back(sat);
+
+    const Timestamp mid = Timestamp::from_seconds(1700000005ULL);
+    Annotation ann{};
+    ann.time = mid;
+    ann.label = "midpoint";
+    ann.icon = MarkerIcon::Pin;
+
+    const EventMarker marker{"power/boot", mid, "cold start"};
+
+    // Each add() resolves, at compile time, to the matching add_* overload.
+    const NavFile file = FileBuilder{}.add(f0).add(f1).add(report).add(ann).add(marker).finish();
+
+    CHECK(file.nav_point_count() == 2);
+
+    // The satellite report associated with a fix (add(SatelliteReport) dispatched).
+    std::size_t total_sats = 0;
+    for (std::size_t i = 0; i < file.nav_point_count(); ++i)
+        total_sats += file.nav_point(i).satellite_count;
+    CHECK(total_sats >= 1);
+
+    // The event marker landed with its path (add(EventMarker) dispatched).
+    REQUIRE(file.event_marker_count() == 1);
+    CHECK(file.event_marker(0).variant_path == "power/boot");
 }
 
 #if defined(__GNUC__) && !defined(__clang__)

@@ -6,9 +6,9 @@
 //! use geotrace_sdk::{Angle, NavFileBuilder, NavFix};
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut sink = NavFileBuilder::new().open();
+//! let mut recorder = NavFileBuilder::new().open();
 //!
-//! sink.add_nav_fix(
+//! recorder.add(
 //!     NavFix::builder()
 //!         .gps_time(chrono::Utc::now())
 //!         .lat(Angle::degrees(51.5))
@@ -17,7 +17,7 @@
 //!         .build(),
 //! );
 //!
-//! let nav_file = sink.finish()?;
+//! let nav_file = recorder.finish()?;
 //! nav_file.write_to_file("output")?;
 //! # Ok(())
 //! # }
@@ -37,7 +37,9 @@ mod variant_path;
 mod write;
 
 // Re-export public API
-pub use builder::{NavFileBuilder, NavFileSink, SatelliteWarning, collect_satellite_warnings};
+pub use builder::{
+    NavFileBuilder, NavRecord, NavRecorder, SatelliteWarning, collect_satellite_warnings,
+};
 pub use error::{BuildError, Error, EventMarkerError};
 pub use types::{
     Annotation, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,

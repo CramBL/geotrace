@@ -189,7 +189,7 @@ pub fn reencode_dropping_ranges(
         }
     }
 
-    let mut sink = NavFileBuilder::new()
+    let mut recorder = NavFileBuilder::new()
         .with_meta(nav_file.meta().clone())
         .with_lenient_errors()
         .open();
@@ -198,14 +198,14 @@ pub fn reencode_dropping_ranges(
         if *drop {
             continue;
         }
-        sink.add_nav_fix(point.fix);
+        recorder.add_nav_fix(point.fix);
         if let Some(report) = &point.satellites {
-            sink.add_satellite_report(report.clone());
+            recorder.add_satellite_report(report.clone());
         }
     }
 
     for marker in nav_file.markers() {
-        sink.add_annotation(marker.annotation.clone());
+        recorder.add_annotation(marker.annotation.clone());
     }
 
     for event in nav_file.event_markers() {
@@ -214,14 +214,14 @@ pub fn reencode_dropping_ranges(
             .sys_time(event.sys_time)
             .maybe_annotation(event.annotation.clone())
             .build()?;
-        sink.add_event_marker(marker);
+        recorder.add_event_marker(marker);
     }
 
     for style in nav_file.event_marker_styles() {
-        sink.add_event_marker_style(style.clone());
+        recorder.add_event_marker_style(style.clone());
     }
 
-    let rebuilt = sink.finish()?;
+    let rebuilt = recorder.finish()?;
     let mut out = Vec::new();
     rebuilt.write(&mut out)?;
     Ok(out)
@@ -488,9 +488,9 @@ mod tests {
         let t0 = base();
         // Five fixes one second apart, each at a distinct longitude so we can
         // tell which ones survived.
-        let mut sink = NavFileBuilder::new().open();
+        let mut recorder = NavFileBuilder::new().open();
         for i in 0..5i64 {
-            sink.add_nav_fix(
+            recorder.add_nav_fix(
                 NavFix::builder()
                     .gps_time(t0 + Duration::seconds(i))
                     .lat(Angle::degrees(55.0))
@@ -500,7 +500,7 @@ mod tests {
             );
         }
         let mut bytes = Vec::new();
-        sink.finish().unwrap().write(&mut bytes).unwrap();
+        recorder.finish().unwrap().write(&mut bytes).unwrap();
 
         // Drop the middle two points (indices 1 and 2).
         let reencoded =
@@ -518,11 +518,11 @@ mod tests {
     #[test]
     fn reencode_clamps_ranges_past_the_end() {
         let t0 = base();
-        let mut sink = NavFileBuilder::new().open();
-        sink.add_nav_fix(minimal_fix(t0));
-        sink.add_nav_fix(minimal_fix(t0 + Duration::seconds(1)));
+        let mut recorder = NavFileBuilder::new().open();
+        recorder.add_nav_fix(minimal_fix(t0));
+        recorder.add_nav_fix(minimal_fix(t0 + Duration::seconds(1)));
         let mut bytes = Vec::new();
-        sink.finish().unwrap().write(&mut bytes).unwrap();
+        recorder.finish().unwrap().write(&mut bytes).unwrap();
 
         // A range that runs past the end must not panic and must keep the rest.
         let reencoded =
@@ -544,9 +544,9 @@ mod tests {
         ) {
             const N: usize = 10;
             // N points with distinct longitudes 0..N, so survivors are identifiable.
-            let mut sink = NavFileBuilder::new().open();
+            let mut recorder = NavFileBuilder::new().open();
             for i in 0..N {
-                sink.add_nav_fix(
+                recorder.add_nav_fix(
                     NavFix::builder()
                         .gps_time(base() + Duration::seconds(i as i64))
                         .lat(Angle::degrees(55.0))
@@ -556,7 +556,7 @@ mod tests {
                 );
             }
             let mut bytes = Vec::new();
-            sink.finish().unwrap().write(&mut bytes).unwrap();
+            recorder.finish().unwrap().write(&mut bytes).unwrap();
 
             let ranges: Vec<std::ops::Range<usize>> = raw.iter().map(|&(a, b)| a..b).collect();
 
@@ -599,8 +599,8 @@ mod tests {
     #[expect(clippy::float_cmp, reason = "direct f64 round-trip comparisons")]
     fn field_by_field_nav_fix() {
         let t0 = base();
-        let mut sink = NavFileBuilder::new().open();
-        sink.add_nav_fix(
+        let mut recorder = NavFileBuilder::new().open();
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(t0)
                 .lat(Angle::degrees(51.5))
@@ -609,7 +609,7 @@ mod tests {
                 .speed(Velocity::meter_per_second(12.5))
                 .build(),
         );
-        let (nav_points, _) = build(&sink.finish().unwrap()).unwrap();
+        let (nav_points, _) = build(&recorder.finish().unwrap()).unwrap();
         assert_eq!(nav_points.len(), 1);
         let tpv = nav_points[0].tpv;
         assert_eq!(tpv.time().utc(), t0);
@@ -624,16 +624,16 @@ mod tests {
 
     #[test]
     fn speed_none_propagation() {
-        let mut sink = NavFileBuilder::new().open();
-        sink.add_nav_fix(minimal_fix(base()));
-        let (nav_points, _) = build(&sink.finish().unwrap()).unwrap();
+        let mut recorder = NavFileBuilder::new().open();
+        recorder.add_nav_fix(minimal_fix(base()));
+        let (nav_points, _) = build(&recorder.finish().unwrap()).unwrap();
         assert_eq!(nav_points[0].tpv.velocity(), None);
     }
 
     #[test]
     fn velocity_unit_preservation() {
-        let mut sink = NavFileBuilder::new().open();
-        sink.add_nav_fix(
+        let mut recorder = NavFileBuilder::new().open();
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(base())
                 .lat(Angle::degrees(0.0))
@@ -642,7 +642,7 @@ mod tests {
                 .speed(Velocity::meter_per_second(15.0))
                 .build(),
         );
-        let (nav_points, _) = build(&sink.finish().unwrap()).unwrap();
+        let (nav_points, _) = build(&recorder.finish().unwrap()).unwrap();
         assert_eq!(
             nav_points[0].tpv.velocity().map(|v| v.get::<uom_mps>()),
             Some(15.0)
@@ -652,9 +652,9 @@ mod tests {
     #[test]
     fn satellite_structure() {
         let t0 = base();
-        let mut sink = NavFileBuilder::new().open();
-        sink.add_nav_fix(minimal_fix(t0));
-        sink.add_satellite_report(
+        let mut recorder = NavFileBuilder::new().open();
+        recorder.add_nav_fix(minimal_fix(t0));
+        recorder.add_satellite_report(
             SatelliteReport::builder()
                 .gps_time(t0)
                 .tracked(vec![
@@ -673,7 +673,7 @@ mod tests {
                 ])
                 .build(),
         );
-        let (nav_points, _) = build(&sink.finish().unwrap()).unwrap();
+        let (nav_points, _) = build(&recorder.finish().unwrap()).unwrap();
         let sats = nav_points[0].satellites.as_ref().unwrap();
         assert_eq!(sats.satellite_count(), 2);
         assert_eq!(sats.fix_count(), 1);
@@ -702,15 +702,15 @@ mod tests {
     fn marker_label_none() {
         let t0 = base();
         let t1 = t0 + Duration::seconds(1);
-        let mut sink = NavFileBuilder::new().open();
-        sink.add_nav_fix(minimal_fix(t0));
-        sink.add_nav_fix(minimal_fix(t1));
-        sink.add_annotation(
+        let mut recorder = NavFileBuilder::new().open();
+        recorder.add_nav_fix(minimal_fix(t0));
+        recorder.add_nav_fix(minimal_fix(t1));
+        recorder.add_annotation(
             Annotation::builder()
                 .time(t0 + Duration::milliseconds(500))
                 .build(),
         );
-        let (_, markers) = build(&sink.finish().unwrap()).unwrap();
+        let (_, markers) = build(&recorder.finish().unwrap()).unwrap();
         assert_eq!(markers[0].label, "");
     }
 
@@ -718,16 +718,16 @@ mod tests {
     fn marker_label_empty_string() {
         let t0 = base();
         let t1 = t0 + Duration::seconds(1);
-        let mut sink = NavFileBuilder::new().open();
-        sink.add_nav_fix(minimal_fix(t0));
-        sink.add_nav_fix(minimal_fix(t1));
-        sink.add_annotation(
+        let mut recorder = NavFileBuilder::new().open();
+        recorder.add_nav_fix(minimal_fix(t0));
+        recorder.add_nav_fix(minimal_fix(t1));
+        recorder.add_annotation(
             Annotation::builder()
                 .time(t0 + Duration::milliseconds(500))
                 .label(String::new())
                 .build(),
         );
-        let (_, markers) = build(&sink.finish().unwrap()).unwrap();
+        let (_, markers) = build(&recorder.finish().unwrap()).unwrap();
         assert_eq!(markers[0].label, "");
     }
 
@@ -735,15 +735,15 @@ mod tests {
     fn marker_icon_none() {
         let t0 = base();
         let t1 = t0 + Duration::seconds(1);
-        let mut sink = NavFileBuilder::new().open();
-        sink.add_nav_fix(minimal_fix(t0));
-        sink.add_nav_fix(minimal_fix(t1));
-        sink.add_annotation(
+        let mut recorder = NavFileBuilder::new().open();
+        recorder.add_nav_fix(minimal_fix(t0));
+        recorder.add_nav_fix(minimal_fix(t1));
+        recorder.add_annotation(
             Annotation::builder()
                 .time(t0 + Duration::milliseconds(500))
                 .build(),
         );
-        let (_, markers) = build(&sink.finish().unwrap()).unwrap();
+        let (_, markers) = build(&recorder.finish().unwrap()).unwrap();
         assert_eq!(markers[0].icon, MarkerIcon::Pin);
     }
 
@@ -781,8 +781,8 @@ mod tests {
 
     #[test]
     fn lat_out_of_range() {
-        let mut sink = NavFileBuilder::new().open();
-        sink.add_nav_fix(
+        let mut recorder = NavFileBuilder::new().open();
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(base())
                 .lat(Angle::degrees(91.0))
@@ -790,7 +790,7 @@ mod tests {
                 .heading(Angle::degrees(0.0))
                 .build(),
         );
-        let nav_file = sink.finish().unwrap();
+        let nav_file = recorder.finish().unwrap();
         let err = from_nav_file(&nav_file).unwrap_err();
         assert!(
             matches!(err, LoadError::LatitudeOutOfRange { lat, idx: 0 } if (lat - 91.0).abs() < 1e-10),
@@ -800,8 +800,8 @@ mod tests {
 
     #[test]
     fn lon_out_of_range() {
-        let mut sink = NavFileBuilder::new().open();
-        sink.add_nav_fix(
+        let mut recorder = NavFileBuilder::new().open();
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(base())
                 .lat(Angle::degrees(0.0))
@@ -809,7 +809,7 @@ mod tests {
                 .heading(Angle::degrees(0.0))
                 .build(),
         );
-        let nav_file = sink.finish().unwrap();
+        let nav_file = recorder.finish().unwrap();
         let err = from_nav_file(&nav_file).unwrap_err();
         assert!(
             matches!(err, LoadError::LongitudeOutOfRange { lon, idx: 0 } if (lon - -181.0).abs() < 1e-10),

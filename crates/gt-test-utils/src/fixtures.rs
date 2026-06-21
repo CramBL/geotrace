@@ -383,12 +383,12 @@ pub struct SyntheticGtdSpec {
     reason = "Fixture generation should fail loudly when test input is invalid"
 )]
 pub fn synthetic_gtd_bytes(spec: SyntheticGtdSpec) -> Vec<u8> {
-    let mut sink = sdk::NavFileBuilder::new().open();
+    let mut recorder = sdk::NavFileBuilder::new().open();
     for i in 0..spec.point_count {
         let i_i64 = i64::try_from(i).unwrap_or(0);
         let time = spec.start + Duration::seconds(i_i64 * spec.step_secs);
 
-        sink.add_nav_fix(
+        recorder.add_nav_fix(
             sdk::NavFix::builder()
                 .gps_time(time)
                 .lat(sdk::Angle::degrees(
@@ -403,7 +403,7 @@ pub fn synthetic_gtd_bytes(spec: SyntheticGtdSpec) -> Vec<u8> {
                 .build(),
         );
 
-        sink.add_satellite_report(
+        recorder.add_satellite_report(
             sdk::SatelliteReport::builder()
                 .gps_time(time)
                 .tracked(synthetic_satellites(spec.sats_seen, spec.sats_in_fix))
@@ -411,7 +411,9 @@ pub fn synthetic_gtd_bytes(spec: SyntheticGtdSpec) -> Vec<u8> {
         );
     }
 
-    let nav_file = sink.finish().expect("synthetic test data must be valid");
+    let nav_file = recorder
+        .finish()
+        .expect("synthetic test data must be valid");
     let mut bytes = Vec::new();
     nav_file
         .write(&mut bytes)

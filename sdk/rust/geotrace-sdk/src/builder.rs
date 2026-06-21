@@ -109,20 +109,20 @@ impl InternalPoint {
     }
 }
 
-/// Configuration builder for creating a [`NavFileSink`].
+/// Configuration builder for creating a [`NavRecorder`].
 ///
 /// Set global options with the fluent `with_*` methods, then call
-/// [`open`](Self::open) to obtain a [`NavFileSink`] for data ingestion.
+/// [`open`](Self::open) to obtain a [`NavRecorder`] for data ingestion.
 ///
 /// ```no_run
 /// use geotrace_sdk::{NavFileBuilder, Meta};
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut sink = NavFileBuilder::new()
+/// let mut recorder = NavFileBuilder::new()
 ///     .with_meta(Meta::builder().title("My Track").build())
 ///     .open();
 ///
-/// // Add data to `sink`, then call `sink.finish()`.
+/// // Add data to `recorder`, then call `recorder.finish()`.
 /// # Ok(())
 /// # }
 /// ```
@@ -198,9 +198,9 @@ impl NavFileBuilder {
         self
     }
 
-    /// Consume the configuration and return a [`NavFileSink`] ready for data.
-    pub fn open(self) -> NavFileSink {
-        NavFileSink {
+    /// Consume the configuration and return a [`NavRecorder`] ready for data.
+    pub fn open(self) -> NavRecorder {
+        NavRecorder {
             fixes: Vec::new(),
             satellite_reports: Vec::new(),
             annotations: Vec::new(),
@@ -220,11 +220,11 @@ impl Default for NavFileBuilder {
     }
 }
 
-/// Data sink for collecting nav fixes, satellite reports, annotations, and event markers.
+/// Data recorder for collecting nav fixes, satellite reports, annotations, and event markers.
 ///
 /// Obtain via [`NavFileBuilder::open`]. Call [`finish`](Self::finish) when all
 /// data has been added to validate and produce a [`NavFile`].
-pub struct NavFileSink {
+pub struct NavRecorder {
     fixes: Vec<InternalFix>,
     satellite_reports: Vec<InternalSatReport>,
     annotations: Vec<Annotation>,
@@ -236,7 +236,57 @@ pub struct NavFileSink {
     continue_on_error: bool,
 }
 
-impl NavFileSink {
+/// A timeline object that [`NavRecorder::add`] dispatches on.
+///
+/// Implemented for [`NavFix`], [`SatelliteReport`], [`Annotation`], and
+/// [`EventMarker`]. Per-variant styling and typed events are intentionally not
+/// `NavRecord`s: use [`add_event_marker_style`] and [`add_event`] respectively.
+///
+/// [`add_event_marker_style`]: NavRecorder::add_event_marker_style
+/// [`add_event`]: NavRecorder::add_event
+pub trait NavRecord {
+    /// Append `self` to `recorder` via its matching typed `add_*` method.
+    fn add_to(self, recorder: &mut NavRecorder);
+}
+
+impl NavRecord for NavFix {
+    fn add_to(self, recorder: &mut NavRecorder) {
+        recorder.add_nav_fix(self);
+    }
+}
+
+impl NavRecord for SatelliteReport {
+    fn add_to(self, recorder: &mut NavRecorder) {
+        recorder.add_satellite_report(self);
+    }
+}
+
+impl NavRecord for Annotation {
+    fn add_to(self, recorder: &mut NavRecorder) {
+        recorder.add_annotation(self);
+    }
+}
+
+impl NavRecord for EventMarker {
+    fn add_to(self, recorder: &mut NavRecorder) {
+        recorder.add_event_marker(self);
+    }
+}
+
+impl NavRecorder {
+    /// Add any timeline object — a [`NavFix`], [`SatelliteReport`],
+    /// [`Annotation`], or [`EventMarker`] — dispatched by type via [`NavRecord`].
+    ///
+    /// Ergonomic sugar for the matching `add_*` method:
+    ///
+    /// ```ignore
+    /// recorder.add(fix).add(report).add(annotation);
+    /// ```
+    pub fn add(&mut self, item: impl NavRecord) -> &mut Self {
+        item.add_to(self);
+        self
+    }
+
     /// Accept a nav fix.
     ///
     /// Timestamps are immediately wrapped into typed clock-domain values so all internal
@@ -1188,7 +1238,7 @@ impl SatelliteIssues {
 /// Validate satellite reports and return one human-readable warning string per issue
 /// category found across all reports.
 ///
-/// The same checks are run by [`NavFileSink::finish`] (which additionally logs each
+/// The same checks are run by [`NavRecorder::finish`] (which additionally logs each
 /// warning via `log::warn!`).  Callers that load an existing `.gtd` file can use this
 /// to surface the same diagnostics without going through the builder.
 ///

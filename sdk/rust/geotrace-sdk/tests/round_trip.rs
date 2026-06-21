@@ -28,13 +28,13 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
     let t1 = t0 + Duration::seconds(1);
     let tmid = t0 + Duration::milliseconds(500);
 
-    let mut sink = NavFileBuilder::new()
+    let mut recorder = NavFileBuilder::new()
         .with_title("Test trace")
         .with_device("u-blox NEO-M9N")
         .with_notes("round-trip test")
         .open();
 
-    sink.add_nav_fix(
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t0)
             .lat(Angle::degrees(51.5))
@@ -43,7 +43,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
             .speed(Velocity::meter_per_second(12.5))
             .build(),
     );
-    sink.add_nav_fix(
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t1)
             .lat(Angle::degrees(51.6))
@@ -53,7 +53,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
             .build(),
     );
 
-    sink.add_satellite_report(
+    recorder.add_satellite_report(
         SatelliteReport::builder()
             .gps_time(t0)
             .tracked(vec![
@@ -73,7 +73,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
             .build(),
     );
 
-    sink.add_annotation(
+    recorder.add_annotation(
         Annotation::builder()
             .time(tmid)
             .label("halfway")
@@ -81,7 +81,7 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
             .build(),
     );
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let rt = round_trip(&nav_file)?;
 
     assert_eq!(rt.meta().title.as_deref(), Some("Test trace"));
@@ -128,8 +128,8 @@ fn all_fields_present() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn minimal() -> Result<(), Box<dyn std::error::Error>> {
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(base())
             .lat(Angle::degrees(0.0))
@@ -137,7 +137,7 @@ fn minimal() -> Result<(), Box<dyn std::error::Error>> {
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    let rt = round_trip(&sink.finish()?)?;
+    let rt = round_trip(&recorder.finish()?)?;
     assert_eq!(rt.nav_points().len(), 1);
     assert_eq!(rt.nav_points()[0].fix.speed, None);
     assert!(rt.nav_points()[0].satellites.is_none());
@@ -148,9 +148,9 @@ fn minimal() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = base();
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
     for i in 0..3 {
-        sink.add_nav_fix(
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(t0 + Duration::seconds(i64::from(i)))
                 .lat(Angle::degrees(0.0))
@@ -159,7 +159,7 @@ fn no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
                 .build(),
         );
     }
-    let rt = round_trip(&sink.finish()?)?;
+    let rt = round_trip(&recorder.finish()?)?;
     assert_eq!(rt.nav_points().len(), 3);
     assert!(rt.nav_points().iter().all(|p| p.satellites.is_none()));
 
@@ -172,8 +172,8 @@ fn no_satellite_data() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn no_markers() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = base();
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t0)
             .lat(Angle::degrees(0.0))
@@ -181,13 +181,13 @@ fn no_markers() -> Result<(), Box<dyn std::error::Error>> {
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    sink.add_satellite_report(
+    recorder.add_satellite_report(
         SatelliteReport::builder()
             .gps_time(t0)
             .tracked(vec![])
             .build(),
     );
-    let rt = round_trip(&sink.finish()?)?;
+    let rt = round_trip(&recorder.finish()?)?;
     assert!(rt.markers().is_empty());
     assert!(rt.nav_points()[0].satellites.is_some());
     Ok(())
@@ -205,7 +205,7 @@ fn empty_builder() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn large_file() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = base();
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
 
     let tracked: Vec<_> = (0u32..12u32)
         .map(|i| {
@@ -220,7 +220,7 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
 
     for i in 0u32..50_000 {
         let t = t0 + Duration::seconds(i64::from(i));
-        sink.add_nav_fix(
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(t)
                 .lat(Angle::degrees(55.0))
@@ -228,7 +228,7 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
                 .heading(Angle::degrees(0.0))
                 .build(),
         );
-        sink.add_satellite_report(
+        recorder.add_satellite_report(
             SatelliteReport::builder()
                 .gps_time(t)
                 .tracked(tracked.clone())
@@ -236,7 +236,7 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     assert_eq!(nav_file.nav_points().len(), 50_000);
 
     let rt = round_trip(&nav_file)?;
@@ -258,17 +258,17 @@ fn large_file() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn identity_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = base();
-    let mut sink = NavFileBuilder::new()
+    let mut recorder = NavFileBuilder::new()
         .with_identity("device-serial-001")
         .open();
-    sink.add_nav_fix(
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t0)
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .build(),
     );
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     assert_eq!(
         nav_file.meta().identity.as_deref(),
         Some("device-serial-001")
@@ -282,15 +282,15 @@ fn identity_round_trips() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn no_identity_deserialises_as_none() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = base();
-    let mut sink = NavFileBuilder::new().with_title("No identity").open();
-    sink.add_nav_fix(
+    let mut recorder = NavFileBuilder::new().with_title("No identity").open();
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t0)
             .lat(Angle::degrees(51.5))
             .lon(Angle::degrees(-0.1))
             .build(),
     );
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
 
     let rt = round_trip(&nav_file)?;
     assert_eq!(rt.meta().identity, None);
@@ -301,15 +301,15 @@ fn no_identity_deserialises_as_none() -> Result<(), Box<dyn std::error::Error>> 
 fn identity_via_meta_builder() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = base();
     let meta = Meta::builder().identity("route-a").build();
-    let mut sink = NavFileBuilder::new().with_meta(meta).open();
-    sink.add_nav_fix(
+    let mut recorder = NavFileBuilder::new().with_meta(meta).open();
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t0)
             .lat(Angle::degrees(48.8))
             .lon(Angle::degrees(2.3))
             .build(),
     );
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let rt = round_trip(&nav_file)?;
     assert_eq!(rt.meta().identity.as_deref(), Some("route-a"));
     Ok(())
@@ -320,12 +320,12 @@ fn large_file_round_trip() -> Result<(), Box<dyn std::error::Error>> {
     const N: u32 = 100_000;
     let t0 = base();
 
-    let mut sink = NavFileBuilder::new().with_title("large file test").open();
+    let mut recorder = NavFileBuilder::new().with_title("large file test").open();
     for i in 0..N {
         let t = t0 + Duration::seconds(i as i64);
         let lat = -89.0 + (i as f64 % 178.0);
         let lon = -179.0 + (i as f64 % 358.0);
-        sink.add_nav_fix(
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(t)
                 .lat(Angle::degrees(lat))
@@ -333,7 +333,7 @@ fn large_file_round_trip() -> Result<(), Box<dyn std::error::Error>> {
                 .build(),
         );
     }
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
 
     assert_eq!(nav_file.nav_points().len(), N as usize);
 

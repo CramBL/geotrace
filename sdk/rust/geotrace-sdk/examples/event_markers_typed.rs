@@ -89,7 +89,7 @@ enum AgpsEvent {
 fn main() -> Result<(), Box<dyn Error>> {
     let t = |s: &str| s.parse::<DateTime<Utc>>().expect("valid timestamp");
 
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
 
     for (ts, lat, lon) in [
         ("2024-06-01T08:00:00Z", 51.5074, -0.1278),
@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("2024-06-01T08:02:00Z", 51.5103, -0.1217),
         ("2024-06-01T08:02:30Z", 51.5110, -0.1200),
     ] {
-        sink.add_nav_fix(
+        recorder.add(
             NavFix::builder()
                 .gps_time(t(ts))
                 .lat(Angle::degrees(lat))
@@ -110,35 +110,35 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // Explicit note overrides the automatic Debug note for this instance.
-    sink.add_event_with_note(
+    recorder.add_event_with_note(
         &Event::Power(PowerEvent::Boot),
         t("2024-06-01T08:00:02Z"),
         "cold start",
     );
     // ConnectivityEvent has note = none, so add_event_with_note is required for a note.
-    sink.add_event_with_note(
+    recorder.add_event_with_note(
         &Event::Connectivity(ConnectivityEvent::Agps(AgpsEvent::Request)),
         t("2024-06-01T08:00:05Z"),
         "EPO fetch started",
     );
-    sink.add_event_with_note(
+    recorder.add_event_with_note(
         &Event::Connectivity(ConnectivityEvent::Agps(AgpsEvent::Success)),
         t("2024-06-01T08:00:18Z"),
         "EPO applied",
     );
     // No note argument - Debug representation is used automatically as the note.
-    sink.add_event(
+    recorder.add_event(
         &Event::Sensor(SensorEvent::Gps(GpsEvent::LockAcquired)),
         t("2024-06-01T08:00:20Z"),
     );
-    sink.add_event_with_note(
+    recorder.add_event_with_note(
         &Event::Power(PowerEvent::BatteryLow),
         t("2024-06-01T08:02:10Z"),
         "14%",
     );
-    sink.add_event(&Event::Power(PowerEvent::Sleep), t("2024-06-01T08:02:25Z"));
+    recorder.add_event(&Event::Power(PowerEvent::Sleep), t("2024-06-01T08:02:25Z"));
 
-    sink.add_event_marker_style(
+    recorder.add_event_marker_style(
         EventMarkerStyle::builder()
             .variant_path(Event::Power(PowerEvent::Boot).variant_path().unwrap())
             .icon(EventMarkerIconChoice::Icon(MarkerIcon::Lightning))
@@ -146,7 +146,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .build()
             .expect("valid hex color"),
     );
-    sink.add_event_marker_style(
+    recorder.add_event_marker_style(
         EventMarkerStyle::builder()
             .variant_path(Event::Power(PowerEvent::Sleep).variant_path().unwrap())
             .icon(EventMarkerIconChoice::Icon(MarkerIcon::Pin))
@@ -155,7 +155,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .expect("valid hex color"),
     );
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
 
     let path = env::temp_dir().join("geotrace_event_markers_typed.gtd");
     nav_file.write_to_file(&path)?;

@@ -36,9 +36,9 @@ mod tests {
 
     fn make_gtd(start_secs: i64, n: u32) -> Vec<u8> {
         let t0 = DateTime::from_timestamp(start_secs, 0).expect("valid timestamp");
-        let mut sink = NavFileBuilder::new().open();
+        let mut recorder = NavFileBuilder::new().open();
         for i in 0..n {
-            sink.add_nav_fix(
+            recorder.add_nav_fix(
                 NavFix::builder()
                     .gps_time(t0 + SdkDuration::seconds(i as i64))
                     .lat(Angle::degrees(51.5))
@@ -47,7 +47,7 @@ mod tests {
                     .build(),
             );
         }
-        let nav_file = sink.finish().expect("valid nav file");
+        let nav_file = recorder.finish().expect("valid nav file");
         let mut bytes = Vec::new();
         nav_file.write(&mut bytes).expect("write bytes");
         bytes

@@ -1,8 +1,8 @@
 //! Write a basic `.gtd` file from a hardcoded GPS track.
 //!
-//! The minimal write workflow: open a [`NavFileSink`] with some metadata, add a
+//! The minimal write workflow: open a [`NavRecorder`] with some metadata, add a
 //! few [`NavFix`] points (plus an optional satellite report and a map
-//! annotation), call [`NavFileSink::finish`], and write the result to disk.
+//! annotation), call [`NavRecorder::finish`], and write the result to disk.
 
 // Examples favour brevity: the core's robustness restriction lints (no
 // unwrap/expect/panic/indexing, no std::env::temp_dir) are not enforced on
@@ -29,9 +29,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .title("Quick tour")
         .device("Example GPS v1.0")
         .build();
-    let mut sink = NavFileBuilder::new().with_meta(meta).open();
+    let mut recorder = NavFileBuilder::new().with_meta(meta).open();
 
-    sink.add_nav_fix(
+    recorder.add(
         NavFix::builder()
             .gps_time(t("2024-06-01T08:00:00Z"))
             .lat(Angle::degrees(51.5074))
@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .build(),
     );
 
-    sink.add_satellite_report(
+    recorder.add(
         SatelliteReport::builder()
             .gps_time(t("2024-06-01T08:00:00Z"))
             .tracked(vec![
@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .build(),
     );
 
-    sink.add_nav_fix(
+    recorder.add(
         NavFix::builder()
             .gps_time(t("2024-06-01T08:00:10Z"))
             .lat(Angle::degrees(51.5080))
@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .build(),
     );
 
-    sink.add_annotation(
+    recorder.add(
         Annotation::builder()
             .time(t("2024-06-01T08:00:00Z"))
             .label("Start point")
@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .build(),
     );
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
 
     let path = env::temp_dir().join("geotrace_write_basic.gtd");
     nav_file.write_to_file(&path)?;

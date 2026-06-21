@@ -235,7 +235,7 @@ void load_fixes(geotrace::FileBuilder &b, const fs::path &base, const std::vecto
         auto hdg = parse_opt_double(cols[5]);
         auto kmh = parse_opt_double(cols[6]);
 
-        b.add_nav_fix(geotrace::NavFix{
+        b.add(geotrace::NavFix{
             gps_ts.value_or(geotrace::Timestamp::none()),
             sys_ts.value_or(geotrace::Timestamp::none()),
             geotrace::Angle::degrees(lat),
@@ -253,7 +253,7 @@ void load_fixes(geotrace::FileBuilder &b, const fs::path &base, const std::vecto
                 report.tracked.push_back(row.sat);
         }
         if (!report.tracked.empty())
-            b.add_satellite_report(report);
+            b.add(report);
     }
 }
 
@@ -271,7 +271,7 @@ void load_markers(geotrace::FileBuilder &b, const fs::path &base) {
         auto ts = parse_ts(cols[0]);
         if (!ts)
             throw geotrace::IoError("markers.csv: missing timestamp");
-        b.add_annotation(geotrace::Annotation{*ts, cols[1], parse_icon(cols[2])});
+        b.add(geotrace::Annotation{*ts, cols[1], parse_icon(cols[2])});
     }
 }
 
@@ -289,7 +289,7 @@ void load_events(geotrace::FileBuilder &b, const fs::path &base) {
         auto ts = parse_ts(cols[0]);
         if (!ts)
             throw geotrace::IoError("events.csv: missing sys_time");
-        b.add_event_marker(geotrace::EventMarker{cols[1], *ts, cols[2]});
+        b.add(geotrace::EventMarker{cols[1], *ts, cols[2]});
     }
 }
 

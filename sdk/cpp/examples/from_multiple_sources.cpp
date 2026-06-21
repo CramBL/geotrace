@@ -47,7 +47,7 @@ int main() {
             fix.lat = geotrace::Angle::degrees(point.lat);
             fix.lon = geotrace::Angle::degrees(point.lon);
             fix.heading = geotrace::Angle::degrees(point.heading);
-            builder.add_nav_fix(fix);
+            builder.add(fix);
             ++idx;
         }
 
@@ -69,7 +69,7 @@ int main() {
             ann.time = at(m.offset);
             ann.label = std::string(m.label);
             ann.icon = m.icon;
-            builder.add_annotation(ann);
+            builder.add(ann);
             ++marker_count;
         }
 

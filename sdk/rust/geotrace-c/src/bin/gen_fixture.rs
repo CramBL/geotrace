@@ -21,12 +21,12 @@ fn main() {
     let t1 =
         chrono::DateTime::from_timestamp_micros(1_700_000_010_000_000).expect("valid timestamp");
 
-    let mut sink = NavFileBuilder::new()
+    let mut recorder = NavFileBuilder::new()
         .with_title("minimal fixture")
         .with_device("gen_fixture")
         .open();
 
-    sink.add_nav_fix(NavFix {
+    recorder.add_nav_fix(NavFix {
         gps_time: Some(t0),
         sys_time: None,
         lat: Angle::degrees(51.5074),
@@ -36,7 +36,7 @@ fn main() {
         eph_m: Some(3.0),
     });
 
-    sink.add_satellite_report(SatelliteReport {
+    recorder.add_satellite_report(SatelliteReport {
         gps_time: Some(t0),
         sys_time: None,
         tracked: vec![
@@ -59,7 +59,7 @@ fn main() {
         ],
     });
 
-    sink.add_nav_fix(NavFix {
+    recorder.add_nav_fix(NavFix {
         gps_time: Some(t1),
         sys_time: None,
         lat: Angle::degrees(51.5080),
@@ -69,7 +69,7 @@ fn main() {
         eph_m: Some(2.5),
     });
 
-    let nav_file = sink.finish().expect("gen_fixture: build failed");
+    let nav_file = recorder.finish().expect("gen_fixture: build failed");
 
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent).expect("create fixture dir");

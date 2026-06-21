@@ -20,7 +20,7 @@ int main() {
         f0.heading = geotrace::Angle::degrees(90.0);
         f0.speed = geotrace::Velocity::mps(5.5);
         f0.eph_m = 3.2;
-        builder.add_nav_fix(f0);
+        builder.add(f0);
 
         geotrace::SatelliteReport report{};
         report.gps_time = now;
@@ -41,7 +41,7 @@ int main() {
         s2.snr_dbhz = 22.0;
         report.tracked.push_back(s2);
 
-        builder.add_satellite_report(report);
+        builder.add(report);
 
         geotrace::NavFix f1{};
         f1.gps_time = t1;
@@ -50,13 +50,13 @@ int main() {
         f1.heading = geotrace::Angle::degrees(85.0);
         f1.speed = geotrace::Velocity::mps(5.8);
         f1.eph_m = 2.9;
-        builder.add_nav_fix(f1);
+        builder.add(f1);
 
         geotrace::Annotation ann{};
         ann.time = now;
         ann.label = "Start point";
         ann.icon = geotrace::MarkerIcon::Pin;
-        builder.add_annotation(ann);
+        builder.add(ann);
 
         const geotrace::NavFile file = builder.finish();
 

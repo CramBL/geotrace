@@ -123,7 +123,7 @@ int main() {
             fix.lat = geotrace::Angle::degrees(point.lat);
             fix.lon = geotrace::Angle::degrees(point.lon);
             fix.heading = geotrace::Angle::degrees(90.0);
-            builder.add_nav_fix(fix);
+            builder.add(fix);
             ++idx;
         }
 

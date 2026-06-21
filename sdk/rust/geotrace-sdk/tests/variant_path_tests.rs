@@ -152,19 +152,19 @@ fn skip_variant_returns_none() {
 // add_event silently no-ops when variant returns None.
 #[test]
 fn add_event_noop_on_skip_variant() {
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(fix());
-    sink.add_event(&SkipEvent::Internal, t(0));
-    let nav_file = sink.finish().unwrap();
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix());
+    recorder.add_event(&SkipEvent::Internal, t(0));
+    let nav_file = recorder.finish().unwrap();
     assert_eq!(nav_file.event_markers().len(), 0);
 }
 
 #[test]
 fn add_event_adds_marker_on_non_skip_variant() {
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(fix());
-    sink.add_event(&SkipEvent::Active, t(0));
-    let nav_file = sink.finish().unwrap();
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix());
+    recorder.add_event(&SkipEvent::Active, t(0));
+    let nav_file = recorder.finish().unwrap();
     assert_eq!(nav_file.event_markers().len(), 1);
     assert_eq!(nav_file.event_markers()[0].variant_path, "active");
 }

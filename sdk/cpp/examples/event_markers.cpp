@@ -47,7 +47,7 @@ int main() {
             fix.lat = geotrace::Angle::degrees(point.lat);
             fix.lon = geotrace::Angle::degrees(point.lon);
             fix.heading = geotrace::Angle::degrees(90.0);
-            builder.add_nav_fix(fix);
+            builder.add(fix);
             ++idx;
         }
 
@@ -64,7 +64,7 @@ int main() {
             {"power/sleep", 145, ""},
         };
         for (const auto &e : events)
-            builder.add_event_marker(
+            builder.add(
                 geotrace::EventMarker{std::string(e.path), at(e.offset), std::string(e.note)});
 
         builder.add_event_marker_style(
