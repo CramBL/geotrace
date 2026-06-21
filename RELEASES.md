@@ -94,6 +94,6 @@ The GUI updater ignores prereleases.
 It runs automatically on every release, including prereleases, but the two tracks trigger it differently because of a GitHub rule: a release created with the built-in `GITHUB_TOKEN` does not emit a `release: published` event that can start another workflow.
 
 - The **SDK** release creates its GitHub release with a repo-scoped PAT (`GEOTRACE_WITH_REPO_SCOPE`), so its `release: published` event triggers the smoke workflow directly.
-- The **GUI** release is created by cargo-dist with `GITHUB_TOKEN`, so dist instead calls the smoke workflow as a post-announce job in the same run (`post-announce-jobs` in `dist-workspace.toml`).
+- The **GUI** release is created by cargo-dist with `GITHUB_TOKEN`, so the smoke workflow instead runs when dist's `Release` workflow completes, via a `workflow_run` trigger filtered to `app/**` tags. (A dist post-announce job cannot be used: it would be skipped on prereleases, because it inherits the skip from the Homebrew publish job that dist gates to stable releases.)
 
 Re-run it for any tag from the Actions tab — `Run workflow` dispatches `release-smoke.yml` with a `tag` input.
