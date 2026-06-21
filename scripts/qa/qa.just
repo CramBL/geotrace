@@ -25,3 +25,20 @@ qa-lint:
 [group("qa")]
 generate-gold:
     {{ _QA }} generate-gold
+
+# Verify the SDK version is consistent across all of its manifests, headers, and
+# CMake files. Pass `--expect X.Y.Z` to also require a specific version.
+[group("qa")]
+check-versions *ARGS:
+    {{ _QA }} versions check {{ ARGS }}
+
+# Set every SDK version (crates, macro pin, Python, C/C++ headers, CMake) to
+# VERSION. Tag the result `geotrace-sdk-vVERSION` to release.
+[group("qa")]
+bump-sdk VERSION:
+    {{ _QA }} versions bump-sdk {{ VERSION }}
+
+# Set the GUI app (workspace) version to VERSION. Tag `app/vVERSION` to release.
+[group("qa")]
+bump-app VERSION:
+    {{ _QA }} versions bump-app {{ VERSION }}

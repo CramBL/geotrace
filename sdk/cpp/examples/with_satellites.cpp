@@ -24,12 +24,10 @@ constexpr std::uint64_t kBase = 1717228800;
 } // namespace
 
 int main() {
-    using namespace geotrace;
-
-    auto at = [](std::uint64_t secs) { return Timestamp::from_seconds(kBase + secs); };
+    auto at = [](std::uint64_t secs) { return geotrace::Timestamp::from_seconds(kBase + secs); };
 
     try {
-        FileBuilder builder;
+        geotrace::FileBuilder builder{};
         builder.title("Satellite quality tour").device("Example GNSS v1.0");
 
         struct TrackPoint {
@@ -44,24 +42,24 @@ int main() {
         };
         std::size_t idx = 0;
         for (const auto &point : track) {
-            const Timestamp t = at(idx);
+            const geotrace::Timestamp t = at(idx);
 
-            NavFix fix;
+            geotrace::NavFix fix{};
             fix.gps_time = t;
-            fix.lat = Angle::degrees(point.lat);
-            fix.lon = Angle::degrees(point.lon);
-            fix.heading = Angle::degrees(90.0);
-            fix.speed = Velocity::mps(5.5);
-            builder.add_nav_fix(fix);
+            fix.lat = geotrace::Angle::degrees(point.lat);
+            fix.lon = geotrace::Angle::degrees(point.lon);
+            fix.heading = geotrace::Angle::degrees(90.0);
+            fix.speed = geotrace::Velocity::mps(5.5);
+            builder.add(fix);
 
             // SNR climbs slightly each second as the receiver settles.
             const double snr = 36.0 + static_cast<double>(idx);
 
-            SatelliteReport report;
+            geotrace::SatelliteReport report{};
             report.gps_time = t;
 
-            Satellite g1;
-            g1.constellation = Constellation::Gps;
+            geotrace::Satellite g1{};
+            g1.constellation = geotrace::Constellation::Gps;
             g1.prn = 1;
             g1.in_fix = true;
             g1.elevation_deg = 45.0;
@@ -69,31 +67,31 @@ int main() {
             g1.snr_dbhz = snr;
             report.tracked.push_back(g1);
 
-            Satellite g5;
-            g5.constellation = Constellation::Gps;
+            geotrace::Satellite g5{};
+            g5.constellation = geotrace::Constellation::Gps;
             g5.prn = 5;
             g5.in_fix = true;
             g5.snr_dbhz = snr - 2.0;
             report.tracked.push_back(g5);
 
-            Satellite e3;
-            e3.constellation = Constellation::Galileo;
+            geotrace::Satellite e3{};
+            e3.constellation = geotrace::Constellation::Galileo;
             e3.prn = 3;
             e3.in_fix = false;
             e3.snr_dbhz = 21.0;
             report.tracked.push_back(e3);
 
-            builder.add_satellite_report(report);
+            builder.add(report);
             ++idx;
         }
 
-        const NavFile file = builder.finish();
+        const geotrace::NavFile file = builder.finish();
 
         const std::filesystem::path out =
             std::filesystem::temp_directory_path() / "geotrace_with_satellites.gtd";
         file.write_to_file(out);
 
-        const NavFile loaded = NavFile::open(out);
+        const geotrace::NavFile loaded = geotrace::NavFile::open(out);
         std::cout << loaded.nav_point_count() << " nav point(s)\n";
         for (std::size_t i = 0; i < loaded.nav_point_count(); ++i) {
             const auto p = loaded.nav_point(i);
@@ -107,7 +105,7 @@ int main() {
         }
 
         std::filesystem::remove(out);
-    } catch (const Error &e) {
+    } catch (const geotrace::Error &e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }

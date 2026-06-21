@@ -11,6 +11,32 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 const MIN_TEXTURE_DIMENSION_2D: u32 = 8192;
 
 fn main() -> eframe::Result {
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+
+    // CLI flags that must not open a window. Release smoke tests run
+    // `geotrace --version` to confirm the installed binary launches and reports
+    // the expected version without bringing up the GUI. On Windows the release
+    // build has no attached console, so stdout may not reach the terminal; a
+    // clean exit code is the cross-platform signal and the printed version is
+    // checked on Unix.
+    if raw_args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("geotrace {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if raw_args.iter().any(|a| a == "--help" || a == "-h") {
+        println!(
+            "GeoTrace {} - GNSS navigation data visualizer\n\n\
+             Usage: geotrace [FILES]...\n\n\
+             Arguments:\n  \
+             [FILES]...  .gtd recordings or .log files to open on startup\n\n\
+             Options:\n  \
+             -V, --version  Print version and exit\n  \
+             -h, --help     Print help and exit",
+            env!("CARGO_PKG_VERSION")
+        );
+        return Ok(());
+    }
+
     // Dependencies whose debug logging floods the output with per-frame or
     // per-request noise, capped at warn so `RUST_LOG=debug` stays readable
     // for GeoTrace's own logs:
@@ -39,10 +65,8 @@ fn main() -> eframe::Result {
     }
     log_builder.init();
 
-    let initial_paths: Vec<std::path::PathBuf> = std::env::args()
-        .skip(1)
-        .map(std::path::PathBuf::from)
-        .collect();
+    let initial_paths: Vec<std::path::PathBuf> =
+        raw_args.iter().map(std::path::PathBuf::from).collect();
 
     // Safety net for very large recordings: egui packs the whole frame into
     // one vertex buffer, and eframe's default device limits cap buffers at
@@ -69,11 +93,19 @@ fn main() -> eframe::Result {
         }
     });
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([800.0, 600.0])
+        .with_min_inner_size([400.0, 320.0])
+        .with_drag_and_drop(true);
+    // The window/taskbar icon. The Windows executable also embeds it via winres
+    // (build.rs) so Explorer and the installer's shortcuts show it too.
+    match eframe::icon_data::from_png_bytes(include_bytes!("../assets/geotrace_icon.png")) {
+        Ok(icon) => viewport = viewport.with_icon(icon),
+        Err(error) => log::warn!("could not load the app icon: {error}"),
+    }
+
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([800.0, 600.0])
-            .with_min_inner_size([400.0, 320.0])
-            .with_drag_and_drop(true),
+        viewport,
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
             wgpu_setup: wgpu_setup.into(),
             ..Default::default()
@@ -91,4 +123,17 @@ fn main() -> eframe::Result {
             )))
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    // The window icon is embedded at compile time and decoded at startup, so a
+    // corrupt asset would only surface when someone launches the GUI. Decode it
+    // here so CI fails loudly instead.
+    #[test]
+    fn embedded_app_icon_is_a_valid_png() {
+        let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/geotrace_icon.png"))
+            .expect("embedded app icon (assets/geotrace_icon.png) must be a valid PNG");
+        assert!(icon.width > 0 && icon.height > 0);
+    }
 }

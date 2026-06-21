@@ -1,0 +1,111 @@
+name: Smoke / Python SDK
+
+# Build a uv project that depends on geotrace-sdk, use it to write a one-fix
+# file, and check its version. A stable release installs from PyPI; a prerelease
+# (not published to PyPI) installs the matching wheel attached to the GitHub
+# release. Each step is one command so the workflow reads as a step-by-step
+# guide, mirroring the Rust SDK smoke test.
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      prerelease:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  REPO: CramBL/geotrace
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  consume:
+    name: python / ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-22.04
+          - ubuntu-24.04-arm
+          - macos-15-intel
+          - macos-14
+          - windows-latest
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+      - name: Create a project
+        run: uv init consumer --python 3.13
+
+      # A stable release is on PyPI.
+      - name: Add the geotrace-sdk dependency (PyPI)
+        if: inputs.prerelease == 'false'
+        working-directory: consumer
+        env:
+          VERSION: ${{ inputs.version }}
+        run: uv add "geotrace-sdk==$VERSION"
+
+      # A prerelease is not, so download the wheel attached to the release and
+      # add it from there (uv picks the one matching this platform + Python).
+      - name: Download the prerelease wheels
+        if: inputs.prerelease == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: gh release download "$TAG" --repo "$REPO" --pattern '*.whl' --dir wheelhouse
+
+      - name: Add the geotrace-sdk dependency (prerelease wheel)
+        if: inputs.prerelease == 'true'
+        working-directory: consumer
+        env:
+          VERSION: ${{ inputs.version }}
+        run: uv add --no-index --find-links ../wheelhouse "geotrace-sdk==$VERSION"
+
+      - name: Write a program that uses the SDK
+        working-directory: consumer
+        run: |
+          cat > use.py <<'PY'
+          from datetime import datetime, timezone
+
+          import geotrace_sdk
+          from geotrace_sdk import NavFileBuilder, NavFix
+
+          builder = NavFileBuilder()
+          builder.add(NavFix(lat=51.5074, lon=-0.1278,
+                             gps_time=datetime(2024, 1, 15, 9, 0, 0, tzinfo=timezone.utc)))
+          builder.finish().write_to_file("out.gtd")
+
+          print("geotrace-sdk", geotrace_sdk.__version__)
+          PY
+
+      - name: Run it
+        working-directory: consumer
+        run: uv run --frozen python use.py
+
+      - name: Check the installed version
+        working-directory: consumer
+        env:
+          EXPECTED: ${{ inputs.version }}
+        run: |
+          uv run --frozen --with packaging python - <<'PY'
+          import os
+
+          from packaging.version import Version
+
+          import geotrace_sdk
+
+          # A SemVer tag (0.1.0-rc.1) normalizes to PEP 440 (0.1.0rc1), so compare
+          # parsed versions rather than raw strings.
+          assert Version(geotrace_sdk.__version__) == Version(os.environ["EXPECTED"]), geotrace_sdk.__version__
+          PY

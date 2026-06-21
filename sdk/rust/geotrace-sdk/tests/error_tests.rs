@@ -8,8 +8,8 @@ fn base() -> DateTime<Utc> {
 
 fn minimal_gtd_bytes() -> Vec<u8> {
     let t = base();
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t)
             .lat(Angle::degrees(51.5))
@@ -17,7 +17,7 @@ fn minimal_gtd_bytes() -> Vec<u8> {
             .heading(Angle::degrees(90.0))
             .build(),
     );
-    sink.add_nav_fix(
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t + Duration::seconds(60))
             .lat(Angle::degrees(51.6))
@@ -26,7 +26,7 @@ fn minimal_gtd_bytes() -> Vec<u8> {
             .build(),
     );
     #[expect(clippy::expect_used, reason = "test setup must succeed")]
-    let nav_file = sink.finish().expect("valid nav file");
+    let nav_file = recorder.finish().expect("valid nav file");
     let mut bytes = Vec::new();
     #[expect(clippy::expect_used, reason = "test setup must succeed")]
     nav_file.write(&mut bytes).expect("write");

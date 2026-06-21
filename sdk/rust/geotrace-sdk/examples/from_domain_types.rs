@@ -4,8 +4,8 @@
 //! a hardware driver, a third-party library, or your own domain model.
 //! Rather than reconstructing each field through SDK builders at every call site,
 //! implement `From` for each SDK type once.
-//! After that, [`NavFileSink::add_nav_fix`], [`NavFileSink::add_satellite_report`],
-//! and [`NavFileSink::add_annotation`] all accept your types directly.
+//! After that, [`NavRecorder::add_nav_fix`], [`NavRecorder::add_satellite_report`],
+//! and [`NavRecorder::add_annotation`] all accept your types directly.
 
 // Examples favour brevity: the core's robustness restriction lints (no
 // unwrap/expect/panic/indexing, no std::env::temp_dir) are not enforced on
@@ -255,19 +255,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         },
     ];
 
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
 
+    // The typed add_* methods accept `impl Into<…>`, so the domain types feed in
+    // directly via their From impls — no manual conversion at the call site.
     for fix in fixes {
-        sink.add_nav_fix(fix);
+        recorder.add_nav_fix(fix);
     }
     for report in sat_reports {
-        sink.add_satellite_report(report);
+        recorder.add_satellite_report(report);
     }
     for entry in log_entries {
-        sink.add_annotation(entry);
+        recorder.add_annotation(entry);
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
 
     let out = env::temp_dir().join("geotrace_from_domain_types.gtd");
     nav_file.write_to_file(&out)?;

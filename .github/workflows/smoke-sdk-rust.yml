@@ -1,0 +1,95 @@
+name: Smoke / Rust SDK
+
+# Build a fresh project that depends on geotrace-sdk, use it to write a one-fix
+# file, and print geotrace_sdk::VERSION. A stable release comes from crates.io; a
+# prerelease (not published to crates.io) is pulled from the tagged git source.
+# Each step is one command so the workflow reads as a step-by-step guide.
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      prerelease:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  REPO: CramBL/geotrace
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  consume:
+    name: rust / ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-22.04
+          - macos-14
+          - windows-latest
+    steps:
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+
+      - name: Create a new project
+        run: cargo new --bin consumer
+
+      # A stable release is on crates.io.
+      - name: Add the geotrace-sdk dependency (crates.io)
+        if: inputs.prerelease == 'false'
+        working-directory: consumer
+        env:
+          VERSION: ${{ inputs.version }}
+        run: cargo add "geotrace-sdk@=$VERSION"
+
+      # A prerelease is not, so depend on the tagged source from git instead (the
+      # same source crates.io would receive).
+      - name: Add the geotrace-sdk dependency (git tag)
+        if: inputs.prerelease == 'true'
+        working-directory: consumer
+        env:
+          TAG: ${{ inputs.tag }}
+        run: cargo add geotrace-sdk --git "https://github.com/${REPO}" --tag "${TAG}"
+
+      - name: Write a program that uses the SDK
+        working-directory: consumer
+        run: |
+          cat > src/main.rs <<'RS'
+          use geotrace_sdk::{Angle, NavFileBuilder, NavFix, Utc};
+
+          fn main() {
+              let mut sink = NavFileBuilder::new().open();
+              sink.add_nav_fix(
+                  NavFix::builder()
+                      .gps_time(Utc::now())
+                      .lat(Angle::degrees(51.5074))
+                      .lon(Angle::degrees(-0.1278))
+                      .build(),
+              );
+              sink.finish().expect("finish").write_to_file("out.gtd").expect("write");
+              println!("geotrace-sdk {}", geotrace_sdk::VERSION);
+          }
+          RS
+
+      - name: Build and run it
+        working-directory: consumer
+        run: cargo run --quiet --release | tee output.txt
+
+      - name: Check the version it printed
+        working-directory: consumer
+        env:
+          VERSION: ${{ inputs.version }}
+        run: grep -qw "$VERSION" output.txt

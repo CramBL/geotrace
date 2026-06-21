@@ -32,7 +32,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: 
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
 
     steps:
       - name: Checkout
@@ -63,9 +66,10 @@ jobs:
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
         with:
-          tool: nextest
+          tool: nextest,just
 
       - name: Install uv
+        if: runner.os == 'Linux'
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 
       - name: Install cargo-pup
@@ -83,20 +87,22 @@ jobs:
           echo "WGPU_BACKEND=gl" >> "$GITHUB_ENV"
 
       - name: Check formatting
+        if: runner.os == 'Linux'
         run: cargo fmt --all --check
+
+      - name: check
+        run: cargo check --workspace --features geotrace/self-update
 
       - name: Clippy
         run: |
           cargo clippy --workspace --no-deps -- -D warnings
           cargo clippy --workspace --no-deps --tests -- -D warnings
           cargo clippy --workspace --no-deps --examples -- -D warnings
-
-      - name: Type-check
-        run: cargo check
+          cargo clippy --workspace --no-deps --features geotrace/self-update --tests -- -D warnings
 
       - name: Tests
         if: runner.os == 'Linux'
-        run: cargo nextest run --workspace --profile ci
+        run: cargo nextest run --workspace --features geotrace/self-update --profile ci
         env:
           GEOTRACE_OFFLINE: 1
 
@@ -104,20 +110,26 @@ jobs:
       # toolchain installed only on Linux (see above) - exclude it elsewhere.
       - name: Tests (excluding gt-arch architecture check)
         if: runner.os != 'Linux'
-        run: cargo nextest run --workspace --exclude gt-arch --profile ci
+        run: cargo nextest run --workspace --exclude gt-arch --features geotrace/self-update --profile ci
         env:
           GEOTRACE_OFFLINE: 1
+
+      - name: Upload snapshots
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: matrix.os == 'macos-latest' && always()
+        with:
+          name: test-results
+          path: "**/tests/snapshots"
 
       - name: Examples
         run: bash scripts/examples.sh
 
       - name: QA checks
+        if: runner.os == 'Linux'
         run: |
-          uv run --project scripts/qa ruff check scripts/qa/src
-          uv run --project scripts/qa mypy --strict scripts/qa/src
-          uv run --project scripts/qa check-em-dash
-          uv run --project scripts/qa check-floating-comments
-          uv run --project scripts/qa check-narrative-comments
+          just qa::qa-lint
+          just qa::check-all
+          just qa::check-versions
 
   ci-essentials:
     runs-on: ubuntu-latest

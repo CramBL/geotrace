@@ -29,7 +29,7 @@ use geotrace_sdk::{
 fn main() -> Result<(), Box<dyn Error>> {
     let t = |s: &str| s.parse::<DateTime<Utc>>().expect("valid timestamp");
 
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
 
     let track = [
         ("2024-06-01T08:00:00Z", 51.5074, -0.1278),
@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     for (i, (ts, lat, lon)) in track.iter().enumerate() {
         let time = t(ts);
-        sink.add_nav_fix(
+        recorder.add(
             NavFix::builder()
                 .gps_time(time)
                 .lat(Angle::degrees(*lat))
@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         // SNR climbs slightly each second as the receiver settles.
         let snr = 36.0 + i as f32;
-        sink.add_satellite_report(
+        recorder.add(
             SatelliteReport::builder()
                 .gps_time(time)
                 .tracked(vec![
@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
 
     let path = env::temp_dir().join("geotrace_with_satellites.gtd");
     nav_file.write_to_file(&path)?;

@@ -4,7 +4,7 @@
 //! (a test harness, an annotation tool, a sensor log) records named events with
 //! timestamps from a different file or database.
 //!
-//! Both sources are added independently to [`NavFileSink`]; `finish()` sorts
+//! Both sources are added independently to [`NavRecorder`]; `finish()` sorts
 //! everything by time and interpolates each annotation's map position from the
 //! surrounding GPS fixes.
 
@@ -45,11 +45,11 @@ const EVENTS: &[(&str, &str, MarkerIcon)] = &[
 ];
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
 
     for &(timestamp, lat, lon, heading) in GPS_FIXES {
         let time = timestamp.parse::<DateTime<Utc>>()?;
-        sink.add_nav_fix(
+        recorder.add(
             NavFix::builder()
                 .gps_time(time)
                 .lat(Angle::degrees(lat))
@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     for &(timestamp, label, icon) in EVENTS {
         let time = timestamp.parse::<DateTime<Utc>>()?;
-        sink.add_annotation(
+        recorder.add(
             Annotation::builder()
                 .time(time)
                 .label(label)
@@ -70,7 +70,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
 
     let temp_dir = tempfile::tempdir()?;
     let out = temp_dir.path().join("geotrace_from_multiple_sources.gtd");

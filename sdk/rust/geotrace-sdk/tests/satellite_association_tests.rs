@@ -75,12 +75,12 @@ fn first_constellation(p: &geotrace_sdk::NavPoint) -> Constellation {
 /// A report at exactly `window` distance from a fix must be assigned to it.
 #[test]
 fn window_boundary_inclusive() -> Result<(), BuildError> {
-    let mut sink = NavFileBuilder::new()
+    let mut recorder = NavFileBuilder::new()
         .with_satellite_window(Duration::milliseconds(100))
         .open();
-    sink.add_nav_fix(fix_at(0, 55.0, 12.0));
-    sink.add_satellite_report(report_gps(100)); // exactly 100 ms away
-    let nav_file = sink.finish()?;
+    recorder.add_nav_fix(fix_at(0, 55.0, 12.0));
+    recorder.add_satellite_report(report_gps(100)); // exactly 100 ms away
+    let nav_file = recorder.finish()?;
 
     assert_eq!(nav_file.nav_points().len(), 1, "no ghost fix expected");
     assert!(
@@ -94,12 +94,12 @@ fn window_boundary_inclusive() -> Result<(), BuildError> {
 /// The report must become a ghost fix, not be silently dropped.
 #[test]
 fn window_boundary_one_microsecond_past_is_excluded() -> Result<(), BuildError> {
-    let mut sink = NavFileBuilder::new()
+    let mut recorder = NavFileBuilder::new()
         .with_satellite_window(Duration::milliseconds(100))
         .open();
-    sink.add_nav_fix(fix_at(0, 0.0, 0.0));
+    recorder.add_nav_fix(fix_at(0, 0.0, 0.0));
     // 100 ms + 1 μs → just outside the window.
-    sink.add_satellite_report(
+    recorder.add_satellite_report(
         SatelliteReport::builder()
             .gps_time(t_us(100_001))
             .tracked(vec![
@@ -111,7 +111,7 @@ fn window_boundary_one_microsecond_past_is_excluded() -> Result<(), BuildError> 
             .build(),
     );
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
 
     // Real fix + 1 dead-reckoned ghost.
     assert_eq!(nav_file.nav_points().len(), 2, "one ghost fix expected");
@@ -130,13 +130,13 @@ fn window_boundary_one_microsecond_past_is_excluded() -> Result<(), BuildError> 
 /// Here the report is closer to fix B (t=2 000 ms) than to fix A (t=0).
 #[test]
 fn report_goes_to_nearer_of_two_candidate_fixes() -> Result<(), BuildError> {
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(fix_at(0, 10.0, 10.0)); // fix A - GPS constellation expected
-    sink.add_nav_fix(fix_at(2000, 20.0, 20.0)); // fix B - Glonass constellation expected
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_at(0, 10.0, 10.0)); // fix A - GPS constellation expected
+    recorder.add_nav_fix(fix_at(2000, 20.0, 20.0)); // fix B - Glonass constellation expected
     // Report at t=1 800 ms: 1 800 ms from A (outside 500 ms window), 200 ms from B (inside).
-    sink.add_satellite_report(report_with(1800, Constellation::Gps, 1));
+    recorder.add_satellite_report(report_with(1800, Constellation::Gps, 1));
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     assert_eq!(points.len(), 2, "no ghost fixes expected");
@@ -156,15 +156,15 @@ fn report_goes_to_nearer_of_two_candidate_fixes() -> Result<(), BuildError> {
 #[test]
 fn report_equidistant_goes_to_earlier_fix() -> Result<(), BuildError> {
     // Use a 2 000 ms window so both fixes are candidates.
-    let mut sink = NavFileBuilder::new()
+    let mut recorder = NavFileBuilder::new()
         .with_satellite_window(Duration::milliseconds(2000))
         .open();
-    sink.add_nav_fix(fix_at(0, 10.0, 10.0)); // fix A
-    sink.add_nav_fix(fix_at(2000, 20.0, 20.0)); // fix B
+    recorder.add_nav_fix(fix_at(0, 10.0, 10.0)); // fix A
+    recorder.add_nav_fix(fix_at(2000, 20.0, 20.0)); // fix B
     // Report at t=1 000 ms: exactly 1 000 ms from both fixes.
-    sink.add_satellite_report(report_gps(1000));
+    recorder.add_satellite_report(report_gps(1000));
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     assert_eq!(points.len(), 2, "no ghost fixes expected");
@@ -183,11 +183,11 @@ fn report_equidistant_goes_to_earlier_fix() -> Result<(), BuildError> {
 /// All reports must be matched; no ghost fixes created.
 #[test]
 fn four_reports_matched_to_four_fixes_no_ghosts() -> Result<(), BuildError> {
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
     for i in 0..4_i64 {
-        sink.add_nav_fix(fix_at(i * 2000, 10.0 + i as f64, 10.0));
+        recorder.add_nav_fix(fix_at(i * 2000, 10.0 + i as f64, 10.0));
         // Each report is 100 ms after its corresponding fix - well within the window.
-        sink.add_satellite_report(report_with(
+        recorder.add_satellite_report(report_with(
             i * 2000 + 100,
             [
                 Constellation::Gps,
@@ -199,7 +199,7 @@ fn four_reports_matched_to_four_fixes_no_ghosts() -> Result<(), BuildError> {
         ));
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     assert_eq!(points.len(), 4, "no ghost fixes expected");
@@ -216,12 +216,12 @@ fn four_reports_matched_to_four_fixes_no_ghosts() -> Result<(), BuildError> {
 /// assigned rather than orphaned.
 #[test]
 fn sys_time_only_report_within_window_is_assigned() -> Result<(), BuildError> {
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
     // Fix with gps_time = t(0).  The fix effective_time is t(0).
-    sink.add_nav_fix(fix_at(0, 55.0, 12.0));
+    recorder.add_nav_fix(fix_at(0, 55.0, 12.0));
     // Report with only sys_time = t(200).  rep_us = sys_time = t(200).
     // Distance to fix: 200 ms - inside the 500 ms window.
-    sink.add_satellite_report(
+    recorder.add_satellite_report(
         SatelliteReport::builder()
             .sys_time(t(200)) // no gps_time
             .tracked(vec![
@@ -234,7 +234,7 @@ fn sys_time_only_report_within_window_is_assigned() -> Result<(), BuildError> {
             .build(),
     );
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
 
     assert_eq!(nav_file.nav_points().len(), 1, "no ghost expected");
     assert!(
@@ -257,11 +257,11 @@ fn sys_time_only_report_within_window_is_assigned() -> Result<(), BuildError> {
 /// If `sys_time` were used instead, it would go to Fix B.
 #[test]
 fn gps_time_is_preferred_over_sys_time_for_comparison() -> Result<(), BuildError> {
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(fix_at(0, 10.0, 10.0)); // fix A
-    sink.add_nav_fix(fix_at(2000, 20.0, 20.0)); // fix B
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_at(0, 10.0, 10.0)); // fix A
+    recorder.add_nav_fix(fix_at(2000, 20.0, 20.0)); // fix B
 
-    sink.add_satellite_report(
+    recorder.add_satellite_report(
         SatelliteReport::builder()
             .gps_time(t(200)) // 200 ms from fix A → inside window
             .sys_time(t(1800)) // 200 ms from fix B → would go to B if sys_time were used
@@ -274,7 +274,7 @@ fn gps_time_is_preferred_over_sys_time_for_comparison() -> Result<(), BuildError
             .build(),
     );
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     assert_eq!(points.len(), 2, "no ghost fixes expected");
@@ -294,9 +294,9 @@ fn gps_time_is_preferred_over_sys_time_for_comparison() -> Result<(), BuildError
 /// No ghost fix must be created for it.
 #[test]
 fn report_with_no_timestamp_is_discarded() -> Result<(), BuildError> {
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(fix_at(0, 55.0, 12.0));
-    sink.add_satellite_report(
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_at(0, 55.0, 12.0));
+    recorder.add_satellite_report(
         SatelliteReport::builder()
             // neither gps_time nor sys_time - dropped in finish()
             .tracked(vec![
@@ -308,7 +308,7 @@ fn report_with_no_timestamp_is_discarded() -> Result<(), BuildError> {
             .build(),
     );
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
 
     assert_eq!(
         nav_file.nav_points().len(),
@@ -326,12 +326,12 @@ fn report_with_no_timestamp_is_discarded() -> Result<(), BuildError> {
 /// and no ghost fixes must be created.
 #[test]
 fn zero_reports_all_fixes_have_no_satellite_data() -> Result<(), BuildError> {
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
     for i in 0..3_i64 {
-        sink.add_nav_fix(fix_at(i * 1000, 55.0, 12.0));
+        recorder.add_nav_fix(fix_at(i * 1000, 55.0, 12.0));
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     assert_eq!(points.len(), 3, "no ghost fixes expected");
@@ -350,15 +350,15 @@ fn three_reports_one_fix_only_closest_wins() -> Result<(), BuildError> {
     // R1 at t=100 ms → 100 ms from A (winner).
     // R2 at t=200 ms → 200 ms from A (first loser).
     // R3 at t=300 ms → 300 ms from A (second loser).
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(fix_at(0, 55.0, 12.0));
-    sink.add_nav_fix(fix_at(5000, 55.1, 12.1));
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_at(0, 55.0, 12.0));
+    recorder.add_nav_fix(fix_at(5000, 55.1, 12.1));
 
-    sink.add_satellite_report(report_with(100, Constellation::Gps, 1)); // R1 - winner
-    sink.add_satellite_report(report_with(200, Constellation::Glonass, 2)); // R2 - loser
-    sink.add_satellite_report(report_with(300, Constellation::Galileo, 3)); // R3 - loser
+    recorder.add_satellite_report(report_with(100, Constellation::Gps, 1)); // R1 - winner
+    recorder.add_satellite_report(report_with(200, Constellation::Glonass, 2)); // R2 - loser
+    recorder.add_satellite_report(report_with(300, Constellation::Galileo, 3)); // R3 - loser
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     // 2 real fixes + 2 ghost fixes for the two losers = 4 total.
@@ -400,13 +400,13 @@ fn three_reports_one_fix_only_closest_wins() -> Result<(), BuildError> {
 #[test]
 fn equidistant_reports_earlier_one_wins() -> Result<(), BuildError> {
     // Fix at t=500 ms.  Both reports are 250 ms away.
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(fix_at(500, 55.0, 12.0));
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_at(500, 55.0, 12.0));
     // Add the LATER report first to confirm it doesn't win just by insertion order.
-    sink.add_satellite_report(report_with(750, Constellation::Glonass, 99)); // later
-    sink.add_satellite_report(report_with(250, Constellation::Gps, 1)); // earlier
+    recorder.add_satellite_report(report_with(750, Constellation::Glonass, 99)); // later
+    recorder.add_satellite_report(report_with(250, Constellation::Gps, 1)); // earlier
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
 
     // Earlier report wins; one ghost for the loser.
     assert_eq!(nav_file.nav_points().len(), 2);
@@ -422,14 +422,14 @@ fn equidistant_reports_earlier_one_wins() -> Result<(), BuildError> {
 /// They must be in chronological order.
 #[test]
 fn multiple_ghosts_after_last_fix_all_have_heading_none() -> Result<(), BuildError> {
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(fix_at(0, 0.0, 0.0));
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_at(0, 0.0, 0.0));
     // Three reports well past the last fix.
-    sink.add_satellite_report(report_with(2000, Constellation::Gps, 1));
-    sink.add_satellite_report(report_with(3000, Constellation::Glonass, 2));
-    sink.add_satellite_report(report_with(4000, Constellation::Galileo, 3));
+    recorder.add_satellite_report(report_with(2000, Constellation::Gps, 1));
+    recorder.add_satellite_report(report_with(3000, Constellation::Glonass, 2));
+    recorder.add_satellite_report(report_with(4000, Constellation::Galileo, 3));
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     // 1 real fix + 3 ghost fixes = 4 total.
@@ -460,8 +460,8 @@ fn multiple_ghosts_after_last_fix_all_have_heading_none() -> Result<(), BuildErr
 /// fix than the first ghost (1 m then 2 m stepping).
 #[test]
 fn second_ghost_after_last_fix_is_further_than_first() -> Result<(), BuildError> {
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t(0))
             .lat(Angle::degrees(0.0))
@@ -469,10 +469,10 @@ fn second_ghost_after_last_fix_is_further_than_first() -> Result<(), BuildError>
             .heading(Angle::degrees(0.0)) // heading north
             .build(),
     );
-    sink.add_satellite_report(report_gps(2000));
-    sink.add_satellite_report(report_gps(3000));
+    recorder.add_satellite_report(report_gps(2000));
+    recorder.add_satellite_report(report_gps(3000));
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     assert_eq!(points.len(), 3);
@@ -522,10 +522,10 @@ fn second_ghost_after_last_fix_is_further_than_first() -> Result<(), BuildError>
 /// Expected ghost position: lat = 0 + 0.40 × 10 = 4.0, lon = 0.
 #[test]
 fn between_fix_ghost_interpolated_at_correct_fraction() -> Result<(), BuildError> {
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
 
     // Fix B: gps ahead of sys by 1 000 ms.
-    sink.add_nav_fix(
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t(0))
             .sys_time(t(1000))
@@ -535,7 +535,7 @@ fn between_fix_ghost_interpolated_at_correct_fraction() -> Result<(), BuildError
             .build(),
     );
     // Fix A: same constant delta.
-    sink.add_nav_fix(
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t(10_000))
             .sys_time(t(11_000))
@@ -546,7 +546,7 @@ fn between_fix_ghost_interpolated_at_correct_fraction() -> Result<(), BuildError
     );
 
     // Report: sys_time only.  Corrected GPS time = t(4 000) → frac = 0.40.
-    sink.add_satellite_report(
+    recorder.add_satellite_report(
         SatelliteReport::builder()
             .sys_time(t(5000)) // no gps_time; 5 000 ms from both fixes' gps_time → orphan
             .tracked(vec![
@@ -559,7 +559,7 @@ fn between_fix_ghost_interpolated_at_correct_fraction() -> Result<(), BuildError
             .build(),
     );
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     // Fix B (t=0) + ghost (t≈4 000 ms) + Fix A (t=10 000 ms) = 3 total.
@@ -598,10 +598,10 @@ fn between_fix_ghost_interpolated_at_correct_fraction() -> Result<(), BuildError
 /// explicitly verifying the "no information" fallback.
 #[test]
 fn between_fix_ghosts_evenly_distributed_when_no_delta_available() -> Result<(), BuildError> {
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
 
     // Fixes with gps_time only - no sys_time, so no delta anchors.
-    sink.add_nav_fix(
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t(0))
             .lat(Angle::degrees(0.0))
@@ -609,7 +609,7 @@ fn between_fix_ghosts_evenly_distributed_when_no_delta_available() -> Result<(),
             .heading(Angle::degrees(90.0))
             .build(),
     );
-    sink.add_nav_fix(
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t(10_000))
             .lat(Angle::degrees(0.0))
@@ -622,7 +622,7 @@ fn between_fix_ghosts_evenly_distributed_when_no_delta_available() -> Result<(),
     // sys_time values are clustered near the end, but the ghost positions must
     // ignore that and distribute evenly at fractions 1/3 and 2/3.
     for sys_offset_ms in [8000_i64, 9000] {
-        sink.add_satellite_report(
+        recorder.add_satellite_report(
             SatelliteReport::builder()
                 .sys_time(t(sys_offset_ms))
                 .tracked(vec![
@@ -635,7 +635,7 @@ fn between_fix_ghosts_evenly_distributed_when_no_delta_available() -> Result<(),
         );
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     // Fix (t=0) + ghost1 + ghost2 + Fix (t=10 000) = 4 total.
@@ -661,15 +661,15 @@ fn between_fix_ghosts_evenly_distributed_when_no_delta_available() -> Result<(),
 /// Both must be handled correctly when they appear together.
 #[test]
 fn pre_fix_dropped_post_fix_ghosted_in_same_batch() -> Result<(), BuildError> {
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(fix_at(5000, 0.0, 0.0));
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(fix_at(5000, 0.0, 0.0));
 
     // Pre-first-fix report - must be dropped.
-    sink.add_satellite_report(report_with(0, Constellation::Gps, 1));
+    recorder.add_satellite_report(report_with(0, Constellation::Gps, 1));
     // Post-last-fix report - must become a ghost.
-    sink.add_satellite_report(report_with(10_000, Constellation::Glonass, 2));
+    recorder.add_satellite_report(report_with(10_000, Constellation::Glonass, 2));
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     // 1 real fix + 1 post-fix ghost = 2 total (pre-fix report is dropped).
@@ -693,9 +693,9 @@ fn pre_fix_dropped_post_fix_ghosted_in_same_batch() -> Result<(), BuildError> {
 /// ghost fixes at some valid position.
 #[test]
 fn ghost_after_fix_with_no_heading_does_not_panic() -> Result<(), BuildError> {
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
     // Fix with no heading (e.g. a ghost fix used as a real fix by a caller).
-    sink.add_nav_fix(
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t(0))
             .lat(Angle::degrees(55.0))
@@ -703,9 +703,9 @@ fn ghost_after_fix_with_no_heading_does_not_panic() -> Result<(), BuildError> {
             // no heading
             .build(),
     );
-    sink.add_satellite_report(report_gps(2000));
+    recorder.add_satellite_report(report_gps(2000));
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
 
     // Must not panic and must produce the ghost.
     assert_eq!(nav_file.nav_points().len(), 2);
@@ -736,9 +736,9 @@ fn ghost_after_fix_with_no_heading_does_not_panic() -> Result<(), BuildError> {
 fn no_filter_sys_time_only_with_large_gps_offset_are_associated() -> Result<(), BuildError> {
     const GPS_SYS_OFFSET_MS: i64 = 2_000; // sys_time is 2 s ahead of gps_time
 
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
     for i in 0..3_i64 {
-        sink.add_nav_fix(
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(t(i * 1_000))
                 .sys_time(t(i * 1_000 + GPS_SYS_OFFSET_MS))
@@ -748,7 +748,7 @@ fn no_filter_sys_time_only_with_large_gps_offset_are_associated() -> Result<(), 
                 .build(),
         );
         // SAT record: only sys_time, at the same moment as the fix's sys_time.
-        sink.add_satellite_report(
+        recorder.add_satellite_report(
             SatelliteReport::builder()
                 .sys_time(t(i * 1_000 + GPS_SYS_OFFSET_MS))
                 .tracked(vec![
@@ -762,7 +762,7 @@ fn no_filter_sys_time_only_with_large_gps_offset_are_associated() -> Result<(), 
         );
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     assert_eq!(
@@ -789,9 +789,9 @@ fn no_filter_sys_time_only_with_large_gps_offset_are_associated() -> Result<(), 
 fn no_filter_1hz_all_sat_associated_with_large_gps_offset() -> Result<(), BuildError> {
     const GPS_SYS_OFFSET_MS: i64 = 1_800; // comfortably beyond the 500 ms window
 
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
     for i in 0..6_i64 {
-        sink.add_nav_fix(
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(t(i * 1_000))
                 .sys_time(t(i * 1_000 + GPS_SYS_OFFSET_MS))
@@ -800,7 +800,7 @@ fn no_filter_1hz_all_sat_associated_with_large_gps_offset() -> Result<(), BuildE
                 .heading(Angle::degrees(0.0))
                 .build(),
         );
-        sink.add_satellite_report(
+        recorder.add_satellite_report(
             SatelliteReport::builder()
                 .sys_time(t(i * 1_000 + GPS_SYS_OFFSET_MS))
                 .tracked(vec![
@@ -814,7 +814,7 @@ fn no_filter_1hz_all_sat_associated_with_large_gps_offset() -> Result<(), BuildE
         );
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     assert_eq!(
@@ -878,10 +878,10 @@ fn gps_ahead_600ms_sat_associates_to_own_fix_not_neighbor() -> Result<(), BuildE
         Constellation::Beidou,
     ];
 
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
     for (i, &constellation) in constellations.iter().enumerate() {
         let i = i as i64;
-        sink.add_nav_fix(
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(t(i * 1_000))
                 .sys_time(t(i * 1_000 - GPS_SYS_OFFSET_MS))
@@ -891,7 +891,7 @@ fn gps_ahead_600ms_sat_associates_to_own_fix_not_neighbor() -> Result<(), BuildE
                 .build(),
         );
         // SAT logged at the same host-clock moment as the TPV (ε = 0).
-        sink.add_satellite_report(
+        recorder.add_satellite_report(
             SatelliteReport::builder()
                 .sys_time(t(i * 1_000 - GPS_SYS_OFFSET_MS))
                 .tracked(vec![
@@ -905,7 +905,7 @@ fn gps_ahead_600ms_sat_associates_to_own_fix_not_neighbor() -> Result<(), BuildE
         );
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     assert_eq!(
@@ -944,10 +944,10 @@ fn gps_ahead_600ms_with_sat_logging_delay_no_off_by_one() -> Result<(), BuildErr
         Constellation::Beidou,
     ];
 
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
     for (i, &constellation) in constellations.iter().enumerate() {
         let i = i as i64;
-        sink.add_nav_fix(
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(t(i * 1_000))
                 .sys_time(t(i * 1_000 - GPS_SYS_OFFSET_MS))
@@ -956,7 +956,7 @@ fn gps_ahead_600ms_with_sat_logging_delay_no_off_by_one() -> Result<(), BuildErr
                 .heading(Angle::degrees(0.0))
                 .build(),
         );
-        sink.add_satellite_report(
+        recorder.add_satellite_report(
             SatelliteReport::builder()
                 .sys_time(t(i * 1_000 - GPS_SYS_OFFSET_MS + SAT_DELAY_MS))
                 .tracked(vec![
@@ -970,7 +970,7 @@ fn gps_ahead_600ms_with_sat_logging_delay_no_off_by_one() -> Result<(), BuildErr
         );
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     assert_eq!(
@@ -998,8 +998,8 @@ fn gps_ahead_600ms_sat_at_499ms_delay_still_correct() -> Result<(), BuildError> 
     const GPS_SYS_OFFSET_MS: i64 = 600;
     const SAT_DELAY_MS: i64 = 499;
 
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t(0))
             .sys_time(t(-GPS_SYS_OFFSET_MS))
@@ -1008,7 +1008,7 @@ fn gps_ahead_600ms_sat_at_499ms_delay_still_correct() -> Result<(), BuildError> 
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    sink.add_nav_fix(
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t(1_000))
             .sys_time(t(1_000 - GPS_SYS_OFFSET_MS))
@@ -1018,7 +1018,7 @@ fn gps_ahead_600ms_sat_at_499ms_delay_still_correct() -> Result<(), BuildError> 
             .build(),
     );
     // SAT for fix 0 arrives 499 ms late in sys-time.
-    sink.add_satellite_report(
+    recorder.add_satellite_report(
         SatelliteReport::builder()
             .sys_time(t(-GPS_SYS_OFFSET_MS + SAT_DELAY_MS))
             .tracked(vec![
@@ -1031,7 +1031,7 @@ fn gps_ahead_600ms_sat_at_499ms_delay_still_correct() -> Result<(), BuildError> 
             .build(),
     );
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     // No ghosts - the SAT must go to fix 0, not fix 1.
@@ -1060,10 +1060,10 @@ fn gps_ahead_600ms_sat_at_exactly_500ms_delay_boundary() -> Result<(), BuildErro
     const GPS_SYS_OFFSET_MS: i64 = 600;
     const SAT_DELAY_MS: i64 = 500; // exactly at the window boundary
 
-    let mut sink = NavFileBuilder::new()
+    let mut recorder = NavFileBuilder::new()
         .with_satellite_window(Duration::milliseconds(500))
         .open();
-    sink.add_nav_fix(
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t(0))
             .sys_time(t(-GPS_SYS_OFFSET_MS))
@@ -1072,7 +1072,7 @@ fn gps_ahead_600ms_sat_at_exactly_500ms_delay_boundary() -> Result<(), BuildErro
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    sink.add_nav_fix(
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t(1_000))
             .sys_time(t(1_000 - GPS_SYS_OFFSET_MS))
@@ -1081,7 +1081,7 @@ fn gps_ahead_600ms_sat_at_exactly_500ms_delay_boundary() -> Result<(), BuildErro
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    sink.add_satellite_report(
+    recorder.add_satellite_report(
         SatelliteReport::builder()
             .sys_time(t(-GPS_SYS_OFFSET_MS + SAT_DELAY_MS))
             .tracked(vec![
@@ -1094,7 +1094,7 @@ fn gps_ahead_600ms_sat_at_exactly_500ms_delay_boundary() -> Result<(), BuildErro
             .build(),
     );
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     assert_eq!(
@@ -1141,10 +1141,10 @@ fn sys_time_direct_comparison_with_drifting_gps_offset() -> Result<(), BuildErro
     // GPS/sys offset per fix in milliseconds (varies, simulating a drifting clock).
     let offsets_ms: [i64; 4] = [100, 600, 250, 450];
 
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
     for (i, (&constellation, &off)) in constellations.iter().zip(offsets_ms.iter()).enumerate() {
         let i = i as i64;
-        sink.add_nav_fix(
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(t(i * 1_000))
                 .sys_time(t(i * 1_000 + off)) // sys ahead of GPS by `off`
@@ -1154,7 +1154,7 @@ fn sys_time_direct_comparison_with_drifting_gps_offset() -> Result<(), BuildErro
                 .build(),
         );
         // SAT recorded at the same host-clock moment as the TPV.
-        sink.add_satellite_report(
+        recorder.add_satellite_report(
             SatelliteReport::builder()
                 .sys_time(t(i * 1_000 + off))
                 .tracked(vec![
@@ -1168,7 +1168,7 @@ fn sys_time_direct_comparison_with_drifting_gps_offset() -> Result<(), BuildErro
         );
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     assert_eq!(
@@ -1206,10 +1206,10 @@ fn sys_time_direct_comparison_drifting_offset_with_sat_delay() -> Result<(), Bui
 
     let offsets_ms: [i64; 4] = [50, 550, 300, 480];
 
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
     for (i, (&constellation, &off)) in constellations.iter().zip(offsets_ms.iter()).enumerate() {
         let i = i as i64;
-        sink.add_nav_fix(
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(t(i * 1_000))
                 .sys_time(t(i * 1_000 + off))
@@ -1219,7 +1219,7 @@ fn sys_time_direct_comparison_drifting_offset_with_sat_delay() -> Result<(), Bui
                 .build(),
         );
         // SAT arrives SAT_DELAY_MS after the TPV's sys_time - still well inside the window.
-        sink.add_satellite_report(
+        recorder.add_satellite_report(
             SatelliteReport::builder()
                 .sys_time(t(i * 1_000 + off + SAT_DELAY_MS))
                 .tracked(vec![
@@ -1233,7 +1233,7 @@ fn sys_time_direct_comparison_drifting_offset_with_sat_delay() -> Result<(), Bui
         );
     }
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let points = nav_file.nav_points();
 
     assert_eq!(
@@ -1257,11 +1257,11 @@ fn sys_time_direct_comparison_drifting_offset_with_sat_delay() -> Result<(), Bui
 /// Satellite reports are silently dropped since there is nothing to ghost from.
 #[test]
 fn no_nav_fixes_no_annotations_returns_empty() -> Result<(), BuildError> {
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_satellite_report(report_gps(0));
-    sink.add_satellite_report(report_gps(1000));
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_satellite_report(report_gps(0));
+    recorder.add_satellite_report(report_gps(1000));
 
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
 
     assert_eq!(
         nav_file.nav_points().len(),

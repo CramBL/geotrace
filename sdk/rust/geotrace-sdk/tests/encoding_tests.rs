@@ -33,8 +33,8 @@ fn to_bytes(nav_file: &NavFile) -> Vec<u8> {
 
 #[test]
 fn nan_for_absent_speed() -> Result<(), Box<dyn std::error::Error>> {
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(base())
             .lat(Angle::degrees(0.0))
@@ -42,7 +42,7 @@ fn nan_for_absent_speed() -> Result<(), Box<dyn std::error::Error>> {
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let bytes = to_bytes(&nav_file);
 
     let file = hdf5_pure::File::from_bytes(bytes)?;
@@ -59,8 +59,8 @@ fn nan_for_absent_speed() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn nan_for_absent_satellite_fields() -> Result<(), Box<dyn std::error::Error>> {
     // elevation, azimuth, snr all None → NaN on disk, None on read-back
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(base())
             .lat(Angle::degrees(0.0))
@@ -68,7 +68,7 @@ fn nan_for_absent_satellite_fields() -> Result<(), Box<dyn std::error::Error>> {
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    sink.add_satellite_report(
+    recorder.add_satellite_report(
         SatelliteReport::builder()
             .gps_time(base())
             .tracked(vec![
@@ -79,7 +79,7 @@ fn nan_for_absent_satellite_fields() -> Result<(), Box<dyn std::error::Error>> {
             ])
             .build(),
     );
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let bytes = to_bytes(&nav_file);
 
     let file = hdf5_pure::File::from_bytes(bytes)?;
@@ -112,8 +112,8 @@ fn constellation_encoding() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     for (constellation, expected_code) in constellations {
-        let mut sink = NavFileBuilder::new().open();
-        sink.add_nav_fix(
+        let mut recorder = NavFileBuilder::new().open();
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(base())
                 .lat(Angle::degrees(0.0))
@@ -121,7 +121,7 @@ fn constellation_encoding() -> Result<(), Box<dyn std::error::Error>> {
                 .heading(Angle::degrees(0.0))
                 .build(),
         );
-        sink.add_satellite_report(
+        recorder.add_satellite_report(
             SatelliteReport::builder()
                 .gps_time(base())
                 .tracked(vec![
@@ -133,7 +133,7 @@ fn constellation_encoding() -> Result<(), Box<dyn std::error::Error>> {
                 ])
                 .build(),
         );
-        let nav_file = sink.finish()?;
+        let nav_file = recorder.finish()?;
         let bytes = to_bytes(&nav_file);
 
         let file = hdf5_pure::File::from_bytes(bytes)?;
@@ -240,8 +240,8 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
     ];
 
     for (icon, expected_code) in icons {
-        let mut sink = NavFileBuilder::new().open();
-        sink.add_nav_fix(
+        let mut recorder = NavFileBuilder::new().open();
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(t(0))
                 .lat(Angle::degrees(0.0))
@@ -249,7 +249,7 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
                 .heading(Angle::degrees(0.0))
                 .build(),
         );
-        sink.add_nav_fix(
+        recorder.add_nav_fix(
             NavFix::builder()
                 .gps_time(t(1000))
                 .lat(Angle::degrees(0.0))
@@ -257,8 +257,8 @@ fn marker_icon_encoding() -> Result<(), Box<dyn std::error::Error>> {
                 .heading(Angle::degrees(0.0))
                 .build(),
         );
-        sink.add_annotation(Annotation::builder().time(t(500)).icon(icon).build());
-        let nav_file = sink.finish()?;
+        recorder.add_annotation(Annotation::builder().time(t(500)).icon(icon).build());
+        let nav_file = recorder.finish()?;
         let bytes = to_bytes(&nav_file);
 
         let file = hdf5_pure::File::from_bytes(bytes)?;
@@ -333,8 +333,8 @@ fn timestamp_precision() -> Result<(), Box<dyn std::error::Error>> {
     // Timestamps with sub-millisecond precision survive the round-trip.
     let t = DateTime::from_timestamp_micros(1_748_000_000_000_500).expect("valid");
 
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t)
             .lat(Angle::degrees(0.0))
@@ -342,7 +342,7 @@ fn timestamp_precision() -> Result<(), Box<dyn std::error::Error>> {
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    let nav_file = sink.finish()?;
+    let nav_file = recorder.finish()?;
     let mut bytes = Vec::new();
     nav_file.write(&mut bytes)?;
     let rt = NavFile::read(bytes.as_slice())?;
@@ -449,8 +449,8 @@ fn nav_file_with_label(label: Option<String>) -> Result<NavFile, Box<dyn std::er
 }
 
 fn build_nav_file_with_label(label: Option<String>) -> Result<NavFile, Box<dyn std::error::Error>> {
-    let mut sink = NavFileBuilder::new().open();
-    sink.add_nav_fix(
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t(0))
             .lat(Angle::degrees(0.0))
@@ -458,7 +458,7 @@ fn build_nav_file_with_label(label: Option<String>) -> Result<NavFile, Box<dyn s
             .heading(Angle::degrees(0.0))
             .build(),
     );
-    sink.add_nav_fix(
+    recorder.add_nav_fix(
         NavFix::builder()
             .gps_time(t(1000))
             .lat(Angle::degrees(1.0))
@@ -471,6 +471,6 @@ fn build_nav_file_with_label(label: Option<String>) -> Result<NavFile, Box<dyn s
     } else {
         Annotation::builder().time(t(500)).build()
     };
-    sink.add_annotation(ann);
-    Ok(sink.finish()?)
+    recorder.add_annotation(ann);
+    Ok(recorder.finish()?)
 }

@@ -2,7 +2,7 @@ use std::ffi::c_char;
 
 use geotrace_sdk::{
     Angle, Annotation, BuildError, EventMarker, EventMarkerColor, EventMarkerStyle, NavFileBuilder,
-    NavFileSink, SatelliteReport, Velocity,
+    NavRecorder, SatelliteReport, Velocity,
 };
 
 use crate::error::{GtdStatus, run_catching_panics, set_last_error};
@@ -14,37 +14,37 @@ use crate::{GtdMarkerIcon, GtdNavFile, GtdOptF64, GtdSatellite, GtdTimestamp, ts
 /// (on error paths) or consumed by `gtd_builder_finish()` (on success).
 pub struct GtdFileBuilder {
     builder: Option<NavFileBuilder>,
-    sink: Option<NavFileSink>,
+    recorder: Option<NavRecorder>,
 }
 
 impl GtdFileBuilder {
     fn new() -> Self {
         Self {
             builder: Some(NavFileBuilder::new()),
-            sink: None,
+            recorder: None,
         }
     }
 
     /// Transition from configuring to open, lazily on first data add.
     fn ensure_open(&mut self) {
-        if self.sink.is_none() {
+        if self.recorder.is_none() {
             let b = self.builder.take().unwrap_or_default();
-            self.sink = Some(b.open());
+            self.recorder = Some(b.open());
         }
     }
 
-    #[expect(clippy::panic, reason = "ensure_open guarantees sink is Some")]
-    fn sink_mut(&mut self) -> &mut NavFileSink {
+    #[expect(clippy::panic, reason = "ensure_open guarantees recorder is Some")]
+    fn recorder_mut(&mut self) -> &mut NavRecorder {
         self.ensure_open();
-        match &mut self.sink {
+        match &mut self.recorder {
             Some(s) => s,
-            None => panic!("geotrace-c: sink is None after ensure_open - this is a bug"),
+            None => panic!("geotrace-c: recorder is None after ensure_open - this is a bug"),
         }
     }
 
-    pub(crate) fn into_sink(mut self) -> NavFileSink {
+    pub(crate) fn into_recorder(mut self) -> NavRecorder {
         self.ensure_open();
-        match self.sink {
+        match self.recorder {
             Some(s) => s,
             None => NavFileBuilder::new().open(),
         }
@@ -205,7 +205,7 @@ pub unsafe extern "C" fn gtd_builder_add_nav_fix(
 ) -> GtdStatus {
     run_catching_panics(|| {
         let b = nonnull_mut!(b);
-        b.sink_mut().add_nav_fix(geotrace_sdk::NavFix {
+        b.recorder_mut().add_nav_fix(geotrace_sdk::NavFix {
             gps_time: ts_to_datetime(gps_time),
             sys_time: ts_to_datetime(sys_time),
             lat: Angle::degrees(lat_deg),
@@ -239,7 +239,7 @@ pub unsafe extern "C" fn gtd_builder_add_satellite_report(
             let slice = unsafe { std::slice::from_raw_parts(sats, n_sats) };
             slice.iter().map(|s| s.to_sdk_satellite()).collect()
         };
-        b.sink_mut().add_satellite_report(SatelliteReport {
+        b.recorder_mut().add_satellite_report(SatelliteReport {
             gps_time: ts_to_datetime(gps_time),
             sys_time: ts_to_datetime(sys_time),
             tracked,
@@ -262,7 +262,7 @@ pub unsafe extern "C" fn gtd_builder_add_annotation(
             return GtdStatus::ErrNullArgument;
         };
         let label_str = cstr_opt!(label).map(str::to_owned);
-        b.sink_mut().add_annotation(Annotation {
+        b.recorder_mut().add_annotation(Annotation {
             time: ann_time,
             label: label_str,
             icon: icon.to_marker_icon(),
@@ -298,7 +298,7 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker(
                 return GtdStatus::ErrInvalidPath;
             }
         };
-        b.sink_mut().add_event_marker(marker);
+        b.recorder_mut().add_event_marker(marker);
         GtdStatus::Ok
     })
 }
@@ -318,7 +318,7 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker_style(
             Some(hex) => EventMarkerColor::Hex(hex.to_owned()),
             None => EventMarkerColor::Auto,
         };
-        b.sink_mut().add_event_marker_style(EventMarkerStyle {
+        b.recorder_mut().add_event_marker_style(EventMarkerStyle {
             variant_path: path.to_owned(),
             icon: icon_choice,
             color,
@@ -349,9 +349,9 @@ pub unsafe extern "C" fn gtd_builder_finish(
         let out_ref = unsafe { &mut *out };
         *out_ref = std::ptr::null_mut();
 
-        let sink = b_box.into_sink();
+        let recorder = b_box.into_recorder();
 
-        match sink.finish() {
+        match recorder.finish() {
             Ok(nav_file) => {
                 let handle = Box::new(GtdNavFile::from_nav_file(nav_file));
                 *out_ref = Box::into_raw(handle);

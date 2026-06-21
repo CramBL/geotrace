@@ -5,11 +5,33 @@ description.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-exclude = [".github", "scripts"]
+# The GUI app ships as prebuilt binaries via dist, never to crates.io (it also
+# has path dependencies, which can't be published). publish = false makes that
+# explicit; exclude keeps dev/release-only files out of any `cargo package`.
+publish = false
+exclude = [
+    ".github",
+    "RELEASES.md",
+    "dist-workspace.toml",
+    "scripts",
+    "tests",
+    "wix",
+]
 homepage.workspace = true
 authors.workspace = true
 repository.workspace = true
 readme.workspace = true
+
+# publish = false (above) hides this package from dist by default; opt the binary
+# back in so dist still builds and releases the GUI app.
+[package.metadata.dist]
+dist = true
+
+[package.metadata.wix]
+upgrade-guid = "C0EAD23B-6B78-4C08-A4C4-2AF5EF829B92"
+path-guid = "746A35A9-07E9-463D-9C4C-6A2A5E7A24F0"
+license = false
+eula = false
 
 [workspace]
 members = [
@@ -203,7 +225,21 @@ ref_option = "warn"
 needless_raw_string_hashes = "warn"
 ignored_unit_patterns = "warn"
 
+[features]
+default = []
+# Enabled by dist for the distributed prebuilt binaries (see dist-workspace.toml).
+# Umbrella for everything that should only ship in those builds.
+dist = ["self-update"]
+# In-app update check and self-update via axoupdater. Off by default so builds
+# from source or via package managers (e.g. `cargo install`) carry no updater
+# code; dist turns it on for the release binaries.
+self-update = ["dep:axoupdater"]
+
 [dependencies]
+# Used as a library (not a standalone updater binary) for the startup update
+# check, behind the `self-update` feature. Driven via its async API on a small
+# tokio runtime (see src/app/update.rs).
+axoupdater = { version = "0.10", optional = true }
 chrono.workspace = true
 dirs.workspace = true
 eframe.workspace = true
@@ -227,10 +263,19 @@ gt-ui-theme = { path = "crates/gt-ui-theme" }
 gt-ui-types = { path = "crates/gt-ui-types" }
 log.workspace = true
 mimalloc = { version = "0.1.48", features = ["v3"] }
+parking_lot.workspace = true
 rfd = "0.17.2"
+semver = "1"
 serde.workspace = true
+# Current-thread runtime for driving axoupdater's async API off the UI thread.
+tokio = { version = "1", features = ["rt", "net", "time"] }
 toml = "1"
 uom.workspace = true
+
+# Embeds the app icon into the Windows executable (see build.rs). Windows-only;
+# a no-op on every other host.
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1.12"
 
 [dev-dependencies]
 egui_kittest.workspace = true
@@ -270,6 +315,11 @@ opt-level = 3
 
 [profile.dev.package.egui_plot]
 opt-level = 3
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 
 [lints]
 workspace = true

@@ -101,13 +101,11 @@ template <> struct geotrace::EventEnum<Gps> {
 };
 
 int main() {
-    using namespace geotrace;
-
     // A lambda over the file-scope kBase keeps the event timeline readable.
-    auto at = [](std::uint64_t secs) { return Timestamp::from_seconds(kBase + secs); };
+    auto at = [](std::uint64_t secs) { return geotrace::Timestamp::from_seconds(kBase + secs); };
 
     try {
-        FileBuilder builder;
+        geotrace::FileBuilder builder{};
         builder.title("Typed event tour").device("Example GPS v1.0");
 
         struct TrackPoint {
@@ -120,38 +118,39 @@ int main() {
         };
         std::size_t idx = 0;
         for (const auto &point : track) {
-            NavFix fix;
+            geotrace::NavFix fix{};
             fix.gps_time = at(idx * 30);
-            fix.lat = Angle::degrees(point.lat);
-            fix.lon = Angle::degrees(point.lon);
-            fix.heading = Angle::degrees(90.0);
-            builder.add_nav_fix(fix);
+            fix.lat = geotrace::Angle::degrees(point.lat);
+            fix.lon = geotrace::Angle::degrees(point.lon);
+            fix.heading = geotrace::Angle::degrees(90.0);
+            builder.add(fix);
             ++idx;
         }
 
         // Single-level events take the enum value directly.
         builder.add_event(Power::Boot, at(2), "cold start");
         // Nested events compose with event_path(); the compiler checks every level.
-        builder.add_event(event_path(Connectivity::Agps, Agps::Request), at(5),
+        builder.add_event(geotrace::event_path(Connectivity::Agps, Agps::Request), at(5),
                           "EPO fetch started");
-        builder.add_event(event_path(Connectivity::Agps, Agps::Success), at(18), "EPO applied");
-        builder.add_event(event_path(Sensor::Gps, Gps::LockAcquired), at(20));
+        builder.add_event(geotrace::event_path(Connectivity::Agps, Agps::Success), at(18),
+                          "EPO applied");
+        builder.add_event(geotrace::event_path(Sensor::Gps, Gps::LockAcquired), at(20));
         builder.add_event(Power::BatteryLow, at(130), "14%");
         builder.add_event(Power::Sleep, at(145));
 
         // Styles are per-variant; event_path() feeds them the same typed path.
-        builder.add_event_marker_style(
-            EventMarkerStyle{event_path(Power::Boot).str(), MarkerIcon::Lightning, "#44BB44"});
-        builder.add_event_marker_style(
-            EventMarkerStyle{event_path(Power::Sleep).str(), MarkerIcon::Pin, "#4488FF"});
+        builder.add_event_marker_style(geotrace::EventMarkerStyle{
+            geotrace::event_path(Power::Boot).str(), geotrace::MarkerIcon::Lightning, "#44BB44"});
+        builder.add_event_marker_style(geotrace::EventMarkerStyle{
+            geotrace::event_path(Power::Sleep).str(), geotrace::MarkerIcon::Pin, "#4488FF"});
 
-        const NavFile file = builder.finish();
+        const geotrace::NavFile file = builder.finish();
 
         const std::filesystem::path out =
             std::filesystem::temp_directory_path() / "geotrace_typed_events.gtd";
         file.write_to_file(out);
 
-        const NavFile loaded = NavFile::open(out);
+        const geotrace::NavFile loaded = geotrace::NavFile::open(out);
         std::cout << loaded.nav_point_count() << " fixes, " << loaded.event_marker_count()
                   << " event markers\n";
         for (std::size_t i = 0; i < loaded.event_marker_count(); ++i) {
@@ -163,7 +162,7 @@ int main() {
         }
 
         std::filesystem::remove(out);
-    } catch (const Error &e) {
+    } catch (const geotrace::Error &e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }

@@ -40,7 +40,7 @@ fn round_trip_from_gt_types_test_data() {
     let nav_data = nav_test_data();
     let marker_data = marker_test_data();
 
-    let mut sink = NavFileBuilder::new().open();
+    let mut recorder = NavFileBuilder::new().open();
 
     for np in &nav_data {
         let tpv = np.tpv;
@@ -54,7 +54,7 @@ fn round_trip_from_gt_types_test_data() {
         } else {
             fix_b.build()
         };
-        sink.add_nav_fix(nav_fix);
+        recorder.add_nav_fix(nav_fix);
 
         if let Some(sats) = &np.satellites {
             let tracked: Vec<SdkSat> = sats
@@ -71,7 +71,7 @@ fn round_trip_from_gt_types_test_data() {
                 })
                 .collect();
 
-            sink.add_satellite_report(
+            recorder.add_satellite_report(
                 SatelliteReport::builder()
                     .maybe_gps_time(sats.gps_time().map(|t| t.utc()))
                     .tracked(tracked)
@@ -91,10 +91,10 @@ fn round_trip_from_gt_types_test_data() {
             .icon(sdk_icon(marker.icon))
             .maybe_label(label_opt)
             .build();
-        sink.add_annotation(ann);
+        recorder.add_annotation(ann);
     }
 
-    let nav_file = sink.finish().unwrap();
+    let nav_file = recorder.finish().unwrap();
 
     let mut bytes = Vec::new();
     nav_file.write(&mut bytes).unwrap();

@@ -4,10 +4,17 @@ authors.workspace = true
 description.workspace = true
 homepage.workspace = true
 repository.workspace = true
-version.workspace = true
+# SDK version line, independent of the GUI app. Keep in lockstep with
+# geotrace-sdk / geotrace-sdk-macros / geotrace-py (see geotrace-sdk/Cargo.toml).
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license = "MIT"
+
+[package.metadata.dist]
+# Excluded from dist: SDKs release on their own track (geotrace-sdk-v* tags).
+# This also keeps the `gen_fixture` bin below out of the GUI release.
+dist = false
 
 [lib]
 crate-type = ["cdylib", "staticlib"]

@@ -1,0 +1,114 @@
+name: Release smoke test
+
+# Orchestration only: parse the tag, then hand off to one reusable workflow per
+# artifact. Each reusable workflow is a self-contained, readable example of how
+# to install and use that piece of the release on each platform, so a developer
+# can open e.g. smoke-sdk-c.yml and replicate it.
+#
+# Runs when a GitHub Release is published (by dist for the GUI, by
+# release-sdk.yml for the SDK) and can be re-run manually for any tag.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to smoke-test (e.g. app/v0.1.0 or geotrace-sdk-v0.1.0)"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      kind: ${{ steps.meta.outputs.kind }}
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - id: meta
+        env:
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          case "$TAG" in
+            app/v*) echo "kind=gui" >> "$GITHUB_OUTPUT"; version="${TAG#app/v}" ;;
+            geotrace-sdk-v*) echo "kind=sdk" >> "$GITHUB_OUTPUT"; version="${TAG#geotrace-sdk-v}" ;;
+            *) echo "kind=unknown" >> "$GITHUB_OUTPUT"; version="" ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  gui:
+    needs: meta
+    if: needs.meta.outputs.kind == 'gui'
+    uses: ./.github/workflows/smoke-gui.yml
+    with:
+      tag: ${{ needs.meta.outputs.tag }}
+      version: ${{ needs.meta.outputs.version }}
+      prerelease: ${{ needs.meta.outputs.prerelease }}
+
+  # Stable releases install from crates.io / PyPI; prereleases (which skip those
+  # registries) install the same artifact straight from the tag / release, so
+  # both run on every SDK release. The reusable workflow picks the source.
+  rust:
+    needs: meta
+    if: needs.meta.outputs.kind == 'sdk'
+    uses: ./.github/workflows/smoke-sdk-rust.yml
+    with:
+      version: ${{ needs.meta.outputs.version }}
+      prerelease: ${{ needs.meta.outputs.prerelease }}
+      tag: ${{ needs.meta.outputs.tag }}
+
+  python:
+    needs: meta
+    if: needs.meta.outputs.kind == 'sdk'
+    uses: ./.github/workflows/smoke-sdk-python.yml
+    with:
+      version: ${{ needs.meta.outputs.version }}
+      prerelease: ${{ needs.meta.outputs.prerelease }}
+      tag: ${{ needs.meta.outputs.tag }}
+
+  # The C/C++ archives ship on every release, so these run for prereleases too
+  # (the Homebrew path inside is gated to stable).
+  c:
+    needs: meta
+    if: needs.meta.outputs.kind == 'sdk'
+    uses: ./.github/workflows/smoke-sdk-c.yml
+    with:
+      tag: ${{ needs.meta.outputs.tag }}
+      version: ${{ needs.meta.outputs.version }}
+      prerelease: ${{ needs.meta.outputs.prerelease }}
+
+  cpp:
+    needs: meta
+    if: needs.meta.outputs.kind == 'sdk'
+    uses: ./.github/workflows/smoke-sdk-cpp.yml
+    with:
+      tag: ${{ needs.meta.outputs.tag }}
+      version: ${{ needs.meta.outputs.version }}
+      prerelease: ${{ needs.meta.outputs.prerelease }}
+
+  smoke:
+    needs:
+      - gui
+      - rust
+      - python
+      - c
+      - cpp
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any smoke test failed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

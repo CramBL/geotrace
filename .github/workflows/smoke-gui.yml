@@ -1,0 +1,161 @@
+name: Smoke / GUI
+
+# Install the published GUI app the way a user would and run `geotrace --version`,
+# which exits before any window or GPU work. Asserts the version on Unix; on
+# Windows the release build has no console, so a clean exit code is the signal.
+# Each step is one phase (install, then run) so the workflow reads as a guide.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      prerelease:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  REPO: CramBL/geotrace
+  TAP: CramBL/homebrew-tap
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  shell-installer:
+    name: shell / ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-24.04-arm, macos-15-intel, macos-14]
+    steps:
+      # The Linux runtime libraries the binary's loader resolves at launch. macOS
+      # ships the equivalents in its system frameworks.
+      - name: Install Linux runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libxkbcommon0 libwayland-client0 libx11-6 libxcursor1 libxi6 libxrandr2 libxcb1
+
+      - name: Install GeoTrace via the shell installer
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf \
+            "https://github.com/${REPO}/releases/download/${TAG}/geotrace-installer.sh" | sh
+          # Put the install dir on PATH for the next step.
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Run it and check the version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          geotrace --version | tee output.txt
+          grep -qw "$VERSION" output.txt
+
+  powershell-installer:
+    name: powershell / ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-latest]
+    steps:
+      - name: Install GeoTrace via the PowerShell installer
+        shell: pwsh
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://github.com/$env:REPO/releases/download/$env:TAG/geotrace-installer.ps1"
+          irm $url | iex
+          # Refresh PATH from the registry and expose the install dir to the next step.
+          $env:Path = [Environment]::GetEnvironmentVariable("Path","User") + ";" + `
+                      [Environment]::GetEnvironmentVariable("Path","Machine")
+          Add-Content -Path $env:GITHUB_PATH -Value (Split-Path (Get-Command geotrace).Source)
+
+      - name: Run it
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = (Get-Command geotrace).Source
+          $p = Start-Process -FilePath $exe -ArgumentList "--version" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "geotrace --version exited $($p.ExitCode)" }
+
+  msi:
+    name: msi / windows
+    runs-on: windows-latest
+    env:
+      MSI: geotrace-x86_64-pc-windows-msvc.msi
+    steps:
+      - name: Download the MSI
+        shell: pwsh
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://github.com/$env:REPO/releases/download/$env:TAG/$env:MSI"
+          Invoke-WebRequest -Uri $url -OutFile $env:MSI
+
+      - name: Install it
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$env:MSI`" /quiet /norestart" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec exited $($p.ExitCode)" }
+          # Refresh PATH from the registry and expose the install dir to the next step.
+          $env:Path = [Environment]::GetEnvironmentVariable("Path","User") + ";" + `
+                      [Environment]::GetEnvironmentVariable("Path","Machine")
+          Add-Content -Path $env:GITHUB_PATH -Value (Split-Path (Get-Command geotrace).Source)
+
+      - name: Run it
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = (Get-Command geotrace).Source
+          $p = Start-Process -FilePath $exe -ArgumentList "--version" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "geotrace --version exited $($p.ExitCode)" }
+
+  homebrew:
+    name: brew / ${{ matrix.runner }}
+    # The Homebrew formula is only published for stable releases.
+    if: inputs.prerelease == 'false'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, macos-15-intel, macos-14]
+    steps:
+      - name: Install Linux runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 \
+            libxkbcommon0 \
+            libwayland-client0 \
+            libx11-6 \
+            libxcursor1 \
+            libxi6 \
+            libxrandr2 \
+            libxcb1
+
+      - name: Install GeoTrace with Homebrew
+        run: brew install "${TAP}/geotrace"
+
+      - name: Run it and check the version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          "$(brew --prefix)/bin/geotrace" --version | tee output.txt
+          grep -qw "$VERSION" output.txt

@@ -7,7 +7,7 @@
 ///
 /// [`variant_path`](EventKind::variant_path) returns `None` for variants
 /// marked `#[event_kind(skip)]`; callers such as
-/// [`NavFileSink::add_event`](crate::NavFileSink::add_event) treat `None` as a
+/// [`NavRecorder::add_event`](crate::NavRecorder::add_event) treat `None` as a
 /// silent no-op.
 ///
 /// # Derive attributes
@@ -102,7 +102,7 @@ pub trait EventKind: __private::Sealed {
     /// | `#[event_kind(note = none)]` | Always `None`; no note is stored. |
     ///
     /// For a one-off custom note on a specific event instance use
-    /// [`NavFileSink::add_event_with_note`](crate::NavFileSink::add_event_with_note)
+    /// [`NavRecorder::add_event_with_note`](crate::NavRecorder::add_event_with_note)
     /// directly - it overrides `event_note` entirely.
     fn event_note(&self) -> Option<String> {
         None

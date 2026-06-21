@@ -4,15 +4,13 @@
 #include <iostream>
 
 int main(int argc, char **argv) {
-    using namespace geotrace;
-
     if (argc < 2) {
         std::cerr << "usage: " << argv[0] << " <file.gtd>\n";
         return 1;
     }
 
     try {
-        auto file = NavFile::open(argv[1]);
+        auto file = geotrace::NavFile::open(argv[1]);
 
         if (!file.device().empty())
             std::cout << "Device: " << file.device() << "\n";
@@ -48,7 +46,7 @@ int main(int argc, char **argv) {
                 std::cout << "\n";
             }
         }
-    } catch (const Error &e) {
+    } catch (const geotrace::Error &e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }

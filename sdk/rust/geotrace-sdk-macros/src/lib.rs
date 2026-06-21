@@ -34,7 +34,7 @@ use syn::{Attribute, Data, DeriveInput, Fields, parse_macro_input};
 ///   `EventKind` implementation, appending its path after this variant's
 ///   segment.  In `lax` enum mode this opts a single variant into delegation.
 /// - **`#[event_kind(skip)]`** - `variant_path()` returns `None` for this
-///   variant; [`NavFileSink::add_event`](geotrace_sdk::NavFileSink::add_event)
+///   variant; [`NavRecorder::add_event`](geotrace_sdk::NavRecorder::add_event)
 ///   silently ignores it.
 /// - **`#[event_kind(icon = <Name>)]`** - sets the
 ///   [`MarkerIcon`](geotrace_sdk::MarkerIcon) for this variant (e.g.

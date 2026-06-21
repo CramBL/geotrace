@@ -41,10 +41,12 @@ clippy:
     cargo clippy --workspace --no-deps -- -D warnings
     cargo clippy --workspace --no-deps --tests -- -D warnings
     cargo clippy --workspace --no-deps --examples -- -D warnings
+    # The dist-only self-update code is feature-gated, so lint it explicitly too.
+    cargo clippy --workspace --no-deps --features geotrace/self-update --tests -- -D warnings
 
 [group("native")]
 test *ARGS:
-    GEOTRACE_OFFLINE=1 cargo nextest run --workspace {{ ARGS }}
+    GEOTRACE_OFFLINE=1 cargo nextest run --workspace --features geotrace/self-update {{ ARGS }}
 
 [group("native")]
 test-all-backends:
@@ -55,7 +57,7 @@ test-all-backends:
 
 [group("native")]
 test-snapshots *ARGS:
-    GEOTRACE_OFFLINE=1 cargo nextest run --workspace -E "test(snapshot) or test(snap)" {{ ARGS }}
+    GEOTRACE_OFFLINE=1 cargo nextest run --workspace --features geotrace/self-update -E "test(snapshot) or test(snap)" {{ ARGS }}
 
 [group("native")]
 examples:
@@ -79,7 +81,7 @@ setup-pup:
 ci: build-images ci-essentials ci-extras ci-sdks
 
 [group("ci")]
-ci-essentials: fmt-check clippy check test examples qa::qa-lint qa::check-all sdk-doc
+ci-essentials: fmt-check clippy check test examples qa::qa-lint qa::check-all qa::check-versions sdk-doc
 
 [group("ci")]
 ci-extras: osv-scanner sort-check shear typos pup msrv sdk-msrv sdk-doc

@@ -9,6 +9,8 @@ from typing import Any, final
 
 StrPath = str | bytes | PathLike[str]
 
+__version__: str
+
 @final
 class Constellation(Enum):
     """GNSS constellation identifier."""
