@@ -141,6 +141,16 @@ jobs:
           printf '%s' "$CONSUMER_CMAKE" > consumer/CMakeLists.txt
           printf '%s' "$CONSUMER_SRC" > consumer/smoke_cpp.cpp
 
+      # GitHub's macOS runners ship Homebrew, but the Linux runners do not, so
+      # install Linuxbrew the way the Homebrew docs prescribe and put it on PATH
+      # for the remaining steps.
+      - name: Install Homebrew
+        if: runner.os == 'Linux'
+        run: |
+          NONINTERACTIVE=1 /bin/bash -c \
+            "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
+
       - name: Install the C/C++ SDK with Homebrew
         run: brew install "${TAP}/geotrace-c"
 
