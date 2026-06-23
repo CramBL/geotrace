@@ -8,7 +8,9 @@ in different places:
   ``geotrace-sdk-macros``, ``geotrace-c``) and the macro dependency pin, the
   Python package (``Cargo.toml`` + ``pyproject.toml``), the C and C++ headers
   (``GEOTRACE_C_VERSION`` / ``GEOTRACE_CPP_VERSION`` and their numeric parts),
-  and the C and C++ CMake ``project(... VERSION)`` declarations.
+  the C and C++ CMake ``project(... VERSION)`` declarations, and the SDK-crate
+  pins in both committed ``Cargo.lock`` files (the root workspace and the
+  isolated Python workspace).
 
 Most spots carry the full version (``0.2.0`` or ``0.2.0-rc.1``); CMake project
 versions and the numeric ``*_MAJOR/MINOR/PATCH`` macros only hold the numeric
@@ -47,6 +49,14 @@ def _cmake_project(name: str) -> re.Pattern[str]:
     return re.compile(rf"(project\({name} VERSION )(\d+\.\d+\.\d+)")
 
 
+def _lock_version(crate: str) -> re.Pattern[str]:
+    # Cargo writes each [[package]] block with `name` immediately followed by
+    # `version`, so anchoring on the exact (quote-terminated) crate name reads
+    # that block's pin. The trailing quote in the name disambiguates
+    # `geotrace-sdk` from `geotrace-sdk-macros`.
+    return re.compile(rf'(name = "{re.escape(crate)}"\nversion = ")([^"]*)')
+
+
 @dataclass(frozen=True)
 class Spot:
     """One place a version is recorded (a single capture in one file)."""
@@ -63,6 +73,13 @@ class Spot:
 _C_HEADER = "sdk/c/geotrace.h"
 _CPP_HEADER = "sdk/cpp/include/geotrace/geotrace.hpp"
 
+# The two committed Cargo.lock files that pin the SDK crates. The root lock is
+# the main workspace (geotrace-c and its deps); the Python lock is an isolated
+# workspace whose pins only refresh when cargo runs in its own directory, so it
+# is the one that silently drifts after a bump.
+_ROOT_LOCK = "Cargo.lock"
+_PY_LOCK = "sdk/python/geotrace-py/Cargo.lock"
+
 _SDK_SPOTS: list[Spot] = [
     Spot("sdk/rust/geotrace-sdk/Cargo.toml", _TOML_VERSION),
     Spot("sdk/rust/geotrace-sdk/Cargo.toml", _MACRO_PIN, note="macro pin"),
@@ -74,6 +91,17 @@ _SDK_SPOTS: list[Spot] = [
     Spot(_CPP_HEADER, _define_str("GEOTRACE_CPP_VERSION"), note="GEOTRACE_CPP_VERSION"),
     Spot("sdk/c/CMakeLists.txt", _cmake_project("GeoTraceC"), core=True),
     Spot("sdk/cpp/CMakeLists.txt", _cmake_project("GeoTraceCpp"), core=True),
+    # Cargo.lock pins (full version). Bumping them here keeps the locks in
+    # lockstep with the manifests; checking them makes a drifted lock fail
+    # loudly instead of being silently re-resolved at build time. The SDK
+    # packages are path crates with no checksum and are referenced by name only,
+    # so rewriting the block's `version` line leaves each lock valid.
+    Spot(_ROOT_LOCK, _lock_version("geotrace-sdk"), note="geotrace-sdk lock"),
+    Spot(_ROOT_LOCK, _lock_version("geotrace-sdk-macros"), note="geotrace-sdk-macros lock"),
+    Spot(_ROOT_LOCK, _lock_version("geotrace-c"), note="geotrace-c lock"),
+    Spot(_PY_LOCK, _lock_version("geotrace-py"), note="geotrace-py lock"),
+    Spot(_PY_LOCK, _lock_version("geotrace-sdk"), note="geotrace-sdk lock"),
+    Spot(_PY_LOCK, _lock_version("geotrace-sdk-macros"), note="geotrace-sdk-macros lock"),
 ]
 
 _APP_SPOTS: list[Spot] = [Spot("Cargo.toml", _TOML_VERSION)]

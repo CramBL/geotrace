@@ -155,8 +155,6 @@ jobs:
       - name: Install C SDK to local prefix (Windows)
         if: runner.os == 'Windows'
         run: |
-          # No explicit -G: CMake's default Visual Studio generator tracks the
-          # runner image's installed VS version, so this survives VS bumps.
           cmake -S sdk/c -B build/c \
             -A x64 \
             -DGEOTRACE_C_LIB_DIR="${{ github.workspace }}/target/release" \
@@ -182,8 +180,6 @@ jobs:
         include:
           - os: ubuntu-latest
           - os: macos-latest
-          # An empty generator selects CMake's default VS generator, which
-          # tracks the runner image's VS version (avoids pinning "Visual Studio NN").
           - { os: windows-latest, generator: "", gen_label: MSBuild, cmake_extra_args: "-A x64" }
           - { os: windows-latest, generator: Ninja, gen_label: Ninja, cmake_extra_args: "-DCMAKE_BUILD_TYPE=Release" }
 
@@ -193,11 +189,10 @@ jobs:
         with:
           persist-credentials: false
 
-      # Intentionally no Rust toolchain — this job proves that downstream
-      # users can build against a prebuilt library without rustup.
-      # On Windows, cmake comes from the runner (which tracks the installed VS
-      # version): setup-cpp's cmake is older and, with ninja, makes
-      # CMAKE_GENERATOR default to Ninja, breaking the MSBuild "-A x64" path.
+      # Intentionally no Rust toolchain — this job proves downstream users can
+      # build against a prebuilt library without rustup. Keep the runner's cmake
+      # on Windows (cmake: false): setup-cpp's older cmake defaults the generator
+      # to Ninja and breaks the MSBuild "-A x64" path.
       - name: Set up SDK toolchain
         uses: ./.github/actions/setup-sdk-toolchain
         with:
@@ -221,9 +216,6 @@ jobs:
       - name: Configure prebuilt smoke consumer (Windows)
         if: runner.os == 'Windows'
         run: |
-          # An empty matrix.generator selects CMake's default VS generator.
-          # GEN/cmake_extra_args are unquoted on purpose so they word-split into
-          # separate cmake arguments (e.g. "-A x64" -> two args).
           GEN=""
           [ -n "${{ matrix.generator }}" ] && GEN="-G ${{ matrix.generator }}"
           cmake -S sdk/integration-tests/prebuilt -B build/smoke \

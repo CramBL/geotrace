@@ -1,19 +1,15 @@
 name: Release SDK
 
-# The SDK releases on its own cadence, independent of the GUI app. Pushing a
-# `geotrace-sdk-vX.Y.Z` tag builds the C/C++ archives, creates a GitHub release,
-# and publishes to crates.io, PyPI, and the Homebrew tap. The GUI app uses bare
-# `vX.Y.Z` tags and the separate dist-generated release.yml.
-#
-# A manual run (workflow_dispatch) only builds + uploads the archives as CI
-# artifacts (a dry run); it never publishes.
+# Independent of the GUI app: pushing a `geotrace-sdk-vX.Y.Z` tag builds the
+# C/C++ archives and Python wheels, creates a GitHub release, and publishes to
+# crates.io, PyPI, and the Homebrew tap. A workflow_dispatch run is a no-publish
+# dry run.
 on:
   push:
     tags:
       - "geotrace-sdk-v[0-9]+.[0-9]+.[0-9]+*"
   workflow_dispatch: {}
 
-# Read-only by default; publish jobs elevate their own permissions.
 permissions:
   contents: read
 
@@ -25,8 +21,6 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
-# One shell on every runner (Git Bash on Windows) so there is a single dialect
-# to maintain, matching the rest of CI.
 defaults:
   run:
     shell: bash
@@ -46,8 +40,7 @@ jobs:
             version="${GITHUB_REF_NAME#geotrace-sdk-v}"
             echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "publish=true" >> "$GITHUB_OUTPUT"
-            # A hyphen in the version (e.g. 0.1.0-rc.1) marks a prerelease: the
-            # GitHub release is flagged, and crates.io/PyPI publishing is skipped.
+            # A hyphen (e.g. 0.1.0-rc.1) marks a prerelease.
             case "$version" in
               *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
               *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
@@ -58,9 +51,8 @@ jobs:
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           fi
 
-  # Guard: the SDK version must be consistent across every manifest, and on a
-  # real release it must equal the tag. Gates the release and all publishing,
-  # so a forgotten version bump fails before anything is pushed to a registry.
+  # Fail the release if the SDK version is inconsistent across manifests, or (on
+  # a real release) not equal to the tag.
   verify-versions:
     needs: meta
     runs-on: ubuntu-latest
@@ -70,9 +62,6 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          # This job only runs a version-consistency check (no Python build), so
-          # the dependency cache buys nothing; disabling it also clears zizmor's
-          # cache-poisoning finding for this release-triggered workflow.
           enable-cache: false
       - uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
         with:
@@ -89,9 +78,7 @@ jobs:
             just qa::check-versions
           fi
 
-  # Build the relocatable C + C++ CMake install tree for each platform and
-  # package it. Windows uses the native MSVC target (no mingw), mirroring the
-  # static-build path proven in ci_sdk_prebuilt.yml.
+  # Build and package the relocatable C & C++ CMake install tree per platform.
   build-archives:
     name: archive / ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
@@ -124,17 +111,10 @@ jobs:
           toolchain: stable
 
       - name: Cache Cargo
-        # This workflow runs only on `geotrace-sdk-v*` tag pushes and manual
-        # dispatch, both of which require repository write access; no pull-request
-        # or fork event can populate this cache, so an untrusted actor cannot
-        # poison it. zizmor flags caching in any artifact-publishing workflow
-        # regardless, so the (unreachable) finding is suppressed.
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1 # zizmor: ignore[cache-poisoning]
         with:
           key: ${{ matrix.target }}
 
-      # The Git Bash coreutils link.exe shadows the MSVC linker on PATH; remove
-      # it so cargo/cmake find the real one. No-op off Windows.
       - name: Remove Git Bash link.exe shim (Windows)
         if: runner.os == 'Windows'
         run: rm -f /usr/bin/link.exe
@@ -142,31 +122,27 @@ jobs:
       - name: Build geotrace-c (release, static)
         run: cargo build -p geotrace-c --release
 
-      - name: Install C + C++ SDK to a prefix
+      - name: Install C & C++ SDK to a prefix
         env:
           PREFIX: ${{ github.workspace }}/sdk-install
           LIB_DIR: ${{ github.workspace }}/target/release
         run: |
           set -euo pipefail
+          GEN_ARGS=""
           if [ "${{ runner.os }}" = "Windows" ]; then
-            # No explicit -G: CMake's default Visual Studio generator tracks the
-            # runner image's VS version. -A selects the architecture.
-            GEN_ARGS=(-A "${{ matrix.win_arch }}")
-          else
-            GEN_ARGS=()
+            GEN_ARGS="-A ${{ matrix.win_arch }}"
           fi
-          # C SDK (static; WIN32 forces static anyway). BUILD_TESTING=OFF keeps
-          # configure from pulling test-only dependencies (e.g. Criterion).
+          # C SDK (static)
           cmake -S sdk/c -B build/c \
-            "${GEN_ARGS[@]}" \
+            $GEN_ARGS \
             -DBUILD_TESTING=OFF \
             -DGEOTRACE_C_STATIC=ON \
             -DGEOTRACE_C_LIB_DIR="$LIB_DIR" \
             -DCMAKE_INSTALL_PREFIX="$PREFIX"
           cmake --install build/c --config Release
-          # C++ SDK (header-only) into the same prefix; finds the C package there.
+          # C++ SDK (header-only)
           cmake -S sdk/cpp -B build/cpp \
-            "${GEN_ARGS[@]}" \
+            $GEN_ARGS \
             -DBUILD_TESTING=OFF \
             -DCMAKE_PREFIX_PATH="$PREFIX" \
             -DCMAKE_INSTALL_PREFIX="$PREFIX"
@@ -201,11 +177,14 @@ jobs:
 
   # Create the GitHub release for the tag and attach every archive + checksum.
   github-release:
-    needs: 
+    needs:
       - meta
       - verify-versions
       - build-archives
-      - build-wheels
+      - wheels-linux
+      - wheels-musllinux
+      - wheels-windows
+      - wheels-macos
       - build-sdist
     if: needs.meta.outputs.publish == 'true'
     runs-on: ubuntu-latest
@@ -223,8 +202,7 @@ jobs:
           path: archives
           merge-multiple: true
 
-      # A prerelease skips PyPI, so the built wheels are attached to the release
-      # instead; the Python smoke test installs them with `pip --find-links`.
+      # On a prerelease the wheels are attached to the release (PyPI is skipped).
       - name: Download Python wheels
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -234,9 +212,8 @@ jobs:
 
       - name: Create release and upload artifacts
         env:
-          # A repo-scoped PAT, not the built-in GITHUB_TOKEN: releases created
-          # with GITHUB_TOKEN do not emit a `release: published` event, so this
-          # is what lets release-smoke.yml run automatically on the new release.
+          # Repo-scoped PAT, not GITHUB_TOKEN: only a PAT-created release emits the
+          # `release: published` event that triggers release-smoke.yml.
           GH_TOKEN: ${{ secrets.GEOTRACE_WITH_REPO_SCOPE }}
           IS_PRERELEASE: ${{ needs.meta.outputs.prerelease }}
           PRERELEASE: ${{ needs.meta.outputs.prerelease == 'true' && '--prerelease' || '' }}
@@ -244,7 +221,6 @@ jobs:
         run: |
           set -euo pipefail
           assets=(archives/*)
-          # Attach wheels only on a prerelease; on a stable release they go to PyPI.
           if [ "$IS_PRERELEASE" = "true" ]; then
             assets+=(python-dist/*.whl)
           fi
@@ -257,7 +233,7 @@ jobs:
 
   # Publish the Rust SDK crates to crates.io, in dependency order.
   publish-crates:
-    needs: 
+    needs:
       - meta
       - verify-versions
     if: needs.meta.outputs.publish == 'true' && needs.meta.outputs.prerelease == 'false'
@@ -272,19 +248,14 @@ jobs:
         with:
           toolchain: stable
 
-      # Token-based publish. crates.io Trusted Publishing (OIDC, like the PyPI
-      # job below) would be the token-free alternative, but it must first be
-      # configured for this repo on crates.io; until then the registry token is
-      # intentional, so zizmor's trusted-publishing suggestion is suppressed.
       - name: Publish crates # zizmor: ignore[use-trusted-publishing]
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_GEOTRACE_PUBLISH }}
           VERSION: ${{ needs.meta.outputs.version }}
         run: |
           set -euo pipefail
-          # crates.io publishes are irreversible, so make this re-runnable: skip
-          # any crate whose version is already on the index (a re-run after a
-          # later job failed must not error on "crate already exists").
+          # Skip crates already on the index so a re-run after a later failure
+          # doesn't error on "crate already exists".
           publish() {
             if curl -fsS "https://crates.io/api/v1/crates/$1/$VERSION" >/dev/null 2>&1; then
               echo "$1 $VERSION already on crates.io, skipping"
@@ -293,58 +264,128 @@ jobs:
             fi
           }
           publish geotrace-sdk-macros
-          # `cargo publish` waits for the new crate to appear in the index, so
-          # geotrace-sdk can resolve the macro crate published just above.
           publish geotrace-sdk
 
-  # Build wheels for the Python SDK across platforms and interpreters.
-  build-wheels:
-    name: wheels / ${{ matrix.target }}
-    runs-on: ${{ matrix.runner }}
+  # Build the Python wheels, one job per OS family.
+  wheels-linux:
+    name: wheels / linux / ${{ matrix.platform.target }}
+    runs-on: ${{ matrix.platform.runner }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - {
-              target: x86_64-unknown-linux-gnu,
-              runner: ubuntu-22.04,
-              manylinux: auto,
-            }
-          - {
-              target: aarch64-unknown-linux-gnu,
-              runner: ubuntu-24.04-arm,
-              manylinux: auto,
-            }
-          - { target: x86_64-apple-darwin, runner: macos-15-intel }
-          - { target: aarch64-apple-darwin, runner: macos-14 }
-          - { target: x86_64-pc-windows-msvc, runner: windows-latest }
+        platform:
+          - { runner: ubuntu-22.04, target: x86_64 }
+          - { runner: ubuntu-22.04, target: x86 }
+          - { runner: ubuntu-22.04, target: aarch64 }
+          - { runner: ubuntu-22.04, target: armv7 }
+          - { runner: ubuntu-22.04, target: s390x }
+          - { runner: ubuntu-22.04, target: ppc64le }
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-
-      # On macOS/Windows --find-interpreter discovers these; inside the Linux
-      # manylinux container maturin uses the container's own CPythons instead.
-      - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: |
-            3.12
-            3.13
-            3.14
-
       - name: Build wheels
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           working-directory: sdk/python/geotrace-py
-          target: ${{ matrix.target }}
-          manylinux: ${{ matrix.manylinux || '' }}
-          args: --release --out dist --find-interpreter
-
+          target: ${{ matrix.platform.target }}
+          manylinux: auto
+          args: --release --out dist
       - name: Upload wheels
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: wheels-${{ matrix.target }}
+          name: wheels-linux-${{ matrix.platform.target }}
+          path: sdk/python/geotrace-py/dist/*
+          retention-days: 7
+
+  wheels-musllinux:
+    name: wheels / musllinux / ${{ matrix.platform.target }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { runner: ubuntu-22.04, target: x86_64 }
+          - { runner: ubuntu-22.04, target: x86 }
+          - { runner: ubuntu-22.04, target: aarch64 }
+          - { runner: ubuntu-22.04, target: armv7 }
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Build wheels
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          working-directory: sdk/python/geotrace-py
+          target: ${{ matrix.platform.target }}
+          manylinux: musllinux_1_2
+          args: --release --out dist
+      - name: Upload wheels
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wheels-musllinux-${{ matrix.platform.target }}
+          path: sdk/python/geotrace-py/dist/*
+          retention-days: 7
+
+  wheels-windows:
+    name: wheels / windows / ${{ matrix.platform.target }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { runner: windows-latest, target: x64, python_arch: x64 }
+          - { runner: windows-latest, target: x86, python_arch: x86 }
+          - { runner: windows-11-arm, target: aarch64, python_arch: arm64 }
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+          architecture: ${{ matrix.platform.python_arch }}
+      - name: Build wheels
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          working-directory: sdk/python/geotrace-py
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist
+      - name: Upload wheels
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wheels-windows-${{ matrix.platform.target }}
+          path: sdk/python/geotrace-py/dist/*
+          retention-days: 7
+
+  wheels-macos:
+    name: wheels / macos / ${{ matrix.platform.target }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { runner: macos-15-intel, target: x86_64 }
+          - { runner: macos-14, target: aarch64 }
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Build wheels
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          working-directory: sdk/python/geotrace-py
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist
+      - name: Upload wheels
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wheels-macos-${{ matrix.platform.target }}
           path: sdk/python/geotrace-py/dist/*
           retention-days: 7
 
@@ -368,14 +409,15 @@ jobs:
           path: sdk/python/geotrace-py/dist/*
           retention-days: 7
 
-  # Publish the Python SDK to PyPI using Trusted Publishing (OIDC, no token).
-  # Requires the PyPI project to be configured with this repo + workflow as a
-  # trusted publisher.
+  # Publish wheels + sdist to PyPI via Trusted Publishing (OIDC, no token).
   publish-pypi:
-    needs: 
+    needs:
       - meta
       - verify-versions
-      - build-wheels
+      - wheels-linux
+      - wheels-musllinux
+      - wheels-windows
+      - wheels-macos
       - build-sdist
     if: needs.meta.outputs.publish == 'true' && needs.meta.outputs.prerelease == 'false'
     runs-on: ubuntu-latest
@@ -393,14 +435,11 @@ jobs:
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
         with:
           packages-dir: dist
-          # Re-runnable: don't fail if some files are already on PyPI.
           skip-existing: true
 
-  # Refresh the C/C++ SDK library formula in the Homebrew tap from this release's
-  # archives. dist's built-in homebrew job only generates the GUI app formula, so
-  # this library formula is maintained here.
+  # Refresh the C/C++ SDK library formula in the Homebrew tap from this release.
   publish-homebrew:
-    needs: 
+    needs:
       - meta
       - github-release
     if: needs.meta.outputs.publish == 'true' && needs.meta.outputs.prerelease == 'false'
@@ -416,7 +455,6 @@ jobs:
           set -euo pipefail
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
           dl() {
-            # Read the published .sha256 sidecar for a target's archive.
             gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
               --pattern "geotrace-sdk-$1.tar.gz.sha256" --output - --clobber
           }
@@ -470,7 +508,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/geotrace-c.rb
-          # Re-runnable: only commit when the formula actually changed.
           if git diff --cached --quiet; then
             echo "Formula already up to date for ${VERSION}, nothing to push"
           else
