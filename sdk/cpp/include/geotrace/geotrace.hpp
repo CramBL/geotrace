@@ -37,9 +37,9 @@
 
 #include <geotrace.h> // C SDK (already has extern "C" guards)
 
-#define GEOTRACE_CPP_VERSION       "0.1.0"
+#define GEOTRACE_CPP_VERSION       "0.2.0-rc.1"
 #define GEOTRACE_CPP_VERSION_MAJOR 0
-#define GEOTRACE_CPP_VERSION_MINOR 1
+#define GEOTRACE_CPP_VERSION_MINOR 2
 #define GEOTRACE_CPP_VERSION_PATCH 0
 
 // Minimal std::span polyfill for C++17.  Replaced by std::span on C++20.
