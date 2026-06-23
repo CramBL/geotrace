@@ -1,0 +1,47 @@
+name: App release title
+
+# dist (app-release.yml) titles the GUI GitHub release after the raw tag
+# (e.g. "app/v0.1.0"), and that workflow is drift-checked so it cannot be
+# hand-edited. Once dist's "Release" workflow finishes for an `app/v*` tag,
+# rename the release to "GeoTrace X.Y.Z".
+#
+# zizmor flags workflow_run as a dangerous trigger; this use is safe — the
+# `branches: ['app/**']` filter only matches a maintainer-pushed release tag,
+# the job is gated to a successful run, and it only edits the release title.
+on: # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+    branches: ['app/**']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to retitle (e.g. app/v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.tag || github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  retitle:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Retitle the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          TAG="${DISPATCH_TAG:-}"
+          [ -n "$TAG" ] || TAG="${RUN_TAG:-}"
+          gh release edit "$TAG" --repo "$REPO" --title "GeoTrace ${TAG#app/v}"

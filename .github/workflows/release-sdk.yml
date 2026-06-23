@@ -224,10 +224,22 @@ jobs:
           if [ "$IS_PRERELEASE" = "true" ]; then
             assets+=(python-dist/*.whl)
           fi
+          # Release body: the CHANGELOG_SDK.md section for this version. A
+          # prerelease (0.2.0-rc.1) shares the base version's (0.2.0) notes.
+          core="${VERSION%%-*}"
+          notes="$RUNNER_TEMP/notes.md"
+          awk -v ver="$core" '
+            $0 ~ "^## \\[" ver "\\]" { grab = 1; next }
+            grab && /^## \[/ { exit }
+            grab { print }
+          ' CHANGELOG_SDK.md > "$notes"
+          if ! grep -q '[^[:space:]]' "$notes"; then
+            echo "C, C++, Rust, and Python SDK release $VERSION." > "$notes"
+          fi
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "GeoTrace SDK $VERSION" \
-            --notes "C, C++, Rust, and Python SDK release $VERSION." \
+            --notes-file "$notes" \
             $PRERELEASE \
             "${assets[@]}"
 
