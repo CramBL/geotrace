@@ -8,6 +8,8 @@ version = "0.2.0"
 edition = "2024"
 license = "MIT"
 description = "Python bindings for geotrace-sdk"
+homepage = "https://github.com/CramBL/geotrace"
+repository = "https://github.com/CramBL/geotrace"
 
 [lib]
 name = "_geotrace_sdk"

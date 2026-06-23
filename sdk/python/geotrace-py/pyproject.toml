@@ -7,7 +7,10 @@ name = "geotrace-sdk"
 version = "0.2.0"
 requires-python = ">=3.12"
 description = "Python bindings for geotrace-sdk - read and write .gtd navigation data files"
+readme = "README.md"
 license = { text = "MIT" }
+authors = [{ name = "Marc Beck König", email = "mgit@tuta.io" }]
+keywords = ["gnss", "gps", "navigation", "geospatial", "gtd", "telemetry"]
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -18,6 +21,13 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Typing :: Typed",
 ]
+
+[project.urls]
+Homepage = "https://github.com/CramBL/geotrace"
+Repository = "https://github.com/CramBL/geotrace"
+Documentation = "https://github.com/CramBL/geotrace/blob/trunk/docs/sdk/python.md"
+Changelog = "https://github.com/CramBL/geotrace/blob/trunk/CHANGELOG_SDK.md"
+Issues = "https://github.com/CramBL/geotrace/issues"
 
 [dependency-groups]
 dev = ["pytest>=8"]
