@@ -37,7 +37,7 @@
 
 #include <geotrace.h> // C SDK (already has extern "C" guards)
 
-#define GEOTRACE_CPP_VERSION       "0.2.0-rc.2"
+#define GEOTRACE_CPP_VERSION       "0.2.0"
 #define GEOTRACE_CPP_VERSION_MAJOR 0
 #define GEOTRACE_CPP_VERSION_MINOR 2
 #define GEOTRACE_CPP_VERSION_PATCH 0
