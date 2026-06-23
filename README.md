@@ -1,7 +1,7 @@
 # GeoTrace
 
-> [!WARNING]
-> **Pre-Alpha Status:** This project is in early development. It is highly experimental, prone to bugs or breaking changes, and **not yet ready for general usage**.
+> [!NOTE]
+> **Beta** - expect minor issues/quirks and frequent updates.
 
 GeoTrace is a desktop application for visualizing GPS/GNSS navigation data.
 It reads `.gtd` recording files and renders Time-Position-Velocity traces on an interactive map with satellite signal quality overlays, event markers, and filtering tools.
@@ -25,7 +25,6 @@ The screenshot is the UI snapshot test baseline (with map tiles off), so it alwa
 
 > [!NOTE]
 > Installers and packages are published with each tagged release.
-> Until the first release is tagged, build from source with `just run`.
 
 GeoTrace is a desktop app for Linux, macOS, and Windows (x86-64 and ARM64).
 
@@ -60,11 +59,8 @@ The check can be turned off under Settings.
 
 ## SDKs
 
-> [!WARNING]
-> No release has been tagged yet, these install instruction does not apply before the first published version
-
 > [!NOTE]
-> SDK packages are published on their own release cadence (separate from the app), starting with the first SDK release.
+> SDK packages are published on their own release cadence, separate from the app.
 
 GeoTrace defines an open binary format (`.gtd`) for storing navigation recordings.
 SDKs are available so you can produce `.gtd` files from any data source and open them in GeoTrace.
@@ -94,52 +90,24 @@ let nav_file = recorder.finish()?;
 nav_file.write_to_file("track.gtd")?;
 ```
 
-Examples: [`sdk/rust/geotrace-sdk/examples/`](sdk/rust/geotrace-sdk/examples/)
+Examples: [`docs/sdk/rust.md`](docs/sdk/rust.md).
 
 ### C SDK
 
-A C API wrapping the core encoder/decoder, suitable for embedding in any language with a C FFI.
-See [`sdk/c/geotrace.h`](sdk/c/geotrace.h) for the full API surface.
-Building or consuming it via CMake requires CMake 3.21+.
-On Windows the released library is built with MSVC.
-
-Homebrew (Linux / macOS), installs headers, the static library, and the CMake package config:
-
-```sh
-brew install CramBL/homebrew-tap/geotrace-c
-```
-
-**find_package** (from a local build, a Homebrew install, or a prebuilt release archive):
-
-```cmake
-find_package(GeoTraceC REQUIRED)
-target_link_libraries(my_target PRIVATE GeoTrace::C)
-```
-
-**FetchContent** (from a release archive URL — no Rust toolchain required):
-
-```cmake
-include(FetchContent)
-FetchContent_Declare(geotrace_c
-    URL     https://github.com/CramBL/geotrace/releases/download/geotrace-sdk-v0.1.0/geotrace-sdk-x86_64-unknown-linux-gnu.tar.gz
-    URL_HASH SHA256=<hash>)
-FetchContent_MakeAvailable(geotrace_c)
-list(APPEND CMAKE_PREFIX_PATH "${geotrace_c_SOURCE_DIR}")
-find_package(GeoTraceC REQUIRED)
-target_link_libraries(my_target PRIVATE GeoTrace::C)
-```
-
-Replace the URL and hash with those from the [Releases](../../releases) page.
-The archive contains the same relocatable install tree produced by `cmake --install`,
-so `find_package` resolves it correctly after adding the extracted root to `CMAKE_PREFIX_PATH`.
+A C99 API over the `.gtd` encoder/decoder, for embedding in any language with a C FFI.
+Install (Homebrew, prebuilt archive, or source) and examples: [`docs/sdk/c.md`](docs/sdk/c.md).
 
 ### C++ SDK
 
-A header-only C++17 wrapper around the C SDK with RAII types and range-based iteration.
-See [`sdk/cpp/include/`](sdk/cpp/include/).
-Building or consuming it via CMake requires CMake 3.21+.
+A header-only C++17 wrapper over the C SDK, with RAII types and range-based iteration.
+Install and examples: [`docs/sdk/cpp.md`](docs/sdk/cpp.md).
 
 ### Python SDK
+
+```sh
+uv add geotrace-sdk
+# or: pip install geotrace-sdk
+```
 
 ```python
 from datetime import UTC, datetime
@@ -150,9 +118,7 @@ recorder.add(NavFix(lat=51.5074, lon=-0.1278, gps_time=datetime(2024, 1, 15, 9, 
 recorder.finish().write_to_file("track.gtd")
 ```
 
-Install with uv: `uv add geotrace-sdk`
-
-Or with pip: `pip install geotrace-sdk`
+Examples: [`docs/sdk/python.md`](docs/sdk/python.md).
 
 ## Development
 
