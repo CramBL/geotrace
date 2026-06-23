@@ -25,7 +25,7 @@ extern "C" {
 
 /** @defgroup version Version macros */
 /** @{ */
-#define GEOTRACE_C_VERSION       "0.2.0-rc.1" /**< SDK version string. */
+#define GEOTRACE_C_VERSION       "0.2.0-rc.2" /**< SDK version string. */
 #define GEOTRACE_C_VERSION_MAJOR 0
 #define GEOTRACE_C_VERSION_MINOR 2
 #define GEOTRACE_C_VERSION_PATCH 0

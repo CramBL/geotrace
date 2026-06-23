@@ -6,7 +6,7 @@ homepage.workspace = true
 repository.workspace = true
 # SDK version line, independent of the GUI app. Keep in lockstep with
 # geotrace-sdk / geotrace-sdk-macros / geotrace-py (see geotrace-sdk/Cargo.toml).
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 edition.workspace = true
 rust-version.workspace = true
 license = "MIT"
