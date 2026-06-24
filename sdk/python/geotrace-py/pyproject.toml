@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "geotrace-sdk"
-version = "0.2.0"
+version = "0.3.0"
 requires-python = ">=3.12"
 description = "Python bindings for geotrace-sdk - read and write .gtd navigation data files"
 readme = "README.md"

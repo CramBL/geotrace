@@ -4,7 +4,7 @@
 
 [package]
 name = "geotrace-py"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 description = "Python bindings for geotrace-sdk"
