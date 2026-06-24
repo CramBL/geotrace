@@ -53,7 +53,7 @@ fmt-c: (_sdk "bash" "scripts/fmt-c.sh")
 fmt-cpp: (_sdk "bash" "scripts/fmt-cpp.sh")
 
 [group("container-sdk")]
-test-gold-all: test-gold-rs test-gold-c test-gold-cpp test-gold-py
+test-gold-all: test-gold-rs test-gold-c test-gold-cpp test-gold-py test-gold-compare
 
 [group("container-sdk")]
 test-gold-rs: (_sdk "cargo run --example gold_dataset -p geotrace-sdk")
@@ -66,3 +66,7 @@ test-gold-cpp: (_sdk "bash" "scripts/gold-cpp.sh")
 
 [group("container-sdk")]
 test-gold-py: (_sdk "bash" "scripts/gold-py.sh")
+
+# Assert the four freshly generated gold files decode to the same NavFile.
+[group("container-sdk")]
+test-gold-compare: (_sdk "cargo test -p geotrace-sdk --test gold_conformance")

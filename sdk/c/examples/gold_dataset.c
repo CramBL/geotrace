@@ -71,15 +71,40 @@ static int month_days(int m, int y) {
     return (m == 2 && is_leap(y)) ? 29 : dom[m - 1];
 }
 
-/* Parse "YYYY-MM-DDTHH:MM:SS+HH:MM" -> GtdTimestamp. Returns gtd_ts_none() on failure. */
+/* Parse "YYYY-MM-DDTHH:MM:SS[.ffffff][+HH:MM]" -> GtdTimestamp.
+   Returns gtd_ts_none() on failure. */
 static GtdTimestamp parse_ts(const char *s) {
-    int Y = 0, Mo = 0, D = 0, H = 0, Mi = 0, S = 0, tz_h = 0, tz_m = 0;
-    char sign = '+';
+    int Y = 0, Mo = 0, D = 0, H = 0, Mi = 0, S = 0, consumed = 0;
 
     if (!s || *s == '\0')
         return gtd_ts_none();
-    if (sscanf(s, "%d-%d-%dT%d:%d:%d%c%d:%d", &Y, &Mo, &D, &H, &Mi, &S, &sign, &tz_h, &tz_m) < 6)
+    if (sscanf(s, "%d-%d-%dT%d:%d:%d%n", &Y, &Mo, &D, &H, &Mi, &S, &consumed) < 6)
         return gtd_ts_none();
+
+    const char *p = s + consumed;
+
+    /* Optional fractional seconds (".ffffff"), kept as microseconds. */
+    long frac_us = 0;
+    if (*p == '.') {
+        p++;
+        char digits[7] = "000000";
+        int n = 0;
+        while (n < 6 && *p >= '0' && *p <= '9')
+            digits[n++] = *p++;
+        while (*p >= '0' && *p <= '9') /* skip sub-microsecond digits */
+            p++;
+        frac_us = strtol(digits, NULL, 10);
+    }
+
+    /* Optional timezone offset ("+HH:MM" / "-HH:MM"). */
+    char sign = '+';
+    long tz = 0;
+    if (*p == '+' || *p == '-') {
+        int tz_h = 0, tz_m = 0;
+        sign = *p;
+        if (sscanf(p + 1, "%d:%d", &tz_h, &tz_m) == 2)
+            tz = (((long)tz_h * 60L) + tz_m) * 60L;
+    }
 
     long days = 0;
     for (int y = 1970; y < Y; y++)
@@ -89,10 +114,9 @@ static GtdTimestamp parse_ts(const char *s) {
     days += D - 1;
 
     long secs = (days * 86400L) + (H * 3600L) + (Mi * 60L) + S;
-    long tz = ((long)tz_h * 60L + tz_m) * 60L;
     secs += (sign == '-') ? tz : -tz;
 
-    return gtd_ts_from_seconds((uint64_t)secs);
+    return gtd_ts_from_micros(((uint64_t)secs * 1000000ULL) + (uint64_t)frac_us);
 }
 
 static GtdOptF64 parse_opt_f64(const char *s) {

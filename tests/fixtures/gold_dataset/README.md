@@ -1,7 +1,9 @@
 # GeoTrace Gold Dataset
 
 This dataset provides a set of reference GPS/GNSS data in CSV format.
-It is intended for cross-SDK verification: all SDKs (Rust, C, C++, Python) should be able to parse these CSV files and produce bit-for-bit identical `.gtd` files.
+It is intended for cross-SDK verification: every SDK (Rust, C, C++, Python) parses these CSV files and writes a `.gtd` file that decodes to the same `NavFile`.
+The HDF5 byte layout may differ between SDKs; the decoded content must not.
+The `gold_conformance` test (`sdk/rust/geotrace-sdk/tests/gold_conformance.rs`) pins `gold.gtd`, `gold_c.gtd`, `gold_cpp.gtd`, and `gold_py.gtd` to this guarantee, and `just test-gold-all` regenerates and re-checks them.
 
 ## Dataset Structure
 
