@@ -72,3 +72,9 @@ add_cpp_test(test_nav_file)
 add_cpp_test(test_round_trip)
 add_cpp_test(test_exceptions)
 add_cpp_test(test_event_kind)
+add_cpp_test(test_result_api)
+
+# Exercise the non-throwing path at runtime by forcing the header onto its
+# no-exceptions branch (the compiler keeps exceptions, so doctest still works).
+add_cpp_test(test_no_exceptions)
+target_compile_definitions(test_no_exceptions PRIVATE GEOTRACE_CPP_NO_EXCEPTIONS)
