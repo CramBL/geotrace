@@ -45,9 +45,9 @@
 
 #include <geotrace.h> // C SDK (already has extern "C" guards)
 
-#define GEOTRACE_CPP_VERSION       "0.2.0"
+#define GEOTRACE_CPP_VERSION       "0.3.0-rc.1"
 #define GEOTRACE_CPP_VERSION_MAJOR 0
-#define GEOTRACE_CPP_VERSION_MINOR 2
+#define GEOTRACE_CPP_VERSION_MINOR 3
 #define GEOTRACE_CPP_VERSION_PATCH 0
 
 // Exception support is detected the idiomatic way, via the standard
