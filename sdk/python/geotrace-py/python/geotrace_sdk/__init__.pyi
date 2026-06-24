@@ -220,6 +220,7 @@ class Meta:
         title: File title, or ``None``.
         device: Sensor or device that produced the data, or ``None``.
         notes: Free-text notes, or ``None``.
+        identity: Opaque producer identity string, or ``None``.
     """
 
     def __init__(
@@ -228,6 +229,7 @@ class Meta:
         title: str | None = None,
         device: str | None = None,
         notes: str | None = None,
+        identity: str | None = None,
     ) -> None: ...
     @property
     def title(self) -> str | None: ...
@@ -235,6 +237,8 @@ class Meta:
     def device(self) -> str | None: ...
     @property
     def notes(self) -> str | None: ...
+    @property
+    def identity(self) -> str | None: ...
     def __eq__(self, other: object) -> bool: ...
 
 @final

@@ -10,7 +10,12 @@
  * Link against `GeoTrace::Cpp` (which transitively links `GeoTrace::C`).
  *
  * All types live in the `geotrace` namespace.
- * All errors are reported as exceptions derived from `geotrace::Error`.
+ *
+ * Errors are reported two ways: the default methods throw exceptions derived
+ * from `geotrace::Error`; the parallel `try_*` methods instead return a
+ * `Result`/`Status` by value and never throw. When the SDK is compiled without
+ * exception support (`-fno-exceptions`, or `GEOTRACE_CPP_NO_EXCEPTIONS`), use
+ * the `try_*` API.
  */
 
 #pragma once
@@ -21,9 +26,12 @@
 #if __has_include(<compare>)
 #include <compare>
 #endif
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -41,6 +49,18 @@
 #define GEOTRACE_CPP_VERSION_MAJOR 0
 #define GEOTRACE_CPP_VERSION_MINOR 2
 #define GEOTRACE_CPP_VERSION_PATCH 0
+
+// Exception support is detected the idiomatic way, via the standard
+// `__cpp_exceptions` feature-test macro (MSVC predates it, so `_CPPUNWIND` is
+// also accepted). Define GEOTRACE_CPP_NO_EXCEPTIONS to force the no-exceptions
+// path even when the compiler supports them. The throwing API is the default;
+// when exceptions are unavailable, use the `try_*` methods and `Result`/`Status`
+// instead, which report errors by value and never throw.
+#if !defined(GEOTRACE_CPP_NO_EXCEPTIONS) && (defined(__cpp_exceptions) || defined(_CPPUNWIND))
+#define GEOTRACE_CPP_EXCEPTIONS 1
+#else
+#define GEOTRACE_CPP_EXCEPTIONS 0
+#endif
 
 // Minimal std::span polyfill for C++17.  Replaced by std::span on C++20.
 #if defined(__cpp_lib_span) && __cpp_lib_span >= 202002L
@@ -138,12 +158,29 @@ struct InvalidPathError : Error {
     using Error::Error;
 };
 
+/** Malformed or corrupt `.gtd` file content (decode failed). */
+struct ParseError : Error {
+    using Error::Error;
+};
+
 namespace detail {
 
-[[noreturn]] inline void throw_status(GtdStatus s) {
-    const char *raw = ::gtd_last_error();
-    const std::string msg = (raw != nullptr) ? raw : "unknown error";
+[[noreturn]] inline void abort_with(const std::string &msg) {
+    const std::string line = "geotrace: " + msg + "\n";
+    static_cast<void>(std::fputs(line.c_str(), stderr));
+    std::abort();
+}
+
+// Throw the typed exception for a status. Without exception support this is only
+// reached by the throwing API (the `try_*` / Result API never calls it), so it
+// prints and aborts as a last resort.
+[[noreturn]] inline void throw_typed(GtdStatus s, const std::string &msg) {
+#if GEOTRACE_CPP_EXCEPTIONS
     switch (s) {
+    case GTD_ERR_NULL_ARGUMENT:
+        // The C++ wrapper never passes null pointers, so this only arises from
+        // an out-of-range accessor index.
+        throw std::out_of_range(msg);
     case GTD_ERR_NO_NAV_FIXES:
         throw NoNavFixesError(msg);
     case GTD_ERR_ANNOTATIONS_OOB:
@@ -156,23 +193,25 @@ namespace detail {
         throw Hdf5Error(msg);
     case GTD_ERR_VERSION:
         throw UnsupportedVersionError(msg);
+    case GTD_ERR_PARSE:
+        throw ParseError(msg);
     default:
         throw Error(msg);
     }
+#else
+    (void)s;
+    abort_with(msg);
+#endif
 }
 
-inline void check(GtdStatus s) {
-    if (s != GTD_OK)
-        throw_status(s);
-}
-
-inline void check_range(GtdStatus s) {
-    if (s == GTD_ERR_NULL_ARGUMENT) {
-        const char *raw = ::gtd_last_error();
-        throw std::out_of_range((raw != nullptr) ? raw : "index out of range");
-    }
-    if (s != GTD_OK)
-        throw_status(s);
+// Encode a filesystem path as UTF-8 for the C API.
+inline std::string path_string(const std::filesystem::path &p) {
+#if defined(__cpp_lib_char8_t)
+    const auto u8 = p.u8string();
+    return std::string(u8.begin(), u8.end());
+#else
+    return p.u8string();
+#endif
 }
 
 inline GtdOptF64 to_c(std::optional<double> v) noexcept {
@@ -196,6 +235,72 @@ struct NavFileDeleter {
 };
 
 } // namespace detail
+
+/**
+ * An error returned by value from a `try_*` method, instead of thrown.
+ *
+ * `code` is the underlying `GtdStatus`; `description` is a human-readable
+ * message. This is the non-throwing error channel: check `is_ok()` or call
+ * `value_or_throw()` on the enclosing `Result`.
+ */
+struct Status {
+    GtdStatus code = GTD_OK;
+    std::string description;
+
+    Status() = default;
+    Status(GtdStatus c, std::string d) : code(c), description(std::move(d)) {}
+
+    /// Build a `Status` from a `GtdStatus`, capturing the thread-local message.
+    static Status from(GtdStatus s) {
+        if (s == GTD_OK)
+            return Status{};
+        const char *raw = ::gtd_last_error();
+        return Status{s, (raw != nullptr) ? raw : "unknown error"};
+    }
+
+    bool is_ok() const noexcept { return code == GTD_OK; }
+    bool is_err() const noexcept { return code != GTD_OK; }
+    explicit operator bool() const noexcept { return is_ok(); }
+
+    /// Throw the matching exception on failure (no-op on success). With
+    /// exceptions disabled this prints and aborts, so prefer `is_ok()` there.
+    void throw_on_failure() const {
+        if (is_err())
+            detail::throw_typed(code, description);
+    }
+};
+
+/**
+ * The result of a fallible operation: either a value or a `Status` error.
+ *
+ * Modelled on Rust's `Result`. Inspect `is_ok()` / `error()` and read `value`,
+ * or call `value_or_throw()` to throw the error (or abort without exceptions).
+ * `T` must be default-constructible; the value is unspecified when `is_err()`.
+ */
+template <typename T> struct Result {
+    T value;
+    Status status;
+
+    Result(T v) : value(std::move(v)) {}
+    // An error result must carry a real error: an ok status here would falsely
+    // report success with a default-constructed value.
+    Result(Status s) : value(), status(std::move(s)) { assert(status.is_err()); }
+    Result() = delete;
+
+    bool is_ok() const noexcept { return status.is_ok(); }
+    bool is_err() const noexcept { return status.is_err(); }
+    explicit operator bool() const noexcept { return is_ok(); }
+    const Status &error() const noexcept { return status; }
+
+    const T &value_or_throw() const & {
+        status.throw_on_failure();
+        return value;
+    }
+    T value_or_throw() && {
+        status.throw_on_failure();
+        return std::move(value);
+    }
+};
 
 /**
  * UTC Unix epoch timestamp in microseconds.
@@ -266,13 +371,20 @@ class Angle {
 /** Velocity stored in metres per second. */
 class Velocity {
   public:
+    // Conversion factors kept bit-identical to the Rust SDK (units.rs
+    // MPS_PER_KMH / MPS_PER_KNOT) so the same input yields the same stored m/s
+    // across SDKs. Use the constant-multiply form (`v * (1.0/3.6)`), not
+    // `v / 3.6`, which differs by 1 ULP for some values.
+    static constexpr double kMpsPerKmh = 1.0 / 3.6;
+    static constexpr double kMpsPerKnot = 1852.0 / 3600.0;
+
     static Velocity mps(double v) noexcept { return Velocity{v}; }
-    static Velocity kmh(double v) noexcept { return Velocity{v / 3.6}; }
-    static Velocity knots(double v) noexcept { return Velocity{v * 0.514444}; }
+    static Velocity kmh(double v) noexcept { return Velocity{v * kMpsPerKmh}; }
+    static Velocity knots(double v) noexcept { return Velocity{v * kMpsPerKnot}; }
 
     double as_mps() const noexcept { return mps_; }
-    double as_kmh() const noexcept { return mps_ * 3.6; }
-    double as_knots() const noexcept { return mps_ / 0.514444; }
+    double as_kmh() const noexcept { return mps_ / kMpsPerKmh; }
+    double as_knots() const noexcept { return mps_ / kMpsPerKnot; }
 
 #if defined(__cpp_impl_three_way_comparison) && __cpp_impl_three_way_comparison >= 201907L
     auto operator<=>(const Velocity &) const = default;
@@ -605,11 +717,12 @@ class FileBuilder {
     /**
      * Create a new builder.
      *
-     * @throws std::bad_alloc on allocation failure.
+     * On allocation failure the builder is left in an error state, surfaced by
+     * `status()` and by `finish()` / `try_finish()`.
      */
     FileBuilder() : impl_(::gtd_builder_create()) {
         if (!impl_)
-            throw std::bad_alloc{};
+            status_ = Status{GTD_ERR_INTERNAL, "failed to allocate the .gtd builder"};
     }
 
     FileBuilder(const FileBuilder &) = delete;
@@ -624,22 +737,22 @@ class FileBuilder {
     ///@{
 
     FileBuilder &title(const std::string &v) {
-        detail::check(::gtd_builder_set_title(impl_.get(), v.c_str()));
+        record(::gtd_builder_set_title(impl_.get(), v.c_str()));
         return *this;
     }
 
     FileBuilder &device(const std::string &v) {
-        detail::check(::gtd_builder_set_device(impl_.get(), v.c_str()));
+        record(::gtd_builder_set_device(impl_.get(), v.c_str()));
         return *this;
     }
 
     FileBuilder &notes(const std::string &v) {
-        detail::check(::gtd_builder_set_notes(impl_.get(), v.c_str()));
+        record(::gtd_builder_set_notes(impl_.get(), v.c_str()));
         return *this;
     }
 
     FileBuilder &identity(const std::string &v) {
-        detail::check(::gtd_builder_set_identity(impl_.get(), v.c_str()));
+        record(::gtd_builder_set_identity(impl_.get(), v.c_str()));
         return *this;
     }
 
@@ -659,10 +772,10 @@ class FileBuilder {
             fix.heading ? std::optional<double>{fix.heading->as_degrees()} : std::nullopt;
         const std::optional<double> speed_mps =
             fix.speed ? std::optional<double>{fix.speed->as_mps()} : std::nullopt;
-        detail::check(::gtd_builder_add_nav_fix(impl_.get(), detail::to_c(fix.gps_time),
-                                                detail::to_c(fix.sys_time), fix.lat.as_degrees(),
-                                                fix.lon.as_degrees(), detail::to_c(heading_deg),
-                                                detail::to_c(speed_mps), detail::to_c(fix.eph_m)));
+        record(::gtd_builder_add_nav_fix(impl_.get(), detail::to_c(fix.gps_time),
+                                         detail::to_c(fix.sys_time), fix.lat.as_degrees(),
+                                         fix.lon.as_degrees(), detail::to_c(heading_deg),
+                                         detail::to_c(speed_mps), detail::to_c(fix.eph_m)));
         return *this;
     }
 
@@ -679,16 +792,16 @@ class FileBuilder {
                 detail::to_c(s.snr_dbhz),
             });
         }
-        detail::check(::gtd_builder_add_satellite_report(impl_.get(), detail::to_c(report.gps_time),
-                                                         detail::to_c(report.sys_time), sats.data(),
-                                                         sats.size()));
+        record(::gtd_builder_add_satellite_report(impl_.get(), detail::to_c(report.gps_time),
+                                                  detail::to_c(report.sys_time), sats.data(),
+                                                  sats.size()));
         return *this;
     }
 
     FileBuilder &add_annotation(const Annotation &ann) {
         const char *label = ann.label.empty() ? nullptr : ann.label.c_str();
-        detail::check(::gtd_builder_add_annotation(impl_.get(), detail::to_c(ann.time), label,
-                                                   detail::to_c(ann.icon)));
+        record(::gtd_builder_add_annotation(impl_.get(), detail::to_c(ann.time), label,
+                                            detail::to_c(ann.icon)));
         return *this;
     }
 
@@ -698,15 +811,15 @@ class FileBuilder {
      */
     FileBuilder &add_event_marker(const EventMarker &marker) {
         const char *ann = marker.annotation.empty() ? nullptr : marker.annotation.c_str();
-        detail::check(::gtd_builder_add_event_marker(impl_.get(), marker.variant_path.c_str(),
-                                                     detail::to_c(marker.sys_time), ann));
+        record(::gtd_builder_add_event_marker(impl_.get(), marker.variant_path.c_str(),
+                                              detail::to_c(marker.sys_time), ann));
         return *this;
     }
 
     FileBuilder &add_event_marker_style(const EventMarkerStyle &style) {
         const char *color = style.color_hex.empty() ? nullptr : style.color_hex.c_str();
-        detail::check(::gtd_builder_add_event_marker_style(impl_.get(), style.variant_path.c_str(),
-                                                           detail::to_c(style.icon), color));
+        record(::gtd_builder_add_event_marker_style(impl_.get(), style.variant_path.c_str(),
+                                                    detail::to_c(style.icon), color));
         return *this;
     }
 
@@ -768,7 +881,29 @@ class FileBuilder {
      */
     NavFile finish();
 
+    /**
+     * Non-throwing `finish()`: returns the `NavFile`, or the first error
+     * recorded by any builder call (or by the finalisation itself).
+     */
+    Result<NavFile> try_finish();
+
+    /** The first error recorded so far, or an ok status. */
+    const Status &status() const noexcept { return status_; }
+
   private:
+    // Record the first error. With exceptions enabled, throw it immediately so
+    // the throwing API still reports at the call site; without exceptions it
+    // stays sticky and is surfaced by status() / try_finish().
+    void record(GtdStatus s) {
+        if (status_.is_ok() && s != GTD_OK) {
+            status_ = Status::from(s);
+#if GEOTRACE_CPP_EXCEPTIONS
+            status_.throw_on_failure();
+#endif
+        }
+    }
+
+    Status status_;
     std::unique_ptr<GtdFileBuilder, detail::BuilderDeleter> impl_;
 };
 
@@ -779,6 +914,9 @@ class FileBuilder {
  */
 class NavFile {
   public:
+    /** An empty, invalid file. Only meaningful as the unset value of a `Result`. */
+    NavFile() noexcept = default;
+
     NavFile(const NavFile &) = delete;
     NavFile &operator=(const NavFile &) = delete;
 
@@ -787,66 +925,79 @@ class NavFile {
 
     ~NavFile() = default;
 
-    /**
-     * Open and parse a `.gtd` file.
-     * @throws IoError, UnsupportedVersionError, Hdf5Error on failure.
-     */
-    static NavFile open(const std::filesystem::path &p) {
+    /** Open and parse a `.gtd` file, or return the error. */
+    static Result<NavFile> try_open(const std::filesystem::path &p) {
         GtdNavFile *out = nullptr;
-        std::string path_str;
-#if defined(__cpp_lib_char8_t)
-        auto u8str = p.u8string();
-        path_str = std::string(u8str.begin(), u8str.end());
-#else
-        path_str = p.u8string();
-#endif
-        detail::check(::gtd_nav_file_open(path_str.c_str(), &out));
+        const GtdStatus s = ::gtd_nav_file_open(detail::path_string(p).c_str(), &out);
+        if (s != GTD_OK)
+            return Status::from(s);
         return NavFile(out);
     }
 
     /**
-     * Parse a `.gtd` file from a memory buffer.
-     * @throws IoError, UnsupportedVersionError, Hdf5Error on failure.
+     * Open and parse a `.gtd` file.
+     * @throws IoError, UnsupportedVersionError, Hdf5Error, ParseError on failure.
      */
-    static NavFile from_bytes(span<const std::uint8_t> data) {
+    static NavFile open(const std::filesystem::path &p) { return try_open(p).value_or_throw(); }
+
+    /** Parse a `.gtd` file from a memory buffer, or return the error. */
+    static Result<NavFile> try_from_bytes(span<const std::uint8_t> data) {
         GtdNavFile *out = nullptr;
-        detail::check(::gtd_nav_file_from_bytes(data.data(), data.size(), &out));
+        const GtdStatus s = ::gtd_nav_file_from_bytes(data.data(), data.size(), &out);
+        if (s != GTD_OK)
+            return Status::from(s);
         return NavFile(out);
     }
 
     /** Convenience overload for `std::vector<uint8_t>`. */
-    static NavFile from_bytes(const std::vector<std::uint8_t> &data) {
-        return from_bytes(span<const std::uint8_t>{data});
+    static Result<NavFile> try_from_bytes(const std::vector<std::uint8_t> &data) {
+        return try_from_bytes(span<const std::uint8_t>{data});
     }
 
     /**
-     * Write the file to disk.
-     * The `.gtd` extension is appended if the path has no extension.
+     * Parse a `.gtd` file from a memory buffer.
+     * @throws IoError, UnsupportedVersionError, Hdf5Error, ParseError on failure.
+     */
+    static NavFile from_bytes(span<const std::uint8_t> data) {
+        return try_from_bytes(data).value_or_throw();
+    }
+
+    /** Convenience overload for `std::vector<uint8_t>`. */
+    static NavFile from_bytes(const std::vector<std::uint8_t> &data) {
+        return try_from_bytes(span<const std::uint8_t>{data}).value_or_throw();
+    }
+
+    /** Write the file to disk, or return the error. */
+    Status try_write_to_file(const std::filesystem::path &p) const {
+        return Status::from(
+            ::gtd_nav_file_write_to_path(impl_.get(), detail::path_string(p).c_str()));
+    }
+
+    /**
+     * Write the file to disk. The `.gtd` extension is appended if the path has none.
      * @throws IoError, Hdf5Error on failure.
      */
     void write_to_file(const std::filesystem::path &p) const {
-        std::string path_str;
-#if defined(__cpp_lib_char8_t)
-        auto u8str = p.u8string();
-        path_str = std::string(u8str.begin(), u8str.end());
-#else
-        path_str = p.u8string();
-#endif
-        detail::check(::gtd_nav_file_write_to_path(impl_.get(), path_str.c_str()));
+        try_write_to_file(p).throw_on_failure();
+    }
+
+    /** Serialise to a byte vector, or return the error. */
+    Result<std::vector<std::uint8_t>> try_to_bytes() const {
+        std::uint8_t *buf = nullptr;
+        std::size_t len = 0;
+        const GtdStatus s = ::gtd_nav_file_to_bytes(impl_.get(), &buf, &len);
+        if (s != GTD_OK)
+            return Status::from(s);
+        auto deleter = [len](std::uint8_t *p) noexcept { ::gtd_free_bytes(p, len); };
+        const std::unique_ptr<std::uint8_t, decltype(deleter)> guard(buf, deleter);
+        return std::vector<std::uint8_t>{buf, buf + len};
     }
 
     /**
      * Serialise to a byte vector.
      * @throws IoError, Hdf5Error on failure.
      */
-    std::vector<std::uint8_t> to_bytes() const {
-        std::uint8_t *buf = nullptr;
-        std::size_t len = 0;
-        detail::check(::gtd_nav_file_to_bytes(impl_.get(), &buf, &len));
-        auto deleter = [len](std::uint8_t *p) noexcept { ::gtd_free_bytes(p, len); };
-        const std::unique_ptr<std::uint8_t, decltype(deleter)> guard(buf, deleter);
-        return {buf, buf + len};
-    }
+    std::vector<std::uint8_t> to_bytes() const { return try_to_bytes().value_or_throw(); }
 
     /** @name Metadata (returns empty string_view when field is absent). */
     ///@{
@@ -875,13 +1026,12 @@ class NavFile {
         return ::gtd_nav_file_nav_point_count(impl_.get());
     }
 
-    /**
-     * Return the navigation fix at @p idx.
-     * @throws std::out_of_range if `idx >= nav_point_count()`.
-     */
-    NavPointView nav_point(std::size_t idx) const {
+    /** Return the navigation fix at @p idx, or an out-of-range error. */
+    Result<NavPointView> try_nav_point(std::size_t idx) const {
         GtdNavPointInfo info{};
-        detail::check_range(::gtd_nav_file_get_nav_point(impl_.get(), idx, &info));
+        const GtdStatus s = ::gtd_nav_file_get_nav_point(impl_.get(), idx, &info);
+        if (s != GTD_OK)
+            return Status::from(s);
 
         NavPointView v{};
         v.gps_time = detail::from_c(info.gps_time);
@@ -900,12 +1050,17 @@ class NavFile {
     }
 
     /**
-     * Return satellite data for a specific tracked satellite.
-     * @throws std::out_of_range if either index is out of range or the fix has no satellite report.
+     * Return the navigation fix at @p idx.
+     * @throws std::out_of_range if `idx >= nav_point_count()`.
      */
-    SatelliteView satellite(std::size_t nav_idx, std::size_t sat_idx) const {
+    NavPointView nav_point(std::size_t idx) const { return try_nav_point(idx).value_or_throw(); }
+
+    /** Return satellite data for a tracked satellite, or an out-of-range error. */
+    Result<SatelliteView> try_satellite(std::size_t nav_idx, std::size_t sat_idx) const {
         GtdSatInfo info{};
-        detail::check_range(::gtd_nav_file_get_satellite(impl_.get(), nav_idx, sat_idx, &info));
+        const GtdStatus s = ::gtd_nav_file_get_satellite(impl_.get(), nav_idx, sat_idx, &info);
+        if (s != GTD_OK)
+            return Status::from(s);
 
         SatelliteView v{};
         v.constellation = detail::from_c(info.constellation);
@@ -921,18 +1076,25 @@ class NavFile {
         return v;
     }
 
+    /**
+     * Return satellite data for a specific tracked satellite.
+     * @throws std::out_of_range if either index is out of range or the fix has no satellite report.
+     */
+    SatelliteView satellite(std::size_t nav_idx, std::size_t sat_idx) const {
+        return try_satellite(nav_idx, sat_idx).value_or_throw();
+    }
+
     /** Number of event markers in the file. */
     std::size_t event_marker_count() const noexcept {
         return ::gtd_nav_file_event_marker_count(impl_.get());
     }
 
-    /**
-     * Return the event marker at @p idx.
-     * @throws std::out_of_range if `idx >= event_marker_count()`.
-     */
-    EventMarkerView event_marker(std::size_t idx) const {
+    /** Return the event marker at @p idx, or an out-of-range error. */
+    Result<EventMarkerView> try_event_marker(std::size_t idx) const {
         GtdEventMarkerInfo info{};
-        detail::check_range(::gtd_nav_file_get_event_marker(impl_.get(), idx, &info));
+        const GtdStatus s = ::gtd_nav_file_get_event_marker(impl_.get(), idx, &info);
+        if (s != GTD_OK)
+            return Status::from(s);
 
         EventMarkerView v{};
         v.variant_path = info.variant_path;
@@ -943,17 +1105,32 @@ class NavFile {
         return v;
     }
 
+    /**
+     * Return the event marker at @p idx.
+     * @throws std::out_of_range if `idx >= event_marker_count()`.
+     */
+    EventMarkerView event_marker(std::size_t idx) const {
+        return try_event_marker(idx).value_or_throw();
+    }
+
   private:
     friend class FileBuilder;
     explicit NavFile(GtdNavFile *impl) noexcept : impl_(impl) {}
     std::unique_ptr<GtdNavFile, detail::NavFileDeleter> impl_;
 };
 
-inline NavFile FileBuilder::finish() {
+inline Result<NavFile> FileBuilder::try_finish() {
+    if (status_.is_err())
+        return status_;
     GtdNavFile *out = nullptr;
     const GtdStatus s = ::gtd_builder_finish(impl_.release(), &out);
-    detail::check(s);
+    if (s != GTD_OK)
+        return Status::from(s);
     return NavFile(out);
+}
+
+inline NavFile FileBuilder::finish() {
+    return try_finish().value_or_throw();
 }
 
 } // namespace geotrace

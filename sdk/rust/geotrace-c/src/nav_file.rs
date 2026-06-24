@@ -3,7 +3,7 @@ use std::io::Cursor;
 
 use geotrace_sdk::NavFile;
 
-use crate::error::{GtdStatus, run_catching_panics, set_last_error};
+use crate::error::{GtdStatus, run_catching_panics, set_last_error, status_for_error};
 use crate::{
     GtdConstellation, GtdEventMarkerInfo, GtdNavPointInfo, GtdSatInfo, opt_f64_none, opt_f64_some,
     ts_from_datetime,
@@ -45,11 +45,7 @@ pub unsafe extern "C" fn gtd_nav_file_write_to_path(
             Ok(()) => GtdStatus::Ok,
             Err(e) => {
                 set_last_error(&e);
-                match e {
-                    geotrace_sdk::Error::Io(_) => GtdStatus::ErrIo,
-                    geotrace_sdk::Error::Hdf5(_) => GtdStatus::ErrHdf5,
-                    _ => GtdStatus::ErrInternal,
-                }
+                status_for_error(&e)
             }
         }
     })
@@ -71,11 +67,7 @@ pub unsafe extern "C" fn gtd_nav_file_to_bytes(
         let mut bytes: Vec<u8> = Vec::new();
         if let Err(e) = f.file.write(&mut bytes) {
             set_last_error(&e);
-            return match e {
-                geotrace_sdk::Error::Io(_) => GtdStatus::ErrIo,
-                geotrace_sdk::Error::Hdf5(_) => GtdStatus::ErrHdf5,
-                _ => GtdStatus::ErrInternal,
-            };
+            return status_for_error(&e);
         }
 
         let mut boxed = bytes.into_boxed_slice();
@@ -131,12 +123,7 @@ pub unsafe extern "C" fn gtd_nav_file_open(
             }
             Err(e) => {
                 set_last_error(&e);
-                match e {
-                    geotrace_sdk::Error::Io(_) => GtdStatus::ErrIo,
-                    geotrace_sdk::Error::Hdf5(_) => GtdStatus::ErrHdf5,
-                    geotrace_sdk::Error::UnsupportedVersion { .. } => GtdStatus::ErrVersion,
-                    _ => GtdStatus::ErrInternal,
-                }
+                status_for_error(&e)
             }
         }
     })
@@ -170,12 +157,7 @@ pub unsafe extern "C" fn gtd_nav_file_from_bytes(
             }
             Err(e) => {
                 set_last_error(&e);
-                match e {
-                    geotrace_sdk::Error::Io(_) => GtdStatus::ErrIo,
-                    geotrace_sdk::Error::Hdf5(_) => GtdStatus::ErrHdf5,
-                    geotrace_sdk::Error::UnsupportedVersion { .. } => GtdStatus::ErrVersion,
-                    _ => GtdStatus::ErrInternal,
-                }
+                status_for_error(&e)
             }
         }
     })

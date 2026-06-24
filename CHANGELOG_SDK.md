@@ -7,6 +7,28 @@ the app).
 
 ## [unreleased]
 
+### Added
+
+- C++ SDK: a non-throwing `try_*` API returning `Result<T>`/`Status` by value
+  alongside the throwing methods, so the SDK works with exceptions disabled
+  (`-fno-exceptions`, or `GEOTRACE_CPP_NO_EXCEPTIONS`).
+- C SDK: a distinct `GTD_ERR_PARSE` status for malformed or corrupt `.gtd` file
+  content, and a matching C++ `ParseError` exception.
+- Python SDK: `Meta.identity` is now settable and readable.
+- Cross-SDK conformance check: every SDK must decode the gold-dataset fixtures to
+  the same `NavFile` (run by `just test-gold-all`).
+- Fuzzing of the `.gtd` decoder.
+
+### Changed
+
+- Decode failures are no longer reported as internal/I/O errors: the C SDK maps
+  them to `GTD_ERR_PARSE`, and the Python SDK raises `ValueError`.
+- Updated `hdf5-pure` to 0.19.0.
+
+### Fixed
+
+- C and C++ gold examples now parse fractional-second timestamps correctly.
+
 ## [0.2.0] - 2026-06-23
 
 ### Added

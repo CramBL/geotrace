@@ -67,11 +67,28 @@ std::optional<geotrace::Timestamp> parse_ts(const std::string &s) {
         auto H = std::stoi(s.substr(11, 2));
         auto Mi = std::stoi(s.substr(14, 2));
         auto S = std::stoi(s.substr(17, 2));
-        const char sign = (s.size() > 19) ? s[19] : '+';
+        // Optional fractional seconds (".ffffff"), kept as microseconds.
+        std::size_t i = 19;
+        long frac_us = 0;
+        if (i < s.size() && s[i] == '.') {
+            ++i;
+            std::string digits;
+            while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+                digits.push_back(s[i]);
+                ++i;
+            }
+            digits.resize(6, '0'); // pad / truncate to microseconds
+            frac_us = std::stol(digits);
+        }
+        // Optional timezone offset ("+HH:MM" / "-HH:MM").
+        char sign = '+';
         int tz_h = 0, tz_m = 0;
-        if (s.size() >= 25) {
-            tz_h = std::stoi(s.substr(20, 2));
-            tz_m = std::stoi(s.substr(23, 2));
+        if (i < s.size() && (s[i] == '+' || s[i] == '-')) {
+            sign = s[i];
+            if (i + 6 <= s.size()) {
+                tz_h = std::stoi(s.substr(i + 1, 2));
+                tz_m = std::stoi(s.substr(i + 4, 2));
+            }
         }
         long days = 0;
         for (int y = 1970; y < Y; y++)
@@ -80,9 +97,11 @@ std::optional<geotrace::Timestamp> parse_ts(const std::string &s) {
             days += month_days(m, Y);
         days += D - 1;
         long secs = (days * 86400L) + (H * 3600L) + (Mi * 60L) + S;
-        const long tz = (static_cast<long>(tz_h) * 60L + tz_m) * 60L;
+        const long tz = ((static_cast<long>(tz_h) * 60L) + tz_m) * 60L;
         secs += (sign == '-') ? tz : -tz;
-        return geotrace::Timestamp::from_seconds(static_cast<std::uint64_t>(secs));
+        const std::uint64_t micros =
+            (static_cast<std::uint64_t>(secs) * 1000000ULL) + static_cast<std::uint64_t>(frac_us);
+        return geotrace::Timestamp::from_micros(micros);
     } catch (const std::exception &) {
         return std::nullopt;
     }

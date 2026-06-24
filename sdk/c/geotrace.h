@@ -64,6 +64,7 @@ typedef enum {
     GTD_ERR_HDF5 = 6,            /**< HDF5 library error. */
     GTD_ERR_VERSION = 7,         /**< Unsupported file format version. */
     GTD_ERR_UTF8 = 8,            /**< String argument contained invalid UTF-8. */
+    GTD_ERR_PARSE = 9,           /**< Malformed or corrupt .gtd file (decode failed). */
     GTD_ERR_INTERNAL = 99,       /**< Internal error (bug in the SDK). */
 } GtdStatus;
 

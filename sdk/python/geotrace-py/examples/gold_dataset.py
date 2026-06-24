@@ -88,7 +88,7 @@ def _rows(path: Path) -> list[list[str]]:
 
 def _load_meta(base: Path) -> Meta:
     cols = _rows(base / "meta.csv")[0]
-    return Meta(title=cols[0], device=cols[1], notes=cols[2])
+    return Meta(title=cols[0], device=cols[1], notes=cols[2], identity=cols[3])
 
 
 def _load_event_styles(builder: NavFileBuilder, base: Path) -> None:
@@ -133,7 +133,10 @@ def _load_fixes(
                 gps_time=gps_time,
                 sys_time=sys_time,
                 heading=_opt_float(cols[5]),
-                speed_mps=None if speed_kmh is None else speed_kmh / 3.6,
+                # Match the SDK's MPS_PER_KMH = 1.0 / 3.6 constant-multiply so
+                # the m/s value is bit-identical across SDKs (kmh / 3.6 differs
+                # by 1 ULP for some values).
+                speed_mps=None if speed_kmh is None else speed_kmh * (1.0 / 3.6),
                 eph_m=_opt_float(cols[7]),
             )
         )

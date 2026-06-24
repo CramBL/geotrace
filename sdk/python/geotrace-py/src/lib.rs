@@ -24,8 +24,23 @@ fn build_err(e: BuildError) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 
-fn io_err(e: geotrace_sdk::Error) -> PyErr {
-    PyIOError::new_err(e.to_string())
+// Map a core SDK error to the appropriate Python exception: filesystem failures
+// become OSError (IOError); bad file content (invalid HDF5 container, wrong
+// version, or a decode failure) becomes ValueError. Exhaustive, so a new
+// variant must be classified.
+fn file_err(e: geotrace_sdk::Error) -> PyErr {
+    use geotrace_sdk::Error;
+    let msg = e.to_string();
+    match e {
+        Error::Io(_) => PyIOError::new_err(msg),
+        Error::Hdf5(_)
+        | Error::UnsupportedVersion { .. }
+        | Error::UnknownConstellation { .. }
+        | Error::ShapeMismatch { .. }
+        | Error::UnknownConstellationName { .. }
+        | Error::UnknownMarkerIcon { .. }
+        | Error::ParseError { .. } => PyValueError::new_err(msg),
+    }
 }
 
 fn consumed_err() -> PyErr {
@@ -504,16 +519,18 @@ pub struct PyMeta {
 #[pymethods]
 impl PyMeta {
     #[new]
-    #[pyo3(signature = (*, title=None, device=None, notes=None))]
+    #[pyo3(signature = (*, title=None, device=None, notes=None, identity=None))]
     fn new(
         title: Option<String>,
         device: Option<String>,
         notes: Option<String>,
+        identity: Option<String>,
     ) -> Self {
         let inner = Meta::builder()
             .maybe_title(title)
             .maybe_device(device)
             .maybe_notes(notes)
+            .maybe_identity(identity)
             .build();
         Self { inner }
     }
@@ -536,10 +553,17 @@ impl PyMeta {
         self.inner.notes.as_deref()
     }
 
+    /// Opaque producer identity string, or `None`.
+    #[getter]
+    fn identity(&self) -> Option<&str> {
+        self.inner.identity.as_deref()
+    }
+
     fn __eq__(&self, other: &Self) -> bool {
         self.inner.title == other.inner.title
             && self.inner.device == other.inner.device
             && self.inner.notes == other.inner.notes
+            && self.inner.identity == other.inner.identity
     }
 
     fn __repr__(&self) -> String {
@@ -862,7 +886,7 @@ impl PyNavFile {
     fn open(path: PathBuf) -> PyResult<Self> {
         NavFile::open(&path)
             .map(|f| Self { inner: f })
-            .map_err(io_err)
+            .map_err(file_err)
     }
 
     /// Parse a `.gtd` file from raw bytes.
@@ -870,7 +894,7 @@ impl PyNavFile {
     fn from_bytes(data: &[u8]) -> PyResult<Self> {
         NavFile::read(std::io::Cursor::new(data))
             .map(|f| Self { inner: f })
-            .map_err(io_err)
+            .map_err(file_err)
     }
 
     /// Write this file to `path`.
@@ -878,13 +902,13 @@ impl PyNavFile {
     /// Accepts any path-like value: `str`, `bytes`, or a `pathlib.Path` object.
     /// Appends `.gtd` if `path` has no extension.
     fn write_to_file(&self, path: PathBuf) -> PyResult<()> {
-        self.inner.write_to_file(&path).map_err(io_err)
+        self.inner.write_to_file(&path).map_err(file_err)
     }
 
     /// Serialise the file to a `bytes` object.
     fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let mut buf = Vec::new();
-        self.inner.write(&mut buf).map_err(io_err)?;
+        self.inner.write(&mut buf).map_err(file_err)?;
         Ok(PyBytes::new(py, &buf))
     }
 
@@ -1130,7 +1154,7 @@ impl PyNavFileBuilder {
                     )
                     .maybe_color(style.color.clone())
                     .build()
-                    .map_err(io_err)?,
+                    .map_err(file_err)?,
             );
         }
         Ok(slf.unbind())
