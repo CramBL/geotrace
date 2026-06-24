@@ -5,7 +5,7 @@
 //! that owns the [`Database`]. The UI thread sends [`Request`]s and drains
 //! [`Response`]s once per frame (see [`HistoryManager::poll`]), so a slow disk
 //! or a large recording never stalls a render. Inserts still happen on the load
-//! threads, which open the database by path; the global database lock keeps the
+//! threads, which open the database by path. The global database lock keeps the
 //! two paths safe.
 
 use std::collections::HashSet;
@@ -193,7 +193,7 @@ impl HistoryManager {
 impl Drop for HistoryManager {
     fn drop(&mut self) {
         // Dropping the request sender disconnects the worker's `recv`, ending its
-        // loop; then join so the thread is gone before we return.
+        // loop. Then join so the thread is gone before we return.
         self.req_tx = None;
         if let Some(handle) = self.handle.take() {
             handle.join().ok();
@@ -209,7 +209,7 @@ fn worker_loop(
 ) {
     while let Ok(req) = req_rx.recv() {
         let resp = handle_request(&mut db, req);
-        // If the UI is gone the send fails; there is nothing left to repaint.
+        // If the UI is gone the send fails, there is nothing left to repaint.
         if resp_tx.send(resp).is_err() {
             break;
         }

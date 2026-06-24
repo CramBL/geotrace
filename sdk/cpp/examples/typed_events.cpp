@@ -129,7 +129,7 @@ int main() {
 
         // Single-level events take the enum value directly.
         builder.add_event(Power::Boot, at(2), "cold start");
-        // Nested events compose with event_path(); the compiler checks every level.
+        // Nested events compose with event_path(). The compiler checks every level.
         builder.add_event(geotrace::event_path(Connectivity::Agps, Agps::Request), at(5),
                           "EPO fetch started");
         builder.add_event(geotrace::event_path(Connectivity::Agps, Agps::Success), at(18),
@@ -138,7 +138,7 @@ int main() {
         builder.add_event(Power::BatteryLow, at(130), "14%");
         builder.add_event(Power::Sleep, at(145));
 
-        // Styles are per-variant; event_path() feeds them the same typed path.
+        // Styles are per-variant. event_path() feeds them the same typed path.
         builder.add_event_marker_style(geotrace::EventMarkerStyle{
             geotrace::event_path(Power::Boot).str(), geotrace::MarkerIcon::Lightning, "#44BB44"});
         builder.add_event_marker_style(geotrace::EventMarkerStyle{

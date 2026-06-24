@@ -65,7 +65,7 @@ impl PruneDialog {
         }
     }
 
-    /// Show the Prune dialog. Sends preview/delete requests to `manager`; the
+    /// Show the Prune dialog. Sends preview/delete requests to `manager`. The
     /// results arrive asynchronously via [`HistoryWindow::set_prune_preview`].
     fn show(&mut self, ctx: &egui::Context, manager: &HistoryManager) {
         if !self.open {
@@ -133,7 +133,7 @@ impl PruneDialog {
                 };
 
                 if params_changed {
-                    // A preview for the old parameters is now stale; drop any
+                    // A preview for the old parameters is now stale. Drop any
                     // in-flight request so its result is ignored.
                     self.preview = None;
                     self.preview_pending = false;
@@ -277,7 +277,7 @@ impl HistoryWindow {
         self.prune.set_preview(refs);
     }
 
-    /// Show the History window. All database work is sent to `manager`; results
+    /// Show the History window. All database work is sent to `manager`. Results
     /// arrive asynchronously and are applied via [`HistoryWindow::set_entries`]
     /// and friends.
     ///
@@ -301,7 +301,7 @@ impl HistoryWindow {
             return;
         }
 
-        // Request the recording list once when it is missing; the worker replies
+        // Request the recording list once when it is missing. The worker replies
         // via `set_entries`. A spinner shows until then.
         if self.entries.is_none() && !self.list_pending && manager.available() {
             manager.list();
@@ -425,7 +425,7 @@ impl HistoryWindow {
 
                 // Auto-prune settings - separated because this is a persistent
                 // setting, not a filter or list entry.  Always rendered so the
-                // layout stays stable; controls are grayed out when inactive,
+                // layout stays stable, controls are grayed out when inactive,
                 // with hover text explaining what to enable first.
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -565,7 +565,7 @@ impl HistoryWindow {
                     });
 
                 ui.separator();
-                // Footer stats cover every stored recording; hidden tracks are
+                // Footer stats cover every stored recording. Hidden tracks are
                 // reported separately since they are pending permanent deletion.
                 let stored_count = entries.len();
                 let total_size: u64 = entries.iter().map(|e| e.meta.gtd_size_bytes).sum();

@@ -11,7 +11,7 @@ use crate::error::{Error, EventMarkerError};
 /// unknown (e.g., dead-reckoned positions emitted only to carry satellite reports).
 /// The app renders those as circles rather than directional arrows.
 ///
-/// `gps_time` is the GPS-receiver timestamp; it is `None` when the receiver had no
+/// `gps_time` is the GPS-receiver timestamp. It is `None` when the receiver had no
 /// lock at the time of this record.
 /// Do not substitute `sys_time` for `gps_time` on the client side - pass `None`
 /// and let the SDK resolve the effective time from `sys_time` internally.
@@ -22,7 +22,7 @@ use crate::error::{Error, EventMarkerError};
 /// domain for accurate ghost-fix interpolation during no-fix periods.
 #[derive(bon::Builder, Debug, Clone, Copy, PartialEq)]
 pub struct NavFix {
-    /// GPS-receiver timestamp; `None` when the receiver had no active lock.
+    /// GPS-receiver timestamp. `None` when the receiver had no active lock.
     #[builder(into)]
     pub gps_time: Option<DateTime<Utc>>,
     /// System-clock time at the moment of this fix, if recorded.
@@ -52,10 +52,10 @@ pub struct NavFix {
 ///   from surrounding NavFixes to place orphan reports in the GPS time domain.
 #[derive(bon::Builder, Debug, Clone, PartialEq)]
 pub struct SatelliteReport {
-    /// GPS-domain timestamp; present when the receiver had an active fix.
+    /// GPS-domain timestamp. Present when the receiver had an active fix.
     #[builder(into)]
     pub gps_time: Option<DateTime<Utc>>,
-    /// System-clock timestamp at capture time; optional but strongly recommended.
+    /// System-clock timestamp at capture time. Optional but strongly recommended.
     #[builder(into)]
     pub sys_time: Option<DateTime<Utc>>,
     /// All satellites currently tracked (may include satellites not in the fix).
@@ -71,11 +71,11 @@ pub struct Satellite {
     /// Whether this satellite is contributing to the current positional fix.
     #[builder(default)]
     pub in_fix: bool,
-    /// Elevation above horizon in degrees; `None` if unavailable.
+    /// Elevation above horizon in degrees. `None` if unavailable.
     pub elevation: Option<f32>,
-    /// Azimuth from true north in degrees; `None` if unavailable.
+    /// Azimuth from true north in degrees. `None` if unavailable.
     pub azimuth: Option<f32>,
-    /// Signal-to-noise ratio in dB-Hz; `None` if unavailable.
+    /// Signal-to-noise ratio in dB-Hz. `None` if unavailable.
     pub snr: Option<f32>,
 }
 
@@ -150,9 +150,9 @@ impl Constellation {
 /// A user-defined map annotation with an optional label and icon.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Annotation {
-    /// Display label; `None` or empty string renders as unlabelled.
+    /// Display label. `None` or empty string renders as unlabelled.
     pub label: Option<String>,
-    /// Visual icon; `None` defaults to `MarkerIcon::Pin` when loaded.
+    /// Visual icon. `None` defaults to `MarkerIcon::Pin` when loaded.
     pub icon: Option<MarkerIcon>,
     pub time: DateTime<Utc>,
 }
@@ -254,7 +254,7 @@ impl MarkerIcon {
 
     /// Lower snake_case wire form, e.g. `MarkerIcon::SatelliteLost.name() == "satellite_lost"`.
     ///
-    /// Inverse of [`MarkerIcon::try_from_lower_case`]; both are derived from the
+    /// Inverse of [`MarkerIcon::try_from_lower_case`]. Both are derived from the
     /// variant names via `strum`, so they always agree.
     pub(crate) fn name(self) -> &'static str {
         self.into()
@@ -289,7 +289,7 @@ mod marker_icon_tests {
     }
 
     /// The wire form is part of the on-disk `.gtd` format
-    /// (`Annotation::icon`/`EventMarkerIconChoice::Icon`); pin it down so a
+    /// (`Annotation::icon`/`EventMarkerIconChoice::Icon`). Pin it down so a
     /// rename of a variant - which would silently change `strum`'s derived
     /// snake_case form - is caught here rather than at file-read time.
     #[test]
@@ -327,7 +327,7 @@ mod constellation_tests {
     /// The display name is the single source of truth for the "BeiDou" vs
     /// "Beidou" vs "BEIDOU" spelling that was previously re-typed independently
     /// at every call site (UI labels, `read::constellation_names`, Python
-    /// bindings); pin it down so a future edit has to change it here.
+    /// bindings). Pin it down so a future edit has to change it here.
     #[test]
     fn display_name_is_canonical_spelling() {
         assert_eq!(Constellation::Gps.display_name(), "GPS");
@@ -337,7 +337,7 @@ mod constellation_tests {
     }
 
     /// The lowercase wire form is part of the on-disk `.gtd` format
-    /// (`tracked_sats/constellation` group attributes); pin it down so a rename
+    /// (`tracked_sats/constellation` group attributes). Pin it down so a rename
     /// of a variant - which would silently change `strum`'s derived lowercase
     /// form - is caught here rather than at file-read time.
     #[test]
@@ -429,7 +429,7 @@ pub struct Marker {
 /// An event marker to add to the nav file.
 ///
 /// The builder computes the geographic position by interpolating surrounding
-/// nav fixes; producers supply only a timestamp.
+/// nav fixes. Producers supply only a timestamp.
 ///
 /// Construct via `EventMarker::builder().build()` - it validates the variant path and returns
 /// `Err` immediately if it is malformed.
@@ -543,9 +543,9 @@ impl From<Option<MarkerIcon>> for EventMarkerIconChoice {
 pub struct EventMarkerStyle {
     /// Must exactly match a `variant_path` used in the event markers.
     pub variant_path: String,
-    /// Icon shape; defaults to `Auto` (Pin).
+    /// Icon shape. Defaults to `Auto` (Pin).
     pub icon: EventMarkerIconChoice,
-    /// Fill color; defaults to `Auto` (hash-derived from the variant path).
+    /// Fill color. Defaults to `Auto` (hash-derived from the variant path).
     pub color: EventMarkerColor,
 }
 

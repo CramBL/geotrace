@@ -87,7 +87,7 @@ const SUPERBLOCK_V2_LEN: usize = 48;
 /// matching libhdf5's `H5_checksum_lookup3`.
 ///
 /// Needed because clearing the superblock status flag changes a byte the
-/// superblock checksum covers; libhdf5 exposes no API to do this (only the
+/// superblock checksum covers. libhdf5 exposes no API to do this (only the
 /// standalone `h5clear` tool, which is not bundled), so the checksum must be
 /// recomputed by hand.
 fn jenkins_lookup3(data: &[u8]) -> u32 {
@@ -287,7 +287,7 @@ fn copy_recording_native(
 /// place, preserving all recordings, their data, and the root attributes.
 ///
 /// The structural groups (`by_identity`, each identity, each recording) are
-/// re-created natively so libhdf5 can extend them later; only the leaf data is
+/// re-created natively so libhdf5 can extend them later. Only the leaf data is
 /// object-copied. The rebuilt file then atomically replaces the original.
 pub(crate) fn migrate_to_native(db_path: &Path) -> Result<(), InternalError> {
     let src = hdf5::File::open(db_path)?;
@@ -577,7 +577,7 @@ fn copy_attr(src: &Group, dst: &Group, name: &str) -> Result<(), InternalError> 
         | TypeDescriptor::FixedAscii(_) => {
             // Re-store every string attribute as fixed-length (see
             // write_string_attr) so its space is reclaimed when the recording is
-            // deleted; reading the original is the subtle part (see read_string_attr).
+            // deleted. Reading the original is the subtle part (see read_string_attr).
             let s = read_string_attr(&attr, &descriptor)?;
             write_string_attr(dst, name, &s)?;
         }
@@ -603,10 +603,10 @@ fn copy_attr(src: &Group, dst: &Group, name: &str) -> Result<(), InternalError> 
 /// heap, which libhdf5 does NOT reclaim across open/close sessions - so writing
 /// them per recording made the database file grow without bound as recordings
 /// churned. The >= 8 KiB fall-back keeps a pathologically long string from being
-/// truncated; one such string is far too rare to reintroduce unbounded growth.
+/// truncated. One such string is far too rare to reintroduce unbounded growth.
 ///
 /// Every per-recording string attribute must be written through this function so
-/// none lands in the global heap; do not call `new_attr::<VarLenUnicode>()`
+/// none lands in the global heap. Do not call `new_attr::<VarLenUnicode>()`
 /// directly on a recording group. The bounded-file invariant is guarded by
 /// `gt_history`'s `file_size_stays_bounded_across_delete_reinsert_cycles` test.
 fn write_string_attr(group: &Group, name: &str, val: &str) -> Result<(), InternalError> {
@@ -890,7 +890,7 @@ mod tests {
     #[test]
     fn jenkins_lookup3_covers_all_tail_lengths() {
         // Exercise every fall-through arm (tail length 0..=12 after the main
-        // loop) so a bug in any tail byte would change the digest; the values
+        // loop) so a bug in any tail byte would change the digest. The values
         // are self-consistent regression anchors.
         let data: Vec<u8> = (0..40_u8).collect();
         for len in 0..=data.len() {

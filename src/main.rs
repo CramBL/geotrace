@@ -14,11 +14,10 @@ fn main() -> eframe::Result {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
 
     // CLI flags that must not open a window. Release smoke tests run
-    // `geotrace --version` to confirm the installed binary launches and reports
-    // the expected version without bringing up the GUI. On Windows the release
-    // build has no attached console, so stdout may not reach the terminal; a
-    // clean exit code is the cross-platform signal and the printed version is
-    // checked on Unix.
+    // `geotrace --version` to confirm the installed binary launches without the
+    // GUI. On Windows the release build has no attached console, so the clean
+    // exit code is the cross-platform signal and the printed version is checked
+    // on Unix.
     if raw_args.iter().any(|a| a == "--version" || a == "-V") {
         println!("geotrace {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
@@ -40,7 +39,7 @@ fn main() -> eframe::Result {
     // Dependencies whose debug logging floods the output with per-frame or
     // per-request noise, capped at warn so `RUST_LOG=debug` stays readable
     // for GeoTrace's own logs:
-    // - winit traces a span for every window call; through the tracing-log
+    // - winit traces a span for every window call. Through the tracing-log
     //   bridge they arrive under both the module path and `tracing::span`.
     // - The wgpu stack logs every surface reconfiguration, shader
     //   compilation, and resource creation.
@@ -71,7 +70,7 @@ fn main() -> eframe::Result {
     // Safety net for very large recordings: egui packs the whole frame into
     // one vertex buffer, and eframe's default device limits cap buffers at
     // 256 MiB - exceeding that is a fatal wgpu validation error. Request the
-    // adapter's actual maximum instead; the renderers also decimate to keep
+    // adapter's actual maximum instead. The renderers also decimate to keep
     // vertex counts low, so this should rarely be needed.
     let mut wgpu_setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     wgpu_setup.device_descriptor = std::sync::Arc::new(|adapter| {

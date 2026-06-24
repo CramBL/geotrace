@@ -1,7 +1,7 @@
 //! Startup update check.
 //!
 //! Compiled only under the `self-update` feature, which dist enables for the
-//! released binaries; builds from source or via package managers omit it and
+//! released binaries. Builds from source or via package managers omit it and
 //! carry no updater code at all.
 //!
 //! The app checks for a newer release on startup (in release builds, when not
@@ -14,7 +14,7 @@
 //! - **No receipt** (Homebrew, MSI, or a manually downloaded build): self-replace
 //!   would fight the package manager, so we never pop a dialog. Instead the app
 //!   shows a subtle "update available" hint next to the version (see
-//!   [`UpdateChecker::badge_version`]); the user updates the normal way.
+//!   [`UpdateChecker::badge_version`]). The user updates the normal way.
 //!
 //! Either way we drive `axoupdater`, which only matches releases that carry the
 //! GeoTrace installer assets. SDK releases (tagged `geotrace-sdk-v*`) carry no
@@ -48,7 +48,7 @@ enum CheckOutcome {
 enum InstallStatus {
     Idle,
     Running,
-    /// The new version was installed; the user must restart to apply it.
+    /// The new version was installed. The user must restart to apply it.
     Done,
     Failed(String),
 }
@@ -115,7 +115,7 @@ impl UpdateChecker {
 
     /// Render the self-update prompt when an in-place update is available and not
     /// skipped/dismissed. Only installs with a receipt (shell/PowerShell) reach
-    /// the dialog; package-manager and manual builds use [`Self::badge_version`]
+    /// the dialog. Package-manager and manual builds use [`Self::badge_version`]
     /// instead. Returns an event the app should act on (e.g. persist a skip).
     pub fn ui(
         &mut self,
@@ -138,7 +138,7 @@ impl UpdateChecker {
             }
         };
         // Builds that can't self-replace never get a dialog (it would just fight
-        // the package manager); they show a subtle badge instead.
+        // the package manager), they show a subtle badge instead.
         if !self_update {
             return None;
         }
@@ -275,7 +275,7 @@ impl UpdateChecker {
 }
 
 /// Build the current-thread runtime the background threads use to drive
-/// `axoupdater`'s async API (reqwest needs a reactor; there is none on a bare
+/// `axoupdater`'s async API (reqwest needs a reactor, there is none on a bare
 /// `std::thread`).
 fn runtime() -> Result<tokio::runtime::Runtime, String> {
     tokio::runtime::Builder::new_current_thread()

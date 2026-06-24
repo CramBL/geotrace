@@ -7,7 +7,7 @@ hierarchy - e.g. ``"connectivity/agps/request"`` - so GeoTrace can
 group and filter them by prefix in the Events panel.
 
 Event markers are added via ``builder.add()``.
-Per-variant colors and icons are optional; unlisted variants get a
+Per-variant colors and icons are optional. Unlisted variants get a
 deterministic fallback color derived from their path.
 """
 

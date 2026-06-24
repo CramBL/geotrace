@@ -1,10 +1,6 @@
-// Embed the app icon and version metadata into the Windows executable so
-// Explorer, the taskbar, and the installer's Start Menu/Desktop shortcuts show
-// it. winres is a Windows-only build dependency, so this whole block compiles
-// away on other platforms.
-//
-// A failure here means a Windows release would ship without its icon/metadata,
-// so panic and fail the build loudly rather than hiding it.
+// Embed the app icon and version metadata into the Windows executable (winres
+// is Windows-only, so this compiles away elsewhere). A failure here would ship
+// a Windows release without its icon/metadata, so panic and fail loudly.
 #![allow(
     clippy::expect_used,
     reason = "a build script must fail loudly if embedding Windows resources fails"
@@ -15,7 +11,7 @@ fn main() {
     {
         let mut res = winres::WindowsResource::new();
         res.set_icon("assets/geotrace_icon.ico");
-        // winres fills version/company from Cargo metadata; set the display
+        // winres fills version/company from Cargo metadata. Set the display
         // strings explicitly so they read "GeoTrace" rather than the crate name.
         res.set("ProductName", "GeoTrace");
         res.set(

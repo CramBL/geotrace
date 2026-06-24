@@ -5,7 +5,7 @@ pub use gt_types::history::{
 };
 use std::path::PathBuf;
 
-// Compile and export the pure Rust implementation
+// Pure-Rust backend
 #[cfg(feature = "backend-pure")]
 pub mod pure_impl {
     pub use gt_history_backend_pure::{PureDb, extract_meta};
@@ -13,7 +13,7 @@ pub mod pure_impl {
 #[cfg(feature = "backend-pure")]
 pub type ActiveDb = pure_impl::PureDb;
 
-// Compile and export the C-backed implementation
+// C-backed (libhdf5) backend
 #[cfg(feature = "backend-sys")]
 pub mod sys_impl {
     pub use gt_history_backend_sys::SysDb;
@@ -21,7 +21,6 @@ pub mod sys_impl {
 #[cfg(feature = "backend-sys")]
 pub type ActiveDb = sys_impl::SysDb;
 
-// Enforce mutually exclusive features at compile time
 #[cfg(all(feature = "backend-sys", feature = "backend-pure"))]
 compile_error!("Features 'backend-sys' and 'backend-pure' are mutually exclusive.");
 

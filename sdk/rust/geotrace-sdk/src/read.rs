@@ -70,7 +70,7 @@ fn read_nav_points(file: &File) -> Result<Vec<NavPoint>, Error> {
     let headings = grp.dataset("heading")?.read_f64()?;
     let speeds = grp.dataset("speed_mps")?.read_f64()?;
 
-    // sys_time_us and eph_m are absent in older files; default to sentinel/NaN.
+    // sys_time_us and eph_m are absent in older files. Default to sentinel/NaN.
     let sys_times: Vec<u64> = grp
         .dataset("sys_time_us")
         .and_then(|ds| ds.read_u64())
@@ -142,7 +142,7 @@ fn attach_satellite_data(
     let r = nav_point_idx.len();
 
     // v2: gps_time_us / sys_time_us (both f64, NaN = absent).
-    // v1: single "time" dataset mapped to gps_time; sys_time absent.
+    // v1: single "time" dataset mapped to gps_time. sys_time absent.
     let (report_gps_times, report_sys_times): (Vec<u64>, Vec<u64>) =
         if let Ok(ds) = sat_grp.dataset("gps_time_us") {
             let gps = ds.read_u64()?;
@@ -152,7 +152,7 @@ fn attach_satellite_data(
                 .unwrap_or_else(|_| vec![u64::MAX; r]);
             (gps, sys)
         } else {
-            // v1 file: old "time" (i64) treated as gps_time; no sys_time.
+            // v1 file: old "time" (i64) treated as gps_time. No sys_time.
             let times = sat_grp.dataset("time")?.read_i64()?;
             let gps = times.iter().map(|&us| us.cast_unsigned()).collect();
             let sys = vec![u64::MAX; r];

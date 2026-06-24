@@ -5,7 +5,7 @@ name: App release title
 # hand-edited. Once dist's "Release" workflow finishes for an `app/v*` tag,
 # rename the release to "GeoTrace X.Y.Z".
 #
-# zizmor flags workflow_run as a dangerous trigger; this use is safe — the
+# zizmor flags workflow_run as a dangerous trigger. This use is safe: the
 # `branches: ['app/**']` filter only matches a maintainer-pushed release tag,
 # the job is gated to a successful run, and it only edits the release title.
 on: # zizmor: ignore[dangerous-triggers]

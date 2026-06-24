@@ -15,7 +15,7 @@ pub mod copy;
 /// Extract recording metadata from raw GTD file bytes.
 ///
 /// libhdf5 reads from a path rather than a byte slice, so the bytes are staged
-/// in a temporary file. Counts come from the relevant datasets' shapes; the
+/// in a temporary file. Counts come from the relevant datasets' shapes. The
 /// time bounds from the first and last `nav_points/time` entries.
 pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
     let tmp = tempfile::NamedTempFile::new()?;
@@ -42,7 +42,7 @@ pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
         (0, 0)
     };
 
-    // Count rows in an optional data group's index dataset; absent groups
+    // Count rows in an optional data group's index dataset. Absent groups
     // contribute zero.
     let count_rows = |group: &str, dataset: &str| -> u64 {
         file.group(group)
@@ -64,7 +64,7 @@ pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
 }
 
 /// Map libhdf5's "file is already open for write" / consistency-flags open
-/// failure to the recoverable [`DbError::WriteLocked`]; pass other errors through.
+/// failure to the recoverable [`DbError::WriteLocked`]. Pass other errors through.
 fn into_write_lock(e: DbError) -> DbError {
     if let DbError::Backend(msg) = &e
         && (msg.contains("already open for write")
@@ -134,7 +134,7 @@ impl HistoryDatabase for SysDb {
             // app can offer to clear it (see `clear_write_lock`).
             Self::validate_existing(path).map_err(into_write_lock)?;
             // A database written by the pure-Rust backend can be read but not
-            // extended by libhdf5; migrate it to a native file once so inserts
+            // extended by libhdf5. Migrate it to a native file once so inserts
             // and deletes work.
             if !crate::copy::is_native_writable(path) {
                 log::info!(

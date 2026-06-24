@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Convert GPS data from CSV text into a .gtd GeoTrace data file.
 
-Scenario: your GPS logger exports fixes as CSV rows.  Parse each row, feed the
+Scenario: your GPS logger exports fixes as CSV rows. Parse each row, feed the
 fields to the builder, then finish() to produce a validated file ready for
-GeoTrace to open.  In a real workflow you would read the CSV from a file
+GeoTrace to open. In a real workflow you would read the CSV from a file
 instead of the inline CSV_DATA constant.
 
 Timestamps here are whole Unix epoch seconds to keep the parser tiny.

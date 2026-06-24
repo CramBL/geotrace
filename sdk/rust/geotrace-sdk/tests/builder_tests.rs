@@ -139,7 +139,7 @@ fn satellite_association_narrowed_window_within() -> Result<(), BuildError> {
 }
 
 /// Two reports both within the window of the same fix.
-/// The closer report wins and is assigned to the fix; the runner-up must NOT
+/// The closer report wins and is assigned to the fix. The runner-up must NOT
 /// be silently dropped - it must become a ghost fix instead.
 ///
 /// Before the fix, `had_candidate` tracking caused the losing report to be
@@ -149,7 +149,7 @@ fn contested_loser_becomes_ghost_fix() -> Result<(), BuildError> {
     // Fix A at t=0, Fix B at t=3 000 ms (well separated so the ghost sits clearly between them).
     // Report R1 at t=400 ms → 400 ms from A (wins), 2 600 ms from B (outside window).
     // Report R2 at t=450 ms → 450 ms from A (loses to R1), 2 550 ms from B (outside window).
-    // R2 has no valid fix to attach to; it must become a ghost fix between A and B.
+    // R2 has no valid fix to attach to. It must become a ghost fix between A and B.
     //
     // Ghost fixes between two real fixes receive the bearing heading, NOT None.
     // We therefore identify each point by the satellite constellation it carries.
@@ -207,7 +207,7 @@ fn contested_loser_becomes_ghost_fix() -> Result<(), BuildError> {
         points.len()
     );
 
-    // Fix A is the first point (sorted by time); it must carry R1 (GPS).
+    // Fix A is the first point (sorted by time). It must carry R1 (GPS).
     let r1_rep = points[0]
         .satellites
         .as_ref()
@@ -218,13 +218,13 @@ fn contested_loser_becomes_ghost_fix() -> Result<(), BuildError> {
         "fix A must carry R1 (GPS)"
     );
 
-    // Fix B is the last point; it must have no satellite report.
+    // Fix B is the last point. It must have no satellite report.
     assert!(
         points[2].satellites.is_none(),
         "fix B must have no satellite report"
     );
 
-    // The ghost is the middle point; it must carry R2 (Glonass).
+    // The ghost is the middle point. It must carry R2 (Glonass).
     let r2_rep = points[1]
         .satellites
         .as_ref()
@@ -238,11 +238,11 @@ fn contested_loser_becomes_ghost_fix() -> Result<(), BuildError> {
     Ok(())
 }
 
-/// Three reports compete for two fixes; the losing middle report must become a ghost.
+/// Three reports compete for two fixes. The losing middle report must become a ghost.
 ///
 /// Fix A at t=0 ms, Fix B at t=3 000 ms.
 /// Report R1 at t=100 ms → assigned to A (100 ms distance).
-/// Report R2 at t=200 ms → also wants A (200 ms), loses; also outside window of B → ghost.
+/// Report R2 at t=200 ms → also wants A (200 ms), loses. Also outside window of B → ghost.
 /// Report R3 at t=2 900 ms → assigned to B (100 ms distance).
 ///
 /// Ghost fixes between real fixes carry the bearing heading (not `None`), so we
@@ -449,7 +449,7 @@ fn first_ghost_after_last_fix_is_1m_ahead() -> Result<(), BuildError> {
         "ghost after last fix must have no heading (circle indicator)"
     );
 
-    // heading=0° means due north; lat increases by ~1/111_320 degrees per metre.
+    // heading=0° means due north. Lat increases by ~1/111_320 degrees per metre.
     // The ghost should be ~1 m north (not 2 m).
     let ghost_lat = ghost.fix.lat.as_degrees();
     let one_metre_deg = 1.0_f64 / 111_320.0; // rough but sufficient
@@ -480,7 +480,7 @@ fn orphan_reports_before_first_fix_are_dropped() -> Result<(), BuildError> {
 
     let nav_file = recorder.finish()?;
 
-    // Only the real fix; the pre-fix report produces no ghost.
+    // Only the real fix. The pre-fix report produces no ghost.
     assert_eq!(
         nav_file.nav_points().len(),
         1,
@@ -571,7 +571,7 @@ fn annotation_after_last_fix_lenient() -> Result<(), Box<dyn std::error::Error>>
 
 #[test]
 fn annotation_out_of_range_strict_error() {
-    // Only annotation errors are returned; satellite-association issues become ghost fixes.
+    // Only annotation errors are returned. Satellite-association issues become ghost fixes.
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(simple_fix(0));
     // These two reports are well outside the window → ghost fixes, not errors.
@@ -598,7 +598,7 @@ fn no_nav_fixes_with_annotations_lenient() {
 #[test]
 fn unsorted_insertion() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
-    // Insert in reverse chronological order; finish() must sort correctly.
+    // Insert in reverse chronological order. finish() must sort correctly.
     for i in (0..5).rev() {
         recorder.add_nav_fix(simple_fix(i * 1000));
         recorder.add_satellite_report(simple_report(i * 1000 + 100));

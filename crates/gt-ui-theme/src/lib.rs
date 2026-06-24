@@ -79,7 +79,7 @@ pub fn track_color(fi: usize, ti: usize) -> Color32 {
     TRACK_COLORS[idx % TRACK_COLORS.len()]
 }
 
-/// Map a [`SignalQuality`] tier to a colour on a green → red gradient.
+/// Map a [`SignalQuality`](gt_types::SignalQuality) tier to a colour on a green → red gradient.
 pub fn snr_color(quality: gt_types::SignalQuality) -> Color32 {
     use gt_types::SignalQuality;
     match quality {

@@ -1,7 +1,7 @@
 """Forbid floating comments in Rust, C/C++, and YAML source files.
 
 A floating comment is a run of consecutive comment lines with a blank line above
-the run and a blank line below it — a section label detached from its code, whether
+the run and a blank line below it: a section label detached from its code, whether
 it's one line or a whole paragraph of them.
 
 Fix by removing the blank line between the comment and the code below it, converting

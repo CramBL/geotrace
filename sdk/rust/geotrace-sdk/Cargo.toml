@@ -3,7 +3,7 @@ name = "geotrace-sdk"
 description = "SDK for generating geotrace (.gtd) files"
 # The SDK has its own release cadence, independent of the GUI app (which uses
 # `version.workspace`). Keep this in lockstep with the other SDK crates
-# (geotrace-sdk-macros, geotrace-c) and sdk/python/geotrace-py; bump them
+# (geotrace-sdk-macros, geotrace-c) and sdk/python/geotrace-py. Bump them
 # together and tag SDK releases as `geotrace-sdk-vX.Y.Z`.
 version = "0.2.0"
 edition.workspace = true

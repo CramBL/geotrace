@@ -80,13 +80,15 @@ _flow TRACK KIND VERSION:
     printf '%sEnter runs the shown command, s skips it, q quits.%s\n' "$dim" "$reset"
 
     ask git switch -c "$branch"
+    # The bump sets every version spot and promotes the changelog to $version.
     ask just qa::"$bump" "$version"
 
-    # A regular release with an unchanged version (e.g. the very first release,
-    # where trunk already carries it) needs no bump and no PR — tag trunk directly.
+    # If the bump was a no-op (version set and changelog already promoted, e.g.
+    # the first release where trunk already carries it) there is no PR to make:
+    # tag trunk directly.
     if [ "$kind" = "release" ] && git diff --quiet; then
       echo
-      echo "Manifest is already at $version, so there is nothing to bump or merge."
+      echo "Version and changelog are already at $version, so there is nothing to bump or merge."
       echo "Tag $trunk directly instead:"
       echo "  git switch $trunk && git tag $tag && git push origin $tag"
       echo "Then delete this branch: git switch $trunk && git branch -D $branch"
@@ -112,14 +114,12 @@ _flow TRACK KIND VERSION:
     ask git switch "$trunk"
     ask git pull --ff-only
 
-    # Never tag an unmerged trunk: confirm the bump actually landed before tagging.
+    # Confirm the bump landed on trunk before tagging. The guard checks the
+    # version spots and the release's changelog section.
     if [ "$track" = "sdk" ]; then
       just qa::check-versions --expect "$version"
     else
-      grep -q "^version = \"$version\"\$" Cargo.toml || {
-        echo "error: Cargo.toml on $trunk is not at $version — was the PR merged?" >&2
-        exit 1
-      }
+      just qa::check-app --expect "$version"
     fi
 
     ask git tag "$tag"

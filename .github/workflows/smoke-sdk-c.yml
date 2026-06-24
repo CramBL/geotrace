@@ -9,7 +9,7 @@ name: Smoke / C SDK
 #   - tarball-unix (Linux + macOS): download the release archive and point CMake
 #     at it. Runs on every release, including prereleases.
 #   - tarball-windows: the same, with the MSVC archive.
-#   - brew (Linux + macOS): `brew install` — stable releases only, since the
+#   - brew (Linux + macOS): `brew install`, stable releases only, since the
 #     Homebrew formula isn't published for prereleases.
 on:
   workflow_call:
@@ -32,7 +32,7 @@ env:
   TAP: CramBL/homebrew-tap
   # The consumer project, written to ./consumer by each job and built with
   # find_package(GeoTraceC). Defined once here so every install path builds the
-  # identical program — what a downstream project does with the installed SDK.
+  # identical program, what a downstream project does with the installed SDK.
   CONSUMER_CMAKE: |
     cmake_minimum_required(VERSION 3.21)
     project(consumer C)

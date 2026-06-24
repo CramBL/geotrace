@@ -3,7 +3,7 @@
  *
  * Scenario: your GPS unit logs fixes to one source, and a separate system (a
  * test harness, an annotation tool, a sensor log) records named events with
- * their own timestamps.  Both are added independently to the builder; finish()
+ * their own timestamps.  Both are added independently to the builder. finish()
  * sorts everything by time and interpolates each annotation's map position from
  * the two surrounding GPS fixes.
  */

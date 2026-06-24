@@ -2,7 +2,7 @@ name: CI / SDK Prebuilt Libraries
 # Demonstrates that the C SDK can be consumed WITHOUT the Rust toolchain: one
 # job builds the library with Rust and uploads it as a CI artifact, and a
 # separate job downloads only that artifact and builds + runs a C consumer
-# against it — mirroring a real GitHub Releases pipeline.
+# against it, mirroring a real GitHub Releases pipeline.
 on:
   push:
     branches: [trunk]
@@ -88,7 +88,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # Intentionally no Rust toolchain — this job proves that downstream
+      # Intentionally no Rust toolchain. This job proves that downstream
       # users can build against a prebuilt library without rustup.
       - name: Set up SDK toolchain
         uses: ./.github/actions/setup-sdk-toolchain
@@ -189,7 +189,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # Intentionally no Rust toolchain — this job proves downstream users can
+      # Intentionally no Rust toolchain. This job proves downstream users can
       # build against a prebuilt library without rustup. Keep the runner's cmake
       # on Windows (cmake: false): setup-cpp's older cmake defaults the generator
       # to Ninja and breaks the MSBuild "-A x64" path.

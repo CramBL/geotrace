@@ -357,7 +357,7 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
         )
         .with_chunks(&[k_chunk])
         .with_deflate(6);
-    // Label rows are 256 B each; chunk by 32 rows to stay at ~8 KiB per chunk.
+    // Label rows are 256 B each. Chunk by 32 rows to stay at ~8 KiB per chunk.
     let label_row_chunk = (CHUNK_SIZE / 256).max(1);
     grp.create_dataset("label")
         .with_u8_data(&label_flat)
@@ -367,7 +367,7 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
             AttrValue::String("UTF-8 null-padded to 256 bytes, max 255 content bytes".into()),
         )
         .set_attr("truncated", AttrValue::I32(i32::from(any_truncated)))
-        // Chunk by rows; shuffle is a no-op for u8 (1-byte elements) so omit it.
+        // Chunk by rows. Shuffle is a no-op for u8 (1-byte elements) so omit it.
         .with_chunks(&[label_row_chunk, 256])
         .with_deflate(6);
     fb.add_group(grp.finish());

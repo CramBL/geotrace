@@ -13,13 +13,11 @@ use strum::IntoEnumIterator;
 /// Chip color, label, and optional hover tooltip for each [`MetricKind`].
 ///
 /// `MetricKind` lives in `gt_types` (shared with the persisted settings, see
-/// `geotrace::settings::PlotSettings::metric`); these are presentation
+/// `geotrace::settings::PlotSettings::metric`). These are presentation
 /// details specific to this widget, so they live here as an extension trait
 /// rather than on the type itself. Together with the `match` in
 /// [`MetricVisibility::field`] and [`MetricVisibility::field_mut`], adding a
-/// variant forces a compile error here until every arm is filled in — chip
-/// interaction, color lookup, label lookup, and mipmap dispatch all go
-/// through one type rather than parallel arrays and magic-number match arms.
+/// variant forces a compile error here until every arm is filled in.
 trait MetricKindUi {
     fn color(self) -> Color32;
     fn label(self) -> &'static str;
@@ -95,7 +93,7 @@ const FILE_SHADE_FACTORS: [i16; 7] = [0, 22, -22, 12, -12, 32, -32];
 
 /// File-level line styles to keep perfectly overlapping lines distinguishable.
 ///
-/// Color still carries metric identity; style only disambiguates file source.
+/// Color still carries metric identity. Style only disambiguates file source.
 const FILE_LINE_STYLES: [LineStyle; 5] = [
     LineStyle::Solid,
     LineStyle::Dashed { length: 6.0 },
@@ -128,7 +126,7 @@ const SWATCH_DOT_RADIUS: f32 = 1.7;
 
 /// Overlap budget expressed as a multiple of the single-track target
 /// (`≈ 2 × plot_width_px`).  Tracks that overlap in time each span the full
-/// width; this many of them can do so at full resolution before [`budget_cap`]
+/// width.  This many of them can do so at full resolution before [`budget_cap`]
 /// starts sharing the budget between them.  See [`budget_cap`].
 const BUDGET_TRACK_MULTIPLE: usize = 8;
 
@@ -153,7 +151,7 @@ fn single_target(available_width: f32) -> usize {
 /// N of them would each request [`single_target`] points.  Sharing a budget of
 /// `single × BUDGET_TRACK_MULTIPLE` across the visible tracks bounds the total
 /// handed to egui_plot in that worst case.  Tracks that occupy only part of the
-/// width get far less via [`track_target`]; this cap only bites when many tracks
+/// width get far less via [`track_target`].  This cap only bites when many tracks
 /// pile up in the same time range.
 fn budget_cap(available_width: f32, visible_count: usize) -> usize {
     let single = single_target(available_width);
@@ -566,7 +564,7 @@ pub fn show_track_plot(
         return;
     }
 
-    // Per-series count, for the line-name prefix; distinct from the
+    // Per-series count, for the line-name prefix.  Distinct from the
     // per-file count below, which gates the file legend overlay.
     let multi_track = visible_count > 1;
     let visible_files: Vec<usize> = {
@@ -580,7 +578,7 @@ pub fn show_track_plot(
     };
 
     // Draw the per-metric filter row before the plot so it consumes vertical
-    // space first; `ui.available_height()` below then gives the remainder.
+    // space first.  `ui.available_height()` below then gives the remainder.
     let hovered_chip = metric_filter_row(
         ui,
         &mut state.metric_vis,
@@ -679,7 +677,7 @@ pub fn show_track_plot(
         // Intersect the visible plot range with the active time filter.
         //
         // `eff_x_min`/`eff_x_max` may end up inverted when the active filter
-        // and the visible viewport don't overlap; `MipMap` normalizes that
+        // and the visible viewport don't overlap.  `MipMap` normalizes that
         // into an empty-range query (see `select_level_bounds`).
         let eff_x_min = filter_x_min.map_or(plot_x_min, |f| plot_x_min.max(f));
         let eff_x_max = filter_x_max.map_or(plot_x_max, |f| plot_x_max.min(f));
@@ -770,7 +768,7 @@ pub fn show_track_plot(
         state.applied_map_x_range = applied;
     }
     // `hovered_plot_item` is set by egui_plot when the cursor is within its own
-    // interact radius of a plotted item — the exact condition that causes
+    // interact radius of a plotted item, the exact condition that causes
     // egui_plot to show a hover label.  Use it directly so the map overlay
     // activates at precisely the same moment, with no custom approximation.
     state.plot_cursor_snapped =
@@ -970,7 +968,7 @@ fn metric_filter_row(
     let mut hovered_chip = None;
 
     ui.horizontal_wrapped(|ui| {
-        // Sync toggle - placed first, to the left of the grid button.
+        // Sync toggle.
         if ui
             .selectable_label(*sync_to_map, egui_phosphor::regular::LINK)
             .on_hover_text(if *sync_to_map {
@@ -983,7 +981,7 @@ fn metric_filter_row(
             *sync_to_map = !*sync_to_map;
         }
 
-        // Grid toggle - icon button with tooltip.
+        // Grid toggle.
         if ui
             .small_button(egui_phosphor::regular::GRID_FOUR)
             .on_hover_text(if *show_grid { "Hide grid" } else { "Show grid" })
@@ -992,7 +990,7 @@ fn metric_filter_row(
             *show_grid = !*show_grid;
         }
 
-        // Show/hide all - icon button with tooltip.
+        // Show/hide all.
         let eye_icon = if all_on {
             egui_phosphor::regular::EYE_SLASH
         } else {
@@ -1078,7 +1076,7 @@ fn metric_filter_row(
 /// opens a context menu with "Show only this".
 ///
 /// Returns `(show_only, hovered)` - `show_only` is `true` when the user chose
-/// "Show only this" from the context menu; `hovered` is `true` while the pointer
+/// "Show only this" from the context menu.  `hovered` is `true` while the pointer
 /// is over this chip.
 fn metric_chip(
     ui: &mut egui::Ui,
@@ -1343,7 +1341,7 @@ mod tests {
             "few-pixel track must hand over few points, got {tiny}"
         );
 
-        // An empty track stays minimal; a degenerate (zero-width) view never
+        // An empty track stays minimal.  A degenerate (zero-width) view never
         // divides by zero and falls back to the cap.
         assert_eq!(track_target(None, 0.0, 100.0, width, cap), 2);
         assert_eq!(track_target(Some((0.0, 1.0)), 5.0, 5.0, width, cap), cap);

@@ -47,7 +47,7 @@ pub enum GtdStatus {
 }
 
 // Pin every discriminant at compile time. These are the C ABI numbers and must
-// match `GtdStatus` in sdk/c/geotrace.h exactly; the build script (build.rs)
+// match `GtdStatus` in sdk/c/geotrace.h exactly. The build script (build.rs)
 // cross-checks the header so the two hand-written lists cannot drift.
 const _: () = {
     assert!(GtdStatus::Ok as u32 == 0);

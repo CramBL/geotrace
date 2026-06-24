@@ -152,7 +152,7 @@ fn disambig_closes_on_esc() {
 /// if !primary_is_tpv && ... { show_tooltip(…) }
 /// ```
 /// From the second frame onward `suppress_hover_labels` is true and individual
-/// tooltips are already suppressed; the compound label takes over.
+/// tooltips are already suppressed. The compound label takes over.
 fn generated_marker_tooltip_allowed(highlight: &MapHighlight) -> bool {
     !matches!(
         highlight.hover,
@@ -257,7 +257,7 @@ fn tooltip_suppressed_when_disambig_popup_open() {
     );
 }
 
-/// `suppress_hover_labels` defaults to false — renderers show tooltips normally
+/// `suppress_hover_labels` defaults to false. Renderers show tooltips normally
 /// when nothing special is active.
 #[test]
 fn suppress_hover_labels_defaults_false() {

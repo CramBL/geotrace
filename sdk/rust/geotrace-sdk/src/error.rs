@@ -58,7 +58,7 @@ pub enum EventMarkerError {
 /// Errors that can occur when building a [`NavFile`](crate::NavFile).
 #[derive(Debug, Clone, Copy, thiserror::Error)]
 pub enum BuildError {
-    /// The builder has no nav fixes; at least one is required to interpolate
+    /// The builder has no nav fixes. At least one is required to interpolate
     /// annotation positions. This is returned even in lenient mode.
     #[error("no nav fixes were added; at least one NavFix is required")]
     NoNavFixes,

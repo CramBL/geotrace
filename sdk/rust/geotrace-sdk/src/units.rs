@@ -3,7 +3,7 @@ use crate::error::Error;
 /// A point in time, wrapping [`chrono::DateTime<chrono::Utc>`].
 ///
 /// Construct from a raw integer timestamp with one of the explicit unit
-/// constructors; each constructor panics if the value is out of the representable
+/// constructors. Each constructor panics if the value is out of the representable
 /// range (which is impossible for any realistic GPS or system timestamp).
 /// A [`chrono::DateTime<chrono::Utc>`] converts into `Timestamp` via [`From`],
 /// so existing code that already has a `DateTime<Utc>` requires no change.
@@ -127,7 +127,7 @@ impl From<uom::si::f64::Angle> for Angle {
 /// A speed, stored internally as metres per second.
 ///
 /// Construct with [`Velocity::meter_per_second`], [`Velocity::kilometer_per_hour`],
-/// or [`Velocity::knot`]; read back with the matching `as_*` getter.
+/// or [`Velocity::knot`]. Read back with the matching `as_*` getter.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Velocity(f64);
 

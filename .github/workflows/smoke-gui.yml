@@ -1,7 +1,7 @@
 name: Smoke / GUI
 
 # Install the published GUI app the way a user would and run `geotrace --version`,
-# which exits before any window or GPU work. Asserts the version on Unix; on
+# which exits before any window or GPU work. Asserts the version on Unix. On
 # Windows the release build has no console, so a clean exit code is the signal.
 # Each step is one phase (install, then run) so the workflow reads as a guide.
 on:

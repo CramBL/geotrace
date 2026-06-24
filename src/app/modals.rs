@@ -41,7 +41,7 @@ pub fn show_delete_confirmation(
     };
     let count = confirm.items.len();
     let mut permanent = confirm.delete_permanently;
-    // Tracks backed by history that this remove touches; drives the wording and
+    // Tracks backed by history that this remove touches. Drives the wording and
     // whether the "delete permanently" option is even relevant.
     let removals = track_removals(&confirm.items, loaded_files);
     let affected_recordings = removals.len();
@@ -225,7 +225,7 @@ fn track_removals(keys: &[NodeKey], loaded_files: &[LoadedFile]) -> Vec<Recordin
         let track_indices: Vec<usize> = positions
             .iter()
             .filter_map(|ti| file.tracks.get(*ti))
-            // `metadata.index` is the 1-based display index; the stored track
+            // `metadata.index` is the 1-based display index. The stored track
             // table is 0-based, so shift down by one.
             .map(|t| t.metadata.index.saturating_sub(1))
             .collect();

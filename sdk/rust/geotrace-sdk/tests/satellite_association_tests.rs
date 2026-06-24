@@ -2,7 +2,7 @@
 //!
 //! See `docs/satellite-association.md` for the authoritative description of
 //! what these tests are verifying.  Tests are grouped by the phase they target
-//! (Phase 1 = nearest-fix assignment; Phase 2 = ghost-fix creation for orphans).
+//! (Phase 1 = nearest-fix assignment, Phase 2 = ghost-fix creation for orphans).
 #![expect(
     clippy::panic_in_result_fn,
     reason = "test functions mix ? propagation with assert! - both are correct in test code"
@@ -180,7 +180,7 @@ fn report_equidistant_goes_to_earlier_fix() -> Result<(), BuildError> {
 }
 
 /// Four fixes spaced 2 s apart, each with one nearby report.
-/// All reports must be matched; no ghost fixes created.
+/// All reports must be matched. No ghost fixes created.
 #[test]
 fn four_reports_matched_to_four_fixes_no_ghosts() -> Result<(), BuildError> {
     let mut recorder = NavFileBuilder::new().open();
@@ -343,7 +343,7 @@ fn zero_reports_all_fixes_have_no_satellite_data() -> Result<(), BuildError> {
 }
 
 /// Three reports all within the window of the same fix.
-/// The closest must win; the other two must become ghost fixes.
+/// The closest must win. The other two must become ghost fixes.
 #[test]
 fn three_reports_one_fix_only_closest_wins() -> Result<(), BuildError> {
     // Fix A at t=0, Fix B at t=5 000 ms (far enough that none of the reports reach it).
@@ -408,7 +408,7 @@ fn equidistant_reports_earlier_one_wins() -> Result<(), BuildError> {
 
     let nav_file = recorder.finish()?;
 
-    // Earlier report wins; one ghost for the loser.
+    // Earlier report wins. One ghost for the loser.
     assert_eq!(nav_file.nav_points().len(), 2);
     assert_eq!(
         first_constellation(&nav_file.nav_points()[0]),
@@ -487,7 +487,7 @@ fn second_ghost_after_last_fix_is_further_than_first() -> Result<(), BuildError>
         "second ghost must be further north than first"
     );
 
-    // First ghost ≈ 1 m ahead; second ≈ 1 + 2 = 3 m ahead from fix.
+    // First ghost ≈ 1 m ahead. Second ≈ 1 + 2 = 3 m ahead from fix.
     let deg_per_metre = 1.0_f64 / 111_320.0;
     let d1 = g1_lat - fix_lat;
     let d2 = g2_lat - fix_lat;
@@ -508,7 +508,7 @@ fn second_ghost_after_last_fix_is_further_than_first() -> Result<(), BuildError>
 /// Ghost fixes between two real fixes must be interpolated at the correct
 /// fractional position along the segment.
 ///
-/// Both fixes supply `gps_time` and `sys_time`; the GPS/system-clock delta is
+/// Both fixes supply `gps_time` and `sys_time`. The GPS/system-clock delta is
 /// known and constant, so `segment_corrected_gps_us` applies the correction.
 ///
 /// Setup:
@@ -689,7 +689,7 @@ fn pre_fix_dropped_post_fix_ghosted_in_same_batch() -> Result<(), BuildError> {
 }
 
 /// A single fix with no heading cannot supply a travel direction for
-/// dead-reckoned ghosts.  The builder must not panic; it must still produce
+/// dead-reckoned ghosts.  The builder must not panic. It must still produce
 /// ghost fixes at some valid position.
 #[test]
 fn ghost_after_fix_with_no_heading_does_not_panic() -> Result<(), BuildError> {
@@ -713,7 +713,7 @@ fn ghost_after_fix_with_no_heading_does_not_panic() -> Result<(), BuildError> {
     Ok(())
 }
 
-/// In the `--no-filter` pipeline, SAT records carry only `sys_time`; TPV records
+/// In the `--no-filter` pipeline, SAT records carry only `sys_time`. TPV records
 /// carry both `gps_time` and `sys_time`.
 /// When the GPS/sys-clock offset exceeds the association window a naive comparison
 /// of `SAT.sys_time` against `TPV.gps_time` places every report outside the window
@@ -731,7 +731,7 @@ fn ghost_after_fix_with_no_heading_does_not_panic() -> Result<(), BuildError> {
 ///   SAT 1: sys_time=t(3 000)  → corrected = t(1 000) → assigned to Fix 1
 ///   SAT 2: sys_time=t(4 000)  → corrected = t(2 000) → assigned to Fix 2
 ///
-/// Expected: all 3 SAT reports assigned; exactly 3 nav points (no ghost fixes).
+/// Expected: all 3 SAT reports assigned. Exactly 3 nav points (no ghost fixes).
 #[test]
 fn no_filter_sys_time_only_with_large_gps_offset_are_associated() -> Result<(), BuildError> {
     const GPS_SYS_OFFSET_MS: i64 = 2_000; // sys_time is 2 s ahead of gps_time
@@ -859,14 +859,14 @@ fn no_filter_1hz_all_sat_associated_with_large_gps_offset() -> Result<(), BuildE
 /// This test covers the common case (ε ≈ sys-time logging jitter, a few ms)
 /// and verifies correct constellation-per-fix assignment.
 ///
-/// Layout (D = 600 ms, GPS 600 ms ahead of sys; ε ≈ 0 ms):
+/// Layout (D = 600 ms, GPS 600 ms ahead of sys, ε ≈ 0 ms):
 ///   Fix 0:  gps=t(0),    sys=t(−600)  - GPS
 ///   Fix 1:  gps=t(1000), sys=t(400)   - Galileo
 ///   Fix 2:  gps=t(2000), sys=t(1400)  - GLONASS
 ///   Fix 3:  gps=t(3000), sys=t(2400)  - BeiDou
 ///   SAT i:  sys_time = Fix[i].sys_time  (same host-clock moment as the fix)
 ///
-/// Expected: Fix[i] carries SAT[i]'s constellation; 4 nav points, no ghosts.
+/// Expected: Fix[i] carries SAT[i]'s constellation. 4 nav points, no ghosts.
 #[test]
 fn gps_ahead_600ms_sat_associates_to_own_fix_not_neighbor() -> Result<(), BuildError> {
     const GPS_SYS_OFFSET_MS: i64 = 600; // GPS clock ahead of system clock
@@ -1192,7 +1192,7 @@ fn sys_time_direct_comparison_with_drifting_gps_offset() -> Result<(), BuildErro
 /// arrive after the GGA sentence on the same serial port.
 ///
 /// With drifting offsets the GPS-domain corrected estimate would compute a
-/// different rep_us for each epoch; the sys_time comparison is always exact.
+/// different rep_us for each epoch. The sys_time comparison is always exact.
 #[test]
 fn sys_time_direct_comparison_drifting_offset_with_sat_delay() -> Result<(), BuildError> {
     const SAT_DELAY_MS: i64 = 200; // realistic GPGSV logging delay

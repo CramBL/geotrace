@@ -4,7 +4,7 @@
 //! (a test harness, an annotation tool, a sensor log) records named events with
 //! timestamps from a different file or database.
 //!
-//! Both sources are added independently to [`NavRecorder`]; `finish()` sorts
+//! Both sources are added independently to [`NavRecorder`]. `finish()` sorts
 //! everything by time and interpolates each annotation's map position from the
 //! surrounding GPS fixes.
 

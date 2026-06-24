@@ -3,7 +3,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{Attribute, Data, DeriveInput, Fields, parse_macro_input};
 
-/// Derives [`geotrace_sdk::EventKind`] for an enum.
+/// Derives `geotrace_sdk::EventKind` for an enum.
 ///
 /// Each variant's name is converted to `snake_case` and becomes one segment of
 /// a slash-separated path string.  Nesting enums that all derive `EventKind`
@@ -15,7 +15,7 @@ use syn::{Attribute, Data, DeriveInput, Fields, parse_macro_input};
 /// `#[event_kind(lax, note = display)]`.
 ///
 /// - *(none)* / **`#[event_kind(strict)]`** - single-field tuple variants
-///   **delegate** to the inner type by default; a compile error is raised if
+///   **delegate** to the inner type by default. A compile error is raised if
 ///   the inner type does not implement `EventKind`.  This is the default.
 /// - **`#[event_kind(lax)]`** - single-field tuple variants are **leaves** by
 ///   default (emit only their own segment, no delegation).  Use
@@ -28,16 +28,16 @@ use syn::{Attribute, Data, DeriveInput, Fields, parse_macro_input};
 ///
 /// # Variant-level attributes
 ///
-/// - **`#[event_kind(leaf)]`** - always emit only this variant's segment;
-///   never delegate to the inner type even if it implements `EventKind`.
+/// - **`#[event_kind(leaf)]`** - always emit only this variant's segment.
+///   Never delegate to the inner type even if it implements `EventKind`.
 /// - **`#[event_kind(delegate)]`** - always delegate to the inner type's
 ///   `EventKind` implementation, appending its path after this variant's
 ///   segment.  In `lax` enum mode this opts a single variant into delegation.
 /// - **`#[event_kind(skip)]`** - `variant_path()` returns `None` for this
-///   variant; [`NavRecorder::add_event`](geotrace_sdk::NavRecorder::add_event)
+///   variant. `geotrace_sdk::NavRecorder::add_event`
 ///   silently ignores it.
 /// - **`#[event_kind(icon = <Name>)]`** - sets the
-///   [`MarkerIcon`](geotrace_sdk::MarkerIcon) for this variant (e.g.
+///   `geotrace_sdk::MarkerIcon` for this variant (e.g.
 ///   `#[event_kind(icon = Warning)]`).  Attributes can be combined:
 ///   `#[event_kind(leaf, icon = Check)]`.  Has no effect on delegating variants
 ///   - their icon is taken from the inner type's leaf.

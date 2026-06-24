@@ -76,13 +76,9 @@ def _process(cls: type, prefix: str) -> _Namespace:
 def event_kind(cls: type) -> _Namespace:
     """Class decorator that converts each attribute to its snake_case event path string.
 
-    Attributes in the class body become path strings derived from the attribute
-    name.
-    Inner classes become nested namespaces; their name in the parent class becomes
-    the next path segment.
-    An attribute set to ``event_kind.skip`` returns the skip sentinel rather than a
-    path string; ``NavFileBuilder.add()`` silently ignores an ``EventMarker`` whose
-    ``variant_path`` is the skip sentinel or ``None``.
+    Attributes in the class body become path strings, and inner classes become
+    nested namespaces. An attribute set to ``event_kind.skip`` returns the skip
+    sentinel, which ``NavFileBuilder.add()`` silently ignores.
 
     Example::
 

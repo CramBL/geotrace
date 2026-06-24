@@ -6,7 +6,7 @@
  * for GeoTrace to open.  In a real workflow you would read the CSV from a file
  * instead of the inline CSV_DATA constant.
  *
- * Timestamps here are whole Unix epoch seconds to keep the parser tiny; a
+ * Timestamps here are whole Unix epoch seconds to keep the parser tiny. A
  * logger emitting ISO-8601 strings would parse them as in gold_dataset.c.
  */
 

@@ -274,8 +274,8 @@ impl NavRecord for EventMarker {
 }
 
 impl NavRecorder {
-    /// Add any timeline object — a [`NavFix`], [`SatelliteReport`],
-    /// [`Annotation`], or [`EventMarker`] — dispatched by type via [`NavRecord`].
+    /// Add any timeline object (a [`NavFix`], [`SatelliteReport`],
+    /// [`Annotation`], or [`EventMarker`]), dispatched by type via [`NavRecord`].
     ///
     /// Ergonomic sugar for the matching `add_*` method:
     ///
@@ -391,21 +391,21 @@ impl NavRecorder {
     ///    configured window.  Reports with `gps_time` are matched directly.
     ///    Reports with only `sys_time` are first corrected into the GPS time domain
     ///    using the GPS/sys-clock delta derived from fixes that have both timestamps
-    ///    (`delta = gps_time − sys_time`); the nearest-anchor delta is applied
+    ///    (`delta = gps_time − sys_time`). The nearest-anchor delta is applied
     ///    before the window comparison.
     ///    This handles the `--no-filter` pipeline where SAT records carry only
     ///    `sys_time` but can be reliably placed once the clock offset is known from
     ///    the surrounding fixes.
     ///    When no delta can be computed (no fix has both timestamps), raw `sys_time`
     ///    is used as a fallback - same behaviour as before.
-    ///    Each fix receives at most one report; on equal distance the earlier report wins.
+    ///    Each fix receives at most one report. On equal distance the earlier report wins.
     /// 4. Orphan satellite reports get ghost nav fixes:
     ///    - Between two real fixes: position is interpolated proportionally using
     ///      the corrected GPS timestamp.  The correction applies the GPS/system-clock
     ///      delta derived from the `sys_time` fields of the surrounding NavFixes.
     ///      Falls back to even distribution when no delta information is available.
     ///    - After the last real fix: dead-reckoned 1 m for the first ghost (a
-    ///      fix-lost indicator), then 2 m per subsequent ghost; `heading = None`
+    ///      fix-lost indicator), then 2 m per subsequent ghost. `heading = None`
     ///      so the app renders circles.
     ///    - Before the first real fix: silently dropped (no reference position).
     /// 5. Interpolate each annotation's position from the surrounding fixes.
@@ -515,14 +515,14 @@ impl NavRecorder {
 ///
 /// **Between two real fixes** - position interpolated proportionally using the
 /// corrected GPS timestamp.  The correction adds the GPS/system-clock delta
-/// derived from the `sys_time` fields of the bounding NavFixes; the delta is
+/// derived from the `sys_time` fields of the bounding NavFixes. The delta is
 /// linearly interpolated between the two anchors.  Reports that already carry
 /// `gps_time` are used directly.  When no delta can be computed and no report
 /// carries `gps_time`, the builder falls back to even spatial distribution so
 /// the output is still usable.  Heading = spherical bearing, fix A to fix B.
 ///
 /// **After the last real fix** - dead-reckoned in the last known heading.  The
-/// first ghost is placed 1 m ahead (a fix-lost indicator); subsequent ghosts
+/// first ghost is placed 1 m ahead (a fix-lost indicator). Subsequent ghosts
 /// step 2 m each.  `heading = None` so the app renders circles.
 ///
 /// **Before the first real fix** - silently dropped (no reference position).
@@ -684,8 +684,8 @@ fn ghost_nav_points_for(
 
 /// Best-guess GPS timestamp (microseconds) for an orphan report.
 ///
-/// Used for segment partitioning only.  Reports with `gps_time` are exact;
-/// reports with only `sys_time` are corrected using the nearest delta anchor.
+/// Used for segment partitioning only.  Reports with `gps_time` are exact.
+/// Reports with only `sys_time` are corrected using the nearest delta anchor.
 fn best_guess_gps_us(report: &InternalSatReport, anchors: &[(i64, i64)]) -> Option<i64> {
     if let Some(gt) = report.gps_time {
         return Some(gt.timestamp_micros());
@@ -719,7 +719,7 @@ fn segment_corrected_gps_us(
         return gt.timestamp_micros();
     }
     let Some(st) = report.sys_time else {
-        // Both timestamps absent; shouldn't reach here after finish() pre-filter.
+        // Both timestamps absent. Shouldn't reach here after finish() pre-filter.
         return (effective_time(b).timestamp_micros() + effective_time(a).timestamp_micros()) / 2;
     };
     let st_us = st.timestamp_micros();
@@ -754,7 +754,7 @@ fn segment_corrected_gps_us(
 
 /// Corrected GPS timestamp for a dead-reckoned report after the last real fix.
 ///
-/// Uses the last fix's delta when available; falls back to sys_time or an
+/// Uses the last fix's delta when available. Falls back to sys_time or an
 /// index-based estimate if no timestamp is usable.
 fn dead_reckoned_gps_us(
     report: &InternalSatReport,
@@ -782,7 +782,7 @@ fn ghost_bearing(lat0_deg: f64, lon0_deg: f64, lat1_deg: f64, lon1_deg: f64) -> 
     (y.atan2(x).to_degrees() + 360.0) % 360.0
 }
 
-/// Move `dist_m` metres from (lat, lon) along `heading_deg`; return new (lat, lon).
+/// Move `dist_m` metres from (lat, lon) along `heading_deg`, return new (lat, lon).
 fn ghost_step(lat_deg: f64, lon_deg: f64, heading_deg: f64, dist_m: f64) -> (f64, f64) {
     const R: f64 = 6_371_000.0;
     let ang = dist_m / R;
@@ -1068,8 +1068,6 @@ fn interpolate_event_markers(
         .collect()
 }
 
-/// Counts of non-conforming satellite data issues found across a set of reports.
-///
 /// A structured data quality warning about satellite data in a recording.
 ///
 /// Returned by [`collect_satellite_warnings`].
@@ -1247,13 +1245,11 @@ impl SatelliteIssues {
 /// | Constellation | Valid native PRN range | Notes |
 /// |---|---|---|
 /// | GPS | 1–32 | PRN 33–64 = SBAS (WAAS, EGNOS, …) |
-/// | GLONASS | 1–32 | Slot numbers R01–R32; 65–96 = NMEA GNGSV offset not stripped |
+/// | GLONASS | 1–32 | Slot numbers R01–R32. 65–96 = NMEA GNGSV offset not stripped |
 /// | Galileo | 1–36 | E01–E36 |
 /// | BeiDou | 1–63 | C01–C63 (GEO + IGSO + MEO combined) |
 ///
 /// PRN 0 is invalid for all constellations.
-/// Validate satellite reports and return one human-readable warning string per issue
-/// category found.
 ///
 /// Accepts any iterator of `SatelliteReport` references so callers can pass a slice,
 /// a filtered iterator from a `NavFile`, etc. without needing to clone the reports.
@@ -1295,7 +1291,7 @@ fn collect_satellite_issues_inner<'a>(
 
             if prn == 0 {
                 issues.prn_zero += 1;
-                // Skip further range checks; PRN 0 is invalid for all constellations.
+                // Skip further range checks. PRN 0 is invalid for all constellations.
                 continue;
             }
 
@@ -1340,7 +1336,7 @@ fn collect_satellite_issues_inner<'a>(
                 if snr < 0.0 {
                     issues.snr_negative += 1;
                 } else if (snr - 99.0).abs() < 0.5 {
-                    // 99 dB-Hz is a common firmware sentinel for "no data"; callers
+                    // 99 dB-Hz is a common firmware sentinel for "no data". Callers
                     // should pass `None` for unavailable SNR rather than a sentinel value.
                     issues.snr_sentinel_99 += 1;
                 } else if snr > 60.0 {
@@ -1388,7 +1384,7 @@ pub(crate) fn micros_to_datetime(us: i64) -> DateTime<Utc> {
 
 /// Encode an optional `DateTime<Utc>` as u64 microseconds since Unix epoch.
 ///
-/// `u64::MAX` is used as the sentinel for `None`; it corresponds to year ~584,542
+/// `u64::MAX` is used as the sentinel for `None`. It corresponds to year ~584,542
 /// which is impossible for real data.  All valid GPS/system timestamps are
 /// positive i64 values that fit safely in u64.
 pub(crate) fn opt_datetime_to_u64(dt: Option<DateTime<Utc>>) -> u64 {

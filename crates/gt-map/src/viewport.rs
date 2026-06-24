@@ -95,7 +95,7 @@ pub(crate) struct TrackEntry {
     /// The plain trackline layer is drawn (file and track enabled, track
     /// layer visible, filter passed).
     pub(crate) trackline: bool,
-    /// Icon-fade classification of the TPV layer; `None` when that layer
+    /// Icon-fade classification of the TPV layer. `None` when that layer
     /// is hidden or the track is disabled or filtered out.
     pub(crate) fade: Option<TrackIconFade>,
 }
@@ -106,7 +106,7 @@ impl TrackEntry {
         self.fade.is_some_and(|f| f != TrackIconFade::AllHidden)
     }
 
-    /// Neither layer draws; the renderer can skip the track outright.
+    /// Neither layer draws. The renderer can skip the track outright.
     pub(crate) fn draws_nothing(self) -> bool {
         !self.trackline && self.fade.is_none()
     }
@@ -160,7 +160,7 @@ impl TrackPlan {
         Self { entries, offsets }
     }
 
-    /// The decisions for `track`; `None` for indices outside the plan.
+    /// The decisions for `track`. `None` for indices outside the plan.
     pub(crate) fn entry(&self, track: TrackRef) -> Option<TrackEntry> {
         let fi = track.fi.as_usize();
         let (&start, &end) = (self.offsets.get(fi)?, self.offsets.get(fi + 1)?);
@@ -271,7 +271,7 @@ pub(crate) fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Re
 
 /// Returns `true` when a spatial point should participate in hover and click detection.
 ///
-/// The renderers already suppress invisible elements from being drawn; this function
+/// The renderers already suppress invisible elements from being drawn. This function
 /// ensures the hit-test layer applies the same rules so that hidden tracks cannot be
 /// accidentally hovered or clicked.
 pub(crate) fn is_spatial_point_visible(

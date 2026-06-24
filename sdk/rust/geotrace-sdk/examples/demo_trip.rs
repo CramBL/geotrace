@@ -5,7 +5,7 @@
 //! gold dataset - the loaders deliberately mirror `gold_dataset.rs`, which
 //! stays untouched as the cross-SDK reference) and writes `demo_trip.gtd`
 //! next to them. The 59 missing seconds carry satellite reports without
-//! fixes; the builder turns those into ghost nav points, which is what the
+//! fixes. The builder turns those into ghost nav points, which is what the
 //! app renders as a dashed fix-lost stretch.
 // Examples favour brevity: the core's robustness restriction lints (no
 // unwrap/expect/panic/indexing, no std::env::temp_dir) are not enforced on

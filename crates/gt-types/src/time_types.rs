@@ -11,7 +11,7 @@
 //!
 //! These types are internal to the workspace (not re-exported by `geotrace-sdk`).
 //! The `geotrace-sdk` public API continues to accept and return plain
-//! `DateTime<Utc>` values; conversions happen at the `gt-io` boundary.
+//! `DateTime<Utc>` values. Conversions happen at the `gt-io` boundary.
 //!
 //! # Cross-domain operations
 //!
@@ -25,7 +25,7 @@ use std::ops::Sub;
 
 /// A timestamp from the GPS receiver clock.
 ///
-/// GPS time and system time are different clocks; use [`SysTime`] for host
+/// GPS time and system time are different clocks. Use [`SysTime`] for host
 /// system-clock timestamps.  Subtracting a `GpsTime` from a `SysTime` (or
 /// vice-versa) is a compile-time error - use [`GpsTime::offset_from_sys`] for
 /// intentional cross-domain comparisons.
@@ -88,7 +88,7 @@ impl fmt::Display for GpsTime {
 
 /// A timestamp from the host system (OS) clock.
 ///
-/// System time and GPS time are different clocks; use [`GpsTime`] for GPS
+/// System time and GPS time are different clocks. Use [`GpsTime`] for GPS
 /// receiver timestamps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SysTime(DateTime<Utc>);

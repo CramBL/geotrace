@@ -559,7 +559,7 @@ pub(crate) fn load_recording(
     }
 
     for child_name in rec_grp.groups()? {
-        // Skip the DB-internal track table; it is not part of the GTD file.
+        // Skip the DB-internal track table. It is not part of the GTD file.
         if is_db_internal_group(&child_name) {
             continue;
         }
@@ -585,7 +585,7 @@ pub(crate) fn load_recording(
         fb.add_group(gb.finish());
     }
 
-    // hdf5-pure can only write to a path; write a sibling temp file then read
+    // hdf5-pure can only write to a path. Write a sibling temp file then read
     // it back into memory before removing it.
     let tmp_path = db_path.with_extension("load_tmp.h5");
     fb.write(&tmp_path)?;

@@ -1,7 +1,7 @@
 name: Smoke / Python SDK
 
 # Build a uv project that depends on geotrace-sdk, use it to write a one-fix
-# file, and check its version. A stable release installs from PyPI; a prerelease
+# file, and check its version. A stable release installs from PyPI. A prerelease
 # (not published to PyPI) installs the matching wheel attached to the GitHub
 # release. Each step is one command so the workflow reads as a step-by-step
 # guide, mirroring the Rust SDK smoke test.

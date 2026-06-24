@@ -32,7 +32,7 @@ fn valid_gtd_bytes() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 }
 
 fn read(bytes: Vec<u8>) {
-    // Only the absence of a panic matters; the decoded result is irrelevant.
+    // Only the absence of a panic matters. The decoded result is irrelevant.
     let _result = NavFile::read(Cursor::new(bytes));
 }
 

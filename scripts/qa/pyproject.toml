@@ -14,6 +14,7 @@ versions = "qa.versions:main"
 [dependency-groups]
 dev = [
     "mypy>=1.16",
+    "pytest>=8",
     "ruff>=0.11",
 ]
 

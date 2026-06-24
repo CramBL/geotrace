@@ -4,7 +4,7 @@
 /// flags by this type, see `geotrace::settings::PlotSettings::metric`) and
 /// the plot widget (which drives chip labels, colors, and series lookups off
 /// the same variant set). The two previously carried independent copies of
-/// this enum kept in sync by hand; a single definition here removes that
+/// this enum kept in sync by hand. A single definition here removes that
 /// drift risk entirely.
 #[derive(
     Debug,
@@ -45,7 +45,7 @@ mod tests {
     use strum::EnumCount;
 
     /// Locks the on-disk spelling of every variant. `Settings` files persist
-    /// these strings under `[plot.metric]`; a silent rename here would orphan
+    /// these strings under `[plot.metric]`. A silent rename here would orphan
     /// every user's saved metric-visibility preferences on their next launch.
     ///
     /// Asserts the table is exhaustive (`expected.len() == MetricKind::COUNT`)

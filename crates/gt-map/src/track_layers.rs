@@ -35,7 +35,7 @@ const FADE_VISIBLE_THRESHOLD: f32 = 0.01;
 const ICON_VIEW_MARGIN_PX: f32 = 50.0;
 
 /// Per-point styling key for the unified line passes: the trackline dashes
-/// ghost stretches; the quality line colors by fix quality and crossfade
+/// ghost stretches. The quality line colors by fix quality and crossfade
 /// bucket. One key drives both layers, so each track's points are
 /// LOD-selected, projected, and culled exactly once per frame.
 ///
@@ -77,7 +77,7 @@ impl TrackGeometry<'_> {
         )
     }
 
-    /// The fade to draw icons with; `None` when no icons draw this frame.
+    /// The fade to draw icons with. `None` when no icons draw this frame.
     fn icon_fade(&self) -> Option<TrackIconFade> {
         self.entry
             .fade
@@ -115,7 +115,7 @@ impl Plugin for TrackLayers<'_> {
         projector: &Projector,
         map_memory: &MapMemory,
     ) {
-        // Build the per-frame coordinate transform once; all per-point calls
+        // Build the per-frame coordinate transform once. All per-point calls
         // are then two f64 multiplies + two f64 adds with no large-value
         // cancellation.
         let transform = MercTransform::new(projector, map_memory, ui.max_rect().center());
@@ -285,8 +285,8 @@ impl TrackLayers<'_> {
         }
     }
 
-    /// Paint the TPV layer per track — the fix-quality line, then the fix
-    /// icons on top — for the entries that pass the `filter(index)` predicate.
+    /// Paint the TPV layer per track: the fix-quality line, then the fix
+    /// icons on top, for the entries that pass the `filter(index)` predicate.
     fn paint_tpv_layers<F>(
         &self,
         ui: &Ui,

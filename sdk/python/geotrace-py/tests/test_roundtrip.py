@@ -93,7 +93,7 @@ def test_roundtrip_gps_time_preserved() -> None:
 
     pt = nav_file.points[0]
     assert pt.gps_time is not None
-    # Timestamps are stored at microsecond precision; allow 1 ms tolerance.
+    # Timestamps are stored at microsecond precision, allow 1 ms tolerance.
     delta = abs((pt.gps_time - T0).total_seconds())
     assert delta < 0.001
 

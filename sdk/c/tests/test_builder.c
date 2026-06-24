@@ -71,8 +71,8 @@ Test(builder, no_fixes_error) {
     GtdFileBuilder *b = gtd_builder_create();
     cr_assert_not_null(b);
 
-    /* NoNavFixes is only returned when there are annotations but no fixes;
-       an empty builder (no fixes, no annotations) is valid and returns OK. */
+    /* NoNavFixes is only returned when there are annotations but no fixes.
+       An empty builder (no fixes, no annotations) is valid and returns OK. */
     cr_assert_eq(
         gtd_builder_add_annotation(b, gtd_ts_from_seconds(1700000000ULL), "note", GTD_ICON_AUTO),
         GTD_OK);

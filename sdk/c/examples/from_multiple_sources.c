@@ -3,7 +3,7 @@
  *
  * Scenario: your GPS unit logs fixes to one source, and a separate system (a
  * test harness, an annotation tool, a sensor log) records named events with
- * their own timestamps.  Both are added independently to the builder; finish()
+ * their own timestamps.  Both are added independently to the builder. finish()
  * sorts everything by time and interpolates each annotation's map position
  * from the two surrounding GPS fixes.
  */
@@ -39,7 +39,7 @@ int main(void) {
         }
     }
 
-    /* Source 2: annotations from a separate log; their map positions are not
+    /* Source 2: annotations from a separate log. Their map positions are not
        supplied - finish() interpolates them from the GPS fixes by timestamp. */
     struct {
         uint32_t offset;

@@ -10,7 +10,7 @@ const MIN_LEVEL_POINTS: usize = 64;
 const MAX_LEVELS: usize = 24;
 
 /// A level must shrink to at most 3/4 of its predecessor to be worth
-/// storing; otherwise its tolerance is below the recording's own point
+/// storing. Otherwise its tolerance is below the recording's own point
 /// spacing and the predecessor (or the full list) serves that scale.
 /// Expressed as a ratio of integers to avoid float comparisons.
 const MAX_KEPT_NUMERATOR: usize = 3;
@@ -96,8 +96,8 @@ fn exponent_to_i32(exp: u32) -> i32 {
 
 /// One radial-distance decimation pass over `candidates` (indices into
 /// `points`, ascending). Keeps a candidate when it is at least `tolerance`
-/// (Mercator units) from the last kept point or its render class changed;
-/// the first and last candidate are always kept.
+/// (Mercator units) from the last kept point or its render class changed.
+/// The first and last candidate are always kept.
 fn decimate(
     points: &[NavPoint],
     candidates: impl Iterator<Item = usize>,

@@ -30,7 +30,7 @@ pub struct MapHighlight {
     /// 3 = GeneratedMarker. Used so renderers can show tooltips for secondary
     /// candidates even when a Tpv point is the primary hover.
     pub hover_candidates: [Option<DataPointRef>; 4],
-    /// Time currently hovered on the track plot; used to cross-highlight the
+    /// Time currently hovered on the track plot. Used to cross-highlight the
     /// closest TPV point on the map. `None` when the plot cursor is inactive.
     pub plot_hover_time: Option<DateTime<Utc>>,
     /// Pre-computed `(FileIdx, TrackIdx, PointIdx)` of the TPV point closest to
@@ -41,8 +41,8 @@ pub struct MapHighlight {
     /// `true` when the plot cursor is within the snap-distance threshold of
     /// `plot_hover_point` (approximately 25 px in time on-screen).
     ///
-    /// Only when this is `true` does the map overlay activate for plot hover —
-    /// prevents the map from dimming the moment the cursor crosses the plot
+    /// Only when this is `true` does the map overlay activate for plot hover.
+    /// Prevents the map from dimming the moment the cursor crosses the plot
     /// boundary, before it is actually near any data.
     pub plot_hover_snapped: bool,
     /// When `true`, renderers must not draw their individual hover labels.

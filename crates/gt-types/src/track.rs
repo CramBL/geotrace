@@ -77,7 +77,7 @@ impl TimeRange {
 
 /// Which marker types a track must have to pass the marker filter.
 ///
-/// The three variants are mutually exclusive; `CustomMarker` is a strict
+/// The three variants are mutually exclusive. `CustomMarker` is a strict
 /// subset of `AnyMarker`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MarkerRequirement {
@@ -92,7 +92,7 @@ pub enum MarkerRequirement {
 
 /// Aggregate GNSS fix-quality statistics computed from satellite reports.
 ///
-/// Covers only intervals between consecutive satellite-report points; periods
+/// Covers only intervals between consecutive satellite-report points. Periods
 /// without satellite data do not contribute to any field.
 /// `None` on a track or file means no satellite reports were present.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,7 +139,7 @@ pub const LOD_BASE_TOLERANCE_MERC: f64 = 1.0 / (1u64 << 26) as f64;
 /// in Mercator units holds exactly in pixels at every latitude.
 #[derive(Debug, Clone, Default)]
 pub struct TrackLod {
-    /// Tolerance exponent of `levels[0]`; level `i` has tolerance
+    /// Tolerance exponent of `levels[0]`. Level `i` has tolerance
     /// `LOD_BASE_TOLERANCE_MERC × 2^(first_level_exp + i)`. Lets sparse
     /// recordings skip storing fine levels that would not drop any points.
     first_level_exp: u32,
@@ -227,7 +227,7 @@ impl TrackMetadata {
 /// Sentinel default for use in test helpers via struct-update syntax (`..TrackMetadata::default()`).
 ///
 /// All numeric fields are zero, bounding box is a point at the origin, and
-/// `fix_stats` is `None`. Not intended for production construction — callers
+/// `fix_stats` is `None`. Not intended for production construction. Callers
 /// should set all semantically meaningful fields explicitly.
 impl Default for TrackMetadata {
     fn default() -> Self {
@@ -314,7 +314,7 @@ pub struct LoadedTrack {
     pub metadata: TrackMetadata,
     /// TPV points, each optionally paired with a satellite report.
     pub points: Vec<NavPoint>,
-    /// Multi-resolution decimation of `points` for rendering; empty (the
+    /// Multi-resolution decimation of `points` for rendering. Empty (the
     /// default) makes renderers fall back to the full point list.
     pub lod: TrackLod,
     pub custom_markers: Vec<CustomMarker>,
@@ -328,7 +328,7 @@ pub struct FileMetadata {
     pub total_distance_km: Length,
     pub total_duration: Duration,
     pub time_range: TimeRange,
-    /// Aggregated fix stats across all tracks; `None` when no track has satellite reports.
+    /// Aggregated fix stats across all tracks. `None` when no track has satellite reports.
     pub fix_stats: Option<FixStats>,
 }
 
@@ -350,7 +350,7 @@ impl Default for FileMetadata {
 
 /// Configuration for log-marker and satellite association.
 ///
-/// Stored in `Settings` and persisted to the config file; also carried on
+/// Stored in `Settings` and persisted to the config file. Also carried on
 /// `LoadedFile` so that re-processing knows which window was last used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -369,7 +369,7 @@ impl Default for AssociationConfig {
     }
 }
 
-/// Where the file content came from; stored on [`LoadedFile`] to enable
+/// Where the file content came from. Stored on [`LoadedFile`] to enable
 /// re-processing when association settings change.
 #[derive(Debug, Clone)]
 pub enum FileSource {
@@ -407,11 +407,11 @@ pub struct LoadWarning {
 pub struct LoadedFile {
     pub metadata: FileMetadata,
     pub tracks: Vec<LoadedTrack>,
-    /// Icon/color overrides keyed by variant path; file-level (shared across tracks).
+    /// Icon/color overrides keyed by variant path. File-level (shared across tracks).
     pub event_marker_styles: HashMap<String, EventMarkerStyle>,
     /// Event markers whose timestamp did not fall within any track's time window.
     pub orphaned_event_markers: Vec<EventMarker>,
-    /// Where this file was loaded from; used to re-process when settings change.
+    /// Where this file was loaded from. Used to re-process when settings change.
     pub source: FileSource,
     /// Data quality warnings detected when the file was loaded (empty when clean).
     pub load_warnings: Vec<LoadWarning>,
@@ -430,7 +430,7 @@ pub struct LoadedFile {
     /// same recording is already loaded (e.g. to disable re-opening it from the
     /// history window).
     ///
-    /// Populated for GTD files regardless of whether storage is enabled; `None`
+    /// Populated for GTD files regardless of whether storage is enabled. `None`
     /// for non-GTD sources such as log files, which never enter history.
     pub recording_meta: Option<RecordingMeta>,
 }

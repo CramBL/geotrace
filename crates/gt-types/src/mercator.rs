@@ -43,7 +43,7 @@ mod tests {
     proptest::proptest! {
         /// `normalize` must never return NaN or Inf for any geographically valid input.
         ///
-        /// Web Mercator is undefined above ≈85.05°; lat is clamped to [-85, 85]
+        /// Web Mercator is undefined above ≈85.05°. Lat is clamped to [-85, 85]
         /// to stay within the finite range of `tan.asinh()`.
         #[test]
         fn normalize_is_finite_for_valid_inputs(
