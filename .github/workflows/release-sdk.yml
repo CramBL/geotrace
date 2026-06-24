@@ -236,6 +236,11 @@ jobs:
           if ! grep -q '[^[:space:]]' "$notes"; then
             echo "C, C++, Rust, and Python SDK release $VERSION." > "$notes"
           fi
+          # Idempotent re-runs: delete any existing release first so `gh release
+          # create` does not error on the tag. Recreating via the PAT re-emits
+          # `release: published`, re-running the smoke tests. The git tag stays
+          # (no --cleanup-tag).
+          gh release delete "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --yes || true
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "GeoTrace SDK $VERSION" \
