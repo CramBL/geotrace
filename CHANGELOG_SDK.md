@@ -7,6 +7,8 @@ the app).
 
 ## [unreleased]
 
+## [0.3.0] - 2026-06-24
+
 ### Added
 
 - C++ SDK: a non-throwing `try_*` API returning `Result<T>`/`Status` by value
