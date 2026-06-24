@@ -29,7 +29,7 @@ pub fn format_fix_percentage(stats: FixStats) -> String {
 }
 
 /// Formats the remaining tooltip details (time without fix, loss count, max
-/// continuous gap), each prefixed by [`TOOLTIP_JOINER`].
+/// continuous gap), each prefixed by `TOOLTIP_JOINER`.
 ///
 /// Returns an empty string when there is nothing to add beyond the
 /// percentage, e.g. for `"100% fix"` with no losses.

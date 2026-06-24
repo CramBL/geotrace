@@ -129,6 +129,10 @@ jobs:
           just qa::check-all
           just qa::check-versions
 
+      - name: Docs
+        if: runner.os == 'Linux'
+        run: just doc
+
   ci-essentials:
     runs-on: ubuntu-latest
     needs: [ci]

@@ -26,7 +26,7 @@ pub struct SegmentationConfig {
     pub detect_clock_discontinuities: bool,
     /// Sensitivity of the clock-discontinuity outlier test: a step must exceed
     /// this many robust standard deviations from the track's median step to be
-    /// flagged.  Lower is more sensitive.  See [`detect_clock_discontinuities`].
+    /// flagged.  Lower is more sensitive.  See `detect_clock_discontinuities`.
     pub clock_discontinuity_sigmas: f64,
 }
 

@@ -1,4 +1,4 @@
-"""Forbid numbered narrative comments (numbered lists or labelled phases) across all checked source files.
+"""Forbid numbered narrative comments (numbered lists or labelled phases) in source files.
 
 Exemption syntax (same line as the comment):
     // 1. Special case // [qa-allow-check-narrative-comments, reason = "why"]

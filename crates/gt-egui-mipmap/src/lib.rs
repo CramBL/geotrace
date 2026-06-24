@@ -6,7 +6,7 @@
 //! to a plot line - no per-frame allocation required.
 //!
 //! Each level is produced by grouping the previous level into windows of
-//! [`DOWNSAMPLE_WINDOW`] points and emitting the minimum-value point and the
+//! `DOWNSAMPLE_WINDOW` points and emitting the minimum-value point and the
 //! maximum-value point for each window in chronological order.
 //!
 //! This preserves all outliers (spikes and dips) at every zoom level while
@@ -76,7 +76,7 @@ impl MipMap {
     ///
     /// `data` must be sorted by `x` (ascending).
     /// Downsampling continues by ~2× per level until a level reaches the
-    /// [`MIN_LEVEL_POINTS`] floor (or stops shrinking), so all but the very
+    /// `MIN_LEVEL_POINTS` floor (or stops shrinking), so all but the very
     /// smallest inputs gain coarse levels down to a single segment.
     pub fn build(data: Vec<[f64; 2]>) -> Self {
         if data.is_empty() {
