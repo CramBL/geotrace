@@ -15,7 +15,7 @@ pub struct FilterPanelState {
     pub spread_input: String,
     /// Stable viewport for the secondary (zoomed) time range bar.
     /// Initialised from the active data range the first time the secondary bar
-    /// appears; reset when the primary bar changes or filters are cleared.
+    /// appears. Reset when the primary bar changes or filters are cleared.
     pub secondary_zoom: Option<(DateTime<Utc>, DateTime<Utc>)>,
 }
 

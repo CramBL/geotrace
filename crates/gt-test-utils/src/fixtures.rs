@@ -195,7 +195,7 @@ pub fn stationary_nav_data(count: usize) -> Vec<NavPoint> {
 /// Two groups of GPS fixes separated by a 10-minute gap, suitable for track segmentation tests.
 ///
 /// Returns `first_count + second_count` points. The gap falls between index `first_count - 1`
-/// and `first_count`. Both groups move along the same straight line; no satellite reports.
+/// and `first_count`. Both groups move along the same straight line. No satellite reports.
 #[expect(
     clippy::unwrap_used,
     reason = "Test data generation with hardcoded values"

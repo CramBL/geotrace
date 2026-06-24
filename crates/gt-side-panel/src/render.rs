@@ -19,7 +19,7 @@ pub struct PanelContext<'a> {
     pub map_center_request: &'a mut Option<(f64, f64)>,
     pub popup_pos_request: &'a mut Option<egui::Pos2>,
     pub zoom_to_visible_request: &'a mut bool,
-    /// Set by clicking the ⚠ icon on a file row; consumed by the app to show a centered dialog.
+    /// Set by clicking the ⚠ icon on a file row. Consumed by the app to show a centered dialog.
     pub warnings_request: &'a mut Option<(String, Vec<LoadWarning>)>,
 }
 

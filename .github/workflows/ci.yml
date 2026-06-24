@@ -13,9 +13,7 @@ on:
 permissions:
   contents: read
 
-# For pull requests: cancel any in-flight run for the same PR when a new push
-# arrives, so stale runs don't waste resources.
-# For the default branch (push or schedule): always run to completion.
+# Cancel in-flight runs for the same PR on a new push. Never cancel default-branch runs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -77,7 +75,7 @@ jobs:
         run: cargo +nightly-2026-01-22 install cargo_pup
 
       # wgpu requires a GPU or a software renderer for headless test rendering.
-      # Ubuntu GitHub runners have no GPU; force Mesa's OpenGL software rasteriser.
+      # Ubuntu GitHub runners have no GPU. Force Mesa's OpenGL software rasteriser.
       - name: Set up software GPU rendering (Linux)
         if: runner.os == 'Linux'
         run: |

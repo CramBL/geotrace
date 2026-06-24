@@ -1,6 +1,6 @@
 //! Keep the C header's `GtdStatus` in lockstep with the `#[repr(C)]` enum in
 //! `src/error.rs`. The two are hand-written parallel lists, so a mismatch (or a
-//! forgotten header update) is a silent ABI break; fail the build instead.
+//! forgotten header update) is a silent ABI break. Fail the build instead.
 //!
 //! The Rust discriminants are pinned by `const _` assertions in `src/error.rs`,
 //! so checking the header against the same literals here locks both sides.

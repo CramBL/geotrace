@@ -4,7 +4,7 @@ use std::{collections::HashMap, path::PathBuf};
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// Schema version - always written as 1; reserved for future migrations.
+    /// Schema version - always written as 1. Reserved for future migrations.
     pub version: u32,
     pub plot: PlotSettings,
     pub map: MapSettings,
@@ -35,7 +35,7 @@ pub struct UpdateSettings {
     /// the user. The check is also skipped in debug builds and when
     /// `GEOTRACE_OFFLINE` is set.
     pub check_on_startup: bool,
-    /// A specific version the user chose to skip; the prompt stays hidden for
+    /// A specific version the user chose to skip. The prompt stays hidden for
     /// exactly this version. Cleared automatically once a newer version appears.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skipped_version: Option<String>,
@@ -101,7 +101,7 @@ impl Default for PlotSettings {
 
 /// One variant per plot metric.
 ///
-/// New variants can be added freely; old config files simply won't have the key,
+/// New variants can be added freely. Old config files simply won't have the key,
 /// and the apply step treats a missing entry as `true` (the default).
 ///
 /// Re-exported from `gt_types` rather than defined here, so the persisted

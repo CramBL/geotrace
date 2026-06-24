@@ -4,7 +4,7 @@
  * Event markers are timed, hierarchical events anchored to the GPS track.  Each
  * carries a slash-separated variant path (e.g. "power/boot" or
  * "connectivity/agps/request") that GeoTrace uses to group and filter events.
- * Per-variant styles set an icon and color; unlisted variants get a
+ * Per-variant styles set an icon and color. Unlisted variants get a
  * deterministic fallback color derived from their path.
  *
  * For a compile-checked taxonomy instead of raw strings, see typed_events.cpp.

@@ -9,7 +9,7 @@ name: Release smoke test
 # release with a repo-scoped PAT, whose `release: published` event runs this
 # directly. The GUI release (dist) creates its release with the built-in
 # GITHUB_TOKEN, which emits no triggering `release: published` event, so instead
-# we run when its "Release" workflow completes (`workflow_run`); this fires from
+# we run when its "Release" workflow completes (`workflow_run`). This fires from
 # a separate run regardless of token, and unlike a dist post-announce job it is
 # not skipped on prereleases (where dist skips the Homebrew publish job). It can
 # also be re-run manually for any tag via workflow_dispatch.
@@ -18,7 +18,7 @@ name: Release smoke test
 # `branches: ['app/**']` filter only matches a "Release" run for a maintainer-
 # pushed release tag (a fork PR cannot push one), the job is gated to a
 # successful run, the token is read-only, and we only install the already-
-# published release artifacts — no untrusted PR code is ever checked out.
+# published release artifacts, no untrusted PR code is ever checked out.
 on: # zizmor: ignore[dangerous-triggers]
   release:
     types: [published]
@@ -42,8 +42,8 @@ concurrency:
 
 jobs:
   meta:
-    # A workflow_run fires for completed "Release" runs regardless of outcome;
-    # only smoke-test one that actually succeeded. The release and dispatch
+    # A workflow_run fires for completed "Release" runs regardless of outcome.
+    # Only smoke-test one that actually succeeded. The release and dispatch
     # paths always proceed.
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
@@ -91,7 +91,7 @@ jobs:
       version: ${{ needs.meta.outputs.version }}
       prerelease: ${{ needs.meta.outputs.prerelease }}
 
-  # Stable releases install from crates.io / PyPI; prereleases (which skip those
+  # Stable releases install from crates.io / PyPI. Prereleases (which skip those
   # registries) install the same artifact straight from the tag / release, so
   # both run on every SDK release. The reusable workflow picks the source.
   rust:

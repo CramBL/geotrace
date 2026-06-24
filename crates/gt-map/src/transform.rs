@@ -163,20 +163,20 @@ impl MercTransform {
         (screen_y as f64 - self.clip_center_y) / self.scale.px_per_merc() + self.merc_center.y
     }
 
-    /// The viewport-independent scale component of this transform; lets
+    /// The viewport-independent scale component of this transform. Lets
     /// tests derive a [`MapScale`] from a [`MercTransform::for_test`].
     #[cfg(test)]
     pub(crate) fn scale(&self) -> MapScale {
         self.scale
     }
 
-    /// Pixels per metre at the given latitude; see [`MapScale`].
+    /// Pixels per metre at the given latitude. See [`MapScale`].
     #[inline]
     pub(crate) fn pixels_per_meter(&self, lat: Latitude) -> f64 {
         self.scale.pixels_per_meter(lat)
     }
 
-    /// Pixels per Mercator unit; see [`MapScale`].
+    /// Pixels per Mercator unit. See [`MapScale`].
     #[inline]
     pub(crate) fn px_per_merc(&self) -> f64 {
         self.scale.px_per_merc()

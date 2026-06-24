@@ -205,8 +205,6 @@ jobs:
           export PATH="/c/criterion/bin:$PATH"
           ctest --test-dir build/c --output-on-failure
 
-  # C++ SDK tests - Linux, macOS, and Windows; C++17 and C++20.
-  #
   # Builds geotrace-c with Cargo (shared lib on Unix, static lib on Windows),
   # installs the C SDK to a local prefix so find_package(GeoTraceC) works,
   # configures and builds the C++ SDK with BUILD_TESTING=ON, then runs ctest.
@@ -217,8 +215,7 @@ jobs:
     strategy:
       fail-fast: false
       # Fully enumerated so macOS can be tested under both the system AppleClang
-      # and Homebrew llvm. `cc` drives the compiler setup; `label` is the job
-      # name suffix; the Windows rows also carry the CMake generator settings.
+      # and Homebrew llvm.
       matrix:
         include:
           - { os: ubuntu-latest, cxx_std: "17", cc: llvm-20, label: llvm-20 }

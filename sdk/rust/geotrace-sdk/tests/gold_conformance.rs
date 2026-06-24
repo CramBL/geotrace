@@ -1,9 +1,9 @@
 //! Cross-SDK conformance. Given the shared gold-dataset fixtures, every SDK
 //! (Rust, C, C++, Python) must produce a `.gtd` file that decodes to the same
 //! `NavFile`. The byte layout may differ (HDF5 serializes logically-identical
-//! content with different addressing); the decoded content must not.
+//! content with different addressing). The decoded content must not.
 //!
-//! Only `gold.gtd` (the Rust output) is committed; `gold_c.gtd`, `gold_cpp.gtd`,
+//! Only `gold.gtd` (the Rust output) is committed. `gold_c.gtd`, `gold_cpp.gtd`,
 //! and `gold_py.gtd` are generated artifacts (gitignored), written by each
 //! SDK's `gold_dataset` example. `just test-gold-all` regenerates all four and
 //! then runs this test (`test-gold-compare`), so the comparison is enforced

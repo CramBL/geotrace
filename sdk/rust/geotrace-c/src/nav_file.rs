@@ -73,7 +73,7 @@ pub unsafe extern "C" fn gtd_nav_file_to_bytes(
         let mut boxed = bytes.into_boxed_slice();
         *len_out = boxed.len();
         *buf_out = boxed.as_mut_ptr();
-        // Transfer ownership to the C caller; gtd_free_bytes reconstructs the Box.
+        // Transfer ownership to the C caller. gtd_free_bytes reconstructs the Box.
         #[expect(
             clippy::mem_forget,
             reason = "intentionally leaking Box<[u8]> to transfer ownership to the C caller"
@@ -264,7 +264,7 @@ pub unsafe extern "C" fn gtd_nav_file_title(f: *const GtdNavFile) -> *const c_ch
     if f.is_null() {
         return std::ptr::null();
     }
-    // SAFETY: f is non-null; CString is stored in the handle for its lifetime
+    // SAFETY: f is non-null. CString is stored in the handle for its lifetime
     unsafe {
         (*f).title
             .as_ref()
@@ -337,7 +337,7 @@ pub unsafe extern "C" fn gtd_nav_file_get_event_marker(
             return GtdStatus::ErrNullArgument;
         };
 
-        // SAFETY: GtdEventMarkerInfo is repr(C); zeroing it is valid initial state
+        // SAFETY: GtdEventMarkerInfo is repr(C). Zeroing it is valid initial state
         *out = unsafe { std::mem::zeroed() };
 
         let path_bytes = marker.variant_path.as_bytes();

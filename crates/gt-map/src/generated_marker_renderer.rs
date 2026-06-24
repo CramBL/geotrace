@@ -67,7 +67,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
         response.show_tooltip_ui(|ui| {
             ui.strong(generated_marker_header(marker.kind));
             // Fix-lost and clock-discontinuity markers sit on a specific
-            // anomalous sample, so also show that point's data; fix-regained is
+            // anomalous sample, so also show that point's data. Fix-regained is
             // a transition with no single underlying point to detail.
             let show_point = match marker.kind {
                 gt_types::GeneratedMarkerKind::GnssFixLost

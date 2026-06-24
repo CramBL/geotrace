@@ -304,7 +304,7 @@ fn label_none() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn label_truncation() -> Result<(), Box<dyn std::error::Error>> {
-    // Labels longer than 255 bytes are truncated; the truncated attribute is set.
+    // Labels longer than 255 bytes are truncated. The truncated attribute is set.
     let long_label: String = "A".repeat(300);
     let nav_file = build_nav_file_with_label(Some(long_label))?;
     let bytes = to_bytes(&nav_file);
@@ -380,7 +380,7 @@ fn make_file_with_version(version: &str) -> Vec<u8> {
 
 #[test]
 fn shape_mismatch_rejection() -> Result<(), Box<dyn std::error::Error>> {
-    // nav_points/lat has an extra element; the reader should detect the mismatch.
+    // nav_points/lat has an extra element. The reader should detect the mismatch.
     let bytes = make_file_with_shape_mismatch();
     let err = NavFile::read(bytes.as_slice()).expect_err("should detect shape mismatch");
     assert!(matches!(

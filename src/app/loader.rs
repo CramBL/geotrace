@@ -50,7 +50,7 @@ pub enum LoadOutcome {
     /// A successfully parsed `.gtd` / HDF5 file with pre-built plot series.
     GtdFile {
         file: LoadedFile,
-        /// Pre-built mipmap series; `fi` is a placeholder (0) because the real
+        /// Pre-built mipmap series. `fi` is a placeholder (0) because the real
         /// file index is only known on the UI thread when the file is appended
         /// to `loaded_files`.  `PlotState::integrate_file` re-stamps the index.
         series: PreparedSeries,
@@ -58,7 +58,7 @@ pub enum LoadOutcome {
         /// is enabled and the insert succeeded.
         db_ref: Option<gt_history::DatabaseRef>,
     },
-    /// A successfully parsed log file; `loaded` is `None` when all entries were
+    /// A successfully parsed log file. `loaded` is `None` when all entries were
     /// unassociated with any GPS track.
     LogFile {
         loaded: Option<LoadedFile>,
@@ -452,9 +452,9 @@ impl LoaderManager {
     /// Spawn a background thread that shows the OS file-picker dialog.
     ///
     /// `rfd::FileDialog::pick_file()` blocks its calling thread.  Running it
-    /// on the render thread freezes the egui loop; on Wayland the compositor
+    /// on the render thread freezes the egui loop. On Wayland the compositor
     /// then stops delivering events, making the window appear unresponsive.
-    /// The dialog runs on a dedicated thread instead; the chosen path arrives
+    /// The dialog runs on a dedicated thread instead. The chosen path arrives
     /// via `drain_file_dialog` each frame.
     #[expect(
         clippy::expect_used,
@@ -488,7 +488,7 @@ impl LoaderManager {
     }
 
     /// Drain all pending channel messages. Updates `loading_jobs` for progress
-    /// messages; returns one `CompletedLoad` per finished job.
+    /// messages, returns one `CompletedLoad` per finished job.
     pub fn drain(&mut self) -> Vec<CompletedLoad> {
         let mut completed = Vec::new();
         while let Ok(msg) = self.load_rx.try_recv() {
@@ -694,7 +694,7 @@ pub(crate) fn stored_segmentation_from_config(
 
 /// Rebuild a [`SegmentationConfig`] from the settings stored alongside a
 /// recording, so re-opening can reproduce the exact tracks it was stored with.
-/// The inverse of [`stored_segmentation_from_config`]; `SegmentationConfig` has
+/// The inverse of [`stored_segmentation_from_config`]. `SegmentationConfig` has
 /// no fields beyond the three persisted, so the round trip is lossless.
 pub(crate) fn config_from_stored_segmentation(
     settings: &gt_history::StoredSegmentation,
@@ -798,7 +798,7 @@ fn store_in_history(
 
     let tracks = track_ranges_from_file(file);
     // The cumulative end must cover exactly the recording's nav points (tracks
-    // are a contiguous 1:1 partition); otherwise the derivation is unsound.
+    // are a contiguous 1:1 partition), otherwise the derivation is unsound.
     debug_assert_eq!(
         tracks.last().map_or(0, |t| t.end),
         meta.nav_point_count,

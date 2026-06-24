@@ -18,8 +18,7 @@ pub fn derive_identity(
         return id.to_owned();
     }
 
-    // If filename already starts with auto:, use it as-is or strip the prefix before reapplying.
-    // For simplicity, just use the provided filename if it's already "auto:".
+    // A filename already prefixed with auto: is used as-is.
     if filename.starts_with("auto:") {
         return filename.to_owned();
     }
@@ -164,7 +163,7 @@ pub fn load_bytes_with_progress(
 /// Each range is a half-open `[start, end)` slice of the original nav-point
 /// sequence - the same index ranges that track segmentation produces (see
 /// [`gt_track_builder::segment_tracks`]). The fixes in those ranges and their
-/// satellite reports are dropped; file metadata, markers, event markers, and
+/// satellite reports are dropped. File metadata, markers, event markers, and
 /// their styles are all preserved. Marker and event-marker positions are
 /// re-interpolated from the surviving fixes by the SDK builder, in lenient mode
 /// so a marker that ends up outside the surviving time range is clamped with a
@@ -381,7 +380,7 @@ fn convert_marker(m: &SdkMarker) -> CustomMarker {
 /// Converts the SDK's wire-format icon to the app's internal `MarkerIcon`.
 ///
 /// The internal type has one variant the SDK doesn't (`Log`, never produced
-/// here); this is the only place that maps between the two, so a rename on
+/// here). This is the only place that maps between the two, so a rename on
 /// either side fails to compile here rather than silently desyncing a second,
 /// copy-pasted match elsewhere.
 fn convert_icon(icon: SdkMarkerIcon) -> MarkerIcon {
@@ -561,7 +560,7 @@ mod tests {
             let ranges: Vec<std::ops::Range<usize>> = raw.iter().map(|&(a, b)| a..b).collect();
 
             // Independently compute which indices a range covers (half-open, clamped
-            // to the point count; reversed/out-of-bounds ranges cover nothing).
+            // to the point count. Reversed/out-of-bounds ranges cover nothing).
             let mut dropped = [false; N];
             for r in &ranges {
                 let end = r.end.min(N);

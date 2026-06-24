@@ -69,7 +69,7 @@ pub fn segment_tracks(points: &[NavPoint], config: &SegmentationConfig) -> Vec<R
 /// Three states:
 /// - `Waiting` - no satellite report seen yet.
 /// - `HasFix` - the most recent satellite report had `fix_count > 0`.
-/// - `LostFix` - most recent report had `fix_count == 0`; records when the fix
+/// - `LostFix` - most recent report had `fix_count == 0`. Records when the fix
 ///   was last seen so the regained-duration can be computed.
 enum GpsFixState {
     Waiting,
@@ -189,7 +189,7 @@ fn detect_generated_markers(
 /// Fewest with-system-timestamp samples a track needs before clock-outlier
 /// detection runs.  Detection works on the step series (one shorter), and the
 /// median/MAD must survive a single outlier step, so at least three steps - four
-/// samples - are required; below that, detection is skipped to avoid a spurious
+/// samples - are required. Below that, detection is skipped to avoid a spurious
 /// marker from an unstable estimate.
 const MIN_CLOCK_SAMPLES: usize = 4;
 
@@ -204,7 +204,7 @@ const MAD_TO_SIGMA: f64 = 1.4826;
 pub const DEFAULT_CLOCK_OUTLIER_SIGMAS: f64 = 5.0;
 
 /// Floor on the robust spread of the step series, in milliseconds.  A healthy
-/// clock has near-zero step-to-step change and thus a near-zero MAD; without a
+/// clock has near-zero step-to-step change and thus a near-zero MAD. Without a
 /// floor, ordinary sub-second jitter would register as an outlier.  This is a
 /// noise gate, not the detection threshold - on a track with genuinely jittery
 /// clock steps the MAD dominates and the bar rises with the data.
@@ -227,14 +227,14 @@ pub fn clock_discontinuity_floor_seconds(sigmas: f64) -> f64 {
 /// Detection runs on the first-difference (step) series - the change in offset
 /// between consecutive with-system-timestamp samples - rather than on the offset
 /// itself.  Two passes: the first measures the track's typical step size (median
-/// and median absolute deviation, both near zero for a healthy clock); the
+/// and median absolute deviation, both near zero for a healthy clock). The
 /// second flags any step more than `sigmas` robust standard deviations from
 /// that.  Working on jumps (not levels) means a discontinuity is
 /// flagged once, at the transition, instead of once per sample of a shifted
 /// plateau - and a genuine large-but-steady offset (e.g. a host clock that
 /// drifted while parked underground) produces no jumps and so no markers.
 /// Deriving the bar from the track's own behaviour - not a fixed magnitude -
-/// is what keeps it device-agnostic.  Detection only; no data is altered.
+/// is what keeps it device-agnostic.  Detection only. No data is altered.
 ///
 /// `sigmas` is the outlier sensitivity (see
 /// [`SegmentationConfig::clock_discontinuity_sigmas`]).
@@ -302,7 +302,7 @@ fn detect_clock_discontinuities(points: &[NavPoint], sigmas: f64) -> Vec<Generat
 }
 
 /// Median of `values` (averaging the two central elements for an even count).
-/// Returns 0 for an empty input; callers guard against that.
+/// Returns 0 for an empty input. Callers guard against that.
 fn median_i64(values: &[i64]) -> i64 {
     if values.is_empty() {
         return 0;
@@ -524,7 +524,7 @@ pub fn build_loaded_file(
         })
         .collect();
 
-    // Assign event markers to tracks by timestamp; orphans go into LoadedFile.
+    // Assign event markers to tracks by timestamp. Orphans go into LoadedFile.
     let mut orphaned_event_markers = Vec::new();
     for em in event_markers {
         let mut em = Some(em);
@@ -1051,7 +1051,7 @@ mod tests {
 
     #[test]
     fn compute_fix_stats_multiple_losses() {
-        // fix→lost→fix→lost pattern; two separate no-fix stretches
+        // fix→lost→fix→lost pattern. Two separate no-fix stretches
         let pts = vec![
             make_point_with_fix(0, true),    // fix
             make_point_with_fix(100, false), // lost (100s with fix)
@@ -1201,8 +1201,8 @@ mod tests {
     #[test]
     fn build_loaded_file_file_fix_stats_aggregates_tracks() {
         // Default split gap is 300 s, so consecutive points must be < 300 s apart to stay in
-        // the same track. Track 1: t=0 (fix)→t=60 (no-fix)→t=180 (no-fix); one loss, max=120s.
-        // Track 2 (after a 9820s gap): t=10000 (fix)→t=10060 (no-fix)→t=10120 (fix); one loss,
+        // the same track. Track 1: t=0 (fix)→t=60 (no-fix)→t=180 (no-fix). One loss, max=120s.
+        // Track 2 (after a 9820s gap): t=10000 (fix)→t=10060 (no-fix)→t=10120 (fix). One loss,
         // max=60s.
         // sum(120, 60) = 180s != max(120, 60) = 120s, so the assertion below distinguishes
         // "max across tracks" from "sum across tracks".

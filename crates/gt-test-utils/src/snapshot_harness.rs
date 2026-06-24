@@ -48,7 +48,7 @@ pub struct TestHarness<'a, State = ()> {
 
 impl<'a> TestHarness<'a, ()> {
     /// Entry point for all snapshot harnesses. Lives on the `State = ()` impl so
-    /// `TestHarness::builder()` resolves without a turbofish; the builder's
+    /// `TestHarness::builder()` resolves without a turbofish. The builder's
     /// `ui_state`/`eframe` methods then pick the real `State`.
     pub fn builder() -> TestHarnessBuilder<'a> {
         TestHarnessBuilder::default()

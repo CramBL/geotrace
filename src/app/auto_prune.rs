@@ -1,9 +1,9 @@
 use gt_history::{Database, DatabaseRef, DbError, PruneMode};
 
 pub enum AutoPruneOutcome {
-    /// Total stored size is within the limit; nothing to delete.
+    /// Total stored size is within the limit, nothing to delete.
     NotNeeded,
-    /// Pruning was performed; this many recordings were deleted.
+    /// Pruning was performed, this many recordings were deleted.
     PrunedSilently(usize),
     /// Caller must present the user with a confirmation dialog before deleting.
     NeedsConfirmation(Vec<DatabaseRef>),

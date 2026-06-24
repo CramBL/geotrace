@@ -48,7 +48,7 @@ pub enum MapLayer {
 
 /// Action requested from a right-click context menu on a map element.
 ///
-/// Returned by [`NavMap::draw`] when the user selects an item; the caller is
+/// Returned by [`NavMap::draw`] when the user selects an item. The caller is
 /// responsible for applying it to the visibility state.
 #[derive(Debug, Clone, Copy)]
 pub enum MapContextAction {
@@ -105,21 +105,21 @@ const HOVER_FADE_IN_RATE: f32 = 3.0;
 const HOVER_FADE_OUT_SLOW: f32 = 0.1;
 /// Fade-out rate when the overlay is near-transparent (end of departure).
 /// Combined with `HOVER_FADE_OUT_SLOW` the overlay stays ≈ 78 % visible
-/// after 1 s and reaches zero in ≈ 2 s — a quadratic ease-in curve.
+/// after 1 s and reaches zero in ≈ 2 s, a quadratic ease-in curve.
 const HOVER_FADE_OUT_FAST: f32 = 1.5;
 
 /// Manages the smooth fade animation for the hover-focus overlay.
 ///
 /// Applies a hysteresis delay before starting the fade, and resets the delay
-/// whenever the focused track changes — so fast cursor movement across many
+/// whenever the focused track changes, so fast cursor movement across many
 /// tracks never triggers the overlay.
 struct HoverFadeState {
-    /// Current overlay progress in [0.0, 1.0]; 0 = no overlay, 1 = full overlay.
+    /// Current overlay progress in [0.0, 1.0]. 0 = no overlay, 1 = full overlay.
     progress: f32,
     /// egui clock time when the current focused track was first established.
     /// Cleared when hover ends or the focused track changes.
     hover_since: Option<f64>,
-    /// egui clock time of the previous `tick` call; used to compute `dt`.
+    /// egui clock time of the previous `tick` call, used to compute `dt`.
     prev_time: f64,
     /// The focused track at the last `tick`, used to detect changes.
     focused_track: Option<TrackRef>,
@@ -129,7 +129,7 @@ impl HoverFadeState {
     /// Advance the animation by one frame and return the current progress.
     ///
     /// - **Track changed while hovering**: resets the delay timer and
-    ///   *freezes* `progress` — the overlay holds its current opacity while
+    ///   *freezes* `progress`, the overlay holds its current opacity while
     ///   the cursor moves, eliminating the "light-up then dim" oscillation
     ///   between adjacent tracks.
     /// - **Same track held for ≥ [`HOVER_HYSTERESIS_SEC`]**: fades in.
@@ -156,7 +156,7 @@ impl HoverFadeState {
             if delay_expired {
                 self.progress = (self.progress + dt * HOVER_FADE_IN_RATE).min(1.0);
             }
-            // Delay not expired: keep progress frozen — no fade-in, no fade-out.
+            // Delay not expired: keep progress frozen, no fade-in, no fade-out.
         } else {
             self.focused_track = None;
             self.hover_since = None;
@@ -193,14 +193,14 @@ pub struct NavMap {
     layer: MapLayer,
     map_memory: MapMemory,
     global_tree: rstar::RTree<SpatialPoint>,
-    /// Screen position where the last sticky click happened; used as the
+    /// Screen position where the last sticky click happened, used as the
     /// default position for the sticky info window.
     sticky_pos: egui::Pos2,
     /// How many files were loaded last frame - used to detect new loads.
     last_file_count: usize,
     /// Load-highlight pulse animation state.
     blink: BlinkState,
-    /// Index of the first newly loaded file; files[new_file_boundary..] are new.
+    /// Index of the first newly loaded file. files[new_file_boundary..] are new.
     new_file_boundary: usize,
     /// Smooth fade animation for the hover-focus overlay.
     hover_fade: HoverFadeState,
@@ -351,12 +351,12 @@ impl NavMap {
 
         // Detect newly loaded files → zoom to fit the visible tracks + start
         // blink animation. The new file is visible by default, so it is always
-        // framed; existing files honor their current visibility.
+        // framed. Existing files honor their current visibility.
         if files.len() > self.last_file_count {
             self.new_file_boundary = self.last_file_count;
             let had_tracks = self.last_file_count > 0;
             self.last_file_count = files.len();
-            // Only blink when adding to existing content; the first load needs no
+            // Only blink when adding to existing content. The first load needs no
             // visual callout because there is nothing else to differentiate from.
             if had_tracks {
                 self.blink.trigger(now);
@@ -580,8 +580,8 @@ impl NavMap {
                 });
             });
 
-        // Handle click: clicking near a map element makes its info popup sticky;
-        // clicking on empty space clears it. Clicking the same element again also clears it.
+        // Clicking near a map element makes its info popup sticky, clicking on
+        // empty space clears it. Clicking the same element again also clears it.
         // When multiple category types are within the threshold, show a small
         // disambiguation menu rather than immediately picking one.
         let candidate_count = hover_candidates.iter().flatten().count();
@@ -706,7 +706,7 @@ impl NavMap {
         // count) so that on the first frame of a multi-hover transition the
         // individual renderer tooltips show normally. From the second frame onward
         // `suppress_hover_labels` is true, individual tooltips are suppressed, and
-        // the compound label takes over — preventing the two from appearing at once.
+        // the compound label takes over, preventing the two from appearing at once.
         let current_multi_hover = hover_candidates.iter().flatten().count() > 1;
         if should_show_compound_label(
             current_multi_hover,
@@ -737,7 +737,7 @@ fn show_sticky_popup(
     default_pos: egui::Pos2,
 ) {
     // For TPV points, satellite reports, and generated-marker events the window
-    // title is the point's datetime; for everything else fall back to a generic label.
+    // title is the point's datetime. For everything else fall back to a generic label.
     let title: String = if sticky_ref.category == DataCategory::Tpv {
         sticky_ref
             .track
@@ -816,11 +816,8 @@ fn show_sticky_popup(
                     .and_then(|f| sticky_ref.track.index.get(&f.tracks))
                     .and_then(|t| sticky_ref.point_index.get(&t.points))
                 {
-                    // Cap the window height so satellite tables never overflow
-                    // the screen. For small satellite counts the ScrollArea
-                    // auto-sizes to content (no scroll bar); it only activates
-                    // when content is taller than the cap - e.g. when the UI is
-                    // zoomed in with Ctrl-+ or when there are many satellites.
+                    // Cap the window height so satellite tables never overflow the
+                    // screen. The ScrollArea only activates past the cap.
                     let max_h = (ui.ctx().viewport_rect().height() * 0.75).min(500.0);
                     egui::ScrollArea::vertical()
                         .max_height(max_h)
@@ -1083,7 +1080,7 @@ mod tests {
     /// track must drop its corner from `compute_visible_bounding_box`.
     #[test]
     fn visible_bounding_box_excludes_hidden_tracks() {
-        // Track 0 sits south-west; track 1 sits far north-east.
+        // Track 0 sits south-west, track 1 sits far north-east.
         let files = vec![file_with_tracks(vec![
             track_at(55.0, 12.0),
             track_at(56.0, 13.0),
@@ -1122,7 +1119,7 @@ mod tests {
     #[test]
     fn hover_skips_hidden_nearest_and_finds_visible() {
         // Two overlapping SpatialPoints in the same Mercator position.
-        // Track 0 is hidden; track 1 is visible.
+        // Track 0 is hidden, track 1 is visible.
         let hidden = SpatialPoint {
             merc: MercPoint { x: 0.5, y: 0.5 },
             file_index: FileIdx::new(0),
@@ -1214,7 +1211,7 @@ mod tests {
     #[test]
     fn compound_label_guard_truth_table() {
         for (multi, disambig, suppress, expected) in [
-            (true, false, false, false), // first frame — suppress not yet set
+            (true, false, false, false), // first frame, suppress not yet set
             (true, false, true, true),   // settled multi-hover
             (false, false, true, false), // single hover
             (true, true, true, false),   // disambiguation popup open
@@ -1228,7 +1225,7 @@ mod tests {
     }
 
     /// candidate_label for a GnssFixRegained marker with a known duration must
-    /// produce the same string as generated_marker_header — both surfaces share
+    /// produce the same string as generated_marker_header, both surfaces share
     /// the same text so the disambiguation popup and the compound hover label agree.
     #[test]
     fn candidate_label_generated_marker_matches_header() {
@@ -1457,7 +1454,7 @@ mod snapshot_tests {
 
     /// Snapshot: the stacked multi-hover label for the common case where a TPV
     /// fix point and a GNSS-fix-regained generated marker share the same map
-    /// position.  The TPV section shows the full hover table; the generated-marker
+    /// position.  The TPV section shows the full hover table. The generated-marker
     /// section shows the kind and the fix-lost duration.
     #[test]
     fn snap_multi_hover_tpv_and_generated_marker() {

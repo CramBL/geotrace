@@ -92,7 +92,7 @@ TEST_CASE("exception: out_of_range from nav_point is std::out_of_range, not geot
 
 TEST_CASE("exception: AnnotationsOutOfRangeError carries a count field") {
     // Create a file where an annotation falls outside the nav fix time range.
-    // Two nav fixes from T1 to T2; annotation at T0 (before T1) - out of range.
+    // Two nav fixes from T1 to T2. Annotation at T0 (before T1) - out of range.
     const Timestamp t1 = Timestamp::from_seconds(1700000100ULL);
     const Timestamp t2 = Timestamp::from_seconds(1700000200ULL);
     const Timestamp t0 = Timestamp::from_seconds(1700000000ULL); // before t1

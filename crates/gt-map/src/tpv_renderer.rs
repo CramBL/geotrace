@@ -31,15 +31,12 @@ use crate::transform::MapScale;
 const ICON_FADE_HI_SPACING_FACTOR: f32 = 0.5;
 const ICON_FADE_LO_SPACING_FACTOR: f32 = 0.2;
 
-/// Absolute floors for the fade band, in pixels. At low zoom the icons
-/// shrink to a few pixels and the proportional thresholds collapse below
-/// one pixel of spacing - but a 3 px arrow packed within a few pixels of
-/// its neighbours is already unreadable, and worth replacing with the
-/// quality line. The floors keep the band meaningful at every icon size:
-/// fading always completes below [`ICON_FADE_LO_MIN_SPACING_PX`] of spacing
-/// and starts below [`ICON_FADE_HI_MIN_SPACING_PX`]. The HI floor exceeding
-/// the LO floor (like the HI factor exceeding the LO factor) keeps the band
-/// non-empty for any icon size.
+/// Absolute floors for the fade band, in pixels. At low zoom the proportional
+/// thresholds collapse below one pixel of spacing, where packed icons are
+/// already unreadable and better replaced by the quality line. Fading completes
+/// below [`ICON_FADE_LO_MIN_SPACING_PX`] and starts below
+/// [`ICON_FADE_HI_MIN_SPACING_PX`]. The HI floor exceeding the LO floor keeps
+/// the band non-empty for any icon size.
 const ICON_FADE_LO_MIN_SPACING_PX: f32 = 2.0;
 const ICON_FADE_HI_MIN_SPACING_PX: f32 = 5.0;
 
@@ -168,7 +165,7 @@ pub(crate) fn draw_track_icons(
     // during fix loss - the heading field is present but unreliable as a
     // "real" direction indicator, so we still show a hollow chevron.
     // `ghost_points` was collected on the LOD level during the geometry
-    // walk (time-filtered there); ghost/real transitions survive every
+    // walk (time-filtered there). Ghost/real transitions survive every
     // level, so faded stretches lose only sub-pixel interior chevrons.
     for (pi, point) in ghost_points
         .iter()
@@ -455,7 +452,6 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
                 }
                 None => {
                     // No satellite report for this point - omit the row.
-                    // A missing report does not mean there was no GPS fix.
                 }
             }
 
@@ -492,7 +488,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
         })
         .collect();
 
-        // Two constellation panels per row; each panel sizes to its own content.
+        // Two constellation panels per row, each panel sizes to its own content.
         for chunk in groups.chunks(2) {
             ui.horizontal_top(|ui| {
                 for (panel_i, (id, name, prefix, const_sats)) in chunk.iter().enumerate() {
@@ -686,7 +682,7 @@ pub(crate) struct TpvDrawStyle {
     pub(crate) min_label_dist: f32,
     /// Opacity of the fix icon currently being drawn, in (0.0, 1.0].
     /// Decided per fix from its local on-screen spacing (see
-    /// [`fix_icon_alpha`]); below 1.0 the icon is crossfading into the
+    /// [`fix_icon_alpha`]). Below 1.0 the icon is crossfading into the
     /// continuous quality line, and fully transparent icons are skipped
     /// before drawing.
     pub(crate) icon_alpha: f32,
@@ -813,7 +809,7 @@ fn icon_fade_alpha(spacing_px: f32, icon_size_px: f32) -> f32 {
     let (lo, hi) = fade_band(icon_size_px);
     if hi <= lo {
         // Unreachable while the HI floor and factor exceed their LO
-        // counterparts; kept so a future constant change degrades to opaque
+        // counterparts. Kept so a future constant change degrades to opaque
         // icons instead of dividing by zero.
         return 1.0;
     }
@@ -1010,7 +1006,7 @@ enum PointKind {
     /// Ghost fix - either heading is absent, or the satellite fix count is zero.
     ///
     /// `direction` is a normalised screen-space vector pointing in the inferred
-    /// travel direction. When the GPS reported a heading it is converted directly;
+    /// travel direction. When the GPS reported a heading it is converted directly,
     /// otherwise it is derived from the surrounding fixes' Mercator positions.
     Ghost { direction: Vec2 },
 }
@@ -1380,7 +1376,7 @@ mod tests {
     }
 
     // At low zoom icons shrink to 3 px and the proportional band would be
-    // 0.6-1.5 px; the absolute floors widen it to 2-5 px so dot-sized
+    // 0.6-1.5 px. The absolute floors widen it to 2-5 px so dot-sized
     // arrows stacked a couple of pixels apart fade into the quality line.
     const SMALL_ICON_PX: f32 = 3.0;
 
@@ -1417,7 +1413,7 @@ mod tests {
     #[test]
     fn icon_fade_stays_opaque_for_infinite_spacing() {
         // Spacing can overflow to infinity when a long track meets an
-        // extreme zoom; the result must clamp to opaque, not turn NaN.
+        // extreme zoom. The result must clamp to opaque, not turn NaN.
         assert!(icon_fade_alpha(f32::INFINITY, TEST_ICON_PX) >= 1.0);
     }
 
@@ -1455,7 +1451,7 @@ mod tests {
 
     #[test]
     fn classify_keeps_lone_fix_visible_at_every_zoom() {
-        // No segments means nothing can overlap; a spacing of zero would
+        // No segments means nothing can overlap. A spacing of zero would
         // hide the lone fix forever.
         let track = track_with_points(Vec::new());
         assert_eq!(
@@ -1660,7 +1656,7 @@ mod tests {
             (Color32::YELLOW, pos2(20.0, 0.0)),
         ];
         let subs = split_spans_by(&span, |k| k);
-        // The blue->yellow edge is blue (starting point's quality); the
+        // The blue->yellow edge is blue (starting point's quality). The
         // boundary point is shared so the line stays continuous.
         assert_eq!(
             subs,

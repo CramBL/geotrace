@@ -46,7 +46,7 @@ use uom::si::f64::Length;
 use uom::si::length::kilometer;
 
 fn fixture_path() -> PathBuf {
-    // CARGO_MANIFEST_DIR is crates/gt-io; workspace root is two levels up.
+    // CARGO_MANIFEST_DIR is crates/gt-io. Workspace root is two levels up.
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace = manifest
         .parent()

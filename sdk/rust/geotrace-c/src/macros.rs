@@ -6,7 +6,7 @@ macro_rules! nonnull_mut {
             $crate::error::set_last_error("null pointer argument");
             return $crate::error::GtdStatus::ErrNullArgument;
         }
-        // SAFETY: checked non-null above; caller is responsible for valid lifetime
+        // SAFETY: checked non-null above. Caller is responsible for valid lifetime.
         unsafe { &mut *($ptr) }
     }};
 }
@@ -18,7 +18,7 @@ macro_rules! nonnull_ref {
             $crate::error::set_last_error("null pointer argument");
             return $crate::error::GtdStatus::ErrNullArgument;
         }
-        // SAFETY: checked non-null above; caller is responsible for valid lifetime
+        // SAFETY: checked non-null above. Caller is responsible for valid lifetime.
         unsafe { &*($ptr) }
     }};
 }
@@ -31,7 +31,7 @@ macro_rules! cstr {
             $crate::error::set_last_error("null string argument");
             return $crate::error::GtdStatus::ErrNullArgument;
         }
-        // SAFETY: checked non-null above; caller guarantees null-terminated, valid lifetime
+        // SAFETY: checked non-null above. Caller guarantees null-terminated, valid lifetime.
         match unsafe { std::ffi::CStr::from_ptr($ptr) }.to_str() {
             Ok(s) => s,
             Err(_) => {
@@ -43,13 +43,13 @@ macro_rules! cstr {
 }
 
 /// Converts a nullable `*const c_char` to `Option<&str>`.
-/// Returns `None` for null; returns the appropriate error on invalid UTF-8.
+/// Returns `None` for null, or the appropriate error on invalid UTF-8.
 macro_rules! cstr_opt {
     ($ptr:expr) => {{
         if ($ptr).is_null() {
             None
         } else {
-            // SAFETY: checked non-null above; caller guarantees null-terminated, valid lifetime
+            // SAFETY: checked non-null above. Caller guarantees null-terminated, valid lifetime.
             match unsafe { std::ffi::CStr::from_ptr($ptr) }.to_str() {
                 Ok(s) => Some(s),
                 Err(_) => {

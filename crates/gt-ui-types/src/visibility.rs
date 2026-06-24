@@ -63,7 +63,7 @@ impl TrackDataVisibility {
         }
     }
 
-    /// Show only the given file; hide all others. Trip visibility within files
+    /// Show only the given file. Hide all others. Trip visibility within files
     /// is preserved so that re-enabling a file restores its previous state.
     pub fn show_only_file(&mut self, fi: FileIdx) {
         for (i, file) in self.files.iter_mut().enumerate() {
@@ -71,7 +71,7 @@ impl TrackDataVisibility {
         }
     }
 
-    /// Show only the given track (and its parent file); hide everything else.
+    /// Show only the given track (and its parent file). Hide everything else.
     pub fn show_only_track(&mut self, track: TrackRef) {
         for (i, file) in self.files.iter_mut().enumerate() {
             if FileIdx::new(i) == track.fi {

@@ -86,7 +86,6 @@ def multi_constellation_sats(t: str, gps_time: str | None = None) -> list[dict[s
 
 
 def main() -> None:
-    # Find the repository root (assuming we are in scripts/qa/src/qa/generate_gold_dataset.py)
     repo_root = Path(__file__).parent.parent.parent.parent.parent
     dest_dir = repo_root / "tests" / "fixtures" / "gold_dataset"
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -133,7 +132,7 @@ def main() -> None:
                 "sys_time": t,
                 "lat": lat,
                 "lon": lon,
-                "heading_deg": 0.0,  # heading simplified
+                "heading_deg": 0.0,
                 "speed_kmh": 18.0,
                 "eph_m": 3.0,
             }

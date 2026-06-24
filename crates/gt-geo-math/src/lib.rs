@@ -59,7 +59,7 @@ pub fn point_set_diameter_m(points: &[NavPoint]) -> f64 {
 
     let hull = multi.convex_hull();
 
-    // `lines()` yields one segment per edge; each segment's `.start` is a
+    // `lines()` yields one segment per edge. Each segment's `.start` is a
     // unique hull vertex (the closing duplicate coord is excluded).
     let hull_verts: SmallVec<[Coord<f64>; 32]> = hull.exterior().lines().map(|l| l.start).collect();
 

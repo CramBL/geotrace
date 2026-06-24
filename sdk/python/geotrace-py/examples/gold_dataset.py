@@ -79,8 +79,8 @@ def _icon(name: str) -> MarkerIcon | None:
 
 def _rows(path: Path) -> list[list[str]]:
     """Return the data rows of a CSV file (header skipped), fields stripped."""
-    # The fixtures contain UTF-8 (emoji in meta.csv); be explicit so Windows
-    # does not fall back to its cp1252 locale default and fail to decode them.
+    # The fixtures contain UTF-8 (emoji in meta.csv), so be explicit to stop Windows
+    # falling back to its cp1252 locale default and failing to decode them.
     with path.open(newline="", encoding="utf-8") as handle:
         rows = [[cell.strip() for cell in row] for row in csv.reader(handle)]
     return [row for row in rows[1:] if row and any(row)]

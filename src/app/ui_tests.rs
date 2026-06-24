@@ -61,7 +61,7 @@ fn minimal_gtd_bytes() -> Vec<u8> {
 
 /// Step the harness repeatedly until all background load jobs have finished.
 ///
-/// Background threads send a `Completed` message when done; `drain_load_channel`
+/// Background threads send a `Completed` message when done. `drain_load_channel`
 /// (called at the start of every `ui()` frame) picks it up and removes the job.
 /// We sleep briefly between steps to let the threads make progress.
 fn step_until_loaded(harness: &mut Harness<App>) {
@@ -231,7 +231,7 @@ fn panel_detached_renders_without_panic() {
 ///
 /// # What this test checks
 ///
-/// `egui_kittest` is headless; it cannot trigger the real Wayland deadlock.
+/// `egui_kittest` is headless. It cannot trigger the real Wayland deadlock.
 /// What it *can* do is verify that the detached panel code path completes
 /// each frame quickly and does not introduce any O(n²) loops or accidentally
 /// blocking operations that would manifest even in a headless runner.
@@ -246,7 +246,7 @@ fn detached_panel_steps_complete_within_time_budget() {
     harness.state_mut().shared.borrow_mut().tree.detached = true;
 
     // 50 consecutive steps must all finish within 10 seconds total.
-    // In a healthy headless runner each step takes well under 1 ms; the
+    // In a healthy headless runner each step takes well under 1 ms. The
     // budget is generous to survive slow CI machines.
     let deadline = Instant::now() + StdDuration::from_secs(10);
     for _ in 0..50 {

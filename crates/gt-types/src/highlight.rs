@@ -104,7 +104,7 @@ impl TrackRef {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DataCategory {
-    /// Rendered as a polyline through all TPV points; no individual point refs.
+    /// Rendered as a polyline through all TPV points. No individual point refs.
     Track,
     Tpv,
     SatelliteReport,

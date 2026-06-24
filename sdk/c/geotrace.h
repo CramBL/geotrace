@@ -4,8 +4,8 @@
  *
  * Link against `libgeotrace_c` and include this header.
  *
- * **Thread safety:** Handles (`GtdFileBuilder*`, `GtdNavFile*`) are not thread-safe;
- * serialise access to a single handle across threads.
+ * **Thread safety:** Handles (`GtdFileBuilder*`, `GtdNavFile*`) are not thread-safe.
+ * Serialise access to a single handle across threads.
  * `gtd_last_error()` is thread-local and always safe to call.
  *
  * **Ownership:** Every function that returns a handle allocates heap memory.

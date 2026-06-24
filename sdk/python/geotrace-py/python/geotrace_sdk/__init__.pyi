@@ -94,7 +94,7 @@ class SatelliteReport:
 
     Args:
         tracked: All satellites currently tracked.
-        gps_time: GPS-domain timestamp; present when the receiver had an active fix.
+        gps_time: GPS-domain timestamp, present when the receiver had an active fix.
         sys_time: System-clock timestamp at capture time.
     """
 
@@ -129,9 +129,9 @@ class NavFix:
     Args:
         lat: Latitude in degrees.
         lon: Longitude in degrees.
-        gps_time: GPS-receiver timestamp; ``None`` when the receiver had no lock.
+        gps_time: GPS-receiver timestamp, or ``None`` when the receiver had no lock.
         sys_time: System-clock timestamp recorded alongside this fix.
-        heading: Compass heading in degrees [0, 360); ``None`` = unknown.
+        heading: Compass heading in degrees [0, 360), or ``None`` if unknown.
         speed_mps: Speed in m/s, or ``None``.
         eph_m: Estimated horizontal accuracy radius in metres, or ``None``.
     """
@@ -190,8 +190,8 @@ class Annotation:
 
     Args:
         time: Timezone-aware timestamp.
-        label: Display label; ``None`` renders as unlabelled.
-        icon: Visual icon; ``None`` defaults to :attr:`MarkerIcon.PIN`.
+        label: Display label, or ``None`` to render as unlabelled.
+        icon: Visual icon, or ``None`` to default to :attr:`MarkerIcon.PIN`.
     """
 
     def __init__(
@@ -459,7 +459,7 @@ class NavFileBuilder:
         )
         nav_file.write_to_file("track.gtd")
 
-    Calling :meth:`finish` consumes the builder; further method calls raise
+    Calling :meth:`finish` consumes the builder. Further method calls raise
     :class:`RuntimeError`.
     """
 
@@ -512,7 +512,7 @@ class NavFileBuilder:
         ...
 
 class _EventKindNamespace:
-    """Resolved event-kind namespace; attributes are strings or nested namespaces."""
+    """Resolved event-kind namespace. Attributes are strings or nested namespaces."""
 
     def __getattr__(self, name: str) -> Any: ...
     def all_paths(self) -> list[str]:
@@ -528,9 +528,9 @@ class _SkipSentinel:
 class _EventKindDecorator:
     """Class decorator that converts each attribute to its snake_case event path string.
 
-    Attributes in the class body become path strings; inner classes become nested
-    namespaces.
-    An attribute set to ``event_kind.skip`` returns the skip sentinel; passing it to
+    Attributes in the class body become path strings, and inner classes become
+    nested namespaces.
+    An attribute set to ``event_kind.skip`` returns the skip sentinel. Passing it to
     :class:`EventMarker` or :meth:`NavFileBuilder.add` is a silent no-op.
 
     Example::

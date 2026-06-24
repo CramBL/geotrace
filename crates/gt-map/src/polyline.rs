@@ -36,7 +36,7 @@ pub(crate) enum VisiblePath<K> {
     /// zoom-out, or a single fix). Draw a dot at this point so the path
     /// stays discoverable.
     Dot(K, egui::Pos2),
-    /// Drawable polyline spans; every span has at least two points.
+    /// Drawable polyline spans. Every span has at least two points.
     Spans(PolylineSpans<K>),
 }
 
@@ -63,7 +63,7 @@ impl<K> PolylineSpans<K> {
         })
     }
 
-    /// Build from per-span point lists; test-only convenience for asserting
+    /// Build from per-span point lists. Test-only convenience for asserting
     /// expected span structure.
     #[cfg(test)]
     pub(crate) fn from_nested(nested: Vec<Vec<(K, egui::Pos2)>>) -> Self {
@@ -88,14 +88,14 @@ impl<K> PolylineSpans<K> {
 /// actually visible rather than to the recording size:
 ///
 /// - Segments that provably cannot intersect `cull_rect` (both endpoints
-///   beyond the same rect edge) end the current span; the polyline resumes
+///   beyond the same rect edge) end the current span. The polyline resumes
 ///   when it re-enters. Partially visible segments are kept whole, so no
 ///   endpoint is ever moved and visible geometry is exact.
 /// - Consecutive points with equal keys closer than [`MIN_POINT_DIST_SQ`]
 ///   are merged - at sub-pixel distance the difference is invisible. A key
 ///   transition is always kept so styled regions stay anchored.
 ///
-/// Spans with fewer than two points (nothing to draw) are dropped; when that
+/// Spans with fewer than two points (nothing to draw) are dropped. When that
 /// leaves nothing but at least one point is on screen, the result is
 /// [`VisiblePath::Dot`] instead.
 pub(crate) fn visible_path<K: Copy + PartialEq>(
@@ -107,7 +107,7 @@ pub(crate) fn visible_path<K: Copy + PartialEq>(
         span_ends: smallvec::SmallVec::new(),
     };
     // Start of the span currently being built, as an index into the flat
-    // buffer; everything before it belongs to completed spans.
+    // buffer. Everything before it belongs to completed spans.
     let mut span_start = 0;
     let mut prev: Option<(K, egui::Pos2)> = None;
     let mut first_on_screen: Option<(K, egui::Pos2)> = None;
@@ -261,7 +261,7 @@ mod tests {
             VisiblePath::OffScreen
         );
         // A lone fix inside the view must stay discoverable (drawn as a dot
-        // by the caller); a lone fix outside the view yields nothing.
+        // by the caller). A lone fix outside the view yields nothing.
         assert_eq!(
             visible_path(std::iter::once(real(10.0, 10.0)), RECT),
             VisiblePath::Dot(false, pos2(10.0, 10.0))

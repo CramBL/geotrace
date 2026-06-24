@@ -7,7 +7,7 @@ use uom::si::{
     length::{kilometer, meter},
 };
 
-/// Two spaces, U+00B7 MIDDLE DOT, two spaces — joins fields inside tooltip strings.
+/// Two spaces, U+00B7 MIDDLE DOT, two spaces, joins fields inside tooltip strings.
 const TOOLTIP_JOINER: &str = "  ·  ";
 
 /// Returns the percentage of time spent with a satellite fix, rounded to the

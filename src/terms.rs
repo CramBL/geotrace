@@ -6,8 +6,8 @@ pub const IDENTITY: &str = "Groups related recordings together in the database. 
 /// Renders a domain-specific term as an underlined label with a tooltip
 /// that explains it on hover.
 ///
-/// Pass a [`egui::RichText`] so the caller controls weight, size, and colour;
-/// the underline is always added here to signal that the term is hoverable.
+/// Pass a [`egui::RichText`] so the caller controls weight, size, and colour.
+/// The underline is always added here to signal that the term is hoverable.
 pub fn term_label(ui: &mut egui::Ui, text: egui::RichText, explanation: &str) {
     ui.add(egui::Label::new(text.underline()).sense(egui::Sense::hover()))
         .on_hover_text(explanation);

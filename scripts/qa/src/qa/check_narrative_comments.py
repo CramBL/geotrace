@@ -1,12 +1,4 @@
-"""Forbid numbered narrative comments across all checked source files.
-
-Narrative comments form a step-by-step story woven through code, either as a
-numbered list (e.g. "// 1. Load the map", "// 2. Filter results") or as
-labelled phases (e.g. "// Phase 1: Parse input", "# Phase 2 - Validate").
-They are a symptom of code that is too complex to be read without an
-accompanying narration, and they create a maintenance burden because the
-numbering must be kept in sync with the code they describe.  The fix is to
-extract the steps into small, well-named functions that are self-documenting.
+"""Forbid numbered narrative comments (numbered lists or labelled phases) across all checked source files.
 
 Exemption syntax (same line as the comment):
     // 1. Special case // [qa-allow-check-narrative-comments, reason = "why"]

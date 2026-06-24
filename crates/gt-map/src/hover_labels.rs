@@ -10,11 +10,11 @@ use crate::icons::ICON_GAP;
 
 /// Returns `true` when the multi-hover compound label should be drawn.
 ///
-/// `current_multi_hover` — more than one candidate hovered this frame.
-/// `disambig_open` — the disambiguation popup is open.
-/// `suppress_hover_labels` — set from the previous frame's candidate count;
-///   false on the transition frame so the compound label and individual
-///   renderer tooltips never appear simultaneously.
+/// `current_multi_hover`, more than one candidate hovered this frame.
+/// `disambig_open`, the disambiguation popup is open.
+/// `suppress_hover_labels`, set from the previous frame's candidate count.
+/// False on the transition frame so the compound label and individual
+/// renderer tooltips never appear simultaneously.
 #[expect(
     clippy::fn_params_excessive_bools,
     reason = "three independent boolean inputs to the guard"
@@ -30,8 +30,7 @@ pub(crate) fn should_show_compound_label(
 /// Renders the sections of a multi-hover stacked label into `ui`.
 ///
 /// Each section is wrapped in its own `Frame::popup` so the items appear as
-/// visually distinct, opaque cards with spacing between them rather than a
-/// single fused block.  The caller should NOT wrap this in an outer frame —
+/// distinct opaque cards. The caller should NOT wrap this in an outer frame,
 /// the popup frames provide all the visual containment needed.
 pub(crate) fn draw_multi_hover_label_contents(
     ui: &mut egui::Ui,

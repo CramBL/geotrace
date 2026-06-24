@@ -258,7 +258,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut recorder = NavFileBuilder::new().open();
 
     // The typed add_* methods accept `impl Into<…>`, so the domain types feed in
-    // directly via their From impls — no manual conversion at the call site.
+    // directly via their From impls, no manual conversion at the call site.
     for fix in fixes {
         recorder.add_nav_fix(fix);
     }

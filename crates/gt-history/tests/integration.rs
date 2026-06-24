@@ -164,7 +164,6 @@ fn repro_missing_version_error() {
         let shape = [n];
 
         let mut fb = hdf5_pure::FileBuilder::new();
-        // NO version attribute here
 
         let mut nav_gb = fb.create_group("nav_points");
 
@@ -189,7 +188,6 @@ fn repro_missing_version_error() {
         .insert_simple("test_device", &meta, &bytes)
         .expect("insert");
 
-    // Now load it
     let loaded_bytes = db.load_bytes(&db_ref).expect("load_bytes");
 
     // Inspect the file to see if it has the version attribute
@@ -226,18 +224,15 @@ fn repro_duplicate_entry_issue() {
 
     let meta = extract_meta(&bytes).expect("parse meta");
 
-    // Insert once
     db.insert_simple("test_device", &meta, &bytes)
         .expect("insert 1");
 
-    // Insert again - should be duplicate
+    // Insert again, should be deduplicated.
     db.insert_simple("test_device", &meta, &bytes)
         .expect("insert 2");
 
-    // List recordings
     let recordings = db.list_recordings().expect("list");
 
-    // Check for duplicates
     assert_eq!(
         recordings.len(),
         1,
@@ -711,7 +706,7 @@ fn set_tracks_hidden_flags_tracks_and_is_reversible() {
     assert_eq!(entries[0].total_tracks, 2);
     assert_eq!(entries[0].hidden_tracks, 0, "new tracks are visible");
 
-    // Hide the first track; the recording stays, with one hidden track.
+    // Hide the first track, the recording stays, with one hidden track.
     db.set_tracks_hidden(&db_ref, &[0], true).expect("hide");
     let entries = db.list_recordings().expect("list after hide");
     assert_eq!(entries[0].hidden_tracks, 1);
@@ -1124,13 +1119,11 @@ fn pure_backend_does_not_add_duplicate_recordings() {
     let bytes = make_gtd_bytes(1_000_000, 5);
     let meta = extract_meta(&bytes).expect("parse meta");
 
-    // First insertion
     let identity = "auto:snapshot.gtd";
     db.insert_simple(identity, &meta, &bytes)
         .expect("first insert");
 
-    // Second insertion with the same (recursively created) identity
-    // If it's a duplicate, is_duplicate should return true
+    // Re-inserting the same identity must be detected as a duplicate.
     let is_dup = db.is_duplicate(&meta).expect("check duplicate");
 
     assert!(is_dup, "Should be detected as a duplicate");
@@ -1187,12 +1180,10 @@ fn sys_backend_structural_parity_repro() {
     let bytes = make_gtd_bytes(1_000_000, 5);
     let meta = extract_meta(&bytes).expect("parse meta");
 
-    // Insert using the sys backend
     let _db_ref = db.insert_simple("device", &meta, &bytes).expect("insert");
 
-    // Attempt to verify structure using the hdf5-pure reader
-    // This is what the pure backend does. If sys backend is parity-compatible,
-    // this should work.
+    // Verify the sys-backend structure with the hdf5-pure reader (as the pure
+    // backend does): if the sys backend is parity-compatible, this works.
     let file = hdf5_pure::File::open(&db_path).expect("open");
     let root = file.root();
 
@@ -1335,7 +1326,7 @@ fn many_recordings_support_list_read_hide_and_delete() {
     let mut refs: Vec<(DatabaseRef, u64)> = Vec::with_capacity(N);
     for i in 0..N {
         // Distinct start timestamps give each a distinct content fingerprint (so
-        // they are not deduplicated); group-name uniqueness is handled by the UUID
+        // they are not deduplicated).  Group-name uniqueness is handled by the UUID
         // suffix regardless of spacing.
         let start = 1_000_000_000 + i as i64 * 1_000_000;
         let n = 6 + (i as u64 % 7);
@@ -1395,7 +1386,7 @@ fn many_recordings_support_list_read_hide_and_delete() {
 
 /// Insert 40 recordings, then run 4 delete-all + refill cycles, returning
 /// `(size_after_first_fill, size_after_cycles)`. With perfect space reuse the two
-/// sizes are equal; without any reuse the file grows by one fill per cycle.
+/// sizes are equal. Without any reuse the file grows by one fill per cycle.
 #[expect(
     clippy::expect_used,
     reason = "test helper; panicking on failure is the right behaviour"
@@ -1405,7 +1396,7 @@ fn delete_reinsert_size_trajectory(db_path: &std::path::Path) -> (u64, u64) {
     let fill = |db: &mut Database| {
         for i in 0..N {
             // Distinct start timestamps give distinct content fingerprints (so the
-            // inserts are not deduplicated); group-name uniqueness comes from the
+            // inserts are not deduplicated).  Group-name uniqueness comes from the
             // UUID suffix.
             let start = 1_000_000_000 + i as i64 * 1_000_000;
             insert_two_track(db, "dev", start, 50);
@@ -1440,14 +1431,14 @@ fn delete_reinsert_size_trajectory(db_path: &std::path::Path) -> (u64, u64) {
 /// reuses object-header and raw-data space - not the global heap that backs
 /// variable-length strings - so the backend stores all string attributes
 /// fixed-length (see `write_string_attr`). Both backends therefore keep the file
-/// flat; a 2x ceiling leaves generous slack while still catching the unbounded
+/// flat. A 2x ceiling leaves generous slack while still catching the unbounded
 /// (one-fill-per-cycle) growth that variable-length strings used to cause.
 #[test_log::test]
 fn file_size_stays_bounded_across_delete_reinsert_cycles() {
     let dir = tempfile::tempdir().expect("temp dir");
     let (baseline, after) = delete_reinsert_size_trajectory(&dir.path().join("geotrace.h5"));
     assert!(baseline > 0, "the filled database has a non-zero size");
-    // Reuse keeps `after` at `baseline`; a regression that stops reclaiming space
+    // Reuse keeps `after` at `baseline`. A regression that stops reclaiming space
     // would grow it by ~one fill per cycle, which the snapshot shows exactly.
     assert_size_snapshot("delete_all_refill", baseline, after);
 }
@@ -1472,7 +1463,7 @@ fn interior_delete_then_insert_reuses_freed_space() {
         .collect();
     let full = file_size(&db_path);
 
-    // Delete the older half (indices 0..N/2); the newer half stays physically
+    // Delete the older half (indices 0..N/2). The newer half stays physically
     // after them, so the freed regions are interior holes.
     let old: Vec<DatabaseRef> = refs.drain(0..N / 2).collect();
     db.delete_batch(&old).expect("delete older half");
@@ -1515,7 +1506,7 @@ fn interior_range_delete_keeps_file_bounded() {
         .expect("delete interior range");
     assert_eq!(db.list_recordings().expect("list").len(), N - 20);
 
-    // Insert 20 fresh recordings; reuse returns the count to 40 with little growth.
+    // Insert 20 fresh recordings. Reuse returns the count to 40 with little growth.
     for i in N..(N + 20) {
         insert_two_track(&mut db, "dev", start_for(i), 50);
     }

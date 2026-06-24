@@ -11,6 +11,17 @@ Two rules hold for both tracks:
   So a prerelease is not just a tag suffix — the manifest must carry the `-rc.N` suffix too, which means the prerelease and the final release are *different commits*.
 - **Bump on a branch, merge via PR, then tag the merged commit** — never commit a version bump straight to `trunk`.
 
+## Changelog
+
+Each track has a changelog: `CHANGELOG.md` (GUI) and `CHANGELOG_SDK.md` (SDK).
+Record user-facing changes under `## [unreleased]` as you make them.
+That section becomes the GitHub release body.
+
+The release flow promotes it for you.
+`just qa::bump-app` / `just qa::bump-sdk` turn `## [unreleased]` into `## [X.Y.Z] - YYYY-MM-DD` and leave a fresh empty `## [unreleased]` on top.
+A prerelease (`X.Y.Z-rc.N`) and its final release share one `## [X.Y.Z]` section.
+The `--expect` guards refuse to tag if that section is missing.
+
 ## Scripted flow
 
 The `just release::*` recipes walk these steps interactively from an up-to-date, clean `trunk`, printing each command as `<command> ?` and running it when you press Enter (`s` skips, `q` quits):
@@ -26,7 +37,7 @@ Bump on a branch and open a PR:
 
 ```sh
 git switch -c release/app-vX.Y.Z
-just qa::bump-app X.Y.Z      # edits the workspace version
+just qa::bump-app X.Y.Z      # edits the workspace version + promotes CHANGELOG.md
 git commit -am "release app vX.Y.Z"
 git push -u origin release/app-vX.Y.Z
 ```
@@ -52,7 +63,7 @@ Same shape — bump on a branch, PR, merge, then tag:
 
 ```sh
 git switch -c release/sdk-vX.Y.Z
-just qa::bump-sdk X.Y.Z      # edits every SDK version spot (fails if it can't)
+just qa::bump-sdk X.Y.Z      # edits every SDK version spot + promotes CHANGELOG_SDK.md (fails if it can't)
 git commit -am "release sdk vX.Y.Z"
 git push -u origin release/sdk-vX.Y.Z
 # open the PR, merge, then:

@@ -3,7 +3,7 @@
 
 Scenario: your GPS unit logs fixes to one source, and a separate system (a test
 harness, an annotation tool, a sensor log) records named events with their own
-timestamps.  Both are added independently to the builder; finish() sorts
+timestamps. Both are added independently to the builder. finish() sorts
 everything by time and interpolates each annotation's map position from the two
 surrounding GPS fixes.
 """
@@ -28,7 +28,7 @@ GPS_FIXES = [
     (51.5079, -0.1268, 90.5),
 ]
 
-# Source 2: annotations from a separate log.  Their positions are not supplied -
+# Source 2: annotations from a separate log. Their positions are not supplied,
 # finish() interpolates them from the GPS fixes by timestamp.
 ANNOTATIONS = [
     (5, "Pothole", MarkerIcon.WARNING),

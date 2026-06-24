@@ -84,7 +84,7 @@ impl CategoriesExpanded {
 /// Stores all unique prefix segments derived from the track's marker
 /// variant paths.  Leaves are paths that exist as actual marker variants;
 /// internal nodes are shared prefix segments.  `CheckState` is derived for
-/// internal nodes from their children; only leaves carry "true" state.
+/// internal nodes from their children. Only leaves carry "true" state.
 #[derive(Default)]
 pub struct EventPathTree {
     /// All paths (leaves and internal nodes) → visibility state.
@@ -219,7 +219,7 @@ pub struct TreeState {
     pub selection: BTreeSet<NodeKey>,
     pub selection_anchor: Option<NodeKey>,
     pub delete_confirm: Option<DeleteConfirmState>,
-    /// Items the user asked to unload from the view (non-destructive; the
+    /// Items the user asked to unload from the view (non-destructive, the
     /// recordings stay in history). Consumed by the app each frame.
     pub pending_unload: Option<Vec<NodeKey>>,
     pub detached: bool,
@@ -449,10 +449,10 @@ impl TreeState {
         self.rebuild_visibility();
     }
 
-    /// Show only the given tracks; hide everything else. All listed tracks must
+    /// Show only the given tracks. Hide everything else. All listed tracks must
     /// belong to the same file as each other (any file structure is fine, but
     /// each `TrackRef` identifies a file+track pair). Tracks from files not
-    /// mentioned in `tracks` are hidden; within a mentioned file, only the
+    /// mentioned in `tracks` are hidden. Within a mentioned file, only the
     /// listed tracks are shown.
     pub fn show_only_tracks(&mut self, tracks: &[TrackRef]) {
         for (i, file_node) in self.files.iter_mut().enumerate() {

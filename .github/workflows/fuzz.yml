@@ -1,7 +1,7 @@
 name: Fuzz
 
 # Fuzz the `.gtd` decoder (geotrace-sdk's NavFile::read, the shared entry point
-# all SDKs decode through). A bounded run on PRs and pushes; a longer run weekly.
+# all SDKs decode through). A bounded run on PRs and pushes, a longer run weekly.
 on:
   push:
     branches: [trunk]
@@ -53,7 +53,7 @@ jobs:
         working-directory: sdk/rust/geotrace-sdk
         run: |
           set -euo pipefail
-          # A short run gates PRs/pushes; the weekly schedule fuzzes longer.
+          # A short run gates PRs/pushes, the weekly schedule fuzzes longer.
           duration=60
           [ "${{ github.event_name }}" = "schedule" ] && duration=600
           # Pin the gnu target: cargo-fuzz ships as a musl-static binary, so it

@@ -6,7 +6,7 @@
 /// `"power/boot"` or `"connectivity/agps/request"` by chaining segments.
 ///
 /// [`variant_path`](EventKind::variant_path) returns `None` for variants
-/// marked `#[event_kind(skip)]`; callers such as
+/// marked `#[event_kind(skip)]`. Callers such as
 /// [`NavRecorder::add_event`](crate::NavRecorder::add_event) treat `None` as a
 /// silent no-op.
 ///
@@ -29,9 +29,9 @@
 ///
 /// | Attribute | Effect |
 /// |-----------|--------|
-/// | `#[event_kind(leaf)]` | Always emit only this variant's segment; never delegate, even if the inner type implements `EventKind`. |
+/// | `#[event_kind(leaf)]` | Always emit only this variant's segment. Never delegate, even if the inner type implements `EventKind`. |
 /// | `#[event_kind(delegate)]` | Always delegate to the inner `EventKind` implementation, appending its path after this variant's segment.  Required in `lax` mode when you *do* want delegation. |
-/// | `#[event_kind(skip)]` | `variant_path()` returns `None` for this variant; `add_event` silently ignores it. |
+/// | `#[event_kind(skip)]` | `variant_path()` returns `None` for this variant. `add_event` silently ignores it. |
 /// | `#[event_kind(icon = <Name>)]` | Sets the [`MarkerIcon`](crate::MarkerIcon) for this variant.  `<Name>` must be a variant of `MarkerIcon` (e.g. `Warning`, `Check`).  Has no effect on delegating variants - their icon comes from the inner type's leaf. |
 ///
 /// # Example
@@ -86,7 +86,7 @@ pub trait EventKind: __private::Sealed {
     ///
     /// For delegating variants the inner type's `marker_icon` is returned, so the
     /// icon always comes from the leaf regardless of nesting depth.
-    /// Returns `None` when no icon was specified; callers fall back to the application default.
+    /// Returns `None` when no icon was specified. Callers fall back to the application default.
     fn marker_icon(&self) -> Option<crate::MarkerIcon> {
         None
     }
@@ -99,7 +99,7 @@ pub trait EventKind: __private::Sealed {
     /// |-----------|-----------|
     /// | *(none)* / `#[event_kind(note = debug)]` | `Some(format!("{self:?}"))` - requires `Debug`. This is the default. |
     /// | `#[event_kind(note = display)]` | `Some(format!("{self}"))` - requires `Display`. |
-    /// | `#[event_kind(note = none)]` | Always `None`; no note is stored. |
+    /// | `#[event_kind(note = none)]` | Always `None`. No note is stored. |
     ///
     /// For a one-off custom note on a specific event instance use
     /// [`NavRecorder::add_event_with_note`](crate::NavRecorder::add_event_with_note)
@@ -111,7 +111,7 @@ pub trait EventKind: __private::Sealed {
 
 /// Internal plumbing for the `#[derive(EventKind)]` macro.
 ///
-/// Not part of the public API; subject to change without notice.
+/// Not part of the public API. Subject to change without notice.
 #[doc(hidden)]
 pub mod __private {
     /// Sealing trait - implemented only by the `#[derive(EventKind)]` macro.

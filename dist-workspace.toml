@@ -10,7 +10,7 @@ ci = "github"
 # The installers to generate for each app
 installers = ["shell", "powershell", "homebrew", "msi"]
 # wix/main.wxs is hand-customized (app icon + Start Menu/Desktop shortcuts), so
-# dist must not regenerate or drift-check it. Scoped to the msi file only; the
+# dist must not regenerate or drift-check it. Scoped to the msi file only. The
 # CI workflow is still fully checked.
 allow-dirty = ["msi"]
 # The archive format to use for windows builds (defaults .zip)

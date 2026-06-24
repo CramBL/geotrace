@@ -29,7 +29,7 @@ pub(crate) const ICON_SIZE_LARGE_PX: f32 = 24.0;
 /// Call this once at startup (before the first frame) from your `App::new`
 /// implementation, **after** [`egui_extras::install_image_loaders`] has been
 /// called. The icons are compiled into the binary via `include_bytes!` and
-/// cached by egui's texture system after their first rasterisation; subsequent
+/// cached by egui's texture system after their first rasterisation. Subsequent
 /// frames pay only a GPU quad draw - no CPU tessellation, no heap allocation.
 macro_rules! icon_bytes {
     ($name:literal) => {

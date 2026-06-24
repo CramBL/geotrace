@@ -516,7 +516,7 @@ mod tests {
             )
             .build();
 
-        // geotrace_c Isolation (Whitelist) - FFI layer; only touches geotrace_sdk and std
+        // geotrace_c Isolation (Whitelist) - FFI layer. Only touches geotrace_sdk and std
         builder
             .module_lint()
             .lint_named("geotrace_c_isolation")

@@ -125,7 +125,7 @@ impl ConfigManager {
         }
     }
 
-    /// Compare `current` against the previous snapshot; mark dirty if changed.
+    /// Compare `current` against the previous snapshot, mark dirty if changed.
     pub fn sync(&mut self, current: AppSnapshot) {
         if current != self.prev_snapshot {
             self.prev_snapshot = current;

@@ -109,20 +109,20 @@ pub struct App {
     /// Active association config - applied to all new log loads.
     assoc_config: AssociationConfig,
 
-    /// Background worker that owns the history database; all reads and edits go
+    /// Background worker that owns the history database. All reads and edits go
     /// through it so the UI thread never blocks on disk I/O.
     history: history_db::HistoryManager,
     /// Set when the database could not be opened because it is marked as locked
-    /// (open for write); drives a confirmation dialog offering to clear it.
+    /// (open for write). Drives a confirmation dialog offering to clear it.
     pending_history_unlock: Option<PathBuf>,
-    /// Set when the database could not be opened because it is corrupted; drives a
+    /// Set when the database could not be opened because it is corrupted. Drives a
     /// dialog offering to recreate it (optionally keeping a backup).
     pending_db_corruption: Option<PathBuf>,
     /// "Keep a backup of the original database" tickbox state for the corruption
     /// recreate dialog.
     keep_db_backup: bool,
     /// Set when a recording is opened from history whose stored segmentation
-    /// settings differ from the current ones; drives the recalculate/use-stored
+    /// settings differ from the current ones. Drives the recalculate/use-stored
     /// prompt.
     pending_resegment: Option<ResegmentPrompt>,
 
@@ -151,7 +151,7 @@ pub struct App {
     /// When `true`, check for updates on startup (also gated on release build and
     /// `GEOTRACE_OFFLINE` being unset). Mirrors `settings.update.check_on_startup`.
     update_check_on_startup: bool,
-    /// A release version the user chose to skip; suppresses the update prompt for
+    /// A release version the user chose to skip. Suppresses the update prompt for
     /// exactly this version. Mirrors `settings.update.skipped_version`.
     skipped_version: Option<String>,
 }
@@ -540,7 +540,7 @@ impl App {
                     }
                 });
 
-                // Only meaningful in dist builds; builds without the self-update
+                // Only meaningful in dist builds. Builds without the self-update
                 // feature carry no update check to toggle.
                 #[cfg(feature = "self-update")]
                 {
@@ -859,7 +859,7 @@ impl App {
                     completed_at: std::time::Instant::now(),
                 });
                 if was_stored {
-                    // The recording list now has a new entry; refresh it.
+                    // The recording list now has a new entry, refresh it.
                     self.history_window.invalidate();
                     self.check_auto_prune();
                 }
@@ -964,7 +964,7 @@ impl App {
         }
     }
 
-    /// Ask the history worker whether auto-pruning is needed; the result comes
+    /// Ask the history worker whether auto-pruning is needed. The result comes
     /// back as a [`history_db::Response::AutoPruned`]. Called after each
     /// successful GTD insert.
     fn check_auto_prune(&self) {
@@ -994,7 +994,7 @@ impl App {
     }
 
     /// Begin opening a recording from history. Reproduces the stored tracks and
-    /// re-applies the hidden ones; when the stored segmentation settings differ
+    /// re-applies the hidden ones. When the stored segmentation settings differ
     /// from the current ones it raises a prompt instead (recalculate vs. use the
     /// stored tracks).
     fn begin_history_open(
@@ -1276,7 +1276,7 @@ impl eframe::App for App {
                 .ctx()
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete));
             if delete_pressed && !s.tree.selection.is_empty() && s.tree.pending_unload.is_none() {
-                // Delete key unloads the selection from the view (non-destructive;
+                // Delete key unloads the selection from the view (non-destructive,
                 // recordings stay in history).
                 s.tree.pending_unload = Some(s.tree.selection.iter().cloned().collect());
             }
@@ -1506,9 +1506,9 @@ impl eframe::App for App {
             show_mapbox_token_dialog(ui, &mut self.map, &mut self.mapbox_token_input);
         }
 
-        // Loading progress overlay - floats in the bottom-right corner.
-        // Shows in-flight jobs with a live elapsed timer, and recently completed
-        // jobs that fade out over ~3 seconds so the user can see how long it took.
+        // Loading progress overlay in the bottom-right corner. Shows in-flight
+        // jobs with a live elapsed timer, plus recently completed jobs that fade
+        // out over ~3 seconds so the user can see how long it took.
         let any_finishing = !self.loader.finishing_jobs.is_empty();
         self.loader.expire_finished();
 
@@ -1604,8 +1604,8 @@ impl eframe::App for App {
             self.load_error = None;
         }
 
-        // Unload (context menu / Delete key): remove items from the view only;
-        // the recordings stay in history, so no confirmation is needed.
+        // Unload (context menu / Delete key): remove items from the view only.
+        // The recordings stay in history, so no confirmation is needed.
         let unloaded = {
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
@@ -2071,7 +2071,7 @@ fn theme_pref_from_setting(s: crate::settings::ThemeSetting) -> egui::ThemePrefe
 ///
 /// `show_days` controls whether the days field is included.
 /// `show_hours` controls whether the hours field is included.
-/// Each component is independent; the total is clamped to `[min_secs, max_secs]`.
+/// Each component is independent. The total is clamped to `[min_secs, max_secs]`.
 fn compound_duration_input(
     ui: &mut egui::Ui,
     value_secs: &mut u64,

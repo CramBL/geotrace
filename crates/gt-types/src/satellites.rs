@@ -90,8 +90,8 @@ impl Constellation {
     /// Single source of truth for this type's display spelling - call sites
     /// (e.g. `gt-map`'s satellite panel) should format through this rather than
     /// re-typing the name. Mirrors `geotrace_sdk::Constellation::display_name`,
-    /// which answers the same "BeiDou" vs "Beidou" vs "BEIDOU" question for the
-    /// structurally-identical SDK/wire-format type; keep the two in sync.
+    /// which answers the same spelling question for the structurally-identical
+    /// SDK/wire-format type. Keep the two in sync.
     pub fn display_name(self) -> &'static str {
         match self {
             Constellation::Gps => "GPS",
@@ -165,7 +165,7 @@ pub struct Satellites {
 impl Satellites {
     /// Construct a satellite report.
     ///
-    /// At least one of `gps_time` / `sys_time` should be `Some`; the builder
+    /// At least one of `gps_time` / `sys_time` should be `Some`. The builder
     /// guarantees this in practice, but it is not enforced here.
     pub fn new(
         gps_time: Option<GpsTime>,
@@ -275,9 +275,8 @@ impl Satellites {
 mod constellation_tests {
     use super::*;
 
-    /// Single source of truth for the "BeiDou" vs "Beidou" vs "BEIDOU" spelling
-    /// that was previously re-typed independently at every UI call site; pin it
-    /// down so a future edit has to change it here. Keep in sync with
+    /// Single source of truth for constellation display spelling. Pin it down
+    /// so a future edit has to change it here. Keep in sync with
     /// `geotrace_sdk::Constellation::display_name`'s identical assertions.
     #[test]
     fn display_name_is_canonical_spelling() {

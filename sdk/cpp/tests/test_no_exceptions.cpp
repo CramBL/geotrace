@@ -1,5 +1,5 @@
 // Built with -DGEOTRACE_CPP_NO_EXCEPTIONS to exercise the non-throwing,
-// sticky-error path of the SDK. doctest itself still uses exceptions; only the
+// sticky-error path of the SDK. doctest itself still uses exceptions. Only the
 // GeoTrace header is forced onto its no-exceptions branch.
 #include <doctest/doctest.h>
 #include <geotrace.h>
@@ -38,7 +38,7 @@ EventMarker bad_marker() {
 TEST_CASE("builder accumulates the first error and surfaces it at try_finish") {
     FileBuilder b;
     b.add(one_fix());
-    b.add_event_marker(bad_marker()); // records the error; does not throw or abort
+    b.add_event_marker(bad_marker()); // records the error, does not throw or abort
     CHECK(b.status().is_err());
     CHECK(b.status().code == GTD_ERR_INVALID_PATH);
 

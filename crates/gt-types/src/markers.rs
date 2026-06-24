@@ -55,7 +55,7 @@ pub enum GeneratedMarkerKind {
     },
     /// The GPS−system clock offset jumped abruptly at this sample relative to
     /// the previous one - e.g. a device resuming from suspend, where a stale
-    /// pre-suspend GPS timestamp meets a post-wake system timestamp.  Surfaced
+    /// pre-suspend GPS timestamp meets a post-wake system timestamp. Surfaced
     /// (never hidden) because such clock discontinuities are exactly the kind of
     /// anomaly engineers use GeoTrace to find.
     ClockDiscontinuity {
@@ -66,7 +66,7 @@ pub enum GeneratedMarkerKind {
 }
 
 impl std::fmt::Display for GeneratedMarkerKind {
-    /// Canonical human-readable label; format through this rather than
+    /// Canonical human-readable label. Format through this rather than
     /// re-typing the wording at each call site.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
@@ -91,11 +91,9 @@ pub struct GeneratedMarker {
 mod generated_marker_kind_tests {
     use super::*;
 
-    /// Single source of truth for the "GPS"/"GNSS"/"Fix" wording question
-    /// that every call site previously answered independently (and
-    /// inconsistently - three different spellings across five copies). Pin
-    /// it down so a future edit has to change it here, where every
-    /// downstream label, tooltip, and test fixture will pick it up.
+    /// Single source of truth for the "GPS"/"GNSS"/"Fix" wording. Pin it down
+    /// so a future edit has to change it here, where every downstream label,
+    /// tooltip, and test fixture will pick it up.
     #[test]
     fn label_is_canonical_wording() {
         assert_eq!(

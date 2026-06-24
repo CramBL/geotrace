@@ -2,7 +2,7 @@
 """Type-safe event markers using the @event_kind decorator - flat (single-level) case.
 
 The decorator converts each class attribute to a snake_case path string.
-All attributes in this example are leaves; there is no nesting.
+All attributes in this example are leaves, with no nesting.
 """
 
 from __future__ import annotations

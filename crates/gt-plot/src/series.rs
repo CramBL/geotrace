@@ -34,7 +34,7 @@ pub(crate) struct TrackSeries {
     pub eph_m: MipMap,
     pub heading_deg: MipMap,
     /// GPS-clock lead over the host system clock, in milliseconds.
-    /// Positive = GPS clock ahead; negative = system clock ahead.
+    /// Positive = GPS clock ahead, negative = system clock ahead.
     /// Only present when the TPV record carries a system timestamp.
     pub clock_delta_ms: MipMap,
 }

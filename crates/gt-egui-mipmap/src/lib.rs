@@ -180,7 +180,7 @@ impl MipMap {
     /// Return the data slice described by a previously computed `LevelSelection`.
     ///
     /// The selection must have been produced by [`Self::select_indices`] on the
-    /// same `MipMap` without any rebuild in between; the caller is responsible
+    /// same `MipMap` without any rebuild in between. The caller is responsible
     /// for invalidating cached selections whenever the source data changes.
     pub fn slice_at(&self, sel: LevelSelection) -> &[PlotPoint] {
         let Some(level) = self.levels.get(sel.level_idx) else {
@@ -222,7 +222,7 @@ impl MipMap {
         target_count: usize,
     ) -> (usize, usize, usize) {
         let x_max = x_max.max(x_min);
-        // Try from coarsest → finest; use the coarsest level that is dense
+        // Try from coarsest → finest. Use the coarsest level that is dense
         // enough for the target count in the visible range.
         let mut bounds = (0, 0, 0);
         for (i, level) in self.levels.iter().enumerate().rev() {

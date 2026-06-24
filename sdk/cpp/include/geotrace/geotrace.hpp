@@ -12,7 +12,7 @@
  * All types live in the `geotrace` namespace.
  *
  * Errors are reported two ways: the default methods throw exceptions derived
- * from `geotrace::Error`; the parallel `try_*` methods instead return a
+ * from `geotrace::Error`. The parallel `try_*` methods instead return a
  * `Result`/`Status` by value and never throw. When the SDK is compiled without
  * exception support (`-fno-exceptions`, or `GEOTRACE_CPP_NO_EXCEPTIONS`), use
  * the `try_*` API.
@@ -53,8 +53,8 @@
 // Exception support is detected the idiomatic way, via the standard
 // `__cpp_exceptions` feature-test macro (MSVC predates it, so `_CPPUNWIND` is
 // also accepted). Define GEOTRACE_CPP_NO_EXCEPTIONS to force the no-exceptions
-// path even when the compiler supports them. The throwing API is the default;
-// when exceptions are unavailable, use the `try_*` methods and `Result`/`Status`
+// path even when the compiler supports them. The throwing API is the default.
+// When exceptions are unavailable, use the `try_*` methods and `Result`/`Status`
 // instead, which report errors by value and never throw.
 #if !defined(GEOTRACE_CPP_NO_EXCEPTIONS) && (defined(__cpp_exceptions) || defined(_CPPUNWIND))
 #define GEOTRACE_CPP_EXCEPTIONS 1
@@ -239,7 +239,7 @@ struct NavFileDeleter {
 /**
  * An error returned by value from a `try_*` method, instead of thrown.
  *
- * `code` is the underlying `GtdStatus`; `description` is a human-readable
+ * `code` is the underlying `GtdStatus`. `description` is a human-readable
  * message. This is the non-throwing error channel: check `is_ok()` or call
  * `value_or_throw()` on the enclosing `Result`.
  */
@@ -275,7 +275,7 @@ struct Status {
  *
  * Modelled on Rust's `Result`. Inspect `is_ok()` / `error()` and read `value`,
  * or call `value_or_throw()` to throw the error (or abort without exceptions).
- * `T` must be default-constructible; the value is unspecified when `is_err()`.
+ * `T` must be default-constructible. The value is unspecified when `is_err()`.
  */
 template <typename T> struct Result {
     T value;
@@ -544,7 +544,7 @@ struct EventMarker {
 struct EventMarkerStyle {
     std::string variant_path;
     MarkerIcon icon = MarkerIcon::Auto;
-    std::string color_hex; // empty = auto (hash-derived); format: "#RRGGBB"
+    std::string color_hex; // empty = auto (hash-derived). format: "#RRGGBB"
 };
 
 /** Data for one navigation fix, returned by `NavFile::nav_point()`. */
@@ -683,7 +683,7 @@ template <class E> void append_event_seg(std::string &out, E v, bool with_base) 
 /**
  * Compose an event path from one or more taxonomy levels.
  *
- * The first value contributes `base + "/" + seg`; each further value appends
+ * The first value contributes `base + "/" + seg`, each further value appends
  * `"/" + seg`, so `event_path(Connectivity::Agps, Agps::Request)` yields
  * `"connectivity/agps/request"`.
  */
@@ -708,9 +708,9 @@ template <class E, class... Es> EventPath event_path(E v0, Es... vs) {
  * Constructs a GeoTrace navigation file.
  *
  * Call `add_nav_fix()` (at least once), then `builder.finish()` to produce a
- * `NavFile`. `finish()` consumes the builder; do not reuse it afterwards.
+ * `NavFile`. `finish()` consumes the builder, do not reuse it afterwards.
  *
- * **Non-copyable; movable.**  Destroyed automatically if `finish()` is never called.
+ * **Non-copyable, movable.**  Destroyed automatically if `finish()` is never called.
  */
 class FileBuilder {
   public:
@@ -826,7 +826,7 @@ class FileBuilder {
     /**
      * Add a type-safe event marker from an event-taxonomy value.
      *
-     * Accepts any `enum class` with an `EventEnum<>` specialisation; the path is
+     * Accepts any `enum class` with an `EventEnum<>` specialisation. The path is
      * `base + "/" + seg(v)`.  Use `event_path()` for nested taxonomies.
      * @throws InvalidPathError if the composed path is malformed.
      */
@@ -849,7 +849,7 @@ class FileBuilder {
     }
 
     /**
-     * @name add() — dispatch by type
+     * @name add() - dispatch by type
      *
      * Convenience sugar that forwards to the matching `add_*` method, chosen at
      * compile time by overload resolution. Pass a constructed timeline object:
@@ -859,7 +859,7 @@ class FileBuilder {
      * @endcode
      *
      * Per-variant styling stays on `add_event_marker_style()`, and the typed
-     * event helpers stay on `add_event()`; neither is an `add()` overload.
+     * event helpers stay on `add_event()`. Neither is an `add()` overload.
      */
     ///@{
     FileBuilder &add(const NavFix &fix) { return add_nav_fix(fix); }
@@ -892,7 +892,7 @@ class FileBuilder {
 
   private:
     // Record the first error. With exceptions enabled, throw it immediately so
-    // the throwing API still reports at the call site; without exceptions it
+    // the throwing API still reports at the call site. Without exceptions it
     // stays sticky and is surfaced by status() / try_finish().
     void record(GtdStatus s) {
         if (status_.is_ok() && s != GTD_OK) {
@@ -910,7 +910,7 @@ class FileBuilder {
 /**
  * A parsed or newly-built GeoTrace navigation file.
  *
- * **Non-copyable; movable.**
+ * **Non-copyable, movable.**
  */
 class NavFile {
   public:

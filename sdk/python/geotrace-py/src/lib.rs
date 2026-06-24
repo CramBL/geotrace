@@ -25,7 +25,7 @@ fn build_err(e: BuildError) -> PyErr {
 }
 
 // Map a core SDK error to the appropriate Python exception: filesystem failures
-// become OSError (IOError); bad file content (invalid HDF5 container, wrong
+// become OSError (IOError). Bad file content (invalid HDF5 container, wrong
 // version, or a decode failure) becomes ValueError. Exhaustive, so a new
 // variant must be classified.
 fn file_err(e: geotrace_sdk::Error) -> PyErr {
@@ -91,8 +91,8 @@ mod py_constellation_tests {
 
     /// `Satellite::__repr__` derives the Python member name from
     /// `PyConstellation`'s `Debug` output (upper-cased) instead of re-typing
-    /// it; this pins down that the result still matches the literal
-    /// `#[pyo3(name = "...")]` strings declared on `PyConstellation` above; a
+    /// it. This pins down that the result still matches the literal
+    /// `#[pyo3(name = "...")]` strings declared on `PyConstellation` above. A
     /// rename of one without the other - the exact desync this issue is
     /// about - fails here.
     #[test]
@@ -199,7 +199,7 @@ pub struct PySatellite {
 impl PySatellite {
     /// Create a satellite entry.
     ///
-    /// `elevation` and `azimuth` are in degrees; `snr` is in dB-Hz.
+    /// `elevation` and `azimuth` are in degrees. `snr` is in dB-Hz.
     #[new]
     #[pyo3(signature = (constellation, prn, *, in_fix=false, elevation=None, azimuth=None, snr=None))]
     fn new(
@@ -355,7 +355,7 @@ impl PySatelliteReport {
 /// Provide at least one of `gps_time` or `sys_time`.
 /// All `datetime` arguments must be timezone-aware.
 /// `lat` and `lon` are in degrees; `heading` in degrees [0, 360);
-/// `speed_mps` in m/s; `eph_m` is the horizontal accuracy radius in metres.
+/// `speed_mps` in m/s. `eph_m` is the horizontal accuracy radius in metres.
 #[pyclass(skip_from_py_object, name = "NavFix")]
 #[derive(Debug, Clone, Copy)]
 pub struct PyNavFix {
@@ -708,7 +708,7 @@ impl PyMarker {
 /// ``"connectivity/agps/request"``, or ``None`` (or the ``event_kind.skip``
 /// sentinel) to silently skip this marker.
 /// Allowed characters: ASCII alphanumeric, hyphen, underscore, and slash.
-/// No leading or trailing slash; no empty segments (``//``); max 256 bytes.
+/// No leading or trailing slash. No empty segments (``//``). Max 256 bytes.
 ///
 /// ``sys_time`` must be a timezone-aware ``datetime.datetime``.
 #[pyclass(skip_from_py_object, name = "EventMarker")]
@@ -1003,12 +1003,12 @@ enum AddItem<'py> {
 /// nav_file.write_to_file("track.gtd")
 /// ```
 ///
-/// Calling `finish()` consumes the builder; further calls raise `RuntimeError`.
+/// Calling `finish()` consumes the builder. Further calls raise `RuntimeError`.
 #[pyclass(skip_from_py_object, name = "NavFileBuilder")]
 pub struct PyNavFileBuilder {
-    /// Pre-open config; None once the recorder has been opened.
+    /// Pre-open config. None once the recorder has been opened.
     config: Option<NavFileBuilder>,
-    /// Opened data recorder; None until the first add() or finish().
+    /// Opened data recorder. None until the first add() or finish().
     recorder: Option<NavRecorder>,
 }
 

@@ -16,16 +16,19 @@ Most spots carry the full version (``0.2.0`` or ``0.2.0-rc.1``); CMake project
 versions and the numeric ``*_MAJOR/MINOR/PATCH`` macros only hold the numeric
 core (``0.2.0``), since they cannot express a prerelease suffix.
 
-``check`` verifies every spot agrees (the guard run before publishing, and in
-CI); ``bump-sdk`` / ``bump-app`` rewrite them atomically.
+``check`` / ``check-app`` verify every spot agrees. ``bump-sdk`` / ``bump-app``
+rewrite them and promote the matching changelog (see ``qa.changelog``). Given
+``--expect X.Y.Z``, the checks also require a ``## [X.Y.Z]`` changelog section.
 """
 
 import argparse
 import re
 import sys
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
+from qa import changelog
 from qa._check import repo_root
 
 _SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
@@ -74,7 +77,7 @@ _C_HEADER = "sdk/c/geotrace.h"
 _CPP_HEADER = "sdk/cpp/include/geotrace/geotrace.hpp"
 
 # The two committed Cargo.lock files that pin the SDK crates. The root lock is
-# the main workspace (geotrace-c and its deps); the Python lock is an isolated
+# the main workspace (geotrace-c and its deps). The Python lock is an isolated
 # workspace whose pins only refresh when cargo runs in its own directory, so it
 # is the one that silently drifts after a bump.
 _ROOT_LOCK = "Cargo.lock"
@@ -92,7 +95,7 @@ _SDK_SPOTS: list[Spot] = [
     Spot("sdk/c/CMakeLists.txt", _cmake_project("GeoTraceC"), core=True),
     Spot("sdk/cpp/CMakeLists.txt", _cmake_project("GeoTraceCpp"), core=True),
     # Cargo.lock pins (full version). Bumping them here keeps the locks in
-    # lockstep with the manifests; checking them makes a drifted lock fail
+    # lockstep with the manifests. Checking them makes a drifted lock fail
     # loudly instead of being silently re-resolved at build time. The SDK
     # packages are path crates with no checksum and are referenced by name only,
     # so rewriting the block's `version` line leaves each lock valid.
@@ -105,6 +108,9 @@ _SDK_SPOTS: list[Spot] = [
 ]
 
 _APP_SPOTS: list[Spot] = [Spot("Cargo.toml", _TOML_VERSION)]
+
+_APP_CHANGELOG = "CHANGELOG.md"
+_SDK_CHANGELOG = "CHANGELOG_SDK.md"
 
 # The numeric `*_MAJOR/MINOR/PATCH` macro triples (always the core version).
 _INT_TRIPLES: list[tuple[str, str]] = [
@@ -166,6 +172,9 @@ def _cmd_check(root: Path, expect: str | None) -> int:
         if expect is not None and version != expect:
             errors.append(f"SDK version is {version}, but the release tag is {expect}")
 
+    if expect is not None:
+        errors += _changelog_errors(root, _SDK_CHANGELOG, expect, "bump-sdk")
+
     if errors:
         print("error: SDK version is inconsistent:")
         for fact in facts:
@@ -175,6 +184,35 @@ def _cmd_check(root: Path, expect: str | None) -> int:
         return 1
 
     print(f"SDK version OK: {full_values[0]}")
+    return 0
+
+
+def _changelog_errors(root: Path, rel: str, expect: str, bump: str) -> list[str]:
+    text = (root / rel).read_text(encoding="utf-8")
+    if changelog.section_exists(text, expect):
+        return []
+    return [
+        f"{rel} has no '## [{_core(expect)}]' section — "
+        f"promote [unreleased] with `just qa::{bump} {expect}` before releasing"
+    ]
+
+
+def _cmd_check_app(root: Path, expect: str | None) -> int:
+    fact = _read(root, _APP_SPOTS[0])
+    errors: list[str] = []
+    if expect is not None and fact.value != expect:
+        errors.append(f"app version is {fact.value}, but the release tag is {expect}")
+    if expect is not None:
+        errors += _changelog_errors(root, _APP_CHANGELOG, expect, "bump-app")
+
+    if errors:
+        print("error: app version is inconsistent:")
+        print(f"  {fact.value:<16} {fact.label}")
+        for err in errors:
+            print(f"  -> {err}")
+        return 1
+
+    print(f"app version OK: {fact.value}")
     return 0
 
 
@@ -213,21 +251,29 @@ def main() -> None:
     parser.add_argument("--repo-root", type=Path, default=repo_root())
     sub = parser.add_subparsers(dest="cmd", required=True)
     check = sub.add_parser("check", help="verify the SDK version is consistent")
-    check.add_argument("--expect", help="also require the SDK version to equal this")
-    bump_sdk = sub.add_parser("bump-sdk", help="set every SDK version")
+    check.add_argument("--expect", help="also require the SDK version (and changelog) to match")
+    check_app = sub.add_parser("check-app", help="verify the GUI app version is consistent")
+    check_app.add_argument("--expect", help="also require the app version (and changelog) to match")
+    bump_sdk = sub.add_parser("bump-sdk", help="set every SDK version and promote its changelog")
     bump_sdk.add_argument("version")
-    bump_app = sub.add_parser("bump-app", help="set the GUI app version")
+    bump_app = sub.add_parser("bump-app", help="set the GUI app version and promote its changelog")
     bump_app.add_argument("version")
     args = parser.parse_args()
 
     root: Path = args.repo_root.resolve()
+    today = date.today()
     if args.cmd == "check":
         sys.exit(_cmd_check(root, args.expect))
+    if args.cmd == "check-app":
+        sys.exit(_cmd_check_app(root, args.expect))
     if args.cmd == "bump-sdk":
         _validate(args.version)
         _apply(root, _SDK_SPOTS, args.version, _core(args.version))
         _apply_int_triples(root, args.version)
+        changelog.promote(root / _SDK_CHANGELOG, args.version, today)
         sys.exit(_cmd_check(root, args.version))
     if args.cmd == "bump-app":
         _validate(args.version)
         _apply(root, _APP_SPOTS, args.version, _core(args.version))
+        changelog.promote(root / _APP_CHANGELOG, args.version, today)
+        sys.exit(_cmd_check_app(root, args.version))

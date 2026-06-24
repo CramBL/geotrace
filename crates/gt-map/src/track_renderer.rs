@@ -44,8 +44,8 @@ fn is_trip_highlighted(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> b
 /// so the focused track stands out and all others are almost hidden.
 ///
 /// Two hover sources are considered:
-/// - `highlight.hover` — a map pointer hover (any [`HighlightScope`]).
-/// - `highlight.plot_hover_point` — the plot cursor snapping to a TPV point.
+/// - `highlight.hover`: a map pointer hover (any [`HighlightScope`]).
+/// - `highlight.plot_hover_point`: the plot cursor snapping to a TPV point.
 pub(crate) fn track_fade_alpha(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> f32 {
     if !highlight.fading_enabled || !hover_is_active(highlight) {
         return 1.0;
@@ -60,7 +60,7 @@ pub(crate) fn track_fade_alpha(highlight: &MapHighlight, fi: FileIdx, ti: TrackI
 /// values, so the element fades to transparent against the map tiles instead
 /// of darkening toward black.
 ///
-/// `fade` is expected to be in `[0.0, 1.0]`; values outside that range are
+/// `fade` is expected to be in `[0.0, 1.0]`. Values outside that range are
 /// clamped.
 pub(crate) fn apply_fade_alpha(color: Color32, fade: f32) -> Color32 {
     #[expect(
@@ -75,7 +75,7 @@ pub(crate) fn apply_fade_alpha(color: Color32, fade: f32) -> Color32 {
 /// tracks should be dimmed.
 ///
 /// For map hover (`highlight.hover`) any active scope qualifies.
-/// For plot hover only [`MapHighlight::plot_hover_snapped`] qualifies — the
+/// For plot hover only [`MapHighlight::plot_hover_snapped`] qualifies. The
 /// cursor must be within snap-distance of an actual data point so that moving
 /// the cursor into the plot area does not immediately trigger the overlay.
 pub(crate) fn hover_is_active(highlight: &MapHighlight) -> bool {
@@ -97,7 +97,7 @@ pub(crate) fn is_track_in_focus(highlight: &MapHighlight, fi: FileIdx, ti: Track
         return true;
     }
     // Only treat the plot hover as a focus source when the cursor has actually
-    // snapped close to a data point; otherwise moving into the plot area would
+    // snapped close to a data point. Otherwise moving into the plot area would
     // immediately change which track is "in focus" on the map.
     if highlight.plot_hover_snapped
         && let Some((phfi, phti, _)) = highlight.plot_hover_point
@@ -120,7 +120,7 @@ pub(crate) fn focused_track_from_highlight(highlight: &MapHighlight) -> Option<T
         Some(HighlightScope::Point(r)) => Some(r.track),
         Some(HighlightScope::File { .. }) | None => {
             // Only return a plot-hover track when the cursor has actually
-            // snapped to a data point; entering the plot area does not count.
+            // snapped to a data point. Entering the plot area does not count.
             if highlight.plot_hover_snapped {
                 highlight
                     .plot_hover_point
