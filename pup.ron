@@ -319,6 +319,7 @@
                         "eframe.*",
                         "env_logger.*",
                         "log.*",
+                        "strum.*",
                         "walkers.*",
                         "chrono.*",
                         "gt_filter.*",

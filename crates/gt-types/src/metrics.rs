@@ -34,6 +34,13 @@ pub enum MetricKind {
     Eph,
     HeadingDeg,
     ClockDeltaMs,
+    /// Satellite utilization rate across all constellations: share of in-view
+    /// satellites (above the elevation mask) the receiver used in the fix.
+    UtilAll,
+    UtilGps,
+    UtilGlonass,
+    UtilGalileo,
+    UtilBeidou,
 }
 
 #[cfg(test)]
@@ -68,6 +75,11 @@ mod tests {
             (MetricKind::Eph, "eph"),
             (MetricKind::HeadingDeg, "heading_deg"),
             (MetricKind::ClockDeltaMs, "clock_delta_ms"),
+            (MetricKind::UtilAll, "util_all"),
+            (MetricKind::UtilGps, "util_gps"),
+            (MetricKind::UtilGlonass, "util_glonass"),
+            (MetricKind::UtilGalileo, "util_galileo"),
+            (MetricKind::UtilBeidou, "util_beidou"),
         ];
         assert_eq!(expected.len(), MetricKind::COUNT);
         for (kind, wire) in expected {

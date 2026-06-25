@@ -21,6 +21,7 @@ use gt_track_builder::SegmentationConfig;
 use gt_types::{AssociationConfig, DataCategory, FileIdx, LoadWarning, LoadedFile, NavPoint};
 use gt_ui_types::{HighlightScope, MapHighlight, TrackDataVisibility};
 use loader::{CompletedLoad, FinishedJob, LoadOutcome, LoaderManager};
+use strum::IntoEnumIterator;
 
 use modals::{
     show_delete_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
@@ -540,6 +541,71 @@ impl App {
                     }
                 });
 
+                ui.add_space(12.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label(egui_phosphor::regular::GAUGE);
+                    ui.strong("Analysis");
+                });
+                ui.separator();
+                egui::Grid::new("analysis_grid")
+                    .num_columns(2)
+                    .spacing([8.0, 6.0])
+                    .show(ui, |ui| {
+                        let mask_help =
+                            "Satellites below this elevation are excluded from the 'in view' \
+                             baseline when computing the satellite utilization rate, so the \
+                             receiver is not penalised for ignoring low-elevation satellites \
+                             (which suffer high atmospheric delay and multipath). \
+                             For example, setting the mask to 0° may artificially lower the \
+                             utilization rate, as the receiver naturally rejects horizon \
+                             satellites.";
+                        ui.label(format!(
+                            "{} Elevation mask",
+                            egui_phosphor::regular::FUNNEL
+                        ))
+                        .on_hover_text(mask_help);
+                        let mut mask_deg =
+                            self.shared.borrow().plot_state.analysis.elevation_mask_deg;
+                        ui.add(
+                            egui::DragValue::new(&mut mask_deg)
+                                .range(0.0..=90.0)
+                                .speed(1.0)
+                                .fixed_decimals(0)
+                                .suffix("°"),
+                        )
+                        .on_hover_text(mask_help);
+                        // Live-apply: re-derives only the mask-dependent series,
+                        // and keeps the loader in step for files loaded later.
+                        let analysis = gt_plot::AnalysisConfig {
+                            elevation_mask_deg: mask_deg,
+                        };
+                        self.loader.analysis_config = analysis;
+                        {
+                            let mut shared = self.shared.borrow_mut();
+                            let s = &mut *shared;
+                            s.plot_state.set_analysis(&s.loaded_files, analysis);
+                        }
+                        ui.end_row();
+
+                        let mark_help =
+                            "Place a red cross on the plot at each epoch where the receiver used a \
+                             satellite below the elevation mask. Hover a marker to see which \
+                             satellites and their elevation. Such satellites are excluded from the \
+                             utilization rate, and the marker keeps that exclusion visible. Markers \
+                             show with the 'Util all' plot.";
+                        ui.label(format!(
+                            "{} Mark masked-out used satellites",
+                            egui_phosphor::regular::WARNING
+                        ))
+                        .on_hover_text(mark_help);
+                        let mut mark = self.shared.borrow().plot_state.mark_masked_fix;
+                        if ui.checkbox(&mut mark, "").on_hover_text(mark_help).changed() {
+                            self.shared.borrow_mut().plot_state.mark_masked_fix = mark;
+                        }
+                        ui.end_row();
+                    });
+
                 // Only meaningful in dist builds. Builds without the self-update
                 // feature carry no update check to toggle.
                 #[cfg(feature = "self-update")]
@@ -581,26 +647,21 @@ impl App {
         };
         self.ctx.set_theme(theme_pref_from_setting(s.ui.theme));
 
+        let analysis = gt_plot::AnalysisConfig {
+            elevation_mask_deg: s.analysis.elevation_mask_deg,
+        };
+        self.loader.analysis_config = analysis;
         {
             let mut shared = self.shared.borrow_mut();
             shared.plot_state.sync_to_map = s.map.sync_to_map;
             shared.plot_state.show_grid = s.plot.show_grid;
+            shared.plot_state.show_advanced_metrics = s.plot.show_advanced_metrics;
+            shared.plot_state.analysis = analysis;
+            shared.plot_state.mark_masked_fix = s.analysis.mark_masked_fix;
             let vis = &mut shared.plot_state.metric_vis;
-            let get_metric = |k| s.plot.metric.get(&k).copied().unwrap_or(true);
-            vis.sats_seen = get_metric(crate::settings::MetricKind::SatsSeen);
-            vis.sats_fix = get_metric(crate::settings::MetricKind::SatsFix);
-            vis.gps_seen = get_metric(crate::settings::MetricKind::GpsSeen);
-            vis.gps_fix = get_metric(crate::settings::MetricKind::GpsFix);
-            vis.glonass_seen = get_metric(crate::settings::MetricKind::GlonassSeen);
-            vis.glonass_fix = get_metric(crate::settings::MetricKind::GlonassFix);
-            vis.galileo_seen = get_metric(crate::settings::MetricKind::GalileoSeen);
-            vis.galileo_fix = get_metric(crate::settings::MetricKind::GalileoFix);
-            vis.beidou_seen = get_metric(crate::settings::MetricKind::BeidouSeen);
-            vis.beidou_fix = get_metric(crate::settings::MetricKind::BeidouFix);
-            vis.velocity = get_metric(crate::settings::MetricKind::Velocity);
-            vis.eph = get_metric(crate::settings::MetricKind::Eph);
-            vis.heading_deg = get_metric(crate::settings::MetricKind::HeadingDeg);
-            vis.clock_delta_ms = get_metric(crate::settings::MetricKind::ClockDeltaMs);
+            for k in crate::settings::MetricKind::iter() {
+                *vis.field_mut(k) = s.plot.metric.get(&k).copied().unwrap_or(true);
+            }
         }
 
         self.tiles_tree
@@ -637,20 +698,14 @@ impl App {
             show_grid: s.plot_state.show_grid,
             panel_visible: self.tiles_tree.tiles.is_visible(self.plot_tile_id),
             split_ratio: self.get_split_ratio().into(),
-            metric_sats_seen: vis.sats_seen,
-            metric_sats_fix: vis.sats_fix,
-            metric_gps_seen: vis.gps_seen,
-            metric_gps_fix: vis.gps_fix,
-            metric_glonass_seen: vis.glonass_seen,
-            metric_glonass_fix: vis.glonass_fix,
-            metric_galileo_seen: vis.galileo_seen,
-            metric_galileo_fix: vis.galileo_fix,
-            metric_beidou_seen: vis.beidou_seen,
-            metric_beidou_fix: vis.beidou_fix,
-            metric_velocity: vis.velocity,
-            metric_eph: vis.eph,
-            metric_heading_deg: vis.heading_deg,
-            metric_clock_delta_ms: vis.clock_delta_ms,
+            // `from_fn` invokes the closure in index order 0..COUNT, matching
+            // the iterator, so each slot gets the visibility of the metric at
+            // that position. The length is COUNT, so `next()` is always `Some`.
+            metrics: {
+                let mut kinds = crate::settings::MetricKind::iter();
+                std::array::from_fn(|_| kinds.next().is_none_or(|k| vis.field(k)))
+            },
+            show_advanced_metrics: s.plot_state.show_advanced_metrics,
             layer: map_layer_to_setting(self.map.layer()),
             mapbox_token: self.map.mapbox_token().to_owned(),
             sync_to_map: s.plot_state.sync_to_map,
@@ -663,6 +718,8 @@ impl App {
             log_marker_window_s: self.assoc_config.log_marker_window_s,
             detect_clock_discontinuities: self.processing_config.detect_clock_discontinuities,
             clock_discontinuity_sigmas: self.processing_config.clock_discontinuity_sigmas.into(),
+            elevation_mask_deg: s.plot_state.analysis.elevation_mask_deg.into(),
+            mark_masked_fix: s.plot_state.mark_masked_fix,
             storage_enabled: self.storage_enabled,
             auto_prune_enabled: self.auto_prune_enabled,
             auto_prune_max_bytes: self.auto_prune_max_bytes,
@@ -673,25 +730,11 @@ impl App {
     }
 
     fn collect_settings_for_flush(&self) -> crate::settings::Settings {
-        use crate::settings::MetricKind as K;
         let s = self.shared.borrow();
         let vis = &s.plot_state.metric_vis;
-        let metric = std::collections::HashMap::from([
-            (K::SatsSeen, vis.sats_seen),
-            (K::SatsFix, vis.sats_fix),
-            (K::GpsSeen, vis.gps_seen),
-            (K::GpsFix, vis.gps_fix),
-            (K::GlonassSeen, vis.glonass_seen),
-            (K::GlonassFix, vis.glonass_fix),
-            (K::GalileoSeen, vis.galileo_seen),
-            (K::GalileoFix, vis.galileo_fix),
-            (K::BeidouSeen, vis.beidou_seen),
-            (K::BeidouFix, vis.beidou_fix),
-            (K::Velocity, vis.velocity),
-            (K::Eph, vis.eph),
-            (K::HeadingDeg, vis.heading_deg),
-            (K::ClockDeltaMs, vis.clock_delta_ms),
-        ]);
+        let metric = crate::settings::MetricKind::iter()
+            .map(|k| (k, vis.field(k)))
+            .collect();
         let theme = self
             .ctx
             .options(|o| theme_pref_to_setting(o.theme_preference));
@@ -702,6 +745,7 @@ impl App {
                 panel_visible: self.tiles_tree.tiles.is_visible(self.plot_tile_id),
                 split_ratio: self.get_split_ratio(),
                 metric,
+                show_advanced_metrics: s.plot_state.show_advanced_metrics,
             },
             map: crate::settings::MapSettings {
                 layer: map_layer_to_setting(self.map.layer()),
@@ -718,6 +762,10 @@ impl App {
                 log_marker_window_s: self.assoc_config.log_marker_window_s,
                 detect_clock_discontinuities: self.processing_config.detect_clock_discontinuities,
                 clock_discontinuity_sigmas: self.processing_config.clock_discontinuity_sigmas,
+            },
+            analysis: crate::settings::AnalysisSettings {
+                elevation_mask_deg: s.plot_state.analysis.elevation_mask_deg,
+                mark_masked_fix: s.plot_state.mark_masked_fix,
             },
             storage: crate::settings::StorageSettings {
                 enabled: self.storage_enabled,

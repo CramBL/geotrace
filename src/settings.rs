@@ -10,6 +10,7 @@ pub struct Settings {
     pub map: MapSettings,
     pub ui: UiSettings,
     pub processing: ProcessingSettings,
+    pub analysis: AnalysisSettings,
     pub storage: StorageSettings,
     pub update: UpdateSettings,
 }
@@ -22,8 +23,29 @@ impl Default for Settings {
             map: MapSettings::default(),
             ui: UiSettings::default(),
             processing: ProcessingSettings::default(),
+            analysis: AnalysisSettings::default(),
             storage: StorageSettings::default(),
             update: UpdateSettings::default(),
+        }
+    }
+}
+
+/// Parameters for the derived satellite-analysis plots (utilization rate).
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct AnalysisSettings {
+    /// Elevation mask, in degrees, applied to the "in view" baseline of the
+    /// satellite utilization rate.
+    pub elevation_mask_deg: f32,
+    /// Whether to mark epochs where a used satellite falls below the mask.
+    pub mark_masked_fix: bool,
+}
+
+impl Default for AnalysisSettings {
+    fn default() -> Self {
+        Self {
+            elevation_mask_deg: gt_plot::DEFAULT_ELEVATION_MASK_DEG,
+            mark_masked_fix: true,
         }
     }
 }
@@ -86,6 +108,9 @@ pub struct PlotSettings {
     pub split_ratio: f32,
     /// Per-metric visibility. A missing key means the metric is visible (default `true`).
     pub metric: HashMap<MetricKind, bool>,
+    /// Whether the advanced analysis chips (satellite utilization) are revealed.
+    /// Off by default - those metrics are hidden until the user opts in.
+    pub show_advanced_metrics: bool,
 }
 
 impl Default for PlotSettings {
@@ -95,6 +120,7 @@ impl Default for PlotSettings {
             panel_visible: true,
             split_ratio: 0.6,
             metric: HashMap::new(),
+            show_advanced_metrics: false,
         }
     }
 }

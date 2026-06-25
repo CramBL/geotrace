@@ -1,7 +1,8 @@
-use crate::series::{TrackSeries, build_all_series, closest_point_index};
+use crate::AnalysisConfig;
+use crate::series::{TrackSeries, UtilAnomaly, build_all_series, closest_point_index};
 use chrono::{DateTime, Utc};
 use egui::Color32;
-use egui_plot::{Line, LineStyle, PlotPoints, VLine};
+use egui_plot::{Line, LineStyle, MarkerShape, PlotPoint, PlotPoints, Points, VLine};
 use gt_egui_mipmap::{LevelSelection, MipMap};
 use gt_filter::GlobalFilter;
 use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx};
@@ -9,6 +10,14 @@ use gt_ui_types::{HighlightScope, TrackDataVisibility};
 use rayon::prelude::*;
 use std::collections::BTreeSet;
 use strum::IntoEnumIterator;
+
+/// Pixel radius within which the pointer is considered to be hovering a
+/// masked-satellite anomaly marker.
+const ANOMALY_HOVER_RADIUS_PX: f32 = 7.0;
+/// On-plot radius of the anomaly cross marker.
+const ANOMALY_MARKER_RADIUS: f32 = 4.0;
+/// Gap between the pointer and the anomaly hover tooltip.
+const ANOMALY_TOOLTIP_GAP: f32 = 12.0;
 
 /// Chip color, label, and optional hover tooltip for each [`MetricKind`].
 ///
@@ -22,9 +31,23 @@ trait MetricKindUi {
     fn color(self) -> Color32;
     fn label(self) -> &'static str;
     fn hover_text(self) -> Option<&'static str>;
+    /// Whether this metric belongs to the advanced analysis group, hidden behind
+    /// the "Advanced" toggle in the chip row and off by default.
+    fn is_advanced(&self) -> bool;
 }
 
 impl MetricKindUi for MetricKind {
+    fn is_advanced(&self) -> bool {
+        matches!(
+            self,
+            Self::UtilAll
+                | Self::UtilGps
+                | Self::UtilGlonass
+                | Self::UtilGalileo
+                | Self::UtilBeidou
+        )
+    }
+
     fn color(self) -> Color32 {
         match self {
             Self::SatsSeen => Color32::from_rgb(80, 200, 255), // powder blue
@@ -41,6 +64,13 @@ impl MetricKindUi for MetricKind {
             Self::Eph => Color32::from_rgb(220, 20, 220),      // magenta
             Self::HeadingDeg => Color32::from_rgb(255, 100, 50), // red-orange
             Self::ClockDeltaMs => Color32::from_rgb(200, 200, 200), // light gray
+            // Utilization echoes each constellation's hue, lightened, so the
+            // family reads as "utilization" while staying constellation-coded.
+            Self::UtilAll => Color32::from_rgb(245, 245, 245), // near-white
+            Self::UtilGps => Color32::from_rgb(150, 255, 150), // pale green
+            Self::UtilGlonass => Color32::from_rgb(255, 200, 130), // pale orange
+            Self::UtilGalileo => Color32::from_rgb(255, 150, 190), // pale pink
+            Self::UtilBeidou => Color32::from_rgb(150, 245, 245), // pale cyan
         }
     }
 
@@ -60,6 +90,11 @@ impl MetricKindUi for MetricKind {
             Self::Eph => "EPH (m)",
             Self::HeadingDeg => "Heading (°)",
             Self::ClockDeltaMs => "Clock Δt (ms)",
+            Self::UtilAll => "Util all (%)",
+            Self::UtilGps => "GPS util (%)",
+            Self::UtilGlonass => "GLONASS util (%)",
+            Self::UtilGalileo => "Galileo util (%)",
+            Self::UtilBeidou => "BeiDou util (%)",
         }
     }
 
@@ -74,6 +109,28 @@ impl MetricKindUi for MetricKind {
                 "GPS clock lead over the host system clock, in milliseconds. \
                  Positive = GPS clock ahead of the system clock; negative = system clock ahead. \
                  Only shown when the receiver reports a system timestamp alongside the GPS fix.",
+            ),
+            Self::UtilAll => Some(
+                "Utilization rate, all constellations: satellites used in the fix divided by \
+                 satellites in view, both counted above the elevation mask. A red cross marks \
+                 where a used satellite fell below the mask and was excluded. Adjust the mask in \
+                 Settings.",
+            ),
+            Self::UtilGps => Some(
+                "GPS utilization rate: GPS satellites used in the fix divided by GPS satellites \
+                 in view above the elevation mask.",
+            ),
+            Self::UtilGlonass => Some(
+                "GLONASS utilization rate: GLONASS satellites used in the fix divided by GLONASS \
+                 satellites in view above the elevation mask.",
+            ),
+            Self::UtilGalileo => Some(
+                "Galileo utilization rate: Galileo satellites used in the fix divided by Galileo \
+                 satellites in view above the elevation mask.",
+            ),
+            Self::UtilBeidou => Some(
+                "BeiDou utilization rate: BeiDou satellites used in the fix divided by BeiDou \
+                 satellites in view above the elevation mask.",
             ),
             _ => None,
         }
@@ -270,6 +327,11 @@ pub struct MetricVisibility {
     pub eph: bool,
     pub heading_deg: bool,
     pub clock_delta_ms: bool,
+    pub util_all: bool,
+    pub util_gps: bool,
+    pub util_glonass: bool,
+    pub util_galileo: bool,
+    pub util_beidou: bool,
 }
 
 impl Default for MetricVisibility {
@@ -289,13 +351,18 @@ impl Default for MetricVisibility {
             eph: true,
             heading_deg: true,
             clock_delta_ms: true,
+            util_all: true,
+            util_gps: true,
+            util_glonass: true,
+            util_galileo: true,
+            util_beidou: true,
         }
     }
 }
 
 impl MetricVisibility {
     /// Returns the current visibility for `kind`.
-    fn field(&self, kind: MetricKind) -> bool {
+    pub fn field(&self, kind: MetricKind) -> bool {
         match kind {
             MetricKind::SatsSeen => self.sats_seen,
             MetricKind::SatsFix => self.sats_fix,
@@ -311,11 +378,16 @@ impl MetricVisibility {
             MetricKind::Eph => self.eph,
             MetricKind::HeadingDeg => self.heading_deg,
             MetricKind::ClockDeltaMs => self.clock_delta_ms,
+            MetricKind::UtilAll => self.util_all,
+            MetricKind::UtilGps => self.util_gps,
+            MetricKind::UtilGlonass => self.util_glonass,
+            MetricKind::UtilGalileo => self.util_galileo,
+            MetricKind::UtilBeidou => self.util_beidou,
         }
     }
 
     /// Returns a mutable reference to the visibility flag for `kind`.
-    fn field_mut(&mut self, kind: MetricKind) -> &mut bool {
+    pub fn field_mut(&mut self, kind: MetricKind) -> &mut bool {
         match kind {
             MetricKind::SatsSeen => &mut self.sats_seen,
             MetricKind::SatsFix => &mut self.sats_fix,
@@ -331,23 +403,33 @@ impl MetricVisibility {
             MetricKind::Eph => &mut self.eph,
             MetricKind::HeadingDeg => &mut self.heading_deg,
             MetricKind::ClockDeltaMs => &mut self.clock_delta_ms,
+            MetricKind::UtilAll => &mut self.util_all,
+            MetricKind::UtilGps => &mut self.util_gps,
+            MetricKind::UtilGlonass => &mut self.util_glonass,
+            MetricKind::UtilGalileo => &mut self.util_galileo,
+            MetricKind::UtilBeidou => &mut self.util_beidou,
         }
     }
 
-    /// Returns `true` when every metric is enabled.
-    fn all_enabled(self) -> bool {
-        MetricKind::iter().all(|k| self.field(k))
+    /// Returns `true` when every *currently shown* metric is enabled.  Advanced
+    /// metrics are ignored while the advanced section is collapsed (`show_advanced
+    /// == false`), so the show/hide-all button neither reflects nor toggles them.
+    fn all_enabled(self, show_advanced: bool) -> bool {
+        MetricKind::iter()
+            .filter(|&k| show_advanced || !k.is_advanced())
+            .all(|k| self.field(k))
     }
 
-    /// Set every metric to `enabled`.
-    fn set_all(&mut self, enabled: bool) {
-        for k in MetricKind::iter() {
+    /// Set every *currently shown* metric to `enabled`, leaving hidden advanced
+    /// metrics untouched.
+    fn set_all(&mut self, enabled: bool, show_advanced: bool) {
+        for k in MetricKind::iter().filter(|&k| show_advanced || !k.is_advanced()) {
             *self.field_mut(k) = enabled;
         }
     }
 }
 
-/// Cached level selections for all 12 metrics of one track's series.
+/// Cached level selections for every metric of one track's series.
 #[derive(Debug, Clone, Copy, Default)]
 struct TripLevelCache {
     total_seen: LevelSelection,
@@ -364,6 +446,11 @@ struct TripLevelCache {
     eph_m: LevelSelection,
     heading_deg: LevelSelection,
     clock_delta_ms: LevelSelection,
+    util_all: LevelSelection,
+    util_gps: LevelSelection,
+    util_glonass: LevelSelection,
+    util_galileo: LevelSelection,
+    util_beidou: LevelSelection,
 }
 
 impl TripLevelCache {
@@ -383,6 +470,11 @@ impl TripLevelCache {
             MetricKind::Eph => self.eph_m,
             MetricKind::HeadingDeg => self.heading_deg,
             MetricKind::ClockDeltaMs => self.clock_delta_ms,
+            MetricKind::UtilAll => self.util_all,
+            MetricKind::UtilGps => self.util_gps,
+            MetricKind::UtilGlonass => self.util_glonass,
+            MetricKind::UtilGalileo => self.util_galileo,
+            MetricKind::UtilBeidou => self.util_beidou,
         }
     }
 }
@@ -404,6 +496,11 @@ impl crate::series::TrackSeries {
             MetricKind::Eph => &self.eph_m,
             MetricKind::HeadingDeg => &self.heading_deg,
             MetricKind::ClockDeltaMs => &self.clock_delta_ms,
+            MetricKind::UtilAll => &self.util_all,
+            MetricKind::UtilGps => &self.util_gps,
+            MetricKind::UtilGlonass => &self.util_glonass,
+            MetricKind::UtilGalileo => &self.util_galileo,
+            MetricKind::UtilBeidou => &self.util_beidou,
         }
     }
 }
@@ -423,6 +520,15 @@ pub struct PlotState {
     pub show_grid: bool,
     /// When true, the plot x-range tracks the map viewport.
     pub sync_to_map: bool,
+    /// Whether to draw the masked-satellite anomaly markers (a used satellite
+    /// below the elevation mask).  Toggled in Settings.
+    pub mark_masked_fix: bool,
+    /// Whether the advanced analysis chips (satellite utilization) are revealed.
+    /// Off by default - these metrics are hidden until the user opts in.
+    pub show_advanced_metrics: bool,
+    /// Analysis parameters the cached series were built with (elevation mask).
+    /// Changing it via [`PlotState::set_analysis`] re-derives the affected series.
+    pub analysis: AnalysisConfig,
     /// Whether the file-style legend body is collapsed.
     pub file_legend_collapsed: bool,
     /// Legend overlay position offset from the plot's top-left corner.
@@ -466,6 +572,9 @@ impl Default for PlotState {
             metric_vis: MetricVisibility::default(),
             show_grid: true,
             sync_to_map: true,
+            mark_masked_fix: true,
+            show_advanced_metrics: false,
+            analysis: AnalysisConfig::default(),
             file_legend_collapsed: false,
             file_legend_offset: LEGEND_DOCK_OFFSET,
             file_legend_size: egui::Vec2::ZERO,
@@ -505,7 +614,26 @@ impl PlotState {
     /// Called after file deletion - runs on the UI thread since deletion is
     /// cheap (files already parsed, just re-indexing the surviving files).
     pub fn rebuild_all(&mut self, files: &[LoadedFile]) {
-        self.series_cache = build_all_series(files);
+        self.series_cache = build_all_series(files, self.analysis);
+        self.invalidate_level_cache();
+    }
+
+    /// Apply new analysis parameters (elevation mask), re-deriving only the
+    /// mask-dependent series in place.  A no-op when `analysis` is unchanged, so
+    /// it is cheap to call every frame while a settings control is open.
+    pub fn set_analysis(&mut self, files: &[LoadedFile], analysis: AnalysisConfig) {
+        if self.analysis == analysis {
+            return;
+        }
+        self.analysis = analysis;
+        for series in &mut self.series_cache {
+            if let Some(track) = files
+                .get(series.fi)
+                .and_then(|file| file.tracks.get(series.ti))
+            {
+                series.apply_analysis(track, analysis);
+            }
+        }
         self.invalidate_level_cache();
     }
 
@@ -584,6 +712,7 @@ pub fn show_track_plot(
         &mut state.metric_vis,
         &mut state.show_grid,
         &mut state.sync_to_map,
+        &mut state.show_advanced_metrics,
     );
 
     // Sample budgeting: each track requests ~2 points per pixel of its *visible*
@@ -641,6 +770,11 @@ pub fn show_track_plot(
     let level_cache = &state.level_cache;
     let last_computed_bounds = state.last_computed_bounds;
     let metric_vis = &state.metric_vis;
+    // Anomaly markers ride on the "Util all" line, so they show only when that
+    // metric is visible and the settings toggle is on.
+    let show_advanced = state.show_advanced_metrics;
+    let show_anomalies =
+        show_advanced && state.mark_masked_fix && state.metric_vis.field(MetricKind::UtilAll);
     let effective_hover_scope = state
         .legend_hover_file
         .map(|fi| HighlightScope::File {
@@ -657,6 +791,10 @@ pub fn show_track_plot(
     let mut new_computed_bounds: Option<(f64, f64, u32, usize)> = None;
     let mut new_level_cache: Option<Vec<TripLevelCache>> = None;
     let mut new_applied_map_x_range: Option<Option<(u64, u64)>> = None;
+    // Nearest masked-satellite anomaly marker under the pointer, with its
+    // screen-space distance, resolved across all visible series inside the plot
+    // closure and turned into a tooltip after it returns.
+    let mut hovered_anomaly: Option<(f32, AnomalyHover)> = None;
 
     let mut plot = egui_plot::Plot::new("track_plot")
         .height(ui.available_height())
@@ -720,6 +858,13 @@ pub fn show_track_plot(
             new_applied_map_x_range = Some(map_x_key);
         }
 
+        // Pointer position for anomaly-marker hit-testing, sampled once.
+        let anomaly_pointer = if show_anomalies {
+            plot_ui.response().hover_pos()
+        } else {
+            None
+        };
+
         debug_assert_eq!(visible.len(), series_cache.len());
         for (si, (vis, series)) in visible.iter().zip(series_cache.iter()).enumerate() {
             if !vis {
@@ -737,7 +882,17 @@ pub fn show_track_plot(
                 metric_vis,
                 hovered_chip,
                 effective_hover_scope,
+                show_advanced,
             );
+            if show_anomalies {
+                add_util_anomalies(
+                    plot_ui,
+                    series,
+                    multi_track,
+                    anomaly_pointer,
+                    &mut hovered_anomaly,
+                );
+            }
         }
 
         if let std::borrow::Cow::Owned(owned) = resolved {
@@ -773,6 +928,21 @@ pub fn show_track_plot(
     // activates at precisely the same moment, with no custom approximation.
     state.plot_cursor_snapped =
         plot_response.response.hovered() && plot_response.hovered_plot_item.is_some();
+
+    // Surface the masked-out satellites for the anomaly marker under the pointer.
+    if let Some((_, hover)) = hovered_anomaly
+        && plot_response.response.hovered()
+    {
+        egui::Tooltip::always_open(
+            ui.ctx().clone(),
+            plot_response.response.layer_id,
+            egui::Id::new("util_anomaly_tooltip"),
+            egui::PopupAnchor::Pointer,
+        )
+        .gap(ANOMALY_TOOLTIP_GAP)
+        .show(|ui| hover.show(ui));
+    }
+
     state.legend_hover_file = show_file_legend_overlay(
         ui,
         files,
@@ -948,6 +1118,32 @@ pub fn legend_is_docked(offset: egui::Vec2) -> bool {
         && (offset.y - LEGEND_DOCK_OFFSET.y).abs() < LEGEND_DOCK_POSITION_TOLERANCE
 }
 
+/// Render one separator-delimited group of metric chips, folding any
+/// "show only this" choice into `show_only` and the hovered metric into `hovered`.
+fn chip_group(
+    ui: &mut egui::Ui,
+    vis: &mut MetricVisibility,
+    kinds: &[MetricKind],
+    show_only: &mut Option<MetricKind>,
+    hovered: &mut Option<MetricKind>,
+) {
+    for &kind in kinds {
+        let (s, h) = metric_chip(
+            ui,
+            vis.field_mut(kind),
+            kind.label(),
+            kind.color(),
+            kind.hover_text(),
+        );
+        if s {
+            *show_only = Some(kind);
+        }
+        if h {
+            *hovered = Some(kind);
+        }
+    }
+}
+
 /// Draw the per-metric filter controls above the track plot.
 ///
 /// All controls and metric chips share a single `horizontal_wrapped` row so they
@@ -962,8 +1158,11 @@ fn metric_filter_row(
     vis: &mut MetricVisibility,
     show_grid: &mut bool,
     sync_to_map: &mut bool,
+    show_advanced: &mut bool,
 ) -> Option<MetricKind> {
-    let all_on = vis.all_enabled();
+    // The show/hide-all button and its eye icon track only the currently shown
+    // chips, so they ignore advanced metrics while that section is collapsed.
+    let all_on = vis.all_enabled(*show_advanced);
     let mut show_only = None;
     let mut hovered_chip = None;
 
@@ -990,7 +1189,7 @@ fn metric_filter_row(
             *show_grid = !*show_grid;
         }
 
-        // Show/hide all.
+        // Show/hide all (currently shown metrics only).
         let eye_icon = if all_on {
             egui_phosphor::regular::EYE_SLASH
         } else {
@@ -1005,67 +1204,80 @@ fn metric_filter_row(
             })
             .clicked()
         {
-            vis.set_all(!all_on);
+            vis.set_all(!all_on, *show_advanced);
         }
 
-        ui.separator();
-
-        // Summary metrics (total satellite counts, velocity, EPH, heading, clock delta).
-        for kind in [
-            MetricKind::SatsSeen,
-            MetricKind::SatsFix,
-            MetricKind::Velocity,
-            MetricKind::Eph,
-            MetricKind::HeadingDeg,
-            MetricKind::ClockDeltaMs,
-        ] {
-            let (s, h) = metric_chip(
-                ui,
-                vis.field_mut(kind),
-                kind.label(),
-                kind.color(),
-                kind.hover_text(),
-            );
-            if s {
-                show_only = Some(kind);
-            }
-            if h {
-                hovered_chip = Some(kind);
-            }
+        // Advanced toggle: reveals the advanced analysis chips (satellite
+        // utilization), hidden by default.
+        if ui
+            .selectable_label(
+                *show_advanced,
+                format!("{} Advanced", egui_phosphor::regular::GAUGE),
+            )
+            .on_hover_text(if *show_advanced {
+                "Hide advanced metrics"
+            } else {
+                "Show advanced metrics (satellite utilization rate)"
+            })
+            .clicked()
+        {
+            *show_advanced = !*show_advanced;
         }
 
-        ui.separator();
+        // Basic groups, each separated by a divider.  Adding a new metric family
+        // is just another `chip_group` call with its `MetricKind` slice.
+        let basic_groups: [&[MetricKind]; 2] = [
+            // Summary metrics (total satellite counts, velocity, EPH, heading, clock delta).
+            &[
+                MetricKind::SatsSeen,
+                MetricKind::SatsFix,
+                MetricKind::Velocity,
+                MetricKind::Eph,
+                MetricKind::HeadingDeg,
+                MetricKind::ClockDeltaMs,
+            ],
+            // Per-constellation satellite counts.
+            &[
+                MetricKind::GpsSeen,
+                MetricKind::GpsFix,
+                MetricKind::GlonassSeen,
+                MetricKind::GlonassFix,
+                MetricKind::GalileoSeen,
+                MetricKind::GalileoFix,
+                MetricKind::BeidouSeen,
+                MetricKind::BeidouFix,
+            ],
+        ];
+        for group in basic_groups {
+            ui.separator();
+            chip_group(ui, vis, group, &mut show_only, &mut hovered_chip);
+        }
 
-        // Per-constellation chips grouped together.
-        for kind in [
-            MetricKind::GpsSeen,
-            MetricKind::GpsFix,
-            MetricKind::GlonassSeen,
-            MetricKind::GlonassFix,
-            MetricKind::GalileoSeen,
-            MetricKind::GalileoFix,
-            MetricKind::BeidouSeen,
-            MetricKind::BeidouFix,
-        ] {
-            let (s, h) = metric_chip(
+        // Advanced group, shown only when revealed.  Every kind here must report
+        // `MetricKindUi::is_advanced() == true` so line drawing and the
+        // show/hide-all scope stay consistent with this chip's visibility.
+        if *show_advanced {
+            ui.separator();
+            chip_group(
                 ui,
-                vis.field_mut(kind),
-                kind.label(),
-                kind.color(),
-                kind.hover_text(),
+                vis,
+                &[
+                    MetricKind::UtilAll,
+                    MetricKind::UtilGps,
+                    MetricKind::UtilGlonass,
+                    MetricKind::UtilGalileo,
+                    MetricKind::UtilBeidou,
+                ],
+                &mut show_only,
+                &mut hovered_chip,
             );
-            if s {
-                show_only = Some(kind);
-            }
-            if h {
-                hovered_chip = Some(kind);
-            }
         }
     });
 
-    // Apply "Show only this" - disable everything, then re-enable the chosen one.
+    // Apply "Show only this" - disable the shown metrics, then re-enable the
+    // chosen one.
     if let Some(kind) = show_only {
-        vis.set_all(false);
+        vis.set_all(false, *show_advanced);
         *vis.field_mut(kind) = true;
     }
 
@@ -1144,6 +1356,11 @@ fn compute_level_cache(
         eph_m: sel(&series.eph_m),
         heading_deg: sel(&series.heading_deg),
         clock_delta_ms: sel(&series.clock_delta_ms),
+        util_all: sel(&series.util_all),
+        util_gps: sel(&series.util_gps),
+        util_glonass: sel(&series.util_glonass),
+        util_galileo: sel(&series.util_galileo),
+        util_beidou: sel(&series.util_beidou),
     }
 }
 
@@ -1185,6 +1402,10 @@ fn trip_is_visible(
 /// The `'a` lifetime ties both `plot_ui` and `series` together so that
 /// [`egui_plot::PlotPoints::Borrowed`] can reference mipmap slices directly
 /// without any per-frame allocation.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "per-line rendering needs the plot, series, level cache, visibility/hover state, track focus, and the advanced-section gate"
+)]
 fn add_series_lines<'a>(
     plot_ui: &mut egui_plot::PlotUi<'a>,
     series: &'a TrackSeries,
@@ -1193,6 +1414,7 @@ fn add_series_lines<'a>(
     metric_vis: &MetricVisibility,
     hovered_chip: Option<MetricKind>,
     hover_scope: Option<HighlightScope>,
+    show_advanced: bool,
 ) {
     let prefix = if multi_track {
         format!("{}: ", series.label)
@@ -1203,6 +1425,11 @@ fn add_series_lines<'a>(
     let has_track_focus = hover_scope.is_some();
 
     for kind in MetricKind::iter() {
+        // Advanced metrics are drawn only when their section is revealed, so a
+        // collapsed advanced chip never leaves a stray line on the plot.
+        if kind.is_advanced() && !show_advanced {
+            continue;
+        }
         if !metric_vis.field(kind) {
             continue;
         }
@@ -1265,6 +1492,95 @@ fn add_line<'a>(
             .style(style)
             .highlight(highlighted),
     );
+}
+
+/// Pre-formatted tooltip contents for one masked-satellite anomaly marker.
+struct AnomalyHover {
+    /// Track label, shown only when more than one track is visible.
+    track: Option<String>,
+    time: String,
+    /// One line per masked-out satellite, e.g. `GPS 07 - 12.3°`.
+    sats: Vec<String>,
+}
+
+impl AnomalyHover {
+    fn new(series: &TrackSeries, multi_track: bool, anomaly: &UtilAnomaly) -> Self {
+        let time = DateTime::from_timestamp(anomaly.t as i64, 0)
+            .map(|dt| dt.format("%H:%M:%S").to_string())
+            .unwrap_or_default();
+        let sats = anomaly
+            .masked
+            .iter()
+            .map(|m| {
+                format!(
+                    "{} {:02} - {:.1}°",
+                    m.constellation.display_name(),
+                    m.prn,
+                    m.elevation
+                )
+            })
+            .collect();
+        Self {
+            track: multi_track.then(|| series.label.clone()),
+            time,
+            sats,
+        }
+    }
+
+    fn show(&self, ui: &mut egui::Ui) {
+        ui.strong("Used satellites below the elevation mask");
+        if let Some(track) = &self.track {
+            ui.label(track);
+        }
+        ui.label(format!("at {}", self.time));
+        ui.separator();
+        for line in &self.sats {
+            ui.label(line);
+        }
+    }
+}
+
+/// Draw the masked-satellite anomaly markers for one track and, when the pointer
+/// is within [`ANOMALY_HOVER_RADIUS_PX`] of a marker, record the nearest one in
+/// `nearest` so the caller can show its tooltip.
+///
+/// Each marker sits on the all-constellations utilization line at the epoch
+/// where the receiver used a satellite below the elevation mask.
+fn add_util_anomalies<'a>(
+    plot_ui: &mut egui_plot::PlotUi<'a>,
+    series: &'a TrackSeries,
+    multi_track: bool,
+    pointer: Option<egui::Pos2>,
+    nearest: &mut Option<(f32, AnomalyHover)>,
+) {
+    if series.util_anomalies.is_empty() {
+        return;
+    }
+
+    let points: Vec<PlotPoint> = series
+        .util_anomalies
+        .iter()
+        .map(|a| PlotPoint::new(a.t, a.value))
+        .collect();
+    plot_ui.points(
+        Points::new("Masked-out used satellites", PlotPoints::Owned(points))
+            .shape(MarkerShape::Cross)
+            .color(gt_ui_theme::ERROR_INDICATOR)
+            .radius(ANOMALY_MARKER_RADIUS)
+            // Hover is handled with a custom tooltip, so suppress egui_plot's own.
+            .allow_hover(false),
+    );
+
+    let Some(ptr) = pointer else {
+        return;
+    };
+    for anomaly in &series.util_anomalies {
+        let screen = plot_ui.screen_from_plot(PlotPoint::new(anomaly.t, anomaly.value));
+        let dist = screen.distance(ptr);
+        if dist <= ANOMALY_HOVER_RADIUS_PX && nearest.as_ref().is_none_or(|(d, _)| dist < *d) {
+            *nearest = Some((dist, AnomalyHover::new(series, multi_track, anomaly)));
+        }
+    }
 }
 
 /// Given a set of visible tracks and a plot-hovered time (in seconds since

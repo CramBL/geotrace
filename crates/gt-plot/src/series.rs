@@ -1,7 +1,13 @@
+use crate::AnalysisConfig;
 use gt_egui_mipmap::MipMap;
 use gt_types::LoadedFile;
-use gt_types::satellites::Constellation;
+use gt_types::satellites::{Constellation, Prn};
 use uom::si::angle::degree;
+
+/// Y-position for an anomaly marker when the masked baseline is empty (no
+/// in-view satellite above the mask), where the rate is undefined.  The marker
+/// lands at the 0 % line - no above-mask satellite was usable, let alone used.
+const ANOMALY_FALLBACK_RATE: f64 = 0.0;
 
 /// Mipmap series for a single track.
 ///
@@ -37,6 +43,148 @@ pub(crate) struct TrackSeries {
     /// Positive = GPS clock ahead, negative = system clock ahead.
     /// Only present when the TPV record carries a system timestamp.
     pub clock_delta_ms: MipMap,
+    /// Satellite utilization rate (percent), all constellations combined, and
+    /// broken down per constellation.  Mask-dependent: recomputed by
+    /// [`TrackSeries::apply_analysis`] when the elevation mask changes.
+    pub util_all: MipMap,
+    pub util_gps: MipMap,
+    pub util_glonass: MipMap,
+    pub util_galileo: MipMap,
+    pub util_beidou: MipMap,
+    /// Epochs where the receiver used a satellite below the elevation mask, so
+    /// that satellite is excluded from the utilization rate.  Surfaced as plot
+    /// markers; also mask-dependent.
+    pub util_anomalies: Vec<UtilAnomaly>,
+}
+
+/// A satellite that was used in the fix while sitting below the elevation mask.
+#[derive(Debug, Clone)]
+pub(crate) struct MaskedSat {
+    pub constellation: Constellation,
+    pub prn: Prn,
+    pub elevation: f32,
+}
+
+/// One epoch at which at least one [`MaskedSat`] was used in the fix.
+#[derive(Debug, Clone)]
+pub(crate) struct UtilAnomaly {
+    /// Epoch, in Unix seconds (the marker's x-position).
+    pub t: f64,
+    /// All-constellations utilization-rate percentage at this epoch, used as the
+    /// marker's y-position so it sits on the `UtilAll` line.  Falls back to
+    /// [`ANOMALY_FALLBACK_RATE`] when the masked baseline is empty (no in-view
+    /// satellite above the mask), which would otherwise leave the rate undefined.
+    pub value: f64,
+    /// The used sub-mask satellites, sorted by ascending elevation.
+    pub masked: Vec<MaskedSat>,
+}
+
+/// Per-track utilization point series plus the masked-satellite anomalies, all
+/// derived together from one pass over the track at a given elevation mask.
+struct UtilPoints {
+    all: Vec<[f64; 2]>,
+    gps: Vec<[f64; 2]>,
+    glonass: Vec<[f64; 2]>,
+    galileo: Vec<[f64; 2]>,
+    beidou: Vec<[f64; 2]>,
+    anomalies: Vec<UtilAnomaly>,
+}
+
+/// Utilization rate as a percentage, or `None` when the masked baseline is
+/// empty (division undefined - the epoch contributes no line point).
+fn rate_percent(num: usize, den: usize) -> Option<f64> {
+    (den > 0).then(|| (num as f64 / den as f64) * 100.0)
+}
+
+/// Compute the utilization-rate series and masked-satellite anomalies for one
+/// track at the given elevation mask.  Shared by [`build_track_series`] and the
+/// in-place rebuild in [`TrackSeries::apply_analysis`].
+fn compute_util(track: &gt_types::LoadedTrack, mask_deg: f32) -> UtilPoints {
+    let mut out = UtilPoints {
+        all: Vec::new(),
+        gps: Vec::new(),
+        glonass: Vec::new(),
+        galileo: Vec::new(),
+        beidou: Vec::new(),
+        anomalies: Vec::new(),
+    };
+
+    for point in &track.points {
+        let Some(sats) = &point.satellites else {
+            continue;
+        };
+        let t = point.tpv.time().as_secs_f64();
+
+        let all_rate = rate_percent(
+            sats.in_fix_above_mask(None, mask_deg),
+            sats.in_view_above_mask(None, mask_deg),
+        );
+        if let Some(r) = all_rate {
+            out.all.push([t, r]);
+        }
+
+        let rate_for = |c: Constellation| {
+            rate_percent(
+                sats.in_fix_above_mask(Some(c), mask_deg),
+                sats.in_view_above_mask(Some(c), mask_deg),
+            )
+        };
+        if let Some(r) = rate_for(Constellation::Gps) {
+            out.gps.push([t, r]);
+        }
+        if let Some(r) = rate_for(Constellation::Glonass) {
+            out.glonass.push([t, r]);
+        }
+        if let Some(r) = rate_for(Constellation::Galileo) {
+            out.galileo.push([t, r]);
+        }
+        if let Some(r) = rate_for(Constellation::Beidou) {
+            out.beidou.push([t, r]);
+        }
+
+        let mut masked: Vec<MaskedSat> = sats
+            .masked_out_in_fix(mask_deg)
+            // `elevation` is guaranteed `Some` by `masked_out_in_fix`'s predicate.
+            .filter_map(|s| {
+                s.elevation().map(|e| MaskedSat {
+                    constellation: s.constellation(),
+                    prn: s.prn(),
+                    elevation: e,
+                })
+            })
+            .collect();
+        if !masked.is_empty() {
+            masked.sort_by(|a, b| a.elevation.total_cmp(&b.elevation));
+            out.anomalies.push(UtilAnomaly {
+                t,
+                value: all_rate.unwrap_or(ANOMALY_FALLBACK_RATE),
+                masked,
+            });
+        }
+    }
+
+    out
+}
+
+impl TrackSeries {
+    /// Recompute only the mask-dependent series (utilization rate + anomalies)
+    /// for `track` under `analysis`, leaving the mask-independent mipmaps intact.
+    ///
+    /// This is the targeted rebuild used when the user changes the elevation
+    /// mask, avoiding a full re-derivation of every metric.
+    pub(crate) fn apply_analysis(
+        &mut self,
+        track: &gt_types::LoadedTrack,
+        analysis: AnalysisConfig,
+    ) {
+        let u = compute_util(track, analysis.elevation_mask_deg);
+        self.util_all = MipMap::build(u.all);
+        self.util_gps = MipMap::build(u.gps);
+        self.util_glonass = MipMap::build(u.glonass);
+        self.util_galileo = MipMap::build(u.galileo);
+        self.util_beidou = MipMap::build(u.beidou);
+        self.util_anomalies = u.anomalies;
+    }
 }
 
 /// Build mipmap series for every track in a single file, using `fi` as the file
@@ -44,16 +192,20 @@ pub(crate) struct TrackSeries {
 ///
 /// No visibility check or time filter is applied - that is done at render time
 /// so the cache stays valid across filter changes without a rebuild.
-pub(crate) fn build_file_series(fi: usize, file: &LoadedFile) -> Vec<TrackSeries> {
+pub(crate) fn build_file_series(
+    fi: usize,
+    file: &LoadedFile,
+    analysis: AnalysisConfig,
+) -> Vec<TrackSeries> {
     file.tracks
         .iter()
         .enumerate()
-        .map(|(ti, track)| build_track_series(fi, ti, file, track))
+        .map(|(ti, track)| build_track_series(fi, ti, file, track, analysis))
         .collect()
 }
 
 /// Build mipmap series for every track in every file.
-pub(crate) fn build_all_series(files: &[LoadedFile]) -> Vec<TrackSeries> {
+pub(crate) fn build_all_series(files: &[LoadedFile], analysis: AnalysisConfig) -> Vec<TrackSeries> {
     files
         .iter()
         .enumerate()
@@ -61,7 +213,7 @@ pub(crate) fn build_all_series(files: &[LoadedFile]) -> Vec<TrackSeries> {
             file.tracks
                 .iter()
                 .enumerate()
-                .map(move |(ti, track)| build_track_series(fi, ti, file, track))
+                .map(move |(ti, track)| build_track_series(fi, ti, file, track, analysis))
         })
         .collect()
 }
@@ -71,6 +223,7 @@ fn build_track_series(
     ti: usize,
     file: &LoadedFile,
     track: &gt_types::LoadedTrack,
+    analysis: AnalysisConfig,
 ) -> TrackSeries {
     let label = if file.tracks.len() == 1 {
         file.metadata.filename.clone()
@@ -150,6 +303,8 @@ fn build_track_series(
             )
         });
 
+    let util = compute_util(track, analysis.elevation_mask_deg);
+
     TrackSeries {
         fi,
         ti,
@@ -169,6 +324,12 @@ fn build_track_series(
         eph_m: MipMap::build(eph_m_pts),
         heading_deg: MipMap::build(heading_deg_pts),
         clock_delta_ms: MipMap::build(clock_delta_ms_pts),
+        util_all: MipMap::build(util.all),
+        util_gps: MipMap::build(util.gps),
+        util_glonass: MipMap::build(util.glonass),
+        util_galileo: MipMap::build(util.galileo),
+        util_beidou: MipMap::build(util.beidou),
+        util_anomalies: util.anomalies,
     }
 }
 

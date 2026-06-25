@@ -9,7 +9,7 @@ use gt_track_builder::SegmentationConfig;
 
 use chrono::{DateTime, Utc};
 use egui::Context;
-use gt_plot::PreparedSeries;
+use gt_plot::{AnalysisConfig, PreparedSeries};
 use gt_types::{
     AssociationConfig, Coord, CustomMarker, FileMetadata, FileSource, LoadedFile, LoadedTrack,
     NavPoint, Rect, TimeRange, TrackMetadata, merc_bounds_for_rect,
@@ -120,6 +120,10 @@ pub(super) struct LoaderManager {
     /// so they can insert recordings after parsing.  `None` when storage is
     /// unavailable (DB failed to open at startup).
     pub db_path: Option<PathBuf>,
+    /// Analysis parameters (elevation mask) forwarded to background load threads
+    /// so freshly built plot series match the rest of the plot.  Kept in sync
+    /// with the plot state's analysis config by the app.
+    pub analysis_config: AnalysisConfig,
 }
 
 impl LoaderManager {
@@ -134,6 +138,7 @@ impl LoaderManager {
             next_id: 0,
             file_dialog_rx: None,
             db_path: None,
+            analysis_config: AnalysisConfig::default(),
         }
     }
 
@@ -164,6 +169,7 @@ impl LoaderManager {
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
         let db_path = self.db_path.clone();
+        let analysis = self.analysis_config;
         let log_name = filename.clone();
         log::info!("Loading file '{filename}'");
         thread::Builder::new()
@@ -191,7 +197,7 @@ impl LoaderManager {
                         })
                         .ok();
                         ctx.request_repaint();
-                        let series = gt_plot::prepare_file_series(0, &file);
+                        let series = gt_plot::prepare_file_series(0, &file, analysis);
                         // Read the bytes once for both the content fingerprint
                         // and the optional history insert.
                         let bytes = std::fs::read(&path).ok();
@@ -263,6 +269,7 @@ impl LoaderManager {
         let tx = self.load_tx.clone();
         let ctx = self.ctx.clone();
         let db_path = self.db_path.clone();
+        let analysis = self.analysis_config;
         let log_name = filename.clone();
         log::info!("Loading file '{filename}'");
         thread::Builder::new()
@@ -316,7 +323,7 @@ impl LoaderManager {
                             })
                             .ok();
                             ctx.request_repaint();
-                            let series = gt_plot::prepare_file_series(0, &file);
+                            let series = gt_plot::prepare_file_series(0, &file, analysis);
                             LoadOutcome::GtdFile {
                                 file,
                                 series,
@@ -662,7 +669,11 @@ fn finish_log_load(
     report(0.90, STAGE_PROCESSING);
     let loaded = build_log_loaded_file(filename, result.markers, source);
     report(0.95, STAGE_PLOTTING);
-    let series = loaded.as_ref().map(|f| gt_plot::prepare_file_series(0, f));
+    // Log files carry no satellite reports, so the utilization series is empty
+    // regardless of the elevation mask - the default analysis config suffices.
+    let series = loaded
+        .as_ref()
+        .map(|f| gt_plot::prepare_file_series(0, f, AnalysisConfig::default()));
 
     tx.send(LoadMessage::Completed {
         id,

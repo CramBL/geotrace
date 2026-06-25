@@ -340,6 +340,7 @@ mod tests {
                     "eframe.*".into(),
                     "env_logger.*".into(),
                     "log.*".into(),
+                    "strum.*".into(),
                     "walkers.*".into(),
                     "chrono.*".into(),
                     "gt_filter.*".into(),
