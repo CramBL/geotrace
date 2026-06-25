@@ -1,8 +1,9 @@
 use crate::AnalysisConfig;
-use crate::series::{TrackSeries, UtilAnomaly, build_all_series};
+use crate::series::{TrackSeries, build_all_series};
 use chrono::{DateTime, Utc};
 use egui::Color32;
 use egui_plot::{Line, LineStyle, MarkerShape, PlotPoint, PlotPoints, Points, VLine};
+use gt_analysis::satellite_utilization::UtilAnomaly;
 use gt_egui_mipmap::{LevelSelection, MipMap};
 use gt_filter::GlobalFilter;
 use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx};
@@ -45,6 +46,11 @@ impl MetricKindUi for MetricKind {
                 | Self::UtilGlonass
                 | Self::UtilGalileo
                 | Self::UtilBeidou
+                | Self::SlipAll
+                | Self::SlipGps
+                | Self::SlipGlonass
+                | Self::SlipGalileo
+                | Self::SlipBeidou
         )
     }
 
@@ -71,6 +77,13 @@ impl MetricKindUi for MetricKind {
             Self::UtilGlonass => Color32::from_rgb(255, 200, 130), // pale orange
             Self::UtilGalileo => Color32::from_rgb(255, 150, 190), // pale pink
             Self::UtilBeidou => Color32::from_rgb(150, 245, 245), // pale cyan
+            // Slip rate uses a hot "warning" palette so a rising loss-of-lock
+            // rate reads as a problem, with a distinct hue per constellation.
+            Self::SlipAll => Color32::from_rgb(255, 80, 80), // bright red
+            Self::SlipGps => Color32::from_rgb(255, 150, 60), // orange
+            Self::SlipGlonass => Color32::from_rgb(230, 200, 70), // amber-yellow
+            Self::SlipGalileo => Color32::from_rgb(235, 110, 200), // magenta
+            Self::SlipBeidou => Color32::from_rgb(120, 190, 235), // steel blue
         }
     }
 
@@ -95,6 +108,11 @@ impl MetricKindUi for MetricKind {
             Self::UtilGlonass => "GLONASS util (%)",
             Self::UtilGalileo => "Galileo util (%)",
             Self::UtilBeidou => "BeiDou util (%)",
+            Self::SlipAll => "Slip all (/min)",
+            Self::SlipGps => "GPS slip (/min)",
+            Self::SlipGlonass => "GLONASS slip (/min)",
+            Self::SlipGalileo => "Galileo slip (/min)",
+            Self::SlipBeidou => "BeiDou slip (/min)",
         }
     }
 
@@ -131,6 +149,29 @@ impl MetricKindUi for MetricKind {
             Self::UtilBeidou => Some(
                 "BeiDou utilization rate: BeiDou satellites used in the fix divided by BeiDou \
                  satellites in view above the elevation mask.",
+            ),
+            Self::SlipAll => Some(
+                "Loss-of-lock (slip) rate per minute, all constellations: how often the receiver \
+                 loses a satellite it should still be tracking. A slip is counted when an \
+                 above-mask satellite vanishes, or when its SNR drops sharply between epochs. \
+                 Averaged over a trailing window. Tune the mask, SNR-drop threshold, and window \
+                 in Settings.",
+            ),
+            Self::SlipGps => Some(
+                "GPS loss-of-lock (slip) rate per minute: GPS satellites lost or sharply faded \
+                 above the elevation mask, averaged over the slip window.",
+            ),
+            Self::SlipGlonass => Some(
+                "GLONASS loss-of-lock (slip) rate per minute: GLONASS satellites lost or sharply \
+                 faded above the elevation mask, averaged over the slip window.",
+            ),
+            Self::SlipGalileo => Some(
+                "Galileo loss-of-lock (slip) rate per minute: Galileo satellites lost or sharply \
+                 faded above the elevation mask, averaged over the slip window.",
+            ),
+            Self::SlipBeidou => Some(
+                "BeiDou loss-of-lock (slip) rate per minute: BeiDou satellites lost or sharply \
+                 faded above the elevation mask, averaged over the slip window.",
             ),
             _ => None,
         }
@@ -332,6 +373,11 @@ pub struct MetricVisibility {
     pub util_glonass: bool,
     pub util_galileo: bool,
     pub util_beidou: bool,
+    pub slip_all: bool,
+    pub slip_gps: bool,
+    pub slip_glonass: bool,
+    pub slip_galileo: bool,
+    pub slip_beidou: bool,
 }
 
 impl Default for MetricVisibility {
@@ -356,6 +402,11 @@ impl Default for MetricVisibility {
             util_glonass: true,
             util_galileo: true,
             util_beidou: true,
+            slip_all: true,
+            slip_gps: true,
+            slip_glonass: true,
+            slip_galileo: true,
+            slip_beidou: true,
         }
     }
 }
@@ -383,6 +434,11 @@ impl MetricVisibility {
             MetricKind::UtilGlonass => self.util_glonass,
             MetricKind::UtilGalileo => self.util_galileo,
             MetricKind::UtilBeidou => self.util_beidou,
+            MetricKind::SlipAll => self.slip_all,
+            MetricKind::SlipGps => self.slip_gps,
+            MetricKind::SlipGlonass => self.slip_glonass,
+            MetricKind::SlipGalileo => self.slip_galileo,
+            MetricKind::SlipBeidou => self.slip_beidou,
         }
     }
 
@@ -408,6 +464,11 @@ impl MetricVisibility {
             MetricKind::UtilGlonass => &mut self.util_glonass,
             MetricKind::UtilGalileo => &mut self.util_galileo,
             MetricKind::UtilBeidou => &mut self.util_beidou,
+            MetricKind::SlipAll => &mut self.slip_all,
+            MetricKind::SlipGps => &mut self.slip_gps,
+            MetricKind::SlipGlonass => &mut self.slip_glonass,
+            MetricKind::SlipGalileo => &mut self.slip_galileo,
+            MetricKind::SlipBeidou => &mut self.slip_beidou,
         }
     }
 
@@ -451,6 +512,11 @@ struct TripLevelCache {
     util_glonass: LevelSelection,
     util_galileo: LevelSelection,
     util_beidou: LevelSelection,
+    slip_all: LevelSelection,
+    slip_gps: LevelSelection,
+    slip_glonass: LevelSelection,
+    slip_galileo: LevelSelection,
+    slip_beidou: LevelSelection,
 }
 
 impl TripLevelCache {
@@ -475,6 +541,11 @@ impl TripLevelCache {
             MetricKind::UtilGlonass => self.util_glonass,
             MetricKind::UtilGalileo => self.util_galileo,
             MetricKind::UtilBeidou => self.util_beidou,
+            MetricKind::SlipAll => self.slip_all,
+            MetricKind::SlipGps => self.slip_gps,
+            MetricKind::SlipGlonass => self.slip_glonass,
+            MetricKind::SlipGalileo => self.slip_galileo,
+            MetricKind::SlipBeidou => self.slip_beidou,
         }
     }
 }
@@ -501,6 +572,11 @@ impl crate::series::TrackSeries {
             MetricKind::UtilGlonass => &self.util_glonass,
             MetricKind::UtilGalileo => &self.util_galileo,
             MetricKind::UtilBeidou => &self.util_beidou,
+            MetricKind::SlipAll => &self.slip_all,
+            MetricKind::SlipGps => &self.slip_gps,
+            MetricKind::SlipGlonass => &self.slip_glonass,
+            MetricKind::SlipGalileo => &self.slip_galileo,
+            MetricKind::SlipBeidou => &self.slip_beidou,
         }
     }
 }
@@ -1217,7 +1293,7 @@ fn metric_filter_row(
             .on_hover_text(if *show_advanced {
                 "Hide advanced metrics"
             } else {
-                "Show advanced metrics (satellite utilization rate)"
+                "Show advanced metrics (satellite utilization and loss-of-lock slip rate)"
             })
             .clicked()
         {
@@ -1253,14 +1329,12 @@ fn metric_filter_row(
             chip_group(ui, vis, group, &mut show_only, &mut hovered_chip);
         }
 
-        // Advanced group, shown only when revealed.  Every kind here must report
+        // Advanced groups, shown only when revealed.  Every kind here must report
         // `MetricKindUi::is_advanced() == true` so line drawing and the
-        // show/hide-all scope stay consistent with this chip's visibility.
+        // show/hide-all scope stay consistent with these chips' visibility.
         if *show_advanced {
-            ui.separator();
-            chip_group(
-                ui,
-                vis,
+            let advanced_groups: [&[MetricKind]; 2] = [
+                // Satellite utilization rate.
                 &[
                     MetricKind::UtilAll,
                     MetricKind::UtilGps,
@@ -1268,9 +1342,19 @@ fn metric_filter_row(
                     MetricKind::UtilGalileo,
                     MetricKind::UtilBeidou,
                 ],
-                &mut show_only,
-                &mut hovered_chip,
-            );
+                // Loss-of-lock (slip) rate.
+                &[
+                    MetricKind::SlipAll,
+                    MetricKind::SlipGps,
+                    MetricKind::SlipGlonass,
+                    MetricKind::SlipGalileo,
+                    MetricKind::SlipBeidou,
+                ],
+            ];
+            for group in advanced_groups {
+                ui.separator();
+                chip_group(ui, vis, group, &mut show_only, &mut hovered_chip);
+            }
         }
     });
 
@@ -1361,6 +1445,11 @@ fn compute_level_cache(
         util_glonass: sel(&series.util_glonass),
         util_galileo: sel(&series.util_galileo),
         util_beidou: sel(&series.util_beidou),
+        slip_all: sel(&series.slip_all),
+        slip_gps: sel(&series.slip_gps),
+        slip_glonass: sel(&series.slip_glonass),
+        slip_galileo: sel(&series.slip_galileo),
+        slip_beidou: sel(&series.slip_beidou),
     }
 }
 

@@ -41,6 +41,14 @@ pub enum MetricKind {
     UtilGlonass,
     UtilGalileo,
     UtilBeidou,
+    /// Loss-of-lock (cycle slip) rate per minute across all constellations, and
+    /// broken down per constellation.  A slip is a satellite lost while still
+    /// trackable above the mask, or a steep SNR drop between epochs.
+    SlipAll,
+    SlipGps,
+    SlipGlonass,
+    SlipGalileo,
+    SlipBeidou,
 }
 
 #[cfg(test)]
@@ -80,6 +88,11 @@ mod tests {
             (MetricKind::UtilGlonass, "util_glonass"),
             (MetricKind::UtilGalileo, "util_galileo"),
             (MetricKind::UtilBeidou, "util_beidou"),
+            (MetricKind::SlipAll, "slip_all"),
+            (MetricKind::SlipGps, "slip_gps"),
+            (MetricKind::SlipGlonass, "slip_glonass"),
+            (MetricKind::SlipGalileo, "slip_galileo"),
+            (MetricKind::SlipBeidou, "slip_beidou"),
         ];
         assert_eq!(expected.len(), MetricKind::COUNT);
         for (kind, wire) in expected {
