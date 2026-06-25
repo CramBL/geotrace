@@ -1,4 +1,5 @@
 use std::time::{Duration, Instant};
+use strum::EnumCount;
 
 /// `f32` stored as its bit pattern so `AppSnapshot` can derive `PartialEq`
 /// without triggering the `float_cmp` lint.
@@ -38,20 +39,13 @@ pub(super) struct AppSnapshot {
     pub show_grid: bool,
     pub panel_visible: bool,
     pub split_ratio: StableF32,
-    pub metric_sats_seen: bool,
-    pub metric_sats_fix: bool,
-    pub metric_gps_seen: bool,
-    pub metric_gps_fix: bool,
-    pub metric_glonass_seen: bool,
-    pub metric_glonass_fix: bool,
-    pub metric_galileo_seen: bool,
-    pub metric_galileo_fix: bool,
-    pub metric_beidou_seen: bool,
-    pub metric_beidou_fix: bool,
-    pub metric_velocity: bool,
-    pub metric_eph: bool,
-    pub metric_heading_deg: bool,
-    pub metric_clock_delta_ms: bool,
+    /// Per-metric visibility flags in `MetricKind::iter()` order, sized by
+    /// `MetricKind::COUNT` so a new variant is picked up automatically with no
+    /// edit here.  This is purely an in-run dirty-check key: on-disk settings are
+    /// keyed by stable wire names, never by position, so tracking the enum's
+    /// order and length here is safe across add/remove/rename/reorder.
+    pub metrics: [bool; crate::settings::MetricKind::COUNT],
+    pub show_advanced_metrics: bool,
     pub layer: crate::settings::MapLayerSetting,
     pub mapbox_token: String,
     pub sync_to_map: bool,
@@ -60,6 +54,8 @@ pub(super) struct AppSnapshot {
     pub log_marker_window_s: u64,
     pub detect_clock_discontinuities: bool,
     pub clock_discontinuity_sigmas: StableF64,
+    pub elevation_mask_deg: StableF32,
+    pub mark_masked_fix: bool,
     pub storage_enabled: bool,
     pub auto_prune_enabled: bool,
     pub auto_prune_max_bytes: u64,
@@ -70,27 +66,17 @@ pub(super) struct AppSnapshot {
 
 impl Default for AppSnapshot {
     fn default() -> Self {
-        // The clock-discontinuity defaults are sourced from the persisted
-        // settings so this dirty-check baseline cannot drift from what is loaded.
+        // The clock-discontinuity and analysis defaults are sourced from the
+        // persisted settings so this dirty-check baseline cannot drift from what
+        // is loaded.
         let processing = crate::settings::ProcessingSettings::default();
+        let analysis = crate::settings::AnalysisSettings::default();
         Self {
             show_grid: true,
             panel_visible: true,
             split_ratio: StableF32::from(0.6_f32),
-            metric_sats_seen: true,
-            metric_sats_fix: true,
-            metric_gps_seen: true,
-            metric_gps_fix: true,
-            metric_glonass_seen: true,
-            metric_glonass_fix: true,
-            metric_galileo_seen: true,
-            metric_galileo_fix: true,
-            metric_beidou_seen: true,
-            metric_beidou_fix: true,
-            metric_velocity: true,
-            metric_eph: true,
-            metric_heading_deg: true,
-            metric_clock_delta_ms: true,
+            metrics: [true; crate::settings::MetricKind::COUNT],
+            show_advanced_metrics: false,
             layer: crate::settings::MapLayerSetting::Osm,
             mapbox_token: String::new(),
             sync_to_map: true,
@@ -99,6 +85,8 @@ impl Default for AppSnapshot {
             log_marker_window_s: 60,
             detect_clock_discontinuities: processing.detect_clock_discontinuities,
             clock_discontinuity_sigmas: StableF64::from(processing.clock_discontinuity_sigmas),
+            elevation_mask_deg: StableF32::from(analysis.elevation_mask_deg),
+            mark_masked_fix: analysis.mark_masked_fix,
             storage_enabled: true,
             auto_prune_enabled: false,
             auto_prune_max_bytes: 10 * 1024 * 1024 * 1024,

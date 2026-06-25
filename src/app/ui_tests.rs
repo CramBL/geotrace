@@ -585,6 +585,14 @@ fn snapshot_app_three_overlapping_files() {
     harness.snapshot_with_tolerance("app_three_overlapping_files", 4.0, 16);
 }
 
+// The settings window renders a `self-update`-only row ("Check for updates on
+// startup"), so its appearance depends on that feature. Gating the snapshot on
+// the feature means the reference image can only ever be generated and compared
+// in the same configuration CI uses (`just test` / `just test-snapshots` both
+// enable it). Without this, regenerating snapshots in a build that lacks the
+// feature would silently drop that row and break macOS CI. Any future
+// feature-dependent snapshot must be gated the same way.
+#[cfg(feature = "self-update")]
 #[test]
 fn snapshot_settings_window() {
     let (mut harness, _config_path) = TestHarness::builder()
