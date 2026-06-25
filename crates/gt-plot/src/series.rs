@@ -332,20 +332,3 @@ fn build_track_series(
         util_anomalies: util.anomalies,
     }
 }
-
-/// Find the index of the point in `points` whose GPS timestamp is closest to
-/// `target_secs` (Unix seconds).  Returns `None` if `points` is empty.
-pub(crate) fn closest_point_index(
-    points: &[gt_types::NavPoint],
-    target_secs: f64,
-) -> Option<usize> {
-    points
-        .iter()
-        .enumerate()
-        .min_by(|(_, a), (_, b)| {
-            let da = (a.tpv.time().as_secs_f64() - target_secs).abs();
-            let db = (b.tpv.time().as_secs_f64() - target_secs).abs();
-            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .map(|(i, _)| i)
-}

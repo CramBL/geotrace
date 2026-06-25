@@ -343,7 +343,9 @@ impl NavMap {
             self.sticky_pos = pos;
         }
 
-        if zoom_to_visible && let Some(bbox) = compute_visible_bounding_box(files, visibility) {
+        if zoom_to_visible
+            && let Some(bbox) = compute_visible_bounding_box(files, visibility, filter)
+        {
             zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
         }
 
@@ -361,7 +363,7 @@ impl NavMap {
             if had_tracks {
                 self.blink.trigger(now);
             }
-            if let Some(bbox) = compute_visible_bounding_box(files, visibility) {
+            if let Some(bbox) = compute_visible_bounding_box(files, visibility, filter) {
                 zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
             }
             self.global_tree = gt_track_builder::build_global_tree(files);
@@ -497,7 +499,7 @@ impl NavMap {
 
         // Double-click anywhere on the map: zoom out to fit the visible tracks.
         if map_response.double_clicked()
-            && let Some(bbox) = compute_visible_bounding_box(files, visibility)
+            && let Some(bbox) = compute_visible_bounding_box(files, visibility, filter)
         {
             zoom_to_fit(&mut self.map_memory, map_response.rect, bbox);
         }
@@ -526,7 +528,7 @@ impl NavMap {
                     .nearest_neighbor_iter([merc_x, merc_y])
                     .take_while(|sp| sp.distance_2(&[merc_x, merc_y]) <= threshold_merc_sq)
                 {
-                    if !is_spatial_point_visible(sp, visibility) {
+                    if !is_spatial_point_visible(sp, files, visibility, filter) {
                         continue;
                     }
                     if let Some(slot) = sp.category.hover_slot() {
@@ -1024,26 +1026,44 @@ mod tests {
     #[test]
     fn visible_tpv_point_is_hoverable() {
         let sp = tpv_spatial_point(0, 0, 0);
+        let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
         let vis = vis_all_visible();
-        assert!(is_spatial_point_visible(&sp, &vis));
+        assert!(is_spatial_point_visible(
+            &sp,
+            &files,
+            &vis,
+            &GlobalFilter::default()
+        ));
     }
 
     /// Regression test: hiding the file must prevent hover on all its points.
     #[test]
     fn hidden_file_blocks_hover() {
         let sp = tpv_spatial_point(0, 0, 0);
+        let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
         let mut vis = vis_all_visible();
         vis.files[0].enabled = false;
-        assert!(!is_spatial_point_visible(&sp, &vis));
+        assert!(!is_spatial_point_visible(
+            &sp,
+            &files,
+            &vis,
+            &GlobalFilter::default()
+        ));
     }
 
     /// Regression test: hiding the track must prevent hover even when the file is visible.
     #[test]
     fn hidden_track_blocks_hover() {
         let sp = tpv_spatial_point(0, 0, 0);
+        let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
         let mut vis = vis_all_visible();
         vis.files[0].tracks[0].enabled = false;
-        assert!(!is_spatial_point_visible(&sp, &vis));
+        assert!(!is_spatial_point_visible(
+            &sp,
+            &files,
+            &vis,
+            &GlobalFilter::default()
+        ));
     }
 
     fn track_at(lat: f64, lon: f64) -> LoadedTrack {
@@ -1096,13 +1116,15 @@ mod tests {
         };
 
         // Everything visible: the box spans both tracks (min_lat, max_lat, min_lon, max_lon).
+        let filter = GlobalFilter::default();
         let all_visible =
-            compute_visible_bounding_box(&files, &vis).expect("visible data has a bbox");
+            compute_visible_bounding_box(&files, &vis, &filter).expect("visible data has a bbox");
         assert_eq!(all_visible, (55.0, 56.0, 12.0, 13.0));
 
         // Hide the north-east track: its corner drops out of the box.
         vis.files[0].tracks[1].enabled = false;
-        let only_first = compute_visible_bounding_box(&files, &vis).expect("track 0 still visible");
+        let only_first =
+            compute_visible_bounding_box(&files, &vis, &filter).expect("track 0 still visible");
         assert_eq!(only_first, (55.0, 55.0, 12.0, 12.0));
     }
 
@@ -1110,9 +1132,61 @@ mod tests {
     #[test]
     fn hidden_tpv_layer_blocks_hover() {
         let sp = tpv_spatial_point(0, 0, 0);
+        let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
         let mut vis = vis_all_visible();
         vis.files[0].tracks[0].tpv_visible = false;
-        assert!(!is_spatial_point_visible(&sp, &vis));
+        assert!(!is_spatial_point_visible(
+            &sp,
+            &files,
+            &vis,
+            &GlobalFilter::default()
+        ));
+    }
+
+    /// Builds a single-point [`NavPoint`] stamped at `time`.
+    fn nav_at(time: chrono::DateTime<chrono::Utc>, lat: f64, lon: f64) -> gt_types::NavPoint {
+        let tpv = gt_types::TimePositionVelocity::builder()
+            .time(gt_types::GpsTime::from_utc(time))
+            .lat(gt_types::Latitude::new(lat))
+            .lon(gt_types::Longitude::new(lon))
+            .build();
+        gt_types::NavPoint::new(tpv, None)
+    }
+
+    /// Regression test: with a partially-overlapping track, points outside the
+    /// filter's time window must not be hoverable - they are hidden on the map,
+    /// so the hit-test must agree (otherwise filtered points stay clickable).
+    #[test]
+    fn time_filtered_point_is_not_hoverable() {
+        let early = chrono::DateTime::from_timestamp(0, 0).expect("valid");
+        let late = early + chrono::Duration::seconds(100);
+        let track = LoadedTrack {
+            metadata: TrackMetadata {
+                time_range: TimeRange::new(early, late),
+                ..TrackMetadata::default()
+            },
+            points: vec![nav_at(early, 55.0, 12.0), nav_at(late, 55.0, 12.0)],
+            lod: gt_types::TrackLod::default(),
+            custom_markers: vec![],
+            generated_markers: vec![],
+            event_markers: vec![],
+        };
+        let files = vec![file_with_tracks(vec![track])];
+        let vis = vis_all_visible();
+        // Start the window between the two points: the track still overlaps it,
+        // but the early point falls outside.
+        let filter = GlobalFilter {
+            time_start: Some(early + chrono::Duration::seconds(50)),
+            ..GlobalFilter::default()
+        };
+        assert!(
+            !is_spatial_point_visible(&tpv_spatial_point(0, 0, 0), &files, &vis, &filter),
+            "the pre-window point must not be hoverable"
+        );
+        assert!(
+            is_spatial_point_visible(&tpv_spatial_point(0, 0, 1), &files, &vis, &filter),
+            "the in-window point must stay hoverable"
+        );
     }
 
     /// The hover must skip the hidden nearest point and return a visible one instead.
@@ -1135,6 +1209,10 @@ mod tests {
             category: DataCategory::Tpv,
         };
         let tree = rstar::RTree::bulk_load(vec![hidden, visible]);
+        let files = vec![file_with_tracks(vec![
+            track_at(55.0, 12.0),
+            track_at(56.0, 13.0),
+        ])];
         let vis = TrackDataVisibility {
             files: vec![FileVisibility {
                 enabled: true,
@@ -1147,10 +1225,11 @@ mod tests {
                 ],
             }],
         };
+        let filter = GlobalFilter::default();
         let found = tree
             .nearest_neighbor_iter([0.5_f64, 0.5_f64])
             .take_while(|sp| sp.distance_2(&[0.5, 0.5]) <= f64::MAX)
-            .find(|sp| is_spatial_point_visible(sp, &vis));
+            .find(|sp| is_spatial_point_visible(sp, &files, &vis, &filter));
         assert!(found.is_some(), "should find the visible track");
         assert_eq!(
             found.unwrap().track_index,
