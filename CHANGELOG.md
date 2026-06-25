@@ -2,6 +2,8 @@
 
 ## [unreleased]
 
+## [0.2.0] - 2026-06-25
+
 ### Added
 
 - Satellite utilization rate plot.
