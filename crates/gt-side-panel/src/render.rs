@@ -1,6 +1,7 @@
 use gt_filter::GlobalFilter;
 use gt_types::{
-    DataCategory, FileIdx, LoadWarning, LoadedFile, LoadedTrack, PointIdx, TrackIdx, TrackRef,
+    DataCategory, FileIdx, GeneratedMarkerKind, LoadWarning, LoadedFile, LoadedTrack, PointIdx,
+    TrackIdx, TrackRef,
 };
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 
@@ -424,7 +425,6 @@ fn render_track_categories(
     let tpv_visible = track_node.tpv_visible;
     let sat_visible = track_node.satellites_visible;
     let cm_visible = track_node.custom_markers_visible;
-    let gm_visible = track_node.generated_markers_visible;
     let tpv_expanded = track_node.categories_expanded.contains(&DataCategory::Tpv);
     let sat_expanded = track_node
         .categories_expanded
@@ -432,9 +432,6 @@ fn render_track_categories(
     let cm_expanded = track_node
         .categories_expanded
         .contains(&DataCategory::CustomMarker);
-    let gm_expanded = track_node
-        .categories_expanded
-        .contains(&DataCategory::GeneratedMarker);
     let em_expanded = track_node
         .categories_expanded
         .contains(&DataCategory::EventMarker);
@@ -534,27 +531,7 @@ fn render_track_categories(
         },
     );
 
-    render_category_section(
-        ui,
-        track_ref,
-        DataCategory::GeneratedMarker,
-        track.generated_markers.len(),
-        "Generated markers",
-        gm_visible,
-        gm_expanded,
-        ctx.tree,
-        ctx.highlight,
-        |ui, highlight| {
-            render_generated_marker_items(
-                ui,
-                track_ref,
-                track,
-                highlight,
-                ctx.map_center_request,
-                ctx.popup_pos_request,
-            );
-        },
-    );
+    render_generated_markers_section(ui, track_ref, track, ctx);
 
     if !track.event_markers.is_empty() {
         render_event_markers_section(
@@ -784,32 +761,127 @@ fn render_custom_marker_items(
     }
 }
 
-fn render_generated_marker_items(
+/// Render the "Generated markers" section as a tree: a category header (master
+/// show/hide + expand) over one collapsible, individually toggleable group per
+/// event type, with the markers of each type beneath their group.
+fn render_generated_markers_section(
     ui: &mut egui::Ui,
     track_ref: TrackRef,
     track: &LoadedTrack,
-    highlight: &mut MapHighlight,
-    map_center_request: &mut Option<(f64, f64)>,
-    popup_pos_request: &mut Option<egui::Pos2>,
+    ctx: &mut PanelContext<'_>,
 ) {
-    for (pi, marker) in track.generated_markers.iter().enumerate() {
-        let point_ref = DataPointRef {
+    let count = track.generated_markers.len();
+    if count == 0 {
+        return;
+    }
+    let Some(node) = ctx.tree.track_node(track_ref) else {
+        return;
+    };
+    let visible = node.generated_markers_visible;
+    let expanded = node
+        .categories_expanded
+        .contains(&DataCategory::GeneratedMarker);
+
+    let header = ui.horizontal(|ui| {
+        let chk = tri_checkbox(
+            ui,
+            if visible {
+                CheckState::On
+            } else {
+                CheckState::Off
+            },
+        );
+        if chk.clicked() {
+            ctx.tree
+                .set_category_visible(track_ref, DataCategory::GeneratedMarker, !visible);
+        }
+        let arrow = expand_arrow(expanded);
+        ui.selectable_label(expanded, format!("{arrow} Generated markers  {count}"))
+    });
+    if header.inner.clicked() {
+        ctx.tree
+            .toggle_category_expanded(track_ref, DataCategory::GeneratedMarker);
+    }
+    if header.inner.hovered() {
+        ctx.highlight.hover = Some(HighlightScope::TrackCategory {
             track: track_ref,
             category: DataCategory::GeneratedMarker,
-            point_index: PointIdx::new(pi),
-        };
-        let label = format!("{}  {}", marker.time.format("%H:%M:%S"), marker.kind);
-        let lat_lon = (marker.lat.as_degrees(), marker.lon.as_degrees());
-        point_item_row(
-            ui,
-            point_ref,
-            label,
-            lat_lon,
-            highlight,
-            map_center_request,
-            popup_pos_request,
-        );
+        });
     }
+    if !expanded {
+        return;
+    }
+
+    // Group markers by event type, ordered by the tag's variant order.
+    let mut groups: std::collections::BTreeMap<gt_types::GeneratedMarkerKindTag, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (pi, marker) in track.generated_markers.iter().enumerate() {
+        groups.entry(marker.kind.tag()).or_default().push(pi);
+    }
+
+    ui.indent((DataCategory::GeneratedMarker, track_ref), |ui| {
+        for (&tag, indices) in &groups {
+            let tag_count = indices.len();
+            let tag_hidden = !ctx.tree.generated_kind_visible(track_ref, tag);
+            let tag_expanded = ctx.tree.generated_kind_expanded(track_ref, tag);
+
+            let row = ui.horizontal(|ui| {
+                let chk = tri_checkbox(
+                    ui,
+                    if tag_hidden {
+                        CheckState::Off
+                    } else {
+                        CheckState::On
+                    },
+                );
+                if chk.clicked() {
+                    ctx.tree.toggle_generated_kind_hidden(track_ref, tag);
+                }
+                let arrow = expand_arrow(tag_expanded);
+                ui.selectable_label(
+                    tag_expanded,
+                    format!("{arrow} {}  {tag_count}", tag.label()),
+                )
+            });
+            if row.inner.clicked() {
+                ctx.tree.toggle_generated_kind_expanded(track_ref, tag);
+            }
+            if !tag_expanded {
+                continue;
+            }
+            ui.indent((tag, track_ref), |ui| {
+                for &pi in indices {
+                    let Some(marker) = track.generated_markers.get(pi) else {
+                        continue;
+                    };
+                    let point_ref = DataPointRef {
+                        track: track_ref,
+                        category: DataCategory::GeneratedMarker,
+                        point_index: PointIdx::new(pi),
+                    };
+                    // A multi-satellite slip shows its satellite count; the
+                    // others need no per-marker detail beyond the time.
+                    let detail = match &marker.kind {
+                        GeneratedMarkerKind::Slip(event) if event.slips.len() > 1 => {
+                            format!("  ({})", event.slips.len())
+                        }
+                        _ => String::new(),
+                    };
+                    let label = format!("{}{detail}", marker.time.format("%H:%M:%S"));
+                    let lat_lon = (marker.lat.as_degrees(), marker.lon.as_degrees());
+                    point_item_row(
+                        ui,
+                        point_ref,
+                        label,
+                        lat_lon,
+                        ctx.highlight,
+                        ctx.map_center_request,
+                        ctx.popup_pos_request,
+                    );
+                }
+            });
+        }
+    });
 }
 
 fn file_bounding_center(file: Option<&LoadedFile>) -> Option<(f64, f64)> {

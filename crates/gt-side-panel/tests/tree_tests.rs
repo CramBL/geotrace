@@ -24,6 +24,8 @@ fn make_track_node() -> gt_side_panel::TrackNode {
         satellites_visible: true,
         custom_markers_visible: true,
         generated_markers_visible: true,
+        generated_kinds_expanded: Default::default(),
+        generated_kinds_hidden: Default::default(),
         event_paths: Default::default(),
         event_filter: String::new(),
     }

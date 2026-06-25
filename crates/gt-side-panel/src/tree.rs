@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use gt_types::{DataCategory, FileIdx, LoadedFile, TrackIdx, TrackRef};
-use gt_ui_types::{EventMarkerVisibility, FileVisibility, TrackDataVisibility, TrackVisibility};
+use gt_types::{DataCategory, FileIdx, GeneratedMarkerKindTag, LoadedFile, TrackIdx, TrackRef};
+use gt_ui_types::{
+    EventMarkerVisibility, FileVisibility, GeneratedMarkerVisibility, TrackDataVisibility,
+    TrackVisibility,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckState {
@@ -171,6 +174,11 @@ pub struct TrackNode {
     pub satellites_visible: bool,
     pub custom_markers_visible: bool,
     pub generated_markers_visible: bool,
+    /// Generated-marker event types whose group is expanded in the tree.
+    pub generated_kinds_expanded: BTreeSet<GeneratedMarkerKindTag>,
+    /// Generated-marker event types hidden on the map (a refinement under the
+    /// category-level `generated_markers_visible` master toggle).
+    pub generated_kinds_hidden: BTreeSet<GeneratedMarkerKindTag>,
     pub event_paths: EventPathTree,
     /// Per-track text filter for the Events section search box.
     pub event_filter: String,
@@ -187,6 +195,8 @@ impl TrackNode {
             satellites_visible: true,
             custom_markers_visible: true,
             generated_markers_visible: true,
+            generated_kinds_expanded: BTreeSet::new(),
+            generated_kinds_hidden: BTreeSet::new(),
             event_paths: EventPathTree::default(),
             event_filter: String::new(),
         }
@@ -227,6 +237,8 @@ pub struct TreeState {
     visibility: TrackDataVisibility,
     /// Derived from tree state, kept in sync.  Passed to gt-map renderers.
     event_marker_visibility: EventMarkerVisibility,
+    /// Derived from tree state, kept in sync.  Passed to gt-map renderers.
+    generated_marker_visibility: GeneratedMarkerVisibility,
 }
 
 impl Default for TreeState {
@@ -246,6 +258,7 @@ impl TreeState {
             detached: false,
             visibility: TrackDataVisibility { files: Vec::new() },
             event_marker_visibility: EventMarkerVisibility::new(),
+            generated_marker_visibility: GeneratedMarkerVisibility::new(),
         }
     }
 
@@ -281,6 +294,7 @@ impl TreeState {
 
         self.rebuild_visibility();
         self.rebuild_event_marker_visibility();
+        self.rebuild_generated_marker_visibility();
     }
 
     /// Full reset: rebuild from scratch with all nodes On and collapsed.
@@ -308,6 +322,7 @@ impl TreeState {
         self.delete_confirm = None;
         self.rebuild_visibility();
         self.rebuild_event_marker_visibility();
+        self.rebuild_generated_marker_visibility();
     }
 
     /// Toggle a file's check state with cascade to all child tracks.
@@ -350,6 +365,39 @@ impl TreeState {
         track_node.event_paths.toggle(path);
         self.rebuild_event_marker_visibility_for(track);
         self.rebuild_visibility_for_track(track);
+    }
+
+    /// Expand or collapse one generated-marker event-type group in the tree.
+    pub fn toggle_generated_kind_expanded(&mut self, track: TrackRef, tag: GeneratedMarkerKindTag) {
+        let Some(track_node) = self.track_node_mut(track) else {
+            return;
+        };
+        if !track_node.generated_kinds_expanded.remove(&tag) {
+            track_node.generated_kinds_expanded.insert(tag);
+        }
+    }
+
+    /// Show or hide one generated-marker event type on the map.
+    pub fn toggle_generated_kind_hidden(&mut self, track: TrackRef, tag: GeneratedMarkerKindTag) {
+        let Some(track_node) = self.track_node_mut(track) else {
+            return;
+        };
+        if !track_node.generated_kinds_hidden.remove(&tag) {
+            track_node.generated_kinds_hidden.insert(tag);
+        }
+        self.rebuild_generated_marker_visibility_for(track);
+    }
+
+    /// Whether markers of `tag` are currently shown for `track`.
+    pub fn generated_kind_visible(&self, track: TrackRef, tag: GeneratedMarkerKindTag) -> bool {
+        self.track_node(track)
+            .is_none_or(|t| !t.generated_kinds_hidden.contains(&tag))
+    }
+
+    /// Whether the generated-marker event-type group is expanded for `track`.
+    pub fn generated_kind_expanded(&self, track: TrackRef, tag: GeneratedMarkerKindTag) -> bool {
+        self.track_node(track)
+            .is_some_and(|t| t.generated_kinds_expanded.contains(&tag))
     }
 
     /// Toggle all event paths for a track (the "Events" header checkbox).
@@ -572,6 +620,11 @@ impl TreeState {
         &self.event_marker_visibility
     }
 
+    /// Returns the derived generated-marker (per-type) visibility for gt-map renderers.
+    pub fn generated_marker_visibility(&self) -> &GeneratedMarkerVisibility {
+        &self.generated_marker_visibility
+    }
+
     /// Returns `true` when every track is hidden - used to trigger zoom-to-fit
     /// when the first track becomes visible.
     pub fn all_hidden(&self) -> bool {
@@ -669,6 +722,31 @@ impl TreeState {
             .map(str::to_owned);
 
         emv.set_hidden(track, hidden);
+    }
+
+    fn rebuild_generated_marker_visibility(&mut self) {
+        let gmv = &mut self.generated_marker_visibility;
+        gmv.clear_all();
+        for (fi, file_node) in self.files.iter().enumerate() {
+            for (ti, track_node) in file_node.tracks.iter().enumerate() {
+                gmv.set_hidden(
+                    TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti)),
+                    track_node.generated_kinds_hidden.iter().copied(),
+                );
+            }
+        }
+    }
+
+    fn rebuild_generated_marker_visibility_for(&mut self, track: TrackRef) {
+        let hidden: Vec<GeneratedMarkerKindTag> = track
+            .fi
+            .get(&self.files)
+            .and_then(|f| track.index.get(&f.tracks))
+            .into_iter()
+            .flat_map(|t| t.generated_kinds_hidden.iter().copied())
+            .collect();
+        self.generated_marker_visibility
+            .set_hidden(track, hidden.into_iter());
     }
 }
 

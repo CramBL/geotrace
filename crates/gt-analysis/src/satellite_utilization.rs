@@ -71,8 +71,8 @@ pub struct UtilAnomaly {
     pub t: f64,
     /// All-constellations utilization-rate percentage at this epoch, used as the
     /// marker's y-position so it sits on the all-constellations line.  Falls back
-    /// to [`ANOMALY_FALLBACK_RATE`] when the masked baseline is empty (no in-view
-    /// satellite above the mask), which would otherwise leave the rate undefined.
+    /// to the 0 % line when the masked baseline is empty (no in-view satellite
+    /// above the mask), which would otherwise leave the rate undefined.
     pub value: f64,
     /// The used sub-mask satellites, sorted by ascending elevation.
     pub masked: Vec<MaskedSat>,

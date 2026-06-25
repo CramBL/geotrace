@@ -4,11 +4,18 @@
 
 ### Added
 
-- Satellite utilization rate plotting: the share of in-view satellites (above an elevation mask) that the receiver uses in the fix, plotted combined and per constellation. Adjustable in Settings.
+- Satellite utilization rate plot.
+- Loss-of-lock (slip) rate plot: above-mask satellites that drop out or whose SNR falls sharply between epochs. Tunable mask, SNR-drop threshold, and window.
+- Slip markers on the map, showing each slipped satellite's before/after elevation, azimuth, and SNR.
+- Per-type detection toggles and per-type show/hide for generated markers.
+
+### Changed
+
+- Moved the derived satellite-analysis algorithms into a `gt-analysis` crate.
 
 ### Fixed
 
-- The time-range filter now also hides filtered-out points from map hover and click. Previously they were only hidden visually but stayed interactive.
+- The time-range filter now also hides filtered-out points from map hover and click.
 
 ## [0.1.0] - 2026-06-21
 

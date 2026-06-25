@@ -9,14 +9,7 @@ license.workspace = true
 # has path dependencies, which can't be published). exclude keeps
 # dev/release-only files out of any `cargo package`.
 publish = false
-exclude = [
-    ".github",
-    "RELEASES.md",
-    "dist-workspace.toml",
-    "scripts",
-    "tests",
-    "wix",
-]
+exclude = [".github", "RELEASES.md", "dist-workspace.toml", "scripts", "tests", "wix"]
 homepage.workspace = true
 authors.workspace = true
 repository.workspace = true
