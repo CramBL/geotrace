@@ -72,6 +72,10 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
 
+      - name: Verify Cargo.lock is up to date
+        if: runner.os == 'Linux'
+        run: cargo update --workspace --locked --offline
+
       - name: check
         run: cargo check --workspace --features geotrace/self-update
 
