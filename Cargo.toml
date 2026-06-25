@@ -35,6 +35,7 @@ eula = false
 
 [workspace]
 members = [
+    "crates/gt-analysis",
     "crates/gt-arch",
     "crates/gt-egui-mipmap",
     "crates/gt-filter",

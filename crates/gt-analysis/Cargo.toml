@@ -1,5 +1,5 @@
 [package]
-name = "gt-track-builder"
+name = "gt-analysis"
 description.workspace = true
 version.workspace = true
 edition.workspace = true
@@ -10,16 +10,10 @@ authors.workspace = true
 doctest = false
 
 [dependencies]
-chrono.workspace = true
-geo-types.workspace = true
-gt-analysis = { path = "../gt-analysis" }
-gt-geo-math = { path = "../gt-geo-math" }
 gt-types = { path = "../gt-types" }
-rstar.workspace = true
-uom.workspace = true
-vec1.workspace = true
 
 [dev-dependencies]
+chrono.workspace = true
 proptest.workspace = true
 
 [lints]

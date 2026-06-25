@@ -5,28 +5,46 @@ pub use plot_widget::{
     LEGEND_DOCK_OFFSET, PlotState, find_closest_tpv, legend_is_docked, show_track_plot,
 };
 
-/// Default elevation mask, in degrees, for the satellite utilization rate.
+/// Default elevation mask, in degrees, shared by the satellite utilization rate
+/// and the slip rate.
 ///
 /// 15 deg is the conventional GNSS baseline: below it atmospheric delay and
 /// multipath dominate, so receivers routinely ignore those satellites.
 pub const DEFAULT_ELEVATION_MASK_DEG: f32 = 15.0;
 
-/// Tunable parameters for the derived satellite-analysis series (currently the
-/// utilization rate).  Threaded into series building so a change re-derives the
-/// affected mipmaps.
+/// Default SNR drop, in dB-Hz between consecutive epochs, that counts as a
+/// loss-of-lock slip.  10 dB-Hz is the value in the slip-rate heuristic: a fall
+/// that steep over a single epoch signals a momentary loss of lock rather than
+/// ordinary signal variation.
+pub const DEFAULT_SNR_DROP_DB: f32 = 10.0;
+
+/// Default averaging window, in minutes, over which the slip rate is computed.
+pub const DEFAULT_SLIP_WINDOW_MIN: f32 = 10.0;
+
+/// Tunable parameters for the derived satellite-analysis series (utilization
+/// rate and slip rate).  Threaded into series building so a change re-derives
+/// the affected mipmaps.
 ///
-/// New parameterized analyses (slip rate, etc.) add their fields here rather
-/// than widening every build signature.
+/// New parameterized analyses add their fields here rather than widening every
+/// build signature.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AnalysisConfig {
-    /// Elevation mask applied to the "in view" baseline of the utilization rate.
+    /// Elevation mask applied to the "in view" baseline of the utilization rate
+    /// and to slip detection.
     pub elevation_mask_deg: f32,
+    /// SNR drop, in dB-Hz between consecutive epochs, above which a still-tracked
+    /// satellite is counted as having slipped.
+    pub snr_drop_db: f32,
+    /// Trailing window, in minutes, over which the slip rate is averaged.
+    pub slip_window_min: f32,
 }
 
 impl Default for AnalysisConfig {
     fn default() -> Self {
         Self {
             elevation_mask_deg: DEFAULT_ELEVATION_MASK_DEG,
+            snr_drop_db: DEFAULT_SNR_DROP_DB,
+            slip_window_min: DEFAULT_SLIP_WINDOW_MIN,
         }
     }
 }

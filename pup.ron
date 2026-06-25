@@ -176,6 +176,29 @@
             ],
         )),
         Module((
+            name: "gt_analysis_isolation",
+            matches: Module("gt_analysis.*"),
+            rules: [
+                RestrictImports(
+                    allowed_only: Some([
+                        "^$",
+                        "std.*",
+                        "core.*",
+                        "alloc.*",
+                        "chrono.*",
+                        "gt_types.*",
+                        "proptest.*",
+                        "crate.*",
+                        "gt_analysis.*",
+                        "loss_of_lock.*",
+                        "satellite_utilization.*",
+                    ]),
+                    denied: None,
+                    severity: Error,
+                ),
+            ],
+        )),
+        Module((
             name: "gt_track_builder_isolation",
             matches: Module("gt_track_builder.*"),
             rules: [
@@ -187,6 +210,7 @@
                         "alloc.*",
                         "chrono.*",
                         "geo_types.*",
+                        "gt_analysis.*",
                         "gt_geo_math.*",
                         "gt_types.*",
                         "proptest.*",
@@ -283,6 +307,7 @@
                         "egui.*",
                         "egui_phosphor.*",
                         "egui_plot.*",
+                        "gt_analysis.*",
                         "gt_egui_mipmap.*",
                         "gt_filter.*",
                         "rayon.*",

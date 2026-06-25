@@ -151,6 +151,66 @@ impl Satellite {
     }
 }
 
+/// Why a [`Slip`] was recorded for a satellite.
+///
+/// The detection algorithm lives in the `gt-analysis` crate; this type is shared
+/// so both the slip-rate plot and the generated-marker pipeline describe a slip
+/// the same way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlipCause {
+    /// Satellite disappeared while above the mask - the receiver lost lock.
+    LostLock,
+    /// Satellite stayed above the mask but its SNR dropped sharply between epochs.
+    SnrDrop,
+}
+
+/// A satellite's tracked geometry and signal at one epoch - the before/after
+/// payload of a [`Slip`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SatSample {
+    pub elevation: Option<f32>,
+    pub azimuth: Option<f32>,
+    pub snr: Option<Snr>,
+}
+
+impl SatSample {
+    /// Snapshot the tracked geometry and signal of `sat`.
+    pub fn of(sat: &Satellite) -> Self {
+        Self {
+            elevation: sat.elevation,
+            azimuth: sat.azimuth,
+            snr: sat.snr,
+        }
+    }
+}
+
+/// A loss-of-lock (cycle slip) detected for one satellite at one epoch, relative
+/// to the previous one.  Produced by `gt_analysis::loss_of_lock`.
+///
+/// Carries the satellite's state on both sides of the transition so a marker can
+/// show what changed: `to` is `None` for a [`SlipCause::LostLock`] (the satellite
+/// is no longer reported this epoch).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Slip {
+    pub constellation: Constellation,
+    pub prn: Prn,
+    pub cause: SlipCause,
+    /// The satellite at the previous epoch (before the slip).
+    pub from: SatSample,
+    /// The satellite at the current epoch, or `None` when it dropped out.
+    pub to: Option<SatSample>,
+}
+
+/// All satellites that slipped at one epoch (one satellite report).
+///
+/// Slips detected at the same epoch are grouped into a single event so the map
+/// shows one marker per epoch listing every affected satellite, rather than a
+/// stack of overlapping markers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SlipEvent {
+    pub slips: Vec<Slip>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Satellites {
     /// GPS receiver clock timestamp, if the original report had `gps_time`.
@@ -269,49 +329,6 @@ impl Satellites {
             .iter()
             .any(|s| s.in_fix && s.constellation == constellation && s.prn == prn)
     }
-
-    /// The masked "in view" baseline - denominator of the basic satellite
-    /// utilization rate.
-    ///
-    /// Satellites with no reported elevation are excluded: their position above
-    /// the mask cannot be confirmed.  Pass `constellation = None` to count
-    /// across every constellation, or `Some(c)` to restrict to one.
-    pub fn in_view_above_mask(&self, constellation: Option<Constellation>, mask_deg: f32) -> usize {
-        self.satellites
-            .iter()
-            .filter(|s| constellation.is_none_or(|c| s.constellation == c))
-            .filter(|s| s.elevation.is_some_and(|e| e >= mask_deg))
-            .count()
-    }
-
-    /// In-fix satellites at or above the elevation mask - numerator of the
-    /// utilization rate.
-    ///
-    /// Shares the mask predicate with [`Self::in_view_above_mask`], so the result
-    /// is always a subset of that denominator: the rate stays within [0, 1] by
-    /// construction, without clamping.  A satellite used below the mask is
-    /// excluded here and surfaced via [`Self::masked_out_in_fix`] instead.  Pass
-    /// `constellation = None` for all constellations, or `Some(c)` to restrict.
-    pub fn in_fix_above_mask(&self, constellation: Option<Constellation>, mask_deg: f32) -> usize {
-        self.satellites
-            .iter()
-            .filter(|s| constellation.is_none_or(|c| s.constellation == c))
-            .filter(|s| s.in_fix && s.elevation.is_some_and(|e| e >= mask_deg))
-            .count()
-    }
-
-    /// Satellites in the fix yet below the elevation mask - used by the receiver
-    /// but excluded from the utilization rate by the mask.
-    ///
-    /// Surfaced as plot anomaly markers so this exclusion stays visible rather
-    /// than silently lowering the rate.  Satellites without a reported elevation
-    /// are not included (their elevation can be neither shown nor compared
-    /// against the mask).
-    pub fn masked_out_in_fix(&self, mask_deg: f32) -> impl Iterator<Item = &Satellite> {
-        self.satellites
-            .iter()
-            .filter(move |s| s.in_fix && s.elevation.is_some_and(|e| e < mask_deg))
-    }
 }
 
 #[cfg(test)]
@@ -327,80 +344,5 @@ mod constellation_tests {
         assert_eq!(Constellation::Glonass.display_name(), "GLONASS");
         assert_eq!(Constellation::Galileo.display_name(), "Galileo");
         assert_eq!(Constellation::Beidou.display_name(), "BeiDou");
-    }
-}
-
-#[cfg(test)]
-mod utilization_tests {
-    use super::*;
-
-    /// `(constellation, elevation, in_fix)` -> `Satellite`, with a throwaway PRN.
-    fn sat(c: Constellation, elevation: Option<f32>, in_fix: bool) -> Satellite {
-        Satellite::new(c, 1, elevation, None, None, in_fix)
-    }
-
-    fn report(sats: Vec<Satellite>) -> Satellites {
-        Satellites::new(None, None, sats)
-    }
-
-    #[test]
-    fn in_view_above_mask_excludes_sub_mask_and_unknown_elevation() {
-        let r = report(vec![
-            sat(Constellation::Gps, Some(20.0), false),
-            sat(Constellation::Gps, Some(15.0), false), // exactly at the mask counts
-            sat(Constellation::Gps, Some(5.0), false),  // below mask
-            sat(Constellation::Gps, None, false),       // unknown elevation
-        ]);
-        assert_eq!(r.in_view_above_mask(None, 15.0), 2);
-        assert_eq!(r.in_view_above_mask(Some(Constellation::Gps), 15.0), 2);
-        assert_eq!(r.in_view_above_mask(Some(Constellation::Galileo), 15.0), 0);
-        // A 0 deg mask still drops unknown-elevation satellites.
-        assert_eq!(r.in_view_above_mask(None, 0.0), 3);
-    }
-
-    #[test]
-    fn in_fix_above_mask_excludes_used_sub_mask_and_unknown_elevation() {
-        let r = report(vec![
-            sat(Constellation::Gps, Some(20.0), true), // used, above mask
-            sat(Constellation::Gps, Some(5.0), true),  // used but below mask -> excluded
-            sat(Constellation::Glonass, Some(40.0), true),
-            sat(Constellation::Gps, Some(50.0), false), // seen, not used
-            sat(Constellation::Gps, None, true),        // used, unknown elevation -> excluded
-        ]);
-        assert_eq!(r.in_fix_above_mask(None, 15.0), 2);
-        assert_eq!(r.in_fix_above_mask(Some(Constellation::Gps), 15.0), 1);
-        assert_eq!(r.in_fix_above_mask(Some(Constellation::Glonass), 15.0), 1);
-    }
-
-    #[test]
-    fn masked_out_in_fix_flags_used_sub_mask_satellites_only() {
-        let r = report(vec![
-            sat(Constellation::Gps, Some(5.0), true), // used and below mask -> flagged
-            sat(Constellation::Gps, Some(20.0), true), // used, above mask
-            sat(Constellation::Gps, Some(3.0), false), // below mask but not used
-            sat(Constellation::Gps, None, true),      // used, unknown elevation -> not flagged
-        ]);
-        let flagged: Vec<f32> = r
-            .masked_out_in_fix(15.0)
-            .filter_map(Satellite::elevation)
-            .collect();
-        assert_eq!(flagged, vec![5.0]);
-    }
-
-    /// A satellite used below the mask is excluded from both the numerator and
-    /// the denominator, so the rate stays within 100 % without clamping. The
-    /// excluded satellite is surfaced as an anomaly instead.
-    #[test]
-    fn utilization_stays_within_one_hundred_percent() {
-        let r = report(vec![
-            sat(Constellation::Gps, Some(20.0), true),
-            sat(Constellation::Gps, Some(5.0), true), // used but below mask
-        ]);
-        let num = r.in_fix_above_mask(None, 15.0);
-        let den = r.in_view_above_mask(None, 15.0);
-        assert_eq!(num, 1);
-        assert_eq!(den, 1);
-        assert!((num as f64) / (den as f64) <= 1.0);
-        assert_eq!(r.masked_out_in_fix(15.0).count(), 1);
     }
 }
