@@ -270,7 +270,11 @@ fn generate_and_verify_snapshot_fixture() {
     );
     assert!(t0.metadata.has_custom_markers, "track 0 has custom markers");
 
-    let gen_kinds: Vec<_> = t0.generated_markers.iter().map(|m| m.kind).collect();
+    let gen_kinds: Vec<_> = t0
+        .generated_markers
+        .iter()
+        .map(|m| m.kind.clone())
+        .collect();
     assert_matches_sequence!(
         gen_kinds,
         [

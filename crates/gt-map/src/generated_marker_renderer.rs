@@ -1,7 +1,9 @@
 use egui::{Color32, Pos2, Response, Stroke, Ui};
 use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, LoadedFile, SpatialPoint};
-use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, TrackDataVisibility};
+use gt_ui_types::{
+    DataPointRef, GeneratedMarkerVisibility, HighlightScope, MapHighlight, TrackDataVisibility,
+};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::track_renderer;
@@ -11,6 +13,7 @@ pub struct GeneratedMarkerRenderer<'a> {
     visibility: &'a TrackDataVisibility,
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
+    generated_vis: &'a GeneratedMarkerVisibility,
     visible_generated: Vec<SpatialPoint>,
 }
 
@@ -20,6 +23,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
         visibility: &'a TrackDataVisibility,
         highlight: &'a MapHighlight,
         filter: &'a GlobalFilter,
+        generated_vis: &'a GeneratedMarkerVisibility,
         visible_generated: Vec<SpatialPoint>,
     ) -> Self {
         Self {
@@ -27,6 +31,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
             visibility,
             highlight,
             filter,
+            generated_vis,
             visible_generated,
         }
     }
@@ -65,23 +70,30 @@ impl<'a> GeneratedMarkerRenderer<'a> {
             egui::Sense::hover(),
         );
         response.show_tooltip_ui(|ui| {
-            ui.strong(generated_marker_header(marker.kind));
-            // Fix-lost and clock-discontinuity markers sit on a specific
-            // anomalous sample, so also show that point's data. Fix-regained is
-            // a transition with no single underlying point to detail.
-            let show_point = match marker.kind {
+            ui.strong(generated_marker_header(&marker.kind));
+            match &marker.kind {
+                // A slip groups the satellites that lost lock at this epoch, so
+                // show what changed for each (geometry and signal, before/after)
+                // rather than the whole-epoch point table.
+                gt_types::GeneratedMarkerKind::Slip(event) => {
+                    ui.separator();
+                    show_slip_table(ui, event);
+                }
+                // Fix-lost and clock-discontinuity markers sit on a specific
+                // anomalous sample, so also show that point's data.
                 gt_types::GeneratedMarkerKind::GnssFixLost
-                | gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. } => true,
-                gt_types::GeneratedMarkerKind::GnssFixRegained { .. } => false,
-            };
-            if show_point
-                && let Some(point) = track
-                    .points
-                    .iter()
-                    .find(|p| p.tpv.time().utc() == marker.time)
-            {
-                ui.separator();
-                crate::tpv_renderer::show_hover_table(ui, point);
+                | gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. } => {
+                    if let Some(point) = track
+                        .points
+                        .iter()
+                        .find(|p| p.tpv.time().utc() == marker.time)
+                    {
+                        ui.separator();
+                        crate::tpv_renderer::show_hover_table(ui, point);
+                    }
+                }
+                // Fix-regained is a transition with no single underlying point.
+                gt_types::GeneratedMarkerKind::GnssFixRegained { .. } => {}
             }
         });
     }
@@ -123,6 +135,13 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             let Some(marker) = sp.point_index.get(&track.generated_markers) else {
                 continue;
             };
+            // Per-event-type show/hide (refines the category-level toggle).
+            if !self
+                .generated_vis
+                .is_visible(sp.track_ref(), marker.kind.tag())
+            {
+                continue;
+            }
             if !gt_filter::point_passes_time_filter(marker.time, self.filter) {
                 continue;
             }
@@ -135,7 +154,7 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             let highlighted = self.is_point_highlighted(point_ref);
             let fade =
                 track_renderer::track_fade_alpha(self.highlight, sp.file_index, sp.track_index);
-            draw_generated_marker(ui, screen_pos, marker.kind, highlighted, fade);
+            draw_generated_marker(ui, screen_pos, &marker.kind, highlighted, fade);
         }
 
         // Show tooltip for the hovered generated marker. Suppressed when the primary
@@ -165,7 +184,7 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
 /// Centralises the "GNSS fix regained after Xs" formatting so both the live
 /// tooltip (`show_tooltip`) and the multi-hover compound label
 /// (`draw_candidate_section`) always produce identical text.
-pub(crate) fn generated_marker_header(kind: gt_types::GeneratedMarkerKind) -> String {
+pub(crate) fn generated_marker_header(kind: &gt_types::GeneratedMarkerKind) -> String {
     match kind {
         gt_types::GeneratedMarkerKind::GnssFixRegained { fix_lost_duration } => format!(
             "{kind} after {}",
@@ -181,7 +200,103 @@ pub(crate) fn generated_marker_header(kind: gt_types::GeneratedMarkerKind) -> St
                 format_fix_duration(ms.saturating_abs())
             )
         }
+        // One satellite: name it inline. Several: the per-satellite detail is in
+        // the table below, so the header just gives the count.
+        gt_types::GeneratedMarkerKind::Slip(event) => match event.slips.as_slice() {
+            [slip] => format!(
+                "{kind}: {} {:02} ({})",
+                slip.constellation.display_name(),
+                slip.prn,
+                slip_cause_label(slip.cause),
+            ),
+            slips => format!("{kind} ({})", slips.len()),
+        },
         gt_types::GeneratedMarkerKind::GnssFixLost => kind.to_string(),
+    }
+}
+
+/// Short human-readable label for a slip's cause.
+fn slip_cause_label(cause: gt_types::satellites::SlipCause) -> &'static str {
+    match cause {
+        gt_types::satellites::SlipCause::LostLock => "lost lock",
+        gt_types::satellites::SlipCause::SnrDrop => "SNR drop",
+    }
+}
+
+/// Render a table of the satellites that slipped at one epoch, one row each,
+/// showing the before/after change in elevation, azimuth, and SNR.  Shared by
+/// the hover tooltip and the sticky (clicked) detail window.
+///
+/// Rows are ordered by constellation then PRN so the table is stable, and the
+/// satellite cell is tinted with the constellation's canonical color.
+pub(crate) fn show_slip_table(ui: &mut Ui, event: &gt_types::satellites::SlipEvent) {
+    use gt_types::satellites::{Constellation, Snr};
+
+    let mut slips = event.slips.clone();
+    slips.sort_by_key(|s| (constellation_rank(s.constellation), s.prn.value()));
+
+    egui::Grid::new("slip_detail_grid")
+        .num_columns(5)
+        .striped(true)
+        .show(ui, |ui| {
+            for heading in ["Satellite", "Cause", "Elevation", "Azimuth", "SNR (dB-Hz)"] {
+                ui.strong(heading);
+            }
+            ui.end_row();
+            for slip in &slips {
+                ui.colored_label(
+                    gt_ui_theme::constellation_color(slip.constellation),
+                    format!("{} {:02}", slip.constellation.display_name(), slip.prn),
+                );
+                ui.label(slip_cause_label(slip.cause));
+                // `to` is `None` for a lost-lock slip (the satellite dropped out).
+                let to = slip.to;
+                ui.label(slip_change(
+                    slip.from.elevation,
+                    to.map(|t| t.elevation),
+                    "°",
+                ));
+                ui.label(slip_change(slip.from.azimuth, to.map(|t| t.azimuth), "°"));
+                ui.label(slip_change(
+                    slip.from.snr.map(Snr::value),
+                    to.map(|t| t.snr.map(Snr::value)),
+                    "",
+                ));
+                ui.end_row();
+            }
+        });
+
+    fn constellation_rank(c: Constellation) -> u8 {
+        match c {
+            Constellation::Gps => 0,
+            Constellation::Glonass => 1,
+            Constellation::Galileo => 2,
+            Constellation::Beidou => 3,
+        }
+    }
+}
+
+/// Format one before/after table cell.
+///
+/// `to` is `None` when the satellite dropped out (lost lock), so only the
+/// last-known `from` value is shown.  Otherwise `from -> to`, collapsing to a
+/// single value when the two render identically (unchanged, or both unknown -
+/// which shows a lone dash rather than `- -> -`).
+fn slip_change(from: Option<f32>, to: Option<Option<f32>>, unit: &str) -> String {
+    let fmt = |v: Option<f32>| v.map_or_else(|| "-".to_owned(), |x| format!("{x:.1}{unit}"));
+    // Compare the rendered text, not the floats, to sidestep `float_cmp`.
+    let before = fmt(from);
+    match to {
+        // Satellite gone: there is no "after", so just the last-known value.
+        None => before,
+        Some(after) => {
+            let after = fmt(after);
+            if after == before {
+                before
+            } else {
+                format!("{before} {} {after}", egui_phosphor::regular::ARROW_RIGHT)
+            }
+        }
     }
 }
 
@@ -211,7 +326,7 @@ fn format_fix_duration(total_ms: i64) -> String {
 fn draw_generated_marker(
     ui: &Ui,
     center: Pos2,
-    kind: gt_types::GeneratedMarkerKind,
+    kind: &gt_types::GeneratedMarkerKind,
     highlighted: bool,
     fade: f32,
 ) {
@@ -226,6 +341,8 @@ fn draw_generated_marker(
         gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. } => {
             (Color32::from_rgb(255, 149, 0), Color32::WHITE)
         }
+        // Orchid: distinct from the fix-lost red and clock-discontinuity orange.
+        gt_types::GeneratedMarkerKind::Slip(_) => (Color32::from_rgb(186, 85, 211), Color32::WHITE),
     };
     let faded_bg = track_renderer::apply_fade_alpha(bg, fade);
     let faded_stroke = track_renderer::apply_fade_alpha(stroke_color, fade);
@@ -272,5 +389,84 @@ fn draw_generated_marker(
             );
             painter.circle_filled(center + egui::vec2(0.0, s * 0.85), 1.3, faded_stroke);
         }
+        gt_types::GeneratedMarkerKind::Slip(_) => {
+            // Broken chain link: a lost connection (loss of lock). Drawn from a
+            // cached SVG texture (one image quad), not per-frame line
+            // tessellation, so a dense cluster of slip markers stays cheap. Sized
+            // to nearly fill the disc - the chain detail needs more room than the
+            // simple line glyphs above to read.
+            let icon_extent = if highlighted { 4.0 * s } else { 3.4 * s };
+            let icon = egui::Rect::from_center_size(center, egui::Vec2::splat(icon_extent));
+            crate::icons::draw_cached_icon(
+                ui,
+                crate::icons::ICON_URI_CONNECTION_LOST,
+                icon,
+                faded_stroke,
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::show_slip_table;
+    use crate::test_harness::TestHarness;
+    use gt_types::satellites::{Constellation, SatSample, Slip, SlipCause, SlipEvent, Snr};
+
+    fn sample(elevation: Option<f32>, azimuth: Option<f32>, snr: Option<f32>) -> SatSample {
+        SatSample {
+            elevation,
+            azimuth,
+            snr: snr.map(Snr::new),
+        }
+    }
+
+    /// A slip event mixing both causes, constellations out of order, an
+    /// unchanged azimuth, and an all-unknown row, to exercise sorting, the
+    /// constellation tint, the before/after collapse, and the missing-value dash.
+    #[test]
+    fn slip_table_renders() {
+        let event = SlipEvent {
+            slips: vec![
+                Slip {
+                    constellation: Constellation::Beidou,
+                    prn: gt_types::satellites::Prn::new(14),
+                    cause: SlipCause::SnrDrop,
+                    from: sample(Some(31.0), Some(120.0), Some(46.0)),
+                    to: Some(sample(Some(30.0), Some(122.0), Some(29.0))),
+                },
+                Slip {
+                    constellation: Constellation::Gps,
+                    prn: gt_types::satellites::Prn::new(7),
+                    cause: SlipCause::LostLock,
+                    from: sample(Some(40.0), Some(205.0), Some(48.0)),
+                    to: None,
+                },
+                Slip {
+                    constellation: Constellation::Gps,
+                    prn: gt_types::satellites::Prn::new(2),
+                    cause: SlipCause::SnrDrop,
+                    from: sample(Some(22.0), Some(88.0), Some(41.0)),
+                    // Elevation and azimuth unchanged -> collapse to a single value.
+                    to: Some(sample(Some(22.0), Some(88.0), Some(27.0))),
+                },
+                Slip {
+                    constellation: Constellation::Galileo,
+                    prn: gt_types::satellites::Prn::new(3),
+                    cause: SlipCause::LostLock,
+                    // Everything unknown -> every cell a lone dash, no arrows.
+                    from: sample(None, None, None),
+                    to: None,
+                },
+            ],
+        };
+
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(420.0, 200.0))
+            .ui(move |ui| {
+                show_slip_table(ui, &event);
+            });
+        harness.run();
+        harness.snapshot("slip_detail_table");
     }
 }

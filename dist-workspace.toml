@@ -9,9 +9,7 @@ cargo-dist-version = "0.32.0"
 ci = "github"
 # The installers to generate for each app
 installers = ["shell", "powershell", "homebrew", "msi"]
-# wix/main.wxs is hand-customized (app icon + Start Menu/Desktop shortcuts), so
-# dist must not regenerate or drift-check it. Scoped to the msi file only. The
-# CI workflow is still fully checked.
+# Skip checking whether the specified configuration files are up to date
 allow-dirty = ["msi"]
 # The archive format to use for windows builds (defaults .zip)
 windows-archive = ".zip"
@@ -23,25 +21,17 @@ tap = "CramBL/homebrew-tap"
 publish-jobs = ["homebrew"]
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
-# Which actions to run on pull requests.
+# Which actions to run on pull requests
 pr-run-mode = "plan"
 # Whether to install an updater program
 install-updater = false
-# Build the released binaries with the dist-only features (the in-app self-update
-# check). Builds from source / package managers omit these (see Cargo.toml).
+# Features to pass to cargo build
 features = ["dist"]
-# Where the shell/PowerShell installers place the binary. GeoTrace targets
-# general desktop users (not only Rust developers), so install to the XDG/local
-# bin dir rather than CARGO_HOME, with fallbacks (uv-style).
+# Path that installers should place binaries in
 install-path = ["$XDG_BIN_HOME/", "$XDG_DATA_HOME/../bin", "~/.local/bin"]
-# Attach build-provenance attestations (SLSA) to released artifacts.
+# Whether to enable GitHub Attestations
 github-attestations = true
-# The GUI and SDK release on independent cadences from the same workspace.
-# tag-namespace scopes dist's generated CI (app-release.yml) to tags beginning
-# with this prefix, so the SDK's own `geotrace-sdk-v*` tags never trigger the
-# GUI release. dist strips the namespace at the `/`, so release the GUI by
-# pushing `app/vX.Y.Z` (the namespace cannot be the `geotrace` package name, or
-# dist parses it as a per-package tag).
+# A prefix git tags must include for dist to care about them
 tag-namespace = "app"
 github-build-setup = "../dist/build-setup.yml"
 

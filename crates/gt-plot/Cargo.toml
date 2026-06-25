@@ -14,6 +14,7 @@ chrono.workspace = true
 egui.workspace = true
 egui-phosphor.workspace = true
 egui_plot.workspace = true
+gt-analysis = { path = "../gt-analysis" }
 gt-egui-mipmap = { path = "../gt-egui-mipmap" }
 gt-filter = { path = "../gt-filter" }
 gt-types = { path = "../gt-types" }

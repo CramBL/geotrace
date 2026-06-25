@@ -30,15 +30,21 @@ impl Default for Settings {
     }
 }
 
-/// Parameters for the derived satellite-analysis plots (utilization rate).
+/// Parameters for the derived satellite-analysis plots (utilization rate and
+/// loss-of-lock slip rate).
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct AnalysisSettings {
     /// Elevation mask, in degrees, applied to the "in view" baseline of the
-    /// satellite utilization rate.
+    /// satellite utilization rate and to slip detection.
     pub elevation_mask_deg: f32,
     /// Whether to mark epochs where a used satellite falls below the mask.
     pub mark_masked_fix: bool,
+    /// SNR drop, in dB-Hz between consecutive epochs, above which a still-tracked
+    /// satellite counts as having slipped.
+    pub snr_drop_db: f32,
+    /// Trailing window, in minutes, over which the slip rate is averaged.
+    pub slip_window_min: f32,
 }
 
 impl Default for AnalysisSettings {
@@ -46,6 +52,8 @@ impl Default for AnalysisSettings {
         Self {
             elevation_mask_deg: gt_plot::DEFAULT_ELEVATION_MASK_DEG,
             mark_masked_fix: true,
+            snr_drop_db: gt_plot::DEFAULT_SNR_DROP_DB,
+            slip_window_min: gt_plot::DEFAULT_SLIP_WINDOW_MIN,
         }
     }
 }
@@ -191,11 +199,19 @@ pub struct ProcessingSettings {
     pub track_split_gap_seconds: u64,
     /// Max seconds between a log entry timestamp and the nearest GPS fix for association.
     pub log_marker_window_s: u64,
+    /// Whether to emit a marker when the GNSS fix drops.
+    pub detect_gnss_fix_lost: bool,
+    /// Whether to emit a marker when the GNSS fix returns.
+    pub detect_gnss_fix_regained: bool,
     /// Whether to flag abrupt GPS/system clock-offset jumps as clock-discontinuity markers.
     pub detect_clock_discontinuities: bool,
     /// Sensitivity of the clock-discontinuity test, in robust standard deviations
     /// from the track's median step.  Lower is more sensitive.
     pub clock_discontinuity_sigmas: f64,
+    /// Whether to flag loss-of-lock (cycle slip) events as markers.  Slip
+    /// detection reuses the elevation mask and SNR-drop threshold from
+    /// [`AnalysisSettings`], so markers and the slip-rate plot stay consistent.
+    pub detect_slips: bool,
 }
 
 impl Default for ProcessingSettings {
@@ -203,8 +219,11 @@ impl Default for ProcessingSettings {
         Self {
             track_split_gap_seconds: 300,
             log_marker_window_s: 60,
+            detect_gnss_fix_lost: true,
+            detect_gnss_fix_regained: true,
             detect_clock_discontinuities: true,
             clock_discontinuity_sigmas: gt_track_builder::DEFAULT_CLOCK_OUTLIER_SIGMAS,
+            detect_slips: true,
         }
     }
 }

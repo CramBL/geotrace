@@ -704,9 +704,11 @@ pub(crate) fn stored_segmentation_from_config(
 }
 
 /// Rebuild a [`SegmentationConfig`] from the settings stored alongside a
-/// recording, so re-opening can reproduce the exact tracks it was stored with.
-/// The inverse of [`stored_segmentation_from_config`]. `SegmentationConfig` has
-/// no fields beyond the three persisted, so the round trip is lossless.
+/// recording, so re-opening reproduces the same track segmentation it was stored
+/// with.  The inverse of [`stored_segmentation_from_config`] for the persisted
+/// fields; the generated-marker toggles and slip-detection params are not
+/// stored, so they fall back to defaults (markers regenerate under the current
+/// app settings on the next "Apply to loaded data").
 pub(crate) fn config_from_stored_segmentation(
     settings: &gt_history::StoredSegmentation,
 ) -> SegmentationConfig {
@@ -714,6 +716,7 @@ pub(crate) fn config_from_stored_segmentation(
         track_split_gap: chrono::Duration::microseconds(settings.track_split_gap_us),
         detect_clock_discontinuities: settings.detect_clock_discontinuities,
         clock_discontinuity_sigmas: settings.clock_discontinuity_sigmas,
+        ..SegmentationConfig::default()
     }
 }
 
@@ -861,6 +864,7 @@ mod tests {
             track_split_gap: chrono::Duration::milliseconds(42_500),
             detect_clock_discontinuities: false,
             clock_discontinuity_sigmas: 3.5,
+            ..SegmentationConfig::default()
         };
         let stored = stored_segmentation_from_config(&config);
         let back = config_from_stored_segmentation(&stored);

@@ -189,6 +189,33 @@ mod tests {
             )
             .build();
 
+        // gt_analysis Isolation (Whitelist)
+        //
+        // Pure domain analysis algorithms: only the shared types in gt_types,
+        // std, and (in tests) chrono/proptest.  No UI, plot, or rendering crate.
+        builder
+            .module_lint()
+            .lint_named("gt_analysis_isolation")
+            .matching(|m| m.module("gt_analysis.*"))
+            .with_severity(Severity::Error)
+            .restrict_imports(
+                Some(vec![
+                    "^$".into(),
+                    "std.*".into(),
+                    "core.*".into(),
+                    "alloc.*".into(),
+                    "chrono.*".into(),
+                    "gt_types.*".into(),
+                    "proptest.*".into(),
+                    "crate.*".into(),
+                    "gt_analysis.*".into(),
+                    "loss_of_lock.*".into(),
+                    "satellite_utilization.*".into(),
+                ]),
+                None,
+            )
+            .build();
+
         // gt_track_builder Isolation (Whitelist)
         builder
             .module_lint()
@@ -203,6 +230,7 @@ mod tests {
                     "alloc.*".into(),
                     "chrono.*".into(),
                     "geo_types.*".into(),
+                    "gt_analysis.*".into(),
                     "gt_geo_math.*".into(),
                     "gt_types.*".into(),
                     "proptest.*".into(),
@@ -302,6 +330,7 @@ mod tests {
                     "egui.*".into(),
                     "egui_phosphor.*".into(),
                     "egui_plot.*".into(),
+                    "gt_analysis.*".into(),
                     "gt_egui_mipmap.*".into(),
                     "gt_filter.*".into(),
                     "rayon.*".into(),

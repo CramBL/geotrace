@@ -1,5 +1,6 @@
 use crate::coordinates::{Latitude, Longitude};
 use crate::mercator::MercPoint;
+use crate::satellites::SlipEvent;
 use chrono::{DateTime, Duration, Utc};
 
 /// RGB fill color for an event marker.
@@ -46,7 +47,10 @@ pub fn event_marker_fallback_color(variant_path: &str) -> MarkerColor {
 /// An automatically-detected GNSS event, with the per-event payload carried in
 /// the variant that needs it (so a `match` stays exhaustive and there are no
 /// "valid only for kind X" optional fields hanging off the marker).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Not `Copy`/`Eq`: the [`Self::Slip`] payload owns a `Vec` of slipped
+/// satellites (with `f32` SNR/elevation/azimuth).
+#[derive(Debug, Clone, PartialEq)]
 pub enum GeneratedMarkerKind {
     GnssFixLost,
     GnssFixRegained {
@@ -63,6 +67,12 @@ pub enum GeneratedMarkerKind {
         /// size of the jump).
         step: Duration,
     },
+    /// The receiver lost lock on one or more satellites that should still have
+    /// been trackable - each vanished while above the elevation mask, or its SNR
+    /// fell sharply between epochs.  Detected by `gt_analysis::loss_of_lock`; the
+    /// payload groups every satellite that slipped at this epoch, each with its
+    /// before/after geometry and signal so the marker can show what changed.
+    Slip(SlipEvent),
 }
 
 impl std::fmt::Display for GeneratedMarkerKind {
@@ -73,11 +83,50 @@ impl std::fmt::Display for GeneratedMarkerKind {
             Self::GnssFixLost => "GNSS fix lost",
             Self::GnssFixRegained { .. } => "GNSS fix regained",
             Self::ClockDiscontinuity { .. } => "Clock discontinuity",
+            Self::Slip(_) => "Satellite slip",
         })
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+/// The kind of a [`GeneratedMarker`] with its payload stripped - a hashable,
+/// orderable key for grouping markers by type and toggling per-type visibility.
+///
+/// The variant order is the canonical display order for the side-panel tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, strum::EnumIter)]
+pub enum GeneratedMarkerKindTag {
+    GnssFixLost,
+    GnssFixRegained,
+    ClockDiscontinuity,
+    Slip,
+}
+
+impl GeneratedMarkerKindTag {
+    /// Human-readable label.  Kept identical to the matching
+    /// [`GeneratedMarkerKind`] `Display` wording (asserted in tests).
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::GnssFixLost => "GNSS fix lost",
+            Self::GnssFixRegained => "GNSS fix regained",
+            Self::ClockDiscontinuity => "Clock discontinuity",
+            Self::Slip => "Satellite slip",
+        }
+    }
+}
+
+impl GeneratedMarkerKind {
+    /// The payload-independent [`GeneratedMarkerKindTag`] for this marker.
+    pub fn tag(&self) -> GeneratedMarkerKindTag {
+        match self {
+            Self::GnssFixLost => GeneratedMarkerKindTag::GnssFixLost,
+            Self::GnssFixRegained { .. } => GeneratedMarkerKindTag::GnssFixRegained,
+            Self::ClockDiscontinuity { .. } => GeneratedMarkerKindTag::ClockDiscontinuity,
+            Self::Slip(_) => GeneratedMarkerKindTag::Slip,
+        }
+    }
+}
+
+// Not `Copy`: `GeneratedMarkerKind::Slip` owns a `Vec` of slipped satellites.
+#[derive(Debug, Clone)]
 pub struct GeneratedMarker {
     pub time: DateTime<Utc>,
     pub kind: GeneratedMarkerKind,
@@ -114,6 +163,56 @@ mod generated_marker_kind_tests {
             .to_string(),
             "Clock discontinuity"
         );
+        assert_eq!(
+            GeneratedMarkerKind::Slip(crate::satellites::SlipEvent {
+                slips: vec![crate::satellites::Slip {
+                    constellation: crate::satellites::Constellation::Gps,
+                    prn: crate::satellites::Prn::new(1),
+                    cause: crate::satellites::SlipCause::LostLock,
+                    from: crate::satellites::SatSample {
+                        elevation: None,
+                        azimuth: None,
+                        snr: None,
+                    },
+                    to: None,
+                }],
+            })
+            .to_string(),
+            "Satellite slip"
+        );
+    }
+
+    /// Each kind's `tag().label()` must match its own `Display`, so the side
+    /// panel's per-type headings never drift from the marker wording.
+    #[test]
+    fn tag_label_matches_display() {
+        use strum::IntoEnumIterator as _;
+
+        let sample = |tag: GeneratedMarkerKindTag| -> GeneratedMarkerKind {
+            match tag {
+                GeneratedMarkerKindTag::GnssFixLost => GeneratedMarkerKind::GnssFixLost,
+                GeneratedMarkerKindTag::GnssFixRegained => GeneratedMarkerKind::GnssFixRegained {
+                    fix_lost_duration: Duration::zero(),
+                },
+                GeneratedMarkerKindTag::ClockDiscontinuity => {
+                    GeneratedMarkerKind::ClockDiscontinuity {
+                        step: Duration::zero(),
+                    }
+                }
+                GeneratedMarkerKindTag::Slip => {
+                    GeneratedMarkerKind::Slip(crate::satellites::SlipEvent { slips: vec![] })
+                }
+            }
+        };
+        for tag in GeneratedMarkerKindTag::iter() {
+            let kind = sample(tag);
+            assert_eq!(kind.tag(), tag, "tag() round-trips for {tag:?}");
+            assert_eq!(
+                tag.label(),
+                kind.to_string(),
+                "label matches Display for {tag:?}"
+            );
+        }
     }
 }
 

@@ -20,7 +20,8 @@ use egui::Context;
 use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
-    DataPointRef, EventMarkerVisibility, HighlightScope, MapHighlight, TrackDataVisibility,
+    DataPointRef, EventMarkerVisibility, GeneratedMarkerVisibility, HighlightScope, MapHighlight,
+    TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
@@ -331,6 +332,7 @@ impl NavMap {
         highlight: &mut MapHighlight,
         filter: &GlobalFilter,
         event_marker_visibility: &EventMarkerVisibility,
+        generated_marker_visibility: &GeneratedMarkerVisibility,
         center_request: Option<(f64, f64)>,
         zoom_to_visible: bool,
         sticky_pos_override: Option<egui::Pos2>,
@@ -484,6 +486,7 @@ impl NavMap {
                 visibility,
                 highlight,
                 filter,
+                generated_marker_visibility,
                 visible.generated,
             ))
             .with_plugin(EventMarkerRenderer::new(
@@ -695,6 +698,13 @@ impl NavMap {
             }
         });
 
+        // Escape dismisses the sticky info window. This is the single window
+        // shared by every map item type (TPV, satellite, markers), so handling
+        // it here covers them all.
+        if highlight.sticky.is_some() && ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
+            highlight.sticky = None;
+        }
+
         // Show a persistent, text-selectable info window for the sticky element.
         if let Some(sticky_ref) = highlight.sticky {
             show_sticky_popup(ui.ctx(), files, sticky_ref, self.sticky_pos);
@@ -857,20 +867,16 @@ fn show_sticky_popup(
                     .and_then(|f| sticky_ref.track.index.get(&f.tracks))
                     .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
                 {
-                    let kind_str = marker.kind.to_string();
+                    // The window title already shows the time, so the body adds
+                    // what hovering shows plus the position: the event summary,
+                    // the position, and (for a slip) the per-satellite table.
+                    let header =
+                        crate::generated_marker_renderer::generated_marker_header(&marker.kind);
                     egui::Grid::new("sticky_gen_grid")
                         .num_columns(2)
                         .show(ui, |ui| {
-                            ui.label("Time");
-                            ui.add(
-                                egui::Label::new(
-                                    marker.time.format("%Y-%m-%d %H:%M:%S").to_string(),
-                                )
-                                .selectable(true),
-                            );
-                            ui.end_row();
                             ui.label("Event");
-                            ui.add(egui::Label::new(kind_str).selectable(true));
+                            ui.add(egui::Label::new(header).selectable(true));
                             ui.end_row();
                             ui.label("Position");
                             ui.add(
@@ -883,6 +889,10 @@ fn show_sticky_popup(
                             );
                             ui.end_row();
                         });
+                    if let gt_types::GeneratedMarkerKind::Slip(event) = &marker.kind {
+                        ui.add_space(4.0);
+                        crate::generated_marker_renderer::show_slip_table(ui, event);
+                    }
                     ui.add_space(4.0);
                     ui.label(egui::RichText::new("Click to deselect").small().weak());
                 }
@@ -1372,7 +1382,7 @@ mod tests {
             point_index: PointIdx::new(0),
         };
         let expected = crate::generated_marker_renderer::generated_marker_header(
-            GeneratedMarkerKind::GnssFixRegained {
+            &GeneratedMarkerKind::GnssFixRegained {
                 fix_lost_duration: dur,
             },
         );

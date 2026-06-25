@@ -3,6 +3,7 @@
 
 // URI constants used by the marker renderer and the startup registration call.
 pub(crate) const ICON_URI_LIGHTNING: &str = "bytes://gt-map/icons/lightning.svg";
+pub(crate) const ICON_URI_CONNECTION_LOST: &str = "bytes://gt-map/icons/connection_lost.svg";
 pub(crate) const ICON_URI_WARNING: &str = "bytes://gt-map/icons/warning.svg";
 pub(crate) const ICON_URI_ERROR: &str = "bytes://gt-map/icons/error.svg";
 pub(crate) const ICON_URI_LOG_PIN: &str = "bytes://gt-map/icons/log_pin.svg";
@@ -44,6 +45,7 @@ macro_rules! icon_bytes {
 
 pub fn register_marker_icons(ctx: &egui::Context) {
     ctx.include_bytes(ICON_URI_LIGHTNING, icon_bytes!("lightning.svg"));
+    ctx.include_bytes(ICON_URI_CONNECTION_LOST, icon_bytes!("connection_lost.svg"));
     ctx.include_bytes(ICON_URI_WARNING, icon_bytes!("warning.svg"));
     ctx.include_bytes(ICON_URI_ERROR, icon_bytes!("error.svg"));
     ctx.include_bytes(ICON_URI_LOG_PIN, icon_bytes!("log_pin.svg"));

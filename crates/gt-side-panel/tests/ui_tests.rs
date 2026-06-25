@@ -101,6 +101,28 @@ fn snapshot_one_file_expanded() {
 }
 
 #[test]
+fn snapshot_generated_markers_grouped() {
+    // `nav_test_data` drops PRNs 9-12 (above the mask) at one epoch, producing a
+    // single multi-satellite loss-of-lock slip - so the generated-markers section
+    // shows the per-type nesting and the "(4)" satellite count.
+    let mut state = make_state(1);
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    state.tree.toggle_expand_track(track);
+    state
+        .tree
+        .toggle_category_expanded(track, gt_types::DataCategory::GeneratedMarker);
+    // Expand the slip type group so its individual marker row (with the "(4)"
+    // satellite count) is shown beneath the per-type heading.
+    state
+        .tree
+        .toggle_generated_kind_expanded(track, gt_types::GeneratedMarkerKindTag::Slip);
+    let mut harness = make_harness(state);
+    harness.run();
+    harness.snapshot("side_panel_generated_markers");
+}
+
+#[test]
 fn renders_without_panic() {
     let mut harness = make_harness(make_state(1));
     harness.run();

@@ -7,6 +7,7 @@ use gt_types::markers::{
 };
 use gt_types::mercator::{self, MercPoint};
 use gt_types::nav_point::NavPoint;
+use gt_types::satellites::SlipEvent;
 use gt_types::time_types::GpsTime;
 use gt_types::track::{
     FileMetadata, FileSource, FixStats, LoadWarning, LoadedFile, LoadedTrack, SegmentLengthRange,
@@ -16,11 +17,18 @@ use std::ops::Range;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
 
-/// Configuration for the track-segmentation algorithm.
+/// Configuration for the track-segmentation algorithm and the per-kind
+/// generated-marker detection it drives.
 #[derive(Debug, Clone, Copy)]
 pub struct SegmentationConfig {
     /// Timestamp gap between consecutive points that triggers a new track split.
     pub track_split_gap: Duration,
+    /// Whether to emit a [`GeneratedMarkerKind::GnssFixLost`] marker when the fix
+    /// drops.
+    pub detect_gnss_fix_lost: bool,
+    /// Whether to emit a [`GeneratedMarkerKind::GnssFixRegained`] marker when the
+    /// fix returns.
+    pub detect_gnss_fix_regained: bool,
     /// Whether to flag abrupt GPS↔system clock-offset jumps as
     /// [`GeneratedMarkerKind::ClockDiscontinuity`] markers.
     pub detect_clock_discontinuities: bool,
@@ -28,17 +36,38 @@ pub struct SegmentationConfig {
     /// this many robust standard deviations from the track's median step to be
     /// flagged.  Lower is more sensitive.  See `detect_clock_discontinuities`.
     pub clock_discontinuity_sigmas: f64,
+    /// Whether to flag loss-of-lock (cycle slip) events as
+    /// [`GeneratedMarkerKind::Slip`] markers.
+    pub detect_slips: bool,
+    /// Elevation mask (degrees) for slip detection.  Shared with the slip-rate
+    /// plot so markers and plot agree; see `gt_analysis::slip`.
+    pub slip_elevation_mask_deg: f32,
+    /// SNR drop (dB-Hz between epochs) above which a still-tracked satellite is
+    /// counted as having slipped.
+    pub slip_snr_drop_db: f32,
 }
 
 impl Default for SegmentationConfig {
     fn default() -> Self {
         Self {
             track_split_gap: Duration::seconds(300),
+            detect_gnss_fix_lost: true,
+            detect_gnss_fix_regained: true,
             detect_clock_discontinuities: true,
             clock_discontinuity_sigmas: DEFAULT_CLOCK_OUTLIER_SIGMAS,
+            detect_slips: true,
+            slip_elevation_mask_deg: DEFAULT_SLIP_ELEVATION_MASK_DEG,
+            slip_snr_drop_db: DEFAULT_SLIP_SNR_DROP_DB,
         }
     }
 }
+
+/// Default elevation mask (degrees) for slip detection.  Mirrors the slip-rate
+/// plot's default so a fresh config agrees with the plot out of the box.
+pub const DEFAULT_SLIP_ELEVATION_MASK_DEG: f32 = 15.0;
+
+/// Default SNR drop (dB-Hz) that counts as a slip.
+pub const DEFAULT_SLIP_SNR_DROP_DB: f32 = 10.0;
 
 /// Partitions `points` into contiguous track ranges. A new track begins when the
 /// timestamp gap between consecutive points reaches `config.track_split_gap`.
@@ -170,8 +199,11 @@ fn detect_generated_markers(
     let mut tracker = GpsFixTracker::new();
     let mut markers = Vec::new();
     for point in points {
+        // The state machine always advances so the regained-duration stays
+        // correct, but a marker is only kept when its kind is enabled.
         if let Some(sats) = &point.satellites
             && let Some(marker) = tracker.update(point, sats.fix_count())
+            && fix_marker_enabled(&marker.kind, config)
         {
             markers.push(marker);
         }
@@ -182,8 +214,44 @@ fn detect_generated_markers(
             config.clock_discontinuity_sigmas,
         ));
     }
+    if config.detect_slips {
+        markers.extend(detect_slip_markers(points, config));
+    }
     markers.sort_by_key(|m| m.time);
     markers
+}
+
+/// Whether a fix-transition marker kind is enabled by `config`.  Non-fix kinds
+/// are gated by their own toggles at their call sites, so this returns `true`
+/// for them rather than claiming to decide.
+fn fix_marker_enabled(kind: &GeneratedMarkerKind, config: &SegmentationConfig) -> bool {
+    match kind {
+        GeneratedMarkerKind::GnssFixLost => config.detect_gnss_fix_lost,
+        GeneratedMarkerKind::GnssFixRegained { .. } => config.detect_gnss_fix_regained,
+        GeneratedMarkerKind::ClockDiscontinuity { .. } | GeneratedMarkerKind::Slip(_) => true,
+    }
+}
+
+/// Build one [`GeneratedMarkerKind::Slip`] marker per epoch that had any
+/// loss-of-lock, grouping every satellite that slipped at that epoch into the
+/// one marker, placed at the position and time of that epoch.
+fn detect_slip_markers(points: &[NavPoint], config: &SegmentationConfig) -> Vec<GeneratedMarker> {
+    gt_analysis::loss_of_lock::detect_slip_events(
+        points,
+        config.slip_elevation_mask_deg,
+        config.slip_snr_drop_db,
+    )
+    .into_iter()
+    .filter_map(|(i, slips)| {
+        let point = points.get(i)?;
+        Some(GeneratedMarker::new(
+            point.tpv.time().utc(),
+            GeneratedMarkerKind::Slip(SlipEvent { slips }),
+            point.tpv.lat(),
+            point.tpv.lon(),
+        ))
+    })
+    .collect()
 }
 
 /// Fewest with-system-timestamp samples a track needs before clock-outlier
