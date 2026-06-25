@@ -66,6 +66,19 @@ pub const TRACK_COLORS: [Color32; 12] = [
     Color32::from_rgb(100, 180, 240), // cornflower
 ];
 
+/// Canonical display color for a GNSS constellation, so a constellation reads
+/// the same hue wherever it appears (plot lines, marker tables, …).  Mirrors the
+/// per-constellation "seen" hues used by the time-series plot.
+pub fn constellation_color(constellation: gt_types::satellites::Constellation) -> Color32 {
+    use gt_types::satellites::Constellation;
+    match constellation {
+        Constellation::Gps => Color32::from_rgb(0, 220, 80), // lime green
+        Constellation::Glonass => Color32::from_rgb(255, 140, 30), // golden
+        Constellation::Galileo => Color32::from_rgb(255, 50, 110), // hot pink
+        Constellation::Beidou => Color32::from_rgb(0, 230, 230), // cyan
+    }
+}
+
 /// Returns the track color for a (file_index, track_index) pair.
 ///
 /// Coprime-factor mixing ensures adjacent tracks get distinct palette slots even

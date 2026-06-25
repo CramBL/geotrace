@@ -102,7 +102,7 @@ fn draw_candidate_section(ui: &mut egui::Ui, candidate: DataPointRef, files: &[L
         Some(ResolvedCandidate::GeneratedMarker(marker)) => {
             ui.strong(format!(
                 "{icon}{ICON_GAP}{}",
-                crate::generated_marker_renderer::generated_marker_header(marker.kind)
+                crate::generated_marker_renderer::generated_marker_header(&marker.kind)
             ));
         }
         Some(ResolvedCandidate::EventMarker(m)) => match &m.annotation {
@@ -191,7 +191,7 @@ pub(crate) fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> 
         },
         Some(ResolvedCandidate::CustomMarker(m)) => m.label.clone(),
         Some(ResolvedCandidate::GeneratedMarker(m)) => {
-            crate::generated_marker_renderer::generated_marker_header(m.kind)
+            crate::generated_marker_renderer::generated_marker_header(&m.kind)
         }
     }
 }

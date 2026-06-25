@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- Broken chain link: two link halves on a diagonal, snapped apart in the
+       middle, with short "recoil" ticks flanking the break. Signifies a lost
+       connection (loss of lock). White strokes only, so the marker renderer can
+       tint and fade it like the other generated-marker glyphs. -->
+  <g fill="none" stroke="white" stroke-width="2.2"
+     stroke-linecap="round" stroke-linejoin="round"
+     transform="rotate(45 12 12)">
+    <rect x="1.6" y="9.3" width="9.0" height="5.4" rx="2.7"/>
+    <rect x="13.4" y="9.3" width="9.0" height="5.4" rx="2.7"/>
+    <line x1="12" y1="8.2" x2="12" y2="6.0"/>
+    <line x1="12" y1="15.8" x2="12" y2="18.0"/>
+  </g>
+</svg>
