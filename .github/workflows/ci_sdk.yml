@@ -26,10 +26,65 @@ defaults:
     shell: bash
 
 jobs:
+  # Detect whether anything that affects the SDKs changed, so the expensive
+  # cross-language matrix below can be skipped on app-only PRs. The path set
+  # covers every cascade source: sdk/** (which includes geotrace-sdk-macros, so
+  # a macro change triggers the full suite), the workspace manifests (the SDK
+  # crates pull deps via `*.workspace = true`, so a Cargo.toml/Cargo.lock bump
+  # changes what they compile against), the C/C++ lint scripts, the shared
+  # toolchain action, and this workflow file itself.
+  #
+  # On non-PR events (push to trunk, schedule, manual dispatch) there is no base
+  # to diff against and we always want full coverage, so the SDK suite always
+  # runs there.
+  changes:
+    name: Detect SDK changes
+    runs-on: ubuntu-latest
+    outputs:
+      sdk: ${{ steps.decide.outputs.sdk }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Filter SDK paths
+        id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        with:
+          filters: |
+            sdk:
+              - 'sdk/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'scripts/lint-c.sh'
+              - 'scripts/lint-cpp.sh'
+              - '.github/actions/setup-sdk-toolchain/**'
+              - '.github/workflows/ci_sdk.yml'
+
+      # Expansions go through env rather than inline `${{ }}` in the run block,
+      # which would be a template-injection sink (flagged by zizmor).
+      - name: Decide whether to run the SDK suite
+        id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SDK_CHANGED: ${{ steps.filter.outputs.sdk }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "Non-PR event ($EVENT_NAME): running the full SDK suite."
+            echo "sdk=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sdk=$SDK_CHANGED" >> "$GITHUB_OUTPUT"
+          fi
+
   # clang-format and clang-tidy for the C and C++ SDKs.
   lint-sdk:
     name: SDK Lint / C & C++
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
 
     steps:
       - name: Checkout
@@ -74,6 +129,8 @@ jobs:
   sdk-msrv:
     name: SDK MSRV (Rust 1.89)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
 
     steps:
       - name: Checkout
@@ -100,6 +157,8 @@ jobs:
   sdk-doc:
     name: SDK Docs
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
 
     steps:
       - name: Checkout
@@ -123,6 +182,8 @@ jobs:
   c-sdk:
     name: C SDK / ${{ matrix.os }} / ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
 
     strategy:
       fail-fast: false
@@ -211,6 +272,8 @@ jobs:
   cpp-sdk:
     name: C++ SDK / ${{ matrix.os }} / C++${{ matrix.cxx_std }} / ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
 
     strategy:
       fail-fast: false
@@ -310,6 +373,8 @@ jobs:
   python-sdk:
     name: Python SDK / ${{ matrix.os }} / Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
 
     strategy:
       fail-fast: false
@@ -379,6 +444,8 @@ jobs:
   vcpkg-sdk:
     name: vcpkg overlay port
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
 
     steps:
       - name: Checkout
@@ -430,7 +497,8 @@ jobs:
 
   ci-sdk:
     runs-on: ubuntu-latest
-    needs: 
+    needs:
+      - changes
       - lint-sdk
       - sdk-msrv
       - sdk-doc
@@ -442,6 +510,31 @@ jobs:
       contents: none
     if: always()
     steps:
-      - name: Fail if any dependency failed
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
-        run: exit 1
+      # Assert the good state explicitly rather than denylisting bad ones (a
+      # cancelled run, a new result type, etc. must never slip through as a
+      # pass). This job always runs so the required status check always reports.
+      #
+      # The `changes` job must have succeeded. If it reports no SDK changes, the
+      # suite was intentionally skipped and the gate passes. Otherwise every
+      # dependency must have a 'success' result.
+      - name: Verify the SDK suite succeeded
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SDK_CHANGED: ${{ needs.changes.outputs.sdk }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "The 'changes' detection job did not succeed (result: $CHANGES_RESULT)."
+            exit 1
+          fi
+          if [ "$SDK_CHANGED" != "true" ]; then
+            echo "No SDK changes detected; the SDK suite was intentionally skipped. OK."
+            exit 0
+          fi
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then
+              echo "A dependency did not succeed (results: $RESULTS)."
+              exit 1
+            fi
+          done
+          echo "All SDK jobs succeeded."

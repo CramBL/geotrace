@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: 
+        os:
           - ubuntu-latest
           - macos-latest
           - windows-latest
@@ -46,18 +46,6 @@ jobs:
         with:
           toolchain: stable
 
-      # cargo-pup is a compiler-plugin architecture linter that must be built
-      # with the specific nightly version the workspace's pup.ron targets.
-      # The gt-arch crate's test suite (part of the Tests step below) invokes
-      # `cargo pup check` directly, so only the platform that runs that
-      # package's tests needs this toolchain.
-      - name: Install Rust nightly (for cargo-pup)
-        if: runner.os == 'Linux'
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
-        with:
-          toolchain: nightly-2026-01-22
-          components: rust-src,rustc-dev,llvm-tools-preview
-
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
@@ -69,10 +57,6 @@ jobs:
       - name: Install uv
         if: runner.os == 'Linux'
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-
-      - name: Install cargo-pup
-        if: runner.os == 'Linux'
-        run: cargo +nightly-2026-01-22 install cargo_pup
 
       # wgpu requires a GPU or a software renderer for headless test rendering.
       # Ubuntu GitHub runners have no GPU. Force Mesa's OpenGL software rasteriser.
@@ -98,17 +82,9 @@ jobs:
           cargo clippy --workspace --no-deps --examples -- -D warnings
           cargo clippy --workspace --no-deps --features geotrace/self-update --tests -- -D warnings
 
+      # The `ci` profile excludes the gt-arch architecture check (see .config/nextest.toml)
       - name: Tests
-        if: runner.os == 'Linux'
         run: cargo nextest run --workspace --features geotrace/self-update --profile ci
-        env:
-          GEOTRACE_OFFLINE: 1
-
-      # gt-arch's test invokes `cargo pup check`, which needs the nightly
-      # toolchain installed only on Linux (see above) - exclude it elsewhere.
-      - name: Tests (excluding gt-arch architecture check)
-        if: runner.os != 'Linux'
-        run: cargo nextest run --workspace --exclude gt-arch --features geotrace/self-update --profile ci
         env:
           GEOTRACE_OFFLINE: 1
 
@@ -133,9 +109,51 @@ jobs:
         if: runner.os == 'Linux'
         run: just doc
 
+  # The gt-arch architecture check (cargo-pup) is slow and needs a pinned
+  # nightly toolchain. The `arch` nextest profile selects only the
+  # gt-arch package (see .config/nextest.toml).
+  arch:
+    name: Architecture lints (cargo-pup)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+
+      # cargo-pup is a compiler-plugin architecture linter that must be built
+      # with the specific nightly version the workspace's pup.ron targets.
+      - name: Install Rust nightly (for cargo-pup)
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: nightly-2026-01-22
+          components: rust-src,rustc-dev,llvm-tools-preview
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install tools
+        uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
+        with:
+          tool: nextest
+
+      - name: Install cargo-pup
+        run: cargo +nightly-2026-01-22 install cargo_pup
+
+      - name: Architecture check
+        run: cargo nextest run -p gt-arch --profile arch
+
   ci-essentials:
     runs-on: ubuntu-latest
-    needs: [ci]
+    needs:
+      - ci
+      - arch
     permissions:
       contents: none
     if: always()

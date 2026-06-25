@@ -1,5 +1,14 @@
 [profile.default]
+# The gt-arch architecture check (cargo-pup) is slow and needs a pinned nightly
+# toolchain, so it is excluded from the normal test run and exercised on its own
+# via `just pup` / the dedicated CI job (which uses the `arch` profile below).
+default-filter = "not package(gt-arch)"
 
 [profile.ci]
 fail-fast = false
 status-level = "all"
+
+[profile.arch]
+fail-fast = false
+status-level = "all"
+default-filter = "package(gt-arch)"
