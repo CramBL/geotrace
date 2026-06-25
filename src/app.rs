@@ -465,59 +465,10 @@ impl App {
                         });
                         self.assoc_config.log_marker_window_s = window_s;
                         ui.end_row();
-
-                        let clock_discontinuities_help =
-                            "Flag abrupt jumps in the GPS/system clock offset - e.g. a device \
-                             resuming from suspend, where a stale GPS timestamp meets a fresh \
-                             system timestamp - as markers. These are surfaced for inspection; \
-                             the underlying data is never altered.";
-                        ui.label(format!(
-                            "{} Clock discontinuities",
-                            egui_phosphor::regular::WARNING
-                        ))
-                        .on_hover_text(clock_discontinuities_help);
-                        // Detection toggle and its jump sensitivity share one row.
-                        // The sensitivity stays visible but grays out when
-                        // detection is off rather than hiding (DESIGN.md: keep
-                        // the layout stable and the feature discoverable).
-                        ui.horizontal(|ui| {
-                            ui.checkbox(
-                                &mut self.processing_config.detect_clock_discontinuities,
-                                "",
-                            )
-                            .on_hover_text(clock_discontinuities_help);
-                            let detect_on = self.processing_config.detect_clock_discontinuities;
-                            let sigmas = self.processing_config.clock_discontinuity_sigmas;
-                            let floor_s =
-                                gt_track_builder::clock_discontinuity_floor_seconds(sigmas);
-                            let sensitivity = ui.add_enabled(
-                                detect_on,
-                                egui::DragValue::new(
-                                    &mut self.processing_config.clock_discontinuity_sigmas,
-                                )
-                                .range(1.0..=20.0)
-                                .speed(0.1)
-                                .fixed_decimals(1)
-                                .suffix(" σ"),
-                            );
-                            if detect_on {
-                                sensitivity.on_hover_text(format!(
-                                    "Jump sensitivity: how far a jump must stand out from the \
-                                     track's normal clock variation to be flagged, in robust \
-                                     standard deviations. Lower flags more (smaller) jumps; \
-                                     higher flags only the most extreme.\n\n\
-                                     For example, on a steady recording {sigmas:.1} σ flags \
-                                     jumps larger than about {floor_s:.1} s; on a noisier one \
-                                     the bar rises with the track's own variation.",
-                                ));
-                            } else {
-                                sensitivity.on_hover_text(
-                                    "Enable clock discontinuities to adjust the jump sensitivity",
-                                );
-                            }
-                        });
-                        ui.end_row();
                     });
+
+                self.show_generated_marker_settings(ui);
+
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let apply_label =
@@ -534,10 +485,15 @@ impl App {
                         self.processing_config.track_split_gap =
                             chrono::Duration::seconds(defaults.track_split_gap_seconds as i64);
                         self.assoc_config.log_marker_window_s = defaults.log_marker_window_s;
+                        self.processing_config.detect_gnss_fix_lost =
+                            defaults.detect_gnss_fix_lost;
+                        self.processing_config.detect_gnss_fix_regained =
+                            defaults.detect_gnss_fix_regained;
                         self.processing_config.detect_clock_discontinuities =
                             defaults.detect_clock_discontinuities;
                         self.processing_config.clock_discontinuity_sigmas =
                             defaults.clock_discontinuity_sigmas;
+                        self.processing_config.detect_slips = defaults.detect_slips;
                     }
                 });
 
@@ -552,41 +508,81 @@ impl App {
                     .num_columns(2)
                     .spacing([8.0, 6.0])
                     .show(ui, |ui| {
+                        // Start from the analysis config the plot currently uses,
+                        // then live-apply any edits below.
+                        let mut analysis = self.shared.borrow().plot_state.analysis;
+
                         let mask_help =
                             "Satellites below this elevation are excluded from the 'in view' \
-                             baseline when computing the satellite utilization rate, so the \
-                             receiver is not penalised for ignoring low-elevation satellites \
-                             (which suffer high atmospheric delay and multipath). \
-                             For example, setting the mask to 0° may artificially lower the \
-                             utilization rate, as the receiver naturally rejects horizon \
-                             satellites.";
-                        ui.label(format!(
-                            "{} Elevation mask",
-                            egui_phosphor::regular::FUNNEL
-                        ))
-                        .on_hover_text(mask_help);
-                        let mut mask_deg =
-                            self.shared.borrow().plot_state.analysis.elevation_mask_deg;
+                             baseline of the utilization rate, and a satellite must sit above it \
+                             to count toward the slip rate. This keeps the receiver from being \
+                             penalised for ignoring low-elevation satellites (high atmospheric \
+                             delay and multipath). \
+                             For example, a 0° mask counts horizon satellites the receiver \
+                             naturally rejects, which lowers the utilization rate and inflates the \
+                             slip rate with routine horizon fades; a 30° mask considers only \
+                             high, clean satellites.";
+                        ui.label(format!("{} Elevation mask", egui_phosphor::regular::FUNNEL))
+                            .on_hover_text(mask_help);
                         ui.add(
-                            egui::DragValue::new(&mut mask_deg)
+                            egui::DragValue::new(&mut analysis.elevation_mask_deg)
                                 .range(0.0..=90.0)
                                 .speed(1.0)
                                 .fixed_decimals(0)
                                 .suffix("°"),
                         )
                         .on_hover_text(mask_help);
-                        // Live-apply: re-derives only the mask-dependent series,
-                        // and keeps the loader in step for files loaded later.
-                        let analysis = gt_plot::AnalysisConfig {
-                            elevation_mask_deg: mask_deg,
-                        };
+                        ui.end_row();
+
+                        let snr_help =
+                            "An above-mask satellite whose SNR falls by more than this many dB-Hz \
+                             between consecutive epochs is counted as a loss-of-lock (slip), a \
+                             sign of a momentary signal break rather than ordinary variation. \
+                             For example, a low threshold like 3 dB-Hz flags ordinary signal \
+                             fluctuation as slips and inflates the rate; a high threshold like \
+                             25 dB-Hz reports only near-total dropouts and may miss real slips.";
+                        ui.label(format!("{} SNR drop threshold", egui_phosphor::regular::WAVE_SINE))
+                            .on_hover_text(snr_help);
+                        ui.add(
+                            egui::DragValue::new(&mut analysis.snr_drop_db)
+                                .range(1.0..=60.0)
+                                .speed(0.5)
+                                .fixed_decimals(0)
+                                .suffix(" dB-Hz"),
+                        )
+                        .on_hover_text(snr_help);
+                        ui.end_row();
+
+                        let window_help =
+                            "Trailing window over which the slip rate is averaged, in minutes. \
+                             The plotted value is the slips counted in the window divided by its \
+                             length, in slips per minute.";
+                        ui.label(format!("{} Slip window", egui_phosphor::regular::CLOCK))
+                            .on_hover_text(window_help);
+                        ui.add(
+                            egui::DragValue::new(&mut analysis.slip_window_min)
+                                .range(1.0..=120.0)
+                                .speed(1.0)
+                                .fixed_decimals(0)
+                                .suffix(" min"),
+                        )
+                        .on_hover_text(window_help);
+                        ui.end_row();
+
+                        // Live-apply: re-derives only the analysis-dependent
+                        // series, and keeps the loader in step for files loaded
+                        // later. `set_analysis` is a no-op when unchanged.
                         self.loader.analysis_config = analysis;
+                        // Slip markers share these detection params, but as
+                        // load-time generated markers they only pick up the
+                        // change on the next load or "Apply to loaded data".
+                        self.processing_config.slip_elevation_mask_deg = analysis.elevation_mask_deg;
+                        self.processing_config.slip_snr_drop_db = analysis.snr_drop_db;
                         {
                             let mut shared = self.shared.borrow_mut();
                             let s = &mut *shared;
                             s.plot_state.set_analysis(&s.loaded_files, analysis);
                         }
-                        ui.end_row();
 
                         let mark_help =
                             "Place a red cross on the plot at each epoch where the receiver used a \
@@ -631,6 +627,101 @@ impl App {
         apply
     }
 
+    /// Render the "Generated markers" settings section: a per-kind on/off toggle
+    /// for each automatically-detected marker.  These are produced at
+    /// load/segmentation time, so they share the same "Apply to loaded data"
+    /// action as the rest of the processing settings.
+    fn show_generated_marker_settings(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(12.0);
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(egui_phosphor::regular::MAP_PIN);
+            ui.strong("Generated markers");
+        });
+        ui.separator();
+        egui::Grid::new("generated_markers_grid")
+            .num_columns(2)
+            .spacing([8.0, 6.0])
+            .show(ui, |ui| {
+                let fix_lost_help =
+                    "Mark each epoch where the GNSS fix dropped (the receiver stopped resolving \
+                     a position). For example, entering a tunnel typically drops the fix.";
+                ui.label(format!("{} GNSS fix lost", egui_phosphor::regular::X_CIRCLE))
+                    .on_hover_text(fix_lost_help);
+                ui.checkbox(&mut self.processing_config.detect_gnss_fix_lost, "")
+                    .on_hover_text(fix_lost_help);
+                ui.end_row();
+
+                let fix_regained_help =
+                    "Mark each epoch where the GNSS fix returned after being lost, annotated with \
+                     how long it was gone.";
+                ui.label(format!(
+                    "{} GNSS fix regained",
+                    egui_phosphor::regular::CHECK_CIRCLE
+                ))
+                .on_hover_text(fix_regained_help);
+                ui.checkbox(&mut self.processing_config.detect_gnss_fix_regained, "")
+                    .on_hover_text(fix_regained_help);
+                ui.end_row();
+
+                // Clock discontinuity: the toggle and its jump sensitivity share
+                // one row. The sensitivity stays visible but grays out when
+                // detection is off rather than hiding (DESIGN.md: keep the layout
+                // stable and the feature discoverable).
+                let clock_help =
+                    "Flag abrupt jumps in the GPS/system clock offset - e.g. a device resuming \
+                     from suspend, where a stale GPS timestamp meets a fresh system timestamp. \
+                     Surfaced for inspection; the underlying data is never altered.";
+                ui.label(format!(
+                    "{} Clock discontinuity",
+                    egui_phosphor::regular::WARNING
+                ))
+                .on_hover_text(clock_help);
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.processing_config.detect_clock_discontinuities, "")
+                        .on_hover_text(clock_help);
+                    let detect_on = self.processing_config.detect_clock_discontinuities;
+                    let sigmas = self.processing_config.clock_discontinuity_sigmas;
+                    let floor_s = gt_track_builder::clock_discontinuity_floor_seconds(sigmas);
+                    let sensitivity = ui.add_enabled(
+                        detect_on,
+                        egui::DragValue::new(&mut self.processing_config.clock_discontinuity_sigmas)
+                            .range(1.0..=20.0)
+                            .speed(0.1)
+                            .fixed_decimals(1)
+                            .suffix(" σ"),
+                    );
+                    if detect_on {
+                        sensitivity.on_hover_text(format!(
+                            "Jump sensitivity: how far a jump must stand out from the track's \
+                             normal clock variation to be flagged, in robust standard deviations. \
+                             Lower flags more (smaller) jumps; higher flags only the most extreme.\
+                             \n\nFor example, on a steady recording {sigmas:.1} σ flags jumps \
+                             larger than about {floor_s:.1} s; on a noisier one the bar rises \
+                             with the track's own variation.",
+                        ));
+                    } else {
+                        sensitivity.on_hover_text(
+                            "Enable clock discontinuity to adjust the jump sensitivity",
+                        );
+                    }
+                });
+                ui.end_row();
+
+                let slip_help =
+                    "Mark each loss-of-lock (cycle slip): an above-mask satellite that vanished, \
+                     or whose SNR dropped sharply between epochs. Hover a marker for which \
+                     satellite slipped and its before/after elevation, azimuth, and SNR. \
+                     Detection uses the elevation mask and SNR-drop threshold from the Analysis \
+                     section, so the markers and the slip-rate plot agree.";
+                ui.label(format!("{} Satellite slip", egui_phosphor::regular::LINK_BREAK))
+                    .on_hover_text(slip_help);
+                ui.checkbox(&mut self.processing_config.detect_slips, "")
+                    .on_hover_text(slip_help);
+                ui.end_row();
+            });
+    }
+
     /// Apply loaded settings on startup.
     fn apply_startup_settings(&mut self, s: &crate::settings::Settings) {
         if !s.map.mapbox_token.is_empty() {
@@ -639,8 +730,15 @@ impl App {
         self.map.set_layer(map_layer_from_setting(s.map.layer));
         self.processing_config = SegmentationConfig {
             track_split_gap: chrono::Duration::seconds(s.processing.track_split_gap_seconds as i64),
+            detect_gnss_fix_lost: s.processing.detect_gnss_fix_lost,
+            detect_gnss_fix_regained: s.processing.detect_gnss_fix_regained,
             detect_clock_discontinuities: s.processing.detect_clock_discontinuities,
             clock_discontinuity_sigmas: s.processing.clock_discontinuity_sigmas,
+            detect_slips: s.processing.detect_slips,
+            // Slip markers share the slip-rate plot's detection params so the
+            // two always agree.
+            slip_elevation_mask_deg: s.analysis.elevation_mask_deg,
+            slip_snr_drop_db: s.analysis.snr_drop_db,
         };
         self.assoc_config = AssociationConfig {
             log_marker_window_s: s.processing.log_marker_window_s,
@@ -649,6 +747,8 @@ impl App {
 
         let analysis = gt_plot::AnalysisConfig {
             elevation_mask_deg: s.analysis.elevation_mask_deg,
+            snr_drop_db: s.analysis.snr_drop_db,
+            slip_window_min: s.analysis.slip_window_min,
         };
         self.loader.analysis_config = analysis;
         {
@@ -716,10 +816,15 @@ impl App {
                 .to_std()
                 .map_or(300, |d| d.as_secs()),
             log_marker_window_s: self.assoc_config.log_marker_window_s,
+            detect_gnss_fix_lost: self.processing_config.detect_gnss_fix_lost,
+            detect_gnss_fix_regained: self.processing_config.detect_gnss_fix_regained,
             detect_clock_discontinuities: self.processing_config.detect_clock_discontinuities,
             clock_discontinuity_sigmas: self.processing_config.clock_discontinuity_sigmas.into(),
+            detect_slips: self.processing_config.detect_slips,
             elevation_mask_deg: s.plot_state.analysis.elevation_mask_deg.into(),
             mark_masked_fix: s.plot_state.mark_masked_fix,
+            snr_drop_db: s.plot_state.analysis.snr_drop_db.into(),
+            slip_window_min: s.plot_state.analysis.slip_window_min.into(),
             storage_enabled: self.storage_enabled,
             auto_prune_enabled: self.auto_prune_enabled,
             auto_prune_max_bytes: self.auto_prune_max_bytes,
@@ -760,12 +865,17 @@ impl App {
                     .to_std()
                     .map_or(300, |d| d.as_secs()),
                 log_marker_window_s: self.assoc_config.log_marker_window_s,
+                detect_gnss_fix_lost: self.processing_config.detect_gnss_fix_lost,
+                detect_gnss_fix_regained: self.processing_config.detect_gnss_fix_regained,
                 detect_clock_discontinuities: self.processing_config.detect_clock_discontinuities,
                 clock_discontinuity_sigmas: self.processing_config.clock_discontinuity_sigmas,
+                detect_slips: self.processing_config.detect_slips,
             },
             analysis: crate::settings::AnalysisSettings {
                 elevation_mask_deg: s.plot_state.analysis.elevation_mask_deg,
                 mark_masked_fix: s.plot_state.mark_masked_fix,
+                snr_drop_db: s.plot_state.analysis.snr_drop_db,
+                slip_window_min: s.plot_state.analysis.slip_window_min,
             },
             storage: crate::settings::StorageSettings {
                 enabled: self.storage_enabled,
@@ -1205,6 +1315,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     &mut s.highlight,
                     &s.filter,
                     s.tree.event_marker_visibility(),
+                    s.tree.generated_marker_visibility(),
                     center_req,
                     zoom_to_visible,
                     popup_pos,
