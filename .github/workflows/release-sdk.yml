@@ -272,9 +272,10 @@ jobs:
         run: |
           set -euo pipefail
           # Skip crates already on the index so a re-run after a later failure
-          # doesn't error on "crate already exists".
+          # doesn't error on "crate already exists". crates.io returns 403
+          # without a User-Agent, so send one or the check always misses.
           publish() {
-            if curl -fsS "https://crates.io/api/v1/crates/$1/$VERSION" >/dev/null 2>&1; then
+            if curl -fsS -A "geotrace-release (+https://github.com/CramBL/geotrace)" "https://crates.io/api/v1/crates/$1/$VERSION" >/dev/null 2>&1; then
               echo "$1 $VERSION already on crates.io, skipping"
             else
               cargo publish -p "$1"
