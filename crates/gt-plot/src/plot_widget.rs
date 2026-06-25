@@ -1,5 +1,5 @@
 use crate::AnalysisConfig;
-use crate::series::{TrackSeries, UtilAnomaly, build_all_series, closest_point_index};
+use crate::series::{TrackSeries, UtilAnomaly, build_all_series};
 use chrono::{DateTime, Utc};
 use egui::Color32;
 use egui_plot::{Line, LineStyle, MarkerShape, PlotPoint, PlotPoints, Points, VLine};
@@ -1616,16 +1616,21 @@ pub fn find_closest_tpv(
             if !gt_filter::track_passes_filter(&track.metadata, filter) {
                 continue;
             }
-            let Some(pi) = closest_point_index(&track.points, target_secs) else {
+            // Only points inside the filter's time window are drawn on the map,
+            // so the cross-highlight must pick the nearest *visible* point - never
+            // one filtered out of view.
+            let nearest = track
+                .points
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| gt_filter::point_passes_time_filter(p.tpv.time().utc(), filter))
+                .map(|(i, p)| (i, (p.tpv.time().as_secs_f64() - target_secs).abs()))
+                .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let Some((pi, dist)) = nearest else {
                 continue;
             };
-            let pi = PointIdx::new(pi);
-            let Some(point) = pi.get(&track.points) else {
-                continue;
-            };
-            let dist = (point.tpv.time().as_secs_f64() - target_secs).abs();
             if best.is_none_or(|(_, _, _, d)| dist < d) {
-                best = Some((fi, ti, pi, dist));
+                best = Some((fi, ti, PointIdx::new(pi), dist));
             }
         }
     }

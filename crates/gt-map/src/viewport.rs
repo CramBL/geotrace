@@ -2,7 +2,7 @@
 //! visible map, zoom-to-fit, hit-test visibility, and the per-frame
 //! collection of spatial points the render plugins draw.
 
-use gt_filter::{GlobalFilter, track_passes_filter};
+use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackIdx, TrackRef};
 use gt_ui_types::TrackDataVisibility;
 use smallvec::SmallVec;
@@ -172,11 +172,17 @@ impl TrackPlan {
     }
 }
 
-/// Bounding box over only the currently **visible** tracks (those with both their
-/// file and track enabled). Returns `None` if no visible data exists.
+/// Bounding box over only the currently **visible** data: tracks with both their
+/// file and track enabled, that pass the active filter, counting only the
+/// points and markers inside the filter's time window.  Returns `None` if no
+/// such data exists.
+///
+/// This matches what the renderers actually draw, so "zoom to fit" frames the
+/// visible data rather than the whole recording.
 pub(crate) fn compute_visible_bounding_box(
     files: &[LoadedFile],
     visibility: &TrackDataVisibility,
+    filter: &GlobalFilter,
 ) -> Option<(f64, f64, f64, f64)> {
     let mut min_lat = f64::MAX;
     let mut max_lat = f64::MIN;
@@ -198,7 +204,13 @@ pub(crate) fn compute_visible_bounding_box(
             if !trip_vis.enabled {
                 continue;
             }
+            if !track_passes_filter(&track.metadata, filter) {
+                continue;
+            }
             for point in &track.points {
+                if !point_passes_time_filter(point.tpv.time().utc(), filter) {
+                    continue;
+                }
                 let lat = point.tpv.lat().as_degrees();
                 let lon = point.tpv.lon().as_degrees();
                 min_lat = min_lat.min(lat);
@@ -208,6 +220,9 @@ pub(crate) fn compute_visible_bounding_box(
                 any = true;
             }
             for marker in &track.custom_markers {
+                if !point_passes_time_filter(marker.time, filter) {
+                    continue;
+                }
                 let lat = marker.lat.as_degrees();
                 let lon = marker.lon.as_degrees();
                 min_lat = min_lat.min(lat);
@@ -271,12 +286,17 @@ pub(crate) fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Re
 
 /// Returns `true` when a spatial point should participate in hover and click detection.
 ///
-/// The renderers already suppress invisible elements from being drawn. This function
-/// ensures the hit-test layer applies the same rules so that hidden tracks cannot be
-/// accidentally hovered or clicked.
+/// The renderers suppress invisible elements from being drawn; this function
+/// applies the *same* rules so a hidden element cannot be hovered or clicked.
+/// That means matching the renderers on every axis: file/track enablement, the
+/// per-category layer toggle, the track-level filter, and the per-point time
+/// window (so points of a partially-overlapping track outside the window are not
+/// hit-testable either).
 pub(crate) fn is_spatial_point_visible(
     sp: &SpatialPoint,
+    files: &[LoadedFile],
     visibility: &TrackDataVisibility,
+    filter: &GlobalFilter,
 ) -> bool {
     let Some(file_vis) = sp.file_index.get(&visibility.files) else {
         return false;
@@ -290,13 +310,39 @@ pub(crate) fn is_spatial_point_visible(
     if !trip_vis.enabled {
         return false;
     }
-    match sp.category {
+    let layer_visible = match sp.category {
         DataCategory::Tpv => trip_vis.tpv_visible,
         DataCategory::CustomMarker => trip_vis.custom_markers_visible,
         DataCategory::GeneratedMarker => trip_vis.generated_markers_visible,
         DataCategory::EventMarker => trip_vis.event_markers_visible,
         DataCategory::Track | DataCategory::SatelliteReport => false,
+    };
+    if !layer_visible {
+        return false;
     }
+
+    // Apply the same filtering the renderers do: drop whole tracks that fail the
+    // filter, then drop the individual point/marker if it sits outside the time
+    // window.
+    let Some(track) = sp
+        .file_index
+        .get(files)
+        .and_then(|file| sp.track_index.get(&file.tracks))
+    else {
+        return false;
+    };
+    if !track_passes_filter(&track.metadata, filter) {
+        return false;
+    }
+    let pi = sp.point_index.as_usize();
+    let time = match sp.category {
+        DataCategory::Tpv => track.points.get(pi).map(|p| p.tpv.time().utc()),
+        DataCategory::CustomMarker => track.custom_markers.get(pi).map(|m| m.time),
+        DataCategory::GeneratedMarker => track.generated_markers.get(pi).map(|m| m.time),
+        DataCategory::EventMarker => track.event_markers.get(pi).map(|m| m.time),
+        DataCategory::Track | DataCategory::SatelliteReport => None,
+    };
+    time.is_some_and(|t| point_passes_time_filter(t, filter))
 }
 
 /// Center the map and set the zoom so the given bounding box fills ~80 % of the
