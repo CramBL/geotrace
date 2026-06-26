@@ -3,6 +3,10 @@
 # toolchain, so it is excluded from the normal test run and exercised on its own
 # via `just pup` / the dedicated CI job (which uses the `arch` profile below).
 default-filter = "not package(gt-arch)"
+# Print each failure's output as it happens and again in a summary at the end,
+# so failures stay visible at the bottom of long CI logs. Inherited by the ci
+# and arch profiles below.
+failure-output = "immediate-final"
 
 [profile.ci]
 fail-fast = false

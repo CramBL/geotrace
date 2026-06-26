@@ -57,6 +57,11 @@ enum InstallStatus {
 pub struct UpdateChecker {
     outcome: Arc<Mutex<Option<CheckOutcome>>>,
     install: Arc<Mutex<InstallStatus>>,
+    /// The running version, shown in the prompt as "(current: …)". Held as a
+    /// field rather than read from `CARGO_PKG_VERSION` at render time so tests
+    /// can pin it to a fixed value; otherwise the prompt snapshot would diff on
+    /// every release as the version bumps.
+    current_version: String,
     /// Whether the background check has been spawned this session.
     started: bool,
     /// Whether the user dismissed the prompt for this session ("Later").
@@ -74,6 +79,7 @@ impl UpdateChecker {
         Self {
             outcome: Arc::new(Mutex::new(None)),
             install: Arc::new(Mutex::new(InstallStatus::Idle)),
+            current_version: env!("CARGO_PKG_VERSION").to_owned(),
             started: false,
             dismissed: false,
         }
@@ -86,6 +92,9 @@ impl UpdateChecker {
     pub fn available_for_test(version: &str, self_update: bool) -> Self {
         let mut checker = Self::new();
         checker.started = true;
+        // Pin the displayed current version so the prompt snapshot stays stable
+        // across releases instead of tracking the live `CARGO_PKG_VERSION`.
+        checker.current_version = "0.1.0".to_owned();
         *checker.outcome.lock() = Some(CheckOutcome::Available {
             version: version.to_owned(),
             self_update,
@@ -152,6 +161,7 @@ impl UpdateChecker {
         let mut start_install = false;
         let mut quit = false;
 
+        let current_version = self.current_version.as_str();
         let install_status = self.install.lock();
         egui::Window::new("Update available")
             .collapsible(false)
@@ -160,8 +170,7 @@ impl UpdateChecker {
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.label(format!(
-                        "GeoTrace {version} is available (current: {}).",
-                        env!("CARGO_PKG_VERSION")
+                        "GeoTrace {version} is available (current: {current_version})."
                     ));
                     ui.add_space(10.0);
 

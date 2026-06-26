@@ -582,7 +582,11 @@ fn snapshot_app_three_overlapping_files() {
         state.zoom_to_visible_request = true;
     }
     harness.inner.run_steps(70);
-    harness.snapshot_with_tolerance("app_three_overlapping_files", 4.0, 16);
+    // Full-app map+plot render, so it carries the same GPU/anti-aliasing
+    // nondeterminism as the other map snapshots and uses the shared loose
+    // tolerance rather than a tighter hand-picked count that the macOS runner
+    // drifts past.
+    harness.snapshot_loose("app_three_overlapping_files");
 }
 
 // The settings window renders a `self-update`-only row ("Check for updates on
