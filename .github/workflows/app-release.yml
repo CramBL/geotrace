@@ -131,9 +131,10 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
-      - name: "Disable cargo HTTP/2 multiplexing on Windows"
-        if: "runner.os == 'Windows'"
-        run: "echo CARGO_HTTP_MULTIPLEXING=false >> \"$GITHUB_ENV\""
+      - name: "Harden cargo crates.io fetches"
+        run: |
+          echo CARGO_HTTP_MULTIPLEXING=false >> "$GITHUB_ENV"
+          echo CARGO_NET_RETRY=10 >> "$GITHUB_ENV"
         shell: "bash"
       - name: "Update RUSTFLAGS with custom windows linker flags"
         if: "runner.os == 'Windows'"
