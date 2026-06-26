@@ -1,11 +1,13 @@
-# Force cargo to fetch over HTTP/1.1 on Windows. The windows-hosted runners
-# intermittently fail crates.io downloads with `[16] Error in the HTTP2
-# framing layer`, which aborts `dist build` before compilation even starts.
-# Disabling HTTP/2 multiplexing sidesteps the broken framing path.
-- name: Disable cargo HTTP/2 multiplexing on Windows
-  if: runner.os == 'Windows'
+# Harden cargo's crates.io fetches against flaky runner networking. All hosted
+# runners intermittently abort downloads before compilation starts: Windows
+# with `[16] Error in the HTTP2 framing layer`, macOS with `[55] Broken pipe`.
+# Both come from curl's multiplexed HTTP/2 path, so force HTTP/1.1 and retry
+# harder.
+- name: Harden cargo crates.io fetches
   shell: bash
-  run: echo CARGO_HTTP_MULTIPLEXING=false >> "$GITHUB_ENV"
+  run: |
+    echo CARGO_HTTP_MULTIPLEXING=false >> "$GITHUB_ENV"
+    echo CARGO_NET_RETRY=10 >> "$GITHUB_ENV"
 
 # A workaround for
 # https://github.com/axodotdev/cargo-dist/issues/1571
