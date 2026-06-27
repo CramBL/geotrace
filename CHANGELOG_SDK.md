@@ -7,6 +7,10 @@ the app).
 
 ## [unreleased]
 
+### Added
+
+- Add support for NavIC and QZSS constellations.
+
 ## [0.3.0] - 2026-06-24
 
 ### Added
