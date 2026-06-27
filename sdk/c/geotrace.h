@@ -141,6 +141,8 @@ typedef enum {
     GTD_CONSTELLATION_GLONASS = 1, /**< GLONASS (Russia). */
     GTD_CONSTELLATION_GALILEO = 2, /**< Galileo (EU). */
     GTD_CONSTELLATION_BEIDOU = 3,  /**< BeiDou (China). */
+    GTD_CONSTELLATION_NAVIC = 4,   /**< NavIC / IRNSS (India). */
+    GTD_CONSTELLATION_QZSS = 5,    /**< QZSS (Japan). */
 } GtdConstellation;
 
 /** @} */

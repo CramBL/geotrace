@@ -2,6 +2,14 @@
 
 ## [unreleased]
 
+### Added
+
+- Add support for NavIC and QZSS constellations.
+
+### Changed
+
+- Avoid showing features for constellations that are not in the loaded data
+
 ## [0.2.0] - 2026-06-25
 
 ### Added

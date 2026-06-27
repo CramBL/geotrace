@@ -11,6 +11,8 @@ fn sdk_constellation(c: Constellation) -> SdkConst {
         Constellation::Glonass => SdkConst::Glonass,
         Constellation::Galileo => SdkConst::Galileo,
         Constellation::Beidou => SdkConst::Beidou,
+        Constellation::Navic => SdkConst::Navic,
+        Constellation::Qzss => SdkConst::Qzss,
     }
 }
 

@@ -104,6 +104,8 @@ pub struct SlipSeries {
     pub glonass: Vec<[f64; 2]>,
     pub galileo: Vec<[f64; 2]>,
     pub beidou: Vec<[f64; 2]>,
+    pub navic: Vec<[f64; 2]>,
+    pub qzss: Vec<[f64; 2]>,
 }
 
 /// Slip rate, in slips per minute, at each epoch in `epochs`, counting the slip
@@ -151,6 +153,8 @@ pub fn slip_rate_series(
     let mut ev_glonass: Vec<f64> = Vec::new();
     let mut ev_galileo: Vec<f64> = Vec::new();
     let mut ev_beidou: Vec<f64> = Vec::new();
+    let mut ev_navic: Vec<f64> = Vec::new();
+    let mut ev_qzss: Vec<f64> = Vec::new();
 
     let mut prev: Option<&Satellites> = None;
     for point in points {
@@ -167,6 +171,8 @@ pub fn slip_rate_series(
                     Constellation::Glonass => ev_glonass.push(t),
                     Constellation::Galileo => ev_galileo.push(t),
                     Constellation::Beidou => ev_beidou.push(t),
+                    Constellation::Navic => ev_navic.push(t),
+                    Constellation::Qzss => ev_qzss.push(t),
                 }
             }
         }
@@ -181,6 +187,8 @@ pub fn slip_rate_series(
         glonass: windowed_rate(&epochs, &ev_glonass, window_secs, per_min),
         galileo: windowed_rate(&epochs, &ev_galileo, window_secs, per_min),
         beidou: windowed_rate(&epochs, &ev_beidou, window_secs, per_min),
+        navic: windowed_rate(&epochs, &ev_navic, window_secs, per_min),
+        qzss: windowed_rate(&epochs, &ev_qzss, window_secs, per_min),
     }
 }
 
@@ -382,5 +390,28 @@ mod series_tests {
         assert_eq!(s.all, vec![[0.0, 0.0], [1.0, 1.0]]);
         assert_eq!(s.gps, vec![[0.0, 0.0], [1.0, 1.0]]);
         assert!(s.glonass.iter().all(|p| p[1] == 0.0));
+    }
+
+    /// A NavIC slip lands in `s.navic`, a QZSS slip in `s.qzss`, and neither
+    /// leaks into the GPS series - the new constellations get their own buckets.
+    #[test]
+    fn navic_and_qzss_slips_route_into_their_own_series() {
+        let nav = |prn, el, snr| {
+            Satellite::new(Constellation::Navic, prn, Some(el), None, Some(snr), true)
+        };
+        let qzs = |prn, el, snr| {
+            Satellite::new(Constellation::Qzss, prn, Some(el), None, Some(snr), true)
+        };
+        let points = vec![
+            point(0, vec![nav(3, 40.0, 45.0), qzs(5, 35.0, 44.0)]),
+            // Both lost at t=1 while above the mask -> one slip each.
+            point(1, vec![]),
+        ];
+        let s = slip_rate_series(&points, 15.0, 10.0, 1.0);
+        assert_eq!(s.navic, vec![[0.0, 0.0], [1.0, 1.0]]);
+        assert_eq!(s.qzss, vec![[0.0, 0.0], [1.0, 1.0]]);
+        assert!(s.gps.iter().all(|p| p[1] == 0.0));
+        // Two slips total at the same epoch.
+        assert_eq!(s.all, vec![[0.0, 0.0], [1.0, 2.0]]);
     }
 }

@@ -19,6 +19,8 @@ class Constellation(Enum):
     GLONASS = 1
     GALILEO = 2
     BEIDOU = 3
+    NAVIC = 4
+    QZSS = 5
 
 @final
 class MarkerIcon(Enum):

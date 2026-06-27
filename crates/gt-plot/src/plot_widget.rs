@@ -6,10 +6,11 @@ use egui_plot::{Line, LineStyle, MarkerShape, PlotPoint, PlotPoints, Points, VLi
 use gt_analysis::satellite_utilization::UtilAnomaly;
 use gt_egui_mipmap::{LevelSelection, MipMap};
 use gt_filter::GlobalFilter;
+use gt_types::satellites::Constellation;
 use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx};
 use gt_ui_types::{HighlightScope, TrackDataVisibility};
 use rayon::prelude::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use strum::IntoEnumIterator;
 
 /// Pixel radius within which the pointer is considered to be hovering a
@@ -35,9 +36,45 @@ trait MetricKindUi {
     /// Whether this metric belongs to the advanced analysis group, hidden behind
     /// the "Advanced" toggle in the chip row and off by default.
     fn is_advanced(&self) -> bool;
+    /// The constellation this metric is specific to, or `None` for metrics that
+    /// span all constellations (totals, velocity, EPH, …).  Used to gate
+    /// per-constellation chips and lines on whether that constellation appears
+    /// in the loaded data.
+    fn constellation(self) -> Option<Constellation>;
 }
 
 impl MetricKindUi for MetricKind {
+    fn constellation(self) -> Option<Constellation> {
+        match self {
+            Self::GpsSeen | Self::GpsFix | Self::UtilGps | Self::SlipGps => {
+                Some(Constellation::Gps)
+            }
+            Self::GlonassSeen | Self::GlonassFix | Self::UtilGlonass | Self::SlipGlonass => {
+                Some(Constellation::Glonass)
+            }
+            Self::GalileoSeen | Self::GalileoFix | Self::UtilGalileo | Self::SlipGalileo => {
+                Some(Constellation::Galileo)
+            }
+            Self::BeidouSeen | Self::BeidouFix | Self::UtilBeidou | Self::SlipBeidou => {
+                Some(Constellation::Beidou)
+            }
+            Self::NavicSeen | Self::NavicFix | Self::UtilNavic | Self::SlipNavic => {
+                Some(Constellation::Navic)
+            }
+            Self::QzssSeen | Self::QzssFix | Self::UtilQzss | Self::SlipQzss => {
+                Some(Constellation::Qzss)
+            }
+            Self::SatsSeen
+            | Self::SatsFix
+            | Self::Velocity
+            | Self::Eph
+            | Self::HeadingDeg
+            | Self::ClockDeltaMs
+            | Self::UtilAll
+            | Self::SlipAll => None,
+        }
+    }
+
     fn is_advanced(&self) -> bool {
         matches!(
             self,
@@ -46,11 +83,15 @@ impl MetricKindUi for MetricKind {
                 | Self::UtilGlonass
                 | Self::UtilGalileo
                 | Self::UtilBeidou
+                | Self::UtilNavic
+                | Self::UtilQzss
                 | Self::SlipAll
                 | Self::SlipGps
                 | Self::SlipGlonass
                 | Self::SlipGalileo
                 | Self::SlipBeidou
+                | Self::SlipNavic
+                | Self::SlipQzss
         )
     }
 
@@ -66,6 +107,10 @@ impl MetricKindUi for MetricKind {
             Self::GalileoFix => Color32::from_rgb(155, 30, 255), // purple
             Self::BeidouSeen => Color32::from_rgb(0, 230, 230), // cyan
             Self::BeidouFix => Color32::from_rgb(0, 160, 160), // teal
+            Self::NavicSeen => Color32::from_rgb(160, 120, 255), // violet
+            Self::NavicFix => Color32::from_rgb(110, 70, 210), // deep violet
+            Self::QzssSeen => Color32::from_rgb(240, 110, 90), // coral
+            Self::QzssFix => Color32::from_rgb(190, 60, 45),   // brick red
             Self::Velocity => Color32::from_rgb(255, 220, 0),  // bright yellow
             Self::Eph => Color32::from_rgb(220, 20, 220),      // magenta
             Self::HeadingDeg => Color32::from_rgb(255, 100, 50), // red-orange
@@ -77,6 +122,8 @@ impl MetricKindUi for MetricKind {
             Self::UtilGlonass => Color32::from_rgb(255, 200, 130), // pale orange
             Self::UtilGalileo => Color32::from_rgb(255, 150, 190), // pale pink
             Self::UtilBeidou => Color32::from_rgb(150, 245, 245), // pale cyan
+            Self::UtilNavic => Color32::from_rgb(205, 185, 255), // pale violet
+            Self::UtilQzss => Color32::from_rgb(255, 185, 170), // pale coral
             // Slip rate uses a hot "warning" palette so a rising loss-of-lock
             // rate reads as a problem, with a distinct hue per constellation.
             Self::SlipAll => Color32::from_rgb(255, 80, 80), // bright red
@@ -84,6 +131,8 @@ impl MetricKindUi for MetricKind {
             Self::SlipGlonass => Color32::from_rgb(230, 200, 70), // amber-yellow
             Self::SlipGalileo => Color32::from_rgb(235, 110, 200), // magenta
             Self::SlipBeidou => Color32::from_rgb(120, 190, 235), // steel blue
+            Self::SlipNavic => Color32::from_rgb(170, 140, 245), // violet
+            Self::SlipQzss => Color32::from_rgb(245, 140, 110), // salmon
         }
     }
 
@@ -99,6 +148,10 @@ impl MetricKindUi for MetricKind {
             Self::GalileoFix => "Galileo fix",
             Self::BeidouSeen => "BeiDou seen",
             Self::BeidouFix => "BeiDou fix",
+            Self::NavicSeen => "NavIC seen",
+            Self::NavicFix => "NavIC fix",
+            Self::QzssSeen => "QZSS seen",
+            Self::QzssFix => "QZSS fix",
             Self::Velocity => "Velocity (km/h)",
             Self::Eph => "EPH (m)",
             Self::HeadingDeg => "Heading (°)",
@@ -108,11 +161,15 @@ impl MetricKindUi for MetricKind {
             Self::UtilGlonass => "GLONASS util (%)",
             Self::UtilGalileo => "Galileo util (%)",
             Self::UtilBeidou => "BeiDou util (%)",
+            Self::UtilNavic => "NavIC util (%)",
+            Self::UtilQzss => "QZSS util (%)",
             Self::SlipAll => "Slip all (/min)",
             Self::SlipGps => "GPS slip (/min)",
             Self::SlipGlonass => "GLONASS slip (/min)",
             Self::SlipGalileo => "Galileo slip (/min)",
             Self::SlipBeidou => "BeiDou slip (/min)",
+            Self::SlipNavic => "NavIC slip (/min)",
+            Self::SlipQzss => "QZSS slip (/min)",
         }
     }
 
@@ -150,6 +207,14 @@ impl MetricKindUi for MetricKind {
                 "BeiDou utilization rate: BeiDou satellites used in the fix divided by BeiDou \
                  satellites in view above the elevation mask.",
             ),
+            Self::UtilNavic => Some(
+                "NavIC utilization rate: NavIC satellites used in the fix divided by NavIC \
+                 satellites in view above the elevation mask.",
+            ),
+            Self::UtilQzss => Some(
+                "QZSS utilization rate: QZSS satellites used in the fix divided by QZSS \
+                 satellites in view above the elevation mask.",
+            ),
             Self::SlipAll => Some(
                 "Loss-of-lock (slip) rate per minute, all constellations: how often the receiver \
                  loses a satellite it should still be tracking. A slip is counted when an \
@@ -171,6 +236,14 @@ impl MetricKindUi for MetricKind {
             ),
             Self::SlipBeidou => Some(
                 "BeiDou loss-of-lock (slip) rate per minute: BeiDou satellites lost or sharply \
+                 faded above the elevation mask, averaged over the slip window.",
+            ),
+            Self::SlipNavic => Some(
+                "NavIC loss-of-lock (slip) rate per minute: NavIC satellites lost or sharply \
+                 faded above the elevation mask, averaged over the slip window.",
+            ),
+            Self::SlipQzss => Some(
+                "QZSS loss-of-lock (slip) rate per minute: QZSS satellites lost or sharply \
                  faded above the elevation mask, averaged over the slip window.",
             ),
             _ => None,
@@ -364,6 +437,10 @@ pub struct MetricVisibility {
     pub galileo_fix: bool,
     pub beidou_seen: bool,
     pub beidou_fix: bool,
+    pub navic_seen: bool,
+    pub navic_fix: bool,
+    pub qzss_seen: bool,
+    pub qzss_fix: bool,
     pub velocity: bool,
     pub eph: bool,
     pub heading_deg: bool,
@@ -373,11 +450,15 @@ pub struct MetricVisibility {
     pub util_glonass: bool,
     pub util_galileo: bool,
     pub util_beidou: bool,
+    pub util_navic: bool,
+    pub util_qzss: bool,
     pub slip_all: bool,
     pub slip_gps: bool,
     pub slip_glonass: bool,
     pub slip_galileo: bool,
     pub slip_beidou: bool,
+    pub slip_navic: bool,
+    pub slip_qzss: bool,
 }
 
 impl Default for MetricVisibility {
@@ -393,6 +474,10 @@ impl Default for MetricVisibility {
             galileo_fix: true,
             beidou_seen: true,
             beidou_fix: true,
+            navic_seen: true,
+            navic_fix: true,
+            qzss_seen: true,
+            qzss_fix: true,
             velocity: true,
             eph: true,
             heading_deg: true,
@@ -402,11 +487,15 @@ impl Default for MetricVisibility {
             util_glonass: true,
             util_galileo: true,
             util_beidou: true,
+            util_navic: true,
+            util_qzss: true,
             slip_all: true,
             slip_gps: true,
             slip_glonass: true,
             slip_galileo: true,
             slip_beidou: true,
+            slip_navic: true,
+            slip_qzss: true,
         }
     }
 }
@@ -425,6 +514,10 @@ impl MetricVisibility {
             MetricKind::GalileoFix => self.galileo_fix,
             MetricKind::BeidouSeen => self.beidou_seen,
             MetricKind::BeidouFix => self.beidou_fix,
+            MetricKind::NavicSeen => self.navic_seen,
+            MetricKind::NavicFix => self.navic_fix,
+            MetricKind::QzssSeen => self.qzss_seen,
+            MetricKind::QzssFix => self.qzss_fix,
             MetricKind::Velocity => self.velocity,
             MetricKind::Eph => self.eph,
             MetricKind::HeadingDeg => self.heading_deg,
@@ -434,11 +527,15 @@ impl MetricVisibility {
             MetricKind::UtilGlonass => self.util_glonass,
             MetricKind::UtilGalileo => self.util_galileo,
             MetricKind::UtilBeidou => self.util_beidou,
+            MetricKind::UtilNavic => self.util_navic,
+            MetricKind::UtilQzss => self.util_qzss,
             MetricKind::SlipAll => self.slip_all,
             MetricKind::SlipGps => self.slip_gps,
             MetricKind::SlipGlonass => self.slip_glonass,
             MetricKind::SlipGalileo => self.slip_galileo,
             MetricKind::SlipBeidou => self.slip_beidou,
+            MetricKind::SlipNavic => self.slip_navic,
+            MetricKind::SlipQzss => self.slip_qzss,
         }
     }
 
@@ -455,6 +552,10 @@ impl MetricVisibility {
             MetricKind::GalileoFix => &mut self.galileo_fix,
             MetricKind::BeidouSeen => &mut self.beidou_seen,
             MetricKind::BeidouFix => &mut self.beidou_fix,
+            MetricKind::NavicSeen => &mut self.navic_seen,
+            MetricKind::NavicFix => &mut self.navic_fix,
+            MetricKind::QzssSeen => &mut self.qzss_seen,
+            MetricKind::QzssFix => &mut self.qzss_fix,
             MetricKind::Velocity => &mut self.velocity,
             MetricKind::Eph => &mut self.eph,
             MetricKind::HeadingDeg => &mut self.heading_deg,
@@ -464,30 +565,52 @@ impl MetricVisibility {
             MetricKind::UtilGlonass => &mut self.util_glonass,
             MetricKind::UtilGalileo => &mut self.util_galileo,
             MetricKind::UtilBeidou => &mut self.util_beidou,
+            MetricKind::UtilNavic => &mut self.util_navic,
+            MetricKind::UtilQzss => &mut self.util_qzss,
             MetricKind::SlipAll => &mut self.slip_all,
             MetricKind::SlipGps => &mut self.slip_gps,
             MetricKind::SlipGlonass => &mut self.slip_glonass,
             MetricKind::SlipGalileo => &mut self.slip_galileo,
             MetricKind::SlipBeidou => &mut self.slip_beidou,
+            MetricKind::SlipNavic => &mut self.slip_navic,
+            MetricKind::SlipQzss => &mut self.slip_qzss,
         }
     }
 
     /// Returns `true` when every *currently shown* metric is enabled.  Advanced
     /// metrics are ignored while the advanced section is collapsed (`show_advanced
-    /// == false`), so the show/hide-all button neither reflects nor toggles them.
-    fn all_enabled(self, show_advanced: bool) -> bool {
+    /// == false`), and per-constellation metrics whose constellation is absent
+    /// from the loaded data are ignored too (their chips are hidden), so the
+    /// show/hide-all button neither reflects nor toggles them.
+    fn all_enabled(self, present: &HashSet<Constellation>, show_advanced: bool) -> bool {
         MetricKind::iter()
-            .filter(|&k| show_advanced || !k.is_advanced())
+            .filter(|&k| metric_is_shown(k, present, show_advanced))
             .all(|k| self.field(k))
     }
 
-    /// Set every *currently shown* metric to `enabled`, leaving hidden advanced
-    /// metrics untouched.
-    fn set_all(&mut self, enabled: bool, show_advanced: bool) {
-        for k in MetricKind::iter().filter(|&k| show_advanced || !k.is_advanced()) {
+    /// Set every *currently shown* metric to `enabled`, leaving hidden metrics
+    /// (collapsed advanced section, or an absent constellation) untouched.
+    fn set_all(&mut self, enabled: bool, present: &HashSet<Constellation>, show_advanced: bool) {
+        for k in MetricKind::iter().filter(|&k| metric_is_shown(k, present, show_advanced)) {
             *self.field_mut(k) = enabled;
         }
     }
+}
+
+/// Whether a metric's chip and line should be shown, given which constellations
+/// appear in the loaded data and whether the advanced section is revealed.
+///
+/// A per-constellation metric is shown only when that constellation is present;
+/// an advanced metric only when the advanced section is open.  This is the
+/// single gate shared by chip rendering, line drawing, and the show/hide-all
+/// logic so they never disagree about what is on screen.
+fn metric_is_shown(
+    kind: MetricKind,
+    present: &HashSet<Constellation>,
+    show_advanced: bool,
+) -> bool {
+    (show_advanced || !kind.is_advanced())
+        && kind.constellation().is_none_or(|c| present.contains(&c))
 }
 
 /// Cached level selections for every metric of one track's series.
@@ -503,6 +626,10 @@ struct TripLevelCache {
     galileo_fix: LevelSelection,
     beidou_seen: LevelSelection,
     beidou_fix: LevelSelection,
+    navic_seen: LevelSelection,
+    navic_fix: LevelSelection,
+    qzss_seen: LevelSelection,
+    qzss_fix: LevelSelection,
     velocity_kmh: LevelSelection,
     eph_m: LevelSelection,
     heading_deg: LevelSelection,
@@ -512,11 +639,15 @@ struct TripLevelCache {
     util_glonass: LevelSelection,
     util_galileo: LevelSelection,
     util_beidou: LevelSelection,
+    util_navic: LevelSelection,
+    util_qzss: LevelSelection,
     slip_all: LevelSelection,
     slip_gps: LevelSelection,
     slip_glonass: LevelSelection,
     slip_galileo: LevelSelection,
     slip_beidou: LevelSelection,
+    slip_navic: LevelSelection,
+    slip_qzss: LevelSelection,
 }
 
 impl TripLevelCache {
@@ -532,6 +663,10 @@ impl TripLevelCache {
             MetricKind::GalileoFix => self.galileo_fix,
             MetricKind::BeidouSeen => self.beidou_seen,
             MetricKind::BeidouFix => self.beidou_fix,
+            MetricKind::NavicSeen => self.navic_seen,
+            MetricKind::NavicFix => self.navic_fix,
+            MetricKind::QzssSeen => self.qzss_seen,
+            MetricKind::QzssFix => self.qzss_fix,
             MetricKind::Velocity => self.velocity_kmh,
             MetricKind::Eph => self.eph_m,
             MetricKind::HeadingDeg => self.heading_deg,
@@ -541,11 +676,15 @@ impl TripLevelCache {
             MetricKind::UtilGlonass => self.util_glonass,
             MetricKind::UtilGalileo => self.util_galileo,
             MetricKind::UtilBeidou => self.util_beidou,
+            MetricKind::UtilNavic => self.util_navic,
+            MetricKind::UtilQzss => self.util_qzss,
             MetricKind::SlipAll => self.slip_all,
             MetricKind::SlipGps => self.slip_gps,
             MetricKind::SlipGlonass => self.slip_glonass,
             MetricKind::SlipGalileo => self.slip_galileo,
             MetricKind::SlipBeidou => self.slip_beidou,
+            MetricKind::SlipNavic => self.slip_navic,
+            MetricKind::SlipQzss => self.slip_qzss,
         }
     }
 }
@@ -563,6 +702,10 @@ impl crate::series::TrackSeries {
             MetricKind::GalileoFix => &self.galileo_fix,
             MetricKind::BeidouSeen => &self.beidou_seen,
             MetricKind::BeidouFix => &self.beidou_fix,
+            MetricKind::NavicSeen => &self.navic_seen,
+            MetricKind::NavicFix => &self.navic_fix,
+            MetricKind::QzssSeen => &self.qzss_seen,
+            MetricKind::QzssFix => &self.qzss_fix,
             MetricKind::Velocity => &self.velocity_kmh,
             MetricKind::Eph => &self.eph_m,
             MetricKind::HeadingDeg => &self.heading_deg,
@@ -572,11 +715,15 @@ impl crate::series::TrackSeries {
             MetricKind::UtilGlonass => &self.util_glonass,
             MetricKind::UtilGalileo => &self.util_galileo,
             MetricKind::UtilBeidou => &self.util_beidou,
+            MetricKind::UtilNavic => &self.util_navic,
+            MetricKind::UtilQzss => &self.util_qzss,
             MetricKind::SlipAll => &self.slip_all,
             MetricKind::SlipGps => &self.slip_gps,
             MetricKind::SlipGlonass => &self.slip_glonass,
             MetricKind::SlipGalileo => &self.slip_galileo,
             MetricKind::SlipBeidou => &self.slip_beidou,
+            MetricKind::SlipNavic => &self.slip_navic,
+            MetricKind::SlipQzss => &self.slip_qzss,
         }
     }
 }
@@ -781,11 +928,21 @@ pub fn show_track_plot(
         file_indices.into_iter().collect()
     };
 
+    // Constellations present anywhere in the loaded data.  Per-constellation
+    // chips and lines are gated on this so a constellation with no data (e.g.
+    // NavIC or QZSS in a GPS-only recording) never clutters the UI.
+    let present: HashSet<Constellation> = state
+        .series_cache
+        .iter()
+        .flat_map(|s| s.present.iter().copied())
+        .collect();
+
     // Draw the per-metric filter row before the plot so it consumes vertical
     // space first.  `ui.available_height()` below then gives the remainder.
     let hovered_chip = metric_filter_row(
         ui,
         &mut state.metric_vis,
+        &present,
         &mut state.show_grid,
         &mut state.sync_to_map,
         &mut state.show_advanced_metrics,
@@ -956,6 +1113,7 @@ pub fn show_track_plot(
                 multi_track,
                 cache,
                 metric_vis,
+                &present,
                 hovered_chip,
                 effective_hover_scope,
                 show_advanced,
@@ -1199,11 +1357,25 @@ pub fn legend_is_docked(offset: egui::Vec2) -> bool {
 fn chip_group(
     ui: &mut egui::Ui,
     vis: &mut MetricVisibility,
+    present: &HashSet<Constellation>,
     kinds: &[MetricKind],
+    show_advanced: bool,
     show_only: &mut Option<MetricKind>,
     hovered: &mut Option<MetricKind>,
 ) {
-    for &kind in kinds {
+    // Skip the whole group - including its leading divider - when none of its
+    // chips are shown (e.g. a per-constellation group with no matching data),
+    // so the chip row never carries a dangling separator.
+    let shown: Vec<MetricKind> = kinds
+        .iter()
+        .copied()
+        .filter(|&k| metric_is_shown(k, present, show_advanced))
+        .collect();
+    if shown.is_empty() {
+        return;
+    }
+    ui.separator();
+    for kind in shown {
         let (s, h) = metric_chip(
             ui,
             vis.field_mut(kind),
@@ -1232,13 +1404,15 @@ fn chip_group(
 fn metric_filter_row(
     ui: &mut egui::Ui,
     vis: &mut MetricVisibility,
+    present: &HashSet<Constellation>,
     show_grid: &mut bool,
     sync_to_map: &mut bool,
     show_advanced: &mut bool,
 ) -> Option<MetricKind> {
     // The show/hide-all button and its eye icon track only the currently shown
-    // chips, so they ignore advanced metrics while that section is collapsed.
-    let all_on = vis.all_enabled(*show_advanced);
+    // chips, so they ignore advanced metrics while that section is collapsed and
+    // per-constellation metrics whose constellation is absent from the data.
+    let all_on = vis.all_enabled(present, *show_advanced);
     let mut show_only = None;
     let mut hovered_chip = None;
 
@@ -1280,7 +1454,7 @@ fn metric_filter_row(
             })
             .clicked()
         {
-            vis.set_all(!all_on, *show_advanced);
+            vis.set_all(!all_on, present, *show_advanced);
         }
 
         // Advanced toggle: reveals the advanced analysis chips (satellite
@@ -1312,7 +1486,8 @@ fn metric_filter_row(
                 MetricKind::HeadingDeg,
                 MetricKind::ClockDeltaMs,
             ],
-            // Per-constellation satellite counts.
+            // Per-constellation satellite counts.  Chips for a constellation
+            // absent from the loaded data are skipped by `chip_group`.
             &[
                 MetricKind::GpsSeen,
                 MetricKind::GpsFix,
@@ -1322,11 +1497,22 @@ fn metric_filter_row(
                 MetricKind::GalileoFix,
                 MetricKind::BeidouSeen,
                 MetricKind::BeidouFix,
+                MetricKind::NavicSeen,
+                MetricKind::NavicFix,
+                MetricKind::QzssSeen,
+                MetricKind::QzssFix,
             ],
         ];
         for group in basic_groups {
-            ui.separator();
-            chip_group(ui, vis, group, &mut show_only, &mut hovered_chip);
+            chip_group(
+                ui,
+                vis,
+                present,
+                group,
+                *show_advanced,
+                &mut show_only,
+                &mut hovered_chip,
+            );
         }
 
         // Advanced groups, shown only when revealed.  Every kind here must report
@@ -1341,6 +1527,8 @@ fn metric_filter_row(
                     MetricKind::UtilGlonass,
                     MetricKind::UtilGalileo,
                     MetricKind::UtilBeidou,
+                    MetricKind::UtilNavic,
+                    MetricKind::UtilQzss,
                 ],
                 // Loss-of-lock (slip) rate.
                 &[
@@ -1349,11 +1537,20 @@ fn metric_filter_row(
                     MetricKind::SlipGlonass,
                     MetricKind::SlipGalileo,
                     MetricKind::SlipBeidou,
+                    MetricKind::SlipNavic,
+                    MetricKind::SlipQzss,
                 ],
             ];
             for group in advanced_groups {
-                ui.separator();
-                chip_group(ui, vis, group, &mut show_only, &mut hovered_chip);
+                chip_group(
+                    ui,
+                    vis,
+                    present,
+                    group,
+                    *show_advanced,
+                    &mut show_only,
+                    &mut hovered_chip,
+                );
             }
         }
     });
@@ -1361,7 +1558,7 @@ fn metric_filter_row(
     // Apply "Show only this" - disable the shown metrics, then re-enable the
     // chosen one.
     if let Some(kind) = show_only {
-        vis.set_all(false, *show_advanced);
+        vis.set_all(false, present, *show_advanced);
         *vis.field_mut(kind) = true;
     }
 
@@ -1436,6 +1633,10 @@ fn compute_level_cache(
         galileo_fix: sel(&series.galileo_fix),
         beidou_seen: sel(&series.beidou_seen),
         beidou_fix: sel(&series.beidou_fix),
+        navic_seen: sel(&series.navic_seen),
+        navic_fix: sel(&series.navic_fix),
+        qzss_seen: sel(&series.qzss_seen),
+        qzss_fix: sel(&series.qzss_fix),
         velocity_kmh: sel(&series.velocity_kmh),
         eph_m: sel(&series.eph_m),
         heading_deg: sel(&series.heading_deg),
@@ -1445,11 +1646,15 @@ fn compute_level_cache(
         util_glonass: sel(&series.util_glonass),
         util_galileo: sel(&series.util_galileo),
         util_beidou: sel(&series.util_beidou),
+        util_navic: sel(&series.util_navic),
+        util_qzss: sel(&series.util_qzss),
         slip_all: sel(&series.slip_all),
         slip_gps: sel(&series.slip_gps),
         slip_glonass: sel(&series.slip_glonass),
         slip_galileo: sel(&series.slip_galileo),
         slip_beidou: sel(&series.slip_beidou),
+        slip_navic: sel(&series.slip_navic),
+        slip_qzss: sel(&series.slip_qzss),
     }
 }
 
@@ -1501,6 +1706,7 @@ fn add_series_lines<'a>(
     multi_track: bool,
     cache: &TripLevelCache,
     metric_vis: &MetricVisibility,
+    present: &HashSet<Constellation>,
     hovered_chip: Option<MetricKind>,
     hover_scope: Option<HighlightScope>,
     show_advanced: bool,
@@ -1514,9 +1720,10 @@ fn add_series_lines<'a>(
     let has_track_focus = hover_scope.is_some();
 
     for kind in MetricKind::iter() {
-        // Advanced metrics are drawn only when their section is revealed, so a
-        // collapsed advanced chip never leaves a stray line on the plot.
-        if kind.is_advanced() && !show_advanced {
+        // Skip metrics with no chip on screen - collapsed advanced section, or a
+        // per-constellation metric whose constellation is absent from the data -
+        // so a hidden chip never leaves a stray line on the plot.
+        if !metric_is_shown(kind, present, show_advanced) {
             continue;
         }
         if !metric_vis.field(kind) {
@@ -1730,6 +1937,46 @@ pub fn find_closest_tpv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every per-constellation metric maps to a constellation and every
+    /// all-constellation metric maps to `None`, with the two groups together
+    /// covering all `MetricKind::COUNT` variants - so a new metric must declare
+    /// which bucket it falls in rather than silently defaulting.
+    #[test]
+    fn metric_constellation_mapping_is_total() {
+        use strum::EnumCount;
+        let with = MetricKind::iter()
+            .filter(|k| k.constellation().is_some())
+            .count();
+        let without = MetricKind::iter()
+            .filter(|k| k.constellation().is_none())
+            .count();
+        assert_eq!(with + without, MetricKind::COUNT);
+        // 6 constellations x {seen, fix, util, slip}.
+        assert_eq!(with, 24);
+    }
+
+    /// A per-constellation chip/line shows only when its constellation appears
+    /// in the data; all-constellation metrics always show (subject to the
+    /// advanced gate).  This is the rule that hides empty NavIC/QZSS chips.
+    #[test]
+    fn metric_is_shown_gates_on_presence_and_advanced() {
+        let none: HashSet<Constellation> = HashSet::new();
+        let gps_only: HashSet<Constellation> = std::iter::once(Constellation::Gps).collect();
+
+        // Totals always show regardless of which constellations are present.
+        assert!(metric_is_shown(MetricKind::SatsSeen, &none, false));
+        // GPS chip hidden with no data, shown once GPS is present.
+        assert!(!metric_is_shown(MetricKind::GpsSeen, &none, false));
+        assert!(metric_is_shown(MetricKind::GpsSeen, &gps_only, false));
+        // NavIC/QZSS stay hidden in a GPS-only recording.
+        assert!(!metric_is_shown(MetricKind::NavicSeen, &gps_only, false));
+        assert!(!metric_is_shown(MetricKind::QzssFix, &gps_only, false));
+        // Advanced metrics need the advanced section open *and* presence.
+        assert!(!metric_is_shown(MetricKind::UtilGps, &gps_only, false));
+        assert!(metric_is_shown(MetricKind::UtilGps, &gps_only, true));
+        assert!(!metric_is_shown(MetricKind::UtilNavic, &gps_only, true));
+    }
 
     #[test]
     fn track_target_scales_with_visible_pixels() {
