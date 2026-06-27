@@ -61,6 +61,10 @@ pub enum PyConstellation {
     Galileo,
     #[pyo3(name = "BEIDOU")]
     Beidou,
+    #[pyo3(name = "NAVIC")]
+    Navic,
+    #[pyo3(name = "QZSS")]
+    Qzss,
 }
 
 impl From<Constellation> for PyConstellation {
@@ -70,6 +74,8 @@ impl From<Constellation> for PyConstellation {
             Constellation::Glonass => Self::Glonass,
             Constellation::Galileo => Self::Galileo,
             Constellation::Beidou => Self::Beidou,
+            Constellation::Navic => Self::Navic,
+            Constellation::Qzss => Self::Qzss,
         }
     }
 }
@@ -81,6 +87,8 @@ impl From<PyConstellation> for Constellation {
             PyConstellation::Glonass => Self::Glonass,
             PyConstellation::Galileo => Self::Galileo,
             PyConstellation::Beidou => Self::Beidou,
+            PyConstellation::Navic => Self::Navic,
+            PyConstellation::Qzss => Self::Qzss,
         }
     }
 }
@@ -102,6 +110,8 @@ mod py_constellation_tests {
             (PyConstellation::Glonass, "GLONASS"),
             (PyConstellation::Galileo, "GALILEO"),
             (PyConstellation::Beidou, "BEIDOU"),
+            (PyConstellation::Navic, "NAVIC"),
+            (PyConstellation::Qzss, "QZSS"),
         ] {
             assert_eq!(format!("{variant:?}").to_uppercase(), pyo3_name);
         }

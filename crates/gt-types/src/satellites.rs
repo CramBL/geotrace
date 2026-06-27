@@ -72,7 +72,12 @@ impl Snr {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Variant declaration order also defines the `Ord` sort order (GPS first,
+/// then GLONASS, Galileo, BeiDou, NavIC, QZSS), used to group satellites by
+/// constellation in tables.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, strum::EnumCount, strum::EnumIter,
+)]
 pub enum Constellation {
     /// United States' Global Positioning System
     Gps,
@@ -82,6 +87,10 @@ pub enum Constellation {
     Galileo,
     /// China's BeiDou Navigation Satellite System
     Beidou,
+    /// India's Navigation with Indian Constellation (NavIC / IRNSS)
+    Navic,
+    /// Japan's Quasi-Zenith Satellite System
+    Qzss,
 }
 
 impl Constellation {
@@ -98,6 +107,8 @@ impl Constellation {
             Constellation::Glonass => "GLONASS",
             Constellation::Galileo => "Galileo",
             Constellation::Beidou => "BeiDou",
+            Constellation::Navic => "NavIC",
+            Constellation::Qzss => "QZSS",
         }
     }
 }
@@ -340,9 +351,19 @@ mod constellation_tests {
     /// `geotrace_sdk::Constellation::display_name`'s identical assertions.
     #[test]
     fn display_name_is_canonical_spelling() {
-        assert_eq!(Constellation::Gps.display_name(), "GPS");
-        assert_eq!(Constellation::Glonass.display_name(), "GLONASS");
-        assert_eq!(Constellation::Galileo.display_name(), "Galileo");
-        assert_eq!(Constellation::Beidou.display_name(), "BeiDou");
+        use strum::EnumCount;
+        let expected = [
+            (Constellation::Gps, "GPS"),
+            (Constellation::Glonass, "GLONASS"),
+            (Constellation::Galileo, "Galileo"),
+            (Constellation::Beidou, "BeiDou"),
+            (Constellation::Navic, "NavIC"),
+            (Constellation::Qzss, "QZSS"),
+        ];
+        // Length-vs-COUNT guard: a new variant without a name entry fails here.
+        assert_eq!(expected.len(), Constellation::COUNT);
+        for (c, name) in expected {
+            assert_eq!(c.display_name(), name);
+        }
     }
 }

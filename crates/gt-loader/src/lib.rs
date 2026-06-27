@@ -342,6 +342,8 @@ fn convert_constellation(c: SdkConstellation) -> Constellation {
         SdkConstellation::Glonass => Constellation::Glonass,
         SdkConstellation::Galileo => Constellation::Galileo,
         SdkConstellation::Beidou => Constellation::Beidou,
+        SdkConstellation::Navic => Constellation::Navic,
+        SdkConstellation::Qzss => Constellation::Qzss,
     }
 }
 

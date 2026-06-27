@@ -30,6 +30,10 @@ pub enum MetricKind {
     GalileoFix,
     BeidouSeen,
     BeidouFix,
+    NavicSeen,
+    NavicFix,
+    QzssSeen,
+    QzssFix,
     Velocity,
     Eph,
     HeadingDeg,
@@ -41,6 +45,8 @@ pub enum MetricKind {
     UtilGlonass,
     UtilGalileo,
     UtilBeidou,
+    UtilNavic,
+    UtilQzss,
     /// Loss-of-lock (cycle slip) rate per minute across all constellations, and
     /// broken down per constellation.  A slip is a satellite lost while still
     /// trackable above the mask, or a steep SNR drop between epochs.
@@ -49,6 +55,8 @@ pub enum MetricKind {
     SlipGlonass,
     SlipGalileo,
     SlipBeidou,
+    SlipNavic,
+    SlipQzss,
 }
 
 #[cfg(test)]
@@ -79,6 +87,10 @@ mod tests {
             (MetricKind::GalileoFix, "galileo_fix"),
             (MetricKind::BeidouSeen, "beidou_seen"),
             (MetricKind::BeidouFix, "beidou_fix"),
+            (MetricKind::NavicSeen, "navic_seen"),
+            (MetricKind::NavicFix, "navic_fix"),
+            (MetricKind::QzssSeen, "qzss_seen"),
+            (MetricKind::QzssFix, "qzss_fix"),
             (MetricKind::Velocity, "velocity"),
             (MetricKind::Eph, "eph"),
             (MetricKind::HeadingDeg, "heading_deg"),
@@ -88,11 +100,15 @@ mod tests {
             (MetricKind::UtilGlonass, "util_glonass"),
             (MetricKind::UtilGalileo, "util_galileo"),
             (MetricKind::UtilBeidou, "util_beidou"),
+            (MetricKind::UtilNavic, "util_navic"),
+            (MetricKind::UtilQzss, "util_qzss"),
             (MetricKind::SlipAll, "slip_all"),
             (MetricKind::SlipGps, "slip_gps"),
             (MetricKind::SlipGlonass, "slip_glonass"),
             (MetricKind::SlipGalileo, "slip_galileo"),
             (MetricKind::SlipBeidou, "slip_beidou"),
+            (MetricKind::SlipNavic, "slip_navic"),
+            (MetricKind::SlipQzss, "slip_qzss"),
         ];
         assert_eq!(expected.len(), MetricKind::COUNT);
         for (kind, wire) in expected {

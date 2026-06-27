@@ -76,6 +76,8 @@ pub fn constellation_color(constellation: gt_types::satellites::Constellation) -
         Constellation::Glonass => Color32::from_rgb(255, 140, 30), // golden
         Constellation::Galileo => Color32::from_rgb(255, 50, 110), // hot pink
         Constellation::Beidou => Color32::from_rgb(0, 230, 230), // cyan
+        Constellation::Navic => Color32::from_rgb(160, 120, 255), // violet
+        Constellation::Qzss => Color32::from_rgb(240, 110, 90), // coral
     }
 }
 

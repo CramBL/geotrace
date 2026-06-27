@@ -230,10 +230,12 @@ fn slip_cause_label(cause: gt_types::satellites::SlipCause) -> &'static str {
 /// Rows are ordered by constellation then PRN so the table is stable, and the
 /// satellite cell is tinted with the constellation's canonical color.
 pub(crate) fn show_slip_table(ui: &mut Ui, event: &gt_types::satellites::SlipEvent) {
-    use gt_types::satellites::{Constellation, Snr};
+    use gt_types::satellites::Snr;
 
     let mut slips = event.slips.clone();
-    slips.sort_by_key(|s| (constellation_rank(s.constellation), s.prn.value()));
+    // `Constellation` derives `Ord` in variant-declaration order (GPS, GLONASS,
+    // Galileo, BeiDou, NavIC, QZSS), which is the grouping we want here.
+    slips.sort_by_key(|s| (s.constellation, s.prn.value()));
 
     egui::Grid::new("slip_detail_grid")
         .num_columns(5)
@@ -265,15 +267,6 @@ pub(crate) fn show_slip_table(ui: &mut Ui, event: &gt_types::satellites::SlipEve
                 ui.end_row();
             }
         });
-
-    fn constellation_rank(c: Constellation) -> u8 {
-        match c {
-            Constellation::Gps => 0,
-            Constellation::Glonass => 1,
-            Constellation::Galileo => 2,
-            Constellation::Beidou => 3,
-        }
-    }
 }
 
 /// Format one before/after table cell.

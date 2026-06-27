@@ -402,7 +402,7 @@ class Velocity {
     double mps_ = 0.0;
 };
 
-enum class Constellation : std::uint8_t { Gps, Glonass, Galileo, Beidou };
+enum class Constellation : std::uint8_t { Gps, Glonass, Galileo, Beidou, Navic, Qzss };
 
 enum class MarkerIcon : std::uint8_t {
     Pin,
@@ -434,6 +434,10 @@ inline GtdConstellation to_c(Constellation c) noexcept {
         return GTD_CONSTELLATION_GALILEO;
     case Constellation::Beidou:
         return GTD_CONSTELLATION_BEIDOU;
+    case Constellation::Navic:
+        return GTD_CONSTELLATION_NAVIC;
+    case Constellation::Qzss:
+        return GTD_CONSTELLATION_QZSS;
     }
     return GTD_CONSTELLATION_GPS;
 }
@@ -448,6 +452,10 @@ inline Constellation from_c(GtdConstellation c) noexcept {
         return Constellation::Galileo;
     case GTD_CONSTELLATION_BEIDOU:
         return Constellation::Beidou;
+    case GTD_CONSTELLATION_NAVIC:
+        return Constellation::Navic;
+    case GTD_CONSTELLATION_QZSS:
+        return Constellation::Qzss;
     }
     return Constellation::Gps;
 }

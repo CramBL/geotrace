@@ -3,6 +3,7 @@ use gt_analysis::satellite_utilization::UtilAnomaly;
 use gt_egui_mipmap::MipMap;
 use gt_types::LoadedFile;
 use gt_types::satellites::Constellation;
+use std::collections::HashSet;
 use uom::si::angle::degree;
 
 /// Mipmap series for a single track.
@@ -32,6 +33,15 @@ pub(crate) struct TrackSeries {
     pub galileo_fix: MipMap,
     pub beidou_seen: MipMap,
     pub beidou_fix: MipMap,
+    pub navic_seen: MipMap,
+    pub navic_fix: MipMap,
+    pub qzss_seen: MipMap,
+    pub qzss_fix: MipMap,
+    /// Constellations that appear at least once in this track's satellite
+    /// reports.  The plot uses the union across tracks to decide which
+    /// per-constellation chips and lines to show, so a constellation with no
+    /// data never clutters the UI.
+    pub present: HashSet<Constellation>,
     pub velocity_kmh: MipMap,
     pub eph_m: MipMap,
     pub heading_deg: MipMap,
@@ -47,6 +57,8 @@ pub(crate) struct TrackSeries {
     pub util_glonass: MipMap,
     pub util_galileo: MipMap,
     pub util_beidou: MipMap,
+    pub util_navic: MipMap,
+    pub util_qzss: MipMap,
     /// Epochs where the receiver used a satellite below the elevation mask, so
     /// that satellite is excluded from the utilization rate.  Surfaced as plot
     /// markers; also mask-dependent.
@@ -60,6 +72,8 @@ pub(crate) struct TrackSeries {
     pub slip_glonass: MipMap,
     pub slip_galileo: MipMap,
     pub slip_beidou: MipMap,
+    pub slip_navic: MipMap,
+    pub slip_qzss: MipMap,
 }
 
 impl TrackSeries {
@@ -85,6 +99,8 @@ impl TrackSeries {
         self.util_glonass = MipMap::build(u.glonass);
         self.util_galileo = MipMap::build(u.galileo);
         self.util_beidou = MipMap::build(u.beidou);
+        self.util_navic = MipMap::build(u.navic);
+        self.util_qzss = MipMap::build(u.qzss);
         self.util_anomalies = u.anomalies;
 
         let s = gt_analysis::loss_of_lock::slip_rate_series(
@@ -98,6 +114,8 @@ impl TrackSeries {
         self.slip_glonass = MipMap::build(s.glonass);
         self.slip_galileo = MipMap::build(s.galileo);
         self.slip_beidou = MipMap::build(s.beidou);
+        self.slip_navic = MipMap::build(s.navic);
+        self.slip_qzss = MipMap::build(s.qzss);
     }
 }
 
@@ -155,6 +173,11 @@ fn build_track_series(
     let mut galileo_fix_pts: Vec<[f64; 2]> = Vec::new();
     let mut beidou_seen_pts: Vec<[f64; 2]> = Vec::new();
     let mut beidou_fix_pts: Vec<[f64; 2]> = Vec::new();
+    let mut navic_seen_pts: Vec<[f64; 2]> = Vec::new();
+    let mut navic_fix_pts: Vec<[f64; 2]> = Vec::new();
+    let mut qzss_seen_pts: Vec<[f64; 2]> = Vec::new();
+    let mut qzss_fix_pts: Vec<[f64; 2]> = Vec::new();
+    let mut present: HashSet<Constellation> = HashSet::new();
     let mut velocity_kmh_pts: Vec<[f64; 2]> = Vec::with_capacity(track.points.len());
     let mut eph_m_pts: Vec<[f64; 2]> = Vec::new();
     let mut heading_deg_pts: Vec<[f64; 2]> = Vec::new();
@@ -177,6 +200,8 @@ fn build_track_series(
             let (gln_seen, gln_fix) = seen_and_fix(Constellation::Glonass);
             let (gal_seen, gal_fix) = seen_and_fix(Constellation::Galileo);
             let (bei_seen, bei_fix) = seen_and_fix(Constellation::Beidou);
+            let (nav_seen, nav_fix) = seen_and_fix(Constellation::Navic);
+            let (qzs_seen, qzs_fix) = seen_and_fix(Constellation::Qzss);
 
             gps_seen_pts.push([t, gps_seen as f64]);
             gps_fix_pts.push([t, gps_fix as f64]);
@@ -186,6 +211,23 @@ fn build_track_series(
             galileo_fix_pts.push([t, gal_fix as f64]);
             beidou_seen_pts.push([t, bei_seen as f64]);
             beidou_fix_pts.push([t, bei_fix as f64]);
+            navic_seen_pts.push([t, nav_seen as f64]);
+            navic_fix_pts.push([t, nav_fix as f64]);
+            qzss_seen_pts.push([t, qzs_seen as f64]);
+            qzss_fix_pts.push([t, qzs_fix as f64]);
+
+            for (count, c) in [
+                (gps_seen, Constellation::Gps),
+                (gln_seen, Constellation::Glonass),
+                (gal_seen, Constellation::Galileo),
+                (bei_seen, Constellation::Beidou),
+                (nav_seen, Constellation::Navic),
+                (qzs_seen, Constellation::Qzss),
+            ] {
+                if count > 0 {
+                    present.insert(c);
+                }
+            }
         }
 
         if let Some(v) = point.tpv.velocity_kmh() {
@@ -243,6 +285,11 @@ fn build_track_series(
         galileo_fix: MipMap::build(galileo_fix_pts),
         beidou_seen: MipMap::build(beidou_seen_pts),
         beidou_fix: MipMap::build(beidou_fix_pts),
+        navic_seen: MipMap::build(navic_seen_pts),
+        navic_fix: MipMap::build(navic_fix_pts),
+        qzss_seen: MipMap::build(qzss_seen_pts),
+        qzss_fix: MipMap::build(qzss_fix_pts),
+        present,
         velocity_kmh: MipMap::build(velocity_kmh_pts),
         eph_m: MipMap::build(eph_m_pts),
         heading_deg: MipMap::build(heading_deg_pts),
@@ -252,11 +299,15 @@ fn build_track_series(
         util_glonass: MipMap::build(util.glonass),
         util_galileo: MipMap::build(util.galileo),
         util_beidou: MipMap::build(util.beidou),
+        util_navic: MipMap::build(util.navic),
+        util_qzss: MipMap::build(util.qzss),
         util_anomalies: util.anomalies,
         slip_all: MipMap::build(slip.all),
         slip_gps: MipMap::build(slip.gps),
         slip_glonass: MipMap::build(slip.glonass),
         slip_galileo: MipMap::build(slip.galileo),
         slip_beidou: MipMap::build(slip.beidou),
+        slip_navic: MipMap::build(slip.navic),
+        slip_qzss: MipMap::build(slip.qzss),
     }
 }

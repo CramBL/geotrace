@@ -90,6 +90,8 @@ pub struct UtilPoints {
     pub glonass: Vec<[f64; 2]>,
     pub galileo: Vec<[f64; 2]>,
     pub beidou: Vec<[f64; 2]>,
+    pub navic: Vec<[f64; 2]>,
+    pub qzss: Vec<[f64; 2]>,
     pub anomalies: Vec<UtilAnomaly>,
 }
 
@@ -135,6 +137,12 @@ pub fn compute_util(points: &[NavPoint], mask_deg: f32) -> UtilPoints {
         }
         if let Some(r) = rate_for(Constellation::Beidou) {
             out.beidou.push([t, r]);
+        }
+        if let Some(r) = rate_for(Constellation::Navic) {
+            out.navic.push([t, r]);
+        }
+        if let Some(r) = rate_for(Constellation::Qzss) {
+            out.qzss.push([t, r]);
         }
 
         let mut masked: Vec<MaskedSat> = masked_out_in_fix(sats, mask_deg)

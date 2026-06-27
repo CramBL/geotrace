@@ -88,13 +88,17 @@ pub struct Satellite {
 /// "BeiDou" vs "Beidou" vs "BEIDOU" spelling question, and the compiler forces
 /// it to be updated whenever a variant is added, unlike a derived
 /// `#[strum(message = ...)]` (which would silently fall back to `None` instead).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString, strum::EnumIter)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, strum::EnumString, strum::EnumIter, strum::EnumCount,
+)]
 #[strum(serialize_all = "lowercase")]
 pub enum Constellation {
     Gps,
     Glonass,
     Galileo,
     Beidou,
+    Navic,
+    Qzss,
 }
 
 impl Constellation {
@@ -105,6 +109,8 @@ impl Constellation {
             Constellation::Glonass => 1,
             Constellation::Galileo => 2,
             Constellation::Beidou => 3,
+            Constellation::Navic => 4,
+            Constellation::Qzss => 5,
         }
     }
 
@@ -114,6 +120,8 @@ impl Constellation {
             1 => Ok(Constellation::Glonass),
             2 => Ok(Constellation::Galileo),
             3 => Ok(Constellation::Beidou),
+            4 => Ok(Constellation::Navic),
+            5 => Ok(Constellation::Qzss),
             _ => Err(Error::UnknownConstellation {
                 code: i16::from(code),
                 dataset,
@@ -132,6 +140,8 @@ impl Constellation {
             Constellation::Glonass => "GLONASS",
             Constellation::Galileo => "Galileo",
             Constellation::Beidou => "BeiDou",
+            Constellation::Navic => "NavIC",
+            Constellation::Qzss => "QZSS",
         }
     }
 
@@ -334,6 +344,8 @@ mod constellation_tests {
         assert_eq!(Constellation::Glonass.display_name(), "GLONASS");
         assert_eq!(Constellation::Galileo.display_name(), "Galileo");
         assert_eq!(Constellation::Beidou.display_name(), "BeiDou");
+        assert_eq!(Constellation::Navic.display_name(), "NavIC");
+        assert_eq!(Constellation::Qzss.display_name(), "QZSS");
     }
 
     /// The lowercase wire form is part of the on-disk `.gtd` format
@@ -347,6 +359,8 @@ mod constellation_tests {
             ("glonass", Constellation::Glonass),
             ("galileo", Constellation::Galileo),
             ("beidou", Constellation::Beidou),
+            ("navic", Constellation::Navic),
+            ("qzss", Constellation::Qzss),
         ] {
             assert_eq!(Constellation::try_from_lower_case(lower).unwrap(), expected);
         }
@@ -358,6 +372,32 @@ mod constellation_tests {
         assert!(
             matches!(err, Error::UnknownConstellationName { name } if name == "not_a_constellation")
         );
+    }
+
+    /// `to_u8`/`from_u8` are the on-disk binary codes in the `.gtd`
+    /// `tracked_sats/constellation` dataset - the highest-consequence mapping
+    /// for this type. Pin the exact codes (a wrong number silently corrupts
+    /// files) and assert the table is exhaustive against `COUNT`, then check
+    /// every variant roundtrips so no new variant can lack a `from_u8` arm.
+    #[test]
+    fn u8_wire_codes_are_stable_and_round_trip() {
+        use strum::{EnumCount, IntoEnumIterator};
+        let expected = [
+            (Constellation::Gps, 0u8),
+            (Constellation::Glonass, 1),
+            (Constellation::Galileo, 2),
+            (Constellation::Beidou, 3),
+            (Constellation::Navic, 4),
+            (Constellation::Qzss, 5),
+        ];
+        assert_eq!(expected.len(), Constellation::COUNT);
+        for (c, code) in expected {
+            assert_eq!(c.to_u8(), code, "{c:?} wire code");
+            assert_eq!(Constellation::from_u8(code, "test").unwrap(), c);
+        }
+        for c in Constellation::iter() {
+            assert_eq!(Constellation::from_u8(c.to_u8(), "test").unwrap(), c);
+        }
     }
 }
 

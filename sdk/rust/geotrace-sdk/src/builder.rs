@@ -1099,6 +1099,10 @@ struct SatelliteIssues {
     gal_out_of_range: u32,
     /// BeiDou satellites with PRN > 63 (valid range is C01–C63).
     bds_out_of_range: u32,
+    /// NavIC satellites with PRN > 14 (valid range is I01–I14).
+    navic_out_of_range: u32,
+    /// QZSS satellites with PRN > 10 (valid range is J01–J10).
+    qzss_out_of_range: u32,
     /// Satellites with elevation < 0° - below the horizon, outside the valid NMEA range [0°, 90°].
     elevation_negative: u32,
     /// Satellites with elevation > 90° - above the zenith, outside the valid NMEA range [0°, 90°].
@@ -1117,112 +1121,107 @@ struct SatelliteIssues {
 
 impl SatelliteIssues {
     fn to_records(&self) -> Vec<SatelliteWarning> {
-        let mut v: Vec<SatelliteWarning> = Vec::new();
-        if self.prn_zero > 0 {
-            v.push(SatelliteWarning {
-                count: self.prn_zero,
-                issue: "satellite(s) with PRN 0",
-                description: "PRN 0 is reserved and undefined in NMEA",
-            });
-        }
-        if self.gps_sbas_range > 0 {
-            v.push(SatelliteWarning {
-                count: self.gps_sbas_range,
-                issue: "GPS satellite(s) with PRN 33-64",
-                description: "this range is reserved for SBAS (WAAS, EGNOS, MSAS, GAGAN) per \
+        // One row per issue category: its count and the human-readable text.
+        // Driving the records off a table keeps each kind a single line and
+        // means a new issue (e.g. another constellation's PRN range) is one
+        // more entry rather than another `if` branch.
+        let table = [
+            (
+                self.prn_zero,
+                "satellite(s) with PRN 0",
+                "PRN 0 is reserved and undefined in NMEA",
+            ),
+            (
+                self.gps_sbas_range,
+                "GPS satellite(s) with PRN 33-64",
+                "this range is reserved for SBAS (WAAS, EGNOS, MSAS, GAGAN) per \
                     NMEA; if these are SBAS satellites, tag them with the GPS constellation \
                     (SBAS is treated as a GPS PRN range in the data model)",
-            });
-        }
-        if self.gps_out_of_range > 0 {
-            v.push(SatelliteWarning {
-                count: self.gps_out_of_range,
-                issue: "GPS satellite(s) with PRN > 64",
-                description: "outside the valid NMEA GPS/SBAS range (1-64); check the source data",
-            });
-        }
-        if self.glo_offset_range > 0 {
-            v.push(SatelliteWarning {
-                count: self.glo_offset_range,
-                issue: "GLONASS satellite(s) with PRN 65-96",
-                description: "looks like an un-stripped NMEA 4.11 GNGSV system-PRN (slot + 64); \
+            ),
+            (
+                self.gps_out_of_range,
+                "GPS satellite(s) with PRN > 64",
+                "outside the valid NMEA GPS/SBAS range (1-64); check the source data",
+            ),
+            (
+                self.glo_offset_range,
+                "GLONASS satellite(s) with PRN 65-96",
+                "looks like an un-stripped NMEA 4.11 GNGSV system-PRN (slot + 64); \
                     expected format is slot numbers 1-32 - subtract 64 before reporting",
-            });
-        }
-        if self.glo_out_of_range > 0 {
-            v.push(SatelliteWarning {
-                count: self.glo_out_of_range,
-                issue: "GLONASS satellite(s) with PRN outside 1-32",
-                description: "not in the valid range (1-32) or GNGSV offset range (65-96); \
+            ),
+            (
+                self.glo_out_of_range,
+                "GLONASS satellite(s) with PRN outside 1-32",
+                "not in the valid range (1-32) or GNGSV offset range (65-96); \
                     check the source data",
-            });
-        }
-        if self.gal_out_of_range > 0 {
-            v.push(SatelliteWarning {
-                count: self.gal_out_of_range,
-                issue: "Galileo satellite(s) with PRN > 36",
-                description: "outside the valid range (E01-E36)",
-            });
-        }
-        if self.bds_out_of_range > 0 {
-            v.push(SatelliteWarning {
-                count: self.bds_out_of_range,
-                issue: "BeiDou satellite(s) with PRN > 63",
-                description: "outside the valid range (C01-C63)",
-            });
-        }
-        if self.elevation_negative > 0 {
-            v.push(SatelliteWarning {
-                count: self.elevation_negative,
-                issue: "satellite(s) with negative elevation",
-                description: "below the horizon; valid NMEA elevation range is [0°, 90°]",
-            });
-        }
-        if self.elevation_above_90 > 0 {
-            v.push(SatelliteWarning {
-                count: self.elevation_above_90,
-                issue: "satellite(s) with elevation > 90°",
-                description: "above the zenith; valid NMEA elevation range is [0°, 90°]",
-            });
-        }
-        if self.azimuth_out_of_range > 0 {
-            v.push(SatelliteWarning {
-                count: self.azimuth_out_of_range,
-                issue: "satellite(s) with azimuth outside [0°, 360°)",
-                description: "azimuth must be in [0°, 360°) per NMEA",
-            });
-        }
-        if self.snr_sentinel_99 > 0 {
-            v.push(SatelliteWarning {
-                count: self.snr_sentinel_99,
-                issue: "satellite(s) with SNR ≈ 99 dB-Hz",
-                description: "common firmware sentinel for unavailable signal strength; omit \
+            ),
+            (
+                self.gal_out_of_range,
+                "Galileo satellite(s) with PRN > 36",
+                "outside the valid range (E01-E36)",
+            ),
+            (
+                self.bds_out_of_range,
+                "BeiDou satellite(s) with PRN > 63",
+                "outside the valid range (C01-C63)",
+            ),
+            (
+                self.navic_out_of_range,
+                "NavIC satellite(s) with PRN > 14",
+                "outside the valid range (I01-I14)",
+            ),
+            (
+                self.qzss_out_of_range,
+                "QZSS satellite(s) with PRN > 10",
+                "outside the valid range (J01-J10)",
+            ),
+            (
+                self.elevation_negative,
+                "satellite(s) with negative elevation",
+                "below the horizon; valid NMEA elevation range is [0°, 90°]",
+            ),
+            (
+                self.elevation_above_90,
+                "satellite(s) with elevation > 90°",
+                "above the zenith; valid NMEA elevation range is [0°, 90°]",
+            ),
+            (
+                self.azimuth_out_of_range,
+                "satellite(s) with azimuth outside [0°, 360°)",
+                "azimuth must be in [0°, 360°) per NMEA",
+            ),
+            (
+                self.snr_sentinel_99,
+                "satellite(s) with SNR ≈ 99 dB-Hz",
+                "common firmware sentinel for unavailable signal strength; omit \
                     the SNR field when no measurement is available",
-            });
-        }
-        if self.snr_above_60 > 0 {
-            v.push(SatelliteWarning {
-                count: self.snr_above_60,
-                issue: "satellite(s) with SNR > 60 dB-Hz",
-                description: "above the physical limit for civil GNSS receivers; check for \
+            ),
+            (
+                self.snr_above_60,
+                "satellite(s) with SNR > 60 dB-Hz",
+                "above the physical limit for civil GNSS receivers; check for \
                     sentinel values or unit errors",
-            });
-        }
-        if self.snr_negative > 0 {
-            v.push(SatelliteWarning {
-                count: self.snr_negative,
-                issue: "satellite(s) with negative SNR",
-                description: "SNR must be >= 0 dB-Hz",
-            });
-        }
-        if self.reports_with_duplicate_prn > 0 {
-            v.push(SatelliteWarning {
-                count: self.reports_with_duplicate_prn,
-                issue: "satellite report(s) with duplicate (constellation, PRN) pairs",
-                description: "each satellite should appear at most once per report",
-            });
-        }
-        v
+            ),
+            (
+                self.snr_negative,
+                "satellite(s) with negative SNR",
+                "SNR must be >= 0 dB-Hz",
+            ),
+            (
+                self.reports_with_duplicate_prn,
+                "satellite report(s) with duplicate (constellation, PRN) pairs",
+                "each satellite should appear at most once per report",
+            ),
+        ];
+        table
+            .into_iter()
+            .filter(|&(count, _, _)| count > 0)
+            .map(|(count, issue, description)| SatelliteWarning {
+                count,
+                issue,
+                description,
+            })
+            .collect()
     }
 
     fn to_warning_strings(&self) -> Vec<String> {
@@ -1272,20 +1271,14 @@ fn collect_satellite_issues_inner<'a>(
     let mut issues = SatelliteIssues::default();
 
     for tracked in reports {
-        // (constellation discriminant, prn) - used for per-report duplicate detection.
-        let mut seen: HashSet<(u8, u32)> = HashSet::new();
+        // (constellation, prn) - used for per-report duplicate detection.
+        let mut seen: HashSet<(Constellation, u32)> = HashSet::new();
         let mut has_duplicate = false;
 
         for sat in tracked {
             let prn = sat.prn;
-            let c_key: u8 = match sat.constellation {
-                Constellation::Gps => 0,
-                Constellation::Glonass => 1,
-                Constellation::Galileo => 2,
-                Constellation::Beidou => 3,
-            };
 
-            if !seen.insert((c_key, prn)) {
+            if !seen.insert((sat.constellation, prn)) {
                 has_duplicate = true;
             }
 
@@ -1314,6 +1307,16 @@ fn collect_satellite_issues_inner<'a>(
                 Constellation::Beidou => {
                     if prn > 63 {
                         issues.bds_out_of_range += 1;
+                    }
+                }
+                Constellation::Navic => {
+                    if prn > 14 {
+                        issues.navic_out_of_range += 1;
+                    }
+                }
+                Constellation::Qzss => {
+                    if prn > 10 {
+                        issues.qzss_out_of_range += 1;
                     }
                 }
             }
@@ -1406,6 +1409,36 @@ mod validation_tests {
     use crate::time_types::GpsTime;
     use crate::types::{Constellation, Satellite};
     use chrono::DateTime;
+
+    /// `to_records` drives off a table with one row per `SatelliteIssues` field.
+    /// Setting every field non-zero must surface exactly one record per field:
+    /// the all-fields struct literal is a compile error if a field is added
+    /// without updating it, and this length check fails if such a field has no
+    /// matching table row (a silently-unreported issue category).
+    #[test]
+    fn every_issue_field_maps_to_a_record() {
+        let issues = SatelliteIssues {
+            prn_zero: 1,
+            gps_sbas_range: 1,
+            gps_out_of_range: 1,
+            glo_offset_range: 1,
+            glo_out_of_range: 1,
+            gal_out_of_range: 1,
+            bds_out_of_range: 1,
+            navic_out_of_range: 1,
+            qzss_out_of_range: 1,
+            elevation_negative: 1,
+            elevation_above_90: 1,
+            azimuth_out_of_range: 1,
+            snr_sentinel_99: 1,
+            snr_above_60: 1,
+            snr_negative: 1,
+            reports_with_duplicate_prn: 1,
+        };
+        let records = issues.to_records();
+        assert_eq!(records.len(), 16);
+        assert!(records.iter().all(|r| r.count == 1));
+    }
 
     fn gps_time() -> GpsTime {
         GpsTime::from_utc(DateTime::from_timestamp(1_748_000_000, 0).expect("valid"))

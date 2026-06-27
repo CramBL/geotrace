@@ -476,6 +476,8 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
             (1, "E", Constellation::Galileo),
             (2, "R", Constellation::Glonass),
             (3, "C", Constellation::Beidou),
+            (4, "I", Constellation::Navic),
+            (5, "J", Constellation::Qzss),
         ]
         .iter()
         .filter_map(|&(id, prefix, constellation)| {
@@ -587,6 +589,8 @@ fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
         Constellation::Galileo,
         Constellation::Glonass,
         Constellation::Beidou,
+        Constellation::Navic,
+        Constellation::Qzss,
     ] {
         let const_total = sats.by_constellation(constellation).count() as u32;
         if const_total == 0 {

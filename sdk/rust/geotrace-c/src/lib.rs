@@ -60,6 +60,8 @@ pub enum GtdConstellation {
     Glonass = 1,
     Galileo = 2,
     Beidou = 3,
+    Navic = 4,
+    Qzss = 5,
 }
 
 impl From<GtdConstellation> for geotrace_sdk::Constellation {
@@ -69,6 +71,8 @@ impl From<GtdConstellation> for geotrace_sdk::Constellation {
             GtdConstellation::Glonass => geotrace_sdk::Constellation::Glonass,
             GtdConstellation::Galileo => geotrace_sdk::Constellation::Galileo,
             GtdConstellation::Beidou => geotrace_sdk::Constellation::Beidou,
+            GtdConstellation::Navic => geotrace_sdk::Constellation::Navic,
+            GtdConstellation::Qzss => geotrace_sdk::Constellation::Qzss,
         }
     }
 }
@@ -80,6 +84,8 @@ impl From<geotrace_sdk::Constellation> for GtdConstellation {
             geotrace_sdk::Constellation::Glonass => GtdConstellation::Glonass,
             geotrace_sdk::Constellation::Galileo => GtdConstellation::Galileo,
             geotrace_sdk::Constellation::Beidou => GtdConstellation::Beidou,
+            geotrace_sdk::Constellation::Navic => GtdConstellation::Navic,
+            geotrace_sdk::Constellation::Qzss => GtdConstellation::Qzss,
         }
     }
 }

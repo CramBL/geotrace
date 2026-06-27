@@ -672,7 +672,8 @@ fn min_max_present_f32(vals: &[f32]) -> (f32, f32, usize) {
 }
 
 fn constellation_names(codes: &[u8]) -> Vec<&'static str> {
-    let mut seen = [false; 4];
+    use strum::EnumCount;
+    let mut seen = [false; Constellation::COUNT];
     for &c in codes {
         if let Some(slot) = seen.get_mut(c as usize) {
             *slot = true;
