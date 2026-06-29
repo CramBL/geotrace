@@ -2,6 +2,8 @@
 
 ## [unreleased]
 
+## [0.3.0] - 2026-06-29
+
 ### Added
 
 - Add support for NavIC and QZSS constellations.
