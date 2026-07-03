@@ -1,0 +1,9 @@
+---
+source: crates/gt-query/src/lib.rs
+expression: query.to_string()
+---
+points
+| window 10
+| where (((spread(heading) <= 10 deg) and (avg(accel) >= 0.3 m/s2)) and (avg(velocity) > 30 km/h))
+| draw
+| table time, velocity, heading, accel

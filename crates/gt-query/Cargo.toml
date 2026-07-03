@@ -1,0 +1,24 @@
+[package]
+name = "gt-query"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+gt-types = { path = "../gt-types" }
+logos.workspace = true
+strum.workspace = true
+uom.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+proptest.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true
