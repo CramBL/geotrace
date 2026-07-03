@@ -145,6 +145,23 @@ pub fn lerp_channel(a: u8, b: u8, num: i32, den: i32) -> u8 {
     u8::try_from(value.clamp(0, 255)).unwrap_or(0)
 }
 
+/// Halo stroke for query matches, drawn beneath the track line.
+///
+/// Magenta reads as "annotation" - it is absent from the track palette
+/// (blues/cyans), the quality gradient (green/yellow/red), and the hover
+/// amber, so a match never blends into any of them. Semi-transparent so the
+/// map background stays legible under wide strokes.
+///
+/// Premultiplied equivalent of `(235, 70, 220, 150)`.
+pub const QUERY_MATCH_HALO: Color32 = Color32::from_rgba_premultiplied(138, 41, 129, 150);
+
+/// [`QUERY_MATCH_HALO`] desaturated for stale results (the visible data
+/// changed after the run). Still clearly present, per the "gray out, never
+/// hide" rule.
+///
+/// Premultiplied equivalent of `(150, 120, 145, 110)`.
+pub const QUERY_MATCH_HALO_STALE: Color32 = Color32::from_rgba_premultiplied(65, 52, 63, 110);
+
 /// Colors used for log-entry markers, cycling over the marker's log index.
 pub const LOG_COLORS: [Color32; 8] = [
     Color32::from_rgb(230, 57, 70),

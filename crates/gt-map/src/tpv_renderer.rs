@@ -225,8 +225,15 @@ pub(crate) fn draw_track_icons(
     }
 }
 
-/// Show the hover tooltip for the given TPV point.
-pub(crate) fn show_tooltip(ui: &Ui, files: &[LoadedFile], point_ref: DataPointRef) {
+/// Show the hover tooltip for the given TPV point. When the point lies
+/// inside a query match, `match_header` renders the match context above the
+/// point table.
+pub(crate) fn show_tooltip(
+    ui: &Ui,
+    files: &[LoadedFile],
+    point_ref: DataPointRef,
+    match_header: Option<impl FnOnce(&mut Ui)>,
+) {
     let Some(file) = point_ref.track.fi.get(files) else {
         return;
     };
@@ -248,6 +255,9 @@ pub(crate) fn show_tooltip(ui: &Ui, files: &[LoadedFile], point_ref: DataPointRe
         PopupAnchor::Pointer,
     )
     .show(|ui| {
+        if let Some(header) = match_header {
+            header(ui);
+        }
         show_hover_table(ui, point);
     });
 }

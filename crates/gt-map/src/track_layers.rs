@@ -8,14 +8,16 @@
 //! previous plugins each walked the points themselves.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use egui::{Color32, Response, Stroke, Ui};
 use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, MercBounds, TrackIdx, TrackRef};
-use gt_ui_types::{HighlightScope, MapHighlight};
+use gt_ui_types::{HighlightScope, MapHighlight, QueryMatches};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
+use crate::query_match_renderer;
 use crate::tpv_renderer::{
     self, QUALITY_LINE_WIDTH, TpvDrawStyle, TrackIconFade, bucket_alpha, fix_icon_alpha,
     line_alpha_bucket, quality_line_color, split_spans_by,
@@ -51,6 +53,8 @@ struct LinePointKey {
     ghost: bool,
     quality: Color32,
     bucket: u8,
+    /// Whether the point lies inside a query match - drives the halo pass.
+    matched: bool,
 }
 
 /// One visible track's prepared geometry and paint decisions for this
@@ -103,6 +107,8 @@ pub struct TrackLayers<'a> {
     /// Animated hover-fade progress in [0.0, 1.0].
     /// Driven by [`crate::HoverFadeState`]: 0 = no overlay, 1 = full overlay.
     hover_fade_alpha: f32,
+    /// Matches of the last query run, drawn as halos beneath the tracklines.
+    query_matches: Option<&'a QueryMatches>,
 }
 
 impl<'a> TrackLayers<'a> {}
@@ -141,6 +147,9 @@ impl Plugin for TrackLayers<'_> {
                     .map(|geo| track_renderer::is_track_in_focus(self.highlight, geo.fi, geo.ti))
                     .collect();
 
+                self.paint_match_halos(ui, &geometries, &style, |i| {
+                    !focused.get(i).copied().unwrap_or(false)
+                });
                 self.paint_tracklines(ui, &geometries, |i| {
                     !focused.get(i).copied().unwrap_or(false)
                 });
@@ -148,6 +157,9 @@ impl Plugin for TrackLayers<'_> {
                     !focused.get(i).copied().unwrap_or(false)
                 });
                 paint_fade_overlay(ui, max_rect, fade);
+                self.paint_match_halos(ui, &geometries, &style, |i| {
+                    focused.get(i).copied().unwrap_or(false)
+                });
                 self.paint_tracklines(ui, &geometries, |i| {
                     focused.get(i).copied().unwrap_or(false)
                 });
@@ -157,11 +169,13 @@ impl Plugin for TrackLayers<'_> {
             } else {
                 // No current hover target (fade-out): all tracks under the
                 // fading overlay, no focused track in Phase 3.
+                self.paint_match_halos(ui, &geometries, &style, |_| true);
                 self.paint_tracklines(ui, &geometries, |_| true);
                 self.paint_tpv_layers(ui, &geometries, &style, &transform, max_rect, |_| true);
                 paint_fade_overlay(ui, max_rect, fade);
             }
         } else {
+            self.paint_match_halos(ui, &geometries, &style, |_| true);
             self.paint_tracklines(ui, &geometries, |_| true);
             self.paint_tpv_layers(ui, &geometries, &style, &transform, max_rect, |_| true);
         }
@@ -222,6 +236,11 @@ impl TrackLayers<'_> {
                     continue;
                 }
 
+                const NO_RANGES: &[Range<usize>] = &[];
+                let match_ranges = self
+                    .query_matches
+                    .map_or(NO_RANGES, |m| m.track_ranges(TrackRef::new(fi, ti)));
+
                 let mut ghost_points: Vec<usize> = Vec::new();
                 let fade = entry.fade;
                 let pts = lod_points(track, transform)
@@ -250,6 +269,7 @@ impl TrackLayers<'_> {
                             ghost: p.tpv.heading().is_none(),
                             quality: quality_line_color(p),
                             bucket,
+                            matched: QueryMatches::range_at(match_ranges, pi).is_some(),
                         };
                         (key, screen_pos)
                     });
@@ -267,6 +287,52 @@ impl TrackLayers<'_> {
             }
         }
         geometries
+    }
+
+    /// Paint every track's query-match halos beneath its lines, for the
+    /// entries that pass the `filter(index)` predicate. Runs in the same
+    /// phases as the tracklines so the fade overlay dims halos consistently.
+    fn paint_match_halos<F>(
+        &self,
+        ui: &Ui,
+        geometries: &[TrackGeometry],
+        style: &TpvDrawStyle,
+        filter: F,
+    ) where
+        F: Fn(usize) -> bool,
+    {
+        let Some(matches) = self.query_matches else {
+            return;
+        };
+        let ring_radius = style.base_arrow_size;
+        for (i, geo) in geometries.iter().enumerate() {
+            if !filter(i)
+                || matches
+                    .track_ranges(TrackRef::new(geo.fi, geo.ti))
+                    .is_empty()
+            {
+                continue;
+            }
+            match &geo.path {
+                VisiblePath::OffScreen => {}
+                VisiblePath::Dot(key, pos) => {
+                    if key.matched {
+                        query_match_renderer::draw_match_ring(ui, *pos, ring_radius, matches.stale);
+                    }
+                }
+                VisiblePath::Spans(spans) => {
+                    for span in spans.iter() {
+                        query_match_renderer::paint_match_halo_span(
+                            ui,
+                            span,
+                            |key| key.matched,
+                            ring_radius,
+                            matches.stale,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Paint every track's plain line (and blink overlay) for the entries
@@ -337,7 +403,21 @@ impl TrackLayers<'_> {
             && !ui.ctx().any_popup_open()
             && !self.highlight.suppress_hover_labels
         {
-            tpv_renderer::show_tooltip(ui, self.files, r);
+            // Hovering a matched point adds the match context above the
+            // standard point table.
+            let match_header = self.query_matches.and_then(|matches| {
+                let range = matches.match_at(r.track, r.point_index.as_usize())?.clone();
+                Some(move |ui: &mut Ui| {
+                    query_match_renderer::match_header_ui(
+                        ui,
+                        self.files,
+                        r.track,
+                        &range,
+                        matches.stale,
+                    );
+                })
+            });
+            tpv_renderer::show_tooltip(ui, self.files, r, match_header);
         }
 
         tpv_renderer::draw_plot_hover_ring(ui, self.files, self.highlight, style, transform);
@@ -457,6 +537,7 @@ mod tests {
             ghost: false,
             quality,
             bucket: 3,
+            matched: false,
         };
         let pts = vec![
             (key(Color32::BLUE), pos2(10.0, 10.0)),
