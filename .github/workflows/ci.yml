@@ -132,7 +132,7 @@ jobs:
           toolchain: stable
 
       # cargo-pup is a compiler-plugin architecture linter that must be built
-      # with the specific nightly version the workspace's pup.ron targets.
+      # with the specific nightly version expected by the gt-arch checks.
       - name: Install Rust nightly (for cargo-pup)
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
         with:
