@@ -40,12 +40,16 @@ expression: catalog
         "16..20: only one draw stage is allowed",
     ),
     (
-        "points | where velocity > 30 kmh",
-        "29..32: unknown unit `kmh` | help: units are deg, m, km, km/h, m/s, kn, m/s2, ms, s, min, h, %, per s/min/h",
+        "points | where velocity > 30 mph",
+        "29..32: unknown unit `mph` | help: units are deg, m, km, km/h, m/s, kn, m/s2, g, km/h/s, ms, s, min, h, %, per s/min/h",
     ),
     (
         "points | where velocity > 30 km/s",
-        "29..33: unknown unit `km/s` | help: units are deg, m, km, km/h, m/s, kn, m/s2, ms, s, min, h, %, per s/min/h",
+        "29..33: unknown unit `km/s` | help: units are deg, m, km, km/h, m/s, kn, m/s2, g, km/h/s, ms, s, min, h, %, per s/min/h",
+    ),
+    (
+        "points | where accel > 1 g/s",
+        "25..28: unknown unit `g/s` | help: units are deg, m, km, km/h, m/s, kn, m/s2, g, km/h/s, ms, s, min, h, %, per s/min/h",
     ),
     (
         "points | where speed > 30 km/h",
@@ -105,7 +109,7 @@ expression: catalog
     ),
     (
         "points | with snr_drop 10 db | where velocity > 0 km/h",
-        "26..28: unknown unit `db` | help: units are deg, m, km, km/h, m/s, kn, m/s2, ms, s, min, h, %, per s/min/h",
+        "26..28: unknown unit `db` | help: units are deg, m, km, km/h, m/s, kn, m/s2, g, km/h/s, ms, s, min, h, %, per s/min/h",
     ),
     (
         "points | with slip_window 5 | where velocity > 0 km/h",

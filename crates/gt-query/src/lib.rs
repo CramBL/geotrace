@@ -372,6 +372,25 @@ mod tests {
     }
 
     #[test]
+    fn acceleration_units_and_kmh_alias_check() {
+        // `g`, `km/h/s`, and the `kmh` alias are all accepted where their
+        // quantity fits, and rejected where it does not.
+        for src in [
+            "points | window 3 | where avg(accel) >= 0.3 g",
+            "points | window 3 | where avg(accel) >= 5 km/h/s",
+            "points | where velocity > 30 kmh",
+        ] {
+            check(&parse(src).expect(src)).expect(src);
+        }
+        // `g` is an acceleration, not a speed.
+        let err = check(&parse("points | where velocity > 30 g").unwrap()).unwrap_err();
+        assert_eq!(
+            err.message,
+            "expected a speed unit (km/h, m/s, kn), found g"
+        );
+    }
+
+    #[test]
     fn deep_nesting_errors_instead_of_overflowing() {
         // The MAX_DEPTH guard must fire well before the stack gives out.
         let src = format!("points | where {}velocity > 0 km/h", "not ".repeat(70));
@@ -475,8 +494,9 @@ mod tests {
             "points | window 3 | window 4",
             "points | draw | where velocity > 0 km/h",
             "points | draw | draw",
-            "points | where velocity > 30 kmh",
+            "points | where velocity > 30 mph",
             "points | where velocity > 30 km/s",
+            "points | where accel > 1 g/s",
             "points | where speed > 30 km/h",
             "points | where avg > 3",
             "points | where blah(velocity) > 3",
@@ -565,23 +585,9 @@ mod tests {
         }
 
         fn unit_strategy() -> impl Strategy<Value = Unit> {
-            proptest::sample::select(vec![
-                Unit::Deg,
-                Unit::M,
-                Unit::Km,
-                Unit::KmPerH,
-                Unit::MPerS,
-                Unit::Kn,
-                Unit::MPerS2,
-                Unit::Ms,
-                Unit::S,
-                Unit::Min,
-                Unit::H,
-                Unit::Percent,
-                Unit::PerS,
-                Unit::PerMin,
-                Unit::PerH,
-            ])
+            // Built from the enum's own iterator so a new variant is covered
+            // by the format/reparse round-trip automatically.
+            proptest::sample::select(Unit::iter().collect::<Vec<_>>())
         }
 
         fn number_strategy() -> impl Strategy<Value = NumberLit> {

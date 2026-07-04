@@ -17,7 +17,8 @@ use crate::unit::Unit;
 /// Recursion cap for nested expressions, far above anything hand-written.
 const MAX_DEPTH: usize = 64;
 
-const UNIT_HELP: &str = "units are deg, m, km, km/h, m/s, kn, m/s2, ms, s, min, h, %, per s/min/h";
+const UNIT_HELP: &str =
+    "units are deg, m, km, km/h, m/s, kn, m/s2, g, km/h/s, ms, s, min, h, %, per s/min/h";
 
 pub fn parse(src: &str) -> Result<Query, Diagnostic> {
     let toks = lex(src)?;
@@ -52,6 +53,24 @@ impl<'src> Parser<'src> {
             self.pos += 1;
         }
         tok
+    }
+
+    /// Consume `n` tokens already known to exist (verified via `peek_at`).
+    fn advance_n(&mut self, n: usize) {
+        for _ in 0..n {
+            self.advance();
+        }
+    }
+
+    /// The identifier `offset + 1` tokens ahead, when the token at `offset` is
+    /// a `/`. Used to look ahead across the slashes of a compound unit.
+    fn peek_slashed_ident(&self, offset: usize) -> Option<Tok<'src>> {
+        match (self.peek_at(offset), self.peek_at(offset + 1)) {
+            (Some(slash), Some(id)) if slash.kind == Token::Slash && id.kind == Token::Ident => {
+                Some(id)
+            }
+            _ => None,
+        }
     }
 
     /// Span for "unexpected end" errors: the last token, or the very end.
@@ -526,44 +545,57 @@ impl<'src> Parser<'src> {
                 self.advance();
                 Ok(Some((unit, tok.span.to(unit_span))))
             }
-            Token::Ident => {
-                let Some(single) = Unit::from_ident(tok.text) else {
-                    return Err(Diagnostic {
-                        span: tok.span,
-                        message: format!("unknown unit `{}`", tok.text),
-                        help: Some(UNIT_HELP.to_owned()),
-                    });
-                };
-                let slash_pair = match (self.peek_at(1), self.peek_at(2)) {
-                    (Some(slash), Some(second))
-                        if slash.kind == Token::Slash && second.kind == Token::Ident =>
-                    {
-                        Some(second)
-                    }
-                    _ => None,
-                };
-                if let Some(second) = slash_pair {
-                    if let Some(compound) = Unit::from_pair(tok.text, second.text) {
-                        self.advance();
-                        self.advance();
-                        self.advance();
-                        return Ok(Some((compound, tok.span.to(second.span))));
-                    }
-                    // `30 km/s`: the right side is unit-shaped, so this is a
-                    // typoed compound unit, not a division by a metric.
-                    if Unit::from_ident(second.text).is_some() || second.text == "s2" {
-                        return Err(Diagnostic {
-                            span: tok.span.to(second.span),
-                            message: format!("unknown unit `{}/{}`", tok.text, second.text),
-                            help: Some(UNIT_HELP.to_owned()),
-                        });
-                    }
-                }
-                self.advance();
-                Ok(Some((single, tok.span)))
-            }
+            Token::Ident => self.unit_from_ident_chain(tok),
             _ => Ok(None),
         }
+    }
+
+    /// A unit written as an identifier, optionally with `/second` and
+    /// `/second/third` slash continuations (`km/h`, `m/s2`, `km/h/s`). The
+    /// longest matching compound wins; a leftover `/ident` that isn't part of
+    /// a known unit is left for expression-level division.
+    fn unit_from_ident_chain(
+        &mut self,
+        first: Tok<'src>,
+    ) -> Result<Option<(Unit, Span)>, Diagnostic> {
+        // Slash-separated identifiers following `first` (whitespace-agnostic,
+        // like every unit form). `second`/`third` are `None` when the shape
+        // doesn't continue. Token layout: first `/` second `/` third.
+        let second = self.peek_slashed_ident(1);
+        let third = second.and_then(|_| self.peek_slashed_ident(3));
+
+        if let (Some(second), Some(third)) = (second, third)
+            && let Some(compound) = Unit::from_triple(first.text, second.text, third.text)
+        {
+            // Consume `first / second / third`.
+            self.advance_n(5);
+            return Ok(Some((compound, first.span.to(third.span))));
+        }
+        if let Some(second) = second {
+            if let Some(compound) = Unit::from_pair(first.text, second.text) {
+                // Consume `first / second`.
+                self.advance_n(3);
+                return Ok(Some((compound, first.span.to(second.span))));
+            }
+            // `30 km/s`: the right side is unit-shaped, so this is a typoed
+            // compound unit, not a division by a metric.
+            if Unit::from_ident(second.text).is_some() || second.text == "s2" {
+                return Err(Diagnostic {
+                    span: first.span.to(second.span),
+                    message: format!("unknown unit `{}/{}`", first.text, second.text),
+                    help: Some(UNIT_HELP.to_owned()),
+                });
+            }
+        }
+        let Some(single) = Unit::from_ident(first.text) else {
+            return Err(Diagnostic {
+                span: first.span,
+                message: format!("unknown unit `{}`", first.text),
+                help: Some(UNIT_HELP.to_owned()),
+            });
+        };
+        self.advance();
+        Ok(Some((single, first.span)))
     }
 }
 

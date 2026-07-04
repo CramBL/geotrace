@@ -335,8 +335,7 @@ impl QueryWindow {
                         let label =
                             match DateTime::<Utc>::from_timestamp_millis(entry.last_run_unix_ms) {
                                 Some(last_run) => {
-                                    let age = gt_fmt::format_human_terse_duration(now - last_run);
-                                    format!("{flat} ({age} ago)")
+                                    format!("{flat} ({})", format_history_age(now - last_run))
                                 }
                                 None => flat,
                             };
@@ -773,6 +772,25 @@ fn match_header_text(files: &[LoadedFile], track_ref: TrackRef, range: &Range<us
         ),
         None => format!("{file} #{} {EM_DASH} {count} points", track_ref.index),
     }
+}
+
+/// Coarse age for a history entry, at minute granularity or coarser.
+///
+/// Deliberately omits seconds: a second-resolution age changes every frame,
+/// which reads as needless flicker in a list that is otherwise static.
+fn format_history_age(age: chrono::Duration) -> String {
+    let minutes = age.num_minutes();
+    if minutes < 1 {
+        return "just now".to_owned();
+    }
+    if minutes < 60 {
+        return format!("{minutes}m ago");
+    }
+    let hours = age.num_hours();
+    if hours < 24 {
+        return format!("{hours}h ago");
+    }
+    format!("{}d ago", age.num_days())
 }
 
 /// A query flattened to one line for the history label: comments dropped,
@@ -1296,6 +1314,19 @@ mod tests {
             !query_one_line(documented).contains('#'),
             "only the compact label drops comments"
         );
+    }
+
+    #[test]
+    fn history_age_omits_seconds() {
+        use chrono::Duration;
+        assert_eq!(format_history_age(Duration::seconds(0)), "just now");
+        assert_eq!(format_history_age(Duration::seconds(59)), "just now");
+        assert_eq!(format_history_age(Duration::seconds(90)), "1m ago");
+        assert_eq!(format_history_age(Duration::minutes(59)), "59m ago");
+        assert_eq!(format_history_age(Duration::minutes(90)), "1h ago");
+        assert_eq!(format_history_age(Duration::hours(25)), "1d ago");
+        // A clock skew putting the run "in the future" reads as just now.
+        assert_eq!(format_history_age(Duration::seconds(-5)), "just now");
     }
 
     #[test]
