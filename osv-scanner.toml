@@ -20,3 +20,13 @@ ignoreUntil = "2026-10-01T00:00:00Z"
 id = "RUSTSEC-2026-0185"
 reason = "Pending update for quinn-proto (v0.11.14)"
 ignoreUntil = "2026-10-01T00:00:00Z"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0194"
+reason = "Fix is quick-xml 0.41 but wayland-scanner (newest, 0.31.10) pins ^0.39; build-time Wayland protocol XML only, no untrusted input"
+ignoreUntil = "2026-10-01T00:00:00Z"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0195"
+reason = "Fix is quick-xml 0.41 but wayland-scanner (newest, 0.31.10) pins ^0.39; build-time Wayland protocol XML only, no untrusted input"
+ignoreUntil = "2026-10-01T00:00:00Z"
