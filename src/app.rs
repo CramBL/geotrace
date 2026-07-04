@@ -795,6 +795,7 @@ impl App {
         self.auto_prune_confirm = s.storage.auto_prune_confirm;
         self.update_check_on_startup = s.update.check_on_startup;
         self.skipped_version = s.update.skipped_version.clone();
+        self.query_window.set_history(s.query.history.clone());
         self.sync_db_path();
     }
 
@@ -865,6 +866,7 @@ impl App {
             auto_prune_confirm: self.auto_prune_confirm,
             update_check_on_startup: self.update_check_on_startup,
             skipped_version: self.skipped_version.clone(),
+            query_history_revision: self.query_window.history_revision(),
         }
     }
 
@@ -933,6 +935,9 @@ impl App {
             update: crate::settings::UpdateSettings {
                 check_on_startup: self.update_check_on_startup,
                 skipped_version: self.skipped_version.clone(),
+            },
+            query: crate::settings::QuerySettings {
+                history: self.query_window.history().to_vec(),
             },
         }
     }

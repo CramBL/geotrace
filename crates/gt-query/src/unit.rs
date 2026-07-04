@@ -6,7 +6,8 @@
 //! bases and literals are converted to them at check time, so the evaluator
 //! is plain f64 arithmetic.
 
-use uom::si::f64::Velocity;
+use uom::si::acceleration::{meter_per_second_squared, standard_gravity};
+use uom::si::f64::{Acceleration, Velocity};
 use uom::si::velocity::{kilometer_per_hour, knot, meter_per_second};
 
 use crate::metric::Quantity;
@@ -21,7 +22,7 @@ const PERCENT: f64 = 100.0;
 const PER_S_TO_PER_MIN: f64 = 60.0;
 
 /// A unit as written in a query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter, strum::EnumCount)]
 pub enum Unit {
     Deg,
     M,
@@ -30,6 +31,10 @@ pub enum Unit {
     MPerS,
     Kn,
     MPerS2,
+    /// Standard gravities, `g`.
+    G,
+    /// Kilometres per hour per second, `km/h/s`.
+    KmPerHPerS,
     Ms,
     S,
     Min,
@@ -46,7 +51,7 @@ impl Unit {
             Unit::Deg => Quantity::Angle,
             Unit::M | Unit::Km => Quantity::Length,
             Unit::KmPerH | Unit::MPerS | Unit::Kn => Quantity::Speed,
-            Unit::MPerS2 => Quantity::Acceleration,
+            Unit::MPerS2 | Unit::G | Unit::KmPerHPerS => Quantity::Acceleration,
             Unit::Ms | Unit::S | Unit::Min | Unit::H => Quantity::Duration,
             Unit::Percent => Quantity::Ratio,
             Unit::PerS | Unit::PerMin | Unit::PerH => Quantity::Rate,
@@ -58,8 +63,14 @@ impl Unit {
         match self {
             Unit::Deg | Unit::M | Unit::MPerS | Unit::MPerS2 | Unit::S | Unit::PerMin => 1.0,
             Unit::Km => M_PER_KM,
-            Unit::KmPerH => Velocity::new::<kilometer_per_hour>(1.0).get::<meter_per_second>(),
+            // km/h and km/h/s share this factor: both carry the "km/h"
+            // magnitude into SI, and the trailing "/s" of km/h/s changes only
+            // the dimension (speed to acceleration), not the number.
+            Unit::KmPerH | Unit::KmPerHPerS => {
+                Velocity::new::<kilometer_per_hour>(1.0).get::<meter_per_second>()
+            }
             Unit::Kn => Velocity::new::<knot>(1.0).get::<meter_per_second>(),
+            Unit::G => Acceleration::new::<standard_gravity>(1.0).get::<meter_per_second_squared>(),
             Unit::Ms => 1.0 / MS_PER_S,
             Unit::Min => S_PER_MIN,
             Unit::H => S_PER_MIN * MIN_PER_H,
@@ -79,6 +90,8 @@ impl Unit {
             Unit::MPerS => "m/s",
             Unit::Kn => "kn",
             Unit::MPerS2 => "m/s2",
+            Unit::G => "g",
+            Unit::KmPerHPerS => "km/h/s",
             Unit::Ms => "ms",
             Unit::S => "s",
             Unit::Min => "min",
@@ -97,7 +110,10 @@ impl Unit {
             "deg" => Some(Unit::Deg),
             "m" => Some(Unit::M),
             "km" => Some(Unit::Km),
+            // `kmh` desugars to the compound `km/h`.
+            "kmh" => Some(Unit::KmPerH),
             "kn" => Some(Unit::Kn),
+            "g" => Some(Unit::G),
             "ms" => Some(Unit::Ms),
             "s" => Some(Unit::S),
             "min" => Some(Unit::Min),
@@ -112,6 +128,14 @@ impl Unit {
             ("km", "h") => Some(Unit::KmPerH),
             ("m", "s") => Some(Unit::MPerS),
             ("m", "s2") => Some(Unit::MPerS2),
+            _ => None,
+        }
+    }
+
+    /// Compound `first/second/third` unit, if the triple is one (`km/h/s`).
+    pub fn from_triple(first: &str, second: &str, third: &str) -> Option<Unit> {
+        match (first, second, third) {
+            ("km", "h", "s") => Some(Unit::KmPerHPerS),
             _ => None,
         }
     }
@@ -136,7 +160,7 @@ pub fn unit_list(quantity: Quantity) -> Option<&'static str> {
     match quantity {
         Quantity::Angle | Quantity::Direction => Some("deg"),
         Quantity::Speed => Some("km/h, m/s, kn"),
-        Quantity::Acceleration => Some("m/s2"),
+        Quantity::Acceleration => Some("m/s2, g, km/h/s"),
         Quantity::Length => Some("m, km"),
         Quantity::Duration => Some("ms, s, min, h"),
         Quantity::Ratio => Some("%"),
@@ -162,5 +186,48 @@ mod tests {
         assert!((Unit::PerS.to_base() - 60.0).abs() < 1e-12);
         assert!((Unit::PerMin.to_base() - 1.0).abs() < 1e-12);
         assert!((Unit::PerH.to_base() - 1.0 / 60.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn acceleration_units_convert_to_m_per_s2() {
+        assert_eq!(Unit::MPerS2.quantity(), Quantity::Acceleration);
+        assert_eq!(Unit::G.quantity(), Quantity::Acceleration);
+        assert_eq!(Unit::KmPerHPerS.quantity(), Quantity::Acceleration);
+        assert!((Unit::MPerS2.to_base() - 1.0).abs() < 1e-12);
+        assert!((Unit::G.to_base() - 9.806_65).abs() < 1e-9, "1 g in m/s2");
+        // km/h/s shares km/h's numeric factor.
+        assert!((Unit::KmPerHPerS.to_base() - 1.0 / 3.6).abs() < 1e-12);
+    }
+
+    #[test]
+    fn unit_ident_alias_and_triple_lookups() {
+        // `kmh` is an accepted spelling of the compound `km/h`.
+        assert_eq!(Unit::from_ident("kmh"), Some(Unit::KmPerH));
+        assert_eq!(Unit::from_ident("g"), Some(Unit::G));
+        assert_eq!(Unit::from_triple("km", "h", "s"), Some(Unit::KmPerHPerS));
+        assert_eq!(Unit::from_triple("m", "s", "s"), None);
+    }
+
+    /// Every unit's `text()` spelling round-trips: single-ident and `kmh`
+    /// forms through `from_ident`, and `km/h/s` through `from_triple`. The
+    /// `%`/`per` forms are parser-level tokens and are covered there.
+    #[test]
+    fn unit_text_round_trips() {
+        use strum::IntoEnumIterator as _;
+        for unit in Unit::iter() {
+            let text = unit.text();
+            let round_tripped = Unit::from_ident(text).or_else(|| {
+                match text.split('/').collect::<Vec<_>>().as_slice() {
+                    [a, b] => Unit::from_pair(a, b),
+                    [a, b, c] => Unit::from_triple(a, b, c),
+                    _ => None,
+                }
+            });
+            // `%` and `per …` are lexed as dedicated tokens, not idents.
+            if matches!(unit, Unit::Percent | Unit::PerS | Unit::PerMin | Unit::PerH) {
+                continue;
+            }
+            assert_eq!(round_tripped, Some(unit), "text {text:?} must round-trip");
+        }
     }
 }

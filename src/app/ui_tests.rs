@@ -704,7 +704,170 @@ fn snapshot_app_query_window() {
     harness.inner.get_by_label_contains("12 points").click();
     harness.inner.run_steps(10);
 
+    // Expand the query-history and examples lists so the snapshot documents
+    // them: history now holds the run above, examples lists the built-ins.
+    // Re-render between clicks so the second targets the reflowed layout.
+    harness.inner.get_by_label("Query history").click();
+    harness.inner.run_steps(5);
+    harness.inner.get_by_label("Examples").click();
+    harness.inner.run_steps(10);
+
+    let history_len = harness.inner.state().query_window.history().len();
+    assert_eq!(history_len, 1, "the run above is recorded in history");
+
     harness.snapshot_loose("app_query_window");
+}
+
+/// The query history survives the settings flush/load roundtrip: a run is
+/// captured by `collect_settings_for_flush` and restored by
+/// `apply_startup_settings`.
+#[test]
+fn query_history_persists_across_settings_roundtrip() {
+    let gtd_bytes = minimal_gtd_bytes();
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.input_mut().dropped_files.push(egui::DroppedFile {
+        bytes: Some(Arc::from(gtd_bytes.as_slice())),
+        name: "test.gtd".to_owned(),
+        ..Default::default()
+    });
+    harness.step();
+    step_until_loaded(&mut harness);
+
+    {
+        let app = harness.state_mut();
+        app.query_window.open = true;
+        app.query_window
+            .set_text("points | where velocity > 1 km/h".to_owned());
+    }
+    harness.run_steps(3);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+        .click();
+    step_until_query_result(&mut harness);
+    harness.run_steps(3);
+
+    // The flushed settings carry the run, and re-applying them restores it.
+    let flushed = harness.state().collect_settings_for_flush();
+    assert_eq!(flushed.query.history.len(), 1);
+    assert_eq!(
+        flushed.query.history[0].text,
+        "points | where velocity > 1 km/h"
+    );
+
+    harness.state_mut().apply_startup_settings(&flushed);
+    assert_eq!(harness.state().query_window.history().len(), 1);
+}
+
+/// Build an app with one loaded file and the query window open. Shared setup
+/// for the interactive query-history tests.
+fn app_with_query_window_open() -> Harness<'static, App> {
+    let gtd_bytes = minimal_gtd_bytes();
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.input_mut().dropped_files.push(egui::DroppedFile {
+        bytes: Some(Arc::from(gtd_bytes.as_slice())),
+        name: "test.gtd".to_owned(),
+        ..Default::default()
+    });
+    harness.step();
+    step_until_loaded(&mut harness);
+    harness.state_mut().query_window.open = true;
+    harness.run_steps(3);
+    harness
+}
+
+/// Run a query through the Run button and wait for its result.
+fn run_query(harness: &mut Harness<App>, text: &str) {
+    harness.state_mut().query_window.set_text(text.to_owned());
+    harness.run_steps(3);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+        .click();
+    step_until_query_result(harness);
+    harness.run_steps(3);
+}
+
+/// Toggling pin flips the entry's pin and deleting removes it - the two
+/// interactive history mutations, driven through the widgets.
+#[test]
+fn query_history_pin_and_delete_via_ui() {
+    let mut harness = app_with_query_window_open();
+    run_query(&mut harness, "points | where velocity > 1 km/h");
+
+    harness.get_by_label("Query history").click();
+    harness.run_steps(3);
+
+    let revision_before = harness.state().query_window.history_revision();
+    harness.get_by_label("pin").click();
+    harness.run_steps(3);
+    {
+        let window = &harness.state().query_window;
+        assert!(window.history()[0].pinned, "clicking pin pins the entry");
+        assert!(
+            window.history_revision() > revision_before,
+            "pinning bumps the revision so settings flush"
+        );
+    }
+
+    harness.get_by_label(egui_phosphor::regular::X).click();
+    harness.run_steps(3);
+    assert!(
+        harness.state().query_window.history().is_empty(),
+        "clicking the delete button removes the entry"
+    );
+}
+
+/// Clicking an example fills the editor with its text and does not run.
+#[test]
+fn query_example_loads_into_editor_without_running() {
+    let mut harness = app_with_query_window_open();
+
+    harness.get_by_label("Examples").click();
+    harness.run_steps(3);
+    harness.get_by_label("Weak fix").click();
+    harness.run_steps(3);
+
+    let window = &harness.state().query_window;
+    assert_eq!(window.text(), "points\n| where sats_fix < 6");
+    assert!(
+        window.matches().is_none() && window.history().is_empty(),
+        "loading an example only fills the editor - it never runs"
+    );
+}
+
+/// Ctrl+Enter (Cmd+Enter) runs the current query, mirroring the Run button.
+#[test]
+fn query_ctrl_enter_runs() {
+    let mut harness = app_with_query_window_open();
+    harness
+        .state_mut()
+        .query_window
+        .set_text("points | where velocity > 1 km/h".to_owned());
+    harness.run_steps(3);
+
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    });
+    harness.step();
+    step_until_query_result(&mut harness);
+    harness.run_steps(3);
+
+    assert!(
+        harness.state().query_window.matches().is_some(),
+        "Ctrl+Enter starts a run"
+    );
+    assert_eq!(
+        harness.state().query_window.history().len(),
+        1,
+        "the Ctrl+Enter run is recorded in history"
+    );
 }
 
 #[test]

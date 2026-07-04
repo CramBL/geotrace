@@ -67,6 +67,11 @@ pub(super) struct AppSnapshot {
     pub auto_prune_confirm: bool,
     pub update_check_on_startup: bool,
     pub skipped_version: Option<String>,
+    /// Query-history mutation counter. The history is a growing `Vec` that
+    /// this flat snapshot cannot compare directly against, so the window
+    /// bumps this counter on every change and the dirty-check watches the
+    /// number.
+    pub query_history_revision: u64,
 }
 
 impl Default for AppSnapshot {
@@ -103,6 +108,7 @@ impl Default for AppSnapshot {
             auto_prune_confirm: true,
             update_check_on_startup: true,
             skipped_version: None,
+            query_history_revision: 0,
         }
     }
 }
