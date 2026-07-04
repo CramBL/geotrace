@@ -38,6 +38,7 @@ members = [
     "crates/gt-history-backend-pure",
     "crates/gt-history-backend-sys",
     "crates/gt-history-types",
+    "crates/gt-loaded-files",
     "crates/gt-loader",
     "crates/gt-logfile",
     "crates/gt-map",
@@ -250,6 +251,7 @@ gt-analysis = { path = "crates/gt-analysis" }
 gt-filter = { path = "crates/gt-filter" }
 gt-fmt = { path = "crates/gt-fmt" }
 gt-history = { path = "crates/gt-history" }
+gt-loaded-files = { path = "crates/gt-loaded-files" }
 gt-loader = { path = "crates/gt-loader" }
 gt-logfile = { path = "crates/gt-logfile" }
 gt-map = { path = "crates/gt-map" }

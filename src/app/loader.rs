@@ -17,7 +17,7 @@ use gt_types::{
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
 
-use super::loaded_files::FileHistory;
+use gt_loaded_files::FileHistory;
 
 pub(super) const STAGE_STARTING: &str = "Starting…";
 pub(super) const STAGE_READING: &str = "Reading…";

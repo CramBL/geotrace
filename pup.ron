@@ -101,6 +101,26 @@
             ],
         )),
         Module((
+            name: "gt_loaded_files_isolation",
+            matches: Module("gt_loaded_files.*"),
+            rules: [
+                RestrictImports(
+                    allowed_only: Some([
+                        "^$",
+                        "std.*",
+                        "core.*",
+                        "alloc.*",
+                        "gt_history_types.*",
+                        "gt_types.*",
+                        "crate.*",
+                        "gt_loaded_files.*",
+                    ]),
+                    denied: None,
+                    severity: Error,
+                ),
+            ],
+        )),
+        Module((
             name: "gt_ui_types_isolation",
             matches: Module("gt_ui_types.*"),
             rules: [
@@ -386,6 +406,7 @@
                         "gt_filter.*",
                         "gt_track_builder.*",
                         "gt_history.*",
+                        "gt_loaded_files.*",
                         "gt_fmt.*",
                         "gt_types.*",
                         "gt_map.*",
@@ -405,7 +426,6 @@
                         "app.*",
                         "config_manager.*",
                         "history_db.*",
-                        "loaded_files.*",
                         "loader.*",
                         "modals.*",
                         "query.*",
@@ -456,6 +476,7 @@
                         "egui_phosphor.*",
                         "uom.*",
                         "gt_filter.*",
+                        "gt_loaded_files.*",
                         "gt_track_builder.*",
                         "gt_types.*",
                         "gt_fmt.*",

@@ -7,7 +7,7 @@ use gt_side_panel::{NodeKey, TreeState};
 use gt_types::{LoadWarning, TrackRef};
 use gt_ui_theme::WARNING_AMBER;
 
-use super::loaded_files::{FileHistory, LoadedFiles};
+use gt_loaded_files::{LoadedFiles, LoadedFilesView};
 
 /// The tracks of one stored recording that a remove acts on.
 pub struct RecordingTrackRemoval {
@@ -46,7 +46,7 @@ pub fn show_delete_confirmation(
     let mut permanent = confirm.delete_permanently;
     // Tracks backed by history that this remove touches. Drives the wording and
     // whether the "delete permanently" option is even relevant.
-    let removals = track_removals(&confirm.items, loaded_files);
+    let removals = track_removals(&confirm.items, loaded_files.view());
     let affected_recordings = removals.len();
     let affected_tracks: usize = removals.iter().map(|r| r.track_indices.len()).sum();
 
@@ -159,7 +159,7 @@ pub fn show_delete_confirmation(
 
 /// Indices of files that removing `keys` would empty entirely - either selected
 /// directly, or because every one of their tracks is in the removal set.
-fn files_fully_removed(keys: &[NodeKey], loaded_files: &LoadedFiles) -> BTreeSet<usize> {
+fn files_fully_removed(keys: &[NodeKey], loaded_files: LoadedFilesView<'_>) -> BTreeSet<usize> {
     let mut files: BTreeSet<usize> = BTreeSet::new();
     let mut tracks: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
     for key in keys {
@@ -179,11 +179,11 @@ fn files_fully_removed(keys: &[NodeKey], loaded_files: &LoadedFiles) -> BTreeSet
         if files.contains(fi) {
             continue;
         }
-        if let Some(file) = loaded_files.get(*fi)
-            && !file.tracks.is_empty()
-            && (0..file.tracks.len()).all(|ti| track_set.contains(&ti))
-        {
-            files.insert(*fi);
+        if let Some(entry) = loaded_files.get(*fi) {
+            let file = entry.file();
+            if !file.tracks.is_empty() && (0..file.tracks.len()).all(|ti| track_set.contains(&ti)) {
+                files.insert(*fi);
+            }
         }
     }
     files
@@ -195,17 +195,20 @@ fn files_fully_removed(keys: &[NodeKey], loaded_files: &LoadedFiles) -> BTreeSet
 /// A removed file contributes all of its tracks. Track indices are taken from
 /// each track's stored `metadata.index` rather than its live view position, so
 /// they line up with the recording's persisted track table.
-fn track_removals(keys: &[NodeKey], loaded_files: &LoadedFiles) -> Vec<RecordingTrackRemoval> {
+fn track_removals(
+    keys: &[NodeKey],
+    loaded_files: LoadedFilesView<'_>,
+) -> Vec<RecordingTrackRemoval> {
     // File index -> set of removed view positions.
     let mut by_file: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
     for key in keys {
         match key {
             NodeKey::File(fi) => {
-                if let Some(file) = loaded_files.get(fi.as_usize()) {
+                if let Some(entry) = loaded_files.entry_for(*fi) {
                     by_file
                         .entry(fi.as_usize())
                         .or_default()
-                        .extend(0..file.tracks.len());
+                        .extend(0..entry.file().tracks.len());
                 }
             }
             NodeKey::Track(TrackRef { fi, index: ti }) => {
@@ -219,14 +222,11 @@ fn track_removals(keys: &[NodeKey], loaded_files: &LoadedFiles) -> Vec<Recording
 
     let mut removals = Vec::new();
     for (fi, positions) in by_file {
-        let Some(file) = loaded_files.get(fi) else {
+        let Some(entry) = loaded_files.get(fi) else {
             continue;
         };
-        let Some(db_ref) = loaded_files
-            .history(fi)
-            .and_then(FileHistory::db_ref)
-            .cloned()
-        else {
+        let file = entry.file();
+        let Some(db_ref) = entry.history().db_ref().cloned() else {
             continue;
         };
         let track_indices: Vec<usize> = positions
@@ -254,8 +254,8 @@ pub fn execute_delete(
     loaded_files: &mut LoadedFiles,
     tree: &mut TreeState,
 ) -> Vec<RecordingTrackRemoval> {
-    let fully_removed = files_fully_removed(keys, loaded_files);
-    let removals = track_removals(keys, loaded_files);
+    let fully_removed = files_fully_removed(keys, loaded_files.view());
+    let removals = track_removals(keys, loaded_files.view());
 
     // Drop individual tracks from files that survive (are not removed wholesale).
     let mut tracks_to_remove: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
@@ -475,9 +475,8 @@ mod tests {
         TrackMetadata,
     };
 
-    use super::FileHistory;
     use super::{NodeKey, TrackRef, files_fully_removed, track_removals};
-    use crate::app::loaded_files::LoadedFiles;
+    use gt_loaded_files::{FileHistory, LoadedFiles};
 
     fn make_file(track_count: usize) -> LoadedFile {
         LoadedFile {
@@ -608,7 +607,7 @@ mod tests {
         for case in cases {
             let files = make_loaded_files(&case.files);
 
-            let removed: Vec<usize> = files_fully_removed(&case.keys, &files)
+            let removed: Vec<usize> = files_fully_removed(&case.keys, files.view())
                 .into_iter()
                 .collect();
             assert_eq!(
@@ -617,7 +616,7 @@ mod tests {
                 case.name
             );
 
-            let removals = track_removals(&case.keys, &files);
+            let removals = track_removals(&case.keys, files.view());
             assert_eq!(
                 removals.len(),
                 case.expect_recordings,

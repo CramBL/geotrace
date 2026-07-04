@@ -1,4 +1,5 @@
 use gt_filter::GlobalFilter;
+use gt_loaded_files::LoadedFilesView;
 use gt_types::{
     DataCategory, FileIdx, GeneratedMarkerKind, LoadWarning, LoadedFile, LoadedTrack, PointIdx,
     TrackIdx, TrackRef,
@@ -12,8 +13,7 @@ use crate::widgets::{
 };
 
 pub struct PanelContext<'a> {
-    pub files: &'a [LoadedFile],
-    pub file_stored_in_history: &'a [bool],
+    pub loaded_files: LoadedFilesView<'a>,
     pub tree: &'a mut TreeState,
     pub highlight: &'a mut MapHighlight,
     pub filter: &'a mut GlobalFilter,
@@ -23,6 +23,20 @@ pub struct PanelContext<'a> {
     pub zoom_to_visible_request: &'a mut bool,
     /// Set by clicking the ⚠ icon on a file row. Consumed by the app to show a centered dialog.
     pub warnings_request: &'a mut Option<(String, Vec<LoadWarning>)>,
+}
+
+impl<'a> PanelContext<'a> {
+    fn files(&self) -> &'a [LoadedFile] {
+        self.loaded_files.files()
+    }
+
+    fn file(&self, file: FileIdx) -> Option<&'a LoadedFile> {
+        self.loaded_files.entry_for(file).map(|entry| entry.file())
+    }
+
+    fn file_stored_in_history(&self, file: FileIdx) -> bool {
+        self.loaded_files.file_stored_in_history(file)
+    }
 }
 
 pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
@@ -53,12 +67,12 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     }
 
     ui.separator();
-    render_filter_panel(ui, ctx.files, ctx.filter, ctx.filter_state);
+    render_filter_panel(ui, ctx.files(), ctx.filter, ctx.filter_state);
 
     let filter_snapshot = *ctx.filter;
     let vis = ctx.tree.visibility();
     let filtered_out: Vec<NodeKey> = ctx
-        .files
+        .files()
         .iter()
         .enumerate()
         .flat_map(|(fi, file)| {
@@ -125,14 +139,14 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for fi in 0..ctx.files.len() {
+            for fi in 0..ctx.files().len() {
                 render_file_row(ui, FileIdx::new(fi), ctx);
             }
         });
 }
 
 fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
-    let Some(file) = fi.get(ctx.files) else {
+    let Some(file) = ctx.file(fi) else {
         return;
     };
     let Some(file_node) = ctx.tree.file_node(fi) else {
@@ -195,7 +209,7 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
     }
     let modifiers = ui.ctx().input(|i| i.modifiers);
     if file_label_resp.double_clicked() {
-        if let Some(center) = file_bounding_center(fi.get(ctx.files)) {
+        if let Some(center) = file_bounding_center(ctx.file(fi)) {
             *ctx.map_center_request = Some(center);
         }
     } else if file_label_resp.clicked() {
@@ -213,11 +227,7 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
             ui.close();
         }
         ui.separator();
-        let stored_in_history = ctx
-            .file_stored_in_history
-            .get(fi.as_usize())
-            .copied()
-            .unwrap_or(false);
+        let stored_in_history = ctx.file_stored_in_history(fi);
         let unload = ui.button("Unload").on_hover_text(if stored_in_history {
             "Unloads this recording from the view; it stays in History"
         } else {
@@ -235,7 +245,7 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
 
     if is_expanded {
         ui.indent(format!("file_{fi}"), |ui| {
-            let track_count = fi.get(ctx.files).map_or(0, |f| f.tracks.len());
+            let track_count = ctx.file(fi).map_or(0, |f| f.tracks.len());
             for ti in 0..track_count {
                 render_track_row(ui, fi, TrackIdx::new(ti), ctx);
             }
@@ -246,7 +256,7 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
 fn render_track_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut PanelContext<'_>) {
     let track_ref = TrackRef::new(fi, ti);
     let (track, passes, is_expanded, panel_hovered, map_hovered, key) = {
-        let Some(file) = fi.get(ctx.files) else {
+        let Some(file) = ctx.file(fi) else {
             return;
         };
         let Some(track) = ti.get(&file.tracks) else {

@@ -1,0 +1,19 @@
+[package]
+name = "gt-loaded-files"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+test = false
+
+[dependencies]
+gt-history-types = { path = "../gt-history-types" }
+gt-types = { path = "../gt-types" }
+
+[lints]
+workspace = true

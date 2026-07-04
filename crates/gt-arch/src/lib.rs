@@ -110,6 +110,31 @@ mod tests {
             )
             .build();
 
+        // gt_loaded_files Isolation (Whitelist)
+        //
+        // Shared app/session loaded-file model. It may depend on raw data
+        // types and history schema types, but not on UI crates or history
+        // backends.
+        builder
+            .module_lint()
+            .lint_named("gt_loaded_files_isolation")
+            .matching(|m| m.module("gt_loaded_files.*"))
+            .with_severity(Severity::Error)
+            .restrict_imports(
+                Some(vec![
+                    "^$".into(),
+                    "std.*".into(),
+                    "core.*".into(),
+                    "alloc.*".into(),
+                    "gt_history_types.*".into(),
+                    "gt_types.*".into(),
+                    "crate.*".into(),
+                    "gt_loaded_files.*".into(),
+                ]),
+                None,
+            )
+            .build();
+
         // gt_ui_types Isolation (Whitelist)
         builder
             .module_lint()
@@ -416,6 +441,7 @@ mod tests {
                     "gt_filter.*".into(),
                     "gt_track_builder.*".into(),
                     "gt_history.*".into(),
+                    "gt_loaded_files.*".into(),
                     "gt_fmt.*".into(),
                     "gt_types.*".into(),
                     "gt_map.*".into(),
@@ -435,7 +461,6 @@ mod tests {
                     "app.*".into(),
                     "config_manager.*".into(),
                     "history_db.*".into(),
-                    "loaded_files.*".into(),
                     "loader.*".into(),
                     "modals.*".into(),
                     "query.*".into(),
@@ -494,6 +519,7 @@ mod tests {
                     "egui_phosphor.*".into(),
                     "uom.*".into(),
                     "gt_filter.*".into(),
+                    "gt_loaded_files.*".into(),
                     "gt_track_builder.*".into(),
                     "gt_types.*".into(),
                     "gt_fmt.*".into(),

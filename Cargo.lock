@@ -1967,6 +1967,7 @@ dependencies = [
  "gt-filter",
  "gt-fmt",
  "gt-history",
+ "gt-loaded-files",
  "gt-loader",
  "gt-logfile",
  "gt-map",
@@ -2301,6 +2302,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gt-loaded-files"
+version = "0.3.0"
+dependencies = [
+ "gt-history-types",
+ "gt-types",
+]
+
+[[package]]
 name = "gt-loader"
 version = "0.3.0"
 dependencies = [
@@ -2389,6 +2398,7 @@ dependencies = [
  "egui-phosphor",
  "gt-filter",
  "gt-fmt",
+ "gt-loaded-files",
  "gt-test-utils",
  "gt-track-builder",
  "gt-types",

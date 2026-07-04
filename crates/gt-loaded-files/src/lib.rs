@@ -1,24 +1,25 @@
 use std::borrow::Cow;
 use std::ops::{Deref, Index, IndexMut};
 
+use gt_history_types::{DatabaseRef, RecordingMeta};
 use gt_types::{FileIdx, LoadedFile};
 
+/// App/session-side history metadata for one loaded file.
+///
+/// This is not persisted history schema. It describes how the currently loaded
+/// `LoadedFile` relates to history, if at all.
 #[derive(Debug, Clone)]
 pub enum FileHistory {
     None,
     Recording {
         identity: String,
-        meta: gt_history::RecordingMeta,
-        db_ref: Option<gt_history::DatabaseRef>,
+        meta: RecordingMeta,
+        db_ref: Option<DatabaseRef>,
     },
 }
 
 impl FileHistory {
-    pub fn recording(
-        identity: String,
-        meta: gt_history::RecordingMeta,
-        db_ref: Option<gt_history::DatabaseRef>,
-    ) -> Self {
+    pub fn recording(identity: String, meta: RecordingMeta, db_ref: Option<DatabaseRef>) -> Self {
         Self::Recording {
             identity,
             meta,
@@ -36,7 +37,7 @@ impl FileHistory {
         )
     }
 
-    pub fn db_ref(&self) -> Option<&gt_history::DatabaseRef> {
+    pub fn db_ref(&self) -> Option<&DatabaseRef> {
         match self {
             Self::Recording {
                 db_ref: Some(db_ref),
@@ -46,7 +47,7 @@ impl FileHistory {
         }
     }
 
-    pub fn meta(&self) -> Option<gt_history::RecordingMeta> {
+    pub fn meta(&self) -> Option<RecordingMeta> {
         match self {
             Self::Recording { meta, .. } => Some(*meta),
             Self::None => None,
@@ -61,11 +62,19 @@ impl FileHistory {
     }
 }
 
+/// Read-only view of loaded files and their app/session sidecar metadata.
+///
+/// `FileIdx(n)` indexes the same logical file in every method on this view:
+/// `files()[n]`, `get(n)`, and `entry_for(FileIdx(n))` all refer to the same
+/// file. The invariant is enforced by constructing this view only from
+/// [`LoadedFiles`], whose file and history sidecar storage is private and is
+/// mutated through methods that keep both vectors aligned.
 #[derive(Debug, Clone, Copy)]
 pub struct LoadedFilesView<'a> {
     loaded_files: &'a LoadedFiles,
 }
 
+/// One loaded file paired with its app/session sidecar metadata.
 #[derive(Debug, Clone, Copy)]
 pub struct LoadedFileEntry<'a> {
     file: &'a LoadedFile,
@@ -77,12 +86,41 @@ impl<'a> LoadedFilesView<'a> {
         self.loaded_files.files()
     }
 
+    pub fn len(&self) -> usize {
+        self.loaded_files.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.loaded_files.is_empty()
+    }
+
+    pub fn get(&self, index: usize) -> Option<LoadedFileEntry<'a>> {
+        let file = self.loaded_files.files.get(index)?;
+        let history = self.loaded_files.history.get(index)?;
+        Some(LoadedFileEntry { file, history })
+    }
+
+    pub fn entry_for(&self, file: FileIdx) -> Option<LoadedFileEntry<'a>> {
+        self.get(file.as_usize())
+    }
+
     pub fn entries(&self) -> impl ExactSizeIterator<Item = LoadedFileEntry<'a>> + 'a {
         self.loaded_files
             .files
             .iter()
             .zip(&self.loaded_files.history)
             .map(|(file, history)| LoadedFileEntry { file, history })
+    }
+
+    pub fn file_stored_in_history(&self, file: FileIdx) -> bool {
+        self.entry_for(file)
+            .is_some_and(|entry| entry.is_stored_in_history())
+    }
+
+    pub fn recording_metas(&self) -> Vec<RecordingMeta> {
+        self.entries()
+            .filter_map(|entry| entry.history().meta())
+            .collect()
     }
 }
 
@@ -98,8 +136,17 @@ impl<'a> LoadedFileEntry<'a> {
     pub fn identity_key(&self) -> Cow<'a, str> {
         self.history.identity_key(self.file)
     }
+
+    pub fn is_stored_in_history(&self) -> bool {
+        self.history.is_stored()
+    }
 }
 
+/// Loaded files plus app/session metadata that must remain index-aligned.
+///
+/// The backing vectors are private so callers cannot construct mismatched file
+/// and history sidecar slices. Use [`LoadedFiles::view`] when read-only
+/// consumers need both the files and their sidecar metadata.
 #[derive(Debug, Clone, Default)]
 pub struct LoadedFiles {
     files: Vec<LoadedFile>,
@@ -148,14 +195,6 @@ impl LoadedFiles {
         self.files.get_mut(index)
     }
 
-    pub fn history(&self, index: usize) -> Option<&FileHistory> {
-        self.history.get(index)
-    }
-
-    pub fn history_for(&self, file: FileIdx) -> Option<&FileHistory> {
-        self.history(file.as_usize())
-    }
-
     pub fn push(&mut self, file: LoadedFile, history: FileHistory) {
         self.files.push(file);
         self.history.push(history);
@@ -170,14 +209,6 @@ impl LoadedFiles {
         let history = self.history.remove(index);
         debug_assert_eq!(self.files.len(), self.history.len());
         Some((file, history))
-    }
-
-    pub fn recording_metas(&self) -> Vec<gt_history::RecordingMeta> {
-        self.history.iter().filter_map(FileHistory::meta).collect()
-    }
-
-    pub fn stored_flags(&self) -> Vec<bool> {
-        self.history.iter().map(FileHistory::is_stored).collect()
     }
 }
 
