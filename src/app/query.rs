@@ -11,12 +11,12 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use super::loaded_files::LoadedFilesView;
 use chrono::{DateTime, Utc};
 use egui::text::LayoutJob;
 use gt_analysis::loss_of_lock::{self, SECS_PER_MIN, SlipRatePerPoint};
 use gt_analysis::satellite_utilization::{self, UtilPerPoint};
 use gt_filter::GlobalFilter;
+use gt_loaded_files::LoadedFilesView;
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{
     CheckedQuery, Diagnostic, MetricProvider, Quantity, QueryMetric, RunOutput, Span, TrackInput,
@@ -1096,7 +1096,7 @@ mod tests {
 
     #[test]
     fn fingerprint_changes_with_files_visibility_and_filter() {
-        let loaded_files = super::super::loaded_files::LoadedFiles::new();
+        let loaded_files = gt_loaded_files::LoadedFiles::new();
         let visibility = TrackDataVisibility::from_loaded(loaded_files.files());
         let base = current_fingerprint(loaded_files.view(), &visibility, &GlobalFilter::default());
         assert_eq!(

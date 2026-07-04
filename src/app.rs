@@ -2,7 +2,6 @@ mod auto_prune;
 mod config_manager;
 mod history;
 mod history_db;
-mod loaded_files;
 mod loader;
 mod modals;
 mod query;
@@ -16,13 +15,13 @@ use egui_tiles::{
     Container, Linear, LinearDir, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse,
 };
 use gt_filter::GlobalFilter;
+use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_map::{MapContextAction, MapLayer, NavMap};
 use gt_plot::PlotState;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
 use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
 use gt_types::{AssociationConfig, DataCategory, FileIdx, LoadWarning, LoadedFile, NavPoint};
 use gt_ui_types::{HighlightScope, MapHighlight, TrackDataVisibility};
-use loaded_files::{FileHistory, LoadedFiles};
 use loader::{CompletedLoad, FinishedJob, LoadOutcome, LoaderManager};
 use strum::IntoEnumIterator;
 
@@ -1608,12 +1607,11 @@ impl eframe::App for App {
                 .show_inside(ui, |ui| {
                     let mut refmut = self.shared.borrow_mut();
                     let s = &mut *refmut;
-                    let file_stored_in_history = s.loaded_files.stored_flags();
+                    let loaded_files = s.loaded_files.view();
                     show_side_panel(
                         ui,
                         &mut PanelContext {
-                            files: &s.loaded_files,
-                            file_stored_in_history: &file_stored_in_history,
+                            loaded_files,
                             tree: &mut s.tree,
                             highlight: &mut s.highlight,
                             filter: &mut s.filter,
@@ -1644,12 +1642,11 @@ impl eframe::App for App {
                 .show(ui.ctx(), |ui| {
                     let mut refmut = self.shared.borrow_mut();
                     let s = &mut *refmut;
-                    let file_stored_in_history = s.loaded_files.stored_flags();
+                    let loaded_files = s.loaded_files.view();
                     show_side_panel(
                         ui,
                         &mut PanelContext {
-                            files: &s.loaded_files,
-                            file_stored_in_history: &file_stored_in_history,
+                            loaded_files,
                             tree: &mut s.tree,
                             highlight: &mut s.highlight,
                             filter: &mut s.filter,
@@ -1917,7 +1914,7 @@ impl eframe::App for App {
         let prev_storage = self.storage_enabled;
         let loaded_metas: Vec<gt_history::RecordingMeta> = {
             let s = self.shared.borrow();
-            s.loaded_files.recording_metas()
+            s.loaded_files.view().recording_metas()
         };
         self.history_window.show(
             ui.ctx(),

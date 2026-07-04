@@ -15,6 +15,7 @@ egui.workspace = true
 egui-phosphor.workspace = true
 gt-filter = { path = "../gt-filter" }
 gt-fmt = { path = "../gt-fmt" }
+gt-loaded-files = { path = "../gt-loaded-files" }
 gt-types = { path = "../gt-types" }
 gt-ui-theme = { path = "../gt-ui-theme" }
 gt-ui-types = { path = "../gt-ui-types" }

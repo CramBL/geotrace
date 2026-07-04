@@ -1,11 +1,12 @@
 use gt_filter::GlobalFilter;
+use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
 use gt_test_utils::TestHarness;
 use gt_types::{FileIdx, FixStats, LoadWarning, TrackIdx, TrackRef};
 use gt_ui_types::MapHighlight;
 
 struct State {
-    files: Vec<gt_types::LoadedFile>,
+    files: LoadedFiles,
     tree: TreeState,
     filter: GlobalFilter,
     filter_state: FilterPanelState,
@@ -26,28 +27,27 @@ fn make_state_with_warnings_on(
     warnings: &[LoadWarning],
 ) -> State {
     let points = gt_test_utils::nav_test_data();
-    let files = (0..file_count)
-        .map(|i| {
-            let w = if i == warned_file {
-                warnings.to_vec()
-            } else {
-                vec![]
-            };
-            gt_track_builder::build_loaded_file(
-                format!("ride_{i}.gtd"),
-                &points,
-                &[],
-                vec![],
-                vec![],
-                &gt_track_builder::SegmentationConfig::default(),
-                gt_types::FileSource::GtdPath(std::path::PathBuf::from(format!("ride_{i}.gtd"))),
-                w,
-            )
-        })
-        .collect();
+    let mut files = LoadedFiles::new();
+    for i in 0..file_count {
+        let w = if i == warned_file {
+            warnings.to_vec()
+        } else {
+            vec![]
+        };
+        let file = gt_track_builder::build_loaded_file(
+            format!("ride_{i}.gtd"),
+            &points,
+            &[],
+            vec![],
+            vec![],
+            &gt_track_builder::SegmentationConfig::default(),
+            gt_types::FileSource::GtdPath(std::path::PathBuf::from(format!("ride_{i}.gtd"))),
+            w,
+        );
+        files.push(file, FileHistory::None);
+    }
     let mut tree = TreeState::new();
-    let files_ref: &Vec<gt_types::LoadedFile> = &files;
-    tree.sync_from_loaded_files(files_ref);
+    tree.sync_from_loaded_files(files.files());
     State {
         files,
         tree,
@@ -67,8 +67,7 @@ fn make_harness(state: State) -> TestHarness<'static, State> {
         .ui_state(
             |ui, s: &mut State| {
                 let mut ctx = PanelContext {
-                    files: &s.files,
-                    file_stored_in_history: &[],
+                    loaded_files: s.files.view(),
                     tree: &mut s.tree,
                     highlight: &mut s.highlight,
                     filter: &mut s.filter,
@@ -191,9 +190,11 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
     let mut tree = TreeState::new();
     tree.sync_from_loaded_files(std::slice::from_ref(&file));
     tree.toggle_expand_file(FileIdx::new(0));
+    let mut files = LoadedFiles::new();
+    files.push(file, FileHistory::None);
 
     let state = State {
-        files: vec![file],
+        files,
         tree,
         filter: GlobalFilter::default(),
         filter_state: FilterPanelState::default(),
