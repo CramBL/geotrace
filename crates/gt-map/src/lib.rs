@@ -4,6 +4,7 @@ mod hover_labels;
 mod icons;
 pub mod marker_renderer;
 mod polyline;
+mod query_match_renderer;
 #[cfg(test)]
 mod test_harness;
 pub mod tpv_renderer;
@@ -21,7 +22,7 @@ use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
     DataPointRef, EventMarkerVisibility, GeneratedMarkerVisibility, HighlightScope, MapHighlight,
-    TrackDataVisibility,
+    QueryMatches, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
@@ -333,6 +334,7 @@ impl NavMap {
         filter: &GlobalFilter,
         event_marker_visibility: &EventMarkerVisibility,
         generated_marker_visibility: &GeneratedMarkerVisibility,
+        query_matches: Option<&QueryMatches>,
         center_request: Option<(f64, f64)>,
         zoom_to_visible: bool,
         sticky_pos_override: Option<egui::Pos2>,
@@ -472,6 +474,7 @@ impl NavMap {
                     .new_file_boundary(self.new_file_boundary)
                     .blink_alpha(blink_alpha)
                     .hover_fade_alpha(hover_fade_progress)
+                    .maybe_query_matches(query_matches)
                     .build(),
             )
             .with_plugin(MarkerRenderer::new(
@@ -1583,5 +1586,68 @@ mod snapshot_tests {
 
         harness.run();
         harness.snapshot("disambig_popup_big_icons");
+    }
+
+    /// Drive the full `NavMap::draw` path over the fixture track with a
+    /// hardcoded set of query matches. Requires `GEOTRACE_OFFLINE=1` (set by
+    /// `just test`) so no map tiles render beneath the halos.
+    fn snapshot_nav_map_with_matches(name: &'static str, stale: bool) {
+        use std::collections::HashMap;
+
+        use gt_ui_types::{QueryMatches, TrackDataVisibility};
+
+        let files = vec![make_snapshot_file()];
+        let visibility = TrackDataVisibility::from_loaded(&files);
+        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        // Two multi-point stretches on different legs of the fixture loop,
+        // plus a single-point match that must render as a ring.
+        let matches = QueryMatches {
+            ranges: HashMap::from([(track, vec![150..300, 700..701, 900..1000])]),
+            stale,
+        };
+
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(800.0, 600.0))
+            .ui_state(
+                move |ui, map: &mut Option<NavMap>| {
+                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let mut highlight = gt_ui_types::MapHighlight::default();
+                    map.draw(
+                        ui,
+                        &files,
+                        &visibility,
+                        &mut highlight,
+                        &gt_filter::GlobalFilter::default(),
+                        &gt_ui_types::EventMarkerVisibility::default(),
+                        &gt_ui_types::GeneratedMarkerVisibility::default(),
+                        Some(&matches),
+                        None,
+                        false,
+                        None,
+                    );
+                },
+                None,
+            );
+
+        // First frame zooms to fit the newly seen file; extra frames let the
+        // blink/fade animations settle before the snapshot.
+        for _ in 0..5 {
+            harness.run();
+        }
+        harness.snapshot_loose(name);
+    }
+
+    /// Snapshot: match halos along the track, including the single-point
+    /// ring, over the live map canvas.
+    #[test]
+    fn snap_query_match_halos() {
+        snapshot_nav_map_with_matches("query_match_halos", false);
+    }
+
+    /// Snapshot: the same matches grayed out after the visible data changed
+    /// (stale results are dimmed, never hidden).
+    #[test]
+    fn snap_query_match_halos_stale() {
+        snapshot_nav_map_with_matches("query_match_halos_stale", true);
     }
 }

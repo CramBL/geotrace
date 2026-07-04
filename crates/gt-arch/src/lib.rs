@@ -129,6 +129,7 @@ mod tests {
                     // Sub-module shorthands
                     "event_marker_visibility.*".into(),
                     "highlight.*".into(),
+                    "query_matches.*".into(),
                     "visibility.*".into(),
                 ]),
                 None,
@@ -284,6 +285,7 @@ mod tests {
                     "hover_labels.*".into(),
                     "icons.*".into(),
                     "marker_renderer.*".into(),
+                    "query_match_renderer.*".into(),
                     "track_renderer.*".into(),
                     "tpv_renderer.*".into(),
                     "transform.*".into(),

@@ -1316,6 +1316,9 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     &s.filter,
                     s.tree.event_marker_visibility(),
                     s.tree.generated_marker_visibility(),
+                    // No query matches yet - the query window that produces
+                    // them is not built.
+                    None,
                     center_req,
                     zoom_to_visible,
                     popup_pos,
