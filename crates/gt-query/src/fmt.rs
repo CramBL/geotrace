@@ -24,8 +24,8 @@ impl fmt::Display for Query {
         for predicate in &self.predicates {
             write!(f, "\n| where {predicate}")?;
         }
-        if self.draw.is_some() {
-            write!(f, "\n| draw")?;
+        if let Some(stage) = self.mode {
+            write!(f, "\n| {}", stage.mode)?;
         }
         if let Some(table) = &self.table {
             write!(f, "\n| table ")?;

@@ -33,11 +33,19 @@ expression: catalog
     ),
     (
         "points | draw | where velocity > 0 km/h",
-        "16..21: where must come before draw and table",
+        "16..21: where must come before draw, keep, hide, or table",
     ),
     (
         "points | draw | draw",
-        "16..20: only one draw stage is allowed",
+        "16..20: only one of draw, keep, or hide is allowed",
+    ),
+    (
+        "points | keep | hide",
+        "16..20: only one of draw, keep, or hide is allowed",
+    ),
+    (
+        "points | where velocity > 0 km/h | keep | table time",
+        "(no error)",
     ),
     (
         "points | where velocity > 30 mph",
@@ -149,11 +157,11 @@ expression: catalog
     ),
     (
         "points |",
-        "8..8: expected a stage after |: with, window, where, draw, or table",
+        "8..8: expected a stage after |: with, window, where, draw, keep, hide, or table",
     ),
     (
         "points | 5",
-        "9..10: expected a stage: with, window, where, draw, or table",
+        "9..10: expected a stage: with, window, where, draw, keep, hide, or table",
     ),
     (
         "points | where > 3",
@@ -177,7 +185,7 @@ expression: catalog
     ),
     (
         "points | draw | window 5",
-        "16..22: window must come before draw and table",
+        "16..22: window must come before draw, keep, hide, or table",
     ),
     (
         "points | window 2 | where avg(velocity)",

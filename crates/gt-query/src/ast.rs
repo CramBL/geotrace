@@ -1,5 +1,7 @@
 //! Syntax tree for a parsed query, produced by [`crate::parse`].
 
+use gt_types::DisplayMode;
+
 use crate::metric::QueryMetric;
 use crate::unit::Unit;
 
@@ -31,8 +33,17 @@ pub struct Query {
     pub window: Option<Window>,
     /// One entry per `where` stage; they combine as if joined with `and`.
     pub predicates: Vec<Expr>,
-    pub draw: Option<Span>,
+    /// The `draw`/`keep`/`hide` display stage, when written. Absent means
+    /// the implicit `draw`.
+    pub mode: Option<ModeStage>,
     pub table: Option<TableSpec>,
+}
+
+/// A `draw`, `keep`, or `hide` stage as written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModeStage {
+    pub mode: DisplayMode,
+    pub span: Span,
 }
 
 /// `window N` - a sliding group of N consecutive points.

@@ -51,7 +51,7 @@ pub struct Diagnostic {
 mod tests {
     use std::collections::BTreeMap;
 
-    use gt_types::{FileIdx, TrackIdx, TrackRef};
+    use gt_types::{DisplayMode, FileIdx, TrackIdx, TrackRef};
 
     use super::*;
 
@@ -136,7 +136,33 @@ mod tests {
         assert_eq!(output.matches[0].ranges, vec![1..3, 4..5]);
         assert_eq!(output.summary.match_count, 2);
         assert_eq!(output.summary.tracks_with_matches, 1);
+        // 3 of the 5 points matched - the counts the keep/hide summary uses.
+        assert_eq!(output.summary.matched_points, 3);
+        assert_eq!(output.summary.total_points, 5);
         assert!(output.summary.skipped.is_empty());
+    }
+
+    #[test]
+    fn matched_points_count_points_not_windows() {
+        // Windows [1,3) and [2,4) both pass, so points 1..=4 (four points)
+        // match even though only two windows did.
+        let provider = TestProvider::new(6).with(
+            QueryMetric::Velocity,
+            vec![
+                Some(0.0),
+                Some(11.0),
+                Some(12.0),
+                Some(13.0),
+                Some(11.0),
+                Some(0.0),
+            ],
+        );
+        let output = run_one(
+            "points | window 3 | where avg(velocity) > 36 km/h",
+            &provider,
+        );
+        assert_eq!(output.summary.matched_points, 4);
+        assert_eq!(output.summary.total_points, 6);
     }
 
     #[test]
@@ -298,14 +324,28 @@ mod tests {
                 QueryMetric::Accel,
             ]
         );
-        assert!(query.draw());
+        assert_eq!(query.mode(), DisplayMode::Draw);
     }
 
     #[test]
-    fn implicit_draw_without_output_stage() {
-        assert!(checked("points | where velocity > 0 km/h").draw());
-        assert!(!checked("points | where velocity > 0 km/h | table time").draw());
-        assert!(checked("points | where velocity > 0 km/h | draw | table time").draw());
+    fn display_mode_defaults_to_draw() {
+        // No display stage, and a table without one, both mean draw.
+        assert_eq!(
+            checked("points | where velocity > 0 km/h").mode(),
+            DisplayMode::Draw
+        );
+        assert_eq!(
+            checked("points | where velocity > 0 km/h | table time").mode(),
+            DisplayMode::Draw
+        );
+        assert_eq!(
+            checked("points | where velocity > 0 km/h | keep").mode(),
+            DisplayMode::Keep
+        );
+        assert_eq!(
+            checked("points | where velocity > 0 km/h | hide | table time").mode(),
+            DisplayMode::Hide
+        );
     }
 
     #[test]
@@ -494,6 +534,8 @@ mod tests {
             "points | window 3 | window 4",
             "points | draw | where velocity > 0 km/h",
             "points | draw | draw",
+            "points | keep | hide",
+            "points | where velocity > 0 km/h | keep | table time",
             "points | where velocity > 30 mph",
             "points | where velocity > 30 km/s",
             "points | where accel > 1 g/s",
@@ -569,9 +611,11 @@ mod tests {
         use proptest::prelude::*;
         use strum::IntoEnumIterator as _;
 
+        use gt_types::DisplayMode;
+
         use super::super::ast::{
-            BinaryOp, Expr, Func, MetricRef, NumberLit, ParamDecl, ParamName, Query, Span,
-            TableSpec, UnaryOp, Window,
+            BinaryOp, Expr, Func, MetricRef, ModeStage, NumberLit, ParamDecl, ParamName, Query,
+            Span, TableSpec, UnaryOp, Window,
         };
         use super::super::unit::Unit;
         use super::super::{QueryMetric, parse};
@@ -664,9 +708,12 @@ mod tests {
             );
             let window = proptest::option::of(1u64..1000);
             let predicates = proptest::collection::vec(expr_strategy(), 0..3);
+            let mode = proptest::option::of(proptest::sample::select(
+                DisplayMode::iter().collect::<Vec<_>>(),
+            ));
             let table = proptest::option::of(proptest::collection::vec(metric_strategy(), 1..4));
-            (params, window, predicates, proptest::bool::ANY, table).prop_map(
-                |(params, window, predicates, draw, table)| Query {
+            (params, window, predicates, mode, table).prop_map(
+                |(params, window, predicates, mode, table)| Query {
                     params: params
                         .into_iter()
                         .map(|(name, value)| ParamDecl {
@@ -677,7 +724,7 @@ mod tests {
                         .collect(),
                     window: window.map(|len| Window { len, span: span() }),
                     predicates,
-                    draw: draw.then(span),
+                    mode: mode.map(|mode| ModeStage { mode, span: span() }),
                     table: table.map(|metrics| TableSpec {
                         columns: metrics
                             .into_iter()

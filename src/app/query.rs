@@ -23,7 +23,7 @@ use gt_query::{
     Unit,
 };
 use gt_types::satellites::Constellation;
-use gt_types::{FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
+use gt_types::{DisplayMode, FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
 use gt_ui_theme::{DEGREE_SIGN, EM_DASH};
 use gt_ui_types::{MapHighlight, QueryMatches, TrackDataVisibility};
 
@@ -74,6 +74,11 @@ const EXAMPLES: &[QueryExample] = &[
         description: "In-fix share of visible GPS satellites below 50 %",
         text: "points\n| with mask 15 deg\n| where util_gps < 50 %\n| draw\n| table time, util_gps, sats_fix",
     },
+    QueryExample {
+        name: "Hide stationary points",
+        description: "Drop points below walking speed to declutter a parked track",
+        text: "points\n| where velocity < 2 km/h\n| hide",
+    },
 ];
 
 /// The floating query window and the results of its last run.
@@ -107,6 +112,8 @@ struct RunningQuery {
     rx: mpsc::Receiver<RunCompleted>,
     /// Snapshot taken when the run started, attached to its results.
     fingerprint: RunFingerprint,
+    /// The display mode the query asked for, carried to the map.
+    mode: DisplayMode,
 }
 
 /// What the worker sends back. `output: None` means the run was cancelled -
@@ -412,7 +419,7 @@ impl QueryWindow {
             return;
         };
 
-        let summary = summary_line(&output);
+        let summary = summary_line(&output, running.mode);
         let mut ranges: HashMap<TrackRef, Vec<Range<usize>>> = HashMap::new();
         let mut track_data = completed.track_data;
         for track_matches in &output.matches {
@@ -435,6 +442,7 @@ impl QueryWindow {
         self.results = Some(QueryResults {
             matches: QueryMatches {
                 ranges,
+                mode: running.mode,
                 stale: false,
             },
             summary,
@@ -563,6 +571,7 @@ impl QueryWindow {
         let Ok(query) = &self.checked else {
             return;
         };
+        let mode = query.mode();
         let query = query.clone();
         let fingerprint = current_fingerprint(loaded_files, visibility, filter);
 
@@ -606,6 +615,7 @@ impl QueryWindow {
             track_total,
             rx,
             fingerprint,
+            mode,
         });
     }
 }
@@ -931,7 +941,7 @@ impl MetricProvider for SliceProvider<'_> {
     }
 }
 
-fn summary_line(output: &RunOutput) -> String {
+fn summary_line(output: &RunOutput, mode: DisplayMode) -> String {
     let summary = &output.summary;
     let mut parts = vec![format!(
         "{} {} on {} {}",
@@ -940,6 +950,19 @@ fn summary_line(output: &RunOutput) -> String {
         summary.tracks_with_matches,
         gt_fmt::pluralize(summary.tracks_with_matches, "track", "tracks"),
     )];
+    // keep/hide remove points from the map; always say how many, so hidden
+    // data stays accounted for.
+    let hidden = match mode {
+        DisplayMode::Draw => None,
+        DisplayMode::Keep => Some(summary.total_points - summary.matched_points),
+        DisplayMode::Hide => Some(summary.matched_points),
+    };
+    if let Some(hidden) = hidden {
+        parts.push(format!(
+            "{hidden} of {} points hidden",
+            summary.total_points
+        ));
+    }
     for (metric, count) in &summary.skipped {
         parts.push(format!("{count} skipped (missing {metric})"));
     }
@@ -1515,7 +1538,7 @@ mod tests {
                 provider: &provider,
             }],
         );
-        let line = summary_line(&output);
+        let line = summary_line(&output, DisplayMode::Draw);
         assert_eq!(
             line,
             format!(
@@ -1523,6 +1546,47 @@ mod tests {
                  {EM_DASH} snr_drop declared but unused"
             )
         );
+    }
+
+    #[test]
+    fn summary_reports_hidden_count_for_keep_and_hide() {
+        // 5 points, 2 matched.
+        let query = gt_query::check(&gt_query::parse("points | where velocity > 30 km/h").unwrap())
+            .unwrap();
+        let provider = TestSpeeds(vec![
+            Some(40.0),
+            Some(40.0),
+            Some(1.0),
+            Some(1.0),
+            Some(1.0),
+        ]);
+        let output = gt_query::run(
+            &query,
+            &[TrackInput {
+                track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+                provider: &provider,
+            }],
+        );
+        // keep hides the 3 non-matching points; hide hides the 2 matching.
+        assert!(summary_line(&output, DisplayMode::Keep).contains("3 of 5 points hidden"));
+        assert!(summary_line(&output, DisplayMode::Hide).contains("2 of 5 points hidden"));
+        assert!(!summary_line(&output, DisplayMode::Draw).contains("hidden"));
+    }
+
+    /// Velocity in m/s per point, everything else missing.
+    struct TestSpeeds(Vec<Option<f64>>);
+
+    impl MetricProvider for TestSpeeds {
+        fn len(&self) -> usize {
+            self.0.len()
+        }
+
+        fn value(&self, metric: QueryMetric, index: usize) -> Option<f64> {
+            match metric {
+                QueryMetric::Velocity => self.0.get(index).copied().flatten(),
+                _ => None,
+            }
+        }
     }
 
     struct EmptyProvider {

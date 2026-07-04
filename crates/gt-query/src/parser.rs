@@ -5,10 +5,12 @@
 
 use std::str::FromStr as _;
 
+use gt_types::DisplayMode;
+
 use crate::Diagnostic;
 use crate::ast::{
-    BinaryOp, Expr, Func, MetricRef, NumberLit, ParamDecl, ParamName, Query, Span, TableSpec,
-    UnaryOp, Window,
+    BinaryOp, Expr, Func, MetricRef, ModeStage, NumberLit, ParamDecl, ParamName, Query, Span,
+    TableSpec, UnaryOp, Window,
 };
 use crate::lexer::{Tok, Token, lex};
 use crate::metric::QueryMetric;
@@ -114,7 +116,7 @@ impl<'src> Parser<'src> {
             params: Vec::new(),
             window: None,
             predicates: Vec::new(),
-            draw: None,
+            mode: None,
             table: None,
         };
 
@@ -130,19 +132,21 @@ impl<'src> Parser<'src> {
             let Some(stage) = self.peek() else {
                 return Err(self.error(
                     self.here(),
-                    "expected a stage after |: with, window, where, draw, or table",
+                    "expected a stage after |: with, window, where, draw, keep, hide, or table",
                 ));
             };
             match stage.kind {
                 Token::With => self.with_stage(&mut query, stage.span)?,
                 Token::Window => self.window_stage(&mut query, stage.span)?,
                 Token::Where => self.where_stage(&mut query, stage.span)?,
-                Token::Draw => self.draw_stage(&mut query, stage.span)?,
+                Token::Draw => self.mode_stage(&mut query, stage.span, DisplayMode::Draw)?,
+                Token::Keep => self.mode_stage(&mut query, stage.span, DisplayMode::Keep)?,
+                Token::Hide => self.mode_stage(&mut query, stage.span, DisplayMode::Hide)?,
                 Token::Table => self.table_stage(&mut query, stage.span)?,
                 _ => {
                     return Err(self.error(
                         stage.span,
-                        "expected a stage: with, window, where, draw, or table",
+                        "expected a stage: with, window, where, draw, keep, hide, or table",
                     ));
                 }
             }
@@ -151,7 +155,7 @@ impl<'src> Parser<'src> {
     }
 
     fn outputs_started(query: &Query) -> bool {
-        query.draw.is_some() || query.table.is_some()
+        query.mode.is_some() || query.table.is_some()
     }
 
     fn with_stage(&mut self, query: &mut Query, kw_span: Span) -> Result<(), Diagnostic> {
@@ -213,7 +217,10 @@ impl<'src> Parser<'src> {
             ));
         }
         if Self::outputs_started(query) {
-            return Err(self.error(kw_span, "window must come before draw and table"));
+            return Err(self.error(
+                kw_span,
+                "window must come before draw, keep, hide, or table",
+            ));
         }
         let Some(tok) = self.peek() else {
             return Err(self.error(self.here(), "window needs a point count, e.g. window 10"));
@@ -247,19 +254,27 @@ impl<'src> Parser<'src> {
     fn where_stage(&mut self, query: &mut Query, kw_span: Span) -> Result<(), Diagnostic> {
         self.advance();
         if Self::outputs_started(query) {
-            return Err(self.error(kw_span, "where must come before draw and table"));
+            return Err(self.error(kw_span, "where must come before draw, keep, hide, or table"));
         }
         let predicate = self.expr()?;
         query.predicates.push(predicate);
         Ok(())
     }
 
-    fn draw_stage(&mut self, query: &mut Query, kw_span: Span) -> Result<(), Diagnostic> {
+    fn mode_stage(
+        &mut self,
+        query: &mut Query,
+        kw_span: Span,
+        mode: DisplayMode,
+    ) -> Result<(), Diagnostic> {
         self.advance();
-        if query.draw.is_some() {
-            return Err(self.error(kw_span, "only one draw stage is allowed"));
+        if query.mode.is_some() {
+            return Err(self.error(kw_span, "only one of draw, keep, or hide is allowed"));
         }
-        query.draw = Some(kw_span);
+        query.mode = Some(ModeStage {
+            mode,
+            span: kw_span,
+        });
         Ok(())
     }
 

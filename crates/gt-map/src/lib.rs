@@ -1392,7 +1392,7 @@ mod tests {
 mod snapshot_tests {
     use super::*;
     use crate::test_harness::TestHarness;
-    use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
+    use gt_types::{DataCategory, DisplayMode, FileIdx, PointIdx, TrackIdx, TrackRef};
     use gt_ui_types::DataPointRef;
 
     fn tpv_ref() -> DataPointRef {
@@ -1579,7 +1579,7 @@ mod snapshot_tests {
     /// Drive the full `NavMap::draw` path over the fixture track with a
     /// hardcoded set of query matches. Requires `GEOTRACE_OFFLINE=1` (set by
     /// `just test`) so no map tiles render beneath the halos.
-    fn snapshot_nav_map_with_matches(name: &'static str, stale: bool) {
+    fn snapshot_nav_map_with_matches(name: &'static str, mode: DisplayMode, stale: bool) {
         use std::collections::HashMap;
 
         use gt_ui_types::{QueryMatches, TrackDataVisibility};
@@ -1591,6 +1591,7 @@ mod snapshot_tests {
         // plus a single-point match that must render as a ring.
         let matches = QueryMatches {
             ranges: HashMap::from([(track, vec![150..300, 700..701, 900..1000])]),
+            mode,
             stale,
         };
 
@@ -1629,13 +1630,27 @@ mod snapshot_tests {
     /// ring, over the live map canvas.
     #[test]
     fn snap_query_match_halos() {
-        snapshot_nav_map_with_matches("query_match_halos", false);
+        snapshot_nav_map_with_matches("query_match_halos", DisplayMode::Draw, false);
     }
 
     /// Snapshot: the same matches grayed out after the visible data changed
     /// (stale results are dimmed, never hidden).
     #[test]
     fn snap_query_match_halos_stale() {
-        snapshot_nav_map_with_matches("query_match_halos_stale", true);
+        snapshot_nav_map_with_matches("query_match_halos_stale", DisplayMode::Draw, true);
+    }
+
+    /// Snapshot: `keep` mode shows only the matching stretches; the rest of
+    /// the track is hidden and the polyline breaks at the gaps.
+    #[test]
+    fn snap_query_keep_mode() {
+        snapshot_nav_map_with_matches("query_keep_mode", DisplayMode::Keep, false);
+    }
+
+    /// Snapshot: `hide` mode drops the matching stretches, leaving the rest
+    /// of the track with breaks where the matches were.
+    #[test]
+    fn snap_query_hide_mode() {
+        snapshot_nav_map_with_matches("query_hide_mode", DisplayMode::Hide, false);
     }
 }

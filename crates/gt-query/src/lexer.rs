@@ -49,6 +49,10 @@ pub enum Token {
     Where,
     #[token("draw")]
     Draw,
+    #[token("keep")]
+    Keep,
+    #[token("hide")]
+    Hide,
     #[token("table")]
     Table,
     #[token("and")]
@@ -89,7 +93,13 @@ impl Token {
     pub fn is_stage_keyword(self) -> bool {
         matches!(
             self,
-            Token::With | Token::Window | Token::Where | Token::Draw | Token::Table
+            Token::With
+                | Token::Window
+                | Token::Where
+                | Token::Draw
+                | Token::Keep
+                | Token::Hide
+                | Token::Table
         )
     }
 
@@ -100,6 +110,8 @@ impl Token {
             | Token::Window
             | Token::Where
             | Token::Draw
+            | Token::Keep
+            | Token::Hide
             | Token::Table
             | Token::And
             | Token::Or
