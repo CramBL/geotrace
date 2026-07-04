@@ -25,6 +25,7 @@ pub struct CheckedQuery {
     pub(crate) predicates: Vec<CExpr>,
     params: Params,
     columns: Vec<QueryMetric>,
+    referenced: Vec<QueryMetric>,
     unused_params: Vec<ParamName>,
     draw: bool,
 }
@@ -43,6 +44,13 @@ impl CheckedQuery {
     /// Match-table columns, `time` first.
     pub fn columns(&self) -> &[QueryMetric] {
         &self.columns
+    }
+
+    /// Every metric the query touches (predicates and table columns), in
+    /// first-mention order. Lets the runner compute expensive derived series
+    /// (util/slip) only when actually used.
+    pub fn referenced_metrics(&self) -> &[QueryMetric] {
+        &self.referenced
     }
 
     /// Declared parameters no referenced metric needs (run-summary note).
@@ -158,6 +166,7 @@ pub fn check(query: &Query) -> Result<CheckedQuery, Diagnostic> {
         predicates,
         params,
         columns,
+        referenced,
         unused_params,
         draw: query.draw.is_some() || (query.draw.is_none() && query.table.is_none()),
     })

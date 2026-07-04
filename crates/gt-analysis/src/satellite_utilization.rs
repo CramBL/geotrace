@@ -101,6 +101,74 @@ fn rate_percent(num: usize, den: usize) -> Option<f64> {
     (den > 0).then(|| (num as f64 / den as f64) * 100.0)
 }
 
+/// Utilization rates (percent) of one satellite report: combined plus one
+/// per constellation, `None` where the masked baseline is empty. Shared by
+/// the time-series and per-point forms so their values cannot drift.
+struct EpochRates {
+    all: Option<f64>,
+    gps: Option<f64>,
+    glonass: Option<f64>,
+    galileo: Option<f64>,
+    beidou: Option<f64>,
+    navic: Option<f64>,
+    qzss: Option<f64>,
+}
+
+fn epoch_rates(sats: &Satellites, mask_deg: f32) -> EpochRates {
+    let rate_for = |c: Option<Constellation>| {
+        rate_percent(
+            in_fix_above_mask(sats, c, mask_deg),
+            in_view_above_mask(sats, c, mask_deg),
+        )
+    };
+    EpochRates {
+        all: rate_for(None),
+        gps: rate_for(Some(Constellation::Gps)),
+        glonass: rate_for(Some(Constellation::Glonass)),
+        galileo: rate_for(Some(Constellation::Galileo)),
+        beidou: rate_for(Some(Constellation::Beidou)),
+        navic: rate_for(Some(Constellation::Navic)),
+        qzss: rate_for(Some(Constellation::Qzss)),
+    }
+}
+
+/// Per-point utilization rates (percent), aligned with `points` by index.
+///
+/// Entry i is `None` when point i has no satellite report or the masked
+/// baseline is empty. The index alignment is what the query evaluator needs;
+/// the plot uses the time-keyed [`compute_util`] instead.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UtilPerPoint {
+    pub all: Vec<Option<f64>>,
+    pub gps: Vec<Option<f64>>,
+    pub glonass: Vec<Option<f64>>,
+    pub galileo: Vec<Option<f64>>,
+    pub beidou: Vec<Option<f64>>,
+    pub navic: Vec<Option<f64>>,
+    pub qzss: Vec<Option<f64>>,
+}
+
+/// Compute per-point utilization rates for one track's `points` at the given
+/// elevation mask. Same values as [`compute_util`], keyed by point index.
+pub fn util_per_point(points: &[NavPoint], mask_deg: f32) -> UtilPerPoint {
+    let mut out = UtilPerPoint::default();
+    for point in points {
+        let rates = point
+            .satellites
+            .as_ref()
+            .map(|sats| epoch_rates(sats, mask_deg));
+        let rate = |f: fn(&EpochRates) -> Option<f64>| rates.as_ref().and_then(f);
+        out.all.push(rate(|r| r.all));
+        out.gps.push(rate(|r| r.gps));
+        out.glonass.push(rate(|r| r.glonass));
+        out.galileo.push(rate(|r| r.galileo));
+        out.beidou.push(rate(|r| r.beidou));
+        out.navic.push(rate(|r| r.navic));
+        out.qzss.push(rate(|r| r.qzss));
+    }
+    out
+}
+
 /// Compute the utilization-rate series and masked-satellite anomalies for one
 /// track's `points` at the given elevation mask.
 pub fn compute_util(points: &[NavPoint], mask_deg: f32) -> UtilPoints {
@@ -112,37 +180,20 @@ pub fn compute_util(points: &[NavPoint], mask_deg: f32) -> UtilPoints {
         };
         let t = point.tpv.time().as_secs_f64();
 
-        let all_rate = rate_percent(
-            in_fix_above_mask(sats, None, mask_deg),
-            in_view_above_mask(sats, None, mask_deg),
-        );
-        if let Some(r) = all_rate {
-            out.all.push([t, r]);
-        }
-
-        let rate_for = |c: Constellation| {
-            rate_percent(
-                in_fix_above_mask(sats, Some(c), mask_deg),
-                in_view_above_mask(sats, Some(c), mask_deg),
-            )
-        };
-        if let Some(r) = rate_for(Constellation::Gps) {
-            out.gps.push([t, r]);
-        }
-        if let Some(r) = rate_for(Constellation::Glonass) {
-            out.glonass.push([t, r]);
-        }
-        if let Some(r) = rate_for(Constellation::Galileo) {
-            out.galileo.push([t, r]);
-        }
-        if let Some(r) = rate_for(Constellation::Beidou) {
-            out.beidou.push([t, r]);
-        }
-        if let Some(r) = rate_for(Constellation::Navic) {
-            out.navic.push([t, r]);
-        }
-        if let Some(r) = rate_for(Constellation::Qzss) {
-            out.qzss.push([t, r]);
+        let rates = epoch_rates(sats, mask_deg);
+        let all_rate = rates.all;
+        for (series, rate) in [
+            (&mut out.all, rates.all),
+            (&mut out.gps, rates.gps),
+            (&mut out.glonass, rates.glonass),
+            (&mut out.galileo, rates.galileo),
+            (&mut out.beidou, rates.beidou),
+            (&mut out.navic, rates.navic),
+            (&mut out.qzss, rates.qzss),
+        ] {
+            if let Some(r) = rate {
+                series.push([t, r]);
+            }
         }
 
         let mut masked: Vec<MaskedSat> = masked_out_in_fix(sats, mask_deg)
@@ -225,6 +276,47 @@ mod tests {
             .filter_map(Satellite::elevation)
             .collect();
         assert_eq!(flagged, vec![5.0]);
+    }
+
+    /// The per-point form is index-aligned: reportless points hold `None`,
+    /// and every value agrees with the time-keyed series.
+    #[test]
+    fn util_per_point_aligns_with_compute_util() {
+        use gt_types::TimePositionVelocity;
+        use gt_types::coordinates::{Latitude, Longitude};
+        use gt_types::time_types::GpsTime;
+
+        let point = |i: i64, sats: Option<Satellites>| {
+            let time =
+                chrono::DateTime::from_timestamp(1_700_000_000 + i, 0).expect("valid timestamp");
+            let tpv = TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(time))
+                .lat(Latitude::new(55.0))
+                .lon(Longitude::new(12.0))
+                .build();
+            NavPoint::new(tpv, sats)
+        };
+        let with_sats = |used: bool| {
+            report(vec![
+                sat(Constellation::Gps, Some(40.0), used),
+                sat(Constellation::Gps, Some(30.0), true),
+            ])
+        };
+        let points = vec![
+            point(0, Some(with_sats(true))),
+            point(1, None),
+            point(2, Some(with_sats(false))),
+        ];
+
+        let per_point = util_per_point(&points, 15.0);
+        assert_eq!(per_point.all, vec![Some(100.0), None, Some(50.0)]);
+        assert_eq!(per_point.gps.len(), points.len());
+
+        // Same values as the time-keyed series, in order.
+        let series = compute_util(&points, 15.0);
+        let series_values: Vec<f64> = series.all.iter().map(|[_, v]| *v).collect();
+        let aligned_values: Vec<f64> = per_point.all.iter().copied().flatten().collect();
+        assert_eq!(series_values, aligned_values);
     }
 
     /// A satellite used below the mask is excluded from both the numerator and

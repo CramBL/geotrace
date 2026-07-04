@@ -63,6 +63,14 @@ impl TrackDataVisibility {
         }
     }
 
+    /// Whether the given track (and its file) is enabled.
+    pub fn track_enabled(&self, track_ref: TrackRef) -> bool {
+        track_ref
+            .fi
+            .get(&self.files)
+            .is_some_and(|f| f.enabled && track_ref.index.get(&f.tracks).is_some_and(|t| t.enabled))
+    }
+
     /// Show only the given file. Hide all others. Trip visibility within files
     /// is preserved so that re-enabling a file restores its previous state.
     pub fn show_only_file(&mut self, fi: FileIdx) {

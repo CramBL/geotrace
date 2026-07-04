@@ -1,4 +1,4 @@
-use crate::highlight::{DataCategory, FileIdx, PointIdx, TrackIdx};
+use crate::highlight::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
 use crate::history::RecordingMeta;
 use crate::markers::{CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker};
 use crate::mercator::MercPoint;
@@ -320,6 +320,16 @@ pub struct LoadedTrack {
     pub custom_markers: Vec<CustomMarker>,
     pub generated_markers: Vec<GeneratedMarker>,
     pub event_markers: Vec<EventMarker>,
+}
+
+impl TrackRef {
+    /// The track this ref addresses, `None` when either index is stale.
+    ///
+    /// The canonical form of the `fi.get(files)` + `index.get(&f.tracks)`
+    /// chain that otherwise gets re-spelled at every lookup site.
+    pub fn resolve(self, files: &[LoadedFile]) -> Option<&LoadedTrack> {
+        self.fi.get(files).and_then(|f| self.index.get(&f.tracks))
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -568,6 +568,62 @@ fn snapshot_app_demo_trip() {
     harness.snapshot_loose("app_demo_trip");
 }
 
+/// Snapshot of the query window end to end over the demo trip: highlighted
+/// editor text, a run whose matches draw as halos on the map, the run
+/// summary, and an expanded match table.
+#[test]
+fn snapshot_app_query_window() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(DEMO_BYTES)),
+            name: "demo_trip.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+
+    {
+        let mut state = harness.inner.state().shared.borrow_mut();
+        state.zoom_to_visible_request = true;
+    }
+    let app = harness.inner.state_mut();
+    app.query_window.open = true;
+    app.query_window.set_text(
+        "points\n| window 10\n| where avg(velocity) > 25 km/h # demo\n| table time, velocity"
+            .to_owned(),
+    );
+    harness.inner.run_steps(5);
+
+    harness
+        .inner
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+        .click();
+    harness.inner.run_steps(60);
+
+    let match_count = {
+        let app = harness.inner.state();
+        app.query_window
+            .matches()
+            .map_or(0, |m| m.ranges.values().map(Vec::len).sum())
+    };
+    assert!(match_count > 0, "the demo trip has stretches above 25 km/h");
+
+    // Expand the second match (the smaller one) so the snapshot covers the
+    // point table with the query's columns.
+    harness.inner.get_by_label_contains("12 points").click();
+    harness.inner.run_steps(10);
+
+    harness.snapshot_loose("app_query_window");
+}
+
 #[test]
 fn snapshot_app_three_overlapping_files() {
     let (mut harness, _config_path) = TestHarness::builder()

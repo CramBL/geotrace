@@ -30,7 +30,9 @@ mod unit;
 
 pub use ast::{ParamName, Query, Span};
 pub use check::{CheckedQuery, Params, check};
-pub use eval::{MetricProvider, RunOutput, RunSummary, TrackInput, TrackMatches, run};
+pub use eval::{
+    MetricProvider, RunOutput, RunSummary, TrackInput, TrackMatches, derived_accel, run,
+};
 pub use metric::{Quantity, QueryMetric};
 pub use parser::parse;
 pub use unit::Unit;

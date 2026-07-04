@@ -162,6 +162,18 @@ pub const QUERY_MATCH_HALO: Color32 = Color32::from_rgba_premultiplied(138, 41, 
 /// Premultiplied equivalent of `(150, 120, 145, 110)`.
 pub const QUERY_MATCH_HALO_STALE: Color32 = Color32::from_rgba_premultiplied(65, 52, 63, 110);
 
+/// Query editor syntax highlighting: keywords (`points`, `where`, `and`, …).
+pub const QUERY_SYNTAX_KEYWORD: Color32 = Color32::from_rgb(198, 120, 221);
+
+/// Query editor syntax highlighting: numeric literals.
+pub const QUERY_SYNTAX_NUMBER: Color32 = Color32::from_rgb(229, 192, 123);
+
+/// Query editor syntax highlighting: metric, unit, and parameter names.
+pub const QUERY_SYNTAX_IDENT: Color32 = Color32::from_rgb(120, 200, 255);
+
+/// Query editor syntax highlighting: comments.
+pub const QUERY_SYNTAX_COMMENT: Color32 = Color32::from_rgb(128, 148, 128);
+
 /// Colors used for log-entry markers, cycling over the marker's log index.
 pub const LOG_COLORS: [Color32; 8] = [
     Color32::from_rgb(230, 57, 70),

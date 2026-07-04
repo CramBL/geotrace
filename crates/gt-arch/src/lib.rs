@@ -412,6 +412,7 @@ mod tests {
                     "strum.*".into(),
                     "walkers.*".into(),
                     "chrono.*".into(),
+                    "gt_analysis.*".into(),
                     "gt_filter.*".into(),
                     "gt_track_builder.*".into(),
                     "gt_history.*".into(),
@@ -419,6 +420,7 @@ mod tests {
                     "gt_types.*".into(),
                     "gt_map.*".into(),
                     "gt_plot.*".into(),
+                    "gt_query.*".into(),
                     "gt_loader.*".into(),
                     "gt_logfile.*".into(),
                     "gt_side_panel.*".into(),
@@ -435,6 +437,7 @@ mod tests {
                     "history_db.*".into(),
                     "loader.*".into(),
                     "modals.*".into(),
+                    "query.*".into(),
                 ]),
                 None,
             )
