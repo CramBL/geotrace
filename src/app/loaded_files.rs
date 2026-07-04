@@ -1,0 +1,230 @@
+use std::borrow::Cow;
+use std::ops::{Deref, Index, IndexMut};
+
+use gt_types::{FileIdx, LoadedFile};
+
+#[derive(Debug, Clone)]
+pub enum FileHistory {
+    None,
+    Recording {
+        identity: String,
+        meta: gt_history::RecordingMeta,
+        db_ref: Option<gt_history::DatabaseRef>,
+    },
+}
+
+impl FileHistory {
+    pub fn recording(
+        identity: String,
+        meta: gt_history::RecordingMeta,
+        db_ref: Option<gt_history::DatabaseRef>,
+    ) -> Self {
+        Self::Recording {
+            identity,
+            meta,
+            db_ref,
+        }
+    }
+
+    pub fn is_stored(&self) -> bool {
+        matches!(
+            self,
+            Self::Recording {
+                db_ref: Some(_),
+                ..
+            }
+        )
+    }
+
+    pub fn db_ref(&self) -> Option<&gt_history::DatabaseRef> {
+        match self {
+            Self::Recording {
+                db_ref: Some(db_ref),
+                ..
+            } => Some(db_ref),
+            Self::None | Self::Recording { db_ref: None, .. } => None,
+        }
+    }
+
+    pub fn meta(&self) -> Option<gt_history::RecordingMeta> {
+        match self {
+            Self::Recording { meta, .. } => Some(*meta),
+            Self::None => None,
+        }
+    }
+
+    fn identity_key<'a>(&'a self, file: &'a LoadedFile) -> Cow<'a, str> {
+        match self {
+            Self::Recording { identity, .. } => Cow::Borrowed(identity.as_str()),
+            Self::None => Cow::Borrowed(file.metadata.filename.as_str()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LoadedFilesView<'a> {
+    loaded_files: &'a LoadedFiles,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LoadedFileEntry<'a> {
+    file: &'a LoadedFile,
+    history: &'a FileHistory,
+}
+
+impl<'a> LoadedFilesView<'a> {
+    pub fn files(&self) -> &'a [LoadedFile] {
+        self.loaded_files.files()
+    }
+
+    pub fn entries(&self) -> impl ExactSizeIterator<Item = LoadedFileEntry<'a>> + 'a {
+        self.loaded_files
+            .files
+            .iter()
+            .zip(&self.loaded_files.history)
+            .map(|(file, history)| LoadedFileEntry { file, history })
+    }
+}
+
+impl<'a> LoadedFileEntry<'a> {
+    pub fn file(&self) -> &'a LoadedFile {
+        self.file
+    }
+
+    pub fn history(&self) -> &'a FileHistory {
+        self.history
+    }
+
+    pub fn identity_key(&self) -> Cow<'a, str> {
+        self.history.identity_key(self.file)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LoadedFiles {
+    files: Vec<LoadedFile>,
+    history: Vec<FileHistory>,
+}
+
+impl LoadedFiles {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn len(&self) -> usize {
+        self.files.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+    }
+
+    pub fn files(&self) -> &[LoadedFile] {
+        &self.files
+    }
+
+    pub fn view(&self) -> LoadedFilesView<'_> {
+        debug_assert_eq!(self.files.len(), self.history.len());
+        LoadedFilesView { loaded_files: self }
+    }
+
+    pub fn files_mut(&mut self) -> &mut [LoadedFile] {
+        &mut self.files
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, LoadedFile> {
+        self.files.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, LoadedFile> {
+        self.files.iter_mut()
+    }
+
+    pub fn get(&self, index: usize) -> Option<&LoadedFile> {
+        self.files.get(index)
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut LoadedFile> {
+        self.files.get_mut(index)
+    }
+
+    pub fn history(&self, index: usize) -> Option<&FileHistory> {
+        self.history.get(index)
+    }
+
+    pub fn history_for(&self, file: FileIdx) -> Option<&FileHistory> {
+        self.history(file.as_usize())
+    }
+
+    pub fn push(&mut self, file: LoadedFile, history: FileHistory) {
+        self.files.push(file);
+        self.history.push(history);
+        debug_assert_eq!(self.files.len(), self.history.len());
+    }
+
+    pub fn remove_file(&mut self, index: usize) -> Option<(LoadedFile, FileHistory)> {
+        if index >= self.files.len() {
+            return None;
+        }
+        let file = self.files.remove(index);
+        let history = self.history.remove(index);
+        debug_assert_eq!(self.files.len(), self.history.len());
+        Some((file, history))
+    }
+
+    pub fn recording_metas(&self) -> Vec<gt_history::RecordingMeta> {
+        self.history.iter().filter_map(FileHistory::meta).collect()
+    }
+
+    pub fn stored_flags(&self) -> Vec<bool> {
+        self.history.iter().map(FileHistory::is_stored).collect()
+    }
+}
+
+impl Deref for LoadedFiles {
+    type Target = [LoadedFile];
+
+    fn deref(&self) -> &Self::Target {
+        self.files()
+    }
+}
+
+impl Index<usize> for LoadedFiles {
+    type Output = LoadedFile;
+
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "Index follows Vec indexing semantics"
+    )]
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.files[index]
+    }
+}
+
+impl IndexMut<usize> for LoadedFiles {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "IndexMut follows Vec indexing semantics"
+    )]
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.files[index]
+    }
+}
+
+impl<'a> IntoIterator for &'a LoadedFiles {
+    type Item = &'a LoadedFile;
+    type IntoIter = std::slice::Iter<'a, LoadedFile>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut LoadedFiles {
+    type Item = &'a mut LoadedFile;
+    type IntoIter = std::slice::IterMut<'a, LoadedFile>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
+    }
+}

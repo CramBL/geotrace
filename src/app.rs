@@ -2,6 +2,7 @@ mod auto_prune;
 mod config_manager;
 mod history;
 mod history_db;
+mod loaded_files;
 mod loader;
 mod modals;
 mod query;
@@ -18,9 +19,10 @@ use gt_filter::GlobalFilter;
 use gt_map::{MapContextAction, MapLayer, NavMap};
 use gt_plot::PlotState;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
-use gt_track_builder::SegmentationConfig;
+use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
 use gt_types::{AssociationConfig, DataCategory, FileIdx, LoadWarning, LoadedFile, NavPoint};
 use gt_ui_types::{HighlightScope, MapHighlight, TrackDataVisibility};
+use loaded_files::{FileHistory, LoadedFiles};
 use loader::{CompletedLoad, FinishedJob, LoadOutcome, LoaderManager};
 use strum::IntoEnumIterator;
 
@@ -36,7 +38,7 @@ enum MainPane {
 }
 
 struct SharedAppState {
-    loaded_files: Vec<LoadedFile>,
+    loaded_files: LoadedFiles,
     tree: TreeState,
     highlight: MapHighlight,
     filter: GlobalFilter,
@@ -52,9 +54,15 @@ struct SharedAppState {
     warnings_popup: Option<(String, Vec<LoadWarning>)>,
 }
 
-/// A recording opened from history whose stored segmentation settings differ
+impl SharedAppState {
+    fn sync_tree_from_loaded_files(&mut self) {
+        self.tree.sync_from_loaded_files(self.loaded_files.files());
+    }
+}
+
+/// A recording opened from history whose stored track-splitting settings differ
 /// from the app's current ones. The user must choose to recalculate the tracks
-/// (current settings) or use the stored tracks (previous settings).
+/// (current split setting) or use the stored tracks (previous split setting).
 struct ResegmentPrompt {
     db_ref: gt_history::DatabaseRef,
     filename: String,
@@ -64,6 +72,9 @@ struct ResegmentPrompt {
     /// 0-based positions of the recording's hidden tracks, re-applied to the view
     /// when the user keeps the stored tracks.
     hidden_positions: Vec<usize>,
+    /// Whether marker-generation settings differ from the stored/default marker
+    /// settings and will be rebuilt from the current app settings when opened.
+    marker_settings_changed: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -272,7 +283,7 @@ impl App {
         let mut app = Self {
             map,
             shared: Rc::new(RefCell::new(SharedAppState {
-                loaded_files: Vec::new(),
+                loaded_files: LoadedFiles::new(),
                 tree: TreeState::new(),
                 highlight: MapHighlight {
                     fading_enabled: options.fading_enabled,
@@ -442,13 +453,14 @@ impl App {
                         );
                         let mut gap_secs = self
                             .processing_config
+                            .track_layout
                             .track_split_gap
                             .to_std()
                             .map_or(300, |d| d.as_secs());
                         ui.horizontal(|ui| {
                             compound_duration_input(ui, &mut gap_secs, 30, 7 * 86400, true, true);
                         });
-                        self.processing_config.track_split_gap =
+                        self.processing_config.track_layout.track_split_gap =
                             chrono::Duration::seconds(gap_secs as i64);
                         ui.end_row();
 
@@ -485,18 +497,18 @@ impl App {
                     );
                     if ui.button(reset_label).clicked() {
                         let defaults = crate::settings::ProcessingSettings::default();
-                        self.processing_config.track_split_gap =
+                        self.processing_config.track_layout.track_split_gap =
                             chrono::Duration::seconds(defaults.track_split_gap_seconds as i64);
                         self.assoc_config.log_marker_window_s = defaults.log_marker_window_s;
-                        self.processing_config.detect_gnss_fix_lost =
+                        self.processing_config.generated_markers.detect_gnss_fix_lost =
                             defaults.detect_gnss_fix_lost;
-                        self.processing_config.detect_gnss_fix_regained =
+                        self.processing_config.generated_markers.detect_gnss_fix_regained =
                             defaults.detect_gnss_fix_regained;
-                        self.processing_config.detect_clock_discontinuities =
+                        self.processing_config.generated_markers.detect_clock_discontinuities =
                             defaults.detect_clock_discontinuities;
-                        self.processing_config.clock_discontinuity_sigmas =
+                        self.processing_config.generated_markers.clock_discontinuity_sigmas =
                             defaults.clock_discontinuity_sigmas;
-                        self.processing_config.detect_slips = defaults.detect_slips;
+                        self.processing_config.generated_markers.detect_slips = defaults.detect_slips;
                     }
                 });
 
@@ -579,8 +591,8 @@ impl App {
                         // Slip markers share these detection params, but as
                         // load-time generated markers they only pick up the
                         // change on the next load or "Apply to loaded data".
-                        self.processing_config.slip_elevation_mask_deg = analysis.elevation_mask_deg;
-                        self.processing_config.slip_snr_drop_db = analysis.snr_drop_db;
+                        self.processing_config.generated_markers.slip_elevation_mask_deg = analysis.elevation_mask_deg;
+                        self.processing_config.generated_markers.slip_snr_drop_db = analysis.snr_drop_db;
                         {
                             let mut shared = self.shared.borrow_mut();
                             let s = &mut *shared;
@@ -651,7 +663,7 @@ impl App {
                      a position). For example, entering a tunnel typically drops the fix.";
                 ui.label(format!("{} GNSS fix lost", egui_phosphor::regular::X_CIRCLE))
                     .on_hover_text(fix_lost_help);
-                ui.checkbox(&mut self.processing_config.detect_gnss_fix_lost, "")
+                ui.checkbox(&mut self.processing_config.generated_markers.detect_gnss_fix_lost, "")
                     .on_hover_text(fix_lost_help);
                 ui.end_row();
 
@@ -663,7 +675,7 @@ impl App {
                     egui_phosphor::regular::CHECK_CIRCLE
                 ))
                 .on_hover_text(fix_regained_help);
-                ui.checkbox(&mut self.processing_config.detect_gnss_fix_regained, "")
+                ui.checkbox(&mut self.processing_config.generated_markers.detect_gnss_fix_regained, "")
                     .on_hover_text(fix_regained_help);
                 ui.end_row();
 
@@ -681,14 +693,14 @@ impl App {
                 ))
                 .on_hover_text(clock_help);
                 ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.processing_config.detect_clock_discontinuities, "")
+                    ui.checkbox(&mut self.processing_config.generated_markers.detect_clock_discontinuities, "")
                         .on_hover_text(clock_help);
-                    let detect_on = self.processing_config.detect_clock_discontinuities;
-                    let sigmas = self.processing_config.clock_discontinuity_sigmas;
+                    let detect_on = self.processing_config.generated_markers.detect_clock_discontinuities;
+                    let sigmas = self.processing_config.generated_markers.clock_discontinuity_sigmas;
                     let floor_s = gt_track_builder::clock_discontinuity_floor_seconds(sigmas);
                     let sensitivity = ui.add_enabled(
                         detect_on,
-                        egui::DragValue::new(&mut self.processing_config.clock_discontinuity_sigmas)
+                        egui::DragValue::new(&mut self.processing_config.generated_markers.clock_discontinuity_sigmas)
                             .range(1.0..=20.0)
                             .speed(0.1)
                             .fixed_decimals(1)
@@ -719,7 +731,7 @@ impl App {
                      section, so the markers and the slip-rate plot agree.";
                 ui.label(format!("{} Satellite slip", egui_phosphor::regular::LINK_BREAK))
                     .on_hover_text(slip_help);
-                ui.checkbox(&mut self.processing_config.detect_slips, "")
+                ui.checkbox(&mut self.processing_config.generated_markers.detect_slips, "")
                     .on_hover_text(slip_help);
                 ui.end_row();
             });
@@ -732,16 +744,22 @@ impl App {
         }
         self.map.set_layer(map_layer_from_setting(s.map.layer));
         self.processing_config = SegmentationConfig {
-            track_split_gap: chrono::Duration::seconds(s.processing.track_split_gap_seconds as i64),
-            detect_gnss_fix_lost: s.processing.detect_gnss_fix_lost,
-            detect_gnss_fix_regained: s.processing.detect_gnss_fix_regained,
-            detect_clock_discontinuities: s.processing.detect_clock_discontinuities,
-            clock_discontinuity_sigmas: s.processing.clock_discontinuity_sigmas,
-            detect_slips: s.processing.detect_slips,
-            // Slip markers share the slip-rate plot's detection params so the
-            // two always agree.
-            slip_elevation_mask_deg: s.analysis.elevation_mask_deg,
-            slip_snr_drop_db: s.analysis.snr_drop_db,
+            track_layout: TrackLayoutConfig {
+                track_split_gap: chrono::Duration::seconds(
+                    s.processing.track_split_gap_seconds as i64,
+                ),
+            },
+            generated_markers: GeneratedMarkerConfig {
+                detect_gnss_fix_lost: s.processing.detect_gnss_fix_lost,
+                detect_gnss_fix_regained: s.processing.detect_gnss_fix_regained,
+                detect_clock_discontinuities: s.processing.detect_clock_discontinuities,
+                clock_discontinuity_sigmas: s.processing.clock_discontinuity_sigmas,
+                detect_slips: s.processing.detect_slips,
+                // Slip markers share the slip-rate plot's detection params so
+                // the two always agree.
+                slip_elevation_mask_deg: s.analysis.elevation_mask_deg,
+                slip_snr_drop_db: s.analysis.snr_drop_db,
+            },
         };
         self.assoc_config = AssociationConfig {
             log_marker_window_s: s.processing.log_marker_window_s,
@@ -815,15 +833,29 @@ impl App {
             theme,
             track_split_gap_seconds: self
                 .processing_config
+                .track_layout
                 .track_split_gap
                 .to_std()
                 .map_or(300, |d| d.as_secs()),
             log_marker_window_s: self.assoc_config.log_marker_window_s,
-            detect_gnss_fix_lost: self.processing_config.detect_gnss_fix_lost,
-            detect_gnss_fix_regained: self.processing_config.detect_gnss_fix_regained,
-            detect_clock_discontinuities: self.processing_config.detect_clock_discontinuities,
-            clock_discontinuity_sigmas: self.processing_config.clock_discontinuity_sigmas.into(),
-            detect_slips: self.processing_config.detect_slips,
+            detect_gnss_fix_lost: self
+                .processing_config
+                .generated_markers
+                .detect_gnss_fix_lost,
+            detect_gnss_fix_regained: self
+                .processing_config
+                .generated_markers
+                .detect_gnss_fix_regained,
+            detect_clock_discontinuities: self
+                .processing_config
+                .generated_markers
+                .detect_clock_discontinuities,
+            clock_discontinuity_sigmas: self
+                .processing_config
+                .generated_markers
+                .clock_discontinuity_sigmas
+                .into(),
+            detect_slips: self.processing_config.generated_markers.detect_slips,
             elevation_mask_deg: s.plot_state.analysis.elevation_mask_deg.into(),
             mark_masked_fix: s.plot_state.mark_masked_fix,
             snr_drop_db: s.plot_state.analysis.snr_drop_db.into(),
@@ -864,15 +896,28 @@ impl App {
             processing: crate::settings::ProcessingSettings {
                 track_split_gap_seconds: self
                     .processing_config
+                    .track_layout
                     .track_split_gap
                     .to_std()
                     .map_or(300, |d| d.as_secs()),
                 log_marker_window_s: self.assoc_config.log_marker_window_s,
-                detect_gnss_fix_lost: self.processing_config.detect_gnss_fix_lost,
-                detect_gnss_fix_regained: self.processing_config.detect_gnss_fix_regained,
-                detect_clock_discontinuities: self.processing_config.detect_clock_discontinuities,
-                clock_discontinuity_sigmas: self.processing_config.clock_discontinuity_sigmas,
-                detect_slips: self.processing_config.detect_slips,
+                detect_gnss_fix_lost: self
+                    .processing_config
+                    .generated_markers
+                    .detect_gnss_fix_lost,
+                detect_gnss_fix_regained: self
+                    .processing_config
+                    .generated_markers
+                    .detect_gnss_fix_regained,
+                detect_clock_discontinuities: self
+                    .processing_config
+                    .generated_markers
+                    .detect_clock_discontinuities,
+                clock_discontinuity_sigmas: self
+                    .processing_config
+                    .generated_markers
+                    .clock_discontinuity_sigmas,
+                detect_slips: self.processing_config.generated_markers.detect_slips,
             },
             analysis: crate::settings::AnalysisSettings {
                 elevation_mask_deg: s.plot_state.analysis.elevation_mask_deg,
@@ -934,7 +979,7 @@ impl App {
         {
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
-            for file in &mut s.loaded_files {
+            for file in s.loaded_files.files_mut() {
                 let has_nav_points = file.tracks.iter().any(|t| !t.points.is_empty());
                 if !has_nav_points {
                     continue;
@@ -961,11 +1006,9 @@ impl App {
                 let event_marker_styles: Vec<gt_types::EventMarkerStyle> =
                     file.event_marker_styles.values().cloned().collect();
                 let filename = file.metadata.filename.clone();
-                let identity = file.identity.clone();
                 let source = file.source.clone();
                 *file = gt_track_builder::build_loaded_file(
                     filename,
-                    identity,
                     &all_points,
                     &all_custom_markers,
                     all_event_markers,
@@ -986,17 +1029,17 @@ impl App {
     fn handle_completed_load(&mut self, completed: CompletedLoad) {
         match completed.outcome {
             Ok(LoadOutcome::GtdFile {
-                mut file,
+                file,
                 series,
-                db_ref,
+                history,
+                applied_current_marker_settings,
             }) => {
-                let was_stored = db_ref.is_some();
+                let was_stored = history.is_stored();
                 log::info!(
                     "Loaded '{}': {} track(s), stored in history: {was_stored}",
                     completed.filename,
                     file.tracks.len()
                 );
-                file.db_ref = db_ref;
                 let orphans: Vec<(chrono::DateTime<chrono::Utc>, String)> = file
                     .orphaned_event_markers
                     .iter()
@@ -1004,10 +1047,8 @@ impl App {
                     .collect();
                 let mut s = self.shared.borrow_mut();
                 let fi = s.loaded_files.len();
-                s.loaded_files.push(file);
-                let files = std::mem::take(&mut s.loaded_files);
-                s.tree.sync_from_loaded_files(&files);
-                s.loaded_files = files;
+                s.loaded_files.push(file, history);
+                s.sync_tree_from_loaded_files();
                 s.plot_state.integrate_file(fi, series);
                 drop(s);
                 if !orphans.is_empty() {
@@ -1024,6 +1065,10 @@ impl App {
                     self.history_window.invalidate();
                     self.check_auto_prune();
                 }
+                if applied_current_marker_settings {
+                    self.toasts
+                        .info("Applied current marker settings to loaded data");
+                }
             }
             Ok(LoadOutcome::LogFile {
                 loaded,
@@ -1033,10 +1078,8 @@ impl App {
                 if let (Some(loaded), Some(series)) = (loaded, series) {
                     let mut s = self.shared.borrow_mut();
                     let fi = s.loaded_files.len();
-                    s.loaded_files.push(loaded);
-                    let files = std::mem::take(&mut s.loaded_files);
-                    s.tree.sync_from_loaded_files(&files);
-                    s.loaded_files = files;
+                    s.loaded_files.push(loaded, FileHistory::None);
+                    s.sync_tree_from_loaded_files();
                     s.plot_state.integrate_file(fi, series);
                 }
                 if !unassociated.is_empty() {
@@ -1154,10 +1197,10 @@ impl App {
         }
     }
 
-    /// Begin opening a recording from history. Reproduces the stored tracks and
-    /// re-applies the hidden ones. When the stored segmentation settings differ
-    /// from the current ones it raises a prompt instead (recalculate vs. use the
-    /// stored tracks).
+    /// Begin opening a recording from history. Reproduces the stored tracks,
+    /// re-applies the hidden ones, and regenerates markers with current settings.
+    /// When the stored track-splitting setting differs from the current one it
+    /// raises a prompt instead (recalculate vs. use the stored tracks).
     fn begin_history_open(
         &mut self,
         db_ref: gt_history::DatabaseRef,
@@ -1179,27 +1222,49 @@ impl App {
             .map(|(i, _)| i)
             .collect();
 
-        let current = loader::stored_segmentation_from_config(&self.processing_config);
-
         match stored.segmentation {
-            // Stored settings differ from the current ones: let the user choose.
-            Some(stored_settings) if stored_settings != current && !stored.tracks.is_empty() => {
+            // Stored track splitting differs from the current setting: let the
+            // user choose before changing track ranges that hidden-track state
+            // may refer to.
+            Some(stored_settings)
+                if !loader::track_split_matches_config(
+                    &stored_settings,
+                    &self.processing_config,
+                ) && !stored.tracks.is_empty() =>
+            {
+                let marker_settings_changed = !loader::marker_settings_match_config(
+                    &stored_settings,
+                    &self.processing_config,
+                );
                 self.pending_resegment = Some(ResegmentPrompt {
                     db_ref,
                     filename,
                     bytes: stored.bytes.into(),
                     stored: stored_settings,
                     hidden_positions,
+                    marker_settings_changed,
                 });
             }
-            // Settings match: reproduce the stored tracks and re-apply hidden ones.
+            // Track splitting matches: reproduce the stored tracks, re-apply
+            // hidden ones, and rebuild generated markers from current settings.
             Some(stored_settings) => {
-                let config = loader::config_from_stored_segmentation(&stored_settings);
+                let marker_settings_changed = !loader::marker_settings_match_config(
+                    &stored_settings,
+                    &self.processing_config,
+                );
+                let config = loader::config_from_stored_segmentation(
+                    &stored_settings,
+                    self.processing_config,
+                );
                 self.loader.spawn_gtd_from_history(
                     stored.bytes.into(),
                     filename,
                     config,
-                    loader::HistoryOpen::ApplyHidden(hidden_positions),
+                    loader::HistoryOpen::ApplyHidden {
+                        db_ref,
+                        positions: hidden_positions,
+                        applied_current_marker_settings: marker_settings_changed,
+                    },
                 );
             }
             // Older recording with no stored settings: load with current settings.
@@ -1208,7 +1273,11 @@ impl App {
                     stored.bytes.into(),
                     filename,
                     self.processing_config,
-                    loader::HistoryOpen::ApplyHidden(hidden_positions),
+                    loader::HistoryOpen::ApplyHidden {
+                        db_ref,
+                        positions: hidden_positions,
+                        applied_current_marker_settings: false,
+                    },
                 );
             }
         }
@@ -1539,10 +1608,12 @@ impl eframe::App for App {
                 .show_inside(ui, |ui| {
                     let mut refmut = self.shared.borrow_mut();
                     let s = &mut *refmut;
+                    let file_stored_in_history = s.loaded_files.stored_flags();
                     show_side_panel(
                         ui,
                         &mut PanelContext {
                             files: &s.loaded_files,
+                            file_stored_in_history: &file_stored_in_history,
                             tree: &mut s.tree,
                             highlight: &mut s.highlight,
                             filter: &mut s.filter,
@@ -1573,10 +1644,12 @@ impl eframe::App for App {
                 .show(ui.ctx(), |ui| {
                     let mut refmut = self.shared.borrow_mut();
                     let s = &mut *refmut;
+                    let file_stored_in_history = s.loaded_files.stored_flags();
                     show_side_panel(
                         ui,
                         &mut PanelContext {
                             files: &s.loaded_files,
+                            file_stored_in_history: &file_stored_in_history,
                             tree: &mut s.tree,
                             highlight: &mut s.highlight,
                             filter: &mut s.filter,
@@ -1683,8 +1756,13 @@ impl eframe::App for App {
                 filter,
                 ..
             } = &mut *s;
-            self.query_window
-                .show(ui.ctx(), loaded_files, tree.visibility(), filter, highlight);
+            self.query_window.show(
+                ui.ctx(),
+                loaded_files.view(),
+                tree.visibility(),
+                filter,
+                highlight,
+            );
         });
 
         let apply_resegment = self.show_settings_window(ui);
@@ -1839,10 +1917,7 @@ impl eframe::App for App {
         let prev_storage = self.storage_enabled;
         let loaded_metas: Vec<gt_history::RecordingMeta> = {
             let s = self.shared.borrow();
-            s.loaded_files
-                .iter()
-                .filter_map(|f| f.recording_meta)
-                .collect()
+            s.loaded_files.recording_metas()
         };
         self.history_window.show(
             ui.ctx(),
@@ -1948,8 +2023,8 @@ impl eframe::App for App {
             }
         }
 
-        // Re-segment prompt: a recording opened from history was stored with
-        // different track-splitting settings than the current ones.
+        // Re-segment prompt: a recording opened from history was stored with a
+        // different track-splitting setting than the current one.
         if let Some(prompt) = self.pending_resegment.take() {
             let current = loader::stored_segmentation_from_config(&self.processing_config);
             let mut recalculate = false;
@@ -1958,14 +2033,13 @@ impl eframe::App for App {
                 .ctx()
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             let fmt_gap = |us: i64| format!("{} s", us / 1_000_000);
-            let yes_no = |b: bool| if b { "yes" } else { "no" };
-            egui::Window::new("Segmentation settings differ")
+            egui::Window::new("Track splitting differs")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .show(ui.ctx(), |ui| {
                     ui.label(format!(
-                        "'{}' was stored with different track-splitting settings than the current ones.",
+                        "'{}' was stored with a different track-splitting setting than the current one.",
                         prompt.filename
                     ));
                     ui.add_space(4.0);
@@ -1980,14 +2054,6 @@ impl eframe::App for App {
                             ui.label("Split gap");
                             ui.label(fmt_gap(prompt.stored.track_split_gap_us));
                             ui.label(fmt_gap(current.track_split_gap_us));
-                            ui.end_row();
-                            ui.label("Detect clock jumps");
-                            ui.label(yes_no(prompt.stored.detect_clock_discontinuities));
-                            ui.label(yes_no(current.detect_clock_discontinuities));
-                            ui.end_row();
-                            ui.label("Sensitivity (σ)");
-                            ui.label(format!("{:.1}", prompt.stored.clock_discontinuity_sigmas));
-                            ui.label(format!("{:.1}", current.clock_discontinuity_sigmas));
                             ui.end_row();
                         });
                     ui.add_space(4.0);
@@ -2018,16 +2084,24 @@ impl eframe::App for App {
                     prompt.bytes,
                     prompt.filename,
                     self.processing_config,
-                    loader::HistoryOpen::Recalculate(prompt.db_ref),
+                    loader::HistoryOpen::Recalculate {
+                        db_ref: prompt.db_ref,
+                        applied_current_marker_settings: prompt.marker_settings_changed,
+                    },
                 );
                 self.history_window.invalidate();
             } else if use_stored {
-                let config = loader::config_from_stored_segmentation(&prompt.stored);
+                let config =
+                    loader::config_from_stored_segmentation(&prompt.stored, self.processing_config);
                 self.loader.spawn_gtd_from_history(
                     prompt.bytes,
                     prompt.filename,
                     config,
-                    loader::HistoryOpen::ApplyHidden(prompt.hidden_positions),
+                    loader::HistoryOpen::ApplyHidden {
+                        db_ref: prompt.db_ref,
+                        positions: prompt.hidden_positions,
+                        applied_current_marker_settings: prompt.marker_settings_changed,
+                    },
                 );
             } else if !cancel {
                 // No choice yet: keep the prompt open for the next frame.

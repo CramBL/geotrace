@@ -816,6 +816,7 @@ fn snapshot_history_resegment_dialog() {
             clock_discontinuity_sigmas: 4.0,
         },
         hidden_positions: Vec::new(),
+        marker_settings_changed: false,
     });
     harness.run();
     harness.snapshot("history_resegment_dialog");

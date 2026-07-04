@@ -405,6 +405,7 @@
                         "app.*",
                         "config_manager.*",
                         "history_db.*",
+                        "loaded_files.*",
                         "loader.*",
                         "modals.*",
                         "query.*",

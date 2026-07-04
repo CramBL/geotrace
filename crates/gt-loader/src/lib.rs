@@ -54,6 +54,11 @@ use gt_types::{
     Longitude, MarkerColor, MarkerIcon, NavPoint, TimePositionVelocity,
 };
 
+pub struct LoadedGtd {
+    pub file: LoadedFile,
+    pub identity: String,
+}
+
 fn to_uom_velocity(v: geotrace_sdk::Velocity) -> uom::si::f64::Velocity {
     uom::si::f64::Velocity::new::<uom::si::velocity::meter_per_second>(v.as_meters_per_second())
 }
@@ -89,6 +94,14 @@ pub fn load_file_with_progress(
     progress: impl Fn(f32, &'static str),
     config: &gt_track_builder::SegmentationConfig,
 ) -> Result<LoadedFile, LoadError> {
+    load_gtd_file_with_progress(path, progress, config).map(|loaded| loaded.file)
+}
+
+pub fn load_gtd_file_with_progress(
+    path: impl AsRef<Path>,
+    progress: impl Fn(f32, &'static str),
+    config: &gt_track_builder::SegmentationConfig,
+) -> Result<LoadedGtd, LoadError> {
     let path = path.as_ref();
     let filename = path
         .file_name()
@@ -110,9 +123,8 @@ pub fn load_file_with_progress(
         nav_file.meta().device.as_deref(),
         &filename,
     );
-    let loaded = gt_track_builder::build_loaded_file(
+    let file = gt_track_builder::build_loaded_file(
         filename,
-        identity,
         &points,
         &markers,
         event_markers,
@@ -121,7 +133,7 @@ pub fn load_file_with_progress(
         source,
         load_warnings,
     );
-    Ok(loaded)
+    Ok(LoadedGtd { file, identity })
 }
 
 /// Like [`load_bytes`] but calls `progress(fraction, stage)` at key milestones.
@@ -131,6 +143,15 @@ pub fn load_bytes_with_progress(
     progress: impl Fn(f32, &'static str),
     config: &gt_track_builder::SegmentationConfig,
 ) -> Result<LoadedFile, LoadError> {
+    load_gtd_bytes_with_progress(bytes, filename, progress, config).map(|loaded| loaded.file)
+}
+
+pub fn load_gtd_bytes_with_progress(
+    bytes: &[u8],
+    filename: String,
+    progress: impl Fn(f32, &'static str),
+    config: &gt_track_builder::SegmentationConfig,
+) -> Result<LoadedGtd, LoadError> {
     progress(0.15, STAGE_PARSING);
     let nav_file = NavFile::read(bytes)?;
     progress(0.60, STAGE_CONVERTING);
@@ -144,9 +165,8 @@ pub fn load_bytes_with_progress(
         nav_file.meta().device.as_deref(),
         &filename,
     );
-    let loaded = gt_track_builder::build_loaded_file(
+    let file = gt_track_builder::build_loaded_file(
         filename,
-        identity,
         &points,
         &markers,
         event_markers,
@@ -155,7 +175,7 @@ pub fn load_bytes_with_progress(
         source,
         load_warnings,
     );
-    Ok(loaded)
+    Ok(LoadedGtd { file, identity })
 }
 
 /// Re-encode a `.gtd` recording with the nav points in `drop_ranges` removed.

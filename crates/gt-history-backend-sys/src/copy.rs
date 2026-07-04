@@ -1,4 +1,4 @@
-use gt_types::history::{
+use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
     ATTR_SEG_GAP_US, ATTR_START_US, DbError, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
@@ -433,7 +433,7 @@ fn write_track_table(rec_grp: &Group, tracks: &[TrackRange]) -> Result<(), Inter
         rec_grp.unlink(TRACKS_GROUP)?;
     }
     let grp = rec_grp.create_group(TRACKS_GROUP)?;
-    let (starts, ends, hidden) = gt_types::history::track_columns(tracks);
+    let (starts, ends, hidden) = gt_history_types::track_columns(tracks);
     for (name, col) in [
         (TRACK_START_DATASET, &starts),
         (TRACK_END_DATASET, &ends),
@@ -461,7 +461,7 @@ fn read_track_table(rec_grp: &Group) -> Vec<TrackRange> {
     let starts = read(TRACK_START_DATASET);
     let ends = read(TRACK_END_DATASET);
     let hidden = read(TRACK_HIDDEN_DATASET);
-    gt_types::history::track_ranges_from_columns(&starts, &ends, &hidden).unwrap_or_else(|| {
+    gt_history_types::track_ranges_from_columns(&starts, &ends, &hidden).unwrap_or_else(|| {
         log::warn!("Inconsistent track table; ignoring it (tracks will be recomputed)");
         Vec::new()
     })
@@ -830,7 +830,7 @@ pub(crate) fn list_recordings(
                     let hidden_tracks = tracks.iter().filter(|t| t.hidden).count();
 
                     entries.push(RecordingEntry {
-                        db_ref: gt_types::DatabaseRef {
+                        db_ref: gt_history_types::DatabaseRef {
                             identity: identity.clone(),
                             group_name: rec_name,
                         },

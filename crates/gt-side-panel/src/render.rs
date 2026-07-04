@@ -13,6 +13,7 @@ use crate::widgets::{
 
 pub struct PanelContext<'a> {
     pub files: &'a [LoadedFile],
+    pub file_stored_in_history: &'a [bool],
     pub tree: &'a mut TreeState,
     pub highlight: &'a mut MapHighlight,
     pub filter: &'a mut GlobalFilter,
@@ -212,8 +213,12 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
             ui.close();
         }
         ui.separator();
-        let has_db_ref = fi.get(ctx.files).is_some_and(|f| f.db_ref.is_some());
-        let unload = ui.button("Unload").on_hover_text(if has_db_ref {
+        let stored_in_history = ctx
+            .file_stored_in_history
+            .get(fi.as_usize())
+            .copied()
+            .unwrap_or(false);
+        let unload = ui.button("Unload").on_hover_text(if stored_in_history {
             "Unloads this recording from the view; it stays in History"
         } else {
             "Unloads this file from the current view"

@@ -11,7 +11,7 @@ test = false
 doctest = false
 
 [dependencies]
-gt-types = { path = "../gt-types" }
+gt-history-types = { path = "../gt-history-types" }
 hdf5-pure.workspace = true
 log.workspace = true
 parking_lot.workspace = true

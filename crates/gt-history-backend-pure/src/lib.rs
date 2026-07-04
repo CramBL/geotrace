@@ -1,9 +1,8 @@
-use gt_types::DatabaseRef;
-use gt_types::history::{
+use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_MARKER_COUNT,
-    ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION, DbError,
-    HistoryDatabase, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR, StoredRecording,
-    StoredSegmentation, TrackRange,
+    ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION,
+    DatabaseRef, DbError, HistoryDatabase, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR,
+    StoredRecording, StoredSegmentation, TrackRange,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 use parking_lot::Mutex;
