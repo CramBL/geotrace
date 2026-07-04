@@ -176,12 +176,12 @@ struct Ctx<'a> {
 impl Ctx<'_> {
     /// Provider value with NaN/inf treated as missing, without attribution.
     fn raw(&self, metric: QueryMetric, index: usize) -> Option<f64> {
-        self.provider.value(metric, index).filter(|v| v.is_finite())
+        raw_value(self.provider, metric, index)
     }
 
     fn metric_at(&mut self, metric: QueryMetric, index: usize) -> Option<f64> {
         let value = if metric == QueryMetric::Accel {
-            self.accel_at(index)
+            derived_accel(self.provider, index)
         } else {
             self.raw(metric, index)
         };
@@ -190,22 +190,31 @@ impl Ctx<'_> {
         }
         value
     }
+}
 
-    /// Backward difference of velocity over time. Missing on the first point
-    /// of a track, wherever velocity is missing, and on non-increasing
-    /// timestamps (a clock anomaly cannot yield a meaningful accel).
-    fn accel_at(&self, index: usize) -> Option<f64> {
-        let prev = index.checked_sub(1)?;
-        let v1 = self.raw(QueryMetric::Velocity, index)?;
-        let v0 = self.raw(QueryMetric::Velocity, prev)?;
-        let t1 = self.raw(QueryMetric::Time, index)?;
-        let t0 = self.raw(QueryMetric::Time, prev)?;
-        let dt = t1 - t0;
-        if dt <= 0.0 {
-            return None;
-        }
-        Some((v1 - v0) / dt)
+/// Provider value with NaN/inf treated as missing.
+fn raw_value(provider: &dyn MetricProvider, metric: QueryMetric, index: usize) -> Option<f64> {
+    provider.value(metric, index).filter(|v| v.is_finite())
+}
+
+/// The derived `accel` metric: backward difference of velocity over time, in
+/// m/s2. Missing on the first point of a track, wherever velocity is missing,
+/// and on non-increasing timestamps (a clock anomaly cannot yield a
+/// meaningful accel).
+///
+/// Public so the UI can show the same value in match tables that the
+/// evaluator used in predicates - this is the single definition of `accel`.
+pub fn derived_accel(provider: &dyn MetricProvider, index: usize) -> Option<f64> {
+    let prev = index.checked_sub(1)?;
+    let v1 = raw_value(provider, QueryMetric::Velocity, index)?;
+    let v0 = raw_value(provider, QueryMetric::Velocity, prev)?;
+    let t1 = raw_value(provider, QueryMetric::Time, index)?;
+    let t0 = raw_value(provider, QueryMetric::Time, prev)?;
+    let dt = t1 - t0;
+    if dt <= 0.0 {
+        return None;
     }
+    Some((v1 - v0) / dt)
 }
 
 /// Condition nodes. The checker guarantees which nodes are conditions, so a

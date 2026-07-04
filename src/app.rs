@@ -4,6 +4,7 @@ mod history;
 mod history_db;
 mod loader;
 mod modals;
+mod query;
 #[cfg(feature = "self-update")]
 mod update;
 
@@ -141,6 +142,7 @@ pub struct App {
 
     /// History window state.
     history_window: history::HistoryWindow,
+    query_window: query::QueryWindow,
 
     /// Toast notification queue - rendered every frame over the top of all content.
     toasts: egui_notify::Toasts,
@@ -309,6 +311,7 @@ impl App {
             auto_prune_confirm: true,
             pending_auto_prune: None,
             history_window: history::HistoryWindow::new(),
+            query_window: query::QueryWindow::new(),
             toasts: egui_notify::Toasts::default(),
             #[cfg(feature = "self-update")]
             update_checker: update::UpdateChecker::new(),
@@ -1298,6 +1301,9 @@ struct MainBehavior<'a> {
     plot_hover_scope: Option<HighlightScope>,
     map_hover_time: Option<chrono::DateTime<chrono::Utc>>,
     toggle_plot_request: bool,
+    /// Matches of the last query run, drawn as halos (one frame behind the
+    /// query window, which renders after the tiles tree).
+    query_matches: Option<&'a gt_ui_types::QueryMatches>,
 }
 
 impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
@@ -1316,9 +1322,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     &s.filter,
                     s.tree.event_marker_visibility(),
                     s.tree.generated_marker_visibility(),
-                    // No query matches yet - the query window that produces
-                    // them is not built.
-                    None,
+                    self.query_matches,
                     center_req,
                     zoom_to_visible,
                     popup_pos,
@@ -1477,6 +1481,17 @@ impl eframe::App for App {
                         self.history_window.invalidate();
                     }
 
+                    if ui
+                        .selectable_label(
+                            self.query_window.open,
+                            egui_phosphor::regular::TERMINAL_WINDOW,
+                        )
+                        .on_hover_text("Query the loaded data (experimental)")
+                        .clicked()
+                    {
+                        self.query_window.open = !self.query_window.open;
+                    }
+
                     // A subtle "update available" hint for builds that can't
                     // self-update (Homebrew, MSI, manual download). Self-updatable
                     // installs get the prompt instead of this badge.
@@ -1602,6 +1617,7 @@ impl eframe::App for App {
                     plot_hover_scope,
                     map_hover_time,
                     toggle_plot_request: false,
+                    query_matches: self.query_window.matches(),
                 };
                 tiles_tree.ui(&mut behavior, ui);
                 toggle_plot_request = behavior.toggle_plot_request;
@@ -1657,6 +1673,17 @@ impl eframe::App for App {
                     self.tiles_tree.tiles.toggle_visibility(self.plot_tile_id);
                 }
             }
+
+            // After the plot-hover forwarding: match-table row hover writes
+            // the same cross-highlight fields and must win for the frame.
+            let SharedAppState {
+                loaded_files,
+                tree,
+                highlight,
+                ..
+            } = &mut *s;
+            self.query_window
+                .show(ui.ctx(), loaded_files, tree.visibility(), highlight);
         });
 
         let apply_resegment = self.show_settings_window(ui);

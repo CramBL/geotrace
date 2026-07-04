@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn unknown_track_has_no_matches() {
-        let m = matches(vec![0..3]);
+        let m = matches(vec![0..3, 5..8]);
         let other = TrackRef::new(FileIdx::new(1), TrackIdx::new(0));
         assert!(m.track_ranges(other).is_empty());
         assert_eq!(m.match_at(other, 1), None);

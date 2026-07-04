@@ -17,8 +17,9 @@ use gt_types::nav_point::NavPoint;
 use gt_types::satellites::{Constellation, SatSample, Satellites, Slip, SlipCause};
 
 /// Seconds per minute, for converting the slip window (minutes) to the seconds
-/// the epoch timestamps are measured in.
-const SECS_PER_MIN: f64 = 60.0;
+/// the epoch timestamps are measured in. Public so callers converting in the
+/// opposite direction share the same factor.
+pub const SECS_PER_MIN: f64 = 60.0;
 
 /// Detect the slips at the current report `curr` relative to the previous one
 /// `prev`, under the elevation mask and SNR-drop threshold.
@@ -138,6 +139,51 @@ fn windowed_rate(epochs: &[f64], events: &[f64], window_secs: f64, per_min: f64)
     out
 }
 
+/// Report epochs and slip events of one track, shared by the time-keyed and
+/// per-point rate forms so their values cannot drift.
+#[derive(Default)]
+struct SlipEvents {
+    /// Timestamp of every point with a satellite report, in point order.
+    epochs: Vec<f64>,
+    /// Index into `points` of each entry in `epochs`.
+    epoch_points: Vec<usize>,
+    all: Vec<f64>,
+    gps: Vec<f64>,
+    glonass: Vec<f64>,
+    galileo: Vec<f64>,
+    beidou: Vec<f64>,
+    navic: Vec<f64>,
+    qzss: Vec<f64>,
+}
+
+fn collect_slip_events(points: &[NavPoint], mask_deg: f32, snr_drop_db: f32) -> SlipEvents {
+    let mut out = SlipEvents::default();
+    let mut prev: Option<&Satellites> = None;
+    for (pi, point) in points.iter().enumerate() {
+        let Some(sats) = &point.satellites else {
+            continue;
+        };
+        let t = point.tpv.time().as_secs_f64();
+        out.epochs.push(t);
+        out.epoch_points.push(pi);
+        if let Some(prev_sats) = prev {
+            for slip in slips_between(prev_sats, sats, mask_deg, snr_drop_db) {
+                out.all.push(t);
+                match slip.constellation {
+                    Constellation::Gps => out.gps.push(t),
+                    Constellation::Glonass => out.glonass.push(t),
+                    Constellation::Galileo => out.galileo.push(t),
+                    Constellation::Beidou => out.beidou.push(t),
+                    Constellation::Navic => out.navic.push(t),
+                    Constellation::Qzss => out.qzss.push(t),
+                }
+            }
+        }
+        prev = Some(sats);
+    }
+    out
+}
+
 /// Compute the slip-rate-per-minute series for a track's `points`: detect slips
 /// between consecutive reports, then turn them into a trailing-window rate at
 /// every epoch.
@@ -147,48 +193,66 @@ pub fn slip_rate_series(
     snr_drop_db: f32,
     window_min: f32,
 ) -> SlipSeries {
-    let mut epochs: Vec<f64> = Vec::new();
-    let mut ev_all: Vec<f64> = Vec::new();
-    let mut ev_gps: Vec<f64> = Vec::new();
-    let mut ev_glonass: Vec<f64> = Vec::new();
-    let mut ev_galileo: Vec<f64> = Vec::new();
-    let mut ev_beidou: Vec<f64> = Vec::new();
-    let mut ev_navic: Vec<f64> = Vec::new();
-    let mut ev_qzss: Vec<f64> = Vec::new();
-
-    let mut prev: Option<&Satellites> = None;
-    for point in points {
-        let Some(sats) = &point.satellites else {
-            continue;
-        };
-        let t = point.tpv.time().as_secs_f64();
-        epochs.push(t);
-        if let Some(prev_sats) = prev {
-            for slip in slips_between(prev_sats, sats, mask_deg, snr_drop_db) {
-                ev_all.push(t);
-                match slip.constellation {
-                    Constellation::Gps => ev_gps.push(t),
-                    Constellation::Glonass => ev_glonass.push(t),
-                    Constellation::Galileo => ev_galileo.push(t),
-                    Constellation::Beidou => ev_beidou.push(t),
-                    Constellation::Navic => ev_navic.push(t),
-                    Constellation::Qzss => ev_qzss.push(t),
-                }
-            }
-        }
-        prev = Some(sats);
-    }
-
+    let events = collect_slip_events(points, mask_deg, snr_drop_db);
     let window_secs = f64::from(window_min) * SECS_PER_MIN;
     let per_min = f64::from(window_min);
     SlipSeries {
-        all: windowed_rate(&epochs, &ev_all, window_secs, per_min),
-        gps: windowed_rate(&epochs, &ev_gps, window_secs, per_min),
-        glonass: windowed_rate(&epochs, &ev_glonass, window_secs, per_min),
-        galileo: windowed_rate(&epochs, &ev_galileo, window_secs, per_min),
-        beidou: windowed_rate(&epochs, &ev_beidou, window_secs, per_min),
-        navic: windowed_rate(&epochs, &ev_navic, window_secs, per_min),
-        qzss: windowed_rate(&epochs, &ev_qzss, window_secs, per_min),
+        all: windowed_rate(&events.epochs, &events.all, window_secs, per_min),
+        gps: windowed_rate(&events.epochs, &events.gps, window_secs, per_min),
+        glonass: windowed_rate(&events.epochs, &events.glonass, window_secs, per_min),
+        galileo: windowed_rate(&events.epochs, &events.galileo, window_secs, per_min),
+        beidou: windowed_rate(&events.epochs, &events.beidou, window_secs, per_min),
+        navic: windowed_rate(&events.epochs, &events.navic, window_secs, per_min),
+        qzss: windowed_rate(&events.epochs, &events.qzss, window_secs, per_min),
+    }
+}
+
+/// Per-point slip rates (slips per minute), aligned with `points` by index.
+///
+/// Entry i is `None` when point i has no satellite report, or when
+/// `window_min` is not positive (the rate is undefined). The index alignment
+/// is what the query evaluator needs; the plot uses the time-keyed
+/// [`slip_rate_series`] instead.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SlipRatePerPoint {
+    pub all: Vec<Option<f64>>,
+    pub gps: Vec<Option<f64>>,
+    pub glonass: Vec<Option<f64>>,
+    pub galileo: Vec<Option<f64>>,
+    pub beidou: Vec<Option<f64>>,
+    pub navic: Vec<Option<f64>>,
+    pub qzss: Vec<Option<f64>>,
+}
+
+/// Compute per-point slip rates for a track's `points`. Same values as
+/// [`slip_rate_series`], keyed by point index.
+pub fn slip_rate_per_point(
+    points: &[NavPoint],
+    mask_deg: f32,
+    snr_drop_db: f32,
+    window_min: f32,
+) -> SlipRatePerPoint {
+    let events = collect_slip_events(points, mask_deg, snr_drop_db);
+    let window_secs = f64::from(window_min) * SECS_PER_MIN;
+    let per_min = f64::from(window_min);
+    let scatter = |ev: &[f64]| {
+        let mut out = vec![None; points.len()];
+        let rates = windowed_rate(&events.epochs, ev, window_secs, per_min);
+        for (k, [_, rate]) in rates.iter().enumerate() {
+            if let Some(slot) = events.epoch_points.get(k).and_then(|&pi| out.get_mut(pi)) {
+                *slot = Some(*rate);
+            }
+        }
+        out
+    };
+    SlipRatePerPoint {
+        all: scatter(&events.all),
+        gps: scatter(&events.gps),
+        glonass: scatter(&events.glonass),
+        galileo: scatter(&events.galileo),
+        beidou: scatter(&events.beidou),
+        navic: scatter(&events.navic),
+        qzss: scatter(&events.qzss),
     }
 }
 
@@ -390,6 +454,44 @@ mod series_tests {
         assert_eq!(s.all, vec![[0.0, 0.0], [1.0, 1.0]]);
         assert_eq!(s.gps, vec![[0.0, 0.0], [1.0, 1.0]]);
         assert!(s.glonass.iter().all(|p| p[1] == 0.0));
+    }
+
+    /// The per-point form is index-aligned: reportless points hold `None`,
+    /// and every value agrees with the time-keyed series.
+    #[test]
+    fn slip_rate_per_point_aligns_with_series() {
+        let reportless = |secs: i64| {
+            let time = GpsTime::from_utc(Utc.timestamp_opt(secs, 0).single().expect("valid"));
+            let tpv = TimePositionVelocity::builder()
+                .time(time)
+                .lat(Latitude::new(55.0))
+                .lon(Longitude::new(12.0))
+                .build();
+            NavPoint::new(tpv, None)
+        };
+        let points = vec![
+            point(0, vec![gps(1, 40.0, 45.0), gps(2, 30.0, 40.0)]),
+            reportless(1),
+            point(2, vec![gps(1, 40.0, 45.0)]),
+        ];
+
+        let per_point = slip_rate_per_point(&points, 15.0, 10.0, 1.0);
+        assert_eq!(per_point.all, vec![Some(0.0), None, Some(1.0)]);
+        assert_eq!(per_point.gps, vec![Some(0.0), None, Some(1.0)]);
+
+        let series = slip_rate_series(&points, 15.0, 10.0, 1.0);
+        let series_values: Vec<f64> = series.all.iter().map(|[_, v]| *v).collect();
+        let aligned_values: Vec<f64> = per_point.all.iter().copied().flatten().collect();
+        assert_eq!(series_values, aligned_values);
+    }
+
+    /// A non-positive window yields no defined rates rather than a division
+    /// artifact.
+    #[test]
+    fn slip_rate_per_point_with_zero_window_is_all_none() {
+        let points = vec![point(0, vec![gps(1, 40.0, 45.0)])];
+        let per_point = slip_rate_per_point(&points, 15.0, 10.0, 0.0);
+        assert_eq!(per_point.all, vec![None]);
     }
 
     /// A NavIC slip lands in `s.navic`, a QZSS slip in `s.qzss`, and neither

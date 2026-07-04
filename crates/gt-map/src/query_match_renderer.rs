@@ -87,7 +87,7 @@ pub(crate) fn match_header_ui(
     range: &std::ops::Range<usize>,
     stale: bool,
 ) {
-    let Some(track) = track_of(files, track_ref) else {
+    let Some(track) = track_ref.resolve(files) else {
         return;
     };
     let count = range.len();
@@ -109,13 +109,6 @@ pub(crate) fn match_header_ui(
         );
     }
     ui.separator();
-}
-
-fn track_of(files: &[LoadedFile], track_ref: TrackRef) -> Option<&LoadedTrack> {
-    track_ref
-        .fi
-        .get(files)
-        .and_then(|f| track_ref.index.get(&f.tracks))
 }
 
 /// Wall-clock duration covered by the match, from its first to its last
