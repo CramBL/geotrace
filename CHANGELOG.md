@@ -2,6 +2,14 @@
 
 ## [unreleased]
 
+### Changed
+
+- History opens only prompt for track-splitting differences, generated marker settings are reapplied from the current settings automatically.
+
+### Fixed
+
+- Loading a recording from History now respects the current generated marker settings, so disabled slip markers no longer reappear from stored history data.
+
 ## [0.3.0] - 2026-06-29
 
 ### Added

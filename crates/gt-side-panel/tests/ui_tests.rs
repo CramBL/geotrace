@@ -35,7 +35,6 @@ fn make_state_with_warnings_on(
             };
             gt_track_builder::build_loaded_file(
                 format!("ride_{i}.gtd"),
-                format!("auto:ride_{i}.gtd"),
                 &points,
                 &[],
                 vec![],
@@ -69,6 +68,7 @@ fn make_harness(state: State) -> TestHarness<'static, State> {
             |ui, s: &mut State| {
                 let mut ctx = PanelContext {
                     files: &s.files,
+                    file_stored_in_history: &[],
                     tree: &mut s.tree,
                     highlight: &mut s.highlight,
                     filter: &mut s.filter,
@@ -174,7 +174,6 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
     let points = gt_test_utils::stationary_nav_data(10);
     let file = gt_track_builder::build_loaded_file(
         "no_sats.gtd".to_owned(),
-        "auto:no_sats.gtd".to_owned(),
         &points,
         &[],
         vec![],

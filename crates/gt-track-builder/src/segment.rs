@@ -17,12 +17,27 @@ use std::ops::Range;
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
 
-/// Configuration for the track-segmentation algorithm and the per-kind
-/// generated-marker detection it drives.
-#[derive(Debug, Clone, Copy)]
-pub struct SegmentationConfig {
+/// Configuration that affects the track ranges produced by segmentation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrackLayoutConfig {
     /// Timestamp gap between consecutive points that triggers a new track split.
     pub track_split_gap: Duration,
+}
+
+impl Default for TrackLayoutConfig {
+    fn default() -> Self {
+        Self {
+            track_split_gap: Duration::seconds(300),
+        }
+    }
+}
+
+/// Configuration for per-kind generated-marker detection.
+///
+/// These settings affect marker output only; they do not change track ranges or
+/// hidden-track index meaning.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GeneratedMarkerConfig {
     /// Whether to emit a [`GeneratedMarkerKind::GnssFixLost`] marker when the fix
     /// drops.
     pub detect_gnss_fix_lost: bool,
@@ -47,10 +62,9 @@ pub struct SegmentationConfig {
     pub slip_snr_drop_db: f32,
 }
 
-impl Default for SegmentationConfig {
+impl Default for GeneratedMarkerConfig {
     fn default() -> Self {
         Self {
-            track_split_gap: Duration::seconds(300),
             detect_gnss_fix_lost: true,
             detect_gnss_fix_regained: true,
             detect_clock_discontinuities: true,
@@ -60,6 +74,13 @@ impl Default for SegmentationConfig {
             slip_snr_drop_db: DEFAULT_SLIP_SNR_DROP_DB,
         }
     }
+}
+
+/// Full processing configuration for building a loaded file.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SegmentationConfig {
+    pub track_layout: TrackLayoutConfig,
+    pub generated_markers: GeneratedMarkerConfig,
 }
 
 /// Default elevation mask (degrees) for slip detection.  Mirrors the slip-rate
@@ -72,7 +93,7 @@ pub const DEFAULT_SLIP_SNR_DROP_DB: f32 = 10.0;
 /// Partitions `points` into contiguous track ranges. A new track begins when the
 /// timestamp gap between consecutive points reaches `config.track_split_gap`.
 /// Returns an empty vec for empty input.
-pub fn segment_tracks(points: &[NavPoint], config: &SegmentationConfig) -> Vec<Range<usize>> {
+pub fn segment_tracks(points: &[NavPoint], config: &TrackLayoutConfig) -> Vec<Range<usize>> {
     if points.is_empty() {
         return Vec::new();
     }
@@ -194,7 +215,7 @@ impl GpsFixTracker {
 
 fn detect_generated_markers(
     points: &[NavPoint],
-    config: &SegmentationConfig,
+    config: &GeneratedMarkerConfig,
 ) -> Vec<GeneratedMarker> {
     let mut tracker = GpsFixTracker::new();
     let mut markers = Vec::new();
@@ -224,7 +245,7 @@ fn detect_generated_markers(
 /// Whether a fix-transition marker kind is enabled by `config`.  Non-fix kinds
 /// are gated by their own toggles at their call sites, so this returns `true`
 /// for them rather than claiming to decide.
-fn fix_marker_enabled(kind: &GeneratedMarkerKind, config: &SegmentationConfig) -> bool {
+fn fix_marker_enabled(kind: &GeneratedMarkerKind, config: &GeneratedMarkerConfig) -> bool {
     match kind {
         GeneratedMarkerKind::GnssFixLost => config.detect_gnss_fix_lost,
         GeneratedMarkerKind::GnssFixRegained { .. } => config.detect_gnss_fix_regained,
@@ -235,7 +256,10 @@ fn fix_marker_enabled(kind: &GeneratedMarkerKind, config: &SegmentationConfig) -
 /// Build one [`GeneratedMarkerKind::Slip`] marker per epoch that had any
 /// loss-of-lock, grouping every satellite that slipped at that epoch into the
 /// one marker, placed at the position and time of that epoch.
-fn detect_slip_markers(points: &[NavPoint], config: &SegmentationConfig) -> Vec<GeneratedMarker> {
+fn detect_slip_markers(
+    points: &[NavPoint],
+    config: &GeneratedMarkerConfig,
+) -> Vec<GeneratedMarker> {
     gt_analysis::loss_of_lock::detect_slip_events(
         points,
         config.slip_elevation_mask_deg,
@@ -534,7 +558,6 @@ pub fn compute_track_metadata(
 )]
 pub fn build_loaded_file(
     filename: String,
-    identity: String,
     points: &[NavPoint],
     custom_markers: &[CustomMarker],
     event_markers: Vec<EventMarker>,
@@ -543,7 +566,7 @@ pub fn build_loaded_file(
     source: FileSource,
     load_warnings: Vec<LoadWarning>,
 ) -> LoadedFile {
-    let ranges = segment_tracks(points, config);
+    let ranges = segment_tracks(points, &config.track_layout);
 
     let mut loaded_tracks: Vec<LoadedTrack> = ranges
         .into_iter()
@@ -566,7 +589,8 @@ pub fn build_loaded_file(
                 .cloned()
                 .collect();
 
-            let track_generated = detect_generated_markers(&track_points, config);
+            let track_generated =
+                detect_generated_markers(&track_points, &config.generated_markers);
 
             let metadata = compute_track_metadata(
                 track_idx + 1,
@@ -673,7 +697,6 @@ pub fn build_loaded_file(
             time_range: file_time_range,
             fix_stats: file_fix_stats,
         },
-        identity,
         tracks: loaded_tracks,
         event_marker_styles: event_marker_styles
             .into_iter()
@@ -682,8 +705,6 @@ pub fn build_loaded_file(
         orphaned_event_markers,
         source,
         load_warnings,
-        db_ref: None,
-        recording_meta: None,
     }
 }
 
@@ -919,20 +940,20 @@ mod tests {
 
     #[test]
     fn segment_tracks_empty_input() {
-        assert!(segment_tracks(&[], &SegmentationConfig::default()).is_empty());
+        assert!(segment_tracks(&[], &TrackLayoutConfig::default()).is_empty());
     }
 
     #[test]
     fn segment_tracks_single_point() {
         let pts = vec![make_point_at(0)];
-        let ranges = segment_tracks(&pts, &SegmentationConfig::default());
+        let ranges = segment_tracks(&pts, &TrackLayoutConfig::default());
         assert_eq!(ranges, vec![0..1]);
     }
 
     #[test]
     fn segment_tracks_all_within_five_minutes() {
         let pts: Vec<NavPoint> = (0..5).map(|i| make_point_at(i * 60)).collect();
-        let ranges = segment_tracks(&pts, &SegmentationConfig::default());
+        let ranges = segment_tracks(&pts, &TrackLayoutConfig::default());
         assert_eq!(ranges, vec![0..5]);
     }
 
@@ -940,7 +961,7 @@ mod tests {
     fn segment_tracks_gap_exactly_300s_starts_new_trip() {
         // [0s, 300s] → gap of exactly 300 s triggers a new track
         let pts = vec![make_point_at(0), make_point_at(300), make_point_at(360)];
-        let ranges = segment_tracks(&pts, &SegmentationConfig::default());
+        let ranges = segment_tracks(&pts, &TrackLayoutConfig::default());
         assert_eq!(ranges, vec![0..1, 1..3]);
     }
 
@@ -952,7 +973,7 @@ mod tests {
             make_point_at(3600), // +1 h gap
             make_point_at(3660),
         ];
-        let ranges = segment_tracks(&pts, &SegmentationConfig::default());
+        let ranges = segment_tracks(&pts, &TrackLayoutConfig::default());
         assert_eq!(ranges, vec![0..2, 2..4]);
     }
 
@@ -963,7 +984,7 @@ mod tests {
             make_point_at(3600), // gap
             make_point_at(7200), // gap
         ];
-        let ranges = segment_tracks(&pts, &SegmentationConfig::default());
+        let ranges = segment_tracks(&pts, &TrackLayoutConfig::default());
         assert_eq!(ranges, vec![0..1, 1..2, 2..3]);
     }
 
@@ -998,7 +1019,6 @@ mod tests {
     fn build_loaded_file_empty_points() {
         let f = build_loaded_file(
             "test.gtd".to_owned(),
-            "auto:test.gtd".to_owned(),
             &[],
             &[],
             vec![],
@@ -1021,7 +1041,6 @@ mod tests {
         ];
         let f = build_loaded_file(
             "ride.gtd".to_owned(),
-            "auto:ride.gtd".to_owned(),
             &pts,
             &[],
             vec![],
@@ -1284,7 +1303,6 @@ mod tests {
         ];
         let f = build_loaded_file(
             "test.gtd".to_owned(),
-            "auto:test.gtd".to_owned(),
             &pts,
             &[],
             vec![],

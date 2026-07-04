@@ -1,5 +1,4 @@
 use crate::highlight::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
-use crate::history::RecordingMeta;
 use crate::markers::{CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker};
 use crate::mercator::MercPoint;
 use crate::nav_point::NavPoint;
@@ -393,15 +392,6 @@ pub enum FileSource {
     LogText(Arc<str>),
 }
 
-/// A reference to a specific recording stored in the history database.
-///
-/// Identifies the HDF5 group at `by_identity/{identity}/{group_name}`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DatabaseRef {
-    pub identity: String,
-    pub group_name: String,
-}
-
 /// A structured data quality warning produced when loading a recording file.
 #[derive(Debug, Clone)]
 pub struct LoadWarning {
@@ -425,22 +415,4 @@ pub struct LoadedFile {
     pub source: FileSource,
     /// Data quality warnings detected when the file was loaded (empty when clean).
     pub load_warnings: Vec<LoadWarning>,
-    /// Grouping key used by the history database.
-    ///
-    /// For GTD files this is the explicit SDK-supplied identity or a value
-    /// derived from file metadata. For non-GTD sources (e.g. log files) it
-    /// defaults to the filename.
-    pub identity: String,
-    /// Reference to the copy of this recording stored in the history database.
-    ///
-    /// `None` for files that were not imported (storage disabled, DB error, or
-    /// non-GTD sources such as log files).
-    pub db_ref: Option<DatabaseRef>,
-    /// Content fingerprint of the source recording, used to recognise when the
-    /// same recording is already loaded (e.g. to disable re-opening it from the
-    /// history window).
-    ///
-    /// Populated for GTD files regardless of whether storage is enabled. `None`
-    /// for non-GTD sources such as log files, which never enter history.
-    pub recording_meta: Option<RecordingMeta>,
 }

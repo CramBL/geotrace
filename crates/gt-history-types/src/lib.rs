@@ -1,4 +1,3 @@
-use crate::DatabaseRef;
 use std::path::Path;
 use thiserror::Error;
 
@@ -75,11 +74,24 @@ pub struct TrackRange {
     pub hidden: bool,
 }
 
-/// The segmentation settings a recording's stored tracks were produced with.
+/// A reference to a specific recording stored in the history database.
 ///
-/// Mirrors `gt_track_builder::SegmentationConfig` using primitives, because
-/// `gt-types` cannot depend on `gt-track-builder`. `track_split_gap` is in
-/// microseconds.
+/// Identifies the HDF5 group at `by_identity/{identity}/{group_name}`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DatabaseRef {
+    pub identity: String,
+    pub group_name: String,
+}
+
+/// History settings stored alongside a recording's track table.
+///
+/// These are primitive persistence fields, intentionally independent of
+/// `gt-track-builder` runtime configuration types. `track_split_gap_us` is the
+/// track-layout setting that determines whether stored track ranges can be
+/// reused safely. The clock marker fields are the generated-marker settings
+/// that this history schema persisted when the tracks were written; newer
+/// generated-marker settings are supplied by the app's current processing config
+/// when the recording is opened.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StoredSegmentation {
     pub track_split_gap_us: i64,

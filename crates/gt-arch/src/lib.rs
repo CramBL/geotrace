@@ -435,6 +435,7 @@ mod tests {
                     "app.*".into(),
                     "config_manager.*".into(),
                     "history_db.*".into(),
+                    "loaded_files.*".into(),
                     "loader.*".into(),
                     "modals.*".into(),
                     "query.*".into(),
@@ -444,11 +445,12 @@ mod tests {
             .build();
 
         // gt_history Isolation (Whitelist)
-        // The `gt_history.*` pattern also covers the two backend crates
-        // (`gt_history_backend_pure`, `gt_history_backend_sys`). The whitelist
-        // therefore includes the system-HDF5 backend's dependencies: `hdf5.*`
-        // (the `hdf5-metno` bindings, imported as `hdf5`, plus `hdf5_pure`) and
-        // `tempfile` (used to stage GTD bytes for libhdf5's cross-file copy).
+        // The `gt_history.*` pattern also covers sibling crates that share the
+        // prefix (`gt_history_types`, `gt_history_backend_pure`, and
+        // `gt_history_backend_sys`). The whitelist therefore includes backend
+        // dependencies: `hdf5.*` covers both the `hdf5-metno` bindings imported
+        // as `hdf5` and `hdf5_pure`, while `tempfile` is used to stage GTD bytes
+        // for libhdf5's cross-file copy.
         builder
             .module_lint()
             .lint_named("gt_history_isolation")

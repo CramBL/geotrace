@@ -1,5 +1,5 @@
 use crate::matches_attrs;
-use gt_types::history::{
+use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
     ATTR_SEG_GAP_US, ATTR_START_US, CURRENT_SCHEMA_VERSION, DbError, GTD_VERSION_ATTR,
@@ -164,7 +164,7 @@ fn snapshot_by_identity(file: &hdf5_pure::File) -> Result<Vec<GroupNode>, Intern
 /// ranges as parallel `start`/`end`/`hidden` u64 datasets.
 fn track_table_node(tracks: &[TrackRange]) -> GroupNode {
     let n = tracks.len() as u64;
-    let (starts, ends, hidden) = gt_types::history::track_columns(tracks);
+    let (starts, ends, hidden) = gt_history_types::track_columns(tracks);
     GroupNode {
         name: TRACKS_GROUP.to_owned(),
         attrs: Vec::new(),
@@ -377,7 +377,7 @@ pub(crate) fn insert_recording(
 /// Remove multiple recordings in a single read-modify-write cycle.
 pub(crate) fn delete_batch(
     db_path: &std::path::Path,
-    refs: &[gt_types::DatabaseRef],
+    refs: &[gt_history_types::DatabaseRef],
 ) -> Result<(), InternalError> {
     let existing_db = hdf5_pure::File::open(db_path)?;
     let mut identity_nodes = snapshot_by_identity(&existing_db)?;
@@ -489,7 +489,7 @@ pub(crate) fn read_track_table(rec_grp: &hdf5_pure::Group<'_>) -> Vec<TrackRange
     let starts = read(TRACK_START_DATASET);
     let ends = read(TRACK_END_DATASET);
     let hidden = read(TRACK_HIDDEN_DATASET);
-    gt_types::history::track_ranges_from_columns(&starts, &ends, &hidden).unwrap_or_else(|| {
+    gt_history_types::track_ranges_from_columns(&starts, &ends, &hidden).unwrap_or_else(|| {
         log::warn!("Inconsistent track table; ignoring it (tracks will be recomputed)");
         Vec::new()
     })

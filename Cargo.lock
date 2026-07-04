@@ -2256,7 +2256,7 @@ dependencies = [
  "geotrace-sdk",
  "gt-history-backend-pure",
  "gt-history-backend-sys",
- "gt-types",
+ "gt-history-types",
  "hdf5-metno",
  "hdf5-pure",
  "insta",
@@ -2269,7 +2269,7 @@ dependencies = [
 name = "gt-history-backend-pure"
 version = "0.3.0"
 dependencies = [
- "gt-types",
+ "gt-history-types",
  "hdf5-pure",
  "log",
  "parking_lot",
@@ -2281,13 +2281,23 @@ dependencies = [
 name = "gt-history-backend-sys"
 version = "0.3.0"
 dependencies = [
- "gt-types",
+ "gt-history-types",
  "hdf5-metno",
  "log",
  "parking_lot",
  "tempfile",
  "thiserror 2.0.18",
  "uuid",
+]
+
+[[package]]
+name = "gt-history-types"
+version = "0.3.0"
+dependencies = [
+ "chrono",
+ "proptest",
+ "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2431,7 +2441,6 @@ dependencies = [
  "rstar 0.13.0",
  "serde",
  "strum",
- "thiserror 2.0.18",
  "uom",
 ]
 

@@ -1003,7 +1003,6 @@ mod tests {
                 time_range: TimeRange::new(now, now + chrono::Duration::seconds(n as i64)),
                 ..FileMetadata::default()
             },
-            identity: format!("auto:test_{n}.gtd"),
             tracks: vec![track],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
@@ -1011,8 +1010,6 @@ mod tests {
                 "test_{n}.gtd"
             ))),
             load_warnings: vec![],
-            db_ref: None,
-            recording_meta: None,
         }
     }
 
@@ -1098,14 +1095,11 @@ mod tests {
     fn file_with_tracks(tracks: Vec<LoadedTrack>) -> LoadedFile {
         LoadedFile {
             metadata: FileMetadata::default(),
-            identity: "auto:test.gtd".to_string(),
             tracks,
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
             source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
             load_warnings: vec![],
-            db_ref: None,
-            recording_meta: None,
         }
     }
 
@@ -1369,14 +1363,11 @@ mod tests {
                 time_range: TimeRange::new(now, now + chrono::Duration::seconds(1)),
                 ..FileMetadata::default()
             },
-            identity: "auto:test.gtd".to_string(),
             tracks: vec![track],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
             source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
             load_warnings: vec![],
-            db_ref: None,
-            recording_meta: None,
         };
 
         let candidate = gt_ui_types::DataPointRef {
@@ -1515,14 +1506,11 @@ mod snapshot_tests {
                 time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
                 ..FileMetadata::default()
             },
-            identity: "auto:snapshot_test.gtd".to_string(),
             tracks: vec![track],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
             source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("snapshot_test.gtd")),
             load_warnings: vec![],
-            db_ref: None,
-            recording_meta: None,
         }
     }
 

@@ -24,7 +24,7 @@ backend-sys = ["dep:gt-history-backend-sys"]
 dirs.workspace = true
 gt-history-backend-pure = { path = "../gt-history-backend-pure", optional = true }
 gt-history-backend-sys = { path = "../gt-history-backend-sys", optional = true }
-gt-types = { path = "../gt-types" }
+gt-history-types = { path = "../gt-history-types" }
 
 [dev-dependencies]
 geotrace-sdk = { path = "../../sdk/rust/geotrace-sdk" }

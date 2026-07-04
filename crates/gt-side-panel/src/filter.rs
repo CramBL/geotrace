@@ -421,14 +421,11 @@ mod tests {
                 ),
                 ..FileMetadata::default()
             },
-            identity: "auto:test.gtd".to_owned(),
             tracks: vec![],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
             source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
             load_warnings: vec![],
-            db_ref: None,
-            recording_meta: None,
         };
         let range = compute_full_time_range(&[file]);
         assert!(range.is_some());

@@ -1,8 +1,9 @@
 [package]
-name = "gt-types"
+name = "gt-history-types"
 description.workspace = true
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
@@ -10,13 +11,9 @@ authors.workspace = true
 doctest = false
 
 [dependencies]
-bon.workspace = true
 chrono.workspace = true
-geo-types.workspace = true
-rstar.workspace = true
 serde.workspace = true
-strum.workspace = true
-uom.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

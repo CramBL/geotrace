@@ -11,6 +11,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+use super::loaded_files::LoadedFilesView;
 use chrono::{DateTime, Utc};
 use egui::text::LayoutJob;
 use gt_analysis::loss_of_lock::{self, SECS_PER_MIN, SlipRatePerPoint};
@@ -134,7 +135,7 @@ impl QueryWindow {
     pub fn show(
         &mut self,
         ctx: &egui::Context,
-        files: &[LoadedFile],
+        loaded_files: LoadedFilesView<'_>,
         visibility: &TrackDataVisibility,
         filter: &GlobalFilter,
         highlight: &mut MapHighlight,
@@ -151,9 +152,10 @@ impl QueryWindow {
         // files, track visibility, or the global filter.
         if let Some(results) = &mut self.results {
             results.matches.stale =
-                current_fingerprint(files, visibility, filter) != results.fingerprint;
+                current_fingerprint(loaded_files, visibility, filter) != results.fingerprint;
         }
 
+        let files = loaded_files.files();
         let mut open = self.open;
         egui::Window::new("Query (experimental)")
             .open(&mut open)
@@ -180,7 +182,7 @@ impl QueryWindow {
         if self.run_requested {
             self.run_requested = false;
             if self.running.is_none() {
-                self.spawn_run(ctx, files, visibility, filter);
+                self.spawn_run(ctx, loaded_files, visibility, filter);
             }
         }
     }
@@ -353,7 +355,7 @@ impl QueryWindow {
     fn spawn_run(
         &mut self,
         ctx: &egui::Context,
-        files: &[LoadedFile],
+        loaded_files: LoadedFilesView<'_>,
         visibility: &TrackDataVisibility,
         filter: &GlobalFilter,
     ) {
@@ -361,12 +363,13 @@ impl QueryWindow {
             return;
         };
         let query = query.clone();
-        let fingerprint = current_fingerprint(files, visibility, filter);
+        let fingerprint = current_fingerprint(loaded_files, visibility, filter);
 
         // Owned snapshot for the worker: each evaluated track's full point
         // vector plus the sub-range passing the time filter. Cloning is the
         // simple-and-correct baseline; an Arc-based snapshot is the known
         // follow-up if this shows up in profiling.
+        let files = loaded_files.files();
         let tracks: Vec<(TrackRef, Vec<NavPoint>, Range<usize>)> = fingerprint
             .tracks
             .iter()
@@ -595,12 +598,15 @@ fn provider_for<'a>(points: &'a [NavPoint], data: Option<&'a TrackQueryData>) ->
 /// Snapshot of the state a run depends on, compared each frame against the
 /// stored one to gray out outdated results.
 fn current_fingerprint(
-    files: &[LoadedFile],
+    loaded_files: LoadedFilesView<'_>,
     visibility: &TrackDataVisibility,
     filter: &GlobalFilter,
 ) -> RunFingerprint {
+    let mut file_identities = Vec::with_capacity(loaded_files.entries().len());
     let mut tracks = Vec::new();
-    for (fi, file) in files.iter().enumerate() {
+    for (fi, entry) in loaded_files.entries().enumerate() {
+        file_identities.push(entry.identity_key().into_owned());
+        let file = entry.file();
         let fi = FileIdx::new(fi);
         for (ti, track) in file.tracks.iter().enumerate() {
             let track_ref = TrackRef::new(fi, TrackIdx::new(ti));
@@ -612,7 +618,7 @@ fn current_fingerprint(
         }
     }
     RunFingerprint {
-        file_identities: files.iter().map(|f| f.identity.clone()).collect(),
+        file_identities,
         tracks,
         filter: *filter,
     }
@@ -1090,18 +1096,21 @@ mod tests {
 
     #[test]
     fn fingerprint_changes_with_files_visibility_and_filter() {
-        let files: Vec<LoadedFile> = Vec::new();
-        let visibility = TrackDataVisibility::from_loaded(&files);
-        let base = current_fingerprint(&files, &visibility, &GlobalFilter::default());
+        let loaded_files = super::super::loaded_files::LoadedFiles::new();
+        let visibility = TrackDataVisibility::from_loaded(loaded_files.files());
+        let base = current_fingerprint(loaded_files.view(), &visibility, &GlobalFilter::default());
         assert_eq!(
             base,
-            current_fingerprint(&files, &visibility, &GlobalFilter::default())
+            current_fingerprint(loaded_files.view(), &visibility, &GlobalFilter::default())
         );
         let filtered = GlobalFilter {
             min_distance_km: Some(uom::si::f64::Length::new::<uom::si::length::kilometer>(1.0)),
             ..GlobalFilter::default()
         };
-        assert_ne!(base, current_fingerprint(&files, &visibility, &filtered));
+        assert_ne!(
+            base,
+            current_fingerprint(loaded_files.view(), &visibility, &filtered)
+        );
     }
 
     #[test]

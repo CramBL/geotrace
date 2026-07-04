@@ -5,7 +5,7 @@ use std::{
     thread,
 };
 
-use gt_track_builder::SegmentationConfig;
+use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
 
 use chrono::{DateTime, Utc};
 use egui::Context;
@@ -16,6 +16,8 @@ use gt_types::{
 };
 use uom::si::f64::Length;
 use uom::si::length::{kilometer, meter};
+
+use super::loaded_files::FileHistory;
 
 pub(super) const STAGE_STARTING: &str = "Starting…";
 pub(super) const STAGE_READING: &str = "Reading…";
@@ -54,9 +56,11 @@ pub enum LoadOutcome {
         /// file index is only known on the UI thread when the file is appended
         /// to `loaded_files`.  `PlotState::integrate_file` re-stamps the index.
         series: PreparedSeries,
-        /// Reference to the recording stored in the history database, if storage
-        /// is enabled and the insert succeeded.
-        db_ref: Option<gt_history::DatabaseRef>,
+        /// App-owned history attachment metadata for this file.
+        history: FileHistory,
+        /// True when a history load rebuilt generated markers with the current
+        /// app settings rather than the recording's stored/default marker settings.
+        applied_current_marker_settings: bool,
     },
     /// A successfully parsed log file. `loaded` is `None` when all entries were
     /// unassociated with any GPS track.
@@ -98,11 +102,39 @@ pub(super) struct CompletedLoad {
 pub(super) enum HistoryOpen {
     /// Remove these track positions (0-based, segmentation order) from the loaded
     /// view - the recording's hidden tracks. The stored table is left unchanged.
-    ApplyHidden(Vec<usize>),
+    ApplyHidden {
+        db_ref: gt_history::DatabaseRef,
+        positions: Vec<usize>,
+        applied_current_marker_settings: bool,
+    },
     /// Overwrite the recording's stored track table and segmentation settings with
     /// a fresh segmentation under the load config (recalculation), discarding the
     /// previous hidden marks.
-    Recalculate(gt_history::DatabaseRef),
+    Recalculate {
+        db_ref: gt_history::DatabaseRef,
+        applied_current_marker_settings: bool,
+    },
+}
+
+impl HistoryOpen {
+    fn applied_current_marker_settings(&self) -> bool {
+        match self {
+            Self::ApplyHidden {
+                applied_current_marker_settings,
+                ..
+            }
+            | Self::Recalculate {
+                applied_current_marker_settings,
+                ..
+            } => *applied_current_marker_settings,
+        }
+    }
+
+    fn db_ref(&self) -> &gt_history::DatabaseRef {
+        match self {
+            Self::ApplyHidden { db_ref, .. } | Self::Recalculate { db_ref, .. } => db_ref,
+        }
+    }
 }
 
 /// Manages the file-loading channel and all background load threads.
@@ -188,8 +220,9 @@ impl LoaderManager {
                     .ok();
                     r_ctx.request_repaint();
                 };
-                let outcome = gt_loader::load_file_with_progress(&path, report, &config)
-                    .map(|mut file| {
+                let outcome = gt_loader::load_gtd_file_with_progress(&path, report, &config)
+                    .map(|loaded| {
+                        let file = loaded.file;
                         tx.send(LoadMessage::Progress {
                             id,
                             fraction: 0.95,
@@ -201,21 +234,27 @@ impl LoaderManager {
                         // Read the bytes once for both the content fingerprint
                         // and the optional history insert.
                         let bytes = std::fs::read(&path).ok();
-                        file.recording_meta = bytes
+                        let meta = bytes
                             .as_deref()
                             .and_then(|b| gt_history::extract_meta(b).ok());
                         log::debug!("Parsed '{log_name}': {} track(s)", file.tracks.len());
                         let db_ref = store_in_history(
                             db_path.as_deref(),
                             &file,
+                            &loaded.identity,
+                            meta.as_ref(),
                             &config,
                             bytes.as_deref(),
                             &log_name,
                         );
+                        let history = meta.map_or(FileHistory::None, |meta| {
+                            FileHistory::recording(loaded.identity, meta, db_ref)
+                        });
                         LoadOutcome::GtdFile {
                             file,
                             series,
-                            db_ref,
+                            history,
+                            applied_current_marker_settings: false,
                         }
                     })
                     .map_err(|e| e.to_string());
@@ -289,9 +328,13 @@ impl LoaderManager {
                     r_ctx.request_repaint();
                 };
                 let outcome =
-                    gt_loader::load_bytes_with_progress(&bytes, filename, report, &config)
-                        .map(|mut file| {
-                            file.recording_meta = gt_history::extract_meta(&bytes).ok();
+                    gt_loader::load_gtd_bytes_with_progress(&bytes, filename, report, &config)
+                        .map(|loaded| {
+                            let mut file = loaded.file;
+                            let applied_current_marker_settings = open
+                                .as_ref()
+                                .is_some_and(HistoryOpen::applied_current_marker_settings);
+                            let meta = gt_history::extract_meta(&bytes).ok();
                             log::debug!("Parsed '{log_name}': {} track(s)", file.tracks.len());
                             // Store first (de-duplicates against the existing
                             // recording, keeping its stored track table) while the
@@ -299,17 +342,21 @@ impl LoaderManager {
                             let db_ref = store_in_history(
                                 db_path.as_deref(),
                                 &file,
+                                &loaded.identity,
+                                meta.as_ref(),
                                 &config,
                                 Some(&bytes),
                                 &log_name,
                             );
+                            let open_db_ref = open.as_ref().map(HistoryOpen::db_ref).cloned();
+                            let history_db_ref = db_ref.or(open_db_ref);
                             match &open {
-                                Some(HistoryOpen::Recalculate(rec)) => {
+                                Some(HistoryOpen::Recalculate { db_ref, .. }) => {
                                     if let Some(path) = db_path.as_deref() {
-                                        recalculate_stored_tracks(path, rec, &file, &config);
+                                        recalculate_stored_tracks(path, db_ref, &file, &config);
                                     }
                                 }
-                                Some(HistoryOpen::ApplyHidden(positions)) => {
+                                Some(HistoryOpen::ApplyHidden { positions, .. }) => {
                                     drop_tracks(&mut file, positions);
                                 }
                                 None => {}
@@ -324,10 +371,14 @@ impl LoaderManager {
                             .ok();
                             ctx.request_repaint();
                             let series = gt_plot::prepare_file_series(0, &file, analysis);
+                            let history = meta.map_or(FileHistory::None, |meta| {
+                                FileHistory::recording(loaded.identity, meta, history_db_ref)
+                            });
                             LoadOutcome::GtdFile {
                                 file,
                                 series,
-                                db_ref,
+                                history,
+                                applied_current_marker_settings,
                             }
                         })
                         .map_err(|e| e.to_string());
@@ -615,7 +666,6 @@ pub(super) fn build_log_loaded_file(
         event_markers: Vec::new(),
     };
 
-    let identity = format!("auto:{filename}");
     Some(LoadedFile {
         metadata: FileMetadata {
             filename,
@@ -624,14 +674,11 @@ pub(super) fn build_log_loaded_file(
             time_range: TimeRange::new(min_time, max_time),
             fix_stats: None,
         },
-        identity,
         tracks: vec![track],
         event_marker_styles: std::collections::HashMap::new(),
         orphaned_event_markers: Vec::new(),
         source,
         load_warnings: Vec::new(),
-        db_ref: None,
-        recording_meta: None,
     })
 }
 
@@ -694,30 +741,69 @@ pub(crate) fn stored_segmentation_from_config(
     config: &SegmentationConfig,
 ) -> gt_history::StoredSegmentation {
     gt_history::StoredSegmentation {
-        track_split_gap_us: config
-            .track_split_gap
-            .num_microseconds()
-            .unwrap_or(i64::MAX),
-        detect_clock_discontinuities: config.detect_clock_discontinuities,
-        clock_discontinuity_sigmas: config.clock_discontinuity_sigmas,
+        track_split_gap_us: track_split_gap_us(config.track_layout),
+        detect_clock_discontinuities: config.generated_markers.detect_clock_discontinuities,
+        clock_discontinuity_sigmas: config.generated_markers.clock_discontinuity_sigmas,
     }
 }
 
-/// Rebuild a [`SegmentationConfig`] from the settings stored alongside a
-/// recording, so re-opening reproduces the same track segmentation it was stored
-/// with.  The inverse of [`stored_segmentation_from_config`] for the persisted
-/// fields; the generated-marker toggles and slip-detection params are not
-/// stored, so they fall back to defaults (markers regenerate under the current
-/// app settings on the next "Apply to loaded data").
-pub(crate) fn config_from_stored_segmentation(
-    settings: &gt_history::StoredSegmentation,
-) -> SegmentationConfig {
-    SegmentationConfig {
+fn track_split_gap_us(config: TrackLayoutConfig) -> i64 {
+    config
+        .track_split_gap
+        .num_microseconds()
+        .unwrap_or(i64::MAX)
+}
+
+fn track_layout_from_stored(settings: &gt_history::StoredSegmentation) -> TrackLayoutConfig {
+    TrackLayoutConfig {
         track_split_gap: chrono::Duration::microseconds(settings.track_split_gap_us),
+    }
+}
+
+fn generated_markers_from_stored(
+    settings: &gt_history::StoredSegmentation,
+) -> GeneratedMarkerConfig {
+    GeneratedMarkerConfig {
         detect_clock_discontinuities: settings.detect_clock_discontinuities,
         clock_discontinuity_sigmas: settings.clock_discontinuity_sigmas,
-        ..SegmentationConfig::default()
+        ..GeneratedMarkerConfig::default()
     }
+}
+
+/// Returns `true` when the stored tracks were split with the same track-layout
+/// setting as the current app config. Generated-marker settings are intentionally
+/// ignored here because they do not affect the stored track ranges.
+pub(crate) fn track_split_matches_config(
+    settings: &gt_history::StoredSegmentation,
+    config: &SegmentationConfig,
+) -> bool {
+    track_layout_from_stored(settings) == config.track_layout
+}
+
+/// Rebuild a [`SegmentationConfig`] for opening stored history tracks.
+///
+/// The stored track split gap is kept so hidden-track indices still line up with
+/// the stored track table. Generated-marker settings come from `current`, so a
+/// history load reflects the user's current marker toggles and slip thresholds.
+pub(crate) fn config_from_stored_segmentation(
+    settings: &gt_history::StoredSegmentation,
+    current: SegmentationConfig,
+) -> SegmentationConfig {
+    SegmentationConfig {
+        track_layout: track_layout_from_stored(settings),
+        generated_markers: current.generated_markers,
+    }
+}
+
+/// Returns `true` when the marker settings implied by a stored recording match
+/// the current app config. History did not persist every generated-marker field,
+/// so missing fields are treated as the historical defaults for mismatch
+/// detection only; loading still uses [`config_from_stored_segmentation`].
+pub(crate) fn marker_settings_match_config(
+    settings: &gt_history::StoredSegmentation,
+    current: &SegmentationConfig,
+) -> bool {
+    generated_markers_from_stored(settings) == current.generated_markers
 }
 
 /// Derive contiguous per-track index ranges from a loaded file's tracks.
@@ -795,6 +881,8 @@ fn recalculate_stored_tracks(
 fn store_in_history(
     db_path: Option<&std::path::Path>,
     file: &LoadedFile,
+    identity: &str,
+    meta: Option<&gt_history::RecordingMeta>,
     config: &SegmentationConfig,
     bytes: Option<&[u8]>,
     filename: &str,
@@ -805,7 +893,7 @@ fn store_in_history(
         log::debug!("Storage disabled; not storing '{filename}' in history");
         return None;
     };
-    let (Some(meta), Some(bytes)) = (file.recording_meta.as_ref(), bytes) else {
+    let (Some(meta), Some(bytes)) = (meta, bytes) else {
         log::warn!("No recording metadata for '{filename}'; not storing in history");
         return None;
     };
@@ -827,7 +915,7 @@ fn store_in_history(
             return None;
         }
     };
-    match db.insert(&file.identity, meta, &tracks, settings, bytes) {
+    match db.insert(identity, meta, &tracks, settings, bytes) {
         Ok(db_ref) => {
             log::info!(
                 "Stored '{filename}' in history as {}/{} ({} track(s))",
@@ -855,30 +943,103 @@ mod tests {
     use super::*;
 
     #[test]
-    #[expect(
-        clippy::float_cmp,
-        reason = "exact lossless round-trip of stored values"
-    )]
-    fn segmentation_config_round_trips_through_stored() {
-        let config = SegmentationConfig {
-            track_split_gap: chrono::Duration::milliseconds(42_500),
+    fn stored_segmentation_records_persisted_fields() {
+        let generated_markers = GeneratedMarkerConfig {
             detect_clock_discontinuities: false,
             clock_discontinuity_sigmas: 3.5,
-            ..SegmentationConfig::default()
+            ..GeneratedMarkerConfig::default()
+        };
+        let config = SegmentationConfig {
+            track_layout: TrackLayoutConfig {
+                track_split_gap: chrono::Duration::milliseconds(42_500),
+            },
+            generated_markers,
         };
         let stored = stored_segmentation_from_config(&config);
-        let back = config_from_stored_segmentation(&stored);
-        assert_eq!(back.track_split_gap, config.track_split_gap);
+        assert_eq!(stored.track_split_gap_us, 42_500_000);
+        assert!(!stored.detect_clock_discontinuities);
         assert_eq!(
-            back.detect_clock_discontinuities,
-            config.detect_clock_discontinuities
+            stored.clock_discontinuity_sigmas.to_bits(),
+            config
+                .generated_markers
+                .clock_discontinuity_sigmas
+                .to_bits()
         );
-        assert_eq!(
-            back.clock_discontinuity_sigmas,
-            config.clock_discontinuity_sigmas
-        );
-        // And the stored form round-trips back to itself.
-        assert_eq!(stored_segmentation_from_config(&back), stored);
+    }
+
+    #[test]
+    fn history_open_config_keeps_stored_track_split_and_current_marker_settings() {
+        let stored_source = SegmentationConfig {
+            track_layout: TrackLayoutConfig {
+                track_split_gap: chrono::Duration::milliseconds(42_500),
+            },
+            generated_markers: GeneratedMarkerConfig {
+                detect_clock_discontinuities: true,
+                clock_discontinuity_sigmas: 7.0,
+                ..GeneratedMarkerConfig::default()
+            },
+        };
+        let current = SegmentationConfig {
+            generated_markers: GeneratedMarkerConfig {
+                detect_gnss_fix_lost: false,
+                detect_gnss_fix_regained: false,
+                detect_clock_discontinuities: false,
+                clock_discontinuity_sigmas: 3.5,
+                detect_slips: false,
+                slip_elevation_mask_deg: 30.0,
+                slip_snr_drop_db: 20.0,
+            },
+            ..SegmentationConfig::default()
+        };
+
+        let stored = stored_segmentation_from_config(&stored_source);
+        let back = config_from_stored_segmentation(&stored, current);
+
+        assert_eq!(back.track_layout, stored_source.track_layout);
+        assert_eq!(back.generated_markers, current.generated_markers);
+    }
+
+    #[test]
+    fn marker_settings_match_detects_unstored_slip_toggle() {
+        let stored = stored_segmentation_from_config(&SegmentationConfig::default());
+
+        assert!(marker_settings_match_config(
+            &stored,
+            &SegmentationConfig::default()
+        ));
+
+        let current = SegmentationConfig {
+            generated_markers: GeneratedMarkerConfig {
+                detect_slips: false,
+                ..GeneratedMarkerConfig::default()
+            },
+            ..SegmentationConfig::default()
+        };
+
+        assert!(!marker_settings_match_config(&stored, &current));
+    }
+
+    #[test]
+    fn marker_settings_match_uses_stored_clock_marker_fields() {
+        let stored_config = SegmentationConfig {
+            generated_markers: GeneratedMarkerConfig {
+                detect_clock_discontinuities: false,
+                clock_discontinuity_sigmas: 3.5,
+                ..GeneratedMarkerConfig::default()
+            },
+            ..SegmentationConfig::default()
+        };
+        let stored = stored_segmentation_from_config(&stored_config);
+        let current = SegmentationConfig {
+            generated_markers: GeneratedMarkerConfig {
+                detect_clock_discontinuities: false,
+                clock_discontinuity_sigmas: 3.5,
+                ..GeneratedMarkerConfig::default()
+            },
+            ..SegmentationConfig::default()
+        };
+
+        assert!(marker_settings_match_config(&stored, &current));
     }
 
     fn write_sample_gtd(dir: &std::path::Path) -> PathBuf {
@@ -927,11 +1088,11 @@ mod tests {
 
         let completed = drain_until_complete(&mut manager);
         let outcome = completed.outcome.expect("load should succeed");
-        let LoadOutcome::GtdFile { db_ref, .. } = outcome else {
+        let LoadOutcome::GtdFile { history, .. } = outcome else {
             panic!("expected a GtdFile outcome");
         };
         assert!(
-            db_ref.is_some(),
+            history.is_stored(),
             "loading with storage enabled must produce a history db_ref"
         );
 
@@ -957,10 +1118,13 @@ mod tests {
 
         let completed = drain_until_complete(&mut manager);
         let outcome = completed.outcome.expect("load should succeed");
-        let LoadOutcome::GtdFile { db_ref, .. } = outcome else {
+        let LoadOutcome::GtdFile { history, .. } = outcome else {
             panic!("expected a GtdFile outcome");
         };
-        assert!(db_ref.is_none(), "no db_ref without a database path");
+        assert!(
+            history.db_ref().is_none(),
+            "no db_ref without a database path"
+        );
     }
 
     /// A loaded recording is stored with a per-track table, and those tracks can
@@ -976,11 +1140,14 @@ mod tests {
         manager.db_path = Some(db_path.clone());
         manager.spawn_gtd_path(gtd_path, SegmentationConfig::default());
         let completed = drain_until_complete(&mut manager);
-        let LoadOutcome::GtdFile { db_ref, .. } = completed.outcome.expect("load should succeed")
+        let LoadOutcome::GtdFile { history, .. } = completed.outcome.expect("load should succeed")
         else {
             panic!("expected a GtdFile outcome");
         };
-        let db_ref = db_ref.expect("loaded file must be stored in history");
+        let db_ref = history
+            .db_ref()
+            .cloned()
+            .expect("loaded file must be stored in history");
 
         let mut db = Database::open_or_create(&db_path).expect("open db");
         let stored = db.load(&db_ref).expect("load stored recording");

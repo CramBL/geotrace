@@ -1,14 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
+use gt_history::DatabaseRef;
 use gt_map::{MapLayer, NavMap};
 use gt_side_panel::{NodeKey, TreeState};
-use gt_types::{LoadWarning, LoadedFile, TrackRef};
+use gt_types::{LoadWarning, TrackRef};
 use gt_ui_theme::WARNING_AMBER;
+
+use super::loaded_files::{FileHistory, LoadedFiles};
 
 /// The tracks of one stored recording that a remove acts on.
 pub struct RecordingTrackRemoval {
-    pub db_ref: gt_types::DatabaseRef,
+    pub db_ref: DatabaseRef,
     /// Original (segmentation) track indices, matching the recording's stored
     /// track table - not the live view positions, which shift as tracks are
     /// removed.
@@ -34,7 +37,7 @@ pub struct RemoveOutcome {
 pub fn show_delete_confirmation(
     ui: &egui::Ui,
     tree: &mut TreeState,
-    loaded_files: &mut Vec<LoadedFile>,
+    loaded_files: &mut LoadedFiles,
 ) -> Option<RemoveOutcome> {
     let Some(confirm) = &tree.delete_confirm else {
         return None;
@@ -156,7 +159,7 @@ pub fn show_delete_confirmation(
 
 /// Indices of files that removing `keys` would empty entirely - either selected
 /// directly, or because every one of their tracks is in the removal set.
-fn files_fully_removed(keys: &[NodeKey], loaded_files: &[LoadedFile]) -> BTreeSet<usize> {
+fn files_fully_removed(keys: &[NodeKey], loaded_files: &LoadedFiles) -> BTreeSet<usize> {
     let mut files: BTreeSet<usize> = BTreeSet::new();
     let mut tracks: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
     for key in keys {
@@ -192,7 +195,7 @@ fn files_fully_removed(keys: &[NodeKey], loaded_files: &[LoadedFile]) -> BTreeSe
 /// A removed file contributes all of its tracks. Track indices are taken from
 /// each track's stored `metadata.index` rather than its live view position, so
 /// they line up with the recording's persisted track table.
-fn track_removals(keys: &[NodeKey], loaded_files: &[LoadedFile]) -> Vec<RecordingTrackRemoval> {
+fn track_removals(keys: &[NodeKey], loaded_files: &LoadedFiles) -> Vec<RecordingTrackRemoval> {
     // File index -> set of removed view positions.
     let mut by_file: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
     for key in keys {
@@ -219,7 +222,11 @@ fn track_removals(keys: &[NodeKey], loaded_files: &[LoadedFile]) -> Vec<Recordin
         let Some(file) = loaded_files.get(fi) else {
             continue;
         };
-        let Some(db_ref) = file.db_ref.clone() else {
+        let Some(db_ref) = loaded_files
+            .history(fi)
+            .and_then(FileHistory::db_ref)
+            .cloned()
+        else {
             continue;
         };
         let track_indices: Vec<usize> = positions
@@ -244,7 +251,7 @@ fn track_removals(keys: &[NodeKey], loaded_files: &[LoadedFile]) -> Vec<Recordin
 /// before the view is mutated, while the track indices are still intact.
 pub fn execute_delete(
     keys: &[NodeKey],
-    loaded_files: &mut Vec<LoadedFile>,
+    loaded_files: &mut LoadedFiles,
     tree: &mut TreeState,
 ) -> Vec<RecordingTrackRemoval> {
     let fully_removed = files_fully_removed(keys, loaded_files);
@@ -275,11 +282,11 @@ pub fn execute_delete(
 
     for fi in (0..loaded_files.len()).rev() {
         if fully_removed.contains(&fi) {
-            loaded_files.remove(fi);
+            loaded_files.remove_file(fi);
         }
     }
 
-    tree.reset_for_files(loaded_files);
+    tree.reset_for_files(loaded_files.files());
     removals
 }
 
@@ -464,13 +471,15 @@ mod tests {
     use std::path::PathBuf;
 
     use gt_types::{
-        DatabaseRef, FileIdx, FileMetadata, FileSource, LoadedFile, LoadedTrack, TrackIdx,
-        TrackLod, TrackMetadata,
+        FileIdx, FileMetadata, FileSource, LoadedFile, LoadedTrack, TrackIdx, TrackLod,
+        TrackMetadata,
     };
 
+    use super::FileHistory;
     use super::{NodeKey, TrackRef, files_fully_removed, track_removals};
+    use crate::app::loaded_files::LoadedFiles;
 
-    fn make_file(track_count: usize, has_db_ref: bool, idx: usize) -> LoadedFile {
+    fn make_file(track_count: usize) -> LoadedFile {
         LoadedFile {
             metadata: FileMetadata::default(),
             tracks: (0..track_count)
@@ -491,13 +500,35 @@ mod tests {
             orphaned_event_markers: Vec::new(),
             source: FileSource::GtdPath(PathBuf::new()),
             load_warnings: Vec::new(),
-            identity: String::new(),
-            db_ref: has_db_ref.then(|| DatabaseRef {
-                identity: "id".to_owned(),
-                group_name: format!("rec{idx}"),
-            }),
-            recording_meta: None,
         }
+    }
+
+    fn make_loaded_files(files: &[(usize, bool)]) -> LoadedFiles {
+        let mut loaded = LoadedFiles::new();
+        for (idx, &(track_count, has_db_ref)) in files.iter().enumerate() {
+            let history = if has_db_ref {
+                FileHistory::recording(
+                    "id".to_owned(),
+                    gt_history::RecordingMeta {
+                        start_us: idx as i64,
+                        end_us: idx as i64,
+                        nav_point_count: 0,
+                        sat_report_count: 0,
+                        marker_count: 0,
+                        event_marker_count: 0,
+                        gtd_size_bytes: 0,
+                    },
+                    Some(gt_history::DatabaseRef {
+                        identity: "id".to_owned(),
+                        group_name: format!("rec{idx}"),
+                    }),
+                )
+            } else {
+                FileHistory::None
+            };
+            loaded.push(make_file(track_count), history);
+        }
+        loaded
     }
 
     fn track_key(fi: usize, ti: usize) -> NodeKey {
@@ -575,12 +606,7 @@ mod tests {
         ];
 
         for case in cases {
-            let files: Vec<LoadedFile> = case
-                .files
-                .iter()
-                .enumerate()
-                .map(|(i, &(tracks, has_ref))| make_file(tracks, has_ref, i))
-                .collect();
+            let files = make_loaded_files(&case.files);
 
             let removed: Vec<usize> = files_fully_removed(&case.keys, &files)
                 .into_iter()

@@ -1,7 +1,6 @@
 use crate::copy::list_recordings;
-use gt_types::DatabaseRef;
-use gt_types::history::{
-    CURRENT_SCHEMA_VERSION, DbError, HistoryDatabase, RecordingEntry, RecordingMeta,
+use gt_history_types::{
+    CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, HistoryDatabase, RecordingEntry, RecordingMeta,
     SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation, TrackRange,
 };
 

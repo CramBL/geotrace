@@ -1,6 +1,5 @@
 pub mod coordinates;
 pub mod highlight;
-pub mod history;
 pub mod markers;
 pub mod mercator;
 pub mod metrics;
@@ -25,7 +24,7 @@ pub use time_types::{GpsTime, SysTime};
 pub use tpv::TimePositionVelocity;
 pub use tpv::TimePositionVelocityBuilder;
 pub use track::{
-    AssociationConfig, DatabaseRef, FileMetadata, FileSource, FixStats, LOD_BASE_TOLERANCE_MERC,
-    LoadWarning, LoadedFile, LoadedTrack, MarkerRequirement, MercBounds, SegmentLengthRange,
-    SpatialPoint, TimeRange, TrackLod, TrackMetadata, merc_bounds_for_rect,
+    AssociationConfig, FileMetadata, FileSource, FixStats, LOD_BASE_TOLERANCE_MERC, LoadWarning,
+    LoadedFile, LoadedTrack, MarkerRequirement, MercBounds, SegmentLengthRange, SpatialPoint,
+    TimeRange, TrackLod, TrackMetadata, merc_bounds_for_rect,
 };

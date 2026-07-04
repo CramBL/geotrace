@@ -1,7 +1,6 @@
-pub use gt_types::DatabaseRef;
-pub use gt_types::history::{
-    DbError, HistoryDatabase, PruneMode, RecordingEntry, RecordingMeta, StoredRecording,
-    StoredSegmentation, TrackRange, format_count_suffix, make_group_name,
+pub use gt_history_types::{
+    DatabaseRef, DbError, HistoryDatabase, PruneMode, RecordingEntry, RecordingMeta,
+    StoredRecording, StoredSegmentation, TrackRange, format_count_suffix, make_group_name,
 };
 use std::path::PathBuf;
 
