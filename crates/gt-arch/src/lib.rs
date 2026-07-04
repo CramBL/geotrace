@@ -1,686 +1,150 @@
-#[cfg(test)]
-mod tests {
-    use cargo_pup_lint_config::{LintBuilder, LintBuilderExt, ModuleLintExt, Severity};
+#![cfg(test)]
+use cargo_pup_lint_config::{LintBuilder, LintBuilderExt, ModuleLintExt, Severity};
 
-    #[test]
-    fn enforce_architecture() {
-        let mut builder = LintBuilder::new();
+const UI_AND_APP_IMPORTS: &[&str] = &[
+    "^eframe($|::.*)",
+    "^egui($|::.*)",
+    "^egui_extras($|::.*)",
+    "^egui_kittest($|::.*)",
+    "^egui_notify($|::.*)",
+    "^egui_phosphor($|::.*)",
+    "^egui_plot($|::.*)",
+    "^egui_tiles($|::.*)",
+    "^gt_map($|::.*)",
+    "^gt_plot($|::.*)",
+    "^gt_side_panel($|::.*)",
+    "^gt_ui_theme($|::.*)",
+    "^gt_ui_types($|::.*)",
+    "^walkers($|::.*)",
+    "^geotrace($|::.*)",
+];
 
-        // gt_geo_math Isolation (Whitelist)
-        builder
-            .module_lint()
-            .lint_named("gt_geo_math_isolation")
-            .matching(|m| m.module("gt_geo_math.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "geo.*".into(),
-                    "geo_types.*".into(),
-                    "smallvec.*".into(),
-                    "gt_types.*".into(),
-                    "crate.*".into(),
-                    "gt_geo_math.*".into(),
-                ]),
-                None,
-            )
-            .build();
+const HISTORY_BACKEND_IMPORTS: &[&str] = &[
+    "^gt_history_backend_pure($|::.*)",
+    "^gt_history_backend_sys($|::.*)",
+    "^hdf5($|::.*)",
+    "^hdf5_pure($|::.*)",
+];
 
-        // gt_ui_theme Isolation (Whitelist)
-        builder
-            .module_lint()
-            .lint_named("gt_ui_theme_isolation")
-            .matching(|m| m.module("gt_ui_theme.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "egui.*".into(),
-                    "gt_types.*".into(),
-                    "crate.*".into(),
-                    "gt_ui_theme.*".into(),
-                ]),
-                None,
-            )
-            .build();
+fn deny_imports(
+    builder: &mut LintBuilder,
+    name: &str,
+    module_pattern: &str,
+    denied_patterns: &[&str],
+) {
+    builder
+        .module_lint()
+        .lint_named(name)
+        .matching(|m| m.module(module_pattern))
+        .with_severity(Severity::Error)
+        .restrict_imports(
+            None,
+            Some(
+                denied_patterns
+                    .iter()
+                    .map(|pattern| (*pattern).to_owned())
+                    .collect(),
+            ),
+        )
+        .build();
+}
 
-        // gt_fmt Isolation (Whitelist)
-        builder
-            .module_lint()
-            .lint_named("gt_fmt_isolation")
-            .matching(|m| m.module("gt_fmt.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "chrono.*".into(),
-                    "gt_types.*".into(),
-                    "uom.*".into(),
-                    "crate.*".into(),
-                    "gt_fmt.*".into(),
-                ]),
-                None,
-            )
-            .build();
+#[test]
+fn enforce_architecture() {
+    let mut builder = LintBuilder::new();
 
-        // gt_types Isolation (Whitelist)
-        builder
-            .module_lint()
-            .lint_named("gt_types_isolation")
-            .matching(|m| m.module("gt_types.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "bon.*".into(),
-                    "chrono.*".into(),
-                    "geo_types.*".into(),
-                    "proptest.*".into(),
-                    "serde.*".into(),
-                    "strum.*".into(),
-                    "uom.*".into(),
-                    "rstar.*".into(),
-                    "crate.*".into(),
-                    "gt_types.*".into(),
-                    "coordinates.*".into(),
-                    "highlight.*".into(),
-                    "markers.*".into(),
-                    "mercator.*".into(),
-                    "metrics.*".into(),
-                    "nav_point.*".into(),
-                    "query.*".into(),
-                    "satellites.*".into(),
-                    "thiserror.*".into(),
-                    "time_types.*".into(),
-                    "track.*".into(),
-                    "tpv.*".into(),
-                ]),
-                None,
-            )
-            .build();
+    deny_imports(
+        &mut builder,
+        "sdk_does_not_import_app",
+        "^geotrace_sdk($|::.*)",
+        &["^gt_.*", "^geotrace($|::.*)"],
+    );
 
-        // gt_loaded_files Isolation (Whitelist)
-        //
-        // Shared app/session loaded-file model. It may depend on raw data
-        // types and history schema types, but not on UI crates or history
-        // backends.
-        builder
-            .module_lint()
-            .lint_named("gt_loaded_files_isolation")
-            .matching(|m| m.module("gt_loaded_files.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "gt_history_types.*".into(),
-                    "gt_types.*".into(),
-                    "crate.*".into(),
-                    "gt_loaded_files.*".into(),
-                ]),
-                None,
-            )
-            .build();
+    deny_imports(
+        &mut builder,
+        "sdk_macros_do_not_import_app",
+        "^geotrace_sdk_macros($|::.*)",
+        &["^gt_.*", "^geotrace($|::.*)"],
+    );
 
-        // gt_ui_types Isolation (Whitelist)
-        builder
-            .module_lint()
-            .lint_named("gt_ui_types_isolation")
-            .matching(|m| m.module("gt_ui_types.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "chrono.*".into(),
-                    "gt_types.*".into(),
-                    "crate.*".into(),
-                    "gt_ui_types.*".into(),
-                    // Sub-module shorthands
-                    "event_marker_visibility.*".into(),
-                    "highlight.*".into(),
-                    "query_matches.*".into(),
-                    "visibility.*".into(),
-                ]),
-                None,
-            )
-            .build();
+    deny_imports(
+        &mut builder,
+        "c_sdk_wrapper_stays_on_sdk_boundary",
+        "^geotrace_c($|::.*)",
+        &["^gt_.*", "^geotrace($|::.*)"],
+    );
 
-        // gt_filter Isolation (Whitelist)
-        builder
-            .module_lint()
-            .lint_named("gt_filter_isolation")
-            .matching(|m| m.module("gt_filter.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "chrono.*".into(),
-                    "geo_types.*".into(),
-                    "gt_types.*".into(),
-                    "uom.*".into(),
-                    "crate.*".into(),
-                    "gt_filter.*".into(),
-                ]),
-                None,
-            )
-            .build();
+    deny_imports(
+        &mut builder,
+        "feature_crates_do_not_import_root_app",
+        "^gt_.*",
+        &["^geotrace($|::.*)"],
+    );
 
-        // gt_test_utils Isolation (Whitelist)
-        builder
-            .module_lint()
-            .lint_named("gt_test_utils_isolation")
-            .matching(|m| m.module("gt_test_utils.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "chrono.*".into(),
-                    "egui.*".into(),
-                    "egui_extras.*".into(),
-                    "egui_kittest.*".into(),
-                    "egui_phosphor.*".into(),
-                    "geo.*".into(),
-                    "geo_types.*".into(),
-                    "geotrace_sdk.*".into(),
-                    "gt_types.*".into(),
-                    "uom.*".into(),
-                    "crate.*".into(),
-                    "gt_test_utils.*".into(),
-                    "fixtures.*".into(),
-                    "snapshot_harness.*".into(),
-                ]),
-                None,
-            )
-            .build();
+    deny_imports(
+        &mut builder,
+        "domain_crates_do_not_import_ui",
+        "^(gt_types|gt_history_types|gt_analysis|gt_query|gt_geo_math|gt_filter|gt_track_builder)($|::.*)",
+        UI_AND_APP_IMPORTS,
+    );
 
-        // gt_analysis Isolation (Whitelist)
-        //
-        // Pure domain analysis algorithms: only the shared types in gt_types,
-        // std, and (in tests) chrono/proptest.  No UI, plot, or rendering crate.
-        builder
-            .module_lint()
-            .lint_named("gt_analysis_isolation")
-            .matching(|m| m.module("gt_analysis.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "chrono.*".into(),
-                    "gt_types.*".into(),
-                    "proptest.*".into(),
-                    "crate.*".into(),
-                    "gt_analysis.*".into(),
-                    "loss_of_lock.*".into(),
-                    "satellite_utilization.*".into(),
-                ]),
-                None,
-            )
-            .build();
+    deny_imports(
+        &mut builder,
+        "data_crates_do_not_import_ui",
+        "^(gt_loader|gt_loaded_files|gt_logfile|gt_history)($|::.*)",
+        UI_AND_APP_IMPORTS,
+    );
 
-        // gt_track_builder Isolation (Whitelist)
-        builder
-            .module_lint()
-            .lint_named("gt_track_builder_isolation")
-            .matching(|m| m.module("gt_track_builder.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "chrono.*".into(),
-                    "geo_types.*".into(),
-                    "gt_analysis.*".into(),
-                    "gt_geo_math.*".into(),
-                    "gt_types.*".into(),
-                    "proptest.*".into(),
-                    "rstar.*".into(),
-                    "uom.*".into(),
-                    "vec1.*".into(),
-                    "crate.*".into(),
-                    "gt_track_builder.*".into(),
-                    "lod.*".into(),
-                    "segment.*".into(),
-                    "spatial.*".into(),
-                ]),
-                None,
-            )
-            .build();
+    deny_imports(
+        &mut builder,
+        "ui_support_crates_do_not_import_features",
+        "^(gt_ui_theme|gt_ui_types|gt_fmt|gt_egui_mipmap)($|::.*)",
+        &[
+            "^gt_map($|::.*)",
+            "^gt_plot($|::.*)",
+            "^gt_side_panel($|::.*)",
+            "^gt_loader($|::.*)",
+            "^gt_history($|::.*)",
+            "^geotrace($|::.*)",
+        ],
+    );
 
-        // gt_map Isolation (Whitelist)
-        builder
-            .module_lint()
-            .lint_named("gt_map_isolation")
-            .matching(|m| m.module("gt_map.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "chrono.*".into(),
-                    "egui.*".into(),
-                    "egui_extras.*".into(),
-                    "egui_kittest.*".into(),
-                    "egui_phosphor.*".into(),
-                    "proptest.*".into(),
-                    "smallvec.*".into(),
-                    "strum.*".into(),
-                    "rstar.*".into(),
-                    "walkers.*".into(),
-                    "uom.*".into(),
-                    "gt_filter.*".into(),
-                    "gt_track_builder.*".into(),
-                    "gt_test_utils.*".into(),
-                    "gt_types.*".into(),
-                    "gt_ui_theme.*".into(),
-                    "gt_ui_types.*".into(),
-                    "crate.*".into(),
-                    "gt_map.*".into(),
-                    "geo_types.*".into(),
-                    "event_marker_renderer.*".into(),
-                    "generated_marker_renderer.*".into(),
-                    "hover_labels.*".into(),
-                    "icons.*".into(),
-                    "marker_renderer.*".into(),
-                    "query_match_renderer.*".into(),
-                    "track_renderer.*".into(),
-                    "tpv_renderer.*".into(),
-                    "transform.*".into(),
-                    "viewport.*".into(),
-                ]),
-                None,
-            )
-            .build();
+    deny_imports(
+        &mut builder,
+        "gt_map_does_not_import_other_ui_features",
+        "^gt_map($|::.*)",
+        &["^gt_plot($|::.*)", "^gt_side_panel($|::.*)"],
+    );
 
-        // gt_egui_mipmap Isolation (Whitelist)
-        builder
-            .module_lint()
-            .lint_named("gt_egui_mipmap_isolation")
-            .matching(|m| m.module("gt_egui_mipmap.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "egui_plot.*".into(),
-                    "proptest.*".into(),
-                    "crate.*".into(),
-                    "gt_egui_mipmap.*".into(),
-                ]),
-                None,
-            )
-            .build();
+    deny_imports(
+        &mut builder,
+        "gt_plot_does_not_import_other_ui_features",
+        "^gt_plot($|::.*)",
+        &["^gt_map($|::.*)", "^gt_side_panel($|::.*)"],
+    );
 
-        // gt_plot Isolation (Whitelist)
-        builder
-            .module_lint()
-            .lint_named("gt_plot_isolation")
-            .matching(|m| m.module("gt_plot.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "chrono.*".into(),
-                    "egui.*".into(),
-                    "egui_phosphor.*".into(),
-                    "egui_plot.*".into(),
-                    "gt_analysis.*".into(),
-                    "gt_egui_mipmap.*".into(),
-                    "gt_filter.*".into(),
-                    "rayon.*".into(),
-                    "strum.*".into(),
-                    "uom.*".into(),
-                    "gt_types.*".into(),
-                    "gt_ui_theme.*".into(),
-                    "gt_ui_types.*".into(),
-                    "crate.*".into(),
-                    "gt_plot.*".into(),
-                    // Sub-module shorthands used by the compiler
-                    "plot_widget.*".into(),
-                    "series.*".into(),
-                ]),
-                None,
-            )
-            .build();
+    deny_imports(
+        &mut builder,
+        "gt_side_panel_does_not_import_other_ui_features",
+        "^gt_side_panel($|::.*)",
+        &["^gt_map($|::.*)", "^gt_plot($|::.*)"],
+    );
 
-        // gt_query Isolation (Whitelist)
-        //
-        // The query language (lexer/parser/checker/evaluator): pure logic on
-        // top of the shared types. No UI, plot, or rendering crate.
-        builder
-            .module_lint()
-            .lint_named("gt_query_isolation")
-            .matching(|m| m.module("gt_query.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "gt_types.*".into(),
-                    "logos.*".into(),
-                    "strum.*".into(),
-                    "uom.*".into(),
-                    "insta.*".into(),
-                    "proptest.*".into(),
-                    "serde.*".into(),
-                    "crate.*".into(),
-                    "gt_query.*".into(),
-                    // Sub-module shorthands used by the compiler
-                    "ast.*".into(),
-                    "check.*".into(),
-                    "eval.*".into(),
-                    "fmt.*".into(),
-                    "lexer.*".into(),
-                    "metric.*".into(),
-                    "parser.*".into(),
-                    "unit.*".into(),
-                ]),
-                None,
-            )
-            .build();
+    deny_imports(
+        &mut builder,
+        "history_backends_do_not_import_ui_or_app",
+        "^(gt_history_backend_pure|gt_history_backend_sys)($|::.*)",
+        UI_AND_APP_IMPORTS,
+    );
 
-        // Application Root Isolation (Whitelist)
-        builder
-            .module_lint()
-            .lint_named("geotrace_isolation")
-            .matching(|m| m.module("^geotrace($|::.+)"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "egui.*".into(),
-                    "egui_notify.*".into(),
-                    "egui_phosphor.*".into(),
-                    "egui_extras.*".into(),
-                    "egui_tiles.*".into(),
-                    "eframe.*".into(),
-                    "env_logger.*".into(),
-                    "log.*".into(),
-                    "strum.*".into(),
-                    "walkers.*".into(),
-                    "chrono.*".into(),
-                    "gt_analysis.*".into(),
-                    "gt_filter.*".into(),
-                    "gt_track_builder.*".into(),
-                    "gt_history.*".into(),
-                    "gt_loaded_files.*".into(),
-                    "gt_fmt.*".into(),
-                    "gt_types.*".into(),
-                    "gt_map.*".into(),
-                    "gt_plot.*".into(),
-                    "gt_query.*".into(),
-                    "gt_loader.*".into(),
-                    "gt_logfile.*".into(),
-                    "gt_side_panel.*".into(),
-                    "gt_ui_theme.*".into(),
-                    "gt_ui_types.*".into(),
-                    "geotrace_sdk.*".into(),
-                    "rfd.*".into(),
-                    "uom.*".into(),
-                    "crate.*".into(),
-                    "geotrace.*".into(),
-                    "geo_types.*".into(),
-                    "app.*".into(),
-                    "config_manager.*".into(),
-                    "history_db.*".into(),
-                    "loader.*".into(),
-                    "modals.*".into(),
-                    "query.*".into(),
-                ]),
-                None,
-            )
-            .build();
+    deny_imports(
+        &mut builder,
+        "app_and_feature_crates_do_not_import_history_backends",
+        "^(geotrace|gt_loader|gt_loaded_files|gt_logfile|gt_map|gt_plot|gt_side_panel)($|::.*)",
+        HISTORY_BACKEND_IMPORTS,
+    );
 
-        // gt_history Isolation (Whitelist)
-        // The `gt_history.*` pattern also covers sibling crates that share the
-        // prefix (`gt_history_types`, `gt_history_backend_pure`, and
-        // `gt_history_backend_sys`). The whitelist therefore includes backend
-        // dependencies: `hdf5.*` covers both the `hdf5-metno` bindings imported
-        // as `hdf5` and `hdf5_pure`, while `tempfile` is used to stage GTD bytes
-        // for libhdf5's cross-file copy.
-        builder
-            .module_lint()
-            .lint_named("gt_history_isolation")
-            .matching(|m| m.module("gt_history.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "chrono.*".into(),
-                    "dirs.*".into(),
-                    "gt_types.*".into(),
-                    "hdf5.*".into(),
-                    "log.*".into(),
-                    "tempfile.*".into(),
-                    "thiserror.*".into(),
-                    "crate.*".into(),
-                    "gt_history.*".into(),
-                    "parking_lot.*".into(),
-                ]),
-                None,
-            )
-            .build();
-
-        // gt_side_panel Isolation (Whitelist)
-        builder
-            .module_lint()
-            .lint_named("gt_side_panel_isolation")
-            .matching(|m| m.module("gt_side_panel.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "chrono.*".into(),
-                    "egui.*".into(),
-                    "egui_phosphor.*".into(),
-                    "uom.*".into(),
-                    "gt_filter.*".into(),
-                    "gt_loaded_files.*".into(),
-                    "gt_track_builder.*".into(),
-                    "gt_types.*".into(),
-                    "gt_fmt.*".into(),
-                    "gt_ui_theme.*".into(),
-                    "gt_ui_types.*".into(),
-                    "crate.*".into(),
-                    "gt_side_panel.*".into(),
-                    // Sub-module shorthands
-                    "filter.*".into(),
-                    "render.*".into(),
-                    "tree.*".into(),
-                ]),
-                None,
-            )
-            .build();
-
-        // gt_logfile Isolation (Whitelist)
-        builder
-            .module_lint()
-            .lint_named("gt_logfile_isolation")
-            .matching(|m| m.module("gt_logfile.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "chrono.*".into(),
-                    "uom.*".into(),
-                    "gt_types.*".into(),
-                    "gt_test_utils.*".into(),
-                    "thiserror.*".into(),
-                    "log.*".into(),
-                    "crate.*".into(),
-                    "gt_logfile.*".into(),
-                ]),
-                None,
-            )
-            .build();
-
-        // geotrace_sdk_macros Isolation (Whitelist) - proc-macro support crates only
-        builder
-            .module_lint()
-            .lint_named("geotrace_sdk_macros_isolation")
-            .matching(|m| m.module("geotrace_sdk_macros.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "proc_macro.*".into(),
-                    "proc_macro2.*".into(),
-                    "quote.*".into(),
-                    "syn.*".into(),
-                    "crate.*".into(),
-                    "geotrace_sdk_macros.*".into(),
-                ]),
-                None,
-            )
-            .build();
-
-        // geotrace_sdk Isolation (Whitelist) - no workspace-internal crates allowed
-        builder
-            .module_lint()
-            .lint_named("geotrace_sdk_isolation")
-            .matching(|m| m.module("^geotrace_sdk($|::.+)"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "bon.*".into(),
-                    "chrono.*".into(),
-                    "uom.*".into(),
-                    "strum.*".into(),
-                    "thiserror.*".into(),
-                    "log.*".into(),
-                    "hdf5_pure.*".into(),
-                    "crate.*".into(),
-                    "super.*".into(),
-                    "geotrace_sdk.*".into(),
-                    // Sub-module shorthands used by the compiler
-                    "builder.*".into(),
-                    "error.*".into(),
-                    "read.*".into(),
-                    "time_types.*".into(),
-                    "types.*".into(),
-                    "units.*".into(),
-                    "variant_path.*".into(),
-                    "write.*".into(),
-                ]),
-                None,
-            )
-            .build();
-
-        // geotrace_c Isolation (Whitelist) - FFI layer. Only touches geotrace_sdk and std
-        builder
-            .module_lint()
-            .lint_named("geotrace_c_isolation")
-            .matching(|m| m.module("^geotrace_c($|::.+)"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "chrono.*".into(),
-                    "geotrace_sdk.*".into(),
-                    "crate.*".into(),
-                    "super.*".into(),
-                    "geotrace_c.*".into(),
-                    // Sub-module shorthands used by the compiler
-                    "builder.*".into(),
-                    "error.*".into(),
-                    "macros.*".into(),
-                    "nav_file.*".into(),
-                ]),
-                None,
-            )
-            .build();
-
-        // gt_loader Isolation (Whitelist)
-        builder
-            .module_lint()
-            .lint_named("gt_loader_isolation")
-            .matching(|m| m.module("gt_loader.*"))
-            .with_severity(Severity::Error)
-            .restrict_imports(
-                Some(vec![
-                    "^$".into(),
-                    "std.*".into(),
-                    "core.*".into(),
-                    "alloc.*".into(),
-                    "gt_track_builder.*".into(),
-                    "gt_types.*".into(),
-                    "geotrace_sdk.*".into(),
-                    "thiserror.*".into(),
-                    "crate.*".into(),
-                    "gt_loader.*".into(),
-                    // Sub-module shorthands used by the compiler
-                    "error.*".into(),
-                ]),
-                None,
-            )
-            .build();
-
-        // Also write to pup.ron for cargo-pup CLI support
-        // This makes the code in this test the source of truth for the architecture rules.
-        builder
-            .write_to_file("../../pup.ron")
-            .expect("Failed to sync pup.ron");
-
-        // Run cargo-pup itself, so `cargo test -p gt-arch` is the single
-        // source of truth for the architecture check (no separate `cargo
-        // pup check` invocation needed).
-        builder
-            .assert_lints(Some("../../Cargo.toml"))
-            .expect("cargo pup architecture checks failed");
-    }
+    builder
+        .assert_lints(Some("../../Cargo.toml"))
+        .expect("cargo pup architecture checks failed");
 }

@@ -48,7 +48,7 @@ jobs:
       # The dev image no longer ships cargo-pup or cargo-msrv, so the `pup`,
       # `msrv`, and `sdk-msrv` recipes run natively on this host (as does the
       # `test` recipe, whose gt-arch test shells out to `cargo pup`). cargo-pup
-      # must be built with the pinned nightly the workspace's pup.ron targets.
+      # must be built with the pinned nightly expected by the gt-arch checks.
       - name: Install Rust nightly (for cargo-pup)
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
         with:
