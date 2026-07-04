@@ -1559,7 +1559,7 @@ impl eframe::App for App {
                             self.query_window.open,
                             egui_phosphor::regular::TERMINAL_WINDOW,
                         )
-                        .on_hover_text("Query the loaded data (experimental)")
+                        .on_hover_text("Query the loaded data")
                         .clicked()
                     {
                         self.query_window.open = !self.query_window.open;

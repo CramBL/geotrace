@@ -1,7 +1,7 @@
-//! The query window (experimental): a small pipeline language for ad-hoc
-//! analysis of the loaded data. Editor with syntax highlighting, run on the
-//! currently visible tracks, and a results area whose matches also draw on
-//! the map as halos.
+//! The query window: a small pipeline language for ad-hoc analysis of the
+//! loaded data. Editor with syntax highlighting, run on the currently
+//! visible tracks, and a results area whose matches also draw on the map as
+//! halos.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -259,7 +259,7 @@ impl QueryWindow {
 
         let files = loaded_files.files();
         let mut open = self.open;
-        egui::Window::new("Query (experimental)")
+        egui::Window::new("Query")
             .open(&mut open)
             .default_width(460.0)
             .show(ctx, |ui| {

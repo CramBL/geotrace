@@ -233,6 +233,10 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **visibility** | Whether a file/track/marker is shown on the map. Controlled via `Visibility` / `GlobalFilter`. | `track_visible`, `show_only_track` |
 | **highlight** | Transient hover or sticky selection state. | `MapHighlight`, `HighlightScope` |
 | **polyline span** | A maximal stretch of consecutive on-screen track points painted as one unbroken polyline; viewport culling splits a track into spans, and key changes (e.g. fix-quality color) split spans into sub-spans. Renderer-internal to `gt-map`. | `PolylineSpans`, `VisiblePath::Spans`, `split_key_spans` |
+| **query** | A short declarative pipeline the user writes and runs over loaded data. Defined by the `gt-query` crate (lex → parse → check → run) and driven from the query window. | `gt-query`, `QueryWindow`, `CheckedQuery` |
+| **stage** | One step of a query pipeline, separated by `\|`: the source (`points`), `with`, `window`, `where`, `draw`, `table`. | parser stage methods in `gt-query` |
+| **match** | A maximal stretch of consecutive points satisfying a query, drawn on the map as a halo. Not "trace" (TPV trace), "span" (renderer), or "segment" (track building). | `QueryMatches`, `TrackMatches`, `match_at` |
+| **query history** | The remembered list of previously run queries. Always written in full - bare "history" means the recording-history database (`gt-history`). | `QueryHistoryEntry`, `QuerySettings::history` |
 
 Terms to avoid and their replacements:
 
