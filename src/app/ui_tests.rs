@@ -76,6 +76,17 @@ fn step_until_loaded(harness: &mut Harness<App>) {
     harness.step();
 }
 
+/// Step the harness repeatedly until the query worker's result has landed.
+fn step_until_query_result(harness: &mut Harness<App>) {
+    for _ in 0..200 {
+        if harness.state().query_window.matches().is_some() {
+            return;
+        }
+        thread::sleep(StdDuration::from_millis(5));
+        harness.step();
+    }
+}
+
 fn load_three_overlapping_files(harness: &mut Harness<App>) {
     let t0 = base_time();
     let overlapping_files = [
@@ -179,6 +190,76 @@ fn drag_drop_gtd_bytes_loads_file() {
     step_until_loaded(&mut harness); // waits for thread + drains channel
 
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 1);
+}
+
+/// Query results gray out when the data they were computed from changes -
+/// here via a global-filter edit - and recover when it changes back.
+#[test]
+fn query_results_go_stale_when_the_filter_changes() {
+    let gtd_bytes = minimal_gtd_bytes();
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.input_mut().dropped_files.push(egui::DroppedFile {
+        bytes: Some(Arc::from(gtd_bytes.as_slice())),
+        name: "test.gtd".to_owned(),
+        ..Default::default()
+    });
+    harness.step();
+    step_until_loaded(&mut harness);
+
+    {
+        let app = harness.state_mut();
+        app.query_window.open = true;
+        app.query_window
+            .set_text("points | where velocity > 1 km/h".to_owned());
+    }
+    harness.run_steps(3);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+        .click();
+    step_until_query_result(&mut harness);
+    harness.run_steps(3);
+    let stale_after_run = harness
+        .state()
+        .query_window
+        .matches()
+        .expect("run produced matches")
+        .stale;
+    assert!(!stale_after_run, "fresh results are not stale");
+
+    // A minimum-distance filter changes the evaluated track set.
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .filter
+        .min_distance_km = Some(uom::si::f64::Length::new::<uom::si::length::kilometer>(
+        999.0,
+    ));
+    harness.run_steps(3);
+    let matches_stale = harness
+        .state()
+        .query_window
+        .matches()
+        .expect("results kept while stale")
+        .stale;
+    assert!(matches_stale, "results gray out when the filter changes");
+
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .filter
+        .min_distance_km = None;
+    harness.run_steps(3);
+    let stale_after_revert = harness
+        .state()
+        .query_window
+        .matches()
+        .expect("results kept")
+        .stale;
+    assert!(!stale_after_revert, "reverting the filter un-grays results");
 }
 
 #[test]
@@ -606,6 +687,8 @@ fn snapshot_app_query_window() {
         .inner
         .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
         .click();
+    // The run executes on a worker thread; step until its results land.
+    step_until_query_result(&mut harness.inner);
     harness.inner.run_steps(60);
 
     let match_count = {

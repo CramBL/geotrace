@@ -1680,10 +1680,11 @@ impl eframe::App for App {
                 loaded_files,
                 tree,
                 highlight,
+                filter,
                 ..
             } = &mut *s;
             self.query_window
-                .show(ui.ctx(), loaded_files, tree.visibility(), highlight);
+                .show(ui.ctx(), loaded_files, tree.visibility(), filter, highlight);
         });
 
         let apply_resegment = self.show_settings_window(ui);

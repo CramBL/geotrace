@@ -1,5 +1,7 @@
+use std::ops::Range;
+
 use chrono::{DateTime, Duration, Utc};
-use gt_types::{MarkerRequirement, TimeRange, TrackMetadata};
+use gt_types::{MarkerRequirement, NavPoint, TimeRange, TrackMetadata};
 use uom::si::f64::Length;
 
 /// Returns `true` when the timestamp falls within the filter's active time window.
@@ -7,7 +9,27 @@ pub fn point_passes_time_filter(time: DateTime<Utc>, filter: &GlobalFilter) -> b
     TimeRange::new(time, time).overlaps_window(filter.time_start, filter.time_end)
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+/// The contiguous sub-range of time-ordered `points` inside the filter's
+/// time window, agreeing point-for-point with [`point_passes_time_filter`]
+/// (pinned by a test below).
+///
+/// Because points are time-ordered within a track, the window selects one
+/// contiguous slice - consumers evaluating over it keep true point
+/// adjacency, with the slice edges being real data boundaries rather than
+/// holes.
+pub fn time_filtered_range(points: &[NavPoint], filter: &GlobalFilter) -> Range<usize> {
+    let start = match filter.time_start {
+        Some(t0) => points.partition_point(|p| p.tpv.time().utc() < t0),
+        None => 0,
+    };
+    let end = match filter.time_end {
+        Some(t1) => points.partition_point(|p| p.tpv.time().utc() <= t1),
+        None => points.len(),
+    };
+    start..end.max(start)
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct GlobalFilter {
     pub time_start: Option<DateTime<Utc>>,
     pub time_end: Option<DateTime<Utc>>,
@@ -70,8 +92,79 @@ mod tests {
     use super::*;
     use chrono::{Duration, TimeZone, Utc};
     use geo_types::Rect;
+    use gt_types::coordinates::{Latitude, Longitude};
+    use gt_types::time_types::GpsTime;
+    use gt_types::tpv::TimePositionVelocity;
     use gt_types::{MercBounds, TimeRange, TrackMetadata};
     use uom::si::length::{kilometer, meter};
+
+    /// Points one second apart starting at a fixed epoch.
+    fn timed_points(count: usize) -> Vec<NavPoint> {
+        (0..count)
+            .map(|i| {
+                let time = Utc
+                    .timestamp_opt(1_700_000_000 + i as i64, 0)
+                    .single()
+                    .expect("valid timestamp");
+                let tpv = TimePositionVelocity::builder()
+                    .time(GpsTime::from_utc(time))
+                    .lat(Latitude::new(55.0))
+                    .lon(Longitude::new(12.0))
+                    .build();
+                NavPoint::new(tpv, None)
+            })
+            .collect()
+    }
+
+    /// The range form must agree point-for-point with the per-point
+    /// predicate - it exists so slicing consumers (the query evaluator)
+    /// cannot drift from what the map draws.
+    #[test]
+    fn time_filtered_range_agrees_with_the_point_predicate() {
+        let points = timed_points(8);
+        let t = |i: usize| points.get(i).expect("in range").tpv.time().utc();
+        let filters = [
+            GlobalFilter::default(),
+            GlobalFilter {
+                time_start: Some(t(2)),
+                ..GlobalFilter::default()
+            },
+            GlobalFilter {
+                time_end: Some(t(5)),
+                ..GlobalFilter::default()
+            },
+            GlobalFilter {
+                time_start: Some(t(2)),
+                time_end: Some(t(5)),
+                ..GlobalFilter::default()
+            },
+            // Windows entirely before and entirely after the data.
+            GlobalFilter {
+                time_end: Some(t(0) - Duration::hours(1)),
+                ..GlobalFilter::default()
+            },
+            GlobalFilter {
+                time_start: Some(t(7) + Duration::hours(1)),
+                ..GlobalFilter::default()
+            },
+            // Inverted window (end before start) selects nothing.
+            GlobalFilter {
+                time_start: Some(t(5)),
+                time_end: Some(t(2)),
+                ..GlobalFilter::default()
+            },
+        ];
+        for filter in filters {
+            let range = time_filtered_range(&points, &filter);
+            for (pi, point) in points.iter().enumerate() {
+                assert_eq!(
+                    range.contains(&pi),
+                    point_passes_time_filter(point.tpv.time().utc(), &filter),
+                    "point {pi} under {filter:?}"
+                );
+            }
+        }
+    }
 
     fn make_meta(
         distance_km: f64,
