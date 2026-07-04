@@ -5,11 +5,17 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use egui::text::LayoutJob;
 use gt_analysis::loss_of_lock::{self, SECS_PER_MIN, SlipRatePerPoint};
 use gt_analysis::satellite_utilization::{self, UtilPerPoint};
+use gt_filter::GlobalFilter;
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{
     CheckedQuery, Diagnostic, MetricProvider, Quantity, QueryMetric, RunOutput, Span, TrackInput,
@@ -33,7 +39,39 @@ pub struct QueryWindow {
     checked_text: String,
     /// Set by the Run button, consumed at the end of `show`.
     run_requested: bool,
+    /// Set by the Cancel button while a run is in flight.
+    cancel_requested: bool,
+    running: Option<RunningQuery>,
     results: Option<QueryResults>,
+}
+
+/// A run in flight on the worker thread.
+struct RunningQuery {
+    cancel: Arc<AtomicBool>,
+    /// Tracks whose derived series are prepared, for the progress line.
+    tracks_prepared: Arc<AtomicUsize>,
+    track_total: usize,
+    rx: mpsc::Receiver<RunCompleted>,
+    /// Snapshot taken when the run started, attached to its results.
+    fingerprint: RunFingerprint,
+}
+
+/// What the worker sends back. `output: None` means the run was cancelled -
+/// previous results stay untouched.
+struct RunCompleted {
+    output: Option<RunOutput>,
+    track_data: HashMap<TrackRef, TrackQueryData>,
+}
+
+/// Everything a run's results depend on besides the query text. Results
+/// gray out when the current state no longer matches the snapshot.
+#[derive(Debug, Clone, PartialEq)]
+struct RunFingerprint {
+    file_identities: Vec<String>,
+    /// The tracks the run evaluated: enabled in the tree and passing the
+    /// track-level global filter, in tree order.
+    tracks: Vec<TrackRef>,
+    filter: GlobalFilter,
 }
 
 /// Everything one run produced and the UI needs to show it.
@@ -44,9 +82,7 @@ struct QueryResults {
     /// Per-track derived series (only for metrics the query referenced),
     /// kept so match tables show the exact values the run used.
     track_data: HashMap<TrackRef, TrackQueryData>,
-    /// Identities of the loaded files at run time - results gray out when
-    /// this no longer matches.
-    file_identities: Vec<String>,
+    fingerprint: RunFingerprint,
 }
 
 /// Owned per-track inputs for [`TrackProvider`], computed once per run.
@@ -54,6 +90,9 @@ struct QueryResults {
 struct TrackQueryData {
     util: Option<UtilPerPoint>,
     slip: Option<SlipRatePerPoint>,
+    /// Index of the first point inside the global time filter - the offset
+    /// between slice-relative evaluation indices and absolute point indices.
+    slice_start: usize,
 }
 
 impl QueryWindow {
@@ -65,6 +104,8 @@ impl QueryWindow {
             text,
             open: false,
             run_requested: false,
+            cancel_requested: false,
+            running: None,
             results: None,
         }
     }
@@ -95,16 +136,22 @@ impl QueryWindow {
         ctx: &egui::Context,
         files: &[LoadedFile],
         visibility: &TrackDataVisibility,
+        filter: &GlobalFilter,
         highlight: &mut MapHighlight,
     ) {
+        // Collect a finished worker even while the window is closed, so its
+        // results are there on reopen.
+        self.drain_completed();
+
         if !self.open {
             return;
         }
 
-        // Results computed against a different set of loaded files gray out
-        // (indices may no longer address the same tracks).
+        // Results gray out when anything they depend on changed: loaded
+        // files, track visibility, or the global filter.
         if let Some(results) = &mut self.results {
-            results.matches.stale = file_identities(files) != results.file_identities;
+            results.matches.stale =
+                current_fingerprint(files, visibility, filter) != results.fingerprint;
         }
 
         let mut open = self.open;
@@ -122,11 +169,76 @@ impl QueryWindow {
         }
         self.open = open;
 
-        // The run button lives inside `editor_ui`; it sets this flag.
+        if self.cancel_requested {
+            self.cancel_requested = false;
+            if let Some(running) = &self.running {
+                running.cancel.store(true, Ordering::Relaxed);
+            }
+        }
+        // The run button lives inside `editor_ui`; it sets this flag. One
+        // run at a time - the button is disabled while one is in flight.
         if self.run_requested {
             self.run_requested = false;
-            self.run(files, visibility);
+            if self.running.is_none() {
+                self.spawn_run(ctx, files, visibility, filter);
+            }
         }
+    }
+
+    /// Collect the worker's completion message, if any.
+    fn drain_completed(&mut self) {
+        let Some(running) = &self.running else {
+            return;
+        };
+        let completed = match running.rx.try_recv() {
+            Ok(completed) => completed,
+            Err(mpsc::TryRecvError::Empty) => return,
+            // The worker is gone without a message; nothing to keep.
+            Err(mpsc::TryRecvError::Disconnected) => {
+                log::error!("query worker disappeared without completing");
+                self.running = None;
+                return;
+            }
+        };
+        let Some(running) = self.running.take() else {
+            return;
+        };
+        // A cancelled run keeps the previous results - partial output is
+        // never shown.
+        let Some(output) = completed.output else {
+            return;
+        };
+
+        let summary = summary_line(&output);
+        let mut ranges: HashMap<TrackRef, Vec<Range<usize>>> = HashMap::new();
+        let mut track_data = completed.track_data;
+        for track_matches in &output.matches {
+            let start = track_data
+                .get(&track_matches.track)
+                .map_or(0, |d| d.slice_start);
+            // Evaluation ran on the time-filtered slice; map indices back to
+            // absolute positions in the track.
+            let absolute = track_matches
+                .ranges
+                .iter()
+                .map(|r| r.start + start..r.end + start)
+                .collect();
+            ranges.insert(track_matches.track, absolute);
+        }
+        // Tracks without matches keep no entry, and unreferenced derived
+        // series were never computed - drop the empties.
+        track_data.retain(|track_ref, _| ranges.contains_key(track_ref));
+
+        self.results = Some(QueryResults {
+            matches: QueryMatches {
+                ranges,
+                stale: false,
+            },
+            summary,
+            columns: output.columns,
+            track_data,
+            fingerprint: running.fingerprint,
+        });
     }
 
     fn editor_ui(&mut self, ui: &mut egui::Ui) {
@@ -165,16 +277,44 @@ impl QueryWindow {
             _ => {}
         }
 
-        let runnable = self.checked.is_ok();
-        let run = ui.add_enabled(runnable, egui::Button::new("Run"));
-        let run = if runnable {
-            run
-        } else {
-            run.on_disabled_hover_text("Fix the error above to run")
-        };
-        if run.clicked() {
-            self.run_requested = true;
-        }
+        ui.horizontal(|ui| {
+            let in_flight = self.running.is_some();
+            let runnable = self.checked.is_ok() && !in_flight;
+            let run = ui.add_enabled(runnable, egui::Button::new("Run"));
+            let run = match (self.checked.is_ok(), in_flight) {
+                (false, _) => run.on_disabled_hover_text("Fix the error above to run"),
+                (true, true) => run.on_disabled_hover_text("A run is in progress"),
+                (true, false) => run,
+            };
+            if run.clicked() {
+                self.run_requested = true;
+            }
+
+            let cancel = ui.add_enabled(in_flight, egui::Button::new("Cancel"));
+            let cancel = if in_flight {
+                cancel
+            } else {
+                cancel.on_disabled_hover_text("No run in progress")
+            };
+            if cancel.clicked() {
+                self.cancel_requested = true;
+            }
+
+            if let Some(running) = &self.running {
+                ui.spinner();
+                let prepared = running.tracks_prepared.load(Ordering::Relaxed);
+                if prepared < running.track_total {
+                    ui.label(format!(
+                        "Preparing {prepared}/{} tracks",
+                        running.track_total
+                    ));
+                } else {
+                    ui.label("Evaluating");
+                }
+                // Keep repainting so progress and completion show promptly.
+                ui.ctx().request_repaint_after(Duration::from_millis(100));
+            }
+        });
     }
 
     fn results_ui(&self, ui: &mut egui::Ui, files: &[LoadedFile], highlight: &mut MapHighlight) {
@@ -204,70 +344,121 @@ impl QueryWindow {
             });
     }
 
-    /// Parse/check are already done (`self.checked`); execute over the
-    /// visible tracks and store everything the UI needs.
-    fn run(&mut self, files: &[LoadedFile], visibility: &TrackDataVisibility) {
+    /// Parse/check are already done (`self.checked`); snapshot the visible
+    /// data and hand the evaluation to a worker thread.
+    #[expect(
+        clippy::expect_used,
+        reason = "thread spawn can only fail under extreme system resource exhaustion"
+    )]
+    fn spawn_run(
+        &mut self,
+        ctx: &egui::Context,
+        files: &[LoadedFile],
+        visibility: &TrackDataVisibility,
+        filter: &GlobalFilter,
+    ) {
         let Ok(query) = &self.checked else {
             return;
         };
+        let query = query.clone();
+        let fingerprint = current_fingerprint(files, visibility, filter);
 
-        let uses_util = query.referenced_metrics().iter().any(|m| m.is_util());
-        let uses_slip = query.referenced_metrics().iter().any(|m| m.is_slip());
-        let params = query.params();
-
-        let mut track_data: HashMap<TrackRef, TrackQueryData> = HashMap::new();
-        let mut track_refs: Vec<TrackRef> = Vec::new();
-        for (fi, file) in files.iter().enumerate() {
-            let fi = FileIdx::new(fi);
-            for (ti, track) in file.tracks.iter().enumerate() {
-                let track_ref = TrackRef::new(fi, TrackIdx::new(ti));
-                if !visibility.track_enabled(track_ref) {
-                    continue;
-                }
-                track_refs.push(track_ref);
-                track_data.insert(
-                    track_ref,
-                    compute_track_data(&track.points, params, uses_util, uses_slip),
-                );
-            }
-        }
-
-        let providers: Vec<(TrackRef, TrackProvider<'_>)> = track_refs
+        // Owned snapshot for the worker: each evaluated track's full point
+        // vector plus the sub-range passing the time filter. Cloning is the
+        // simple-and-correct baseline; an Arc-based snapshot is the known
+        // follow-up if this shows up in profiling.
+        let tracks: Vec<(TrackRef, Vec<NavPoint>, Range<usize>)> = fingerprint
+            .tracks
             .iter()
             .filter_map(|&track_ref| {
                 let points = points_of(files, track_ref)?;
-                let data = track_data.get(&track_ref);
-                Some((track_ref, provider_for(points, data)))
-            })
-            .collect();
-        let inputs: Vec<TrackInput<'_>> = providers
-            .iter()
-            .map(|(track_ref, provider)| TrackInput {
-                track: *track_ref,
-                provider,
+                let slice = gt_filter::time_filtered_range(points, filter);
+                Some((track_ref, points.to_vec(), slice))
             })
             .collect();
 
-        let output = gt_query::run(query, &inputs);
-        let summary = summary_line(&output);
-        let mut ranges: HashMap<TrackRef, Vec<Range<usize>>> = HashMap::new();
-        for track_matches in &output.matches {
-            ranges.insert(track_matches.track, track_matches.ranges.clone());
-        }
-        // Tracks without matches keep no entry, and unreferenced derived
-        // series were never computed - drop the empties.
-        track_data.retain(|track_ref, _| ranges.contains_key(track_ref));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let tracks_prepared = Arc::new(AtomicUsize::new(0));
+        let track_total = tracks.len();
+        let (tx, rx) = mpsc::channel();
 
-        self.results = Some(QueryResults {
-            matches: QueryMatches {
-                ranges,
-                stale: false,
-            },
-            summary,
-            columns: output.columns,
-            track_data,
-            file_identities: file_identities(files),
+        let worker_cancel = Arc::clone(&cancel);
+        let worker_prepared = Arc::clone(&tracks_prepared);
+        let worker_ctx = ctx.clone();
+        thread::Builder::new()
+            .name("query-run".to_owned())
+            .spawn(move || {
+                let completed = run_worker(&query, &tracks, &worker_cancel, &worker_prepared);
+                // A send failure means the window dropped the receiver;
+                // nothing left to notify.
+                tx.send(completed).ok();
+                worker_ctx.request_repaint();
+            })
+            .expect("failed to spawn query worker thread");
+
+        self.running = Some(RunningQuery {
+            cancel,
+            tracks_prepared,
+            track_total,
+            rx,
+            fingerprint,
         });
+    }
+}
+
+/// The worker body: derived series per track, then the evaluation, with
+/// cancellation checks between tracks (gt-query checks within them).
+fn run_worker(
+    query: &CheckedQuery,
+    tracks: &[(TrackRef, Vec<NavPoint>, Range<usize>)],
+    cancel: &AtomicBool,
+    prepared: &AtomicUsize,
+) -> RunCompleted {
+    let cancelled = || cancel.load(Ordering::Relaxed);
+    let uses_util = query.referenced_metrics().iter().any(|m| m.is_util());
+    let uses_slip = query.referenced_metrics().iter().any(|m| m.is_slip());
+    let params = query.params();
+
+    let mut track_data: HashMap<TrackRef, TrackQueryData> = HashMap::new();
+    for (track_ref, points, slice) in tracks {
+        if cancelled() {
+            return RunCompleted {
+                output: None,
+                track_data,
+            };
+        }
+        track_data.insert(
+            *track_ref,
+            compute_track_data(points, params, uses_util, uses_slip, slice.start),
+        );
+        prepared.fetch_add(1, Ordering::Relaxed);
+    }
+
+    let providers: Vec<(TrackRef, SliceProvider<'_>)> = tracks
+        .iter()
+        .map(|(track_ref, points, slice)| {
+            let provider = provider_for(points, track_data.get(track_ref));
+            (
+                *track_ref,
+                SliceProvider {
+                    inner: provider,
+                    start: slice.start,
+                    len: slice.len(),
+                },
+            )
+        })
+        .collect();
+    let inputs: Vec<TrackInput<'_>> = providers
+        .iter()
+        .map(|(track_ref, provider)| TrackInput {
+            track: *track_ref,
+            provider,
+        })
+        .collect();
+
+    RunCompleted {
+        output: gt_query::run_cancellable(query, &inputs, &cancelled),
+        track_data,
     }
 }
 
@@ -309,7 +500,17 @@ fn match_table_ui(
     let Some(points) = points_of(files, track_ref) else {
         return;
     };
-    let provider = provider_for(points, results.track_data.get(&track_ref));
+    let data = results.track_data.get(&track_ref);
+    let provider = provider_for(points, data);
+    // accel derives through the same slice the evaluator saw, so the first
+    // point of a time-filtered run shows the missing value the predicate
+    // used, not a value reaching before the filter window.
+    let slice_start = data.map_or(0, |d| d.slice_start);
+    let slice = SliceProvider {
+        inner: provider,
+        start: slice_start,
+        len: points.len().saturating_sub(slice_start),
+    };
 
     egui::Grid::new(ui.id().with("match_table"))
         .striped(true)
@@ -323,7 +524,8 @@ fn match_table_ui(
                 let mut row_hovered = false;
                 for column in &results.columns {
                     let value = if *column == QueryMetric::Accel {
-                        gt_query::derived_accel(&provider, pi)
+                        pi.checked_sub(slice_start)
+                            .and_then(|rel| gt_query::derived_accel(&slice, rel))
                     } else {
                         provider.value(*column, pi)
                     };
@@ -390,8 +592,30 @@ fn provider_for<'a>(points: &'a [NavPoint], data: Option<&'a TrackQueryData>) ->
     }
 }
 
-fn file_identities(files: &[LoadedFile]) -> Vec<String> {
-    files.iter().map(|f| f.identity.clone()).collect()
+/// Snapshot of the state a run depends on, compared each frame against the
+/// stored one to gray out outdated results.
+fn current_fingerprint(
+    files: &[LoadedFile],
+    visibility: &TrackDataVisibility,
+    filter: &GlobalFilter,
+) -> RunFingerprint {
+    let mut tracks = Vec::new();
+    for (fi, file) in files.iter().enumerate() {
+        let fi = FileIdx::new(fi);
+        for (ti, track) in file.tracks.iter().enumerate() {
+            let track_ref = TrackRef::new(fi, TrackIdx::new(ti));
+            if visibility.track_enabled(track_ref)
+                && gt_filter::track_passes_filter(&track.metadata, filter)
+            {
+                tracks.push(track_ref);
+            }
+        }
+    }
+    RunFingerprint {
+        file_identities: files.iter().map(|f| f.identity.clone()).collect(),
+        tracks,
+        filter: *filter,
+    }
 }
 
 fn compute_track_data(
@@ -399,6 +623,7 @@ fn compute_track_data(
     params: gt_query::Params,
     uses_util: bool,
     uses_slip: bool,
+    slice_start: usize,
 ) -> TrackQueryData {
     // gt_query::check::require_params guarantees these parameters whenever
     // the corresponding metrics are referenced - defaulting below is for the
@@ -421,7 +646,33 @@ fn compute_track_data(
             (params.slip_window_s.unwrap_or_default() / SECS_PER_MIN) as f32,
         )
     });
-    TrackQueryData { util, slip }
+    TrackQueryData {
+        util,
+        slip,
+        slice_start,
+    }
+}
+
+/// A window onto another provider: the evaluator sees only the points inside
+/// the global time filter, while `inner` (and the derived series it carries)
+/// stays indexed by absolute track position.
+struct SliceProvider<'a> {
+    inner: TrackProvider<'a>,
+    start: usize,
+    len: usize,
+}
+
+impl MetricProvider for SliceProvider<'_> {
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn value(&self, metric: QueryMetric, index: usize) -> Option<f64> {
+        if index >= self.len {
+            return None;
+        }
+        self.inner.value(metric, self.start + index)
+    }
 }
 
 fn summary_line(output: &RunOutput) -> String {
@@ -457,6 +708,7 @@ fn summary_line(output: &RunOutput) -> String {
 
 /// Provider over one track's points plus the run's derived series, in the
 /// evaluator's base units (m/s, degrees, seconds, 0-1 ratios, per minute).
+#[derive(Clone, Copy)]
 struct TrackProvider<'a> {
     points: &'a [NavPoint],
     util: Option<&'a UtilPerPoint>,
@@ -779,6 +1031,7 @@ mod tests {
         let data = TrackQueryData {
             util: Some(util),
             slip: Some(slip),
+            slice_start: 0,
         };
         let provider = provider_for(&points, Some(&data));
 
@@ -819,6 +1072,36 @@ mod tests {
             }
         }
         assert_eq!(provider.len(), 2);
+    }
+
+    #[test]
+    fn slice_provider_offsets_and_bounds() {
+        let points = test_points();
+        let slice = SliceProvider {
+            inner: provider_for(&points, None),
+            start: 1,
+            len: 1,
+        };
+        assert_eq!(slice.len(), 1);
+        // Index 0 of the slice is point 1 of the track (the bare point).
+        assert_eq!(slice.value(QueryMetric::Lat, 0), Some(55.6));
+        assert_eq!(slice.value(QueryMetric::Lat, 1), None, "out of the slice");
+    }
+
+    #[test]
+    fn fingerprint_changes_with_files_visibility_and_filter() {
+        let files: Vec<LoadedFile> = Vec::new();
+        let visibility = TrackDataVisibility::from_loaded(&files);
+        let base = current_fingerprint(&files, &visibility, &GlobalFilter::default());
+        assert_eq!(
+            base,
+            current_fingerprint(&files, &visibility, &GlobalFilter::default())
+        );
+        let filtered = GlobalFilter {
+            min_distance_km: Some(uom::si::f64::Length::new::<uom::si::length::kilometer>(1.0)),
+            ..GlobalFilter::default()
+        };
+        assert_ne!(base, current_fingerprint(&files, &visibility, &filtered));
     }
 
     #[test]

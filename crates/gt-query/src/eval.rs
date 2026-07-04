@@ -17,6 +17,10 @@ use crate::metric::QueryMetric;
 const FULL_TURN_DEG: f64 = 360.0;
 const HALF_TURN_DEG: f64 = 180.0;
 
+/// Points evaluated between cancellation checks. Small enough to stop within
+/// a frame or two, large enough that the check never shows up in a profile.
+const CANCEL_CHECK_INTERVAL: usize = 4096;
+
 /// Per-point metric access for one track.
 ///
 /// Values are in the evaluator's base units: degrees, meters, m/s, m/s2,
@@ -72,6 +76,35 @@ pub struct RunOutput {
 }
 
 pub fn run(query: &CheckedQuery, tracks: &[TrackInput<'_>]) -> RunOutput {
+    let never = || false;
+    run_cancellable(query, tracks, &never).unwrap_or_else(|| RunOutput {
+        // Unreachable: the cancel check above never fires. Constructed rather
+        // than unwrapped to keep the no-panic guarantee.
+        matches: Vec::new(),
+        columns: query.columns().to_vec(),
+        summary: RunSummary::default(),
+    })
+}
+
+/// Like [`run`], stopping early when `should_cancel` returns true. Returns
+/// `None` on cancellation - partial results are never surfaced, so a
+/// cancelled run cannot masquerade as a complete one.
+pub fn run_cancellable(
+    query: &CheckedQuery,
+    tracks: &[TrackInput<'_>],
+    should_cancel: &dyn Fn() -> bool,
+) -> Option<RunOutput> {
+    run_with_interval(query, tracks, should_cancel, CANCEL_CHECK_INTERVAL)
+}
+
+/// [`run_cancellable`] with the check interval exposed, so tests can cross
+/// the interval boundary without a 4096-point fixture.
+pub(crate) fn run_with_interval(
+    query: &CheckedQuery,
+    tracks: &[TrackInput<'_>],
+    should_cancel: &dyn Fn() -> bool,
+    check_interval: usize,
+) -> Option<RunOutput> {
     let mut summary = RunSummary {
         unused_params: query.unused_params().to_vec(),
         ..RunSummary::default()
@@ -79,6 +112,9 @@ pub fn run(query: &CheckedQuery, tracks: &[TrackInput<'_>]) -> RunOutput {
     let mut matches = Vec::new();
 
     for input in tracks {
+        if should_cancel() {
+            return None;
+        }
         let len = input.provider.len();
         let mut ctx = Ctx {
             provider: input.provider,
@@ -94,6 +130,9 @@ pub fn run(query: &CheckedQuery, tracks: &[TrackInput<'_>]) -> RunOutput {
             Some(window) => {
                 let last_start = len - window;
                 for start in 0..=last_start {
+                    if start % check_interval == 0 && should_cancel() {
+                        return None;
+                    }
                     let scope = Scope::Window { start, len: window };
                     match verdict(query, &mut ctx, scope) {
                         Some(true) => {
@@ -108,6 +147,9 @@ pub fn run(query: &CheckedQuery, tracks: &[TrackInput<'_>]) -> RunOutput {
             }
             None => {
                 for (index, slot) in matched.iter_mut().enumerate() {
+                    if index % check_interval == 0 && should_cancel() {
+                        return None;
+                    }
                     match verdict(query, &mut ctx, Scope::Point(index)) {
                         Some(true) => *slot = true,
                         Some(false) => {}
@@ -128,11 +170,11 @@ pub fn run(query: &CheckedQuery, tracks: &[TrackInput<'_>]) -> RunOutput {
         }
     }
 
-    RunOutput {
+    Some(RunOutput {
         matches,
         columns: query.columns().to_vec(),
         summary,
-    }
+    })
 }
 
 fn record_skip(summary: &mut RunSummary, ctx: &Ctx<'_>) {
