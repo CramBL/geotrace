@@ -41,6 +41,7 @@ members = [
     "crates/gt-logfile",
     "crates/gt-map",
     "crates/gt-plot",
+    "crates/gt-query",
     "crates/gt-side-panel",
     "crates/gt-test-utils",
     "crates/gt-track-builder",
@@ -80,6 +81,7 @@ geo-types = "0.7.19"
 hdf5-pure = "0.19.0"
 insta = "1.48.0"
 log = "0.4"
+logos = "0.16"
 parking_lot = "0.12"
 proc-macro2 = "1"
 proptest = "1"

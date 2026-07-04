@@ -1,0 +1,182 @@
+---
+source: crates/gt-query/src/lib.rs
+assertion_line: 328
+expression: query
+---
+Query {
+    params: [],
+    window: Some(
+        Window {
+            len: 10,
+            span: Span {
+                start: 9,
+                end: 18,
+            },
+        },
+    ),
+    predicates: [
+        Binary {
+            op: And,
+            lhs: Binary {
+                op: And,
+                lhs: Binary {
+                    op: Le,
+                    lhs: Call {
+                        func: Spread,
+                        arg: Metric(
+                            MetricRef {
+                                metric: Heading,
+                                span: Span {
+                                    start: 34,
+                                    end: 41,
+                                },
+                            },
+                        ),
+                        span: Span {
+                            start: 27,
+                            end: 42,
+                        },
+                    },
+                    rhs: Number(
+                        NumberLit {
+                            value: 10.0,
+                            unit: Some(
+                                Deg,
+                            ),
+                            span: Span {
+                                start: 46,
+                                end: 52,
+                            },
+                        },
+                    ),
+                    span: Span {
+                        start: 27,
+                        end: 52,
+                    },
+                },
+                rhs: Binary {
+                    op: Ge,
+                    lhs: Call {
+                        func: Avg,
+                        arg: Metric(
+                            MetricRef {
+                                metric: Accel,
+                                span: Span {
+                                    start: 65,
+                                    end: 70,
+                                },
+                            },
+                        ),
+                        span: Span {
+                            start: 61,
+                            end: 71,
+                        },
+                    },
+                    rhs: Number(
+                        NumberLit {
+                            value: 0.3,
+                            unit: Some(
+                                MPerS2,
+                            ),
+                            span: Span {
+                                start: 75,
+                                end: 83,
+                            },
+                        },
+                    ),
+                    span: Span {
+                        start: 61,
+                        end: 83,
+                    },
+                },
+                span: Span {
+                    start: 27,
+                    end: 83,
+                },
+            },
+            rhs: Binary {
+                op: Gt,
+                lhs: Call {
+                    func: Avg,
+                    arg: Metric(
+                        MetricRef {
+                            metric: Velocity,
+                            span: Span {
+                                start: 96,
+                                end: 104,
+                            },
+                        },
+                    ),
+                    span: Span {
+                        start: 92,
+                        end: 105,
+                    },
+                },
+                rhs: Number(
+                    NumberLit {
+                        value: 30.0,
+                        unit: Some(
+                            KmPerH,
+                        ),
+                        span: Span {
+                            start: 108,
+                            end: 115,
+                        },
+                    },
+                ),
+                span: Span {
+                    start: 92,
+                    end: 115,
+                },
+            },
+            span: Span {
+                start: 27,
+                end: 115,
+            },
+        },
+    ],
+    draw: Some(
+        Span {
+            start: 118,
+            end: 122,
+        },
+    ),
+    table: Some(
+        TableSpec {
+            columns: [
+                MetricRef {
+                    metric: Time,
+                    span: Span {
+                        start: 131,
+                        end: 135,
+                    },
+                },
+                MetricRef {
+                    metric: Velocity,
+                    span: Span {
+                        start: 137,
+                        end: 145,
+                    },
+                },
+                MetricRef {
+                    metric: Heading,
+                    span: Span {
+                        start: 147,
+                        end: 154,
+                    },
+                },
+                MetricRef {
+                    metric: Accel,
+                    span: Span {
+                        start: 156,
+                        end: 161,
+                    },
+                },
+            ],
+            span: Span {
+                start: 125,
+                end: 161,
+            },
+        },
+    ),
+}

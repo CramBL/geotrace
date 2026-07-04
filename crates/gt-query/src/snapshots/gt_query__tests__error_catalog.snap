@@ -1,0 +1,206 @@
+---
+source: crates/gt-query/src/lib.rs
+expression: catalog
+---
+[
+    (
+        "",
+        "0..0: a query starts with the source: points",
+    ),
+    (
+        "where velocity > 0",
+        "0..5: a query starts with the source: points",
+    ),
+    (
+        "points | window",
+        "15..15: window needs a point count, e.g. window 10",
+    ),
+    (
+        "points | window 0",
+        "16..17: window needs at least 1 point",
+    ),
+    (
+        "points | window 2.5",
+        "16..19: window takes a whole number of points",
+    ),
+    (
+        "points | window 15 s",
+        "19..20: time-based windows are not supported yet - window takes a point count",
+    ),
+    (
+        "points | window 3 | window 4",
+        "20..26: only one window stage is allowed",
+    ),
+    (
+        "points | draw | where velocity > 0 km/h",
+        "16..21: where must come before draw and table",
+    ),
+    (
+        "points | draw | draw",
+        "16..20: only one draw stage is allowed",
+    ),
+    (
+        "points | where velocity > 30 kmh",
+        "29..32: unknown unit `kmh` | help: units are deg, m, km, km/h, m/s, kn, m/s2, ms, s, min, h, %, per s/min/h",
+    ),
+    (
+        "points | where velocity > 30 km/s",
+        "29..33: unknown unit `km/s` | help: units are deg, m, km, km/h, m/s, kn, m/s2, ms, s, min, h, %, per s/min/h",
+    ),
+    (
+        "points | where speed > 30 km/h",
+        "15..20: unknown metric `speed` | help: metrics are lowercase snake_case, e.g. velocity, heading, sats_fix",
+    ),
+    (
+        "points | where avg > 3",
+        "15..18: avg is a function - call it like avg(velocity)",
+    ),
+    (
+        "points | where blah(velocity) > 3",
+        "15..19: unknown function `blah`",
+    ),
+    (
+        "points | where velocity + 3 s > 30 km/h",
+        "26..29: expected a speed unit (km/h, m/s, kn), found s",
+    ),
+    (
+        "points | where not velocity",
+        "15..27: not needs a condition",
+    ),
+    (
+        "points | where -heading < 10 deg",
+        "15..23: cannot negate a direction",
+    ),
+    (
+        "points | window 3 | where avg(avg(velocity)) > 0 km/h",
+        "30..43: aggregates cannot be nested",
+    ),
+    (
+        "points | window 3 | where avg(heading) < 10 deg",
+        "26..38: avg on a direction is ambiguous - use spread, first, last, or delta",
+    ),
+    (
+        "points | window 3 | where spread(velocity) > 3 km/h and avg(velocity)",
+        "56..69: and needs conditions on both sides",
+    ),
+    (
+        "points | where time > 100",
+        "22..25: timestamps have no literals - restrict time with the global filter",
+    ),
+    (
+        "points | where sats_fix > 6 m",
+        "26..29: sats_fix is a count - compare against a bare number",
+    ),
+    (
+        "points | where eph > velocity",
+        "15..29: cannot compare length with speed",
+    ),
+    (
+        "points | where velocity / eph > 1",
+        "15..29: unsupported arithmetic between speed and length",
+    ),
+    (
+        "points | with mask 15 | where util_all < 50 %",
+        "14..21: mask needs an angle, e.g. mask 15 deg",
+    ),
+    (
+        "points | with snr_drop 10 db | where velocity > 0 km/h",
+        "26..28: unknown unit `db` | help: units are deg, m, km, km/h, m/s, kn, m/s2, ms, s, min, h, %, per s/min/h",
+    ),
+    (
+        "points | with slip_window 5 | where velocity > 0 km/h",
+        "14..27: slip_window needs a duration, e.g. slip_window 5 min",
+    ),
+    (
+        "points | with mask 1 deg, mask 2 deg | where util_all < 50 %",
+        "26..36: mask is declared twice",
+    ),
+    (
+        "points | with speed 3 | where velocity > 0 km/h",
+        "14..19: unknown parameter `speed` - parameters are mask, snr_drop, slip_window",
+    ),
+    (
+        "points | Draw",
+        "9..10: unexpected character `D` | help: queries are all lowercase",
+    ),
+    (
+        "points | table",
+        "14..14: expected a metric",
+    ),
+    (
+        "points | table velocity, | draw",
+        "25..26: expected a metric",
+    ),
+    (
+        "points | where (velocity > 0 km/h",
+        "33..33: expected )",
+    ),
+    (
+        "points | where velocity > 2 per day",
+        "32..35: per needs a duration unit: per s, per min, per h",
+    ),
+    (
+        "points draw",
+        "7..11: expected | or end of query | help: stages are separated by |",
+    ),
+    (
+        "points |",
+        "8..8: expected a stage after |: with, window, where, draw, or table",
+    ),
+    (
+        "points | 5",
+        "9..10: expected a stage: with, window, where, draw, or table",
+    ),
+    (
+        "points | where > 3",
+        "15..16: expected a value",
+    ),
+    (
+        "points | with mask deg",
+        "19..22: expected a number",
+    ),
+    (
+        "points | with mask 1 deg | with mask 2 deg",
+        "27..31: only one with stage is allowed",
+    ),
+    (
+        "points | table time | table time",
+        "22..27: only one table stage is allowed",
+    ),
+    (
+        "points | window 5 | with mask 1 deg",
+        "20..24: with must come directly after the source",
+    ),
+    (
+        "points | draw | window 5",
+        "16..22: window must come before draw and table",
+    ),
+    (
+        "points | window 2 | where avg(velocity)",
+        "26..39: where needs a condition, e.g. velocity > 30 km/h",
+    ),
+    (
+        "points | where velocity",
+        "15..23: where needs a condition, e.g. velocity > 30 km/h",
+    ),
+    (
+        "points | window 2 | where avg(velocity > 0 km/h)",
+        "26..48: avg needs a value, not a condition",
+    ),
+    (
+        "points | where abs(velocity > 0 km/h)",
+        "15..37: abs needs a value, not a condition",
+    ),
+    (
+        "points | where (velocity > 0 km/h) < (eph > 1 m)",
+        "16..33: cannot compare conditions",
+    ),
+    (
+        "points | window 2 | where first(velocity) == last(velocity)",
+        "26..59: == compares counts only - use a range",
+    ),
+    (
+        "points | with snr_drop 10 s | where velocity > 0 km/h",
+        "14..27: snr_drop takes a bare number",
+    ),
+]

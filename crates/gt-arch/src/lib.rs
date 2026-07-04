@@ -349,6 +349,44 @@ mod tests {
             )
             .build();
 
+        // gt_query Isolation (Whitelist)
+        //
+        // The query language (lexer/parser/checker/evaluator): pure logic on
+        // top of the shared types. No UI, plot, or rendering crate.
+        builder
+            .module_lint()
+            .lint_named("gt_query_isolation")
+            .matching(|m| m.module("gt_query.*"))
+            .with_severity(Severity::Error)
+            .restrict_imports(
+                Some(vec![
+                    "^$".into(),
+                    "std.*".into(),
+                    "core.*".into(),
+                    "alloc.*".into(),
+                    "gt_types.*".into(),
+                    "logos.*".into(),
+                    "strum.*".into(),
+                    "uom.*".into(),
+                    "insta.*".into(),
+                    "proptest.*".into(),
+                    "serde.*".into(),
+                    "crate.*".into(),
+                    "gt_query.*".into(),
+                    // Sub-module shorthands used by the compiler
+                    "ast.*".into(),
+                    "check.*".into(),
+                    "eval.*".into(),
+                    "fmt.*".into(),
+                    "lexer.*".into(),
+                    "metric.*".into(),
+                    "parser.*".into(),
+                    "unit.*".into(),
+                ]),
+                None,
+            )
+            .build();
+
         // Application Root Isolation (Whitelist)
         builder
             .module_lint()
