@@ -2,6 +2,10 @@
 
 ## [unreleased]
 
+### Added
+
+- Query window: write a short pipeline (e.g. `points | window 10 | where avg(velocity) > 30 km/h`) to find stretches of the loaded data. Includes unit-aware expressions, syntax highlighting, a built-in examples list, and a persisted query history.
+
 ### Changed
 
 - History opens only prompt for track-splitting differences, generated marker settings are reapplied from the current settings automatically.

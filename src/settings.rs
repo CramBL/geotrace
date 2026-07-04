@@ -32,8 +32,8 @@ impl Default for Settings {
     }
 }
 
-/// Persisted state for the experimental query window: the history of run
-/// queries. Examples are embedded in the binary, not persisted.
+/// Persisted state for the query window: the history of run queries.
+/// Examples are embedded in the binary, not persisted.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct QuerySettings {
