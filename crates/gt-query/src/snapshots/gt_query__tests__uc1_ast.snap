@@ -1,6 +1,5 @@
 ---
 source: crates/gt-query/src/lib.rs
-assertion_line: 328
 expression: query
 ---
 Query {
@@ -135,10 +134,13 @@ Query {
             },
         },
     ],
-    draw: Some(
-        Span {
-            start: 118,
-            end: 122,
+    mode: Some(
+        ModeStage {
+            mode: Draw,
+            span: Span {
+                start: 118,
+                end: 122,
+            },
         },
     ),
     table: Some(

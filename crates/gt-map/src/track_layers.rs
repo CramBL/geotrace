@@ -12,7 +12,9 @@ use std::ops::Range;
 
 use egui::{Color32, Response, Stroke, Ui};
 use gt_filter::GlobalFilter;
-use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, MercBounds, TrackIdx, TrackRef};
+use gt_types::{
+    DataCategory, DisplayMode, FileIdx, LoadedFile, LoadedTrack, MercBounds, TrackIdx, TrackRef,
+};
 use gt_ui_types::{HighlightScope, MapHighlight, QueryMatches};
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -55,6 +57,9 @@ struct LinePointKey {
     bucket: u8,
     /// Whether the point lies inside a query match - drives the halo pass.
     matched: bool,
+    /// Whether the query's display mode hides this point (`keep` hides
+    /// non-matches, `hide` hides matches). Splits the line at hidden points.
+    hidden: bool,
 }
 
 /// One visible track's prepared geometry and paint decisions for this
@@ -240,6 +245,7 @@ impl TrackLayers<'_> {
                 let match_ranges = self
                     .query_matches
                     .map_or(NO_RANGES, |m| m.track_ranges(TrackRef::new(fi, ti)));
+                let mode = self.query_matches.map(|m| m.mode).unwrap_or_default();
 
                 let mut ghost_points: Vec<usize> = Vec::new();
                 let fade = entry.fade;
@@ -265,11 +271,13 @@ impl TrackLayers<'_> {
                                 ),
                             ),
                         };
+                        let matched = QueryMatches::range_at(match_ranges, pi).is_some();
                         let key = LinePointKey {
                             ghost: p.tpv.heading().is_none(),
                             quality: quality_line_color(p),
                             bucket,
-                            matched: QueryMatches::range_at(match_ranges, pi).is_some(),
+                            matched,
+                            hidden: !mode.shows(matched),
                         };
                         (key, screen_pos)
                     });
@@ -304,6 +312,11 @@ impl TrackLayers<'_> {
         let Some(matches) = self.query_matches else {
             return;
         };
+        // Halos annotate matches in `draw` mode; `keep`/`hide` change point
+        // visibility instead and paint no halos.
+        if matches.mode != DisplayMode::Draw {
+            return;
+        }
         let ring_radius = style.base_arrow_size;
         for (i, geo) in geometries.iter().enumerate() {
             if !filter(i)
@@ -373,14 +386,38 @@ impl TrackLayers<'_> {
                 paint_quality_path(ui, &geo.path);
             }
             if let Some(fade) = geo.icon_fade() {
+                let track_ref = TrackRef::new(geo.fi, geo.ti);
+                let tpv = self.tpv_by_track.get(&track_ref);
+                // In keep/hide, drop the icons of hidden points too, so the
+                // arrows match the (broken) line.
+                let (filtered_tpv, filtered_ghost);
+                let (tpv, ghost) = match self.query_matches {
+                    Some(matches) if matches.mode != DisplayMode::Draw => {
+                        let ranges = matches.track_ranges(track_ref);
+                        let shown = |pi: &usize| {
+                            matches
+                                .mode
+                                .shows(QueryMatches::range_at(ranges, *pi).is_some())
+                        };
+                        filtered_tpv = tpv.map(|v| v.iter().copied().filter(shown).collect());
+                        filtered_ghost = geo
+                            .ghost_points
+                            .iter()
+                            .copied()
+                            .filter(shown)
+                            .collect::<Vec<_>>();
+                        (filtered_tpv.as_ref(), filtered_ghost.as_slice())
+                    }
+                    _ => (tpv, geo.ghost_points.as_slice()),
+                };
                 tpv_renderer::draw_track_icons(
                     ui,
                     icon_view_rect,
                     geo.fi,
                     geo.ti,
                     geo.track,
-                    self.tpv_by_track.get(&TrackRef::new(geo.fi, geo.ti)),
-                    &geo.ghost_points,
+                    tpv,
+                    ghost,
                     style,
                     fade,
                     transform,
@@ -424,6 +461,18 @@ impl TrackLayers<'_> {
     }
 }
 
+/// Maximal runs of consecutive shown (non-hidden) points within one span.
+///
+/// In `draw` mode nothing is hidden, so this yields the whole span as one
+/// run and rendering is unchanged. In `keep`/`hide` the line breaks at every
+/// hidden point rather than bridging the gap.
+fn shown_runs(
+    span: &[(LinePointKey, egui::Pos2)],
+) -> impl Iterator<Item = &[(LinePointKey, egui::Pos2)]> {
+    span.split(|(key, _)| key.hidden)
+        .filter(|run| !run.is_empty())
+}
+
 /// Paint a track's plain (track-colored) line from its prepared geometry,
 /// with the optional blink overlay on top.
 fn paint_trackline_path(
@@ -434,8 +483,10 @@ fn paint_trackline_path(
 ) {
     match path {
         VisiblePath::OffScreen => {}
-        // The key is ignored: a dot has no edge to render dashed or color.
-        VisiblePath::Dot(_, pos) => {
+        VisiblePath::Dot(key, pos) => {
+            if key.hidden {
+                return;
+            }
             ui.painter().circle_filled(*pos, stroke.width, stroke.color);
             if let Some(blink) = blink {
                 ui.painter().circle_filled(*pos, blink.width, blink.color);
@@ -443,10 +494,12 @@ fn paint_trackline_path(
         }
         VisiblePath::Spans(spans) => {
             for span in spans.iter() {
-                draw_track_with_ghost(ui.painter(), span, stroke, |key| key.ghost);
-                if let Some(blink) = blink {
-                    let bp: Vec<egui::Pos2> = span.iter().map(|&(_, pos)| pos).collect();
-                    ui.painter().add(egui::Shape::line(bp, blink));
+                for run in shown_runs(span) {
+                    draw_track_with_ghost(ui.painter(), run, stroke, |key| key.ghost);
+                    if let Some(blink) = blink {
+                        let bp: Vec<egui::Pos2> = run.iter().map(|&(_, pos)| pos).collect();
+                        ui.painter().add(egui::Shape::line(bp, blink));
+                    }
                 }
             }
         }
@@ -486,6 +539,9 @@ fn paint_quality_path(ui: &Ui, path: &VisiblePath<LinePointKey>) {
     match path {
         VisiblePath::OffScreen => {}
         VisiblePath::Dot(key, pos) => {
+            if key.hidden {
+                return;
+            }
             if key.bucket > 0 {
                 painter.circle_filled(
                     *pos,
@@ -496,19 +552,23 @@ fn paint_quality_path(ui: &Ui, path: &VisiblePath<LinePointKey>) {
         }
         VisiblePath::Spans(spans) => {
             for span in spans.iter() {
-                for ((quality, bucket), sub_span) in
-                    split_spans_by(span, |key| (key.quality, key.bucket))
-                {
-                    if bucket == 0 {
-                        continue;
+                // Restrict to shown runs first (keep/hide), then color each
+                // run by fix quality as before.
+                for run in shown_runs(span) {
+                    for ((quality, bucket), sub_span) in
+                        split_spans_by(run, |key| (key.quality, key.bucket))
+                    {
+                        if bucket == 0 {
+                            continue;
+                        }
+                        painter.add(egui::Shape::line(
+                            sub_span,
+                            Stroke::new(
+                                QUALITY_LINE_WIDTH,
+                                quality.gamma_multiply(bucket_alpha(bucket)),
+                            ),
+                        ));
                     }
-                    painter.add(egui::Shape::line(
-                        sub_span,
-                        Stroke::new(
-                            QUALITY_LINE_WIDTH,
-                            quality.gamma_multiply(bucket_alpha(bucket)),
-                        ),
-                    ));
                 }
             }
         }
@@ -519,8 +579,51 @@ fn paint_quality_path(ui: &Ui, path: &VisiblePath<LinePointKey>) {
 mod tests {
     use egui::{Color32, Rect, pos2};
 
-    use super::LinePointKey;
+    use super::{LinePointKey, shown_runs};
     use crate::polyline::{VisiblePath, visible_path};
+
+    /// A span of points with the given `hidden` flags, at increasing x.
+    fn span(hidden: &[bool]) -> Vec<(LinePointKey, egui::Pos2)> {
+        hidden
+            .iter()
+            .enumerate()
+            .map(|(i, &hidden)| {
+                let key = LinePointKey {
+                    ghost: false,
+                    quality: Color32::BLUE,
+                    bucket: 0,
+                    matched: false,
+                    hidden,
+                };
+                (key, pos2(i as f32, 0.0))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn shown_runs_of_all_visible_is_one_run() {
+        // Draw mode: nothing hidden, so the whole span is a single run and
+        // rendering is byte-identical to before the keep/hide feature.
+        let s = span(&[false, false, false]);
+        let runs: Vec<usize> = shown_runs(&s).map(<[_]>::len).collect();
+        assert_eq!(runs, vec![3]);
+    }
+
+    #[test]
+    fn shown_runs_break_at_hidden_points() {
+        // Hidden points split the line; leading/trailing/adjacent hidden
+        // points yield no empty runs, and an isolated shown point is a
+        // 1-element run (which draws no edge but keeps its icon).
+        let s = span(&[true, false, false, true, false, true]);
+        let runs: Vec<usize> = shown_runs(&s).map(<[_]>::len).collect();
+        assert_eq!(runs, vec![2, 1]);
+    }
+
+    #[test]
+    fn shown_runs_of_all_hidden_is_empty() {
+        let s = span(&[true, true]);
+        assert_eq!(shown_runs(&s).count(), 0);
+    }
 
     /// A parked cluster with mixed fix quality at sub-pixel distance: the
     /// quality transition forces point retention, so the unified key paints
@@ -538,6 +641,7 @@ mod tests {
             quality,
             bucket: 3,
             matched: false,
+            hidden: false,
         };
         let pts = vec![
             (key(Color32::BLUE), pos2(10.0, 10.0)),

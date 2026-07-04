@@ -3,19 +3,22 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-use gt_types::TrackRef;
+use gt_types::{DisplayMode, TrackRef};
 
 /// Matches of a query run, as point-index ranges per track.
 ///
 /// Produced by the app layer from a query run's output and consumed by the
-/// map, which draws each range as a halo beneath the track line. Rendering
-/// state only - the run summary and tables stay with the query window.
+/// map. Rendering state only - the run summary and tables stay with the
+/// query window.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueryMatches {
     /// Per track: sorted, disjoint, non-empty point-index ranges.
     pub ranges: HashMap<TrackRef, Vec<Range<usize>>>,
-    /// True when the visible data changed after the run - halos gray out
-    /// until the query runs again.
+    /// How the matches change the map: `Draw` halos over them, `Keep` only
+    /// them, or `Hide` them.
+    pub mode: DisplayMode,
+    /// True when the visible data changed after the run - the display grays
+    /// out (or reverts) until the query runs again.
     pub stale: bool,
 }
 
@@ -71,6 +74,7 @@ mod tests {
     fn matches(ranges: Vec<Range<usize>>) -> QueryMatches {
         QueryMatches {
             ranges: HashMap::from([(track(), ranges)]),
+            mode: DisplayMode::default(),
             stale: false,
         }
     }

@@ -5,6 +5,8 @@
 //! arithmetic. Several error messages here are user-facing UX pinned verbatim
 //! by tests - change them deliberately.
 
+use gt_types::DisplayMode;
+
 use crate::Diagnostic;
 use crate::ast::{BinaryOp, Expr, Func, NumberLit, ParamDecl, ParamName, Query, Span, UnaryOp};
 use crate::metric::{Quantity, QueryMetric};
@@ -27,7 +29,7 @@ pub struct CheckedQuery {
     columns: Vec<QueryMetric>,
     referenced: Vec<QueryMetric>,
     unused_params: Vec<ParamName>,
-    draw: bool,
+    mode: DisplayMode,
 }
 
 impl CheckedQuery {
@@ -58,10 +60,10 @@ impl CheckedQuery {
         &self.unused_params
     }
 
-    /// Whether matches are drawn on the map (explicit `draw`, or no output
-    /// stage at all).
-    pub fn draw(&self) -> bool {
-        self.draw
+    /// How the matches change the map: `draw` halos (the default), `keep`
+    /// (only matching points shown), or `hide` (matching points hidden).
+    pub fn mode(&self) -> DisplayMode {
+        self.mode
     }
 }
 
@@ -168,7 +170,8 @@ pub fn check(query: &Query) -> Result<CheckedQuery, Diagnostic> {
         columns,
         referenced,
         unused_params,
-        draw: query.draw.is_some() || (query.draw.is_none() && query.table.is_none()),
+        // No display stage means the implicit `draw`.
+        mode: query.mode.map(|stage| stage.mode).unwrap_or_default(),
     })
 }
 

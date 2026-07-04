@@ -100,6 +100,7 @@ mod tests {
                     "mercator.*".into(),
                     "metrics.*".into(),
                     "nav_point.*".into(),
+                    "query.*".into(),
                     "satellites.*".into(),
                     "thiserror.*".into(),
                     "time_types.*".into(),

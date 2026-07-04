@@ -57,6 +57,11 @@ pub struct TrackMatches {
 pub struct RunSummary {
     pub match_count: usize,
     pub tracks_with_matches: usize,
+    /// Points that fell inside a match, summed over tracks.
+    pub matched_points: usize,
+    /// Points evaluated, summed over tracks - the denominator for the
+    /// keep/hide "N of M points" summary.
+    pub total_points: usize,
     /// Windows (or points, without a window) skipped per missing metric.
     pub skipped: BTreeMap<QueryMetric, usize>,
     /// Skips from non-finite arithmetic (e.g. division by zero) - kept
@@ -116,6 +121,7 @@ pub(crate) fn run_with_interval(
             return None;
         }
         let len = input.provider.len();
+        summary.total_points += len;
         let mut ctx = Ctx {
             provider: input.provider,
             missing: BTreeSet::new(),
@@ -159,6 +165,7 @@ pub(crate) fn run_with_interval(
             }
         }
 
+        summary.matched_points += matched.iter().filter(|m| **m).count();
         let ranges = ranges_from(&matched);
         if !ranges.is_empty() {
             summary.tracks_with_matches += 1;

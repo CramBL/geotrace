@@ -4,6 +4,7 @@ pub mod markers;
 pub mod mercator;
 pub mod metrics;
 pub mod nav_point;
+pub mod query;
 pub mod satellites;
 pub use satellites::{Prn, SignalQuality, Snr};
 pub mod time_types;
@@ -20,6 +21,7 @@ pub use markers::{
 pub use mercator::MercPoint;
 pub use metrics::MetricKind;
 pub use nav_point::{FixQuality, NavPoint};
+pub use query::DisplayMode;
 pub use time_types::{GpsTime, SysTime};
 pub use tpv::TimePositionVelocity;
 pub use tpv::TimePositionVelocityBuilder;
