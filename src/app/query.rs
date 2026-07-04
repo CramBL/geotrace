@@ -27,8 +27,54 @@ use gt_types::{FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
 use gt_ui_theme::{DEGREE_SIGN, EM_DASH};
 use gt_ui_types::{MapHighlight, QueryMatches, TrackDataVisibility};
 
+use crate::settings::QueryHistoryEntry;
+
 /// Rows shown per match table before truncating with a "more points" note.
 const MATCH_TABLE_ROW_CAP: usize = 100;
+
+/// Unpinned history entries kept before the oldest is evicted. Pinned
+/// entries never count against this cap.
+const MAX_UNPINNED_HISTORY: usize = 50;
+
+/// Characters of a history entry's first line shown before eliding.
+const HISTORY_LINE_MAX_CHARS: usize = 48;
+
+/// A built-in query offered in the examples list.
+struct QueryExample {
+    name: &'static str,
+    description: &'static str,
+    text: &'static str,
+}
+
+/// Starter queries, mirroring the documented use cases. Embedded, not
+/// persisted; every one is asserted to parse, check, and run by a test.
+const EXAMPLES: &[QueryExample] = &[
+    QueryExample {
+        name: "Steady acceleration",
+        description: "Stretches of constant-heading speed-up",
+        text: "points\n| window 10\n| where spread(heading) <= 10 deg\n    and avg(accel) >= 0.3 m/s2\n    and avg(velocity) > 30 km/h\n| draw\n| table time, velocity, heading, accel",
+    },
+    QueryExample {
+        name: "Poor accuracy while moving",
+        description: "eph worse than 20 m above walking speed",
+        text: "points\n| where eph > 20 m and velocity > 5 km/h",
+    },
+    QueryExample {
+        name: "Weak fix",
+        description: "Fewer than 6 satellites used in the fix",
+        text: "points\n| where sats_fix < 6",
+    },
+    QueryExample {
+        name: "Heading jitter",
+        description: "Heading spread above 90 deg within 5 points while moving - a multipath indicator",
+        text: "points\n| window 5\n| where spread(heading) > 90 deg and min(velocity) > 15 km/h\n| draw\n| table time, heading, velocity",
+    },
+    QueryExample {
+        name: "Low GPS utilization",
+        description: "In-fix share of visible GPS satellites below 50 %",
+        text: "points\n| with mask 15 deg\n| where util_gps < 50 %\n| draw\n| table time, util_gps, sats_fix",
+    },
+];
 
 /// The floating query window and the results of its last run.
 pub struct QueryWindow {
@@ -44,6 +90,12 @@ pub struct QueryWindow {
     cancel_requested: bool,
     running: Option<RunningQuery>,
     results: Option<QueryResults>,
+    /// Previously run queries, newest first. Persisted in settings.
+    history: Vec<QueryHistoryEntry>,
+    /// Bumped on every history mutation so the config dirty-check (which
+    /// compares a flat snapshot and cannot see into a growing `Vec`) notices
+    /// and flushes.
+    history_revision: u64,
 }
 
 /// A run in flight on the worker thread.
@@ -108,6 +160,8 @@ impl QueryWindow {
             cancel_requested: false,
             running: None,
             results: None,
+            history: Vec::new(),
+            history_revision: 0,
         }
     }
 
@@ -118,15 +172,63 @@ impl QueryWindow {
 
     /// Replace the editor text, e.g. when loading a history entry or an
     /// example. Never runs - running stays an explicit action.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "exercised by the snapshot test; query history and examples load through it next"
-        )
-    )]
     pub fn set_text(&mut self, text: String) {
         self.text = text;
+    }
+
+    /// The current editor text (used by tests to observe loads).
+    #[cfg(test)]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// The persisted query history, newest first.
+    pub fn history(&self) -> &[QueryHistoryEntry] {
+        &self.history
+    }
+
+    /// Load the history from settings at startup.
+    pub fn set_history(&mut self, history: Vec<QueryHistoryEntry>) {
+        self.history = history;
+    }
+
+    /// Monotonic counter of history mutations, for the config dirty-check.
+    pub fn history_revision(&self) -> u64 {
+        self.history_revision
+    }
+
+    /// Record a query that is about to run: deduplicated by trimmed text
+    /// (rerunning moves the entry to the top and keeps its pin), capped at
+    /// [`MAX_UNPINNED_HISTORY`] unpinned entries with the oldest evicted.
+    fn record_run(&mut self, text: &str) {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        // Drop any prior entry with the same text, carrying its pin forward.
+        let pinned = match self.history.iter().position(|e| e.text.trim() == trimmed) {
+            Some(index) => self.history.remove(index).pinned,
+            None => false,
+        };
+        self.history.insert(
+            0,
+            QueryHistoryEntry {
+                text: text.to_owned(),
+                pinned,
+                last_run_unix_ms: Utc::now().timestamp_millis(),
+            },
+        );
+        // `retain` runs newest-first, so this keeps the first
+        // MAX_UNPINNED_HISTORY unpinned entries and drops the older ones.
+        let mut unpinned = 0;
+        self.history.retain(|e| {
+            if e.pinned {
+                return true;
+            }
+            unpinned += 1;
+            unpinned <= MAX_UNPINNED_HISTORY
+        });
+        self.history_revision += 1;
     }
 
     /// Render the window and handle runs. Call after the plot-hover
@@ -164,12 +266,24 @@ impl QueryWindow {
                 self.editor_ui(ui);
                 ui.separator();
                 self.results_ui(ui, files, highlight);
+                ui.separator();
+                self.history_examples_ui(ui);
             });
 
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
             open = false;
         }
         self.open = open;
+
+        // Ctrl+Enter (Cmd+Enter on macOS) runs, mirroring the Run button.
+        // Consumed only while the window is open, so it never steals the
+        // chord from other widgets.
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter))
+            && self.checked.is_ok()
+            && self.running.is_none()
+        {
+            self.run_requested = true;
+        }
 
         if self.cancel_requested {
             self.cancel_requested = false;
@@ -182,8 +296,96 @@ impl QueryWindow {
         if self.run_requested {
             self.run_requested = false;
             if self.running.is_none() {
+                self.record_run(&self.text.clone());
                 self.spawn_run(ctx, loaded_files, visibility, filter);
             }
+        }
+    }
+
+    /// The collapsible query-history and examples lists below the results.
+    /// Loading an entry only fills the editor - running stays explicit.
+    fn history_examples_ui(&mut self, ui: &mut egui::Ui) {
+        // Gather actions during the borrow of `self.history`, apply after.
+        let mut load: Option<String> = None;
+        let mut toggle_pin: Option<usize> = None;
+        let mut delete: Option<usize> = None;
+        let now = Utc::now();
+
+        egui::CollapsingHeader::new("Query history")
+            .default_open(false)
+            .show(ui, |ui| {
+                if self.history.is_empty() {
+                    ui.label(egui::RichText::new("No queries run yet").weak());
+                }
+                for (index, entry) in self.history.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        let pin_hover = if entry.pinned {
+                            format!("Pinned {EM_DASH} never evicted. Click to unpin")
+                        } else {
+                            "Pin so this query is never evicted".to_owned()
+                        };
+                        if ui
+                            .selectable_label(entry.pinned, "pin")
+                            .on_hover_text(pin_hover)
+                            .clicked()
+                        {
+                            toggle_pin = Some(index);
+                        }
+                        let flat = query_one_line(&entry.text);
+                        let label =
+                            match DateTime::<Utc>::from_timestamp_millis(entry.last_run_unix_ms) {
+                                Some(last_run) => {
+                                    let age = gt_fmt::format_human_terse_duration(now - last_run);
+                                    format!("{flat} ({age} ago)")
+                                }
+                                None => flat,
+                            };
+                        // The label flattens the query and drops comments;
+                        // the hover shows the full verbatim text (comments
+                        // included) so a documented query is readable without
+                        // loading it. Loading restores that text unchanged.
+                        if ui.button(label).on_hover_text(&entry.text).clicked() {
+                            load = Some(entry.text.clone());
+                        }
+                        if ui
+                            .small_button(egui_phosphor::regular::X)
+                            .on_hover_text("Remove from history")
+                            .clicked()
+                        {
+                            delete = Some(index);
+                        }
+                    });
+                }
+            });
+
+        egui::CollapsingHeader::new("Examples")
+            .default_open(false)
+            .show(ui, |ui| {
+                for example in EXAMPLES {
+                    if ui
+                        .button(example.name)
+                        .on_hover_text(example.description)
+                        .clicked()
+                    {
+                        load = Some(example.text.to_owned());
+                    }
+                }
+            });
+
+        if let Some(text) = load {
+            self.set_text(text);
+        }
+        if let Some(index) = toggle_pin
+            && let Some(entry) = self.history.get_mut(index)
+        {
+            entry.pinned = !entry.pinned;
+            self.history_revision += 1;
+        }
+        if let Some(index) = delete
+            && index < self.history.len()
+        {
+            self.history.remove(index);
+            self.history_revision += 1;
         }
     }
 
@@ -573,6 +775,36 @@ fn match_header_text(files: &[LoadedFile], track_ref: TrackRef, range: &Range<us
     }
 }
 
+/// A query flattened to one line for the history label: comments dropped,
+/// whitespace collapsed, elided to [`HISTORY_LINE_MAX_CHARS`].
+///
+/// Every query's first line is the bare `points` source, so the full
+/// flattened pipeline distinguishes entries where the first line alone would
+/// not. The untruncated text is available on hover.
+///
+/// Comment removal goes through the shared lexer (dropping its `Comment`
+/// spans) rather than re-deriving comment syntax, so the two cannot drift.
+/// Only comment spans are removed - the original spacing of the remaining
+/// code is preserved, then whitespace is collapsed.
+fn query_one_line(text: &str) -> String {
+    let mut kept = String::with_capacity(text.len());
+    let mut cursor = 0;
+    for (span, class) in lexer::highlight_classes(text) {
+        if matches!(class, TokenClass::Comment) {
+            kept.push_str(text.get(cursor..span.start).unwrap_or(""));
+            cursor = span.end;
+        }
+    }
+    kept.push_str(text.get(cursor..).unwrap_or(""));
+
+    let flat = kept.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= HISTORY_LINE_MAX_CHARS {
+        return flat;
+    }
+    let truncated: String = flat.chars().take(HISTORY_LINE_MAX_CHARS).collect();
+    format!("{truncated}{EM_DASH}")
+}
+
 /// Matches ordered by track then start index, for a stable list.
 fn matches_in_order(matches: &QueryMatches) -> Vec<(TrackRef, &Vec<Range<usize>>)> {
     let mut entries: Vec<(TrackRef, &Vec<Range<usize>>)> =
@@ -954,6 +1186,130 @@ fn segments(range: Range<usize>, underline: Option<(usize, usize)>) -> Vec<Range
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every built-in example parses, type-checks, and runs against a real
+    /// track - the guard that keeps embedded queries valid as the language
+    /// evolves.
+    #[test]
+    fn examples_parse_check_and_run() {
+        let points = gt_test_utils::nav_test_data();
+        let provider = provider_for(&points, None);
+        let inputs = [TrackInput {
+            track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            provider: &provider,
+        }];
+        for example in EXAMPLES {
+            let parsed = gt_query::parse(example.text).unwrap_or_else(|e| {
+                panic!("example {:?} failed to parse: {}", example.name, e.message)
+            });
+            let checked = gt_query::check(&parsed).unwrap_or_else(|e| {
+                panic!("example {:?} failed to check: {}", example.name, e.message)
+            });
+            // Runs without panicking; util/slip series are absent here, which
+            // the poison rules handle, so we only assert it completes.
+            let _ = gt_query::run(&checked, &inputs);
+        }
+    }
+
+    #[test]
+    fn examples_have_unique_names() {
+        let mut names: Vec<&str> = EXAMPLES.iter().map(|e| e.name).collect();
+        names.sort_unstable();
+        let count = names.len();
+        names.dedup();
+        assert_eq!(names.len(), count, "example names must be unique");
+    }
+
+    #[test]
+    fn history_dedup_moves_to_top_and_keeps_pin() {
+        let mut window = QueryWindow::new();
+        window.record_run("points | where velocity > 10 km/h");
+        window.record_run("points | where eph > 20 m");
+        // Pin the older entry, then rerun it.
+        window.history[1].pinned = true;
+        window.record_run("  points | where velocity > 10 km/h  ");
+
+        assert_eq!(window.history.len(), 2, "rerun deduplicates, not appends");
+        assert_eq!(
+            window.history[0].text, "  points | where velocity > 10 km/h  ",
+            "rerun moves the entry to the top with its new text"
+        );
+        assert!(window.history[0].pinned, "the pin carries across a rerun");
+    }
+
+    #[test]
+    fn history_evicts_oldest_unpinned_beyond_cap() {
+        let mut window = QueryWindow::new();
+        // Pin the very first entry, then overflow the cap.
+        window.record_run("points | where sats_fix < 4");
+        window.history[0].pinned = true;
+        for i in 0..MAX_UNPINNED_HISTORY + 5 {
+            window.record_run(&format!("points | where velocity > {i} km/h"));
+        }
+        let unpinned = window.history.iter().filter(|e| !e.pinned).count();
+        assert_eq!(
+            unpinned, MAX_UNPINNED_HISTORY,
+            "unpinned entries are capped"
+        );
+        assert!(
+            window.history.iter().any(|e| e.pinned),
+            "the pinned entry survives eviction"
+        );
+        assert_eq!(
+            window.history.len(),
+            MAX_UNPINNED_HISTORY + 1,
+            "pinned entries do not count against the cap"
+        );
+    }
+
+    #[test]
+    fn recording_bumps_the_revision_and_skips_blank() {
+        let mut window = QueryWindow::new();
+        let before = window.history_revision();
+        window.record_run("   \n  # just a comment is still text \n  ");
+        assert_eq!(
+            window.history.len(),
+            1,
+            "a comment-only query is still text"
+        );
+        assert!(window.history_revision() > before);
+
+        let after_one = window.history_revision();
+        window.record_run("   ");
+        assert_eq!(window.history.len(), 1, "blank text is not recorded");
+        assert_eq!(window.history_revision(), after_one, "blank does not bump");
+    }
+
+    #[test]
+    fn history_keeps_comments_verbatim() {
+        // Comments are documentation - the stored entry must keep them, even
+        // though the compact list label strips them.
+        let documented = "# average speed over a 10-point window\npoints\n| window 10\n| where avg(velocity) > 30 km/h # only when moving";
+        let mut window = QueryWindow::new();
+        window.record_run(documented);
+        assert_eq!(
+            window.history()[0].text,
+            documented,
+            "the stored query keeps its comments"
+        );
+        assert!(
+            !query_one_line(documented).contains('#'),
+            "only the compact label drops comments"
+        );
+    }
+
+    #[test]
+    fn query_one_line_flattens_drops_comments_and_elides() {
+        assert_eq!(
+            query_one_line("points\n| window 10 # every ten\n| draw"),
+            "points | window 10 | draw"
+        );
+        assert_eq!(query_one_line("# only a comment\n\n"), "");
+        let long = format!("points | where velocity > {} km/h", "9".repeat(60));
+        let shown = query_one_line(&long);
+        assert!(shown.ends_with(EM_DASH), "over-long lines are elided");
+        assert_eq!(shown.chars().count(), HISTORY_LINE_MAX_CHARS + 1);
+    }
 
     #[test]
     fn segments_split_exactly_at_diagnostic_edges() {

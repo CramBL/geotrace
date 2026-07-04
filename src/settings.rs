@@ -13,6 +13,7 @@ pub struct Settings {
     pub analysis: AnalysisSettings,
     pub storage: StorageSettings,
     pub update: UpdateSettings,
+    pub query: QuerySettings,
 }
 
 impl Default for Settings {
@@ -26,8 +27,34 @@ impl Default for Settings {
             analysis: AnalysisSettings::default(),
             storage: StorageSettings::default(),
             update: UpdateSettings::default(),
+            query: QuerySettings::default(),
         }
     }
+}
+
+/// Persisted state for the experimental query window: the history of run
+/// queries. Examples are embedded in the binary, not persisted.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct QuerySettings {
+    /// Previously run queries, newest first. See `app::query` for the
+    /// dedup/pin/cap rules that maintain this list.
+    pub history: Vec<QueryHistoryEntry>,
+}
+
+/// One remembered query: its text, whether the user pinned it against
+/// eviction, and when it last ran.
+///
+/// Stored verbatim - an entry that no longer parses after a language change
+/// simply shows a parse error when loaded, it is never dropped on load.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct QueryHistoryEntry {
+    pub text: String,
+    pub pinned: bool,
+    /// When this query last ran, as Unix milliseconds. Stored as a plain
+    /// integer because chrono's serde support is off workspace-wide.
+    pub last_run_unix_ms: i64,
 }
 
 /// Parameters for the derived satellite-analysis plots (utilization rate and
