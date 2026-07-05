@@ -2,6 +2,8 @@
 
 use gt_types::MetricKind;
 
+use crate::dimension::Dimension;
+
 /// Every metric addressable from a query.
 ///
 /// Covers all of [`MetricKind`] (names are the wire names with unit suffixes
@@ -68,7 +70,7 @@ pub enum QueryMetric {
 ///
 /// `Condition` is the type of comparisons and `and`/`or`/`not` - it never
 /// belongs to a metric.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::EnumIter, strum::EnumCount)]
 #[strum(serialize_all = "lowercase")]
 pub enum Quantity {
     Timestamp,
@@ -88,6 +90,26 @@ impl Quantity {
     /// Dimensionless scalars that may scale any quantity in `*` and `/`.
     pub fn is_scalar(self) -> bool {
         matches!(self, Quantity::Count | Quantity::Ratio)
+    }
+
+    /// The physical dimension of this quantity, or `None` for the quantities
+    /// that never take part in dimensional arithmetic ([`Quantity::Timestamp`]
+    /// and [`Quantity::Condition`]).
+    ///
+    /// [`Quantity::Count`] and [`Quantity::Ratio`] are both dimensionless (a
+    /// share and a tally have no unit); the exponents cannot tell them apart,
+    /// which is why a later kind tag rides alongside the dimension.
+    pub fn dimension(self) -> Option<Dimension> {
+        Some(match self {
+            Quantity::Angle | Quantity::Direction => Dimension::ANGLE,
+            Quantity::Length => Dimension::LENGTH,
+            Quantity::Speed => Dimension::SPEED,
+            Quantity::Acceleration => Dimension::ACCELERATION,
+            Quantity::Duration => Dimension::TIME,
+            Quantity::Rate => Dimension::RATE,
+            Quantity::Count | Quantity::Ratio => Dimension::DIMENSIONLESS,
+            Quantity::Timestamp | Quantity::Condition => return None,
+        })
     }
 }
 
@@ -210,6 +232,65 @@ mod tests {
     use strum::{EnumCount as _, IntoEnumIterator as _};
 
     use super::*;
+
+    /// Every quantity's dimension is pinned, and only `Timestamp` and
+    /// `Condition` are non-dimensional. Asserted against `COUNT` so a new
+    /// quantity must be classified here rather than defaulting silently.
+    #[test]
+    fn quantity_dimensions_are_pinned() {
+        let dimensioned = [
+            (Quantity::Angle, Dimension::ANGLE),
+            (Quantity::Direction, Dimension::ANGLE),
+            (Quantity::Speed, Dimension::SPEED),
+            (Quantity::Acceleration, Dimension::ACCELERATION),
+            (Quantity::Length, Dimension::LENGTH),
+            (Quantity::Duration, Dimension::TIME),
+            (Quantity::Rate, Dimension::RATE),
+            // A count and a ratio are both dimensionless: the exponents cannot
+            // separate them, which is the later kind tag's job.
+            (Quantity::Count, Dimension::DIMENSIONLESS),
+            (Quantity::Ratio, Dimension::DIMENSIONLESS),
+        ];
+        for (quantity, dimension) in dimensioned {
+            assert_eq!(
+                quantity.dimension(),
+                Some(dimension),
+                "{quantity} dimension"
+            );
+        }
+
+        let non_dimensional: Vec<Quantity> = Quantity::iter()
+            .filter(|q| q.dimension().is_none())
+            .collect();
+        assert_eq!(non_dimensional, [Quantity::Timestamp, Quantity::Condition]);
+        // The dimensioned and non-dimensional variants together are exhaustive,
+        // so a new quantity must be classified in one of them.
+        assert_eq!(dimensioned.len() + non_dimensional.len(), Quantity::COUNT);
+    }
+
+    /// The exponent algebra reproduces the derivations the checker currently
+    /// hard-codes (`length / time = speed`, `speed / time = acceleration`), so
+    /// routing the checker through dimensions later preserves behavior.
+    #[test]
+    fn dimensional_algebra_reproduces_the_named_derivations() {
+        let dim = |q: Quantity| q.dimension().unwrap();
+        assert_eq!(
+            dim(Quantity::Length) / dim(Quantity::Duration),
+            dim(Quantity::Speed)
+        );
+        assert_eq!(
+            dim(Quantity::Speed) / dim(Quantity::Duration),
+            dim(Quantity::Acceleration)
+        );
+        assert_eq!(
+            dim(Quantity::Speed) * dim(Quantity::Duration),
+            dim(Quantity::Length)
+        );
+        assert_eq!(
+            dim(Quantity::Acceleration) * dim(Quantity::Duration),
+            dim(Quantity::Speed)
+        );
+    }
 
     /// Every plot metric is reachable from a query, no plot metric is covered
     /// twice, and the extra query-only metrics are exactly the five per-point
