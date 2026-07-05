@@ -29,8 +29,22 @@ pub const DANGER_FG: Color32 = Color32::WHITE;
 /// Colour used for inline load-error labels.
 pub const ERROR_INDICATOR: Color32 = Color32::from_rgb(220, 70, 50);
 
-/// Amber colour used for data quality warning icons and indicators.
+/// Amber colour used for data quality warning icons and indicators. Bright
+/// enough for dark backgrounds; use [`warning_amber`] where the surface may be
+/// light.
 pub const WARNING_AMBER: Color32 = Color32::from_rgb(255, 180, 0);
+
+/// The dimmed amber for light backgrounds, where [`WARNING_AMBER`] glares.
+pub const WARNING_AMBER_LIGHT: Color32 = Color32::from_rgb(176, 112, 0);
+
+/// The warning amber for the current theme. Pass `ui.visuals().dark_mode`.
+pub fn warning_amber(dark_mode: bool) -> Color32 {
+    if dark_mode {
+        WARNING_AMBER
+    } else {
+        WARNING_AMBER_LIGHT
+    }
+}
 
 /// Affirmative green for a primary call-to-action, e.g. the "Update and restart"
 /// button in the update prompt.
@@ -168,8 +182,23 @@ pub const QUERY_SYNTAX_KEYWORD: Color32 = Color32::from_rgb(198, 120, 221);
 /// Query editor syntax highlighting: numeric literals.
 pub const QUERY_SYNTAX_NUMBER: Color32 = Color32::from_rgb(229, 192, 123);
 
-/// Query editor syntax highlighting: metric, unit, and parameter names.
+/// Query editor syntax highlighting: metric, unit, and parameter names. Bright
+/// for dark backgrounds; use [`query_syntax_ident`] to keep it legible on a
+/// light editor too.
 pub const QUERY_SYNTAX_IDENT: Color32 = Color32::from_rgb(120, 200, 255);
+
+/// The identifier syntax colour, darkened for a light editor background where
+/// [`QUERY_SYNTAX_IDENT`] is too pale to read.
+pub const QUERY_SYNTAX_IDENT_LIGHT: Color32 = Color32::from_rgb(20, 110, 190);
+
+/// The identifier syntax colour for the given theme. Pass `ui.visuals().dark_mode`.
+pub fn query_syntax_ident(dark_mode: bool) -> Color32 {
+    if dark_mode {
+        QUERY_SYNTAX_IDENT
+    } else {
+        QUERY_SYNTAX_IDENT_LIGHT
+    }
+}
 
 /// Query editor syntax highlighting: comments.
 pub const QUERY_SYNTAX_COMMENT: Color32 = Color32::from_rgb(128, 148, 128);

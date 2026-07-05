@@ -23,6 +23,9 @@ pub struct PanelContext<'a> {
     pub zoom_to_visible_request: &'a mut bool,
     /// Set by clicking the ⚠ icon on a file row. Consumed by the app to show a centered dialog.
     pub warnings_request: &'a mut Option<(String, Vec<LoadWarning>)>,
+    /// Set when "Reset filters" is clicked, so the app can also drop the query
+    /// filter (which the side panel cannot reach directly).
+    pub clear_query_request: &'a mut bool,
 }
 
 impl<'a> PanelContext<'a> {
@@ -67,7 +70,9 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     }
 
     ui.separator();
-    render_filter_panel(ui, ctx.files(), ctx.filter, ctx.filter_state);
+    if render_filter_panel(ui, ctx.files(), ctx.filter, ctx.filter_state) {
+        *ctx.clear_query_request = true;
+    }
 
     let filter_snapshot = *ctx.filter;
     let vis = ctx.tree.visibility();

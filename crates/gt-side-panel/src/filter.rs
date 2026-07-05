@@ -19,12 +19,16 @@ pub struct FilterPanelState {
     pub secondary_zoom: Option<(DateTime<Utc>, DateTime<Utc>)>,
 }
 
+/// Render the global-filter controls. Returns `true` when the user clicked
+/// "Reset filters", so the caller can also clear dependent state (the query
+/// filter).
+#[must_use]
 pub fn render_filter_panel(
     ui: &mut Ui,
     files: &[LoadedFile],
     filter: &mut GlobalFilter,
     state: &mut FilterPanelState,
-) {
+) -> bool {
     let full_range = compute_full_time_range(files);
     let filtered_range = compute_filtered_time_range(files, filter);
 
@@ -171,7 +175,9 @@ pub fn render_filter_panel(
     {
         *filter = GlobalFilter::default();
         *state = FilterPanelState::default();
+        return true;
     }
+    false
 }
 
 fn compute_full_time_range(files: &[LoadedFile]) -> Option<(DateTime<Utc>, DateTime<Utc>)> {

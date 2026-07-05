@@ -790,6 +790,30 @@ fn run_query(harness: &mut Harness<App>, text: &str) {
     harness.run_steps(3);
 }
 
+/// "Reset filters" clears the query filter too, not just the global filter, so
+/// the map fully returns to normal.
+#[test]
+fn reset_filters_clears_the_query_filter() {
+    let mut harness = app_with_query_window_open();
+    run_query(&mut harness, "points | where velocity > 1 km/h");
+    assert!(
+        harness.state().query_window.filter_active(),
+        "the run produced an active query filter"
+    );
+
+    // Close the window so it can't overlap the side panel's reset button.
+    harness.state_mut().query_window.open = false;
+    harness.run_steps(2);
+    harness.get_by_label_contains("Reset filters").click();
+    harness.run_steps(3);
+
+    assert!(
+        harness.state().query_window.matches().is_none(),
+        "Reset filters drops the query results"
+    );
+    assert!(!harness.state().query_window.filter_active());
+}
+
 /// Toggling pin flips the entry's pin and deleting removes it - the two
 /// interactive history mutations, driven through the widgets.
 #[test]
@@ -801,7 +825,9 @@ fn query_history_pin_and_delete_via_ui() {
     harness.run_steps(3);
 
     let revision_before = harness.state().query_window.history_revision();
-    harness.get_by_label("pin").click();
+    harness
+        .get_by_label(egui_phosphor::regular::PUSH_PIN)
+        .click();
     harness.run_steps(3);
     {
         let window = &harness.state().query_window;
@@ -868,6 +894,228 @@ fn query_ctrl_enter_runs() {
         1,
         "the Ctrl+Enter run is recorded in history"
     );
+}
+
+/// A key-press event for the given key with no modifiers.
+fn key_press(key: egui::Key) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    }
+}
+
+/// Open the query window with `text`, focus the editor with the caret at the
+/// end, and step until the autocomplete popup has candidates.
+fn editor_with_popup(text: &str) -> Harness<'static, App> {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    {
+        let app = harness.state_mut();
+        app.query_window.open = true;
+        app.query_window.set_text(text.to_owned());
+    }
+    harness.run_steps(2);
+    focus_query_editor_at_end(&harness, text);
+    harness.run_steps(3);
+    harness
+}
+
+/// Enter accepts the highlighted candidate, replacing the partial word; a
+/// stage keyword gets a trailing space so the next token can be typed straight
+/// away.
+#[test]
+fn autocomplete_enter_accepts_top_candidate() {
+    let mut harness = editor_with_popup("points | wh");
+    assert_eq!(
+        harness.state().query_window.autocomplete_names(),
+        vec!["where", "with"]
+    );
+
+    harness.input_mut().events.push(key_press(egui::Key::Enter));
+    harness.run_steps(2);
+
+    assert_eq!(harness.state().query_window.text(), "points | where ");
+}
+
+/// Arrow keys move the selection before Enter accepts it.
+#[test]
+fn autocomplete_arrow_down_then_enter_accepts_second() {
+    let mut harness = editor_with_popup("points | wh");
+
+    harness
+        .input_mut()
+        .events
+        .push(key_press(egui::Key::ArrowDown));
+    harness.run_steps(1);
+    harness.input_mut().events.push(key_press(egui::Key::Enter));
+    harness.run_steps(2);
+
+    assert_eq!(harness.state().query_window.text(), "points | with ");
+}
+
+/// Esc dismisses the popup without editing the text or closing the window, and
+/// the popup stays closed until the text changes again.
+#[test]
+fn autocomplete_esc_dismisses_without_editing() {
+    let mut harness = editor_with_popup("points | wh");
+
+    harness
+        .input_mut()
+        .events
+        .push(key_press(egui::Key::Escape));
+    harness.run_steps(2);
+
+    let window = &harness.state().query_window;
+    assert!(
+        window.autocomplete_names().is_empty(),
+        "Esc closes the popup"
+    );
+    assert_eq!(
+        window.text(),
+        "points | wh",
+        "Esc leaves the text unchanged"
+    );
+    assert!(window.open, "Esc dismisses the popup, not the window");
+}
+
+/// Clicking a popup row accepts that candidate (the deferred click path, not
+/// the keyboard path).
+#[test]
+fn autocomplete_click_accepts_candidate() {
+    let mut harness = editor_with_popup("points | wh");
+    // The "with" row is identified by its unique summary text.
+    harness
+        .get_by_label_contains("set satellite-analysis parameters")
+        .click();
+    harness.run_steps(2);
+    assert_eq!(harness.state().query_window.text(), "points | with ");
+}
+
+/// Right-clicking the toolbar query button while a filter is active offers
+/// "Clear query filter", which clears it.
+#[test]
+fn toolbar_context_menu_clears_query_filter() {
+    let mut harness = app_with_query_window_open();
+    run_query(&mut harness, "points | where velocity > 1 km/h");
+    // Close the window so the toolbar shows the active-filter alert.
+    harness.state_mut().query_window.open = false;
+    harness.run_steps(3);
+    assert!(harness.state().query_window.filter_active());
+
+    harness
+        .get_by_label_contains(egui_phosphor::regular::TERMINAL_WINDOW)
+        .click_secondary();
+    harness.run_steps(2);
+    harness.get_by_label_contains("Clear query filter").click();
+    harness.run_steps(3);
+
+    assert!(
+        !harness.state().query_window.filter_active(),
+        "the context menu cleared the query filter"
+    );
+}
+
+/// Focus the query editor and drop the caret at the end of `text`, so the
+/// caret-driven autocomplete and hover paths run in a snapshot.
+fn focus_query_editor_at_end(harness: &Harness<App>, text: &str) {
+    let editor_id = egui::Id::new(super::query::EDITOR_ID_SALT);
+    harness.ctx.memory_mut(|m| m.request_focus(editor_id));
+    let mut state = egui::TextEdit::load_state(&harness.ctx, editor_id).unwrap_or_default();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(
+            egui::text::CCursor::new(text.chars().count()),
+        )));
+    egui::TextEdit::store_state(&harness.ctx, editor_id, state);
+}
+
+/// The autocomplete popup: candidates under the caret, the top one
+/// highlighted, capped to five rows with a footer noting the rest.
+#[test]
+fn snapshot_query_autocomplete_popup() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(560.0, 460.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    // A prefix that matches many metrics, so the popup overflows five rows.
+    let text = "points | where s";
+    {
+        let app = harness.inner.state_mut();
+        app.query_window.open = true;
+        app.query_window.set_text(text.to_owned());
+    }
+    harness.inner.run_steps(3);
+    focus_query_editor_at_end(&harness.inner, text);
+    harness.inner.run_steps(3);
+
+    let names = harness.inner.state().query_window.autocomplete_names();
+    assert!(
+        names.len() > 5,
+        "the popup overflows five rows and shows a footer, got {names:?}"
+    );
+    assert!(
+        names.contains(&"sats_fix"),
+        "s-metrics are offered: {names:?}"
+    );
+
+    harness.snapshot("query_autocomplete_popup");
+}
+
+/// A checker error: an error icon and the red problem, then the suggestion as
+/// a plain "Hint:" line below.
+#[test]
+fn snapshot_query_error() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(560.0, 260.0))
+        .eframe(build_app);
+    harness.inner.step();
+    {
+        let app = harness.inner.state_mut();
+        app.query_window.open = true;
+        // Per-point metric in a window: the message splits into problem + hint.
+        app.query_window
+            .set_text("points | window 10 | where velocity >= 10 km/h".to_owned());
+    }
+    // Editor left unfocused so no completion popup covers the error.
+    harness.inner.run_steps(3);
+    harness.snapshot("query_error");
+}
+
+/// Hovering a construct in the editor shows a Rust-doc-style tooltip: name and
+/// kind, summary, then the fuller explanation and an example.
+#[test]
+fn snapshot_query_hover_docs() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(560.0, 460.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    {
+        let app = harness.inner.state_mut();
+        app.query_window.open = true;
+        app.query_window
+            .set_text("points | window 10 | where avg(velocity) > 30 km/h".to_owned());
+    }
+    harness.inner.run_steps(3);
+
+    // Hover the `window` token. It starts after "points | " on the first line;
+    // the editor's text begins near the top-left of the window content.
+    let editor = harness
+        .inner
+        .get_by_role(egui::accesskit::Role::MultilineTextInput);
+    let rect = editor.rect();
+    let hover = egui::pos2(rect.left() + 96.0, rect.top() + 10.0);
+    harness.inner.run_steps(2);
+    harness.inner.hover_at(hover);
+    harness.inner.run_steps(3);
+
+    harness.snapshot("query_hover_docs");
 }
 
 #[test]

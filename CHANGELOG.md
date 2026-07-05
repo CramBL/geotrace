@@ -6,6 +6,10 @@
 
 - Query window: write a short pipeline (e.g. `points | window 10 | where avg(velocity) > 30 km/h`) to find stretches of the loaded data. Includes unit-aware expressions, syntax highlighting, a built-in examples list, and a persisted query history.
 - Query display modes: besides drawing halos on matches, a query can end with `keep` (show only the matching points) or `hide` (remove the matching points).
+- Query editor autocomplete: as you type, a popup under the caret lists the constructs valid at that position (fuzzy-matched), with Enter or Tab to accept, arrows to choose, and Esc to dismiss. Unit suggestions are restricted to the compared value's quantity.
+- Query editor hover documentation: hovering a construct shows a Rust-doc-style tooltip with its summary, a fuller explanation, and example usage.
+- Query editor Clear button, to empty the editor in one click.
+- Clearing an active query filter: "Reset filters" now also clears it, and while a query is filtering the map with its window closed the toolbar button turns amber with a warning mark and offers "Clear query filter" on right-click.
 
 ### Changed
 

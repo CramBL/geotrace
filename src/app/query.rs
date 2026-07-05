@@ -12,15 +12,15 @@ use std::thread;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use egui::text::LayoutJob;
+use egui::text::{CCursor, CCursorRange, LayoutJob};
 use gt_analysis::loss_of_lock::{self, SECS_PER_MIN, SlipRatePerPoint};
 use gt_analysis::satellite_utilization::{self, UtilPerPoint};
 use gt_filter::GlobalFilter;
 use gt_loaded_files::LoadedFilesView;
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{
-    CheckedQuery, Diagnostic, MetricProvider, Quantity, QueryMetric, RunOutput, Span, TrackInput,
-    Unit,
+    CheckedQuery, Construct, ConstructKind, Diagnostic, MetricProvider, Quantity, QueryMetric,
+    RunOutput, Span, TrackInput, Unit,
 };
 use gt_types::satellites::Constellation;
 use gt_types::{DisplayMode, FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
@@ -38,6 +38,18 @@ const MAX_UNPINNED_HISTORY: usize = 50;
 
 /// Characters of a history entry's first line shown before eliding.
 const HISTORY_LINE_MAX_CHARS: usize = 48;
+
+/// Ellipsis appended to an elided history line.
+const ELLIPSIS: &str = "…";
+
+/// Id salt for the query editor's text field. Fixed (not derived from the
+/// enclosing `Ui`) so the autocomplete caret/focus plumbing - and the UI
+/// snapshot test - can address the widget directly.
+pub(crate) const EDITOR_ID_SALT: &str = "query_editor";
+
+/// Candidate rows the autocomplete popup shows before it scrolls. A footer
+/// notes how many more there are.
+const AUTOCOMPLETE_VISIBLE_ROWS: usize = 5;
 
 /// A built-in query offered in the examples list.
 struct QueryExample {
@@ -101,6 +113,36 @@ pub struct QueryWindow {
     /// compares a flat snapshot and cannot see into a growing `Vec`) notices
     /// and flushes.
     history_revision: u64,
+    /// The editor's autocomplete popup, recomputed each frame from the caret.
+    autocomplete: Autocomplete,
+}
+
+/// The editor's autocomplete popup state.
+///
+/// Recomputed each frame from the caret by [`QueryWindow::update_autocomplete`]
+/// and drawn under the caret. Its key handling runs at the *start* of the next
+/// frame ([`QueryWindow::apply_autocomplete_input`]) so it can claim
+/// Enter/Tab/arrows before the text editor consumes them.
+#[derive(Default)]
+struct Autocomplete {
+    /// Candidates for the caret as of the last frame, best first. Empty when
+    /// the popup is not shown.
+    items: Vec<Construct>,
+    /// Byte range of the partial word an accepted candidate replaces.
+    range: Range<usize>,
+    /// The highlighted row.
+    selected: usize,
+    /// Screen position for the popup (just below the caret), cached so the
+    /// popup can still be drawn on the frame a click steals the editor's focus.
+    caret_pos: egui::Pos2,
+    /// The text at which Esc dismissed the popup; it stays closed until the
+    /// text changes again.
+    dismissed_text: Option<String>,
+    /// Whether the popup was drawn last frame. Key handling keys off this
+    /// rather than live focus: egui surrenders a widget's focus on Escape (and
+    /// on a click into the popup) *before* the editor renders, so live focus
+    /// reads false on the very frame the popup must still act.
+    shown: bool,
 }
 
 /// A run in flight on the worker thread.
@@ -169,12 +211,35 @@ impl QueryWindow {
             results: None,
             history: Vec::new(),
             history_revision: 0,
+            autocomplete: Autocomplete::default(),
         }
     }
 
     /// Matches of the last run, for the map. `None` when there are none.
     pub fn matches(&self) -> Option<&QueryMatches> {
         self.results.as_ref().map(|r| &r.matches)
+    }
+
+    /// Whether a query is currently affecting the map: halos for `draw`/`hide`
+    /// with matches, or `keep` (which always filters). Drives the toolbar
+    /// indicator shown while the window is closed.
+    pub fn filter_active(&self) -> bool {
+        self.results.as_ref().is_some_and(|results| {
+            let has_matches = results.matches.ranges.values().any(|r| !r.is_empty());
+            match results.matches.mode {
+                DisplayMode::Draw | DisplayMode::Hide => has_matches,
+                DisplayMode::Keep => true,
+            }
+        })
+    }
+
+    /// Drop the last run's results so the map returns to normal, abandoning any
+    /// run still in flight. Called by the toolbar's clear action and by the
+    /// side panel's "Reset filters".
+    pub fn clear_filter(&mut self) {
+        self.results = None;
+        // Dropping the handle detaches the worker; its result is discarded.
+        self.running = None;
     }
 
     /// Replace the editor text, e.g. when loading a history entry or an
@@ -187,6 +252,13 @@ impl QueryWindow {
     #[cfg(test)]
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// The names currently offered by the autocomplete popup, best first (used
+    /// by the UI test to assert the popup's contents).
+    #[cfg(test)]
+    pub fn autocomplete_names(&self) -> Vec<&'static str> {
+        self.autocomplete.items.iter().map(|c| c.name).collect()
     }
 
     /// The persisted query history, newest first.
@@ -269,6 +341,9 @@ impl QueryWindow {
         egui::Window::new("Query")
             .open(&mut open)
             .default_width(460.0)
+            .default_height(520.0)
+            .resizable(true)
+            .vscroll(true)
             .show(ctx, |ui| {
                 self.editor_ui(ui);
                 ui.separator();
@@ -316,6 +391,7 @@ impl QueryWindow {
         let mut load: Option<String> = None;
         let mut toggle_pin: Option<usize> = None;
         let mut delete: Option<usize> = None;
+        let mut clear_history = false;
         let now = Utc::now();
 
         egui::CollapsingHeader::new("Query history")
@@ -323,45 +399,59 @@ impl QueryWindow {
             .show(ui, |ui| {
                 if self.history.is_empty() {
                     ui.label(egui::RichText::new("No queries run yet").weak());
+                    return;
                 }
-                for (index, entry) in self.history.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        let pin_hover = if entry.pinned {
-                            format!("Pinned {EM_DASH} never evicted. Click to unpin")
-                        } else {
-                            "Pin so this query is never evicted".to_owned()
-                        };
-                        if ui
-                            .selectable_label(entry.pinned, "pin")
-                            .on_hover_text(pin_hover)
-                            .clicked()
-                        {
-                            toggle_pin = Some(index);
-                        }
-                        let flat = query_one_line(&entry.text);
-                        let label =
-                            match DateTime::<Utc>::from_timestamp_millis(entry.last_run_unix_ms) {
-                                Some(last_run) => {
-                                    format!("{flat} ({})", format_history_age(now - last_run))
-                                }
-                                None => flat,
+                if ui
+                    .small_button(egui_phosphor::regular::TRASH)
+                    .on_hover_text("Clear the query history (pinned queries are kept)")
+                    .clicked()
+                {
+                    clear_history = true;
+                }
+                // A table so the age and remove columns line up across rows.
+                egui::Grid::new(ui.id().with("query_history_grid"))
+                    .num_columns(4)
+                    .spacing(egui::vec2(8.0, 4.0))
+                    .show(ui, |ui| {
+                        for (index, entry) in self.history.iter().enumerate() {
+                            let pin_hover = if entry.pinned {
+                                "Pinned, never evicted. Click to unpin."
+                            } else {
+                                "Pin so this query is never evicted"
                             };
-                        // The label flattens the query and drops comments;
-                        // the hover shows the full verbatim text (comments
-                        // included) so a documented query is readable without
-                        // loading it. Loading restores that text unchanged.
-                        if ui.button(label).on_hover_text(&entry.text).clicked() {
-                            load = Some(entry.text.clone());
-                        }
-                        if ui
-                            .small_button(egui_phosphor::regular::X)
-                            .on_hover_text("Remove from history")
-                            .clicked()
-                        {
-                            delete = Some(index);
+                            if ui
+                                .selectable_label(entry.pinned, egui_phosphor::regular::PUSH_PIN)
+                                .on_hover_text(pin_hover)
+                                .clicked()
+                            {
+                                toggle_pin = Some(index);
+                            }
+                            // The button flattens the query and drops comments;
+                            // its hover shows the full verbatim text (comments
+                            // included). Loading restores that text unchanged.
+                            if ui
+                                .button(query_one_line(&entry.text))
+                                .on_hover_text(&entry.text)
+                                .clicked()
+                            {
+                                load = Some(entry.text.clone());
+                            }
+                            let age =
+                                DateTime::<Utc>::from_timestamp_millis(entry.last_run_unix_ms)
+                                    .map_or_else(String::new, |last_run| {
+                                        format_history_age(now - last_run)
+                                    });
+                            ui.label(egui::RichText::new(age).weak());
+                            if ui
+                                .small_button(egui_phosphor::regular::X)
+                                .on_hover_text("Remove from history")
+                                .clicked()
+                            {
+                                delete = Some(index);
+                            }
+                            ui.end_row();
                         }
                     });
-                }
             });
 
         egui::CollapsingHeader::new("Examples")
@@ -391,6 +481,11 @@ impl QueryWindow {
             && index < self.history.len()
         {
             self.history.remove(index);
+            self.history_revision += 1;
+        }
+        if clear_history {
+            // Pins mark queries to keep, so clear-all still respects them.
+            self.history.retain(|entry| entry.pinned);
             self.history_revision += 1;
         }
     }
@@ -453,6 +548,11 @@ impl QueryWindow {
     }
 
     fn editor_ui(&mut self, ui: &mut egui::Ui) {
+        let editor_id = egui::Id::new(EDITOR_ID_SALT);
+        // Runs before the editor so the open popup can claim Enter/Tab/arrows,
+        // and may edit the text (accepting a candidate) - so re-check after.
+        self.apply_autocomplete_input(ui, editor_id);
+
         if self.checked_text != self.text {
             self.checked = check_text(&self.text);
             self.checked_text = self.text.clone();
@@ -464,28 +564,28 @@ impl QueryWindow {
             job.wrap.max_width = wrap_width;
             ui.fonts_mut(|f| f.layout_job(job))
         };
-        ui.add(
-            egui::TextEdit::multiline(&mut self.text)
-                .code_editor()
-                .desired_rows(5)
-                .desired_width(f32::INFINITY)
-                .hint_text("points | where velocity > 30 km/h")
-                .layouter(&mut layouter),
-        );
+        let output = egui::TextEdit::multiline(&mut self.text)
+            .id(editor_id)
+            .code_editor()
+            .desired_rows(5)
+            .desired_width(f32::INFINITY)
+            .hint_text("points | where velocity > 30 km/h")
+            .layouter(&mut layouter)
+            .show(ui);
 
-        match &self.checked {
-            Err(diagnostic) if !self.text.trim().is_empty() => {
-                let message = match &diagnostic.help {
-                    Some(help) => format!("{}\n{help}", diagnostic.message),
-                    None => diagnostic.message.clone(),
-                };
-                ui.label(
-                    egui::RichText::new(message)
-                        .color(gt_ui_theme::ERROR_INDICATOR)
-                        .small(),
-                );
+        self.update_autocomplete(ui, editor_id, &output);
+        self.hover_docs(ui, &output);
+
+        if let Err(diagnostic) = &self.checked
+            && !self.text.trim().is_empty()
+        {
+            // The message shows in red with an error icon (the quoted token
+            // lifts into the code font); the fix, carried in the structured
+            // `help`, is a plain "Hint:" line below.
+            ui.label(error_message_layout(ui, &diagnostic.message));
+            if let Some(hint) = &diagnostic.help {
+                ui.label(format!("Hint: {hint}"));
             }
-            _ => {}
         }
 
         ui.horizontal(|ui| {
@@ -511,6 +611,18 @@ impl QueryWindow {
                 self.cancel_requested = true;
             }
 
+            let clearable = !self.text.is_empty();
+            let clear = ui.add_enabled(clearable, egui::Button::new("Clear"));
+            let clear = if clearable {
+                clear
+            } else {
+                clear.on_disabled_hover_text("The editor is already empty")
+            };
+            if clear.clicked() {
+                self.text.clear();
+                self.autocomplete = Autocomplete::default();
+            }
+
             if let Some(running) = &self.running {
                 ui.spinner();
                 let prepared = running.tracks_prepared.load(Ordering::Relaxed);
@@ -528,6 +640,196 @@ impl QueryWindow {
         });
     }
 
+    /// Handle keyboard acceptance of the autocomplete popup, using the
+    /// candidates computed last frame. Called before the editor renders so the
+    /// popup can consume Enter/Tab/arrows the text field would otherwise take.
+    /// (Mouse clicks are handled inline in `update_autocomplete`.)
+    fn apply_autocomplete_input(&mut self, ui: &egui::Ui, editor_id: egui::Id) {
+        // Keyed off `shown` (last frame), not live focus, because egui
+        // surrenders the editor's focus on Escape before this runs. Key state
+        // is read inside `input_mut`, but the follow-up (focus, text edits)
+        // happens after - re-entering the context lock inside would deadlock.
+        let mut accept = None;
+        let mut dismissed = false;
+        if self.autocomplete.shown && !self.autocomplete.items.is_empty() {
+            let len = self.autocomplete.items.len();
+            ui.input_mut(|input| {
+                if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
+                    self.autocomplete.selected = (self.autocomplete.selected + 1) % len;
+                }
+                if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                    self.autocomplete.selected = (self.autocomplete.selected + len - 1) % len;
+                }
+                if input.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
+                    dismissed = true;
+                    return;
+                }
+                // Enter and Tab both accept; Ctrl+Enter carries the COMMAND
+                // modifier, so it is left for the window's run shortcut.
+                if input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                    || input.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
+                {
+                    accept = Some(self.autocomplete.selected);
+                }
+            });
+        }
+
+        if dismissed {
+            self.autocomplete.dismissed_text = Some(self.text.clone());
+            self.autocomplete.items.clear();
+            self.autocomplete.shown = false;
+            // egui already dropped the editor's focus for this Escape; put it
+            // back so dismissing the popup keeps the caret in the editor.
+            ui.ctx().memory_mut(|m| m.request_focus(editor_id));
+            return;
+        }
+
+        if let Some(index) = accept
+            && let Some(&construct) = self.autocomplete.items.get(index)
+        {
+            self.accept_completion(ui, editor_id, construct);
+        }
+    }
+
+    /// Replace the partial word under the caret with `construct`, then move the
+    /// caret past the insertion and close the popup for that word.
+    fn accept_completion(&mut self, ui: &egui::Ui, editor_id: egui::Id, construct: Construct) {
+        let range = self.autocomplete.range.clone();
+        // Guard against a range that a same-frame edit already invalidated.
+        if range.end > self.text.len() {
+            return;
+        }
+        let space = if inserts_trailing_space(construct.kind) {
+            " "
+        } else {
+            ""
+        };
+        let insertion = format!("{}{space}", construct.name);
+        let caret_byte = range.start + insertion.len();
+        self.text.replace_range(range, &insertion);
+
+        let caret_char = self.text.get(..caret_byte).map_or(0, |s| s.chars().count());
+        let mut state = egui::TextEdit::load_state(ui.ctx(), editor_id).unwrap_or_default();
+        state
+            .cursor
+            .set_char_range(Some(CCursorRange::one(CCursor::new(caret_char))));
+        egui::TextEdit::store_state(ui.ctx(), editor_id, state);
+        ui.ctx().memory_mut(|m| m.request_focus(editor_id));
+
+        self.autocomplete.items.clear();
+        self.autocomplete.selected = 0;
+        self.autocomplete.dismissed_text = None;
+        self.autocomplete.shown = false;
+    }
+
+    /// Recompute the candidates for the current caret, draw the popup under it,
+    /// and accept a clicked row. While the editor is focused the candidates are
+    /// recomputed; on the frame a click into the popup steals that focus, the
+    /// popup is redrawn from the cached candidates so the click still lands.
+    fn update_autocomplete(
+        &mut self,
+        ui: &egui::Ui,
+        editor_id: egui::Id,
+        output: &egui::widgets::text_edit::TextEditOutput,
+    ) {
+        let focused = output.response.has_focus();
+        if let (true, Some(caret_char)) = (
+            focused,
+            output.cursor_range.map(|range| range.primary.index),
+        ) {
+            // Esc keeps the popup closed until the text changes.
+            if self.autocomplete.dismissed_text.as_deref() == Some(self.text.as_str()) {
+                self.autocomplete.items.clear();
+                self.autocomplete.shown = false;
+                return;
+            }
+            self.autocomplete.dismissed_text = None;
+
+            let caret_byte = char_to_byte(&self.text, caret_char);
+            let completions = gt_query::completions_at(&self.text, caret_byte);
+            let items = completions.items;
+
+            // Keep the highlighted row while the candidate set is unchanged;
+            // otherwise start at the top.
+            let unchanged = items.iter().map(|c| c.name).eq(self
+                .autocomplete
+                .items
+                .iter()
+                .map(|c| c.name));
+            self.autocomplete.selected = if unchanged {
+                self.autocomplete
+                    .selected
+                    .min(items.len().saturating_sub(1))
+            } else {
+                0
+            };
+            self.autocomplete.items = items;
+            self.autocomplete.range = completions.range;
+            let caret_rect = output.galley.pos_from_cursor(CCursor::new(caret_char));
+            self.autocomplete.caret_pos =
+                output.galley_pos + caret_rect.left_bottom().to_vec2() + egui::vec2(0.0, 2.0);
+        } else if !self.autocomplete.shown {
+            // Not editing and nothing was open: keep it closed.
+            self.autocomplete.items.clear();
+            return;
+        }
+
+        if self.autocomplete.items.is_empty() {
+            self.autocomplete.shown = false;
+            return;
+        }
+        let clicked = draw_autocomplete_popup(
+            ui,
+            output.response.id,
+            self.autocomplete.caret_pos,
+            &self.autocomplete,
+        );
+        self.autocomplete.shown = true;
+
+        if let Some(index) = clicked {
+            if let Some(&construct) = self.autocomplete.items.get(index) {
+                self.accept_completion(ui, editor_id, construct);
+            }
+        } else if !focused {
+            // Focus left the editor without a click into the popup (e.g. a
+            // click elsewhere) - close it.
+            self.autocomplete.items.clear();
+            self.autocomplete.shown = false;
+        }
+    }
+
+    /// Show a documentation tooltip for the construct under the pointer, in the
+    /// editor. Suppressed while the completion popup is up, so the two don't
+    /// stack.
+    fn hover_docs(&self, ui: &egui::Ui, output: &egui::widgets::text_edit::TextEditOutput) {
+        if self.autocomplete.shown {
+            return;
+        }
+        let Some(pointer) = ui.ctx().pointer_hover_pos() else {
+            return;
+        };
+        if !output.response.rect.contains(pointer) {
+            return;
+        }
+        let ccursor = output.galley.cursor_from_pos(pointer - output.galley_pos);
+        let byte = char_to_byte(&self.text, ccursor.index);
+        let Some(construct) = gt_query::construct_at(&self.text, byte) else {
+            return;
+        };
+        // Drawn as an Area (rather than a hover tooltip) so it is anchored to
+        // the token under the pointer and shows without a hover delay.
+        egui::Area::new(egui::Id::new("query_hover_doc"))
+            .order(egui::Order::Tooltip)
+            .fixed_pos(pointer + egui::vec2(12.0, 18.0))
+            .constrain(true)
+            .interactable(false)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    construct_tooltip_ui(ui, construct);
+                });
+            });
+    }
+
     fn results_ui(&self, ui: &mut egui::Ui, files: &[LoadedFile], highlight: &mut MapHighlight) {
         let Some(results) = &self.results else {
             ui.label(egui::RichText::new("No runs yet").weak());
@@ -535,17 +837,13 @@ impl QueryWindow {
         };
         let stale = results.matches.stale;
 
-        ui.label(&results.summary);
-        if stale {
-            ui.label(
-                egui::RichText::new(format!("Data changed since this run {EM_DASH} run again"))
-                    .weak()
-                    .italics(),
-            );
-        }
-
-        egui::ScrollArea::vertical()
-            .max_height(300.0)
+        // The run summary is the collapsible header; the match tables are its
+        // body. A stable id keeps the open/closed state across reruns even as
+        // the summary text changes. No inner scroll - the window scrolls as a
+        // whole (see `show`), so the scrollbar sits at its edge.
+        egui::CollapsingHeader::new(&results.summary)
+            .id_salt("query_matches")
+            .default_open(true)
             .show(ui, |ui| {
                 for (track_ref, ranges) in matches_in_order(&results.matches) {
                     for range in ranges {
@@ -553,6 +851,13 @@ impl QueryWindow {
                     }
                 }
             });
+        if stale {
+            ui.label(
+                egui::RichText::new(format!("Data changed since this run {EM_DASH} run again"))
+                    .weak()
+                    .italics(),
+            );
+        }
     }
 
     /// Parse/check are already done (`self.checked`); snapshot the visible
@@ -791,7 +1096,7 @@ fn match_header_text(files: &[LoadedFile], track_ref: TrackRef, range: &Range<us
 fn format_history_age(age: chrono::Duration) -> String {
     let minutes = age.num_minutes();
     if minutes < 1 {
-        return "just now".to_owned();
+        return "now".to_owned();
     }
     if minutes < 60 {
         return format!("{minutes}m ago");
@@ -830,7 +1135,7 @@ fn query_one_line(text: &str) -> String {
         return flat;
     }
     let truncated: String = flat.chars().take(HISTORY_LINE_MAX_CHARS).collect();
-    format!("{truncated}{EM_DASH}")
+    format!("{truncated}{ELLIPSIS}")
 }
 
 /// Matches ordered by track then start index, for a stable list.
@@ -1124,6 +1429,241 @@ fn check_text(text: &str) -> Result<CheckedQuery, Diagnostic> {
     gt_query::check(&gt_query::parse(text)?)
 }
 
+/// Whether accepting a construct of this kind should append a space, because
+/// something always follows it (a value, an operand, the next stage). Kinds
+/// that lead straight into punctuation - `avg` into `(`, a metric into an
+/// operator, a unit into `|` - get none.
+fn inserts_trailing_space(kind: ConstructKind) -> bool {
+    matches!(
+        kind,
+        ConstructKind::Source | ConstructKind::Stage | ConstructKind::Param
+    )
+}
+
+/// Byte offset of the `char_index`-th character, or the text length when the
+/// index is at or past the end. The egui caret is a char index; the query
+/// position model works in bytes.
+fn char_to_byte(text: &str, char_index: usize) -> usize {
+    text.char_indices()
+        .nth(char_index)
+        .map_or(text.len(), |(byte, _)| byte)
+}
+
+/// Draw the completion popup at `pos`, returning the index of a clicked row.
+fn draw_autocomplete_popup(
+    ui: &egui::Ui,
+    editor_id: egui::Id,
+    pos: egui::Pos2,
+    autocomplete: &Autocomplete,
+) -> Option<usize> {
+    let mut clicked = None;
+    // Size the scroll area to exactly five rows. A `selectable_label` is the
+    // text height plus its button padding, and rows are separated by the item
+    // spacing.
+    let spacing = ui.spacing();
+    let row_height = ui.text_style_height(&egui::TextStyle::Body)
+        + 2.0 * spacing.button_padding.y
+        + spacing.item_spacing.y;
+    let max_height = row_height * AUTOCOMPLETE_VISIBLE_ROWS as f32;
+    let overflow = autocomplete
+        .items
+        .len()
+        .saturating_sub(AUTOCOMPLETE_VISIBLE_ROWS);
+
+    egui::Area::new(editor_id.with("autocomplete"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(pos)
+        .constrain(true)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_min_width(220.0);
+                ui.set_max_width(380.0);
+                egui::ScrollArea::vertical()
+                    .max_height(max_height)
+                    .show(ui, |ui| {
+                        for (index, construct) in autocomplete.items.iter().enumerate() {
+                            let selected = index == autocomplete.selected;
+                            let response =
+                                ui.selectable_label(selected, autocomplete_row(ui, construct));
+                            if response.clicked() {
+                                clicked = Some(index);
+                            }
+                            if selected {
+                                response.scroll_to_me(None);
+                            }
+                        }
+                    });
+                if overflow > 0 {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} {} more below",
+                            egui_phosphor::regular::CARET_DOWN,
+                            overflow,
+                        ))
+                        .weak()
+                        .small(),
+                    );
+                }
+            });
+        });
+    clicked
+}
+
+/// One popup row: the construct's name in code font, its summary dimmed beside
+/// it.
+fn autocomplete_row(ui: &egui::Ui, construct: &Construct) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    job.append(
+        construct.name,
+        0.0,
+        egui::TextFormat {
+            font_id: egui::TextStyle::Monospace.resolve(ui.style()),
+            color: ui.visuals().strong_text_color(),
+            ..Default::default()
+        },
+    );
+    job.append(
+        &format!("  {}", construct.summary),
+        0.0,
+        egui::TextFormat {
+            font_id: egui::TextStyle::Body.resolve(ui.style()),
+            color: ui.visuals().weak_text_color(),
+            italics: true,
+            ..Default::default()
+        },
+    );
+    job
+}
+
+/// A Rust-doc-style hover: the construct's name and kind, its summary, then -
+/// when present - the fuller explanation and example snippets. Language
+/// constructs (backticked in the doc, and whole example snippets) are syntax
+/// colored the way the editor colors them, rather than shown in raw backticks.
+fn construct_tooltip_ui(ui: &mut egui::Ui, construct: &Construct) {
+    ui.set_max_width(360.0);
+    let mono = egui::TextStyle::Monospace.resolve(ui.style());
+    let body = egui::TextStyle::Body.resolve(ui.style());
+    let default = ui.visuals().text_color();
+    let dark = ui.visuals().dark_mode;
+
+    ui.horizontal(|ui| {
+        // The name is itself a construct, so color it like the editor would.
+        let mut name = LayoutJob::default();
+        append_query_syntax(&mut name, &mono, default, dark, construct.name);
+        ui.label(name);
+        ui.label(egui::RichText::new(construct.kind.label()).weak().small());
+    });
+    ui.label(construct.summary);
+    if !construct.doc.is_empty() || !construct.examples.is_empty() {
+        ui.separator();
+    }
+    if !construct.doc.is_empty() {
+        let mut doc = LayoutJob::default();
+        // The doc is prose with `backticked` code spans; color the code.
+        let mut in_code = false;
+        for part in construct.doc.split('`') {
+            if !part.is_empty() {
+                if in_code {
+                    append_query_syntax(&mut doc, &mono, default, dark, part);
+                } else {
+                    doc.append(part, 0.0, text_format(&body, default));
+                }
+            }
+            in_code = !in_code;
+        }
+        doc.wrap.max_width = ui.available_width();
+        ui.label(doc);
+    }
+    for example in construct.examples {
+        let mut job = LayoutJob::default();
+        append_query_syntax(&mut job, &mono, default, dark, example);
+        job.wrap.max_width = ui.available_width();
+        ui.label(job);
+    }
+}
+
+/// A single-color text section for a [`LayoutJob`].
+fn text_format(font: &egui::FontId, color: egui::Color32) -> egui::TextFormat {
+    egui::TextFormat {
+        font_id: font.clone(),
+        color,
+        ..Default::default()
+    }
+}
+
+/// The syntax-highlight color for a token class in the current theme; `default`
+/// colors whitespace and punctuation. Shared by the editor's layouter and the
+/// hover doc so they can't diverge.
+fn syntax_color(class: TokenClass, default: egui::Color32, dark_mode: bool) -> egui::Color32 {
+    match class {
+        TokenClass::Keyword => gt_ui_theme::QUERY_SYNTAX_KEYWORD,
+        TokenClass::Number => gt_ui_theme::QUERY_SYNTAX_NUMBER,
+        TokenClass::Ident => gt_ui_theme::query_syntax_ident(dark_mode),
+        TokenClass::Comment => gt_ui_theme::QUERY_SYNTAX_COMMENT,
+        TokenClass::Punctuation => default,
+        TokenClass::Error => gt_ui_theme::ERROR_INDICATOR,
+    }
+}
+
+/// Append `text` to `job` in `font`, coloring query tokens the way the editor
+/// does. `default` colors whitespace and punctuation.
+fn append_query_syntax(
+    job: &mut LayoutJob,
+    font: &egui::FontId,
+    default: egui::Color32,
+    dark_mode: bool,
+    text: &str,
+) {
+    let color = |class| syntax_color(class, default, dark_mode);
+    let mut cursor = 0;
+    for (span, class) in lexer::highlight_classes(text) {
+        // Whitespace between tokens is not covered by a span.
+        if let Some(gap) = text.get(cursor..span.start).filter(|g| !g.is_empty()) {
+            job.append(gap, 0.0, text_format(font, default));
+        }
+        if let Some(slice) = text.get(span.start..span.end) {
+            job.append(slice, 0.0, text_format(font, color(class)));
+        }
+        cursor = span.end;
+    }
+    if let Some(rest) = text.get(cursor..).filter(|r| !r.is_empty()) {
+        job.append(rest, 0.0, text_format(font, default));
+    }
+}
+
+/// The query error's problem as a [`LayoutJob`]: an error icon and red prose,
+/// with the quoted token (backticked in the message) lifted out of the red into
+/// the code font and italicized so it stands out.
+fn error_message_layout(ui: &egui::Ui, message: &str) -> LayoutJob {
+    let body = egui::TextStyle::Body.resolve(ui.style());
+    let mono = egui::TextStyle::Monospace.resolve(ui.style());
+    let mut job = LayoutJob::default();
+    job.append(
+        &format!("{} ", egui_phosphor::regular::WARNING_OCTAGON),
+        0.0,
+        text_format(&body, gt_ui_theme::ERROR_INDICATOR),
+    );
+    let mut in_code = false;
+    for part in message.split('`') {
+        if !part.is_empty() {
+            let format = if in_code {
+                egui::TextFormat {
+                    font_id: mono.clone(),
+                    color: ui.visuals().strong_text_color(),
+                    italics: true,
+                    ..Default::default()
+                }
+            } else {
+                text_format(&body, gt_ui_theme::ERROR_INDICATOR)
+            };
+            job.append(part, 0.0, format);
+        }
+        in_code = !in_code;
+    }
+    job.wrap.max_width = ui.available_width();
+    job
+}
+
 /// Display formatting per metric quantity, for match tables. Values arrive
 /// in the evaluator's base units.
 fn format_value(metric: QueryMetric, value: Option<f64>) -> String {
@@ -1184,14 +1724,7 @@ fn highlight_layout(ui: &egui::Ui, text: &str, diagnostic: Option<Span>) -> Layo
         for range in segments(cursor..span.start, underline) {
             append(range, default_color);
         }
-        let color = match class {
-            TokenClass::Keyword => gt_ui_theme::QUERY_SYNTAX_KEYWORD,
-            TokenClass::Number => gt_ui_theme::QUERY_SYNTAX_NUMBER,
-            TokenClass::Ident => gt_ui_theme::QUERY_SYNTAX_IDENT,
-            TokenClass::Comment => gt_ui_theme::QUERY_SYNTAX_COMMENT,
-            TokenClass::Punctuation => default_color,
-            TokenClass::Error => gt_ui_theme::ERROR_INDICATOR,
-        };
+        let color = syntax_color(class, default_color, ui.visuals().dark_mode);
         for range in segments(span.start..span.end, underline) {
             append(range, color);
         }
@@ -1342,14 +1875,14 @@ mod tests {
     #[test]
     fn history_age_omits_seconds() {
         use chrono::Duration;
-        assert_eq!(format_history_age(Duration::seconds(0)), "just now");
-        assert_eq!(format_history_age(Duration::seconds(59)), "just now");
+        assert_eq!(format_history_age(Duration::seconds(0)), "now");
+        assert_eq!(format_history_age(Duration::seconds(59)), "now");
         assert_eq!(format_history_age(Duration::seconds(90)), "1m ago");
         assert_eq!(format_history_age(Duration::minutes(59)), "59m ago");
         assert_eq!(format_history_age(Duration::minutes(90)), "1h ago");
         assert_eq!(format_history_age(Duration::hours(25)), "1d ago");
-        // A clock skew putting the run "in the future" reads as just now.
-        assert_eq!(format_history_age(Duration::seconds(-5)), "just now");
+        // A clock skew putting the run "in the future" reads as now.
+        assert_eq!(format_history_age(Duration::seconds(-5)), "now");
     }
 
     #[test]
@@ -1361,7 +1894,10 @@ mod tests {
         assert_eq!(query_one_line("# only a comment\n\n"), "");
         let long = format!("points | where velocity > {} km/h", "9".repeat(60));
         let shown = query_one_line(&long);
-        assert!(shown.ends_with(EM_DASH), "over-long lines are elided");
+        assert!(
+            shown.ends_with(ELLIPSIS),
+            "over-long lines are elided with dots"
+        );
         assert_eq!(shown.chars().count(), HISTORY_LINE_MAX_CHARS + 1);
     }
 
