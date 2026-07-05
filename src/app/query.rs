@@ -20,7 +20,7 @@ use gt_loaded_files::LoadedFilesView;
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{
     CheckedQuery, Construct, ConstructKind, Diagnostic, MetricProvider, PipelineOutput, Quantity,
-    QueryMetric, RunSummary, Span, TrackInput, TrackMatches, Unit, run_pipeline,
+    QueryMetric, RunSummary, Span, TrackInput, TrackMatches, Unit,
 };
 use gt_types::satellites::Constellation;
 use gt_types::{DisplayMode, FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
@@ -567,11 +567,22 @@ impl QueryWindow {
                 .collect()
         };
 
+        // The point-key bitmask distinguishes only so many halo layers; extra
+        // draw queries beyond that cannot be rendered distinctly.
+        if output.draws.len() > gt_ui_types::MAX_DRAW_LAYERS {
+            log::warn!(
+                "query has {} draw stages; only the first {} render as halos",
+                output.draws.len(),
+                gt_ui_types::MAX_DRAW_LAYERS
+            );
+        }
+
         // The i-th draw query gets palette color i; the map keys its halo layer
         // to the same order.
         let draw_color: HashMap<usize, usize> = output
             .draws
             .iter()
+            .take(gt_ui_types::MAX_DRAW_LAYERS)
             .enumerate()
             .map(|(order, layer)| (layer.query_index, order))
             .collect();
@@ -581,6 +592,7 @@ impl QueryWindow {
             draws: output
                 .draws
                 .iter()
+                .take(gt_ui_types::MAX_DRAW_LAYERS)
                 .enumerate()
                 .map(|(color, layer)| DrawLayer {
                     color,
@@ -1090,7 +1102,7 @@ fn run_worker(
         .collect();
 
     RunCompleted {
-        output: run_pipeline(queries, &inputs, &cancelled),
+        output: gt_query::run_pipeline(queries, &inputs, &cancelled),
         track_data,
     }
 }
@@ -1109,8 +1121,6 @@ fn merge_params(queries: &[CheckedQuery]) -> gt_query::Params {
     merged
 }
 
-/// One match: a collapsing header with the point table inside. Row hover
-/// echoes the point on the map through the plot cross-highlight ring.
 /// A query's results header: a color swatch for draw queries, then its summary.
 fn query_header(ui: &egui::Ui, query: &PanelQuery) -> LayoutJob {
     let mut job = LayoutJob::default();
@@ -1138,6 +1148,8 @@ struct MatchCtx<'a> {
     columns: &'a [QueryMetric],
 }
 
+/// One match: a collapsing header with the point table inside. Row hover
+/// echoes the point on the map through the plot cross-highlight ring.
 fn match_ui(
     ui: &mut egui::Ui,
     ctx: &MatchCtx<'_>,
@@ -2087,6 +2099,29 @@ mod tests {
             "over-long lines are elided with dots"
         );
         assert_eq!(shown.chars().count(), HISTORY_LINE_MAX_CHARS + 1);
+    }
+
+    #[test]
+    fn split_queries_handles_blank_line_edge_cases() {
+        // Built from arguments so single-element `vec![r(0, 1)]` does not trip
+        // clippy's `single_range_in_vec_init`.
+        let r = |start: usize, end: usize| start..end;
+        let cases: &[(&str, Vec<Range<usize>>)] = &[
+            // A blank line separates two queries.
+            ("a\n\nb", vec![r(0, 1), r(3, 4)]),
+            // Leading and trailing blank lines are dropped.
+            ("\n\na\n\n", vec![r(2, 3)]),
+            // A whitespace-only line still separates.
+            ("a\n   \nb", vec![r(0, 1), r(6, 7)]),
+            // A single chunk without a trailing newline.
+            ("a", vec![r(0, 1)]),
+            // Adjacent non-blank lines are one multi-line query, and the range
+            // ends at the last line's trimmed content.
+            ("points\n| draw", vec![r(0, 13)]),
+        ];
+        for (text, want) in cases {
+            assert_eq!(&split_queries(text), want, "input: {text:?}");
+        }
     }
 
     #[test]

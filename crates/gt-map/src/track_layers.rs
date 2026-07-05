@@ -317,12 +317,18 @@ impl TrackLayers<'_> {
             }
             let track_ref = TrackRef::new(geo.fi, geo.ti);
             // A layer per draw query, painted in its own color; overlapping
-            // halos stack because each is a separate pass.
-            for (layer_idx, layer) in matches.draws.iter().enumerate() {
+            // halos stack because each is a separate pass. Capped at the
+            // bitmask width, matching `QueryMatches::draw_bits`.
+            for (layer_idx, layer) in matches
+                .draws
+                .iter()
+                .take(gt_ui_types::MAX_DRAW_LAYERS)
+                .enumerate()
+            {
                 if layer.ranges_for(track_ref).is_empty() {
                     continue;
                 }
-                let bit = 1u16 << (layer_idx % u16::BITS as usize);
+                let bit = gt_ui_types::layer_bit(layer_idx);
                 let color = gt_ui_theme::query_halo_color(layer.color, matches.stale);
                 match &geo.path {
                     VisiblePath::OffScreen => {}

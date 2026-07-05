@@ -23,6 +23,24 @@ pub struct QueryMatches {
     pub stale: bool,
 }
 
+/// The most `draw` layers a [`QueryMatches`] can distinguish, bounded by the
+/// width of the per-point bitmask ([`draw_bits`](QueryMatches::draw_bits)) the
+/// map renderer stores in each point key.
+pub const MAX_DRAW_LAYERS: usize = u16::BITS as usize;
+
+/// The point-key bit standing for draw layer `index`.
+///
+/// The renderer and [`QueryMatches::draw_bits`] must agree on this mapping, so
+/// it lives here. Callers keep `index < MAX_DRAW_LAYERS`; beyond that the mask
+/// cannot represent more layers (the app clamps the pipeline to that many).
+pub fn layer_bit(index: usize) -> u16 {
+    debug_assert!(
+        index < MAX_DRAW_LAYERS,
+        "draw layer {index} exceeds the {MAX_DRAW_LAYERS}-bit mask"
+    );
+    1u16 << (index % MAX_DRAW_LAYERS)
+}
+
 /// One `draw` query's halos: the points it matched that are still shown.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DrawLayer {
@@ -56,9 +74,9 @@ impl QueryMatches {
     /// `draws[i]`). Few layers, so the caller stores it in the point key.
     pub fn draw_bits(&self, track: TrackRef, point_index: usize) -> u16 {
         let mut bits = 0u16;
-        for (i, layer) in self.draws.iter().enumerate() {
+        for (i, layer) in self.draws.iter().take(MAX_DRAW_LAYERS).enumerate() {
             if Self::range_at(track_ranges(&layer.ranges, track), point_index).is_some() {
-                bits |= 1u16 << (i % u16::BITS as usize);
+                bits |= layer_bit(i);
             }
         }
         bits
@@ -166,5 +184,34 @@ mod tests {
             ..QueryMatches::default()
         };
         assert!(!drawn.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "sorted and disjoint")]
+    fn unsorted_ranges_fail_loudly_in_debug() {
+        let matches = QueryMatches {
+            hidden: HashMap::from([(track(), vec![rng(9, 10), rng(2, 5)])]),
+            ..QueryMatches::default()
+        };
+        let _ = matches.hidden_ranges(track());
+    }
+
+    #[test]
+    fn draw_bits_ignore_layers_beyond_the_mask_width() {
+        // One layer per bit, plus one extra that the u16 mask cannot hold.
+        let draws = (0..=MAX_DRAW_LAYERS)
+            .map(|i| layer(i, vec![rng(0, 1)]))
+            .collect();
+        let matches = QueryMatches {
+            draws,
+            ..QueryMatches::default()
+        };
+        // Every representable layer covers point 0; the overflow layer does not
+        // alias back onto bit 0.
+        assert_eq!(matches.draws.len(), MAX_DRAW_LAYERS + 1);
+        assert_eq!(
+            matches.draw_bits(track(), 0).count_ones() as usize,
+            MAX_DRAW_LAYERS
+        );
     }
 }

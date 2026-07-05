@@ -1576,9 +1576,6 @@ mod snapshot_tests {
         harness.snapshot("disambig_popup_big_icons");
     }
 
-    /// Drive the full `NavMap::draw` path over the fixture track with a
-    /// hardcoded set of query matches. Requires `GEOTRACE_OFFLINE=1` (set by
-    /// `just test`) so no map tiles render beneath the halos.
     /// The gaps between `ranges` within `0..len` - the points a `keep` query
     /// hides.
     fn complement(ranges: &[std::ops::Range<usize>], len: usize) -> Vec<std::ops::Range<usize>> {
@@ -1596,6 +1593,9 @@ mod snapshot_tests {
         out
     }
 
+    /// Drive the full `NavMap::draw` path over the fixture track with a
+    /// hardcoded set of query matches. Requires `GEOTRACE_OFFLINE=1` (set by
+    /// `just test`) so no map tiles render beneath the halos.
     fn snapshot_nav_map_with_matches(name: &'static str, mode: DisplayMode, stale: bool) {
         use std::collections::HashMap;
 
