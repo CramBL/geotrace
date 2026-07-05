@@ -176,6 +176,34 @@ pub const QUERY_MATCH_HALO: Color32 = Color32::from_rgba_premultiplied(138, 41, 
 /// Premultiplied equivalent of `(150, 120, 145, 110)`.
 pub const QUERY_MATCH_HALO_STALE: Color32 = Color32::from_rgba_premultiplied(65, 52, 63, 110);
 
+/// Halo colours for successive `draw` queries, so overlapping outlines stay
+/// distinguishable. The first is [`QUERY_MATCH_HALO`], so a single draw query
+/// looks unchanged. All semi-transparent and clear of the track blues.
+pub const QUERY_MATCH_HALOS: [Color32; 5] = [
+    QUERY_MATCH_HALO,
+    // (70, 200, 120, 150) green
+    Color32::from_rgba_premultiplied(41, 118, 71, 150),
+    // (240, 150, 40, 150) amber
+    Color32::from_rgba_premultiplied(141, 88, 24, 150),
+    // (90, 160, 240, 150) blue
+    Color32::from_rgba_premultiplied(53, 94, 141, 150),
+    // (220, 90, 90, 150) red
+    Color32::from_rgba_premultiplied(129, 53, 53, 150),
+];
+
+/// Halo colour for the `index`-th `draw` query, or the stale grey when the
+/// visible data changed after the run. The palette cycles past its length.
+pub fn query_halo_color(index: usize, stale: bool) -> Color32 {
+    if stale {
+        return QUERY_MATCH_HALO_STALE;
+    }
+    let palette = QUERY_MATCH_HALOS;
+    palette
+        .get(index % palette.len())
+        .copied()
+        .unwrap_or(QUERY_MATCH_HALO)
+}
+
 /// Query editor syntax highlighting: keywords (`points`, `where`, `and`, …).
 pub const QUERY_SYNTAX_KEYWORD: Color32 = Color32::from_rgb(198, 120, 221);
 

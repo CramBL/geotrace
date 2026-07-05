@@ -2,7 +2,7 @@
 //! stretches a query matched, rings for single-point matches, and the match
 //! header shown in the hover tooltip.
 
-use egui::{Pos2, Stroke, Ui};
+use egui::{Color32, Pos2, Stroke, Ui};
 use gt_types::{LoadedFile, LoadedTrack, TrackRef};
 
 /// Width of the halo stroke. Deliberately wider than the trackline, the
@@ -17,34 +17,27 @@ const RING_STROKE_WIDTH: f32 = 3.0;
 /// ring encloses the fix icon like the plot-hover ring does.
 const RING_RADIUS_PADDING: f32 = 5.0;
 
-pub(crate) fn halo_stroke(stale: bool) -> Stroke {
-    let color = if stale {
-        gt_ui_theme::QUERY_MATCH_HALO_STALE
-    } else {
-        gt_ui_theme::QUERY_MATCH_HALO
-    };
-    Stroke::new(HALO_WIDTH, color)
-}
-
-/// Paint one track's match halos from its prepared span geometry.
+/// Paint one draw layer's halos from a track's prepared span geometry, in the
+/// layer's `color`.
 ///
 /// `span` is one culling span of the track's polyline; `matched` projects
-/// each point's key to its match flag, so no intermediate buffer is built
-/// per frame. Consecutive matched points form the halo stretches. Runs of
-/// one point (a single-point match, or a longer match reduced to one visible
-/// point by LOD selection) draw as a ring so they stay visible.
+/// each point's key to whether this layer covers it, so no intermediate
+/// buffer is built per frame. Consecutive matched points form the halo
+/// stretches. Runs of one point (a single-point match, or a longer match
+/// reduced to one visible point by LOD selection) draw as a ring so they stay
+/// visible.
 pub(crate) fn paint_match_halo_span<K>(
     ui: &Ui,
     span: &[(K, Pos2)],
     matched: impl Fn(&K) -> bool,
     ring_radius: f32,
-    stale: bool,
+    color: Color32,
 ) {
-    let stroke = halo_stroke(stale);
+    let stroke = Stroke::new(HALO_WIDTH, color);
     for run in matched_runs(span, &matched) {
         match run {
             [] => {}
-            [(_, pos)] => draw_match_ring(ui, *pos, ring_radius, stale),
+            [(_, pos)] => draw_match_ring(ui, *pos, ring_radius, color),
             _ => {
                 let points: Vec<Pos2> = run.iter().map(|&(_, pos)| pos).collect();
                 ui.painter().add(egui::Shape::line(points, stroke));
@@ -55,12 +48,11 @@ pub(crate) fn paint_match_halo_span<K>(
 
 /// Ring around an isolated matched point (also used when a whole track
 /// collapses to a sub-pixel dot).
-pub(crate) fn draw_match_ring(ui: &Ui, pos: Pos2, radius: f32, stale: bool) {
-    let stroke = halo_stroke(stale);
+pub(crate) fn draw_match_ring(ui: &Ui, pos: Pos2, radius: f32, color: Color32) {
     ui.painter().circle_stroke(
         pos,
         radius + RING_RADIUS_PADDING,
-        Stroke::new(RING_STROKE_WIDTH, stroke.color),
+        Stroke::new(RING_STROKE_WIDTH, color),
     );
 }
 

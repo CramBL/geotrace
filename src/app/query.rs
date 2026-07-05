@@ -19,13 +19,13 @@ use gt_filter::GlobalFilter;
 use gt_loaded_files::LoadedFilesView;
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{
-    CheckedQuery, Construct, ConstructKind, Diagnostic, MetricProvider, Quantity, QueryMetric,
-    RunOutput, Span, TrackInput, Unit,
+    CheckedQuery, Construct, ConstructKind, Diagnostic, MetricProvider, PipelineOutput, Quantity,
+    QueryMetric, RunSummary, Span, TrackInput, TrackMatches, Unit, run_pipeline,
 };
 use gt_types::satellites::Constellation;
 use gt_types::{DisplayMode, FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
 use gt_ui_theme::{DEGREE_SIGN, EM_DASH};
-use gt_ui_types::{MapHighlight, QueryMatches, TrackDataVisibility};
+use gt_ui_types::{DrawLayer, MapHighlight, QueryMatches, TrackDataVisibility};
 
 use crate::settings::QueryHistoryEntry;
 
@@ -97,9 +97,10 @@ const EXAMPLES: &[QueryExample] = &[
 pub struct QueryWindow {
     pub open: bool,
     text: String,
-    /// Outcome of checking `text`, kept in sync by `editor_ui`.
-    checked: Result<CheckedQuery, Diagnostic>,
-    /// The text `checked` was computed from.
+    /// The blank-line-separated queries of `text`, each parsed and checked.
+    /// Kept in sync by `editor_ui`.
+    chunks: Vec<Chunk>,
+    /// The text `chunks` was computed from.
     checked_text: String,
     /// Set by the Run button, consumed at the end of `show`.
     run_requested: bool,
@@ -145,6 +146,12 @@ struct Autocomplete {
     shown: bool,
 }
 
+/// One query in the editor: its byte range in `text` and its check outcome.
+struct Chunk {
+    range: Range<usize>,
+    result: Result<CheckedQuery, Diagnostic>,
+}
+
 /// A run in flight on the worker thread.
 struct RunningQuery {
     cancel: Arc<AtomicBool>,
@@ -154,14 +161,12 @@ struct RunningQuery {
     rx: mpsc::Receiver<RunCompleted>,
     /// Snapshot taken when the run started, attached to its results.
     fingerprint: RunFingerprint,
-    /// The display mode the query asked for, carried to the map.
-    mode: DisplayMode,
 }
 
 /// What the worker sends back. `output: None` means the run was cancelled -
 /// previous results stay untouched.
 struct RunCompleted {
-    output: Option<RunOutput>,
+    output: Option<PipelineOutput>,
     track_data: HashMap<TrackRef, TrackQueryData>,
 }
 
@@ -178,13 +183,25 @@ struct RunFingerprint {
 
 /// Everything one run produced and the UI needs to show it.
 struct QueryResults {
+    /// The composed display effect for the map.
     matches: QueryMatches,
-    summary: String,
-    columns: Vec<QueryMetric>,
-    /// Per-track derived series (only for metrics the query referenced),
+    /// Per query, in editor order, for the results panel.
+    queries: Vec<PanelQuery>,
+    /// Per-track derived series (only for metrics some query referenced),
     /// kept so match tables show the exact values the run used.
     track_data: HashMap<TrackRef, TrackQueryData>,
     fingerprint: RunFingerprint,
+}
+
+/// One query's result for the panel: its summary line, columns, and matches.
+struct PanelQuery {
+    /// Palette color index when this query draws, for the swatch; `None`
+    /// otherwise.
+    color: Option<usize>,
+    summary: String,
+    columns: Vec<QueryMetric>,
+    /// Absolute point-index ranges this query matched.
+    matches: Vec<TrackMatches>,
 }
 
 /// Owned per-track inputs for [`TrackProvider`], computed once per run.
@@ -201,7 +218,7 @@ impl QueryWindow {
     pub fn new() -> Self {
         let text = String::new();
         Self {
-            checked: check_text(&text),
+            chunks: check_all(&text),
             checked_text: text.clone(),
             text,
             open: false,
@@ -220,17 +237,35 @@ impl QueryWindow {
         self.results.as_ref().map(|r| &r.matches)
     }
 
-    /// Whether a query is currently affecting the map: halos for `draw`/`hide`
-    /// with matches, or `keep` (which always filters). Drives the toolbar
-    /// indicator shown while the window is closed.
+    /// Whether the queries are currently affecting the map (any hidden points
+    /// or halos). Drives the toolbar indicator shown while the window is closed.
     pub fn filter_active(&self) -> bool {
-        self.results.as_ref().is_some_and(|results| {
-            let has_matches = results.matches.ranges.values().any(|r| !r.is_empty());
-            match results.matches.mode {
-                DisplayMode::Draw | DisplayMode::Hide => has_matches,
-                DisplayMode::Keep => true,
-            }
-        })
+        self.results
+            .as_ref()
+            .is_some_and(|results| !results.matches.is_empty())
+    }
+
+    /// Whether every query in the editor checks and there is at least one, so
+    /// the pipeline can run.
+    fn all_ok(&self) -> bool {
+        !self.chunks.is_empty() && self.chunks.iter().all(|c| c.result.is_ok())
+    }
+
+    /// The first query that failed to check, with its diagnostic and the byte
+    /// offset of its chunk (to map spans back to editor coordinates).
+    fn first_error(&self) -> Option<(&Diagnostic, usize)> {
+        self.chunks
+            .iter()
+            .find_map(|c| c.result.as_ref().err().map(|d| (d, c.range.start)))
+    }
+
+    /// The checked query the caret sits in, and the caret's offset within that
+    /// chunk - for autocomplete and hover, which analyze one query at a time.
+    fn chunk_at(&self, byte: usize) -> Option<(&Chunk, usize)> {
+        self.chunks
+            .iter()
+            .find(|c| c.range.start <= byte && byte <= c.range.end)
+            .map(|c| (c, byte - c.range.start))
     }
 
     /// Drop the last run's results so the map returns to normal, abandoning any
@@ -361,7 +396,7 @@ impl QueryWindow {
         // Consumed only while the window is open, so it never steals the
         // chord from other widgets.
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter))
-            && self.checked.is_ok()
+            && self.all_ok()
             && self.running.is_none()
         {
             self.run_requested = true;
@@ -513,35 +548,71 @@ impl QueryWindow {
         let Some(output) = completed.output else {
             return;
         };
+        let track_data = completed.track_data;
 
-        let summary = summary_line(&output, running.mode);
-        let mut ranges: HashMap<TrackRef, Vec<Range<usize>>> = HashMap::new();
-        let mut track_data = completed.track_data;
-        for track_matches in &output.matches {
-            let start = track_data
-                .get(&track_matches.track)
-                .map_or(0, |d| d.slice_start);
-            // Evaluation ran on the time-filtered slice; map indices back to
-            // absolute positions in the track.
-            let absolute = track_matches
-                .ranges
+        // Evaluation ran on each track's time-filtered slice; map indices back
+        // to absolute positions.
+        let absolute = |tms: &[TrackMatches]| -> HashMap<TrackRef, Vec<Range<usize>>> {
+            tms.iter()
+                .filter(|tm| !tm.ranges.is_empty())
+                .map(|tm| {
+                    let start = track_data.get(&tm.track).map_or(0, |d| d.slice_start);
+                    let ranges = tm
+                        .ranges
+                        .iter()
+                        .map(|r| r.start + start..r.end + start)
+                        .collect();
+                    (tm.track, ranges)
+                })
+                .collect()
+        };
+
+        // The i-th draw query gets palette color i; the map keys its halo layer
+        // to the same order.
+        let draw_color: HashMap<usize, usize> = output
+            .draws
+            .iter()
+            .enumerate()
+            .map(|(order, layer)| (layer.query_index, order))
+            .collect();
+
+        let matches = QueryMatches {
+            hidden: absolute(&output.hidden),
+            draws: output
+                .draws
                 .iter()
-                .map(|r| r.start + start..r.end + start)
-                .collect();
-            ranges.insert(track_matches.track, absolute);
-        }
-        // Tracks without matches keep no entry, and unreferenced derived
-        // series were never computed - drop the empties.
-        track_data.retain(|track_ref, _| ranges.contains_key(track_ref));
+                .enumerate()
+                .map(|(color, layer)| DrawLayer {
+                    color,
+                    ranges: absolute(&layer.matches),
+                })
+                .collect(),
+            stale: false,
+        };
+        let queries = output
+            .queries
+            .iter()
+            .enumerate()
+            .map(|(qi, q)| PanelQuery {
+                color: draw_color.get(&qi).copied(),
+                summary: summary_line(&q.summary, q.mode),
+                columns: q.columns.clone(),
+                matches: q
+                    .matches
+                    .iter()
+                    .map(|tm| TrackMatches {
+                        track: tm.track,
+                        ranges: absolute(std::slice::from_ref(tm))
+                            .remove(&tm.track)
+                            .unwrap_or_default(),
+                    })
+                    .collect(),
+            })
+            .collect();
 
         self.results = Some(QueryResults {
-            matches: QueryMatches {
-                ranges,
-                mode: running.mode,
-                stale: false,
-            },
-            summary,
-            columns: output.columns,
+            matches,
+            queries,
             track_data,
             fingerprint: running.fingerprint,
         });
@@ -554,10 +625,13 @@ impl QueryWindow {
         self.apply_autocomplete_input(ui, editor_id);
 
         if self.checked_text != self.text {
-            self.checked = check_text(&self.text);
+            self.chunks = check_all(&self.text);
             self.checked_text = self.text.clone();
         }
-        let diagnostic_span = self.checked.as_ref().err().map(|d| d.span);
+        // Underline the first error, mapped from its chunk to editor bytes.
+        let diagnostic_span = self
+            .first_error()
+            .map(|(d, offset)| Span::new(d.span.start + offset, d.span.end + offset));
 
         let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
             let mut job = highlight_layout(ui, buf.as_str(), diagnostic_span);
@@ -576,7 +650,7 @@ impl QueryWindow {
         self.update_autocomplete(ui, editor_id, &output);
         self.hover_docs(ui, &output);
 
-        if let Err(diagnostic) = &self.checked
+        if let Some((diagnostic, _)) = self.first_error()
             && !self.text.trim().is_empty()
         {
             // The message shows in red with an error icon (the quoted token
@@ -590,9 +664,10 @@ impl QueryWindow {
 
         ui.horizontal(|ui| {
             let in_flight = self.running.is_some();
-            let runnable = self.checked.is_ok() && !in_flight;
+            let all_ok = self.all_ok();
+            let runnable = all_ok && !in_flight;
             let run = ui.add_enabled(runnable, egui::Button::new("Run"));
-            let run = match (self.checked.is_ok(), in_flight) {
+            let run = match (all_ok, in_flight) {
                 (false, _) => run.on_disabled_hover_text("Fix the error above to run"),
                 (true, true) => run.on_disabled_hover_text("A run is in progress"),
                 (true, false) => run,
@@ -746,8 +821,18 @@ impl QueryWindow {
             self.autocomplete.dismissed_text = None;
 
             let caret_byte = char_to_byte(&self.text, caret_char);
-            let completions = gt_query::completions_at(&self.text, caret_byte);
+            // Analyze only the query the caret is in, then shift the byte range
+            // back to editor coordinates. Between queries, offer a fresh source.
+            let (src, offset) = match self.chunk_at(caret_byte) {
+                Some((chunk, _)) => (
+                    self.text.get(chunk.range.clone()).unwrap_or(""),
+                    chunk.range.start,
+                ),
+                None => ("", caret_byte),
+            };
+            let completions = gt_query::completions_at(src, caret_byte - offset);
             let items = completions.items;
+            let range = completions.range.start + offset..completions.range.end + offset;
 
             // Keep the highlighted row while the candidate set is unchanged;
             // otherwise start at the top.
@@ -764,7 +849,7 @@ impl QueryWindow {
                 0
             };
             self.autocomplete.items = items;
-            self.autocomplete.range = completions.range;
+            self.autocomplete.range = range;
             let caret_rect = output.galley.pos_from_cursor(CCursor::new(caret_char));
             self.autocomplete.caret_pos =
                 output.galley_pos + caret_rect.left_bottom().to_vec2() + egui::vec2(0.0, 2.0);
@@ -813,7 +898,12 @@ impl QueryWindow {
         }
         let ccursor = output.galley.cursor_from_pos(pointer - output.galley_pos);
         let byte = char_to_byte(&self.text, ccursor.index);
-        let Some(construct) = gt_query::construct_at(&self.text, byte) else {
+        // Look up the construct within the query under the pointer.
+        let Some((chunk, local)) = self.chunk_at(byte) else {
+            return;
+        };
+        let src = self.text.get(chunk.range.clone()).unwrap_or("");
+        let Some(construct) = gt_query::construct_at(src, local) else {
             return;
         };
         // Drawn as an Area (rather than a hover tooltip) so it is anchored to
@@ -837,20 +927,35 @@ impl QueryWindow {
         };
         let stale = results.matches.stale;
 
-        // The run summary is the collapsible header; the match tables are its
-        // body. A stable id keeps the open/closed state across reruns even as
-        // the summary text changes. No inner scroll - the window scrolls as a
-        // whole (see `show`), so the scrollbar sits at its edge.
-        egui::CollapsingHeader::new(&results.summary)
-            .id_salt("query_matches")
-            .default_open(true)
-            .show(ui, |ui| {
-                for (track_ref, ranges) in matches_in_order(&results.matches) {
-                    for range in ranges {
-                        match_ui(ui, files, results, track_ref, range, stale, highlight);
+        // One collapsible section per query, in editor order: its summary is
+        // the header (with a color swatch for draw queries), its match tables
+        // the body. Stable ids keep the open/closed state across reruns. No
+        // inner scroll - the window scrolls as a whole (see `show`).
+        for (qi, query) in results.queries.iter().enumerate() {
+            let matches = query
+                .matches
+                .iter()
+                .map(|tm| tm.ranges.len())
+                .sum::<usize>();
+            let match_ctx = MatchCtx {
+                files,
+                track_data: &results.track_data,
+                columns: &query.columns,
+            };
+            egui::CollapsingHeader::new(query_header(ui, query))
+                .id_salt(("query_result", qi))
+                .default_open(true)
+                .show(ui, |ui| {
+                    if matches == 0 {
+                        ui.label(egui::RichText::new("No matches").weak());
                     }
-                }
-            });
+                    for tm in &query.matches {
+                        for range in &tm.ranges {
+                            match_ui(ui, &match_ctx, tm.track, range, stale, highlight);
+                        }
+                    }
+                });
+        }
         if stale {
             ui.label(
                 egui::RichText::new(format!("Data changed since this run {EM_DASH} run again"))
@@ -873,11 +978,14 @@ impl QueryWindow {
         visibility: &TrackDataVisibility,
         filter: &GlobalFilter,
     ) {
-        let Ok(query) = &self.checked else {
+        if !self.all_ok() {
             return;
-        };
-        let mode = query.mode();
-        let query = query.clone();
+        }
+        let queries: Vec<CheckedQuery> = self
+            .chunks
+            .iter()
+            .filter_map(|c| c.result.as_ref().ok().cloned())
+            .collect();
         let fingerprint = current_fingerprint(loaded_files, visibility, filter);
 
         // Owned snapshot for the worker: each evaluated track's full point
@@ -906,7 +1014,7 @@ impl QueryWindow {
         thread::Builder::new()
             .name("query-run".to_owned())
             .spawn(move || {
-                let completed = run_worker(&query, &tracks, &worker_cancel, &worker_prepared);
+                let completed = run_worker(&queries, &tracks, &worker_cancel, &worker_prepared);
                 // A send failure means the window dropped the receiver;
                 // nothing left to notify.
                 tx.send(completed).ok();
@@ -920,23 +1028,29 @@ impl QueryWindow {
             track_total,
             rx,
             fingerprint,
-            mode,
         });
     }
 }
 
-/// The worker body: derived series per track, then the evaluation, with
-/// cancellation checks between tracks (gt-query checks within them).
+/// The worker body: derived series per track, then the sequential pipeline
+/// evaluation, with cancellation checks between tracks (gt-query checks within
+/// them).
 fn run_worker(
-    query: &CheckedQuery,
+    queries: &[CheckedQuery],
     tracks: &[(TrackRef, Vec<NavPoint>, Range<usize>)],
     cancel: &AtomicBool,
     prepared: &AtomicUsize,
 ) -> RunCompleted {
     let cancelled = || cancel.load(Ordering::Relaxed);
-    let uses_util = query.referenced_metrics().iter().any(|m| m.is_util());
-    let uses_slip = query.referenced_metrics().iter().any(|m| m.is_slip());
-    let params = query.params();
+    let uses_util = queries
+        .iter()
+        .any(|q| q.referenced_metrics().iter().any(|m| m.is_util()));
+    let uses_slip = queries
+        .iter()
+        .any(|q| q.referenced_metrics().iter().any(|m| m.is_slip()));
+    // One derived-series set per track, so `with` parameters merge: the first
+    // query to set mask/snr_drop/slip_window wins (queries rarely disagree).
+    let params = merge_params(queries);
 
     let mut track_data: HashMap<TrackRef, TrackQueryData> = HashMap::new();
     for (track_ref, points, slice) in tracks {
@@ -976,23 +1090,63 @@ fn run_worker(
         .collect();
 
     RunCompleted {
-        output: gt_query::run_cancellable(query, &inputs, &cancelled),
+        output: run_pipeline(queries, &inputs, &cancelled),
         track_data,
     }
 }
 
+/// Merge the `with` parameters of every query, taking the first value set for
+/// each. The derived util/slip series are computed once per track, so a later
+/// query that declares a different mask reuses the first (a rare conflict).
+fn merge_params(queries: &[CheckedQuery]) -> gt_query::Params {
+    let mut merged = gt_query::Params::default();
+    for query in queries {
+        let params = query.params();
+        merged.mask_deg = merged.mask_deg.or(params.mask_deg);
+        merged.snr_drop_db_hz = merged.snr_drop_db_hz.or(params.snr_drop_db_hz);
+        merged.slip_window_s = merged.slip_window_s.or(params.slip_window_s);
+    }
+    merged
+}
+
 /// One match: a collapsing header with the point table inside. Row hover
 /// echoes the point on the map through the plot cross-highlight ring.
+/// A query's results header: a color swatch for draw queries, then its summary.
+fn query_header(ui: &egui::Ui, query: &PanelQuery) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    if let Some(color) = query.color {
+        job.append(
+            "\u{25cf} ",
+            0.0,
+            text_format(&font, gt_ui_theme::query_halo_color(color, false)),
+        );
+    }
+    job.append(
+        &query.summary,
+        0.0,
+        text_format(&font, ui.visuals().text_color()),
+    );
+    job
+}
+
+/// The shared inputs a query's match tables read: the files, the run's derived
+/// series, and the query's columns.
+struct MatchCtx<'a> {
+    files: &'a [LoadedFile],
+    track_data: &'a HashMap<TrackRef, TrackQueryData>,
+    columns: &'a [QueryMetric],
+}
+
 fn match_ui(
     ui: &mut egui::Ui,
-    files: &[LoadedFile],
-    results: &QueryResults,
+    ctx: &MatchCtx<'_>,
     track_ref: TrackRef,
     range: &Range<usize>,
     stale: bool,
     highlight: &mut MapHighlight,
 ) {
-    let header = match_header_text(files, track_ref, range);
+    let header = match_header_text(ctx.files, track_ref, range);
     let id = ui.id().with(("query_match", track_ref, range.start));
     if stale {
         // Grayed out, not hidden: the rows reference point indices that may
@@ -1004,22 +1158,22 @@ fn match_ui(
     egui::CollapsingHeader::new(header)
         .id_salt(id)
         .show(ui, |ui| {
-            match_table_ui(ui, files, results, track_ref, range, highlight);
+            match_table_ui(ui, ctx, track_ref, range, highlight);
         });
 }
 
 fn match_table_ui(
     ui: &mut egui::Ui,
-    files: &[LoadedFile],
-    results: &QueryResults,
+    ctx: &MatchCtx<'_>,
     track_ref: TrackRef,
     range: &Range<usize>,
     highlight: &mut MapHighlight,
 ) {
-    let Some(points) = points_of(files, track_ref) else {
+    let columns = ctx.columns;
+    let Some(points) = points_of(ctx.files, track_ref) else {
         return;
     };
-    let data = results.track_data.get(&track_ref);
+    let data = ctx.track_data.get(&track_ref);
     let provider = provider_for(points, data);
     // accel derives through the same slice the evaluator saw, so the first
     // point of a time-filtered run shows the missing value the predicate
@@ -1034,14 +1188,14 @@ fn match_table_ui(
     egui::Grid::new(ui.id().with("match_table"))
         .striped(true)
         .show(ui, |ui| {
-            for column in &results.columns {
+            for column in columns {
                 ui.strong(column.to_string());
             }
             ui.end_row();
 
             for pi in range.clone().take(MATCH_TABLE_ROW_CAP) {
                 let mut row_hovered = false;
-                for column in &results.columns {
+                for column in columns {
                     let value = if *column == QueryMetric::Accel {
                         pi.checked_sub(slice_start)
                             .and_then(|rel| gt_query::derived_accel(&slice, rel))
@@ -1136,14 +1290,6 @@ fn query_one_line(text: &str) -> String {
     }
     let truncated: String = flat.chars().take(HISTORY_LINE_MAX_CHARS).collect();
     format!("{truncated}{ELLIPSIS}")
-}
-
-/// Matches ordered by track then start index, for a stable list.
-fn matches_in_order(matches: &QueryMatches) -> Vec<(TrackRef, &Vec<Range<usize>>)> {
-    let mut entries: Vec<(TrackRef, &Vec<Range<usize>>)> =
-        matches.ranges.iter().map(|(t, r)| (*t, r)).collect();
-    entries.sort_by_key(|(t, _)| *t);
-    entries
 }
 
 fn points_of(files: &[LoadedFile], track_ref: TrackRef) -> Option<&[NavPoint]> {
@@ -1246,8 +1392,7 @@ impl MetricProvider for SliceProvider<'_> {
     }
 }
 
-fn summary_line(output: &RunOutput, mode: DisplayMode) -> String {
-    let summary = &output.summary;
+fn summary_line(summary: &RunSummary, mode: DisplayMode) -> String {
     let mut parts = vec![format!(
         "{} {} on {} {}",
         summary.match_count,
@@ -1427,6 +1572,49 @@ impl MetricProvider for TrackProvider<'_> {
 
 fn check_text(text: &str) -> Result<CheckedQuery, Diagnostic> {
     gt_query::check(&gt_query::parse(text)?)
+}
+
+/// Parse and check every query in the editor. Queries are separated by a blank
+/// line; each chunk keeps its byte range so diagnostics and the caret map back
+/// to editor coordinates.
+fn check_all(text: &str) -> Vec<Chunk> {
+    split_queries(text)
+        .into_iter()
+        .map(|range| {
+            let src = text.get(range.clone()).unwrap_or("");
+            Chunk {
+                result: check_text(src),
+                range,
+            }
+        })
+        .collect()
+}
+
+/// Byte ranges of the blank-line-separated queries in `text`. Each range spans
+/// from a query's first non-blank line to the end of its last non-blank line.
+fn split_queries(text: &str) -> Vec<Range<usize>> {
+    let mut chunks = Vec::new();
+    let mut current: Option<Range<usize>> = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let start = offset;
+        offset += line.len();
+        if line.trim().is_empty() {
+            if let Some(range) = current.take() {
+                chunks.push(range);
+            }
+        } else {
+            let content_end = start + line.trim_end().len();
+            match &mut current {
+                Some(range) => range.end = content_end,
+                None => current = Some(start..content_end),
+            }
+        }
+    }
+    if let Some(range) = current {
+        chunks.push(range);
+    }
+    chunks
 }
 
 /// Whether accepting a construct of this kind should append a space, because
@@ -2074,7 +2262,7 @@ mod tests {
                 provider: &provider,
             }],
         );
-        let line = summary_line(&output, DisplayMode::Draw);
+        let line = summary_line(&output.summary, DisplayMode::Draw);
         assert_eq!(
             line,
             format!(
@@ -2104,9 +2292,9 @@ mod tests {
             }],
         );
         // keep hides the 3 non-matching points; hide hides the 2 matching.
-        assert!(summary_line(&output, DisplayMode::Keep).contains("3 of 5 points hidden"));
-        assert!(summary_line(&output, DisplayMode::Hide).contains("2 of 5 points hidden"));
-        assert!(!summary_line(&output, DisplayMode::Draw).contains("hidden"));
+        assert!(summary_line(&output.summary, DisplayMode::Keep).contains("3 of 5 points hidden"));
+        assert!(summary_line(&output.summary, DisplayMode::Hide).contains("2 of 5 points hidden"));
+        assert!(!summary_line(&output.summary, DisplayMode::Draw).contains("hidden"));
     }
 
     /// Velocity in m/s per point, everything else missing.

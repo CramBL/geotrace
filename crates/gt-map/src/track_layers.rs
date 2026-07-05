@@ -8,13 +8,10 @@
 //! previous plugins each walked the points themselves.
 
 use std::collections::HashMap;
-use std::ops::Range;
 
 use egui::{Color32, Response, Stroke, Ui};
 use gt_filter::GlobalFilter;
-use gt_types::{
-    DataCategory, DisplayMode, FileIdx, LoadedFile, LoadedTrack, MercBounds, TrackIdx, TrackRef,
-};
+use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, MercBounds, TrackIdx, TrackRef};
 use gt_ui_types::{HighlightScope, MapHighlight, QueryMatches};
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -55,10 +52,11 @@ struct LinePointKey {
     ghost: bool,
     quality: Color32,
     bucket: u8,
-    /// Whether the point lies inside a query match - drives the halo pass.
-    matched: bool,
-    /// Whether the query's display mode hides this point (`keep` hides
-    /// non-matches, `hide` hides matches). Splits the line at hidden points.
+    /// Bitmask of the `draw` layers covering this point (bit `i` for the
+    /// i-th draw query) - drives the per-layer halo passes.
+    matched: u16,
+    /// Whether the query pipeline hides this point. Splits the line at hidden
+    /// points.
     hidden: bool,
 }
 
@@ -241,12 +239,7 @@ impl TrackLayers<'_> {
                     continue;
                 }
 
-                const NO_RANGES: &[Range<usize>] = &[];
-                let match_ranges = self
-                    .query_matches
-                    .map_or(NO_RANGES, |m| m.track_ranges(TrackRef::new(fi, ti)));
-                let mode = self.query_matches.map(|m| m.mode).unwrap_or_default();
-
+                let track_ref = TrackRef::new(fi, ti);
                 let mut ghost_points: Vec<usize> = Vec::new();
                 let fade = entry.fade;
                 let pts = lod_points(track, transform)
@@ -271,13 +264,15 @@ impl TrackLayers<'_> {
                                 ),
                             ),
                         };
-                        let matched = QueryMatches::range_at(match_ranges, pi).is_some();
+                        let (matched, hidden) = self.query_matches.map_or((0, false), |m| {
+                            (m.draw_bits(track_ref, pi), m.is_hidden(track_ref, pi))
+                        });
                         let key = LinePointKey {
                             ghost: p.tpv.heading().is_none(),
                             quality: quality_line_color(p),
                             bucket,
                             matched,
-                            hidden: !mode.shows(matched),
+                            hidden,
                         };
                         (key, screen_pos)
                     });
@@ -312,36 +307,40 @@ impl TrackLayers<'_> {
         let Some(matches) = self.query_matches else {
             return;
         };
-        // Halos annotate matches in `draw` mode; `keep`/`hide` change point
-        // visibility instead and paint no halos.
-        if matches.mode != DisplayMode::Draw {
+        if matches.draws.is_empty() {
             return;
         }
         let ring_radius = style.base_arrow_size;
         for (i, geo) in geometries.iter().enumerate() {
-            if !filter(i)
-                || matches
-                    .track_ranges(TrackRef::new(geo.fi, geo.ti))
-                    .is_empty()
-            {
+            if !filter(i) {
                 continue;
             }
-            match &geo.path {
-                VisiblePath::OffScreen => {}
-                VisiblePath::Dot(key, pos) => {
-                    if key.matched {
-                        query_match_renderer::draw_match_ring(ui, *pos, ring_radius, matches.stale);
-                    }
+            let track_ref = TrackRef::new(geo.fi, geo.ti);
+            // A layer per draw query, painted in its own color; overlapping
+            // halos stack because each is a separate pass.
+            for (layer_idx, layer) in matches.draws.iter().enumerate() {
+                if layer.ranges_for(track_ref).is_empty() {
+                    continue;
                 }
-                VisiblePath::Spans(spans) => {
-                    for span in spans.iter() {
-                        query_match_renderer::paint_match_halo_span(
-                            ui,
-                            span,
-                            |key| key.matched,
-                            ring_radius,
-                            matches.stale,
-                        );
+                let bit = 1u16 << (layer_idx % u16::BITS as usize);
+                let color = gt_ui_theme::query_halo_color(layer.color, matches.stale);
+                match &geo.path {
+                    VisiblePath::OffScreen => {}
+                    VisiblePath::Dot(key, pos) => {
+                        if key.matched & bit != 0 {
+                            query_match_renderer::draw_match_ring(ui, *pos, ring_radius, color);
+                        }
+                    }
+                    VisiblePath::Spans(spans) => {
+                        for span in spans.iter() {
+                            query_match_renderer::paint_match_halo_span(
+                                ui,
+                                span,
+                                |key| key.matched & bit != 0,
+                                ring_radius,
+                                color,
+                            );
+                        }
                     }
                 }
             }
@@ -392,13 +391,8 @@ impl TrackLayers<'_> {
                 // arrows match the (broken) line.
                 let (filtered_tpv, filtered_ghost);
                 let (tpv, ghost) = match self.query_matches {
-                    Some(matches) if matches.mode != DisplayMode::Draw => {
-                        let ranges = matches.track_ranges(track_ref);
-                        let shown = |pi: &usize| {
-                            matches
-                                .mode
-                                .shows(QueryMatches::range_at(ranges, *pi).is_some())
-                        };
+                    Some(matches) if !matches.hidden_ranges(track_ref).is_empty() => {
+                        let shown = |pi: &usize| !matches.is_hidden(track_ref, *pi);
                         filtered_tpv = tpv.map(|v| v.iter().copied().filter(shown).collect());
                         filtered_ghost = geo
                             .ghost_points
@@ -443,7 +437,9 @@ impl TrackLayers<'_> {
             // Hovering a matched point adds the match context above the
             // standard point table.
             let match_header = self.query_matches.and_then(|matches| {
-                let range = matches.match_at(r.track, r.point_index.as_usize())?.clone();
+                let range = matches
+                    .header_range(r.track, r.point_index.as_usize())?
+                    .clone();
                 Some(move |ui: &mut Ui| {
                     query_match_renderer::match_header_ui(
                         ui,
@@ -592,7 +588,7 @@ mod tests {
                     ghost: false,
                     quality: Color32::BLUE,
                     bucket: 0,
-                    matched: false,
+                    matched: 0,
                     hidden,
                 };
                 (key, pos2(i as f32, 0.0))
@@ -640,7 +636,7 @@ mod tests {
             ghost: false,
             quality,
             bucket: 3,
-            matched: false,
+            matched: 0,
             hidden: false,
         };
         let pts = vec![

@@ -1579,20 +1579,58 @@ mod snapshot_tests {
     /// Drive the full `NavMap::draw` path over the fixture track with a
     /// hardcoded set of query matches. Requires `GEOTRACE_OFFLINE=1` (set by
     /// `just test`) so no map tiles render beneath the halos.
+    /// The gaps between `ranges` within `0..len` - the points a `keep` query
+    /// hides.
+    fn complement(ranges: &[std::ops::Range<usize>], len: usize) -> Vec<std::ops::Range<usize>> {
+        let mut out = Vec::new();
+        let mut cursor = 0;
+        for r in ranges {
+            if cursor < r.start {
+                out.push(cursor..r.start);
+            }
+            cursor = r.end;
+        }
+        if cursor < len {
+            out.push(cursor..len);
+        }
+        out
+    }
+
     fn snapshot_nav_map_with_matches(name: &'static str, mode: DisplayMode, stale: bool) {
         use std::collections::HashMap;
 
-        use gt_ui_types::{QueryMatches, TrackDataVisibility};
+        use gt_ui_types::{DrawLayer, QueryMatches, TrackDataVisibility};
 
         let files = vec![make_snapshot_file()];
         let visibility = TrackDataVisibility::from_loaded(&files);
         let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let len = files
+            .first()
+            .and_then(|f| f.tracks.first())
+            .map_or(0, |t| t.points.len());
         // Two multi-point stretches on different legs of the fixture loop,
         // plus a single-point match that must render as a ring.
-        let matches = QueryMatches {
-            ranges: HashMap::from([(track, vec![150..300, 700..701, 900..1000])]),
-            mode,
-            stale,
+        let ranges = vec![150..300, 700..701, 900..1000];
+        let per_track = |rs: Vec<std::ops::Range<usize>>| HashMap::from([(track, rs)]);
+        let matches = match mode {
+            DisplayMode::Draw => QueryMatches {
+                draws: vec![DrawLayer {
+                    color: 0,
+                    ranges: per_track(ranges),
+                }],
+                stale,
+                ..QueryMatches::default()
+            },
+            DisplayMode::Hide => QueryMatches {
+                hidden: per_track(ranges),
+                stale,
+                ..QueryMatches::default()
+            },
+            DisplayMode::Keep => QueryMatches {
+                hidden: per_track(complement(&ranges, len)),
+                stale,
+                ..QueryMatches::default()
+            },
         };
 
         let mut harness = TestHarness::builder()

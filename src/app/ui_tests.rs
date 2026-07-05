@@ -691,11 +691,15 @@ fn snapshot_app_query_window() {
     step_until_query_result(&mut harness.inner);
     harness.inner.run_steps(60);
 
-    let match_count = {
+    let match_count: usize = {
         let app = harness.inner.state();
-        app.query_window
-            .matches()
-            .map_or(0, |m| m.ranges.values().map(Vec::len).sum())
+        app.query_window.matches().map_or(0, |m| {
+            m.draws
+                .iter()
+                .flat_map(|d| d.ranges.values())
+                .map(Vec::len)
+                .sum()
+        })
     };
     assert!(match_count > 0, "the demo trip has stretches above 25 km/h");
 
@@ -716,6 +720,66 @@ fn snapshot_app_query_window() {
     assert_eq!(history_len, 1, "the run above is recorded in history");
 
     harness.snapshot_loose("app_query_window");
+}
+
+/// Several queries compose in one editor: a `hide` filter plus two colored
+/// `draw` layers, evaluated in sequence over the demo trip.
+#[test]
+fn snapshot_query_pipeline() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(DEMO_BYTES)),
+            name: "demo_trip.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+    {
+        let mut state = harness.inner.state().shared.borrow_mut();
+        state.zoom_to_visible_request = true;
+    }
+    {
+        let app = harness.inner.state_mut();
+        app.query_window.open = true;
+        // Hide the slow stretches, then outline the fast and the very-fast
+        // survivors in two colors.
+        app.query_window.set_text(
+            "points | where velocity < 20 km/h | hide\n\n\
+             points | where velocity > 30 km/h | draw\n\n\
+             points | where velocity > 80 km/h | draw"
+                .to_owned(),
+        );
+    }
+    harness.inner.run_steps(5);
+    harness
+        .inner
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+        .click();
+    step_until_query_result(&mut harness.inner);
+    harness.inner.run_steps(60);
+
+    {
+        let matches = harness
+            .inner
+            .state()
+            .query_window
+            .matches()
+            .expect("the pipeline produced a result");
+        assert!(
+            !matches.hidden.is_empty(),
+            "the hide query removed the slow points"
+        );
+        assert_eq!(matches.draws.len(), 2, "two draw queries, two halo layers");
+    }
+
+    harness.snapshot_loose("query_pipeline");
 }
 
 /// The query history survives the settings flush/load roundtrip: a run is
