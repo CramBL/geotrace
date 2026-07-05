@@ -430,49 +430,37 @@ mod tests {
         assert!(query.unused_params().is_empty());
     }
 
-    #[test]
-    fn pinned_error_messages() {
-        let cases = [
-            (
-                "points | where velocity > 30",
-                "velocity needs a unit, e.g. 30 km/h",
-            ),
-            (
-                "points | where velocity > 30 deg",
-                "expected a speed unit (km/h, m/s, kn), found deg",
-            ),
-            (
-                "points | where velocity == 30 km/h",
-                "use a range, e.g. 29 km/h < velocity and velocity < 31 km/h",
-            ),
-            (
-                "points | window 10 | where velocity > 30 km/h",
-                "velocity is per point",
-            ),
-            (
-                "points | where avg(velocity) > 30 km/h",
-                "avg needs a window",
-            ),
-            (
-                "points | where util_gps < 50 %",
-                "util_gps needs an elevation mask",
-            ),
-            (
-                "points | where slip_all > 2 per min",
-                "slip_all needs mask, snr_drop, and slip_window",
-            ),
-            (
-                "points | where eph > 20 m | window 3",
-                "window must come before where",
-            ),
-        ];
-        for (src, expected) in cases {
-            let message = parse(src)
-                .and_then(|q| check(&q).map(|_| ()))
-                .expect_err(src)
-                .message;
-            assert_eq!(message, expected, "for {src}");
-        }
+    #[rstest]
+    #[case("points | where velocity > 30", "velocity needs a unit, e.g. 30 km/h")]
+    #[case(
+        "points | where velocity > 30 deg",
+        "expected a speed unit (km/h, m/s, kn), found deg"
+    )]
+    #[case(
+        "points | where velocity == 30 km/h",
+        "use a range, e.g. 29 km/h < velocity and velocity < 31 km/h"
+    )]
+    #[case(
+        "points | window 10 | where velocity > 30 km/h",
+        "velocity is per point"
+    )]
+    #[case("points | where avg(velocity) > 30 km/h", "avg needs a window")]
+    #[case("points | where util_gps < 50 %", "util_gps needs an elevation mask")]
+    #[case(
+        "points | where slip_all > 2 per min",
+        "slip_all needs mask, snr_drop, and slip_window"
+    )]
+    #[case(
+        "points | where eph > 20 m | window 3",
+        "window must come before where"
+    )]
+    fn pinned_error_messages(#[case] src: &str, #[case] expected: &str) {
+        // The error may come from either the parse or the check stage.
+        let message = parse(src)
+            .and_then(|q| check(&q).map(|_| ()))
+            .expect_err(src)
+            .message;
+        assert_eq!(message, expected, "for {src}");
     }
 
     #[test]
