@@ -22,8 +22,9 @@ use std::ops::{Div, Mul};
 
 /// A physical dimension: exponents of length, time, and angle.
 ///
-/// The fields are `i32` so an integer power never has to worry about a narrow
-/// overflow; real dimensions keep the exponents within a handful of units.
+/// The fields are `i32`, which gives ample headroom for exponents that stay
+/// within a handful of units. Guarding a pathological integer power is the
+/// power operator's job (it bounds the exponent), not this type's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Dimension {
     pub length: i32,
@@ -164,5 +165,44 @@ mod tests {
         assert_eq!(Dimension::LENGTH.sqrt(), None);
         assert_eq!(Dimension::ACCELERATION.sqrt(), None);
         assert_eq!(Dimension::ANGLE.sqrt(), None);
+    }
+
+    mod properties {
+        use proptest::prelude::*;
+
+        use super::super::Dimension;
+
+        // Exponents kept small - real dimensions never leave this range, and it
+        // keeps the doubled exponents from a square well clear of overflow.
+        fn dimension() -> impl Strategy<Value = Dimension> {
+            (-4..=4i32, -4..=4i32, -4..=4i32).prop_map(|(length, time, angle)| Dimension {
+                length,
+                time,
+                angle,
+            })
+        }
+
+        proptest! {
+            #[test]
+            fn multiplication_commutes(a in dimension(), b in dimension()) {
+                prop_assert_eq!(a * b, b * a);
+            }
+
+            #[test]
+            fn dimensionless_is_the_identity(d in dimension()) {
+                prop_assert_eq!(d * Dimension::DIMENSIONLESS, d);
+                prop_assert_eq!(d / Dimension::DIMENSIONLESS, d);
+            }
+
+            #[test]
+            fn division_inverts_multiplication(a in dimension(), b in dimension()) {
+                prop_assert_eq!((a * b) / b, a);
+            }
+
+            #[test]
+            fn square_root_undoes_squaring(d in dimension()) {
+                prop_assert_eq!(d.powi(2).sqrt(), Some(d));
+            }
+        }
     }
 }

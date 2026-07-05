@@ -238,7 +238,7 @@ mod tests {
     /// quantity must be classified here rather than defaulting silently.
     #[test]
     fn quantity_dimensions_are_pinned() {
-        for (quantity, dimension) in [
+        let dimensioned = [
             (Quantity::Angle, Dimension::ANGLE),
             (Quantity::Direction, Dimension::ANGLE),
             (Quantity::Speed, Dimension::SPEED),
@@ -250,7 +250,8 @@ mod tests {
             // separate them, which is the later kind tag's job.
             (Quantity::Count, Dimension::DIMENSIONLESS),
             (Quantity::Ratio, Dimension::DIMENSIONLESS),
-        ] {
+        ];
+        for (quantity, dimension) in dimensioned {
             assert_eq!(
                 quantity.dimension(),
                 Some(dimension),
@@ -262,8 +263,9 @@ mod tests {
             .filter(|q| q.dimension().is_none())
             .collect();
         assert_eq!(non_dimensional, [Quantity::Timestamp, Quantity::Condition]);
-        // 9 dimensioned + 2 non-dimensional covers every variant.
-        assert_eq!(9 + non_dimensional.len(), Quantity::COUNT);
+        // The dimensioned and non-dimensional variants together are exhaustive,
+        // so a new quantity must be classified in one of them.
+        assert_eq!(dimensioned.len() + non_dimensional.len(), Quantity::COUNT);
     }
 
     /// The exponent algebra reproduces the derivations the checker currently
