@@ -91,6 +91,7 @@ proptest = "1"
 quote = "1"
 rayon = "1"
 rstar = "0.13"
+rstest = "0.26"
 serde = { version = "1", features = ["derive"] }
 smallvec = { version = "1", features = ["union"] }
 strum = { version = "0.28", features = ["derive"] }

@@ -961,8 +961,10 @@ fn describe(expr: &Expr) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
     use strum::{EnumCount as _, IntoEnumIterator as _};
 
+    use super::Kind::{Count, Number, Ratio};
     use super::*;
 
     /// Every quantity maps to a value type and back, so `named_dimension` stays
@@ -983,47 +985,46 @@ mod tests {
         assert_eq!(covered, Quantity::COUNT);
     }
 
-    #[test]
-    fn dimensionless_kinds_follow_the_matrix() {
-        use Kind::{Count, Number, Ratio};
+    /// A bare number pairs with a count, never a ratio; a count and a ratio
+    /// never mix.
+    #[rstest]
+    #[case::number_number(Number, Number, true)]
+    #[case::count_count(Count, Count, true)]
+    #[case::ratio_ratio(Ratio, Ratio, true)]
+    #[case::number_count(Number, Count, true)]
+    #[case::count_number(Count, Number, true)]
+    #[case::number_ratio(Number, Ratio, false)]
+    #[case::ratio_number(Ratio, Number, false)]
+    #[case::count_ratio(Count, Ratio, false)]
+    #[case::ratio_count(Ratio, Count, false)]
+    fn dimensionless_compatibility(#[case] a: Kind, #[case] b: Kind, #[case] expected: bool) {
+        assert_eq!(dimensionless_compatible(a, b), expected);
+    }
 
-        // A bare number pairs with a count, never a ratio; a count and a ratio
-        // never mix.
-        for (a, b, expected) in [
-            (Number, Number, true),
-            (Count, Count, true),
-            (Ratio, Ratio, true),
-            (Number, Count, true),
-            (Count, Number, true),
-            (Number, Ratio, false),
-            (Ratio, Number, false),
-            (Count, Ratio, false),
-            (Ratio, Count, false),
-        ] {
-            assert_eq!(dimensionless_compatible(a, b), expected, "{a:?} ~ {b:?}");
-        }
-
-        // `==`/`!=` are counts only: both discrete, at least one a real count.
+    /// `==`/`!=` are counts only: both sides discrete, at least one a real
+    /// count.
+    #[rstest]
+    #[case::count_count(Count, Count, true)]
+    #[case::count_number(Count, Number, true)]
+    #[case::number_count(Number, Count, true)]
+    #[case::number_number(Number, Number, false)]
+    #[case::count_ratio(Count, Ratio, false)]
+    #[case::ratio_ratio(Ratio, Ratio, false)]
+    fn equality_requires_a_count(#[case] a: Kind, #[case] b: Kind, #[case] expected: bool) {
         let dimensionless = |kind| ValueType::Dimensionless(kind);
-        for (a, b, expected) in [
-            (Count, Count, true),
-            (Count, Number, true),
-            (Number, Count, true),
-            (Number, Number, false),
-            (Count, Ratio, false),
-            (Ratio, Ratio, false),
-        ] {
-            assert_eq!(
-                equality_allowed(dimensionless(a), dimensionless(b)),
-                expected,
-                "{a:?} == {b:?}"
-            );
-        }
+        assert_eq!(
+            equality_allowed(dimensionless(a), dimensionless(b)),
+            expected
+        );
+    }
 
-        // A bare number takes on the other kind when summed; like kinds stay.
-        assert_eq!(combine_kinds(Number, Count), Count);
-        assert_eq!(combine_kinds(Ratio, Number), Ratio);
-        assert_eq!(combine_kinds(Number, Number), Number);
-        assert_eq!(combine_kinds(Count, Count), Count);
+    /// A bare number takes on the other kind when summed; like kinds stay.
+    #[rstest]
+    #[case::number_count(Number, Count, Count)]
+    #[case::ratio_number(Ratio, Number, Ratio)]
+    #[case::number_number(Number, Number, Number)]
+    #[case::count_count(Count, Count, Count)]
+    fn combining_kinds(#[case] a: Kind, #[case] b: Kind, #[case] expected: Kind) {
+        assert_eq!(combine_kinds(a, b), expected);
     }
 }
