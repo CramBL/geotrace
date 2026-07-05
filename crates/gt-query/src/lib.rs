@@ -620,6 +620,72 @@ mod tests {
         assert_eq!(check(&parse(src).unwrap()).is_ok(), accepted, "for {src}");
     }
 
+    /// `var` squares the argument's dimension: `var(velocity)` is a squared
+    /// speed with no matching literal, while `var(sats_fix)` is a plain number.
+    #[rstest]
+    #[case("points | window 3 | where var(sats_fix) < 4", None)]
+    // Two squared speeds share a dimension, so they compare.
+    #[case("points | window 3 | where var(velocity) > var(velocity)", None)]
+    // A squared ratio is a bare number; a squared timestamp is a squared
+    // duration; a squared angle is exotic - none has a matching literal.
+    #[case(
+        "points | with mask 15 deg | window 3 | where var(util_all) < 0.1",
+        None
+    )]
+    #[case(
+        "points | window 3 | where var(velocity) > 30 km/h",
+        Some("cannot compare these values")
+    )]
+    #[case(
+        "points | window 3 | where var(velocity) > var(eph)",
+        Some("cannot compare these values")
+    )]
+    #[case(
+        "points | window 3 | where var(time) > 5 s",
+        Some("cannot compare these values")
+    )]
+    #[case(
+        "points | window 3 | where var(lat) > 3 deg",
+        Some("cannot compare these values")
+    )]
+    fn var_squares_the_dimension(#[case] src: &str, #[case] error: Option<&str>) {
+        match error {
+            None => {
+                check(&parse(src).expect(src)).expect(src);
+            }
+            Some(message) => {
+                assert_eq!(
+                    check(&parse(src).unwrap()).unwrap_err().message,
+                    message,
+                    "for {src}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn var_on_a_direction_suggests_std() {
+        let err =
+            check(&parse("points | window 3 | where var(heading) < 1 deg").unwrap()).unwrap_err();
+        assert_eq!(err.message, "var is not defined for a direction");
+        assert_eq!(
+            err.help.as_deref(),
+            Some("circular variance is unitless, not a squared angle - use std")
+        );
+    }
+
+    #[test]
+    fn var_matches_low_variance_windows() {
+        // window 2 var(sats_fix) over [6,6,6,9]: windows [0,2) and [1,3) have
+        // variance 0; [2,4) has variance 2.25. So only the steady points match.
+        let provider = TestProvider::new(4).with(
+            QueryMetric::SatsFix,
+            vec![Some(6.0), Some(6.0), Some(6.0), Some(9.0)],
+        );
+        let output = run_one("points | window 2 | where var(sats_fix) < 1", &provider);
+        assert_eq!(output.matches[0].ranges, vec![0..3]);
+    }
+
     #[test]
     fn long_arithmetic_chain_checks_without_panicking() {
         // A long `*` chain folds many exponent additions in the checker; the
