@@ -201,7 +201,8 @@ impl BinaryOp {
     }
 }
 
-/// Functions callable in expressions. All except `abs` are window aggregates.
+/// Functions callable in expressions. All except `abs` and `sqrt` are window
+/// aggregates.
 #[derive(
     Debug,
     Clone,
@@ -226,22 +227,19 @@ pub enum Func {
     Last,
     Delta,
     Abs,
+    Sqrt,
 }
 
 impl Func {
-    pub fn is_aggregate(self) -> bool {
-        !matches!(self, Func::Abs)
-    }
-
     /// The quantity this function produces from an argument of `arg`. `spread`,
     /// `std`, and `delta` collapse a direction to a plain angle and a timestamp
     /// to a duration; the others pass the quantity through.
     ///
     /// A completion-level approximation, shared by [`crate::check`] and
-    /// [`crate::completions_at`]. `var` squares the dimension, which no
-    /// [`Quantity`] can name, so its true result is computed at the dimension
-    /// level in the checker; here it passes through, which is good enough for
-    /// offering unit completions.
+    /// [`crate::completions_at`]. `var` and `sqrt` change the dimension in ways
+    /// no [`Quantity`] can name (squaring, halving), so their true result is
+    /// computed at the dimension level in the checker; here they pass through,
+    /// which is good enough for offering unit completions.
     pub fn result_quantity(self, arg: Quantity) -> Quantity {
         match self {
             Func::Spread | Func::Std | Func::Delta => match arg {
@@ -255,7 +253,8 @@ impl Func {
             | Func::First
             | Func::Last
             | Func::Var
-            | Func::Abs => arg,
+            | Func::Abs
+            | Func::Sqrt => arg,
         }
     }
 }
