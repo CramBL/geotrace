@@ -22,6 +22,7 @@
 pub mod ast;
 mod check;
 pub mod construct;
+mod dimension;
 mod eval;
 mod fmt;
 pub mod lexer;
@@ -34,6 +35,7 @@ mod unit;
 pub use ast::{ParamName, Query, Span};
 pub use check::{CheckedQuery, Params, check};
 pub use construct::{Construct, ConstructKind, catalog};
+pub use dimension::Dimension;
 pub use eval::{
     MetricProvider, RunOutput, RunSummary, TrackInput, TrackMatches, derived_accel, run,
     run_cancellable,

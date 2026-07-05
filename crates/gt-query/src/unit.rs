@@ -10,6 +10,7 @@ use uom::si::acceleration::{meter_per_second_squared, standard_gravity};
 use uom::si::f64::{Acceleration, Velocity};
 use uom::si::velocity::{kilometer_per_hour, knot, meter_per_second};
 
+use crate::dimension::Dimension;
 use crate::metric::Quantity;
 
 const M_PER_KM: f64 = 1_000.0;
@@ -55,6 +56,22 @@ impl Unit {
             Unit::Ms | Unit::S | Unit::Min | Unit::H => Quantity::Duration,
             Unit::Percent => Quantity::Ratio,
             Unit::PerS | Unit::PerMin | Unit::PerH => Quantity::Rate,
+        }
+    }
+
+    /// The physical dimension of a literal in this unit. Total, because every
+    /// unit is dimensioned - none maps to a timestamp or a condition - so this
+    /// agrees with `self.quantity().dimension()` on every variant (pinned by a
+    /// test).
+    pub fn dimension(self) -> Dimension {
+        match self {
+            Unit::Deg => Dimension::ANGLE,
+            Unit::M | Unit::Km => Dimension::LENGTH,
+            Unit::KmPerH | Unit::MPerS | Unit::Kn => Dimension::SPEED,
+            Unit::MPerS2 | Unit::G | Unit::KmPerHPerS => Dimension::ACCELERATION,
+            Unit::Ms | Unit::S | Unit::Min | Unit::H => Dimension::TIME,
+            Unit::Percent => Dimension::DIMENSIONLESS,
+            Unit::PerS | Unit::PerMin | Unit::PerH => Dimension::RATE,
         }
     }
 
@@ -197,6 +214,28 @@ mod tests {
         assert!((Unit::G.to_base() - 9.806_65).abs() < 1e-9, "1 g in m/s2");
         // km/h/s shares km/h's numeric factor.
         assert!((Unit::KmPerHPerS.to_base() - 1.0 / 3.6).abs() < 1e-12);
+    }
+
+    /// Each unit's dimension agrees with its quantity's dimension, tying the
+    /// two hand-written tables together. Exhaustive over the enum, so a new
+    /// unit must appear in both.
+    #[test]
+    fn unit_dimensions_match_their_quantity() {
+        use strum::IntoEnumIterator as _;
+        for unit in Unit::iter() {
+            assert_eq!(
+                Some(unit.dimension()),
+                unit.quantity().dimension(),
+                "{} dimension must agree with its quantity",
+                unit.text()
+            );
+        }
+        // A few pinned outright.
+        assert_eq!(Unit::Deg.dimension(), Dimension::ANGLE);
+        assert_eq!(Unit::KmPerH.dimension(), Dimension::SPEED);
+        assert_eq!(Unit::G.dimension(), Dimension::ACCELERATION);
+        assert_eq!(Unit::Percent.dimension(), Dimension::DIMENSIONLESS);
+        assert_eq!(Unit::PerMin.dimension(), Dimension::RATE);
     }
 
     #[test]
