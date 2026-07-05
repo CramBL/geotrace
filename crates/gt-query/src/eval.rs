@@ -9,13 +9,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
 use gt_types::TrackRef;
+use nalgebra::{Complex, UnitComplex};
 
 use crate::ast::{Func, ParamName};
 use crate::check::{ArithOp, CExpr, CheckedQuery, CmpOp};
 use crate::metric::QueryMetric;
 
 const FULL_TURN_DEG: f64 = 360.0;
-const HALF_TURN_DEG: f64 = 180.0;
 
 /// Points evaluated between cancellation checks. Small enough to stop within
 /// a frame or two, large enough that the check never shows up in a profile.
@@ -435,6 +435,13 @@ fn aggregate(
                 max - min
             }
         }
+        Func::Std => {
+            if circular {
+                circular_std(&values)
+            } else {
+                population_std(&values)
+            }
+        }
         // The checker never emits abs as an aggregate.
         Func::Abs => return None,
     };
@@ -442,13 +449,44 @@ fn aggregate(
 }
 
 /// Signed shortest angular difference from `first` to `last`, in (-180, 180].
+///
+/// Expressed as the rotation carrying `first` onto `last`, so the wrap is the
+/// rotation group's job rather than hand-rolled modular arithmetic.
 fn circular_delta(first: f64, last: f64) -> f64 {
-    let diff = (last - first + HALF_TURN_DEG).rem_euclid(FULL_TURN_DEG) - HALF_TURN_DEG;
-    if diff <= -HALF_TURN_DEG {
-        diff + FULL_TURN_DEG
-    } else {
-        diff
-    }
+    let rotation =
+        UnitComplex::new(last.to_radians()) * UnitComplex::new(first.to_radians()).inverse();
+    rotation.angle().to_degrees()
+}
+
+/// Population standard deviation (divided by N) of the window's values.
+///
+/// N is the whole window, so this describes the data in hand rather than
+/// estimating a larger population, the same descriptive stance as
+/// `avg`/`min`/`max`/`spread`. A single value has a deviation of 0.
+fn population_std(values: &[f64]) -> f64 {
+    let n = values.len() as f64;
+    let mean = values.iter().sum::<f64>() / n;
+    let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n;
+    variance.sqrt()
+}
+
+/// Circular (population) standard deviation of directions given in degrees,
+/// returned in degrees.
+///
+/// Built from the mean resultant length R of the directions as unit vectors:
+/// `sqrt(-2 ln R)` (Mardia), which is robust across the 0/360 wrap where a
+/// linear standard deviation of the degrees is not. Identical directions give
+/// 0; as they spread toward uniform, R falls to 0 and the deviation grows
+/// without bound.
+fn circular_std(values: &[f64]) -> f64 {
+    let n = values.len() as f64;
+    let resultant = values.iter().fold(Complex::new(0.0, 0.0), |acc, deg| {
+        acc + UnitComplex::new(deg.to_radians()).into_inner()
+    });
+    // Clamp guards a floating-point overshoot above 1 when every direction is
+    // identical, which would make the log positive and the sqrt NaN.
+    let mean_resultant = (resultant.norm() / n).min(1.0);
+    (-2.0 * mean_resultant.ln()).sqrt().to_degrees()
 }
 
 /// Size of the smallest arc containing all directions: 360 minus the largest
@@ -501,6 +539,27 @@ mod tests {
         assert!((circular_delta(350.0, 10.0) - 20.0).abs() < 1e-12);
         assert!((circular_delta(10.0, 350.0) + 20.0).abs() < 1e-12);
         assert!((circular_delta(0.0, 180.0) - 180.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn population_std_divides_by_n() {
+        // 2,4,4,4,5,5,7,9: mean 5, population variance 4, so std 2.
+        let values = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
+        assert!((population_std(&values) - 2.0).abs() < 1e-12);
+        // A single value has no spread.
+        assert!(population_std(&[42.0]).abs() < 1e-12);
+    }
+
+    #[test]
+    fn circular_std_stays_small_across_the_wrap() {
+        // Headings clustered around north stay small, unlike a linear std of
+        // the raw degrees (which 359, 0, 1 would blow up).
+        assert!(circular_std(&[359.0, 0.0, 1.0]) < 2.0);
+        // Identical directions collapse to zero (within float noise).
+        assert!(circular_std(&[123.0, 123.0, 123.0]) < 1e-6);
+        assert!(circular_std(&[42.0]) < 1e-6);
+        // A wide scatter is a large deviation.
+        assert!(circular_std(&[0.0, 90.0, 180.0]) > 45.0);
     }
 
     #[test]

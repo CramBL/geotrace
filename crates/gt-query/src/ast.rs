@@ -209,6 +209,7 @@ pub enum Func {
     Min,
     Max,
     Spread,
+    Std,
     First,
     Last,
     Delta,
@@ -220,13 +221,13 @@ impl Func {
         !matches!(self, Func::Abs)
     }
 
-    /// The quantity this function produces from an argument of `arg`. `spread`
-    /// and `delta` collapse a direction to a plain angle and a timestamp to a
-    /// duration; the others pass the quantity through. The single source for
-    /// this rule, shared by [`crate::check`] and [`crate::completions_at`].
+    /// The quantity this function produces from an argument of `arg`. `spread`,
+    /// `std`, and `delta` collapse a direction to a plain angle and a timestamp
+    /// to a duration; the others pass the quantity through. The single source
+    /// for this rule, shared by [`crate::check`] and [`crate::completions_at`].
     pub fn result_quantity(self, arg: Quantity) -> Quantity {
         match self {
-            Func::Spread | Func::Delta => match arg {
+            Func::Spread | Func::Std | Func::Delta => match arg {
                 Quantity::Direction => Quantity::Angle,
                 Quantity::Timestamp => Quantity::Duration,
                 other => other,

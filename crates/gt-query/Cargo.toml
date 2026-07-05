@@ -12,6 +12,7 @@ doctest = false
 [dependencies]
 gt-types = { path = "../gt-types" }
 logos.workspace = true
+nalgebra.workspace = true
 strum.workspace = true
 uom.workspace = true
 
