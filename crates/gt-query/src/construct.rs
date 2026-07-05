@@ -185,9 +185,9 @@ fn func_construct(func: Func) -> Construct {
         Func::Var => (
             "variance over the window",
             "The population variance, divided by N. Its unit is the square of \
-             the values' unit, so it feeds `sqrt` or a ratio rather than a \
-             direct threshold. Not defined on a direction (`heading`) - use \
-             `std`.",
+             the values' unit, so it has no direct threshold: compare with \
+             `std` (its square root) instead, or form a ratio of two \
+             variances. Not defined on a direction (`heading`) - use `std`.",
             &["var(sats_fix) < 4"],
         ),
         Func::First => (

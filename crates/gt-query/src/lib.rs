@@ -624,12 +624,28 @@ mod tests {
     /// speed with no matching literal, while `var(sats_fix)` is a plain number.
     #[rstest]
     #[case("points | window 3 | where var(sats_fix) < 4", None)]
+    // Two squared speeds share a dimension, so they compare.
+    #[case("points | window 3 | where var(velocity) > var(velocity)", None)]
+    // A squared ratio is a bare number; a squared timestamp is a squared
+    // duration; a squared angle is exotic - none has a matching literal.
+    #[case(
+        "points | with mask 15 deg | window 3 | where var(util_all) < 0.1",
+        None
+    )]
     #[case(
         "points | window 3 | where var(velocity) > 30 km/h",
         Some("cannot compare these values")
     )]
     #[case(
         "points | window 3 | where var(velocity) > var(eph)",
+        Some("cannot compare these values")
+    )]
+    #[case(
+        "points | window 3 | where var(time) > 5 s",
+        Some("cannot compare these values")
+    )]
+    #[case(
+        "points | window 3 | where var(lat) > 3 deg",
         Some("cannot compare these values")
     )]
     fn var_squares_the_dimension(#[case] src: &str, #[case] error: Option<&str>) {

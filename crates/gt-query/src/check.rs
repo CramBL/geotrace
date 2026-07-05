@@ -544,8 +544,8 @@ impl Checker {
                 "use spread, std, first, last, or delta",
             ));
         }
-        // Circular variance is a unitless 0-1 quantity, not a squared angle, so
-        // `var` on a direction is a category error rather than a value.
+        // Circular variance is a unitless quantity in [0, 1], not a squared
+        // angle, so `var` on a direction is a category error rather than a value.
         if circular && func == Func::Var {
             return Err(err_hint(
                 span,
@@ -669,7 +669,10 @@ fn agg_result(func: Func, arg: ValueType) -> ValueType {
 /// never circular.
 fn var_result(arg: ValueType) -> ValueType {
     match arg {
-        ValueType::Dimensioned { dim, .. } => dimensioned(dim.powi(2)),
+        ValueType::Dimensioned { dim, circular } => {
+            debug_assert!(!circular, "call rejects a direction before agg_result");
+            dimensioned(dim.powi(2))
+        }
         ValueType::Timestamp => dimensioned(Dimension::TIME.powi(2)),
         ValueType::Dimensionless(_) => ValueType::Dimensionless(Kind::Number),
         ValueType::Condition => {
