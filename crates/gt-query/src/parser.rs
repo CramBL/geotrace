@@ -82,11 +82,18 @@ impl<'src> Parser<'src> {
     }
 
     fn error(&self, span: Span, message: impl Into<String>) -> Diagnostic {
-        Diagnostic {
-            span,
-            message: message.into(),
-            help: None,
-        }
+        Diagnostic::new(span, message)
+    }
+
+    /// An error whose fix goes in the structured `help` field (shown as a
+    /// separate "Hint:" line) rather than tacked onto the message.
+    fn error_hint(
+        &self,
+        span: Span,
+        message: impl Into<String>,
+        help: impl Into<String>,
+    ) -> Diagnostic {
+        Diagnostic::with_hint(span, message, help)
     }
 
     fn with_depth<T>(
@@ -180,12 +187,10 @@ impl<'src> Parser<'src> {
                 ));
             }
             let Ok(name) = ParamName::from_str(tok.text) else {
-                return Err(self.error(
+                return Err(self.error_hint(
                     tok.span,
-                    format!(
-                        "unknown parameter `{}` - parameters are mask, snr_drop, slip_window",
-                        tok.text
-                    ),
+                    format!("unknown parameter `{}`", tok.text),
+                    "parameters are mask, snr_drop, slip_window",
                 ));
             };
             self.advance();
@@ -211,9 +216,10 @@ impl<'src> Parser<'src> {
             return Err(self.error(kw_span, "only one window stage is allowed"));
         }
         if !query.predicates.is_empty() {
-            return Err(self.error(
+            return Err(self.error_hint(
                 kw_span,
-                "window must come before where - windows always see consecutive points",
+                "window must come before where",
+                "windows always see consecutive points",
             ));
         }
         if Self::outputs_started(query) {
@@ -239,9 +245,10 @@ impl<'src> Parser<'src> {
         }
         self.advance();
         if self.at_unit_start() {
-            return Err(self.error(
+            return Err(self.error_hint(
                 self.here(),
-                "time-based windows are not supported yet - window takes a point count",
+                "time-based windows are not supported yet",
+                "window takes a point count",
             ));
         }
         query.window = Some(Window {
@@ -459,9 +466,10 @@ impl<'src> Parser<'src> {
         let next_is_paren = matches!(self.peek_at(1), Some(t) if t.kind == Token::LParen);
         if let Ok(func) = Func::from_str(tok.text) {
             if !next_is_paren {
-                return Err(self.error(
+                return Err(self.error_hint(
                     tok.span,
-                    format!("{func} is a function - call it like {func}(velocity)"),
+                    format!("{func} is a function"),
+                    format!("call it like {func}(velocity)"),
                 ));
             }
             self.advance();
@@ -586,7 +594,14 @@ impl<'src> Parser<'src> {
             self.advance_n(5);
             return Ok(Some((compound, first.span.to(third.span))));
         }
-        if let Some(second) = second {
+        // A `/ ident (` is division by a function call, never a compound unit -
+        // even when the identifier also names a unit, as `min` does (the minute
+        // and the aggregate). Leaving it for expression division is what makes
+        // `<length> / min(x)` round-trip through the printer.
+        let second_starts_call = matches!(self.peek_at(3), Some(t) if t.kind == Token::LParen);
+        if let Some(second) = second
+            && !second_starts_call
+        {
             if let Some(compound) = Unit::from_pair(first.text, second.text) {
                 // Consume `first / second`.
                 self.advance_n(3);

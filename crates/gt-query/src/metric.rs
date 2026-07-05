@@ -19,6 +19,7 @@ use gt_types::MetricKind;
     Hash,
     strum::Display,
     strum::EnumString,
+    strum::IntoStaticStr,
     strum::EnumIter,
     strum::EnumCount,
 )]

@@ -117,11 +117,11 @@ pub(crate) enum ArithOp {
 }
 
 fn err(span: Span, message: impl Into<String>) -> Diagnostic {
-    Diagnostic {
-        span,
-        message: message.into(),
-        help: None,
-    }
+    Diagnostic::new(span, message)
+}
+
+fn err_hint(span: Span, message: impl Into<String>, help: impl Into<String>) -> Diagnostic {
+    Diagnostic::with_hint(span, message, help)
 }
 
 pub fn check(query: &Query) -> Result<CheckedQuery, Diagnostic> {
@@ -178,45 +178,57 @@ pub fn check(query: &Query) -> Result<CheckedQuery, Diagnostic> {
 fn resolve_params(decls: &[ParamDecl]) -> Result<Params, Diagnostic> {
     let mut params = Params::default();
     for decl in decls {
-        let lit = decl.value;
+        // Duplicate is reported before any unit mismatch, matching the pinned
+        // error order.
+        let already_set = match decl.name {
+            ParamName::Mask => params.mask_deg.is_some(),
+            ParamName::SnrDrop => params.snr_drop_db_hz.is_some(),
+            ParamName::SlipWindow => params.slip_window_s.is_some(),
+        };
+        if already_set {
+            return Err(declared_twice(decl));
+        }
+        let base = param_value_base(decl)?;
         match decl.name {
-            ParamName::Mask => {
-                if params.mask_deg.is_some() {
-                    return Err(declared_twice(decl));
-                }
-                let angle = lit
-                    .unit
-                    .filter(|u| u.quantity() == Quantity::Angle)
-                    .ok_or_else(|| err(decl.span, "mask needs an angle, e.g. mask 15 deg"))?;
-                params.mask_deg = Some(lit.value * angle.to_base());
-            }
-            ParamName::SnrDrop => {
-                if params.snr_drop_db_hz.is_some() {
-                    return Err(declared_twice(decl));
-                }
-                if lit.unit.is_some() {
-                    return Err(err(decl.span, "snr_drop takes a bare number"));
-                }
-                params.snr_drop_db_hz = Some(lit.value);
-            }
-            ParamName::SlipWindow => {
-                if params.slip_window_s.is_some() {
-                    return Err(declared_twice(decl));
-                }
-                let duration = lit
-                    .unit
-                    .filter(|u| u.quantity() == Quantity::Duration)
-                    .ok_or_else(|| {
-                        err(
-                            decl.span,
-                            "slip_window needs a duration, e.g. slip_window 5 min",
-                        )
-                    })?;
-                params.slip_window_s = Some(lit.value * duration.to_base());
-            }
+            ParamName::Mask => params.mask_deg = Some(base),
+            ParamName::SnrDrop => params.snr_drop_db_hz = Some(base),
+            ParamName::SlipWindow => params.slip_window_s = Some(base),
         }
     }
     Ok(params)
+}
+
+/// Resolve a parameter's literal to its base-unit value, checking the unit
+/// against the parameter's [`ParamName::value_quantity`] (the single source
+/// shared with autocomplete).
+fn param_value_base(decl: &ParamDecl) -> Result<f64, Diagnostic> {
+    let lit = decl.value;
+    match decl.name.value_quantity() {
+        // A bare number, like snr_drop: a unit is a mistake.
+        None => {
+            if lit.unit.is_some() {
+                return Err(err(decl.span, format!("{} takes a bare number", decl.name)));
+            }
+            Ok(lit.value)
+        }
+        Some(quantity) => {
+            let unit = lit
+                .unit
+                .filter(|u| u.quantity() == quantity)
+                .ok_or_else(|| err(decl.span, param_unit_help(decl.name)))?;
+            Ok(lit.value * unit.to_base())
+        }
+    }
+}
+
+/// The "needs a …" message when a parameter's value is missing its unit.
+fn param_unit_help(name: ParamName) -> &'static str {
+    match name {
+        ParamName::Mask => "mask needs an angle, e.g. mask 15 deg",
+        ParamName::SlipWindow => "slip_window needs a duration, e.g. slip_window 5 min",
+        // snr_drop has no quantity, so it never reaches this branch.
+        ParamName::SnrDrop => "snr_drop takes a bare number",
+    }
 }
 
 fn declared_twice(decl: &ParamDecl) -> Diagnostic {
@@ -321,10 +333,11 @@ impl Checker {
             }),
             Expr::Metric(m) => {
                 if self.windowed && !in_agg {
-                    return Err(err(
+                    return Err(err_hint(
                         m.span,
+                        format!("{metric} is per point", metric = m.metric),
                         format!(
-                            "{metric} is per point - wrap it in an aggregate like avg({metric})",
+                            "wrap it in an aggregate like avg({metric})",
                             metric = m.metric
                         ),
                     ));
@@ -395,26 +408,16 @@ impl Checker {
         if quantity == Quantity::Condition {
             return Err(err(span, format!("{func} needs a value, not a condition")));
         }
-        let result = match func {
-            Func::Avg | Func::Min | Func::Max => {
-                if quantity == Quantity::Direction {
-                    return Err(err(
-                        span,
-                        format!(
-                            "{func} on a direction is ambiguous - use spread, first, last, or delta"
-                        ),
-                    ));
-                }
-                quantity
-            }
-            Func::Spread | Func::Delta => match quantity {
-                Quantity::Direction => Quantity::Angle,
-                Quantity::Timestamp => Quantity::Duration,
-                other => other,
-            },
-            // Abs is unreachable here (handled above), listed to stay exhaustive.
-            Func::First | Func::Last | Func::Abs => quantity,
-        };
+        // avg/min/max collapse a direction ambiguously; the rest are fine.
+        if matches!(func, Func::Avg | Func::Min | Func::Max) && quantity == Quantity::Direction {
+            return Err(err_hint(
+                span,
+                format!("{func} on a direction is ambiguous"),
+                "use spread, first, last, or delta",
+            ));
+        }
+        // The resulting quantity is shared with autocomplete via `Func`.
+        let result = func.result_quantity(quantity);
         Ok((
             result,
             CExpr::Agg {
@@ -613,9 +616,10 @@ fn unit_mismatch(lhs: &Expr, ql: Quantity, rhs: &Expr, qr: Quantity) -> Option<D
         };
         let desc = describe(other_expr).unwrap_or_else(|| "this value".to_owned());
         if other_q == Quantity::Timestamp {
-            return Some(err(
+            return Some(err_hint(
                 lit.span,
-                "timestamps have no literals - restrict time with the global filter",
+                "timestamps have no literals",
+                "restrict time with the global filter",
             ));
         }
         match lit.unit {
@@ -628,9 +632,10 @@ fn unit_mismatch(lhs: &Expr, ql: Quantity, rhs: &Expr, qr: Quantity) -> Option<D
             }
             Some(unit) => {
                 if other_q == Quantity::Count {
-                    return Some(err(
+                    return Some(err_hint(
                         lit.span,
-                        format!("{desc} is a count - compare against a bare number"),
+                        format!("{desc} is a count"),
+                        "compare against a bare number",
                     ));
                 }
                 let list = unit_list(other_q)?;
@@ -667,7 +672,7 @@ fn equality_needs_range(lhs: &Expr, rhs: &Expr, span: Span) -> Diagnostic {
             ),
         );
     }
-    err(span, "== compares counts only - use a range")
+    err_hint(span, "== compares counts only", "use a range")
 }
 
 /// A short name for the value being compared, for error messages: the metric

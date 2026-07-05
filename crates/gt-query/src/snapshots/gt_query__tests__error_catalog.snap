@@ -25,7 +25,7 @@ expression: catalog
     ),
     (
         "points | window 15 s",
-        "19..20: time-based windows are not supported yet - window takes a point count",
+        "19..20: time-based windows are not supported yet | help: window takes a point count",
     ),
     (
         "points | window 3 | window 4",
@@ -65,7 +65,7 @@ expression: catalog
     ),
     (
         "points | where avg > 3",
-        "15..18: avg is a function - call it like avg(velocity)",
+        "15..18: avg is a function | help: call it like avg(velocity)",
     ),
     (
         "points | where blah(velocity) > 3",
@@ -89,7 +89,7 @@ expression: catalog
     ),
     (
         "points | window 3 | where avg(heading) < 10 deg",
-        "26..38: avg on a direction is ambiguous - use spread, first, last, or delta",
+        "26..38: avg on a direction is ambiguous | help: use spread, first, last, or delta",
     ),
     (
         "points | window 3 | where spread(velocity) > 3 km/h and avg(velocity)",
@@ -97,11 +97,11 @@ expression: catalog
     ),
     (
         "points | where time > 100",
-        "22..25: timestamps have no literals - restrict time with the global filter",
+        "22..25: timestamps have no literals | help: restrict time with the global filter",
     ),
     (
         "points | where sats_fix > 6 m",
-        "26..29: sats_fix is a count - compare against a bare number",
+        "26..29: sats_fix is a count | help: compare against a bare number",
     ),
     (
         "points | where eph > velocity",
@@ -129,7 +129,7 @@ expression: catalog
     ),
     (
         "points | with speed 3 | where velocity > 0 km/h",
-        "14..19: unknown parameter `speed` - parameters are mask, snr_drop, slip_window",
+        "14..19: unknown parameter `speed` | help: parameters are mask, snr_drop, slip_window",
     ),
     (
         "points | Draw",
@@ -209,7 +209,7 @@ expression: catalog
     ),
     (
         "points | window 2 | where first(velocity) == last(velocity)",
-        "26..59: == compares counts only - use a range",
+        "26..59: == compares counts only | help: use a range",
     ),
     (
         "points | with snr_drop 10 s | where velocity > 0 km/h",

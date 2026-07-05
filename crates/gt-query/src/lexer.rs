@@ -175,6 +175,27 @@ pub fn lex(src: &str) -> Result<Vec<Tok<'_>>, Diagnostic> {
     Ok(toks)
 }
 
+/// Tokenize leniently: yield the tokens that lex, dropping comments and any
+/// rejected characters, and never fail. Used by editor assistance (which
+/// runs on incomplete, mid-edit text where `lex` would error).
+pub fn tokenize(src: &str) -> Vec<Tok<'_>> {
+    let mut lexer = Token::lexer(src);
+    let mut toks = Vec::new();
+    while let Some(result) = lexer.next() {
+        if let Ok(kind) = result
+            && kind != Token::Comment
+        {
+            let range = lexer.span();
+            toks.push(Tok {
+                kind,
+                span: Span::new(range.start, range.end),
+                text: lexer.slice(),
+            });
+        }
+    }
+    toks
+}
+
 /// Tokenize for syntax highlighting: never fails, covers every non-whitespace
 /// byte, and classifies rejected characters as [`TokenClass::Error`].
 pub fn highlight_classes(src: &str) -> Vec<(Span, TokenClass)> {
