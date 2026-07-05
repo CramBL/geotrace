@@ -70,6 +70,36 @@ impl fmt::Display for Expr {
             } => write!(f, "(-{operand})"),
             Expr::Binary { op, lhs, rhs, .. } => write!(f, "({lhs} {} {rhs})", op.text()),
             Expr::Call { func, arg, .. } => write!(f, "{func}({arg})"),
+            Expr::Power { base, exponent, .. } => write!(f, "({base}{})", Superscript(*exponent)),
         }
+    }
+}
+
+/// An `i8` exponent as superscript digits (`-3` prints `⁻³`), the canonical
+/// form for a power. Also used by the checker to label squared dimensions.
+pub(crate) struct Superscript(pub(crate) i8);
+
+impl fmt::Display for Superscript {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0 < 0 {
+            write!(f, "⁻")?;
+        }
+        for digit in self.0.unsigned_abs().to_string().chars() {
+            let glyph = match digit {
+                '0' => '⁰',
+                '1' => '¹',
+                '2' => '²',
+                '3' => '³',
+                '4' => '⁴',
+                '5' => '⁵',
+                '6' => '⁶',
+                '7' => '⁷',
+                '8' => '⁸',
+                '9' => '⁹',
+                other => other,
+            };
+            write!(f, "{glyph}")?;
+        }
+        Ok(())
     }
 }

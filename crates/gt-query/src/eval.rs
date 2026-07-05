@@ -351,7 +351,8 @@ fn eval_bool(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<bool> {
         | CExpr::Agg { .. }
         | CExpr::Abs(_)
         | CExpr::Neg(_)
-        | CExpr::Arith { .. } => None,
+        | CExpr::Arith { .. }
+        | CExpr::Power { .. } => None,
     }
 }
 
@@ -379,6 +380,14 @@ fn eval_num(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<f64> {
                 ArithOp::Mul => l * r,
                 ArithOp::Div => l / r,
             };
+            if !result.is_finite() {
+                ctx.non_finite = true;
+                return None;
+            }
+            Some(result)
+        }
+        CExpr::Power { base, exponent } => {
+            let result = eval_num(ctx, base, scope)?.powi(i32::from(*exponent));
             if !result.is_finite() {
                 ctx.non_finite = true;
                 return None;

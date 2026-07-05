@@ -136,6 +136,14 @@ pub enum Expr {
         arg: Box<Expr>,
         span: Span,
     },
+    /// A postfix integer power, `base²` or `base⁻³`. The exponent is a whole
+    /// number in `i8` range; the parser rejects fractional and out-of-range
+    /// powers.
+    Power {
+        base: Box<Expr>,
+        exponent: i8,
+        span: Span,
+    },
 }
 
 impl Expr {
@@ -143,7 +151,10 @@ impl Expr {
         match self {
             Expr::Number(n) => n.span,
             Expr::Metric(m) => m.span,
-            Expr::Unary { span, .. } | Expr::Binary { span, .. } | Expr::Call { span, .. } => *span,
+            Expr::Unary { span, .. }
+            | Expr::Binary { span, .. }
+            | Expr::Call { span, .. }
+            | Expr::Power { span, .. } => *span,
         }
     }
 }
