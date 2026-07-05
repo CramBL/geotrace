@@ -23,22 +23,44 @@ pub struct QueryMatches {
     pub stale: bool,
 }
 
-/// The most `draw` layers a [`QueryMatches`] can distinguish, bounded by the
-/// width of the per-point bitmask ([`draw_bits`](QueryMatches::draw_bits)) the
-/// map renderer stores in each point key.
-pub const MAX_DRAW_LAYERS: usize = u16::BITS as usize;
-
-/// The point-key bit standing for draw layer `index`.
+/// Which `draw` layers cover one point, as a fixed-width bitset (bit `i` for
+/// `draws[i]`).
 ///
-/// The renderer and [`QueryMatches::draw_bits`] must agree on this mapping, so
-/// it lives here. Callers keep `index < MAX_DRAW_LAYERS`; beyond that the mask
-/// cannot represent more layers (the app clamps the pipeline to that many).
-pub fn layer_bit(index: usize) -> u16 {
-    debug_assert!(
-        index < MAX_DRAW_LAYERS,
-        "draw layer {index} exceeds the {MAX_DRAW_LAYERS}-bit mask"
-    );
-    1u16 << (index % MAX_DRAW_LAYERS)
+/// The map renderer stores one of these in every point key and asks it which
+/// layer to paint, so the bit twiddling lives here rather than being scattered
+/// across the renderer. Layer indices past [`DrawLayerMask::MAX_LAYERS`] cannot
+/// be represented; the app clamps the pipeline to that many draw queries.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DrawLayerMask(u16);
+
+impl DrawLayerMask {
+    /// The most `draw` layers the mask distinguishes, set by its bit width.
+    pub const MAX_LAYERS: usize = u16::BITS as usize;
+
+    /// Records that layer `index` covers the point.
+    pub fn insert(&mut self, index: usize) {
+        debug_assert!(
+            index < Self::MAX_LAYERS,
+            "draw layer {index} exceeds the {}-bit mask",
+            Self::MAX_LAYERS
+        );
+        self.0 |= 1u16 << (index % Self::MAX_LAYERS);
+    }
+
+    /// Whether layer `index` covers the point.
+    pub fn contains(self, index: usize) -> bool {
+        self.0 & (1u16 << (index % Self::MAX_LAYERS)) != 0
+    }
+
+    /// Whether no layer covers the point.
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// How many layers cover the point.
+    pub fn count(self) -> u32 {
+        self.0.count_ones()
+    }
 }
 
 /// One `draw` query's halos: the points it matched that are still shown.
@@ -70,16 +92,21 @@ impl QueryMatches {
         Self::range_at(self.hidden_ranges(track), point_index).is_some()
     }
 
-    /// A bitmask of the `draw` layers covering the point (bit `i` for
-    /// `draws[i]`). Few layers, so the caller stores it in the point key.
-    pub fn draw_bits(&self, track: TrackRef, point_index: usize) -> u16 {
-        let mut bits = 0u16;
-        for (i, layer) in self.draws.iter().take(MAX_DRAW_LAYERS).enumerate() {
+    /// Which `draw` layers cover the point. Few layers, so the caller stores
+    /// the mask in the point key.
+    pub fn draw_mask(&self, track: TrackRef, point_index: usize) -> DrawLayerMask {
+        let mut mask = DrawLayerMask::default();
+        for (i, layer) in self
+            .draws
+            .iter()
+            .take(DrawLayerMask::MAX_LAYERS)
+            .enumerate()
+        {
             if Self::range_at(track_ranges(&layer.ranges, track), point_index).is_some() {
-                bits |= layer_bit(i);
+                mask.insert(i);
             }
         }
-        bits
+        mask
     }
 
     /// The draw range containing the point, for the hover header: the first
@@ -150,16 +177,22 @@ mod tests {
     }
 
     #[test]
-    fn draw_bits_report_each_covering_layer() {
+    fn draw_mask_reports_each_covering_layer() {
         let matches = QueryMatches {
             draws: vec![layer(0, vec![rng(0, 3)]), layer(1, vec![rng(2, 6)])],
             ..QueryMatches::default()
         };
-        // Point 1: only layer 0. Point 2: both. Point 5: only layer 1.
-        assert_eq!(matches.draw_bits(track(), 1), 0b01);
-        assert_eq!(matches.draw_bits(track(), 2), 0b11);
-        assert_eq!(matches.draw_bits(track(), 5), 0b10);
-        assert_eq!(matches.draw_bits(track(), 9), 0);
+        // Point 1: only layer 0.
+        let at_1 = matches.draw_mask(track(), 1);
+        assert!(at_1.contains(0) && !at_1.contains(1));
+        // Point 2: both layers.
+        let at_2 = matches.draw_mask(track(), 2);
+        assert!(at_2.contains(0) && at_2.contains(1));
+        // Point 5: only layer 1.
+        let at_5 = matches.draw_mask(track(), 5);
+        assert!(!at_5.contains(0) && at_5.contains(1));
+        // Point 9: no layer.
+        assert!(matches.draw_mask(track(), 9).is_empty());
     }
 
     #[test]
@@ -197,9 +230,9 @@ mod tests {
     }
 
     #[test]
-    fn draw_bits_ignore_layers_beyond_the_mask_width() {
-        // One layer per bit, plus one extra that the u16 mask cannot hold.
-        let draws = (0..=MAX_DRAW_LAYERS)
+    fn draw_mask_ignores_layers_beyond_the_mask_width() {
+        // One layer per bit, plus one extra that the mask cannot hold.
+        let draws = (0..=DrawLayerMask::MAX_LAYERS)
             .map(|i| layer(i, vec![rng(0, 1)]))
             .collect();
         let matches = QueryMatches {
@@ -208,10 +241,10 @@ mod tests {
         };
         // Every representable layer covers point 0; the overflow layer does not
         // alias back onto bit 0.
-        assert_eq!(matches.draws.len(), MAX_DRAW_LAYERS + 1);
+        assert_eq!(matches.draws.len(), DrawLayerMask::MAX_LAYERS + 1);
         assert_eq!(
-            matches.draw_bits(track(), 0).count_ones() as usize,
-            MAX_DRAW_LAYERS
+            matches.draw_mask(track(), 0).count() as usize,
+            DrawLayerMask::MAX_LAYERS
         );
     }
 }

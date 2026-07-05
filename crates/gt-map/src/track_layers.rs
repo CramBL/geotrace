@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use egui::{Color32, Response, Stroke, Ui};
 use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, MercBounds, TrackIdx, TrackRef};
-use gt_ui_types::{HighlightScope, MapHighlight, QueryMatches};
+use gt_ui_types::{DrawLayerMask, HighlightScope, MapHighlight, QueryMatches};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
@@ -52,9 +52,8 @@ struct LinePointKey {
     ghost: bool,
     quality: Color32,
     bucket: u8,
-    /// Bitmask of the `draw` layers covering this point (bit `i` for the
-    /// i-th draw query) - drives the per-layer halo passes.
-    matched: u16,
+    /// Which `draw` layers cover this point - drives the per-layer halo passes.
+    matched: DrawLayerMask,
     /// Whether the query pipeline hides this point. Splits the line at hidden
     /// points.
     hidden: bool,
@@ -264,9 +263,11 @@ impl TrackLayers<'_> {
                                 ),
                             ),
                         };
-                        let (matched, hidden) = self.query_matches.map_or((0, false), |m| {
-                            (m.draw_bits(track_ref, pi), m.is_hidden(track_ref, pi))
-                        });
+                        let (matched, hidden) = self
+                            .query_matches
+                            .map_or((DrawLayerMask::default(), false), |m| {
+                                (m.draw_mask(track_ref, pi), m.is_hidden(track_ref, pi))
+                            });
                         let key = LinePointKey {
                             ghost: p.tpv.heading().is_none(),
                             quality: quality_line_color(p),
@@ -318,22 +319,21 @@ impl TrackLayers<'_> {
             let track_ref = TrackRef::new(geo.fi, geo.ti);
             // A layer per draw query, painted in its own color; overlapping
             // halos stack because each is a separate pass. Capped at the
-            // bitmask width, matching `QueryMatches::draw_bits`.
+            // mask width, matching `QueryMatches::draw_mask`.
             for (layer_idx, layer) in matches
                 .draws
                 .iter()
-                .take(gt_ui_types::MAX_DRAW_LAYERS)
+                .take(DrawLayerMask::MAX_LAYERS)
                 .enumerate()
             {
                 if layer.ranges_for(track_ref).is_empty() {
                     continue;
                 }
-                let bit = gt_ui_types::layer_bit(layer_idx);
                 let color = gt_ui_theme::query_halo_color(layer.color, matches.stale);
                 match &geo.path {
                     VisiblePath::OffScreen => {}
                     VisiblePath::Dot(key, pos) => {
-                        if key.matched & bit != 0 {
+                        if key.matched.contains(layer_idx) {
                             query_match_renderer::draw_match_ring(ui, *pos, ring_radius, color);
                         }
                     }
@@ -342,7 +342,7 @@ impl TrackLayers<'_> {
                             query_match_renderer::paint_match_halo_span(
                                 ui,
                                 span,
-                                |key| key.matched & bit != 0,
+                                |key| key.matched.contains(layer_idx),
                                 ring_radius,
                                 color,
                             );
@@ -581,6 +581,8 @@ fn paint_quality_path(ui: &Ui, path: &VisiblePath<LinePointKey>) {
 mod tests {
     use egui::{Color32, Rect, pos2};
 
+    use gt_ui_types::DrawLayerMask;
+
     use super::{LinePointKey, shown_runs};
     use crate::polyline::{VisiblePath, visible_path};
 
@@ -594,7 +596,7 @@ mod tests {
                     ghost: false,
                     quality: Color32::BLUE,
                     bucket: 0,
-                    matched: 0,
+                    matched: DrawLayerMask::default(),
                     hidden,
                 };
                 (key, pos2(i as f32, 0.0))
@@ -642,7 +644,7 @@ mod tests {
             ghost: false,
             quality,
             bucket: 3,
-            matched: 0,
+            matched: DrawLayerMask::default(),
             hidden: false,
         };
         let pts = vec![

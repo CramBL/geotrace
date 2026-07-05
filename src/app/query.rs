@@ -25,7 +25,7 @@ use gt_query::{
 use gt_types::satellites::Constellation;
 use gt_types::{DisplayMode, FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
 use gt_ui_theme::{DEGREE_SIGN, EM_DASH};
-use gt_ui_types::{DrawLayer, MapHighlight, QueryMatches, TrackDataVisibility};
+use gt_ui_types::{DrawLayer, DrawLayerMask, MapHighlight, QueryMatches, TrackDataVisibility};
 
 use crate::settings::QueryHistoryEntry;
 
@@ -567,13 +567,13 @@ impl QueryWindow {
                 .collect()
         };
 
-        // The point-key bitmask distinguishes only so many halo layers; extra
+        // The point-key mask distinguishes only so many halo layers; extra
         // draw queries beyond that cannot be rendered distinctly.
-        if output.draws.len() > gt_ui_types::MAX_DRAW_LAYERS {
+        if output.draws.len() > DrawLayerMask::MAX_LAYERS {
             log::warn!(
                 "query has {} draw stages; only the first {} render as halos",
                 output.draws.len(),
-                gt_ui_types::MAX_DRAW_LAYERS
+                DrawLayerMask::MAX_LAYERS
             );
         }
 
@@ -582,7 +582,7 @@ impl QueryWindow {
         let draw_color: HashMap<usize, usize> = output
             .draws
             .iter()
-            .take(gt_ui_types::MAX_DRAW_LAYERS)
+            .take(DrawLayerMask::MAX_LAYERS)
             .enumerate()
             .map(|(order, layer)| (layer.query_index, order))
             .collect();
@@ -592,7 +592,7 @@ impl QueryWindow {
             draws: output
                 .draws
                 .iter()
-                .take(gt_ui_types::MAX_DRAW_LAYERS)
+                .take(DrawLayerMask::MAX_LAYERS)
                 .enumerate()
                 .map(|(color, layer)| DrawLayer {
                     color,
@@ -954,10 +954,17 @@ impl QueryWindow {
                 track_data: &results.track_data,
                 columns: &query.columns,
             };
-            egui::CollapsingHeader::new(query_header(ui, query))
-                .id_salt(("query_result", qi))
-                .default_open(true)
-                .show(ui, |ui| {
+            let id = ui.make_persistent_id(("query_result", qi));
+            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+                .show_header(ui, |ui| {
+                    // A draw query's section carries the swatch of its map halo
+                    // color; hide/keep queries have none.
+                    if let Some(color) = query.color {
+                        query_swatch(ui, gt_ui_theme::query_halo_color(color, false));
+                    }
+                    ui.label(query.summary.as_str());
+                })
+                .body(|ui| {
                     if matches == 0 {
                         ui.label(egui::RichText::new("No matches").weak());
                     }
@@ -1121,23 +1128,15 @@ fn merge_params(queries: &[CheckedQuery]) -> gt_query::Params {
     merged
 }
 
-/// A query's results header: a color swatch for draw queries, then its summary.
-fn query_header(ui: &egui::Ui, query: &PanelQuery) -> LayoutJob {
-    let mut job = LayoutJob::default();
-    let font = egui::TextStyle::Body.resolve(ui.style());
-    if let Some(color) = query.color {
-        job.append(
-            "\u{25cf} ",
-            0.0,
-            text_format(&font, gt_ui_theme::query_halo_color(color, false)),
-        );
-    }
-    job.append(
-        &query.summary,
-        0.0,
-        text_format(&font, ui.visuals().text_color()),
-    );
-    job
+/// Paints a small filled square in a draw query's halo `color`, tying its
+/// results section to the matching halos on the map. Painted rather than a
+/// text glyph, which the editor font does not carry.
+fn query_swatch(ui: &mut egui::Ui, color: egui::Color32) {
+    let side = egui::TextStyle::Body.resolve(ui.style()).size;
+    let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::hover());
+    ui.painter().rect_filled(rect.shrink(1.0), 2.0, color);
+    // Space between the swatch and the summary the caller appends next.
+    ui.add_space(ui.spacing().item_spacing.x);
 }
 
 /// The shared inputs a query's match tables read: the files, the run's derived
