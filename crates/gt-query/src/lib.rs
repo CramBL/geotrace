@@ -522,8 +522,11 @@ mod tests {
     }
 
     #[test]
-    fn arithmetic_quantity_table() {
-        // The dimensional truth table of check::arith_quantity, both sides.
+    fn arithmetic_dimensional_algebra() {
+        // Arithmetic is dimensional algebra: `*` adds dimensions, `/`
+        // subtracts, and a dimensionless result is a bare number. A product or
+        // quotient of dimensioned values is always well-formed - a wrong
+        // combination surfaces at the comparison, not the arithmetic.
         let accepted = [
             "points | where velocity + 3 km/h > 30 km/h",
             "points | where eph - 3 m > 10 m",
@@ -531,22 +534,32 @@ mod tests {
             "points | where 2 * velocity > 30 km/h",
             "points | where sats_fix * 2 > 6",
             "points | where velocity / 2 > 15 km/h",
-            "points | where eph / eph > 50 %",
+            // length / length and speed / speed are dimensionless bare numbers.
+            "points | where eph / eph > 0.5",
             "points | where eph / clock_delta > 1 m/s",
             "points | where velocity / clock_delta > 0.1 m/s2",
+            // speed * duration is a length; speed / length is a rate. Both are
+            // new: the old table rejected any product or quotient of two
+            // dimensioned values outright.
+            "points | where velocity * clock_delta > eph",
+            "points | where velocity / eph > 2 per min",
         ];
         for src in accepted {
             check(&parse(src).expect(src)).expect(src);
         }
         let rejected = [
+            // The product/quotient type-checks; comparing its exotic dimension
+            // (a speed·length, a count/speed) against a bare number does not.
             (
                 "points | where velocity * eph > 3",
-                "unsupported arithmetic between speed and length",
+                "cannot compare these values",
             ),
             (
                 "points | where sats_fix / velocity > 3",
-                "unsupported arithmetic between count and speed",
+                "cannot compare these values",
             ),
+            // Addition still demands a shared dimension, and timestamps,
+            // directions, and conditions still reject arithmetic outright.
             (
                 "points | where velocity + eph > 3 m",
                 "unsupported arithmetic between speed and length",

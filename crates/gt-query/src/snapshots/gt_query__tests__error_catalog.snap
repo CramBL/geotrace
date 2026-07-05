@@ -109,7 +109,7 @@ expression: catalog
     ),
     (
         "points | where velocity / eph > 1",
-        "15..29: unsupported arithmetic between speed and length",
+        "32..33: this value needs a unit, e.g. 2 per min",
     ),
     (
         "points | with mask 15 | where util_all < 50 %",

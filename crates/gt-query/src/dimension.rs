@@ -22,14 +22,15 @@ use std::ops::{Div, Mul};
 
 /// A physical dimension: exponents of length, time, and angle.
 ///
-/// The fields are `i32`, which gives ample headroom for exponents that stay
-/// within a handful of units. Guarding a pathological integer power is the
+/// The exponents are `i8`, which stays compact where the dimension is embedded
+/// (in the checker's value type) while giving ample headroom for exponents that
+/// stay within a handful of units. Guarding a pathological integer power is the
 /// power operator's job (it bounds the exponent), not this type's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Dimension {
-    pub length: i32,
-    pub time: i32,
-    pub angle: i32,
+    pub length: i8,
+    pub time: i8,
+    pub angle: i8,
 }
 
 impl Dimension {
@@ -43,7 +44,7 @@ impl Dimension {
     /// Events per unit time, `T⁻¹`.
     pub const RATE: Dimension = Dimension::new(0, -1, 0);
 
-    const fn new(length: i32, time: i32, angle: i32) -> Dimension {
+    const fn new(length: i8, time: i8, angle: i8) -> Dimension {
         Dimension {
             length,
             time,
@@ -57,7 +58,7 @@ impl Dimension {
 
     /// Raised to an integer power: exponents scale, so `speed² = L² T⁻²`.
     /// A zeroth power is dimensionless; a negative power inverts.
-    pub fn powi(self, n: i32) -> Dimension {
+    pub fn powi(self, n: i8) -> Dimension {
         Dimension {
             length: self.length * n,
             time: self.time * n,
@@ -69,7 +70,7 @@ impl Dimension {
     /// exponent is odd, since a whole-number dimension has no square root then
     /// (e.g. `sqrt(length)` is not expressible).
     pub fn sqrt(self) -> Option<Dimension> {
-        let even = |e: i32| e % 2 == 0;
+        let even = |e: i8| e % 2 == 0;
         (even(self.length) && even(self.time) && even(self.angle)).then_some(Dimension {
             length: self.length / 2,
             time: self.time / 2,
@@ -175,7 +176,7 @@ mod tests {
         // Exponents kept small - real dimensions never leave this range, and it
         // keeps the doubled exponents from a square well clear of overflow.
         fn dimension() -> impl Strategy<Value = Dimension> {
-            (-4..=4i32, -4..=4i32, -4..=4i32).prop_map(|(length, time, angle)| Dimension {
+            (-4..=4i8, -4..=4i8, -4..=4i8).prop_map(|(length, time, angle)| Dimension {
                 length,
                 time,
                 angle,
