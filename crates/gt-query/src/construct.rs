@@ -182,6 +182,14 @@ fn func_construct(func: Func) -> Construct {
              the 0/360 wrap.",
             &["std(heading) <= 3 deg", "std(velocity) < 2 km/h"],
         ),
+        Func::Var => (
+            "variance over the window",
+            "The population variance, divided by N. Its unit is the square of \
+             the values' unit, so it feeds `sqrt` or a ratio rather than a \
+             direct threshold. Not defined on a direction (`heading`) - use \
+             `std`.",
+            &["var(sats_fix) < 4"],
+        ),
         Func::First => (
             "value at the window's first point",
             "The value at the earliest point of the window.",

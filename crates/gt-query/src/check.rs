@@ -544,6 +544,15 @@ impl Checker {
                 "use spread, std, first, last, or delta",
             ));
         }
+        // Circular variance is a unitless 0-1 quantity, not a squared angle, so
+        // `var` on a direction is a category error rather than a value.
+        if circular && func == Func::Var {
+            return Err(err_hint(
+                span,
+                "var is not defined for a direction",
+                "circular variance is unitless, not a squared angle - use std",
+            ));
+        }
         Ok((
             agg_result(func, value_type),
             CExpr::Agg {
@@ -645,9 +654,28 @@ impl Checker {
 /// dimension has no quantity and passes straight through, since an aggregate
 /// keeps its argument's dimension.
 fn agg_result(func: Func, arg: ValueType) -> ValueType {
+    if func == Func::Var {
+        return var_result(arg);
+    }
     match named_quantity(arg) {
         Some(quantity) => value_type(func.result_quantity(quantity)),
         None => arg,
+    }
+}
+
+/// The result type of `var`: the argument's dimension squared. A count or ratio
+/// squares to a bare number, and a timestamp's variance is a squared duration.
+/// The checker rejects `var` on a direction before this, so the argument is
+/// never circular.
+fn var_result(arg: ValueType) -> ValueType {
+    match arg {
+        ValueType::Dimensioned { dim, .. } => dimensioned(dim.powi(2)),
+        ValueType::Timestamp => dimensioned(Dimension::TIME.powi(2)),
+        ValueType::Dimensionless(_) => ValueType::Dimensionless(Kind::Number),
+        ValueType::Condition => {
+            debug_assert!(false, "call rejects a condition argument before agg_result");
+            arg
+        }
     }
 }
 

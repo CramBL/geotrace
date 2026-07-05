@@ -442,6 +442,8 @@ fn aggregate(
                 population_std(&values)
             }
         }
+        // The checker rejects var on a direction, so it is always linear.
+        Func::Var => population_variance(&values),
         // The checker never emits abs as an aggregate.
         Func::Abs => return None,
     };
@@ -476,10 +478,16 @@ fn circular_delta(first: f64, last: f64) -> f64 {
 /// estimating a larger population, the same descriptive stance as
 /// `avg`/`min`/`max`/`spread`. A single value has a deviation of 0.
 fn population_std(values: &[f64]) -> f64 {
+    population_variance(values).sqrt()
+}
+
+/// Population variance (divided by N): the mean squared deviation. Its unit is
+/// the square of the values' unit, so a query compares it only to another
+/// squared quantity or feeds it to `sqrt` (which is `std`).
+fn population_variance(values: &[f64]) -> f64 {
     let n = values.len() as f64;
     let mean = values.iter().sum::<f64>() / n;
-    let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n;
-    variance.sqrt()
+    values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n
 }
 
 /// Circular (population) standard deviation of directions given in degrees,
@@ -559,8 +567,10 @@ mod tests {
         // 2,4,4,4,5,5,7,9: mean 5, population variance 4, so std 2.
         let values = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
         assert!((population_std(&values) - 2.0).abs() < 1e-12);
+        assert!((population_variance(&values) - 4.0).abs() < 1e-12);
         // A single value has no spread.
         assert!(population_std(&[42.0]).abs() < 1e-12);
+        assert!(population_variance(&[42.0]).abs() < 1e-12);
     }
 
     #[test]

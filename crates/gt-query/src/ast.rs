@@ -210,6 +210,7 @@ pub enum Func {
     Max,
     Spread,
     Std,
+    Var,
     First,
     Last,
     Delta,
@@ -223,8 +224,13 @@ impl Func {
 
     /// The quantity this function produces from an argument of `arg`. `spread`,
     /// `std`, and `delta` collapse a direction to a plain angle and a timestamp
-    /// to a duration; the others pass the quantity through. The single source
-    /// for this rule, shared by [`crate::check`] and [`crate::completions_at`].
+    /// to a duration; the others pass the quantity through.
+    ///
+    /// A completion-level approximation, shared by [`crate::check`] and
+    /// [`crate::completions_at`]. `var` squares the dimension, which no
+    /// [`Quantity`] can name, so its true result is computed at the dimension
+    /// level in the checker; here it passes through, which is good enough for
+    /// offering unit completions.
     pub fn result_quantity(self, arg: Quantity) -> Quantity {
         match self {
             Func::Spread | Func::Std | Func::Delta => match arg {
@@ -232,7 +238,13 @@ impl Func {
                 Quantity::Timestamp => Quantity::Duration,
                 other => other,
             },
-            Func::Avg | Func::Min | Func::Max | Func::First | Func::Last | Func::Abs => arg,
+            Func::Avg
+            | Func::Min
+            | Func::Max
+            | Func::First
+            | Func::Last
+            | Func::Var
+            | Func::Abs => arg,
         }
     }
 }
