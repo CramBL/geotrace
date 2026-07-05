@@ -27,6 +27,7 @@ mod fmt;
 pub mod lexer;
 mod metric;
 mod parser;
+mod pipeline;
 mod position;
 mod unit;
 
@@ -39,6 +40,7 @@ pub use eval::{
 };
 pub use metric::{Quantity, QueryMetric};
 pub use parser::parse;
+pub use pipeline::{DrawLayer, PipelineOutput, QueryOutput, run_pipeline};
 pub use position::{Completions, completions_at, construct_at};
 pub use unit::Unit;
 
