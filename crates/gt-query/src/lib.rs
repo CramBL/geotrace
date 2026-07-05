@@ -522,8 +522,11 @@ mod tests {
     }
 
     #[test]
-    fn arithmetic_quantity_table() {
-        // The dimensional truth table of check::arith_quantity, both sides.
+    fn arithmetic_dimensional_algebra() {
+        // Arithmetic is dimensional algebra: `*` adds dimensions, `/`
+        // subtracts, and a dimensionless result is a bare number. A product or
+        // quotient of dimensioned values is always well-formed - a wrong
+        // combination surfaces at the comparison, not the arithmetic.
         let accepted = [
             "points | where velocity + 3 km/h > 30 km/h",
             "points | where eph - 3 m > 10 m",
@@ -531,22 +534,32 @@ mod tests {
             "points | where 2 * velocity > 30 km/h",
             "points | where sats_fix * 2 > 6",
             "points | where velocity / 2 > 15 km/h",
-            "points | where eph / eph > 50 %",
+            // length / length and speed / speed are dimensionless bare numbers.
+            "points | where eph / eph > 0.5",
             "points | where eph / clock_delta > 1 m/s",
             "points | where velocity / clock_delta > 0.1 m/s2",
+            // speed * duration is a length; speed / length is a rate. Both are
+            // new: the old table rejected any product or quotient of two
+            // dimensioned values outright.
+            "points | where velocity * clock_delta > eph",
+            "points | where velocity / eph > 2 per min",
         ];
         for src in accepted {
             check(&parse(src).expect(src)).expect(src);
         }
         let rejected = [
+            // The product/quotient type-checks; comparing its exotic dimension
+            // (a speed·length, a count/speed) against a bare number does not.
             (
                 "points | where velocity * eph > 3",
-                "unsupported arithmetic between speed and length",
+                "cannot compare these values",
             ),
             (
                 "points | where sats_fix / velocity > 3",
-                "unsupported arithmetic between count and speed",
+                "cannot compare these values",
             ),
+            // Addition still demands a shared dimension, and timestamps,
+            // directions, and conditions still reject arithmetic outright.
             (
                 "points | where velocity + eph > 3 m",
                 "unsupported arithmetic between speed and length",
@@ -609,6 +622,31 @@ mod tests {
     fn sats_equality_is_allowed_velocity_equality_is_not() {
         check(&parse("points | where sats_fix == 6").unwrap()).unwrap();
         check(&parse("points | where velocity == 30 km/h").unwrap()).unwrap_err();
+    }
+
+    #[test]
+    fn a_ratio_metric_needs_a_percent_literal() {
+        // A ratio compares against `%`, never a bare number - a bare number is
+        // the neutral kind and does not stand in for a percentage.
+        check(&parse("points | with mask 15 deg | where util_all < 50 %").unwrap()).unwrap();
+        check(&parse("points | with mask 15 deg | where util_all < 50").unwrap()).unwrap_err();
+    }
+
+    #[test]
+    fn long_arithmetic_chain_checks_without_panicking() {
+        // A long `*` chain folds many exponent additions in the checker; the
+        // dimension arithmetic saturates rather than overflowing i8 (which once
+        // panicked in dev builds). The exotic dimension has no matching literal,
+        // so the query is rejected at the comparison rather than crashing.
+        let chain = std::iter::repeat_n("velocity", 200)
+            .collect::<Vec<_>>()
+            .join(" * ");
+        let src = format!("points | where {chain} > 0");
+        let result = check(&parse(&src).expect("a long product chain parses"));
+        assert!(
+            result.is_err(),
+            "an exotic dimension cannot compare to a bare number"
+        );
     }
 
     #[test]

@@ -87,11 +87,6 @@ pub enum Quantity {
 }
 
 impl Quantity {
-    /// Dimensionless scalars that may scale any quantity in `*` and `/`.
-    pub fn is_scalar(self) -> bool {
-        matches!(self, Quantity::Count | Quantity::Ratio)
-    }
-
     /// The physical dimension of this quantity, or `None` for the quantities
     /// that never take part in dimensional arithmetic ([`Quantity::Timestamp`]
     /// and [`Quantity::Condition`]).

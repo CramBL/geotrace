@@ -22,14 +22,18 @@ use std::ops::{Div, Mul};
 
 /// A physical dimension: exponents of length, time, and angle.
 ///
-/// The fields are `i32`, which gives ample headroom for exponents that stay
-/// within a handful of units. Guarding a pathological integer power is the
-/// power operator's job (it bounds the exponent), not this type's.
+/// The exponents are `i8`, which stays compact where the dimension is embedded
+/// (in the checker's value type) while giving ample headroom for exponents that
+/// stay within a handful of units. The arithmetic saturates rather than
+/// overflowing, so a pathological expression (a very long `*` chain, say)
+/// yields a stuck exotic dimension instead of panicking or wrapping - a
+/// saturated dimension simply matches nothing, which is the right outcome for
+/// nonsense input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Dimension {
-    pub length: i32,
-    pub time: i32,
-    pub angle: i32,
+    pub length: i8,
+    pub time: i8,
+    pub angle: i8,
 }
 
 impl Dimension {
@@ -43,7 +47,7 @@ impl Dimension {
     /// Events per unit time, `T⁻¹`.
     pub const RATE: Dimension = Dimension::new(0, -1, 0);
 
-    const fn new(length: i32, time: i32, angle: i32) -> Dimension {
+    const fn new(length: i8, time: i8, angle: i8) -> Dimension {
         Dimension {
             length,
             time,
@@ -57,11 +61,11 @@ impl Dimension {
 
     /// Raised to an integer power: exponents scale, so `speed² = L² T⁻²`.
     /// A zeroth power is dimensionless; a negative power inverts.
-    pub fn powi(self, n: i32) -> Dimension {
+    pub fn powi(self, n: i8) -> Dimension {
         Dimension {
-            length: self.length * n,
-            time: self.time * n,
-            angle: self.angle * n,
+            length: self.length.saturating_mul(n),
+            time: self.time.saturating_mul(n),
+            angle: self.angle.saturating_mul(n),
         }
     }
 
@@ -69,7 +73,7 @@ impl Dimension {
     /// exponent is odd, since a whole-number dimension has no square root then
     /// (e.g. `sqrt(length)` is not expressible).
     pub fn sqrt(self) -> Option<Dimension> {
-        let even = |e: i32| e % 2 == 0;
+        let even = |e: i8| e % 2 == 0;
         (even(self.length) && even(self.time) && even(self.angle)).then_some(Dimension {
             length: self.length / 2,
             time: self.time / 2,
@@ -84,9 +88,9 @@ impl Mul for Dimension {
 
     fn mul(self, other: Dimension) -> Dimension {
         Dimension {
-            length: self.length + other.length,
-            time: self.time + other.time,
-            angle: self.angle + other.angle,
+            length: self.length.saturating_add(other.length),
+            time: self.time.saturating_add(other.time),
+            angle: self.angle.saturating_add(other.angle),
         }
     }
 }
@@ -98,9 +102,9 @@ impl Div for Dimension {
 
     fn div(self, other: Dimension) -> Dimension {
         Dimension {
-            length: self.length - other.length,
-            time: self.time - other.time,
-            angle: self.angle - other.angle,
+            length: self.length.saturating_sub(other.length),
+            time: self.time.saturating_sub(other.time),
+            angle: self.angle.saturating_sub(other.angle),
         }
     }
 }
@@ -167,6 +171,19 @@ mod tests {
         assert_eq!(Dimension::ANGLE.sqrt(), None);
     }
 
+    #[test]
+    fn arithmetic_saturates_instead_of_overflowing() {
+        // A very long product folds many exponent additions; saturation keeps
+        // it finite (a stuck exotic dimension) rather than overflowing i8.
+        let huge = (0..200).fold(Dimension::LENGTH, |acc, _| acc * Dimension::LENGTH);
+        assert_eq!(huge.length, i8::MAX);
+        assert!(!huge.is_dimensionless());
+        // powi and division saturate the same way.
+        assert_eq!(Dimension::LENGTH.powi(i8::MAX).length, i8::MAX);
+        let tiny = (0..200).fold(Dimension::DIMENSIONLESS, |acc, _| acc / Dimension::LENGTH);
+        assert_eq!(tiny.length, i8::MIN);
+    }
+
     mod properties {
         use proptest::prelude::*;
 
@@ -175,7 +192,7 @@ mod tests {
         // Exponents kept small - real dimensions never leave this range, and it
         // keeps the doubled exponents from a square well clear of overflow.
         fn dimension() -> impl Strategy<Value = Dimension> {
-            (-4..=4i32, -4..=4i32, -4..=4i32).prop_map(|(length, time, angle)| Dimension {
+            (-4..=4i8, -4..=4i8, -4..=4i8).prop_map(|(length, time, angle)| Dimension {
                 length,
                 time,
                 angle,

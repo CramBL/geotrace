@@ -9,6 +9,7 @@ use gt_types::DisplayMode;
 
 use crate::Diagnostic;
 use crate::ast::{BinaryOp, Expr, Func, NumberLit, ParamDecl, ParamName, Query, Span, UnaryOp};
+use crate::dimension::Dimension;
 use crate::metric::{Quantity, QueryMetric};
 use crate::unit::{example_literal, unit_list};
 
@@ -116,6 +117,133 @@ pub(crate) enum ArithOp {
     Div,
 }
 
+/// The static type the checker gives an expression. Dimensionless values carry
+/// a [`Kind`] so a count, a ratio, and a bare number stay distinct despite
+/// sharing the zero dimension; `Timestamp` and `Condition` stand outside
+/// dimensional arithmetic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ValueType {
+    Condition,
+    Timestamp,
+    /// A dimensioned value. The dimension is never dimensionless - that case is
+    /// [`ValueType::Dimensionless`]. `circular` marks a direction (a bearing
+    /// that wraps at 360) rather than a plain angle, and is only ever set when
+    /// the dimension is [`Dimension::ANGLE`].
+    Dimensioned {
+        dim: Dimension,
+        circular: bool,
+    },
+    Dimensionless(Kind),
+}
+
+/// How the language treats a dimensionless value. All three share the zero
+/// dimension; the tag keeps them from comparing nonsensically across
+/// categories (a count is not a ratio is not a bare number).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    /// A bare number with no unit, and the result of dimensionless arithmetic.
+    Number,
+    /// A discrete tally (satellite counts). The only kind `==`/`!=` accept.
+    Count,
+    /// A percentage-denominated share (satellite utilization).
+    Ratio,
+}
+
+impl ValueType {
+    /// A dimensioned value that never wraps.
+    fn linear(dim: Dimension) -> ValueType {
+        ValueType::Dimensioned {
+            dim,
+            circular: false,
+        }
+    }
+
+    fn is_condition(self) -> bool {
+        self == ValueType::Condition
+    }
+}
+
+/// The `ValueType` of a metric's or parameter's declared [`Quantity`].
+fn value_type(quantity: Quantity) -> ValueType {
+    match quantity {
+        Quantity::Condition => ValueType::Condition,
+        Quantity::Timestamp => ValueType::Timestamp,
+        Quantity::Count => ValueType::Dimensionless(Kind::Count),
+        Quantity::Ratio => ValueType::Dimensionless(Kind::Ratio),
+        // Every remaining quantity is a dimensioned value; `Direction` is the
+        // only one that wraps. Its dimension is taken from the single source
+        // in `Quantity::dimension`.
+        _ => match quantity.dimension() {
+            Some(dim) => ValueType::Dimensioned {
+                dim,
+                circular: quantity == Quantity::Direction,
+            },
+            None => {
+                debug_assert!(
+                    false,
+                    "only Timestamp and Condition lack a dimension, and both matched above"
+                );
+                ValueType::Dimensionless(Kind::Number)
+            }
+        },
+    }
+}
+
+/// The [`Quantity`] a value type names, when it names one. Exotic dimensions (a
+/// squared speed, say) and the bare [`Kind::Number`] have no quantity. Lets the
+/// error wording and the aggregate result rule reuse [`Quantity`]-keyed logic.
+fn named_quantity(vt: ValueType) -> Option<Quantity> {
+    Some(match vt {
+        ValueType::Condition => Quantity::Condition,
+        ValueType::Timestamp => Quantity::Timestamp,
+        ValueType::Dimensionless(Kind::Count) => Quantity::Count,
+        ValueType::Dimensionless(Kind::Ratio) => Quantity::Ratio,
+        ValueType::Dimensionless(Kind::Number) => return None,
+        ValueType::Dimensioned { dim, circular } => return named_dimension(dim, circular),
+    })
+}
+
+fn named_dimension(dim: Dimension, circular: bool) -> Option<Quantity> {
+    Some(if dim == Dimension::ANGLE {
+        if circular {
+            Quantity::Direction
+        } else {
+            Quantity::Angle
+        }
+    } else if dim == Dimension::SPEED {
+        Quantity::Speed
+    } else if dim == Dimension::ACCELERATION {
+        Quantity::Acceleration
+    } else if dim == Dimension::LENGTH {
+        Quantity::Length
+    } else if dim == Dimension::TIME {
+        Quantity::Duration
+    } else if dim == Dimension::RATE {
+        Quantity::Rate
+    } else {
+        return None;
+    })
+}
+
+/// A short label for a value type in an error, or `None` when it has no concise
+/// name (an exotic dimension such as a squared speed).
+fn type_label(vt: ValueType) -> Option<String> {
+    match named_quantity(vt) {
+        Some(quantity) => Some(quantity.to_string()),
+        None => matches!(vt, ValueType::Dimensionless(Kind::Number)).then(|| "number".to_owned()),
+    }
+}
+
+/// Normalise a computed dimension into a value type: a dimensionless result is
+/// a bare [`Kind::Number`], anything else a linear dimensioned value.
+fn dimensioned(dim: Dimension) -> ValueType {
+    if dim.is_dimensionless() {
+        ValueType::Dimensionless(Kind::Number)
+    } else {
+        ValueType::linear(dim)
+    }
+}
+
 fn err(span: Span, message: impl Into<String>) -> Diagnostic {
     Diagnostic::new(span, message)
 }
@@ -141,8 +269,8 @@ pub fn check(query: &Query) -> Result<CheckedQuery, Diagnostic> {
     };
     let mut predicates = Vec::new();
     for predicate in &query.predicates {
-        let (quantity, cexpr) = checker.expr(predicate, false)?;
-        if quantity != Quantity::Condition {
+        let (value_type, cexpr) = checker.expr(predicate, false)?;
+        if !value_type.is_condition() {
             return Err(err(
                 predicate.span(),
                 "where needs a condition, e.g. velocity > 30 km/h",
@@ -325,12 +453,9 @@ struct Checker {
 }
 
 impl Checker {
-    fn expr(&mut self, expr: &Expr, in_agg: bool) -> Result<(Quantity, CExpr), Diagnostic> {
+    fn expr(&mut self, expr: &Expr, in_agg: bool) -> Result<(ValueType, CExpr), Diagnostic> {
         match expr {
-            Expr::Number(lit) => Ok(match lit.unit {
-                Some(unit) => (unit.quantity(), CExpr::Const(lit.value * unit.to_base())),
-                None => (Quantity::Count, CExpr::Const(lit.value)),
-            }),
+            Expr::Number(lit) => Ok((literal_type(lit), CExpr::Const(literal_base(lit)))),
             Expr::Metric(m) => {
                 if self.windowed && !in_agg {
                     return Err(err_hint(
@@ -345,7 +470,7 @@ impl Checker {
                 if !self.referenced.iter().any(|(seen, _)| *seen == m.metric) {
                     self.referenced.push((m.metric, m.span));
                 }
-                Ok((m.metric.quantity(), CExpr::Metric(m.metric)))
+                Ok((value_type(m.metric.quantity()), CExpr::Metric(m.metric)))
             }
             Expr::Unary { op, operand, span } => self.unary(*op, operand, *span, in_agg),
             Expr::Call { func, arg, span } => self.call(*func, arg, *span, in_agg),
@@ -359,26 +484,28 @@ impl Checker {
         operand: &Expr,
         span: Span,
         in_agg: bool,
-    ) -> Result<(Quantity, CExpr), Diagnostic> {
-        let (quantity, cexpr) = self.expr(operand, in_agg)?;
+    ) -> Result<(ValueType, CExpr), Diagnostic> {
+        let (value_type, cexpr) = self.expr(operand, in_agg)?;
         match op {
             UnaryOp::Not => {
-                if quantity != Quantity::Condition {
+                if !value_type.is_condition() {
                     return Err(err(span, "not needs a condition"));
                 }
-                Ok((Quantity::Condition, CExpr::Not(Box::new(cexpr))))
+                Ok((ValueType::Condition, CExpr::Not(Box::new(cexpr))))
             }
             UnaryOp::Neg => {
-                let rejected = match quantity {
-                    Quantity::Condition => Some("cannot negate a condition"),
-                    Quantity::Timestamp => Some("cannot negate a timestamp"),
-                    Quantity::Direction => Some("cannot negate a direction"),
+                let rejected = match value_type {
+                    ValueType::Condition => Some("cannot negate a condition"),
+                    ValueType::Timestamp => Some("cannot negate a timestamp"),
+                    ValueType::Dimensioned { circular: true, .. } => {
+                        Some("cannot negate a direction")
+                    }
                     _ => None,
                 };
                 if let Some(message) = rejected {
                     return Err(err(span, message));
                 }
-                Ok((quantity, CExpr::Neg(Box::new(cexpr))))
+                Ok((value_type, CExpr::Neg(Box::new(cexpr))))
             }
         }
     }
@@ -389,13 +516,13 @@ impl Checker {
         arg: &Expr,
         span: Span,
         in_agg: bool,
-    ) -> Result<(Quantity, CExpr), Diagnostic> {
+    ) -> Result<(ValueType, CExpr), Diagnostic> {
         if func == Func::Abs {
-            let (quantity, cexpr) = self.expr(arg, in_agg)?;
-            if quantity == Quantity::Condition {
+            let (value_type, cexpr) = self.expr(arg, in_agg)?;
+            if value_type.is_condition() {
                 return Err(err(span, "abs needs a value, not a condition"));
             }
-            return Ok((quantity, CExpr::Abs(Box::new(cexpr))));
+            return Ok((value_type, CExpr::Abs(Box::new(cexpr))));
         }
 
         if !self.windowed {
@@ -404,25 +531,24 @@ impl Checker {
         if in_agg {
             return Err(err(span, "aggregates cannot be nested"));
         }
-        let (quantity, cexpr) = self.expr(arg, true)?;
-        if quantity == Quantity::Condition {
+        let (value_type, cexpr) = self.expr(arg, true)?;
+        if value_type.is_condition() {
             return Err(err(span, format!("{func} needs a value, not a condition")));
         }
+        let circular = matches!(value_type, ValueType::Dimensioned { circular: true, .. });
         // avg/min/max collapse a direction ambiguously; the rest are fine.
-        if matches!(func, Func::Avg | Func::Min | Func::Max) && quantity == Quantity::Direction {
+        if circular && matches!(func, Func::Avg | Func::Min | Func::Max) {
             return Err(err_hint(
                 span,
                 format!("{func} on a direction is ambiguous"),
                 "use spread, std, first, last, or delta",
             ));
         }
-        // The resulting quantity is shared with autocomplete via `Func`.
-        let result = func.result_quantity(quantity);
         Ok((
-            result,
+            agg_result(func, value_type),
             CExpr::Agg {
                 func,
-                circular: quantity == Quantity::Direction,
+                circular,
                 arg: Box::new(cexpr),
             },
         ))
@@ -435,20 +561,20 @@ impl Checker {
         rhs: &Expr,
         span: Span,
         in_agg: bool,
-    ) -> Result<(Quantity, CExpr), Diagnostic> {
-        let (ql, cl) = self.expr(lhs, in_agg)?;
-        let (qr, cr) = self.expr(rhs, in_agg)?;
+    ) -> Result<(ValueType, CExpr), Diagnostic> {
+        let (lt, cl) = self.expr(lhs, in_agg)?;
+        let (rt, cr) = self.expr(rhs, in_agg)?;
         match op {
             BinaryOp::And | BinaryOp::Or => {
-                if ql != Quantity::Condition || qr != Quantity::Condition {
-                    let side = if ql == Quantity::Condition { rhs } else { lhs };
+                if !lt.is_condition() || !rt.is_condition() {
+                    let side = if lt.is_condition() { rhs } else { lhs };
                     return Err(err(
                         side.span(),
                         format!("{} needs conditions on both sides", op.text()),
                     ));
                 }
                 Ok((
-                    Quantity::Condition,
+                    ValueType::Condition,
                     CExpr::Logic {
                         and: op == BinaryOp::And,
                         lhs: Box::new(cl),
@@ -457,7 +583,7 @@ impl Checker {
                 ))
             }
             BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
-                check_comparable(lhs, ql, rhs, qr, span)?;
+                check_comparable(lhs, lt, rhs, rt, span)?;
                 let cmp = match op {
                     BinaryOp::Lt => CmpOp::Lt,
                     BinaryOp::Le => CmpOp::Le,
@@ -465,7 +591,7 @@ impl Checker {
                     _ => CmpOp::Ge,
                 };
                 Ok((
-                    Quantity::Condition,
+                    ValueType::Condition,
                     CExpr::Cmp {
                         op: cmp,
                         lhs: Box::new(cl),
@@ -474,12 +600,12 @@ impl Checker {
                 ))
             }
             BinaryOp::Eq | BinaryOp::Ne => {
-                check_comparable(lhs, ql, rhs, qr, span)?;
-                if ql != Quantity::Count || qr != Quantity::Count {
+                check_comparable(lhs, lt, rhs, rt, span)?;
+                if !equality_allowed(lt, rt) {
                     return Err(equality_needs_range(lhs, rhs, span));
                 }
                 Ok((
-                    Quantity::Condition,
+                    ValueType::Condition,
                     CExpr::Cmp {
                         op: if op == BinaryOp::Eq {
                             CmpOp::Eq
@@ -492,17 +618,17 @@ impl Checker {
                 ))
             }
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
-                let quantity = arith_quantity(op, lhs, ql, rhs, qr, span)?;
-                let arith = match op {
+                let arith_op = match op {
                     BinaryOp::Add => ArithOp::Add,
                     BinaryOp::Sub => ArithOp::Sub,
                     BinaryOp::Mul => ArithOp::Mul,
                     _ => ArithOp::Div,
                 };
+                let value_type = arith(arith_op, lhs, lt, rhs, rt, span)?;
                 Ok((
-                    quantity,
+                    value_type,
                     CExpr::Arith {
-                        op: arith,
+                        op: arith_op,
                         lhs: Box::new(cl),
                         rhs: Box::new(cr),
                     },
@@ -512,141 +638,288 @@ impl Checker {
     }
 }
 
-/// Shared unit-compatibility rules for comparisons (`<`, `==`, …).
-fn check_comparable(
-    lhs: &Expr,
-    ql: Quantity,
-    rhs: &Expr,
-    qr: Quantity,
-    span: Span,
-) -> Result<(), Diagnostic> {
-    if ql == Quantity::Condition || qr == Quantity::Condition {
-        let side = if ql == Quantity::Condition { lhs } else { rhs };
-        return Err(err(side.span(), "cannot compare conditions"));
+/// The value type an aggregate produces from its argument. Where the argument
+/// names a quantity, reuses [`Func::result_quantity`] - the single definition
+/// of the collapse rule (`spread`/`std`/`delta` turn a direction into a plain
+/// angle and a timestamp into a duration), shared with autocomplete. An exotic
+/// dimension has no quantity and passes straight through, since an aggregate
+/// keeps its argument's dimension.
+fn agg_result(func: Func, arg: ValueType) -> ValueType {
+    match named_quantity(arg) {
+        Some(quantity) => value_type(func.result_quantity(quantity)),
+        None => arg,
     }
-    if compatible(ql, qr) {
-        return Ok(());
-    }
-    if let Some(diagnostic) = unit_mismatch(lhs, ql, rhs, qr) {
-        return Err(diagnostic);
-    }
-    Err(err(span, format!("cannot compare {ql} with {qr}")))
 }
 
-/// The dimensional truth table for `+ - * /`, pinned by a parameterized test.
-fn arith_quantity(
-    op: BinaryOp,
+/// `==`/`!=` compare counts only: both sides dimensionless and discrete, with
+/// at least one a genuine count. So `sats_fix == 6` is fine, while `3 == 3` and
+/// the float-equality trap `velocity == 30 km/h` are not.
+fn equality_allowed(lt: ValueType, rt: ValueType) -> bool {
+    let discrete = |vt| matches!(vt, ValueType::Dimensionless(Kind::Count | Kind::Number));
+    let is_count = |vt| vt == ValueType::Dimensionless(Kind::Count);
+    discrete(lt) && discrete(rt) && (is_count(lt) || is_count(rt))
+}
+
+/// Shared compatibility rules for comparisons (`<`, `==`, …).
+fn check_comparable(
     lhs: &Expr,
-    ql: Quantity,
+    lt: ValueType,
     rhs: &Expr,
-    qr: Quantity,
+    rt: ValueType,
     span: Span,
-) -> Result<Quantity, Diagnostic> {
-    if ql == Quantity::Condition || qr == Quantity::Condition {
+) -> Result<(), Diagnostic> {
+    if lt.is_condition() || rt.is_condition() {
+        let side = if lt.is_condition() { lhs } else { rhs };
+        return Err(err(side.span(), "cannot compare conditions"));
+    }
+    if compatible(lt, rt) {
+        return Ok(());
+    }
+    if let Some(diagnostic) = unit_mismatch(lhs, lt, rhs, rt) {
+        return Err(diagnostic);
+    }
+    Err(err(span, compare_error(lt, rt)))
+}
+
+/// `+ - * /` on the value types. Replaces the old hand-written quantity table
+/// with dimensional algebra: multiplication adds dimensions, division
+/// subtracts, and a dimensionless result becomes a bare number. Products and
+/// quotients of dimensioned values are therefore always well-formed - a wrong
+/// combination surfaces when the result is compared, not here.
+fn arith(
+    op: ArithOp,
+    lhs: &Expr,
+    lt: ValueType,
+    rhs: &Expr,
+    rt: ValueType,
+    span: Span,
+) -> Result<ValueType, Diagnostic> {
+    if lt.is_condition() || rt.is_condition() {
         return Err(err(span, "conditions do not support arithmetic"));
     }
     match op {
-        BinaryOp::Add | BinaryOp::Sub => {
-            for quantity in [ql, qr] {
-                let rejected = match quantity {
-                    Quantity::Timestamp => Some("timestamps do not support + and -"),
-                    Quantity::Direction => Some("directions do not support + and -"),
-                    _ => None,
-                };
-                if let Some(message) = rejected {
-                    return Err(err(span, message));
-                }
+        ArithOp::Add | ArithOp::Sub => add_sub(lhs, lt, rhs, rt, span),
+        ArithOp::Mul | ArithOp::Div => {
+            // A timestamp has no scale, so it cannot multiply or divide.
+            if lt == ValueType::Timestamp || rt == ValueType::Timestamp {
+                return Err(err(span, "timestamps do not support arithmetic"));
             }
-            if ql == qr {
-                return Ok(ql);
-            }
-            if let Some(diagnostic) = unit_mismatch(lhs, ql, rhs, qr) {
-                return Err(diagnostic);
-            }
-            Err(unsupported_arith(ql, qr, span))
+            Ok(if op == ArithOp::Mul {
+                multiply(lt, rt)
+            } else {
+                divide(lt, rt)
+            })
         }
-        BinaryOp::Mul => {
-            if ql.is_scalar() && qr.is_scalar() {
-                return Ok(if ql == qr { ql } else { Quantity::Ratio });
-            }
-            if ql.is_scalar() {
-                return Ok(qr);
-            }
-            if qr.is_scalar() {
-                return Ok(ql);
-            }
-            Err(unsupported_arith(ql, qr, span))
-        }
-        BinaryOp::Div => {
-            if qr.is_scalar() {
-                return Ok(ql);
-            }
-            if ql == qr {
-                return Ok(Quantity::Ratio);
-            }
-            match (ql, qr) {
-                (Quantity::Length, Quantity::Duration) => Ok(Quantity::Speed),
-                (Quantity::Speed, Quantity::Duration) => Ok(Quantity::Acceleration),
-                _ => Err(unsupported_arith(ql, qr, span)),
-            }
-        }
-        _ => Err(unsupported_arith(ql, qr, span)),
     }
 }
 
-fn compatible(a: Quantity, b: Quantity) -> bool {
+/// Addition and subtraction: both sides must share a dimension. Timestamps and
+/// directions have no meaningful sum, and are rejected with their own message.
+fn add_sub(
+    lhs: &Expr,
+    lt: ValueType,
+    rhs: &Expr,
+    rt: ValueType,
+    span: Span,
+) -> Result<ValueType, Diagnostic> {
+    for value_type in [lt, rt] {
+        let rejected = match value_type {
+            ValueType::Timestamp => Some("timestamps do not support + and -"),
+            ValueType::Dimensioned { circular: true, .. } => {
+                Some("directions do not support + and -")
+            }
+            _ => None,
+        };
+        if let Some(message) = rejected {
+            return Err(err(span, message));
+        }
+    }
+    if compatible(lt, rt) {
+        return Ok(add_sub_result(lt, rt));
+    }
+    if let Some(diagnostic) = unit_mismatch(lhs, lt, rhs, rt) {
+        return Err(diagnostic);
+    }
+    Err(err(span, unsupported_arith(lt, rt)))
+}
+
+/// The sum's type once the operands are known compatible. Dimensioned operands
+/// share a dimension and keep it; dimensionless operands combine their kinds.
+fn add_sub_result(lt: ValueType, rt: ValueType) -> ValueType {
+    match (lt, rt) {
+        (ValueType::Dimensionless(a), ValueType::Dimensionless(b)) => {
+            ValueType::Dimensionless(combine_kinds(a, b))
+        }
+        (ValueType::Dimensioned { dim, .. }, _) => ValueType::linear(dim),
+        _ => {
+            // Compatible operands are either both dimensionless or both the
+            // same dimension; timestamps and conditions are rejected upstream.
+            debug_assert!(false, "add_sub_result reached an incompatible operand pair");
+            lt
+        }
+    }
+}
+
+/// The kind of a dimensionless sum. A bare number takes on the other kind; two
+/// like kinds stay themselves.
+fn combine_kinds(a: Kind, b: Kind) -> Kind {
+    match (a, b) {
+        (Kind::Number, other) | (other, Kind::Number) => other,
+        _ => a,
+    }
+}
+
+/// Product: dimensions multiply. Scaling a dimensioned value by a dimensionless
+/// one keeps its dimension (and its wrap flag); two dimensionless values give a
+/// bare number.
+fn multiply(lt: ValueType, rt: ValueType) -> ValueType {
+    match (lt, rt) {
+        (ValueType::Dimensioned { dim, circular }, ValueType::Dimensionless(_))
+        | (ValueType::Dimensionless(_), ValueType::Dimensioned { dim, circular }) => {
+            ValueType::Dimensioned { dim, circular }
+        }
+        (ValueType::Dimensioned { dim: a, .. }, ValueType::Dimensioned { dim: b, .. }) => {
+            dimensioned(a * b)
+        }
+        (ValueType::Dimensionless(_), ValueType::Dimensionless(_)) => {
+            ValueType::Dimensionless(Kind::Number)
+        }
+        _ => {
+            // Timestamps and conditions are rejected by `arith` before this.
+            debug_assert!(false, "multiply reached a timestamp or condition");
+            ValueType::Dimensionless(Kind::Number)
+        }
+    }
+}
+
+/// Quotient: dimensions divide. Dividing by a dimensionless value keeps the
+/// numerator's dimension; other combinations subtract the exponents, with a
+/// dimensionless result collapsing to a bare number.
+fn divide(lt: ValueType, rt: ValueType) -> ValueType {
+    match (lt, rt) {
+        (ValueType::Dimensioned { dim, circular }, ValueType::Dimensionless(_)) => {
+            ValueType::Dimensioned { dim, circular }
+        }
+        (ValueType::Dimensioned { dim: a, .. }, ValueType::Dimensioned { dim: b, .. }) => {
+            dimensioned(a / b)
+        }
+        (ValueType::Dimensionless(_), ValueType::Dimensioned { dim, .. }) => {
+            dimensioned(Dimension::DIMENSIONLESS / dim)
+        }
+        (ValueType::Dimensionless(_), ValueType::Dimensionless(_)) => {
+            ValueType::Dimensionless(Kind::Number)
+        }
+        _ => {
+            // Timestamps and conditions are rejected by `arith` before this.
+            debug_assert!(false, "divide reached a timestamp or condition");
+            ValueType::Dimensionless(Kind::Number)
+        }
+    }
+}
+
+/// Whether two value types can be compared. Dimensioned values compare when
+/// their dimensions match (so a plain angle and a direction, both `A`, do);
+/// dimensionless values compare when their kinds line up.
+fn compatible(a: ValueType, b: ValueType) -> bool {
+    match (a, b) {
+        (ValueType::Timestamp, ValueType::Timestamp) => true,
+        (ValueType::Dimensioned { dim: da, .. }, ValueType::Dimensioned { dim: db, .. }) => {
+            da == db
+        }
+        (ValueType::Dimensionless(ka), ValueType::Dimensionless(kb)) => {
+            dimensionless_compatible(ka, kb)
+        }
+        _ => false,
+    }
+}
+
+/// A bare number compares with a count (`sats_fix > 6`), but a count and a
+/// ratio never mix, and a bare number never stands in for a ratio (which must
+/// carry `%`).
+fn dimensionless_compatible(a: Kind, b: Kind) -> bool {
     a == b
         || matches!(
             (a, b),
-            (Quantity::Angle, Quantity::Direction) | (Quantity::Direction, Quantity::Angle)
+            (Kind::Number, Kind::Count) | (Kind::Count, Kind::Number)
         )
 }
 
-fn unsupported_arith(a: Quantity, b: Quantity, span: Span) -> Diagnostic {
-    err(span, format!("unsupported arithmetic between {a} and {b}"))
+fn compare_error(lt: ValueType, rt: ValueType) -> String {
+    match (type_label(lt), type_label(rt)) {
+        (Some(a), Some(b)) => format!("cannot compare {a} with {b}"),
+        _ => "cannot compare these values".to_owned(),
+    }
+}
+
+fn unsupported_arith(a: ValueType, b: ValueType) -> String {
+    match (type_label(a), type_label(b)) {
+        (Some(x), Some(y)) => format!("unsupported arithmetic between {x} and {y}"),
+        _ => "unsupported arithmetic between these values".to_owned(),
+    }
 }
 
 /// Errors for a literal whose (missing or wrong) unit clashes with the other
 /// side, e.g. `velocity > 30` or `velocity > 30 deg`. `None` when neither
 /// side is a literal, i.e. the mismatch is not unit-shaped.
-fn unit_mismatch(lhs: &Expr, ql: Quantity, rhs: &Expr, qr: Quantity) -> Option<Diagnostic> {
-    for (lit_expr, other_expr, other_q) in [(lhs, rhs, qr), (rhs, lhs, ql)] {
+fn unit_mismatch(lhs: &Expr, lt: ValueType, rhs: &Expr, rt: ValueType) -> Option<Diagnostic> {
+    for (lit_expr, other_expr, other_t) in [(lhs, rhs, rt), (rhs, lhs, lt)] {
         let Expr::Number(lit) = lit_expr else {
             continue;
         };
         let desc = describe(other_expr).unwrap_or_else(|| "this value".to_owned());
-        if other_q == Quantity::Timestamp {
+        if other_t == ValueType::Timestamp {
             return Some(err_hint(
                 lit.span,
                 "timestamps have no literals",
                 "restrict time with the global filter",
             ));
         }
+        let other_q = named_quantity(other_t);
         match lit.unit {
             None => {
-                let example = example_literal(other_q)?;
+                let example = other_q.and_then(example_literal)?;
                 return Some(err(
                     lit.span,
                     format!("{desc} needs a unit, e.g. {example}"),
                 ));
             }
             Some(unit) => {
-                if other_q == Quantity::Count {
+                if other_t == ValueType::Dimensionless(Kind::Count) {
                     return Some(err_hint(
                         lit.span,
                         format!("{desc} is a count"),
                         "compare against a bare number",
                     ));
                 }
-                let list = unit_list(other_q)?;
+                let quantity = other_q?;
+                let list = unit_list(quantity)?;
                 return Some(err(
                     lit.span,
-                    format!("expected a {other_q} unit ({list}), found {}", unit.text()),
+                    format!("expected a {quantity} unit ({list}), found {}", unit.text()),
                 ));
             }
         }
     }
     None
+}
+
+/// A number literal's value type: `%` is a ratio, another unit its dimension, a
+/// bare number the neutral [`Kind::Number`].
+fn literal_type(lit: &NumberLit) -> ValueType {
+    match lit.unit {
+        // `%` is the one dimensionless unit, and it denominates a ratio.
+        Some(unit) if unit.dimension().is_dimensionless() => ValueType::Dimensionless(Kind::Ratio),
+        Some(unit) => ValueType::linear(unit.dimension()),
+        None => ValueType::Dimensionless(Kind::Number),
+    }
+}
+
+/// A number literal's value in base units.
+fn literal_base(lit: &NumberLit) -> f64 {
+    match lit.unit {
+        Some(unit) => lit.value * unit.to_base(),
+        None => lit.value,
+    }
 }
 
 /// The pinned `==` message: with a unit literal on one side, suggest the
@@ -683,5 +956,74 @@ fn describe(expr: &Expr) -> Option<String> {
         Expr::Call { arg, .. } => describe(arg),
         Expr::Unary { operand, .. } => describe(operand),
         Expr::Number(_) | Expr::Binary { .. } => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use strum::{EnumCount as _, IntoEnumIterator as _};
+
+    use super::*;
+
+    /// Every quantity maps to a value type and back, so `named_dimension` stays
+    /// in step with `Quantity::dimension`. A new quantity not wired into
+    /// `named_dimension` fails here instead of silently becoming an unnamed
+    /// exotic value that degrades every error message.
+    #[test]
+    fn value_type_round_trips_through_named_quantity() {
+        let mut covered = 0;
+        for quantity in Quantity::iter() {
+            assert_eq!(
+                named_quantity(value_type(quantity)),
+                Some(quantity),
+                "{quantity}"
+            );
+            covered += 1;
+        }
+        assert_eq!(covered, Quantity::COUNT);
+    }
+
+    #[test]
+    fn dimensionless_kinds_follow_the_matrix() {
+        use Kind::{Count, Number, Ratio};
+
+        // A bare number pairs with a count, never a ratio; a count and a ratio
+        // never mix.
+        for (a, b, expected) in [
+            (Number, Number, true),
+            (Count, Count, true),
+            (Ratio, Ratio, true),
+            (Number, Count, true),
+            (Count, Number, true),
+            (Number, Ratio, false),
+            (Ratio, Number, false),
+            (Count, Ratio, false),
+            (Ratio, Count, false),
+        ] {
+            assert_eq!(dimensionless_compatible(a, b), expected, "{a:?} ~ {b:?}");
+        }
+
+        // `==`/`!=` are counts only: both discrete, at least one a real count.
+        let dimensionless = |kind| ValueType::Dimensionless(kind);
+        for (a, b, expected) in [
+            (Count, Count, true),
+            (Count, Number, true),
+            (Number, Count, true),
+            (Number, Number, false),
+            (Count, Ratio, false),
+            (Ratio, Ratio, false),
+        ] {
+            assert_eq!(
+                equality_allowed(dimensionless(a), dimensionless(b)),
+                expected,
+                "{a:?} == {b:?}"
+            );
+        }
+
+        // A bare number takes on the other kind when summed; like kinds stay.
+        assert_eq!(combine_kinds(Number, Count), Count);
+        assert_eq!(combine_kinds(Ratio, Number), Ratio);
+        assert_eq!(combine_kinds(Number, Number), Number);
+        assert_eq!(combine_kinds(Count, Count), Count);
     }
 }
