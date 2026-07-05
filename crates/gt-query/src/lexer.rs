@@ -177,7 +177,11 @@ pub fn lex(src: &str) -> Result<Vec<Tok<'_>>, Diagnostic> {
                 return Err(Diagnostic {
                     span,
                     message: format!("unexpected character `{ch}`"),
-                    help: Some("queries are all lowercase".to_owned()),
+                    // The lowercase hint fits an uppercase keyword; it would
+                    // mislead for a stray symbol like `^` or `@`.
+                    help: ch
+                        .is_ascii_uppercase()
+                        .then(|| "queries are all lowercase".to_owned()),
                 });
             }
         }

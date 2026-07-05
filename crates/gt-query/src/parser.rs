@@ -461,7 +461,7 @@ impl<'src> Parser<'src> {
         let Some(tok) = self.peek() else {
             return Ok(None);
         };
-        let signed = match tok.kind {
+        let raw = match tok.kind {
             Token::Superscript => superscript_value(tok.text),
             // Strip the leading `^`; a fractional part means a non-whole power.
             Token::CaretPower => match tok.text.get(1..) {
@@ -474,10 +474,16 @@ impl<'src> Parser<'src> {
             _ => return Ok(None),
         };
         self.advance();
-        let value = signed.and_then(|v| i8::try_from(v).ok()).ok_or_else(|| {
+        // `None` here is a digitless run (a lone `⁻`) or a value beyond `i32`.
+        let raw = raw.ok_or_else(|| self.error(tok.span, "a power must be a whole number"))?;
+        let value = i8::try_from(raw).map_err(|_overflow| {
             self.error(
                 tok.span,
-                "a power must be a whole number between -128 and 127",
+                format!(
+                    "a power must be a whole number between {} and {}",
+                    i8::MIN,
+                    i8::MAX
+                ),
             )
         })?;
         Ok(Some((value, tok.span)))

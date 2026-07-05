@@ -76,8 +76,8 @@ impl fmt::Display for Expr {
 }
 
 /// An `i8` exponent as superscript digits (`-3` prints `⁻³`), the canonical
-/// form for a power.
-struct Superscript(i8);
+/// form for a power. Also used by the checker to label squared dimensions.
+pub(crate) struct Superscript(pub(crate) i8);
 
 impl fmt::Display for Superscript {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

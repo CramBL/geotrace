@@ -541,10 +541,13 @@ mod tests {
     /// still needs a shared dimension; timestamps, directions, and conditions
     /// reject arithmetic outright.
     #[rstest]
-    #[case("points | where velocity * eph > 3", "cannot compare these values")]
+    #[case(
+        "points | where velocity * eph > 3",
+        "cannot compare length²/time with number"
+    )]
     #[case(
         "points | where sats_fix / velocity > 3",
-        "cannot compare these values"
+        "cannot compare time/length with number"
     )]
     #[case(
         "points | where velocity + eph > 3 m",
@@ -634,19 +637,19 @@ mod tests {
     )]
     #[case(
         "points | window 3 | where var(velocity) > 30 km/h",
-        Some("cannot compare these values")
+        Some("cannot compare speed² with speed")
     )]
     #[case(
         "points | window 3 | where var(velocity) > var(eph)",
-        Some("cannot compare these values")
+        Some("cannot compare speed² with length²")
     )]
     #[case(
         "points | window 3 | where var(time) > 5 s",
-        Some("cannot compare these values")
+        Some("cannot compare duration² with duration")
     )]
     #[case(
         "points | window 3 | where var(lat) > 3 deg",
-        Some("cannot compare these values")
+        Some("cannot compare angle² with angle")
     )]
     fn var_squares_the_dimension(#[case] src: &str, #[case] error: Option<&str>) {
         match error {
@@ -732,6 +735,7 @@ mod tests {
         "points | where velocity⁹⁹⁹ > 0",
         "a power must be a whole number between -128 and 127"
     )]
+    #[case("points | where velocity⁻ > 0", "a power must be a whole number")]
     fn power_rejects_non_integer_and_out_of_range(#[case] src: &str, #[case] expected: &str) {
         assert_eq!(parse(src).expect_err(src).message, expected, "for {src}");
     }
@@ -745,7 +749,7 @@ mod tests {
     #[case("points | where velocity² > velocity²", None)]
     #[case(
         "points | where velocity² > 30 km/h",
-        Some("cannot compare these values")
+        Some("cannot compare speed² with speed")
     )]
     fn power_scales_the_dimension(#[case] src: &str, #[case] error: Option<&str>) {
         match error {
@@ -768,6 +772,32 @@ mod tests {
         let provider = TestProvider::new(2).with(QueryMetric::SatsFix, vec![Some(3.0), Some(5.0)]);
         let output = run_one("points | where sats_fix² < 16", &provider);
         assert_eq!(output.matches[0].ranges, vec![0..1]);
+    }
+
+    #[test]
+    fn power_with_a_negative_exponent_inverts() {
+        // sats_fix⁻¹: 1/2 = 0.5 > 0.4 matches, 1/4 = 0.25 does not.
+        let provider = TestProvider::new(2).with(QueryMetric::SatsFix, vec![Some(2.0), Some(4.0)]);
+        let output = run_one("points | where sats_fix⁻¹ > 0.4", &provider);
+        assert_eq!(output.matches[0].ranges, vec![0..1]);
+    }
+
+    #[test]
+    fn power_with_a_zero_exponent_is_one() {
+        // Every value to the zeroth power is 1, so all points clear the bar.
+        let provider = TestProvider::new(2).with(QueryMetric::SatsFix, vec![Some(3.0), Some(7.0)]);
+        let output = run_one("points | where sats_fix⁰ > 0.5", &provider);
+        assert_eq!(output.matches[0].ranges, vec![0..2]);
+    }
+
+    #[test]
+    fn a_negative_power_of_zero_poisons_the_point() {
+        // 0⁻¹ is infinite, so that point is skipped like any undefined
+        // arithmetic; the finite inverse still matches.
+        let provider = TestProvider::new(2).with(QueryMetric::SatsFix, vec![Some(0.0), Some(2.0)]);
+        let output = run_one("points | where sats_fix⁻¹ < 1", &provider);
+        assert_eq!(output.matches[0].ranges, vec![1..2]);
+        assert_eq!(output.summary.skipped_non_finite, 1);
     }
 
     #[test]
@@ -965,7 +995,7 @@ mod tests {
                         operand: Box::new(operand),
                         span: span(),
                     }),
-                    (inner, -128i8..=127).prop_map(|(base, exponent)| Expr::Power {
+                    (inner, any::<i8>()).prop_map(|(base, exponent)| Expr::Power {
                         base: Box::new(base),
                         exponent,
                         span: span(),

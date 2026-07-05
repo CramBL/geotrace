@@ -10,6 +10,7 @@ use gt_types::DisplayMode;
 use crate::Diagnostic;
 use crate::ast::{BinaryOp, Expr, Func, NumberLit, ParamDecl, ParamName, Query, Span, UnaryOp};
 use crate::dimension::Dimension;
+use crate::fmt::Superscript;
 use crate::metric::{Quantity, QueryMetric};
 use crate::unit::{example_literal, unit_list};
 
@@ -231,10 +232,82 @@ fn named_dimension(dim: Dimension, circular: bool) -> Option<Quantity> {
 
 /// A short label for a value type in an error, or `None` when it has no concise
 /// name (an exotic dimension such as a squared speed).
-fn type_label(vt: ValueType) -> Option<String> {
-    match named_quantity(vt) {
-        Some(quantity) => Some(quantity.to_string()),
-        None => matches!(vt, ValueType::Dimensionless(Kind::Number)).then(|| "number".to_owned()),
+/// A readable name for a value type in an error message. Every value has one:
+/// named quantities use their name, a bare number is "number", and an exotic
+/// dimension is described from its exponents (see [`dimension_label`]).
+fn type_label(vt: ValueType) -> String {
+    match vt {
+        ValueType::Dimensionless(Kind::Number) => "number".to_owned(),
+        ValueType::Dimensioned { dim, circular } => dimension_label(dim, circular),
+        // Count, Ratio, Timestamp, and Condition all name a quantity.
+        other => named_quantity(other).map_or_else(|| "value".to_owned(), |q| q.to_string()),
+    }
+}
+
+/// A label for a dimension: its quantity name (`speed`), a whole power of one
+/// (`speed²`, the shape `var` and the power operator produce), or a fraction of
+/// the base dimensions (`length²/time`).
+fn dimension_label(dim: Dimension, circular: bool) -> String {
+    if let Some(quantity) = named_dimension(dim, circular) {
+        return quantity.to_string();
+    }
+    power_of_named(dim).unwrap_or_else(|| base_dimension_fraction(dim))
+}
+
+/// `speed²` or `acceleration³` when the dimension is a square or cube of a
+/// named quantity.
+fn power_of_named(dim: Dimension) -> Option<String> {
+    for n in [2i8, 3] {
+        if dim.length % n == 0 && dim.time % n == 0 && dim.angle % n == 0 {
+            let root = Dimension {
+                length: dim.length / n,
+                time: dim.time / n,
+                angle: dim.angle / n,
+            };
+            if let Some(quantity) = named_dimension(root, false) {
+                return Some(format!("{quantity}{}", Superscript(n)));
+            }
+        }
+    }
+    None
+}
+
+/// The base-dimension fraction, e.g. `length²/time`: positive exponents in the
+/// numerator, negative in the denominator.
+fn base_dimension_fraction(dim: Dimension) -> String {
+    let bases = [
+        ("length", dim.length),
+        ("time", dim.time),
+        ("angle", dim.angle),
+    ];
+    let group = |numerator: bool| -> Vec<String> {
+        bases
+            .iter()
+            .filter_map(|&(name, exp)| {
+                let included = if numerator { exp > 0 } else { exp < 0 };
+                included.then(|| base_with_exponent(name, exp.saturating_abs()))
+            })
+            .collect()
+    };
+    let numerator = group(true);
+    let denominator = group(false);
+    let numerator = if numerator.is_empty() {
+        "1".to_owned()
+    } else {
+        numerator.join("·")
+    };
+    if denominator.is_empty() {
+        numerator
+    } else {
+        format!("{numerator}/{}", denominator.join("·"))
+    }
+}
+
+fn base_with_exponent(name: &str, exponent: i8) -> String {
+    if exponent == 1 {
+        name.to_owned()
+    } else {
+        format!("{name}{}", Superscript(exponent))
     }
 }
 
@@ -911,17 +984,15 @@ fn dimensionless_compatible(a: Kind, b: Kind) -> bool {
 }
 
 fn compare_error(lt: ValueType, rt: ValueType) -> String {
-    match (type_label(lt), type_label(rt)) {
-        (Some(a), Some(b)) => format!("cannot compare {a} with {b}"),
-        _ => "cannot compare these values".to_owned(),
-    }
+    format!("cannot compare {} with {}", type_label(lt), type_label(rt))
 }
 
 fn unsupported_arith(a: ValueType, b: ValueType) -> String {
-    match (type_label(a), type_label(b)) {
-        (Some(x), Some(y)) => format!("unsupported arithmetic between {x} and {y}"),
-        _ => "unsupported arithmetic between these values".to_owned(),
-    }
+    format!(
+        "unsupported arithmetic between {} and {}",
+        type_label(a),
+        type_label(b)
+    )
 }
 
 /// Errors for a literal whose (missing or wrong) unit clashes with the other
