@@ -19,7 +19,7 @@ const HALF_TURN_DEG: f64 = 180.0;
 
 /// Points evaluated between cancellation checks. Small enough to stop within
 /// a frame or two, large enough that the check never shows up in a profile.
-const CANCEL_CHECK_INTERVAL: usize = 4096;
+pub(crate) const CANCEL_CHECK_INTERVAL: usize = 4096;
 
 /// Per-point metric access for one track.
 ///
@@ -120,53 +120,10 @@ pub(crate) fn run_with_interval(
         if should_cancel() {
             return None;
         }
-        let len = input.provider.len();
-        summary.total_points += len;
-        let mut ctx = Ctx {
-            provider: input.provider,
-            missing: BTreeSet::new(),
-            non_finite: false,
-        };
-        let mut matched = vec![false; len];
-
-        match query.window() {
-            Some(window) if len < window => {
-                summary.tracks_shorter_than_window += 1;
-            }
-            Some(window) => {
-                let last_start = len - window;
-                for start in 0..=last_start {
-                    if start % check_interval == 0 && should_cancel() {
-                        return None;
-                    }
-                    let scope = Scope::Window { start, len: window };
-                    match verdict(query, &mut ctx, scope) {
-                        Some(true) => {
-                            for slot in matched.iter_mut().skip(start).take(window) {
-                                *slot = true;
-                            }
-                        }
-                        Some(false) => {}
-                        None => record_skip(&mut summary, &ctx),
-                    }
-                }
-            }
-            None => {
-                for (index, slot) in matched.iter_mut().enumerate() {
-                    if index % check_interval == 0 && should_cancel() {
-                        return None;
-                    }
-                    match verdict(query, &mut ctx, Scope::Point(index)) {
-                        Some(true) => *slot = true,
-                        Some(false) => {}
-                        None => record_skip(&mut summary, &ctx),
-                    }
-                }
-            }
-        }
-
-        summary.matched_points += matched.iter().filter(|m| **m).count();
-        let ranges = ranges_from(&matched);
+        summary.total_points += input.provider.len();
+        let eval = evaluate_track(query, input.provider, should_cancel, check_interval)?;
+        summary.absorb(&eval);
+        let ranges = ranges_from(&eval.matched);
         if !ranges.is_empty() {
             summary.tracks_with_matches += 1;
             summary.match_count += ranges.len();
@@ -184,12 +141,110 @@ pub(crate) fn run_with_interval(
     })
 }
 
-fn record_skip(summary: &mut RunSummary, ctx: &Ctx<'_>) {
-    for metric in &ctx.missing {
-        *summary.skipped.entry(*metric).or_insert(0) += 1;
+/// One track's evaluation: which points matched, plus the skip counts. The
+/// shared core of both the single-query [`run`] and the multi-query
+/// [`crate::run_pipeline`], which runs it over each visible run.
+pub(crate) struct TrackEval {
+    /// One flag per provider point.
+    pub matched: Vec<bool>,
+    /// Windows (or points) skipped per missing metric.
+    pub skipped: BTreeMap<QueryMetric, usize>,
+    pub skipped_non_finite: usize,
+    /// The provider was shorter than the window, so nothing could match.
+    pub shorter_than_window: bool,
+}
+
+impl RunSummary {
+    /// Fold one track's evaluation into the running totals.
+    fn absorb(&mut self, eval: &TrackEval) {
+        self.matched_points += eval.matched.iter().filter(|m| **m).count();
+        for (metric, count) in &eval.skipped {
+            *self.skipped.entry(*metric).or_insert(0) += count;
+        }
+        self.skipped_non_finite += eval.skipped_non_finite;
+        self.tracks_shorter_than_window += usize::from(eval.shorter_than_window);
     }
-    if ctx.non_finite {
-        summary.skipped_non_finite += 1;
+}
+
+/// Evaluate `query` over one provider, returning the matched mask and skips.
+/// `None` only on cancellation. Windows and derived metrics are relative to
+/// this provider, so running it over a [`crate::RunView`] gives gap-aware
+/// evaluation for the pipeline.
+pub(crate) fn evaluate_track(
+    query: &CheckedQuery,
+    provider: &dyn MetricProvider,
+    should_cancel: &dyn Fn() -> bool,
+    check_interval: usize,
+) -> Option<TrackEval> {
+    let len = provider.len();
+    let mut ctx = Ctx {
+        provider,
+        missing: BTreeSet::new(),
+        non_finite: false,
+    };
+    let mut matched = vec![false; len];
+    let mut skips = Skips::default();
+    let mut shorter_than_window = false;
+
+    match query.window() {
+        Some(window) if len < window => {
+            shorter_than_window = true;
+        }
+        Some(window) => {
+            let last_start = len - window;
+            for start in 0..=last_start {
+                if start % check_interval == 0 && should_cancel() {
+                    return None;
+                }
+                let scope = Scope::Window { start, len: window };
+                match verdict(query, &mut ctx, scope) {
+                    Some(true) => {
+                        for slot in matched.iter_mut().skip(start).take(window) {
+                            *slot = true;
+                        }
+                    }
+                    Some(false) => {}
+                    None => skips.record(&ctx),
+                }
+            }
+        }
+        None => {
+            for (index, slot) in matched.iter_mut().enumerate() {
+                if index % check_interval == 0 && should_cancel() {
+                    return None;
+                }
+                match verdict(query, &mut ctx, Scope::Point(index)) {
+                    Some(true) => *slot = true,
+                    Some(false) => {}
+                    None => skips.record(&ctx),
+                }
+            }
+        }
+    }
+    Some(TrackEval {
+        matched,
+        skipped: skips.per_metric,
+        skipped_non_finite: skips.non_finite,
+        shorter_than_window,
+    })
+}
+
+/// Skip tallies accumulated during one track's evaluation, kept apart from the
+/// matched mask so both can be mutated in the same loop.
+#[derive(Default)]
+struct Skips {
+    per_metric: BTreeMap<QueryMetric, usize>,
+    non_finite: usize,
+}
+
+impl Skips {
+    fn record(&mut self, ctx: &Ctx<'_>) {
+        for metric in &ctx.missing {
+            *self.per_metric.entry(*metric).or_insert(0) += 1;
+        }
+        if ctx.non_finite {
+            self.non_finite += 1;
+        }
     }
 }
 
@@ -418,7 +473,7 @@ fn circular_spread(values: &mut [f64]) -> f64 {
 }
 
 /// Maximal runs of `true`.
-fn ranges_from(matched: &[bool]) -> Vec<Range<usize>> {
+pub(crate) fn ranges_from(matched: &[bool]) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     let mut run_start = None;
     for (index, &hit) in matched.iter().enumerate() {
