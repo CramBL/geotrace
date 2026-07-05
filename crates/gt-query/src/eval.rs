@@ -446,9 +446,10 @@ fn aggregate(
         Func::Abs => return None,
     };
     // Like arithmetic (see `eval_num`), an aggregate never hands a non-finite
-    // value to a comparison: an overflowing spread, or the circular-std
-    // singularity of a window with no resultant direction, poisons and is
-    // reported as skipped rather than comparing as a bare infinity.
+    // value to a comparison: an overflowing sum (in `avg` or `population_std`),
+    // or the circular-std singularity of a window with no resultant direction,
+    // poisons and is reported as skipped rather than comparing as a bare
+    // infinity.
     if !value.is_finite() {
         ctx.non_finite = true;
         return None;
