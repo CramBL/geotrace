@@ -30,10 +30,10 @@ pub struct QueryOutput {
 }
 
 /// A `draw` query's halos: the points it matched that are still visible in the
-/// final composed result. Layers are returned in draw order, which the caller
-/// maps to distinct colors.
+/// final composed result. Contributions are returned in draw order, which the
+/// caller maps to distinct colors (the map-facing `gt_ui_types::DrawLayer`).
 #[derive(Debug, Clone, PartialEq)]
-pub struct DrawLayer {
+pub struct DrawContribution {
     /// Index into [`PipelineOutput::queries`] of the drawing query.
     pub query_index: usize,
     pub matches: Vec<TrackMatches>,
@@ -47,7 +47,7 @@ pub struct PipelineOutput {
     /// Final hidden point ranges per track: where the polyline breaks.
     pub hidden: Vec<TrackMatches>,
     /// Halo layers, one per `draw` query, in draw order.
-    pub draws: Vec<DrawLayer>,
+    pub draws: Vec<DrawContribution>,
 }
 
 /// A window onto a contiguous run of one provider's points, reindexed to
@@ -95,9 +95,9 @@ fn run_pipeline_with_interval(
         .filter(|(_, q)| q.mode() == DisplayMode::Draw)
         .map(|(i, _)| i)
         .collect();
-    let mut draw_layers: Vec<DrawLayer> = draw_indices
+    let mut draw_layers: Vec<DrawContribution> = draw_indices
         .iter()
-        .map(|&query_index| DrawLayer {
+        .map(|&query_index| DrawContribution {
             query_index,
             matches: Vec::new(),
         })
@@ -205,18 +205,14 @@ fn fold_track(
             shorter_than_window: query.window().is_some() && !run_long_enough,
         });
 
-        match query.mode() {
-            DisplayMode::Draw => draw_matched.push(matched),
-            DisplayMode::Hide => {
-                for (vis, hit) in visible.iter_mut().zip(&matched) {
-                    *vis &= !hit;
-                }
-            }
-            DisplayMode::Keep => {
-                for (vis, hit) in visible.iter_mut().zip(&matched) {
-                    *vis &= *hit;
-                }
-            }
+        // `shows` is the shared keep/hide/draw truth table; draw shows every
+        // point, so the fold leaves visibility untouched and only records the
+        // matched mask for the final halo pass.
+        for (vis, hit) in visible.iter_mut().zip(&matched) {
+            *vis &= query.mode().shows(*hit);
+        }
+        if query.mode() == DisplayMode::Draw {
+            draw_matched.push(matched);
         }
     }
 
@@ -410,5 +406,55 @@ mod tests {
         let out = compose(&["points | where velocity > 10 m/s | draw"], &provider);
         assert!(hidden_ranges(&out).is_empty());
         assert_eq!(draw_ranges(&out, 0), vec![1..3]);
+    }
+
+    #[test]
+    fn accel_resets_across_a_hidden_gap() {
+        // A slow point in the middle is hidden, splitting the track into two
+        // runs. `accel` differences velocity over time within a run only.
+        let provider = Speeds(vec![10.0, 20.0, 1.0, 100.0, 100.0, 100.0]);
+        let out = compose(
+            &[
+                "points | where velocity < 5 m/s | hide",
+                "points | where accel > 2 m/s2 | draw",
+            ],
+            &provider,
+        );
+        assert_eq!(hidden_ranges(&out), vec![2..3]);
+        // The 10->20 step inside the first run is a real acceleration; the
+        // 1->100 jump is not matched, because accel is missing at the start of
+        // the second run rather than differencing across the hidden point.
+        assert_eq!(draw_ranges(&out, 0), vec![1..2]);
+    }
+
+    #[test]
+    fn cancellation_stops_the_pipeline_without_partial_results() {
+        let provider = Speeds(vec![20.0; 8]);
+        let queries: Vec<CheckedQuery> = [
+            "points | where velocity > 0 m/s | hide",
+            "points | where velocity > 0 m/s | draw",
+        ]
+        .iter()
+        .map(|s| check(&parse(s).expect(s)).expect(s))
+        .collect();
+        let inputs = [TrackInput {
+            track: track(),
+            provider: &provider,
+        }];
+
+        // Interval 1 checks every point; cancel after a few so the stop lands
+        // inside a run's scan, not only at the per-track entry.
+        let calls = std::cell::Cell::new(0_u32);
+        let cancel_after_three = || {
+            calls.set(calls.get() + 1);
+            calls.get() > 3
+        };
+        assert_eq!(
+            run_pipeline_with_interval(&queries, &inputs, &cancel_after_three, 1),
+            None
+        );
+
+        // The same pipeline completes when never cancelled.
+        assert!(run_pipeline_with_interval(&queries, &inputs, &|| false, 1).is_some());
     }
 }
