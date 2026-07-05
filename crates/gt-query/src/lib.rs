@@ -261,6 +261,42 @@ mod tests {
     }
 
     #[test]
+    fn std_over_a_window_uses_population_deviation() {
+        // Steady speed has zero std; the last window jumps, so only the steady
+        // stretch matches. 2 km/h is 0.556 m/s, well above the 0 of a flat run.
+        let provider = TestProvider::new(4).with(
+            QueryMetric::Velocity,
+            vec![Some(10.0), Some(10.0), Some(10.0), Some(20.0)],
+        );
+        let output = run_one(
+            "points | window 2 | where std(velocity) < 2 km/h",
+            &provider,
+        );
+        // Windows [0,2) and [1,3) are flat; [2,4) has a 5 m/s std and fails.
+        assert_eq!(output.matches[0].ranges, vec![0..3]);
+    }
+
+    #[test]
+    fn circular_std_flags_a_steady_heading() {
+        // A heading tight around north stays under the threshold; the scattered
+        // windows do not, so only the steady stretch matches.
+        let provider = TestProvider::new(6).with(
+            QueryMetric::Heading,
+            vec![
+                Some(359.0),
+                Some(1.0),
+                Some(0.0),
+                Some(90.0),
+                Some(200.0),
+                Some(300.0),
+            ],
+        );
+        let output = run_one("points | window 3 | where std(heading) <= 5 deg", &provider);
+        // Only the first window [0,3) around north is steady.
+        assert_eq!(output.matches[0].ranges, vec![0..3]);
+    }
+
+    #[test]
     fn short_track_is_reported_not_dropped() {
         let provider =
             TestProvider::new(3).with(QueryMetric::Velocity, vec![Some(1.0), Some(2.0), Some(3.0)]);

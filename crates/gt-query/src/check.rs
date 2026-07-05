@@ -413,7 +413,7 @@ impl Checker {
             return Err(err_hint(
                 span,
                 format!("{func} on a direction is ambiguous"),
-                "use spread, first, last, or delta",
+                "use spread, std, first, last, or delta",
             ));
         }
         // The resulting quantity is shared with autocomplete via `Func`.

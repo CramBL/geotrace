@@ -174,6 +174,14 @@ fn func_construct(func: Func) -> Construct {
              350 deg and 10 deg have a spread of 20 deg, not 340 deg.",
             &["spread(heading) <= 10 deg"],
         ),
+        Func::Std => (
+            "standard deviation over the window",
+            "The population standard deviation, divided by N. Same unit as the \
+             values, so it compares directly against a threshold, unlike a \
+             variance. On a direction (`heading`) it is circular, robust across \
+             the 0/360 wrap.",
+            &["std(heading) <= 3 deg", "std(velocity) < 2 km/h"],
+        ),
         Func::First => (
             "value at the window's first point",
             "The value at the earliest point of the window.",

@@ -89,7 +89,7 @@ expression: catalog
     ),
     (
         "points | window 3 | where avg(heading) < 10 deg",
-        "26..38: avg on a direction is ambiguous | help: use spread, first, last, or delta",
+        "26..38: avg on a direction is ambiguous | help: use spread, std, first, last, or delta",
     ),
     (
         "points | window 3 | where spread(velocity) > 3 km/h and avg(velocity)",
