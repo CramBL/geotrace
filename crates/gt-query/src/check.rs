@@ -117,10 +117,10 @@ pub(crate) enum ArithOp {
     Div,
 }
 
-/// The static type the checker gives an expression. Dimensioned values carry
-/// their [`Dimension`]; dimensionless values carry a [`Kind`] so a count, a
-/// ratio, and a bare number stay distinct even though their dimension is the
-/// same zero. `Timestamp` and `Condition` stand outside dimensional arithmetic.
+/// The static type the checker gives an expression. Dimensionless values carry
+/// a [`Kind`] so a count, a ratio, and a bare number stay distinct despite
+/// sharing the zero dimension; `Timestamp` and `Condition` stand outside
+/// dimensional arithmetic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ValueType {
     Condition,
@@ -178,9 +178,13 @@ fn value_type(quantity: Quantity) -> ValueType {
                 dim,
                 circular: quantity == Quantity::Direction,
             },
-            // Unreachable: only Timestamp and Condition lack a dimension, and
-            // both matched above.
-            None => ValueType::Dimensionless(Kind::Number),
+            None => {
+                debug_assert!(
+                    false,
+                    "only Timestamp and Condition lack a dimension, and both matched above"
+                );
+                ValueType::Dimensionless(Kind::Number)
+            }
         },
     }
 }
@@ -614,13 +618,13 @@ impl Checker {
                 ))
             }
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
-                let value_type = arith(op, lhs, lt, rhs, rt, span)?;
                 let arith_op = match op {
                     BinaryOp::Add => ArithOp::Add,
                     BinaryOp::Sub => ArithOp::Sub,
                     BinaryOp::Mul => ArithOp::Mul,
                     _ => ArithOp::Div,
                 };
+                let value_type = arith(arith_op, lhs, lt, rhs, rt, span)?;
                 Ok((
                     value_type,
                     CExpr::Arith {
@@ -683,7 +687,7 @@ fn check_comparable(
 /// quotients of dimensioned values are therefore always well-formed - a wrong
 /// combination surfaces when the result is compared, not here.
 fn arith(
-    op: BinaryOp,
+    op: ArithOp,
     lhs: &Expr,
     lt: ValueType,
     rhs: &Expr,
@@ -694,20 +698,18 @@ fn arith(
         return Err(err(span, "conditions do not support arithmetic"));
     }
     match op {
-        BinaryOp::Add | BinaryOp::Sub => add_sub(lhs, lt, rhs, rt, span),
-        BinaryOp::Mul | BinaryOp::Div => {
+        ArithOp::Add | ArithOp::Sub => add_sub(lhs, lt, rhs, rt, span),
+        ArithOp::Mul | ArithOp::Div => {
             // A timestamp has no scale, so it cannot multiply or divide.
             if lt == ValueType::Timestamp || rt == ValueType::Timestamp {
                 return Err(err(span, "timestamps do not support arithmetic"));
             }
-            Ok(if op == BinaryOp::Mul {
+            Ok(if op == ArithOp::Mul {
                 multiply(lt, rt)
             } else {
                 divide(lt, rt)
             })
         }
-        // `binary` routes only the four arithmetic operators here.
-        _ => Err(err(span, "conditions do not support arithmetic")),
     }
 }
 
@@ -749,9 +751,12 @@ fn add_sub_result(lt: ValueType, rt: ValueType) -> ValueType {
             ValueType::Dimensionless(combine_kinds(a, b))
         }
         (ValueType::Dimensioned { dim, .. }, _) => ValueType::linear(dim),
-        // Compatible operands that are neither pair do not occur (timestamps
-        // are rejected above); fall back to the left type.
-        _ => lt,
+        _ => {
+            // Compatible operands are either both dimensionless or both the
+            // same dimension; timestamps and conditions are rejected upstream.
+            debug_assert!(false, "add_sub_result reached an incompatible operand pair");
+            lt
+        }
     }
 }
 
@@ -779,8 +784,11 @@ fn multiply(lt: ValueType, rt: ValueType) -> ValueType {
         (ValueType::Dimensionless(_), ValueType::Dimensionless(_)) => {
             ValueType::Dimensionless(Kind::Number)
         }
-        // Timestamps and conditions never reach here (rejected by `arith`).
-        _ => ValueType::Dimensionless(Kind::Number),
+        _ => {
+            // Timestamps and conditions are rejected by `arith` before this.
+            debug_assert!(false, "multiply reached a timestamp or condition");
+            ValueType::Dimensionless(Kind::Number)
+        }
     }
 }
 
@@ -801,8 +809,11 @@ fn divide(lt: ValueType, rt: ValueType) -> ValueType {
         (ValueType::Dimensionless(_), ValueType::Dimensionless(_)) => {
             ValueType::Dimensionless(Kind::Number)
         }
-        // Timestamps and conditions never reach here (rejected by `arith`).
-        _ => ValueType::Dimensionless(Kind::Number),
+        _ => {
+            // Timestamps and conditions are rejected by `arith` before this.
+            debug_assert!(false, "divide reached a timestamp or condition");
+            ValueType::Dimensionless(Kind::Number)
+        }
     }
 }
 
@@ -945,5 +956,74 @@ fn describe(expr: &Expr) -> Option<String> {
         Expr::Call { arg, .. } => describe(arg),
         Expr::Unary { operand, .. } => describe(operand),
         Expr::Number(_) | Expr::Binary { .. } => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use strum::{EnumCount as _, IntoEnumIterator as _};
+
+    use super::*;
+
+    /// Every quantity maps to a value type and back, so `named_dimension` stays
+    /// in step with `Quantity::dimension`. A new quantity not wired into
+    /// `named_dimension` fails here instead of silently becoming an unnamed
+    /// exotic value that degrades every error message.
+    #[test]
+    fn value_type_round_trips_through_named_quantity() {
+        let mut covered = 0;
+        for quantity in Quantity::iter() {
+            assert_eq!(
+                named_quantity(value_type(quantity)),
+                Some(quantity),
+                "{quantity}"
+            );
+            covered += 1;
+        }
+        assert_eq!(covered, Quantity::COUNT);
+    }
+
+    #[test]
+    fn dimensionless_kinds_follow_the_matrix() {
+        use Kind::{Count, Number, Ratio};
+
+        // A bare number pairs with a count, never a ratio; a count and a ratio
+        // never mix.
+        for (a, b, expected) in [
+            (Number, Number, true),
+            (Count, Count, true),
+            (Ratio, Ratio, true),
+            (Number, Count, true),
+            (Count, Number, true),
+            (Number, Ratio, false),
+            (Ratio, Number, false),
+            (Count, Ratio, false),
+            (Ratio, Count, false),
+        ] {
+            assert_eq!(dimensionless_compatible(a, b), expected, "{a:?} ~ {b:?}");
+        }
+
+        // `==`/`!=` are counts only: both discrete, at least one a real count.
+        let dimensionless = |kind| ValueType::Dimensionless(kind);
+        for (a, b, expected) in [
+            (Count, Count, true),
+            (Count, Number, true),
+            (Number, Count, true),
+            (Number, Number, false),
+            (Count, Ratio, false),
+            (Ratio, Ratio, false),
+        ] {
+            assert_eq!(
+                equality_allowed(dimensionless(a), dimensionless(b)),
+                expected,
+                "{a:?} == {b:?}"
+            );
+        }
+
+        // A bare number takes on the other kind when summed; like kinds stay.
+        assert_eq!(combine_kinds(Number, Count), Count);
+        assert_eq!(combine_kinds(Ratio, Number), Ratio);
+        assert_eq!(combine_kinds(Number, Number), Number);
+        assert_eq!(combine_kinds(Count, Count), Count);
     }
 }

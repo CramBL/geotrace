@@ -625,6 +625,31 @@ mod tests {
     }
 
     #[test]
+    fn a_ratio_metric_needs_a_percent_literal() {
+        // A ratio compares against `%`, never a bare number - a bare number is
+        // the neutral kind and does not stand in for a percentage.
+        check(&parse("points | with mask 15 deg | where util_all < 50 %").unwrap()).unwrap();
+        check(&parse("points | with mask 15 deg | where util_all < 50").unwrap()).unwrap_err();
+    }
+
+    #[test]
+    fn long_arithmetic_chain_checks_without_panicking() {
+        // A long `*` chain folds many exponent additions in the checker; the
+        // dimension arithmetic saturates rather than overflowing i8 (which once
+        // panicked in dev builds). The exotic dimension has no matching literal,
+        // so the query is rejected at the comparison rather than crashing.
+        let chain = std::iter::repeat_n("velocity", 200)
+            .collect::<Vec<_>>()
+            .join(" * ");
+        let src = format!("points | where {chain} > 0");
+        let result = check(&parse(&src).expect("a long product chain parses"));
+        assert!(
+            result.is_err(),
+            "an exotic dimension cannot compare to a bare number"
+        );
+    }
+
+    #[test]
     fn uc1_parses_checks_and_formats() {
         let query = parse(UC1).unwrap();
         check(&query).unwrap();
