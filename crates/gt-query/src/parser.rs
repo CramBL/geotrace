@@ -436,7 +436,51 @@ impl<'src> Parser<'src> {
                 })
             });
         }
-        self.primary()
+        self.power()
+    }
+
+    /// A primary optionally raised to a postfix integer power, `base²`. Power
+    /// binds tighter than unary minus (`-x²` is `-(x²)`) and than `*`/`/`.
+    fn power(&mut self) -> Result<Expr, Diagnostic> {
+        let base = self.primary()?;
+        let Some((exponent, exp_span)) = self.exponent()? else {
+            return Ok(base);
+        };
+        let span = base.span().to(exp_span);
+        Ok(Expr::Power {
+            base: Box::new(base),
+            exponent,
+            span,
+        })
+    }
+
+    /// A postfix exponent, superscript (`²`, `⁻³`) or caret (`^2`, `^-3`), or
+    /// `None` when none follows. Fractional and out-of-range powers are
+    /// rejected with a pointed message.
+    fn exponent(&mut self) -> Result<Option<(i8, Span)>, Diagnostic> {
+        let Some(tok) = self.peek() else {
+            return Ok(None);
+        };
+        let signed = match tok.kind {
+            Token::Superscript => superscript_value(tok.text),
+            // Strip the leading `^`; a fractional part means a non-whole power.
+            Token::CaretPower => match tok.text.get(1..) {
+                Some(digits) if digits.contains('.') => {
+                    return Err(self.error(tok.span, "a power must be a whole number"));
+                }
+                Some(digits) => digits.parse::<i32>().ok(),
+                None => None,
+            },
+            _ => return Ok(None),
+        };
+        self.advance();
+        let value = signed.and_then(|v| i8::try_from(v).ok()).ok_or_else(|| {
+            self.error(
+                tok.span,
+                "a power must be a whole number between -128 and 127",
+            )
+        })?;
+        Ok(Some((value, tok.span)))
     }
 
     fn primary(&mut self) -> Result<Expr, Diagnostic> {
@@ -637,4 +681,37 @@ fn binary(op: BinaryOp, lhs: Expr, rhs: Expr) -> Expr {
         rhs: Box::new(rhs),
         span,
     }
+}
+
+/// The integer value of a superscript run (`²` is 2, `⁻¹⁰` is -10), or `None`
+/// when it carries no digit (a lone `⁻`) or overflows an `i32`.
+fn superscript_value(text: &str) -> Option<i32> {
+    let mut chars = text.chars().peekable();
+    let negative = chars.peek() == Some(&'⁻');
+    if negative {
+        chars.next();
+    }
+    let mut value: i32 = 0;
+    let mut digits = 0;
+    for c in chars {
+        value = value.checked_mul(10)?.checked_add(superscript_digit(c)?)?;
+        digits += 1;
+    }
+    (digits > 0).then_some(if negative { -value } else { value })
+}
+
+fn superscript_digit(c: char) -> Option<i32> {
+    Some(match c {
+        '⁰' => 0,
+        '¹' => 1,
+        '²' => 2,
+        '³' => 3,
+        '⁴' => 4,
+        '⁵' => 5,
+        '⁶' => 6,
+        '⁷' => 7,
+        '⁸' => 8,
+        '⁹' => 9,
+        _ => return None,
+    })
 }

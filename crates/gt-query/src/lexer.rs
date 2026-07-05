@@ -39,6 +39,14 @@ pub enum Token {
     Slash,
     #[token("%")]
     Percent,
+    // A postfix power. The superscript form is canonical (`x²`, `x⁻³`); the
+    // caret form (`x^2`, `x^-3`) is accepted so pasted or pre-rewrite text still
+    // parses. Both carry an integer the parser resolves; a fractional caret
+    // power lexes here so the parser can reject it with a pointed message.
+    #[regex(r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+")]
+    Superscript,
+    #[regex(r"\^-?[0-9]+(\.[0-9]+)?")]
+    CaretPower,
     #[token("points")]
     Points,
     #[token("with")]
@@ -134,7 +142,9 @@ impl Token {
             | Token::Minus
             | Token::Star
             | Token::Slash
-            | Token::Percent => TokenClass::Punctuation,
+            | Token::Percent
+            | Token::Superscript
+            | Token::CaretPower => TokenClass::Punctuation,
         }
     }
 }
@@ -239,6 +249,15 @@ mod tests {
         let err = lex("Points").unwrap_err();
         assert_eq!(err.message, "unexpected character `P`");
         assert_eq!(err.span, Span::new(0, 1));
+    }
+
+    #[test]
+    fn powers_lex_as_superscript_or_caret() {
+        let kinds = |src| lex(src).unwrap().iter().map(|t| t.kind).collect::<Vec<_>>();
+        assert_eq!(kinds("velocity²"), vec![Token::Ident, Token::Superscript]);
+        assert_eq!(kinds("x⁻³"), vec![Token::Ident, Token::Superscript]);
+        assert_eq!(kinds("velocity^2"), vec![Token::Ident, Token::CaretPower]);
+        assert_eq!(kinds("velocity^-2"), vec![Token::Ident, Token::CaretPower]);
     }
 
     #[test]

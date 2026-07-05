@@ -97,6 +97,10 @@ pub(crate) enum CExpr {
         lhs: Box<CExpr>,
         rhs: Box<CExpr>,
     },
+    Power {
+        base: Box<CExpr>,
+        exponent: i8,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -475,7 +479,38 @@ impl Checker {
             Expr::Unary { op, operand, span } => self.unary(*op, operand, *span, in_agg),
             Expr::Call { func, arg, span } => self.call(*func, arg, *span, in_agg),
             Expr::Binary { op, lhs, rhs, span } => self.binary(*op, lhs, rhs, *span, in_agg),
+            Expr::Power {
+                base,
+                exponent,
+                span,
+            } => self.power(base, *exponent, *span, in_agg),
         }
+    }
+
+    fn power(
+        &mut self,
+        base: &Expr,
+        exponent: i8,
+        span: Span,
+        in_agg: bool,
+    ) -> Result<(ValueType, CExpr), Diagnostic> {
+        let (base_type, cbase) = self.expr(base, in_agg)?;
+        let result = match base_type {
+            ValueType::Condition => return Err(err(span, "cannot raise a condition to a power")),
+            ValueType::Timestamp => return Err(err(span, "timestamps do not support powers")),
+            // The power scales the dimension; the wrap flag drops, since a
+            // squared angle is no longer a direction.
+            ValueType::Dimensioned { dim, .. } => dimensioned(dim.powi(exponent)),
+            // Any power of a dimensionless value is a bare number.
+            ValueType::Dimensionless(_) => ValueType::Dimensionless(Kind::Number),
+        };
+        Ok((
+            result,
+            CExpr::Power {
+                base: Box::new(cbase),
+                exponent,
+            },
+        ))
     }
 
     fn unary(
@@ -986,6 +1021,7 @@ fn describe(expr: &Expr) -> Option<String> {
         Expr::Metric(m) => Some(m.metric.to_string()),
         Expr::Call { arg, .. } => describe(arg),
         Expr::Unary { operand, .. } => describe(operand),
+        Expr::Power { base, .. } => describe(base),
         Expr::Number(_) | Expr::Binary { .. } => None,
     }
 }

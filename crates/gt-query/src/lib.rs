@@ -687,6 +687,90 @@ mod tests {
     }
 
     #[test]
+    fn caret_and_superscript_powers_agree() {
+        // The caret form is a convenience for the canonical superscript; both
+        // parse to the same tree, so they print identically.
+        let same = |caret: &str, superscript: &str| {
+            assert_eq!(
+                parse(caret).unwrap().to_string(),
+                parse(superscript).unwrap().to_string()
+            );
+        };
+        same(
+            "points | where velocity^2 > velocity^2",
+            "points | where velocity² > velocity²",
+        );
+        same(
+            "points | where sats_fix^-1 < 0.5",
+            "points | where sats_fix⁻¹ < 0.5",
+        );
+    }
+
+    /// A power binds tighter than unary minus and than `*`/`/`, and its base can
+    /// be a parenthesized expression.
+    #[rstest]
+    #[case("points | where -accel² < 0", "(-(accel²))")]
+    #[case("points | where velocity² * eph > 0", "((velocity²) * eph)")]
+    #[case("points | where (velocity + eph)² > 0", "((velocity + eph)²)")]
+    fn power_binds_tighter_than_minus_and_mul(#[case] src: &str, #[case] fragment: &str) {
+        let canonical = parse(src).expect(src).to_string();
+        assert!(
+            canonical.contains(fragment),
+            "{canonical} should contain {fragment}"
+        );
+    }
+
+    /// The exponent is a whole number in `i8` range; fractional and oversized
+    /// powers are rejected while parsing.
+    #[rstest]
+    #[case("points | where velocity^2.5 > 0", "a power must be a whole number")]
+    #[case(
+        "points | where velocity^999 > 0",
+        "a power must be a whole number between -128 and 127"
+    )]
+    #[case(
+        "points | where velocity⁹⁹⁹ > 0",
+        "a power must be a whole number between -128 and 127"
+    )]
+    fn power_rejects_non_integer_and_out_of_range(#[case] src: &str, #[case] expected: &str) {
+        assert_eq!(parse(src).expect_err(src).message, expected, "for {src}");
+    }
+
+    /// A power scales the base's dimension: `velocity²` is a squared speed
+    /// (comparable only to another squared speed), while any power of a
+    /// dimensionless value is a bare number.
+    #[rstest]
+    #[case("points | where sats_fix² < 100", None)]
+    #[case("points | where sats_fix⁻¹ < 0.5", None)]
+    #[case("points | where velocity² > velocity²", None)]
+    #[case(
+        "points | where velocity² > 30 km/h",
+        Some("cannot compare these values")
+    )]
+    fn power_scales_the_dimension(#[case] src: &str, #[case] error: Option<&str>) {
+        match error {
+            None => {
+                check(&parse(src).expect(src)).expect(src);
+            }
+            Some(message) => {
+                assert_eq!(
+                    check(&parse(src).unwrap()).unwrap_err().message,
+                    message,
+                    "for {src}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn power_squares_a_point_value() {
+        // sats_fix squared: 3² = 9 < 16 matches, 5² = 25 does not.
+        let provider = TestProvider::new(2).with(QueryMetric::SatsFix, vec![Some(3.0), Some(5.0)]);
+        let output = run_one("points | where sats_fix² < 16", &provider);
+        assert_eq!(output.matches[0].ranges, vec![0..1]);
+    }
+
+    #[test]
     fn long_arithmetic_chain_checks_without_panicking() {
         // A long `*` chain folds many exponent additions in the checker; the
         // dimension arithmetic saturates rather than overflowing i8 (which once
@@ -876,9 +960,14 @@ mod tests {
                         operand: Box::new(operand),
                         span: span(),
                     }),
-                    inner.prop_map(|operand| Expr::Unary {
+                    inner.clone().prop_map(|operand| Expr::Unary {
                         op: UnaryOp::Neg,
                         operand: Box::new(operand),
+                        span: span(),
+                    }),
+                    (inner, -128i8..=127).prop_map(|(base, exponent)| Expr::Power {
+                        base: Box::new(base),
+                        exponent,
                         span: span(),
                     }),
                 ]
