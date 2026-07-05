@@ -14,6 +14,7 @@
     Eq,
     strum::Display,
     strum::EnumString,
+    strum::IntoStaticStr,
     strum::EnumCount,
     strum::EnumIter,
 )]

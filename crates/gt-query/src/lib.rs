@@ -21,21 +21,25 @@
 
 pub mod ast;
 mod check;
+pub mod construct;
 mod eval;
 mod fmt;
 pub mod lexer;
 mod metric;
 mod parser;
+mod position;
 mod unit;
 
 pub use ast::{ParamName, Query, Span};
 pub use check::{CheckedQuery, Params, check};
+pub use construct::{Construct, ConstructKind, catalog};
 pub use eval::{
     MetricProvider, RunOutput, RunSummary, TrackInput, TrackMatches, derived_accel, run,
     run_cancellable,
 };
 pub use metric::{Quantity, QueryMetric};
 pub use parser::parse;
+pub use position::{Completions, completions_at, construct_at};
 pub use unit::Unit;
 
 /// A parse or type error: what went wrong, where, and optionally how to fix
@@ -45,6 +49,31 @@ pub struct Diagnostic {
     pub span: Span,
     pub message: String,
     pub help: Option<String>,
+}
+
+impl Diagnostic {
+    /// An error with no suggestion.
+    pub(crate) fn new(span: Span, message: impl Into<String>) -> Self {
+        Self {
+            span,
+            message: message.into(),
+            help: None,
+        }
+    }
+
+    /// An error whose fix goes in `help` (shown as a separate "Hint:" line)
+    /// rather than tacked onto the message.
+    pub(crate) fn with_hint(
+        span: Span,
+        message: impl Into<String>,
+        help: impl Into<String>,
+    ) -> Self {
+        Self {
+            span,
+            message: message.into(),
+            help: Some(help.into()),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -377,7 +406,7 @@ mod tests {
             ),
             (
                 "points | window 10 | where velocity > 30 km/h",
-                "velocity is per point - wrap it in an aggregate like avg(velocity)",
+                "velocity is per point",
             ),
             (
                 "points | where avg(velocity) > 30 km/h",
@@ -393,7 +422,7 @@ mod tests {
             ),
             (
                 "points | where eph > 20 m | window 3",
-                "window must come before where - windows always see consecutive points",
+                "window must come before where",
             ),
         ];
         for (src, expected) in cases {
@@ -409,6 +438,20 @@ mod tests {
     fn util_mask_error_has_the_add_help() {
         let err = check(&parse("points | where util_gps < 50 %").unwrap()).unwrap_err();
         assert_eq!(err.help.as_deref(), Some("add: | with mask 15 deg"));
+    }
+
+    #[test]
+    fn suggestion_lives_in_help_not_the_message() {
+        // A diagnostic's fix goes in the structured `help`, not appended to
+        // `message`, so the editor shows it as a separate "Hint:" line without
+        // parsing the message.
+        let err =
+            check(&parse("points | window 10 | where velocity > 30 km/h").unwrap()).unwrap_err();
+        assert_eq!(err.message, "velocity is per point");
+        assert_eq!(
+            err.help.as_deref(),
+            Some("wrap it in an aggregate like avg(velocity)")
+        );
     }
 
     #[test]
@@ -492,6 +535,22 @@ mod tests {
         // Position disambiguates: after a number `min` is the minute unit,
         // before `(` it is the aggregate.
         checked("points | window 3 | where delta(time) <= 15 min and min(velocity) > 5 km/h");
+    }
+
+    #[test]
+    fn division_by_a_call_named_like_a_unit_round_trips() {
+        // `min` names both the minute unit and the aggregate. After a unit,
+        // `/ min(...)` is division by a call, not a `deg/min` compound unit -
+        // the shape the printer emits for `<length> / min(x)`. Regression for
+        // a format/reparse round-trip the property test surfaced.
+        let query = parse("points | where avg(1 deg / min(heading)) > 0")
+            .expect("division by a call parses");
+        let printed = query.to_string();
+        assert_eq!(
+            parse(&printed).expect("re-parses").to_string(),
+            printed,
+            "the canonical form round-trips"
+        );
     }
 
     #[test]

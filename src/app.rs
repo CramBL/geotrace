@@ -51,6 +51,9 @@ struct SharedAppState {
     zoom_to_visible_request: bool,
     /// Filename and warnings for the currently open data quality warnings dialog, if any.
     warnings_popup: Option<(String, Vec<LoadWarning>)>,
+    /// Set by the side panel's "Reset filters", consumed by the app to also
+    /// clear the query filter (the query window is not part of shared state).
+    clear_query_request: bool,
 }
 
 impl SharedAppState {
@@ -295,6 +298,7 @@ impl App {
                 popup_pos_request: None,
                 zoom_to_visible_request: false,
                 warnings_popup: None,
+                clear_query_request: false,
             })),
             load_error: None,
             unassociated_log_lines: None,
@@ -1554,15 +1558,47 @@ impl eframe::App for App {
                         self.history_window.invalidate();
                     }
 
-                    if ui
-                        .selectable_label(
-                            self.query_window.open,
-                            egui_phosphor::regular::TERMINAL_WINDOW,
-                        )
-                        .on_hover_text("Query the loaded data")
-                        .clicked()
-                    {
+                    // While a query is filtering the map but its window is
+                    // closed, the button turns amber with a "!" so the active
+                    // filter is not forgotten; right-click clears it. The amber
+                    // is dimmed in light mode, where the bright tone glares.
+                    let query_active = self.query_window.filter_active();
+                    let show_alert = query_active && !self.query_window.open;
+                    let query_label = if show_alert {
+                        egui::RichText::new(format!(
+                            "{} !",
+                            egui_phosphor::regular::TERMINAL_WINDOW
+                        ))
+                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode))
+                    } else {
+                        egui::RichText::new(egui_phosphor::regular::TERMINAL_WINDOW)
+                    };
+                    let query_button = ui.selectable_label(self.query_window.open, query_label);
+                    let query_button = if query_active {
+                        query_button.on_hover_text(format!(
+                            "Query the loaded data. A query filter is active {} \
+                             right-click to clear it.",
+                            gt_ui_theme::EM_DASH
+                        ))
+                    } else {
+                        query_button.on_hover_text("Query the loaded data")
+                    };
+                    if query_button.clicked() {
                         self.query_window.open = !self.query_window.open;
+                    }
+                    if query_active {
+                        query_button.context_menu(|ui| {
+                            if ui
+                                .button(format!(
+                                    "{} Clear query filter",
+                                    egui_phosphor::regular::TRASH
+                                ))
+                                .clicked()
+                            {
+                                self.query_window.clear_filter();
+                                ui.close();
+                            }
+                        });
                     }
 
                     // A subtle "update available" hint for builds that can't
@@ -1625,6 +1661,7 @@ impl eframe::App for App {
                             popup_pos_request: &mut s.popup_pos_request,
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
+                            clear_query_request: &mut s.clear_query_request,
                         },
                     );
                 });
@@ -1660,12 +1697,18 @@ impl eframe::App for App {
                             popup_pos_request: &mut s.popup_pos_request,
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
+                            clear_query_request: &mut s.clear_query_request,
                         },
                     );
                 });
             if !is_open {
                 self.shared.borrow_mut().tree.detached = false;
             }
+        }
+
+        // "Reset filters" also drops the query filter so the map fully clears.
+        if std::mem::take(&mut self.shared.borrow_mut().clear_query_request) {
+            self.query_window.clear_filter();
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {

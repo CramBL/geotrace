@@ -15,6 +15,7 @@ struct State {
     popup_pos: Option<egui::Pos2>,
     zoom_to_visible: bool,
     warnings_request: Option<(String, Vec<LoadWarning>)>,
+    clear_query_request: bool,
 }
 
 fn make_state(file_count: usize) -> State {
@@ -58,6 +59,7 @@ fn make_state_with_warnings_on(
         popup_pos: None,
         zoom_to_visible: false,
         warnings_request: None,
+        clear_query_request: false,
     }
 }
 
@@ -76,6 +78,7 @@ fn make_harness(state: State) -> TestHarness<'static, State> {
                     popup_pos_request: &mut s.popup_pos,
                     zoom_to_visible_request: &mut s.zoom_to_visible,
                     warnings_request: &mut s.warnings_request,
+                    clear_query_request: &mut s.clear_query_request,
                 };
                 show_side_panel(ui, &mut ctx);
             },
@@ -203,6 +206,7 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
         popup_pos: None,
         zoom_to_visible: false,
         warnings_request: None,
+        clear_query_request: false,
     };
     // Renders the expanded track row, exercising the `fix_stats == None` fallback
     // ("No satellite data") instead of the colored tooltip.

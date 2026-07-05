@@ -2,7 +2,7 @@
 
 use gt_types::DisplayMode;
 
-use crate::metric::QueryMetric;
+use crate::metric::{Quantity, QueryMetric};
 use crate::unit::Unit;
 
 /// Byte range into the query source, for error underlining.
@@ -70,6 +70,7 @@ pub struct ParamDecl {
     Eq,
     strum::Display,
     strum::EnumString,
+    strum::IntoStaticStr,
     strum::EnumIter,
     strum::EnumCount,
 )]
@@ -78,6 +79,19 @@ pub enum ParamName {
     Mask,
     SnrDrop,
     SlipWindow,
+}
+
+impl ParamName {
+    /// The quantity of this parameter's value, or `None` when it is a bare
+    /// number (`snr_drop`). The single source for both unit checking
+    /// ([`crate::check`]) and unit autocomplete ([`crate::completions_at`]).
+    pub fn value_quantity(self) -> Option<Quantity> {
+        match self {
+            ParamName::Mask => Some(Quantity::Angle),
+            ParamName::SnrDrop => None,
+            ParamName::SlipWindow => Some(Quantity::Duration),
+        }
+    }
 }
 
 /// A numeric literal, optionally carrying a unit (`30 km/h`, `6`).
@@ -185,6 +199,7 @@ impl BinaryOp {
     Eq,
     strum::Display,
     strum::EnumString,
+    strum::IntoStaticStr,
     strum::EnumIter,
     strum::EnumCount,
 )]
@@ -203,5 +218,20 @@ pub enum Func {
 impl Func {
     pub fn is_aggregate(self) -> bool {
         !matches!(self, Func::Abs)
+    }
+
+    /// The quantity this function produces from an argument of `arg`. `spread`
+    /// and `delta` collapse a direction to a plain angle and a timestamp to a
+    /// duration; the others pass the quantity through. The single source for
+    /// this rule, shared by [`crate::check`] and [`crate::completions_at`].
+    pub fn result_quantity(self, arg: Quantity) -> Quantity {
+        match self {
+            Func::Spread | Func::Delta => match arg {
+                Quantity::Direction => Quantity::Angle,
+                Quantity::Timestamp => Quantity::Duration,
+                other => other,
+            },
+            Func::Avg | Func::Min | Func::Max | Func::First | Func::Last | Func::Abs => arg,
+        }
     }
 }
