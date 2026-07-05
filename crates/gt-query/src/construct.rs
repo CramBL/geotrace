@@ -214,11 +214,11 @@ fn func_construct(func: Func) -> Construct {
         ),
         Func::Sqrt => (
             "square root",
-            "The square root of a value; its unit is the value's unit square \
-             rooted, so it reduces a squared quantity - `sqrt(velocity²)` is a \
-             speed. Pair it with `²` for magnitudes, e.g. `sqrt(lat² + lon²)`. \
-             Works with or without a window.",
-            &["sqrt(lat² + lon²) > 0 deg"],
+            "The square root of a value; its unit is the square root of the \
+             value's unit, so it reduces a squared quantity - `sqrt(velocity²)` \
+             is a speed. Pair it with `²` for magnitudes, e.g. \
+             `sqrt(lat² + lon²)`. Works with or without a window.",
+            &["sqrt(lat² + lon²) > 1 deg"],
         ),
     };
     Construct {

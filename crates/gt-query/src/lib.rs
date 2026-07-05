@@ -808,6 +808,14 @@ mod tests {
     #[case("points | where sqrt(lat² + lon²) > 0 deg", None)]
     #[case("points | where sqrt(velocity² + velocity²) > 30 km/h", None)]
     #[case("points | where sqrt(sats_fix) < 5", None)]
+    // sqrt nested inside an aggregate (it works in a window too).
+    #[case("points | window 3 | where avg(sqrt(velocity²)) > 30 km/h", None)]
+    // A squared ratio roots to a bare number, compared without a unit.
+    #[case("points | with mask 15 deg | where sqrt(util_gps) > 0.7", None)]
+    #[case(
+        "points | with mask 15 deg | where sqrt(util_gps) > 50 %",
+        Some("cannot compare number with ratio")
+    )]
     #[case("points | where sqrt(velocity) > 0", Some("sqrt needs a square"))]
     #[case(
         "points | where sqrt(time) > 5 s",
@@ -853,6 +861,21 @@ mod tests {
             .with(QueryMetric::Lon, vec![Some(4.0), Some(0.0)]);
         let output = run_one("points | where sqrt(lat² + lon²) > 4.5 deg", &provider);
         assert_eq!(output.matches[0].ranges, vec![0..1]);
+    }
+
+    #[test]
+    fn sqrt_wraps_a_windowed_aggregate() {
+        // sqrt(avg(velocity)²) over window 2: avg 15 m/s (54 km/h) misses the
+        // 70 km/h bar, avg 25 m/s (90 km/h) clears it.
+        let provider = TestProvider::new(3).with(
+            QueryMetric::Velocity,
+            vec![Some(10.0), Some(20.0), Some(30.0)],
+        );
+        let output = run_one(
+            "points | window 2 | where sqrt(avg(velocity)²) > 70 km/h",
+            &provider,
+        );
+        assert_eq!(output.matches[0].ranges, vec![1..3]);
     }
 
     #[test]
