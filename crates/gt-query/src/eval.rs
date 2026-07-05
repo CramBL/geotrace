@@ -445,13 +445,24 @@ fn aggregate(
         // The checker never emits abs as an aggregate.
         Func::Abs => return None,
     };
+    // Like arithmetic (see `eval_num`), an aggregate never hands a non-finite
+    // value to a comparison: an overflowing spread, or the circular-std
+    // singularity of a window with no resultant direction, poisons and is
+    // reported as skipped rather than comparing as a bare infinity.
+    if !value.is_finite() {
+        ctx.non_finite = true;
+        return None;
+    }
     Some(value)
 }
 
-/// Signed shortest angular difference from `first` to `last`, in (-180, 180].
+/// Signed shortest angular difference from `first` to `last`, in degrees,
+/// approximately in (-180, 180].
 ///
 /// Expressed as the rotation carrying `first` onto `last`, so the wrap is the
-/// rotation group's job rather than hand-rolled modular arithmetic.
+/// rotation group's job rather than hand-rolled modular arithmetic. At the
+/// exact antipode the sign is implementation-defined: the turn is equally short
+/// either way, and `angle()` decides it by floating-point rounding.
 fn circular_delta(first: f64, last: f64) -> f64 {
     let rotation =
         UnitComplex::new(last.to_radians()) * UnitComplex::new(first.to_radians()).inverse();
@@ -477,7 +488,8 @@ fn population_std(values: &[f64]) -> f64 {
 /// `sqrt(-2 ln R)` (Mardia), which is robust across the 0/360 wrap where a
 /// linear standard deviation of the degrees is not. Identical directions give
 /// 0; as they spread toward uniform, R falls to 0 and the deviation grows
-/// without bound.
+/// without bound, reaching a non-finite value at the R = 0 singularity that the
+/// [`aggregate`] boundary turns into a reported skip.
 fn circular_std(values: &[f64]) -> f64 {
     let n = values.len() as f64;
     let resultant = values.iter().fold(Complex::new(0.0, 0.0), |acc, deg| {
@@ -580,5 +592,43 @@ mod tests {
         );
         assert_eq!(ranges_from(&[true]), vec![0..1]);
         assert!(ranges_from(&[false, false]).is_empty());
+    }
+
+    mod properties {
+        use proptest::prelude::*;
+
+        use super::super::circular_std;
+
+        proptest! {
+            /// Circular std is invariant under a rigid rotation of all the
+            /// directions, including across the 0/360 wrap - the property that
+            /// justifies the whole helper. Tested on tight clusters (within
+            /// +/-30 deg) where the statistic is well conditioned, so the
+            /// invariant holds to a fine tolerance.
+            #[test]
+            fn circular_std_is_rotation_invariant(
+                deltas in proptest::collection::vec(-30.0f64..30.0, 1..20),
+                center in 0.0f64..360.0,
+                offset in 0.0f64..360.0,
+            ) {
+                let cluster = |base: f64| -> Vec<f64> {
+                    deltas.iter().map(|d| (base + d).rem_euclid(360.0)).collect()
+                };
+                let here = circular_std(&cluster(center));
+                let there = circular_std(&cluster(center + offset));
+                prop_assert!(here.is_finite() && here >= 0.0);
+                prop_assert!((here - there).abs() < 1e-6, "here {here} there {there}");
+            }
+
+            /// The R clamp keeps the statistic real over arbitrary directions:
+            /// never NaN, never negative.
+            #[test]
+            fn circular_std_is_never_nan(
+                angles in proptest::collection::vec(0.0f64..360.0, 1..50),
+            ) {
+                let std = circular_std(&angles);
+                prop_assert!(!std.is_nan() && std >= 0.0);
+            }
+        }
     }
 }
