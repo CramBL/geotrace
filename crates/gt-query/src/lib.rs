@@ -85,6 +85,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use gt_types::{DisplayMode, FileIdx, TrackIdx, TrackRef};
+    use rstest::rstest;
 
     use super::*;
 
@@ -494,23 +495,26 @@ mod tests {
         );
     }
 
-    #[test]
-    fn acceleration_units_and_kmh_alias_check() {
-        // `g`, `km/h/s`, and the `kmh` alias are all accepted where their
-        // quantity fits, and rejected where it does not.
-        for src in [
-            "points | window 3 | where avg(accel) >= 0.3 g",
-            "points | window 3 | where avg(accel) >= 5 km/h/s",
-            "points | where velocity > 30 kmh",
-        ] {
-            check(&parse(src).expect(src)).expect(src);
+    /// `g`, `km/h/s`, and the `kmh` alias are accepted where their quantity
+    /// fits, and rejected (with a message) where it does not - `g` is an
+    /// acceleration, not a speed.
+    #[rstest]
+    #[case("points | window 3 | where avg(accel) >= 0.3 g", None)]
+    #[case("points | window 3 | where avg(accel) >= 5 km/h/s", None)]
+    #[case("points | where velocity > 30 kmh", None)]
+    #[case(
+        "points | where velocity > 30 g",
+        Some("expected a speed unit (km/h, m/s, kn), found g")
+    )]
+    fn acceleration_units_and_kmh_alias(#[case] src: &str, #[case] error: Option<&str>) {
+        match error {
+            None => {
+                check(&parse(src).expect(src)).expect(src);
+            }
+            Some(message) => {
+                assert_eq!(check(&parse(src).unwrap()).unwrap_err().message, message);
+            }
         }
-        // `g` is an acceleration, not a speed.
-        let err = check(&parse("points | where velocity > 30 g").unwrap()).unwrap_err();
-        assert_eq!(
-            err.message,
-            "expected a speed unit (km/h, m/s, kn), found g"
-        );
     }
 
     #[test]
@@ -521,66 +525,58 @@ mod tests {
         assert_eq!(err.message, "expression is too deeply nested");
     }
 
-    #[test]
-    fn arithmetic_dimensional_algebra() {
-        // Arithmetic is dimensional algebra: `*` adds dimensions, `/`
-        // subtracts, and a dimensionless result is a bare number. A product or
-        // quotient of dimensioned values is always well-formed - a wrong
-        // combination surfaces at the comparison, not the arithmetic.
-        let accepted = [
-            "points | where velocity + 3 km/h > 30 km/h",
-            "points | where eph - 3 m > 10 m",
-            "points | where velocity * 2 > 30 km/h",
-            "points | where 2 * velocity > 30 km/h",
-            "points | where sats_fix * 2 > 6",
-            "points | where velocity / 2 > 15 km/h",
-            // length / length and speed / speed are dimensionless bare numbers.
-            "points | where eph / eph > 0.5",
-            "points | where eph / clock_delta > 1 m/s",
-            "points | where velocity / clock_delta > 0.1 m/s2",
-            // speed * duration is a length; speed / length is a rate. Both are
-            // new: the old table rejected any product or quotient of two
-            // dimensioned values outright.
-            "points | where velocity * clock_delta > eph",
-            "points | where velocity / eph > 2 per min",
-        ];
-        for src in accepted {
-            check(&parse(src).expect(src)).expect(src);
-        }
-        let rejected = [
-            // The product/quotient type-checks; comparing its exotic dimension
-            // (a speed·length, a count/speed) against a bare number does not.
-            (
-                "points | where velocity * eph > 3",
-                "cannot compare these values",
-            ),
-            (
-                "points | where sats_fix / velocity > 3",
-                "cannot compare these values",
-            ),
-            // Addition still demands a shared dimension, and timestamps,
-            // directions, and conditions still reject arithmetic outright.
-            (
-                "points | where velocity + eph > 3 m",
-                "unsupported arithmetic between speed and length",
-            ),
-            (
-                "points | where time - clock_delta > 3 s",
-                "timestamps do not support + and -",
-            ),
-            (
-                "points | where heading + 10 deg < 30 deg",
-                "directions do not support + and -",
-            ),
-            (
-                "points | where (sats_fix == 1) + 1 > 1",
-                "conditions do not support arithmetic",
-            ),
-        ];
-        for (src, expected) in rejected {
-            let message = check(&parse(src).expect(src)).expect_err(src).message;
-            assert_eq!(message, expected, "for {src}");
-        }
+    /// Arithmetic is dimensional algebra: `*` adds dimensions, `/` subtracts,
+    /// and a dimensionless result is a bare number. A product or quotient of
+    /// dimensioned values is always well-formed - a wrong combination surfaces
+    /// at the comparison, not the arithmetic (see the rejected cases below).
+    #[rstest]
+    #[case("points | where velocity + 3 km/h > 30 km/h")]
+    #[case("points | where eph - 3 m > 10 m")]
+    #[case("points | where velocity * 2 > 30 km/h")]
+    #[case("points | where 2 * velocity > 30 km/h")]
+    #[case("points | where sats_fix * 2 > 6")]
+    #[case("points | where velocity / 2 > 15 km/h")]
+    // length / length and speed / speed are dimensionless bare numbers.
+    #[case("points | where eph / eph > 0.5")]
+    #[case("points | where eph / clock_delta > 1 m/s")]
+    #[case("points | where velocity / clock_delta > 0.1 m/s2")]
+    // speed * duration is a length; speed / length is a rate. Both are new:
+    // the old table rejected any product or quotient of two dimensioned values.
+    #[case("points | where velocity * clock_delta > eph")]
+    #[case("points | where velocity / eph > 2 per min")]
+    fn arithmetic_accepts_well_formed_dimensions(#[case] src: &str) {
+        check(&parse(src).expect(src)).expect(src);
+    }
+
+    /// The rejected side of the algebra. A product or quotient with an exotic
+    /// dimension type-checks but cannot compare to a bare number; addition
+    /// still needs a shared dimension; timestamps, directions, and conditions
+    /// reject arithmetic outright.
+    #[rstest]
+    #[case("points | where velocity * eph > 3", "cannot compare these values")]
+    #[case(
+        "points | where sats_fix / velocity > 3",
+        "cannot compare these values"
+    )]
+    #[case(
+        "points | where velocity + eph > 3 m",
+        "unsupported arithmetic between speed and length"
+    )]
+    #[case(
+        "points | where time - clock_delta > 3 s",
+        "timestamps do not support + and -"
+    )]
+    #[case(
+        "points | where heading + 10 deg < 30 deg",
+        "directions do not support + and -"
+    )]
+    #[case(
+        "points | where (sats_fix == 1) + 1 > 1",
+        "conditions do not support arithmetic"
+    )]
+    fn arithmetic_rejects_with_message(#[case] src: &str, #[case] expected: &str) {
+        let message = check(&parse(src).expect(src)).expect_err(src).message;
+        assert_eq!(message, expected, "for {src}");
     }
 
     #[test]
@@ -618,18 +614,22 @@ mod tests {
         assert_eq!(output.matches[0].ranges, vec![1..3]);
     }
 
-    #[test]
-    fn sats_equality_is_allowed_velocity_equality_is_not() {
-        check(&parse("points | where sats_fix == 6").unwrap()).unwrap();
-        check(&parse("points | where velocity == 30 km/h").unwrap()).unwrap_err();
+    /// `==`/`!=` accept a discrete count (`sats_fix == 6`) but not a continuous
+    /// quantity (`velocity == 30 km/h`), which would be a float-equality trap.
+    #[rstest]
+    #[case("points | where sats_fix == 6", true)]
+    #[case("points | where velocity == 30 km/h", false)]
+    fn equality_is_allowed_only_on_counts(#[case] src: &str, #[case] accepted: bool) {
+        assert_eq!(check(&parse(src).unwrap()).is_ok(), accepted, "for {src}");
     }
 
-    #[test]
-    fn a_ratio_metric_needs_a_percent_literal() {
-        // A ratio compares against `%`, never a bare number - a bare number is
-        // the neutral kind and does not stand in for a percentage.
-        check(&parse("points | with mask 15 deg | where util_all < 50 %").unwrap()).unwrap();
-        check(&parse("points | with mask 15 deg | where util_all < 50").unwrap()).unwrap_err();
+    /// A ratio compares against `%`, never a bare number - a bare number is the
+    /// neutral kind and does not stand in for a percentage.
+    #[rstest]
+    #[case("points | with mask 15 deg | where util_all < 50 %", true)]
+    #[case("points | with mask 15 deg | where util_all < 50", false)]
+    fn a_ratio_metric_needs_a_percent_literal(#[case] src: &str, #[case] accepted: bool) {
+        assert_eq!(check(&parse(src).unwrap()).is_ok(), accepted, "for {src}");
     }
 
     #[test]
