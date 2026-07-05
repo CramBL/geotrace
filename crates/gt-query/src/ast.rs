@@ -201,7 +201,8 @@ impl BinaryOp {
     }
 }
 
-/// Functions callable in expressions. All except `abs` are window aggregates.
+/// Functions callable in expressions. All except `abs` and `sqrt` are window
+/// aggregates.
 #[derive(
     Debug,
     Clone,
@@ -226,11 +227,12 @@ pub enum Func {
     Last,
     Delta,
     Abs,
+    Sqrt,
 }
 
 impl Func {
     pub fn is_aggregate(self) -> bool {
-        !matches!(self, Func::Abs)
+        !matches!(self, Func::Abs | Func::Sqrt)
     }
 
     /// The quantity this function produces from an argument of `arg`. `spread`,
@@ -255,7 +257,8 @@ impl Func {
             | Func::First
             | Func::Last
             | Func::Var
-            | Func::Abs => arg,
+            | Func::Abs
+            | Func::Sqrt => arg,
         }
     }
 }

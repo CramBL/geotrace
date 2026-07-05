@@ -350,6 +350,7 @@ fn eval_bool(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<bool> {
         | CExpr::Metric(_)
         | CExpr::Agg { .. }
         | CExpr::Abs(_)
+        | CExpr::Sqrt(_)
         | CExpr::Neg(_)
         | CExpr::Arith { .. }
         | CExpr::Power { .. } => None,
@@ -371,6 +372,16 @@ fn eval_num(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<f64> {
             arg,
         } => aggregate(ctx, *func, *circular, arg, scope),
         CExpr::Abs(inner) => eval_num(ctx, inner, scope).map(f64::abs),
+        CExpr::Sqrt(inner) => {
+            // A negative radicand roots to NaN; poison it like any undefined
+            // arithmetic rather than comparing a NaN.
+            let result = eval_num(ctx, inner, scope)?.sqrt();
+            if !result.is_finite() {
+                ctx.non_finite = true;
+                return None;
+            }
+            Some(result)
+        }
         CExpr::Neg(inner) => eval_num(ctx, inner, scope).map(|v| -v),
         CExpr::Arith { op, lhs, rhs } => {
             let (l, r) = both_nums(ctx, lhs, rhs, scope)?;
@@ -453,8 +464,9 @@ fn aggregate(
         }
         // The checker rejects var on a direction, so it is always linear.
         Func::Var => population_variance(&values),
-        // The checker never emits abs as an aggregate.
-        Func::Abs => return None,
+        // The checker never emits abs or sqrt as an aggregate; they are their
+        // own scalar `CExpr` nodes.
+        Func::Abs | Func::Sqrt => return None,
     };
     // Like arithmetic (see `eval_num`), an aggregate never hands a non-finite
     // value to a comparison: an overflowing sum (in `avg` or `population_std`),

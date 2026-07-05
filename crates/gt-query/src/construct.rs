@@ -212,6 +212,14 @@ fn func_construct(func: Func) -> Construct {
             "Drops the sign of a value. Works with or without a window.",
             &["abs(accel) > 1 m/s2"],
         ),
+        Func::Sqrt => (
+            "square root",
+            "The square root of a value; its unit is the value's unit square \
+             rooted, so it reduces a squared quantity - `sqrt(velocity²)` is a \
+             speed. Pair it with `²` for magnitudes, e.g. `sqrt(lat² + lon²)`. \
+             Works with or without a window.",
+            &["sqrt(lat² + lon²) > 0 deg"],
+        ),
     };
     Construct {
         name: func.into(),

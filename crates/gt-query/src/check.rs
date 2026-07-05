@@ -81,6 +81,7 @@ pub(crate) enum CExpr {
         arg: Box<CExpr>,
     },
     Abs(Box<CExpr>),
+    Sqrt(Box<CExpr>),
     Neg(Box<CExpr>),
     Not(Box<CExpr>),
     Cmp {
@@ -230,8 +231,6 @@ fn named_dimension(dim: Dimension, circular: bool) -> Option<Quantity> {
     })
 }
 
-/// A short label for a value type in an error, or `None` when it has no concise
-/// name (an exotic dimension such as a squared speed).
 /// A readable name for a value type in an error message. Every value has one:
 /// named quantities use their name, a bare number is "number", and an exotic
 /// dimension is described from its exponents (see [`dimension_label`]).
@@ -632,6 +631,32 @@ impl Checker {
             }
             return Ok((value_type, CExpr::Abs(Box::new(cexpr))));
         }
+        if func == Func::Sqrt {
+            let (value_type, cexpr) = self.expr(arg, in_agg)?;
+            let result = match value_type {
+                ValueType::Condition => {
+                    return Err(err(span, "sqrt needs a value, not a condition"));
+                }
+                ValueType::Timestamp => {
+                    return Err(err(span, "cannot take the square root of a timestamp"));
+                }
+                // The square root of any dimensionless value is a bare number.
+                ValueType::Dimensionless(_) => ValueType::Dimensionless(Kind::Number),
+                // A square root halves the exponents, so the dimension must be a
+                // perfect square (`sqrt(velocity²)` is a speed).
+                ValueType::Dimensioned { dim, .. } => match dim.sqrt() {
+                    Some(root) => dimensioned(root),
+                    None => {
+                        return Err(err_hint(
+                            span,
+                            "sqrt needs a square",
+                            "square the values first, e.g. sqrt(x² + y²)",
+                        ));
+                    }
+                },
+            };
+            return Ok((result, CExpr::Sqrt(Box::new(cexpr))));
+        }
 
         if !self.windowed {
             return Err(err(span, format!("{func} needs a window")));
@@ -817,7 +842,24 @@ fn check_comparable(
     if let Some(diagnostic) = unit_mismatch(lhs, lt, rhs, rt) {
         return Err(diagnostic);
     }
-    Err(err(span, compare_error(lt, rt)))
+    let message = compare_error(lt, rt);
+    Err(match squared_hint(lt, rt) {
+        Some(help) => err_hint(span, message, help),
+        None => err(span, message),
+    })
+}
+
+/// When a comparison fails only because one side is a squared quantity whose
+/// root matches the other side, suggest reducing it with `sqrt` - e.g.
+/// `velocity² > 30 km/h` becomes comparable as `sqrt(velocity²) > 30 km/h`.
+fn squared_hint(lt: ValueType, rt: ValueType) -> Option<String> {
+    let reduces_to = |square: ValueType, other: ValueType| match square {
+        ValueType::Dimensioned { dim, .. } => dim
+            .sqrt()
+            .is_some_and(|root| compatible(dimensioned(root), other)),
+        _ => false,
+    };
+    (reduces_to(lt, rt) || reduces_to(rt, lt)).then(|| "take its square root with sqrt".to_owned())
 }
 
 /// `+ - * /` on the value types. Replaces the old hand-written quantity table
