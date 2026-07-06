@@ -15,6 +15,12 @@ pub fn expand_arrow(expanded: bool) -> &'static str {
 /// Frameless button showing On/Off/Mixed state with Phosphor icons.
 ///
 /// Sized to match egui's standard checkbox: icon at `icon_width`, total hit area `interact_size.y²`.
+/// Width of the tri-state checkbox column, for padding a checkbox-less row so it
+/// aligns with the checkboxed sections. Single source of truth for [`tri_checkbox`].
+pub fn checkbox_width(ui: &egui::Ui) -> f32 {
+    ui.spacing().interact_size.y + 4.0
+}
+
 pub fn tri_checkbox(ui: &mut egui::Ui, state: CheckState) -> egui::Response {
     let icon = match state {
         CheckState::On => egui_phosphor::regular::CHECK_SQUARE,
@@ -22,7 +28,7 @@ pub fn tri_checkbox(ui: &mut egui::Ui, state: CheckState) -> egui::Response {
         CheckState::Mixed => egui_phosphor::regular::MINUS_SQUARE,
     };
     let icon_size = ui.spacing().icon_width + 4.0;
-    let side = ui.spacing().interact_size.y + 4.0;
+    let side = checkbox_width(ui);
     ui.add(
         egui::Button::new(egui::RichText::new(icon).size(icon_size))
             .frame(false)

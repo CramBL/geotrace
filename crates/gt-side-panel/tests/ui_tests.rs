@@ -283,13 +283,23 @@ fn snapshot_track_channels() {
         times: vec![start, start + chrono::Duration::seconds(2)],
         values: vec![1.5, 2.0],
     };
+    // A unitless scalar channel exercises the `unit: None` label branch.
+    let raw = gt_types::Channel {
+        name: "raw".to_owned(),
+        unit: None,
+        period: None,
+        description: None,
+        components: vec![],
+        times: vec![start],
+        values: vec![42.0],
+    };
     let file = gt_track_builder::build_loaded_file(
         "sensors.gtd".to_owned(),
         &points,
         &[],
         vec![],
         vec![],
-        &[accel, incline],
+        &[accel, incline, raw],
         &gt_track_builder::SegmentationConfig::default(),
         gt_types::FileSource::GtdPath(PathBuf::from("sensors.gtd")),
         vec![],

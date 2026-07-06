@@ -9,7 +9,8 @@ use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 use crate::filter::{FilterPanelState, render_filter_panel};
 use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState};
 use crate::widgets::{
-    expand_arrow, fix_stats_tooltip_row, paint_map_hover_bg, point_item_row, tri_checkbox,
+    checkbox_width, expand_arrow, fix_stats_tooltip_row, paint_map_hover_bg, point_item_row,
+    tri_checkbox,
 };
 
 pub struct PanelContext<'a> {
@@ -583,10 +584,9 @@ fn render_channels_section(
 ) {
     let count = track.channels.len();
     let header = ui.horizontal(|ui| {
-        // Pad the checkbox column (see `tri_checkbox`) so the label aligns with
-        // the toggleable sections above, even though channels have nothing to
-        // toggle.
-        ui.add_space(ui.spacing().interact_size.y + 4.0);
+        // Pad the checkbox column so the label aligns with the toggleable
+        // sections above, even though channels have nothing to toggle.
+        ui.add_space(checkbox_width(ui));
         let arrow = expand_arrow(is_open);
         ui.selectable_label(is_open, format!("{arrow} Channels  {count}"))
     });
@@ -605,17 +605,16 @@ fn render_channels_section(
                 .as_deref()
                 .map(|u| format!(" ({u})"))
                 .unwrap_or_default();
-            let samples = channel.times.len();
-            let label = if channel.is_vector() {
-                format!(
-                    "{}{unit}  {samples} samples  [{}]",
-                    channel.name,
-                    channel.components.join(", ")
-                )
+            let components = if channel.is_vector() {
+                format!("  [{}]", channel.components.join(", "))
             } else {
-                format!("{}{unit}  {samples} samples", channel.name)
+                String::new()
             };
-            ui.label(label);
+            let samples = channel.times.len();
+            ui.label(format!(
+                "{}{unit}  {samples} samples{components}",
+                channel.name
+            ));
         }
     });
 }

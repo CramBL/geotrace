@@ -168,6 +168,31 @@ fn toggle_expand_file() {
 }
 
 #[test]
+fn toggle_channels_expanded_flips_the_flag() {
+    let mut tree = make_tree(1, 1);
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    assert!(
+        !tree
+            .track_node(track)
+            .expect("track node")
+            .channels_expanded
+    );
+    tree.toggle_channels_expanded(track);
+    assert!(
+        tree.track_node(track)
+            .expect("track node")
+            .channels_expanded
+    );
+    tree.toggle_channels_expanded(track);
+    assert!(
+        !tree
+            .track_node(track)
+            .expect("track node")
+            .channels_expanded
+    );
+}
+
+#[test]
 fn apply_click_single_clears_previous_selection() {
     let mut tree = make_tree(1, 2);
     tree.files[0].expanded = true;
