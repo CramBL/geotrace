@@ -74,9 +74,12 @@ fn string_array_attr(
     attrs: &HashMap<String, hdf5_pure::AttrValue>,
     key: &str,
 ) -> Option<Vec<String>> {
-    use hdf5_pure::AttrValue::{AsciiStringArray, StringArray, VarLenAsciiArray};
+    use hdf5_pure::AttrValue::{String as StringAttr, StringArray};
     match attrs.get(key) {
-        Some(StringArray(v) | AsciiStringArray(v) | VarLenAsciiArray(v)) => Some(v.clone()),
+        Some(StringArray(v)) => Some(v.clone()),
+        // A single-element string array reads back as a plain `String`, so a
+        // one-component vector's `components` attribute arrives this way.
+        Some(StringAttr(s)) => Some(vec![s.clone()]),
         _ => None,
     }
 }
@@ -355,10 +358,10 @@ fn read_event_marker_styles(file: &File) -> Result<Vec<EventMarkerStyle>, Error>
     Ok(styles)
 }
 
-/// Read ad-hoc scalar channels from `channels/<name>/`. Absent in files written
-/// before channels existed, in which case there are simply none. Channels are
-/// returned sorted by name for a deterministic order independent of how the
-/// producer added them.
+/// Read ad-hoc channels from `channels/<name>/`. Absent in files written before
+/// channels existed, in which case there are simply none. Channels are returned
+/// sorted by name for a deterministic order independent of how the producer
+/// added them.
 fn read_channels(file: &File) -> Result<Vec<Channel>, Error> {
     let Ok(root) = file.group("channels") else {
         return Ok(Vec::new());
@@ -376,7 +379,16 @@ fn read_channels(file: &File) -> Result<Vec<Channel>, Error> {
         let values = grp.dataset("value")?.read_f64()?;
         let components = string_array_attr(&attrs, "components").unwrap_or_default();
         let columns = components.len().max(1);
-        check_len("channels", "value", times_us.len() * columns, values.len())?;
+        let expected = times_us
+            .len()
+            .checked_mul(columns)
+            .ok_or(Error::ShapeMismatch {
+                group: "channels",
+                dataset: "value",
+                expected: usize::MAX,
+                actual: values.len(),
+            })?;
+        check_len("channels", "value", expected, values.len())?;
 
         channels.push(Channel {
             name,

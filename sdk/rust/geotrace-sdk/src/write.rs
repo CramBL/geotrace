@@ -42,8 +42,9 @@ pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
     Ok(fb.finish()?)
 }
 
-/// Write ad-hoc scalar channels as `channels/<name>/{time,value}`, with the
-/// channel's unit, wrap period, and description as attributes on its group.
+/// Write ad-hoc channels as `channels/<name>/{time,value}`, with the channel's
+/// unit, wrap period, description, and (for vector channels) component labels as
+/// attributes on its group.
 fn write_channels(nav_file: &NavFile, fb: &mut FileBuilder) {
     let channels = nav_file.channels();
     if channels.is_empty() {
@@ -92,7 +93,11 @@ fn write_channels(nav_file: &NavFile, fb: &mut FileBuilder) {
         let value = grp.create_dataset("value").with_f64_data(&channel.values);
         if channel.is_vector() {
             let k = channel.component_count() as u64;
-            value.with_shape(&[n, k]).with_chunks(&[chunk, k]);
+            // Keep ~CHUNK_SIZE elements per chunk by dividing the row count by
+            // the column count, mirroring how the string datasets chunk by row.
+            value
+                .with_shape(&[n, k])
+                .with_chunks(&[(chunk / k).max(1), k]);
         } else {
             value.with_shape(&[n]).with_chunks(&[chunk]);
         }

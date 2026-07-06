@@ -622,14 +622,15 @@ pub struct EventMarkerPoint {
     pub annotation: Option<String>,
 }
 
-/// A named scalar time series recorded alongside the nav track: an ad-hoc
-/// sensor metric such as an accelerometer magnitude or an inclinometer angle,
-/// sampled at its own rate and correlated with the track by timestamp.
+/// A named scalar or vector time series recorded alongside the nav track: an
+/// ad-hoc sensor metric such as an accelerometer's x/y/z axes or an inclinometer
+/// angle, sampled at its own rate and correlated with the track by timestamp.
 ///
 /// Stored under `channels/<name>/` as a `time` (µs) dataset and a `value`
-/// dataset, with the unit, wrap period, and description carried as attributes on
-/// the channel's group. Build one with [`Channel::builder`] and attach it via
-/// [`NavRecorder::add_channel`](crate::NavRecorder::add_channel).
+/// dataset (1-D for a scalar channel, 2-D `[n, k]` for a vector channel), with
+/// the unit, wrap period, description, and component labels carried as
+/// attributes on the channel's group. Build one with [`Channel::builder`] and
+/// attach it via [`NavRecorder::add_channel`](crate::NavRecorder::add_channel).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Channel {
     pub(crate) name: String,

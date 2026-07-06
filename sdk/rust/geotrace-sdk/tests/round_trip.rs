@@ -634,3 +634,106 @@ fn vector_channel_validation() {
         })
     ));
 }
+
+#[test]
+fn a_single_component_vector_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+    // A 1-component vector's `components` attribute stores as a single string;
+    // it must still read back as a vector, not collapse to a scalar.
+    let t0 = base();
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_channel(
+        Channel::builder()
+            .name("tilt")
+            .unit("deg")
+            .components(vec!["angle".to_owned()])
+            .times(vec![t0, t0 + Duration::seconds(1)])
+            .values(vec![10.0, 20.0])
+            .build()?,
+    );
+    let nav_file = recorder.finish()?;
+    let rt = round_trip(&nav_file)?;
+
+    let tilt = &rt.channels()[0];
+    assert!(tilt.is_vector());
+    assert_eq!(tilt.component_count(), 1);
+    assert_eq!(tilt.components(), &["angle"]);
+    assert_eq!(rt, nav_file);
+    Ok(())
+}
+
+#[test]
+fn scalar_and_vector_channels_coexist() -> Result<(), Box<dyn std::error::Error>> {
+    let t0 = base();
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_channel(
+        Channel::builder()
+            .name("accel")
+            .components(["x", "y", "z"].map(String::from).to_vec())
+            .times(vec![t0])
+            .values(vec![0.1, 0.2, 0.98])
+            .build()?,
+    );
+    recorder.add_channel(
+        Channel::builder()
+            .name("temp")
+            .unit("degc")
+            .times(vec![t0])
+            .values(vec![21.5])
+            .build()?,
+    );
+    let nav_file = recorder.finish()?;
+    let rt = round_trip(&nav_file)?;
+
+    // Sorted by name: accel (vector) then temp (scalar).
+    assert!(rt.channels()[0].is_vector());
+    assert_eq!(rt.channels()[0].component_count(), 3);
+    assert!(!rt.channels()[1].is_vector());
+    assert_eq!(rt.channels()[1].name(), "temp");
+    assert_eq!(rt, nav_file);
+    Ok(())
+}
+
+#[test]
+fn a_vector_channel_preserves_its_period() -> Result<(), Box<dyn std::error::Error>> {
+    let t0 = base();
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_channel(
+        Channel::builder()
+            .name("bearing")
+            .unit("deg")
+            .period(Angle::degrees(360.0))
+            .components(["fwd", "aft"].map(String::from).to_vec())
+            .times(vec![t0])
+            .values(vec![10.0, 190.0])
+            .build()?,
+    );
+    let nav_file = recorder.finish()?;
+    let rt = round_trip(&nav_file)?;
+    let bearing = &rt.channels()[0];
+    assert_eq!(bearing.period(), Some(Angle::degrees(360.0)));
+    assert_eq!(bearing.components(), &["fwd", "aft"]);
+    assert_eq!(rt, nav_file);
+    Ok(())
+}
+
+#[test]
+#[expect(clippy::float_cmp, reason = "round-trip exact bit preservation")]
+fn a_vector_channel_preserves_nan_holes() -> Result<(), Box<dyn std::error::Error>> {
+    // NaN marks an absent sample per column, and must survive the round-trip.
+    let t0 = base();
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_channel(
+        Channel::builder()
+            .name("accel")
+            .components(["x", "y"].map(String::from).to_vec())
+            .times(vec![t0, t0 + Duration::seconds(1)])
+            .values(vec![1.0, f64::NAN, f64::NAN, 4.0])
+            .build()?,
+    );
+    let rt = round_trip(&recorder.finish()?)?;
+    let values = rt.channels()[0].values();
+    // NaN != NaN, so compare finiteness and the finite values explicitly.
+    assert!(values[0] == 1.0 && values[3] == 4.0);
+    assert!(values[1].is_nan() && values[2].is_nan());
+    Ok(())
+}
