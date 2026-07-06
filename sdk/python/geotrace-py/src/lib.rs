@@ -7,7 +7,7 @@
 use chrono::{DateTime, FixedOffset, Utc};
 use std::path::PathBuf;
 use geotrace_sdk::{
-    Angle, Annotation, BuildError, Constellation, EventMarker, EventMarkerColor,
+    Angle, Annotation, BuildError, Channel, Constellation, EventMarker, EventMarkerColor,
     EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon, Meta,
     NavFile, NavFileBuilder, NavRecorder, NavFix, NavPoint, Satellite, SatelliteReport, Velocity,
 };
@@ -358,7 +358,101 @@ impl PySatelliteReport {
     }
 }
 
+/// A named scalar or vector sensor channel sampled at its own rate.
+///
+/// Pass `components` (e.g. `["x", "y", "z"]`) for a vector channel whose values
+/// have one column per component, or omit it for a scalar channel. `values` is
+/// row-major: `len(times)` rows of one column (scalar) or `len(components)`
+/// columns (vector). `times` must be timezone-aware `datetime.datetime` objects.
+#[pyclass(skip_from_py_object, name = "Channel")]
+#[derive(Debug, Clone)]
+pub struct PyChannel {
+    inner: Channel,
+}
 
+#[pymethods]
+impl PyChannel {
+    #[new]
+    #[pyo3(signature = (name, times, values, *, unit=None, period_deg=None, description=None, components=None))]
+    fn new(
+        name: String,
+        times: Vec<DateTime<FixedOffset>>,
+        values: Vec<f64>,
+        unit: Option<String>,
+        period_deg: Option<f64>,
+        description: Option<String>,
+        components: Option<Vec<String>>,
+    ) -> PyResult<Self> {
+        let inner = Channel::builder()
+            .name(name)
+            .maybe_unit(unit)
+            .maybe_period(period_deg.map(Angle::degrees))
+            .maybe_description(description)
+            .maybe_components(components)
+            .times(times.into_iter().map(|t| t.to_utc()).collect())
+            .values(values)
+            .build()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    /// The channel's identifier, referenced as `@name` in queries.
+    #[getter]
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    /// The unit of the values (`"g"`, `"deg"`), or `None`.
+    #[getter]
+    fn unit(&self) -> Option<&str> {
+        self.inner.unit()
+    }
+
+    /// The wrap period in degrees for an angular channel, or `None` if linear.
+    #[getter]
+    fn period_deg(&self) -> Option<f64> {
+        self.inner.period().map(Angle::as_degrees)
+    }
+
+    /// A human description of what the channel records, or `None`.
+    #[getter]
+    fn description(&self) -> Option<&str> {
+        self.inner.description()
+    }
+
+    /// The vector component labels, or an empty list for a scalar channel.
+    #[getter]
+    fn components(&self) -> Vec<String> {
+        self.inner.components().to_vec()
+    }
+
+    /// Whether this is a vector channel (has named components).
+    #[getter]
+    fn is_vector(&self) -> bool {
+        self.inner.is_vector()
+    }
+
+    /// The sample timestamps, one per row of `values`.
+    #[getter]
+    fn times(&self) -> Vec<DateTime<FixedOffset>> {
+        self.inner.times().iter().map(|t| to_fixed(*t)).collect()
+    }
+
+    /// The sample values, row-major: `len(times)` rows by component count.
+    #[getter]
+    fn values(&self) -> Vec<f64> {
+        self.inner.values().to_vec()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Channel(name={:?}, samples={}, components={})",
+            self.inner.name(),
+            self.inner.times().len(),
+            self.inner.components().len()
+        )
+    }
+}
 
 /// A single GPS/GNSS fix: position, optional heading, and optional speed.
 ///
@@ -960,6 +1054,16 @@ impl PyNavFile {
             .collect()
     }
 
+    /// All ad-hoc sensor channels, sorted by name.
+    #[getter]
+    fn channels(&self) -> Vec<PyChannel> {
+        self.inner
+            .channels()
+            .iter()
+            .map(|c| PyChannel { inner: c.clone() })
+            .collect()
+    }
+
     /// Per-variant style overrides stored in the file.
     #[getter]
     fn event_marker_styles(&self) -> Vec<PyEventMarkerStyle> {
@@ -999,6 +1103,7 @@ enum AddItem<'py> {
     Report(Bound<'py, PySatelliteReport>),
     Annotation(Bound<'py, PyAnnotation>),
     EventMarker(Bound<'py, PyEventMarker>),
+    Channel(Bound<'py, PyChannel>),
 }
 
 /// Assembles nav fixes, satellite reports, and annotations into a `NavFile`.
@@ -1139,6 +1244,9 @@ impl PyNavFileBuilder {
                         .map_err(|e| PyValueError::new_err(e.to_string()))?;
                     recorder.add_event_marker(marker);
                 }
+                AddItem::Channel(c) => {
+                    recorder.add_channel(c.borrow().inner.clone());
+                }
             }
         }
         Ok(slf.unbind())
@@ -1193,6 +1301,7 @@ fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMarkerIcon>()?;
     m.add_class::<PySatellite>()?;
     m.add_class::<PySatelliteReport>()?;
+    m.add_class::<PyChannel>()?;
     m.add_class::<PyNavFix>()?;
     m.add_class::<PyAnnotation>()?;
     m.add_class::<PyMeta>()?;

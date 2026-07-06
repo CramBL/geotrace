@@ -29,6 +29,7 @@ from importlib.metadata import version as _dist_version
 
 from geotrace_sdk._geotrace_sdk import (
     Annotation,
+    Channel,
     Constellation,
     EventMarker,
     EventMarkerPoint,
@@ -53,6 +54,7 @@ except PackageNotFoundError:  # running from a source tree, not an installed dis
 __all__ = [
     "__version__",
     "Annotation",
+    "Channel",
     "Constellation",
     "EventMarker",
     "EventMarkerPoint",

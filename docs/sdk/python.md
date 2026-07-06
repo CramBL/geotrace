@@ -35,6 +35,7 @@ Run with `python <name>.py`.
 - [`with_satellites`](../../sdk/python/geotrace-py/examples/with_satellites.py): pair each fix with a satellite visibility report.
 - [`with_satellites_and_markers`](../../sdk/python/geotrace-py/examples/with_satellites_and_markers.py): satellite reports plus custom map annotations placed by interpolation.
 - [`event_markers`](../../sdk/python/geotrace-py/examples/event_markers.py): write and read hierarchical event markers (`variant_path`).
+- [`channels`](../../sdk/python/geotrace-py/examples/channels.py): attach scalar and vector sensor channels and read them back.
 - [`event_markers_flat`](../../sdk/python/geotrace-py/examples/event_markers_flat.py): typed markers via `@event_kind`, single-level paths.
 - [`event_markers_nested`](../../sdk/python/geotrace-py/examples/event_markers_nested.py): typed markers via `@event_kind`, nested paths.
 - [`event_markers_skip`](../../sdk/python/geotrace-py/examples/event_markers_skip.py): omit variants with `event_kind.skip`.
