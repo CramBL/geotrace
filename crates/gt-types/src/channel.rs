@@ -51,6 +51,11 @@ impl Channel {
     /// each value row aligned with its timestamp.
     pub fn slice_time_range(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> Channel {
         let columns = self.component_count();
+        debug_assert_eq!(
+            self.values.len(),
+            self.times.len() * columns,
+            "channel values must be times.len() * component_count()"
+        );
         let mut times = Vec::new();
         let mut values = Vec::new();
         for (time, row) in self.times.iter().zip(self.values.chunks(columns)) {

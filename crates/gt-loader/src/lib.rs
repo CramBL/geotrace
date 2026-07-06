@@ -606,6 +606,37 @@ mod tests {
     }
 
     #[test]
+    fn reencode_preserves_channels() {
+        let t0 = base();
+        let mut recorder = NavFileBuilder::new().open();
+        for i in 0..5i64 {
+            recorder.add_nav_fix(minimal_fix(t0 + Duration::seconds(i)));
+        }
+        recorder.add_channel(
+            geotrace_sdk::Channel::builder()
+                .name("accel")
+                .unit("g")
+                .components(["x", "y", "z"].map(String::from).to_vec())
+                .times(vec![t0, t0 + Duration::seconds(4)])
+                .values(vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02])
+                .build()
+                .expect("valid channel"),
+        );
+        let mut bytes = Vec::new();
+        recorder.finish().unwrap().write(&mut bytes).unwrap();
+
+        // Dropping a point range must not drop the channel.
+        let reencoded =
+            reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..3))).unwrap();
+        let nav_file = NavFile::read(reencoded.as_slice()).unwrap();
+        assert_eq!(nav_file.channels().len(), 1);
+        let accel = &nav_file.channels()[0];
+        assert_eq!(accel.name(), "accel");
+        assert_eq!(accel.components(), ["x", "y", "z"]);
+        assert_eq!(accel.times().len(), 2);
+    }
+
+    #[test]
     fn reencode_clamps_ranges_past_the_end() {
         let t0 = base();
         let mut recorder = NavFileBuilder::new().open();

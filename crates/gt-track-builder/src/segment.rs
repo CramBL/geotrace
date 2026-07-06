@@ -566,7 +566,7 @@ pub fn build_loaded_file(
     channels: &[Channel],
     config: &SegmentationConfig,
     source: FileSource,
-    load_warnings: Vec<LoadWarning>,
+    mut load_warnings: Vec<LoadWarning>,
 ) -> LoadedFile {
     let ranges = segment_tracks(points, &config.track_layout);
 
@@ -653,6 +653,25 @@ pub fn build_loaded_file(
     // Back-fill event_marker_count now that assignment is done.
     for track in &mut loaded_tracks {
         track.metadata.event_marker_count = track.event_markers.len();
+    }
+
+    // Channel samples that fell in a between-track gap (e.g. a sensor still
+    // logging while GPS had no fix) belong to no track and were dropped above.
+    // Surface the loss rather than hiding it.
+    let input_samples: usize = channels.iter().map(|c| c.times.len()).sum();
+    let kept_samples: usize = loaded_tracks
+        .iter()
+        .flat_map(|t| &t.channels)
+        .map(|c| c.times.len())
+        .sum();
+    if let Some(dropped) = input_samples.checked_sub(kept_samples).filter(|&d| d > 0) {
+        load_warnings.push(LoadWarning {
+            count: u32::try_from(dropped).unwrap_or(u32::MAX),
+            issue: "channel sample(s) outside every track".to_owned(),
+            description: "Sensor samples whose timestamp fell between tracks (no \
+                nav fix covers that time) were dropped and are not shown."
+                .to_owned(),
+        });
     }
 
     let total_distance_km = loaded_tracks
@@ -1148,6 +1167,69 @@ mod tests {
         assert_eq!(reassembled.len(), 1);
         assert_eq!(reassembled[0].times, vec![utc(0), utc(30), utc(3600)]);
         assert_eq!(reassembled[0].values, vec![1.0, 2.0, 3.0]);
+
+        // The one gap sample (1800) that landed in no track is surfaced as a warning.
+        let warning = f
+            .load_warnings
+            .iter()
+            .find(|w| w.issue.contains("outside every track"))
+            .expect("dropped gap sample should be reported");
+        assert_eq!(warning.count, 1);
+    }
+
+    #[test]
+    fn a_vector_channel_partitions_and_reassembles_with_columns_aligned() {
+        // Two tracks split at the 3600s gap. A 3-component accel channel with two
+        // samples in track 1, one in the gap (dropped), and one in track 2.
+        let pts = vec![
+            make_point_at(0),
+            make_point_at(60),
+            make_point_at(3600),
+            make_point_at(3660),
+        ];
+        let channel = Channel {
+            name: "accel".to_owned(),
+            unit: Some("g".to_owned()),
+            period: None,
+            description: None,
+            components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
+            times: vec![utc(0), utc(30), utc(1800), utc(3600)],
+            // Row-major: four samples of (x, y, z).
+            values: vec![
+                0.0, 0.1, 1.0, // t=0
+                1.0, 1.1, 2.0, // t=30
+                8.0, 8.1, 8.2, // t=1800 (gap, dropped)
+                3.0, 3.1, 4.0, // t=3600
+            ],
+        };
+        let f = build_loaded_file(
+            "ride.gtd".to_owned(),
+            &pts,
+            &[],
+            vec![],
+            vec![],
+            std::slice::from_ref(&channel),
+            &SegmentationConfig::default(),
+            FileSource::GtdPath(PathBuf::from("ride.gtd")),
+            vec![],
+        );
+
+        // Track 1 keeps rows 0 and 1 with their columns intact.
+        let t0 = &f.tracks[0].channels[0];
+        assert_eq!(t0.components, ["x", "y", "z"]);
+        assert_eq!(t0.times, vec![utc(0), utc(30)]);
+        assert_eq!(t0.values, vec![0.0, 0.1, 1.0, 1.0, 1.1, 2.0]);
+        // Track 2 keeps the last row.
+        assert_eq!(f.tracks[1].channels[0].values, vec![3.0, 3.1, 4.0]);
+
+        // Reassembly restores the surviving rows in time order, columns aligned.
+        let reassembled = reassemble_channels(&f.tracks);
+        assert_eq!(reassembled[0].components, ["x", "y", "z"]);
+        assert_eq!(reassembled[0].times, vec![utc(0), utc(30), utc(3600)]);
+        assert_eq!(
+            reassembled[0].values,
+            vec![0.0, 0.1, 1.0, 1.0, 1.1, 2.0, 3.0, 3.1, 4.0]
+        );
     }
 
     #[test]
