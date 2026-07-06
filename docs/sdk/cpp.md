@@ -72,6 +72,7 @@ In [`sdk/cpp/examples/`](../../sdk/cpp/examples/). Configure the C++ SDK with
 - [`read_file`](../../sdk/cpp/examples/read_file.cpp): open a `.gtd` file and print a content summary.
 - [`with_satellites`](../../sdk/cpp/examples/with_satellites.cpp): pair each fix with a per-satellite signal report.
 - [`event_markers`](../../sdk/cpp/examples/event_markers.cpp): write and read hierarchical event markers (`variant_path`).
+- [`channels`](../../sdk/cpp/examples/channels.cpp): attach scalar and vector sensor channels and read them back.
 - [`typed_events`](../../sdk/cpp/examples/typed_events.cpp): type-safe markers via `enum class` and `EventEnum<>` specialization.
 - [`from_csv`](../../sdk/cpp/examples/from_csv.cpp): convert CSV rows into a `.gtd` file.
 - [`from_multiple_sources`](../../sdk/cpp/examples/from_multiple_sources.cpp): merge fixes and events from separate sources, interpolating event positions.

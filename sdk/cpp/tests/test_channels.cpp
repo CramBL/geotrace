@@ -1,0 +1,107 @@
+#include <doctest/doctest.h>
+#include <geotrace/geotrace.hpp>
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+using geotrace::Angle;
+using geotrace::Channel;
+using geotrace::FileBuilder;
+using geotrace::InvalidChannelError;
+using geotrace::NavFile;
+using geotrace::NavFix;
+using geotrace::Timestamp;
+
+static const Timestamp T0 = Timestamp::from_seconds(1700000000ULL);
+static const Timestamp T1 = Timestamp::from_seconds(1700000001ULL);
+
+TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
+    std::vector<std::uint8_t> bytes;
+    {
+        NavFix fix{};
+        fix.gps_time = T0;
+        fix.lat = Angle::degrees(51.5);
+        fix.lon = Angle::degrees(-0.1);
+
+        Channel incline{};
+        incline.name = "incline";
+        incline.unit = "deg";
+        incline.period = Angle::degrees(360.0);
+        incline.times = {T0, T1};
+        incline.values = {1.5, 2.0};
+
+        Channel accel{};
+        accel.name = "accel";
+        accel.unit = "g";
+        accel.components = {"x", "y", "z"};
+        accel.times = {T0, T1};
+        accel.values = {0.1, 0.2, 0.98, -0.1, 0.3, 1.02};
+
+        auto file = FileBuilder{}.add_nav_fix(fix).add_channel(incline).add(accel).finish();
+        bytes = file.to_bytes();
+    }
+
+    auto file = NavFile::from_bytes(bytes);
+    REQUIRE(file.channel_count() == 2);
+
+    // Channels sort by name: accel (vector) then incline (scalar).
+    auto accel = file.channel(0);
+    CHECK(accel.name == "accel");
+    CHECK(accel.is_vector());
+    CHECK(accel.unit == "g");
+    CHECK(accel.components == std::vector<std::string>{"x", "y", "z"});
+    CHECK_FALSE(accel.period.has_value());
+    REQUIRE(accel.times.size() == 2);
+    CHECK(accel.times[1].unix_micros == T1.unix_micros);
+    REQUIRE(accel.values.size() == 6);
+    CHECK(accel.values[0] == doctest::Approx(0.1));
+    CHECK(accel.values[5] == doctest::Approx(1.02));
+
+    auto incline = file.channel(1);
+    CHECK(incline.name == "incline");
+    CHECK_FALSE(incline.is_vector());
+    CHECK(incline.components.empty());
+    REQUIRE(incline.period.has_value());
+    CHECK(incline.period->as_degrees() == doctest::Approx(360.0));
+}
+
+TEST_CASE("channels: a malformed channel throws InvalidChannelError") {
+    SUBCASE("invalid name") {
+        Channel ch{};
+        ch.name = "Bad Name";
+        ch.times = {T0};
+        ch.values = {1.0};
+        CHECK_THROWS_AS(FileBuilder{}.add_channel(ch), InvalidChannelError);
+    }
+    SUBCASE("length mismatch") {
+        Channel ch{};
+        ch.name = "accel";
+        ch.times = {T0};
+        ch.values = {1.0, 2.0};
+        CHECK_THROWS_AS(FileBuilder{}.add_channel(ch), InvalidChannelError);
+    }
+    SUBCASE("duplicate component label") {
+        Channel ch{};
+        ch.name = "accel";
+        ch.components = {"x", "x"};
+        ch.times = {T0};
+        ch.values = {1.0, 2.0};
+        CHECK_THROWS_AS(FileBuilder{}.add_channel(ch), InvalidChannelError);
+    }
+    SUBCASE("duplicate channel name at finish") {
+        Channel ch{};
+        ch.name = "accel";
+        ch.times = {T0};
+        ch.values = {1.0};
+        CHECK_THROWS_AS(FileBuilder{}.add_channel(ch).add_channel(ch).finish(),
+                        InvalidChannelError);
+    }
+}
+
+TEST_CASE("channels: try_channel reports out-of-range without throwing") {
+    auto file = FileBuilder{}.finish();
+    CHECK(file.channel_count() == 0);
+    auto result = file.try_channel(0);
+    CHECK(result.is_err());
+}
