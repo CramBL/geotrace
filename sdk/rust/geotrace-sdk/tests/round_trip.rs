@@ -6,8 +6,8 @@
 
 use geotrace_sdk::{Angle, DateTime, Duration, Utc, Velocity};
 use geotrace_sdk::{
-    Annotation, Constellation, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, Satellite,
-    SatelliteReport,
+    Annotation, Channel, Constellation, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix,
+    Satellite, SatelliteReport,
 };
 
 #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
@@ -353,4 +353,200 @@ fn large_file_round_trip() -> Result<(), Box<dyn std::error::Error>> {
     assert!((last.fix.lon.as_degrees() - last_lon).abs() < 1e-9);
 
     Ok(())
+}
+
+#[test]
+fn channels_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+    let t0 = base();
+    let t1 = t0 + Duration::milliseconds(100);
+    let t2 = t0 + Duration::milliseconds(200);
+
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .gps_time(t0)
+            .lat(Angle::degrees(51.5))
+            .lon(Angle::degrees(-0.1))
+            .build(),
+    );
+
+    // Added out of name order to exercise the canonical sort on finish. An
+    // angular channel carrying a wrap period and no description...
+    recorder.add_channel(
+        Channel::builder()
+            .name("tilt")
+            .unit("deg")
+            .period(Angle::degrees(360.0))
+            .times(vec![t0, t1])
+            .values(vec![10.0, 350.0])
+            .build()?,
+    );
+    // ...and a linear channel with a unit and description.
+    recorder.add_channel(
+        Channel::builder()
+            .name("accel_mag")
+            .unit("g")
+            .description("accelerometer magnitude")
+            .times(vec![t0, t1, t2])
+            .values(vec![0.98, 1.02, 1.15])
+            .build()?,
+    );
+
+    let nav_file = recorder.finish()?;
+    let rt = round_trip(&nav_file)?;
+
+    // Restored channels are name-sorted, so accel_mag precedes tilt.
+    assert_eq!(rt.channels().len(), 2);
+
+    let accel = &rt.channels()[0];
+    assert_eq!(accel.name(), "accel_mag");
+    assert_eq!(accel.unit(), Some("g"));
+    assert_eq!(accel.period(), None);
+    assert_eq!(accel.description(), Some("accelerometer magnitude"));
+    assert_eq!(accel.times(), &[t0, t1, t2]);
+    assert_eq!(accel.values(), &[0.98, 1.02, 1.15]);
+
+    let tilt = &rt.channels()[1];
+    assert_eq!(tilt.name(), "tilt");
+    assert_eq!(tilt.unit(), Some("deg"));
+    assert_eq!(tilt.period(), Some(Angle::degrees(360.0)));
+    assert_eq!(tilt.description(), None);
+    assert_eq!(tilt.times(), &[t0, t1]);
+    assert_eq!(tilt.values(), &[10.0, 350.0]);
+
+    // The whole file round-trips by value (finish already sorted the channels).
+    assert_eq!(rt, nav_file);
+
+    Ok(())
+}
+
+#[test]
+fn a_file_without_channels_still_reads() -> Result<(), Box<dyn std::error::Error>> {
+    // The channels group is absent, so there are simply none.
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .gps_time(base())
+            .lat(Angle::degrees(0.0))
+            .lon(Angle::degrees(0.0))
+            .build(),
+    );
+    let rt = round_trip(&recorder.finish()?)?;
+    assert!(rt.channels().is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_channel_name_must_be_a_lowercase_identifier() {
+    // Uppercase, a space, an empty name, and a leading digit are all rejected;
+    // a plain lowercase identifier is accepted.
+    for bad in ["Accel Fwd", "accel-fwd", "", "1accel", "Accel"] {
+        assert!(
+            matches!(
+                Channel::builder()
+                    .name(bad)
+                    .times(vec![base()])
+                    .values(vec![1.0])
+                    .build(),
+                Err(geotrace_sdk::ChannelError::InvalidName { .. })
+            ),
+            "expected {bad:?} to be rejected"
+        );
+    }
+    Channel::builder()
+        .name("accel_fwd2")
+        .times(vec![base()])
+        .values(vec![1.0])
+        .build()
+        .expect("a lowercase identifier with digits and underscores is valid");
+}
+
+#[test]
+fn a_bare_channel_round_trips_with_no_optional_fields() -> Result<(), Box<dyn std::error::Error>> {
+    let t0 = base();
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_channel(
+        Channel::builder()
+            .name("raw")
+            .times(vec![t0, t0 + Duration::seconds(1)])
+            .values(vec![1.0, 2.0])
+            .build()?,
+    );
+    let rt = round_trip(&recorder.finish()?)?;
+    let channel = &rt.channels()[0];
+    assert_eq!(channel.name(), "raw");
+    assert_eq!(channel.unit(), None);
+    assert_eq!(channel.period(), None);
+    assert_eq!(channel.description(), None);
+    Ok(())
+}
+
+#[test]
+fn an_empty_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_channel(
+        Channel::builder()
+            .name("empty")
+            .unit("g")
+            .times(vec![])
+            .values(vec![])
+            .build()?,
+    );
+    let rt = round_trip(&recorder.finish()?)?;
+    let channel = &rt.channels()[0];
+    assert_eq!(channel.name(), "empty");
+    assert!(channel.times().is_empty());
+    assert!(channel.values().is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_whitespace_only_unit_becomes_none() -> Result<(), Box<dyn std::error::Error>> {
+    let channel = Channel::builder()
+        .name("accel")
+        .unit("   ")
+        .description("  \t ")
+        .times(vec![base()])
+        .values(vec![1.0])
+        .build()?;
+    assert_eq!(channel.unit(), None);
+    assert_eq!(channel.description(), None);
+    Ok(())
+}
+
+#[test]
+fn duplicate_channel_names_are_rejected() {
+    let mut recorder = NavFileBuilder::new().open();
+    for value in [1.0, 2.0] {
+        recorder.add_channel(
+            Channel::builder()
+                .name("accel")
+                .times(vec![base()])
+                .values(vec![value])
+                .build()
+                .expect("valid channel"),
+        );
+    }
+    assert!(matches!(
+        recorder.finish(),
+        Err(geotrace_sdk::BuildError::DuplicateChannelName { name }) if name == "accel"
+    ));
+}
+
+#[test]
+fn a_channel_rejects_mismatched_lengths() {
+    let err = Channel::builder()
+        .name("accel")
+        .times(vec![base()])
+        .values(vec![1.0, 2.0])
+        .build()
+        .expect_err("two values but one timestamp");
+    assert!(matches!(
+        err,
+        geotrace_sdk::ChannelError::LengthMismatch {
+            times: 1,
+            values: 2,
+            ..
+        }
+    ));
 }

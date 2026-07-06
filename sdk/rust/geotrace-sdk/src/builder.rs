@@ -4,7 +4,7 @@ use chrono::{DateTime, Duration, Utc};
 use crate::error::BuildError;
 use crate::time_types::{GpsTime, SysTime};
 use crate::types::{
-    Annotation, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,
+    Annotation, Channel, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,
     EventMarkerPoint, EventMarkerStyle, Marker, Meta, NavFile, NavFix, NavPoint, Satellite,
     SatelliteReport,
 };
@@ -206,6 +206,7 @@ impl NavFileBuilder {
             annotations: Vec::new(),
             pending_event_markers: Vec::new(),
             event_marker_styles: Vec::new(),
+            channels: Vec::new(),
             styled_paths: std::collections::HashSet::new(),
             meta: self.meta,
             satellite_window: self.satellite_window,
@@ -230,6 +231,7 @@ pub struct NavRecorder {
     annotations: Vec<Annotation>,
     pending_event_markers: Vec<(String, chrono::DateTime<chrono::Utc>, Option<String>)>,
     event_marker_styles: Vec<EventMarkerStyle>,
+    channels: Vec<Channel>,
     styled_paths: std::collections::HashSet<String>,
     meta: Option<Meta>,
     satellite_window: Duration,
@@ -318,6 +320,16 @@ impl NavRecorder {
         let marker = marker.into();
         self.pending_event_markers
             .push((marker.variant_path, marker.sys_time, marker.annotation));
+        self
+    }
+
+    /// Attach a scalar sensor [`Channel`] to be recorded alongside the track.
+    ///
+    /// The channel keeps its own sample timestamps; it is correlated with the
+    /// nav points by time at query time, not resampled here. Build one with
+    /// [`Channel::builder`].
+    pub fn add_channel(&mut self, channel: Channel) -> &mut Self {
+        self.channels.push(channel);
         self
     }
 
@@ -497,12 +509,25 @@ impl NavRecorder {
             })
             .collect();
 
+        // Channels are keyed by name, so store them in a canonical name order
+        // independent of the order they were added. Names become HDF5 group
+        // names, so a duplicate would silently collide - reject it loudly.
+        let mut channels = self.channels;
+        channels.sort_by(|a, b| a.name.cmp(&b.name));
+        if let Some(name) = channels.windows(2).find_map(|pair| match pair {
+            [a, b] if a.name == b.name => Some(a.name.clone()),
+            _ => None,
+        }) {
+            return Err(BuildError::DuplicateChannelName { name });
+        }
+
         Ok(NavFile {
             meta: self.meta.unwrap_or_default(),
             nav_points,
             markers,
             event_markers,
             event_marker_styles: self.event_marker_styles,
+            channels,
         })
     }
 }

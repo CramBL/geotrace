@@ -3,7 +3,7 @@ use std::{fs::File, io, path::Path};
 use crate::{Angle, Velocity};
 use chrono::{DateTime, Utc};
 
-use crate::error::{Error, EventMarkerError};
+use crate::error::{ChannelError, Error, EventMarkerError};
 
 /// A single GPS/GNSS fix: position, heading, and optional speed at a point in time.
 ///
@@ -622,6 +622,93 @@ pub struct EventMarkerPoint {
     pub annotation: Option<String>,
 }
 
+/// A named scalar time series recorded alongside the nav track: an ad-hoc
+/// sensor metric such as an accelerometer magnitude or an inclinometer angle,
+/// sampled at its own rate and correlated with the track by timestamp.
+///
+/// Stored under `channels/<name>/` as a `time` (µs) dataset and a `value`
+/// dataset, with the unit, wrap period, and description carried as attributes on
+/// the channel's group. Build one with [`Channel::builder`] and attach it via
+/// [`NavRecorder::add_channel`](crate::NavRecorder::add_channel).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Channel {
+    pub(crate) name: String,
+    pub(crate) unit: Option<String>,
+    pub(crate) period: Option<Angle>,
+    pub(crate) description: Option<String>,
+    pub(crate) times: Vec<DateTime<Utc>>,
+    pub(crate) values: Vec<f64>,
+}
+
+#[bon::bon]
+impl Channel {
+    /// Build a validated [`Channel`].
+    ///
+    /// `name` must be a lowercase identifier, since queries reference it as
+    /// `@name`. Empty or whitespace-only units and descriptions become `None`.
+    /// Returns `Err` if the name is malformed or `times` and `values` differ in
+    /// length.
+    #[builder(finish_fn = build)]
+    pub fn new(
+        #[builder(into)] name: String,
+        #[builder(into)] unit: Option<String>,
+        period: Option<Angle>,
+        #[builder(into)] description: Option<String>,
+        times: Vec<DateTime<Utc>>,
+        values: Vec<f64>,
+    ) -> Result<Self, ChannelError> {
+        crate::error::validate_channel_name(&name)?;
+        if times.len() != values.len() {
+            return Err(ChannelError::LengthMismatch {
+                name,
+                times: times.len(),
+                values: values.len(),
+            });
+        }
+        Ok(Self {
+            name,
+            unit: unit.filter(|s| !s.trim().is_empty()),
+            period,
+            description: description.filter(|s| !s.trim().is_empty()),
+            times,
+            values,
+        })
+    }
+}
+
+impl Channel {
+    /// The channel's identifier, referenced as `@name` in queries.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The unit of the channel's values (`"g"`, `"deg"`), when declared.
+    pub fn unit(&self) -> Option<&str> {
+        self.unit.as_deref()
+    }
+
+    /// The wrap period of an angular channel (`360°` for a heading), or `None`
+    /// for a linear value.
+    pub fn period(&self) -> Option<Angle> {
+        self.period
+    }
+
+    /// A human description of what the channel records, when declared.
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    /// The sample timestamps, one per value.
+    pub fn times(&self) -> &[DateTime<Utc>] {
+        &self.times
+    }
+
+    /// The sample values, in [`unit`](Self::unit), one per timestamp.
+    pub fn values(&self) -> &[f64] {
+        &self.values
+    }
+}
+
 /// A complete, validated GeoTrace data file ready for serialisation.
 ///
 /// Construct via [`NavRecorder::finish`](crate::NavRecorder::finish).
@@ -632,6 +719,7 @@ pub struct NavFile {
     pub(crate) markers: Vec<Marker>,
     pub(crate) event_markers: Vec<EventMarkerPoint>,
     pub(crate) event_marker_styles: Vec<EventMarkerStyle>,
+    pub(crate) channels: Vec<Channel>,
 }
 
 impl NavFile {
@@ -653,6 +741,10 @@ impl NavFile {
 
     pub fn event_marker_styles(&self) -> &[EventMarkerStyle] {
         &self.event_marker_styles
+    }
+
+    pub fn channels(&self) -> &[Channel] {
+        &self.channels
     }
 
     /// Serialise the file to the provided writer.

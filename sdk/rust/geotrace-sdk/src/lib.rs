@@ -40,9 +40,9 @@ mod write;
 pub use builder::{
     NavFileBuilder, NavRecord, NavRecorder, SatelliteWarning, collect_satellite_warnings,
 };
-pub use error::{BuildError, Error, EventMarkerError};
+pub use error::{BuildError, ChannelError, Error, EventMarkerError};
 pub use types::{
-    Annotation, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,
+    Annotation, Channel, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,
     EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint,
     Satellite, SatelliteReport,
 };
