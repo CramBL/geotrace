@@ -2015,6 +2015,7 @@ dependencies = [
  "chrono",
  "geotrace-sdk-macros",
  "hdf5-pure",
+ "insta",
  "log",
  "proptest",
  "strum",

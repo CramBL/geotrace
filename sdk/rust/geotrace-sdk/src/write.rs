@@ -42,8 +42,9 @@ pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
     Ok(fb.finish()?)
 }
 
-/// Write ad-hoc scalar channels as `channels/<name>/{time,value}`, with the
-/// channel's unit, wrap period, and description as attributes on its group.
+/// Write ad-hoc channels as `channels/<name>/{time,value}`, with the channel's
+/// unit, wrap period, description, and (for vector channels) component labels as
+/// attributes on its group.
 fn write_channels(nav_file: &NavFile, fb: &mut FileBuilder) {
     let channels = nav_file.channels();
     if channels.is_empty() {
@@ -71,6 +72,12 @@ fn write_channels(nav_file: &NavFile, fb: &mut FileBuilder) {
         if let Some(description) = &channel.description {
             grp.set_attr("description", AttrValue::String(description.clone()));
         }
+        if channel.is_vector() {
+            grp.set_attr(
+                "components",
+                AttrValue::StringArray(channel.components.clone()),
+            );
+        }
         grp.create_dataset("time")
             .with_i64_data(&times)
             .with_shape(&[n])
@@ -81,12 +88,20 @@ fn write_channels(nav_file: &NavFile, fb: &mut FileBuilder) {
             .with_chunks(&[chunk])
             .with_shuffle()
             .with_deflate(6);
-        grp.create_dataset("value")
-            .with_f64_data(&channel.values)
-            .with_shape(&[n])
-            .with_chunks(&[chunk])
-            .with_shuffle()
-            .with_deflate(6);
+        // A scalar channel is a 1-D `[n]` dataset; a vector channel is a 2-D
+        // `[n, k]` dataset so the components stay clock-locked in one column each.
+        let value = grp.create_dataset("value").with_f64_data(&channel.values);
+        if channel.is_vector() {
+            let k = channel.component_count() as u64;
+            // Keep ~CHUNK_SIZE elements per chunk by dividing the row count by
+            // the column count, mirroring how the string datasets chunk by row.
+            value
+                .with_shape(&[n, k])
+                .with_chunks(&[(chunk / k).max(1), k]);
+        } else {
+            value.with_shape(&[n]).with_chunks(&[chunk]);
+        }
+        value.with_shuffle().with_deflate(6);
         root.add_group(grp.finish());
     }
     fb.add_group(root.finish());
