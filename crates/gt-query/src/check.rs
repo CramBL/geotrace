@@ -27,11 +27,14 @@ pub struct Params {
 /// A window is a time span anchored at each nav point; an aggregate reduces the
 /// metric's native samples within that span. Only the point-count kind exists
 /// today; a time-based form is planned.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Window {
     /// A span of `n` consecutive points: at anchor `i` the points `[i, i+n)` and
     /// the time extent `[t(i), t(i+n-1)]`.
     Count(usize),
+    /// A span of a fixed duration in seconds: at anchor `i` the points whose
+    /// time lands in `[t(i), t(i) + secs)`. Requires the full duration to fit.
+    Duration(f64),
 }
 
 /// A query that passed all static checks, ready to run.
@@ -346,10 +349,22 @@ pub fn check(query: &Query) -> Result<CheckedQuery, Diagnostic> {
         None => None,
         // The conversion only fails on targets where usize is narrower than
         // u64; kept as a defensive branch rather than an assumption.
-        Some(w) => {
-            let n =
-                usize::try_from(w.len).map_err(|_overflow| err(w.span, "window is too large"))?;
+        Some(crate::ast::Window::Count { len, span }) => {
+            let n = usize::try_from(len).map_err(|_overflow| err(span, "window is too large"))?;
             Some(Window::Count(n))
+        }
+        Some(crate::ast::Window::Duration { value, unit, span }) => {
+            if unit.quantity() != Quantity::Duration {
+                return Err(err_hint(
+                    span,
+                    "a window duration needs a time unit",
+                    "try s, min, or h, e.g. window 15 s",
+                ));
+            }
+            if value <= 0.0 {
+                return Err(err(span, "a window duration must be positive"));
+            }
+            Some(Window::Duration(value * unit.to_base()))
         }
     };
 

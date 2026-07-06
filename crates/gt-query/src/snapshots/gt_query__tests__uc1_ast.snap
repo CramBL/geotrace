@@ -5,7 +5,7 @@ expression: query
 Query {
     params: [],
     window: Some(
-        Window {
+        Count {
             len: 10,
             span: Span {
                 start: 9,

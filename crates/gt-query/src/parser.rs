@@ -234,26 +234,40 @@ impl<'src> Parser<'src> {
         if tok.kind != Token::Number {
             return Err(self.error(tok.span, "window needs a point count, e.g. window 10"));
         }
-        if tok.text.contains('.') {
-            return Err(self.error(tok.span, "window takes a whole number of points"));
+        let num_span = tok.span;
+        let num_text = tok.text.to_owned();
+        self.advance();
+
+        // A unit after the number makes it a time span (`window 15 s`); the
+        // checker validates the unit is a duration. Otherwise it is a point
+        // count, which must be a whole number of at least 1.
+        if self.at_unit_start() {
+            let Some((unit, unit_span)) = self.unit()? else {
+                return Err(self.error(self.here(), "window needs a duration, e.g. window 15 s"));
+            };
+            let Ok(value) = num_text.parse::<f64>() else {
+                return Err(self.error(num_span, "invalid number"));
+            };
+            query.window = Some(Window::Duration {
+                value,
+                unit,
+                span: kw_span.to(unit_span),
+            });
+            return Ok(());
         }
-        let Ok(len) = tok.text.parse::<u64>() else {
-            return Err(self.error(tok.span, "window is too large"));
+
+        if num_text.contains('.') {
+            return Err(self.error(num_span, "window takes a whole number of points"));
+        }
+        let Ok(len) = num_text.parse::<u64>() else {
+            return Err(self.error(num_span, "window is too large"));
         };
         if len == 0 {
-            return Err(self.error(tok.span, "window needs at least 1 point"));
+            return Err(self.error(num_span, "window needs at least 1 point"));
         }
-        self.advance();
-        if self.at_unit_start() {
-            return Err(self.error_hint(
-                self.here(),
-                "time-based windows are not supported yet",
-                "window takes a point count",
-            ));
-        }
-        query.window = Some(Window {
+        query.window = Some(Window::Count {
             len,
-            span: kw_span.to(tok.span),
+            span: kw_span.to(num_span),
         });
         Ok(())
     }

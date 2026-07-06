@@ -193,24 +193,25 @@ pub(crate) fn evaluate_track(
             shorter_than_window = true;
         }
         Some(Window::Count(n)) => {
-            let last_start = len - n;
-            for start in 0..=last_start {
+            for start in 0..=(len - n) {
                 if start % check_interval == 0 && should_cancel() {
                     return None;
                 }
-                let scope = Scope::Window {
-                    start,
-                    end: start + n,
-                };
-                match verdict(query, &mut ctx, scope) {
-                    Some(true) => {
-                        for slot in matched.iter_mut().skip(start).take(n) {
-                            *slot = true;
-                        }
-                    }
-                    Some(false) => {}
-                    None => skips.record(&ctx),
-                }
+                apply_window(query, &mut ctx, &mut matched, &mut skips, start, start + n);
+            }
+        }
+        Some(Window::Duration(secs)) => {
+            match duration_windows(
+                query,
+                &mut ctx,
+                &mut matched,
+                &mut skips,
+                secs,
+                should_cancel,
+                check_interval,
+            ) {
+                None => return None,
+                Some(too_short) => shorter_than_window = too_short,
             }
         }
         None => {
@@ -232,6 +233,79 @@ pub(crate) fn evaluate_track(
         skipped_non_finite: skips.non_finite,
         shorter_than_window,
     })
+}
+
+/// Evaluate one window spanning the points `[start, end)`: mark those points on
+/// a match, record a skip on a poisoned window, do nothing on no-match.
+fn apply_window(
+    query: &CheckedQuery,
+    ctx: &mut Ctx<'_>,
+    matched: &mut [bool],
+    skips: &mut Skips,
+    start: usize,
+    end: usize,
+) {
+    match verdict(query, ctx, Scope::Window { start, end }) {
+        Some(true) => {
+            for slot in matched.iter_mut().skip(start).take(end - start) {
+                *slot = true;
+            }
+        }
+        Some(false) => {}
+        None => skips.record(ctx),
+    }
+}
+
+/// Evaluate every `secs`-long duration window: at each anchor the contiguous
+/// points whose time lands in `[t, t + secs)`, requiring the full duration to
+/// fit within the data. Returns `None` on cancellation, else whether the track
+/// was too short for any window to fit (the shorter-than-window flag).
+fn duration_windows(
+    query: &CheckedQuery,
+    ctx: &mut Ctx<'_>,
+    matched: &mut [bool],
+    skips: &mut Skips,
+    secs: f64,
+    should_cancel: &dyn Fn() -> bool,
+    check_interval: usize,
+) -> Option<bool> {
+    let len = matched.len();
+    // Each point's time places a window's span; a nav point always has one, so
+    // in practice none are missing. The last time is how far the data reaches,
+    // which bounds where a full window fits.
+    let times: Vec<Option<f64>> = (0..len).map(|i| ctx.raw(QueryMetric::Time, i)).collect();
+    let last_time = times.iter().rev().find_map(|t| *t);
+    let mut any_fit = false;
+    for start in 0..len {
+        if start % check_interval == 0 && should_cancel() {
+            return None;
+        }
+        let (Some(t_start), Some(t_last)) = (times.get(start).copied().flatten(), last_time) else {
+            continue;
+        };
+        // The full duration must fit: the data has to reach `t_start + secs`.
+        // Present times are sorted, so once a window overruns the end, every
+        // later anchor does too.
+        if t_start + secs > t_last {
+            break;
+        }
+        any_fit = true;
+        // The contiguous points with time in `[t_start, t_start + secs)`; the
+        // anchor itself always fits.
+        let end_time = t_start + secs;
+        let mut end = start;
+        while end < len
+            && times
+                .get(end)
+                .copied()
+                .flatten()
+                .is_some_and(|t| t < end_time)
+        {
+            end += 1;
+        }
+        apply_window(query, ctx, matched, skips, start, end);
+    }
+    Some(!any_fit)
 }
 
 /// Skip tallies accumulated during one track's evaluation, kept apart from the

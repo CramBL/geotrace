@@ -24,8 +24,12 @@ expression: catalog
         "16..19: window takes a whole number of points",
     ),
     (
-        "points | window 15 s",
-        "19..20: time-based windows are not supported yet | help: window takes a point count",
+        "points | window 10 km/h",
+        "9..23: a window duration needs a time unit | help: try s, min, or h, e.g. window 15 s",
+    ),
+    (
+        "points | window 0 s",
+        "9..19: a window duration must be positive",
     ),
     (
         "points | window 3 | window 4",
