@@ -285,7 +285,8 @@ typedef struct {
  * Sample timestamps, values, and component labels are fetched separately with
  * `gtd_nav_file_channel_times()`, `gtd_nav_file_channel_values()`, and
  * `gtd_nav_file_get_channel_component()`. A @ref component_count of zero marks a
- * scalar channel. All string fields are null-terminated.
+ * scalar channel. All string fields are null-terminated and truncated to their
+ * buffer size if longer.
  */
 typedef struct {
     char name[256];          /**< Channel name. */

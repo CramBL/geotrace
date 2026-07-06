@@ -79,6 +79,16 @@ Test(channels, round_trip) {
     assert_near(got_vals[0], 0.1, 1e-12);
     assert_near(got_vals[5], 1.02, 1e-12);
 
+    /* A smaller cap copies only `cap` values but still reports the true total. */
+    double partial[6] = {-1, -1, -1, -1, -1, -1};
+    cr_assert_eq(gtd_nav_file_channel_values(f2, 0, partial, 3), 6);
+    assert_near(partial[0], 0.1, 1e-12);
+    cr_assert(partial[3] == -1.0); /* untouched beyond cap */
+
+    /* A NULL out / zero cap queries the count without copying. */
+    cr_assert_eq(gtd_nav_file_channel_times(f2, 0, NULL, 0), 2);
+    cr_assert_eq(gtd_nav_file_channel_values(f2, 0, NULL, 0), 6);
+
     cr_assert_eq(gtd_nav_file_get_channel(f2, 1, &ci), GTD_OK);
     cr_assert_str_eq(ci.name, "incline");
     cr_assert_eq(ci.component_count, 0);
@@ -115,6 +125,24 @@ Test(channels, length_mismatch_is_rejected) {
     ch.n_times = 1; /* one sample */
     ch.values = v;
     ch.n_values = 2; /* but two scalar values */
+    cr_assert_eq(gtd_builder_add_channel(b, &ch), GTD_ERR_INVALID_CHANNEL);
+    gtd_builder_destroy(b);
+}
+
+Test(channels, invalid_component_is_rejected) {
+    GtdFileBuilder *b = gtd_builder_create();
+    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
+    double v[2] = {1.0, 2.0};
+    const char *dup[2] = {"x", "x"}; /* duplicate component label */
+    GtdChannel ch = {0};
+    ch.name = "accel";
+    ch.period_deg = GTD_NONE_F64;
+    ch.components = dup;
+    ch.n_components = 2;
+    ch.times = &t;
+    ch.n_times = 1;
+    ch.values = v;
+    ch.n_values = 2;
     cr_assert_eq(gtd_builder_add_channel(b, &ch), GTD_ERR_INVALID_CHANNEL);
     gtd_builder_destroy(b);
 }

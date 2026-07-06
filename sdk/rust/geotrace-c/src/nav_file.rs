@@ -340,22 +340,14 @@ pub unsafe extern "C" fn gtd_nav_file_get_event_marker(
         // SAFETY: GtdEventMarkerInfo is repr(C). Zeroing it is valid initial state
         *out = unsafe { std::mem::zeroed() };
 
-        let path_bytes = marker.variant_path.as_bytes();
-        for (dst, &src) in out.variant_path.iter_mut().zip(path_bytes.iter()) {
-            *dst = src as c_char;
-        }
-        // out.variant_path[path_bytes.len()] is already 0 from the zeroing above
-
+        fill_c_str(&mut out.variant_path, &marker.variant_path);
         out.sys_time = ts_from_datetime(marker.sys_time);
         out.lat_deg = marker.lat.as_degrees();
         out.lon_deg = marker.lon.as_degrees();
 
         if let Some(ann) = &marker.annotation {
             out.has_annotation = 1;
-            let ann_bytes = ann.as_bytes();
-            for (dst, &src) in out.annotation.iter_mut().zip(ann_bytes.iter()) {
-                *dst = src as c_char;
-            }
+            fill_c_str(&mut out.annotation, ann);
         }
 
         GtdStatus::Ok

@@ -225,9 +225,7 @@ pub struct GtdChannelInfo {
 /// Copy `s` into a fixed C-string buffer, zero-filling and always leaving a
 /// trailing NUL (truncating an over-long string rather than overrunning).
 pub(crate) fn fill_c_str(dst: &mut [c_char], s: &str) {
-    for slot in dst.iter_mut() {
-        *slot = 0;
-    }
+    dst.fill(0);
     let cap = dst.len().saturating_sub(1);
     for (slot, byte) in dst.iter_mut().zip(s.bytes().take(cap)) {
         *slot = byte as c_char;
