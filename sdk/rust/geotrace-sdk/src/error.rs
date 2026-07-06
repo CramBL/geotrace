@@ -59,7 +59,7 @@ pub enum EventMarkerError {
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ChannelError {
     #[error(
-        "invalid channel name {name:?}: must be a lowercase identifier (a letter or underscore, then letters, digits, or underscores)"
+        "invalid channel name {name:?}: must be a lowercase identifier (a lowercase letter or underscore, then lowercase letters, digits, or underscores)"
     )]
     InvalidName { name: String },
 
@@ -86,7 +86,7 @@ pub(crate) fn validate_channel_name(name: &str) -> Result<(), ChannelError> {
 }
 
 /// Errors that can occur when building a [`NavFile`](crate::NavFile).
-#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum BuildError {
     /// The builder has no nav fixes. At least one is required to interpolate
     /// annotation positions. This is returned even in lenient mode.
@@ -100,6 +100,11 @@ pub enum BuildError {
     /// to downgrade to a warning and continue.
     #[error("{count} annotation(s) fall outside the nav fix time range")]
     AnnotationsOutsideRange { count: usize },
+
+    /// Two channels share a name. Names are the primary key (queries reference
+    /// them as `@name`) and become HDF5 group names, so they must be unique.
+    #[error("two channels share the name {name:?}; channel names must be unique")]
+    DuplicateChannelName { name: String },
 }
 
 /// Errors that can occur when reading or writing a `.gtd` file.

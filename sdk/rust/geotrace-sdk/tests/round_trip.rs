@@ -438,15 +438,98 @@ fn a_file_without_channels_still_reads() -> Result<(), Box<dyn std::error::Error
 
 #[test]
 fn a_channel_name_must_be_a_lowercase_identifier() {
-    let err = Channel::builder()
-        .name("Accel Fwd")
+    // Uppercase, a space, an empty name, and a leading digit are all rejected;
+    // a plain lowercase identifier is accepted.
+    for bad in ["Accel Fwd", "accel-fwd", "", "1accel", "Accel"] {
+        assert!(
+            matches!(
+                Channel::builder()
+                    .name(bad)
+                    .times(vec![base()])
+                    .values(vec![1.0])
+                    .build(),
+                Err(geotrace_sdk::ChannelError::InvalidName { .. })
+            ),
+            "expected {bad:?} to be rejected"
+        );
+    }
+    Channel::builder()
+        .name("accel_fwd2")
         .times(vec![base()])
         .values(vec![1.0])
         .build()
-        .expect_err("uppercase and space are invalid");
+        .expect("a lowercase identifier with digits and underscores is valid");
+}
+
+#[test]
+fn a_bare_channel_round_trips_with_no_optional_fields() -> Result<(), Box<dyn std::error::Error>> {
+    let t0 = base();
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_channel(
+        Channel::builder()
+            .name("raw")
+            .times(vec![t0, t0 + Duration::seconds(1)])
+            .values(vec![1.0, 2.0])
+            .build()?,
+    );
+    let rt = round_trip(&recorder.finish()?)?;
+    let channel = &rt.channels()[0];
+    assert_eq!(channel.name(), "raw");
+    assert_eq!(channel.unit(), None);
+    assert_eq!(channel.period(), None);
+    assert_eq!(channel.description(), None);
+    Ok(())
+}
+
+#[test]
+fn an_empty_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_channel(
+        Channel::builder()
+            .name("empty")
+            .unit("g")
+            .times(vec![])
+            .values(vec![])
+            .build()?,
+    );
+    let rt = round_trip(&recorder.finish()?)?;
+    let channel = &rt.channels()[0];
+    assert_eq!(channel.name(), "empty");
+    assert!(channel.times().is_empty());
+    assert!(channel.values().is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_whitespace_only_unit_becomes_none() -> Result<(), Box<dyn std::error::Error>> {
+    let channel = Channel::builder()
+        .name("accel")
+        .unit("   ")
+        .description("  \t ")
+        .times(vec![base()])
+        .values(vec![1.0])
+        .build()?;
+    assert_eq!(channel.unit(), None);
+    assert_eq!(channel.description(), None);
+    Ok(())
+}
+
+#[test]
+fn duplicate_channel_names_are_rejected() {
+    let mut recorder = NavFileBuilder::new().open();
+    for value in [1.0, 2.0] {
+        recorder.add_channel(
+            Channel::builder()
+                .name("accel")
+                .times(vec![base()])
+                .values(vec![value])
+                .build()
+                .expect("valid channel"),
+        );
+    }
     assert!(matches!(
-        err,
-        geotrace_sdk::ChannelError::InvalidName { .. }
+        recorder.finish(),
+        Err(geotrace_sdk::BuildError::DuplicateChannelName { name }) if name == "accel"
     ));
 }
 

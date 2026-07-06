@@ -367,6 +367,13 @@ pub unsafe extern "C" fn gtd_builder_finish(
                 ));
                 GtdStatus::ErrAnnotationsOob
             }
+            // The C API has no way to add channels yet, so this is unreachable
+            // through it; handle it exhaustively until the channel parity PR
+            // gives it a dedicated status.
+            Err(BuildError::DuplicateChannelName { name }) => {
+                set_last_error(format!("two channels share the name {name:?}"));
+                GtdStatus::ErrInternal
+            }
         }
     })
 }

@@ -510,9 +510,16 @@ impl NavRecorder {
             .collect();
 
         // Channels are keyed by name, so store them in a canonical name order
-        // independent of the order they were added.
+        // independent of the order they were added. Names become HDF5 group
+        // names, so a duplicate would silently collide - reject it loudly.
         let mut channels = self.channels;
         channels.sort_by(|a, b| a.name.cmp(&b.name));
+        if let Some(name) = channels.windows(2).find_map(|pair| match pair {
+            [a, b] if a.name == b.name => Some(a.name.clone()),
+            _ => None,
+        }) {
+            return Err(BuildError::DuplicateChannelName { name });
+        }
 
         Ok(NavFile {
             meta: self.meta.unwrap_or_default(),

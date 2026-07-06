@@ -11,6 +11,9 @@ use crate::types::{Constellation, MarkerIcon, NavFile};
 /// deflate to compress effectively.
 const CHUNK_SIZE: u64 = 8_192;
 
+/// The `units` attribute value shared by every microsecond timestamp dataset.
+const MICROS_SINCE_EPOCH_UNITS: &str = "microseconds since 1970-01-01T00:00:00Z";
+
 /// Serialise `nav_file` to HDF5 bytes.
 pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
     let mut fb = FileBuilder::new();
@@ -73,7 +76,7 @@ fn write_channels(nav_file: &NavFile, fb: &mut FileBuilder) {
             .with_shape(&[n])
             .set_attr(
                 "units",
-                AttrValue::String("microseconds since 1970-01-01T00:00:00Z".into()),
+                AttrValue::String(MICROS_SINCE_EPOCH_UNITS.to_owned()),
             )
             .with_chunks(&[chunk])
             .with_shuffle()
@@ -125,7 +128,7 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) {
         .with_shape(&[n as u64])
         .set_attr(
             "units",
-            AttrValue::String("microseconds since 1970-01-01T00:00:00Z".into()),
+            AttrValue::String(MICROS_SINCE_EPOCH_UNITS.to_owned()),
         )
         .with_chunks(&[chunk])
         .with_shuffle()
@@ -135,7 +138,7 @@ fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) {
         .with_shape(&[n as u64])
         .set_attr(
             "units",
-            AttrValue::String("microseconds since 1970-01-01T00:00:00Z".into()),
+            AttrValue::String(MICROS_SINCE_EPOCH_UNITS.to_owned()),
         )
         .set_attr("absent_sentinel", AttrValue::String("u64::MAX".into()))
         .with_chunks(&[chunk])
@@ -252,7 +255,7 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) {
         .with_shape(&[r as u64])
         .set_attr(
             "units",
-            AttrValue::String("microseconds since 1970-01-01T00:00:00Z".into()),
+            AttrValue::String(MICROS_SINCE_EPOCH_UNITS.to_owned()),
         )
         .set_attr("absent_sentinel", AttrValue::String("u64::MAX".into()))
         .with_chunks(&[r_chunk])
@@ -264,7 +267,7 @@ fn write_satellite_data(nav_file: &NavFile, fb: &mut FileBuilder) {
         .with_shape(&[r as u64])
         .set_attr(
             "units",
-            AttrValue::String("microseconds since 1970-01-01T00:00:00Z".into()),
+            AttrValue::String(MICROS_SINCE_EPOCH_UNITS.to_owned()),
         )
         .set_attr("absent_sentinel", AttrValue::String("u64::MAX".into()))
         .with_chunks(&[r_chunk])
@@ -378,7 +381,7 @@ fn write_markers(nav_file: &NavFile, fb: &mut FileBuilder) -> Result<(), Error> 
         .with_shape(&[k as u64])
         .set_attr(
             "units",
-            AttrValue::String("microseconds since 1970-01-01T00:00:00Z".into()),
+            AttrValue::String(MICROS_SINCE_EPOCH_UNITS.to_owned()),
         )
         .with_chunks(&[k_chunk])
         .with_shuffle()
@@ -471,7 +474,7 @@ fn write_event_markers(nav_file: &NavFile, fb: &mut FileBuilder) {
             .with_shape(&[n as u64])
             .set_attr(
                 "units",
-                AttrValue::String("microseconds since 1970-01-01T00:00:00Z".into()),
+                AttrValue::String(MICROS_SINCE_EPOCH_UNITS.to_owned()),
             )
             .set_attr("absent_sentinel", AttrValue::String("u64::MAX".into()))
             .with_chunks(&[n_chunk])

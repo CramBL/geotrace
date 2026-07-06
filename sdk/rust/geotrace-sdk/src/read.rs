@@ -673,7 +673,8 @@ fn inspect_channels(file: &File, out: &mut String) {
         return;
     };
 
-    let names = root.groups().unwrap_or_default();
+    let mut names = root.groups().unwrap_or_default();
+    names.sort();
     writeln!(
         out,
         "{:<24}{} channels",
@@ -681,8 +682,8 @@ fn inspect_channels(file: &File, out: &mut String) {
         fmt_count(names.len() as u64)
     )
     .ok();
-    for name in names {
-        let Ok(grp) = root.group(&name) else {
+    for name in &names {
+        let Ok(grp) = root.group(name) else {
             continue;
         };
         let samples = grp
