@@ -25,46 +25,45 @@ def _write_and_read(builder: NavFileBuilder) -> NavFile:
 
 
 def test_scalar_and_vector_channels_round_trip() -> None:
+    accel_channel = Channel(
+        "accel",
+        [T0, T1],
+        [0.1, 0.2, 0.98, -0.1, 0.3, 1.02],
+        unit="g",
+        components=["x", "y", "z"],
+    )
+    incline_channel = Channel(
+        "incline",
+        [T0, T1],
+        [1.5, 2.0],
+        unit="deg",
+        period_deg=360.0,
+        description="boom",
+    )
+
     b = NavFileBuilder()
-    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
-    b.add(
-        Channel(
-            "incline",
-            [T0, T1],
-            [1.5, 2.0],
-            unit="deg",
-            period_deg=360.0,
-            description="boom",
-        )
-    )
-    b.add(
-        Channel(
-            "accel",
-            [T0, T1],
-            [0.1, 0.2, 0.98, -0.1, 0.3, 1.02],
-            unit="g",
-            components=["x", "y", "z"],
-        )
-    )
+    # add() returns the builder, so calls chain.
+    assert b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0)) is b
+    b.add(incline_channel).add(accel_channel)
 
     channels = _write_and_read(b).channels
     assert len(channels) == 2
 
     # Channels sort by name: accel (vector) then incline (scalar).
     accel, incline = channels
-    assert accel.name == "accel"
+    assert accel == accel_channel  # whole-value round-trip
     assert accel.is_vector
     assert accel.components == ["x", "y", "z"]
-    assert accel.unit == "g"
     assert accel.period_deg is None
-    assert accel.values == [0.1, 0.2, 0.98, -0.1, 0.3, 1.02]
-    assert accel.times == [T0, T1]
 
-    assert incline.name == "incline"
+    assert incline == incline_channel
     assert not incline.is_vector
     assert incline.components == []
+    assert incline.unit == "deg"
     assert incline.period_deg == 360.0
     assert incline.description == "boom"
+    assert incline.values == [1.5, 2.0]
+    assert incline.times == [T0, T1]
 
 
 def test_bare_channel_has_no_optional_fields() -> None:

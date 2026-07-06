@@ -444,6 +444,10 @@ impl PyChannel {
         self.inner.values().to_vec()
     }
 
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "Channel(name={:?}, samples={}, components={})",
@@ -1210,7 +1214,8 @@ impl PyNavFileBuilder {
         Ok(slf.unbind())
     }
 
-    /// Add a nav fix, satellite report, annotation, or event marker to the file.
+    /// Add a nav fix, satellite report, annotation, event marker, or channel to
+    /// the file.
     ///
     /// Returns `self` to allow chaining:
     ///
