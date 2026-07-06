@@ -1,12 +1,14 @@
 use std::ffi::c_char;
 
 use geotrace_sdk::{
-    Angle, Annotation, BuildError, EventMarker, EventMarkerColor, EventMarkerStyle, NavFileBuilder,
-    NavRecorder, SatelliteReport, Velocity,
+    Angle, Annotation, BuildError, Channel, EventMarker, EventMarkerColor, EventMarkerStyle,
+    NavFileBuilder, NavRecorder, SatelliteReport, Velocity,
 };
 
 use crate::error::{GtdStatus, run_catching_panics, set_last_error};
-use crate::{GtdMarkerIcon, GtdNavFile, GtdOptF64, GtdSatellite, GtdTimestamp, ts_to_datetime};
+use crate::{
+    GtdChannel, GtdMarkerIcon, GtdNavFile, GtdOptF64, GtdSatellite, GtdTimestamp, ts_to_datetime,
+};
 
 /// Opaque handle for a file-under-construction.
 ///
@@ -327,6 +329,98 @@ pub unsafe extern "C" fn gtd_builder_add_event_marker_style(
     })
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_builder_add_channel(
+    b: *mut GtdFileBuilder,
+    channel: *const GtdChannel,
+) -> GtdStatus {
+    run_catching_panics(|| {
+        let b = nonnull_mut!(b);
+        let ch = nonnull_ref!(channel);
+
+        let name = cstr!(ch.name);
+        let unit = cstr_opt!(ch.unit).map(str::to_owned);
+        let description = cstr_opt!(ch.description).map(str::to_owned);
+
+        // A null or empty component list is a scalar channel.
+        let components = if ch.n_components == 0 {
+            None
+        } else if ch.components.is_null() {
+            set_last_error("components is null but n_components > 0");
+            return GtdStatus::ErrNullArgument;
+        } else {
+            // SAFETY: components is non-null with n_components elements (checked).
+            let ptrs = unsafe { std::slice::from_raw_parts(ch.components, ch.n_components) };
+            let mut labels = Vec::with_capacity(ch.n_components);
+            for &ptr in ptrs {
+                if ptr.is_null() {
+                    set_last_error("a component label pointer is null");
+                    return GtdStatus::ErrNullArgument;
+                }
+                // SAFETY: ptr is a non-null C string (checked).
+                match unsafe { std::ffi::CStr::from_ptr(ptr) }.to_str() {
+                    Ok(label) => labels.push(label.to_owned()),
+                    Err(_) => {
+                        set_last_error("a component label is not valid UTF-8");
+                        return GtdStatus::ErrUtf8;
+                    }
+                }
+            }
+            Some(labels)
+        };
+
+        if ch.n_times > 0 && ch.times.is_null() {
+            set_last_error("times is null but n_times > 0");
+            return GtdStatus::ErrNullArgument;
+        }
+        let time_slice = if ch.n_times == 0 {
+            &[][..]
+        } else {
+            // SAFETY: times is non-null with n_times elements (checked above).
+            unsafe { std::slice::from_raw_parts(ch.times, ch.n_times) }
+        };
+        let mut times = Vec::with_capacity(ch.n_times);
+        for ts in time_slice {
+            let Some(dt) = ts_to_datetime(*ts) else {
+                set_last_error("channel timestamps must not be gtd_ts_none()");
+                return GtdStatus::ErrNullArgument;
+            };
+            times.push(dt);
+        }
+
+        if ch.n_values > 0 && ch.values.is_null() {
+            set_last_error("values is null but n_values > 0");
+            return GtdStatus::ErrNullArgument;
+        }
+        let values = if ch.n_values == 0 {
+            Vec::new()
+        } else {
+            // SAFETY: values is non-null with n_values elements (checked above).
+            unsafe { std::slice::from_raw_parts(ch.values, ch.n_values) }.to_vec()
+        };
+
+        let built = Channel::builder()
+            .name(name)
+            .maybe_unit(unit)
+            .maybe_period(ch.period_deg.to_opt().map(Angle::degrees))
+            .maybe_description(description)
+            .maybe_components(components)
+            .times(times)
+            .values(values)
+            .build();
+        match built {
+            Ok(built) => {
+                b.recorder_mut().add_channel(built);
+                GtdStatus::Ok
+            }
+            Err(e) => {
+                set_last_error(e);
+                GtdStatus::ErrInvalidChannel
+            }
+        }
+    })
+}
+
 // ── Finalisation ────────────────────────────────────────────────────────────── // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "C API section headers are an established convention in this FFI file"]
 
 #[unsafe(no_mangle)]
@@ -367,12 +461,9 @@ pub unsafe extern "C" fn gtd_builder_finish(
                 ));
                 GtdStatus::ErrAnnotationsOob
             }
-            // The C API has no way to add channels yet, so this is unreachable
-            // through it; handle it exhaustively until the channel parity PR
-            // gives it a dedicated status.
             Err(BuildError::DuplicateChannelName { name }) => {
                 set_last_error(format!("two channels share the name {name:?}"));
-                GtdStatus::ErrInternal
+                GtdStatus::ErrInvalidChannel
             }
         }
     })

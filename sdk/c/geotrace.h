@@ -55,17 +55,18 @@ typedef struct GtdNavFile GtdNavFile;
  * On failure, call `gtd_last_error()` for a human-readable description.
  */
 typedef enum {
-    GTD_OK = 0,                  /**< Success. */
-    GTD_ERR_NULL_ARGUMENT = 1,   /**< A required pointer argument was NULL. */
-    GTD_ERR_INVALID_PATH = 2,    /**< Malformed event-marker variant path. */
-    GTD_ERR_NO_NAV_FIXES = 3,    /**< Builder finished with no nav fixes. */
-    GTD_ERR_ANNOTATIONS_OOB = 4, /**< Annotation(s) outside the nav fix time range. */
-    GTD_ERR_IO = 5,              /**< I/O error (file not found, permission denied, etc.). */
-    GTD_ERR_HDF5 = 6,            /**< HDF5 library error. */
-    GTD_ERR_VERSION = 7,         /**< Unsupported file format version. */
-    GTD_ERR_UTF8 = 8,            /**< String argument contained invalid UTF-8. */
-    GTD_ERR_PARSE = 9,           /**< Malformed or corrupt .gtd file (decode failed). */
-    GTD_ERR_INTERNAL = 99,       /**< Internal error (bug in the SDK). */
+    GTD_OK = 0,                   /**< Success. */
+    GTD_ERR_NULL_ARGUMENT = 1,    /**< A required pointer argument was NULL. */
+    GTD_ERR_INVALID_PATH = 2,     /**< Malformed event-marker variant path. */
+    GTD_ERR_NO_NAV_FIXES = 3,     /**< Builder finished with no nav fixes. */
+    GTD_ERR_ANNOTATIONS_OOB = 4,  /**< Annotation(s) outside the nav fix time range. */
+    GTD_ERR_IO = 5,               /**< I/O error (file not found, permission denied, etc.). */
+    GTD_ERR_HDF5 = 6,             /**< HDF5 library error. */
+    GTD_ERR_VERSION = 7,          /**< Unsupported file format version. */
+    GTD_ERR_UTF8 = 8,             /**< String argument contained invalid UTF-8. */
+    GTD_ERR_PARSE = 9,            /**< Malformed or corrupt .gtd file (decode failed). */
+    GTD_ERR_INVALID_CHANNEL = 10, /**< Malformed channel (bad name/component or length mismatch). */
+    GTD_ERR_INTERNAL = 99,        /**< Internal error (bug in the SDK). */
 } GtdStatus;
 
 /**
@@ -192,6 +193,29 @@ typedef struct {
     GtdOptF64 snr_dbhz;      /**< Signal-to-noise ratio in dB·Hz. */
 } GtdSatellite;
 
+/**
+ * A scalar or vector channel to add via `gtd_builder_add_channel()`.
+ *
+ * A scalar channel leaves @ref components NULL and @ref n_components zero; a
+ * vector channel points @ref components at @ref n_components label strings.
+ * @ref values is row-major: @ref n_times rows of one column (scalar) or
+ * @ref n_components columns (vector), so @ref n_values must equal
+ * `n_times * (n_components > 0 ? n_components : 1)`.
+ */
+typedef struct {
+    const char *name;     /**< Channel name (a lowercase identifier). */
+    const char *unit;     /**< Unit of the values, or NULL. */
+    GtdOptF64 period_deg; /**< Wrap period in degrees for an angular channel, or `GTD_NONE_F64`. */
+    const char *description; /**< Human-readable description, or NULL. */
+    const char *const
+        *components;           /**< Component labels for a vector channel, or NULL for scalar. */
+    size_t n_components;       /**< Number of component labels (0 = scalar channel). */
+    const GtdTimestamp *times; /**< Sample timestamps, one per row. */
+    size_t n_times;            /**< Number of timestamps. */
+    const double *values;      /**< Row-major values, `n_times * max(n_components, 1)` of them. */
+    size_t n_values;           /**< Number of values. */
+} GtdChannel;
+
 /** @} */
 
 /**
@@ -254,6 +278,26 @@ typedef struct {
     uint8_t has_annotation; /**< Non-zero if @ref annotation is set. */
     char annotation[1024];  /**< Human-readable annotation text, when @ref has_annotation. */
 } GtdEventMarkerInfo;
+
+/**
+ * Channel metadata returned by `gtd_nav_file_get_channel()`.
+ *
+ * Sample timestamps, values, and component labels are fetched separately with
+ * `gtd_nav_file_channel_times()`, `gtd_nav_file_channel_values()`, and
+ * `gtd_nav_file_get_channel_component()`. A @ref component_count of zero marks a
+ * scalar channel. All string fields are null-terminated and truncated to their
+ * buffer size if longer.
+ */
+typedef struct {
+    char name[256];          /**< Channel name. */
+    uint8_t has_unit;        /**< Non-zero if @ref unit is set. */
+    char unit[64];           /**< Unit of the values, when @ref has_unit. */
+    GtdOptF64 period_deg;    /**< Wrap period in degrees, or absent for a linear channel. */
+    uint8_t has_description; /**< Non-zero if @ref description is set. */
+    char description[1024];  /**< Description, when @ref has_description. */
+    size_t component_count;  /**< Number of vector components (0 = scalar channel). */
+    size_t sample_count;     /**< Number of sample timestamps (value rows). */
+} GtdChannelInfo;
 
 /** @} */
 
@@ -404,6 +448,21 @@ GtdStatus gtd_builder_add_event_marker(GtdFileBuilder *b, const char *variant_pa
  */
 GtdStatus gtd_builder_add_event_marker_style(GtdFileBuilder *b, const char *variant_path,
                                              GtdMarkerIcon icon, const char *color_hex);
+
+/**
+ * Add a scalar or vector sensor channel.
+ *
+ * The channel keeps its own sample timestamps; it is correlated with the nav
+ * track by time at query time, not resampled here. See @ref GtdChannel for the
+ * field layout, including the row-major `values` convention.
+ *
+ * @param b       Builder handle.
+ * @param channel Channel description.  Not retained after the call returns.
+ *
+ * @return `GTD_ERR_INVALID_CHANNEL` if the name or a component label is
+ *         malformed, or `values` is not `n_times * max(n_components, 1)` long.
+ */
+GtdStatus gtd_builder_add_channel(GtdFileBuilder *b, const GtdChannel *channel);
 
 /**
  * Finalise the builder and produce a `GtdNavFile` handle.
@@ -577,6 +636,64 @@ size_t gtd_nav_file_event_marker_count(const GtdNavFile *f);
  * @return `GTD_ERR_NULL_ARGUMENT` if @p idx is out of range.
  */
 GtdStatus gtd_nav_file_get_event_marker(const GtdNavFile *f, size_t idx, GtdEventMarkerInfo *out);
+
+/** @} */
+
+/**
+ * @defgroup navfile_channels Channel read path
+ * @{
+ */
+
+/**
+ * Return the number of channels in the file.
+ *
+ * @param f File handle.  Returns 0 if NULL.
+ */
+size_t gtd_nav_file_channel_count(const GtdNavFile *f);
+
+/**
+ * Fill @p out with metadata for the channel at @p idx.
+ *
+ * @param f   File handle.
+ * @param idx Zero-based index.  Must be less than `gtd_nav_file_channel_count(f)`.
+ * @param out Caller-allocated struct to fill.
+ *
+ * @return `GTD_ERR_NULL_ARGUMENT` if @p idx is out of range.
+ */
+GtdStatus gtd_nav_file_get_channel(const GtdNavFile *f, size_t idx, GtdChannelInfo *out);
+
+/**
+ * Copy the label of a vector channel's component into @p out (null-terminated,
+ * truncated to @p cap bytes).
+ *
+ * @param f        File handle.
+ * @param ch_idx   Channel index.
+ * @param comp_idx Component index.  Must be less than `GtdChannelInfo::component_count`.
+ * @param out      Caller-allocated buffer of @p cap bytes.
+ * @param cap      Capacity of @p out in bytes.
+ *
+ * @return `GTD_ERR_NULL_ARGUMENT` if an index is out of range or @p out is NULL.
+ */
+GtdStatus gtd_nav_file_get_channel_component(const GtdNavFile *f, size_t ch_idx, size_t comp_idx,
+                                             char *out, size_t cap);
+
+/**
+ * Copy up to @p cap sample timestamps of the channel at @p ch_idx into @p out.
+ *
+ * @return The channel's total sample count (independent of @p cap).  Pass a NULL
+ *         @p out or zero @p cap to query the count without copying.
+ */
+size_t gtd_nav_file_channel_times(const GtdNavFile *f, size_t ch_idx, GtdTimestamp *out,
+                                  size_t cap);
+
+/**
+ * Copy up to @p cap values of the channel at @p ch_idx into @p out (row-major).
+ *
+ * @return The channel's total value count, `sample_count * max(component_count, 1)`
+ *         (independent of @p cap).  Pass a NULL @p out or zero @p cap to query
+ *         the count without copying.
+ */
+size_t gtd_nav_file_channel_values(const GtdNavFile *f, size_t ch_idx, double *out, size_t cap);
 
 /** @} */
 

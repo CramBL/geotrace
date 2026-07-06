@@ -43,6 +43,7 @@ pub enum GtdStatus {
     ErrVersion = 7,
     ErrUtf8 = 8,
     ErrParse = 9,
+    ErrInvalidChannel = 10,
     ErrInternal = 99,
 }
 
@@ -60,6 +61,7 @@ const _: () = {
     assert!(GtdStatus::ErrVersion as u32 == 7);
     assert!(GtdStatus::ErrUtf8 as u32 == 8);
     assert!(GtdStatus::ErrParse as u32 == 9);
+    assert!(GtdStatus::ErrInvalidChannel as u32 == 10);
     assert!(GtdStatus::ErrInternal as u32 == 99);
 };
 
