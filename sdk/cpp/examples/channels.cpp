@@ -8,7 +8,7 @@
 
 #include <geotrace/geotrace.hpp>
 
-#include <cstdint>
+#include <cstddef>
 #include <iostream>
 
 int main() {
