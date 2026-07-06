@@ -182,6 +182,10 @@ pub struct TrackNode {
     pub event_paths: EventPathTree,
     /// Per-track text filter for the Events section search box.
     pub event_filter: String,
+    /// Whether the read-only Channels section is expanded. Channels have no map
+    /// visibility yet, so they get a dedicated flag rather than a
+    /// [`DataCategory`] entry.
+    pub channels_expanded: bool,
 }
 
 impl TrackNode {
@@ -199,6 +203,7 @@ impl TrackNode {
             generated_kinds_hidden: BTreeSet::new(),
             event_paths: EventPathTree::default(),
             event_filter: String::new(),
+            channels_expanded: false,
         }
     }
 }
@@ -462,6 +467,12 @@ impl TreeState {
     pub fn toggle_category_expanded(&mut self, track: TrackRef, cat: DataCategory) {
         if let Some(track_node) = self.track_node_mut(track) {
             track_node.categories_expanded.toggle(cat);
+        }
+    }
+
+    pub fn toggle_channels_expanded(&mut self, track: TrackRef) {
+        if let Some(track_node) = self.track_node_mut(track) {
+            track_node.channels_expanded = !track_node.channels_expanded;
         }
     }
 

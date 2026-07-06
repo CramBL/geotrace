@@ -255,3 +255,78 @@ fn snapshot_file_with_warnings() {
     harness.run();
     harness.snapshot("side_panel_file_with_warnings");
 }
+
+#[test]
+fn snapshot_track_channels() {
+    // A stationary track (starts 2026-01-01T12:00:00Z, 1 pt/s) plus two channels
+    // whose samples fall in its range: a vector accel and a scalar incline.
+    let start = chrono::NaiveDate::from_ymd_opt(2026, 1, 1)
+        .and_then(|d| d.and_hms_opt(12, 0, 0))
+        .expect("valid date")
+        .and_utc();
+    let points = gt_test_utils::stationary_nav_data(10);
+    let accel = gt_types::Channel {
+        name: "accel".to_owned(),
+        unit: Some("g".to_owned()),
+        period: None,
+        description: None,
+        components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
+        times: vec![start, start + chrono::Duration::seconds(1)],
+        values: vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02],
+    };
+    let incline = gt_types::Channel {
+        name: "incline".to_owned(),
+        unit: Some("deg".to_owned()),
+        period: None,
+        description: None,
+        components: vec![],
+        times: vec![start, start + chrono::Duration::seconds(2)],
+        values: vec![1.5, 2.0],
+    };
+    // A unitless scalar channel exercises the `unit: None` label branch.
+    let raw = gt_types::Channel {
+        name: "raw".to_owned(),
+        unit: None,
+        period: None,
+        description: None,
+        components: vec![],
+        times: vec![start],
+        values: vec![42.0],
+    };
+    let file = gt_track_builder::build_loaded_file(
+        "sensors.gtd".to_owned(),
+        &points,
+        &[],
+        vec![],
+        vec![],
+        &[accel, incline, raw],
+        &gt_track_builder::SegmentationConfig::default(),
+        gt_types::FileSource::GtdPath(PathBuf::from("sensors.gtd")),
+        vec![],
+    );
+
+    let mut tree = TreeState::new();
+    tree.sync_from_loaded_files(std::slice::from_ref(&file));
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    tree.toggle_expand_file(FileIdx::new(0));
+    tree.toggle_expand_track(track);
+    tree.toggle_channels_expanded(track);
+    let mut files = LoadedFiles::new();
+    files.push(file, FileHistory::None);
+
+    let state = State {
+        files,
+        tree,
+        filter: GlobalFilter::default(),
+        filter_state: FilterPanelState::default(),
+        highlight: MapHighlight::default(),
+        map_center: None,
+        popup_pos: None,
+        zoom_to_visible: false,
+        warnings_request: None,
+        clear_query_request: false,
+    };
+    let mut harness = make_harness(state);
+    harness.run();
+    harness.snapshot("side_panel_track_channels");
+}

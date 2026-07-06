@@ -28,6 +28,7 @@ fn make_track_node() -> gt_side_panel::TrackNode {
         generated_kinds_hidden: Default::default(),
         event_paths: Default::default(),
         event_filter: String::new(),
+        channels_expanded: false,
     }
 }
 
@@ -164,6 +165,31 @@ fn toggle_expand_file() {
     assert!(tree.files[0].expanded);
     tree.toggle_expand_file(FileIdx::new(0));
     assert!(!tree.files[0].expanded);
+}
+
+#[test]
+fn toggle_channels_expanded_flips_the_flag() {
+    let mut tree = make_tree(1, 1);
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    assert!(
+        !tree
+            .track_node(track)
+            .expect("track node")
+            .channels_expanded
+    );
+    tree.toggle_channels_expanded(track);
+    assert!(
+        tree.track_node(track)
+            .expect("track node")
+            .channels_expanded
+    );
+    tree.toggle_channels_expanded(track);
+    assert!(
+        !tree
+            .track_node(track)
+            .expect("track node")
+            .channels_expanded
+    );
 }
 
 #[test]

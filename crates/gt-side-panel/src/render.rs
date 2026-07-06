@@ -9,7 +9,8 @@ use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 use crate::filter::{FilterPanelState, render_filter_panel};
 use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState};
 use crate::widgets::{
-    expand_arrow, fix_stats_tooltip_row, paint_map_hover_bg, point_item_row, tri_checkbox,
+    checkbox_width, expand_arrow, fix_stats_tooltip_row, paint_map_hover_bg, point_item_row,
+    tri_checkbox,
 };
 
 pub struct PanelContext<'a> {
@@ -455,6 +456,7 @@ fn render_track_categories(
     let em_expanded = track_node
         .categories_expanded
         .contains(&DataCategory::EventMarker);
+    let channels_expanded = track_node.channels_expanded;
     let em_agg = track_node.event_paths.aggregate();
     let event_filter = track_node.event_filter.clone();
 
@@ -564,6 +566,57 @@ fn render_track_categories(
             ctx,
         );
     }
+
+    if !track.channels.is_empty() {
+        render_channels_section(ui, track_ref, track, channels_expanded, ctx);
+    }
+}
+
+/// A read-only list of the track's ad-hoc sensor channels. Channels are not yet
+/// shown on the map or queryable, so this section has no visibility toggle - it
+/// only surfaces what was loaded.
+fn render_channels_section(
+    ui: &mut egui::Ui,
+    track_ref: TrackRef,
+    track: &LoadedTrack,
+    is_open: bool,
+    ctx: &mut PanelContext<'_>,
+) {
+    let count = track.channels.len();
+    let header = ui.horizontal(|ui| {
+        // Pad the checkbox column so the label aligns with the toggleable
+        // sections above, even though channels have nothing to toggle.
+        ui.add_space(checkbox_width(ui));
+        let arrow = expand_arrow(is_open);
+        ui.selectable_label(is_open, format!("{arrow} Channels  {count}"))
+    });
+    if header.inner.clicked() {
+        ctx.tree.toggle_channels_expanded(track_ref);
+    }
+
+    if !is_open {
+        return;
+    }
+
+    ui.indent(("channels", track_ref), |ui| {
+        for channel in &track.channels {
+            let unit = channel
+                .unit
+                .as_deref()
+                .map(|u| format!(" ({u})"))
+                .unwrap_or_default();
+            let components = if channel.is_vector() {
+                format!("  [{}]", channel.components.join(", "))
+            } else {
+                String::new()
+            };
+            let samples = channel.times.len();
+            ui.label(format!(
+                "{}{unit}  {samples} samples{components}",
+                channel.name
+            ));
+        }
+    });
 }
 
 fn render_event_markers_section(
