@@ -18,8 +18,12 @@ fn base() -> DateTime<Utc> {
     DateTime::from_timestamp(1_748_000_000, 0).expect("valid")
 }
 
+/// A full inspect render of a file exercising every section: metadata, nav
+/// points, satellites, a marker, and both a scalar and a vector channel. The
+/// snapshot pins the exact layout, which the earlier substring assertions could
+/// not. Timestamps derive from the fixed [`base`], so the output is stable.
 #[test]
-fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
+fn snapshot_inspect_populated_file() -> Result<(), Box<dyn std::error::Error>> {
     let t0 = base();
     let t1 = t0 + Duration::seconds(1);
     let tmid = t0 + Duration::milliseconds(500);
@@ -27,6 +31,7 @@ fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new()
         .with_title("Inspect test")
         .with_device("test-device")
+        .with_notes("a populated file")
         .open();
 
     recorder.add_nav_fix(
@@ -44,6 +49,7 @@ fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
             .lat(Angle::degrees(51.6))
             .lon(Angle::degrees(-0.2))
             .heading(Angle::degrees(180.0))
+            .speed(Velocity::meter_per_second(12.5))
             .build(),
     );
 
@@ -55,6 +61,12 @@ fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
                     .constellation(Constellation::Gps)
                     .prn(1u32)
                     .snr(35.0f32)
+                    .in_fix(true)
+                    .build(),
+                Satellite::builder()
+                    .constellation(Constellation::Galileo)
+                    .prn(11u32)
+                    .snr(30.0f32)
                     .in_fix(true)
                     .build(),
             ])
@@ -69,23 +81,30 @@ fn smoke_test_populated_file() -> Result<(), Box<dyn std::error::Error>> {
             .build(),
     );
 
+    recorder.add_channel(
+        Channel::builder()
+            .name("incline")
+            .unit("deg")
+            .times(vec![t0, t1])
+            .values(vec![1.5, 2.0])
+            .build()?,
+    );
+    recorder.add_channel(
+        Channel::builder()
+            .name("accel")
+            .unit("g")
+            .components(["x", "y", "z"].map(String::from).to_vec())
+            .times(vec![t0, t1])
+            .values(vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02])
+            .build()?,
+    );
+
     let nav_file = recorder.finish()?;
     let tmp = tempfile::NamedTempFile::new().expect("tempfile");
     nav_file.write(tmp.as_file())?;
 
     let output = NavFile::inspect(tmp.path())?;
-
-    assert!(output.contains("version 1"), "missing version: {output}");
-    assert!(
-        output.contains("2 records"),
-        "missing nav point count: {output}"
-    );
-    assert!(
-        output.contains("1 records"),
-        "missing marker count: {output}"
-    );
-    assert!(output.contains("Inspect test"), "missing title: {output}");
-
+    insta::assert_snapshot!(output);
     Ok(())
 }
 
@@ -156,46 +175,6 @@ fn file_with_no_markers() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn inspect_lists_channels() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_nav_fix(
-        NavFix::builder()
-            .gps_time(t0)
-            .lat(Angle::degrees(0.0))
-            .lon(Angle::degrees(0.0))
-            .build(),
-    );
-    recorder.add_channel(
-        Channel::builder()
-            .name("accel_mag")
-            .unit("g")
-            .times(vec![
-                t0,
-                t0 + Duration::milliseconds(100),
-                t0 + Duration::milliseconds(200),
-            ])
-            .values(vec![0.98, 1.02, 1.15])
-            .build()?,
-    );
-
-    let nav_file = recorder.finish()?;
-    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
-    nav_file.write(tmp.as_file())?;
-    let output = NavFile::inspect(tmp.path())?;
-
-    assert!(
-        output.contains("1 channels"),
-        "missing channel count: {output}"
-    );
-    assert!(
-        output.contains("accel_mag") && output.contains("3 samples") && output.contains("g"),
-        "missing channel summary: {output}"
-    );
-    Ok(())
-}
-
-#[test]
 fn inspect_reports_no_channels_when_absent() -> Result<(), Box<dyn std::error::Error>> {
     let mut recorder = NavFileBuilder::new().open();
     recorder.add_nav_fix(
@@ -212,36 +191,6 @@ fn inspect_reports_no_channels_when_absent() -> Result<(), Box<dyn std::error::E
     assert!(
         output.contains("0 channels"),
         "missing zero-channel line: {output}"
-    );
-    Ok(())
-}
-
-#[test]
-fn inspect_lists_vector_components() -> Result<(), Box<dyn std::error::Error>> {
-    let t0 = base();
-    let mut recorder = NavFileBuilder::new().open();
-    recorder.add_channel(
-        Channel::builder()
-            .name("accel")
-            .unit("g")
-            .components(["x", "y", "z"].map(String::from).to_vec())
-            .times(vec![t0, t0 + Duration::milliseconds(80)])
-            .values(vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02])
-            .build()?,
-    );
-
-    let nav_file = recorder.finish()?;
-    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
-    nav_file.write(tmp.as_file())?;
-    let output = NavFile::inspect(tmp.path())?;
-
-    assert!(
-        output.contains("accel") && output.contains("2 samples"),
-        "{output}"
-    );
-    assert!(
-        output.contains("components") && output.contains("x, y, z"),
-        "{output}"
     );
     Ok(())
 }

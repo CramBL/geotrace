@@ -1,0 +1,33 @@
+---
+source: sdk/rust/geotrace-sdk/tests/inspect_tests.rs
+expression: output
+---
+GeoTrace Data File - version 1
+────────────────────────────────────────────────────────────
+Metadata
+  title  : "Inspect test"
+  device : "test-device"
+  notes  : "a populated file"
+
+Nav Points              2 records
+  time                  2025-05-23T11:33:20Z → 2025-05-23T11:33:21Z
+  lat                   51.500° – 51.600°
+  lon                   -0.200° – -0.100°
+  heading               180.0° – 270.0°
+  speed                 10.0 – 12.5 m/s  (2 / 2 present)
+
+Satellite Reports       1 records  (1 / 2 nav points have data)
+  Tracked satellites    2 total  (avg 2.0 per report)
+    constellations      GPS, Galileo
+    SNR                 30.0 – 35.0 dB-Hz  (2 / 2 present)
+  Fix satellites        2 total  (avg 2.0 per report)
+
+Markers                 1 records
+  icons                 warning ×1
+  labels                "midpoint"
+
+Channels                2 channels
+  accel                 2 samples g
+    components          x, y, z
+  incline               2 samples deg
+────────────────────────────────────────────────────────────
