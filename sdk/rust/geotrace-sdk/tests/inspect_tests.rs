@@ -215,3 +215,33 @@ fn inspect_reports_no_channels_when_absent() -> Result<(), Box<dyn std::error::E
     );
     Ok(())
 }
+
+#[test]
+fn inspect_lists_vector_components() -> Result<(), Box<dyn std::error::Error>> {
+    let t0 = base();
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_channel(
+        Channel::builder()
+            .name("accel")
+            .unit("g")
+            .components(["x", "y", "z"].map(String::from).to_vec())
+            .times(vec![t0, t0 + Duration::milliseconds(80)])
+            .values(vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02])
+            .build()?,
+    );
+
+    let nav_file = recorder.finish()?;
+    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    nav_file.write(tmp.as_file())?;
+    let output = NavFile::inspect(tmp.path())?;
+
+    assert!(
+        output.contains("accel") && output.contains("2 samples"),
+        "{output}"
+    );
+    assert!(
+        output.contains("components") && output.contains("x, y, z"),
+        "{output}"
+    );
+    Ok(())
+}

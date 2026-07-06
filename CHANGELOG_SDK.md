@@ -10,11 +10,13 @@ the app).
 ### Added
 
 - Add support for NavIC and QZSS constellations.
-- Rust SDK: scalar channels. Attach an ad-hoc sensor time series (an
-  accelerometer magnitude, an inclinometer angle) to a recording with
+- Rust SDK: channels. Attach an ad-hoc sensor time series (an accelerometer
+  magnitude, an inclinometer angle) to a recording with
   `NavRecorder::add_channel`. Each channel keeps its own sample timestamps and a
   unit, optional wrap period, and description, stored under `channels/<name>/` in
-  the `.gtd` file. `NavFile::inspect` lists them.
+  the `.gtd` file. A channel may be scalar or a vector with named components
+  (`.components(["x", "y", "z"])`), stored as one `[n, k]` `value` dataset so the
+  components stay clock-locked. `NavFile::inspect` lists them.
 
 ## [0.3.0] - 2026-06-24
 

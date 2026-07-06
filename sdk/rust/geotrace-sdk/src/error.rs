@@ -63,24 +63,71 @@ pub enum ChannelError {
     )]
     InvalidName { name: String },
 
-    #[error("channel {name:?} has {times} timestamps but {values} values")]
+    #[error("channel {name:?}: a vector channel needs at least one component")]
+    EmptyComponents { name: String },
+
+    #[error(
+        "channel {name:?}: invalid component label {component:?}: must be a lowercase identifier"
+    )]
+    InvalidComponent { name: String, component: String },
+
+    #[error("channel {name:?}: duplicate component label {component:?}")]
+    DuplicateComponent { name: String, component: String },
+
+    #[error("channel {name:?}: expected {expected} values but got {actual}")]
     LengthMismatch {
         name: String,
-        times: usize,
-        values: usize,
+        expected: usize,
+        actual: usize,
     },
+}
+
+/// A lowercase identifier: a lowercase letter or underscore, then lowercase
+/// letters, digits, or underscores. Channel names and vector component labels
+/// must both be identifiers, since queries reference them as `@name.component`.
+fn is_identifier(s: &str) -> bool {
+    let mut bytes = s.bytes();
+    let valid_start = matches!(bytes.next(), Some(b) if b.is_ascii_lowercase() || b == b'_');
+    valid_start && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
 }
 
 /// Validate that `name` is a well-formed channel name: a lowercase identifier,
 /// so it can be referenced as `@name` in the query language.
 pub(crate) fn validate_channel_name(name: &str) -> Result<(), ChannelError> {
-    let mut bytes = name.bytes();
-    let valid_start = matches!(bytes.next(), Some(b) if b.is_ascii_lowercase() || b == b'_');
-    let valid_rest = bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
-    if !valid_start || !valid_rest {
-        return Err(ChannelError::InvalidName {
+    if is_identifier(name) {
+        Ok(())
+    } else {
+        Err(ChannelError::InvalidName {
+            name: name.to_owned(),
+        })
+    }
+}
+
+/// Validate a vector channel's component labels: a non-empty list of unique
+/// identifiers, since each is referenced as `@name.label`.
+pub(crate) fn validate_components(name: &str, components: &[String]) -> Result<(), ChannelError> {
+    if components.is_empty() {
+        return Err(ChannelError::EmptyComponents {
             name: name.to_owned(),
         });
+    }
+    for (i, component) in components.iter().enumerate() {
+        if !is_identifier(component) {
+            return Err(ChannelError::InvalidComponent {
+                name: name.to_owned(),
+                component: component.clone(),
+            });
+        }
+        if components
+            .iter()
+            .take(i)
+            .any(|earlier| earlier == component)
+        {
+            return Err(ChannelError::DuplicateComponent {
+                name: name.to_owned(),
+                component: component.clone(),
+            });
+        }
     }
     Ok(())
 }

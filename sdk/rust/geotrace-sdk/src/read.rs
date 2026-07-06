@@ -70,6 +70,17 @@ fn f64_attr(attrs: &HashMap<String, hdf5_pure::AttrValue>, key: &str) -> Option<
     }
 }
 
+fn string_array_attr(
+    attrs: &HashMap<String, hdf5_pure::AttrValue>,
+    key: &str,
+) -> Option<Vec<String>> {
+    use hdf5_pure::AttrValue::{AsciiStringArray, StringArray, VarLenAsciiArray};
+    match attrs.get(key) {
+        Some(StringArray(v) | AsciiStringArray(v) | VarLenAsciiArray(v)) => Some(v.clone()),
+        _ => None,
+    }
+}
+
 fn read_nav_points(file: &File) -> Result<Vec<NavPoint>, Error> {
     let grp = file.group("nav_points")?;
 
@@ -359,14 +370,20 @@ fn read_channels(file: &File) -> Result<Vec<Channel>, Error> {
         let attrs = grp.attrs()?;
 
         let times_us = grp.dataset("time")?.read_i64()?;
+        // `read_f64` flattens the 2-D vector dataset row-major, which is exactly
+        // the layout `Channel` stores. A vector channel has one column per
+        // component, a scalar channel one column.
         let values = grp.dataset("value")?.read_f64()?;
-        check_len("channels", "value", times_us.len(), values.len())?;
+        let components = string_array_attr(&attrs, "components").unwrap_or_default();
+        let columns = components.len().max(1);
+        check_len("channels", "value", times_us.len() * columns, values.len())?;
 
         channels.push(Channel {
             name,
             unit: string_attr(&attrs, "unit"),
             period: f64_attr(&attrs, "period_deg").map(Angle::degrees),
             description: string_attr(&attrs, "description"),
+            components,
             times: times_us.into_iter().map(micros_to_datetime).collect(),
             values,
         });
@@ -692,12 +709,18 @@ fn inspect_channels(file: &File, out: &mut String) {
             .ok()
             .and_then(|s| s.first().copied())
             .unwrap_or(0);
-        let unit = grp
-            .attrs()
-            .ok()
-            .and_then(|a| string_attr(&a, "unit"))
+        let attrs = grp.attrs().ok();
+        let unit = attrs
+            .as_ref()
+            .and_then(|a| string_attr(a, "unit"))
             .map_or_else(String::new, |u| format!(" {u}"));
         writeln!(out, "  {:<22}{} samples{unit}", name, fmt_count(samples)).ok();
+        if let Some(components) = attrs
+            .as_ref()
+            .and_then(|a| string_array_attr(a, "components"))
+        {
+            writeln!(out, "    {:<20}{}", "components", components.join(", ")).ok();
+        }
     }
 }
 

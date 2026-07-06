@@ -636,33 +636,58 @@ pub struct Channel {
     pub(crate) unit: Option<String>,
     pub(crate) period: Option<Angle>,
     pub(crate) description: Option<String>,
+    /// Vector component labels (`["x", "y", "z"]`), or empty for a scalar
+    /// channel. When non-empty, `values` holds one column per component.
+    pub(crate) components: Vec<String>,
     pub(crate) times: Vec<DateTime<Utc>>,
+    /// Sample values in row-major order: `times.len()` rows of
+    /// `component_count()` columns each. A scalar channel has one column, so
+    /// this is one value per timestamp.
     pub(crate) values: Vec<f64>,
 }
 
 #[bon::bon]
 impl Channel {
-    /// Build a validated [`Channel`].
+    /// Build a validated [`Channel`], scalar or vector.
     ///
     /// `name` must be a lowercase identifier, since queries reference it as
-    /// `@name`. Empty or whitespace-only units and descriptions become `None`.
-    /// Returns `Err` if the name is malformed or `times` and `values` differ in
-    /// length.
+    /// `@name`. Pass `components` (e.g. `["x", "y", "z"]`) to make a vector
+    /// channel whose `value` dataset has one column per component; each label
+    /// must be a unique identifier, referenced as `@name.label`. Omit it for a
+    /// scalar channel. Empty or whitespace-only units and descriptions become
+    /// `None`.
+    ///
+    /// `values` is row-major: `times.len()` rows of one column (scalar) or
+    /// `components.len()` columns (vector). Returns `Err` if the name or a
+    /// component label is malformed, or `values` is not `times.len() ×
+    /// columns` long.
     #[builder(finish_fn = build)]
     pub fn new(
         #[builder(into)] name: String,
         #[builder(into)] unit: Option<String>,
         period: Option<Angle>,
         #[builder(into)] description: Option<String>,
+        components: Option<Vec<String>>,
         times: Vec<DateTime<Utc>>,
         values: Vec<f64>,
     ) -> Result<Self, ChannelError> {
         crate::error::validate_channel_name(&name)?;
-        if times.len() != values.len() {
+        // `None` is a scalar channel; `Some(list)` is a vector channel, and an
+        // explicitly empty list is rejected by `validate_components`.
+        let components = match components {
+            None => Vec::new(),
+            Some(list) => {
+                crate::error::validate_components(&name, &list)?;
+                list
+            }
+        };
+        let columns = components.len().max(1);
+        let expected = times.len() * columns;
+        if values.len() != expected {
             return Err(ChannelError::LengthMismatch {
                 name,
-                times: times.len(),
-                values: values.len(),
+                expected,
+                actual: values.len(),
             });
         }
         Ok(Self {
@@ -670,6 +695,7 @@ impl Channel {
             unit: unit.filter(|s| !s.trim().is_empty()),
             period,
             description: description.filter(|s| !s.trim().is_empty()),
+            components,
             times,
             values,
         })
@@ -698,14 +724,41 @@ impl Channel {
         self.description.as_deref()
     }
 
-    /// The sample timestamps, one per value.
+    /// The vector component labels (`["x", "y", "z"]`), or empty for a scalar
+    /// channel. Each is referenced as `@name.label` in queries.
+    pub fn components(&self) -> &[String] {
+        &self.components
+    }
+
+    /// Whether this is a vector channel (has named components).
+    pub fn is_vector(&self) -> bool {
+        !self.components.is_empty()
+    }
+
+    /// Value columns per sample: the component count for a vector channel, or 1
+    /// for a scalar channel.
+    pub fn component_count(&self) -> usize {
+        self.components.len().max(1)
+    }
+
+    /// The sample timestamps, one per row of [`values`](Self::values).
     pub fn times(&self) -> &[DateTime<Utc>] {
         &self.times
     }
 
-    /// The sample values, in [`unit`](Self::unit), one per timestamp.
+    /// The sample values, in [`unit`](Self::unit), in row-major order:
+    /// `times.len()` rows of [`component_count`](Self::component_count) columns.
+    /// For a scalar channel this is one value per timestamp; see
+    /// [`rows`](Self::rows) to iterate per sample.
     pub fn values(&self) -> &[f64] {
         &self.values
+    }
+
+    /// The samples as rows, each holding one value per column
+    /// ([`component_count`](Self::component_count) values). A scalar channel
+    /// yields one-element rows.
+    pub fn rows(&self) -> impl Iterator<Item = &[f64]> {
+        self.values.chunks(self.component_count())
     }
 }
 

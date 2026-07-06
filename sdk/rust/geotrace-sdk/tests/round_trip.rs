@@ -544,9 +544,93 @@ fn a_channel_rejects_mismatched_lengths() {
     assert!(matches!(
         err,
         geotrace_sdk::ChannelError::LengthMismatch {
-            times: 1,
-            values: 2,
+            expected: 1,
+            actual: 2,
             ..
         }
+    ));
+}
+
+#[test]
+fn a_vector_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+    let t0 = base();
+    let t1 = t0 + Duration::milliseconds(80);
+
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_channel(
+        Channel::builder()
+            .name("accel")
+            .unit("g")
+            .description("device-frame acceleration")
+            .components(["x", "y", "z"].map(String::from).to_vec())
+            // Two samples, row-major: [x0, y0, z0, x1, y1, z1].
+            .times(vec![t0, t1])
+            .values(vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02])
+            .build()?,
+    );
+
+    let nav_file = recorder.finish()?;
+    let rt = round_trip(&nav_file)?;
+    let accel = &rt.channels()[0];
+
+    assert!(accel.is_vector());
+    assert_eq!(accel.component_count(), 3);
+    assert_eq!(accel.components(), &["x", "y", "z"]);
+    assert_eq!(accel.unit(), Some("g"));
+    assert_eq!(accel.times(), &[t0, t1]);
+    let rows: Vec<Vec<f64>> = accel.rows().map(<[f64]>::to_vec).collect();
+    assert_eq!(rows, vec![vec![0.1, 0.2, 0.98], vec![-0.1, 0.3, 1.02]]);
+
+    // The whole file round-trips by value, components and all.
+    assert_eq!(rt, nav_file);
+    Ok(())
+}
+
+#[test]
+fn vector_channel_validation() {
+    let t = vec![base()];
+    // Empty component list.
+    assert!(matches!(
+        Channel::builder()
+            .name("v")
+            .components(vec![])
+            .times(t.clone())
+            .values(vec![1.0])
+            .build(),
+        Err(geotrace_sdk::ChannelError::EmptyComponents { .. })
+    ));
+    // A component label that is not an identifier.
+    assert!(matches!(
+        Channel::builder()
+            .name("v")
+            .components(["x", "Y"].map(String::from).to_vec())
+            .times(t.clone())
+            .values(vec![1.0, 2.0])
+            .build(),
+        Err(geotrace_sdk::ChannelError::InvalidComponent { .. })
+    ));
+    // A repeated component label.
+    assert!(matches!(
+        Channel::builder()
+            .name("v")
+            .components(["x", "x"].map(String::from).to_vec())
+            .times(t.clone())
+            .values(vec![1.0, 2.0])
+            .build(),
+        Err(geotrace_sdk::ChannelError::DuplicateComponent { .. })
+    ));
+    // Values are not times × components long (1 sample × 3 components = 3).
+    assert!(matches!(
+        Channel::builder()
+            .name("v")
+            .components(["x", "y", "z"].map(String::from).to_vec())
+            .times(t)
+            .values(vec![1.0, 2.0])
+            .build(),
+        Err(geotrace_sdk::ChannelError::LengthMismatch {
+            expected: 3,
+            actual: 2,
+            ..
+        })
     ));
 }
