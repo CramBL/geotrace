@@ -163,6 +163,16 @@ struct ParseError : Error {
     using Error::Error;
 };
 
+/**
+ * A channel was malformed (bad name/component, length mismatch, or duplicate
+ * name). Derives `Error` rather than `BuildError`, mirroring `InvalidPathError`:
+ * both are input-validation errors, even though the duplicate-name check fires
+ * at `finish()`.
+ */
+struct InvalidChannelError : Error {
+    using Error::Error;
+};
+
 namespace detail {
 
 [[noreturn]] inline void abort_with(const std::string &msg) {
@@ -195,6 +205,8 @@ namespace detail {
         throw UnsupportedVersionError(msg);
     case GTD_ERR_PARSE:
         throw ParseError(msg);
+    case GTD_ERR_INVALID_CHANNEL:
+        throw InvalidChannelError(msg);
     default:
         throw Error(msg);
     }
@@ -555,6 +567,38 @@ struct EventMarkerStyle {
     std::string color_hex; // empty = auto (hash-derived). format: "#RRGGBB"
 };
 
+/**
+ * A scalar or vector sensor channel sampled at its own rate.
+ *
+ * Leave `components` empty for a scalar channel, or list one label per column
+ * for a vector channel (an accelerometer's `{"x", "y", "z"}`). `values` is
+ * row-major: `times.size()` rows of one column (scalar) or `components.size()`
+ * columns (vector).
+ */
+struct Channel {
+    std::string name;
+    std::string unit;                    // empty = none
+    std::optional<Angle> period;         // wrap period, none = linear
+    std::string description;             // empty = none
+    std::vector<std::string> components; // empty = scalar channel
+    std::vector<Timestamp> times;
+    std::vector<double> values;
+};
+
+/** Channel data returned by `NavFile::channel()`. String fields are copies. */
+struct ChannelView {
+    std::string name;
+    std::string unit;                    // empty = none
+    std::optional<Angle> period;         // none = linear
+    std::string description;             // empty = none
+    std::vector<std::string> components; // empty = scalar channel
+    std::vector<Timestamp> times;
+    std::vector<double> values; // row-major, times.size() * max(components.size(), 1)
+
+    /** Whether this is a vector channel (has named components). */
+    bool is_vector() const noexcept { return !components.empty(); }
+};
+
 /** Data for one navigation fix, returned by `NavFile::nav_point()`. */
 struct NavPointView {
     Timestamp gps_time;
@@ -832,6 +876,40 @@ class FileBuilder {
     }
 
     /**
+     * Add a scalar or vector sensor channel.
+     * @throws InvalidChannelError if the name/a component is malformed or
+     *         `values` is not `times.size() * max(components.size(), 1)` long.
+     */
+    FileBuilder &add_channel(const Channel &ch) {
+        std::vector<const char *> components;
+        components.reserve(ch.components.size());
+        for (const auto &label : ch.components)
+            components.push_back(label.c_str());
+
+        std::vector<GtdTimestamp> times;
+        times.reserve(ch.times.size());
+        for (const auto &t : ch.times)
+            times.push_back(detail::to_c(t));
+
+        const std::optional<double> period_deg =
+            ch.period ? std::optional<double>{ch.period->as_degrees()} : std::nullopt;
+
+        GtdChannel c{};
+        c.name = ch.name.c_str();
+        c.unit = ch.unit.empty() ? nullptr : ch.unit.c_str();
+        c.period_deg = detail::to_c(period_deg);
+        c.description = ch.description.empty() ? nullptr : ch.description.c_str();
+        c.components = components.empty() ? nullptr : components.data();
+        c.n_components = components.size();
+        c.times = times.data();
+        c.n_times = times.size();
+        c.values = ch.values.data();
+        c.n_values = ch.values.size();
+        record(::gtd_builder_add_channel(impl_.get(), &c));
+        return *this;
+    }
+
+    /**
      * Add a type-safe event marker from an event-taxonomy value.
      *
      * Accepts any `enum class` with an `EventEnum<>` specialisation. The path is
@@ -874,6 +952,7 @@ class FileBuilder {
     FileBuilder &add(const SatelliteReport &report) { return add_satellite_report(report); }
     FileBuilder &add(const Annotation &ann) { return add_annotation(ann); }
     FileBuilder &add(const EventMarker &marker) { return add_event_marker(marker); }
+    FileBuilder &add(const Channel &ch) { return add_channel(ch); }
     ///@}
 
     ///@}
@@ -1120,6 +1199,58 @@ class NavFile {
     EventMarkerView event_marker(std::size_t idx) const {
         return try_event_marker(idx).value_or_throw();
     }
+
+    /** Number of channels in the file. */
+    std::size_t channel_count() const noexcept { return ::gtd_nav_file_channel_count(impl_.get()); }
+
+    /** Return the channel at @p idx, or an out-of-range error. */
+    Result<ChannelView> try_channel(std::size_t idx) const {
+        GtdChannelInfo info{};
+        const GtdStatus s = ::gtd_nav_file_get_channel(impl_.get(), idx, &info);
+        if (s != GTD_OK)
+            return Status::from(s);
+
+        ChannelView v{};
+        v.name = info.name;
+        v.unit = info.has_unit ? std::string{info.unit} : std::string{};
+        v.period = info.period_deg.present
+                       ? std::optional<Angle>{Angle::degrees(info.period_deg.value)}
+                       : std::nullopt;
+        v.description = info.has_description ? std::string{info.description} : std::string{};
+
+        v.components.reserve(info.component_count);
+        for (std::size_t c = 0; c < info.component_count; ++c) {
+            // Matches GtdChannelInfo::name[256]; a longer label is truncated by
+            // the C API, which cannot report the untruncated length.
+            static constexpr std::size_t kChannelLabelCap = 256;
+            char buf[kChannelLabelCap] = {};
+            if (::gtd_nav_file_get_channel_component(impl_.get(), idx, c, buf, sizeof(buf)) ==
+                GTD_OK)
+                v.components.emplace_back(buf);
+        }
+
+        // info already holds the authoritative counts, so size the buffers from
+        // it rather than querying the C accessors again.
+        const std::size_t columns = info.component_count > 0 ? info.component_count : 1;
+        std::vector<GtdTimestamp> raw_times(info.sample_count);
+        if (info.sample_count > 0)
+            ::gtd_nav_file_channel_times(impl_.get(), idx, raw_times.data(), raw_times.size());
+        v.times.reserve(info.sample_count);
+        for (const auto &t : raw_times)
+            v.times.push_back(detail::from_c(t));
+
+        v.values.resize(info.sample_count * columns);
+        if (!v.values.empty())
+            ::gtd_nav_file_channel_values(impl_.get(), idx, v.values.data(), v.values.size());
+
+        return v;
+    }
+
+    /**
+     * Return the channel at @p idx.
+     * @throws std::out_of_range if `idx >= channel_count()`.
+     */
+    ChannelView channel(std::size_t idx) const { return try_channel(idx).value_or_throw(); }
 
   private:
     friend class FileBuilder;

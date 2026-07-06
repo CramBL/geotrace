@@ -5,6 +5,7 @@ set(GEOTRACE_CPP_EXAMPLES
     read_file
     with_satellites
     event_markers
+    channels
     typed_events
     from_csv
     from_multiple_sources
@@ -40,7 +41,7 @@ endforeach()
 # read_file needs an input path and gold_dataset needs the CSV fixtures and
 # writes into the source tree, so both are exercised separately (test-gold-cpp)
 # and excluded here.
-foreach(example write_basic with_satellites event_markers typed_events from_csv
+foreach(example write_basic with_satellites event_markers channels typed_events from_csv
                 from_multiple_sources)
     add_test(NAME example_${example} COMMAND ${example})
 endforeach()
