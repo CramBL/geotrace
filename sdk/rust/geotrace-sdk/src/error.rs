@@ -55,6 +55,36 @@ pub enum EventMarkerError {
     InvalidChars { path: String },
 }
 
+/// Errors that can occur when building a [`Channel`](crate::Channel).
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ChannelError {
+    #[error(
+        "invalid channel name {name:?}: must be a lowercase identifier (a letter or underscore, then letters, digits, or underscores)"
+    )]
+    InvalidName { name: String },
+
+    #[error("channel {name:?} has {times} timestamps but {values} values")]
+    LengthMismatch {
+        name: String,
+        times: usize,
+        values: usize,
+    },
+}
+
+/// Validate that `name` is a well-formed channel name: a lowercase identifier,
+/// so it can be referenced as `@name` in the query language.
+pub(crate) fn validate_channel_name(name: &str) -> Result<(), ChannelError> {
+    let mut bytes = name.bytes();
+    let valid_start = matches!(bytes.next(), Some(b) if b.is_ascii_lowercase() || b == b'_');
+    let valid_rest = bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    if !valid_start || !valid_rest {
+        return Err(ChannelError::InvalidName {
+            name: name.to_owned(),
+        });
+    }
+    Ok(())
+}
+
 /// Errors that can occur when building a [`NavFile`](crate::NavFile).
 #[derive(Debug, Clone, Copy, thiserror::Error)]
 pub enum BuildError {

@@ -4,8 +4,8 @@ use std::path::Path;
 use crate::builder::{micros_to_datetime, u64_to_opt_datetime};
 use crate::error::Error;
 use crate::types::{
-    Annotation, Constellation, EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon, Meta,
-    NavFile, NavFix, NavPoint, Satellite, SatelliteReport,
+    Annotation, Channel, Constellation, EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon,
+    Meta, NavFile, NavFix, NavPoint, Satellite, SatelliteReport,
 };
 use crate::write;
 use crate::{Angle, Velocity};
@@ -35,6 +35,7 @@ pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
     let markers = read_markers(&file)?;
     let event_markers = read_event_markers(&file)?;
     let event_marker_styles = read_event_marker_styles(&file)?;
+    let channels = read_channels(&file)?;
 
     Ok(NavFile {
         meta,
@@ -42,6 +43,7 @@ pub(crate) fn parse_hdf5(bytes: Vec<u8>) -> Result<NavFile, Error> {
         markers,
         event_markers,
         event_marker_styles,
+        channels,
     })
 }
 
@@ -57,6 +59,13 @@ fn read_meta(attrs: &HashMap<String, hdf5_pure::AttrValue>) -> Meta {
 fn string_attr(attrs: &HashMap<String, hdf5_pure::AttrValue>, key: &str) -> Option<String> {
     match attrs.get(key) {
         Some(hdf5_pure::AttrValue::String(s)) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+fn f64_attr(attrs: &HashMap<String, hdf5_pure::AttrValue>, key: &str) -> Option<f64> {
+    match attrs.get(key) {
+        Some(hdf5_pure::AttrValue::F64(v)) => Some(*v),
         _ => None,
     }
 }
@@ -335,6 +344,37 @@ fn read_event_marker_styles(file: &File) -> Result<Vec<EventMarkerStyle>, Error>
     Ok(styles)
 }
 
+/// Read ad-hoc scalar channels from `channels/<name>/`. Absent in files written
+/// before channels existed, in which case there are simply none. Channels are
+/// returned sorted by name for a deterministic order independent of how the
+/// producer added them.
+fn read_channels(file: &File) -> Result<Vec<Channel>, Error> {
+    let Ok(root) = file.group("channels") else {
+        return Ok(Vec::new());
+    };
+
+    let mut channels = Vec::new();
+    for name in root.groups()? {
+        let grp = root.group(&name)?;
+        let attrs = grp.attrs()?;
+
+        let times_us = grp.dataset("time")?.read_i64()?;
+        let values = grp.dataset("value")?.read_f64()?;
+        check_len("channels", "value", times_us.len(), values.len())?;
+
+        channels.push(Channel {
+            name,
+            unit: string_attr(&attrs, "unit"),
+            period: f64_attr(&attrs, "period_deg").map(Angle::degrees),
+            description: string_attr(&attrs, "description"),
+            times: times_us.into_iter().map(micros_to_datetime).collect(),
+            values,
+        });
+    }
+    channels.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(channels)
+}
+
 fn decode_fixed_str(row: &[u8]) -> Option<String> {
     let end = row.iter().position(|&b| b == 0).unwrap_or(row.len());
     if end == 0 {
@@ -419,6 +459,8 @@ pub(crate) fn inspect_path(path: &Path) -> Result<String, Error> {
     inspect_satellite_reports(&file, n, &mut out);
     writeln!(out).ok();
     inspect_markers(&file, &mut out);
+    writeln!(out).ok();
+    inspect_channels(&file, &mut out);
     writeln!(out, "{sep}").ok();
 
     Ok(out)
@@ -620,6 +662,41 @@ fn inspect_markers(file: &File, out: &mut String) {
         if !preview.is_empty() {
             writeln!(out, "  {:<22}{preview}", "labels").ok();
         }
+    }
+}
+
+fn inspect_channels(file: &File, out: &mut String) {
+    use std::fmt::Write as _;
+
+    let Ok(root) = file.group("channels") else {
+        writeln!(out, "{:<24}0 channels", "Channels").ok();
+        return;
+    };
+
+    let names = root.groups().unwrap_or_default();
+    writeln!(
+        out,
+        "{:<24}{} channels",
+        "Channels",
+        fmt_count(names.len() as u64)
+    )
+    .ok();
+    for name in names {
+        let Ok(grp) = root.group(&name) else {
+            continue;
+        };
+        let samples = grp
+            .dataset("value")
+            .and_then(|ds| ds.shape())
+            .ok()
+            .and_then(|s| s.first().copied())
+            .unwrap_or(0);
+        let unit = grp
+            .attrs()
+            .ok()
+            .and_then(|a| string_attr(&a, "unit"))
+            .map_or_else(String::new, |u| format!(" {u}"));
+        writeln!(out, "  {:<22}{} samples{unit}", name, fmt_count(samples)).ok();
     }
 }
 

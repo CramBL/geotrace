@@ -9,7 +9,7 @@
 
 use geotrace_sdk::{Angle, DateTime, Duration, Utc, Velocity};
 use geotrace_sdk::{
-    Annotation, Constellation, MarkerIcon, NavFile, NavFileBuilder, NavFix, Satellite,
+    Annotation, Channel, Constellation, MarkerIcon, NavFile, NavFileBuilder, NavFix, Satellite,
     SatelliteReport,
 };
 
@@ -152,5 +152,66 @@ fn file_with_no_markers() -> Result<(), Box<dyn std::error::Error>> {
         "expected markers section with '0 records': {output}"
     );
 
+    Ok(())
+}
+
+#[test]
+fn inspect_lists_channels() -> Result<(), Box<dyn std::error::Error>> {
+    let t0 = base();
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .gps_time(t0)
+            .lat(Angle::degrees(0.0))
+            .lon(Angle::degrees(0.0))
+            .build(),
+    );
+    recorder.add_channel(
+        Channel::builder()
+            .name("accel_mag")
+            .unit("g")
+            .times(vec![
+                t0,
+                t0 + Duration::milliseconds(100),
+                t0 + Duration::milliseconds(200),
+            ])
+            .values(vec![0.98, 1.02, 1.15])
+            .build()?,
+    );
+
+    let nav_file = recorder.finish()?;
+    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    nav_file.write(tmp.as_file())?;
+    let output = NavFile::inspect(tmp.path())?;
+
+    assert!(
+        output.contains("1 channels"),
+        "missing channel count: {output}"
+    );
+    assert!(
+        output.contains("accel_mag") && output.contains("3 samples") && output.contains("g"),
+        "missing channel summary: {output}"
+    );
+    Ok(())
+}
+
+#[test]
+fn inspect_reports_no_channels_when_absent() -> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .gps_time(base())
+            .lat(Angle::degrees(0.0))
+            .lon(Angle::degrees(0.0))
+            .build(),
+    );
+    let nav_file = recorder.finish()?;
+    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    nav_file.write(tmp.as_file())?;
+    let output = NavFile::inspect(tmp.path())?;
+    assert!(
+        output.contains("0 channels"),
+        "missing zero-channel line: {output}"
+    );
     Ok(())
 }

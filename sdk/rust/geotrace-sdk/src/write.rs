@@ -34,8 +34,59 @@ pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
     write_satellite_data(nav_file, &mut fb);
     write_markers(nav_file, &mut fb)?;
     write_event_markers(nav_file, &mut fb);
+    write_channels(nav_file, &mut fb);
 
     Ok(fb.finish()?)
+}
+
+/// Write ad-hoc scalar channels as `channels/<name>/{time,value}`, with the
+/// channel's unit, wrap period, and description as attributes on its group.
+fn write_channels(nav_file: &NavFile, fb: &mut FileBuilder) {
+    let channels = nav_file.channels();
+    if channels.is_empty() {
+        return;
+    }
+
+    let chunk = CHUNK_SIZE.max(1);
+    let mut root = fb.create_group("channels");
+    for channel in channels {
+        let n = channel.times.len() as u64;
+        let times: Vec<i64> = channel
+            .times
+            .iter()
+            .copied()
+            .map(datetime_to_micros)
+            .collect();
+
+        let mut grp = root.create_group(&channel.name);
+        if let Some(unit) = &channel.unit {
+            grp.set_attr("unit", AttrValue::String(unit.clone()));
+        }
+        if let Some(period) = channel.period {
+            grp.set_attr("period_deg", AttrValue::F64(period.as_degrees()));
+        }
+        if let Some(description) = &channel.description {
+            grp.set_attr("description", AttrValue::String(description.clone()));
+        }
+        grp.create_dataset("time")
+            .with_i64_data(&times)
+            .with_shape(&[n])
+            .set_attr(
+                "units",
+                AttrValue::String("microseconds since 1970-01-01T00:00:00Z".into()),
+            )
+            .with_chunks(&[chunk])
+            .with_shuffle()
+            .with_deflate(6);
+        grp.create_dataset("value")
+            .with_f64_data(&channel.values)
+            .with_shape(&[n])
+            .with_chunks(&[chunk])
+            .with_shuffle()
+            .with_deflate(6);
+        root.add_group(grp.finish());
+    }
+    fb.add_group(root.finish());
 }
 
 fn write_nav_points(nav_file: &NavFile, fb: &mut FileBuilder) {
