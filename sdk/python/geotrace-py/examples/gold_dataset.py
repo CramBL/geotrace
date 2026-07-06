@@ -11,11 +11,13 @@ Run it from anywhere - the repository root is located relative to this file.
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from geotrace_sdk import (
     Annotation,
+    Channel,
     Constellation,
     EventMarker,
     EventMarkerStyle,
@@ -162,6 +164,57 @@ def _load_events(builder: NavFileBuilder, base: Path) -> None:
         builder.add(EventMarker(cols[1], time, annotation=cols[2] or None))
 
 
+@dataclass
+class _ChannelAcc:
+    """Accumulates one channel's metadata and samples across its CSV rows."""
+
+    unit: str | None
+    period_deg: float | None
+    description: str | None
+    components: list[str] | None
+    times: list[datetime] = field(default_factory=list)
+    values: list[float] = field(default_factory=list)
+
+
+def _load_channels(builder: NavFileBuilder, base: Path) -> None:
+    accumulators: dict[str, _ChannelAcc] = {}
+    order: list[str] = []
+    for cols in _rows(base / "channels.csv"):
+        # cols: name, unit, period_deg, description, components, time, values
+        if len(cols) < 7:
+            continue
+        name = cols[0]
+        acc = accumulators.get(name)
+        if acc is None:
+            acc = _ChannelAcc(
+                unit=cols[1] or None,
+                period_deg=float(cols[2]) if cols[2] else None,
+                description=cols[3] or None,
+                components=cols[4].split(";") if cols[4] else None,
+            )
+            accumulators[name] = acc
+            order.append(name)
+        time = _parse_ts(cols[5])
+        if time is None:
+            raise ValueError("channels.csv: invalid timestamp")
+        acc.times.append(time)
+        acc.values.extend(float(v) for v in cols[6].split(";"))
+
+    for name in order:
+        acc = accumulators[name]
+        builder.add(
+            Channel(
+                name,
+                acc.times,
+                acc.values,
+                unit=acc.unit,
+                period_deg=acc.period_deg,
+                description=acc.description,
+                components=acc.components,
+            )
+        )
+
+
 def _verify(path: Path) -> None:
     from geotrace_sdk import NavFile
 
@@ -194,6 +247,12 @@ def _verify(path: Path) -> None:
     assert styles["style/custom-icon"].icon == MarkerIcon.LIGHTNING
     assert styles["style/custom-color"].color == "#FF00FF"
 
+    channels = {c.name: c for c in file.channels}
+    assert len(channels) == 2, f"expected 2 channels, got {len(channels)}"
+    assert channels["accel"].is_vector
+    assert channels["accel"].components == ["x", "y", "z"]
+    assert channels["heading_raw"].period_deg == 360.0
+
 
 def main() -> None:
     base = _find_repo_root() / "tests" / "fixtures" / "gold_dataset"
@@ -203,6 +262,7 @@ def main() -> None:
     _load_fixes(builder, base, _load_satellites(base))
     _load_markers(builder, base)
     _load_events(builder, base)
+    _load_channels(builder, base)
 
     nav_file = builder.finish()
 
@@ -213,6 +273,7 @@ def main() -> None:
     print(f"  Nav points:    {len(nav_file.points)}")
     print(f"  Markers:       {len(nav_file.markers)}")
     print(f"  Event markers: {len(nav_file.event_markers)}")
+    print(f"  Channels:      {len(nav_file.channels)}")
 
     print("Verifying round-trip integrity...")
     _verify(out)

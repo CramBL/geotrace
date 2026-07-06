@@ -10,7 +10,7 @@
 )]
 
 use geotrace_sdk::{
-    Angle, Annotation, Constellation, EventMarker, EventMarkerStyle, MarkerIcon, Meta,
+    Angle, Annotation, Channel, Constellation, EventMarker, EventMarkerStyle, MarkerIcon, Meta,
     NavFileBuilder, NavFix, NavRecorder, Satellite, SatelliteReport, Velocity,
 };
 use std::collections::HashMap;
@@ -39,6 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_satellites_and_fixes(&mut recorder, base_dir)?;
     load_markers(&mut recorder, base_dir)?;
     load_events(&mut recorder, base_dir)?;
+    load_channels(&mut recorder, base_dir)?;
 
     let nav_file = recorder.finish()?;
     nav_file.write_to_file(base_dir.join("gold.gtd"))?;
@@ -48,6 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Nav Points:    {}", nav_file.nav_points().len());
     println!("  Markers:       {}", nav_file.markers().len());
     println!("  Event Markers: {}", nav_file.event_markers().len());
+    println!("  Channels:      {}", nav_file.channels().len());
 
     println!("Verifying round-trip integrity...");
     verify_gold_file(base_dir.join("gold.gtd"))?;
@@ -298,6 +300,83 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
         assert_eq!(hex, "#FF00FF");
     }
 
+    let channels = file.channels();
+    assert_eq!(channels.len(), 2);
+    let accel = channels.iter().find(|c| c.name() == "accel").unwrap();
+    assert!(accel.is_vector());
+    assert_eq!(accel.components(), ["x", "y", "z"]);
+    let heading = channels.iter().find(|c| c.name() == "heading_raw").unwrap();
+    assert_eq!(heading.period().map(|a| a.as_degrees()), Some(360.0));
+
+    Ok(())
+}
+
+fn load_channels(
+    recorder: &mut NavRecorder,
+    base_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // One accumulator per channel, keyed by name in first-seen order. Each CSV
+    // row is one sample; the metadata columns repeat and are read once.
+    struct Acc {
+        unit: Option<String>,
+        period_deg: Option<f64>,
+        description: Option<String>,
+        components: Option<Vec<String>>,
+        times: Vec<chrono::DateTime<chrono::Utc>>,
+        values: Vec<f64>,
+    }
+
+    let file = File::open(base_dir.join("channels.csv"))?;
+    let reader = BufReader::new(file);
+    let mut channels: Vec<(String, Acc)> = Vec::new();
+    for line in reader.lines().skip(1) {
+        let line = line?;
+        let cols: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+        if cols.len() < 7 {
+            continue;
+        }
+        let time = parse_time(cols[5]).ok_or("invalid channel timestamp")?;
+        let values: Vec<f64> = cols[6]
+            .split(';')
+            .map(|v| v.trim().parse())
+            .collect::<Result<_, _>>()?;
+
+        let acc = if let Some(existing) = channels.iter_mut().find(|(n, _)| n.as_str() == cols[0]) {
+            &mut existing.1
+        } else {
+            // No per-component trim: the other SDK ports split on ';' without
+            // trimming, so keep this byte-identical for the gold fixture.
+            let split = |s: &str| s.split(';').map(str::to_string).collect::<Vec<_>>();
+            channels.push((
+                cols[0].to_string(),
+                Acc {
+                    unit: (!cols[1].is_empty()).then(|| cols[1].to_string()),
+                    period_deg: (!cols[2].is_empty()).then(|| cols[2].parse()).transpose()?,
+                    description: (!cols[3].is_empty()).then(|| cols[3].to_string()),
+                    components: (!cols[4].is_empty()).then(|| split(cols[4])),
+                    times: Vec::new(),
+                    values: Vec::new(),
+                },
+            ));
+            &mut channels.last_mut().ok_or("unreachable: just pushed")?.1
+        };
+        acc.times.push(time);
+        acc.values.extend(values);
+    }
+
+    for (name, acc) in channels {
+        recorder.add_channel(
+            Channel::builder()
+                .name(name)
+                .maybe_unit(acc.unit)
+                .maybe_period(acc.period_deg.map(Angle::degrees))
+                .maybe_description(acc.description)
+                .maybe_components(acc.components)
+                .times(acc.times)
+                .values(acc.values)
+                .build()?,
+        );
+    }
     Ok(())
 }
 

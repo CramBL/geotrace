@@ -37,11 +37,18 @@
             FAILF("%s: %s", label, gtd_last_error());                                              \
     } while (0)
 
-#define CSV_BUFSIZE  4096
-#define CSV_MAX_COLS 16
-#define TS_BUFSIZE   48
-#define MAX_SATS     2048
-#define SAT_PER_FIX  64
+#define CSV_BUFSIZE       4096
+#define CSV_MAX_COLS      16
+#define TS_BUFSIZE        48
+#define MAX_SATS          2048
+#define SAT_PER_FIX       64
+#define MAX_CHANNELS      8
+#define MAX_CH_SAMPLES    64
+#define MAX_CH_COMPONENTS 8
+#define CH_NAME_BUFSIZE   64
+#define CH_UNIT_BUFSIZE   32
+#define CH_DESC_BUFSIZE   256
+#define CH_COMP_BUFSIZE   32
 
 static void rtrim(char *s) {
     size_t n = strlen(s);
@@ -49,17 +56,21 @@ static void rtrim(char *s) {
         s[--n] = '\0';
 }
 
-static int split_csv(char *line, char *cols[], int max) {
+static int split_delim(char *line, char delim, char *cols[], int max) {
     int n = 0;
     char *p = line;
     while (n < max) {
         cols[n++] = p;
-        p = strchr(p, ',');
+        p = strchr(p, delim);
         if (!p)
             break;
         *p++ = '\0';
     }
     return n;
+}
+
+static int split_csv(char *line, char *cols[], int max) {
+    return split_delim(line, ',', cols, max);
 }
 
 static int is_leap(int y) {
@@ -385,6 +396,118 @@ static void load_events(GtdFileBuilder *b, const char *base) {
     fclose(f);
 }
 
+/* One accumulator per channel; each CSV row is one sample, and the metadata
+   columns repeat and are read once (on the first row for a name). Fields are
+   ordered largest-alignment first to avoid struct padding. */
+typedef struct {
+    GtdTimestamp times[MAX_CH_SAMPLES];
+    double values[MAX_CH_SAMPLES * MAX_CH_COMPONENTS];
+    GtdOptF64 period_deg;
+    const char *components[MAX_CH_COMPONENTS];
+    size_t n_components;
+    size_t n_times;
+    size_t n_values;
+    int has_unit;
+    int has_description;
+    char name[CH_NAME_BUFSIZE];
+    char unit[CH_UNIT_BUFSIZE];
+    char description[CH_DESC_BUFSIZE];
+    char comp_storage[MAX_CH_COMPONENTS][CH_COMP_BUFSIZE];
+} ChannelAcc;
+
+static void load_channels(GtdFileBuilder *b, const char *base) {
+    FILE *f = open_csv(base, "channels.csv");
+    char line[CSV_BUFSIZE];
+    /* skip header */
+    if (!fgets(line, sizeof line, f)) {
+        fclose(f);
+        return;
+    }
+
+    /* static to keep the ~40 KiB of accumulators off the stack. */
+    static ChannelAcc channels[MAX_CHANNELS];
+    size_t n_channels = 0;
+
+    while (fgets(line, sizeof line, f)) {
+        rtrim(line);
+        if (*line == '\0')
+            continue;
+        char *cols[CSV_MAX_COLS];
+        /* cols: name, unit, period_deg, description, components, time, values */
+        if (split_csv(line, cols, CSV_MAX_COLS) < 7)
+            continue;
+
+        ChannelAcc *ch = NULL;
+        for (size_t i = 0; i < n_channels; i++) {
+            if (strcmp(channels[i].name, cols[0]) == 0) {
+                ch = &channels[i];
+                break;
+            }
+        }
+        if (ch == NULL) {
+            if (n_channels >= MAX_CHANNELS)
+                FAIL("too many channels");
+            ch = &channels[n_channels++];
+            memset(ch, 0, sizeof *ch);
+            snprintf(ch->name, sizeof ch->name, "%s", cols[0]);
+            if (*cols[1] != '\0') {
+                ch->has_unit = 1;
+                snprintf(ch->unit, sizeof ch->unit, "%s", cols[1]);
+            }
+            ch->period_deg = parse_opt_f64(cols[2]);
+            if (*cols[3] != '\0') {
+                ch->has_description = 1;
+                snprintf(ch->description, sizeof ch->description, "%s", cols[3]);
+            }
+            if (*cols[4] != '\0') {
+                char *ccols[MAX_CH_COMPONENTS];
+                int nc = split_delim(cols[4], ';', ccols, MAX_CH_COMPONENTS);
+                for (size_t i = 0; i < (size_t)nc; i++) {
+                    snprintf(ch->comp_storage[i], sizeof ch->comp_storage[i], "%s", ccols[i]);
+                    ch->components[i] = ch->comp_storage[i];
+                }
+                ch->n_components = (size_t)nc;
+            }
+        }
+
+        if (ch->n_times >= MAX_CH_SAMPLES)
+            FAIL("too many channel samples");
+        GtdTimestamp ch_ts = parse_ts(cols[5]);
+        if (gtd_ts_is_none(ch_ts))
+            FAIL("invalid channel timestamp");
+        ch->times[ch->n_times++] = ch_ts;
+
+        char *vcols[MAX_CH_COMPONENTS];
+        int nv = split_delim(cols[6], ';', vcols, MAX_CH_COMPONENTS);
+        for (size_t i = 0; i < (size_t)nv; i++) {
+            char *end;
+            double v = strtod(vcols[i], &end);
+            if (end == vcols[i])
+                FAIL("invalid channel value");
+            if (ch->n_values >= (size_t)MAX_CH_SAMPLES * MAX_CH_COMPONENTS)
+                FAIL("too many channel values");
+            ch->values[ch->n_values++] = v;
+        }
+    }
+    fclose(f);
+
+    for (size_t i = 0; i < n_channels; i++) {
+        ChannelAcc *ch = &channels[i];
+        GtdChannel c = {0};
+        c.name = ch->name;
+        c.unit = ch->has_unit ? ch->unit : NULL;
+        c.period_deg = ch->period_deg;
+        c.description = ch->has_description ? ch->description : NULL;
+        c.components = ch->n_components ? ch->components : NULL;
+        c.n_components = ch->n_components;
+        c.times = ch->times;
+        c.n_times = ch->n_times;
+        c.values = ch->values;
+        c.n_values = ch->n_values;
+        CHECK_SDK(gtd_builder_add_channel(b, &c), "add_channel");
+    }
+}
+
 static void verify_counts(const GtdNavFile *f) {
     const char *title = gtd_nav_file_title(f);
     const char *device = gtd_nav_file_device(f);
@@ -413,6 +536,19 @@ static void verify_counts(const GtdNavFile *f) {
     size_t em = gtd_nav_file_event_marker_count(f);
     if (em != 6)
         FAILF("expected 6 event markers, got %zu", em);
+
+    size_t nch = gtd_nav_file_channel_count(f);
+    if (nch != 2)
+        FAILF("expected 2 channels, got %zu", nch);
+    for (size_t i = 0; i < nch; i++) {
+        GtdChannelInfo ci;
+        CHECK_SDK(gtd_nav_file_get_channel(f, i, &ci), "get_channel");
+        if (strcmp(ci.name, "accel") == 0)
+            CHECK(ci.component_count == 3, "accel should have 3 components");
+        if (strcmp(ci.name, "heading_raw") == 0)
+            CHECK(ci.period_deg.present && ci.period_deg.value == 360.0,
+                  "heading_raw period wrong");
+    }
 }
 
 int main(int argc, char **argv) {
@@ -432,6 +568,7 @@ int main(int argc, char **argv) {
     load_fixes(b, base);
     load_markers(b, base);
     load_events(b, base);
+    load_channels(b, base);
 
     GtdNavFile *nav = NULL;
     GtdStatus s = gtd_builder_finish(b, &nav);
@@ -445,6 +582,6 @@ int main(int argc, char **argv) {
     gtd_nav_file_destroy(nav);
 
     printf("Written: %s\n", out_path);
-    printf("Gold dataset verified. Nav points: 189, Event markers: 6\n");
+    printf("Gold dataset verified. Nav points: 189, Event markers: 6, Channels: 2\n");
     return 0;
 }
