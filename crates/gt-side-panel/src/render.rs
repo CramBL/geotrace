@@ -455,6 +455,7 @@ fn render_track_categories(
     let em_expanded = track_node
         .categories_expanded
         .contains(&DataCategory::EventMarker);
+    let channels_expanded = track_node.channels_expanded;
     let em_agg = track_node.event_paths.aggregate();
     let event_filter = track_node.event_filter.clone();
 
@@ -564,6 +565,59 @@ fn render_track_categories(
             ctx,
         );
     }
+
+    if !track.channels.is_empty() {
+        render_channels_section(ui, track_ref, track, channels_expanded, ctx);
+    }
+}
+
+/// A read-only list of the track's ad-hoc sensor channels. Channels are not yet
+/// shown on the map or queryable, so this section has no visibility toggle - it
+/// only surfaces what was loaded.
+fn render_channels_section(
+    ui: &mut egui::Ui,
+    track_ref: TrackRef,
+    track: &LoadedTrack,
+    is_open: bool,
+    ctx: &mut PanelContext<'_>,
+) {
+    let count = track.channels.len();
+    let header = ui.horizontal(|ui| {
+        // Pad the checkbox column (see `tri_checkbox`) so the label aligns with
+        // the toggleable sections above, even though channels have nothing to
+        // toggle.
+        ui.add_space(ui.spacing().interact_size.y + 4.0);
+        let arrow = expand_arrow(is_open);
+        ui.selectable_label(is_open, format!("{arrow} Channels  {count}"))
+    });
+    if header.inner.clicked() {
+        ctx.tree.toggle_channels_expanded(track_ref);
+    }
+
+    if !is_open {
+        return;
+    }
+
+    ui.indent(("channels", track_ref), |ui| {
+        for channel in &track.channels {
+            let unit = channel
+                .unit
+                .as_deref()
+                .map(|u| format!(" ({u})"))
+                .unwrap_or_default();
+            let samples = channel.times.len();
+            let label = if channel.is_vector() {
+                format!(
+                    "{}{unit}  {samples} samples  [{}]",
+                    channel.name,
+                    channel.components.join(", ")
+                )
+            } else {
+                format!("{}{unit}  {samples} samples", channel.name)
+            };
+            ui.label(label);
+        }
+    });
 }
 
 fn render_event_markers_section(

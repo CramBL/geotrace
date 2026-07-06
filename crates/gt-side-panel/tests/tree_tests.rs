@@ -28,6 +28,7 @@ fn make_track_node() -> gt_side_panel::TrackNode {
         generated_kinds_hidden: Default::default(),
         event_paths: Default::default(),
         event_filter: String::new(),
+        channels_expanded: false,
     }
 }
 
