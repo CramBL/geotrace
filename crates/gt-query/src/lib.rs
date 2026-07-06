@@ -33,7 +33,7 @@ mod position;
 mod unit;
 
 pub use ast::{ParamName, Query, Span};
-pub use check::{CheckedQuery, Params, check};
+pub use check::{CheckedQuery, Params, Window, check};
 pub use construct::{Construct, ConstructKind, catalog};
 pub use dimension::Dimension;
 pub use eval::{
@@ -145,6 +145,15 @@ mod tests {
 
     fn checked(src: &str) -> CheckedQuery {
         check(&parse(src).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_count_window_checks_to_window_count() {
+        assert_eq!(
+            checked("points | window 5 | where avg(velocity) > 30 km/h").window(),
+            Some(Window::Count(5))
+        );
+        assert_eq!(checked("points | where velocity > 30 km/h").window(), None);
     }
 
     fn run_one(src: &str, provider: &TestProvider) -> RunOutput {

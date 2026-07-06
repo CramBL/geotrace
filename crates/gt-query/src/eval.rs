@@ -12,7 +12,7 @@ use gt_types::TrackRef;
 use nalgebra::{Complex, UnitComplex};
 
 use crate::ast::{Func, ParamName};
-use crate::check::{ArithOp, CExpr, CheckedQuery, CmpOp};
+use crate::check::{ArithOp, CExpr, CheckedQuery, CmpOp, Window};
 use crate::metric::QueryMetric;
 
 const FULL_TURN_DEG: f64 = 360.0;
@@ -187,19 +187,24 @@ pub(crate) fn evaluate_track(
     let mut shorter_than_window = false;
 
     match query.window() {
-        Some(window) if len < window => {
+        // A count window at anchor `start` spans the points `[start, start+n)`.
+        // Too few points for even one full window means nothing can match.
+        Some(Window::Count(n)) if len < n => {
             shorter_than_window = true;
         }
-        Some(window) => {
-            let last_start = len - window;
+        Some(Window::Count(n)) => {
+            let last_start = len - n;
             for start in 0..=last_start {
                 if start % check_interval == 0 && should_cancel() {
                     return None;
                 }
-                let scope = Scope::Window { start, len: window };
+                let scope = Scope::Window {
+                    start,
+                    end: start + n,
+                };
                 match verdict(query, &mut ctx, scope) {
                     Some(true) => {
-                        for slot in matched.iter_mut().skip(start).take(window) {
+                        for slot in matched.iter_mut().skip(start).take(n) {
                             *slot = true;
                         }
                     }
@@ -267,7 +272,12 @@ fn verdict(query: &CheckedQuery, ctx: &mut Ctx<'_>, scope: Scope) -> Option<bool
 #[derive(Clone, Copy)]
 enum Scope {
     Point(usize),
-    Window { start: usize, len: usize },
+    /// The points a window spans, as the half-open index range `start..end`. An
+    /// aggregate reduces the metric's samples over these points.
+    Window {
+        start: usize,
+        end: usize,
+    },
 }
 
 struct Ctx<'a> {
@@ -425,11 +435,11 @@ fn aggregate(
     arg: &CExpr,
     scope: Scope,
 ) -> Option<f64> {
-    let Scope::Window { start, len } = scope else {
+    let Scope::Window { start, end } = scope else {
         return None;
     };
-    let mut values = Vec::with_capacity(len);
-    for index in start..start + len {
+    let mut values = Vec::with_capacity(end - start);
+    for index in start..end {
         values.push(eval_num(ctx, arg, Scope::Point(index))?);
     }
     let (first, last) = (values.first().copied()?, values.last().copied()?);
