@@ -50,8 +50,8 @@ use geotrace_sdk::{
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::{GpsTime, SysTime};
 use gt_types::{
-    CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude, LoadWarning, LoadedFile,
-    Longitude, MarkerColor, MarkerIcon, NavPoint, TimePositionVelocity,
+    Channel, CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude, LoadWarning,
+    LoadedFile, Longitude, MarkerColor, MarkerIcon, NavPoint, TimePositionVelocity,
 };
 
 pub struct LoadedGtd {
@@ -113,7 +113,7 @@ pub fn load_gtd_file_with_progress(
     progress(0.20, STAGE_PARSING);
     let nav_file = NavFile::read(file)?;
     progress(0.65, STAGE_CONVERTING);
-    let (points, markers, event_markers, event_marker_styles) = from_nav_file(&nav_file)?;
+    let (points, markers, event_markers, event_marker_styles, channels) = from_nav_file(&nav_file)?;
     let load_warnings = satellite_warnings_from_nav_file(&nav_file);
     progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::GtdPath(path.to_path_buf());
@@ -129,6 +129,7 @@ pub fn load_gtd_file_with_progress(
         &markers,
         event_markers,
         event_marker_styles,
+        &channels,
         config,
         source,
         load_warnings,
@@ -155,7 +156,7 @@ pub fn load_gtd_bytes_with_progress(
     progress(0.15, STAGE_PARSING);
     let nav_file = NavFile::read(bytes)?;
     progress(0.60, STAGE_CONVERTING);
-    let (points, markers, event_markers, event_marker_styles) = from_nav_file(&nav_file)?;
+    let (points, markers, event_markers, event_marker_styles, channels) = from_nav_file(&nav_file)?;
     let load_warnings = satellite_warnings_from_nav_file(&nav_file);
     progress(0.90, STAGE_SEGMENTING);
     let source = FileSource::GtdBytes(Arc::from(bytes));
@@ -171,6 +172,7 @@ pub fn load_gtd_bytes_with_progress(
         &markers,
         event_markers,
         event_marker_styles,
+        &channels,
         config,
         source,
         load_warnings,
@@ -240,6 +242,13 @@ pub fn reencode_dropping_ranges(
         recorder.add_event_marker_style(style.clone());
     }
 
+    // Channels are their own time series, independent of the dropped point
+    // ranges, so carry them through unchanged. Samples that end up outside every
+    // surviving track are dropped when the reencoded file is next segmented.
+    for channel in nav_file.channels() {
+        recorder.add_channel(channel.clone());
+    }
+
     let rebuilt = recorder.finish()?;
     let mut out = Vec::new();
     rebuilt.write(&mut out)?;
@@ -267,6 +276,7 @@ type NavFileContents = (
     Vec<CustomMarker>,
     Vec<EventMarker>,
     Vec<EventMarkerStyle>,
+    Vec<Channel>,
 );
 
 fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
@@ -312,7 +322,27 @@ fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
         .map(convert_event_marker_style)
         .collect();
 
-    Ok((nav_points, markers, event_markers, event_marker_styles))
+    let channels = nav_file.channels().iter().map(convert_channel).collect();
+
+    Ok((
+        nav_points,
+        markers,
+        event_markers,
+        event_marker_styles,
+        channels,
+    ))
+}
+
+fn convert_channel(sdk: &geotrace_sdk::Channel) -> Channel {
+    Channel {
+        name: sdk.name().to_owned(),
+        unit: sdk.unit().map(str::to_owned),
+        period: sdk.period().map(to_uom_angle),
+        description: sdk.description().map(str::to_owned),
+        components: sdk.components().to_vec(),
+        times: sdk.times().to_vec(),
+        values: sdk.values().to_vec(),
+    }
 }
 
 fn convert_event_marker(m: &EventMarkerPoint) -> EventMarker {
@@ -501,7 +531,46 @@ mod tests {
     }
 
     fn build(nav_file: &NavFile) -> Result<(Vec<NavPoint>, Vec<CustomMarker>), LoadError> {
-        from_nav_file(nav_file).map(|(pts, markers, _, _)| (pts, markers))
+        from_nav_file(nav_file).map(|(pts, markers, _, _, _)| (pts, markers))
+    }
+
+    #[test]
+    fn loaded_file_carries_channels_on_its_track() {
+        let t0 = base();
+        let mut recorder = NavFileBuilder::new().open();
+        for i in 0..3i64 {
+            recorder.add_nav_fix(minimal_fix(t0 + Duration::seconds(i)));
+        }
+        recorder.add_channel(
+            geotrace_sdk::Channel::builder()
+                .name("accel")
+                .unit("g")
+                .period(Angle::degrees(360.0))
+                .components(["x", "y", "z"].map(String::from).to_vec())
+                .times(vec![t0, t0 + Duration::seconds(2)])
+                .values(vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02])
+                .build()
+                .expect("valid channel"),
+        );
+        let mut bytes = Vec::new();
+        recorder.finish().unwrap().write(&mut bytes).unwrap();
+
+        let file = load_bytes(&bytes, "ride.gtd".to_owned()).unwrap();
+        // Three consecutive fixes form one track carrying the channel.
+        assert_eq!(file.tracks.len(), 1);
+        let channels = &file.tracks[0].channels;
+        assert_eq!(channels.len(), 1);
+        let accel = &channels[0];
+        assert_eq!(accel.name, "accel");
+        assert!(accel.is_vector());
+        assert_eq!(accel.components, ["x", "y", "z"]);
+        assert_eq!(accel.unit.as_deref(), Some("g"));
+        assert_eq!(
+            accel.period.map(|a| a.get::<uom::si::angle::degree>()),
+            Some(360.0)
+        );
+        assert_eq!(accel.times.len(), 2);
+        assert_eq!(accel.values, vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02]);
     }
 
     #[test]
@@ -534,6 +603,37 @@ mod tests {
             .map(|p| p.fix.lon.as_degrees().round())
             .collect();
         assert_eq!(lons, vec![0.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn reencode_preserves_channels() {
+        let t0 = base();
+        let mut recorder = NavFileBuilder::new().open();
+        for i in 0..5i64 {
+            recorder.add_nav_fix(minimal_fix(t0 + Duration::seconds(i)));
+        }
+        recorder.add_channel(
+            geotrace_sdk::Channel::builder()
+                .name("accel")
+                .unit("g")
+                .components(["x", "y", "z"].map(String::from).to_vec())
+                .times(vec![t0, t0 + Duration::seconds(4)])
+                .values(vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02])
+                .build()
+                .expect("valid channel"),
+        );
+        let mut bytes = Vec::new();
+        recorder.finish().unwrap().write(&mut bytes).unwrap();
+
+        // Dropping a point range must not drop the channel.
+        let reencoded =
+            reencode_dropping_ranges(&bytes, std::slice::from_ref(&(1usize..3))).unwrap();
+        let nav_file = NavFile::read(reencoded.as_slice()).unwrap();
+        assert_eq!(nav_file.channels().len(), 1);
+        let accel = &nav_file.channels()[0];
+        assert_eq!(accel.name(), "accel");
+        assert_eq!(accel.components(), ["x", "y", "z"]);
+        assert_eq!(accel.times().len(), 2);
     }
 
     #[test]

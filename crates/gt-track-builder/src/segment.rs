@@ -1,6 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use geo_types::{Coord, Rect};
 use gt_geo_math::{path_distance_km, point_set_diameter_m, segment_length_range_m};
+use gt_types::channel::Channel;
 use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
@@ -562,9 +563,10 @@ pub fn build_loaded_file(
     custom_markers: &[CustomMarker],
     event_markers: Vec<EventMarker>,
     event_marker_styles: Vec<EventMarkerStyle>,
+    channels: &[Channel],
     config: &SegmentationConfig,
     source: FileSource,
-    load_warnings: Vec<LoadWarning>,
+    mut load_warnings: Vec<LoadWarning>,
 ) -> LoadedFile {
     let ranges = segment_tracks(points, &config.track_layout);
 
@@ -587,6 +589,15 @@ pub fn build_loaded_file(
                 .iter()
                 .filter(|m| m.time >= track_start && m.time <= track_end)
                 .cloned()
+                .collect();
+
+            // Each channel keeps only the samples in this track's time range.
+            // Tracks are time-disjoint, so a sample lands in at most one track;
+            // a channel with no samples here is dropped from this track.
+            let track_channels: Vec<Channel> = channels
+                .iter()
+                .map(|c| c.slice_time_range(track_start, track_end))
+                .filter(|c| !c.times.is_empty())
                 .collect();
 
             let track_generated =
@@ -612,6 +623,7 @@ pub fn build_loaded_file(
                 custom_markers: track_custom,
                 generated_markers: track_generated,
                 event_markers: Vec::new(),
+                channels: track_channels,
             }
         })
         .collect();
@@ -641,6 +653,25 @@ pub fn build_loaded_file(
     // Back-fill event_marker_count now that assignment is done.
     for track in &mut loaded_tracks {
         track.metadata.event_marker_count = track.event_markers.len();
+    }
+
+    // Channel samples that fell in a between-track gap (e.g. a sensor still
+    // logging while GPS had no fix) belong to no track and were dropped above.
+    // Surface the loss rather than hiding it.
+    let input_samples: usize = channels.iter().map(|c| c.times.len()).sum();
+    let kept_samples: usize = loaded_tracks
+        .iter()
+        .flat_map(|t| &t.channels)
+        .map(|c| c.times.len())
+        .sum();
+    if let Some(dropped) = input_samples.checked_sub(kept_samples).filter(|&d| d > 0) {
+        load_warnings.push(LoadWarning {
+            count: u32::try_from(dropped).unwrap_or(u32::MAX),
+            issue: "channel sample(s) outside every track".to_owned(),
+            description: "Sensor samples whose timestamp fell between tracks (no \
+                nav fix covers that time) were dropped and are not shown."
+                .to_owned(),
+        });
     }
 
     let total_distance_km = loaded_tracks
@@ -706,6 +737,26 @@ pub fn build_loaded_file(
         source,
         load_warnings,
     }
+}
+
+/// Reassemble file-level channels from a file's per-track channel slices, for
+/// re-segmentation. Concatenates each channel's samples across tracks (in track
+/// order, which is time order) and returns them sorted by name, mirroring the
+/// order a fresh load produces.
+pub fn reassemble_channels(tracks: &[LoadedTrack]) -> Vec<Channel> {
+    let mut by_name: Vec<Channel> = Vec::new();
+    for track in tracks {
+        for channel in &track.channels {
+            if let Some(existing) = by_name.iter_mut().find(|c| c.name == channel.name) {
+                existing.times.extend_from_slice(&channel.times);
+                existing.values.extend_from_slice(&channel.values);
+            } else {
+                by_name.push(channel.clone());
+            }
+        }
+    }
+    by_name.sort_by(|a, b| a.name.cmp(&b.name));
+    by_name
 }
 
 /// Overwrites `merc` on ghost points (those with `heading == None`) with
@@ -796,6 +847,8 @@ fn precompute_ghost_positions(points: &mut [NavPoint]) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use chrono::TimeZone;
     use gt_types::coordinates::{Latitude, Longitude};
@@ -1023,8 +1076,9 @@ mod tests {
             &[],
             vec![],
             vec![],
+            &[],
             &SegmentationConfig::default(),
-            FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
+            FileSource::GtdPath(PathBuf::from("test.gtd")),
             vec![],
         );
         assert!(f.tracks.is_empty());
@@ -1045,8 +1099,9 @@ mod tests {
             &[],
             vec![],
             vec![],
+            &[],
             &SegmentationConfig::default(),
-            FileSource::GtdPath(std::path::PathBuf::from("ride.gtd")),
+            FileSource::GtdPath(PathBuf::from("ride.gtd")),
             vec![],
         );
         assert_eq!(f.tracks.len(), 2);
@@ -1054,6 +1109,156 @@ mod tests {
         assert_eq!(f.tracks[1].points.len(), 2);
         assert_eq!(f.tracks[0].metadata.index, 1);
         assert_eq!(f.tracks[1].metadata.index, 2);
+    }
+
+    fn utc(secs: i64) -> DateTime<Utc> {
+        Utc.timestamp_opt(secs, 0)
+            .single()
+            .expect("valid timestamp")
+    }
+
+    #[test]
+    fn channels_partition_to_tracks_by_timestamp() {
+        // Two tracks: [0, 60] and [3600, 3660]. A scalar channel with samples in
+        // track 1 (0, 30), the gap (1800), and track 2 (3600).
+        let pts = vec![
+            make_point_at(0),
+            make_point_at(60),
+            make_point_at(3600),
+            make_point_at(3660),
+        ];
+        let channel = Channel {
+            name: "incline".to_owned(),
+            unit: Some("deg".to_owned()),
+            period: None,
+            description: None,
+            components: vec![],
+            times: vec![utc(0), utc(30), utc(1800), utc(3600)],
+            values: vec![1.0, 2.0, 9.0, 3.0],
+        };
+        let f = build_loaded_file(
+            "ride.gtd".to_owned(),
+            &pts,
+            &[],
+            vec![],
+            vec![],
+            std::slice::from_ref(&channel),
+            &SegmentationConfig::default(),
+            FileSource::GtdPath(PathBuf::from("ride.gtd")),
+            vec![],
+        );
+        assert_eq!(f.tracks.len(), 2);
+
+        // Track 1 keeps the two in-range samples; the gap sample (1800) is dropped.
+        let t0 = &f.tracks[0].channels;
+        assert_eq!(t0.len(), 1);
+        assert_eq!(t0[0].name, "incline");
+        assert_eq!(t0[0].times, vec![utc(0), utc(30)]);
+        assert_eq!(t0[0].values, vec![1.0, 2.0]);
+
+        // Track 2 keeps its single sample.
+        let t1 = &f.tracks[1].channels;
+        assert_eq!(t1.len(), 1);
+        assert_eq!(t1[0].times, vec![utc(3600)]);
+
+        // Reassembly concatenates the per-track slices back in time order; the
+        // dropped gap sample stays dropped.
+        let reassembled = reassemble_channels(&f.tracks);
+        assert_eq!(reassembled.len(), 1);
+        assert_eq!(reassembled[0].times, vec![utc(0), utc(30), utc(3600)]);
+        assert_eq!(reassembled[0].values, vec![1.0, 2.0, 3.0]);
+
+        // The one gap sample (1800) that landed in no track is surfaced as a warning.
+        let warning = f
+            .load_warnings
+            .iter()
+            .find(|w| w.issue.contains("outside every track"))
+            .expect("dropped gap sample should be reported");
+        assert_eq!(warning.count, 1);
+    }
+
+    #[test]
+    fn a_vector_channel_partitions_and_reassembles_with_columns_aligned() {
+        // Two tracks split at the 3600s gap. A 3-component accel channel with two
+        // samples in track 1, one in the gap (dropped), and one in track 2.
+        let pts = vec![
+            make_point_at(0),
+            make_point_at(60),
+            make_point_at(3600),
+            make_point_at(3660),
+        ];
+        let channel = Channel {
+            name: "accel".to_owned(),
+            unit: Some("g".to_owned()),
+            period: None,
+            description: None,
+            components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
+            times: vec![utc(0), utc(30), utc(1800), utc(3600)],
+            // Row-major: four samples of (x, y, z).
+            values: vec![
+                0.0, 0.1, 1.0, // t=0
+                1.0, 1.1, 2.0, // t=30
+                8.0, 8.1, 8.2, // t=1800 (gap, dropped)
+                3.0, 3.1, 4.0, // t=3600
+            ],
+        };
+        let f = build_loaded_file(
+            "ride.gtd".to_owned(),
+            &pts,
+            &[],
+            vec![],
+            vec![],
+            std::slice::from_ref(&channel),
+            &SegmentationConfig::default(),
+            FileSource::GtdPath(PathBuf::from("ride.gtd")),
+            vec![],
+        );
+
+        // Track 1 keeps rows 0 and 1 with their columns intact.
+        let t0 = &f.tracks[0].channels[0];
+        assert_eq!(t0.components, ["x", "y", "z"]);
+        assert_eq!(t0.times, vec![utc(0), utc(30)]);
+        assert_eq!(t0.values, vec![0.0, 0.1, 1.0, 1.0, 1.1, 2.0]);
+        // Track 2 keeps the last row.
+        assert_eq!(f.tracks[1].channels[0].values, vec![3.0, 3.1, 4.0]);
+
+        // Reassembly restores the surviving rows in time order, columns aligned.
+        let reassembled = reassemble_channels(&f.tracks);
+        assert_eq!(reassembled[0].components, ["x", "y", "z"]);
+        assert_eq!(reassembled[0].times, vec![utc(0), utc(30), utc(3600)]);
+        assert_eq!(
+            reassembled[0].values,
+            vec![0.0, 0.1, 1.0, 1.0, 1.1, 2.0, 3.0, 3.1, 4.0]
+        );
+    }
+
+    #[test]
+    fn a_channel_absent_from_a_track_is_not_attached() {
+        // Channel samples only in track 2's range; track 1 carries no channel.
+        let pts = vec![make_point_at(0), make_point_at(3600), make_point_at(3660)];
+        let channel = Channel {
+            name: "accel".to_owned(),
+            unit: None,
+            period: None,
+            description: None,
+            components: vec![],
+            times: vec![utc(3600), utc(3660)],
+            values: vec![1.0, 2.0],
+        };
+        let f = build_loaded_file(
+            "ride.gtd".to_owned(),
+            &pts,
+            &[],
+            vec![],
+            vec![],
+            std::slice::from_ref(&channel),
+            &SegmentationConfig::default(),
+            FileSource::GtdPath(PathBuf::from("ride.gtd")),
+            vec![],
+        );
+        assert_eq!(f.tracks.len(), 2);
+        assert!(f.tracks[0].channels.is_empty());
+        assert_eq!(f.tracks[1].channels.len(), 1);
     }
 
     fn make_point_with_fix(t: i64, fix_count_positive: bool) -> NavPoint {
@@ -1307,8 +1512,9 @@ mod tests {
             &[],
             vec![],
             vec![],
+            &[],
             &SegmentationConfig::default(),
-            FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
+            FileSource::GtdPath(PathBuf::from("test.gtd")),
             vec![],
         );
         assert_eq!(f.tracks.len(), 2, "expected two tracks");

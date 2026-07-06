@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
@@ -41,8 +43,9 @@ fn make_state_with_warnings_on(
             &[],
             vec![],
             vec![],
+            &[],
             &gt_track_builder::SegmentationConfig::default(),
-            gt_types::FileSource::GtdPath(std::path::PathBuf::from(format!("ride_{i}.gtd"))),
+            gt_types::FileSource::GtdPath(PathBuf::from(format!("ride_{i}.gtd"))),
             w,
         );
         files.push(file, FileHistory::None);
@@ -180,8 +183,9 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
         &[],
         vec![],
         vec![],
+        &[],
         &gt_track_builder::SegmentationConfig::default(),
-        gt_types::FileSource::GtdPath(std::path::PathBuf::from("no_sats.gtd")),
+        gt_types::FileSource::GtdPath(PathBuf::from("no_sats.gtd")),
         vec![],
     );
     assert_eq!(file.tracks.len(), 1);

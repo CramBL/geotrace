@@ -1,3 +1,4 @@
+use crate::channel::Channel;
 use crate::highlight::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
 use crate::markers::{CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker};
 use crate::mercator::MercPoint;
@@ -319,6 +320,9 @@ pub struct LoadedTrack {
     pub custom_markers: Vec<CustomMarker>,
     pub generated_markers: Vec<GeneratedMarker>,
     pub event_markers: Vec<EventMarker>,
+    /// Ad-hoc sensor channels, each holding the samples whose timestamp falls in
+    /// this track's time range. File-level on load, partitioned here by time.
+    pub channels: Vec<Channel>,
 }
 
 impl TrackRef {

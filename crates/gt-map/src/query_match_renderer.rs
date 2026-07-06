@@ -180,6 +180,7 @@ mod tests {
             custom_markers: vec![],
             generated_markers: vec![],
             event_markers: vec![],
+            channels: vec![],
         };
         assert_eq!(match_duration_seconds(&track, &(0..1)), None);
         assert_eq!(match_duration_seconds(&track, &(0..3)), Some(2));

@@ -664,6 +664,7 @@ pub(super) fn build_log_loaded_file(
         custom_markers: markers,
         generated_markers: Vec::new(),
         event_markers: Vec::new(),
+        channels: Vec::new(),
     };
 
     Some(LoadedFile {
