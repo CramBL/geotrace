@@ -1195,6 +1195,7 @@ mod tests {
             custom_markers: Vec::new(),
             generated_markers: Vec::new(),
             event_markers: Vec::new(),
+            channels: Vec::new(),
         }
     }
 
@@ -1460,6 +1461,7 @@ mod tests {
             custom_markers: Vec::new(),
             generated_markers: Vec::new(),
             event_markers: Vec::new(),
+            channels: Vec::new(),
         }
     }
 

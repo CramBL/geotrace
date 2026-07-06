@@ -1013,6 +1013,7 @@ impl App {
                     .collect();
                 let event_marker_styles: Vec<gt_types::EventMarkerStyle> =
                     file.event_marker_styles.values().cloned().collect();
+                let all_channels = gt_track_builder::reassemble_channels(&file.tracks);
                 let filename = file.metadata.filename.clone();
                 let source = file.source.clone();
                 *file = gt_track_builder::build_loaded_file(
@@ -1021,6 +1022,7 @@ impl App {
                     &all_custom_markers,
                     all_event_markers,
                     event_marker_styles,
+                    &all_channels,
                     &config,
                     source,
                     file.load_warnings.clone(),

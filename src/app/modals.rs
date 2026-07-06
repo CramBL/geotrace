@@ -493,6 +493,7 @@ mod tests {
                     custom_markers: Vec::new(),
                     generated_markers: Vec::new(),
                     event_markers: Vec::new(),
+                    channels: Vec::new(),
                 })
                 .collect(),
             event_marker_styles: HashMap::new(),

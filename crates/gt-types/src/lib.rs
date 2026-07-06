@@ -1,3 +1,4 @@
+pub mod channel;
 pub mod coordinates;
 pub mod highlight;
 pub mod markers;
@@ -11,6 +12,7 @@ pub mod time_types;
 pub mod tpv;
 pub mod track;
 
+pub use channel::Channel;
 pub use coordinates::{Latitude, Longitude};
 pub use geo_types::{Coord, Rect};
 pub use highlight::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};

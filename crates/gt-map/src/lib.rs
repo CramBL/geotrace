@@ -994,6 +994,7 @@ mod tests {
             custom_markers: vec![],
             generated_markers: vec![],
             event_markers: vec![],
+            channels: vec![],
         };
         LoadedFile {
             metadata: FileMetadata {
@@ -1089,6 +1090,7 @@ mod tests {
             custom_markers: vec![],
             generated_markers: vec![],
             event_markers: vec![],
+            channels: vec![],
         }
     }
 
@@ -1177,6 +1179,7 @@ mod tests {
             custom_markers: vec![],
             generated_markers: vec![],
             event_markers: vec![],
+            channels: vec![],
         };
         let files = vec![file_with_tracks(vec![track])];
         let vis = vis_all_visible();
@@ -1354,6 +1357,7 @@ mod tests {
                 merc: mercator::normalize(lat, lon),
             }],
             event_markers: vec![],
+            channels: vec![],
         };
         let file = LoadedFile {
             metadata: FileMetadata {
@@ -1496,6 +1500,7 @@ mod snapshot_tests {
             custom_markers: vec![custom_marker],
             generated_markers: vec![generated_marker],
             event_markers: vec![event_marker],
+            channels: vec![],
         };
 
         LoadedFile {
