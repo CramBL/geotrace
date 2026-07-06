@@ -28,6 +28,7 @@ TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
         incline.name = "incline";
         incline.unit = "deg";
         incline.period = Angle::degrees(360.0);
+        incline.description = "boom inclinometer";
         incline.times = {T0, T1};
         incline.values = {1.5, 2.0};
 
@@ -38,12 +39,20 @@ TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
         accel.times = {T0, T1};
         accel.values = {0.1, 0.2, 0.98, -0.1, 0.3, 1.02};
 
-        auto file = FileBuilder{}.add_nav_fix(fix).add_channel(incline).add(accel).finish();
+        // A bare channel with no unit, period, or description exercises the
+        // empty-means-none marshalling on both write and read.
+        Channel temp{};
+        temp.name = "temp";
+        temp.times = {T0};
+        temp.values = {20.0};
+
+        auto file =
+            FileBuilder{}.add_nav_fix(fix).add_channel(incline).add(accel).add(temp).finish();
         bytes = file.to_bytes();
     }
 
     auto file = NavFile::from_bytes(bytes);
-    REQUIRE(file.channel_count() == 2);
+    REQUIRE(file.channel_count() == 3);
 
     // Channels sort by name: accel (vector) then incline (scalar).
     auto accel = file.channel(0);
@@ -62,8 +71,16 @@ TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
     CHECK(incline.name == "incline");
     CHECK_FALSE(incline.is_vector());
     CHECK(incline.components.empty());
+    CHECK(incline.description == "boom inclinometer");
     REQUIRE(incline.period.has_value());
     CHECK(incline.period->as_degrees() == doctest::Approx(360.0));
+
+    // The bare channel round-trips with all optional fields absent.
+    auto temp = file.channel(2);
+    CHECK(temp.name == "temp");
+    CHECK(temp.unit.empty());
+    CHECK(temp.description.empty());
+    CHECK_FALSE(temp.period.has_value());
 }
 
 TEST_CASE("channels: a malformed channel throws InvalidChannelError") {

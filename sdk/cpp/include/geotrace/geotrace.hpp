@@ -163,7 +163,12 @@ struct ParseError : Error {
     using Error::Error;
 };
 
-/** A channel was malformed (bad name/component, length mismatch, or duplicate name). */
+/**
+ * A channel was malformed (bad name/component, length mismatch, or duplicate
+ * name). Derives `Error` rather than `BuildError`, mirroring `InvalidPathError`:
+ * both are input-validation errors, even though the duplicate-name check fires
+ * at `finish()`.
+ */
 struct InvalidChannelError : Error {
     using Error::Error;
 };
@@ -1215,23 +1220,27 @@ class NavFile {
 
         v.components.reserve(info.component_count);
         for (std::size_t c = 0; c < info.component_count; ++c) {
-            char buf[256] = {};
+            // Matches GtdChannelInfo::name[256]; a longer label is truncated by
+            // the C API, which cannot report the untruncated length.
+            static constexpr std::size_t kChannelLabelCap = 256;
+            char buf[kChannelLabelCap] = {};
             if (::gtd_nav_file_get_channel_component(impl_.get(), idx, c, buf, sizeof(buf)) ==
                 GTD_OK)
                 v.components.emplace_back(buf);
         }
 
-        const std::size_t n_times = ::gtd_nav_file_channel_times(impl_.get(), idx, nullptr, 0);
-        std::vector<GtdTimestamp> raw_times(n_times);
-        if (n_times > 0)
+        // info already holds the authoritative counts, so size the buffers from
+        // it rather than querying the C accessors again.
+        const std::size_t columns = info.component_count > 0 ? info.component_count : 1;
+        std::vector<GtdTimestamp> raw_times(info.sample_count);
+        if (info.sample_count > 0)
             ::gtd_nav_file_channel_times(impl_.get(), idx, raw_times.data(), raw_times.size());
-        v.times.reserve(n_times);
+        v.times.reserve(info.sample_count);
         for (const auto &t : raw_times)
             v.times.push_back(detail::from_c(t));
 
-        const std::size_t n_values = ::gtd_nav_file_channel_values(impl_.get(), idx, nullptr, 0);
-        v.values.resize(n_values);
-        if (n_values > 0)
+        v.values.resize(info.sample_count * columns);
+        if (!v.values.empty())
             ::gtd_nav_file_channel_values(impl_.get(), idx, v.values.data(), v.values.size());
 
         return v;

@@ -9,10 +9,12 @@ using geotrace::Angle;
 using geotrace::Annotation;
 using geotrace::AnnotationsOutOfRangeError;
 using geotrace::BuildError;
+using geotrace::Channel;
 using geotrace::Error;
 using geotrace::EventMarker;
 using geotrace::FileBuilder;
 using geotrace::Hdf5Error;
+using geotrace::InvalidChannelError;
 using geotrace::InvalidPathError;
 using geotrace::IoError;
 using geotrace::NavFile;
@@ -27,6 +29,7 @@ TEST_CASE("exception hierarchy: all types derive from geotrace::Error") {
     CHECK(std::is_base_of_v<Error, Hdf5Error>);
     CHECK(std::is_base_of_v<Error, UnsupportedVersionError>);
     CHECK(std::is_base_of_v<Error, InvalidPathError>);
+    CHECK(std::is_base_of_v<Error, InvalidChannelError>);
     CHECK(std::is_base_of_v<BuildError, NoNavFixesError>);
     CHECK(std::is_base_of_v<BuildError, AnnotationsOutOfRangeError>);
 }
@@ -66,6 +69,18 @@ TEST_CASE("exception: InvalidPathError is catchable as Error") {
         b.add_event_marker(marker);
     };
     CHECK_THROWS_AS(throw_it(), InvalidPathError);
+    CHECK_THROWS_AS(throw_it(), Error);
+}
+
+TEST_CASE("exception: InvalidChannelError is catchable as Error") {
+    auto throw_it = [] {
+        Channel ch{};
+        ch.name = "Bad Name";
+        ch.times = {Timestamp::from_seconds(1700000000ULL)};
+        ch.values = {1.0};
+        FileBuilder{}.add_channel(ch);
+    };
+    CHECK_THROWS_AS(throw_it(), InvalidChannelError);
     CHECK_THROWS_AS(throw_it(), Error);
 }
 
