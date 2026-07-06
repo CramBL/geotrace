@@ -22,10 +22,22 @@ pub struct Params {
     pub slip_window_s: Option<f64>,
 }
 
+/// The window a query aggregates over, resolved from the `window` stage.
+///
+/// A window is a time span anchored at each nav point; an aggregate reduces the
+/// metric's native samples within that span. Only the point-count kind exists
+/// today; a time-based form is planned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Window {
+    /// A span of `n` consecutive points: at anchor `i` the points `[i, i+n)` and
+    /// the time extent `[t(i), t(i+n-1)]`.
+    Count(usize),
+}
+
 /// A query that passed all static checks, ready to run.
 #[derive(Debug, Clone)]
 pub struct CheckedQuery {
-    pub(crate) window: Option<usize>,
+    pub(crate) window: Option<Window>,
     pub(crate) predicates: Vec<CExpr>,
     params: Params,
     columns: Vec<QueryMetric>,
@@ -35,8 +47,8 @@ pub struct CheckedQuery {
 }
 
 impl CheckedQuery {
-    /// Window length in points, when the query has a `window` stage.
-    pub fn window(&self) -> Option<usize> {
+    /// The window a windowed query aggregates over, if any.
+    pub fn window(&self) -> Option<Window> {
         self.window
     }
 
@@ -335,7 +347,9 @@ pub fn check(query: &Query) -> Result<CheckedQuery, Diagnostic> {
         // The conversion only fails on targets where usize is narrower than
         // u64; kept as a defensive branch rather than an assumption.
         Some(w) => {
-            Some(usize::try_from(w.len).map_err(|_overflow| err(w.span, "window is too large"))?)
+            let n =
+                usize::try_from(w.len).map_err(|_overflow| err(w.span, "window is too large"))?;
+            Some(Window::Count(n))
         }
     };
 
