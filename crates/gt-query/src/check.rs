@@ -25,9 +25,8 @@ pub struct Params {
 /// The window a query aggregates over, resolved from the `window` stage.
 ///
 /// A window is a time span anchored at each nav point; an aggregate reduces the
-/// metric's native samples within that span. A [`Count`](Window::Count) window's
-/// span is fixed by point count - its `n` points and their time extent - which
-/// is the only kind for now. A time-based `window Δ s` form arrives later.
+/// metric's native samples within that span. Only the point-count kind exists
+/// today; a time-based form is planned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Window {
     /// A span of `n` consecutive points: at anchor `i` the points `[i, i+n)` and
