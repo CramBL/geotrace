@@ -35,16 +35,20 @@ std::string rtrim(std::string s) {
     return s;
 }
 
-std::vector<std::string> split_csv(const std::string &line) {
+std::vector<std::string> split(const std::string &line, char delim) {
     std::vector<std::string> cols;
     std::istringstream ss(line);
     std::string col;
-    while (std::getline(ss, col, ','))
+    while (std::getline(ss, col, delim))
         cols.push_back(std::move(col));
-    // std::getline drops the trailing empty field for lines that end with ','.
-    if (!line.empty() && line.back() == ',')
+    // std::getline drops the trailing empty field for lines that end with the delimiter.
+    if (!line.empty() && line.back() == delim)
         cols.emplace_back();
     return cols;
+}
+
+std::vector<std::string> split_csv(const std::string &line) {
+    return split(line, ',');
 }
 
 bool is_leap(int y) noexcept {
@@ -312,6 +316,52 @@ void load_events(geotrace::FileBuilder &b, const fs::path &base) {
     }
 }
 
+void load_channels(geotrace::FileBuilder &b, const fs::path &base) {
+    auto f = open_csv(base, "channels.csv");
+    std::string line;
+    std::getline(f, line); // skip header
+
+    // One Channel per name, built up across its rows (each row is one sample).
+    std::vector<geotrace::Channel> channels;
+    while (std::getline(f, line)) {
+        line = rtrim(std::move(line));
+        if (line.empty())
+            continue;
+        auto cols = split_csv(line);
+        // cols: name, unit, period_deg, description, components, time, values
+        if (cols.size() < 7)
+            continue;
+
+        geotrace::Channel *ch = nullptr;
+        for (auto &existing : channels) {
+            if (existing.name == cols[0]) {
+                ch = &existing;
+                break;
+            }
+        }
+        if (ch == nullptr) {
+            geotrace::Channel channel;
+            channel.name = cols[0];
+            channel.unit = cols[1];
+            if (!cols[2].empty())
+                channel.period = geotrace::Angle::degrees(std::stod(cols[2]));
+            channel.description = cols[3];
+            if (!cols[4].empty())
+                channel.components = split(cols[4], ';');
+            channels.push_back(std::move(channel));
+            ch = &channels.back();
+        }
+
+        if (auto ts = parse_ts(cols[5]))
+            ch->times.push_back(*ts);
+        for (const auto &value : split(cols[6], ';'))
+            ch->values.push_back(std::stod(value));
+    }
+
+    for (const auto &channel : channels)
+        b.add_channel(channel);
+}
+
 void verify_counts(const geotrace::NavFile &file) {
     auto check = [](bool cond, const char *msg) {
         if (!cond)
@@ -356,6 +406,7 @@ int main(int argc, char **argv) {
         load_fixes(b, base, sats);
         load_markers(b, base);
         load_events(b, base);
+        load_channels(b, base);
 
         auto nav = b.finish();
         nav.write_to_file(out);

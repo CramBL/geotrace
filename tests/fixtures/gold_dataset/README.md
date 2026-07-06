@@ -11,6 +11,7 @@ The `gold_conformance` test (`sdk/rust/geotrace-sdk/tests/gold_conformance.rs`) 
 - `satellites.csv`: Satellite visibility reports associated with the fixes.
 - `markers.csv`: User-defined map annotations (Markers). Now includes 15 markers covering peaks, starts, and sub-second interpolation.
 - `events.csv`: System event markers. Now includes 5 events for status changes, turns, and signal loss.
+- `channels.csv`: Ad-hoc sensor channels correlated with the track by timestamp. One row per sample. The metadata columns (`unit`, `period_deg`, `description`, `components`) repeat per channel, and `components`/`values` are `;`-separated. Covers a vector channel (`accel`, x/y/z, unit g) and a scalar channel with a wrap period (`heading_raw`, deg, period 360).
 
 ## Track Definitions
 
