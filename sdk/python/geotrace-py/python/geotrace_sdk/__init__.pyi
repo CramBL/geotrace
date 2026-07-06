@@ -122,6 +122,58 @@ class SatelliteReport:
     def __eq__(self, other: object) -> bool: ...
 
 @final
+class Channel:
+    """A named scalar or vector sensor channel sampled at its own rate.
+
+    Pass ``components`` for a vector channel (one column per component) or omit
+    it for a scalar channel. ``values`` is row-major: ``len(times)`` rows of one
+    column (scalar) or ``len(components)`` columns (vector). ``times`` must be
+    timezone-aware :class:`datetime.datetime` objects.
+
+    Args:
+        name: Channel identifier (a lowercase identifier), referenced as ``@name``.
+        times: Sample timestamps, one per row of ``values``.
+        values: Row-major sample values.
+        unit: Unit of the values (``"g"``, ``"deg"``), or ``None``.
+        period_deg: Wrap period in degrees for an angular channel, or ``None``.
+        description: Human description, or ``None``.
+        components: Vector component labels, or ``None`` for a scalar channel.
+
+    Raises:
+        ValueError: If the name or a component label is malformed, or ``values``
+            is not ``len(times) * max(len(components), 1)`` long.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        times: list[datetime],
+        values: list[float],
+        *,
+        unit: str | None = None,
+        period_deg: float | None = None,
+        description: str | None = None,
+        components: list[str] | None = None,
+    ) -> None: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def unit(self) -> str | None: ...
+    @property
+    def period_deg(self) -> float | None: ...
+    @property
+    def description(self) -> str | None: ...
+    @property
+    def components(self) -> list[str]: ...
+    @property
+    def is_vector(self) -> bool: ...
+    @property
+    def times(self) -> list[datetime]: ...
+    @property
+    def values(self) -> list[float]: ...
+    def __eq__(self, other: object) -> bool: ...
+
+@final
 class NavFix:
     """A single GPS/GNSS fix: position, optional heading, and optional speed.
 
@@ -447,6 +499,11 @@ class NavFile:
         """Per-variant style overrides stored in the file."""
         ...
 
+    @property
+    def channels(self) -> list[Channel]:
+        """All ad-hoc sensor channels, sorted by name."""
+        ...
+
 @final
 class NavFileBuilder:
     """Assembles nav fixes, satellite reports, and annotations into a :class:`NavFile`.
@@ -489,9 +546,9 @@ class NavFileBuilder:
         ...
 
     def add(
-        self, item: NavFix | SatelliteReport | Annotation | EventMarker
+        self, item: NavFix | SatelliteReport | Annotation | EventMarker | Channel
     ) -> NavFileBuilder:
-        """Add a nav fix, satellite report, annotation, or event marker.
+        """Add a nav fix, satellite report, annotation, event marker, or channel.
 
         Returns ``self``.
 
