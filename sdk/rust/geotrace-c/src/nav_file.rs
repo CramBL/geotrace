@@ -5,8 +5,8 @@ use geotrace_sdk::NavFile;
 
 use crate::error::{GtdStatus, run_catching_panics, set_last_error, status_for_error};
 use crate::{
-    GtdConstellation, GtdEventMarkerInfo, GtdNavPointInfo, GtdSatInfo, opt_f64_none, opt_f64_some,
-    ts_from_datetime,
+    GtdChannelInfo, GtdConstellation, GtdEventMarkerInfo, GtdNavPointInfo, GtdSatInfo,
+    GtdTimestamp, fill_c_str, opt_f64_none, opt_f64_some, ts_from_datetime,
 };
 
 /// Opaque handle for a parsed or freshly-built GeoTrace nav file.
@@ -360,4 +360,139 @@ pub unsafe extern "C" fn gtd_nav_file_get_event_marker(
 
         GtdStatus::Ok
     })
+}
+
+// ── Channel accessors ─────────────────────────────────────────────────────────── // [qa-allow-check-em-dash, qa-allow-check-floating-comments, reason = "C API section headers are an established convention in this FFI file"]
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_nav_file_channel_count(f: *const GtdNavFile) -> usize {
+    if f.is_null() {
+        return 0;
+    }
+    // SAFETY: f is non-null
+    unsafe { (*f).file.channels().len() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_nav_file_get_channel(
+    f: *const GtdNavFile,
+    idx: usize,
+    out: *mut GtdChannelInfo,
+) -> GtdStatus {
+    run_catching_panics(|| {
+        let f = nonnull_ref!(f);
+        let out = nonnull_mut!(out);
+
+        let Some(ch) = f.file.channels().get(idx) else {
+            set_last_error(format!("channel index {idx} is out of range"));
+            return GtdStatus::ErrNullArgument;
+        };
+
+        // SAFETY: GtdChannelInfo is repr(C). Zeroing it is a valid initial state.
+        *out = unsafe { std::mem::zeroed() };
+        fill_c_str(&mut out.name, ch.name());
+        if let Some(unit) = ch.unit() {
+            out.has_unit = 1;
+            fill_c_str(&mut out.unit, unit);
+        }
+        out.period_deg = ch
+            .period()
+            .map_or(opt_f64_none(), |a| opt_f64_some(a.as_degrees()));
+        if let Some(description) = ch.description() {
+            out.has_description = 1;
+            fill_c_str(&mut out.description, description);
+        }
+        out.component_count = ch.components().len();
+        out.sample_count = ch.times().len();
+        GtdStatus::Ok
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_nav_file_get_channel_component(
+    f: *const GtdNavFile,
+    ch_idx: usize,
+    comp_idx: usize,
+    out: *mut c_char,
+    cap: usize,
+) -> GtdStatus {
+    run_catching_panics(|| {
+        let f = nonnull_ref!(f);
+        if out.is_null() {
+            set_last_error("out buffer is null");
+            return GtdStatus::ErrNullArgument;
+        }
+        if cap == 0 {
+            set_last_error("out buffer capacity is zero");
+            return GtdStatus::ErrNullArgument;
+        }
+        let Some(ch) = f.file.channels().get(ch_idx) else {
+            set_last_error(format!("channel index {ch_idx} is out of range"));
+            return GtdStatus::ErrNullArgument;
+        };
+        let Some(label) = ch.components().get(comp_idx) else {
+            set_last_error(format!("component index {comp_idx} is out of range"));
+            return GtdStatus::ErrNullArgument;
+        };
+        // SAFETY: out points to `cap` writable bytes (caller contract).
+        let buf = unsafe { std::slice::from_raw_parts_mut(out, cap) };
+        fill_c_str(buf, label);
+        GtdStatus::Ok
+    })
+}
+
+/// Copy up to `cap` sample timestamps into `out`, returning the channel's total
+/// sample count (independent of `cap`). Passing a null `out` or zero `cap`
+/// queries the count without copying.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_nav_file_channel_times(
+    f: *const GtdNavFile,
+    ch_idx: usize,
+    out: *mut GtdTimestamp,
+    cap: usize,
+) -> usize {
+    if f.is_null() {
+        return 0;
+    }
+    // SAFETY: f is non-null
+    let Some(ch) = (unsafe { &(*f).file }).channels().get(ch_idx) else {
+        return 0;
+    };
+    let times = ch.times();
+    if !out.is_null() && cap > 0 {
+        // SAFETY: out points to `cap` writable elements (caller contract).
+        let buf = unsafe { std::slice::from_raw_parts_mut(out, cap) };
+        for (slot, &dt) in buf.iter_mut().zip(times.iter()) {
+            *slot = ts_from_datetime(dt);
+        }
+    }
+    times.len()
+}
+
+/// Copy up to `cap` values into `out`, returning the channel's total value count
+/// (`sample_count * max(component_count, 1)`, row-major). Passing a null `out`
+/// or zero `cap` queries the count without copying.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_nav_file_channel_values(
+    f: *const GtdNavFile,
+    ch_idx: usize,
+    out: *mut f64,
+    cap: usize,
+) -> usize {
+    if f.is_null() {
+        return 0;
+    }
+    // SAFETY: f is non-null
+    let Some(ch) = (unsafe { &(*f).file }).channels().get(ch_idx) else {
+        return 0;
+    };
+    let values = ch.values();
+    if !out.is_null() && cap > 0 {
+        // SAFETY: out points to `cap` writable elements (caller contract).
+        let buf = unsafe { std::slice::from_raw_parts_mut(out, cap) };
+        for (slot, &v) in buf.iter_mut().zip(values.iter()) {
+            *slot = v;
+        }
+    }
+    values.len()
 }

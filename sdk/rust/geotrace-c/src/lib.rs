@@ -186,6 +186,54 @@ impl GtdSatellite {
     }
 }
 
+/// A channel to add via `gtd_builder_add_channel` (write path, input from C).
+///
+/// A scalar channel leaves `components` NULL and `n_components` zero; a vector
+/// channel points `components` at `n_components` label strings. `values` is
+/// row-major: `n_times` rows of one column (scalar) or `n_components` columns
+/// (vector), so `n_values` must equal `n_times * max(n_components, 1)`.
+#[repr(C)]
+pub struct GtdChannel {
+    pub name: *const c_char,
+    pub unit: *const c_char,
+    pub period_deg: GtdOptF64,
+    pub description: *const c_char,
+    pub components: *const *const c_char,
+    pub n_components: usize,
+    pub times: *const GtdTimestamp,
+    pub n_times: usize,
+    pub values: *const f64,
+    pub n_values: usize,
+}
+
+/// Channel metadata returned by `gtd_nav_file_get_channel` (read path). Sample
+/// timestamps, values, and component labels are fetched separately; a
+/// `component_count` of zero marks a scalar channel.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct GtdChannelInfo {
+    pub name: [c_char; 256],
+    pub has_unit: u8,
+    pub unit: [c_char; 64],
+    pub period_deg: GtdOptF64,
+    pub has_description: u8,
+    pub description: [c_char; 1024],
+    pub component_count: usize,
+    pub sample_count: usize,
+}
+
+/// Copy `s` into a fixed C-string buffer, zero-filling and always leaving a
+/// trailing NUL (truncating an over-long string rather than overrunning).
+pub(crate) fn fill_c_str(dst: &mut [c_char], s: &str) {
+    for slot in dst.iter_mut() {
+        *slot = 0;
+    }
+    let cap = dst.len().saturating_sub(1);
+    for (slot, byte) in dst.iter_mut().zip(s.bytes().take(cap)) {
+        *slot = byte as c_char;
+    }
+}
+
 /// Nav point data returned by `gtd_nav_file_get_nav_point`.
 #[repr(C)]
 #[derive(Clone, Copy)]

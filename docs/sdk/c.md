@@ -82,6 +82,7 @@ In [`sdk/c/examples/`](../../sdk/c/examples/). Configure the C SDK with
 - [`read_file`](../../sdk/c/examples/read_file.c): open a `.gtd` file and print a content summary.
 - [`with_satellites`](../../sdk/c/examples/with_satellites.c): pair each fix with a per-satellite signal report.
 - [`event_markers`](../../sdk/c/examples/event_markers.c): write and read hierarchical event markers (`variant_path`).
+- [`channels`](../../sdk/c/examples/channels.c): attach scalar and vector sensor channels and read them back.
 - [`from_csv`](../../sdk/c/examples/from_csv.c): convert CSV rows into a `.gtd` file.
 - [`from_multiple_sources`](../../sdk/c/examples/from_multiple_sources.c): merge fixes and events from separate sources, interpolating event positions.
 - [`gold_dataset`](../../sdk/c/examples/gold_dataset.c): build the cross-SDK reference file from shared fixtures and verify the round-trip.
