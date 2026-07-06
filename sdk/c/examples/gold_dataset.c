@@ -397,21 +397,22 @@ static void load_events(GtdFileBuilder *b, const char *base) {
 }
 
 /* One accumulator per channel; each CSV row is one sample, and the metadata
-   columns repeat and are read once (on the first row for a name). */
+   columns repeat and are read once (on the first row for a name). Fields are
+   ordered largest-alignment first to avoid struct padding. */
 typedef struct {
-    char name[CH_NAME_BUFSIZE];
-    char unit[CH_UNIT_BUFSIZE];
-    int has_unit;
+    GtdTimestamp times[MAX_CH_SAMPLES];
+    double values[MAX_CH_SAMPLES * MAX_CH_COMPONENTS];
     GtdOptF64 period_deg;
-    char description[CH_DESC_BUFSIZE];
-    int has_description;
-    char comp_storage[MAX_CH_COMPONENTS][CH_COMP_BUFSIZE];
     const char *components[MAX_CH_COMPONENTS];
     size_t n_components;
-    GtdTimestamp times[MAX_CH_SAMPLES];
     size_t n_times;
-    double values[MAX_CH_SAMPLES * MAX_CH_COMPONENTS];
     size_t n_values;
+    int has_unit;
+    int has_description;
+    char name[CH_NAME_BUFSIZE];
+    char unit[CH_UNIT_BUFSIZE];
+    char description[CH_DESC_BUFSIZE];
+    char comp_storage[MAX_CH_COMPONENTS][CH_COMP_BUFSIZE];
 } ChannelAcc;
 
 static void load_channels(GtdFileBuilder *b, const char *base) {
@@ -483,7 +484,7 @@ static void load_channels(GtdFileBuilder *b, const char *base) {
             double v = strtod(vcols[i], &end);
             if (end == vcols[i])
                 FAIL("invalid channel value");
-            if (ch->n_values >= MAX_CH_SAMPLES * MAX_CH_COMPONENTS)
+            if (ch->n_values >= (size_t)MAX_CH_SAMPLES * MAX_CH_COMPONENTS)
                 FAIL("too many channel values");
             ch->values[ch->n_values++] = v;
         }
