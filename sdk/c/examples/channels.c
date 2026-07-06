@@ -32,10 +32,10 @@ int main(void) {
     double accel_vals[9]; /* 3 samples x 3 components, row-major */
     for (size_t i = 0; i < 3; i++) {
         times[i] = gtd_ts_from_seconds(BASE_EPOCH + i);
-        incline_vals[i] = 1.0 + (double)i * 0.5;
-        accel_vals[i * 3 + 0] = 0.1 * (double)i;
-        accel_vals[i * 3 + 1] = 0.2;
-        accel_vals[i * 3 + 2] = 0.98;
+        incline_vals[i] = 1.0 + ((double)i * 0.5);
+        accel_vals[(i * 3) + 0] = 0.1 * (double)i;
+        accel_vals[(i * 3) + 1] = 0.2;
+        accel_vals[(i * 3) + 2] = 0.98;
     }
 
     GtdChannel incline = {0};
