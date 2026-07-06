@@ -352,8 +352,10 @@ void load_channels(geotrace::FileBuilder &b, const fs::path &base) {
             ch = &channels.back();
         }
 
-        if (auto ts = parse_ts(cols[5]))
-            ch->times.push_back(*ts);
+        auto ts = parse_ts(cols[5]);
+        if (!ts)
+            throw geotrace::IoError("channels.csv: invalid timestamp");
+        ch->times.push_back(*ts);
         for (const auto &value : split(cols[6], ';'))
             ch->values.push_back(std::stod(value));
     }
@@ -389,6 +391,19 @@ void verify_counts(const geotrace::NavFile &file) {
     auto em = file.event_marker_count();
     if (em != 6)
         throw std::runtime_error("expected 6 event markers, got " + std::to_string(em));
+
+    auto nch = file.channel_count();
+    if (nch != 2)
+        throw std::runtime_error("expected 2 channels, got " + std::to_string(nch));
+    for (std::size_t i = 0; i < nch; i++) {
+        auto ch = file.channel(i);
+        if (ch.name == "accel")
+            check(ch.is_vector() && ch.components == std::vector<std::string>{"x", "y", "z"},
+                  "accel components wrong");
+        if (ch.name == "heading_raw")
+            check(ch.period.has_value() && ch.period->as_degrees() == 360.0,
+                  "heading_raw period wrong");
+    }
 }
 
 } // namespace
@@ -414,7 +429,7 @@ int main(int argc, char **argv) {
         verify_counts(nav);
 
         std::cout << "Written: " << out << "\n";
-        std::cout << "Gold dataset verified. Nav points: 189, Event markers: 6\n";
+        std::cout << "Gold dataset verified. Nav points: 189, Event markers: 6, Channels: 2\n";
     } catch (const std::exception &e) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;

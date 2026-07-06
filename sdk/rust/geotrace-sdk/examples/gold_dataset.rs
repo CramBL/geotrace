@@ -300,6 +300,14 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
         assert_eq!(hex, "#FF00FF");
     }
 
+    let channels = file.channels();
+    assert_eq!(channels.len(), 2);
+    let accel = channels.iter().find(|c| c.name() == "accel").unwrap();
+    assert!(accel.is_vector());
+    assert_eq!(accel.components(), ["x", "y", "z"]);
+    let heading = channels.iter().find(|c| c.name() == "heading_raw").unwrap();
+    assert_eq!(heading.period().map(|a| a.as_degrees()), Some(360.0));
+
     Ok(())
 }
 
@@ -336,11 +344,9 @@ fn load_channels(
         let acc = if let Some(existing) = channels.iter_mut().find(|(n, _)| n.as_str() == cols[0]) {
             &mut existing.1
         } else {
-            let split = |s: &str| {
-                s.split(';')
-                    .map(|p| p.trim().to_string())
-                    .collect::<Vec<_>>()
-            };
+            // No per-component trim: the other SDK ports split on ';' without
+            // trimming, so keep this byte-identical for the gold fixture.
+            let split = |s: &str| s.split(';').map(str::to_string).collect::<Vec<_>>();
             channels.push((
                 cols[0].to_string(),
                 Acc {

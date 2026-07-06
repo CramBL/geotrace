@@ -195,8 +195,9 @@ def _load_channels(builder: NavFileBuilder, base: Path) -> None:
             accumulators[name] = acc
             order.append(name)
         time = _parse_ts(cols[5])
-        if time is not None:
-            acc.times.append(time)
+        if time is None:
+            raise ValueError("channels.csv: invalid timestamp")
+        acc.times.append(time)
         acc.values.extend(float(v) for v in cols[6].split(";"))
 
     for name in order:

@@ -45,6 +45,10 @@
 #define MAX_CHANNELS      8
 #define MAX_CH_SAMPLES    64
 #define MAX_CH_COMPONENTS 8
+#define CH_NAME_BUFSIZE   64
+#define CH_UNIT_BUFSIZE   32
+#define CH_DESC_BUFSIZE   256
+#define CH_COMP_BUFSIZE   32
 
 static void rtrim(char *s) {
     size_t n = strlen(s);
@@ -395,13 +399,13 @@ static void load_events(GtdFileBuilder *b, const char *base) {
 /* One accumulator per channel; each CSV row is one sample, and the metadata
    columns repeat and are read once (on the first row for a name). */
 typedef struct {
-    char name[64];
-    char unit[32];
+    char name[CH_NAME_BUFSIZE];
+    char unit[CH_UNIT_BUFSIZE];
     int has_unit;
     GtdOptF64 period_deg;
-    char description[256];
+    char description[CH_DESC_BUFSIZE];
     int has_description;
-    char comp_storage[MAX_CH_COMPONENTS][32];
+    char comp_storage[MAX_CH_COMPONENTS][CH_COMP_BUFSIZE];
     const char *components[MAX_CH_COMPONENTS];
     size_t n_components;
     GtdTimestamp times[MAX_CH_SAMPLES];
@@ -467,7 +471,10 @@ static void load_channels(GtdFileBuilder *b, const char *base) {
 
         if (ch->n_times >= MAX_CH_SAMPLES)
             FAIL("too many channel samples");
-        ch->times[ch->n_times++] = parse_ts(cols[5]);
+        GtdTimestamp ch_ts = parse_ts(cols[5]);
+        if (gtd_ts_is_none(ch_ts))
+            FAIL("invalid channel timestamp");
+        ch->times[ch->n_times++] = ch_ts;
 
         char *vcols[MAX_CH_COMPONENTS];
         int nv = split_delim(cols[6], ';', vcols, MAX_CH_COMPONENTS);
@@ -528,6 +535,19 @@ static void verify_counts(const GtdNavFile *f) {
     size_t em = gtd_nav_file_event_marker_count(f);
     if (em != 6)
         FAILF("expected 6 event markers, got %zu", em);
+
+    size_t nch = gtd_nav_file_channel_count(f);
+    if (nch != 2)
+        FAILF("expected 2 channels, got %zu", nch);
+    for (size_t i = 0; i < nch; i++) {
+        GtdChannelInfo ci;
+        CHECK_SDK(gtd_nav_file_get_channel(f, i, &ci), "get_channel");
+        if (strcmp(ci.name, "accel") == 0)
+            CHECK(ci.component_count == 3, "accel should have 3 components");
+        if (strcmp(ci.name, "heading_raw") == 0)
+            CHECK(ci.period_deg.present && ci.period_deg.value == 360.0,
+                  "heading_raw period wrong");
+    }
 }
 
 int main(int argc, char **argv) {
@@ -561,6 +581,6 @@ int main(int argc, char **argv) {
     gtd_nav_file_destroy(nav);
 
     printf("Written: %s\n", out_path);
-    printf("Gold dataset verified. Nav points: 189, Event markers: 6\n");
+    printf("Gold dataset verified. Nav points: 189, Event markers: 6, Channels: 2\n");
     return 0;
 }
