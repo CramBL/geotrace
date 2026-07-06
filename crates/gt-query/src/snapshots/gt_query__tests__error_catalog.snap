@@ -29,7 +29,7 @@ expression: catalog
     ),
     (
         "points | window 0 s",
-        "9..19: a window duration must be positive",
+        "9..19: a window duration must be a positive number",
     ),
     (
         "points | window 3 | window 4",

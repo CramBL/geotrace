@@ -271,23 +271,30 @@ fn duration_windows(
 ) -> Option<bool> {
     let len = matched.len();
     // Each point's time places a window's span; a nav point always has one, so
-    // in practice none are missing. The last time is how far the data reaches,
-    // which bounds where a full window fits.
+    // in practice none are missing.
     let times: Vec<Option<f64>> = (0..len).map(|i| ctx.raw(QueryMetric::Time, i)).collect();
-    let last_time = times.iter().rev().find_map(|t| *t);
+    // How far the data reaches, which bounds where a full window fits. Taken as
+    // the max rather than the last value: this crate does not assume per-track
+    // time is monotonic (see `derived_accel`, which flags backward steps), so a
+    // clock jump must not make later anchors vanish.
+    let max_time = times
+        .iter()
+        .flatten()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max);
     let mut any_fit = false;
     for start in 0..len {
         if start % check_interval == 0 && should_cancel() {
             return None;
         }
-        let (Some(t_start), Some(t_last)) = (times.get(start).copied().flatten(), last_time) else {
+        let Some(t_start) = times.get(start).copied().flatten() else {
             continue;
         };
         // The full duration must fit: the data has to reach `t_start + secs`.
-        // Present times are sorted, so once a window overruns the end, every
-        // later anchor does too.
-        if t_start + secs > t_last {
-            break;
+        // Skip (not break) an anchor whose window overruns, since without a
+        // monotonic-time assumption a later anchor may still fit.
+        if t_start + secs > max_time {
+            continue;
         }
         any_fit = true;
         // The contiguous points with time in `[t_start, t_start + secs)`; the

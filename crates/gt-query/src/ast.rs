@@ -57,15 +57,6 @@ pub enum Window {
     Duration { value: f64, unit: Unit, span: Span },
 }
 
-impl Window {
-    /// The source span of the whole `window` argument, for error underlining.
-    pub fn span(self) -> Span {
-        match self {
-            Window::Count { span, .. } | Window::Duration { span, .. } => span,
-        }
-    }
-}
-
 /// One `name value` entry of the `with` stage.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParamDecl {

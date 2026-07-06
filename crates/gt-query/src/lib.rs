@@ -276,6 +276,52 @@ mod tests {
     }
 
     #[test]
+    fn a_fractional_duration_window_spans_sub_second() {
+        // Points at 0, 0.4, 0.8, 1.2 s. A 0.5 s window at anchor 0 spans [0, 0.5),
+        // holding points 0 and 1; the last anchor that fits is at 0.8 s (0.8+0.5
+        // = 1.3 > 1.2, so it does not fit — only anchors 0 and 1 fit).
+        let provider = TestProvider::new(4)
+            .with(
+                QueryMetric::Time,
+                vec![Some(0.0), Some(0.4), Some(0.8), Some(1.2)],
+            )
+            .with(
+                QueryMetric::Velocity,
+                vec![Some(10.0), Some(10.0), Some(0.0), Some(0.0)],
+            );
+        let output = run_one(
+            "points | window 0.5 s | where avg(velocity) > 5 km/h",
+            &provider,
+        );
+        // Anchor 0 (pts 0,1 avg 10, match); anchor 1 (pts 1,2 avg 5 m/s, match).
+        assert_eq!(output.matches[0].ranges, vec![0..3]);
+    }
+
+    #[test]
+    fn a_duration_window_survives_a_backward_time_step() {
+        // A backward clock jump at point 2 (times 0, 1, 0, 1 s): the crate does
+        // not assume monotonic time, so anchors after the jump must still be
+        // evaluated, not silently dropped.
+        let provider = TestProvider::new(4)
+            .with(
+                QueryMetric::Time,
+                vec![Some(0.0), Some(1.0), Some(0.0), Some(1.0)],
+            )
+            .with(
+                QueryMetric::Velocity,
+                vec![Some(0.0), Some(0.0), Some(10.0), Some(10.0)],
+            );
+        // window 2 s never fits (max time is 1 s), but the fast pair after the
+        // jump proves the loop reaches them: with window 1 s, anchor 2 spans
+        // [0,1) = point 2 (avg 10, match), which a `break` would have skipped.
+        let output = run_one(
+            "points | window 1 s | where avg(velocity) > 5 km/h",
+            &provider,
+        );
+        assert!(output.matches.iter().any(|m| m.ranges.contains(&(2..3))));
+    }
+
+    #[test]
     fn a_duration_window_spans_real_time_not_point_count() {
         // Uneven spacing: points at 0, 1, 5, 6 s. A 2 s window at point 0 holds
         // only points 0 and 1 (point at 5 s is outside [0, 2)); the sparse

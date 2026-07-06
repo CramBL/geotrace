@@ -8,7 +8,10 @@
 use gt_types::DisplayMode;
 
 use crate::Diagnostic;
-use crate::ast::{BinaryOp, Expr, Func, NumberLit, ParamDecl, ParamName, Query, Span, UnaryOp};
+use crate::ast::{
+    BinaryOp, Expr, Func, NumberLit, ParamDecl, ParamName, Query, Span, UnaryOp,
+    Window as AstWindow,
+};
 use crate::dimension::Dimension;
 use crate::fmt::Superscript;
 use crate::metric::{Quantity, QueryMetric};
@@ -22,11 +25,9 @@ pub struct Params {
     pub slip_window_s: Option<f64>,
 }
 
-/// The window a query aggregates over, resolved from the `window` stage.
-///
-/// A window is a time span anchored at each nav point; an aggregate reduces the
-/// metric's native samples within that span. Only the point-count kind exists
-/// today; a time-based form is planned.
+/// The window a query aggregates over, resolved from the `window` stage: a fixed
+/// point count or a fixed time span. Either way it is a time span anchored at
+/// each nav point over which an aggregate reduces the metric's native samples.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Window {
     /// A span of `n` consecutive points: at anchor `i` the points `[i, i+n)` and
@@ -349,11 +350,11 @@ pub fn check(query: &Query) -> Result<CheckedQuery, Diagnostic> {
         None => None,
         // The conversion only fails on targets where usize is narrower than
         // u64; kept as a defensive branch rather than an assumption.
-        Some(crate::ast::Window::Count { len, span }) => {
+        Some(AstWindow::Count { len, span }) => {
             let n = usize::try_from(len).map_err(|_overflow| err(span, "window is too large"))?;
             Some(Window::Count(n))
         }
-        Some(crate::ast::Window::Duration { value, unit, span }) => {
+        Some(AstWindow::Duration { value, unit, span }) => {
             if unit.quantity() != Quantity::Duration {
                 return Err(err_hint(
                     span,
@@ -361,8 +362,10 @@ pub fn check(query: &Query) -> Result<CheckedQuery, Diagnostic> {
                     "try s, min, or h, e.g. window 15 s",
                 ));
             }
-            if value <= 0.0 {
-                return Err(err(span, "a window duration must be positive"));
+            // Reject zero, negative, and the infinity an overlong digit run
+            // lexes to, so a duration is always a real positive span.
+            if !(value > 0.0 && value.is_finite()) {
+                return Err(err(span, "a window duration must be a positive number"));
             }
             Some(Window::Duration(value * unit.to_base()))
         }
