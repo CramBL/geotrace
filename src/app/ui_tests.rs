@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::{
     sync::Arc,
     thread,
@@ -1255,8 +1256,7 @@ fn snapshot_history_locked_dialog() {
         .size(egui::vec2(640.0, 420.0))
         .eframe(build_app);
     harness.inner.step();
-    harness.inner.state_mut().pending_history_unlock =
-        Some(std::path::PathBuf::from("geotrace.h5"));
+    harness.inner.state_mut().pending_history_unlock = Some(PathBuf::from("geotrace.h5"));
     harness.run();
     harness.snapshot("history_locked_dialog");
 }
@@ -1267,7 +1267,7 @@ fn snapshot_history_corrupt_dialog() {
         .size(egui::vec2(640.0, 420.0))
         .eframe(build_app);
     harness.inner.step();
-    harness.inner.state_mut().pending_db_corruption = Some(std::path::PathBuf::from("geotrace.h5"));
+    harness.inner.state_mut().pending_db_corruption = Some(PathBuf::from("geotrace.h5"));
     harness.run();
     harness.snapshot("history_corrupt_dialog");
 }

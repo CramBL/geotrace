@@ -7,13 +7,14 @@
     reason = "fixture generator binary - panicking on errors is intentional"
 )]
 
+use std::path::PathBuf;
+
 use geotrace_sdk::{
     Angle, Constellation, NavFileBuilder, NavFix, Satellite, SatelliteReport, Velocity,
 };
 
 fn main() {
-    let out = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../c/tests/fixtures/minimal.gtd");
+    let out = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../c/tests/fixtures/minimal.gtd");
 
     let t0 =
         chrono::DateTime::from_timestamp_micros(1_700_000_000_000_000).expect("valid timestamp");

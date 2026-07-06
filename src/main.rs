@@ -3,6 +3,8 @@ pub mod app;
 pub mod settings;
 pub mod terms;
 
+use std::path::PathBuf;
+
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -64,8 +66,7 @@ fn main() -> eframe::Result {
     }
     log_builder.init();
 
-    let initial_paths: Vec<std::path::PathBuf> =
-        raw_args.iter().map(std::path::PathBuf::from).collect();
+    let initial_paths: Vec<PathBuf> = raw_args.iter().map(PathBuf::from).collect();
 
     // Safety net for very large recordings: egui packs the whole frame into
     // one vertex buffer, and eframe's default device limits cap buffers at

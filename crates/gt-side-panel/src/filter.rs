@@ -351,6 +351,7 @@ fn parse_duration_input(s: &str) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use std::fmt::Write as _;
+    use std::path::PathBuf;
 
     use gt_types::TimeRange;
 
@@ -430,7 +431,7 @@ mod tests {
             tracks: vec![],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
-            source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
+            source: gt_types::FileSource::GtdPath(PathBuf::from("test.gtd")),
             load_warnings: vec![],
         };
         let range = compute_full_time_range(&[file]);

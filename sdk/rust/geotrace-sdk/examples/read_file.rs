@@ -20,6 +20,7 @@
     reason = "SDK example: demonstration code"
 )]
 
+use std::path::PathBuf;
 use std::{env, error::Error, fs};
 
 use geotrace_sdk::{Angle, DateTime, NavFile, NavFileBuilder, NavFix, Utc};
@@ -27,7 +28,7 @@ use geotrace_sdk::{Angle, DateTime, NavFile, NavFileBuilder, NavFix, Utc};
 fn main() -> Result<(), Box<dyn Error>> {
     // Use the path argument if given, otherwise generate a throwaway file.
     let (path, temp) = match env::args().nth(1) {
-        Some(arg) => (std::path::PathBuf::from(arg), false),
+        Some(arg) => (PathBuf::from(arg), false),
         None => (generate_sample()?, true),
     };
 
@@ -72,7 +73,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 /// Write a small sample file to a temp path and return it.
-fn generate_sample() -> Result<std::path::PathBuf, Box<dyn Error>> {
+fn generate_sample() -> Result<PathBuf, Box<dyn Error>> {
     let t = |s: &str| s.parse::<DateTime<Utc>>().expect("valid timestamp");
 
     let mut recorder = NavFileBuilder::new().open();

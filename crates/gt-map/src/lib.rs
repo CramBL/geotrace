@@ -948,6 +948,8 @@ fn show_sticky_popup(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::hover_labels::candidate_label;
     use gt_test_utils::nav_test_data;
@@ -1007,9 +1009,7 @@ mod tests {
             tracks: vec![track],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
-            source: gt_types::FileSource::GtdPath(std::path::PathBuf::from(format!(
-                "test_{n}.gtd"
-            ))),
+            source: gt_types::FileSource::GtdPath(PathBuf::from(format!("test_{n}.gtd"))),
             load_warnings: vec![],
         }
     }
@@ -1100,7 +1100,7 @@ mod tests {
             tracks,
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
-            source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
+            source: gt_types::FileSource::GtdPath(PathBuf::from("test.gtd")),
             load_warnings: vec![],
         }
     }
@@ -1370,7 +1370,7 @@ mod tests {
             tracks: vec![track],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
-            source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
+            source: gt_types::FileSource::GtdPath(PathBuf::from("test.gtd")),
             load_warnings: vec![],
         };
 
@@ -1394,6 +1394,8 @@ mod tests {
 
 #[cfg(test)]
 mod snapshot_tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::test_harness::TestHarness;
     use gt_types::{DataCategory, DisplayMode, FileIdx, PointIdx, TrackIdx, TrackRef};
@@ -1514,7 +1516,7 @@ mod snapshot_tests {
             tracks: vec![track],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
-            source: gt_types::FileSource::GtdPath(std::path::PathBuf::from("snapshot_test.gtd")),
+            source: gt_types::FileSource::GtdPath(PathBuf::from("snapshot_test.gtd")),
             load_warnings: vec![],
         }
     }

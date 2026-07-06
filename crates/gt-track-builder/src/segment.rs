@@ -828,6 +828,8 @@ fn precompute_ghost_positions(points: &mut [NavPoint]) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use chrono::TimeZone;
     use gt_types::coordinates::{Latitude, Longitude};
@@ -1057,7 +1059,7 @@ mod tests {
             vec![],
             &[],
             &SegmentationConfig::default(),
-            FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
+            FileSource::GtdPath(PathBuf::from("test.gtd")),
             vec![],
         );
         assert!(f.tracks.is_empty());
@@ -1080,7 +1082,7 @@ mod tests {
             vec![],
             &[],
             &SegmentationConfig::default(),
-            FileSource::GtdPath(std::path::PathBuf::from("ride.gtd")),
+            FileSource::GtdPath(PathBuf::from("ride.gtd")),
             vec![],
         );
         assert_eq!(f.tracks.len(), 2);
@@ -1123,7 +1125,7 @@ mod tests {
             vec![],
             std::slice::from_ref(&channel),
             &SegmentationConfig::default(),
-            FileSource::GtdPath(std::path::PathBuf::from("ride.gtd")),
+            FileSource::GtdPath(PathBuf::from("ride.gtd")),
             vec![],
         );
         assert_eq!(f.tracks.len(), 2);
@@ -1169,7 +1171,7 @@ mod tests {
             vec![],
             std::slice::from_ref(&channel),
             &SegmentationConfig::default(),
-            FileSource::GtdPath(std::path::PathBuf::from("ride.gtd")),
+            FileSource::GtdPath(PathBuf::from("ride.gtd")),
             vec![],
         );
         assert_eq!(f.tracks.len(), 2);
@@ -1430,7 +1432,7 @@ mod tests {
             vec![],
             &[],
             &SegmentationConfig::default(),
-            FileSource::GtdPath(std::path::PathBuf::from("test.gtd")),
+            FileSource::GtdPath(PathBuf::from("test.gtd")),
             vec![],
         );
         assert_eq!(f.tracks.len(), 2, "expected two tracks");
