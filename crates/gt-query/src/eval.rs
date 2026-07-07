@@ -439,6 +439,7 @@ fn eval_bool(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<bool> {
         }
         CExpr::Const(_)
         | CExpr::Metric(_)
+        | CExpr::Channel(_)
         | CExpr::Agg { .. }
         | CExpr::Abs(_)
         | CExpr::Sqrt(_)
@@ -496,8 +497,11 @@ fn eval_num(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<f64> {
             }
             Some(result)
         }
-        // Condition nodes never appear in value position.
-        CExpr::Not(_) | CExpr::Cmp { .. } | CExpr::Logic { .. } => None,
+        // Channel sample reduction is not wired up yet, so a channel yields no
+        // value; its window poisons and never silently matches (the next PR
+        // reduces its native samples over the window span). Condition nodes
+        // never appear in value position.
+        CExpr::Channel(_) | CExpr::Not(_) | CExpr::Cmp { .. } | CExpr::Logic { .. } => None,
     }
 }
 

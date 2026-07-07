@@ -33,7 +33,7 @@ mod position;
 mod unit;
 
 pub use ast::{ParamName, Query, Span};
-pub use check::{CheckedQuery, Params, Window, check};
+pub use check::{ChannelInfo, ChannelSchema, CheckedQuery, Params, Window, check};
 pub use construct::{Construct, ConstructKind, catalog};
 pub use dimension::Dimension;
 pub use eval::{
@@ -144,7 +144,13 @@ mod tests {
     }
 
     fn checked(src: &str) -> CheckedQuery {
-        check(&parse(src).unwrap()).unwrap()
+        check(&parse(src).unwrap(), &ChannelSchema::new()).unwrap()
+    }
+
+    /// Check with an empty channel schema, for the many tests that reference no
+    /// channels. Tests that need channels build their own schema.
+    fn chk(query: &Query) -> Result<CheckedQuery, Diagnostic> {
+        check(query, &ChannelSchema::new())
     }
 
     #[test]
@@ -581,7 +587,7 @@ mod tests {
     fn pinned_error_messages(#[case] src: &str, #[case] expected: &str) {
         // The error may come from either the parse or the check stage.
         let message = parse(src)
-            .and_then(|q| check(&q).map(|_| ()))
+            .and_then(|q| chk(&q).map(|_| ()))
             .expect_err(src)
             .message;
         assert_eq!(message, expected, "for {src}");
@@ -589,7 +595,7 @@ mod tests {
 
     #[test]
     fn util_mask_error_has_the_add_help() {
-        let err = check(&parse("points | where util_gps < 50 %").unwrap()).unwrap_err();
+        let err = chk(&parse("points | where util_gps < 50 %").unwrap()).unwrap_err();
         assert_eq!(err.help.as_deref(), Some("add: | with mask 15 deg"));
     }
 
@@ -599,7 +605,7 @@ mod tests {
         // `message`, so the editor shows it as a separate "Hint:" line without
         // parsing the message.
         let err =
-            check(&parse("points | window 10 | where velocity > 30 km/h").unwrap()).unwrap_err();
+            chk(&parse("points | window 10 | where velocity > 30 km/h").unwrap()).unwrap_err();
         assert_eq!(err.message, "velocity is per point");
         assert_eq!(
             err.help.as_deref(),
@@ -621,10 +627,10 @@ mod tests {
     fn acceleration_units_and_kmh_alias(#[case] src: &str, #[case] error: Option<&str>) {
         match error {
             None => {
-                check(&parse(src).expect(src)).expect(src);
+                chk(&parse(src).expect(src)).expect(src);
             }
             Some(message) => {
-                assert_eq!(check(&parse(src).unwrap()).unwrap_err().message, message);
+                assert_eq!(chk(&parse(src).unwrap()).unwrap_err().message, message);
             }
         }
     }
@@ -657,7 +663,7 @@ mod tests {
     #[case("points | where velocity * clock_delta > eph")]
     #[case("points | where velocity / eph > 2 per min")]
     fn arithmetic_accepts_well_formed_dimensions(#[case] src: &str) {
-        check(&parse(src).expect(src)).expect(src);
+        chk(&parse(src).expect(src)).expect(src);
     }
 
     /// The rejected side of the algebra. A product or quotient with an exotic
@@ -690,7 +696,7 @@ mod tests {
         "conditions do not support arithmetic"
     )]
     fn arithmetic_rejects_with_message(#[case] src: &str, #[case] expected: &str) {
-        let message = check(&parse(src).expect(src)).expect_err(src).message;
+        let message = chk(&parse(src).expect(src)).expect_err(src).message;
         assert_eq!(message, expected, "for {src}");
     }
 
@@ -735,7 +741,7 @@ mod tests {
     #[case("points | where sats_fix == 6", true)]
     #[case("points | where velocity == 30 km/h", false)]
     fn equality_is_allowed_only_on_counts(#[case] src: &str, #[case] accepted: bool) {
-        assert_eq!(check(&parse(src).unwrap()).is_ok(), accepted, "for {src}");
+        assert_eq!(chk(&parse(src).unwrap()).is_ok(), accepted, "for {src}");
     }
 
     /// A ratio compares against `%`, never a bare number - a bare number is the
@@ -744,7 +750,7 @@ mod tests {
     #[case("points | with mask 15 deg | where util_all < 50 %", true)]
     #[case("points | with mask 15 deg | where util_all < 50", false)]
     fn a_ratio_metric_needs_a_percent_literal(#[case] src: &str, #[case] accepted: bool) {
-        assert_eq!(check(&parse(src).unwrap()).is_ok(), accepted, "for {src}");
+        assert_eq!(chk(&parse(src).unwrap()).is_ok(), accepted, "for {src}");
     }
 
     /// `var` squares the argument's dimension: `var(velocity)` is a squared
@@ -778,11 +784,11 @@ mod tests {
     fn var_squares_the_dimension(#[case] src: &str, #[case] error: Option<&str>) {
         match error {
             None => {
-                check(&parse(src).expect(src)).expect(src);
+                chk(&parse(src).expect(src)).expect(src);
             }
             Some(message) => {
                 assert_eq!(
-                    check(&parse(src).unwrap()).unwrap_err().message,
+                    chk(&parse(src).unwrap()).unwrap_err().message,
                     message,
                     "for {src}"
                 );
@@ -793,7 +799,7 @@ mod tests {
     #[test]
     fn var_on_a_direction_suggests_std() {
         let err =
-            check(&parse("points | window 3 | where var(heading) < 1 deg").unwrap()).unwrap_err();
+            chk(&parse("points | window 3 | where var(heading) < 1 deg").unwrap()).unwrap_err();
         assert_eq!(err.message, "var is not defined for a direction");
         assert_eq!(
             err.help.as_deref(),
@@ -878,11 +884,11 @@ mod tests {
     fn power_scales_the_dimension(#[case] src: &str, #[case] error: Option<&str>) {
         match error {
             None => {
-                check(&parse(src).expect(src)).expect(src);
+                chk(&parse(src).expect(src)).expect(src);
             }
             Some(message) => {
                 assert_eq!(
-                    check(&parse(src).unwrap()).unwrap_err().message,
+                    chk(&parse(src).unwrap()).unwrap_err().message,
                     message,
                     "for {src}"
                 );
@@ -948,11 +954,11 @@ mod tests {
     fn sqrt_needs_a_perfect_square(#[case] src: &str, #[case] error: Option<&str>) {
         match error {
             None => {
-                check(&parse(src).expect(src)).expect(src);
+                chk(&parse(src).expect(src)).expect(src);
             }
             Some(message) => {
                 assert_eq!(
-                    check(&parse(src).unwrap()).unwrap_err().message,
+                    chk(&parse(src).unwrap()).unwrap_err().message,
                     message,
                     "for {src}"
                 );
@@ -962,7 +968,7 @@ mod tests {
 
     #[test]
     fn sqrt_on_a_non_square_suggests_squaring_first() {
-        let err = check(&parse("points | where sqrt(velocity) > 0").unwrap()).unwrap_err();
+        let err = chk(&parse("points | where sqrt(velocity) > 0").unwrap()).unwrap_err();
         assert_eq!(
             err.help.as_deref(),
             Some("square the values first, e.g. sqrt(x² + y²)")
@@ -972,7 +978,7 @@ mod tests {
     #[test]
     fn a_squared_comparison_suggests_sqrt() {
         // The squared side has a matching root, so the fix is to take it.
-        let err = check(&parse("points | where velocity² > 30 km/h").unwrap()).unwrap_err();
+        let err = chk(&parse("points | where velocity² > 30 km/h").unwrap()).unwrap_err();
         assert_eq!(err.message, "cannot compare speed² with speed");
         assert_eq!(err.help.as_deref(), Some("take its square root with sqrt"));
     }
@@ -1004,13 +1010,142 @@ mod tests {
         assert!(query.to_string().contains(&expected));
     }
 
+    /// A scalar channel schema entry for `@name` with the given unit/period.
+    fn schema_with(name: &str, unit: Option<&str>, period_deg: Option<f64>) -> ChannelSchema {
+        let mut schema = ChannelSchema::new();
+        schema.insert(
+            name,
+            ChannelInfo {
+                unit: unit.map(str::to_owned),
+                period_deg,
+                components: vec![],
+            },
+        );
+        schema
+    }
+
     #[test]
-    fn a_channel_is_not_yet_supported_by_the_checker() {
-        // Grammar-only for now: the reference parses but the checker rejects it
-        // until schema-aware checking lands.
-        let err =
-            check(&parse("points | window 10 | where max(@accel.x) > 0.1 g").unwrap()).unwrap_err();
-        assert_eq!(err.message, "channels are not supported yet");
+    fn a_channel_absent_from_the_schema_is_no_such_channel() {
+        // An empty schema knows no channels.
+        let err = check(
+            &parse("points | window 10 | where max(@accel) > 0.1 g").unwrap(),
+            &ChannelSchema::new(),
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "no such channel @accel");
+    }
+
+    #[test]
+    fn a_scalar_channel_resolves_to_its_unit_dimension() {
+        // @accel (unit g) is an acceleration, so it compares to an acceleration
+        // literal and rejects a speed.
+        let schema = schema_with("accel", Some("g"), None);
+        let ok = "points | window 10 | where max(@accel) > 0.1 g";
+        check(&parse(ok).unwrap(), &schema).expect("checks with the schema");
+
+        let bad = "points | window 10 | where max(@accel) > 30 km/h";
+        let err = check(&parse(bad).unwrap(), &schema).unwrap_err();
+        assert_eq!(
+            err.message,
+            "expected a acceleration unit (m/s2, g, km/h/s), found km/h"
+        );
+    }
+
+    #[test]
+    fn a_channel_with_a_period_is_circular_and_accepts_spread() {
+        // @heading (deg, period 360) is a direction, so spread accepts it.
+        let schema = schema_with("heading", Some("deg"), Some(360.0));
+        let ok = "points | window 10 | where spread(@heading) < 10 deg";
+        check(&parse(ok).unwrap(), &schema).expect("checks with the schema");
+    }
+
+    #[rstest]
+    #[case("avg")]
+    #[case("min")]
+    #[case("max")]
+    fn a_direction_channel_rejects_ambiguous_aggregates(#[case] func: &str) {
+        // avg/min/max collapse a direction ambiguously, the same rule the
+        // Direction nav metric follows.
+        let schema = schema_with("heading", Some("deg"), Some(360.0));
+        let src = format!("points | window 10 | where {func}(@heading) < 10 deg");
+        let err = check(&parse(&src).unwrap(), &schema).unwrap_err();
+        assert_eq!(err.message, format!("{func} on a direction is ambiguous"));
+    }
+
+    #[rstest]
+    // No unit and an unrecognised unit both resolve to a bare number: it
+    // compares to a plain number but not to a dimensioned literal.
+    #[case(None)]
+    #[case(Some("furlong"))]
+    fn a_channel_without_a_known_unit_is_a_bare_number(#[case] unit: Option<&str>) {
+        let schema = schema_with("x", unit, None);
+        let ok = "points | window 10 | where max(@x) > 5";
+        check(&parse(ok).unwrap(), &schema).expect("a bare number compares to a number");
+
+        let bad = "points | window 10 | where max(@x) > 5 g";
+        check(&parse(bad).unwrap(), &schema).unwrap_err();
+    }
+
+    #[test]
+    fn a_bare_channel_must_be_aggregated() {
+        // Like a nav-point metric, a channel has no per-point value; used raw it
+        // errors with a hint to wrap it in an aggregate.
+        let schema = schema_with("accel", Some("g"), None);
+        let err = check(
+            &parse("points | window 10 | where @accel > 0.1 g").unwrap(),
+            &schema,
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "@accel is per sample");
+        assert_eq!(
+            err.help.as_deref(),
+            Some("wrap it in an aggregate like max(@accel)")
+        );
+    }
+
+    #[test]
+    fn a_vector_channel_reference_is_deferred() {
+        // Vector channels and component references land in a later PR.
+        let mut schema = ChannelSchema::new();
+        schema.insert(
+            "accel",
+            ChannelInfo {
+                unit: Some("g".to_owned()),
+                period_deg: None,
+                components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
+            },
+        );
+        let err = check(
+            &parse("points | window 10 | where max(@accel.x) > 0.1 g").unwrap(),
+            &schema,
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "vector channels are not supported yet");
+    }
+
+    #[test]
+    fn a_checked_channel_query_does_not_match_until_evaluation_lands() {
+        // Grammar + checking work with a schema, but sample reduction is not
+        // wired up yet, so a channel window never matches (the stub poisons it).
+        // It must not silently produce a match; full skip reporting arrives with
+        // real evaluation in the next PR.
+        let schema = schema_with("incline", Some("deg"), None);
+        let query = check(
+            &parse("points | window 2 | where max(@incline) > 0 deg").unwrap(),
+            &schema,
+        )
+        .expect("checks with the schema");
+        let provider = TestProvider::new(3)
+            .indexed_time()
+            .with(QueryMetric::Heading, vec![Some(1.0), Some(2.0), Some(3.0)]);
+        let output = run(
+            &query,
+            &[TrackInput {
+                track: track_ref(),
+                provider: &provider,
+            }],
+        );
+        assert!(output.matches.is_empty());
     }
 
     #[test]
@@ -1058,7 +1193,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join(" * ");
         let src = format!("points | where {chain} > 0");
-        let result = check(&parse(&src).expect("a long product chain parses"));
+        let result = chk(&parse(&src).expect("a long product chain parses"));
         assert!(
             result.is_err(),
             "an exotic dimension cannot compare to a bare number"
@@ -1068,7 +1203,7 @@ mod tests {
     #[test]
     fn uc1_parses_checks_and_formats() {
         let query = parse(UC1).unwrap();
-        check(&query).unwrap();
+        chk(&query).unwrap();
         insta::assert_debug_snapshot!("uc1_ast", query);
         insta::assert_snapshot!("uc1_canonical", query.to_string());
     }
@@ -1138,7 +1273,7 @@ mod tests {
             .map(|src| {
                 let outcome = match parse(src) {
                     Err(e) => diag_line(&e),
-                    Ok(q) => match check(&q) {
+                    Ok(q) => match chk(&q) {
                         Err(e) => diag_line(&e),
                         Ok(_) => "(no error)".to_owned(),
                     },

@@ -5,17 +5,58 @@
 //! arithmetic. Several error messages here are user-facing UX pinned verbatim
 //! by tests - change them deliberately.
 
+use std::collections::HashMap;
+
 use gt_types::DisplayMode;
 
 use crate::Diagnostic;
 use crate::ast::{
-    BinaryOp, Expr, Func, NumberLit, ParamDecl, ParamName, Query, Span, UnaryOp,
+    BinaryOp, ChannelRef, Expr, Func, NumberLit, ParamDecl, ParamName, Query, Span, UnaryOp,
     Window as AstWindow,
 };
 use crate::dimension::Dimension;
 use crate::fmt::Superscript;
 use crate::metric::{Quantity, QueryMetric};
-use crate::unit::{example_literal, unit_list};
+use crate::unit::{Unit, example_literal, unit_list};
+
+/// What a query needs to know about one ad-hoc channel to type-check a
+/// reference to it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ChannelInfo {
+    /// Unit as written by the producer (`"g"`, `"deg"`), or `None`. Resolved to
+    /// a dimension via [`Unit::from_ident`]; an unrecognised unit is treated as
+    /// a bare number.
+    pub unit: Option<String>,
+    /// Wrap period in degrees for an angular channel, or `None` for a linear
+    /// value. A present period marks the channel circular (a direction).
+    pub period_deg: Option<f64>,
+    /// Vector component labels (`["x", "y", "z"]`), or empty for a scalar
+    /// channel.
+    pub components: Vec<String>,
+}
+
+/// The channels a query may reference, keyed by name. The app builds this from
+/// the loaded files; [`check`] resolves each `@name` against it.
+#[derive(Debug, Clone, Default)]
+pub struct ChannelSchema {
+    channels: HashMap<String, ChannelInfo>,
+}
+
+impl ChannelSchema {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a channel. A later insert with the same name replaces the
+    /// earlier one.
+    pub fn insert(&mut self, name: impl Into<String>, info: ChannelInfo) {
+        self.channels.insert(name.into(), info);
+    }
+
+    fn get(&self, name: &str) -> Option<&ChannelInfo> {
+        self.channels.get(name)
+    }
+}
 
 /// Resolved `with` parameters, in base units.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -91,6 +132,13 @@ impl CheckedQuery {
 pub(crate) enum CExpr {
     Const(f64),
     Metric(QueryMetric),
+    /// A scalar channel referenced by name. Only ever appears inside an
+    /// aggregate, which reduces its native samples over the window span.
+    #[expect(
+        dead_code,
+        reason = "the name is read when channel-sample evaluation lands in the next PR"
+    )]
+    Channel(String),
     Agg {
         func: Func,
         circular: bool,
@@ -326,6 +374,37 @@ fn base_with_exponent(name: &str, exponent: i8) -> String {
     }
 }
 
+/// The value type of a scalar channel from its schema entry. The unit fixes the
+/// dimension; an angular channel with a period wraps, so it is a direction
+/// rather than a plain angle.
+///
+/// An unrecognised or absent unit resolves to a bare number, so a typo'd
+/// producer unit compares only to unitless values rather than erroring. This is
+/// an interim choice: surfacing an unknown unit as a warning is deferred.
+fn channel_value_type(info: &ChannelInfo) -> ValueType {
+    let Some(quantity) = info
+        .unit
+        .as_deref()
+        .and_then(Unit::from_ident)
+        .map(Unit::quantity)
+    else {
+        return ValueType::Dimensionless(Kind::Number);
+    };
+    let vt = value_type(quantity);
+    // A period only means "wraps" for an angle; ignore it otherwise. This keeps
+    // the invariant that `circular` is set only when the dimension is ANGLE.
+    if info.period_deg.is_some()
+        && matches!(vt, ValueType::Dimensioned { dim, .. } if dim == Dimension::ANGLE)
+    {
+        ValueType::Dimensioned {
+            dim: Dimension::ANGLE,
+            circular: true,
+        }
+    } else {
+        vt
+    }
+}
+
 /// Normalise a computed dimension into a value type: a dimensionless result is
 /// a bare [`Kind::Number`], anything else a linear dimensioned value.
 fn dimensioned(dim: Dimension) -> ValueType {
@@ -344,7 +423,7 @@ fn err_hint(span: Span, message: impl Into<String>, help: impl Into<String>) -> 
     Diagnostic::with_hint(span, message, help)
 }
 
-pub fn check(query: &Query) -> Result<CheckedQuery, Diagnostic> {
+pub fn check(query: &Query, schema: &ChannelSchema) -> Result<CheckedQuery, Diagnostic> {
     let params = resolve_params(&query.params)?;
     let window = match query.window {
         None => None,
@@ -374,6 +453,7 @@ pub fn check(query: &Query) -> Result<CheckedQuery, Diagnostic> {
     let mut checker = Checker {
         windowed: window.is_some(),
         referenced: Vec::new(),
+        schema,
     };
     let mut predicates = Vec::new();
     for predicate in &query.predicates {
@@ -554,13 +634,14 @@ fn unused_params(decls: &[ParamDecl], referenced: &[QueryMetric]) -> Vec<ParamNa
         .collect()
 }
 
-struct Checker {
+struct Checker<'a> {
     windowed: bool,
     /// First occurrence of each referenced metric, in source order.
     referenced: Vec<(QueryMetric, Span)>,
+    schema: &'a ChannelSchema,
 }
 
-impl Checker {
+impl Checker<'_> {
     fn expr(&mut self, expr: &Expr, in_agg: bool) -> Result<(ValueType, CExpr), Diagnostic> {
         match expr {
             Expr::Number(lit) => Ok((literal_type(lit), CExpr::Const(literal_base(lit)))),
@@ -580,10 +661,7 @@ impl Checker {
                 }
                 Ok((value_type(m.metric.quantity()), CExpr::Metric(m.metric)))
             }
-            // Channel references parse but are not yet resolvable: schema-aware
-            // checking (the channel schema) arrives in a later PR. Reject them
-            // with a clear message rather than silently ignoring the reference.
-            Expr::Channel(c) => Err(err(c.span, "channels are not supported yet")),
+            Expr::Channel(c) => self.channel(c, in_agg),
             Expr::Unary { op, operand, span } => self.unary(*op, operand, *span, in_agg),
             Expr::Call { func, arg, span } => self.call(*func, arg, *span, in_agg),
             Expr::Binary { op, lhs, rhs, span } => self.binary(*op, lhs, rhs, *span, in_agg),
@@ -619,6 +697,31 @@ impl Checker {
                 exponent,
             },
         ))
+    }
+
+    /// Resolve a channel reference against the schema. Scalar channels only for
+    /// now: a vector channel or a `@name.component` reference is deferred with a
+    /// clear message. Like a nav-point metric, a channel has no per-point value,
+    /// so it must appear inside an aggregate (over a window).
+    fn channel(&self, c: &ChannelRef, in_agg: bool) -> Result<(ValueType, CExpr), Diagnostic> {
+        let Some(info) = self.schema.get(&c.name) else {
+            return Err(err(c.span, format!("no such channel @{}", c.name)));
+        };
+        if c.component.is_some() || !info.components.is_empty() {
+            return Err(err_hint(
+                c.span,
+                "vector channels are not supported yet",
+                "reference a scalar channel like @incline",
+            ));
+        }
+        if !in_agg {
+            return Err(err_hint(
+                c.span,
+                format!("@{} is per sample", c.name),
+                format!("wrap it in an aggregate like max(@{})", c.name),
+            ));
+        }
+        Ok((channel_value_type(info), CExpr::Channel(c.name.clone())))
     }
 
     fn unary(
