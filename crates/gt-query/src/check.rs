@@ -53,8 +53,17 @@ impl ChannelSchema {
         self.channels.insert(name.into(), info);
     }
 
-    fn get(&self, name: &str) -> Option<&ChannelInfo> {
+    /// The info for `name`, if the schema knows it.
+    pub(crate) fn get(&self, name: &str) -> Option<&ChannelInfo> {
         self.channels.get(name)
+    }
+
+    /// Every channel as a `(name, info)` pair, in the map's arbitrary order.
+    /// Callers that show the channels (completion, hover) sort as they see fit.
+    pub(crate) fn iter_unsorted(&self) -> impl Iterator<Item = (&str, &ChannelInfo)> {
+        self.channels
+            .iter()
+            .map(|(name, info)| (name.as_str(), info))
     }
 }
 

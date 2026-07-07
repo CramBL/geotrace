@@ -998,7 +998,7 @@ fn autocomplete_enter_accepts_top_candidate() {
     let mut harness = editor_with_popup("points | wh");
     assert_eq!(
         harness.state().query_window.autocomplete_names(),
-        vec!["where", "with"]
+        vec!["where".to_owned(), "with".to_owned()]
     );
 
     harness.input_mut().events.push(key_press(egui::Key::Enter));
@@ -1125,7 +1125,7 @@ fn snapshot_query_autocomplete_popup() {
         "the popup overflows five rows and shows a footer, got {names:?}"
     );
     assert!(
-        names.contains(&"sats_fix"),
+        names.iter().any(|n| n == "sats_fix"),
         "s-metrics are offered: {names:?}"
     );
 
