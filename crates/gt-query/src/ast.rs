@@ -148,6 +148,19 @@ pub enum Expr {
         exponent: i8,
         span: Span,
     },
+    /// A channel reference: `@name`, or a vector component `@name.component`.
+    /// The checker resolves it against the channel schema.
+    Channel(ChannelRef),
+}
+
+/// A channel reference occurrence in the source: `@name` or `@name.component`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelRef {
+    pub name: String,
+    /// The component after the dot (`@accel.x` → `Some("x")`), or `None` for a
+    /// whole-channel reference.
+    pub component: Option<String>,
+    pub span: Span,
 }
 
 impl Expr {
@@ -155,6 +168,7 @@ impl Expr {
         match self {
             Expr::Number(n) => n.span,
             Expr::Metric(m) => m.span,
+            Expr::Channel(c) => c.span,
             Expr::Unary { span, .. }
             | Expr::Binary { span, .. }
             | Expr::Call { span, .. }

@@ -75,6 +75,11 @@ pub enum Token {
     Number,
     #[regex(r"[a-z_][a-z0-9_]*")]
     Ident,
+    // A channel reference: `@name` or a vector component `@name.x`. Both parts
+    // are lowercase identifiers, matching the SDK's channel-name rule. The
+    // parser splits the name from the optional component.
+    #[regex(r"@[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)?")]
+    Channel,
     // A real token rather than a skip so the highlighter can color comments;
     // `lex` filters it out before parsing. Consuming to end of line is the
     // point, hence the greedy-repetition opt-in logos 0.16 requires.
@@ -126,7 +131,7 @@ impl Token {
             | Token::Not
             | Token::Per => TokenClass::Keyword,
             Token::Number => TokenClass::Number,
-            Token::Ident => TokenClass::Ident,
+            Token::Ident | Token::Channel => TokenClass::Ident,
             Token::Comment => TokenClass::Comment,
             Token::Pipe
             | Token::Comma
@@ -262,6 +267,25 @@ mod tests {
         assert_eq!(kinds("x⁻³"), vec![Token::Ident, Token::Superscript]);
         assert_eq!(kinds("velocity^2"), vec![Token::Ident, Token::CaretPower]);
         assert_eq!(kinds("velocity^-2"), vec![Token::Ident, Token::CaretPower]);
+    }
+
+    #[test]
+    fn channel_references_lex_as_one_channel_token() {
+        let toks = |src| lex(src).unwrap();
+        // A whole-channel reference and a vector component are each one token,
+        // with the `@` and any `.component` kept in the token text.
+        let whole = toks("@accel");
+        assert_eq!(
+            whole.iter().map(|t| t.kind).collect::<Vec<_>>(),
+            vec![Token::Channel]
+        );
+        assert_eq!(whole[0].text, "@accel");
+        let component = toks("@accel.x");
+        assert_eq!(
+            component.iter().map(|t| t.kind).collect::<Vec<_>>(),
+            vec![Token::Channel]
+        );
+        assert_eq!(component[0].text, "@accel.x");
     }
 
     #[test]

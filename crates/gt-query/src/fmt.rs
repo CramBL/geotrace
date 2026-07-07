@@ -75,6 +75,10 @@ impl fmt::Display for Expr {
             Expr::Binary { op, lhs, rhs, .. } => write!(f, "({lhs} {} {rhs})", op.text()),
             Expr::Call { func, arg, .. } => write!(f, "{func}({arg})"),
             Expr::Power { base, exponent, .. } => write!(f, "({base}{})", Superscript(*exponent)),
+            Expr::Channel(c) => match &c.component {
+                Some(comp) => write!(f, "@{}.{comp}", c.name),
+                None => write!(f, "@{}", c.name),
+            },
         }
     }
 }

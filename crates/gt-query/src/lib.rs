@@ -977,6 +977,42 @@ mod tests {
         assert_eq!(err.help.as_deref(), Some("take its square root with sqrt"));
     }
 
+    #[rstest]
+    #[case("points | where @accel > 0", "accel", None)]
+    #[case("points | where @accel.x > 0", "accel", Some("x"))]
+    fn a_channel_reference_parses_and_formats(
+        #[case] src: &str,
+        #[case] name: &str,
+        #[case] component: Option<&str>,
+    ) {
+        use crate::ast::Expr;
+        let query = parse(src).expect(src);
+        // The predicate is `<channel> > 0`; the channel is the comparison's LHS.
+        let Some(Expr::Binary { lhs, .. }) = query.predicates.first() else {
+            panic!("expected a comparison in {src}");
+        };
+        let Expr::Channel(c) = lhs.as_ref() else {
+            panic!("expected a channel reference as the lhs in {src}");
+        };
+        assert_eq!(c.name, name);
+        assert_eq!(c.component.as_deref(), component);
+        // The canonical form round-trips through parse → format unchanged.
+        let expected = match component {
+            Some(comp) => format!("@{name}.{comp}"),
+            None => format!("@{name}"),
+        };
+        assert!(query.to_string().contains(&expected));
+    }
+
+    #[test]
+    fn a_channel_is_not_yet_supported_by_the_checker() {
+        // Grammar-only for now: the reference parses but the checker rejects it
+        // until schema-aware checking lands.
+        let err =
+            check(&parse("points | window 10 | where max(@accel.x) > 0.1 g").unwrap()).unwrap_err();
+        assert_eq!(err.message, "channels are not supported yet");
+    }
+
     #[test]
     fn sqrt_computes_a_magnitude() {
         // sqrt(lat² + lon²): sqrt(3² + 4²) = 5 clears 4.5, sqrt(0) does not.
@@ -1132,8 +1168,8 @@ mod tests {
         use gt_types::DisplayMode;
 
         use super::super::ast::{
-            BinaryOp, Expr, Func, MetricRef, ModeStage, NumberLit, ParamDecl, ParamName, Query,
-            Span, TableSpec, UnaryOp, Window,
+            BinaryOp, ChannelRef, Expr, Func, MetricRef, ModeStage, NumberLit, ParamDecl,
+            ParamName, Query, Span, TableSpec, UnaryOp, Window,
         };
         use super::super::unit::Unit;
         use super::super::{QueryMetric, parse};
@@ -1163,12 +1199,20 @@ mod tests {
         }
 
         fn expr_strategy() -> impl Strategy<Value = Expr> {
+            let ident = "[a-z_][a-z0-9_]*";
             let leaf = prop_oneof![
                 number_strategy().prop_map(Expr::Number),
                 metric_strategy().prop_map(|metric| Expr::Metric(MetricRef {
                     metric,
                     span: span(),
                 })),
+                (ident, proptest::option::of(ident)).prop_map(|(name, component)| Expr::Channel(
+                    ChannelRef {
+                        name,
+                        component,
+                        span: span(),
+                    }
+                )),
             ];
             leaf.prop_recursive(4, 24, 2, |inner| {
                 let funcs = proptest::sample::select(Func::iter().collect::<Vec<_>>());
