@@ -54,13 +54,13 @@ pub struct PipelineOutput {
 /// `0..len`. Evaluating a query over it makes windows and derived metrics
 /// run-local: `accel` at run-local `0` is missing, and a window cannot reach
 /// past the run's edges into a hidden gap.
-struct RunView<'a> {
-    inner: &'a dyn MetricProvider,
+struct RunView<'a, P: MetricProvider> {
+    inner: &'a P,
     start: usize,
     len: usize,
 }
 
-impl MetricProvider for RunView<'_> {
+impl<P: MetricProvider> MetricProvider for RunView<'_, P> {
     fn len(&self) -> usize {
         self.len
     }
@@ -86,18 +86,18 @@ impl MetricProvider for RunView<'_> {
 }
 
 /// Run `queries` in order over `tracks`. `None` only on cancellation.
-pub fn run_pipeline(
+pub fn run_pipeline<P: MetricProvider>(
     queries: &[CheckedQuery],
-    tracks: &[TrackInput<'_>],
-    should_cancel: &dyn Fn() -> bool,
+    tracks: &[TrackInput<'_, P>],
+    should_cancel: &impl Fn() -> bool,
 ) -> Option<PipelineOutput> {
     run_pipeline_with_interval(queries, tracks, should_cancel, CANCEL_CHECK_INTERVAL)
 }
 
-fn run_pipeline_with_interval(
+fn run_pipeline_with_interval<P: MetricProvider>(
     queries: &[CheckedQuery],
-    tracks: &[TrackInput<'_>],
-    should_cancel: &dyn Fn() -> bool,
+    tracks: &[TrackInput<'_, P>],
+    should_cancel: &impl Fn() -> bool,
     check_interval: usize,
 ) -> Option<PipelineOutput> {
     let mut query_accums: Vec<QueryAccum> = queries.iter().map(QueryAccum::new).collect();
@@ -166,10 +166,10 @@ struct QueryContribution {
     shorter_than_window: bool,
 }
 
-fn fold_track(
+fn fold_track<P: MetricProvider>(
     queries: &[CheckedQuery],
-    input: &TrackInput<'_>,
-    should_cancel: &dyn Fn() -> bool,
+    input: &TrackInput<'_, P>,
+    should_cancel: &impl Fn() -> bool,
     check_interval: usize,
 ) -> Option<TrackFold> {
     let len = input.provider.len();
@@ -323,7 +323,7 @@ mod tests {
         }
     }
 
-    fn compose(srcs: &[&str], provider: &dyn MetricProvider) -> PipelineOutput {
+    fn compose<P: MetricProvider>(srcs: &[&str], provider: &P) -> PipelineOutput {
         let queries: Vec<CheckedQuery> = srcs
             .iter()
             .map(|s| check(&parse(s).expect(s), &ChannelSchema::new()).expect(s))

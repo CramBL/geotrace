@@ -108,11 +108,20 @@ pub trait MetricProvider {
 }
 
 /// One track to run a query over.
-#[derive(Clone, Copy)]
-pub struct TrackInput<'a> {
+pub struct TrackInput<'a, P: MetricProvider> {
     pub track: TrackRef,
-    pub provider: &'a dyn MetricProvider,
+    pub provider: &'a P,
 }
+
+// Hand-written so `Clone`/`Copy` hold for any `P`: the provider is a shared
+// reference (always `Copy`), so neither needs `P: Clone`/`P: Copy`.
+impl<P: MetricProvider> Clone for TrackInput<'_, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<P: MetricProvider> Copy for TrackInput<'_, P> {}
 
 /// Matches of one track: maximal runs of consecutive matched point indices.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,7 +161,7 @@ pub struct RunOutput {
     pub summary: RunSummary,
 }
 
-pub fn run(query: &CheckedQuery, tracks: &[TrackInput<'_>]) -> RunOutput {
+pub fn run<P: MetricProvider>(query: &CheckedQuery, tracks: &[TrackInput<'_, P>]) -> RunOutput {
     let never = || false;
     run_cancellable(query, tracks, &never).unwrap_or_else(|| RunOutput {
         // Unreachable: the cancel check above never fires. Constructed rather
@@ -166,20 +175,20 @@ pub fn run(query: &CheckedQuery, tracks: &[TrackInput<'_>]) -> RunOutput {
 /// Like [`run`], stopping early when `should_cancel` returns true. Returns
 /// `None` on cancellation - partial results are never surfaced, so a
 /// cancelled run cannot masquerade as a complete one.
-pub fn run_cancellable(
+pub fn run_cancellable<P: MetricProvider>(
     query: &CheckedQuery,
-    tracks: &[TrackInput<'_>],
-    should_cancel: &dyn Fn() -> bool,
+    tracks: &[TrackInput<'_, P>],
+    should_cancel: &impl Fn() -> bool,
 ) -> Option<RunOutput> {
     run_with_interval(query, tracks, should_cancel, CANCEL_CHECK_INTERVAL)
 }
 
 /// [`run_cancellable`] with the check interval exposed, so tests can cross
 /// the interval boundary without a 4096-point fixture.
-pub(crate) fn run_with_interval(
+pub(crate) fn run_with_interval<P: MetricProvider>(
     query: &CheckedQuery,
-    tracks: &[TrackInput<'_>],
-    should_cancel: &dyn Fn() -> bool,
+    tracks: &[TrackInput<'_, P>],
+    should_cancel: &impl Fn() -> bool,
     check_interval: usize,
 ) -> Option<RunOutput> {
     let mut summary = RunSummary {
@@ -249,10 +258,10 @@ impl RunSummary {
 /// `None` only on cancellation. Windows and derived metrics are relative to
 /// this provider, so running it over a [`crate::RunView`] gives gap-aware
 /// evaluation for the pipeline.
-pub(crate) fn evaluate_track(
+pub(crate) fn evaluate_track<P: MetricProvider>(
     query: &CheckedQuery,
-    provider: &dyn MetricProvider,
-    should_cancel: &dyn Fn() -> bool,
+    provider: &P,
+    should_cancel: &impl Fn() -> bool,
     check_interval: usize,
 ) -> Option<TrackEval> {
     match query.source() {
@@ -267,10 +276,10 @@ pub(crate) fn evaluate_track(
 }
 
 /// Evaluate a points-source query: the timeline is the provider's nav points.
-fn evaluate_points(
+fn evaluate_points<P: MetricProvider>(
     query: &CheckedQuery,
-    provider: &dyn MetricProvider,
-    should_cancel: &dyn Fn() -> bool,
+    provider: &P,
+    should_cancel: &impl Fn() -> bool,
     check_interval: usize,
 ) -> Option<TrackEval> {
     let len = provider.len();
@@ -345,9 +354,9 @@ fn evaluate_points(
 
 /// Evaluate one window: mark its points on a match, record a skip on a poisoned
 /// window, do nothing on no-match.
-fn apply_window(
+fn apply_window<P: MetricProvider>(
     query: &CheckedQuery,
-    ctx: &mut Ctx<'_>,
+    ctx: &mut Ctx<'_, P>,
     matched: &mut [bool],
     skips: &mut Skips,
     window: WindowScope,
@@ -371,13 +380,13 @@ fn apply_window(
 /// points whose time lands in `[t, t + secs)`, requiring the full duration to
 /// fit within the data. Returns `None` on cancellation, else whether the track
 /// was too short for any window to fit (the shorter-than-window flag).
-fn duration_windows(
+fn duration_windows<P: MetricProvider>(
     query: &CheckedQuery,
-    ctx: &mut Ctx<'_>,
+    ctx: &mut Ctx<'_, P>,
     matched: &mut [bool],
     skips: &mut Skips,
     secs: f64,
-    should_cancel: &dyn Fn() -> bool,
+    should_cancel: &impl Fn() -> bool,
     check_interval: usize,
 ) -> Option<bool> {
     let len = matched.len();
@@ -441,11 +450,11 @@ fn duration_windows(
 /// match is a range of sample indices. Without a window each sample is judged on
 /// its own row; a count window groups consecutive samples and a duration window
 /// a time span, for the aggregates to reduce over.
-fn evaluate_channel_source(
+fn evaluate_channel_source<P: MetricProvider>(
     query: &CheckedQuery,
-    provider: &dyn MetricProvider,
+    provider: &P,
     name: &str,
-    should_cancel: &dyn Fn() -> bool,
+    should_cancel: &impl Fn() -> bool,
     check_interval: usize,
 ) -> Option<TrackEval> {
     let timeline = provider.channel_timeline(name);
@@ -523,9 +532,9 @@ fn evaluate_channel_source(
 
 /// Evaluate one channel-source window over the `samples` index range: mark them
 /// on a match, record a skip on a poisoned window, do nothing on no-match.
-fn apply_sample_window(
+fn apply_sample_window<P: MetricProvider>(
     query: &CheckedQuery,
-    ctx: &mut Ctx<'_>,
+    ctx: &mut Ctx<'_, P>,
     matched: &mut [bool],
     skips: &mut Skips,
     timeline: &ChannelTimeline,
@@ -558,14 +567,14 @@ fn apply_sample_window(
     clippy::too_many_arguments,
     reason = "the channel-source window loop threads the same evaluation state as duration_windows, plus the sample timeline; a struct would not group anything meaningfully reusable"
 )]
-fn sample_duration_windows(
+fn sample_duration_windows<P: MetricProvider>(
     query: &CheckedQuery,
-    ctx: &mut Ctx<'_>,
+    ctx: &mut Ctx<'_, P>,
     matched: &mut [bool],
     skips: &mut Skips,
     timeline: &ChannelTimeline,
     secs: f64,
-    should_cancel: &dyn Fn() -> bool,
+    should_cancel: &impl Fn() -> bool,
     check_interval: usize,
 ) -> Option<bool> {
     let len = timeline.times.len();
@@ -608,7 +617,7 @@ struct Skips {
 }
 
 impl Skips {
-    fn record(&mut self, ctx: &Ctx<'_>) {
+    fn record<P: MetricProvider>(&mut self, ctx: &Ctx<'_, P>) {
         for metric in &ctx.missing {
             *self.per_metric.entry(*metric).or_insert(0) += 1;
         }
@@ -623,7 +632,11 @@ impl Skips {
 
 /// All `where` stages must hold; a missing value in any of them poisons the
 /// whole point or window to "skipped".
-fn verdict(query: &CheckedQuery, ctx: &mut Ctx<'_>, scope: Scope) -> Option<bool> {
+fn verdict<P: MetricProvider>(
+    query: &CheckedQuery,
+    ctx: &mut Ctx<'_, P>,
+    scope: Scope,
+) -> Option<bool> {
     ctx.missing.clear();
     ctx.missing_channels.clear();
     ctx.non_finite = false;
@@ -674,8 +687,8 @@ enum Scope<'a> {
     },
 }
 
-struct Ctx<'a> {
-    provider: &'a dyn MetricProvider,
+struct Ctx<'a, P: MetricProvider> {
+    provider: &'a P,
     /// Metrics that came up missing in the current point/window evaluation.
     missing: BTreeSet<QueryMetric>,
     /// Channels with no samples in the current window's span.
@@ -683,7 +696,7 @@ struct Ctx<'a> {
     non_finite: bool,
 }
 
-impl Ctx<'_> {
+impl<P: MetricProvider> Ctx<'_, P> {
     /// Provider value with NaN/inf treated as missing, without attribution.
     fn raw(&self, metric: QueryMetric, index: usize) -> Option<f64> {
         raw_value(self.provider, metric, index)
@@ -703,7 +716,7 @@ impl Ctx<'_> {
 }
 
 /// Provider value with NaN/inf treated as missing.
-fn raw_value(provider: &dyn MetricProvider, metric: QueryMetric, index: usize) -> Option<f64> {
+fn raw_value<P: MetricProvider>(provider: &P, metric: QueryMetric, index: usize) -> Option<f64> {
     provider.value(metric, index).filter(|v| v.is_finite())
 }
 
@@ -714,7 +727,7 @@ fn raw_value(provider: &dyn MetricProvider, metric: QueryMetric, index: usize) -
 ///
 /// Public so the UI can show the same value in match tables that the
 /// evaluator used in predicates - this is the single definition of `accel`.
-pub fn derived_accel(provider: &dyn MetricProvider, index: usize) -> Option<f64> {
+pub fn derived_accel<P: MetricProvider>(provider: &P, index: usize) -> Option<f64> {
     let prev = index.checked_sub(1)?;
     let v1 = raw_value(provider, QueryMetric::Velocity, index)?;
     let v0 = raw_value(provider, QueryMetric::Velocity, prev)?;
@@ -729,7 +742,7 @@ pub fn derived_accel(provider: &dyn MetricProvider, index: usize) -> Option<f64>
 
 /// Condition nodes. The checker guarantees which nodes are conditions, so a
 /// value node here is a checker bug and poisons rather than lies.
-fn eval_bool(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<bool> {
+fn eval_bool<P: MetricProvider>(ctx: &mut Ctx<'_, P>, expr: &CExpr, scope: Scope) -> Option<bool> {
     match expr {
         CExpr::Not(inner) => eval_bool(ctx, inner, scope).map(|b| !b),
         CExpr::Cmp { op, lhs, rhs } => {
@@ -766,7 +779,7 @@ fn eval_bool(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<bool> {
 }
 
 /// Value nodes, in base units.
-fn eval_num(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<f64> {
+fn eval_num<P: MetricProvider>(ctx: &mut Ctx<'_, P>, expr: &CExpr, scope: Scope) -> Option<f64> {
     match expr {
         CExpr::Const(v) => Some(*v),
         CExpr::Metric(metric) => match scope {
@@ -841,7 +854,12 @@ fn eval_num(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<f64> {
     }
 }
 
-fn both_nums(ctx: &mut Ctx<'_>, lhs: &CExpr, rhs: &CExpr, scope: Scope) -> Option<(f64, f64)> {
+fn both_nums<P: MetricProvider>(
+    ctx: &mut Ctx<'_, P>,
+    lhs: &CExpr,
+    rhs: &CExpr,
+    scope: Scope,
+) -> Option<(f64, f64)> {
     let l = eval_num(ctx, lhs, scope);
     let r = eval_num(ctx, rhs, scope);
     Some((l?, r?))
@@ -853,8 +871,8 @@ fn both_nums(ctx: &mut Ctx<'_>, lhs: &CExpr, rhs: &CExpr, scope: Scope) -> Optio
 /// point had no timestamp) reports a missing time; a span with no samples
 /// reports the missing channel. Either way the aggregate poisons rather than
 /// matching silently.
-fn reduce_channel(
-    ctx: &mut Ctx<'_>,
+fn reduce_channel<P: MetricProvider>(
+    ctx: &mut Ctx<'_, P>,
     name: &str,
     arg: &CExpr,
     window: WindowScope,
@@ -878,8 +896,8 @@ fn reduce_channel(
 /// Reduce the aggregate argument over the window: a channel's native samples in
 /// the time span, or the metric's values over the window's points, per the
 /// source the checker resolved. Any missing value poisons the whole aggregate.
-fn aggregate(
-    ctx: &mut Ctx<'_>,
+fn aggregate<P: MetricProvider>(
+    ctx: &mut Ctx<'_, P>,
     func: Func,
     circular: bool,
     source: &AggSource,
@@ -915,11 +933,11 @@ fn aggregate(
 /// Reduce a window's gathered per-sample `values` by `func`. A non-finite
 /// result (overflow, or the circular-std singularity) poisons rather than
 /// comparing as a bare infinity.
-fn reduce_values(
+fn reduce_values<P: MetricProvider>(
     func: Func,
     circular: bool,
     mut values: Vec<f64>,
-    ctx: &mut Ctx<'_>,
+    ctx: &mut Ctx<'_, P>,
 ) -> Option<f64> {
     let (first, last) = (values.first().copied()?, values.last().copied()?);
     let value = match func {
