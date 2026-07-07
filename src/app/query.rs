@@ -1582,7 +1582,10 @@ impl MetricProvider for TrackProvider<'_> {
 }
 
 fn check_text(text: &str) -> Result<CheckedQuery, Diagnostic> {
-    gt_query::check(&gt_query::parse(text)?)
+    // An empty schema for now: the editor does not yet see loaded channels, so
+    // `@name` reports "no such channel". Wiring the real schema (and running
+    // channels) lands with channel evaluation.
+    gt_query::check(&gt_query::parse(text)?, &gt_query::ChannelSchema::new())
 }
 
 /// Parse and check every query in the editor. Queries are separated by a blank
@@ -1975,9 +1978,10 @@ mod tests {
             let parsed = gt_query::parse(example.text).unwrap_or_else(|e| {
                 panic!("example {:?} failed to parse: {}", example.name, e.message)
             });
-            let checked = gt_query::check(&parsed).unwrap_or_else(|e| {
-                panic!("example {:?} failed to check: {}", example.name, e.message)
-            });
+            let checked =
+                gt_query::check(&parsed, &gt_query::ChannelSchema::new()).unwrap_or_else(|e| {
+                    panic!("example {:?} failed to check: {}", example.name, e.message)
+                });
             // Runs without panicking; util/slip series are absent here, which
             // the poison rules handle, so we only assert it completes.
             let _ = gt_query::run(&checked, &inputs);
@@ -2286,6 +2290,7 @@ mod tests {
         let query = gt_query::check(
             &gt_query::parse("points | with mask 15 deg, snr_drop 10 | where util_all < 50 %")
                 .expect("parses"),
+            &gt_query::ChannelSchema::new(),
         )
         .expect("checks");
         let provider = EmptyProvider { len: 3 };
@@ -2309,8 +2314,11 @@ mod tests {
     #[test]
     fn summary_reports_hidden_count_for_keep_and_hide() {
         // 5 points, 2 matched.
-        let query = gt_query::check(&gt_query::parse("points | where velocity > 30 km/h").unwrap())
-            .unwrap();
+        let query = gt_query::check(
+            &gt_query::parse("points | where velocity > 30 km/h").unwrap(),
+            &gt_query::ChannelSchema::new(),
+        )
+        .unwrap();
         let provider = TestSpeeds(vec![
             Some(40.0),
             Some(40.0),

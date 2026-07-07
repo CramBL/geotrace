@@ -314,7 +314,7 @@ mod tests {
     fn compose(srcs: &[&str], provider: &dyn MetricProvider) -> PipelineOutput {
         let queries: Vec<CheckedQuery> = srcs
             .iter()
-            .map(|s| check(&parse(s).expect(s)).expect(s))
+            .map(|s| check(&parse(s).expect(s), &crate::ChannelSchema::new()).expect(s))
             .collect();
         let inputs = [TrackInput {
             track: track(),
@@ -435,7 +435,7 @@ mod tests {
             "points | where velocity > 0 m/s | draw",
         ]
         .iter()
-        .map(|s| check(&parse(s).expect(s)).expect(s))
+        .map(|s| check(&parse(s).expect(s), &crate::ChannelSchema::new()).expect(s))
         .collect();
         let inputs = [TrackInput {
             track: track(),
