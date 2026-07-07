@@ -101,11 +101,13 @@ mod tests {
         TrackRef::new(FileIdx::new(0), TrackIdx::new(0))
     }
 
-    /// Per-metric series in base units; anything absent is missing.
+    /// Per-metric series in base units; anything absent is missing. Channels
+    /// carry their own `(time, value)` samples, keyed by name.
     #[derive(Default)]
     struct TestProvider {
         len: usize,
         series: BTreeMap<QueryMetric, Vec<Option<f64>>>,
+        channels: BTreeMap<String, Vec<(f64, f64)>>,
     }
 
     impl TestProvider {
@@ -113,6 +115,7 @@ mod tests {
             Self {
                 len,
                 series: BTreeMap::new(),
+                channels: BTreeMap::new(),
             }
         }
 
@@ -129,6 +132,12 @@ mod tests {
                 (0..len).map(|i| Some(i as f64)).collect(),
             )
         }
+
+        /// Attach a channel's native `(time_secs, value)` samples.
+        fn with_channel(mut self, name: &str, samples: Vec<(f64, f64)>) -> Self {
+            self.channels.insert(name.to_owned(), samples);
+            self
+        }
     }
 
     impl MetricProvider for TestProvider {
@@ -140,6 +149,16 @@ mod tests {
             self.series
                 .get(&metric)
                 .and_then(|values| values.get(index).copied().flatten())
+        }
+
+        fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> Vec<f64> {
+            self.channels
+                .get(name)
+                .into_iter()
+                .flatten()
+                .filter(|(t, _)| *t >= t_lo && *t <= t_hi)
+                .map(|(_, v)| *v)
+                .collect()
         }
     }
 
@@ -1104,6 +1123,40 @@ mod tests {
     }
 
     #[test]
+    fn an_aggregate_over_two_channels_is_rejected() {
+        // An aggregate reduces one timeline; two channels are on separate clocks
+        // and cannot be combined per sample, so mixing them is a category error.
+        let mut schema = schema_with("ax", Some("g"), None);
+        schema.insert(
+            "ay",
+            ChannelInfo {
+                unit: Some("g".to_owned()),
+                period_deg: None,
+                components: vec![],
+            },
+        );
+        let err = check(
+            &parse("points | window 10 | where max(@ax + @ay) > 1.0 g").unwrap(),
+            &schema,
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "an aggregate reduces one channel at a time");
+    }
+
+    #[test]
+    fn an_aggregate_mixing_a_channel_and_a_metric_is_rejected() {
+        // @accel (a channel) and accel (the derived nav metric) share a dimension
+        // but not a clock, so an aggregate cannot combine them per element.
+        let schema = schema_with("accel", Some("g"), None);
+        let err = check(
+            &parse("points | window 10 | where max(@accel + accel) > 1.0 g").unwrap(),
+            &schema,
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "cannot mix @accel with a per-point metric");
+    }
+
+    #[test]
     fn a_vector_channel_reference_is_deferred() {
         // Vector channels and component references land in a later PR.
         let mut schema = ChannelSchema::new();
@@ -1123,29 +1176,150 @@ mod tests {
         assert_eq!(err.message, "vector channels are not supported yet");
     }
 
-    #[test]
-    fn a_checked_channel_query_does_not_match_until_evaluation_lands() {
-        // Grammar + checking work with a schema, but sample reduction is not
-        // wired up yet, so a channel window never matches (the stub poisons it).
-        // It must not silently produce a match; full skip reporting arrives with
-        // real evaluation in the next PR.
-        let schema = schema_with("incline", Some("deg"), None);
-        let query = check(
-            &parse("points | window 2 | where max(@incline) > 0 deg").unwrap(),
-            &schema,
-        )
-        .expect("checks with the schema");
-        let provider = TestProvider::new(3)
-            .indexed_time()
-            .with(QueryMetric::Heading, vec![Some(1.0), Some(2.0), Some(3.0)]);
-        let output = run(
+    /// Run a channel query against a provider, checking with the given schema.
+    fn run_channel(src: &str, schema: &ChannelSchema, provider: &TestProvider) -> RunOutput {
+        let query = check(&parse(src).unwrap(), schema).expect(src);
+        run(
             &query,
             &[TrackInput {
                 track: track_ref(),
-                provider: &provider,
+                provider,
             }],
+        )
+    }
+
+    #[test]
+    fn a_channel_aggregate_reduces_native_samples_in_the_window_span() {
+        // Points at 0,1,2 s; @accel sampled finer than points. A count `window 3`
+        // spans the closed point extent [t(0), t(2)] = [0, 2], holding all five
+        // accel samples. Sample values are base units (m/s2) per the channel_span
+        // contract, near 1g here; the peak 10.8 clears 1.0 g (9.81 m/s2), so the
+        // whole track matches.
+        let schema = schema_with("accel", Some("g"), None);
+        let provider = TestProvider::new(3).indexed_time().with_channel(
+            "accel",
+            vec![
+                (0.0, 9.6),
+                (0.5, 10.3),
+                (1.0, 10.8),
+                (1.5, 10.0),
+                (2.0, 9.7),
+            ],
+        );
+        let output = run_channel(
+            "points | window 3 | where max(@accel) > 1.0 g",
+            &schema,
+            &provider,
+        );
+        assert_eq!(output.matches[0].ranges, vec![0..3]);
+    }
+
+    #[test]
+    fn a_channel_reduces_more_samples_than_points() {
+        // std over a `window 2` (span [0, 1]) reduces all five native accel
+        // samples, not the 2 points. Values are base units (m/s2). A flat channel
+        // has std 0 (< 0.02 g = 0.196 m/s2); a jumpy one does not.
+        let schema = schema_with("accel", Some("g"), None);
+        let flat = TestProvider::new(2).indexed_time().with_channel(
+            "accel",
+            vec![(0.0, 9.8), (0.25, 9.8), (0.5, 9.8), (0.75, 9.8), (1.0, 9.8)],
+        );
+        let calm = run_channel(
+            "points | window 2 | where std(@accel) < 0.02 g",
+            &schema,
+            &flat,
+        );
+        assert_eq!(calm.matches[0].ranges, vec![0..2]);
+
+        let jumpy = TestProvider::new(2).indexed_time().with_channel(
+            "accel",
+            vec![
+                (0.0, 9.0),
+                (0.25, 10.5),
+                (0.5, 9.0),
+                (0.75, 10.5),
+                (1.0, 9.0),
+            ],
+        );
+        let shaky = run_channel(
+            "points | window 2 | where std(@accel) < 0.02 g",
+            &schema,
+            &jumpy,
+        );
+        assert!(shaky.matches.is_empty());
+    }
+
+    #[test]
+    fn a_window_with_no_channel_samples_is_reported_as_skipped() {
+        // The channel has no samples in the window's span, so the aggregate is
+        // missing: the window is skipped, attributed to the channel by name.
+        let schema = schema_with("accel", Some("g"), None);
+        let provider = TestProvider::new(2)
+            .indexed_time()
+            .with_channel("accel", vec![(100.0, 9.8)]); // far outside [0, 1]
+        let output = run_channel(
+            "points | window 2 | where max(@accel) > 0.5 g",
+            &schema,
+            &provider,
         );
         assert!(output.matches.is_empty());
+        assert_eq!(output.summary.skipped_channels.get("accel"), Some(&1));
+    }
+
+    #[test]
+    fn channel_per_sample_arithmetic_reduces_within_the_timeline() {
+        // `@accel * 2` is per-sample math within the channel's own clock: each
+        // base-unit sample doubled, then reduced. max(2*5.2) = 10.4 clears
+        // 1.0 g (9.81 m/s2).
+        let schema = schema_with("accel", Some("g"), None);
+        let provider = TestProvider::new(2)
+            .indexed_time()
+            .with_channel("accel", vec![(0.0, 4.0), (0.5, 5.2), (1.0, 4.5)]);
+        let output = run_channel(
+            "points | window 2 | where max(@accel * 2) > 1.0 g",
+            &schema,
+            &provider,
+        );
+        assert_eq!(output.matches[0].ranges, vec![0..2]);
+    }
+
+    #[test]
+    fn a_duration_window_gathers_channel_samples_over_its_span() {
+        // A `window 2 s` at anchor 0 spans [0, 2] s (the declared extent, closed
+        // at the top), the only anchor whose full duration fits. The sample at
+        // exactly 2.0 s is gathered though point 2 (at t=2) is not in the
+        // half-open [0, 2) point window - the boundary difference the code flags.
+        // The span's peak 10.8 clears 1.0 g, so the window's points 0 and 1 match.
+        let schema = schema_with("accel", Some("g"), None);
+        let provider = TestProvider::new(3).indexed_time().with_channel(
+            "accel",
+            vec![(0.0, 9.6), (0.7, 10.8), (1.4, 10.0), (2.0, 9.7)],
+        );
+        let output = run_channel(
+            "points | window 2 s | where max(@accel) > 1.0 g",
+            &schema,
+            &provider,
+        );
+        assert_eq!(output.matches[0].ranges, vec![0..2]);
+    }
+
+    #[test]
+    fn a_channel_span_includes_samples_on_both_endpoints() {
+        // The span is closed at both ends, so samples at exactly t_lo and t_hi
+        // both count. A count `window 3` spans [0, 2]; the endpoints 9 and 11 are
+        // the min and max, so spread = 2 clears the threshold. Dropping either
+        // endpoint drops the spread to 1 and the window no longer matches, so the
+        // assertion pins both bounds. A unitless channel keeps the math plain.
+        let schema = schema_with("sensor", None, None);
+        let provider = TestProvider::new(3)
+            .indexed_time()
+            .with_channel("sensor", vec![(0.0, 9.0), (1.0, 10.0), (2.0, 11.0)]);
+        let output = run_channel(
+            "points | window 3 | where spread(@sensor) > 1.5",
+            &schema,
+            &provider,
+        );
+        assert_eq!(output.matches[0].ranges, vec![0..3]);
     }
 
     #[test]
