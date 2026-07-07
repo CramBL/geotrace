@@ -135,6 +135,16 @@ impl CheckedQuery {
     }
 }
 
+/// A resolved channel reference: the channel name, and for a vector channel the
+/// column of the referenced component (`@accel.x`). `None` is a scalar channel
+/// or a whole vector; the checker resolves the component label to its index so
+/// evaluation works by column.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChannelKey {
+    pub name: String,
+    pub component: Option<usize>,
+}
+
 /// Which timeline an aggregate reduces: the window's nav points, or a single
 /// channel's native samples over the window's time span. The checker resolves
 /// this once (see [`aggregate_source`]), so evaluation never sniffs the
@@ -142,7 +152,7 @@ impl CheckedQuery {
 #[derive(Debug, Clone)]
 pub(crate) enum AggSource {
     Points,
-    Channel(String),
+    Channel(ChannelKey),
 }
 
 /// Checked expression: literals in base units, aggregates tagged circular
@@ -151,9 +161,10 @@ pub(crate) enum AggSource {
 pub(crate) enum CExpr {
     Const(f64),
     Metric(QueryMetric),
-    /// A scalar channel referenced by name. Only ever appears inside an
-    /// aggregate, which reduces its native samples over the window span.
-    Channel(String),
+    /// A scalar channel or one component of a vector channel. Only ever appears
+    /// inside an aggregate, which reduces its native samples over the window
+    /// span.
+    Channel(ChannelKey),
     Agg {
         func: Func,
         circular: bool,
@@ -431,23 +442,67 @@ fn dimensioned(dim: Dimension) -> ValueType {
     }
 }
 
+/// The column a channel reference selects, validated against the channel's
+/// shape. `None` for a scalar channel (`@name`); `Some(i)` for a vector
+/// component (`@name.x`). A component on a scalar, an unknown component, or a
+/// bare vector (which has no scalar value) each error with a hint.
+fn resolve_component(c: &ChannelRef, info: &ChannelInfo) -> Result<Option<usize>, Diagnostic> {
+    match &c.component {
+        Some(label) => {
+            if info.components.is_empty() {
+                return Err(err_hint(
+                    c.span,
+                    format!("@{} is not a vector channel", c.name),
+                    format!("reference the scalar @{} without a component", c.name),
+                ));
+            }
+            match info.components.iter().position(|comp| comp == label) {
+                Some(index) => Ok(Some(index)),
+                None => Err(err_hint(
+                    c.span,
+                    format!("@{} has no component {label}", c.name),
+                    format!("its components are {}", info.components.join(", ")),
+                )),
+            }
+        }
+        // A scalar channel has one value; a whole vector has none until a
+        // component is named (norm over the vector lands later).
+        None if info.components.is_empty() => Ok(None),
+        None => {
+            let first = info.components.first().map_or("x", String::as_str);
+            Err(err_hint(
+                c.span,
+                format!("@{} is a vector channel", c.name),
+                format!("reference a component like @{}.{first}", c.name),
+            ))
+        }
+    }
+}
+
 /// Which timeline an aggregate argument reduces, rejecting anything that mixes
 /// two. An aggregate reduces one clock at a time: the window's nav points, or a
-/// single channel's samples. More than one channel, or a channel alongside a
-/// per-point metric, is a category error - the two are sampled on independent
-/// clocks and cannot be combined per element.
+/// single channel component's samples. More than one component, more than one
+/// channel, or a channel alongside a per-point metric is a category error - the
+/// timelines are independent and cannot be combined per element.
 fn aggregate_source(arg: &CExpr, span: Span) -> Result<AggSource, Diagnostic> {
-    let mut channels: Vec<&str> = Vec::new();
+    let mut channels: Vec<&ChannelKey> = Vec::new();
     let mut has_metric = false;
     collect_timelines(arg, &mut channels, &mut has_metric);
     match channels.as_slice() {
         [] => Ok(AggSource::Points),
-        [name] if has_metric => Err(err_hint(
+        [key] if has_metric => Err(err_hint(
             span,
-            format!("cannot mix @{name} with a per-point metric"),
+            format!("cannot mix @{} with a per-point metric", key.name),
             "a channel and a nav-point metric are on separate clocks",
         )),
-        [name] => Ok(AggSource::Channel((*name).to_owned())),
+        [key] => Ok(AggSource::Channel((*key).clone())),
+        // More than one distinct reference: all of one channel (differing
+        // components) or spanning channels - both beyond one timeline for now.
+        [first, rest @ ..] if rest.iter().all(|k| k.name == first.name) => Err(err_hint(
+            span,
+            "combining vector components is not supported yet",
+            format!("aggregate one component of @{} at a time", first.name),
+        )),
         _ => Err(err_hint(
             span,
             "an aggregate reduces one channel at a time",
@@ -456,13 +511,17 @@ fn aggregate_source(arg: &CExpr, span: Span) -> Result<AggSource, Diagnostic> {
     }
 }
 
-/// Collect the distinct channels an expression reads and whether it reads any
-/// per-point metric, walking every value-carrying node.
-fn collect_timelines<'a>(expr: &'a CExpr, channels: &mut Vec<&'a str>, has_metric: &mut bool) {
+/// Collect the distinct channel references an expression reads and whether it
+/// reads any per-point metric, walking every value-carrying node.
+fn collect_timelines<'a>(
+    expr: &'a CExpr,
+    channels: &mut Vec<&'a ChannelKey>,
+    has_metric: &mut bool,
+) {
     match expr {
-        CExpr::Channel(name) => {
-            if !channels.contains(&name.as_str()) {
-                channels.push(name);
+        CExpr::Channel(key) => {
+            if !channels.contains(&key) {
+                channels.push(key);
             }
         }
         CExpr::Metric(_) => *has_metric = true,
@@ -766,29 +825,30 @@ impl Checker<'_> {
         ))
     }
 
-    /// Resolve a channel reference against the schema. Scalar channels only for
-    /// now: a vector channel or a `@name.component` reference is deferred with a
-    /// clear message. Like a nav-point metric, a channel has no per-point value,
-    /// so it must appear inside an aggregate (over a window).
+    /// Resolve a channel reference against the schema. A `@name.component`
+    /// selects one column of a vector channel as a scalar; a bare `@name` is a
+    /// scalar channel, or an error for a vector (which has no scalar value on
+    /// its own). Like a nav-point metric, a channel has no per-point value, so
+    /// it must appear inside an aggregate (over a window).
     fn channel(&self, c: &ChannelRef, in_agg: bool) -> Result<(ValueType, CExpr), Diagnostic> {
         let Some(info) = self.schema.get(&c.name) else {
             return Err(err(c.span, format!("no such channel @{}", c.name)));
         };
-        if c.component.is_some() || !info.components.is_empty() {
-            return Err(err_hint(
-                c.span,
-                "vector channels are not supported yet",
-                "reference a scalar channel like @incline",
-            ));
-        }
+        let component = resolve_component(c, info)?;
         if !in_agg {
             return Err(err_hint(
                 c.span,
-                format!("@{} is per sample", c.name),
-                format!("wrap it in an aggregate like max(@{})", c.name),
+                format!("{c} is per sample"),
+                format!("wrap it in an aggregate like max({c})"),
             ));
         }
-        Ok((channel_value_type(info), CExpr::Channel(c.name.clone())))
+        Ok((
+            channel_value_type(info),
+            CExpr::Channel(ChannelKey {
+                name: c.name.clone(),
+                component,
+            }),
+        ))
     }
 
     fn unary(

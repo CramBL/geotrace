@@ -105,12 +105,13 @@ mod tests {
     }
 
     /// Per-metric series in base units; anything absent is missing. Channels
-    /// carry their own `(time, value)` samples, keyed by name.
+    /// carry their own `(time, row)` samples, keyed by name, where each row
+    /// holds one value per component (one for a scalar channel).
     #[derive(Default)]
     struct TestProvider {
         len: usize,
         series: BTreeMap<QueryMetric, Vec<Option<f64>>>,
-        channels: BTreeMap<String, Vec<(f64, f64)>>,
+        channels: BTreeMap<String, Vec<(f64, Vec<f64>)>>,
     }
 
     impl TestProvider {
@@ -136,8 +137,16 @@ mod tests {
             )
         }
 
-        /// Attach a channel's native `(time_secs, value)` samples.
+        /// Attach a scalar channel's native `(time_secs, value)` samples.
         fn with_channel(mut self, name: &str, samples: Vec<(f64, f64)>) -> Self {
+            let rows = samples.into_iter().map(|(t, v)| (t, vec![v])).collect();
+            self.channels.insert(name.to_owned(), rows);
+            self
+        }
+
+        /// Attach a vector channel's native `(time_secs, row)` samples, each row
+        /// one value per component.
+        fn with_vector_channel(mut self, name: &str, samples: Vec<(f64, Vec<f64>)>) -> Self {
             self.channels.insert(name.to_owned(), samples);
             self
         }
@@ -154,13 +163,19 @@ mod tests {
                 .and_then(|values| values.get(index).copied().flatten())
         }
 
-        fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> Vec<f64> {
+        fn channel_span(
+            &self,
+            name: &str,
+            component: Option<usize>,
+            t_lo: f64,
+            t_hi: f64,
+        ) -> Vec<f64> {
             self.channels
                 .get(name)
                 .into_iter()
                 .flatten()
                 .filter(|(t, _)| *t >= t_lo && *t <= t_hi)
-                .map(|(_, v)| *v)
+                .filter_map(|(_, row)| row.get(component.unwrap_or(0)).copied())
                 .collect()
         }
     }
@@ -1046,6 +1061,20 @@ mod tests {
         schema
     }
 
+    /// A single vector channel with the given unit and component labels.
+    fn vector_schema(name: &str, unit: Option<&str>, components: &[&str]) -> ChannelSchema {
+        let mut schema = ChannelSchema::new();
+        schema.insert(
+            name,
+            ChannelInfo {
+                unit: unit.map(str::to_owned),
+                period_deg: None,
+                components: components.iter().map(|c| (*c).to_owned()).collect(),
+            },
+        );
+        schema
+    }
+
     #[test]
     fn a_channel_absent_from_the_schema_is_no_such_channel() {
         // An empty schema knows no channels.
@@ -1160,23 +1189,91 @@ mod tests {
     }
 
     #[test]
-    fn a_vector_channel_reference_is_deferred() {
-        // Vector channels and component references land in a later PR.
-        let mut schema = ChannelSchema::new();
-        schema.insert(
-            "accel",
-            ChannelInfo {
-                unit: Some("g".to_owned()),
-                period_deg: None,
-                components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
-            },
-        );
+    fn a_vector_component_resolves_to_the_channel_dimension() {
+        // @accel.x is one column of the g-unit vector, so it is an acceleration:
+        // it compares to an acceleration literal and rejects a speed.
+        let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+        let ok = "points | window 10 | where max(@accel.x) > 0.1 g";
+        check(&parse(ok).unwrap(), &schema).expect("a component checks like a scalar");
+
+        let bad = "points | window 10 | where max(@accel.x) > 30 km/h";
+        let err = check(&parse(bad).unwrap(), &schema).unwrap_err();
+        assert!(err.message.contains("acceleration"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_bare_vector_channel_needs_a_component() {
+        // A whole vector has no scalar value; the error points at a component.
+        let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
         let err = check(
-            &parse("points | window 10 | where max(@accel.x) > 0.1 g").unwrap(),
+            &parse("points | window 10 | where max(@accel) > 0.1 g").unwrap(),
             &schema,
         )
         .unwrap_err();
-        assert_eq!(err.message, "vector channels are not supported yet");
+        assert_eq!(err.message, "@accel is a vector channel");
+        assert_eq!(
+            err.help.as_deref(),
+            Some("reference a component like @accel.x")
+        );
+    }
+
+    #[test]
+    fn an_unknown_component_is_rejected() {
+        let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+        let err = check(
+            &parse("points | window 10 | where max(@accel.w) > 0.1 g").unwrap(),
+            &schema,
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "@accel has no component w");
+        assert_eq!(err.help.as_deref(), Some("its components are x, y, z"));
+    }
+
+    #[test]
+    fn a_component_on_a_scalar_channel_is_rejected() {
+        let schema = schema_with("incline", Some("deg"), None);
+        let err = check(
+            &parse("points | window 10 | where max(@incline.x) > 1 deg").unwrap(),
+            &schema,
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "@incline is not a vector channel");
+    }
+
+    #[test]
+    fn a_bare_component_must_be_aggregated() {
+        // Like a nav-point metric, a component has no per-point value; used raw
+        // it hints at wrapping it in an aggregate, keeping the `.x`.
+        let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+        let err = check(
+            &parse("points | window 10 | where @accel.x > 0.1 g").unwrap(),
+            &schema,
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "@accel.x is per sample");
+        assert_eq!(
+            err.help.as_deref(),
+            Some("wrap it in an aggregate like max(@accel.x)")
+        );
+    }
+
+    #[test]
+    fn combining_two_components_is_deferred() {
+        // Per-sample math across components (and norm) lands in the next PR.
+        let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+        let err = check(
+            &parse("points | window 10 | where max(@accel.x + @accel.y) > 0.1 g").unwrap(),
+            &schema,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.message,
+            "combining vector components is not supported yet"
+        );
+        assert_eq!(
+            err.help.as_deref(),
+            Some("aggregate one component of @accel at a time")
+        );
     }
 
     /// Run a channel query against a provider, checking with the given schema.
@@ -1284,6 +1381,36 @@ mod tests {
             &provider,
         );
         assert_eq!(output.matches[0].ranges, vec![0..2]);
+    }
+
+    #[test]
+    fn a_vector_component_reduces_its_own_column() {
+        // @accel.y reduces the middle column, not x or z. A `window 3` spans the
+        // three points' closed time extent [0, 2], holding all three samples.
+        let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+        let provider = TestProvider::new(3).indexed_time().with_vector_channel(
+            "accel",
+            vec![
+                (0.0, vec![9.0, 10.5, 9.5]),
+                (1.0, vec![9.1, 11.0, 9.4]),
+                (2.0, vec![9.2, 10.8, 9.6]),
+            ],
+        );
+        // The y column peaks at 11.0, clearing 1.0 g (9.81 m/s2), so all match.
+        let y = run_channel(
+            "points | window 3 | where max(@accel.y) > 1.0 g",
+            &schema,
+            &provider,
+        );
+        assert_eq!(y.matches[0].ranges, vec![0..3]);
+        // The x column peaks at 9.2, below 1.0 g, so nothing matches - proving
+        // the reduction reads x's column, not whichever column happens to clear.
+        let x = run_channel(
+            "points | window 3 | where max(@accel.x) > 1.0 g",
+            &schema,
+            &provider,
+        );
+        assert!(x.matches.is_empty());
     }
 
     #[test]

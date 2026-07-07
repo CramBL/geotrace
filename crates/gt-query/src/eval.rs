@@ -12,7 +12,7 @@ use gt_types::TrackRef;
 use nalgebra::{Complex, UnitComplex};
 
 use crate::ast::{Func, ParamName};
-use crate::check::{AggSource, ArithOp, CExpr, CheckedQuery, CmpOp, Window};
+use crate::check::{AggSource, ArithOp, CExpr, ChannelKey, CheckedQuery, CmpOp, Window};
 use crate::metric::QueryMetric;
 
 const FULL_TURN_DEG: f64 = 360.0;
@@ -37,13 +37,20 @@ pub trait MetricProvider {
 
     fn value(&self, metric: QueryMetric, index: usize) -> Option<f64>;
 
-    /// The channel's native sample values whose timestamp lands in the closed
-    /// span `[t_lo, t_hi]` (seconds), in the channel's native order. Values are
-    /// in the evaluator's base units, like [`value`](Self::value) - the provider
-    /// converts from the channel's stored unit. An unknown channel or a span
-    /// with no samples yields an empty vec. Providers with no channels use the
-    /// default.
-    fn channel_span(&self, _name: &str, _t_lo: f64, _t_hi: f64) -> Vec<f64> {
+    /// A channel's native sample values whose timestamp lands in the closed
+    /// span `[t_lo, t_hi]` (seconds), in the channel's native order. `component`
+    /// selects one column of a vector channel (`@accel.x`); `None` is a scalar
+    /// channel. Values are in the evaluator's base units, like
+    /// [`value`](Self::value) - the provider converts from the channel's stored
+    /// unit. An unknown channel or a span with no samples yields an empty vec.
+    /// Providers with no channels use the default.
+    fn channel_span(
+        &self,
+        _name: &str,
+        _component: Option<usize>,
+        _t_lo: f64,
+        _t_hi: f64,
+    ) -> Vec<f64> {
         Vec::new()
     }
 }
@@ -591,7 +598,7 @@ fn both_nums(ctx: &mut Ctx<'_>, lhs: &CExpr, rhs: &CExpr, scope: Scope) -> Optio
 /// channel. Either way the aggregate poisons rather than matching silently.
 fn channel_samples(
     ctx: &mut Ctx<'_>,
-    name: &str,
+    key: &ChannelKey,
     arg: &CExpr,
     window: WindowScope,
 ) -> Option<Vec<f64>> {
@@ -599,9 +606,13 @@ fn channel_samples(
         ctx.missing.insert(QueryMetric::Time);
         return None;
     };
-    let samples = ctx.provider.channel_span(name, span.lo, span.hi);
+    let samples = ctx
+        .provider
+        .channel_span(&key.name, key.component, span.lo, span.hi);
     if samples.is_empty() {
-        ctx.missing_channels.insert(name.to_owned());
+        // The whole channel is absent from the span, so report it by name (a
+        // vector's components share one clock and go missing together).
+        ctx.missing_channels.insert(key.name.clone());
         return None;
     }
     let mut values = Vec::with_capacity(samples.len());
@@ -626,7 +637,7 @@ fn aggregate(
         return None;
     };
     let mut values = match source {
-        AggSource::Channel(name) => channel_samples(ctx, name, arg, window)?,
+        AggSource::Channel(key) => channel_samples(ctx, key, arg, window)?,
         AggSource::Points => {
             let mut values = Vec::with_capacity(window.end - window.start);
             for index in window.start..window.end {
