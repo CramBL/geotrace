@@ -1171,10 +1171,7 @@ fn describe(expr: &Expr) -> Option<String> {
         Expr::Call { arg, .. } => describe(arg),
         Expr::Unary { operand, .. } => describe(operand),
         Expr::Power { base, .. } => describe(base),
-        Expr::Channel(c) => Some(match &c.component {
-            Some(comp) => format!("@{}.{comp}", c.name),
-            None => format!("@{}", c.name),
-        }),
+        Expr::Channel(c) => Some(c.to_string()),
         Expr::Number(_) | Expr::Binary { .. } => None,
     }
 }

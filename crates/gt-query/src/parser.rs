@@ -526,11 +526,16 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// A channel reference token (`@name` or `@name.component`) into a
+    /// Parses a channel-reference token (`@name` or `@name.component`) into a
     /// [`ChannelRef`]. The lexer guarantees the `@name[.component]` shape, so
     /// the split is infallible.
     fn channel_ref(&mut self, tok: Tok<'src>) -> Expr {
         self.advance();
+        debug_assert!(
+            tok.text.starts_with('@'),
+            "channel token must start with @: {:?}",
+            tok.text
+        );
         let body = tok.text.strip_prefix('@').unwrap_or(tok.text);
         let (name, component) = match body.split_once('.') {
             Some((name, comp)) => (name.to_owned(), Some(comp.to_owned())),

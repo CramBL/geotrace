@@ -148,12 +148,13 @@ pub enum Expr {
         exponent: i8,
         span: Span,
     },
-    /// A channel reference: `@name`, or a vector component `@name.component`.
-    /// The checker resolves it against the channel schema.
+    /// A channel reference. The checker will resolve it against the channel
+    /// schema (not yet implemented).
     Channel(ChannelRef),
 }
 
-/// A channel reference occurrence in the source: `@name` or `@name.component`.
+/// A channel reference occurrence in the source: `@name`, or a vector component
+/// `@name.component`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelRef {
     pub name: String,
@@ -161,6 +162,15 @@ pub struct ChannelRef {
     /// whole-channel reference.
     pub component: Option<String>,
     pub span: Span,
+}
+
+impl std::fmt::Display for ChannelRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.component {
+            Some(comp) => write!(f, "@{}.{comp}", self.name),
+            None => write!(f, "@{}", self.name),
+        }
+    }
 }
 
 impl Expr {
