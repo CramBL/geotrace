@@ -130,8 +130,8 @@ pub struct ChannelCompletions {
 /// Channel completions at `cursor`, or `None` when the cursor is not typing a
 /// `@channel` reference. The `@` sigil is the trigger, so this is independent
 /// of the pipeline slot: a partial `@ac` (or a lone `@`) offers the schema's
-/// scalar channels, ranked against the text after the `@`. Vector channels are
-/// omitted until they become queryable.
+/// scalar channels and each vector channel's components (`@accel.x`), ranked
+/// against the text after the `@`.
 pub fn channel_completions_at(
     src: &str,
     cursor: usize,
@@ -140,17 +140,9 @@ pub fn channel_completions_at(
     let (range, prefix) = channel_partial(src, cursor)?;
     let mut scored: Vec<(i32, ChannelSuggestion)> = schema
         .iter_unsorted()
-        .filter(|(_, info)| info.components.is_empty())
-        .filter_map(|(name, info)| {
-            fuzzy_score(prefix, name).map(|score| {
-                (
-                    score,
-                    ChannelSuggestion {
-                        name: name.to_owned(),
-                        summary: channel_summary(info),
-                    },
-                )
-            })
+        .flat_map(|(name, info)| channel_offers(name, info))
+        .filter_map(|suggestion| {
+            fuzzy_score(prefix, &suggestion.name).map(|score| (score, suggestion))
         })
         .collect();
     // Highest score first; the schema iterates in arbitrary (hash) order, so
@@ -164,45 +156,87 @@ pub fn channel_completions_at(
     })
 }
 
+/// The completion entries a channel contributes: a scalar channel offers itself
+/// (`@incline`); a vector channel offers each component (`@accel.x`), since a
+/// bare vector reference has no scalar value.
+fn channel_offers(name: &str, info: &ChannelInfo) -> Vec<ChannelSuggestion> {
+    if info.components.is_empty() {
+        return vec![ChannelSuggestion {
+            name: name.to_owned(),
+            summary: channel_summary(info),
+        }];
+    }
+    info.components
+        .iter()
+        .map(|component| ChannelSuggestion {
+            name: format!("{name}.{component}"),
+            summary: channel_summary(info),
+        })
+        .collect()
+}
+
 /// The channel under `cursor` for a hover tooltip, or `None` when the token is
-/// not a scalar channel the schema knows. Vector channels are omitted like they
-/// are in completion, until they become queryable.
+/// not a channel the schema knows. A component `@accel.x` reads as the channel's
+/// dimension; a whole vector `@accel` reads as a vector with its component list.
 pub fn channel_at(src: &str, cursor: usize, schema: &ChannelSchema) -> Option<ChannelSuggestion> {
     let cursor = cursor.min(src.len());
     let toks = lexer::tokenize(src);
     let tok = toks
         .iter()
         .find(|t| t.kind == Token::Channel && t.span.start <= cursor && cursor < t.span.end)?;
-    let name = tok.text.strip_prefix('@')?.split('.').next()?;
-    let info = schema.get(name).filter(|info| info.components.is_empty())?;
-    Some(ChannelSuggestion {
-        name: name.to_owned(),
-        summary: channel_summary(info),
-    })
+    let body = tok.text.strip_prefix('@')?;
+    let (name, component) = match body.split_once('.') {
+        Some((name, component)) => (name, Some(component)),
+        None => (body, None),
+    };
+    let info = schema.get(name)?;
+    match component {
+        // A named component reads as the channel's dimension, if it exists.
+        Some(component) => {
+            info.components
+                .iter()
+                .any(|c| c == component)
+                .then(|| ChannelSuggestion {
+                    name: format!("{name}.{component}"),
+                    summary: channel_summary(info),
+                })
+        }
+        // A scalar channel reads as its dimension; a whole vector names its
+        // components, since it has no scalar value on its own.
+        None if info.components.is_empty() => Some(ChannelSuggestion {
+            name: name.to_owned(),
+            summary: channel_summary(info),
+        }),
+        None => Some(ChannelSuggestion {
+            name: name.to_owned(),
+            summary: format!("vector ({})", info.components.join(", ")),
+        }),
+    }
 }
 
 /// The `@partial` the cursor is completing: the byte range from the `@` to the
-/// end of the partial word, and the text between the `@` and the cursor. `None`
-/// unless a `@` immediately precedes the word the cursor sits in.
+/// end of the partial reference, and the text between the `@` and the cursor.
+/// The body may carry a `.component` (`@accel.x`). `None` unless a `@`
+/// immediately precedes the reference the cursor sits in.
 fn channel_partial(src: &str, cursor: usize) -> Option<(Range<usize>, &str)> {
     let cursor = cursor.min(src.len());
     let before = src.get(..cursor)?;
     let prefix_len = before
         .bytes()
         .rev()
-        .take_while(|b| is_ident_byte(*b))
+        .take_while(|b| is_body_byte(*b))
         .count();
-    // The `@` sits just before the typed prefix.
+    // The `@` sits just before the typed body (a name, optionally `.component`).
     let at = cursor.checked_sub(prefix_len)?.checked_sub(1)?;
     if src.as_bytes().get(at) != Some(&b'@') {
         return None;
     }
-    // Extend over any word characters after the cursor so accepting replaces the
-    // whole `@word`, not only the part left of the caret.
+    // Extend over any body characters after the cursor so accepting replaces the
+    // whole `@ref`, not only the part left of the caret.
     let after_len = src
         .get(cursor..)?
         .bytes()
-        .take_while(|b| is_ident_byte(*b))
+        .take_while(|b| is_body_byte(*b))
         .count();
     Some((at..cursor + after_len, src.get(at + 1..cursor)?))
 }
@@ -213,6 +247,12 @@ fn channel_partial(src: &str, cursor: usize) -> Option<(Range<usize>, &str)> {
 /// scanning by byte never splits a multi-byte character.
 fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'
+}
+
+/// Whether `b` can appear in a channel reference body after the `@`: an ident
+/// character or the `.` separating a vector component (`@accel.x`).
+fn is_body_byte(b: u8) -> bool {
+    is_ident_byte(b) || b == b'.'
 }
 
 /// A one-line description of a channel's dimension for the popup and hover. The
@@ -730,12 +770,36 @@ mod tests {
     }
 
     #[test]
-    fn a_lone_at_offers_all_scalar_channels() {
-        // The vector `gyro` is omitted; the rest come sorted by name.
+    fn a_lone_at_offers_channels_and_vector_components() {
+        // Scalar channels by name, plus each component of the vector `gyro`, all
+        // sorted by name.
         let src = "points | window 3 | where max(@";
         assert_eq!(
             channel_names(src, src.len()),
-            vec!["accel", "bearing", "incline"]
+            vec!["accel", "bearing", "gyro.x", "gyro.y", "gyro.z", "incline"]
+        );
+    }
+
+    #[test]
+    fn a_component_prefix_offers_the_matching_components() {
+        // `@gyro.` offers every component of gyro.
+        let dot = "points | window 3 | where max(@gyro.";
+        assert_eq!(
+            channel_names(dot, dot.len()),
+            vec!["gyro.x", "gyro.y", "gyro.z"]
+        );
+        // `@gyro.y` narrows to the one component, replacing the whole `@gyro.y`.
+        let one = "points | window 3 | where max(@gyro.y";
+        let completions = channel_completions_at(one, one.len(), &channel_schema()).unwrap();
+        let at = one.find("@gyro.y").expect("has @gyro.y");
+        assert_eq!(completions.range, at..at + "@gyro.y".len());
+        assert_eq!(
+            completions
+                .items
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["gyro.y"]
         );
     }
 
@@ -788,11 +852,27 @@ mod tests {
             Some("direction".to_owned())
         );
         assert!(channel_at(dir, 0, &channel_schema()).is_none());
+    }
 
-        // A vector channel has no scalar hover yet, matching completion.
-        let vec_src = "points | window 3 | where max(@gyro) > 1 deg";
-        let gi = vec_src.find("@gyro").expect("has @gyro") + 2;
-        assert!(channel_at(vec_src, gi, &channel_schema()).is_none());
+    #[test]
+    fn channel_hover_handles_components_and_whole_vectors() {
+        // A component reads as the channel's dimension.
+        let comp = "points | window 3 | where max(@gyro.x) > 1 deg";
+        let ci = comp.find("@gyro.x").expect("has @gyro.x") + 2;
+        let hover = channel_at(comp, ci, &channel_schema()).expect("hovers a component");
+        assert_eq!(hover.name, "gyro.x");
+        assert_eq!(hover.summary, "in deg");
+
+        // A whole vector names its components; an unknown component has no hover.
+        let whole = "points | window 3 | where max(@gyro) > 1 deg";
+        let gi = whole.find("@gyro").expect("has @gyro") + 2;
+        assert_eq!(
+            channel_at(whole, gi, &channel_schema()).map(|s| s.summary),
+            Some("vector (x, y, z)".to_owned())
+        );
+        let bad = "points | window 3 | where max(@gyro.w) > 1 deg";
+        let wi = bad.find("@gyro.w").expect("has @gyro.w") + 2;
+        assert!(channel_at(bad, wi, &channel_schema()).is_none());
     }
 
     mod properties {
