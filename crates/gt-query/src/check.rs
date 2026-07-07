@@ -121,6 +121,15 @@ impl CheckedQuery {
         matches!(self.source, CheckedSource::Channel(_))
     }
 
+    /// The source channel's name, or `None` for the points source. The app
+    /// reads it to gather that channel's timeline for a channel-source run.
+    pub fn source_channel(&self) -> Option<&str> {
+        match &self.source {
+            CheckedSource::Channel(name) => Some(name),
+            CheckedSource::Points => None,
+        }
+    }
+
     /// The window a windowed query aggregates over, if any.
     pub fn window(&self) -> Option<Window> {
         self.window

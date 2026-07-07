@@ -19,9 +19,9 @@ use gt_filter::GlobalFilter;
 use gt_loaded_files::LoadedFilesView;
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{
-    ChannelInfo, ChannelSamples, ChannelSchema, CheckedQuery, Construct, ConstructKind, Diagnostic,
-    MetricProvider, PipelineOutput, Quantity, QueryMetric, RunSummary, Span, TrackInput,
-    TrackMatches, Unit,
+    ChannelInfo, ChannelSamples, ChannelSchema, ChannelTimeline, CheckedQuery, Construct,
+    ConstructKind, Diagnostic, MetricProvider, PipelineOutput, Quantity, QueryMetric, RunSummary,
+    Span, TrackInput, TrackMatches, Unit,
 };
 use gt_types::satellites::Constellation;
 use gt_types::{Channel, DisplayMode, FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
@@ -218,8 +218,40 @@ struct RunningQuery {
 /// What the worker sends back. `output: None` means the run was cancelled -
 /// previous results stay untouched.
 struct RunCompleted {
-    output: Option<PipelineOutput>,
+    output: Option<RunProduct>,
+    /// Per-track derived series for the points path; empty for a channel run.
     track_data: HashMap<TrackRef, TrackQueryData>,
+}
+
+/// The worker's product, dispatched on the source of the run's queries.
+enum RunProduct {
+    /// A composed points pipeline.
+    Points(PipelineOutput),
+    /// A standalone channel-source run: matched sample ranges per track, and
+    /// the source channel's timeline for the sample tables.
+    Channel(ChannelRun),
+}
+
+/// A channel-source run's raw output, before the panel projection.
+struct ChannelRun {
+    channel: String,
+    /// Component labels for a vector channel (`["x","y","z"]`), empty for a
+    /// scalar. Column headers for the sample table.
+    components: Vec<String>,
+    summary: RunSummary,
+    tracks: Vec<ChannelTrackResult>,
+}
+
+/// How a run dispatches, decided from the checked queries' sources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunKind {
+    /// Every query is points-source: run the composing pipeline.
+    Points,
+    /// A single channel-source query: run it standalone over its samples.
+    Channel,
+    /// A channel source mixed with other queries - not allowed, since a channel
+    /// has its own timeline and cannot compose in one pipeline.
+    MixedChannel,
 }
 
 /// Everything a run's results depend on besides the query text. Results
@@ -233,8 +265,22 @@ struct RunFingerprint {
     filter: GlobalFilter,
 }
 
-/// Everything one run produced and the UI needs to show it.
+/// Everything one run produced and the UI needs to show it: either a points
+/// pipeline (map halos + point match tables) or a channel-source run (sample
+/// match tables, no map effect yet).
 struct QueryResults {
+    body: ResultsBody,
+    fingerprint: RunFingerprint,
+}
+
+/// The two kinds of run result, dispatched on the query source.
+enum ResultsBody {
+    Points(PointsResults),
+    Channel(ChannelResults),
+}
+
+/// A points-pipeline run: its composed map effect and per-query panel rows.
+struct PointsResults {
     /// The composed display effect for the map.
     matches: QueryMatches,
     /// Per query, in editor order, for the results panel.
@@ -242,7 +288,28 @@ struct QueryResults {
     /// Per-track derived series (only for metrics some query referenced),
     /// kept so match tables show the exact values the run used.
     track_data: HashMap<TrackRef, TrackQueryData>,
-    fingerprint: RunFingerprint,
+}
+
+/// A channel-source run: matched sample ranges per track over the source
+/// channel's own timeline. Renders as sample tables; map projection lands
+/// later.
+struct ChannelResults {
+    /// The source channel's name, for the panel header.
+    channel: String,
+    /// Component labels for a vector channel, empty for a scalar.
+    components: Vec<String>,
+    summary: String,
+    tracks: Vec<ChannelTrackResult>,
+    /// Grayed out when the run's inputs changed, like the points path.
+    stale: bool,
+}
+
+/// One track's channel-source matches and the timeline they index into.
+struct ChannelTrackResult {
+    track: TrackRef,
+    /// Matched sample-index ranges into `timeline`.
+    ranges: Vec<Range<usize>>,
+    timeline: ChannelTimeline,
 }
 
 /// One query's result for the panel: its summary line, columns, and matches.
@@ -285,17 +352,19 @@ impl QueryWindow {
         }
     }
 
-    /// Matches of the last run, for the map. `None` when there are none.
+    /// Matches of the last run, for the map. `None` for a channel-source run
+    /// (no map projection yet) or when there was no run.
     pub fn matches(&self) -> Option<&QueryMatches> {
-        self.results.as_ref().map(|r| &r.matches)
+        match &self.results.as_ref()?.body {
+            ResultsBody::Points(p) => Some(&p.matches),
+            ResultsBody::Channel(_) => None,
+        }
     }
 
     /// Whether the queries are currently affecting the map (any hidden points
     /// or halos). Drives the toolbar indicator shown while the window is closed.
     pub fn filter_active(&self) -> bool {
-        self.results
-            .as_ref()
-            .is_some_and(|results| !results.matches.is_empty())
+        self.matches().is_some_and(|matches| !matches.is_empty())
     }
 
     /// Whether every query in the editor checks and there is at least one, so
@@ -304,14 +373,24 @@ impl QueryWindow {
         !self.chunks.is_empty() && self.chunks.iter().all(|c| c.result.is_ok())
     }
 
-    /// Whether any checked query reads from a channel source. Such a query
-    /// evaluates over the channel's samples, which the map cannot yet render, so
-    /// running is gated until that lands.
-    fn has_channel_source(&self) -> bool {
-        self.chunks
+    /// How a run of the current (checked) queries would dispatch, or why it
+    /// cannot run. Only meaningful when [`all_ok`](Self::all_ok).
+    fn run_kind(&self) -> RunKind {
+        let sources = self
+            .chunks
             .iter()
             .filter_map(|c| c.result.as_ref().ok())
-            .any(gt_query::CheckedQuery::is_channel_source)
+            .map(gt_query::CheckedQuery::is_channel_source);
+        let (channel_count, total) = sources.fold((0, 0), |(ch, n), is_channel| {
+            (ch + usize::from(is_channel), n + 1)
+        });
+        match channel_count {
+            0 => RunKind::Points,
+            // A channel source has its own timeline, so it cannot compose with
+            // other queries in one pipeline: it must stand alone.
+            _ if channel_count == total && total == 1 => RunKind::Channel,
+            _ => RunKind::MixedChannel,
+        }
     }
 
     /// The first query that failed to check, with its diagnostic and the byte
@@ -434,8 +513,12 @@ impl QueryWindow {
         // Results gray out when anything they depend on changed: loaded
         // files, track visibility, or the global filter.
         if let Some(results) = &mut self.results {
-            results.matches.stale =
+            let stale =
                 current_fingerprint(loaded_files, visibility, filter) != results.fingerprint;
+            match &mut results.body {
+                ResultsBody::Points(p) => p.matches.stale = stale,
+                ResultsBody::Channel(c) => c.stale = stale,
+            }
         }
 
         let files = loaded_files.files();
@@ -467,7 +550,7 @@ impl QueryWindow {
         // chord from other widgets.
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter))
             && self.all_ok()
-            && !self.has_channel_source()
+            && self.run_kind() != RunKind::MixedChannel
             && self.running.is_none()
         {
             self.run_requested = true;
@@ -619,84 +702,14 @@ impl QueryWindow {
         let Some(output) = completed.output else {
             return;
         };
-        let track_data = completed.track_data;
-
-        // Evaluation ran on each track's time-filtered slice; map indices back
-        // to absolute positions.
-        let absolute = |tms: &[TrackMatches]| -> HashMap<TrackRef, Vec<Range<usize>>> {
-            tms.iter()
-                .filter(|tm| !tm.ranges.is_empty())
-                .map(|tm| {
-                    let start = track_data.get(&tm.track).map_or(0, |d| d.slice_start);
-                    let ranges = tm
-                        .ranges
-                        .iter()
-                        .map(|r| r.start + start..r.end + start)
-                        .collect();
-                    (tm.track, ranges)
-                })
-                .collect()
+        let body = match output {
+            RunProduct::Points(pipeline) => {
+                ResultsBody::Points(points_results(&pipeline, completed.track_data))
+            }
+            RunProduct::Channel(run) => ResultsBody::Channel(channel_results(run)),
         };
-
-        // The point-key mask distinguishes only so many halo layers; extra
-        // draw queries beyond that cannot be rendered distinctly.
-        if output.draws.len() > DrawLayerMask::MAX_LAYERS {
-            log::warn!(
-                "query has {} draw stages; only the first {} render as halos",
-                output.draws.len(),
-                DrawLayerMask::MAX_LAYERS
-            );
-        }
-
-        // The i-th draw query gets palette color i; the map keys its halo layer
-        // to the same order.
-        let draw_color: HashMap<usize, usize> = output
-            .draws
-            .iter()
-            .take(DrawLayerMask::MAX_LAYERS)
-            .enumerate()
-            .map(|(order, layer)| (layer.query_index, order))
-            .collect();
-
-        let matches = QueryMatches {
-            hidden: absolute(&output.hidden),
-            draws: output
-                .draws
-                .iter()
-                .take(DrawLayerMask::MAX_LAYERS)
-                .enumerate()
-                .map(|(color, layer)| DrawLayer {
-                    color,
-                    ranges: absolute(&layer.matches),
-                })
-                .collect(),
-            stale: false,
-        };
-        let queries = output
-            .queries
-            .iter()
-            .enumerate()
-            .map(|(qi, q)| PanelQuery {
-                color: draw_color.get(&qi).copied(),
-                summary: summary_line(&q.summary, q.mode),
-                columns: q.columns.clone(),
-                matches: q
-                    .matches
-                    .iter()
-                    .map(|tm| TrackMatches {
-                        track: tm.track,
-                        ranges: absolute(std::slice::from_ref(tm))
-                            .remove(&tm.track)
-                            .unwrap_or_default(),
-                    })
-                    .collect(),
-            })
-            .collect();
-
         self.results = Some(QueryResults {
-            matches,
-            queries,
-            track_data,
+            body,
             fingerprint: running.fingerprint,
         });
     }
@@ -749,14 +762,14 @@ impl QueryWindow {
         ui.horizontal(|ui| {
             let in_flight = self.running.is_some();
             let all_ok = self.all_ok();
-            let channel_source = self.has_channel_source();
-            let runnable = all_ok && !in_flight && !channel_source;
+            let mixed = all_ok && self.run_kind() == RunKind::MixedChannel;
+            let runnable = all_ok && !in_flight && !mixed;
             let run = ui.add_enabled(runnable, egui::Button::new("Run"));
-            let run = match (all_ok, in_flight, channel_source) {
+            let run = match (all_ok, in_flight, mixed) {
                 (false, _, _) => run.on_disabled_hover_text("Fix the error above to run"),
-                (_, _, true) => {
-                    run.on_disabled_hover_text("Channel-source queries can't run on the map yet")
-                }
+                (_, _, true) => run.on_disabled_hover_text(
+                    "A channel-source query must be the only query in the editor",
+                ),
                 (true, true, _) => run.on_disabled_hover_text("A run is in progress"),
                 (true, false, false) => run,
             };
@@ -1041,44 +1054,16 @@ impl QueryWindow {
             ui.label(egui::RichText::new("No runs yet").weak());
             return;
         };
-        let stale = results.matches.stale;
-
-        // One collapsible section per query, in editor order: its summary is
-        // the header (with a color swatch for draw queries), its match tables
-        // the body. Stable ids keep the open/closed state across reruns. No
-        // inner scroll - the window scrolls as a whole (see `show`).
-        for (qi, query) in results.queries.iter().enumerate() {
-            let matches = query
-                .matches
-                .iter()
-                .map(|tm| tm.ranges.len())
-                .sum::<usize>();
-            let match_ctx = MatchCtx {
-                files,
-                track_data: &results.track_data,
-                columns: &query.columns,
-            };
-            let id = ui.make_persistent_id(("query_result", qi));
-            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
-                .show_header(ui, |ui| {
-                    // A draw query's section carries the swatch of its map halo
-                    // color; hide/keep queries have none.
-                    if let Some(color) = query.color {
-                        query_swatch(ui, gt_ui_theme::query_halo_color(color, false));
-                    }
-                    ui.label(query.summary.as_str());
-                })
-                .body(|ui| {
-                    if matches == 0 {
-                        ui.label(egui::RichText::new("No matches").weak());
-                    }
-                    for tm in &query.matches {
-                        for range in &tm.ranges {
-                            match_ui(ui, &match_ctx, tm.track, range, stale, highlight);
-                        }
-                    }
-                });
-        }
+        let stale = match &results.body {
+            ResultsBody::Points(points) => {
+                points_results_ui(ui, points, files, highlight);
+                points.matches.stale
+            }
+            ResultsBody::Channel(channel) => {
+                channel_results_ui(ui, channel, files);
+                channel.stale
+            }
+        };
         if stale {
             ui.label(
                 egui::RichText::new(format!("Data changed since this run {EM_DASH} run again"))
@@ -1179,6 +1164,11 @@ fn run_worker(
     prepared: &AtomicUsize,
 ) -> RunCompleted {
     let cancelled = || cancel.load(Ordering::Relaxed);
+    // A channel-source query runs standalone (the UI gates a mix), on its own
+    // sample timeline rather than the composing points pipeline.
+    if let Some(query) = queries.first().filter(|q| q.is_channel_source()) {
+        return run_channel_worker(query, tracks, &cancelled, prepared);
+    }
     let uses_util = queries
         .iter()
         .any(|q| q.referenced_metrics().iter().any(|m| m.is_util()));
@@ -1237,8 +1227,83 @@ fn run_worker(
         .collect();
 
     RunCompleted {
-        output: gt_query::run_pipeline(queries, &inputs, &cancelled),
+        output: gt_query::run_pipeline(queries, &inputs, &cancelled).map(RunProduct::Points),
         track_data,
+    }
+}
+
+/// Evaluate one channel-source `query` over each track's sample timeline. Nav
+/// metrics are rejected on a channel source, so no derived series are needed.
+/// Returns `None` output on cancellation, like the points path.
+fn run_channel_worker(
+    query: &CheckedQuery,
+    tracks: &[TrackSnapshot],
+    cancelled: &impl Fn() -> bool,
+    prepared: &AtomicUsize,
+) -> RunCompleted {
+    let providers: Vec<(TrackRef, SliceProvider<'_>)> = tracks
+        .iter()
+        .map(|snapshot| {
+            let provider = provider_for(&snapshot.points, &snapshot.channels, None);
+            prepared.fetch_add(1, Ordering::Relaxed);
+            (
+                snapshot.track_ref,
+                SliceProvider {
+                    inner: provider,
+                    start: snapshot.slice.start,
+                    len: snapshot.slice.len(),
+                },
+            )
+        })
+        .collect();
+    let inputs: Vec<TrackInput<'_, SliceProvider<'_>>> = providers
+        .iter()
+        .map(|(track_ref, provider)| TrackInput {
+            track: *track_ref,
+            provider,
+        })
+        .collect();
+
+    let Some(output) = gt_query::run_cancellable(query, &inputs, cancelled) else {
+        return RunCompleted {
+            output: None,
+            track_data: HashMap::new(),
+        };
+    };
+    // The source channel is present (the query checked as a channel source).
+    let name = query.source_channel().unwrap_or_default();
+    // Component labels for the table headers, from any track carrying the
+    // channel. Components are structural (the channel's shape), not per-track
+    // content, so first-vs-last does not matter here unlike the unit collision
+    // schema_from_files resolves last-wins.
+    let components = tracks
+        .iter()
+        .flat_map(|s| &s.channels)
+        .find(|c| c.name == name)
+        .map(|c| c.components.clone())
+        .unwrap_or_default();
+    // Pair each track's matched sample ranges with its timeline, for the table.
+    let tracks: Vec<ChannelTrackResult> = output
+        .matches
+        .into_iter()
+        .filter_map(|tm| {
+            let provider = providers.iter().find(|(tr, _)| *tr == tm.track)?;
+            Some(ChannelTrackResult {
+                track: tm.track,
+                ranges: tm.ranges,
+                timeline: provider.1.channel_timeline(name),
+            })
+        })
+        .collect();
+
+    RunCompleted {
+        output: Some(RunProduct::Channel(ChannelRun {
+            channel: name.to_owned(),
+            components,
+            summary: output.summary,
+            tracks,
+        })),
+        track_data: HashMap::new(),
     }
 }
 
@@ -1381,6 +1446,149 @@ fn match_header_text(files: &[LoadedFile], track_ref: TrackRef, range: &Range<us
             track_ref.index
         ),
         None => format!("{file} #{} {EM_DASH} {count} points", track_ref.index),
+    }
+}
+
+/// Render a points pipeline's per-query sections with their point match tables.
+fn points_results_ui(
+    ui: &mut egui::Ui,
+    points: &PointsResults,
+    files: &[LoadedFile],
+    highlight: &mut MapHighlight,
+) {
+    let stale = points.matches.stale;
+    // One collapsible section per query, in editor order: its summary is the
+    // header (with a color swatch for draw queries), its match tables the body.
+    // Stable ids keep the open/closed state across reruns.
+    for (qi, query) in points.queries.iter().enumerate() {
+        let matches = query
+            .matches
+            .iter()
+            .map(|tm| tm.ranges.len())
+            .sum::<usize>();
+        let match_ctx = MatchCtx {
+            files,
+            track_data: &points.track_data,
+            columns: &query.columns,
+        };
+        let id = ui.make_persistent_id(("query_result", qi));
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+            .show_header(ui, |ui| {
+                if let Some(color) = query.color {
+                    query_swatch(ui, gt_ui_theme::query_halo_color(color, false));
+                }
+                ui.label(query.summary.as_str());
+            })
+            .body(|ui| {
+                if matches == 0 {
+                    ui.label(egui::RichText::new("No matches").weak());
+                }
+                for tm in &query.matches {
+                    for range in &tm.ranges {
+                        match_ui(ui, &match_ctx, tm.track, range, stale, highlight);
+                    }
+                }
+            });
+    }
+}
+
+/// Render a channel-source run: a summary header, then one sample match table
+/// per track. Each row is a matched sample's time and component values.
+fn channel_results_ui(ui: &mut egui::Ui, channel: &ChannelResults, files: &[LoadedFile]) {
+    let id = ui.make_persistent_id(("channel_result", channel.channel.as_str()));
+    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
+        .show_header(ui, |ui| {
+            ui.label(channel.summary.as_str());
+        })
+        .body(|ui| {
+            let total: usize = channel
+                .tracks
+                .iter()
+                .map(|t| t.ranges.iter().map(Range::len).sum::<usize>())
+                .sum();
+            if total == 0 {
+                ui.label(egui::RichText::new("No matches").weak());
+            }
+            for track in &channel.tracks {
+                channel_track_ui(ui, channel, track, files);
+            }
+        });
+}
+
+/// One track's matched channel samples as a table: `time` plus one column per
+/// component (or the channel name for a scalar). Capped like the point tables.
+/// Values print in the evaluator's base units (a `g` channel shows m/s2), the
+/// same convention the query language and the provider timeline use.
+fn channel_track_ui(
+    ui: &mut egui::Ui,
+    channel: &ChannelResults,
+    track: &ChannelTrackResult,
+    files: &[LoadedFile],
+) {
+    let matched: usize = track.ranges.iter().map(Range::len).sum();
+    if matched == 0 {
+        return;
+    }
+    let file = track.track.fi.get(files).map_or_else(
+        || format!("file {}", track.track.fi),
+        |f| f.metadata.filename.clone(),
+    );
+    ui.label(
+        egui::RichText::new(format!(
+            "{file} #{} {EM_DASH} {matched} {}",
+            track.track.index,
+            gt_fmt::pluralize(matched, "sample", "samples"),
+        ))
+        .strong(),
+    );
+
+    // Column headers: time, then each component (the channel name when scalar).
+    let value_headers: Vec<String> = if channel.components.is_empty() {
+        vec![channel.channel.clone()]
+    } else {
+        channel.components.clone()
+    };
+    egui::Grid::new(ui.id().with(("channel_table", track.track)))
+        .striped(true)
+        .show(ui, |ui| {
+            ui.strong("time");
+            for header in &value_headers {
+                ui.strong(header.as_str());
+            }
+            ui.end_row();
+
+            let columns = track.timeline.columns.max(1);
+            for sample in track
+                .ranges
+                .iter()
+                .flat_map(Clone::clone)
+                .take(MATCH_TABLE_ROW_CAP)
+            {
+                let time = track
+                    .timeline
+                    .times
+                    .get(sample)
+                    .and_then(|t| {
+                        DateTime::<Utc>::from_timestamp_micros((t * MICROS_PER_SEC) as i64)
+                    })
+                    .map(|dt| dt.format("%H:%M:%S%.3f").to_string())
+                    .unwrap_or_default();
+                ui.label(time);
+                for col in 0..columns {
+                    let value = track.timeline.values.get(sample * columns + col);
+                    ui.label(value.map_or_else(String::new, |v| format!("{v:.3}")));
+                }
+                ui.end_row();
+            }
+        });
+    if matched > MATCH_TABLE_ROW_CAP {
+        ui.label(
+            egui::RichText::new(format!(
+                "{EM_DASH} {} more samples",
+                matched - MATCH_TABLE_ROW_CAP
+            ))
+            .weak(),
+        );
     }
 }
 
@@ -1542,6 +1750,132 @@ impl MetricProvider for SliceProvider<'_> {
         // selects them directly from the inner provider - no index offset.
         self.inner.channel_span(name, t_lo, t_hi)
     }
+
+    fn channel_timeline(&self, name: &str) -> ChannelTimeline {
+        // A channel's own sample clock is independent of the point slice, so it
+        // forwards whole.
+        self.inner.channel_timeline(name)
+    }
+}
+
+/// Project a points [`PipelineOutput`] into the panel/map result. Evaluation
+/// ran on each track's time-filtered slice, so point indices shift back to
+/// absolute positions here.
+fn points_results(
+    output: &PipelineOutput,
+    track_data: HashMap<TrackRef, TrackQueryData>,
+) -> PointsResults {
+    let absolute = |tms: &[TrackMatches]| -> HashMap<TrackRef, Vec<Range<usize>>> {
+        tms.iter()
+            .filter(|tm| !tm.ranges.is_empty())
+            .map(|tm| {
+                let start = track_data.get(&tm.track).map_or(0, |d| d.slice_start);
+                let ranges = tm
+                    .ranges
+                    .iter()
+                    .map(|r| r.start + start..r.end + start)
+                    .collect();
+                (tm.track, ranges)
+            })
+            .collect()
+    };
+
+    // The point-key mask distinguishes only so many halo layers; extra draw
+    // queries beyond that cannot be rendered distinctly.
+    if output.draws.len() > DrawLayerMask::MAX_LAYERS {
+        log::warn!(
+            "query has {} draw stages; only the first {} render as halos",
+            output.draws.len(),
+            DrawLayerMask::MAX_LAYERS
+        );
+    }
+
+    // The i-th draw query gets palette color i; the map keys its halo layer to
+    // the same order.
+    let draw_color: HashMap<usize, usize> = output
+        .draws
+        .iter()
+        .take(DrawLayerMask::MAX_LAYERS)
+        .enumerate()
+        .map(|(order, layer)| (layer.query_index, order))
+        .collect();
+
+    let matches = QueryMatches {
+        hidden: absolute(&output.hidden),
+        draws: output
+            .draws
+            .iter()
+            .take(DrawLayerMask::MAX_LAYERS)
+            .enumerate()
+            .map(|(color, layer)| DrawLayer {
+                color,
+                ranges: absolute(&layer.matches),
+            })
+            .collect(),
+        stale: false,
+    };
+    let queries = output
+        .queries
+        .iter()
+        .enumerate()
+        .map(|(qi, q)| PanelQuery {
+            color: draw_color.get(&qi).copied(),
+            summary: summary_line(&q.summary, q.mode),
+            columns: q.columns.clone(),
+            matches: q
+                .matches
+                .iter()
+                .map(|tm| TrackMatches {
+                    track: tm.track,
+                    ranges: absolute(std::slice::from_ref(tm))
+                        .remove(&tm.track)
+                        .unwrap_or_default(),
+                })
+                .collect(),
+        })
+        .collect();
+
+    PointsResults {
+        matches,
+        queries,
+        track_data,
+    }
+}
+
+/// Project a channel-source [`ChannelRun`] into its panel result. The matched
+/// ranges are sample indices into each track's timeline, kept as-is (no slice
+/// offset: a channel source is not sliced by the point time filter).
+fn channel_results(run: ChannelRun) -> ChannelResults {
+    ChannelResults {
+        channel: run.channel,
+        components: run.components,
+        summary: channel_summary_line(&run.summary),
+        tracks: run.tracks,
+        stale: false,
+    }
+}
+
+/// A channel-source run's summary line: match count over tracks, plus any
+/// skipped-window reporting. Matches are samples, so it never mentions the
+/// points/keep/hide accounting the [`summary_line`] points path uses.
+fn channel_summary_line(summary: &RunSummary) -> String {
+    let mut parts = vec![format!(
+        "{} {} on {} {}",
+        summary.match_count,
+        gt_fmt::pluralize(summary.match_count, "match", "matches"),
+        summary.tracks_with_matches,
+        gt_fmt::pluralize(summary.tracks_with_matches, "track", "tracks"),
+    )];
+    for (channel, count) in &summary.skipped_channels {
+        parts.push(format!("{count} skipped (missing @{channel})"));
+    }
+    if summary.skipped_non_finite > 0 {
+        parts.push(format!(
+            "{} skipped (undefined arithmetic)",
+            summary.skipped_non_finite
+        ));
+    }
+    parts.join(&format!(" {EM_DASH} "))
 }
 
 fn summary_line(summary: &RunSummary, mode: DisplayMode) -> String {
@@ -1631,6 +1965,20 @@ impl TrackProvider<'_> {
                         fix: acc.fix + usize::from(sat.in_fix()),
                     })
             })
+    }
+
+    /// Locate channel `name` and the two things both channel readers need: its
+    /// column count and the factor converting its stored unit to base units. An
+    /// unknown or absent unit leaves values a bare number (factor 1.0), matching
+    /// how the checker types such a channel; components share the channel unit.
+    fn resolve_channel(&self, name: &str) -> Option<(&Channel, usize, f64)> {
+        let channel = self.channels.iter().find(|c| c.name == name)?;
+        let to_base = channel
+            .unit
+            .as_deref()
+            .and_then(Unit::from_ident)
+            .map_or(1.0, Unit::to_base);
+        Some((channel, channel.component_count(), to_base))
     }
 }
 
@@ -1731,18 +2079,9 @@ impl MetricProvider for TrackProvider<'_> {
     /// precision of a sample's own timestamp only refines placement within that
     /// grid.
     fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> ChannelSamples {
-        let Some(channel) = self.channels.iter().find(|c| c.name == name) else {
+        let Some((channel, columns, to_base)) = self.resolve_channel(name) else {
             return ChannelSamples::default();
         };
-        let columns = channel.component_count();
-        // An unknown or absent unit leaves the samples as a bare number (factor
-        // 1.0), matching how the checker types such a channel. Components share
-        // the channel-level unit.
-        let to_base = channel
-            .unit
-            .as_deref()
-            .and_then(Unit::from_ident)
-            .map_or(1.0, Unit::to_base);
         // `times` is sorted ascending, so the samples in the closed span are a
         // contiguous row range found by binary search. An inverted span (`t_lo >
         // t_hi`, possible when the track's time is non-monotonic) makes the range
@@ -1759,6 +2098,25 @@ impl MetricProvider for TrackProvider<'_> {
             .map(|value| value * to_base)
             .collect();
         ChannelSamples { values, columns }
+    }
+
+    /// The whole sample timeline of `name` in base units, for a query whose
+    /// source is that channel. Each sample's time is its own (sub-second)
+    /// clock, since the channel is the timeline here rather than being bucketed
+    /// onto nav-point seconds.
+    fn channel_timeline(&self, name: &str) -> ChannelTimeline {
+        let Some((channel, columns, to_base)) = self.resolve_channel(name) else {
+            return ChannelTimeline::default();
+        };
+        ChannelTimeline {
+            times: channel
+                .times
+                .iter()
+                .map(|t| t.timestamp_micros() as f64 / MICROS_PER_SEC)
+                .collect(),
+            values: channel.values.iter().map(|value| value * to_base).collect(),
+            columns,
+        }
     }
 }
 
@@ -2178,6 +2536,8 @@ fn segments(range: Range<usize>, underline: Option<(usize, usize)>) -> Vec<Range
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
     /// Every built-in example parses, type-checks, and runs against a real
@@ -2760,9 +3120,73 @@ mod tests {
     }
 
     #[test]
-    fn a_channel_source_checks_and_is_flagged_for_run_gating() {
-        // A channel source type-checks against the loaded schema, and the app
-        // recognizes it so the run path can gate it until map output lands.
+    fn channel_timeline_serves_the_whole_channel_in_base_units() {
+        // The channel-source timeline carries every sample's time and value,
+        // converted to base units (g -> m/s2), independent of the point slice.
+        let base = TEST_EPOCH as f64;
+        let accel = scalar_channel("accel", Some("g"), &[(0, 1.0), (1, 2.0)]);
+        let channels = [accel];
+        let points = test_points();
+        let provider = provider_for(&points, &channels, None);
+
+        let timeline = provider.channel_timeline("accel");
+        assert_eq!(timeline.columns, 1);
+        assert_eq!(timeline.times.len(), 2);
+        assert!((timeline.times[0] - base).abs() < 1e-6);
+        let g = Unit::G.to_base();
+        assert!((timeline.values[0] - g).abs() < 1e-9);
+        assert!((timeline.values[1] - 2.0 * g).abs() < 1e-9);
+        // Unknown channel yields an empty timeline.
+        assert!(provider.channel_timeline("missing").times.is_empty());
+    }
+
+    #[test]
+    fn a_channel_source_runs_over_its_own_samples() {
+        // The whole channel-source app path: run `@accel | where ...` over the
+        // channel's timeline. Two of three samples clear 1 g, matching per
+        // sample (indices 0 and 2), with the sample count as the total.
+        let channel = scalar_channel("accel", Some("g"), &[(0, 1.5), (1, 0.2), (2, 2.0)]);
+        let files = [file_with_channels(vec![channel.clone()])];
+        let schema = schema_from_files(&files);
+        let query = check_text("@accel | where @accel > 1 g", &schema)
+            .expect("a channel source checks against the loaded schema");
+        assert!(query.is_channel_source());
+
+        let points = test_points();
+        let channels = [channel];
+        let provider = provider_for(&points, &channels, None);
+        let output = gt_query::run(
+            &query,
+            &[TrackInput {
+                track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+                provider: &provider,
+            }],
+        );
+        assert_eq!(output.matches[0].ranges, vec![0..1, 2..3]);
+        assert_eq!(output.summary.match_count, 2);
+        // Three channel samples were the timeline, not the two nav points.
+        assert_eq!(output.summary.total_points, 3);
+    }
+
+    /// A `QueryWindow` whose editor holds `text`, checked against `schema`, for
+    /// exercising `run_kind` without stepping the egui harness.
+    fn window_with(text: &str, schema: &ChannelSchema) -> QueryWindow {
+        let mut window = QueryWindow::new();
+        window.chunks = check_all(text, schema);
+        window
+    }
+
+    #[rstest]
+    // Every query points-source: the composing pipeline.
+    #[case("points | where velocity > 1 km/h", RunKind::Points)]
+    // A lone channel source: standalone run.
+    #[case("@accel | where norm(@accel) > 1 g", RunKind::Channel)]
+    // A channel source mixed with a points query: disallowed.
+    #[case(
+        "points | where velocity > 1 km/h\n\n@accel | where norm(@accel) > 1 g",
+        RunKind::MixedChannel
+    )]
+    fn run_kind_classifies_the_editor_queries(#[case] text: &str, #[case] expected: RunKind) {
         let files = [file_with_channels(vec![vector_channel(
             "accel",
             Some("g"),
@@ -2770,12 +3194,46 @@ mod tests {
             &[(0, [1.0, 0.0, 0.0])],
         )])];
         let schema = schema_from_files(&files);
-        let query = check_text("@accel | where norm(@accel) > 1 g", &schema)
-            .expect("a channel source checks against the loaded schema");
-        assert!(query.is_channel_source());
-        // A points query is not flagged.
-        let points = check_text("points | where velocity > 1 km/h", &schema).unwrap();
-        assert!(!points.is_channel_source());
+        let window = window_with(text, &schema);
+        assert!(window.all_ok(), "fixture queries must check");
+        assert_eq!(window.run_kind(), expected);
+    }
+
+    #[test]
+    fn run_channel_worker_pairs_matches_with_the_timeline() {
+        // The worker branch for a channel source: run it standalone and package
+        // per-track matched sample ranges with the channel's timeline and
+        // component labels. Sample 0 (1.5 g -> 14.7 m/s2) clears 1 g; sample 1
+        // (0.2 g -> 1.96) does not.
+        let channel = vector_channel(
+            "accel",
+            Some("g"),
+            &["x", "y", "z"],
+            &[(0, [1.5, 0.0, 0.0]), (1, [0.2, 0.0, 0.0])],
+        );
+        let files = [file_with_channels(vec![channel.clone()])];
+        let schema = schema_from_files(&files);
+        let query = check_text("@accel | where norm(@accel) > 1 g", &schema).unwrap();
+
+        let points = test_points();
+        let snapshot = TrackSnapshot {
+            track_ref: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            slice: 0..points.len(),
+            points,
+            channels: vec![channel],
+        };
+        let cancel = AtomicBool::new(false);
+        let prepared = AtomicUsize::new(0);
+        let completed = run_worker(&[query], &[snapshot], &cancel, &prepared);
+
+        let Some(RunProduct::Channel(run)) = completed.output else {
+            panic!("a channel source produces a channel run");
+        };
+        assert_eq!(run.channel, "accel");
+        assert_eq!(run.components, vec!["x", "y", "z"]);
+        assert_eq!(run.tracks.len(), 1);
+        assert_eq!(run.tracks[0].ranges, vec![0..1]);
+        assert_eq!(run.tracks[0].timeline.times.len(), 2);
     }
 
     #[test]
