@@ -37,7 +37,7 @@ pub struct ChannelInfo {
 
 /// The channels a query may reference, keyed by name. The app builds this from
 /// the loaded files; [`check`] resolves each `@name` against it.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChannelSchema {
     channels: HashMap<String, ChannelInfo>,
 }
