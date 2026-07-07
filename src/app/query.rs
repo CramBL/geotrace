@@ -240,6 +240,9 @@ struct ChannelRun {
     components: Vec<String>,
     summary: RunSummary,
     tracks: Vec<ChannelTrackResult>,
+    /// The map effect: matched sample spans projected onto the track as
+    /// enclosing nav-point ranges, honoring the query's draw/keep/hide mode.
+    matches: QueryMatches,
 }
 
 /// How a run dispatches, decided from the checked queries' sources.
@@ -267,7 +270,7 @@ struct RunFingerprint {
 
 /// Everything one run produced and the UI needs to show it: either a points
 /// pipeline (map halos + point match tables) or a channel-source run (sample
-/// match tables, no map effect yet).
+/// match tables plus halos over the matched track segments).
 struct QueryResults {
     body: ResultsBody,
     fingerprint: RunFingerprint,
@@ -291,8 +294,8 @@ struct PointsResults {
 }
 
 /// A channel-source run: matched sample ranges per track over the source
-/// channel's own timeline. Renders as sample tables; map projection lands
-/// later.
+/// channel's own timeline. Renders as sample tables, and as halos over the
+/// track segments the matched spans cover.
 struct ChannelResults {
     /// The source channel's name, for the panel header.
     channel: String,
@@ -300,8 +303,9 @@ struct ChannelResults {
     components: Vec<String>,
     summary: String,
     tracks: Vec<ChannelTrackResult>,
-    /// Grayed out when the run's inputs changed, like the points path.
-    stale: bool,
+    /// The map effect: halos over the matched track segments, honoring the
+    /// query mode. Carries its own `stale` flag for the map.
+    matches: QueryMatches,
 }
 
 /// One track's channel-source matches and the timeline they index into.
@@ -352,12 +356,11 @@ impl QueryWindow {
         }
     }
 
-    /// Matches of the last run, for the map. `None` for a channel-source run
-    /// (no map projection yet) or when there was no run.
+    /// Matches of the last run, for the map. `None` when there was no run.
     pub fn matches(&self) -> Option<&QueryMatches> {
         match &self.results.as_ref()?.body {
             ResultsBody::Points(p) => Some(&p.matches),
-            ResultsBody::Channel(_) => None,
+            ResultsBody::Channel(c) => Some(&c.matches),
         }
     }
 
@@ -517,7 +520,7 @@ impl QueryWindow {
                 current_fingerprint(loaded_files, visibility, filter) != results.fingerprint;
             match &mut results.body {
                 ResultsBody::Points(p) => p.matches.stale = stale,
-                ResultsBody::Channel(c) => c.stale = stale,
+                ResultsBody::Channel(c) => c.matches.stale = stale,
             }
         }
 
@@ -1061,7 +1064,7 @@ impl QueryWindow {
             }
             ResultsBody::Channel(channel) => {
                 channel_results_ui(ui, channel, files);
-                channel.stale
+                channel.matches.stale
             }
         };
         if stale {
@@ -1283,7 +1286,7 @@ fn run_channel_worker(
         .map(|c| c.components.clone())
         .unwrap_or_default();
     // Pair each track's matched sample ranges with its timeline, for the table.
-    let tracks: Vec<ChannelTrackResult> = output
+    let track_results: Vec<ChannelTrackResult> = output
         .matches
         .into_iter()
         .filter_map(|tm| {
@@ -1296,14 +1299,124 @@ fn run_channel_worker(
         })
         .collect();
 
+    // Project each track's matched sample spans onto its nav points, for the
+    // map halos: a matched span bands the track segments it covers.
+    let per_track: HashMap<TrackRef, (Vec<Range<usize>>, usize)> = track_results
+        .iter()
+        .filter_map(|result| {
+            let snapshot = tracks.iter().find(|s| s.track_ref == result.track)?;
+            let point_ranges =
+                matched_point_ranges(&snapshot.points, &result.timeline, &result.ranges);
+            let len = snapshot.points.len();
+            (!point_ranges.is_empty()).then_some((result.track, (point_ranges, len)))
+        })
+        .collect();
+    let matches = channel_query_matches(query.mode(), &per_track);
+
     RunCompleted {
         output: Some(RunProduct::Channel(ChannelRun {
             channel: name.to_owned(),
             components,
             summary: output.summary,
-            tracks,
+            tracks: track_results,
+            matches,
         })),
         track_data: HashMap::new(),
+    }
+}
+
+/// Map one track's matched sample ranges to enclosing nav-point index ranges,
+/// so the point-halo renderer bands the track over each matched span. A span
+/// `[t0, t1]` extends to the nav point at or before `t0` through the one at or
+/// after `t1`, so even a sub-interval match bands the segment it sits on.
+/// Returned sorted and merged (disjoint), as [`QueryMatches`] requires.
+fn matched_point_ranges(
+    points: &[NavPoint],
+    timeline: &ChannelTimeline,
+    ranges: &[Range<usize>],
+) -> Vec<Range<usize>> {
+    let Some(last) = points.len().checked_sub(1) else {
+        return Vec::new();
+    };
+    let point_secs: Vec<f64> = points.iter().map(|p| p.tpv.time().as_secs_f64()).collect();
+    let mut spans: Vec<Range<usize>> = ranges
+        .iter()
+        .filter_map(|r| {
+            let t0 = *timeline.times.get(r.start)?;
+            let t1 = *timeline.times.get(r.end.checked_sub(1)?)?;
+            // Last point at or before t0 (or the first point); first point at or
+            // after t1 (or the last).
+            let lo = point_secs.partition_point(|&t| t <= t0).saturating_sub(1);
+            let hi = point_secs.partition_point(|&t| t < t1).min(last);
+            Some(lo..hi + 1)
+        })
+        .collect();
+    spans.sort_by_key(|r| r.start);
+    merge_ranges(spans)
+}
+
+/// Merge overlapping or touching ranges (assumes `ranges` sorted by start),
+/// yielding sorted, disjoint, non-empty ranges.
+fn merge_ranges(ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    let mut merged: Vec<Range<usize>> = Vec::with_capacity(ranges.len());
+    for range in ranges.into_iter().filter(|r| !r.is_empty()) {
+        match merged.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => merged.push(range),
+        }
+    }
+    merged
+}
+
+/// The complement of sorted, disjoint `ranges` within `0..len`: the gaps not
+/// covered by any range.
+fn complement_ranges(ranges: &[Range<usize>], len: usize) -> Vec<Range<usize>> {
+    let mut gaps = Vec::new();
+    let mut cursor = 0;
+    for range in ranges {
+        if range.start > cursor {
+            gaps.push(cursor..range.start);
+        }
+        cursor = cursor.max(range.end);
+    }
+    if cursor < len {
+        gaps.push(cursor..len);
+    }
+    gaps
+}
+
+/// Build the map effect for a channel-source run from each track's matched
+/// nav-point ranges and point count, honoring the query's display mode:
+/// `draw` halos the matched segments, `hide` breaks the polyline there, and
+/// `keep` breaks it everywhere else.
+fn channel_query_matches(
+    mode: DisplayMode,
+    per_track: &HashMap<TrackRef, (Vec<Range<usize>>, usize)>,
+) -> QueryMatches {
+    let matched: HashMap<TrackRef, Vec<Range<usize>>> = per_track
+        .iter()
+        .map(|(track, (ranges, _))| (*track, ranges.clone()))
+        .collect();
+    match mode {
+        DisplayMode::Draw => QueryMatches {
+            draws: vec![DrawLayer {
+                color: 0,
+                ranges: matched,
+            }],
+            ..QueryMatches::default()
+        },
+        DisplayMode::Hide => QueryMatches {
+            hidden: matched,
+            ..QueryMatches::default()
+        },
+        DisplayMode::Keep => QueryMatches {
+            hidden: per_track
+                .iter()
+                .map(|(track, (ranges, len))| (*track, complement_ranges(ranges, *len)))
+                .filter(|(_, gaps)| !gaps.is_empty())
+                .collect(),
+            ..QueryMatches::default()
+        },
     }
 }
 
@@ -1851,7 +1964,7 @@ fn channel_results(run: ChannelRun) -> ChannelResults {
         components: run.components,
         summary: channel_summary_line(&run.summary),
         tracks: run.tracks,
-        stale: false,
+        matches: run.matches,
     }
 }
 
@@ -2539,6 +2652,12 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    /// A range built from arguments, so a single-element `vec![rng(0, 1)]` does
+    /// not trip clippy's `single_range_in_vec_init`.
+    fn rng(start: usize, end: usize) -> Range<usize> {
+        start..end
+    }
 
     /// Every built-in example parses, type-checks, and runs against a real
     /// track - the guard that keeps embedded queries valid as the language
@@ -3234,6 +3353,71 @@ mod tests {
         assert_eq!(run.tracks.len(), 1);
         assert_eq!(run.tracks[0].ranges, vec![0..1]);
         assert_eq!(run.tracks[0].timeline.times.len(), 2);
+        // The matched sample (at t=0 s) bands the track: a draw halo over the
+        // enclosing nav-point range.
+        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        assert_eq!(run.matches.draws.len(), 1);
+        assert_eq!(run.matches.draws[0].ranges_for(track), [rng(0, 1)]);
+    }
+
+    #[test]
+    fn matched_point_ranges_band_the_covering_segment() {
+        // Points at 0 and 1 s; a channel sample matched at 0.5 s brackets to the
+        // segment between them, banding both nav points.
+        let base = TEST_EPOCH as f64;
+        let points = test_points();
+        let timeline = ChannelTimeline {
+            times: vec![base + 0.5],
+            values: vec![9.8],
+            columns: 1,
+        };
+        assert_eq!(
+            matched_point_ranges(&points, &timeline, &[rng(0, 1)]),
+            vec![rng(0, 2)]
+        );
+        // No matched samples yields no bands.
+        assert!(matched_point_ranges(&points, &timeline, &[]).is_empty());
+    }
+
+    #[test]
+    fn merge_ranges_merges_touching_and_overlapping() {
+        assert_eq!(merge_ranges(vec![0..2, 2..4, 5..6]), vec![0..4, 5..6]);
+        assert_eq!(merge_ranges(vec![0..3, 1..2]), vec![rng(0, 3)]);
+        assert!(merge_ranges(vec![]).is_empty());
+    }
+
+    #[test]
+    fn complement_ranges_returns_the_gaps() {
+        assert_eq!(complement_ranges(&[1..3, 5..6], 8), vec![0..1, 3..5, 6..8]);
+        assert!(complement_ranges(&[rng(0, 4)], 4).is_empty());
+        assert_eq!(complement_ranges(&[], 3), vec![rng(0, 3)]);
+    }
+
+    #[rstest]
+    #[case(DisplayMode::Draw)]
+    #[case(DisplayMode::Hide)]
+    #[case(DisplayMode::Keep)]
+    fn channel_query_matches_honors_the_mode(#[case] mode: DisplayMode) {
+        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let per_track = HashMap::from([(track, (vec![rng(1, 3)], 5usize))]);
+        let matches = channel_query_matches(mode, &per_track);
+        match mode {
+            // Draw halos the matched segments.
+            DisplayMode::Draw => {
+                assert_eq!(matches.draws[0].ranges_for(track), [rng(1, 3)]);
+                assert!(matches.hidden.is_empty());
+            }
+            // Hide breaks the polyline at the matched segments.
+            DisplayMode::Hide => {
+                assert_eq!(matches.hidden_ranges(track), [rng(1, 3)]);
+                assert!(matches.draws.is_empty());
+            }
+            // Keep breaks the polyline everywhere else (the complement).
+            DisplayMode::Keep => {
+                assert_eq!(matches.hidden_ranges(track), &[0..1, 3..5]);
+                assert!(matches.draws.is_empty());
+            }
+        }
     }
 
     #[test]
