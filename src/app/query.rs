@@ -1228,7 +1228,7 @@ fn run_worker(
             )
         })
         .collect();
-    let inputs: Vec<TrackInput<'_>> = providers
+    let inputs: Vec<TrackInput<'_, SliceProvider<'_>>> = providers
         .iter()
         .map(|(track_ref, provider)| TrackInput {
             track: *track_ref,
