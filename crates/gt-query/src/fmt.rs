@@ -7,11 +7,14 @@
 
 use std::fmt;
 
-use crate::ast::{Expr, Query, UnaryOp, Window};
+use crate::ast::{Expr, Query, Source, UnaryOp, Window};
 
 impl fmt::Display for Query {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "points")?;
+        match &self.source {
+            Source::Points => write!(f, "points")?,
+            Source::Channel(c) => write!(f, "{c}")?,
+        }
         if let Some((head, tail)) = self.params.split_first() {
             write!(f, "\n| with {} {}", head.name, Lit(&head.value))?;
             for param in tail {

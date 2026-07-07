@@ -786,6 +786,14 @@ mod tests {
     }
 
     #[test]
+    fn an_at_at_the_start_offers_channels_as_sources() {
+        // The `@` sigil triggers channel completion anywhere, including the
+        // source position, so `@acc` at the query start offers accel as a source.
+        let names = channel_names("@acc", "@acc".len());
+        assert_eq!(names, vec!["accel"]);
+    }
+
+    #[test]
     fn a_component_prefix_offers_the_matching_components() {
         // `@gyro.` offers every component of gyro.
         let dot = "points | window 3 | where max(@gyro.";

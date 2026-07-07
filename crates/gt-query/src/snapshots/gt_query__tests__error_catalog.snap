@@ -5,11 +5,11 @@ expression: catalog
 [
     (
         "",
-        "0..0: a query starts with the source: points",
+        "0..0: a query starts with a source: points or a channel like @accel",
     ),
     (
         "where velocity > 0",
-        "0..5: a query starts with the source: points",
+        "0..5: a query starts with a source: points or a channel like @accel",
     ),
     (
         "points | window",

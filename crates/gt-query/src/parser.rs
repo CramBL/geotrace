@@ -10,7 +10,7 @@ use gt_types::DisplayMode;
 use crate::Diagnostic;
 use crate::ast::{
     BinaryOp, ChannelRef, Expr, Func, MetricRef, ModeStage, NumberLit, ParamDecl, ParamName, Query,
-    Span, TableSpec, UnaryOp, Window,
+    Source, Span, TableSpec, UnaryOp, Window,
 };
 use crate::lexer::{Tok, Token, lex};
 use crate::metric::QueryMetric;
@@ -110,16 +110,26 @@ impl<'src> Parser<'src> {
     }
 
     fn query(&mut self) -> Result<Query, Diagnostic> {
-        match self.peek() {
+        let source = match self.peek() {
             Some(tok) if tok.kind == Token::Points => {
                 self.advance();
+                Source::Points
+            }
+            // A channel names its own timeline as the source (`@accel | ...`).
+            Some(tok) if tok.kind == Token::Channel => {
+                self.advance();
+                Source::Channel(self.channel_ref_of(tok))
             }
             _ => {
-                return Err(self.error(self.here(), "a query starts with the source: points"));
+                return Err(self.error(
+                    self.here(),
+                    "a query starts with a source: points or a channel like @accel",
+                ));
             }
-        }
+        };
 
         let mut query = Query {
+            source,
             params: Vec::new(),
             window: None,
             predicates: Vec::new(),
@@ -531,6 +541,13 @@ impl<'src> Parser<'src> {
     /// the split is infallible.
     fn channel_ref(&mut self, tok: Tok<'src>) -> Expr {
         self.advance();
+        Expr::Channel(self.channel_ref_of(tok))
+    }
+
+    /// Split a `@name[.component]` [`Token::Channel`] into a [`ChannelRef`],
+    /// without advancing. The lexer guarantees the shape, so the split is
+    /// infallible. Shared by expression parsing and the pipeline source.
+    fn channel_ref_of(&self, tok: Tok<'src>) -> ChannelRef {
         debug_assert!(
             tok.text.starts_with('@'),
             "channel token must start with @: {:?}",
@@ -541,11 +558,11 @@ impl<'src> Parser<'src> {
             Some((name, comp)) => (name.to_owned(), Some(comp.to_owned())),
             None => (body.to_owned(), None),
         };
-        Expr::Channel(ChannelRef {
+        ChannelRef {
             name,
             component,
             span: tok.span,
-        })
+        }
     }
 
     /// An identifier in value position: a function call or a metric.

@@ -14,8 +14,8 @@ use gt_types::{DisplayMode, TrackRef};
 
 use crate::check::CheckedQuery;
 use crate::eval::{
-    CANCEL_CHECK_INTERVAL, ChannelSamples, MetricProvider, RunSummary, TrackInput, TrackMatches,
-    evaluate_track, ranges_from,
+    CANCEL_CHECK_INTERVAL, ChannelSamples, ChannelTimeline, MetricProvider, RunSummary, TrackInput,
+    TrackMatches, evaluate_track, ranges_from,
 };
 use crate::metric::QueryMetric;
 
@@ -76,6 +76,12 @@ impl MetricProvider for RunView<'_> {
         // Channel samples are keyed by absolute time, so the run's time window
         // selects them directly from the underlying provider - no index offset.
         self.inner.channel_span(name, t_lo, t_hi)
+    }
+
+    fn channel_timeline(&self, name: &str) -> ChannelTimeline {
+        // A channel's timeline is its own sample clock, independent of the point
+        // run this view slices, so it forwards whole.
+        self.inner.channel_timeline(name)
     }
 }
 

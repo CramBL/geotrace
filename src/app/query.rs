@@ -304,6 +304,16 @@ impl QueryWindow {
         !self.chunks.is_empty() && self.chunks.iter().all(|c| c.result.is_ok())
     }
 
+    /// Whether any checked query reads from a channel source. Such a query
+    /// evaluates over the channel's samples, which the map cannot yet render, so
+    /// running is gated until that lands.
+    fn has_channel_source(&self) -> bool {
+        self.chunks
+            .iter()
+            .filter_map(|c| c.result.as_ref().ok())
+            .any(gt_query::CheckedQuery::is_channel_source)
+    }
+
     /// The first query that failed to check, with its diagnostic and the byte
     /// offset of its chunk (to map spans back to editor coordinates).
     fn first_error(&self) -> Option<(&Diagnostic, usize)> {
@@ -457,6 +467,7 @@ impl QueryWindow {
         // chord from other widgets.
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter))
             && self.all_ok()
+            && !self.has_channel_source()
             && self.running.is_none()
         {
             self.run_requested = true;
@@ -738,12 +749,16 @@ impl QueryWindow {
         ui.horizontal(|ui| {
             let in_flight = self.running.is_some();
             let all_ok = self.all_ok();
-            let runnable = all_ok && !in_flight;
+            let channel_source = self.has_channel_source();
+            let runnable = all_ok && !in_flight && !channel_source;
             let run = ui.add_enabled(runnable, egui::Button::new("Run"));
-            let run = match (all_ok, in_flight) {
-                (false, _) => run.on_disabled_hover_text("Fix the error above to run"),
-                (true, true) => run.on_disabled_hover_text("A run is in progress"),
-                (true, false) => run,
+            let run = match (all_ok, in_flight, channel_source) {
+                (false, _, _) => run.on_disabled_hover_text("Fix the error above to run"),
+                (_, _, true) => {
+                    run.on_disabled_hover_text("Channel-source queries can't run on the map yet")
+                }
+                (true, true, _) => run.on_disabled_hover_text("A run is in progress"),
+                (true, false, false) => run,
             };
             if run.clicked() {
                 self.run_requested = true;
@@ -2742,6 +2757,25 @@ mod tests {
         let err = check_text("points | window 2 | where max(@accel) > 30 km/h", &schema)
             .expect_err("an acceleration cannot compare to a speed");
         assert!(err.message.contains("acceleration"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_channel_source_checks_and_is_flagged_for_run_gating() {
+        // A channel source type-checks against the loaded schema, and the app
+        // recognizes it so the run path can gate it until map output lands.
+        let files = [file_with_channels(vec![vector_channel(
+            "accel",
+            Some("g"),
+            &["x", "y", "z"],
+            &[(0, [1.0, 0.0, 0.0])],
+        )])];
+        let schema = schema_from_files(&files);
+        let query = check_text("@accel | where norm(@accel) > 1 g", &schema)
+            .expect("a channel source checks against the loaded schema");
+        assert!(query.is_channel_source());
+        // A points query is not flagged.
+        let points = check_text("points | where velocity > 1 km/h", &schema).unwrap();
+        assert!(!points.is_channel_source());
     }
 
     #[test]

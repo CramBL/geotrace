@@ -11,8 +11,8 @@ use gt_types::DisplayMode;
 
 use crate::Diagnostic;
 use crate::ast::{
-    BinaryOp, ChannelRef, Expr, Func, NumberLit, ParamDecl, ParamName, Query, Span, UnaryOp,
-    Window as AstWindow,
+    BinaryOp, ChannelRef, Expr, Func, NumberLit, ParamDecl, ParamName, Query, Source, Span,
+    UnaryOp, Window as AstWindow,
 };
 use crate::dimension::Dimension;
 use crate::fmt::Superscript;
@@ -88,9 +88,18 @@ pub enum Window {
     Duration(f64),
 }
 
+/// The resolved pipeline source: the nav points, or a channel's samples by
+/// name. The evaluator dispatches its timeline and match granularity on this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CheckedSource {
+    Points,
+    Channel(String),
+}
+
 /// A query that passed all static checks, ready to run.
 #[derive(Debug, Clone)]
 pub struct CheckedQuery {
+    pub(crate) source: CheckedSource,
     pub(crate) window: Option<Window>,
     pub(crate) predicates: Vec<CExpr>,
     params: Params,
@@ -101,6 +110,17 @@ pub struct CheckedQuery {
 }
 
 impl CheckedQuery {
+    /// The resolved source: the nav points or a channel's samples.
+    pub(crate) fn source(&self) -> &CheckedSource {
+        &self.source
+    }
+
+    /// Whether the source is a channel (its samples are the timeline), rather
+    /// than the nav points. The app uses this to route or gate a run.
+    pub fn is_channel_source(&self) -> bool {
+        matches!(self.source, CheckedSource::Channel(_))
+    }
+
     /// The window a windowed query aggregates over, if any.
     pub fn window(&self) -> Option<Window> {
         self.window
@@ -577,8 +597,31 @@ pub fn check(query: &Query, schema: &ChannelSchema) -> Result<CheckedQuery, Diag
         }
     };
 
+    // Resolve the source: `points`, or a whole channel whose samples become the
+    // timeline. A component (`@accel.x`) is not a source - the whole channel is.
+    let source = match &query.source {
+        Source::Points => CheckedSource::Points,
+        Source::Channel(c) => {
+            if c.component.is_some() {
+                return Err(err_hint(
+                    c.span,
+                    "a channel source is a whole channel",
+                    format!("use @{} as the source", c.name),
+                ));
+            }
+            if schema.get(&c.name).is_none() {
+                return Err(err(c.span, format!("no such channel @{}", c.name)));
+            }
+            CheckedSource::Channel(c.name.clone())
+        }
+    };
+
     let mut checker = Checker {
         windowed: window.is_some(),
+        source_channel: match &source {
+            CheckedSource::Points => None,
+            CheckedSource::Channel(name) => Some(name.as_str()),
+        },
         referenced: Vec::new(),
         schema,
     };
@@ -594,12 +637,13 @@ pub fn check(query: &Query, schema: &ChannelSchema) -> Result<CheckedQuery, Diag
         predicates.push(cexpr);
     }
 
-    let mut occurrences = checker.referenced;
     if let Some(table) = &query.table {
         for column in &table.columns {
-            occurrences.push((column.metric, column.span));
+            checker.reject_metric_on_channel_source(column.metric, column.span)?;
+            checker.referenced.push((column.metric, column.span));
         }
     }
+    let occurrences = checker.referenced;
     require_params(&occurrences, params)?;
 
     let referenced: Vec<QueryMetric> = dedup_metrics(occurrences.iter().map(|(m, _)| *m));
@@ -607,6 +651,7 @@ pub fn check(query: &Query, schema: &ChannelSchema) -> Result<CheckedQuery, Diag
     let unused_params = unused_params(&query.params, &referenced);
 
     Ok(CheckedQuery {
+        source,
         window,
         predicates,
         params,
@@ -763,16 +808,41 @@ fn unused_params(decls: &[ParamDecl], referenced: &[QueryMetric]) -> Vec<ParamNa
 
 struct Checker<'a> {
     windowed: bool,
+    /// The source channel's name on a channel source, else `None` for the
+    /// points source. On a channel source the timeline is this channel's
+    /// samples, so a reference to it is per-sample (the match granularity).
+    source_channel: Option<&'a str>,
     /// First occurrence of each referenced metric, in source order.
     referenced: Vec<(QueryMetric, Span)>,
     schema: &'a ChannelSchema,
 }
 
 impl Checker<'_> {
+    /// Reject a nav-point metric on a channel source, wherever it appears (a
+    /// `where` expression or a `table` column). Interpolating a nav metric onto
+    /// the channel's sample times is a later step.
+    fn reject_metric_on_channel_source(
+        &self,
+        metric: QueryMetric,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        if let Some(source) = self.source_channel {
+            return Err(err_hint(
+                span,
+                format!("{metric} is not available on a channel source"),
+                format!("query the points source, or drop {metric} from @{source}"),
+            ));
+        }
+        Ok(())
+    }
+
     fn expr(&mut self, expr: &Expr, in_agg: bool) -> Result<(ValueType, CExpr), Diagnostic> {
         match expr {
             Expr::Number(lit) => Ok((literal_type(lit), CExpr::Const(literal_base(lit)))),
             Expr::Metric(m) => {
+                // Nav-point metrics on a channel source would need interpolating
+                // onto the channel's sample times, which is a later step.
+                self.reject_metric_on_channel_source(m.metric, m.span)?;
                 if self.windowed && !in_agg {
                     return Err(err_hint(
                         m.span,
@@ -826,23 +896,53 @@ impl Checker<'_> {
         ))
     }
 
+    /// Validate a per-sample reference to channel `name`, labelled as it reads
+    /// in source (`@accel.x`, `norm(@accel)`). A per-sample value must be
+    /// aggregated, except on a channel source where a reference to the source
+    /// channel is itself the match granularity - unless a window groups samples,
+    /// which then needs an aggregate. On a channel source, naming any other
+    /// channel is off the source's timeline.
+    fn per_sample_ok(
+        &self,
+        name: &str,
+        in_agg: bool,
+        span: Span,
+        label: &str,
+    ) -> Result<(), Diagnostic> {
+        if let Some(source) = self.source_channel {
+            if source != name {
+                return Err(err_hint(
+                    span,
+                    format!("@{name} is not the source channel"),
+                    format!("a query on @{source} reads only @{source}"),
+                ));
+            }
+            // The source channel is per-sample: a bare use matches per sample,
+            // unless a window groups samples and an aggregate must reduce them.
+            if in_agg || !self.windowed {
+                return Ok(());
+            }
+        } else if in_agg {
+            return Ok(());
+        }
+        Err(err_hint(
+            span,
+            format!("{label} is per sample"),
+            format!("wrap it in an aggregate like max({label})"),
+        ))
+    }
+
     /// Resolve a channel reference against the schema. A `@name.component`
     /// selects one column of a vector channel as a scalar; a bare `@name` is a
     /// scalar channel, or an error for a vector (which has no scalar value on
-    /// its own). Like a nav-point metric, a channel has no per-point value, so
-    /// it must appear inside an aggregate (over a window).
+    /// its own). A per-sample reference must be aggregated (see
+    /// [`per_sample_ok`](Self::per_sample_ok)).
     fn channel(&self, c: &ChannelRef, in_agg: bool) -> Result<(ValueType, CExpr), Diagnostic> {
         let Some(info) = self.schema.get(&c.name) else {
             return Err(err(c.span, format!("no such channel @{}", c.name)));
         };
         let component = resolve_component(c, info)?;
-        if !in_agg {
-            return Err(err_hint(
-                c.span,
-                format!("{c} is per sample"),
-                format!("wrap it in an aggregate like max({c})"),
-            ));
-        }
+        self.per_sample_ok(&c.name, in_agg, c.span, &c.to_string())?;
         Ok((
             channel_value_type(info),
             CExpr::Channel(ChannelKey {
@@ -881,13 +981,7 @@ impl Checker<'_> {
                 "norm needs a vector like @accel",
             ));
         }
-        if !in_agg {
-            return Err(err_hint(
-                span,
-                format!("norm(@{}) is per sample", c.name),
-                format!("wrap it in an aggregate like max(norm(@{}))", c.name),
-            ));
-        }
+        self.per_sample_ok(&c.name, in_agg, span, &format!("norm(@{})", c.name))?;
         Ok((channel_value_type(info), CExpr::Norm(c.name.clone())))
     }
 
