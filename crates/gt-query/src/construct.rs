@@ -220,6 +220,14 @@ fn func_construct(func: Func) -> Construct {
              `sqrt(lat² + lon²)`. Works with or without a window.",
             &["sqrt(lat² + lon²) > 1 deg"],
         ),
+        Func::Norm => (
+            "magnitude of a vector channel",
+            "The Euclidean magnitude of a whole vector channel, \
+             `sqrt(x² + y² + z²)`, in the channel's unit. Frame-invariant, so \
+             it needs no component convention. Aggregate it over a window, e.g. \
+             `std(norm(@accel))`.",
+            &["std(norm(@accel)) < 0.02 g"],
+        ),
     };
     Construct {
         name: func.into(),

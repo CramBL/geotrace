@@ -19,8 +19,9 @@ use gt_filter::GlobalFilter;
 use gt_loaded_files::LoadedFilesView;
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{
-    ChannelInfo, ChannelSchema, CheckedQuery, Construct, ConstructKind, Diagnostic, MetricProvider,
-    PipelineOutput, Quantity, QueryMetric, RunSummary, Span, TrackInput, TrackMatches, Unit,
+    ChannelInfo, ChannelSamples, ChannelSchema, CheckedQuery, Construct, ConstructKind, Diagnostic,
+    MetricProvider, PipelineOutput, Quantity, QueryMetric, RunSummary, Span, TrackInput,
+    TrackMatches, Unit,
 };
 use gt_types::satellites::Constellation;
 use gt_types::{Channel, DisplayMode, FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
@@ -1521,10 +1522,10 @@ impl MetricProvider for SliceProvider<'_> {
         self.inner.value(metric, self.start + index)
     }
 
-    fn channel_span(&self, name: &str, component: Option<usize>, t_lo: f64, t_hi: f64) -> Vec<f64> {
+    fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> ChannelSamples {
         // Channel samples are keyed by absolute time, so the slice's time span
         // selects them directly from the inner provider - no index offset.
-        self.inner.channel_span(name, component, t_lo, t_hi)
+        self.inner.channel_span(name, t_lo, t_hi)
     }
 }
 
@@ -1706,26 +1707,19 @@ impl MetricProvider for TrackProvider<'_> {
         }
     }
 
-    /// A channel's samples whose timestamp lands in `[t_lo, t_hi]`, converted
-    /// from the channel's stored unit to the evaluator's base units. `component`
-    /// selects one column of a vector channel (`@accel.x`); `None` reads the
-    /// lone column of a scalar channel.
+    /// A channel's samples whose timestamp lands in `[t_lo, t_hi]`, as row-major
+    /// rows (one column per component, one for a scalar channel), converted from
+    /// the channel's stored unit to the evaluator's base units.
     ///
     /// `t_lo`/`t_hi` arrive floored to whole seconds (the query engine's time
     /// resolution, since nav-point time floors to whole seconds); the sub-second
     /// precision of a sample's own timestamp only refines placement within that
     /// grid.
-    fn channel_span(&self, name: &str, component: Option<usize>, t_lo: f64, t_hi: f64) -> Vec<f64> {
+    fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> ChannelSamples {
         let Some(channel) = self.channels.iter().find(|c| c.name == name) else {
-            return Vec::new();
+            return ChannelSamples::default();
         };
         let columns = channel.component_count();
-        // A scalar channel is column 0; a vector component selects its column.
-        // The checker keeps `component` in range, but guard defensively.
-        let col = component.unwrap_or(0);
-        if col >= columns {
-            return Vec::new();
-        }
         // An unknown or absent unit leaves the samples as a bare number (factor
         // 1.0), matching how the checker types such a channel. Components share
         // the channel-level unit.
@@ -1736,16 +1730,20 @@ impl MetricProvider for TrackProvider<'_> {
             .map_or(1.0, Unit::to_base);
         // `times` is sorted ascending, so the samples in the closed span are a
         // contiguous row range found by binary search. An inverted span (`t_lo >
-        // t_hi`, possible when the track's time is non-monotonic) or a malformed
-        // channel makes the range empty rather than panicking. Values are
-        // row-major `[rows, columns]`, so row `r`'s component is `r*columns+col`.
+        // t_hi`, possible when the track's time is non-monotonic) makes the range
+        // empty rather than panicking. Values are row-major `[rows, columns]`, so
+        // row `r`'s columns are `r*columns .. (r+1)*columns`.
         let secs = |time: &DateTime<Utc>| time.timestamp_micros() as f64 / MICROS_PER_SEC;
         let lo = channel.times.partition_point(|time| secs(time) < t_lo);
         let hi = channel.times.partition_point(|time| secs(time) <= t_hi);
-        (lo..hi)
-            .filter_map(|row| channel.values.get(row * columns + col).copied())
+        let values = channel
+            .values
+            .get(lo * columns..hi * columns)
+            .unwrap_or_default()
+            .iter()
             .map(|value| value * to_base)
-            .collect()
+            .collect();
+        ChannelSamples { values, columns }
     }
 }
 
@@ -2633,21 +2631,22 @@ mod tests {
         let points = test_points();
         let provider = provider_for(&points, &channels, None);
 
-        let got = provider.channel_span("accel", None, base, base + 2.0);
-        // The first three samples (the fourth is past t_hi), each g -> m/s2.
+        let got = provider.channel_span("accel", base, base + 2.0);
+        // The first three samples (the fourth is past t_hi), each g -> m/s2, one
+        // column (scalar).
         let g = Unit::G.to_base();
         let want = [1.0 * g, 1.5 * g, 2.0 * g];
-        assert_eq!(got.len(), want.len());
-        for (a, b) in got.iter().zip(want) {
+        assert_eq!(got.columns, 1);
+        assert_eq!(got.values.len(), want.len());
+        for (a, b) in got.values.iter().zip(want) {
             assert!((a - b).abs() < 1e-9, "{a} != {b}");
         }
     }
 
     #[test]
-    fn channel_span_reads_a_vector_component_column() {
-        // Component y (index 1) reads the middle column of the row-major values,
-        // converted to base; an unknown channel or an out-of-range component
-        // yields nothing.
+    fn channel_span_reads_vector_rows() {
+        // A vector channel returns row-major values, all columns per row, each
+        // converted to base; an unknown channel yields nothing.
         let base = TEST_EPOCH as f64;
         let accel = vector_channel(
             "accel",
@@ -2660,19 +2659,17 @@ mod tests {
         let provider = provider_for(&points, &channels, None);
 
         let g = Unit::G.to_base();
-        let y = provider.channel_span("accel", Some(1), base, base + 1.0);
-        assert_eq!(y.len(), 2);
-        for (got, raw) in y.iter().zip([2.0, 2.2]) {
-            assert!((got - raw * g).abs() < 1e-9, "{got}");
+        let got = provider.channel_span("accel", base, base + 1.0);
+        assert_eq!(got.columns, 3);
+        let want = [1.0, 2.0, 3.0, 1.1, 2.2, 3.3];
+        assert_eq!(got.values.len(), want.len());
+        for (a, raw) in got.values.iter().zip(want) {
+            assert!((a - raw * g).abs() < 1e-9, "{a}");
         }
         assert!(
             provider
-                .channel_span("missing", None, 0.0, f64::MAX)
-                .is_empty()
-        );
-        assert!(
-            provider
-                .channel_span("accel", Some(9), base, base + 1.0)
+                .channel_span("missing", 0.0, f64::MAX)
+                .values
                 .is_empty()
         );
     }
@@ -2695,14 +2692,14 @@ mod tests {
         // The span [base, base+1] holds the first two samples through either
         // provider; the slice's start must not shift the time window.
         assert_eq!(
-            slice.channel_span("accel", None, base, base + 1.0),
-            inner.channel_span("accel", None, base, base + 1.0),
+            slice.channel_span("accel", base, base + 1.0),
+            inner.channel_span("accel", base, base + 1.0),
         );
         let g = Unit::G.to_base();
         let want = [1.0 * g, 1.5 * g];
-        let got = slice.channel_span("accel", None, base, base + 1.0);
-        assert_eq!(got.len(), want.len());
-        for (a, b) in got.iter().zip(want) {
+        let got = slice.channel_span("accel", base, base + 1.0);
+        assert_eq!(got.values.len(), want.len());
+        for (a, b) in got.values.iter().zip(want) {
             assert!((a - b).abs() < 1e-9, "{a} != {b}");
         }
     }
@@ -2799,6 +2796,41 @@ mod tests {
             }],
         );
         assert_eq!(output.matches.len(), 1, "the y column clears the threshold");
+    }
+
+    #[test]
+    fn norm_of_a_loaded_vector_checks_and_runs_end_to_end() {
+        // norm(@accel) over a loaded vector: row 0 is (3,4,0) -> 5 m/s2, well
+        // over 0.1 g (0.981 m/s2), so the window matches.
+        let channel = vector_channel(
+            "accel",
+            Some("g"),
+            &["x", "y", "z"],
+            &[(0, [3.0, 4.0, 0.0]), (1, [0.1, 0.0, 0.0])],
+        );
+        let files = [file_with_channels(vec![channel.clone()])];
+        let schema = schema_from_files(&files);
+        let query = check_text(
+            "points | window 2 | where max(norm(@accel)) > 0.1 g",
+            &schema,
+        )
+        .expect("norm checks against the loaded schema");
+
+        let points = test_points();
+        let channels = [channel];
+        let provider = provider_for(&points, &channels, None);
+        let output = gt_query::run(
+            &query,
+            &[TrackInput {
+                track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+                provider: &provider,
+            }],
+        );
+        assert_eq!(
+            output.matches.len(),
+            1,
+            "the magnitude clears the threshold"
+        );
     }
 
     #[test]

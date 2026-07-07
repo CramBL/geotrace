@@ -157,8 +157,8 @@ pub fn channel_completions_at(
 }
 
 /// The completion entries a channel contributes: a scalar channel offers itself
-/// (`@incline`); a vector channel offers each component (`@accel.x`), since a
-/// bare vector reference has no scalar value.
+/// (`@incline`); a vector channel offers the whole vector (`@accel`, for
+/// `norm`) and each component (`@accel.x`).
 fn channel_offers(name: &str, info: &ChannelInfo) -> Vec<ChannelSuggestion> {
     if info.components.is_empty() {
         return vec![ChannelSuggestion {
@@ -166,12 +166,15 @@ fn channel_offers(name: &str, info: &ChannelInfo) -> Vec<ChannelSuggestion> {
             summary: channel_summary(info),
         }];
     }
-    info.components
-        .iter()
-        .map(|component| ChannelSuggestion {
+    let whole = ChannelSuggestion {
+        name: name.to_owned(),
+        summary: format!("vector ({})", info.components.join(", ")),
+    };
+    std::iter::once(whole)
+        .chain(info.components.iter().map(|component| ChannelSuggestion {
             name: format!("{name}.{component}"),
             summary: channel_summary(info),
-        })
+        }))
         .collect()
 }
 
@@ -771,12 +774,14 @@ mod tests {
 
     #[test]
     fn a_lone_at_offers_channels_and_vector_components() {
-        // Scalar channels by name, plus each component of the vector `gyro`, all
-        // sorted by name.
+        // Scalar channels by name, the whole vector `gyro` (for norm) plus each
+        // of its components, all sorted by name.
         let src = "points | window 3 | where max(@";
         assert_eq!(
             channel_names(src, src.len()),
-            vec!["accel", "bearing", "gyro.x", "gyro.y", "gyro.z", "incline"]
+            vec![
+                "accel", "bearing", "gyro", "gyro.x", "gyro.y", "gyro.z", "incline"
+            ]
         );
     }
 

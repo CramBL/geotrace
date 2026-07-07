@@ -37,8 +37,8 @@ pub use check::{ChannelInfo, ChannelSchema, CheckedQuery, Params, Window, check}
 pub use construct::{Construct, ConstructKind, catalog};
 pub use dimension::Dimension;
 pub use eval::{
-    MetricProvider, RunOutput, RunSummary, TrackInput, TrackMatches, derived_accel, run,
-    run_cancellable,
+    ChannelSamples, MetricProvider, RunOutput, RunSummary, TrackInput, TrackMatches, derived_accel,
+    run, run_cancellable,
 };
 pub use metric::{Quantity, QueryMetric};
 pub use parser::parse;
@@ -163,20 +163,17 @@ mod tests {
                 .and_then(|values| values.get(index).copied().flatten())
         }
 
-        fn channel_span(
-            &self,
-            name: &str,
-            component: Option<usize>,
-            t_lo: f64,
-            t_hi: f64,
-        ) -> Vec<f64> {
-            self.channels
-                .get(name)
-                .into_iter()
-                .flatten()
+        fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> ChannelSamples {
+            let Some(rows) = self.channels.get(name) else {
+                return ChannelSamples::default();
+            };
+            let columns = rows.first().map_or(1, |(_, row)| row.len());
+            let values = rows
+                .iter()
                 .filter(|(t, _)| *t >= t_lo && *t <= t_hi)
-                .filter_map(|(_, row)| row.get(component.unwrap_or(0)).copied())
-                .collect()
+                .flat_map(|(_, row)| row.iter().copied())
+                .collect();
+            ChannelSamples { values, columns }
         }
     }
 
@@ -1258,22 +1255,108 @@ mod tests {
     }
 
     #[test]
-    fn combining_two_components_is_deferred() {
-        // Per-sample math across components (and norm) lands in the next PR.
+    fn components_of_one_channel_combine_per_sample() {
+        // Components of one vector share a clock, so per-sample math across them
+        // is a single timeline: sqrt(x² + y²) type-checks as an acceleration.
         let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+        let src = "points | window 10 | where max(sqrt(@accel.x² + @accel.y²)) > 0.1 g";
+        check(&parse(src).unwrap(), &schema).expect("shared-clock components combine");
+    }
+
+    #[test]
+    fn two_different_channels_cannot_combine() {
+        // Distinct channels are on independent clocks, even at the same
+        // dimension (both acceleration here, so the timeline rule is what bites,
+        // not a unit mismatch).
+        let mut schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+        schema.insert(
+            "accel2",
+            ChannelInfo {
+                unit: Some("g".to_owned()),
+                period_deg: None,
+                components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
+            },
+        );
         let err = check(
-            &parse("points | window 10 | where max(@accel.x + @accel.y) > 0.1 g").unwrap(),
+            &parse("points | window 10 | where max(@accel.x + @accel2.x) > 0.1 g").unwrap(),
             &schema,
         )
         .unwrap_err();
-        assert_eq!(
-            err.message,
-            "combining vector components is not supported yet"
+        assert_eq!(err.message, "an aggregate reduces one channel at a time");
+    }
+
+    #[test]
+    fn norm_is_the_magnitude_of_a_vector_channel() {
+        // norm(@accel) is an acceleration, so it compares to a g literal.
+        let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+        let ok = "points | window 10 | where max(norm(@accel)) > 1 g";
+        check(&parse(ok).unwrap(), &schema).expect("norm of a vector is its dimension");
+    }
+
+    /// accel and accel2 (g-unit vectors) plus the scalar incline, for exercising
+    /// norm's rejections and cross-timeline mixing.
+    fn norm_schema() -> ChannelSchema {
+        let mut schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+        schema.insert(
+            "accel2",
+            ChannelInfo {
+                unit: Some("g".to_owned()),
+                period_deg: None,
+                components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
+            },
         );
-        assert_eq!(
-            err.help.as_deref(),
-            Some("aggregate one component of @accel at a time")
+        schema.insert(
+            "incline",
+            ChannelInfo {
+                unit: Some("deg".to_owned()),
+                period_deg: None,
+                components: vec![],
+            },
         );
+        schema
+    }
+
+    #[rstest]
+    // A scalar channel has no vector to take the magnitude of.
+    #[case(
+        "max(norm(@incline)) > 1 deg",
+        "@incline is not a vector channel",
+        Some("norm needs a vector like @accel")
+    )]
+    // A single component is not a whole vector.
+    #[case(
+        "max(norm(@accel.x)) > 1 g",
+        "norm takes a whole vector, not a component",
+        Some("use norm(@accel)")
+    )]
+    // norm is per sample, so a bare use needs an aggregate.
+    #[case(
+        "norm(@accel) > 1 g",
+        "norm(@accel) is per sample",
+        Some("wrap it in an aggregate like max(norm(@accel))")
+    )]
+    // norm's channel counts as a timeline: two are on separate clocks.
+    #[case(
+        "max(norm(@accel) + norm(@accel2)) > 1 g",
+        "an aggregate reduces one channel at a time",
+        Some("split it into separate aggregates, one per channel")
+    )]
+    // And a channel cannot mix with a per-point metric (accel is acceleration,
+    // matching norm's dimension, so the timeline rule is what bites).
+    #[case(
+        "max(norm(@accel) + accel) > 1 g",
+        "cannot mix @accel with a per-point metric",
+        Some("a channel and a nav-point metric are on separate clocks")
+    )]
+    fn norm_and_channel_mixing_rejections(
+        #[case] predicate: &str,
+        #[case] message: &str,
+        #[case] help: Option<&str>,
+    ) {
+        let src = format!("points | window 10 | where {predicate}");
+        let err = check(&parse(&src).unwrap(), &norm_schema()).unwrap_err();
+        assert_eq!(err.message, message);
+        assert_eq!(err.help.as_deref(), help);
     }
 
     /// Run a channel query against a provider, checking with the given schema.
@@ -1411,6 +1494,65 @@ mod tests {
             &provider,
         );
         assert!(x.matches.is_empty());
+    }
+
+    #[test]
+    fn norm_reduces_the_per_sample_vector_magnitude() {
+        // norm(@accel) is sqrt(x²+y²+z²) per sample, on base-unit rows. Row 0 is
+        // (3,4,0) -> 5 m/s2; the rest are near zero. 0.1 g is 0.981 m/s2, so
+        // max(norm) = 5 clears it and min does not. Unit "g" so the schema types
+        // it as an acceleration (from_ident has no compound "m/s2").
+        let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+        let provider = TestProvider::new(2).indexed_time().with_vector_channel(
+            "accel",
+            vec![(0.0, vec![3.0, 4.0, 0.0]), (1.0, vec![0.1, 0.0, 0.0])],
+        );
+        let hit = run_channel(
+            "points | window 2 | where max(norm(@accel)) > 0.1 g",
+            &schema,
+            &provider,
+        );
+        assert_eq!(hit.matches[0].ranges, vec![0..2]);
+        let miss = run_channel(
+            "points | window 2 | where min(norm(@accel)) > 0.1 g",
+            &schema,
+            &provider,
+        );
+        assert!(miss.matches.is_empty());
+    }
+
+    #[test]
+    fn norm_of_a_non_finite_sample_poisons_the_window() {
+        // A component of f64::MAX squares to inf, so norm is non-finite: the
+        // window poisons rather than matching, and the skip is counted.
+        let schema = vector_schema("accel", Some("g"), &["x", "y"]);
+        let provider = TestProvider::new(1)
+            .indexed_time()
+            .with_vector_channel("accel", vec![(0.0, vec![f64::MAX, 0.0])]);
+        let output = run_channel(
+            "points | window 1 | where max(norm(@accel)) > 0.1 g",
+            &schema,
+            &provider,
+        );
+        assert!(output.matches.is_empty());
+        assert_eq!(output.summary.skipped_non_finite, 1);
+    }
+
+    #[test]
+    fn components_combine_per_sample_within_the_row() {
+        // sqrt(x² + y²) is per-sample math across two columns of the same row.
+        // Row 0 is (3, 4) -> 5 m/s2, clearing 0.1 g (0.981 m/s2); the explicit
+        // form matches what norm computes over those columns.
+        let schema = vector_schema("accel", Some("g"), &["x", "y"]);
+        let provider = TestProvider::new(2)
+            .indexed_time()
+            .with_vector_channel("accel", vec![(0.0, vec![3.0, 4.0]), (1.0, vec![0.1, 0.0])]);
+        let output = run_channel(
+            "points | window 2 | where max(sqrt(@accel.x² + @accel.y²)) > 0.1 g",
+            &schema,
+            &provider,
+        );
+        assert_eq!(output.matches[0].ranges, vec![0..2]);
     }
 
     #[test]

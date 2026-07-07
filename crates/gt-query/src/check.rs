@@ -145,14 +145,15 @@ pub(crate) struct ChannelKey {
     pub component: Option<usize>,
 }
 
-/// Which timeline an aggregate reduces: the window's nav points, or a single
-/// channel's native samples over the window's time span. The checker resolves
-/// this once (see [`aggregate_source`]), so evaluation never sniffs the
-/// argument for a channel and cannot confuse two channels.
+/// Which timeline an aggregate reduces: the window's nav points, or one
+/// channel's native samples over the window's time span. A vector channel's
+/// components share a clock, so the timeline is the channel by name; each
+/// [`CExpr::Channel`]/[`CExpr::Norm`] node projects the column(s) it needs per
+/// sample. The checker resolves this once (see [`aggregate_source`]).
 #[derive(Debug, Clone)]
 pub(crate) enum AggSource {
     Points,
-    Channel(ChannelKey),
+    Channel(String),
 }
 
 /// Checked expression: literals in base units, aggregates tagged circular
@@ -165,6 +166,10 @@ pub(crate) enum CExpr {
     /// inside an aggregate, which reduces its native samples over the window
     /// span.
     Channel(ChannelKey),
+    /// The Euclidean magnitude of a whole vector channel (`norm(@accel)`), by
+    /// name. A per-sample scalar in the channel's own unit, reduced by the
+    /// enclosing aggregate.
+    Norm(String),
     Agg {
         func: Func,
         circular: bool,
@@ -481,28 +486,22 @@ fn resolve_component(c: &ChannelRef, info: &ChannelInfo) -> Result<Option<usize>
 
 /// Which timeline an aggregate argument reduces, rejecting anything that mixes
 /// two. An aggregate reduces one clock at a time: the window's nav points, or a
-/// single channel component's samples. More than one component, more than one
-/// channel, or a channel alongside a per-point metric is a category error - the
-/// timelines are independent and cannot be combined per element.
+/// single channel's samples. A vector channel's components share a clock, so
+/// several components of one channel are fine; two different channels, or a
+/// channel alongside a per-point metric, are on independent clocks and cannot
+/// be combined per element.
 fn aggregate_source(arg: &CExpr, span: Span) -> Result<AggSource, Diagnostic> {
-    let mut channels: Vec<&ChannelKey> = Vec::new();
+    let mut channels: Vec<&str> = Vec::new();
     let mut has_metric = false;
     collect_timelines(arg, &mut channels, &mut has_metric);
     match channels.as_slice() {
         [] => Ok(AggSource::Points),
-        [key] if has_metric => Err(err_hint(
+        [name] if has_metric => Err(err_hint(
             span,
-            format!("cannot mix @{} with a per-point metric", key.name),
+            format!("cannot mix @{name} with a per-point metric"),
             "a channel and a nav-point metric are on separate clocks",
         )),
-        [key] => Ok(AggSource::Channel((*key).clone())),
-        // More than one distinct reference: all of one channel (differing
-        // components) or spanning channels - both beyond one timeline for now.
-        [first, rest @ ..] if rest.iter().all(|k| k.name == first.name) => Err(err_hint(
-            span,
-            "combining vector components is not supported yet",
-            format!("aggregate one component of @{} at a time", first.name),
-        )),
+        [name] => Ok(AggSource::Channel((*name).to_owned())),
         _ => Err(err_hint(
             span,
             "an aggregate reduces one channel at a time",
@@ -511,17 +510,19 @@ fn aggregate_source(arg: &CExpr, span: Span) -> Result<AggSource, Diagnostic> {
     }
 }
 
-/// Collect the distinct channel references an expression reads and whether it
-/// reads any per-point metric, walking every value-carrying node.
-fn collect_timelines<'a>(
-    expr: &'a CExpr,
-    channels: &mut Vec<&'a ChannelKey>,
-    has_metric: &mut bool,
-) {
+/// Collect the distinct channel names an expression reads and whether it reads
+/// any per-point metric, walking every value-carrying node. Components of one
+/// vector channel collapse to that channel's single name (one timeline).
+fn collect_timelines<'a>(expr: &'a CExpr, channels: &mut Vec<&'a str>, has_metric: &mut bool) {
     match expr {
         CExpr::Channel(key) => {
-            if !channels.contains(&key) {
-                channels.push(key);
+            if !channels.contains(&key.name.as_str()) {
+                channels.push(&key.name);
+            }
+        }
+        CExpr::Norm(name) => {
+            if !channels.contains(&name.as_str()) {
+                channels.push(name);
             }
         }
         CExpr::Metric(_) => *has_metric = true,
@@ -851,6 +852,45 @@ impl Checker<'_> {
         ))
     }
 
+    /// Resolve `norm(@vector)`: the Euclidean magnitude of a whole vector
+    /// channel, in the channel's own dimension. The argument must be a bare
+    /// vector reference (no component); like a bare channel, the result is
+    /// per-sample and must sit inside an aggregate.
+    fn norm(&self, arg: &Expr, span: Span, in_agg: bool) -> Result<(ValueType, CExpr), Diagnostic> {
+        let Expr::Channel(c) = arg else {
+            return Err(err_hint(
+                span,
+                "norm needs a vector channel",
+                "give it a whole vector, e.g. norm(@accel)",
+            ));
+        };
+        let Some(info) = self.schema.get(&c.name) else {
+            return Err(err(c.span, format!("no such channel @{}", c.name)));
+        };
+        if c.component.is_some() {
+            return Err(err_hint(
+                c.span,
+                "norm takes a whole vector, not a component",
+                format!("use norm(@{})", c.name),
+            ));
+        }
+        if info.components.is_empty() {
+            return Err(err_hint(
+                c.span,
+                format!("@{} is not a vector channel", c.name),
+                "norm needs a vector like @accel",
+            ));
+        }
+        if !in_agg {
+            return Err(err_hint(
+                span,
+                format!("norm(@{}) is per sample", c.name),
+                format!("wrap it in an aggregate like max(norm(@{}))", c.name),
+            ));
+        }
+        Ok((channel_value_type(info), CExpr::Norm(c.name.clone())))
+    }
+
     fn unary(
         &mut self,
         op: UnaryOp,
@@ -922,6 +962,9 @@ impl Checker<'_> {
                 },
             };
             return Ok((result, CExpr::Sqrt(Box::new(cexpr))));
+        }
+        if func == Func::Norm {
+            return self.norm(arg, span, in_agg);
         }
 
         if !self.windowed {
