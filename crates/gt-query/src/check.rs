@@ -5,6 +5,8 @@
 //! arithmetic. Several error messages here are user-facing UX pinned verbatim
 //! by tests - change them deliberately.
 
+use std::collections::HashMap;
+
 use gt_types::DisplayMode;
 
 use crate::Diagnostic;
@@ -12,16 +14,13 @@ use crate::ast::{
     BinaryOp, ChannelRef, Expr, Func, NumberLit, ParamDecl, ParamName, Query, Span, UnaryOp,
     Window as AstWindow,
 };
-use std::collections::HashMap;
-
 use crate::dimension::Dimension;
 use crate::fmt::Superscript;
 use crate::metric::{Quantity, QueryMetric};
 use crate::unit::{Unit, example_literal, unit_list};
 
 /// What a query needs to know about one ad-hoc channel to type-check a
-/// reference to it: its unit (for dimensional checking), whether it wraps (an
-/// angular channel with a period is a direction), and its vector components.
+/// reference to it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChannelInfo {
     /// Unit as written by the producer (`"g"`, `"deg"`), or `None`. Resolved to
@@ -376,8 +375,12 @@ fn base_with_exponent(name: &str, exponent: i8) -> String {
 }
 
 /// The value type of a scalar channel from its schema entry. The unit fixes the
-/// dimension (an unrecognised or absent unit is a bare number); an angular
-/// channel with a period wraps, so it is a direction rather than a plain angle.
+/// dimension; an angular channel with a period wraps, so it is a direction
+/// rather than a plain angle.
+///
+/// An unrecognised or absent unit resolves to a bare number, so a typo'd
+/// producer unit compares only to unitless values rather than erroring. This is
+/// an interim choice: surfacing an unknown unit as a warning is deferred.
 fn channel_value_type(info: &ChannelInfo) -> ValueType {
     let Some(quantity) = info
         .unit

@@ -1052,14 +1052,37 @@ mod tests {
     }
 
     #[test]
-    fn a_channel_with_a_period_is_circular() {
-        // @heading (deg, period 360) is a direction: spread/std/delta accept it,
-        // but avg (which collapses a direction ambiguously) is rejected.
+    fn a_channel_with_a_period_is_circular_and_accepts_spread() {
+        // @heading (deg, period 360) is a direction, so spread accepts it.
         let schema = schema_with("heading", Some("deg"), Some(360.0));
         let ok = "points | window 10 | where spread(@heading) < 10 deg";
         check(&parse(ok).unwrap(), &schema).expect("checks with the schema");
+    }
 
-        let bad = "points | window 10 | where avg(@heading) < 10 deg";
+    #[rstest]
+    #[case("avg")]
+    #[case("min")]
+    #[case("max")]
+    fn a_direction_channel_rejects_ambiguous_aggregates(#[case] func: &str) {
+        // avg/min/max collapse a direction ambiguously, the same rule the
+        // Direction nav metric follows.
+        let schema = schema_with("heading", Some("deg"), Some(360.0));
+        let src = format!("points | window 10 | where {func}(@heading) < 10 deg");
+        let err = check(&parse(&src).unwrap(), &schema).unwrap_err();
+        assert_eq!(err.message, format!("{func} on a direction is ambiguous"));
+    }
+
+    #[rstest]
+    // No unit and an unrecognised unit both resolve to a bare number: it
+    // compares to a plain number but not to a dimensioned literal.
+    #[case(None)]
+    #[case(Some("furlong"))]
+    fn a_channel_without_a_known_unit_is_a_bare_number(#[case] unit: Option<&str>) {
+        let schema = schema_with("x", unit, None);
+        let ok = "points | window 10 | where max(@x) > 5";
+        check(&parse(ok).unwrap(), &schema).expect("a bare number compares to a number");
+
+        let bad = "points | window 10 | where max(@x) > 5 g";
         check(&parse(bad).unwrap(), &schema).unwrap_err();
     }
 
