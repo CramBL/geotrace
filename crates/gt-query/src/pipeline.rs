@@ -71,6 +71,12 @@ impl MetricProvider for RunView<'_> {
         }
         self.inner.value(metric, self.start + index)
     }
+
+    fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> Vec<f64> {
+        // Channel samples are keyed by absolute time, so the run's time window
+        // selects them directly from the underlying provider - no index offset.
+        self.inner.channel_span(name, t_lo, t_hi)
+    }
 }
 
 /// Run `queries` in order over `tracks`. `None` only on cancellation.

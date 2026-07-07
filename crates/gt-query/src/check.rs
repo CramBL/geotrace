@@ -126,6 +126,16 @@ impl CheckedQuery {
     }
 }
 
+/// Which timeline an aggregate reduces: the window's nav points, or a single
+/// channel's native samples over the window's time span. The checker resolves
+/// this once (see [`aggregate_source`]), so evaluation never sniffs the
+/// argument for a channel and cannot confuse two channels.
+#[derive(Debug, Clone)]
+pub(crate) enum AggSource {
+    Points,
+    Channel(String),
+}
+
 /// Checked expression: literals in base units, aggregates tagged circular
 /// where they run on a direction.
 #[derive(Debug, Clone)]
@@ -134,14 +144,11 @@ pub(crate) enum CExpr {
     Metric(QueryMetric),
     /// A scalar channel referenced by name. Only ever appears inside an
     /// aggregate, which reduces its native samples over the window span.
-    #[expect(
-        dead_code,
-        reason = "the name is read when channel-sample evaluation lands in the next PR"
-    )]
     Channel(String),
     Agg {
         func: Func,
         circular: bool,
+        source: AggSource,
         arg: Box<CExpr>,
     },
     Abs(Box<CExpr>),
@@ -412,6 +419,57 @@ fn dimensioned(dim: Dimension) -> ValueType {
         ValueType::Dimensionless(Kind::Number)
     } else {
         ValueType::linear(dim)
+    }
+}
+
+/// Which timeline an aggregate argument reduces, rejecting anything that mixes
+/// two. An aggregate reduces one clock at a time: the window's nav points, or a
+/// single channel's samples. More than one channel, or a channel alongside a
+/// per-point metric, is a category error - the two are sampled on independent
+/// clocks and cannot be combined per element.
+fn aggregate_source(arg: &CExpr, span: Span) -> Result<AggSource, Diagnostic> {
+    let mut channels: Vec<&str> = Vec::new();
+    let mut has_metric = false;
+    collect_timelines(arg, &mut channels, &mut has_metric);
+    match channels.as_slice() {
+        [] => Ok(AggSource::Points),
+        [name] if has_metric => Err(err_hint(
+            span,
+            format!("cannot mix @{name} with a per-point metric"),
+            "a channel and a nav-point metric are on separate clocks",
+        )),
+        [name] => Ok(AggSource::Channel((*name).to_owned())),
+        _ => Err(err_hint(
+            span,
+            "an aggregate reduces one channel at a time",
+            "split it into separate aggregates, one per channel",
+        )),
+    }
+}
+
+/// Collect the distinct channels an expression reads and whether it reads any
+/// per-point metric, walking every value-carrying node.
+fn collect_timelines<'a>(expr: &'a CExpr, channels: &mut Vec<&'a str>, has_metric: &mut bool) {
+    match expr {
+        CExpr::Channel(name) => {
+            if !channels.contains(&name.as_str()) {
+                channels.push(name);
+            }
+        }
+        CExpr::Metric(_) => *has_metric = true,
+        CExpr::Abs(inner) | CExpr::Sqrt(inner) | CExpr::Neg(inner) | CExpr::Not(inner) => {
+            collect_timelines(inner, channels, has_metric);
+        }
+        CExpr::Power { base, .. } => collect_timelines(base, channels, has_metric),
+        CExpr::Arith { lhs, rhs, .. }
+        | CExpr::Cmp { lhs, rhs, .. }
+        | CExpr::Logic { lhs, rhs, .. } => {
+            collect_timelines(lhs, channels, has_metric);
+            collect_timelines(rhs, channels, has_metric);
+        }
+        // A constant carries no timeline, and aggregates never nest (rejected
+        // before this runs), so neither contributes a channel or metric.
+        CExpr::Const(_) | CExpr::Agg { .. } => {}
     }
 }
 
@@ -825,11 +883,13 @@ impl Checker<'_> {
                 "circular variance is unitless, not a squared angle - use std",
             ));
         }
+        let source = aggregate_source(&cexpr, span)?;
         Ok((
             agg_result(func, value_type),
             CExpr::Agg {
                 func,
                 circular,
+                source,
                 arg: Box::new(cexpr),
             },
         ))

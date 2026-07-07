@@ -12,7 +12,7 @@ use gt_types::TrackRef;
 use nalgebra::{Complex, UnitComplex};
 
 use crate::ast::{Func, ParamName};
-use crate::check::{ArithOp, CExpr, CheckedQuery, CmpOp, Window};
+use crate::check::{AggSource, ArithOp, CExpr, CheckedQuery, CmpOp, Window};
 use crate::metric::QueryMetric;
 
 const FULL_TURN_DEG: f64 = 360.0;
@@ -36,6 +36,16 @@ pub trait MetricProvider {
     }
 
     fn value(&self, metric: QueryMetric, index: usize) -> Option<f64>;
+
+    /// The channel's native sample values whose timestamp lands in the closed
+    /// span `[t_lo, t_hi]` (seconds), in the channel's native order. Values are
+    /// in the evaluator's base units, like [`value`](Self::value) - the provider
+    /// converts from the channel's stored unit. An unknown channel or a span
+    /// with no samples yields an empty vec. Providers with no channels use the
+    /// default.
+    fn channel_span(&self, _name: &str, _t_lo: f64, _t_hi: f64) -> Vec<f64> {
+        Vec::new()
+    }
 }
 
 /// One track to run a query over.
@@ -64,6 +74,8 @@ pub struct RunSummary {
     pub total_points: usize,
     /// Windows (or points, without a window) skipped per missing metric.
     pub skipped: BTreeMap<QueryMetric, usize>,
+    /// Windows skipped per channel that had no samples in the window's span.
+    pub skipped_channels: BTreeMap<String, usize>,
     /// Skips from non-finite arithmetic (e.g. division by zero) - kept
     /// separate so they stay visible without a metric to blame.
     pub skipped_non_finite: usize,
@@ -149,6 +161,8 @@ pub(crate) struct TrackEval {
     pub matched: Vec<bool>,
     /// Windows (or points) skipped per missing metric.
     pub skipped: BTreeMap<QueryMetric, usize>,
+    /// Windows skipped per channel with no samples in the span.
+    pub skipped_channels: BTreeMap<String, usize>,
     pub skipped_non_finite: usize,
     /// The provider was shorter than the window, so nothing could match.
     pub shorter_than_window: bool,
@@ -160,6 +174,9 @@ impl RunSummary {
         self.matched_points += eval.matched.iter().filter(|m| **m).count();
         for (metric, count) in &eval.skipped {
             *self.skipped.entry(*metric).or_insert(0) += count;
+        }
+        for (channel, count) in &eval.skipped_channels {
+            *self.skipped_channels.entry(channel.clone()).or_insert(0) += count;
         }
         self.skipped_non_finite += eval.skipped_non_finite;
         self.tracks_shorter_than_window += usize::from(eval.shorter_than_window);
@@ -180,6 +197,7 @@ pub(crate) fn evaluate_track(
     let mut ctx = Ctx {
         provider,
         missing: BTreeSet::new(),
+        missing_channels: BTreeSet::new(),
         non_finite: false,
     };
     let mut matched = vec![false; len];
@@ -197,7 +215,16 @@ pub(crate) fn evaluate_track(
                 if start % check_interval == 0 && should_cancel() {
                     return None;
                 }
-                apply_window(query, &mut ctx, &mut matched, &mut skips, start, start + n);
+                let end = start + n;
+                // A count window's channel span is the closed time extent of
+                // its points, `[t(start), t(end-1)]`. A boundary point with no
+                // timestamp (never, for nav points) leaves the span absent.
+                let span = ctx
+                    .raw(QueryMetric::Time, start)
+                    .zip(ctx.raw(QueryMetric::Time, end - 1))
+                    .map(|(lo, hi)| TimeSpan { lo, hi });
+                let window = WindowScope { start, end, span };
+                apply_window(query, &mut ctx, &mut matched, &mut skips, window);
             }
         }
         Some(Window::Duration(secs)) => {
@@ -230,24 +257,28 @@ pub(crate) fn evaluate_track(
     Some(TrackEval {
         matched,
         skipped: skips.per_metric,
+        skipped_channels: skips.per_channel,
         skipped_non_finite: skips.non_finite,
         shorter_than_window,
     })
 }
 
-/// Evaluate one window spanning the points `[start, end)`: mark those points on
-/// a match, record a skip on a poisoned window, do nothing on no-match.
+/// Evaluate one window: mark its points on a match, record a skip on a poisoned
+/// window, do nothing on no-match.
 fn apply_window(
     query: &CheckedQuery,
     ctx: &mut Ctx<'_>,
     matched: &mut [bool],
     skips: &mut Skips,
-    start: usize,
-    end: usize,
+    window: WindowScope,
 ) {
-    match verdict(query, ctx, Scope::Window { start, end }) {
+    match verdict(query, ctx, Scope::Window(window)) {
         Some(true) => {
-            for slot in matched.iter_mut().skip(start).take(end - start) {
+            for slot in matched
+                .iter_mut()
+                .skip(window.start)
+                .take(window.end - window.start)
+            {
                 *slot = true;
             }
         }
@@ -310,7 +341,18 @@ fn duration_windows(
         {
             end += 1;
         }
-        apply_window(query, ctx, matched, skips, start, end);
+        // The channel span is the window's declared time extent `[t_start,
+        // t_start + secs]`; gathering is closed at the top, differing from the
+        // half-open point rule only at an exact-float boundary.
+        let window = WindowScope {
+            start,
+            end,
+            span: Some(TimeSpan {
+                lo: t_start,
+                hi: end_time,
+            }),
+        };
+        apply_window(query, ctx, matched, skips, window);
     }
     Some(!any_fit)
 }
@@ -320,6 +362,7 @@ fn duration_windows(
 #[derive(Default)]
 struct Skips {
     per_metric: BTreeMap<QueryMetric, usize>,
+    per_channel: BTreeMap<String, usize>,
     non_finite: usize,
 }
 
@@ -327,6 +370,9 @@ impl Skips {
     fn record(&mut self, ctx: &Ctx<'_>) {
         for metric in &ctx.missing {
             *self.per_metric.entry(*metric).or_insert(0) += 1;
+        }
+        for channel in &ctx.missing_channels {
+            *self.per_channel.entry(channel.clone()).or_insert(0) += 1;
         }
         if ctx.non_finite {
             self.non_finite += 1;
@@ -338,6 +384,7 @@ impl Skips {
 /// whole point or window to "skipped".
 fn verdict(query: &CheckedQuery, ctx: &mut Ctx<'_>, scope: Scope) -> Option<bool> {
     ctx.missing.clear();
+    ctx.missing_channels.clear();
     ctx.non_finite = false;
     let mut all = true;
     let mut poisoned = false;
@@ -350,21 +397,42 @@ fn verdict(query: &CheckedQuery, ctx: &mut Ctx<'_>, scope: Scope) -> Option<bool
     if poisoned { None } else { Some(all) }
 }
 
+/// The closed time span `[lo, hi]` (seconds) a window's channel samples are
+/// gathered from.
+#[derive(Clone, Copy)]
+struct TimeSpan {
+    lo: f64,
+    hi: f64,
+}
+
+/// A window over the points `start..end`, plus the time span its channel
+/// samples come from. The span is absent only when a boundary point has no
+/// timestamp (never for nav points); a channel aggregate then reports a missing
+/// time rather than blaming the channel.
+#[derive(Clone, Copy)]
+struct WindowScope {
+    start: usize,
+    end: usize,
+    span: Option<TimeSpan>,
+}
+
 #[derive(Clone, Copy)]
 enum Scope {
     Point(usize),
-    /// The points a window spans, as the half-open index range `start..end`. An
-    /// aggregate reduces the metric's samples over these points.
-    Window {
-        start: usize,
-        end: usize,
-    },
+    /// A point aggregate reduces its metric over the window's points; a channel
+    /// aggregate reduces the channel's samples over the window's time span.
+    Window(WindowScope),
+    /// One native channel sample, for evaluating a channel aggregate's argument
+    /// once per sample. A channel node resolves to this value.
+    Sample(f64),
 }
 
 struct Ctx<'a> {
     provider: &'a dyn MetricProvider,
     /// Metrics that came up missing in the current point/window evaluation.
     missing: BTreeSet<QueryMetric>,
+    /// Channels with no samples in the current window's span.
+    missing_channels: BTreeSet<String>,
     non_finite: bool,
 }
 
@@ -455,14 +523,23 @@ fn eval_num(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<f64> {
         CExpr::Const(v) => Some(*v),
         CExpr::Metric(metric) => match scope {
             Scope::Point(index) => ctx.metric_at(*metric, index),
-            // The checker forbids bare metrics in windowed predicates.
-            Scope::Window { .. } => None,
+            // The checker forbids a bare metric in a windowed predicate, and
+            // rejects a nav-point metric inside a channel aggregate, so neither
+            // window nor per-sample scope reaches here.
+            Scope::Window(_) | Scope::Sample(_) => None,
+        },
+        // A channel node yields the current sample inside a channel aggregate;
+        // in any other scope it has no per-point value.
+        CExpr::Channel(_) => match scope {
+            Scope::Sample(value) => Some(value),
+            Scope::Point(_) | Scope::Window(_) => None,
         },
         CExpr::Agg {
             func,
             circular,
+            source,
             arg,
-        } => aggregate(ctx, *func, *circular, arg, scope),
+        } => aggregate(ctx, *func, *circular, source, arg, scope),
         CExpr::Abs(inner) => eval_num(ctx, inner, scope).map(f64::abs),
         CExpr::Sqrt(inner) => {
             // A negative radicand roots to NaN; poison it like any undefined
@@ -497,11 +574,8 @@ fn eval_num(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<f64> {
             }
             Some(result)
         }
-        // Channel sample reduction is not wired up yet, so a channel yields no
-        // value; its window poisons and never silently matches (the next PR
-        // reduces its native samples over the window span). Condition nodes
-        // never appear in value position.
-        CExpr::Channel(_) | CExpr::Not(_) | CExpr::Cmp { .. } | CExpr::Logic { .. } => None,
+        // Condition nodes never appear in value position.
+        CExpr::Not(_) | CExpr::Cmp { .. } | CExpr::Logic { .. } => None,
     }
 }
 
@@ -511,22 +585,56 @@ fn both_nums(ctx: &mut Ctx<'_>, lhs: &CExpr, rhs: &CExpr, scope: Scope) -> Optio
     Some((l?, r?))
 }
 
-/// Evaluate the aggregate argument at every point of the window; any missing
-/// point poisons the whole aggregate.
+/// Evaluate the aggregate argument once per native sample of `name` in the
+/// window's time span. An absent span (a boundary point had no timestamp)
+/// reports a missing time; a span holding no samples reports the missing
+/// channel. Either way the aggregate poisons rather than matching silently.
+fn channel_samples(
+    ctx: &mut Ctx<'_>,
+    name: &str,
+    arg: &CExpr,
+    window: WindowScope,
+) -> Option<Vec<f64>> {
+    let Some(span) = window.span else {
+        ctx.missing.insert(QueryMetric::Time);
+        return None;
+    };
+    let samples = ctx.provider.channel_span(name, span.lo, span.hi);
+    if samples.is_empty() {
+        ctx.missing_channels.insert(name.to_owned());
+        return None;
+    }
+    let mut values = Vec::with_capacity(samples.len());
+    for sample in samples {
+        values.push(eval_num(ctx, arg, Scope::Sample(sample))?);
+    }
+    Some(values)
+}
+
+/// Reduce the aggregate argument over the window: a channel's native samples in
+/// the time span, or the metric's values over the window's points, per the
+/// source the checker resolved. Any missing value poisons the whole aggregate.
 fn aggregate(
     ctx: &mut Ctx<'_>,
     func: Func,
     circular: bool,
+    source: &AggSource,
     arg: &CExpr,
     scope: Scope,
 ) -> Option<f64> {
-    let Scope::Window { start, end } = scope else {
+    let Scope::Window(window) = scope else {
         return None;
     };
-    let mut values = Vec::with_capacity(end - start);
-    for index in start..end {
-        values.push(eval_num(ctx, arg, Scope::Point(index))?);
-    }
+    let mut values = match source {
+        AggSource::Channel(name) => channel_samples(ctx, name, arg, window)?,
+        AggSource::Points => {
+            let mut values = Vec::with_capacity(window.end - window.start);
+            for index in window.start..window.end {
+                values.push(eval_num(ctx, arg, Scope::Point(index))?);
+            }
+            values
+        }
+    };
     let (first, last) = (values.first().copied()?, values.last().copied()?);
     let value = match func {
         Func::Avg => values.iter().sum::<f64>() / values.len() as f64,
