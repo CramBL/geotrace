@@ -12,7 +12,7 @@ use gt_types::TrackRef;
 use nalgebra::{Complex, UnitComplex};
 
 use crate::ast::{Func, ParamName};
-use crate::check::{AggSource, ArithOp, CExpr, ChannelKey, CheckedQuery, CmpOp, Window};
+use crate::check::{AggSource, ArithOp, CExpr, CheckedQuery, CmpOp, Window};
 use crate::metric::QueryMetric;
 
 const FULL_TURN_DEG: f64 = 360.0;
@@ -20,6 +20,38 @@ const FULL_TURN_DEG: f64 = 360.0;
 /// Points evaluated between cancellation checks. Small enough to stop within
 /// a frame or two, large enough that the check never shows up in a profile.
 pub(crate) const CANCEL_CHECK_INTERVAL: usize = 4096;
+
+/// A channel's samples over a time span: row-major values in the evaluator's
+/// base units, `columns` per row. A scalar channel has one column; a vector
+/// channel one per component (`@accel.x` is column 0). Empty when the channel
+/// is unknown or has no samples in the span.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ChannelSamples {
+    /// Row-major values, `columns` per row.
+    pub values: Vec<f64>,
+    /// Values per row: 1 for a scalar channel, the component count otherwise.
+    pub columns: usize,
+}
+
+impl ChannelSamples {
+    fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    /// The rows, each a slice of `columns` component values.
+    fn rows(&self) -> impl Iterator<Item = &[f64]> {
+        // `chunks_exact` panics on a zero size and silently drops a trailing
+        // partial row, so guard the size and assert the row-major contract
+        // rather than lose data (mirrors `Channel::slice_time_range`).
+        let columns = self.columns.max(1);
+        debug_assert_eq!(
+            self.values.len() % columns,
+            0,
+            "channel samples must be a whole number of rows"
+        );
+        self.values.chunks_exact(columns)
+    }
+}
 
 /// Per-point metric access for one track.
 ///
@@ -37,21 +69,15 @@ pub trait MetricProvider {
 
     fn value(&self, metric: QueryMetric, index: usize) -> Option<f64>;
 
-    /// A channel's native sample values whose timestamp lands in the closed
-    /// span `[t_lo, t_hi]` (seconds), in the channel's native order. `component`
-    /// selects one column of a vector channel (`@accel.x`); `None` is a scalar
-    /// channel. Values are in the evaluator's base units, like
-    /// [`value`](Self::value) - the provider converts from the channel's stored
-    /// unit. An unknown channel or a span with no samples yields an empty vec.
-    /// Providers with no channels use the default.
-    fn channel_span(
-        &self,
-        _name: &str,
-        _component: Option<usize>,
-        _t_lo: f64,
-        _t_hi: f64,
-    ) -> Vec<f64> {
-        Vec::new()
+    /// A channel's native samples whose timestamp lands in the closed span
+    /// `[t_lo, t_hi]` (seconds), in the channel's native order, as row-major
+    /// values with one column per component (one column for a scalar channel).
+    /// Values are in the evaluator's base units, like [`value`](Self::value) -
+    /// the provider converts from the channel's stored unit. An unknown channel
+    /// or a span with no samples yields empty samples. Providers with no
+    /// channels use the default.
+    fn channel_span(&self, _name: &str, _t_lo: f64, _t_hi: f64) -> ChannelSamples {
+        ChannelSamples::default()
     }
 }
 
@@ -424,14 +450,14 @@ struct WindowScope {
 }
 
 #[derive(Clone, Copy)]
-enum Scope {
+enum Scope<'a> {
     Point(usize),
     /// A point aggregate reduces its metric over the window's points; a channel
     /// aggregate reduces the channel's samples over the window's time span.
     Window(WindowScope),
-    /// One native channel sample, for evaluating a channel aggregate's argument
-    /// once per sample. A channel node resolves to this value.
-    Sample(f64),
+    /// One native channel sample: the row of component values (one for a scalar
+    /// channel). A `@name.x` node reads its column; `norm` reads the whole row.
+    Sample(&'a [f64]),
 }
 
 struct Ctx<'a> {
@@ -515,6 +541,7 @@ fn eval_bool(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<bool> {
         CExpr::Const(_)
         | CExpr::Metric(_)
         | CExpr::Channel(_)
+        | CExpr::Norm(_)
         | CExpr::Agg { .. }
         | CExpr::Abs(_)
         | CExpr::Sqrt(_)
@@ -535,10 +562,24 @@ fn eval_num(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<f64> {
             // window nor per-sample scope reaches here.
             Scope::Window(_) | Scope::Sample(_) => None,
         },
-        // A channel node yields the current sample inside a channel aggregate;
-        // in any other scope it has no per-point value.
-        CExpr::Channel(_) => match scope {
-            Scope::Sample(value) => Some(value),
+        // A channel node reads its component's column of the current sample row
+        // inside a channel aggregate; in any other scope it has no value. The
+        // checker keeps the column in range, but guard rather than index.
+        CExpr::Channel(key) => match scope {
+            Scope::Sample(row) => row.get(key.component.unwrap_or(0)).copied(),
+            Scope::Point(_) | Scope::Window(_) => None,
+        },
+        // norm is the Euclidean magnitude of the whole sample row. A non-finite
+        // component (an absent sample) poisons it like any undefined arithmetic.
+        CExpr::Norm(_) => match scope {
+            Scope::Sample(row) => {
+                let result = row.iter().map(|v| v * v).sum::<f64>().sqrt();
+                if !result.is_finite() {
+                    ctx.non_finite = true;
+                    return None;
+                }
+                Some(result)
+            }
             Scope::Point(_) | Scope::Window(_) => None,
         },
         CExpr::Agg {
@@ -592,13 +633,15 @@ fn both_nums(ctx: &mut Ctx<'_>, lhs: &CExpr, rhs: &CExpr, scope: Scope) -> Optio
     Some((l?, r?))
 }
 
-/// Evaluate the aggregate argument once per native sample of `name` in the
-/// window's time span. An absent span (a boundary point had no timestamp)
-/// reports a missing time; a span holding no samples reports the missing
-/// channel. Either way the aggregate poisons rather than matching silently.
-fn channel_samples(
+/// Evaluate the aggregate argument once per native sample of channel `name` in
+/// the window's time span, each argument seeing that sample's whole row (so a
+/// `@name.x`/`@name.y`/`norm` reads aligned columns). An absent span (a boundary
+/// point had no timestamp) reports a missing time; a span with no samples
+/// reports the missing channel. Either way the aggregate poisons rather than
+/// matching silently.
+fn reduce_channel(
     ctx: &mut Ctx<'_>,
-    key: &ChannelKey,
+    name: &str,
     arg: &CExpr,
     window: WindowScope,
 ) -> Option<Vec<f64>> {
@@ -606,18 +649,14 @@ fn channel_samples(
         ctx.missing.insert(QueryMetric::Time);
         return None;
     };
-    let samples = ctx
-        .provider
-        .channel_span(&key.name, key.component, span.lo, span.hi);
+    let samples = ctx.provider.channel_span(name, span.lo, span.hi);
     if samples.is_empty() {
-        // The whole channel is absent from the span, so report it by name (a
-        // vector's components share one clock and go missing together).
-        ctx.missing_channels.insert(key.name.clone());
+        ctx.missing_channels.insert(name.to_owned());
         return None;
     }
-    let mut values = Vec::with_capacity(samples.len());
-    for sample in samples {
-        values.push(eval_num(ctx, arg, Scope::Sample(sample))?);
+    let mut values = Vec::with_capacity(samples.values.len() / samples.columns.max(1));
+    for row in samples.rows() {
+        values.push(eval_num(ctx, arg, Scope::Sample(row))?);
     }
     Some(values)
 }
@@ -637,7 +676,7 @@ fn aggregate(
         return None;
     };
     let mut values = match source {
-        AggSource::Channel(key) => channel_samples(ctx, key, arg, window)?,
+        AggSource::Channel(name) => reduce_channel(ctx, name, arg, window)?,
         AggSource::Points => {
             let mut values = Vec::with_capacity(window.end - window.start);
             for index in window.start..window.end {
@@ -678,9 +717,9 @@ fn aggregate(
         }
         // The checker rejects var on a direction, so it is always linear.
         Func::Var => population_variance(&values),
-        // The checker never emits abs or sqrt as an aggregate; they are their
-        // own scalar `CExpr` nodes.
-        Func::Abs | Func::Sqrt => return None,
+        // The checker never emits abs, sqrt, or norm as an aggregate; they are
+        // their own scalar `CExpr` nodes.
+        Func::Abs | Func::Sqrt | Func::Norm => return None,
     };
     // Like arithmetic (see `eval_num`), an aggregate never hands a non-finite
     // value to a comparison: an overflowing sum (in `avg` or `population_std`),

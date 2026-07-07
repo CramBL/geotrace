@@ -256,6 +256,7 @@ pub enum Func {
     Delta,
     Abs,
     Sqrt,
+    Norm,
 }
 
 impl Func {
@@ -282,7 +283,9 @@ impl Func {
             | Func::Last
             | Func::Var
             | Func::Abs
-            | Func::Sqrt => arg,
+            | Func::Sqrt
+            // norm's magnitude has the vector's own dimension.
+            | Func::Norm => arg,
         }
     }
 }
