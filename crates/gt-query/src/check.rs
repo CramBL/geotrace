@@ -580,6 +580,10 @@ impl Checker {
                 }
                 Ok((value_type(m.metric.quantity()), CExpr::Metric(m.metric)))
             }
+            // Channel references parse but are not yet resolvable: schema-aware
+            // checking (the channel schema) arrives in a later PR. Reject them
+            // with a clear message rather than silently ignoring the reference.
+            Expr::Channel(c) => Err(err(c.span, "channels are not supported yet")),
             Expr::Unary { op, operand, span } => self.unary(*op, operand, *span, in_agg),
             Expr::Call { func, arg, span } => self.call(*func, arg, *span, in_agg),
             Expr::Binary { op, lhs, rhs, span } => self.binary(*op, lhs, rhs, *span, in_agg),
@@ -1167,6 +1171,7 @@ fn describe(expr: &Expr) -> Option<String> {
         Expr::Call { arg, .. } => describe(arg),
         Expr::Unary { operand, .. } => describe(operand),
         Expr::Power { base, .. } => describe(base),
+        Expr::Channel(c) => Some(c.to_string()),
         Expr::Number(_) | Expr::Binary { .. } => None,
     }
 }

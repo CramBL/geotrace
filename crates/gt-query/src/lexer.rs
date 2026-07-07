@@ -8,6 +8,9 @@ use crate::ast::Span;
 
 #[derive(Logos, Debug, Clone, Copy, PartialEq, Eq)]
 #[logos(skip r"[ \t\r\n]+")]
+// A lowercase identifier: metric/channel names and vector components all share
+// this shape (the SDK channel-name rule), so define it once.
+#[logos(subpattern ident = r"[a-z_][a-z0-9_]*")]
 pub enum Token {
     #[token("|")]
     Pipe,
@@ -73,8 +76,12 @@ pub enum Token {
     Per,
     #[regex(r"[0-9]+(\.[0-9]+)?")]
     Number,
-    #[regex(r"[a-z_][a-z0-9_]*")]
+    #[regex(r"(?&ident)")]
     Ident,
+    // A channel reference: `@name` or a vector component `@name.x`. The parser
+    // splits the name from the optional component.
+    #[regex(r"@(?&ident)(\.(?&ident))?")]
+    Channel,
     // A real token rather than a skip so the highlighter can color comments;
     // `lex` filters it out before parsing. Consuming to end of line is the
     // point, hence the greedy-repetition opt-in logos 0.16 requires.
@@ -126,7 +133,7 @@ impl Token {
             | Token::Not
             | Token::Per => TokenClass::Keyword,
             Token::Number => TokenClass::Number,
-            Token::Ident => TokenClass::Ident,
+            Token::Ident | Token::Channel => TokenClass::Ident,
             Token::Comment => TokenClass::Comment,
             Token::Pipe
             | Token::Comma
@@ -262,6 +269,50 @@ mod tests {
         assert_eq!(kinds("x⁻³"), vec![Token::Ident, Token::Superscript]);
         assert_eq!(kinds("velocity^2"), vec![Token::Ident, Token::CaretPower]);
         assert_eq!(kinds("velocity^-2"), vec![Token::Ident, Token::CaretPower]);
+    }
+
+    #[test]
+    fn channel_references_lex_as_one_channel_token() {
+        let toks = |src| lex(src).unwrap();
+        // A whole-channel reference and a vector component are each one token,
+        // with the `@` and any `.component` kept in the token text.
+        let whole = toks("@accel");
+        assert_eq!(
+            whole.iter().map(|t| t.kind).collect::<Vec<_>>(),
+            vec![Token::Channel]
+        );
+        assert_eq!(whole[0].text, "@accel");
+        let component = toks("@accel.x");
+        assert_eq!(
+            component.iter().map(|t| t.kind).collect::<Vec<_>>(),
+            vec![Token::Channel]
+        );
+        assert_eq!(component[0].text, "@accel.x");
+    }
+
+    #[test]
+    fn a_keyword_named_channel_is_still_one_channel_token() {
+        // The `@` prefix wins over the bare keyword, so `@window`/`@and` are
+        // channel references, not keyword tokens.
+        for src in ["@window", "@and", "@points"] {
+            let toks = lex(src).unwrap();
+            assert_eq!(
+                toks.iter().map(|t| t.kind).collect::<Vec<_>>(),
+                vec![Token::Channel],
+                "{src} should lex as one Channel token"
+            );
+            assert_eq!(toks[0].text, src);
+        }
+    }
+
+    #[test]
+    fn a_bare_or_malformed_at_is_a_lex_error() {
+        // `@` needs a name; `@.x` has no name before the dot. Both are rejected
+        // rather than producing a partial token.
+        for src in ["@", "@.x"] {
+            let err = lex(src).unwrap_err();
+            assert_eq!(err.message, "unexpected character `@`", "for {src}");
+        }
     }
 
     #[test]
