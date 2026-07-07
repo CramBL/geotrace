@@ -19,11 +19,11 @@ use gt_filter::GlobalFilter;
 use gt_loaded_files::LoadedFilesView;
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{
-    CheckedQuery, Construct, ConstructKind, Diagnostic, MetricProvider, PipelineOutput, Quantity,
-    QueryMetric, RunSummary, Span, TrackInput, TrackMatches, Unit,
+    ChannelInfo, ChannelSchema, CheckedQuery, Construct, ConstructKind, Diagnostic, MetricProvider,
+    PipelineOutput, Quantity, QueryMetric, RunSummary, Span, TrackInput, TrackMatches, Unit,
 };
 use gt_types::satellites::Constellation;
-use gt_types::{DisplayMode, FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
+use gt_types::{Channel, DisplayMode, FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
 use gt_ui_theme::{DEGREE_SIGN, EM_DASH};
 use gt_ui_types::{DrawLayer, DrawLayerMask, MapHighlight, QueryMatches, TrackDataVisibility};
 
@@ -38,6 +38,10 @@ const MAX_UNPINNED_HISTORY: usize = 50;
 
 /// Characters of a history entry's first line shown before eliding.
 const HISTORY_LINE_MAX_CHARS: usize = 48;
+
+/// Microseconds per second, for converting a channel sample's `timestamp_micros`
+/// to the evaluator's seconds.
+const MICROS_PER_SEC: f64 = 1_000_000.0;
 
 /// Ellipsis appended to an elided history line.
 const ELLIPSIS: &str = "…";
@@ -102,6 +106,10 @@ pub struct QueryWindow {
     chunks: Vec<Chunk>,
     /// The text `chunks` was computed from.
     checked_text: String,
+    /// The channel schema `chunks` was checked against. Kept so a file load or
+    /// unload that changes the channels re-checks even when the text is
+    /// unchanged (a `@name` error resolves once its channel appears).
+    checked_schema: ChannelSchema,
     /// Set by the Run button, consumed at the end of `show`.
     run_requested: bool,
     /// Set by the Cancel button while a run is in flight.
@@ -218,8 +226,9 @@ impl QueryWindow {
     pub fn new() -> Self {
         let text = String::new();
         Self {
-            chunks: check_all(&text),
+            chunks: check_all(&text, &ChannelSchema::new()),
             checked_text: text.clone(),
+            checked_schema: ChannelSchema::new(),
             text,
             open: false,
             run_requested: false,
@@ -372,6 +381,9 @@ impl QueryWindow {
         }
 
         let files = loaded_files.files();
+        // The channels the editor checks `@name` against, gathered across every
+        // loaded track.
+        let schema = schema_from_files(files);
         let mut open = self.open;
         egui::Window::new("Query")
             .open(&mut open)
@@ -380,7 +392,7 @@ impl QueryWindow {
             .resizable(true)
             .vscroll(true)
             .show(ctx, |ui| {
-                self.editor_ui(ui);
+                self.editor_ui(ui, &schema);
                 ui.separator();
                 self.results_ui(ui, files, highlight);
                 ui.separator();
@@ -630,15 +642,16 @@ impl QueryWindow {
         });
     }
 
-    fn editor_ui(&mut self, ui: &mut egui::Ui) {
+    fn editor_ui(&mut self, ui: &mut egui::Ui, schema: &ChannelSchema) {
         let editor_id = egui::Id::new(EDITOR_ID_SALT);
         // Runs before the editor so the open popup can claim Enter/Tab/arrows,
         // and may edit the text (accepting a candidate) - so re-check after.
         self.apply_autocomplete_input(ui, editor_id);
 
-        if self.checked_text != self.text {
-            self.chunks = check_all(&self.text);
+        if self.checked_text != self.text || self.checked_schema != *schema {
+            self.chunks = check_all(&self.text, schema);
             self.checked_text = self.text.clone();
+            self.checked_schema = schema.clone();
         }
         // Underline the first error, mapped from its chunk to editor bytes.
         let diagnostic_span = self
@@ -1008,17 +1021,22 @@ impl QueryWindow {
         let fingerprint = current_fingerprint(loaded_files, visibility, filter);
 
         // Owned snapshot for the worker: each evaluated track's full point
-        // vector plus the sub-range passing the time filter. Cloning is the
-        // simple-and-correct baseline; an Arc-based snapshot is the known
-        // follow-up if this shows up in profiling.
+        // vector and its channels, plus the sub-range passing the time filter.
+        // Cloning is the simple-and-correct baseline; an Arc-based snapshot is
+        // the known follow-up if this shows up in profiling.
         let files = loaded_files.files();
-        let tracks: Vec<(TrackRef, Vec<NavPoint>, Range<usize>)> = fingerprint
+        let tracks: Vec<TrackSnapshot> = fingerprint
             .tracks
             .iter()
             .filter_map(|&track_ref| {
-                let points = points_of(files, track_ref)?;
-                let slice = gt_filter::time_filtered_range(points, filter);
-                Some((track_ref, points.to_vec(), slice))
+                let track = track_ref.resolve(files)?;
+                let slice = gt_filter::time_filtered_range(&track.points, filter);
+                Some(TrackSnapshot {
+                    track_ref,
+                    points: track.points.clone(),
+                    channels: track.channels.clone(),
+                    slice,
+                })
             })
             .collect();
 
@@ -1051,12 +1069,21 @@ impl QueryWindow {
     }
 }
 
+/// One track's owned data for the worker: the full point vector and channels,
+/// plus the sub-range of points passing the time filter.
+struct TrackSnapshot {
+    track_ref: TrackRef,
+    points: Vec<NavPoint>,
+    channels: Vec<Channel>,
+    slice: Range<usize>,
+}
+
 /// The worker body: derived series per track, then the sequential pipeline
 /// evaluation, with cancellation checks between tracks (gt-query checks within
 /// them).
 fn run_worker(
     queries: &[CheckedQuery],
-    tracks: &[(TrackRef, Vec<NavPoint>, Range<usize>)],
+    tracks: &[TrackSnapshot],
     cancel: &AtomicBool,
     prepared: &AtomicUsize,
 ) -> RunCompleted {
@@ -1072,7 +1099,7 @@ fn run_worker(
     let params = merge_params(queries);
 
     let mut track_data: HashMap<TrackRef, TrackQueryData> = HashMap::new();
-    for (track_ref, points, slice) in tracks {
+    for snapshot in tracks {
         if cancelled() {
             return RunCompleted {
                 output: None,
@@ -1080,22 +1107,32 @@ fn run_worker(
             };
         }
         track_data.insert(
-            *track_ref,
-            compute_track_data(points, params, uses_util, uses_slip, slice.start),
+            snapshot.track_ref,
+            compute_track_data(
+                &snapshot.points,
+                params,
+                uses_util,
+                uses_slip,
+                snapshot.slice.start,
+            ),
         );
         prepared.fetch_add(1, Ordering::Relaxed);
     }
 
     let providers: Vec<(TrackRef, SliceProvider<'_>)> = tracks
         .iter()
-        .map(|(track_ref, points, slice)| {
-            let provider = provider_for(points, track_data.get(track_ref));
+        .map(|snapshot| {
+            let provider = provider_for(
+                &snapshot.points,
+                &snapshot.channels,
+                track_data.get(&snapshot.track_ref),
+            );
             (
-                *track_ref,
+                snapshot.track_ref,
                 SliceProvider {
                     inner: provider,
-                    start: slice.start,
-                    len: slice.len(),
+                    start: snapshot.slice.start,
+                    len: snapshot.slice.len(),
                 },
             )
         })
@@ -1185,7 +1222,9 @@ fn match_table_ui(
         return;
     };
     let data = ctx.track_data.get(&track_ref);
-    let provider = provider_for(points, data);
+    // The match table reads only metric columns (channels cannot be columns
+    // yet), so it needs no channel data.
+    let provider = provider_for(points, &[], data);
     // accel derives through the same slice the evaluator saw, so the first
     // point of a time-filtered run shows the missing value the predicate
     // used, not a value reaching before the filter window.
@@ -1309,9 +1348,14 @@ fn points_of(files: &[LoadedFile], track_ref: TrackRef) -> Option<&[NavPoint]> {
 
 /// The provider both the run and the match tables read through - one code
 /// path, so tables always show the values the evaluator saw.
-fn provider_for<'a>(points: &'a [NavPoint], data: Option<&'a TrackQueryData>) -> TrackProvider<'a> {
+fn provider_for<'a>(
+    points: &'a [NavPoint],
+    channels: &'a [Channel],
+    data: Option<&'a TrackQueryData>,
+) -> TrackProvider<'a> {
     TrackProvider {
         points,
+        channels,
         util: data.and_then(|d| d.util.as_ref()),
         slip: data.and_then(|d| d.slip.as_ref()),
     }
@@ -1401,6 +1445,12 @@ impl MetricProvider for SliceProvider<'_> {
         }
         self.inner.value(metric, self.start + index)
     }
+
+    fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> Vec<f64> {
+        // Channel samples are keyed by absolute time, so the slice's time span
+        // selects them directly from the inner provider - no index offset.
+        self.inner.channel_span(name, t_lo, t_hi)
+    }
 }
 
 fn summary_line(summary: &RunSummary, mode: DisplayMode) -> String {
@@ -1451,6 +1501,7 @@ fn summary_line(summary: &RunSummary, mode: DisplayMode) -> String {
 #[derive(Clone, Copy)]
 struct TrackProvider<'a> {
     points: &'a [NavPoint],
+    channels: &'a [Channel],
     util: Option<&'a UtilPerPoint>,
     slip: Option<&'a SlipRatePerPoint>,
 }
@@ -1579,25 +1630,85 @@ impl MetricProvider for TrackProvider<'_> {
             QueryMetric::SlipQzss => self.slip_value(index, |s| &s.qzss),
         }
     }
+
+    /// A scalar channel's samples whose timestamp lands in `[t_lo, t_hi]`,
+    /// converted from the channel's stored unit to the evaluator's base units.
+    /// Vector channels have no scalar series (the checker rejects a bare
+    /// `@name` for them), so they yield nothing.
+    ///
+    /// `t_lo`/`t_hi` arrive floored to whole seconds (the query engine's time
+    /// resolution, since nav-point time floors to whole seconds); the sub-second
+    /// precision of a sample's own timestamp only refines placement within that
+    /// grid.
+    fn channel_span(&self, name: &str, t_lo: f64, t_hi: f64) -> Vec<f64> {
+        let Some(channel) = self.channels.iter().find(|c| c.name == name) else {
+            return Vec::new();
+        };
+        if channel.is_vector() {
+            return Vec::new();
+        }
+        // An unknown or absent unit leaves the samples as a bare number (factor
+        // 1.0), matching how the checker types such a channel.
+        let to_base = channel
+            .unit
+            .as_deref()
+            .and_then(Unit::from_ident)
+            .map_or(1.0, Unit::to_base);
+        // `times` is sorted ascending, so the samples in the closed span are a
+        // contiguous slice found by binary search. An inverted span (`t_lo >
+        // t_hi`, possible when the track's time is non-monotonic) or a malformed
+        // channel makes the range empty rather than panicking.
+        let secs = |time: &DateTime<Utc>| time.timestamp_micros() as f64 / MICROS_PER_SEC;
+        let lo = channel.times.partition_point(|time| secs(time) < t_lo);
+        let hi = channel.times.partition_point(|time| secs(time) <= t_hi);
+        channel
+            .values
+            .get(lo..hi)
+            .unwrap_or_default()
+            .iter()
+            .map(|value| value * to_base)
+            .collect()
+    }
 }
 
-fn check_text(text: &str) -> Result<CheckedQuery, Diagnostic> {
-    // An empty schema for now: the editor does not yet see loaded channels, so
-    // `@name` reports "no such channel". Wiring the real schema (and running
-    // channels) lands with channel evaluation.
-    gt_query::check(&gt_query::parse(text)?, &gt_query::ChannelSchema::new())
+/// The schema the editor checks against: every scalar or vector channel across
+/// the loaded files, keyed by name. A channel is queryable if any loaded track
+/// carries it; a run over a track lacking it reports the window as skipped. On
+/// a name collision the last track's metadata wins (channels rarely collide,
+/// and a debug tool need not choose between conflicting units).
+fn schema_from_files(files: &[LoadedFile]) -> ChannelSchema {
+    use uom::si::angle::degree;
+
+    let mut schema = ChannelSchema::new();
+    for file in files {
+        for channel in file.tracks.iter().flat_map(|t| &t.channels) {
+            schema.insert(
+                &channel.name,
+                ChannelInfo {
+                    unit: channel.unit.clone(),
+                    period_deg: channel.period.map(|p| p.get::<degree>()),
+                    components: channel.components.clone(),
+                },
+            );
+        }
+    }
+    schema
 }
 
-/// Parse and check every query in the editor. Queries are separated by a blank
-/// line; each chunk keeps its byte range so diagnostics and the caret map back
-/// to editor coordinates.
-fn check_all(text: &str) -> Vec<Chunk> {
+fn check_text(text: &str, schema: &ChannelSchema) -> Result<CheckedQuery, Diagnostic> {
+    gt_query::check(&gt_query::parse(text)?, schema)
+}
+
+/// Parse and check every query in the editor against the loaded channels.
+/// Queries are separated by a blank line; each chunk keeps its byte range so
+/// diagnostics and the caret map back to editor coordinates.
+fn check_all(text: &str, schema: &ChannelSchema) -> Vec<Chunk> {
     split_queries(text)
         .into_iter()
         .map(|range| {
             let src = text.get(range.clone()).unwrap_or("");
             Chunk {
-                result: check_text(src),
+                result: check_text(src, schema),
                 range,
             }
         })
@@ -1969,7 +2080,7 @@ mod tests {
     #[test]
     fn examples_parse_check_and_run() {
         let points = gt_test_utils::nav_test_data();
-        let provider = provider_for(&points, None);
+        let provider = provider_for(&points, &[], None);
         let inputs = [TrackInput {
             track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
             provider: &provider,
@@ -2211,7 +2322,7 @@ mod tests {
             slip: Some(slip),
             slice_start: 0,
         };
-        let provider = provider_for(&points, Some(&data));
+        let provider = provider_for(&points, &[], Some(&data));
 
         // (metric, point index, expected base-unit value)
         let cases = [
@@ -2256,7 +2367,7 @@ mod tests {
     fn slice_provider_offsets_and_bounds() {
         let points = test_points();
         let slice = SliceProvider {
-            inner: provider_for(&points, None),
+            inner: provider_for(&points, &[], None),
             start: 1,
             len: 1,
         };
@@ -2367,5 +2478,162 @@ mod tests {
         fn value(&self, _metric: QueryMetric, _index: usize) -> Option<f64> {
             None
         }
+    }
+
+    /// The Unix epoch the test fixtures place their first sample at, matching
+    /// `test_points`.
+    const TEST_EPOCH: i64 = 1_700_000_000;
+
+    /// A scalar channel named `name` with `unit`, sampled at `TEST_EPOCH + secs`
+    /// for each `(secs, value)` pair.
+    fn scalar_channel(name: &str, unit: Option<&str>, samples: &[(i64, f64)]) -> Channel {
+        Channel {
+            name: name.to_owned(),
+            unit: unit.map(str::to_owned),
+            period: None,
+            description: None,
+            components: vec![],
+            times: samples
+                .iter()
+                .map(|&(secs, _)| {
+                    DateTime::from_timestamp(TEST_EPOCH + secs, 0).expect("valid timestamp")
+                })
+                .collect(),
+            values: samples.iter().map(|&(_, value)| value).collect(),
+        }
+    }
+
+    #[test]
+    fn channel_span_converts_units_and_filters_time() {
+        // A g-valued accel channel: channel_span converts each sample to base
+        // m/s2 and keeps only those whose absolute time lands in the span.
+        let base = TEST_EPOCH as f64;
+        let accel = scalar_channel(
+            "accel",
+            Some("g"),
+            &[(0, 1.0), (1, 1.5), (2, 2.0), (3, 0.5)],
+        );
+        let channels = [accel];
+        let points = test_points();
+        let provider = provider_for(&points, &channels, None);
+
+        let got = provider.channel_span("accel", base, base + 2.0);
+        // The first three samples (the fourth is past t_hi), each g -> m/s2.
+        let g = Unit::G.to_base();
+        let want = [1.0 * g, 1.5 * g, 2.0 * g];
+        assert_eq!(got.len(), want.len());
+        for (a, b) in got.iter().zip(want) {
+            assert!((a - b).abs() < 1e-9, "{a} != {b}");
+        }
+    }
+
+    #[test]
+    fn channel_span_skips_vector_and_unknown_channels() {
+        // A vector channel has no scalar series (the checker rejects a bare
+        // reference to it), and an unknown name has nothing.
+        let mut vector = scalar_channel("accel", Some("g"), &[(0, 1.0)]);
+        vector.components = vec!["x".to_owned(), "y".to_owned(), "z".to_owned()];
+        vector.values = vec![1.0, 2.0, 3.0];
+        let channels = [vector];
+        let points = test_points();
+        let provider = provider_for(&points, &channels, None);
+
+        assert!(provider.channel_span("accel", 0.0, f64::MAX).is_empty());
+        assert!(provider.channel_span("missing", 0.0, f64::MAX).is_empty());
+    }
+
+    #[test]
+    fn slice_provider_channel_span_ignores_the_index_offset() {
+        // Channels are absolute-time-keyed, so a SliceProvider selects the same
+        // samples as its inner provider regardless of the point-index start.
+        let base = TEST_EPOCH as f64;
+        let accel = scalar_channel("accel", Some("g"), &[(0, 1.0), (1, 1.5), (2, 2.0)]);
+        let channels = [accel];
+        let points = test_points();
+        let inner = provider_for(&points, &channels, None);
+        let slice = SliceProvider {
+            inner,
+            start: 1,
+            len: 1,
+        };
+
+        // The span [base, base+1] holds the first two samples through either
+        // provider; the slice's start must not shift the time window.
+        assert_eq!(
+            slice.channel_span("accel", base, base + 1.0),
+            inner.channel_span("accel", base, base + 1.0),
+        );
+        let g = Unit::G.to_base();
+        let want = [1.0 * g, 1.5 * g];
+        let got = slice.channel_span("accel", base, base + 1.0);
+        assert_eq!(got.len(), want.len());
+        for (a, b) in got.iter().zip(want) {
+            assert!((a - b).abs() < 1e-9, "{a} != {b}");
+        }
+    }
+
+    /// A single-track file carrying `channels` over `test_points`.
+    fn file_with_channels(channels: Vec<Channel>) -> LoadedFile {
+        use gt_types::{FileMetadata, FileSource, LoadedTrack, TrackLod, TrackMetadata};
+
+        LoadedFile {
+            metadata: FileMetadata::default(),
+            tracks: vec![LoadedTrack {
+                metadata: TrackMetadata::default(),
+                points: test_points(),
+                lod: TrackLod::default(),
+                custom_markers: vec![],
+                generated_markers: vec![],
+                event_markers: vec![],
+                channels,
+            }],
+            event_marker_styles: HashMap::new(),
+            orphaned_event_markers: vec![],
+            source: FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),
+            load_warnings: vec![],
+        }
+    }
+
+    #[test]
+    fn schema_from_files_types_a_channel_for_the_editor() {
+        // A loaded g-unit accel channel resolves to an acceleration in the
+        // editor: it compares to an acceleration literal and rejects a speed.
+        let files = [file_with_channels(vec![scalar_channel(
+            "accel",
+            Some("g"),
+            &[(0, 1.0)],
+        )])];
+        let schema = schema_from_files(&files);
+
+        check_text("points | window 2 | where max(@accel) > 1 g", &schema)
+            .expect("a g channel checks against an acceleration literal");
+        let err = check_text("points | window 2 | where max(@accel) > 30 km/h", &schema)
+            .expect_err("an acceleration cannot compare to a speed");
+        assert!(err.message.contains("acceleration"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_loaded_channel_checks_and_runs_end_to_end() {
+        // The whole app path: build the editor schema from the file, check a
+        // channel query against it, then run it over a provider carrying the
+        // same channel. The peak sample (1.5 g) clears the 1 g threshold.
+        let channel = scalar_channel("accel", Some("g"), &[(0, 0.9), (1, 1.5)]);
+        let files = [file_with_channels(vec![channel.clone()])];
+        let schema = schema_from_files(&files);
+        let query = check_text("points | window 2 | where max(@accel) > 1 g", &schema)
+            .expect("checks against the loaded schema");
+
+        let points = test_points();
+        let channels = [channel];
+        let provider = provider_for(&points, &channels, None);
+        let output = gt_query::run(
+            &query,
+            &[TrackInput {
+                track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+                provider: &provider,
+            }],
+        );
+        assert_eq!(output.matches.len(), 1, "the window matches");
+        assert_eq!(output.summary.match_count, 1);
     }
 }
