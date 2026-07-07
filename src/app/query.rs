@@ -43,6 +43,10 @@ const HISTORY_LINE_MAX_CHARS: usize = 48;
 /// to the evaluator's seconds.
 const MICROS_PER_SEC: f64 = 1_000_000.0;
 
+/// Max width of an editor hover tooltip, shared by the construct and channel
+/// tooltips so they stay the same size.
+const TOOLTIP_MAX_WIDTH: f32 = 360.0;
+
 /// Ellipsis appended to an elided history line.
 const ELLIPSIS: &str = "…";
 
@@ -126,6 +130,45 @@ pub struct QueryWindow {
     autocomplete: Autocomplete,
 }
 
+/// One completion offered in the popup: a language construct or a loaded
+/// channel, reduced to what the popup needs. A construct and a channel render
+/// and insert the same way, so the popup holds one type for both.
+#[derive(Clone)]
+struct Candidate {
+    /// The text inserted when accepted (`velocity`, `@accel`).
+    insert: String,
+    /// The dimmed one-line summary shown beside the name.
+    summary: String,
+    /// Whether accepting adds a trailing space (stages, params, the source do;
+    /// metrics and channels do not).
+    trailing_space: bool,
+}
+
+impl Candidate {
+    fn from_construct(construct: Construct) -> Self {
+        Self {
+            insert: construct.name.to_owned(),
+            summary: construct.summary.to_owned(),
+            trailing_space: inserts_trailing_space(construct.kind),
+        }
+    }
+
+    fn from_channel(channel: gt_query::ChannelSuggestion) -> Self {
+        Self {
+            insert: format!("@{}", channel.name),
+            summary: channel.summary,
+            trailing_space: false,
+        }
+    }
+}
+
+/// What the editor hover shows under the pointer: a loaded channel or a
+/// language construct.
+enum HoverDoc {
+    Channel(gt_query::ChannelSuggestion),
+    Construct(&'static Construct),
+}
+
 /// The editor's autocomplete popup state.
 ///
 /// Recomputed each frame from the caret by [`QueryWindow::update_autocomplete`]
@@ -136,7 +179,7 @@ pub struct QueryWindow {
 struct Autocomplete {
     /// Candidates for the caret as of the last frame, best first. Empty when
     /// the popup is not shown.
-    items: Vec<Construct>,
+    items: Vec<Candidate>,
     /// Byte range of the partial word an accepted candidate replaces.
     range: Range<usize>,
     /// The highlighted row.
@@ -298,11 +341,15 @@ impl QueryWindow {
         &self.text
     }
 
-    /// The names currently offered by the autocomplete popup, best first (used
-    /// by the UI test to assert the popup's contents).
+    /// The insertions currently offered by the autocomplete popup, best first
+    /// (used by the UI test to assert the popup's contents).
     #[cfg(test)]
-    pub fn autocomplete_names(&self) -> Vec<&'static str> {
-        self.autocomplete.items.iter().map(|c| c.name).collect()
+    pub fn autocomplete_names(&self) -> Vec<String> {
+        self.autocomplete
+            .items
+            .iter()
+            .map(|c| c.insert.clone())
+            .collect()
     }
 
     /// The persisted query history, newest first.
@@ -672,8 +719,8 @@ impl QueryWindow {
             .layouter(&mut layouter)
             .show(ui);
 
-        self.update_autocomplete(ui, editor_id, &output);
-        self.hover_docs(ui, &output);
+        self.update_autocomplete(ui, editor_id, schema, &output);
+        self.hover_docs(ui, schema, &output);
 
         if let Some((diagnostic, _)) = self.first_error()
             && !self.text.trim().is_empty()
@@ -785,26 +832,22 @@ impl QueryWindow {
         }
 
         if let Some(index) = accept
-            && let Some(&construct) = self.autocomplete.items.get(index)
+            && let Some(candidate) = self.autocomplete.items.get(index).cloned()
         {
-            self.accept_completion(ui, editor_id, construct);
+            self.accept_completion(ui, editor_id, &candidate);
         }
     }
 
-    /// Replace the partial word under the caret with `construct`, then move the
+    /// Replace the partial word under the caret with `candidate`, then move the
     /// caret past the insertion and close the popup for that word.
-    fn accept_completion(&mut self, ui: &egui::Ui, editor_id: egui::Id, construct: Construct) {
+    fn accept_completion(&mut self, ui: &egui::Ui, editor_id: egui::Id, candidate: &Candidate) {
         let range = self.autocomplete.range.clone();
         // Guard against a range that a same-frame edit already invalidated.
         if range.end > self.text.len() {
             return;
         }
-        let space = if inserts_trailing_space(construct.kind) {
-            " "
-        } else {
-            ""
-        };
-        let insertion = format!("{}{space}", construct.name);
+        let space = if candidate.trailing_space { " " } else { "" };
+        let insertion = format!("{}{space}", candidate.insert);
         let caret_byte = range.start + insertion.len();
         self.text.replace_range(range, &insertion);
 
@@ -830,6 +873,7 @@ impl QueryWindow {
         &mut self,
         ui: &egui::Ui,
         editor_id: egui::Id,
+        schema: &ChannelSchema,
         output: &egui::widgets::text_edit::TextEditOutput,
     ) {
         let focused = output.response.has_focus();
@@ -855,17 +899,35 @@ impl QueryWindow {
                 ),
                 None => ("", caret_byte),
             };
-            let completions = gt_query::completions_at(src, caret_byte - offset);
-            let items = completions.items;
-            let range = completions.range.start + offset..completions.range.end + offset;
+            let local = caret_byte - offset;
+            // A `@name` being typed offers channels; anywhere else, the language
+            // constructs. The `@` sigil makes the two positions disjoint.
+            let (range, items) =
+                if let Some(channels) = gt_query::channel_completions_at(src, local, schema) {
+                    let items = channels
+                        .items
+                        .into_iter()
+                        .map(Candidate::from_channel)
+                        .collect();
+                    (channels.range, items)
+                } else {
+                    let completions = gt_query::completions_at(src, local);
+                    let items = completions
+                        .items
+                        .into_iter()
+                        .map(Candidate::from_construct)
+                        .collect::<Vec<_>>();
+                    (completions.range, items)
+                };
+            let range = range.start + offset..range.end + offset;
 
             // Keep the highlighted row while the candidate set is unchanged;
             // otherwise start at the top.
-            let unchanged = items.iter().map(|c| c.name).eq(self
+            let unchanged = items.iter().map(|c| &c.insert).eq(self
                 .autocomplete
                 .items
                 .iter()
-                .map(|c| c.name));
+                .map(|c| &c.insert));
             self.autocomplete.selected = if unchanged {
                 self.autocomplete
                     .selected
@@ -897,8 +959,8 @@ impl QueryWindow {
         self.autocomplete.shown = true;
 
         if let Some(index) = clicked {
-            if let Some(&construct) = self.autocomplete.items.get(index) {
-                self.accept_completion(ui, editor_id, construct);
+            if let Some(candidate) = self.autocomplete.items.get(index).cloned() {
+                self.accept_completion(ui, editor_id, &candidate);
             }
         } else if !focused {
             // Focus left the editor without a click into the popup (e.g. a
@@ -911,7 +973,12 @@ impl QueryWindow {
     /// Show a documentation tooltip for the construct under the pointer, in the
     /// editor. Suppressed while the completion popup is up, so the two don't
     /// stack.
-    fn hover_docs(&self, ui: &egui::Ui, output: &egui::widgets::text_edit::TextEditOutput) {
+    fn hover_docs(
+        &self,
+        ui: &egui::Ui,
+        schema: &ChannelSchema,
+        output: &egui::widgets::text_edit::TextEditOutput,
+    ) {
         if self.autocomplete.shown {
             return;
         }
@@ -923,13 +990,20 @@ impl QueryWindow {
         }
         let ccursor = output.galley.cursor_from_pos(pointer - output.galley_pos);
         let byte = char_to_byte(&self.text, ccursor.index);
-        // Look up the construct within the query under the pointer.
+        // Look up the token within the query under the pointer: a channel first
+        // (its `@` is unambiguous), otherwise a language construct.
         let Some((chunk, local)) = self.chunk_at(byte) else {
             return;
         };
         let src = self.text.get(chunk.range.clone()).unwrap_or("");
-        let Some(construct) = gt_query::construct_at(src, local) else {
-            return;
+        // A channel wins (its `@` is unambiguous), else a language construct,
+        // else nothing under the pointer to document.
+        let doc = match gt_query::channel_at(src, local, schema) {
+            Some(channel) => HoverDoc::Channel(channel),
+            None => match gt_query::construct_at(src, local) {
+                Some(construct) => HoverDoc::Construct(construct),
+                None => return,
+            },
         };
         // Drawn as an Area (rather than a hover tooltip) so it is anchored to
         // the token under the pointer and shows without a hover delay.
@@ -939,8 +1013,9 @@ impl QueryWindow {
             .constrain(true)
             .interactable(false)
             .show(ui.ctx(), |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    construct_tooltip_ui(ui, construct);
+                egui::Frame::popup(ui.style()).show(ui, |ui| match &doc {
+                    HoverDoc::Channel(channel) => channel_tooltip_ui(ui, channel),
+                    HoverDoc::Construct(construct) => construct_tooltip_ui(ui, construct),
                 });
             });
     }
@@ -1794,10 +1869,10 @@ fn draw_autocomplete_popup(
                 egui::ScrollArea::vertical()
                     .max_height(max_height)
                     .show(ui, |ui| {
-                        for (index, construct) in autocomplete.items.iter().enumerate() {
+                        for (index, candidate) in autocomplete.items.iter().enumerate() {
                             let selected = index == autocomplete.selected;
                             let response =
-                                ui.selectable_label(selected, autocomplete_row(ui, construct));
+                                ui.selectable_label(selected, autocomplete_row(ui, candidate));
                             if response.clicked() {
                                 clicked = Some(index);
                             }
@@ -1822,12 +1897,12 @@ fn draw_autocomplete_popup(
     clicked
 }
 
-/// One popup row: the construct's name in code font, its summary dimmed beside
-/// it.
-fn autocomplete_row(ui: &egui::Ui, construct: &Construct) -> LayoutJob {
+/// One popup row: the candidate's insertion in code font, its summary dimmed
+/// beside it.
+fn autocomplete_row(ui: &egui::Ui, candidate: &Candidate) -> LayoutJob {
     let mut job = LayoutJob::default();
     job.append(
-        construct.name,
+        &candidate.insert,
         0.0,
         egui::TextFormat {
             font_id: egui::TextStyle::Monospace.resolve(ui.style()),
@@ -1836,7 +1911,7 @@ fn autocomplete_row(ui: &egui::Ui, construct: &Construct) -> LayoutJob {
         },
     );
     job.append(
-        &format!("  {}", construct.summary),
+        &format!("  {}", candidate.summary),
         0.0,
         egui::TextFormat {
             font_id: egui::TextStyle::Body.resolve(ui.style()),
@@ -1853,19 +1928,11 @@ fn autocomplete_row(ui: &egui::Ui, construct: &Construct) -> LayoutJob {
 /// constructs (backticked in the doc, and whole example snippets) are syntax
 /// colored the way the editor colors them, rather than shown in raw backticks.
 fn construct_tooltip_ui(ui: &mut egui::Ui, construct: &Construct) {
-    ui.set_max_width(360.0);
+    tooltip_header(ui, construct.name, construct.kind.label());
     let mono = egui::TextStyle::Monospace.resolve(ui.style());
     let body = egui::TextStyle::Body.resolve(ui.style());
     let default = ui.visuals().text_color();
     let dark = ui.visuals().dark_mode;
-
-    ui.horizontal(|ui| {
-        // The name is itself a construct, so color it like the editor would.
-        let mut name = LayoutJob::default();
-        append_query_syntax(&mut name, &mono, default, dark, construct.name);
-        ui.label(name);
-        ui.label(egui::RichText::new(construct.kind.label()).weak().small());
-    });
     ui.label(construct.summary);
     if !construct.doc.is_empty() || !construct.examples.is_empty() {
         ui.separator();
@@ -1893,6 +1960,29 @@ fn construct_tooltip_ui(ui: &mut egui::Ui, construct: &Construct) {
         job.wrap.max_width = ui.available_width();
         ui.label(job);
     }
+}
+
+/// A hover tooltip for a channel: its `@name` colored like the editor, a
+/// "channel" label, then its dimension summary. Channels carry no catalog doc,
+/// so the tooltip is just the header and summary.
+fn channel_tooltip_ui(ui: &mut egui::Ui, channel: &gt_query::ChannelSuggestion) {
+    tooltip_header(ui, &format!("@{}", channel.name), "channel");
+    ui.label(&channel.summary);
+}
+
+/// The shared head of an editor hover tooltip: the token colored the way the
+/// editor colors it, then a dimmed kind label beside it.
+fn tooltip_header(ui: &mut egui::Ui, name: &str, kind_label: &str) {
+    ui.set_max_width(TOOLTIP_MAX_WIDTH);
+    let mono = egui::TextStyle::Monospace.resolve(ui.style());
+    let default = ui.visuals().text_color();
+    let dark = ui.visuals().dark_mode;
+    ui.horizontal(|ui| {
+        let mut colored = LayoutJob::default();
+        append_query_syntax(&mut colored, &mono, default, dark, name);
+        ui.label(colored);
+        ui.label(egui::RichText::new(kind_label).weak().small());
+    });
 }
 
 /// A single-color text section for a [`LayoutJob`].
@@ -2635,5 +2725,33 @@ mod tests {
         );
         assert_eq!(output.matches.len(), 1, "the window matches");
         assert_eq!(output.summary.match_count, 1);
+    }
+
+    #[test]
+    fn candidate_from_channel_inserts_the_at_sigil() {
+        let channel = gt_query::ChannelSuggestion {
+            name: "accel".to_owned(),
+            summary: "in m/s2".to_owned(),
+        };
+        let candidate = Candidate::from_channel(channel);
+        assert_eq!(candidate.insert, "@accel");
+        assert_eq!(candidate.summary, "in m/s2");
+        assert!(
+            !candidate.trailing_space,
+            "a channel takes no trailing space"
+        );
+    }
+
+    #[test]
+    fn candidate_from_construct_maps_name_and_trailing_space() {
+        // A stage keyword gets a trailing space so the next token can follow; a
+        // metric does not (an operator, not a space, comes next).
+        let find = |name| gt_query::catalog().into_iter().find(|c| c.name == name);
+        let stage = Candidate::from_construct(find("where").expect("where is catalogued"));
+        assert_eq!(stage.insert, "where");
+        assert!(stage.trailing_space);
+        let metric = Candidate::from_construct(find("velocity").expect("velocity is catalogued"));
+        assert_eq!(metric.insert, "velocity");
+        assert!(!metric.trailing_space);
     }
 }

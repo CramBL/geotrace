@@ -14,6 +14,7 @@ use std::sync::OnceLock;
 use strum::IntoEnumIterator as _;
 
 use crate::ast::{Func, ParamName};
+use crate::check::{ChannelInfo, ChannelSchema};
 use crate::construct::{Construct, ConstructKind, catalog};
 use crate::lexer::{self, Token};
 use crate::metric::{Quantity, QueryMetric};
@@ -106,6 +107,122 @@ pub fn completions_at(src: &str, cursor: usize) -> Completions {
     Completions {
         range,
         items: items.into_iter().map(|(_, c)| c).collect(),
+    }
+}
+
+/// A channel offered by the editor: its bare name (no `@`) and a one-line
+/// summary of its dimension, for the completion popup and the hover tooltip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelSuggestion {
+    pub name: String,
+    pub summary: String,
+}
+
+/// Channel-name completions for a `@channel` reference being typed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelCompletions {
+    /// Byte range of the `@partial` an accepted `@name` replaces.
+    pub range: Range<usize>,
+    /// Matching channels, best first.
+    pub items: Vec<ChannelSuggestion>,
+}
+
+/// Channel completions at `cursor`, or `None` when the cursor is not typing a
+/// `@channel` reference. The `@` sigil is the trigger, so this is independent
+/// of the pipeline slot: a partial `@ac` (or a lone `@`) offers the schema's
+/// scalar channels, ranked against the text after the `@`. Vector channels are
+/// omitted until they become queryable.
+pub fn channel_completions_at(
+    src: &str,
+    cursor: usize,
+    schema: &ChannelSchema,
+) -> Option<ChannelCompletions> {
+    let (range, prefix) = channel_partial(src, cursor)?;
+    let mut scored: Vec<(i32, ChannelSuggestion)> = schema
+        .iter_unsorted()
+        .filter(|(_, info)| info.components.is_empty())
+        .filter_map(|(name, info)| {
+            fuzzy_score(prefix, name).map(|score| {
+                (
+                    score,
+                    ChannelSuggestion {
+                        name: name.to_owned(),
+                        summary: channel_summary(info),
+                    },
+                )
+            })
+        })
+        .collect();
+    // Highest score first; the schema iterates in arbitrary (hash) order, so
+    // break ties by name for a stable popup.
+    scored.sort_by(|(a_score, a), (b_score, b)| {
+        b_score.cmp(a_score).then_with(|| a.name.cmp(&b.name))
+    });
+    Some(ChannelCompletions {
+        range,
+        items: scored.into_iter().map(|(_, s)| s).collect(),
+    })
+}
+
+/// The channel under `cursor` for a hover tooltip, or `None` when the token is
+/// not a scalar channel the schema knows. Vector channels are omitted like they
+/// are in completion, until they become queryable.
+pub fn channel_at(src: &str, cursor: usize, schema: &ChannelSchema) -> Option<ChannelSuggestion> {
+    let cursor = cursor.min(src.len());
+    let toks = lexer::tokenize(src);
+    let tok = toks
+        .iter()
+        .find(|t| t.kind == Token::Channel && t.span.start <= cursor && cursor < t.span.end)?;
+    let name = tok.text.strip_prefix('@')?.split('.').next()?;
+    let info = schema.get(name).filter(|info| info.components.is_empty())?;
+    Some(ChannelSuggestion {
+        name: name.to_owned(),
+        summary: channel_summary(info),
+    })
+}
+
+/// The `@partial` the cursor is completing: the byte range from the `@` to the
+/// end of the partial word, and the text between the `@` and the cursor. `None`
+/// unless a `@` immediately precedes the word the cursor sits in.
+fn channel_partial(src: &str, cursor: usize) -> Option<(Range<usize>, &str)> {
+    let cursor = cursor.min(src.len());
+    let before = src.get(..cursor)?;
+    let prefix_len = before
+        .bytes()
+        .rev()
+        .take_while(|b| is_ident_byte(*b))
+        .count();
+    // The `@` sits just before the typed prefix.
+    let at = cursor.checked_sub(prefix_len)?.checked_sub(1)?;
+    if src.as_bytes().get(at) != Some(&b'@') {
+        return None;
+    }
+    // Extend over any word characters after the cursor so accepting replaces the
+    // whole `@word`, not only the part left of the caret.
+    let after_len = src
+        .get(cursor..)?
+        .bytes()
+        .take_while(|b| is_ident_byte(*b))
+        .count();
+    Some((at..cursor + after_len, src.get(at + 1..cursor)?))
+}
+
+/// Whether `b` is a channel-name character (`[a-z0-9_]`). Mirrors the lexer's
+/// `ident` subpattern (see [`crate::lexer`]); keep the two in step if the
+/// SDK's channel-name rule changes. All such bytes are single-byte ASCII, so
+/// scanning by byte never splits a multi-byte character.
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'
+}
+
+/// A one-line description of a channel's dimension for the popup and hover. The
+/// `@` prefix and the hover's "channel" label already say it is a channel, so
+/// this names only the kind of value.
+fn channel_summary(info: &ChannelInfo) -> String {
+    match (&info.unit, info.period_deg) {
+        (_, Some(_)) => "direction".to_owned(),
+        (Some(unit), None) => format!("in {unit}"),
+        (None, None) => "unitless".to_owned(),
     }
 }
 
@@ -567,10 +684,122 @@ mod tests {
         assert_eq!(fuzzy_score("", "anything"), Some(0));
     }
 
+    /// accel (m/s2), incline (unitless), bearing (a direction), and the vector
+    /// gyro - one of each shape the summary and the scalar filter distinguish.
+    fn channel_schema() -> ChannelSchema {
+        let mut schema = ChannelSchema::new();
+        schema.insert(
+            "accel",
+            ChannelInfo {
+                unit: Some("m/s2".to_owned()),
+                period_deg: None,
+                components: vec![],
+            },
+        );
+        schema.insert(
+            "incline",
+            ChannelInfo {
+                unit: None,
+                period_deg: None,
+                components: vec![],
+            },
+        );
+        schema.insert(
+            "bearing",
+            ChannelInfo {
+                unit: Some("deg".to_owned()),
+                period_deg: Some(360.0),
+                components: vec![],
+            },
+        );
+        schema.insert(
+            "gyro",
+            ChannelInfo {
+                unit: Some("deg".to_owned()),
+                period_deg: None,
+                components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
+            },
+        );
+        schema
+    }
+
+    fn channel_names(src: &str, cursor: usize) -> Vec<String> {
+        channel_completions_at(src, cursor, &channel_schema())
+            .map(|c| c.items.into_iter().map(|s| s.name).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_lone_at_offers_all_scalar_channels() {
+        // The vector `gyro` is omitted; the rest come sorted by name.
+        let src = "points | window 3 | where max(@";
+        assert_eq!(
+            channel_names(src, src.len()),
+            vec!["accel", "bearing", "incline"]
+        );
+    }
+
+    #[test]
+    fn a_channel_prefix_filters_the_offer() {
+        // `@in` prefixes incline (ranked first); it is a subsequence of
+        // bear-in-g too, but accel has no 'i' then 'n' so it drops out.
+        let incline = "points | window 3 | where max(@in";
+        let names = channel_names(incline, incline.len());
+        assert_eq!(names.first().map(String::as_str), Some("incline"));
+        assert!(!names.contains(&"accel".to_owned()));
+        // `@b` prefixes only bearing.
+        let bearing = "points | window 3 | where max(@b";
+        assert_eq!(channel_names(bearing, bearing.len()), vec!["bearing"]);
+    }
+
+    #[test]
+    fn channel_completion_replaces_the_at_partial() {
+        let src = "points | window 3 | where max(@ac)";
+        let at = src.find("@ac").expect("has @ac");
+        // Cursor just after `@ac`, before the `)`.
+        let completions = channel_completions_at(src, at + 3, &channel_schema()).unwrap();
+        assert_eq!(completions.range, at..at + 3);
+        assert_eq!(
+            completions.items.first().map(|s| s.name.as_str()),
+            Some("accel")
+        );
+    }
+
+    #[test]
+    fn no_channel_completion_without_an_at() {
+        let src = "points | where velocity";
+        assert!(channel_completions_at(src, src.len(), &channel_schema()).is_none());
+    }
+
+    #[test]
+    fn channel_hover_describes_the_dimension() {
+        let src = "points | window 3 | where max(@accel) > 1 g";
+        let inside = src.find("@accel").expect("has @accel") + 2;
+        let hover = channel_at(src, inside, &channel_schema()).expect("hovers a channel");
+        assert_eq!(hover.name, "accel");
+        assert_eq!(hover.summary, "in m/s2");
+
+        // A direction channel reads as one; a position off any channel has no
+        // hover.
+        let dir = "points | window 3 | where spread(@bearing) < 5 deg";
+        let bi = dir.find("@bearing").expect("has @bearing") + 2;
+        assert_eq!(
+            channel_at(dir, bi, &channel_schema()).map(|s| s.summary),
+            Some("direction".to_owned())
+        );
+        assert!(channel_at(dir, 0, &channel_schema()).is_none());
+
+        // A vector channel has no scalar hover yet, matching completion.
+        let vec_src = "points | window 3 | where max(@gyro) > 1 deg";
+        let gi = vec_src.find("@gyro").expect("has @gyro") + 2;
+        assert!(channel_at(vec_src, gi, &channel_schema()).is_none());
+    }
+
     mod properties {
         use proptest::prelude::*;
 
-        use crate::{completions_at, construct_at, lexer};
+        use super::channel_schema;
+        use crate::{channel_at, channel_completions_at, completions_at, construct_at, lexer};
 
         proptest! {
             /// Editor assistance runs on arbitrary, incomplete text and an
@@ -578,9 +807,12 @@ mod tests {
             /// cursor past the end of the text or inside a multi-byte char.
             #[test]
             fn never_panics(src in ".*", cursor in 0usize..256) {
+                let schema = channel_schema();
                 let _ = lexer::tokenize(&src);
                 let _ = completions_at(&src, cursor);
                 let _ = construct_at(&src, cursor);
+                let _ = channel_completions_at(&src, cursor, &schema);
+                let _ = channel_at(&src, cursor, &schema);
             }
         }
     }

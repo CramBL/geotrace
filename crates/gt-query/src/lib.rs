@@ -43,7 +43,10 @@ pub use eval::{
 pub use metric::{Quantity, QueryMetric};
 pub use parser::parse;
 pub use pipeline::{DrawContribution, PipelineOutput, QueryOutput, run_pipeline};
-pub use position::{Completions, completions_at, construct_at};
+pub use position::{
+    ChannelCompletions, ChannelSuggestion, Completions, channel_at, channel_completions_at,
+    completions_at, construct_at,
+};
 pub use unit::Unit;
 
 /// A parse or type error: what went wrong, where, and optionally how to fix
