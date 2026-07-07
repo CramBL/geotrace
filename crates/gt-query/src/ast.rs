@@ -26,9 +26,18 @@ impl Span {
     }
 }
 
-/// A parsed query: `points` followed by its stages, in canonical order.
+/// The pipeline's source: its timeline and match granularity. `points` is the
+/// loaded nav points; a channel iterates that channel's own samples.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Source {
+    Points,
+    Channel(ChannelRef),
+}
+
+/// A parsed query: a source followed by its stages, in canonical order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Query {
+    pub source: Source,
     pub params: Vec<ParamDecl>,
     pub window: Option<Window>,
     /// One entry per `where` stage; they combine as if joined with `and`.

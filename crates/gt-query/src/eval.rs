@@ -12,7 +12,7 @@ use gt_types::TrackRef;
 use nalgebra::{Complex, UnitComplex};
 
 use crate::ast::{Func, ParamName};
-use crate::check::{AggSource, ArithOp, CExpr, CheckedQuery, CmpOp, Window};
+use crate::check::{AggSource, ArithOp, CExpr, CheckedQuery, CheckedSource, CmpOp, Window};
 use crate::metric::QueryMetric;
 
 const FULL_TURN_DEG: f64 = 360.0;
@@ -53,6 +53,25 @@ impl ChannelSamples {
     }
 }
 
+/// A channel's full sample timeline, for a query whose source is that channel:
+/// each sample's time (seconds) and its row of component values, in base units.
+/// `times.len()` is the sample count; `values` is row-major with `columns` per
+/// row (one for a scalar channel). Empty when the channel is unknown.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ChannelTimeline {
+    pub times: Vec<f64>,
+    pub values: Vec<f64>,
+    pub columns: usize,
+}
+
+impl ChannelTimeline {
+    /// The `index`-th sample's row of component values, or `None` past the end.
+    fn row(&self, index: usize) -> Option<&[f64]> {
+        let columns = self.columns.max(1);
+        self.values.get(index * columns..(index + 1) * columns)
+    }
+}
+
 /// Per-point metric access for one track.
 ///
 /// Values are in the evaluator's base units: degrees, meters, m/s, m/s2,
@@ -79,6 +98,13 @@ pub trait MetricProvider {
     fn channel_span(&self, _name: &str, _t_lo: f64, _t_hi: f64) -> ChannelSamples {
         ChannelSamples::default()
     }
+
+    /// The full sample timeline of `name`, for a query whose source is that
+    /// channel. Values are in base units. An unknown channel yields an empty
+    /// timeline. Providers with no channels use the default.
+    fn channel_timeline(&self, _name: &str) -> ChannelTimeline {
+        ChannelTimeline::default()
+    }
 }
 
 /// One track to run a query over.
@@ -102,8 +128,9 @@ pub struct RunSummary {
     pub tracks_with_matches: usize,
     /// Points that fell inside a match, summed over tracks.
     pub matched_points: usize,
-    /// Points evaluated, summed over tracks - the denominator for the
-    /// keep/hide "N of M points" summary.
+    /// Timeline entries evaluated, summed over tracks: nav points for a points
+    /// source, samples for a channel source - the denominator for the keep/hide
+    /// "N of M points" summary.
     pub total_points: usize,
     /// Windows (or points, without a window) skipped per missing metric.
     pub skipped: BTreeMap<QueryMetric, usize>,
@@ -165,8 +192,10 @@ pub(crate) fn run_with_interval(
         if should_cancel() {
             return None;
         }
-        summary.total_points += input.provider.len();
         let eval = evaluate_track(query, input.provider, should_cancel, check_interval)?;
+        // The timeline length is the matched mask's length: nav points for a
+        // points source, samples for a channel source.
+        summary.total_points += eval.matched.len();
         summary.absorb(&eval);
         let ranges = ranges_from(&eval.matched);
         if !ranges.is_empty() {
@@ -221,6 +250,24 @@ impl RunSummary {
 /// this provider, so running it over a [`crate::RunView`] gives gap-aware
 /// evaluation for the pipeline.
 pub(crate) fn evaluate_track(
+    query: &CheckedQuery,
+    provider: &dyn MetricProvider,
+    should_cancel: &dyn Fn() -> bool,
+    check_interval: usize,
+) -> Option<TrackEval> {
+    match query.source() {
+        // The nav points are the timeline: iterate points, windows group points.
+        CheckedSource::Points => evaluate_points(query, provider, should_cancel, check_interval),
+        // A channel's own samples are the timeline: iterate samples, windows
+        // group samples, and a match is a range of sample indices.
+        CheckedSource::Channel(name) => {
+            evaluate_channel_source(query, provider, name, should_cancel, check_interval)
+        }
+    }
+}
+
+/// Evaluate a points-source query: the timeline is the provider's nav points.
+fn evaluate_points(
     query: &CheckedQuery,
     provider: &dyn MetricProvider,
     should_cancel: &dyn Fn() -> bool,
@@ -390,6 +437,167 @@ fn duration_windows(
     Some(!any_fit)
 }
 
+/// Evaluate a channel-source query: `name`'s own samples are the timeline, so a
+/// match is a range of sample indices. Without a window each sample is judged on
+/// its own row; a count window groups consecutive samples and a duration window
+/// a time span, for the aggregates to reduce over.
+fn evaluate_channel_source(
+    query: &CheckedQuery,
+    provider: &dyn MetricProvider,
+    name: &str,
+    should_cancel: &dyn Fn() -> bool,
+    check_interval: usize,
+) -> Option<TrackEval> {
+    let timeline = provider.channel_timeline(name);
+    let len = timeline.times.len();
+    let mut ctx = Ctx {
+        provider,
+        missing: BTreeSet::new(),
+        missing_channels: BTreeSet::new(),
+        non_finite: false,
+    };
+    let mut matched = vec![false; len];
+    let mut skips = Skips::default();
+    let mut shorter_than_window = false;
+
+    match query.window() {
+        Some(Window::Count(n)) if len < n => shorter_than_window = true,
+        Some(Window::Count(n)) => {
+            for start in 0..=(len - n) {
+                if start % check_interval == 0 && should_cancel() {
+                    return None;
+                }
+                apply_sample_window(
+                    query,
+                    &mut ctx,
+                    &mut matched,
+                    &mut skips,
+                    &timeline,
+                    start..start + n,
+                );
+            }
+        }
+        Some(Window::Duration(secs)) => {
+            match sample_duration_windows(
+                query,
+                &mut ctx,
+                &mut matched,
+                &mut skips,
+                &timeline,
+                secs,
+                should_cancel,
+                check_interval,
+            ) {
+                None => return None,
+                Some(too_short) => shorter_than_window = too_short,
+            }
+        }
+        None => {
+            for start in 0..len {
+                if start % check_interval == 0 && should_cancel() {
+                    return None;
+                }
+                let Some(row) = timeline.row(start) else {
+                    continue;
+                };
+                match verdict(query, &mut ctx, Scope::Sample(row)) {
+                    Some(true) => {
+                        if let Some(slot) = matched.get_mut(start) {
+                            *slot = true;
+                        }
+                    }
+                    Some(false) => {}
+                    None => skips.record(&ctx),
+                }
+            }
+        }
+    }
+    Some(TrackEval {
+        matched,
+        skipped: skips.per_metric,
+        skipped_channels: skips.per_channel,
+        skipped_non_finite: skips.non_finite,
+        shorter_than_window,
+    })
+}
+
+/// Evaluate one channel-source window over the `samples` index range: mark them
+/// on a match, record a skip on a poisoned window, do nothing on no-match.
+fn apply_sample_window(
+    query: &CheckedQuery,
+    ctx: &mut Ctx<'_>,
+    matched: &mut [bool],
+    skips: &mut Skips,
+    timeline: &ChannelTimeline,
+    samples: Range<usize>,
+) {
+    let columns = timeline.columns.max(1);
+    let Some(rows) = timeline
+        .values
+        .get(samples.start * columns..samples.end * columns)
+    else {
+        return;
+    };
+    match verdict(query, ctx, Scope::SampleWindow { rows, columns }) {
+        Some(true) => {
+            for slot in matched.iter_mut().skip(samples.start).take(samples.len()) {
+                *slot = true;
+            }
+        }
+        Some(false) => {}
+        None => skips.record(ctx),
+    }
+}
+
+/// Every `secs`-long duration window over a channel-source timeline: at each
+/// anchor the contiguous samples whose time lands in `[t, t + secs)`, requiring
+/// the full duration to fit. Mirrors [`duration_windows`] over the channel's
+/// sample times. Returns `None` on cancellation, else the shorter-than-window
+/// flag.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the channel-source window loop threads the same evaluation state as duration_windows, plus the sample timeline; a struct would not group anything meaningfully reusable"
+)]
+fn sample_duration_windows(
+    query: &CheckedQuery,
+    ctx: &mut Ctx<'_>,
+    matched: &mut [bool],
+    skips: &mut Skips,
+    timeline: &ChannelTimeline,
+    secs: f64,
+    should_cancel: &dyn Fn() -> bool,
+    check_interval: usize,
+) -> Option<bool> {
+    let len = timeline.times.len();
+    // As in duration_windows, the reach is the max time, not the last, since
+    // sample time is not assumed monotonic.
+    let max_time = timeline
+        .times
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max);
+    let mut any_fit = false;
+    for start in 0..len {
+        if start % check_interval == 0 && should_cancel() {
+            return None;
+        }
+        let Some(&t_start) = timeline.times.get(start) else {
+            continue;
+        };
+        if t_start + secs > max_time {
+            continue;
+        }
+        any_fit = true;
+        let end_time = t_start + secs;
+        let mut end = start;
+        while end < len && timeline.times.get(end).is_some_and(|&t| t < end_time) {
+            end += 1;
+        }
+        apply_sample_window(query, ctx, matched, skips, timeline, start..end);
+    }
+    Some(!any_fit)
+}
+
 /// Skip tallies accumulated during one track's evaluation, kept apart from the
 /// matched mask so both can be mutated in the same loop.
 #[derive(Default)]
@@ -458,6 +666,12 @@ enum Scope<'a> {
     /// One native channel sample: the row of component values (one for a scalar
     /// channel). A `@name.x` node reads its column; `norm` reads the whole row.
     Sample(&'a [f64]),
+    /// A window of a channel-source timeline: the samples' rows, row-major with
+    /// `columns` per row. An aggregate reduces its argument over these rows.
+    SampleWindow {
+        rows: &'a [f64],
+        columns: usize,
+    },
 }
 
 struct Ctx<'a> {
@@ -557,17 +771,17 @@ fn eval_num(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<f64> {
         CExpr::Const(v) => Some(*v),
         CExpr::Metric(metric) => match scope {
             Scope::Point(index) => ctx.metric_at(*metric, index),
-            // The checker forbids a bare metric in a windowed predicate, and
-            // rejects a nav-point metric inside a channel aggregate, so neither
-            // window nor per-sample scope reaches here.
-            Scope::Window(_) | Scope::Sample(_) => None,
+            // The checker forbids a bare metric in a windowed predicate, rejects
+            // a nav-point metric inside a channel aggregate, and rejects metrics
+            // on a channel source, so no window or sample scope reaches here.
+            Scope::Window(_) | Scope::Sample(_) | Scope::SampleWindow { .. } => None,
         },
         // A channel node reads its component's column of the current sample row
-        // inside a channel aggregate; in any other scope it has no value. The
-        // checker keeps the column in range, but guard rather than index.
+        // inside a channel aggregate (or per sample on a channel source); in any
+        // other scope it has no value. The checker keeps the column in range.
         CExpr::Channel(key) => match scope {
             Scope::Sample(row) => row.get(key.component.unwrap_or(0)).copied(),
-            Scope::Point(_) | Scope::Window(_) => None,
+            Scope::Point(_) | Scope::Window(_) | Scope::SampleWindow { .. } => None,
         },
         // norm is the Euclidean magnitude of the whole sample row. A non-finite
         // component (an absent sample) poisons it like any undefined arithmetic.
@@ -580,7 +794,7 @@ fn eval_num(ctx: &mut Ctx<'_>, expr: &CExpr, scope: Scope) -> Option<f64> {
                 }
                 Some(result)
             }
-            Scope::Point(_) | Scope::Window(_) => None,
+            Scope::Point(_) | Scope::Window(_) | Scope::SampleWindow { .. } => None,
         },
         CExpr::Agg {
             func,
@@ -672,19 +886,41 @@ fn aggregate(
     arg: &CExpr,
     scope: Scope,
 ) -> Option<f64> {
-    let Scope::Window(window) = scope else {
-        return None;
-    };
-    let mut values = match source {
-        AggSource::Channel(name) => reduce_channel(ctx, name, arg, window)?,
-        AggSource::Points => {
-            let mut values = Vec::with_capacity(window.end - window.start);
-            for index in window.start..window.end {
-                values.push(eval_num(ctx, arg, Scope::Point(index))?);
+    let values = match scope {
+        // A points-source window: reduce the metric over its points, or the
+        // channel's samples over the window's time span.
+        Scope::Window(window) => match source {
+            AggSource::Channel(name) => reduce_channel(ctx, name, arg, window)?,
+            AggSource::Points => {
+                let mut values = Vec::with_capacity(window.end - window.start);
+                for index in window.start..window.end {
+                    values.push(eval_num(ctx, arg, Scope::Point(index))?);
+                }
+                values
+            }
+        },
+        // A channel-source window: reduce over the window's own sample rows.
+        Scope::SampleWindow { rows, columns } => {
+            let mut values = Vec::with_capacity(rows.len() / columns.max(1));
+            for row in rows.chunks_exact(columns.max(1)) {
+                values.push(eval_num(ctx, arg, Scope::Sample(row))?);
             }
             values
         }
+        Scope::Point(_) | Scope::Sample(_) => return None,
     };
+    reduce_values(func, circular, values, ctx)
+}
+
+/// Reduce a window's gathered per-sample `values` by `func`. A non-finite
+/// result (overflow, or the circular-std singularity) poisons rather than
+/// comparing as a bare infinity.
+fn reduce_values(
+    func: Func,
+    circular: bool,
+    mut values: Vec<f64>,
+    ctx: &mut Ctx<'_>,
+) -> Option<f64> {
     let (first, last) = (values.first().copied()?, values.last().copied()?);
     let value = match func {
         Func::Avg => values.iter().sum::<f64>() / values.len() as f64,

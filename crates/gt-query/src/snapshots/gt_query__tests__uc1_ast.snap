@@ -3,6 +3,7 @@ source: crates/gt-query/src/lib.rs
 expression: query
 ---
 Query {
+    source: Points,
     params: [],
     window: Some(
         Count {
