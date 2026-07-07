@@ -46,11 +46,15 @@ pub struct ModeStage {
     pub span: Span,
 }
 
-/// `window N` - a sliding group of N consecutive points.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Window {
-    pub len: u64,
-    pub span: Span,
+/// The `window` stage: a sliding window over the points, either a fixed count
+/// or a time span. Both slide by one point.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Window {
+    /// `window N` - N consecutive points.
+    Count { len: u64, span: Span },
+    /// `window Δ unit` - a time span. The checker converts `value` and `unit`
+    /// to seconds and rejects a non-duration unit.
+    Duration { value: f64, unit: Unit, span: Span },
 }
 
 /// One `name value` entry of the `with` stage.

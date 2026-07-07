@@ -7,7 +7,7 @@
 
 use std::fmt;
 
-use crate::ast::{Expr, Query, UnaryOp};
+use crate::ast::{Expr, Query, UnaryOp, Window};
 
 impl fmt::Display for Query {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -18,8 +18,12 @@ impl fmt::Display for Query {
                 write!(f, ", {} {}", param.name, Lit(&param.value))?;
             }
         }
-        if let Some(window) = self.window {
-            write!(f, "\n| window {}", window.len)?;
+        match self.window {
+            Some(Window::Count { len, .. }) => write!(f, "\n| window {len}")?,
+            Some(Window::Duration { value, unit, .. }) => {
+                write!(f, "\n| window {value} {}", unit.text())?;
+            }
+            None => {}
         }
         for predicate in &self.predicates {
             write!(f, "\n| where {predicate}")?;

@@ -156,6 +156,19 @@ mod tests {
         assert_eq!(checked("points | where velocity > 30 km/h").window(), None);
     }
 
+    #[test]
+    fn a_duration_window_checks_to_seconds() {
+        assert_eq!(
+            checked("points | window 15 s | where avg(velocity) > 30 km/h").window(),
+            Some(Window::Duration(15.0))
+        );
+        // Units convert to seconds: 2 min = 120 s.
+        assert_eq!(
+            checked("points | window 2 min | where avg(velocity) > 30 km/h").window(),
+            Some(Window::Duration(120.0))
+        );
+    }
+
     fn run_one(src: &str, provider: &TestProvider) -> RunOutput {
         let query = checked(src);
         run(
@@ -228,6 +241,108 @@ mod tests {
         );
         assert_eq!(output.matches[0].ranges, vec![1..5]);
         assert_eq!(output.summary.match_count, 1);
+    }
+
+    #[test]
+    fn a_duration_window_reduces_the_points_in_its_time_span() {
+        // Points at 0..5 s. A `window 2 s` at anchor i spans [t[i], t[i]+2), so
+        // two points, and needs the full 2 s to fit (last anchor is point 2).
+        let provider = TestProvider::new(5).indexed_time().with(
+            QueryMetric::Velocity,
+            vec![Some(10.0), Some(10.0), Some(0.0), Some(0.0), Some(0.0)],
+        );
+        let output = run_one(
+            "points | window 2 s | where avg(velocity) > 5 km/h",
+            &provider,
+        );
+        // Anchor 0 (pts 0,1 avg 10) and anchor 1 (pts 1,2 avg 5 m/s) clear the
+        // 5 km/h bar; anchor 2 (pts 2,3 avg 0) does not; anchor 3 doesn't fit.
+        assert_eq!(output.matches[0].ranges, vec![0..3]);
+    }
+
+    #[test]
+    fn a_duration_window_longer_than_the_track_matches_nothing() {
+        // Track spans only 2 s (points at 0, 1, 2), so a 10 s window never fits.
+        let provider = TestProvider::new(3).indexed_time().with(
+            QueryMetric::Velocity,
+            vec![Some(10.0), Some(10.0), Some(10.0)],
+        );
+        let output = run_one(
+            "points | window 10 s | where avg(velocity) > 0 km/h",
+            &provider,
+        );
+        assert!(output.matches.is_empty());
+        assert_eq!(output.summary.tracks_shorter_than_window, 1);
+    }
+
+    #[test]
+    fn a_fractional_duration_window_spans_sub_second() {
+        // Points at 0, 0.4, 0.8, 1.2 s. A 0.5 s window at anchor 0 spans [0, 0.5),
+        // holding points 0 and 1; the last anchor that fits is at 0.8 s (0.8+0.5
+        // = 1.3 > 1.2, so it does not fit — only anchors 0 and 1 fit).
+        let provider = TestProvider::new(4)
+            .with(
+                QueryMetric::Time,
+                vec![Some(0.0), Some(0.4), Some(0.8), Some(1.2)],
+            )
+            .with(
+                QueryMetric::Velocity,
+                vec![Some(10.0), Some(10.0), Some(0.0), Some(0.0)],
+            );
+        let output = run_one(
+            "points | window 0.5 s | where avg(velocity) > 5 km/h",
+            &provider,
+        );
+        // Anchor 0 (pts 0,1 avg 10, match); anchor 1 (pts 1,2 avg 5 m/s, match).
+        assert_eq!(output.matches[0].ranges, vec![0..3]);
+    }
+
+    #[test]
+    fn a_duration_window_survives_a_backward_time_step() {
+        // A backward clock jump at point 2 (times 0, 1, 0, 1 s): the crate does
+        // not assume monotonic time, so anchors after the jump must still be
+        // evaluated, not silently dropped.
+        let provider = TestProvider::new(4)
+            .with(
+                QueryMetric::Time,
+                vec![Some(0.0), Some(1.0), Some(0.0), Some(1.0)],
+            )
+            .with(
+                QueryMetric::Velocity,
+                vec![Some(0.0), Some(0.0), Some(10.0), Some(10.0)],
+            );
+        // window 2 s never fits (max time is 1 s), but the fast pair after the
+        // jump proves the loop reaches them: with window 1 s, anchor 2 spans
+        // [0,1) = point 2 (avg 10, match), which a `break` would have skipped.
+        let output = run_one(
+            "points | window 1 s | where avg(velocity) > 5 km/h",
+            &provider,
+        );
+        assert!(output.matches.iter().any(|m| m.ranges.contains(&(2..3))));
+    }
+
+    #[test]
+    fn a_duration_window_spans_real_time_not_point_count() {
+        // Uneven spacing: points at 0, 1, 5, 6 s. A 2 s window at point 0 holds
+        // only points 0 and 1 (point at 5 s is outside [0, 2)); the sparse
+        // stretch is not force-filled to a fixed count.
+        let provider = TestProvider::new(4)
+            .with(
+                QueryMetric::Time,
+                vec![Some(0.0), Some(1.0), Some(5.0), Some(6.0)],
+            )
+            .with(
+                QueryMetric::Velocity,
+                vec![Some(10.0), Some(10.0), Some(0.0), Some(0.0)],
+            );
+        // window 2 s: anchor 0 → pts 0,1 (avg 10, match); anchor 1 → t=1, 1+2=3
+        // <= 6, pts with time in [1,3) = just point 1 (avg 10, match); anchor 2
+        // → t=5, 5+2=7 > 6, doesn't fit → break.
+        let output = run_one(
+            "points | window 2 s | where avg(velocity) > 5 km/h",
+            &provider,
+        );
+        assert_eq!(output.matches[0].ranges, vec![0..2]);
     }
 
     #[test]
@@ -932,7 +1047,8 @@ mod tests {
             "points | window",
             "points | window 0",
             "points | window 2.5",
-            "points | window 15 s",
+            "points | window 10 km/h",
+            "points | window 0 s",
             "points | window 3 | window 4",
             "points | draw | where velocity > 0 km/h",
             "points | draw | draw",
@@ -1113,7 +1229,23 @@ mod tests {
                 ),
                 0..3,
             );
-            let window = proptest::option::of(1u64..1000);
+            let window = proptest::option::of(prop_oneof![
+                (1u64..1000).prop_map(|len| Window::Count { len, span: span() }),
+                (
+                    1.0f64..1000.0,
+                    prop_oneof![
+                        Just(Unit::Ms),
+                        Just(Unit::S),
+                        Just(Unit::Min),
+                        Just(Unit::H),
+                    ],
+                )
+                    .prop_map(|(value, unit)| Window::Duration {
+                        value,
+                        unit,
+                        span: span(),
+                    }),
+            ]);
             let predicates = proptest::collection::vec(expr_strategy(), 0..3);
             let mode = proptest::option::of(proptest::sample::select(
                 DisplayMode::iter().collect::<Vec<_>>(),
@@ -1129,7 +1261,7 @@ mod tests {
                             span: span(),
                         })
                         .collect(),
-                    window: window.map(|len| Window { len, span: span() }),
+                    window,
                     predicates,
                     mode: mode.map(|mode| ModeStage { mode, span: span() }),
                     table: table.map(|metrics| TableSpec {
