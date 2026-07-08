@@ -490,6 +490,7 @@ mod tests {
                     },
                     points: Vec::new(),
                     lod: TrackLod::default(),
+                    sat_label_anchors: Vec::new(),
                     custom_markers: Vec::new(),
                     generated_markers: Vec::new(),
                     event_markers: Vec::new(),

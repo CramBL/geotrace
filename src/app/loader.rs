@@ -641,8 +641,9 @@ pub(super) fn build_log_loaded_file(
         },
     );
     let track = LoadedTrack {
-        // No nav points, so no LOD to build.
+        // No nav points, so no LOD to build and nothing to anchor labels on.
         lod: gt_types::TrackLod::default(),
+        sat_label_anchors: Vec::new(),
         metadata: TrackMetadata {
             index: 0,
             distance_km: Length::new::<kilometer>(0.0),

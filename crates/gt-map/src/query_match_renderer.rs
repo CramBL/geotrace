@@ -177,6 +177,7 @@ mod tests {
             metadata: gt_types::TrackMetadata::default(),
             points: gt_test_utils::nav_test_data(),
             lod: gt_types::TrackLod::default(),
+            sat_label_anchors: Vec::new(),
             custom_markers: vec![],
             generated_markers: vec![],
             event_markers: vec![],

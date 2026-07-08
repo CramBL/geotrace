@@ -3638,6 +3638,7 @@ mod tests {
                 metadata: TrackMetadata::default(),
                 points: test_points(),
                 lod: TrackLod::default(),
+                sat_label_anchors: Vec::new(),
                 custom_markers: vec![],
                 generated_markers: vec![],
                 event_markers: vec![],
