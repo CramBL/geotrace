@@ -3,7 +3,7 @@ use crate::highlight::PointIdx;
 /// Priority tier of a [`SatLabelAnchor`], ordered by diagnostic value:
 /// variants are declared highest-priority first, so the derived [`Ord`]
 /// makes a smaller tier win when label placement resolves collisions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, strum::EnumCount)]
 pub enum SatLabelTier {
     /// The point's [`crate::FixQuality`] differs from the previous point
     /// with a satellite report - a degradation or a recovery.
@@ -34,6 +34,7 @@ pub struct SatLabelAnchor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use strum::EnumCount;
 
     #[test]
     fn tier_ordering_is_priority_ordering() {
@@ -43,6 +44,9 @@ mod tests {
             SatLabelTier::QualityTransition,
             SatLabelTier::FixCountMinimum,
         ];
+        // A variant added to the enum but not to this list fails here
+        // instead of silently escaping the ordering check.
+        assert_eq!(tiers.len(), SatLabelTier::COUNT);
         tiers.sort();
         assert_eq!(
             tiers,

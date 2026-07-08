@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use gt_geo_math::haversine_m;
+use gt_geo_math::segment_distances_m;
 use gt_types::sat_label::{SatLabelAnchor, SatLabelTier};
 use gt_types::{FixQuality, NavPoint, PointIdx};
 
@@ -10,7 +10,8 @@ use gt_types::{FixQuality, NavPoint, PointIdx};
 const FILL_SPACING_M: f64 = 100.0;
 
 /// A satellite-report point of the track, with the fields the anchor
-/// selection passes reason about.
+/// selection passes reason about. Snapshotting the count and quality up
+/// front keeps the windowed passes free of repeated `Option` plumbing.
 struct SatPoint {
     index: usize,
     fix_count: u32,
@@ -116,13 +117,16 @@ fn add_ghost_recoveries(anchors: &mut BTreeMap<usize, SatLabelTier>, points: &[N
 /// higher-priority anchors.
 fn add_fill(anchors: &mut BTreeMap<usize, SatLabelTier>, points: &[NavPoint]) {
     let mut since_anchor_m = 0.0;
-    for (i, w) in points.windows(2).enumerate() {
-        let [prev, cur] = w else { continue };
-        since_anchor_m += haversine_m(prev.tpv.lat(), prev.tpv.lon(), cur.tpv.lat(), cur.tpv.lon());
+    for (i, segment_m) in segment_distances_m(points).enumerate() {
+        since_anchor_m += segment_m;
         let cur_index = i + 1;
         if anchors.contains_key(&cur_index) {
             since_anchor_m = 0.0;
-        } else if cur.satellites.is_some() && since_anchor_m >= FILL_SPACING_M {
+        } else if since_anchor_m >= FILL_SPACING_M
+            && points
+                .get(cur_index)
+                .is_some_and(|p| p.satellites.is_some())
+        {
             add_anchor(anchors, cur_index, SatLabelTier::Fill);
             since_anchor_m = 0.0;
         }
@@ -259,6 +263,47 @@ mod tests {
         let points = track(&[Some(12), Some(12), Some(4)]);
         let anchors = build_sat_label_anchors(&points);
         assert_eq!(tier_at(&anchors, 2), Some(SatLabelTier::QualityTransition));
+    }
+
+    proptest::proptest! {
+        /// Invariants under arbitrary track shapes (fix counts, heading
+        /// dropouts, point spacing): anchors ascend without duplicates,
+        /// never outnumber the points, and always sit on a point that
+        /// carries a satellite report.
+        #[test]
+        fn anchor_invariants_hold_for_arbitrary_tracks(
+            specs in proptest::collection::vec(
+                (
+                    proptest::option::of(0u32..20),
+                    proptest::bool::ANY,
+                    0.0f64..300.0,
+                ),
+                0..100usize,
+            )
+        ) {
+            let mut x_m = 0.0;
+            let points: Vec<NavPoint> = specs
+                .iter()
+                .map(|&(fix_count, heading, step_m)| {
+                    x_m += step_m;
+                    point(x_m, fix_count, heading)
+                })
+                .collect();
+
+            let anchors = build_sat_label_anchors(&points);
+
+            proptest::prop_assert!(
+                anchors
+                    .windows(2)
+                    .all(|w| matches!(w, [a, b] if a.point < b.point))
+            );
+            proptest::prop_assert!(anchors.len() <= points.len());
+            for a in &anchors {
+                proptest::prop_assert!(
+                    a.point.get(&points).is_some_and(|p| p.satellites.is_some())
+                );
+            }
+        }
     }
 
     #[test]
