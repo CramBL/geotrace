@@ -1485,7 +1485,7 @@ fn accel_channel_gtd_bytes() -> Vec<u8> {
         .name("accel")
         .unit("g")
         .description("IMU acceleration")
-        .components(vec!["x".to_owned(), "y".to_owned(), "z".to_owned()])
+        .components(["x", "y", "z"])
         .times(times)
         .values(values)
         .build()

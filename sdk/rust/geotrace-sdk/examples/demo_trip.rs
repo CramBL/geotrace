@@ -274,7 +274,7 @@ fn synthesize_accel(fixes: &[FixDynamics]) -> Result<Channel, Box<dyn std::error
         .name("accel")
         .unit("g")
         .description("Device-frame IMU acceleration derived from the trip's speed and heading")
-        .components(vec!["x".to_owned(), "y".to_owned(), "z".to_owned()])
+        .components(["x", "y", "z"])
         .times(times)
         .values(values)
         .build()?)
