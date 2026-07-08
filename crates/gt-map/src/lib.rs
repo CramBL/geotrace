@@ -1,3 +1,4 @@
+pub mod display_counts;
 pub mod event_marker_renderer;
 pub mod generated_marker_renderer;
 mod hover_labels;
