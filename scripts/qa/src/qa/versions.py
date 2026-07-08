@@ -19,7 +19,7 @@ core (``0.2.0``), since they cannot express a prerelease suffix.
 
 ``check`` / ``check-app`` verify every spot agrees. ``bump-sdk`` / ``bump-app``
 rewrite them and promote the matching changelog (see ``qa.changelog``). Given
-``--expect X.Y.Z``, the checks also require a ``## [X.Y.Z]`` changelog section.
+``--expect X.Y.Z``, the checks also require a matching changelog section.
 """
 
 import argparse
@@ -220,7 +220,7 @@ def _changelog_errors(root: Path, rel: str, expect: str, bump: str) -> list[str]
     if changelog.section_exists(text, expect):
         return []
     return [
-        f"{rel} has no '## [{_core(expect)}]' section — "
+        f"{rel} has no release section for {_core(expect)} - "
         f"promote [unreleased] with `just qa::{bump} {expect}` before releasing"
     ]
 
@@ -307,5 +307,5 @@ def main() -> None:
     if args.cmd == "bump-app":
         _validate(args.version)
         _apply(root, _APP_SPOTS, args.version, _core(args.version))
-        changelog.promote(root / _APP_CHANGELOG, args.version, today)
+        changelog.promote(root / _APP_CHANGELOG, args.version, today, heading_style="cargo_dist")
         sys.exit(_cmd_check_app(root, args.version))

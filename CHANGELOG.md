@@ -1,8 +1,8 @@
 # Changelog
 
-## [unreleased]
+## Unreleased
 
-## [0.4.0] - 2026-07-08
+## 0.4.0 - 2026-07-08
 
 ### Added
 
@@ -21,7 +21,7 @@
 
 - Loading a recording from History now respects the current generated marker settings, so disabled slip markers no longer reappear from stored history data.
 
-## [0.3.0] - 2026-06-29
+## 0.3.0 - 2026-06-29
 
 ### Added
 
@@ -31,7 +31,7 @@
 
 - Avoid showing features for constellations that are not in the loaded data
 
-## [0.2.0] - 2026-06-25
+## 0.2.0 - 2026-06-25
 
 ### Added
 
@@ -48,6 +48,6 @@
 
 - The time-range filter now also hides filtered-out points from map hover and click.
 
-## [0.1.0] - 2026-06-21
+## 0.1.0 - 2026-06-21
 
 Initial release

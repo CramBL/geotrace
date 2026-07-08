@@ -5,9 +5,7 @@ name: Fuzz
 on:
   push:
     branches: [trunk]
-    paths: ["sdk/rust/geotrace-sdk/**"]
   pull_request:
-    paths: ["sdk/rust/geotrace-sdk/**"]
   schedule:
     - cron: "0 4 * * 1"
   workflow_dispatch: {}

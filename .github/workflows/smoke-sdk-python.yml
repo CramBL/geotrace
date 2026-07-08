@@ -57,7 +57,17 @@ jobs:
         working-directory: consumer
         env:
           VERSION: ${{ inputs.version }}
-        run: uv add "geotrace-sdk==$VERSION"
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if uv add "geotrace-sdk==$VERSION"; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 10 ]; then
+              exit 1
+            fi
+            sleep 30
+          done
 
       # A prerelease is not, so download the wheel attached to the release and
       # add it from there (uv picks the one matching this platform + Python).

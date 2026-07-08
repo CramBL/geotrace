@@ -1,13 +1,14 @@
-name: App release title
+name: App release metadata
 
 # dist (app-release.yml) titles the GUI GitHub release after the raw tag
-# (e.g. "app/v0.1.0"), and that workflow is drift-checked so it cannot be
+# (e.g. "app/v0.1.0"), and its root changelog auto-detection can pick the SDK
+# changelog in this repo. That workflow is drift-checked so it cannot be
 # hand-edited. Once dist's "Release" workflow finishes for an `app/v*` tag,
-# rename the release to "GeoTrace X.Y.Z".
+# retitle the release to "GeoTrace X.Y.Z" and prepend the app CHANGELOG notes.
 #
 # zizmor flags workflow_run as a dangerous trigger. This use is safe: the
 # `branches: ['app/**']` filter only matches a maintainer-pushed release tag,
-# the job is gated to a successful run, and it only edits the release title.
+# the job is gated to a successful run, and it only edits release metadata.
 on: # zizmor: ignore[dangerous-triggers]
   workflow_run:
     workflows: ["Release"]
@@ -16,7 +17,7 @@ on: # zizmor: ignore[dangerous-triggers]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to retitle (e.g. app/v0.1.0)"
+        description: "Release tag to update (e.g. app/v0.1.0)"
         required: true
         type: string
 
@@ -28,13 +29,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  retitle:
+  metadata:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Retitle the release
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+
+      - name: Update release metadata
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -44,4 +51,44 @@ jobs:
           set -euo pipefail
           TAG="${DISPATCH_TAG:-}"
           [ -n "$TAG" ] || TAG="${RUN_TAG:-}"
-          gh release edit "$TAG" --repo "$REPO" --title "GeoTrace ${TAG#app/v}"
+          VERSION="${TAG#app/v}"
+          CORE="${VERSION%%-*}"
+
+          notes="$RUNNER_TEMP/app-notes.md"
+          awk -v ver="$CORE" '
+            BEGIN {
+              ver_re = ver
+              gsub(/\./, "\\.", ver_re)
+            }
+            $0 ~ "^## (\\[" ver_re "\\]|" ver_re ")( |$)" { grab = 1; next }
+            grab && /^## / { exit }
+            grab { print }
+          ' CHANGELOG.md > "$notes"
+
+          body="$RUNNER_TEMP/current-body.md"
+          gh release view "$TAG" --repo "$REPO" --json body -q .body > "$body"
+
+          install_body="$RUNNER_TEMP/install-body.md"
+          awk 'seen || /^## Install / { seen = 1; print }' "$body" > "$install_body"
+          if ! grep -q '[^[:space:]]' "$install_body"; then
+            cp "$body" "$install_body"
+          fi
+
+          next_body="$RUNNER_TEMP/next-body.md"
+          if grep -q '[^[:space:]]' "$notes"; then
+            {
+              echo "## Release Notes"
+              echo
+              cat "$notes"
+              echo
+              echo
+              cat "$install_body"
+            } > "$next_body"
+          else
+            cp "$body" "$next_body"
+          fi
+
+          gh release edit "$TAG" \
+            --repo "$REPO" \
+            --title "GeoTrace ${VERSION}" \
+            --notes-file "$next_body"

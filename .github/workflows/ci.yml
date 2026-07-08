@@ -23,8 +23,70 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  ci:
-    name: CI / ${{ matrix.os }}
+  check:
+    name: check / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: check
+        run: cargo check --workspace --features geotrace/self-update
+
+  clippy:
+    name: clippy / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Clippy
+        run: |
+          cargo clippy --workspace --no-deps -- -D warnings
+          cargo clippy --workspace --no-deps --tests -- -D warnings
+          cargo clippy --workspace --no-deps --examples -- -D warnings
+          cargo clippy --workspace --no-deps --features geotrace/self-update --tests -- -D warnings
+
+  test:
+    name: test / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -54,10 +116,6 @@ jobs:
         with:
           tool: nextest,just
 
-      - name: Install uv
-        if: runner.os == 'Linux'
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-
       # wgpu requires a GPU or a software renderer for headless test rendering.
       # Ubuntu GitHub runners have no GPU. Force Mesa's OpenGL software rasteriser.
       - name: Set up software GPU rendering (Linux)
@@ -67,24 +125,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends libgl1-mesa-dev
           echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
           echo "WGPU_BACKEND=gl" >> "$GITHUB_ENV"
-
-      - name: Check formatting
-        if: runner.os == 'Linux'
-        run: cargo fmt --all --check
-
-      - name: Verify Cargo.lock is up to date
-        if: runner.os == 'Linux'
-        run: cargo update --workspace --locked
-
-      - name: check
-        run: cargo check --workspace --features geotrace/self-update
-
-      - name: Clippy
-        run: |
-          cargo clippy --workspace --no-deps -- -D warnings
-          cargo clippy --workspace --no-deps --tests -- -D warnings
-          cargo clippy --workspace --no-deps --examples -- -D warnings
-          cargo clippy --workspace --no-deps --features geotrace/self-update --tests -- -D warnings
 
       # The `ci` profile excludes the gt-arch architecture check (see .config/nextest.toml)
       - name: Tests
@@ -99,18 +139,79 @@ jobs:
           name: test-results
           path: "**/tests/snapshots"
 
+  examples:
+    name: examples / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
       - name: Examples
         run: bash scripts/examples.sh
 
+  quality:
+    name: quality / ubuntu-latest
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install tools
+        uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
+        with:
+          tool: just
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Verify Cargo.lock is up to date
+        run: cargo update --workspace --locked
+
+      - name: QA lint
+        run: just qa::qa-lint
+
+      - name: QA tests
+        run: just qa::test
+
       - name: QA checks
-        if: runner.os == 'Linux'
         run: |
-          just qa::qa-lint
           just qa::check-all
           just qa::check-versions
 
       - name: Docs
-        if: runner.os == 'Linux'
         run: just doc
 
   # The gt-arch architecture check (cargo-pup) is slow and needs a pinned
@@ -156,7 +257,11 @@ jobs:
   ci-essentials:
     runs-on: ubuntu-latest
     needs:
-      - ci
+      - check
+      - clippy
+      - test
+      - examples
+      - quality
       - arch
     permissions:
       contents: none
