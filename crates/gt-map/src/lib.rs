@@ -534,7 +534,7 @@ impl NavMap {
                     .nearest_neighbor_iter([merc_x, merc_y])
                     .take_while(|sp| sp.distance_2(&[merc_x, merc_y]) <= threshold_merc_sq)
                 {
-                    if !is_spatial_point_visible(sp, files, visibility, filter) {
+                    if !is_spatial_point_visible(sp, files, visibility, filter, query_matches) {
                         continue;
                     }
                     if let Some(slot) = sp.category.hover_slot() {
@@ -1043,7 +1043,8 @@ mod tests {
             &sp,
             &files,
             &vis,
-            &GlobalFilter::default()
+            &GlobalFilter::default(),
+            None
         ));
     }
 
@@ -1058,7 +1059,8 @@ mod tests {
             &sp,
             &files,
             &vis,
-            &GlobalFilter::default()
+            &GlobalFilter::default(),
+            None
         ));
     }
 
@@ -1073,7 +1075,8 @@ mod tests {
             &sp,
             &files,
             &vis,
-            &GlobalFilter::default()
+            &GlobalFilter::default(),
+            None
         ));
     }
 
@@ -1148,7 +1151,8 @@ mod tests {
             &sp,
             &files,
             &vis,
-            &GlobalFilter::default()
+            &GlobalFilter::default(),
+            None
         ));
     }
 
@@ -1190,12 +1194,65 @@ mod tests {
             ..GlobalFilter::default()
         };
         assert!(
-            !is_spatial_point_visible(&tpv_spatial_point(0, 0, 0), &files, &vis, &filter),
+            !is_spatial_point_visible(&tpv_spatial_point(0, 0, 0), &files, &vis, &filter, None),
             "the pre-window point must not be hoverable"
         );
         assert!(
-            is_spatial_point_visible(&tpv_spatial_point(0, 0, 1), &files, &vis, &filter),
+            is_spatial_point_visible(&tpv_spatial_point(0, 0, 1), &files, &vis, &filter, None),
             "the in-window point must stay hoverable"
+        );
+    }
+
+    /// Regression test: points a `keep`/`hide` query removed are not drawn, so
+    /// they must not be hoverable or clickable either.
+    #[test]
+    fn query_hidden_point_is_not_hoverable() {
+        let now = chrono::DateTime::from_timestamp(0, 0).expect("valid");
+        let track = LoadedTrack {
+            metadata: TrackMetadata::default(),
+            points: vec![nav_at(now, 55.0, 12.0), nav_at(now, 55.0001, 12.0001)],
+            lod: gt_types::TrackLod::default(),
+            custom_markers: vec![],
+            generated_markers: vec![],
+            event_markers: vec![],
+            channels: vec![],
+        };
+        let files = vec![file_with_tracks(vec![track])];
+        let vis = vis_all_visible();
+        let filter = GlobalFilter::default();
+        // A range built from arguments, so the single-element vec does not trip
+        // clippy's `single_range_in_vec_init`.
+        let rng = |start: usize, end: usize| start..end;
+        let matches = QueryMatches {
+            hidden: std::collections::HashMap::from([(
+                TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+                vec![rng(0, 1)],
+            )]),
+            ..QueryMatches::default()
+        };
+        assert!(
+            !is_spatial_point_visible(
+                &tpv_spatial_point(0, 0, 0),
+                &files,
+                &vis,
+                &filter,
+                Some(&matches)
+            ),
+            "the query-hidden point must not be hoverable"
+        );
+        assert!(
+            is_spatial_point_visible(
+                &tpv_spatial_point(0, 0, 1),
+                &files,
+                &vis,
+                &filter,
+                Some(&matches)
+            ),
+            "the point the query kept must stay hoverable"
+        );
+        assert!(
+            is_spatial_point_visible(&tpv_spatial_point(0, 0, 0), &files, &vis, &filter, None),
+            "without a query run the point is hoverable"
         );
     }
 
@@ -1239,7 +1296,7 @@ mod tests {
         let found = tree
             .nearest_neighbor_iter([0.5_f64, 0.5_f64])
             .take_while(|sp| sp.distance_2(&[0.5, 0.5]) <= f64::MAX)
-            .find(|sp| is_spatial_point_visible(sp, &files, &vis, &filter));
+            .find(|sp| is_spatial_point_visible(sp, &files, &vis, &filter, None));
         assert!(found.is_some(), "should find the visible track");
         assert_eq!(
             found.unwrap().track_index,
