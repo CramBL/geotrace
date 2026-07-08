@@ -897,6 +897,81 @@ fn snapshot_app_query_channel_source() {
     harness.snapshot_loose("app_query_channel_source");
 }
 
+/// A points-source query that references a channel: the window's time span
+/// collects the `@accel` samples, `max(norm(@accel))` reduces them, and the
+/// matches land as point ranges - the results table shows the query's metric
+/// columns and the map halos the matched stretches. The mixed flow, distinct
+/// from the standalone channel source above.
+#[test]
+fn snapshot_app_query_points_with_channel() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(accel_channel_gtd_bytes())),
+            name: "accel_demo.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+
+    {
+        let mut state = harness.inner.state().shared.borrow_mut();
+        state.zoom_to_visible_request = true;
+    }
+    let app = harness.inner.state_mut();
+    app.query_window.open = true;
+    // Hard-maneuver detection: the fixture's baseline norm sits near 1 g
+    // (gravity on z), the crafted stretches reach ~1.8 g.
+    app.query_window.set_text(
+        "points | window 10 | where max(norm(@accel)) > 1.2 g | table time, velocity".to_owned(),
+    );
+    harness.inner.run_steps(5);
+
+    harness
+        .inner
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+        .click();
+    step_until_query_result(&mut harness.inner);
+    harness.inner.run_steps(60);
+
+    // The high-accel stretches match as point ranges on the track.
+    let matches = harness
+        .inner
+        .state()
+        .query_window
+        .matches()
+        .expect("the run produced matches")
+        .clone();
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    assert!(
+        !matches.draws[0].ranges_for(track).is_empty(),
+        "the matched windows halo the track"
+    );
+
+    // Expand the first match so the snapshot shows the point table with the
+    // query's `table time, velocity` columns.
+    let first_match = harness
+        .inner
+        .query_all_by_label_contains("accel_demo.gtd #0")
+        .next()
+        .expect("the run lists match headers");
+    first_match.click();
+    harness.inner.run_steps(10);
+    // Park the pointer off the header so the hovered-match cross-highlight
+    // (its own snapshot) does not blend into this one.
+    harness.inner.hover_at(egui::pos2(1.0, 1.0));
+    harness.inner.run_steps(5);
+
+    harness.snapshot_loose("app_query_points_with_channel");
+}
+
 /// Several queries compose in one editor: a `hide` filter plus two colored
 /// `draw` layers, evaluated in sequence over the demo trip.
 #[test]
