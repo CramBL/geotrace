@@ -51,6 +51,21 @@ impl DisplayCounts {
         }
     }
 
+    /// Build counts from a per-category lookup, for UI tests that need
+    /// known numbers without a full fixture file.
+    #[cfg(test)]
+    pub(crate) fn from_fn(get: impl Fn(DisplayCategory) -> usize) -> Self {
+        Self {
+            tracks: get(DisplayCategory::Tracks),
+            track_points: get(DisplayCategory::TrackPoints),
+            satellite_labels: get(DisplayCategory::SatelliteLabels),
+            custom_markers: get(DisplayCategory::CustomMarkers),
+            generated_markers: get(DisplayCategory::GeneratedMarkers),
+            event_markers: get(DisplayCategory::EventMarkers),
+            query_highlights: get(DisplayCategory::QueryHighlights),
+        }
+    }
+
     pub fn compute(
         files: &[LoadedFile],
         visibility: &TrackDataVisibility,

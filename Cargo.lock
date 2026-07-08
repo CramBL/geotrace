@@ -2382,6 +2382,7 @@ dependencies = [
  "egui-phosphor",
  "egui_kittest",
  "gt-filter",
+ "gt-fmt",
  "gt-test-utils",
  "gt-track-builder",
  "gt-types",

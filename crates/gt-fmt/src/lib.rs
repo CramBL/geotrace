@@ -143,10 +143,37 @@ pub fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a st
     if count == 1 { singular } else { plural }
 }
 
+/// Format a count with comma thousands separators (`8,940`).
+pub fn format_count(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::Duration;
+
+    #[test]
+    fn format_count_adds_thousands_separators() {
+        for (n, expected) in [
+            (0, "0"),
+            (12, "12"),
+            (999, "999"),
+            (1000, "1,000"),
+            (8940, "8,940"),
+            (1_000_000, "1,000,000"),
+        ] {
+            assert_eq!(format_count(n), expected);
+        }
+    }
 
     #[test]
     fn pluralize_picks_singular_only_for_one() {

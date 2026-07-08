@@ -1,4 +1,5 @@
 pub mod display_counts;
+mod display_toggle;
 pub mod event_marker_renderer;
 pub mod generated_marker_renderer;
 mod hover_labels;
@@ -219,6 +220,8 @@ pub struct NavMap {
     disambiguation_candidates: [Option<DataPointRef>; 4],
     /// Screen position where the disambiguation popup is anchored.
     disambiguation_pos: egui::Pos2,
+    /// Session-only state of the display toggle (popup open, solo restore).
+    display_toggle: display_toggle::DisplayToggleState,
 }
 
 impl NavMap {
@@ -240,6 +243,7 @@ impl NavMap {
             right_click_ref: None,
             disambiguation_candidates: [None; 4],
             disambiguation_pos: egui::pos2(0.0, 0.0),
+            display_toggle: display_toggle::DisplayToggleState::default(),
         }
     }
 
@@ -334,7 +338,7 @@ impl NavMap {
         visibility: &TrackDataVisibility,
         highlight: &mut MapHighlight,
         filter: &GlobalFilter,
-        display_mask: DisplayMask,
+        display_mask: &mut DisplayMask,
         event_marker_visibility: &EventMarkerVisibility,
         generated_marker_visibility: &GeneratedMarkerVisibility,
         query_matches: Option<&QueryMatches>,
@@ -352,7 +356,7 @@ impl NavMap {
 
         if zoom_to_visible
             && let Some(bbox) =
-                compute_visible_bounding_box(files, visibility, filter, display_mask)
+                compute_visible_bounding_box(files, visibility, filter, *display_mask)
         {
             zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
         }
@@ -372,7 +376,7 @@ impl NavMap {
                 self.blink.trigger(now);
             }
             if let Some(bbox) =
-                compute_visible_bounding_box(files, visibility, filter, display_mask)
+                compute_visible_bounding_box(files, visibility, filter, *display_mask)
             {
                 zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
             }
@@ -429,7 +433,7 @@ impl NavMap {
             files,
             visibility,
             filter,
-            display_mask,
+            *display_mask,
             self.map_memory.zoom(),
         );
         let visible = viewport::collect_visible_points(
@@ -527,7 +531,7 @@ impl NavMap {
         // Double-click anywhere on the map: zoom out to fit the visible tracks.
         if map_response.double_clicked()
             && let Some(bbox) =
-                compute_visible_bounding_box(files, visibility, filter, display_mask)
+                compute_visible_bounding_box(files, visibility, filter, *display_mask)
         {
             zoom_to_fit(&mut self.map_memory, map_response.rect, bbox);
         }
@@ -561,7 +565,7 @@ impl NavMap {
                         files,
                         visibility,
                         filter,
-                        display_mask,
+                        *display_mask,
                         query_matches,
                     ) {
                         continue;
@@ -589,7 +593,7 @@ impl NavMap {
         };
 
         // Layer toggle - floating panel anchored to the bottom-right of the map.
-        egui::Area::new(egui::Id::new("map_layer_toggle"))
+        let layer_toggle = egui::Area::new(egui::Id::new("map_layer_toggle"))
             .fixed_pos(egui::pos2(map_rect.right() - 8.0, map_rect.bottom() - 8.0))
             .pivot(egui::Align2::RIGHT_BOTTOM)
             .show(ui.ctx(), |ui| {
@@ -616,6 +620,24 @@ impl NavMap {
                     }
                 });
             });
+
+        // Display toggle - the eye button stacked above the layer toggle.
+        display_toggle::show_display_toggle(
+            ui,
+            layer_toggle.response.rect,
+            &mut self.display_toggle,
+            display_mask,
+            || {
+                display_counts::DisplayCounts::compute(
+                    files,
+                    visibility,
+                    filter,
+                    event_marker_visibility,
+                    generated_marker_visibility,
+                    query_matches,
+                )
+            },
+        );
 
         // Clicking near a map element makes its info popup sticky, clicking on
         // empty space clears it. Clicking the same element again also clears it.
@@ -1857,7 +1879,7 @@ mod snapshot_tests {
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
-                        gt_ui_types::DisplayMask::default(),
+                        &mut gt_ui_types::DisplayMask::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         Some(&matches),
@@ -1929,7 +1951,7 @@ mod snapshot_tests {
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
-                        gt_ui_types::DisplayMask::default(),
+                        &mut gt_ui_types::DisplayMask::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
@@ -1977,7 +1999,7 @@ mod snapshot_tests {
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
-                        mask,
+                        &mut mask.clone(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,

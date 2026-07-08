@@ -15,12 +15,14 @@ chrono.workspace = true
 egui.workspace = true
 egui-phosphor.workspace = true
 gt-filter = { path = "../gt-filter" }
+gt-fmt = { path = "../gt-fmt" }
 gt-track-builder = { path = "../gt-track-builder" }
 gt-types = { path = "../gt-types" }
 gt-ui-theme = { path = "../gt-ui-theme" }
 gt-ui-types = { path = "../gt-ui-types" }
 rstar.workspace = true
 smallvec.workspace = true
+strum.workspace = true
 uom.workspace = true
 walkers.workspace = true
 
@@ -28,7 +30,6 @@ walkers.workspace = true
 egui_kittest.workspace = true
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 proptest.workspace = true
-strum.workspace = true
 
 [lints]
 workspace = true
