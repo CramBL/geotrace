@@ -16,7 +16,7 @@ use strum::IntoEnumIterator as _;
 use crate::ast::{Func, ParamName};
 use crate::check::{ChannelInfo, ChannelSchema};
 use crate::construct::{Construct, ConstructKind, catalog};
-use crate::lexer::{self, Token};
+use crate::lexer::{self, Token, TokenClass};
 use crate::metric::{Quantity, QueryMetric};
 use crate::unit::Unit;
 
@@ -30,9 +30,27 @@ pub struct Completions {
     pub items: Vec<Construct>,
 }
 
+/// How a completion request was initiated. The trigger decides how eager the
+/// empty-prefix behavior is: while typing, most positions wait for a first
+/// character; an explicit request opens on whatever the slot accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionTrigger {
+    /// Recomputed as the caret moves or the text changes.
+    Automatic,
+    /// Explicitly requested (Ctrl+Space in the editor).
+    Manual,
+}
+
 /// The constructs valid at `cursor` in `src`, fuzzy-filtered and ranked
-/// against the partial word under the cursor.
-pub fn completions_at(src: &str, cursor: usize) -> Completions {
+/// against the partial word under the cursor. The schema types `@channel`
+/// references so a unit suggested after `where @accel > 1 ` matches the
+/// channel's dimension.
+pub fn completions_at(
+    src: &str,
+    cursor: usize,
+    schema: &ChannelSchema,
+    trigger: CompletionTrigger,
+) -> Completions {
     let cursor = cursor.min(src.len());
     let toks = lexer::tokenize(src);
 
@@ -48,8 +66,8 @@ pub fn completions_at(src: &str, cursor: usize) -> Completions {
     let word_text = src.get(range.start..range.end).unwrap_or("");
 
     // A typed word is only completed when it begins at a real boundary (start
-    // of input, after whitespace, or after `|` `(` `,`). This stops the `h` of
-    // a finished `km/h` from completing into `heading`.
+    // of input, or after whitespace, punctuation, an operator, or a digit).
+    // This stops the `h` of a finished `km/h` from completing into `heading`.
     if !prefix.is_empty() && !starts_at_boundary(src, range.start) {
         return Completions {
             range,
@@ -68,14 +86,32 @@ pub fn completions_at(src: &str, cursor: usize) -> Completions {
     }
     // At a unit position, restrict to the units the value's quantity allows,
     // so `velocity > 30 ` never offers `m` or `g` and `with mask 15 ` offers
-    // only `deg`.
+    // only `deg`. `None` when the quantity can't be inferred.
     let allowed_units = (slot == Slot::Unit)
-        .then(|| allowed_units_at(&toks, range.start))
+        .then(|| allowed_units_at(&toks, range.start, schema))
         .flatten();
 
+    // With nothing typed yet, an automatic request offers candidates only
+    // where the offer is small and specific: the units matching an inferred
+    // quantity, or the parameter names after `with`. Everywhere else the
+    // popup waits for the first character (`points | ` and `table ` must not
+    // dump every keyword or metric). A manual request always offers.
+    let eager = match slot {
+        Slot::Unit => allowed_units.is_some(),
+        Slot::Param => true,
+        _ => false,
+    };
+    if prefix.is_empty() && trigger == CompletionTrigger::Automatic && !eager {
+        return Completions {
+            range,
+            items: Vec::new(),
+        };
+    }
+
     let mut items: Vec<(i32, Construct)> = catalog()
-        .into_iter()
-        .filter(|c| slot.accepts(c.kind))
+        .iter()
+        .copied()
+        .filter(|c| slot.accepts(c))
         .filter(|c| match &allowed_units {
             Some(names) if c.kind == ConstructKind::Unit => names.contains(&c.name),
             _ => true,
@@ -85,15 +121,6 @@ pub fn completions_at(src: &str, cursor: usize) -> Completions {
     // Higher score first; stable, so the catalog order breaks ties.
     items.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
 
-    // With nothing typed yet, only offer when a single kind of construct fits
-    // (units, params, the source); otherwise wait for the first character, so
-    // `|` and `where` don't dump every keyword or metric.
-    let single_kind = items
-        .first()
-        .is_none_or(|(_, first)| items.iter().all(|(_, c)| c.kind == first.kind));
-    if prefix.is_empty() && !single_kind {
-        items.clear();
-    }
     // The word the cursor sits in is already a complete construct (the caret
     // is inside `velocity`, not building it) - there is nothing to add.
     if !word_text.is_empty()
@@ -128,16 +155,29 @@ pub struct ChannelCompletions {
 }
 
 /// Channel completions at `cursor`, or `None` when the cursor is not typing a
-/// `@channel` reference. The `@` sigil is the trigger, so this is independent
-/// of the pipeline slot: a partial `@ac` (or a lone `@`) offers the schema's
-/// scalar channels and each vector channel's components (`@accel.x`), ranked
-/// against the text after the `@`.
+/// `@channel` reference. The typed `@` sigil is the trigger, so a partial
+/// `@ac` (or a lone `@`) offers the schema's scalar channels and each vector
+/// channel's components (`@accel.x`), ranked against the text after the `@`.
+///
+/// The sigil is explicit intent, but not unconditional: a `@` inside a
+/// comment is prose, and one in a position no channel can occupy (a stage
+/// keyword, a `table` column, a `with` parameter) would only complete into a
+/// parse error - both stay quiet.
 pub fn channel_completions_at(
     src: &str,
     cursor: usize,
     schema: &ChannelSchema,
 ) -> Option<ChannelCompletions> {
     let (range, prefix) = channel_partial(src, cursor)?;
+    if in_comment(src, range.start) {
+        return None;
+    }
+    let toks = lexer::tokenize(src);
+    match slot_before(&toks, range.start) {
+        // A channel stands where a source or a value name can.
+        Slot::Source | Slot::ValueName => {}
+        _ => return None,
+    }
     let mut scored: Vec<(i32, ChannelSuggestion)> = schema
         .iter_unsorted()
         .flat_map(|(name, info)| channel_offers(name, info))
@@ -258,6 +298,15 @@ fn is_body_byte(b: u8) -> bool {
     is_ident_byte(b) || b == b'.'
 }
 
+/// Whether `byte` falls inside a `# …` comment. [`lexer::tokenize`] drops
+/// comments, so this goes through the highlighter's classification, which
+/// covers them.
+fn in_comment(src: &str, byte: usize) -> bool {
+    lexer::highlight_classes(src)
+        .iter()
+        .any(|(span, class)| *class == TokenClass::Comment && span.start <= byte && byte < span.end)
+}
+
 /// A one-line description of a channel's dimension for the popup and hover. The
 /// `@` prefix and the hover's "channel" label already say it is a channel, so
 /// this names only the kind of value.
@@ -269,8 +318,14 @@ fn channel_summary(info: &ChannelInfo) -> String {
     }
 }
 
-/// The unit names of a quantity, in catalog order, for filtering the unit slot.
+/// The unit names of a quantity, in catalog order, for filtering the unit
+/// slot. A direction is written in angle units (`heading > 90 deg`), so it
+/// maps to the angle set.
 fn units_of_quantity(quantity: Quantity) -> Vec<&'static str> {
+    let quantity = match quantity {
+        Quantity::Direction => Quantity::Angle,
+        other => other,
+    };
     Unit::iter()
         .filter(|u| u.quantity() == quantity)
         .map(Unit::text)
@@ -287,56 +342,118 @@ fn unit_follows(toks: &[lexer::Tok<'_>], cursor: usize) -> bool {
 }
 
 /// Whether the byte at `start` begins a word at a real boundary: the start of
-/// input, or right after whitespace or a `|` `(` `,`.
+/// input, or right after whitespace, punctuation, a comparison or arithmetic
+/// operator, or a digit (compact typing like `eph>2km` completes at each
+/// step). `/` is deliberately not a boundary, so the `h` of a finished `km/h`
+/// never completes into `heading`.
 fn starts_at_boundary(src: &str, start: usize) -> bool {
     match src.get(..start).and_then(|s| s.chars().next_back()) {
         None => true,
-        Some(c) => c.is_whitespace() || matches!(c, '|' | '(' | ','),
+        Some(c) => {
+            c.is_whitespace()
+                || c.is_ascii_digit()
+                || matches!(c, '|' | '(' | ',' | '<' | '>' | '=' | '!' | '+' | '-' | '*')
+        }
     }
 }
 
 /// The unit names allowed for the value at this position, or `None` when the
-/// quantity can't be inferred (then every unit is offered). Walks left from the
-/// number to whatever the value belongs to: a `with` parameter (`mask` wants an
-/// angle, `snr_drop` no unit) or a compared metric (`velocity` a speed).
-fn allowed_units_at(toks: &[lexer::Tok<'_>], word_start: usize) -> Option<Vec<&'static str>> {
+/// quantity can't be inferred. Walks left from the number to whatever the
+/// value belongs to: a `window` duration, a `with` parameter (`mask` wants an
+/// angle, `snr_drop` no unit), or a compared metric or channel (`velocity` a
+/// speed, `@accel` its schema unit's quantity).
+///
+/// The walk covers the whole run back to the start of the condition atom
+/// (`where`, a connective, a comma). A dimension-changing operator anywhere in
+/// that run (`velocity / eph`, a power) means the found name does not type the
+/// value, so the inference honestly gives up rather than suggesting the wrong
+/// units. `+`/`-` keep the dimension and are walked through.
+fn allowed_units_at(
+    toks: &[lexer::Tok<'_>],
+    word_start: usize,
+    schema: &ChannelSchema,
+) -> Option<Vec<&'static str>> {
     let number = toks
         .iter()
         .rposition(|t| t.span.end <= word_start && t.kind == Token::Number)?;
+    let mut source: Option<(usize, Quantity)> = None;
     for (idx, tok) in toks.iter().enumerate().take(number).rev() {
-        if let Ok(param) = ParamName::from_str(tok.text) {
-            return Some(match param.value_quantity() {
-                Some(quantity) => units_of_quantity(quantity),
-                // A bare number, like snr_drop: no unit belongs here.
-                None => Vec::new(),
-            });
-        }
-        if let Ok(metric) = QueryMetric::from_str(tok.text) {
-            return Some(units_of_quantity(metric_value_quantity(toks, idx, metric)));
+        match tok.kind {
+            // The start of the value's context: nothing left to scan.
+            Token::Where
+            | Token::And
+            | Token::Or
+            | Token::Not
+            | Token::With
+            | Token::Comma
+            | Token::Pipe => break,
+            // `window 15 ` - the count-or-duration argument.
+            Token::Window => {
+                return match source {
+                    None => Some(units_of_quantity(Quantity::Duration)),
+                    Some(_) => None,
+                };
+            }
+            // The value's dimension is not the found name's; give up.
+            Token::Star | Token::Slash | Token::Superscript | Token::CaretPower => return None,
+            Token::Ident if source.is_none() => {
+                if let Ok(param) = ParamName::from_str(tok.text) {
+                    return Some(match param.value_quantity() {
+                        Some(quantity) => units_of_quantity(quantity),
+                        // A bare number, like snr_drop: no unit belongs here.
+                        None => Vec::new(),
+                    });
+                }
+                if let Ok(metric) = QueryMetric::from_str(tok.text) {
+                    source = Some((idx, metric.quantity()));
+                }
+            }
+            Token::Channel if source.is_none() => {
+                // The channel's quantity comes from its schema unit; a channel
+                // with no (or an unknown) unit is a bare number, like the
+                // checker types it.
+                let quantity = channel_quantity(tok.text, schema)?;
+                source = Some((idx, quantity));
+            }
+            _ => {}
         }
     }
-    None
+    source.map(|(idx, quantity)| units_of_quantity(wrapped_quantity(toks, idx, quantity)))
 }
 
-/// A metric's effective quantity, accounting for a directly-wrapping aggregate:
+/// The quantity of a `@channel` reference per the schema, or `None` when the
+/// channel is unknown. A channel without a recognisable unit is a bare number
+/// (no unit belongs after it), mirroring the checker.
+fn channel_quantity(text: &str, schema: &ChannelSchema) -> Option<Quantity> {
+    let body = text.strip_prefix('@')?;
+    let name = body.split_once('.').map_or(body, |(name, _)| name);
+    let info = schema.get(name)?;
+    if info.period_deg.is_some() {
+        return Some(Quantity::Direction);
+    }
+    Some(
+        info.unit
+            .as_deref()
+            .and_then(Unit::from_label)
+            .map_or(Quantity::Count, Unit::quantity),
+    )
+}
+
+/// A value's effective quantity, accounting for a directly-wrapping aggregate:
 /// `delta(time)` is a duration, `spread(heading)` an angle. The transform is
 /// [`Func::result_quantity`], shared with the checker.
-fn metric_value_quantity(
-    toks: &[lexer::Tok<'_>],
-    metric_idx: usize,
-    metric: QueryMetric,
-) -> Quantity {
-    let func = metric_idx
+fn wrapped_quantity(toks: &[lexer::Tok<'_>], value_idx: usize, quantity: Quantity) -> Quantity {
+    let func = value_idx
         .checked_sub(2)
         .filter(|_| {
-            toks.get(metric_idx - 1)
+            toks.get(value_idx - 1)
                 .is_some_and(|t| t.kind == Token::LParen)
         })
         .and_then(|i| toks.get(i))
         .and_then(|t| Func::from_str(t.text).ok());
     match func {
-        Some(func) => func.result_quantity(metric.quantity()),
-        None => metric.quantity(),
+        Some(func) => func.result_quantity(quantity),
+        None => quantity,
     }
 }
 
@@ -381,19 +498,30 @@ enum Slot {
     Column,
     /// A unit suffix (just after a number).
     Unit,
+    /// After a complete `where` atom: `and`, `or`.
+    Connective,
     /// Nothing is offered here.
     None,
 }
 
 impl Slot {
-    fn accepts(self, kind: ConstructKind) -> bool {
+    fn accepts(self, construct: &Construct) -> bool {
+        let kind = construct.kind;
         match self {
             Slot::Source => kind == ConstructKind::Source,
             Slot::Stage => matches!(kind, ConstructKind::Stage | ConstructKind::Mode),
             Slot::Param => kind == ConstructKind::Param,
-            Slot::ValueName => matches!(kind, ConstructKind::Metric | ConstructKind::Function),
+            // The start of an atom takes a value name, or `not` negating one -
+            // but never `and`/`or`, which need a left-hand side.
+            Slot::ValueName => {
+                matches!(kind, ConstructKind::Metric | ConstructKind::Function)
+                    || construct.name == "not"
+            }
             Slot::Column => kind == ConstructKind::Metric,
             Slot::Unit => kind == ConstructKind::Unit,
+            // `not` starts an atom rather than joining two, so after a
+            // complete one only `and`/`or` fit.
+            Slot::Connective => kind == ConstructKind::Connective && construct.name != "not",
             Slot::None => false,
         }
     }
@@ -455,16 +583,22 @@ fn slot_before(toks: &[lexer::Tok<'_>], word_start: usize) -> Slot {
                 | Token::Star
                 | Token::Slash,
             ) => Slot::ValueName,
-            // After a complete atom (metric, `)`, `%`): an operator is
-            // expected, not a name - offer nothing.
-            _ => Slot::None,
+            // After a complete atom (metric, `)`, `%`, a unit): a comparison
+            // operator or a connective can follow; only the connectives are
+            // completable names.
+            _ => Slot::Connective,
         },
         Token::Table => match prev {
             // A column name at the start or after a comma.
             Some(Token::Table | Token::Comma) => Slot::Column,
             _ => Slot::None,
         },
-        // window N, and the display modes, take nothing after them.
+        Token::Window => match prev {
+            // `window 15 ` - the count may carry a duration unit.
+            Some(Token::Number) => Slot::Unit,
+            _ => Slot::None,
+        },
+        // The display modes take nothing after them.
         _ => Slot::None,
     }
 }
@@ -525,7 +659,7 @@ fn by_name() -> &'static HashMap<&'static str, Vec<Construct>> {
     MAP.get_or_init(|| {
         let mut map: HashMap<&'static str, Vec<Construct>> = HashMap::new();
         for c in catalog() {
-            map.entry(c.name).or_default().push(c);
+            map.entry(c.name).or_default().push(*c);
         }
         map
     })
@@ -535,10 +669,24 @@ fn by_name() -> &'static HashMap<&'static str, Vec<Construct>> {
 mod tests {
     use super::*;
 
-    /// The candidate names at the end of `src` (cursor at the last char of
-    /// the marker `|` removed - here we just use src.len()).
+    /// The candidate names at `cursor`, typed automatically with an empty
+    /// channel schema - the common case for the construct-path tests.
     fn names_at(src: &str, cursor: usize) -> Vec<&'static str> {
-        completions_at(src, cursor)
+        completions_with(
+            src,
+            cursor,
+            &ChannelSchema::new(),
+            CompletionTrigger::Automatic,
+        )
+    }
+
+    fn completions_with(
+        src: &str,
+        cursor: usize,
+        schema: &ChannelSchema,
+        trigger: CompletionTrigger,
+    ) -> Vec<&'static str> {
+        completions_at(src, cursor, schema, trigger)
             .items
             .iter()
             .map(|c| c.name)
@@ -550,9 +698,30 @@ mod tests {
     }
 
     #[test]
-    fn source_at_the_start() {
-        assert_eq!(names(""), vec!["points"]);
+    fn source_waits_for_a_typed_character() {
+        // An empty editor (or the blank line after a query) stays quiet: the
+        // popup must not assert `points` before anything is typed - a channel
+        // source is an equally valid start.
+        assert!(names("").is_empty());
         assert_eq!(names("po"), vec!["points"]);
+    }
+
+    #[test]
+    fn manual_trigger_offers_at_an_empty_prefix() {
+        // Ctrl+Space is explicit intent, so the empty-prefix wait does not
+        // apply: the source slot offers `points` on request.
+        let manual = completions_with("", 0, &ChannelSchema::new(), CompletionTrigger::Manual);
+        assert_eq!(manual, vec!["points"]);
+        // A stage position offers the stage keywords and display modes.
+        let src = "points | ";
+        let stage = completions_with(
+            src,
+            src.len(),
+            &ChannelSchema::new(),
+            CompletionTrigger::Manual,
+        );
+        assert!(stage.contains(&"where"));
+        assert!(stage.contains(&"draw"));
     }
 
     #[test]
@@ -682,23 +851,101 @@ mod tests {
 
     #[test]
     fn columns_in_table() {
-        let items = names("points | where velocity > 30 km/h | table ");
+        // `table ` must not dump every metric unprompted - the popup waits
+        // for the first character, then offers only metrics.
+        assert!(names("points | where velocity > 30 km/h | table ").is_empty());
+        let items = names("points | where velocity > 30 km/h | table v");
         assert!(items.contains(&"velocity"));
-        assert!(items.contains(&"time"));
-        let after_comma = names("points | where velocity > 30 km/h | table time, ");
+        assert!(
+            !items.contains(&"avg"),
+            "columns are metrics, not functions"
+        );
+        let after_comma = names("points | where velocity > 30 km/h | table time, h");
         assert!(after_comma.contains(&"heading"));
     }
 
     #[test]
-    fn nothing_after_display_modes_or_window_count() {
+    fn nothing_after_display_modes() {
         assert!(names("points | draw ").is_empty());
-        assert!(names("points | window 10 ").is_empty());
+    }
+
+    #[test]
+    fn duration_units_after_a_window_count() {
+        // `window 15 s` is valid grammar, so the count position offers the
+        // duration units - and only those.
+        let items = names("points | window 15 ");
+        assert!(items.contains(&"s"));
+        assert!(items.contains(&"min"));
+        assert!(!items.contains(&"km/h"));
+        assert!(!items.contains(&"deg"));
+    }
+
+    #[test]
+    fn connectives_complete_after_an_atom() {
+        // After a complete comparison, a typed character offers the joining
+        // connectives - but nothing pops eagerly, and `not` (which starts an
+        // atom rather than joining two) is not offered there.
+        assert!(names("points | where velocity > 30 km/h ").is_empty());
+        assert_eq!(names("points | where velocity > 30 km/h a"), vec!["and"]);
+        assert_eq!(names("points | where velocity > 30 km/h o"), vec!["or"]);
+        assert!(!names("points | where velocity > 30 km/h n").contains(&"not"));
+        // At the start of an atom `not` is offered alongside value names.
+        assert!(names("points | where velocity > 30 km/h and no").contains(&"not"));
+    }
+
+    #[test]
+    fn channels_type_the_unit_slot_through_the_schema() {
+        // `@accel` is m/s2 in the schema, so the unit offered after a
+        // comparison against it is an acceleration - never a speed.
+        let src = "points | where @accel > 1 ";
+        let items = completions_with(
+            src,
+            src.len(),
+            &channel_schema(),
+            CompletionTrigger::Automatic,
+        );
+        assert!(items.contains(&"m/s2"));
+        assert!(items.contains(&"g"));
+        assert!(!items.contains(&"km/h"));
+    }
+
+    #[test]
+    fn arithmetic_between_metrics_gives_up_instead_of_guessing() {
+        // `velocity / eph` is dimensionless; suggesting length units (from
+        // `eph`) would be wrong, so nothing pops eagerly...
+        assert!(names("points | where velocity / eph > 3 ").is_empty());
+        // ...while a typed prefix still completes over the full unit set (the
+        // honest fallback when the quantity is unknown).
+        let typed = names("points | where velocity / eph > 3 k");
+        assert!(typed.contains(&"km/h"));
+        assert!(typed.contains(&"km"));
+    }
+
+    #[test]
+    fn a_leading_literal_offers_no_eager_units() {
+        // `where 30 ` (intending `30 km/h < velocity`) has nothing to type the
+        // literal yet - offering every unit would be noise.
+        assert!(names("points | where 30 ").is_empty());
+    }
+
+    #[test]
+    fn compact_typing_completes_after_operators_and_digits() {
+        // No spaces anywhere: the metric after `(`, the unit after the digit.
+        assert!(names("points | where eph>2k").contains(&"km"));
+        assert!(names("points | where avg(velocity)>3 k").contains(&"km/h"));
+        // A name right after a comparison operator completes too.
+        assert!(names("points | where eph>vel").contains(&"velocity"));
     }
 
     #[test]
     fn replace_range_covers_the_partial_word() {
         // "vel" starts at byte 15 in "points | where vel".
-        let completions = completions_at("points | where vel", 18);
+        let completions = completions_at(
+            "points | where vel",
+            18,
+            &ChannelSchema::new(),
+            CompletionTrigger::Automatic,
+        );
         assert_eq!(completions.range, 15..18);
         assert_eq!(completions.items.first().map(|c| c.name), Some("velocity"));
     }
@@ -849,6 +1096,32 @@ mod tests {
     }
 
     #[test]
+    fn no_channel_completion_inside_a_comment() {
+        // A `@` in a comment is prose, not a reference being typed.
+        for src in ["# see @", "points | draw # ping @a"] {
+            assert!(
+                channel_completions_at(src, src.len(), &channel_schema()).is_none(),
+                "no channel popup in {src:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_channel_completion_where_a_channel_cannot_go() {
+        // Accepting a channel at a stage keyword, a `table` column, or a
+        // `with` parameter would insert an immediate parse error.
+        for src in ["points | @", "points | table @", "points | with mask @"] {
+            assert!(
+                channel_completions_at(src, src.len(), &channel_schema()).is_none(),
+                "no channel popup in {src:?}"
+            );
+        }
+        // Value positions still offer on the sigil.
+        let value = "points | where @";
+        assert!(channel_completions_at(value, value.len(), &channel_schema()).is_some());
+    }
+
+    #[test]
     fn channel_hover_describes_the_dimension() {
         let src = "points | window 3 | where max(@accel) > 1 g";
         let inside = src.find("@accel").expect("has @accel") + 2;
@@ -892,6 +1165,7 @@ mod tests {
         use proptest::prelude::*;
 
         use super::channel_schema;
+        use crate::position::CompletionTrigger;
         use crate::{channel_at, channel_completions_at, completions_at, construct_at, lexer};
 
         proptest! {
@@ -902,7 +1176,8 @@ mod tests {
             fn never_panics(src in ".*", cursor in 0usize..256) {
                 let schema = channel_schema();
                 let _ = lexer::tokenize(&src);
-                let _ = completions_at(&src, cursor);
+                let _ = completions_at(&src, cursor, &schema, CompletionTrigger::Automatic);
+                let _ = completions_at(&src, cursor, &schema, CompletionTrigger::Manual);
                 let _ = construct_at(&src, cursor);
                 let _ = channel_completions_at(&src, cursor, &schema);
                 let _ = channel_at(&src, cursor, &schema);
