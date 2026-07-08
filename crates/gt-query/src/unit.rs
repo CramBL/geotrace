@@ -156,6 +156,23 @@ impl Unit {
             _ => None,
         }
     }
+
+    /// A unit from a producer's free-form unit label, as carried by a channel's
+    /// metadata: a single identifier (`g`, `deg`), `%`, or a compound slash
+    /// form (`km/h`, `m/s2`, `km/h/s`). The `per …` rate spellings are query
+    /// syntax, not labels, and are not accepted here.
+    pub fn from_label(label: &str) -> Option<Unit> {
+        if label == "%" {
+            return Some(Unit::Percent);
+        }
+        let parts: Vec<&str> = label.split('/').collect();
+        match parts.as_slice() {
+            [a] => Unit::from_ident(a),
+            [a, b] => Unit::from_pair(a, b),
+            [a, b, c] => Unit::from_triple(a, b, c),
+            _ => None,
+        }
+    }
 }
 
 /// Example literal used in "needs a unit" error help, per quantity.

@@ -23,9 +23,9 @@ use crate::unit::{Unit, example_literal, unit_list};
 /// reference to it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChannelInfo {
-    /// Unit as written by the producer (`"g"`, `"deg"`), or `None`. Resolved to
-    /// a dimension via [`Unit::from_ident`]; an unrecognised unit is treated as
-    /// a bare number.
+    /// Unit as written by the producer (`"g"`, `"m/s2"`), or `None`. Resolved
+    /// to a dimension via [`Unit::from_label`]; an unrecognised unit is
+    /// treated as a bare number.
     pub unit: Option<String>,
     /// Wrap period in degrees for an angular channel, or `None` for a linear
     /// value. A present period marks the channel circular (a direction).
@@ -51,6 +51,11 @@ impl ChannelSchema {
     /// earlier one.
     pub fn insert(&mut self, name: impl Into<String>, info: ChannelInfo) {
         self.channels.insert(name.into(), info);
+    }
+
+    /// Whether the schema holds no channels at all (nothing is loaded).
+    pub fn is_empty(&self) -> bool {
+        self.channels.is_empty()
     }
 
     /// The info for `name`, if the schema knows it.
@@ -446,7 +451,7 @@ fn channel_value_type(info: &ChannelInfo) -> ValueType {
     let Some(quantity) = info
         .unit
         .as_deref()
-        .and_then(Unit::from_ident)
+        .and_then(Unit::from_label)
         .map(Unit::quantity)
     else {
         return ValueType::Dimensionless(Kind::Number);

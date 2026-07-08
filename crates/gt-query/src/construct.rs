@@ -11,6 +11,8 @@
 //! `ParamName`, gt_types::DisplayMode) so a new variant cannot ship without
 //! a catalog entry (enforced by `catalog_is_exhaustive`).
 
+use std::sync::OnceLock;
+
 use gt_types::DisplayMode;
 use strum::IntoEnumIterator as _;
 
@@ -35,6 +37,8 @@ pub enum ConstructKind {
     Unit,
     /// A `with` parameter (`mask`, `snr_drop`, `slip_window`).
     Param,
+    /// A logical connective in a `where` condition (`and`, `or`, `not`).
+    Connective,
 }
 
 impl ConstructKind {
@@ -48,6 +52,7 @@ impl ConstructKind {
             ConstructKind::Metric => "metric",
             ConstructKind::Unit => "unit",
             ConstructKind::Param => "parameter",
+            ConstructKind::Connective => "connective",
         }
     }
 }
@@ -68,23 +73,28 @@ pub struct Construct {
 }
 
 /// Every construct in the language, in a stable order (sources, stages,
-/// modes, functions, metrics, units, parameters).
-pub fn catalog() -> Vec<Construct> {
-    let mut out = vec![Construct {
-        name: "points",
-        kind: ConstructKind::Source,
-        summary: "the loaded track points",
-        doc: "The data a query reads: the points of every visible track, \
-              after the global filter. Every query starts with `points`.",
-        examples: &["points | where velocity > 30 km/h"],
-    }];
-    out.extend(STAGES.iter().copied());
-    out.extend(DisplayMode::iter().map(mode_construct));
-    out.extend(Func::iter().map(func_construct));
-    out.extend(QueryMetric::iter().map(metric_construct));
-    out.extend(Unit::iter().map(unit_construct));
-    out.extend(ParamName::iter().map(param_construct));
-    out
+/// modes, connectives, functions, metrics, units, parameters). Built once and
+/// cached: completion runs per keystroke and must not re-allocate the catalog.
+pub fn catalog() -> &'static [Construct] {
+    static CATALOG: OnceLock<Vec<Construct>> = OnceLock::new();
+    CATALOG.get_or_init(|| {
+        let mut out = vec![Construct {
+            name: "points",
+            kind: ConstructKind::Source,
+            summary: "the loaded track points",
+            doc: "The data a query reads: the points of every visible track, \
+                  after the global filter. Every query starts with `points`.",
+            examples: &["points | where velocity > 30 km/h"],
+        }];
+        out.extend(STAGES.iter().copied());
+        out.extend(DisplayMode::iter().map(mode_construct));
+        out.extend(CONNECTIVES.iter().copied());
+        out.extend(Func::iter().map(func_construct));
+        out.extend(QueryMetric::iter().map(metric_construct));
+        out.extend(Unit::iter().map(unit_construct));
+        out.extend(ParamName::iter().map(param_construct));
+        out
+    })
 }
 
 /// The pipeline stage keywords (the display modes are catalogued separately
@@ -124,6 +134,35 @@ const STAGES: &[Construct] = &[
               table. `time` is always the first column. Without it, the \
               table shows every metric the query referenced.",
         examples: &["points | where velocity > 30 km/h | table time, velocity, heading"],
+    },
+];
+
+/// The logical connectives of a `where` condition. Keywords rather than enum
+/// variants, so they are catalogued by hand like the stages.
+const CONNECTIVES: &[Construct] = &[
+    Construct {
+        name: "and",
+        kind: ConstructKind::Connective,
+        summary: "both conditions must hold",
+        doc: "Joins two conditions; a point (or window) matches only when \
+              both sides do. Binds tighter than `or`.",
+        examples: &["points | where eph > 20 m and velocity > 5 km/h"],
+    },
+    Construct {
+        name: "or",
+        kind: ConstructKind::Connective,
+        summary: "either condition may hold",
+        doc: "Joins two conditions; a point (or window) matches when either \
+              side does. `and` binds tighter; parenthesize to override.",
+        examples: &["points | where velocity < 2 km/h or eph > 50 m"],
+    },
+    Construct {
+        name: "not",
+        kind: ConstructKind::Connective,
+        summary: "invert a condition",
+        doc: "Matches where the condition does not. Applies to the next \
+              atom; parenthesize a compound condition to negate all of it.",
+        examples: &["points | where not (velocity > 5 km/h and eph < 10 m)"],
     },
 ];
 
@@ -417,9 +456,11 @@ mod tests {
     #[test]
     fn catalog_is_exhaustive() {
         let entries = catalog();
-        // 1 source + stages + every mode/func/metric/unit/param variant.
+        // 1 source + stages + connectives + every mode/func/metric/unit/param
+        // variant.
         let expected = 1
             + STAGES.len()
+            + CONNECTIVES.len()
             + DisplayMode::COUNT
             + Func::COUNT
             + QueryMetric::COUNT

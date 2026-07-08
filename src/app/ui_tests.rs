@@ -1048,6 +1048,246 @@ fn autocomplete_esc_dismisses_without_editing() {
     assert!(window.open, "Esc dismisses the popup, not the window");
 }
 
+/// The blank line after a query stays quiet - no `points` popup before a
+/// character is typed - and continuation typing (`| …`) is analyzed in the
+/// context of the chunk above, not as a fresh query.
+#[test]
+fn no_popup_on_the_blank_line_after_a_query() {
+    let mut harness = editor_with_popup("points\n");
+    assert!(
+        harness.state().query_window.autocomplete_names().is_empty(),
+        "the empty line after a query must not pop `points`"
+    );
+
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("| d".to_owned()));
+    harness.run_steps(3);
+    let names = harness.state().query_window.autocomplete_names();
+    assert!(
+        names.iter().any(|n| n == "draw"),
+        "continuation typing completes stage keywords in context: {names:?}"
+    );
+}
+
+/// An eagerly opened empty-prefix popup (units after a number) is passive:
+/// Enter still breaks the line instead of inserting a unit.
+#[test]
+fn passive_unit_popup_lets_enter_break_the_line() {
+    let mut harness = editor_with_popup("points | where velocity > 30");
+    let names = harness.state().query_window.autocomplete_names();
+    assert_eq!(
+        names.first().map(String::as_str),
+        Some("km/h"),
+        "the unit popup is open on the empty prefix: {names:?}"
+    );
+
+    harness.input_mut().events.push(key_press(egui::Key::Enter));
+    harness.run_steps(2);
+    assert_eq!(
+        harness.state().query_window.text(),
+        "points | where velocity > 30\n",
+        "Enter breaks the line; the passive popup does not claim it"
+    );
+}
+
+/// Tab accepts even a passive popup, and a unit accepted directly after a
+/// digit gets its separating space.
+#[test]
+fn tab_accepts_a_passive_unit_with_a_separating_space() {
+    let mut harness = editor_with_popup("points | where velocity > 30");
+    harness.input_mut().events.push(key_press(egui::Key::Tab));
+    harness.run_steps(2);
+    assert_eq!(
+        harness.state().query_window.text(),
+        "points | where velocity > 30 km/h"
+    );
+}
+
+/// Accepting a function inserts its parentheses with the caret inside them.
+#[test]
+fn accepting_a_function_inserts_parentheses() {
+    let mut harness = editor_with_popup("points | window 3 | where av");
+    harness.input_mut().events.push(key_press(egui::Key::Enter));
+    harness.run_steps(2);
+    assert_eq!(
+        harness.state().query_window.text(),
+        "points | window 3 | where avg()"
+    );
+    // Typing lands inside the parentheses.
+    harness
+        .input_mut()
+        .events
+        .push(egui::Event::Text("velocity".to_owned()));
+    harness.run_steps(2);
+    assert_eq!(
+        harness.state().query_window.text(),
+        "points | window 3 | where avg(velocity)"
+    );
+}
+
+/// Ctrl+Space opens the popup on demand where the automatic path waits for a
+/// typed character.
+#[test]
+fn ctrl_space_opens_the_popup_manually() {
+    let mut harness = editor_with_popup("points | ");
+    assert!(
+        harness.state().query_window.autocomplete_names().is_empty(),
+        "a stage position waits for the first character"
+    );
+
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    });
+    harness.run_steps(3);
+    let names = harness.state().query_window.autocomplete_names();
+    assert!(
+        names.iter().any(|n| n == "where"),
+        "Ctrl+Space offers the stage keywords: {names:?}"
+    );
+}
+
+/// With the editor focused, Esc first unfocuses it; only a second Esc closes
+/// the query window.
+#[test]
+fn esc_unfocuses_the_editor_before_closing_the_window() {
+    let mut harness = editor_with_popup("points | draw");
+    assert!(
+        harness.state().query_window.autocomplete_names().is_empty(),
+        "nothing completes after a display mode"
+    );
+
+    harness
+        .input_mut()
+        .events
+        .push(key_press(egui::Key::Escape));
+    harness.run_steps(2);
+    assert!(
+        harness.state().query_window.open,
+        "the first Esc only unfocuses the editor"
+    );
+
+    harness
+        .input_mut()
+        .events
+        .push(key_press(egui::Key::Escape));
+    harness.run_steps(2);
+    assert!(
+        !harness.state().query_window.open,
+        "the second Esc closes the window"
+    );
+}
+
+/// A standalone comment paragraph between queries is skipped, so it neither
+/// errors nor blocks running the real query.
+#[test]
+fn comment_only_chunk_does_not_block_run() {
+    let mut harness = app_with_query_window_open();
+    run_query(
+        &mut harness,
+        "# scratch note between queries\n\npoints | where velocity > 1 km/h",
+    );
+    assert!(
+        harness.state().query_window.matches().is_some(),
+        "the comment paragraph must not disable Run"
+    );
+}
+
+/// A loaded file carrying one scalar channel (no points), for driving the `@`
+/// completion path through the app: `schema_from_files` builds the schema the
+/// popup offers from.
+fn push_file_with_channel(harness: &mut Harness<App>, name: &str, unit: &str) {
+    use gt_types::{
+        Channel, FileMetadata, FileSource, LoadedFile, LoadedTrack, TrackLod, TrackMetadata,
+    };
+    let channel = Channel {
+        name: name.to_owned(),
+        unit: Some(unit.to_owned()),
+        period: None,
+        description: None,
+        components: vec![],
+        times: vec![],
+        values: vec![],
+    };
+    let file = LoadedFile {
+        metadata: FileMetadata::default(),
+        tracks: vec![LoadedTrack {
+            metadata: TrackMetadata::default(),
+            points: vec![],
+            lod: TrackLod::default(),
+            custom_markers: vec![],
+            generated_markers: vec![],
+            event_markers: vec![],
+            channels: vec![channel],
+        }],
+        event_marker_styles: std::collections::HashMap::new(),
+        orphaned_event_markers: vec![],
+        source: FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),
+        load_warnings: vec![],
+    };
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .loaded_files
+        .push(file, gt_loaded_files::FileHistory::None);
+    harness.step();
+}
+
+/// The `@` channel popup, driven through the whole app path: the loaded file's
+/// channel reaches the schema, the popup offers it, and accepting inserts the
+/// `@name` reference.
+#[test]
+fn channel_popup_offers_and_inserts_a_loaded_channel() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    push_file_with_channel(&mut harness, "accel", "g");
+    {
+        let app = harness.state_mut();
+        app.query_window.open = true;
+        app.query_window.set_text("@ac".to_owned());
+    }
+    harness.run_steps(2);
+    focus_query_editor_at_end(&harness, "@ac");
+    harness.run_steps(3);
+
+    assert_eq!(
+        harness.state().query_window.autocomplete_names(),
+        vec!["@accel".to_owned()],
+        "the loaded channel is offered for the typed sigil"
+    );
+    harness.input_mut().events.push(key_press(egui::Key::Enter));
+    harness.run_steps(2);
+    assert_eq!(harness.state().query_window.text(), "@accel");
+}
+
+/// A channel-source query mixed with a points query cannot run; the editor
+/// says why instead of leaving a silently dead Run button.
+#[test]
+fn mixed_channel_queries_explain_why_run_is_disabled() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    push_file_with_channel(&mut harness, "accel", "g");
+    {
+        let app = harness.state_mut();
+        app.query_window.open = true;
+        app.query_window
+            .set_text("points | where velocity > 1 km/h\n\n@accel | where @accel > 1 g".to_owned());
+    }
+    harness.run_steps(3);
+
+    harness.get_by_label_contains("must be the only query in the editor");
+}
+
 /// Clicking a popup row accepts that candidate (the deferred click path, not
 /// the keyboard path).
 #[test]
@@ -1178,7 +1418,9 @@ fn snapshot_query_hover_docs() {
     let hover = egui::pos2(rect.left() + 96.0, rect.top() + 10.0);
     harness.inner.run_steps(2);
     harness.inner.hover_at(hover);
-    harness.inner.run_steps(3);
+    // The hover doc appears only after the pointer has rested; step past the
+    // delay (steps advance the mock clock a frame at a time).
+    harness.inner.run_steps(40);
 
     harness.snapshot("query_hover_docs");
 }

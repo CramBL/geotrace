@@ -19,9 +19,9 @@ use gt_filter::GlobalFilter;
 use gt_loaded_files::LoadedFilesView;
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{
-    ChannelInfo, ChannelSamples, ChannelSchema, ChannelTimeline, CheckedQuery, Construct,
-    ConstructKind, Diagnostic, MetricProvider, PipelineOutput, Quantity, QueryMetric, RunSummary,
-    Span, TrackInput, TrackMatches, Unit,
+    ChannelInfo, ChannelSamples, ChannelSchema, ChannelTimeline, CheckedQuery, CompletionTrigger,
+    Construct, ConstructKind, Diagnostic, MetricProvider, PipelineOutput, Quantity, QueryMetric,
+    RunSummary, Span, TrackInput, TrackMatches, Unit,
 };
 use gt_types::satellites::Constellation;
 use gt_types::{Channel, DisplayMode, FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
@@ -59,6 +59,17 @@ pub(crate) const EDITOR_ID_SALT: &str = "query_editor";
 /// Candidate rows the autocomplete popup shows before it scrolls. A footer
 /// notes how many more there are.
 const AUTOCOMPLETE_VISIBLE_ROWS: usize = 5;
+
+/// Seconds the pointer must rest before the editor hover doc appears, so the
+/// tooltip does not flicker over every token the pointer crosses.
+const HOVER_DOC_DELAY_SECS: f32 = 0.4;
+
+/// Seconds after the last keystroke before the caret chunk's diagnostic shows.
+/// A query is structurally broken for most of the time it is being typed
+/// (`points |` until the keyword lands); flashing red on every keystroke reads
+/// as noise, so the chunk under the caret gets this grace period. Errors in
+/// other chunks (and the disabled Run button) are immediate.
+const DIAGNOSTIC_IDLE_SECS: f64 = 0.6;
 
 /// A built-in query offered in the examples list.
 struct QueryExample {
@@ -127,8 +138,20 @@ pub struct QueryWindow {
     /// compares a flat snapshot and cannot see into a growing `Vec`) notices
     /// and flushes.
     history_revision: u64,
-    /// The editor's autocomplete popup, recomputed each frame from the caret.
+    /// The editor's autocomplete popup, recomputed from the caret when the
+    /// text, schema, or caret changed.
     autocomplete: Autocomplete,
+    /// Bumped whenever the checked text or schema changes; keys the
+    /// autocomplete memo so candidates are not recomputed every repaint.
+    assist_revision: u64,
+    /// `ui.input(..).time` of the last text edit, for the diagnostic grace
+    /// period on the chunk being typed in.
+    last_edit_time: Option<f64>,
+    /// Whether the editor had keyboard focus last frame. Read (not the live
+    /// value) by the window's Escape handling: egui surrenders focus on Escape
+    /// before the editor renders, so the live value is already false on the
+    /// very frame the Escape should only unfocus, not close.
+    editor_had_focus: bool,
 }
 
 /// One completion offered in the popup: a language construct or a loaded
@@ -136,21 +159,43 @@ pub struct QueryWindow {
 /// and insert the same way, so the popup holds one type for both.
 #[derive(Clone)]
 struct Candidate {
-    /// The text inserted when accepted (`velocity`, `@accel`).
+    /// The name shown in the popup and inserted when accepted (`velocity`,
+    /// `@accel`).
     insert: String,
     /// The dimmed one-line summary shown beside the name.
     summary: String,
-    /// Whether accepting adds a trailing space (stages, params, the source do;
-    /// metrics and channels do not).
-    trailing_space: bool,
+    /// Appended after `insert` on acceptance: a trailing space where something
+    /// always follows (stages, params, the source, connectives), `()` for a
+    /// function.
+    suffix: &'static str,
+    /// Bytes the caret steps back into the suffix, so accepting `avg` lands
+    /// the caret inside the inserted `()`.
+    caret_back: usize,
+    /// Whether a separating space is inserted when the replaced range starts
+    /// directly after a digit: accepting a unit at the caret in `30` writes
+    /// `30 km/h`, the way every example and doc spells it.
+    pad_after_digit: bool,
 }
 
 impl Candidate {
-    fn from_construct(construct: Construct) -> Self {
+    fn from_construct(construct: &Construct) -> Self {
+        let (suffix, caret_back) = match construct.kind {
+            ConstructKind::Function => ("()", 1),
+            // Something always follows these; land the caret past a space.
+            ConstructKind::Source
+            | ConstructKind::Stage
+            | ConstructKind::Param
+            | ConstructKind::Connective => (" ", 0),
+            // A metric leads into an operator, a unit into `|` or a
+            // connective, a mode into nothing - no suffix.
+            ConstructKind::Mode | ConstructKind::Metric | ConstructKind::Unit => ("", 0),
+        };
         Self {
             insert: construct.name.to_owned(),
             summary: construct.summary.to_owned(),
-            trailing_space: inserts_trailing_space(construct.kind),
+            suffix,
+            caret_back,
+            pad_after_digit: construct.kind == ConstructKind::Unit,
         }
     }
 
@@ -158,7 +203,9 @@ impl Candidate {
         Self {
             insert: format!("@{}", channel.name),
             summary: channel.summary,
-            trailing_space: false,
+            suffix: "",
+            caret_back: 0,
+            pad_after_digit: false,
         }
     }
 }
@@ -172,10 +219,16 @@ enum HoverDoc {
 
 /// The editor's autocomplete popup state.
 ///
-/// Recomputed each frame from the caret by [`QueryWindow::update_autocomplete`]
-/// and drawn under the caret. Its key handling runs at the *start* of the next
-/// frame ([`QueryWindow::apply_autocomplete_input`]) so it can claim
-/// Enter/Tab/arrows before the text editor consumes them.
+/// Recomputed from the caret by [`QueryWindow::update_autocomplete`] and drawn
+/// under the caret. Its key handling runs at the *start* of the next frame
+/// ([`QueryWindow::apply_autocomplete_input`]) so it can claim keys before the
+/// text editor consumes them.
+///
+/// The popup claims keys in two grades. *Active* - the user typed a prefix or
+/// requested completion (Ctrl+Space) - claims Enter, Tab, and the arrow keys.
+/// *Passive* - an eager empty-prefix offer, like the units after a number -
+/// claims only Tab (accept) and Esc (dismiss), so Enter still breaks the line
+/// and the arrows still move the caret through a multi-line query.
 #[derive(Default)]
 struct Autocomplete {
     /// Candidates for the caret as of the last frame, best first. Empty when
@@ -183,14 +236,33 @@ struct Autocomplete {
     items: Vec<Candidate>,
     /// Byte range of the partial word an accepted candidate replaces.
     range: Range<usize>,
+    /// The text under `range` when the candidates were computed. Acceptance
+    /// re-validates it, so a same-frame edit (key repeat, paste) can never
+    /// splice a candidate over the wrong span.
+    word: String,
+    /// Whether the popup claims Enter and the arrow keys (see type docs).
+    active: bool,
     /// The highlighted row.
     selected: usize,
     /// Screen position for the popup (just below the caret), cached so the
     /// popup can still be drawn on the frame a click steals the editor's focus.
     caret_pos: egui::Pos2,
-    /// The text at which Esc dismissed the popup; it stays closed until the
-    /// text changes again.
-    dismissed_text: Option<String>,
+    /// The caret's top edge, for flipping the popup above the caret when there
+    /// is no room below.
+    caret_top: egui::Pos2,
+    /// Byte position (`range.start`) at which Esc dismissed the popup: it
+    /// stays closed while completing the same word and re-arms when the caret
+    /// moves on to another one.
+    dismissed_at: Option<usize>,
+    /// Set by Ctrl+Space; the next recompute runs with the manual trigger,
+    /// which offers candidates even on an empty prefix.
+    manual_request: bool,
+    /// A non-interactive explanation row shown instead of candidates (typing
+    /// `@` with no channels loaded).
+    notice: Option<&'static str>,
+    /// Memo key of the last candidate computation: the window's assist
+    /// revision and the caret byte. Unchanged key, unchanged candidates.
+    computed_for: Option<(u64, usize)>,
     /// Whether the popup was drawn last frame. Key handling keys off this
     /// rather than live focus: egui surrenders a widget's focus on Escape (and
     /// on a click into the popup) *before* the editor renders, so live focus
@@ -353,6 +425,9 @@ impl QueryWindow {
             history: Vec::new(),
             history_revision: 0,
             autocomplete: Autocomplete::default(),
+            assist_revision: 0,
+            last_edit_time: None,
+            editor_had_focus: false,
         }
     }
 
@@ -396,21 +471,30 @@ impl QueryWindow {
         }
     }
 
-    /// The first query that failed to check, with its diagnostic and the byte
-    /// offset of its chunk (to map spans back to editor coordinates).
-    fn first_error(&self) -> Option<(&Diagnostic, usize)> {
+    /// The editor-coordinate span of each channel-source chunk's `@name`
+    /// source token, for the mixed-channel underline.
+    fn channel_source_spans(&self) -> Vec<Span> {
         self.chunks
             .iter()
-            .find_map(|c| c.result.as_ref().err().map(|d| (d, c.range.start)))
+            .filter(|c| c.result.as_ref().is_ok_and(CheckedQuery::is_channel_source))
+            .filter_map(|c| {
+                let src = self.text.get(c.range.clone())?;
+                let first = lexer::tokenize(src).into_iter().next()?;
+                Some(Span::new(
+                    first.span.start + c.range.start,
+                    first.span.end + c.range.start,
+                ))
+            })
+            .collect()
     }
 
-    /// The checked query the caret sits in, and the caret's offset within that
-    /// chunk - for autocomplete and hover, which analyze one query at a time.
-    fn chunk_at(&self, byte: usize) -> Option<(&Chunk, usize)> {
-        self.chunks
-            .iter()
-            .find(|c| c.range.start <= byte && byte <= c.range.end)
-            .map(|c| (c, byte - c.range.start))
+    /// The byte offset of the editor caret, from the text edit's stored state.
+    /// Zero before the editor has ever been focused.
+    fn caret_byte(&self, ctx: &egui::Context, editor_id: egui::Id) -> usize {
+        let caret_char = egui::TextEdit::load_state(ctx, editor_id)
+            .and_then(|state| state.cursor.char_range())
+            .map_or(0, |range| range.primary.index);
+        char_to_byte(&self.text, caret_char)
     }
 
     /// Drop the last run's results so the map returns to normal, abandoning any
@@ -528,6 +612,10 @@ impl QueryWindow {
         // The channels the editor checks `@name` against, gathered across every
         // loaded track.
         let schema = schema_from_files(files);
+        // Whether the editor held focus at the start of this frame (egui drops
+        // focus on Escape before any widget runs, so the field - updated
+        // inside `editor_ui` - must be read before the window renders).
+        let editor_was_focused = self.editor_had_focus;
         let mut open = self.open;
         egui::Window::new("Query")
             .open(&mut open)
@@ -543,8 +631,16 @@ impl QueryWindow {
                 self.history_examples_ui(ui);
             });
 
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        // Esc closes the window - but not out from under someone typing: with
+        // the editor focused, the first Esc only unfocuses it (the completion
+        // popup, when open, consumes its own Esc before this).
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            && !editor_was_focused
+        {
             open = false;
+        }
+        if !open {
+            self.editor_had_focus = false;
         }
         self.open = open;
 
@@ -719,22 +815,64 @@ impl QueryWindow {
 
     fn editor_ui(&mut self, ui: &mut egui::Ui, schema: &ChannelSchema) {
         let editor_id = egui::Id::new(EDITOR_ID_SALT);
-        // Runs before the editor so the open popup can claim Enter/Tab/arrows,
-        // and may edit the text (accepting a candidate) - so re-check after.
+        // Runs before the editor so the open popup can claim its keys, and may
+        // edit the text (accepting a candidate) - so re-check after.
         self.apply_autocomplete_input(ui, editor_id);
 
-        if self.checked_text != self.text || self.checked_schema != *schema {
+        let text_changed = self.checked_text != self.text;
+        if text_changed || self.checked_schema != *schema {
             self.chunks = check_all(&self.text, schema);
             self.checked_text = self.text.clone();
             self.checked_schema = schema.clone();
+            self.assist_revision += 1;
+            if text_changed {
+                self.last_edit_time = Some(ui.input(|i| i.time));
+            }
         }
-        // Underline the first error, mapped from its chunk to editor bytes.
-        let diagnostic_span = self
-            .first_error()
-            .map(|(d, offset)| Span::new(d.span.start + offset, d.span.end + offset));
+
+        // Every failed chunk surfaces: each gets an underline and a message
+        // line, so an error in query 3 is never hidden behind one in query 1.
+        // The chunk being typed in gets a grace period instead of flashing
+        // red under every keystroke.
+        let now = ui.input(|i| i.time);
+        let in_grace = self.editor_had_focus
+            && self
+                .last_edit_time
+                .is_some_and(|at| now - at < DIAGNOSTIC_IDLE_SECS);
+        let caret_byte = self.caret_byte(ui.ctx(), editor_id);
+        let mut errors: Vec<Diagnostic> = Vec::new();
+        let mut underlines: Vec<Span> = Vec::new();
+        let mut suppressed = false;
+        for chunk in &self.chunks {
+            let Err(diagnostic) = &chunk.result else {
+                continue;
+            };
+            if in_grace && chunk.range.start <= caret_byte && caret_byte <= chunk.range.end {
+                suppressed = true;
+                continue;
+            }
+            errors.push(diagnostic.clone());
+            underlines.push(Span::new(
+                diagnostic.span.start + chunk.range.start,
+                diagnostic.span.end + chunk.range.start,
+            ));
+        }
+        if suppressed {
+            // Repaint when the grace period lapses so the error appears
+            // without further input.
+            ui.ctx().request_repaint_after(Duration::from_millis(100));
+        }
+        // A channel source mixed with other queries cannot run even though
+        // every chunk checks green; surface it like a check error (underline
+        // the channel sources, message below) instead of leaving a dead Run
+        // button as the only clue.
+        let mixed = self.all_ok() && self.run_kind() == RunKind::MixedChannel;
+        if mixed {
+            underlines.extend(self.channel_source_spans());
+        }
 
         let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
-            let mut job = highlight_layout(ui, buf.as_str(), diagnostic_span);
+            let mut job = highlight_layout(ui, buf.as_str(), &underlines);
             job.wrap.max_width = wrap_width;
             ui.fonts_mut(|f| f.layout_job(job))
         };
@@ -746,13 +884,12 @@ impl QueryWindow {
             .hint_text("points | where velocity > 30 km/h")
             .layouter(&mut layouter)
             .show(ui);
+        self.editor_had_focus = output.response.has_focus();
 
         self.update_autocomplete(ui, editor_id, schema, &output);
         self.hover_docs(ui, schema, &output);
 
-        if let Some((diagnostic, _)) = self.first_error()
-            && !self.text.trim().is_empty()
-        {
+        for diagnostic in &errors {
             // The message shows in red with an error icon (the quoted token
             // lifts into the code font); the fix, carried in the structured
             // `help`, is a plain "Hint:" line below.
@@ -760,6 +897,12 @@ impl QueryWindow {
             if let Some(hint) = &diagnostic.help {
                 ui.label(format!("Hint: {hint}"));
             }
+        }
+        if mixed {
+            ui.label(error_message_layout(
+                ui,
+                "a channel-source query (`@name | \u{2026}`) must be the only query in the editor",
+            ));
         }
 
         ui.horizontal(|ui| {
@@ -769,6 +912,9 @@ impl QueryWindow {
             let runnable = all_ok && !in_flight && !mixed;
             let run = ui.add_enabled(runnable, egui::Button::new("Run"));
             let run = match (all_ok, in_flight, mixed) {
+                (false, _, _) if self.chunks.is_empty() => {
+                    run.on_disabled_hover_text("Type a query to run")
+                }
                 (false, _, _) => run.on_disabled_hover_text("Fix the error above to run"),
                 (_, _, true) => run.on_disabled_hover_text(
                     "A channel-source query must be the only query in the editor",
@@ -819,11 +965,25 @@ impl QueryWindow {
         });
     }
 
-    /// Handle keyboard acceptance of the autocomplete popup, using the
-    /// candidates computed last frame. Called before the editor renders so the
-    /// popup can consume Enter/Tab/arrows the text field would otherwise take.
-    /// (Mouse clicks are handled inline in `update_autocomplete`.)
+    /// Handle keyboard input for the autocomplete popup, using the candidates
+    /// computed last frame. Called before the editor renders so the popup can
+    /// consume keys the text field would otherwise take. (Mouse clicks are
+    /// handled inline in `update_autocomplete`.)
+    ///
+    /// A passive popup (empty prefix, opened eagerly) claims only Tab and Esc:
+    /// Enter must still break the line and the arrows must still move the
+    /// caret, or the popup hijacks ordinary editing. Typing a prefix or
+    /// pressing Ctrl+Space makes it active, claiming Enter and the arrows too.
     fn apply_autocomplete_input(&mut self, ui: &egui::Ui, editor_id: egui::Id) {
+        // Ctrl+Space (Cmd+Space on macOS) requests completion at the caret,
+        // the explicit counterpart to the automatic popup.
+        if self.editor_had_focus
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::Space))
+        {
+            self.autocomplete.manual_request = true;
+            self.autocomplete.dismissed_at = None;
+        }
+
         // Keyed off `shown` (last frame), not live focus, because egui
         // surrenders the editor's focus on Escape before this runs. Key state
         // is read inside `input_mut`, but the follow-up (focus, text edits)
@@ -832,30 +992,40 @@ impl QueryWindow {
         let mut dismissed = false;
         if self.autocomplete.shown && !self.autocomplete.items.is_empty() {
             let len = self.autocomplete.items.len();
+            let active = self.autocomplete.active;
             ui.input_mut(|input| {
-                if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
-                    self.autocomplete.selected = (self.autocomplete.selected + 1) % len;
-                }
-                if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
-                    self.autocomplete.selected = (self.autocomplete.selected + len - 1) % len;
+                if active {
+                    if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
+                        self.autocomplete.selected = (self.autocomplete.selected + 1) % len;
+                    }
+                    if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
+                        self.autocomplete.selected = (self.autocomplete.selected + len - 1) % len;
+                    }
                 }
                 if input.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
                     dismissed = true;
                     return;
                 }
-                // Enter and Tab both accept; Ctrl+Enter carries the COMMAND
-                // modifier, so it is left for the window's run shortcut.
-                if input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
-                    || input.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
+                // Tab always accepts; Enter only on an active popup. Ctrl+Enter
+                // carries the COMMAND modifier, so it is left for the window's
+                // run shortcut.
+                if input.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
+                    || (active && input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
                 {
                     accept = Some(self.autocomplete.selected);
                 }
             });
+        } else if self.autocomplete.shown && self.autocomplete.notice.is_some() {
+            // A notice-only popup has nothing to accept; Esc just closes it.
+            if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                dismissed = true;
+            }
         }
 
         if dismissed {
-            self.autocomplete.dismissed_text = Some(self.text.clone());
+            self.autocomplete.dismissed_at = Some(self.autocomplete.range.start);
             self.autocomplete.items.clear();
+            self.autocomplete.notice = None;
             self.autocomplete.shown = false;
             // egui already dropped the editor's focus for this Escape; put it
             // back so dismissing the popup keeps the caret in the editor.
@@ -871,16 +1041,27 @@ impl QueryWindow {
     }
 
     /// Replace the partial word under the caret with `candidate`, then move the
-    /// caret past the insertion and close the popup for that word.
+    /// caret past the insertion (or inside a function's inserted `()`) and
+    /// close the popup for that word.
     fn accept_completion(&mut self, ui: &egui::Ui, editor_id: egui::Id, candidate: &Candidate) {
         let range = self.autocomplete.range.clone();
-        // Guard against a range that a same-frame edit already invalidated.
-        if range.end > self.text.len() {
+        // The candidates were computed for the word recorded alongside them; a
+        // same-frame edit (key repeat, paste) may have moved or replaced it,
+        // in which case accepting would splice the wrong span - do nothing.
+        if self.text.get(range.clone()) != Some(self.autocomplete.word.as_str()) {
             return;
         }
-        let space = if candidate.trailing_space { " " } else { "" };
-        let insertion = format!("{}{space}", candidate.insert);
-        let caret_byte = range.start + insertion.len();
+        // A unit accepted directly after a digit gets a separating space:
+        // `30` + `km/h` reads `30 km/h`, the way the docs write it.
+        let pad = candidate.pad_after_digit
+            && range
+                .start
+                .checked_sub(1)
+                .and_then(|i| self.text.as_bytes().get(i))
+                .is_some_and(u8::is_ascii_digit);
+        let space = if pad { " " } else { "" };
+        let insertion = format!("{space}{}{}", candidate.insert, candidate.suffix);
+        let caret_byte = range.start + insertion.len() - candidate.caret_back;
         self.text.replace_range(range, &insertion);
 
         let caret_char = self.text.get(..caret_byte).map_or(0, |s| s.chars().count());
@@ -893,14 +1074,16 @@ impl QueryWindow {
 
         self.autocomplete.items.clear();
         self.autocomplete.selected = 0;
-        self.autocomplete.dismissed_text = None;
+        self.autocomplete.dismissed_at = None;
+        self.autocomplete.notice = None;
         self.autocomplete.shown = false;
     }
 
-    /// Recompute the candidates for the current caret, draw the popup under it,
-    /// and accept a clicked row. While the editor is focused the candidates are
-    /// recomputed; on the frame a click into the popup steals that focus, the
-    /// popup is redrawn from the cached candidates so the click still lands.
+    /// Refresh the candidates for the current caret, draw the popup under it,
+    /// and accept a clicked row. Candidates are recomputed only when the text,
+    /// schema, or caret changed (or completion was requested manually); on the
+    /// frame a click into the popup steals the editor's focus, the popup is
+    /// redrawn from the cached candidates so the click still lands.
     fn update_autocomplete(
         &mut self,
         ui: &egui::Ui,
@@ -909,85 +1092,45 @@ impl QueryWindow {
         output: &egui::widgets::text_edit::TextEditOutput,
     ) {
         let focused = output.response.has_focus();
+        let manual = std::mem::take(&mut self.autocomplete.manual_request);
         if let (true, Some(caret_char)) = (
             focused,
             output.cursor_range.map(|range| range.primary.index),
         ) {
-            // Esc keeps the popup closed until the text changes.
-            if self.autocomplete.dismissed_text.as_deref() == Some(self.text.as_str()) {
+            let caret_byte = char_to_byte(&self.text, caret_char);
+            let memo_key = (self.assist_revision, caret_byte);
+            if manual || self.autocomplete.computed_for != Some(memo_key) {
+                self.recompute_candidates(caret_byte, schema, manual);
+                self.autocomplete.computed_for = Some(memo_key);
+            }
+            // Esc keeps the popup closed while completing the same word; the
+            // caret moving to another word re-arms it.
+            if self.autocomplete.dismissed_at == Some(self.autocomplete.range.start) {
                 self.autocomplete.items.clear();
+                self.autocomplete.notice = None;
                 self.autocomplete.shown = false;
                 return;
             }
-            self.autocomplete.dismissed_text = None;
-
-            let caret_byte = char_to_byte(&self.text, caret_char);
-            // Analyze only the query the caret is in, then shift the byte range
-            // back to editor coordinates. Between queries, offer a fresh source.
-            let (src, offset) = match self.chunk_at(caret_byte) {
-                Some((chunk, _)) => (
-                    self.text.get(chunk.range.clone()).unwrap_or(""),
-                    chunk.range.start,
-                ),
-                None => ("", caret_byte),
-            };
-            let local = caret_byte - offset;
-            // A `@name` being typed offers channels; anywhere else, the language
-            // constructs. The `@` sigil makes the two positions disjoint.
-            let (range, items) =
-                if let Some(channels) = gt_query::channel_completions_at(src, local, schema) {
-                    let items = channels
-                        .items
-                        .into_iter()
-                        .map(Candidate::from_channel)
-                        .collect();
-                    (channels.range, items)
-                } else {
-                    let completions = gt_query::completions_at(src, local);
-                    let items = completions
-                        .items
-                        .into_iter()
-                        .map(Candidate::from_construct)
-                        .collect::<Vec<_>>();
-                    (completions.range, items)
-                };
-            let range = range.start + offset..range.end + offset;
-
-            // Keep the highlighted row while the candidate set is unchanged;
-            // otherwise start at the top.
-            let unchanged = items.iter().map(|c| &c.insert).eq(self
-                .autocomplete
-                .items
-                .iter()
-                .map(|c| &c.insert));
-            self.autocomplete.selected = if unchanged {
-                self.autocomplete
-                    .selected
-                    .min(items.len().saturating_sub(1))
-            } else {
-                0
-            };
-            self.autocomplete.items = items;
-            self.autocomplete.range = range;
+            self.autocomplete.dismissed_at = None;
+            // The popup anchors track the caret every frame - the window may
+            // move without the text changing.
             let caret_rect = output.galley.pos_from_cursor(CCursor::new(caret_char));
             self.autocomplete.caret_pos =
                 output.galley_pos + caret_rect.left_bottom().to_vec2() + egui::vec2(0.0, 2.0);
+            self.autocomplete.caret_top =
+                output.galley_pos + caret_rect.left_top().to_vec2() - egui::vec2(0.0, 2.0);
         } else if !self.autocomplete.shown {
             // Not editing and nothing was open: keep it closed.
             self.autocomplete.items.clear();
+            self.autocomplete.notice = None;
             return;
         }
 
-        if self.autocomplete.items.is_empty() {
+        if self.autocomplete.items.is_empty() && self.autocomplete.notice.is_none() {
             self.autocomplete.shown = false;
             return;
         }
-        let clicked = draw_autocomplete_popup(
-            ui,
-            output.response.id,
-            self.autocomplete.caret_pos,
-            &self.autocomplete,
-        );
+        let clicked = draw_autocomplete_popup(ui, output.response.id, &self.autocomplete);
         self.autocomplete.shown = true;
 
         if let Some(index) = clicked {
@@ -998,13 +1141,84 @@ impl QueryWindow {
             // Focus left the editor without a click into the popup (e.g. a
             // click elsewhere) - close it.
             self.autocomplete.items.clear();
+            self.autocomplete.notice = None;
             self.autocomplete.shown = false;
         }
     }
 
-    /// Show a documentation tooltip for the construct under the pointer, in the
+    /// Compute the completion candidates for the caret at `caret_byte` and
+    /// store them in `self.autocomplete`.
+    fn recompute_candidates(&mut self, caret_byte: usize, schema: &ChannelSchema, manual: bool) {
+        // Analyze only the query the caret is in, then shift the byte range
+        // back to editor coordinates. The chunk ranges are recomputed from the
+        // current text: the checked chunks are one frame stale (the editor
+        // applies this frame's keystrokes after the check ran), and a stale
+        // range would misroute the caret to the between-queries fallback.
+        let context = analysis_context(&self.text, caret_byte);
+        let offset = context.start;
+        let src = self.text.get(context).unwrap_or("");
+        let local = caret_byte - offset;
+        let trigger = if manual {
+            CompletionTrigger::Manual
+        } else {
+            CompletionTrigger::Automatic
+        };
+        // A `@name` being typed offers channels; anywhere else, the language
+        // constructs. The `@` sigil makes the two positions disjoint.
+        let mut notice = None;
+        let (range, items) =
+            if let Some(channels) = gt_query::channel_completions_at(src, local, schema) {
+                if channels.items.is_empty() && schema.is_empty() {
+                    // The sigil path exists but has nothing to offer: say why,
+                    // instead of silently not appearing.
+                    notice = Some("No channels loaded");
+                }
+                let items = channels
+                    .items
+                    .into_iter()
+                    .map(Candidate::from_channel)
+                    .collect();
+                (channels.range, items)
+            } else {
+                let completions = gt_query::completions_at(src, local, schema, trigger);
+                let items = completions
+                    .items
+                    .iter()
+                    .map(Candidate::from_construct)
+                    .collect::<Vec<_>>();
+                (completions.range, items)
+            };
+        let range = range.start + offset..range.end + offset;
+
+        // Keep the highlighted row while the candidate set is unchanged;
+        // otherwise start at the top.
+        let unchanged = items.iter().map(|c| &c.insert).eq(self
+            .autocomplete
+            .items
+            .iter()
+            .map(|c| &c.insert));
+        self.autocomplete.selected = if unchanged {
+            self.autocomplete
+                .selected
+                .min(items.len().saturating_sub(1))
+        } else {
+            0
+        };
+        // The popup claims Enter and the arrows only once the user has shown
+        // intent: a typed prefix or an explicit request.
+        self.autocomplete.active = manual || caret_byte > range.start;
+        self.autocomplete.word = self.text.get(range.clone()).unwrap_or("").to_owned();
+        self.autocomplete.items = items;
+        self.autocomplete.notice = notice;
+        self.autocomplete.range = range;
+    }
+
+    /// Show a documentation tooltip for the token under the pointer, in the
     /// editor. Suppressed while the completion popup is up, so the two don't
-    /// stack.
+    /// stack; shown only after the pointer has rested a moment, and only when
+    /// it actually sits on the token's own rectangle (the galley clamps a
+    /// position in the blank space right of a line to the nearest character,
+    /// which is not a hover).
     fn hover_docs(
         &self,
         ui: &egui::Ui,
@@ -1020,14 +1234,44 @@ impl QueryWindow {
         if !output.response.rect.contains(pointer) {
             return;
         }
+        let rested = ui.input(|i| i.pointer.time_since_last_movement());
+        if rested < HOVER_DOC_DELAY_SECS {
+            // Repaint when the delay lapses so the tooltip appears without
+            // further pointer movement.
+            ui.ctx()
+                .request_repaint_after(Duration::from_secs_f32(HOVER_DOC_DELAY_SECS - rested));
+            return;
+        }
         let ccursor = output.galley.cursor_from_pos(pointer - output.galley_pos);
         let byte = char_to_byte(&self.text, ccursor.index);
-        // Look up the token within the query under the pointer: a channel first
-        // (its `@` is unambiguous), otherwise a language construct.
-        let Some((chunk, local)) = self.chunk_at(byte) else {
+        // Look up the token within the query under the pointer. Fresh ranges:
+        // the checked chunks can be one frame stale after an edit.
+        let Some(chunk) = split_queries(&self.text)
+            .into_iter()
+            .find(|range| range.start <= byte && byte <= range.end)
+        else {
             return;
         };
-        let src = self.text.get(chunk.range.clone()).unwrap_or("");
+        let local = byte - chunk.start;
+        let src = self.text.get(chunk.clone()).unwrap_or("");
+        // Hit-test the token's actual span rectangle before documenting it.
+        let Some(token_span) = lexer::tokenize(src)
+            .into_iter()
+            .map(|t| t.span)
+            .find(|span| span.start <= local && local < span.end)
+        else {
+            return;
+        };
+        if !self
+            .token_rect(
+                output,
+                chunk.start + token_span.start,
+                chunk.start + token_span.end,
+            )
+            .contains(pointer)
+        {
+            return;
+        }
         // A channel wins (its `@` is unambiguous), else a language construct,
         // else nothing under the pointer to document.
         let doc = match gt_query::channel_at(src, local, schema) {
@@ -1038,7 +1282,7 @@ impl QueryWindow {
             },
         };
         // Drawn as an Area (rather than a hover tooltip) so it is anchored to
-        // the token under the pointer and shows without a hover delay.
+        // the token under the pointer.
         egui::Area::new(egui::Id::new("query_hover_doc"))
             .order(egui::Order::Tooltip)
             .fixed_pos(pointer + egui::vec2(12.0, 18.0))
@@ -1050,6 +1294,24 @@ impl QueryWindow {
                     HoverDoc::Construct(construct) => construct_tooltip_ui(ui, construct),
                 });
             });
+    }
+
+    /// The screen rectangle spanned by the text between byte `start` and
+    /// `end`, from the editor galley. Grown a little so hovering the very edge
+    /// of a glyph still counts.
+    fn token_rect(
+        &self,
+        output: &egui::widgets::text_edit::TextEditOutput,
+        start: usize,
+        end: usize,
+    ) -> egui::Rect {
+        let char_at = |byte: usize| self.text.get(..byte).map_or(0, |s| s.chars().count());
+        let first = output.galley.pos_from_cursor(CCursor::new(char_at(start)));
+        let last = output.galley.pos_from_cursor(CCursor::new(char_at(end)));
+        first
+            .union(last)
+            .translate(output.galley_pos.to_vec2())
+            .expand(1.0)
     }
 
     fn results_ui(&self, ui: &mut egui::Ui, files: &[LoadedFile], highlight: &mut MapHighlight) {
@@ -2089,7 +2351,7 @@ impl TrackProvider<'_> {
         let to_base = channel
             .unit
             .as_deref()
-            .and_then(Unit::from_ident)
+            .and_then(Unit::from_label)
             .map_or(1.0, Unit::to_base);
         Some((channel, channel.component_count(), to_base))
     }
@@ -2264,17 +2526,58 @@ fn check_text(text: &str, schema: &ChannelSchema) -> Result<CheckedQuery, Diagno
 /// Parse and check every query in the editor against the loaded channels.
 /// Queries are separated by a blank line; each chunk keeps its byte range so
 /// diagnostics and the caret map back to editor coordinates.
+///
+/// A chunk holding no code - a standalone comment paragraph - is not a query:
+/// it is skipped rather than checked, so a block comment between queries
+/// neither errors nor blocks Run.
 fn check_all(text: &str, schema: &ChannelSchema) -> Vec<Chunk> {
     split_queries(text)
         .into_iter()
-        .map(|range| {
+        .filter_map(|range| {
             let src = text.get(range.clone()).unwrap_or("");
-            Chunk {
+            // Comment-only via the highlighter's classes rather than the
+            // parsing tokenizer: the latter also drops rejected characters,
+            // which must still be checked (and reported), not skipped.
+            let comment_only = lexer::highlight_classes(src)
+                .iter()
+                .all(|(_, class)| *class == TokenClass::Comment);
+            if comment_only {
+                return None;
+            }
+            Some(Chunk {
                 result: check_text(src, schema),
                 range,
-            }
+            })
         })
         .collect()
+}
+
+/// The byte range of the text the caret's completions analyze: the query
+/// chunk containing the caret; or, when the caret sits on the line directly
+/// after a chunk (an Enter pressed to continue it with `| …`), that chunk
+/// extended to the caret so continuation typing is analyzed in context;
+/// otherwise an empty context at the caret (a fresh query).
+fn analysis_context(text: &str, caret: usize) -> Range<usize> {
+    let mut preceding: Option<Range<usize>> = None;
+    for range in split_queries(text) {
+        if range.start <= caret && caret <= range.end {
+            return range;
+        }
+        if range.end < caret {
+            preceding = Some(range);
+        }
+    }
+    // Directly after a chunk means only whitespace with at most one newline in
+    // between: a second newline is the blank-line separator, so the caret
+    // starts a fresh query.
+    if let Some(range) = preceding
+        && let Some(gap) = text.get(range.end..caret)
+        && gap.chars().all(char::is_whitespace)
+        && gap.matches('\n').count() <= 1
+    {
+        return range.start..caret;
+    }
+    caret..caret
 }
 
 /// Byte ranges of the blank-line-separated queries in `text`. Each range spans
@@ -2304,17 +2607,6 @@ fn split_queries(text: &str) -> Vec<Range<usize>> {
     chunks
 }
 
-/// Whether accepting a construct of this kind should append a space, because
-/// something always follows it (a value, an operand, the next stage). Kinds
-/// that lead straight into punctuation - `avg` into `(`, a metric into an
-/// operator, a unit into `|` - get none.
-fn inserts_trailing_space(kind: ConstructKind) -> bool {
-    matches!(
-        kind,
-        ConstructKind::Source | ConstructKind::Stage | ConstructKind::Param
-    )
-}
-
 /// Byte offset of the `char_index`-th character, or the text length when the
 /// index is at or past the end. The egui caret is a char index; the query
 /// position model works in bytes.
@@ -2324,11 +2616,11 @@ fn char_to_byte(text: &str, char_index: usize) -> usize {
         .map_or(text.len(), |(byte, _)| byte)
 }
 
-/// Draw the completion popup at `pos`, returning the index of a clicked row.
+/// Draw the completion popup under (or, when the screen ends, above) the
+/// caret, returning the index of a clicked row.
 fn draw_autocomplete_popup(
     ui: &egui::Ui,
     editor_id: egui::Id,
-    pos: egui::Pos2,
     autocomplete: &Autocomplete,
 ) -> Option<usize> {
     let mut clicked = None;
@@ -2345,6 +2637,19 @@ fn draw_autocomplete_popup(
         .len()
         .saturating_sub(AUTOCOMPLETE_VISIBLE_ROWS);
 
+    // Flip above the caret when there is no room below, so the popup never
+    // covers the line being typed. The height estimate mirrors the layout
+    // above; `constrain` still clamps any residual overshoot.
+    let visible_rows = autocomplete.items.len().clamp(1, AUTOCOMPLETE_VISIBLE_ROWS);
+    let footer = if overflow > 0 { row_height } else { 0.0 };
+    let frame_padding = egui::Frame::popup(ui.style()).total_margin().sum().y;
+    let est_height = row_height * visible_rows as f32 + footer + frame_padding;
+    let pos = if autocomplete.caret_pos.y + est_height > ui.ctx().content_rect().bottom() {
+        autocomplete.caret_top - egui::vec2(0.0, est_height)
+    } else {
+        autocomplete.caret_pos
+    };
+
     egui::Area::new(editor_id.with("autocomplete"))
         .order(egui::Order::Foreground)
         .fixed_pos(pos)
@@ -2353,6 +2658,10 @@ fn draw_autocomplete_popup(
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_min_width(220.0);
                 ui.set_max_width(380.0);
+                if let Some(notice) = autocomplete.notice {
+                    ui.label(egui::RichText::new(notice).weak().italics());
+                    return;
+                }
                 egui::ScrollArea::vertical()
                     .max_height(max_height)
                     .show(ui, |ui| {
@@ -2575,14 +2884,16 @@ fn format_value(metric: QueryMetric, value: Option<f64>) -> String {
     }
 }
 
-/// Token-driven syntax highlighting plus the diagnostic underline, built
-/// from the same lexer the parser uses.
-fn highlight_layout(ui: &egui::Ui, text: &str, diagnostic: Option<Span>) -> LayoutJob {
+/// Token-driven syntax highlighting plus the diagnostic underlines (one per
+/// failing chunk), built from the same lexer the parser uses.
+fn highlight_layout(ui: &egui::Ui, text: &str, diagnostics: &[Span]) -> LayoutJob {
     let font = egui::TextStyle::Monospace.resolve(ui.style());
     let default_color = ui.visuals().text_color();
-    let underline = diagnostic
+    let underlines: Vec<(usize, usize)> = diagnostics
+        .iter()
         .map(|span| (span.start, span.end.max(span.start + 1)))
-        .map(|(start, end)| (start, end.min(text.len().max(start))));
+        .map(|(start, end)| (start, end.min(text.len().max(start))))
+        .collect();
 
     let mut job = LayoutJob::default();
     let mut append = |range: Range<usize>, color: egui::Color32| {
@@ -2592,8 +2903,9 @@ fn highlight_layout(ui: &egui::Ui, text: &str, diagnostic: Option<Span>) -> Layo
         if slice.is_empty() {
             return;
         }
-        let underlined =
-            underline.is_some_and(|(start, end)| range.start < end && start < range.end);
+        let underlined = underlines
+            .iter()
+            .any(|&(start, end)| range.start < end && start < range.end);
         let format = egui::TextFormat {
             font_id: font.clone(),
             color,
@@ -2607,20 +2919,20 @@ fn highlight_layout(ui: &egui::Ui, text: &str, diagnostic: Option<Span>) -> Layo
         job.append(slice, 0.0, format);
     };
 
-    // Cut at token boundaries and at the diagnostic edges so the underline
-    // starts and ends exactly on the reported span.
+    // Cut at token boundaries and at the diagnostic edges so each underline
+    // starts and ends exactly on its reported span.
     let mut cursor = 0;
     for (span, class) in lexer::highlight_classes(text) {
-        for range in segments(cursor..span.start, underline) {
+        for range in segments(cursor..span.start, &underlines) {
             append(range, default_color);
         }
         let color = syntax_color(class, default_color, ui.visuals().dark_mode);
-        for range in segments(span.start..span.end, underline) {
+        for range in segments(span.start..span.end, &underlines) {
             append(range, color);
         }
         cursor = span.end;
     }
-    for range in segments(cursor..text.len(), underline) {
+    for range in segments(cursor..text.len(), &underlines) {
         append(range, default_color);
     }
     job
@@ -2628,17 +2940,20 @@ fn highlight_layout(ui: &egui::Ui, text: &str, diagnostic: Option<Span>) -> Layo
 
 /// Split a byte range at the diagnostic edges so each piece is uniformly
 /// underlined or not.
-fn segments(range: Range<usize>, underline: Option<(usize, usize)>) -> Vec<Range<usize>> {
-    let Some((start, end)) = underline else {
+fn segments(range: Range<usize>, underlines: &[(usize, usize)]) -> Vec<Range<usize>> {
+    if underlines.is_empty() {
         return vec![range];
-    };
+    }
     let mut cuts = vec![range.start, range.end];
-    for edge in [start, end] {
-        if range.start < edge && edge < range.end {
-            cuts.push(edge);
+    for &(start, end) in underlines {
+        for edge in [start, end] {
+            if range.start < edge && edge < range.end {
+                cuts.push(edge);
+            }
         }
     }
     cuts.sort_unstable();
+    cuts.dedup();
     cuts.windows(2)
         .filter_map(|pair| match pair {
             [a, b] if a < b => Some(*a..*b),
@@ -2825,11 +3140,16 @@ mod tests {
 
     #[test]
     fn segments_split_exactly_at_diagnostic_edges() {
-        assert_eq!(segments(0..10, None), vec![0..10]);
-        assert_eq!(segments(0..10, Some((3, 7))), vec![0..3, 3..7, 7..10]);
-        assert_eq!(segments(4..6, Some((3, 7))), vec![4..6]);
-        assert_eq!(segments(0..5, Some((3, 9))), vec![0..3, 3..5]);
-        assert_eq!(segments(5..5, Some((3, 9))), Vec::<Range<usize>>::new());
+        assert_eq!(segments(0..10, &[]), vec![0..10]);
+        assert_eq!(segments(0..10, &[(3, 7)]), vec![0..3, 3..7, 7..10]);
+        assert_eq!(segments(4..6, &[(3, 7)]), vec![4..6]);
+        assert_eq!(segments(0..5, &[(3, 9)]), vec![0..3, 3..5]);
+        assert_eq!(segments(5..5, &[(3, 9)]), Vec::<Range<usize>>::new());
+        // Two diagnostics cut independently.
+        assert_eq!(
+            segments(0..10, &[(1, 3), (5, 7)]),
+            vec![0..1, 1..3, 3..5, 5..7, 7..10]
+        );
     }
 
     #[test]
@@ -3518,22 +3838,64 @@ mod tests {
         let candidate = Candidate::from_channel(channel);
         assert_eq!(candidate.insert, "@accel");
         assert_eq!(candidate.summary, "in m/s2");
-        assert!(
-            !candidate.trailing_space,
-            "a channel takes no trailing space"
-        );
+        assert_eq!(candidate.suffix, "", "a channel takes no trailing space");
     }
 
     #[test]
-    fn candidate_from_construct_maps_name_and_trailing_space() {
-        // A stage keyword gets a trailing space so the next token can follow; a
-        // metric does not (an operator, not a space, comes next).
-        let find = |name| gt_query::catalog().into_iter().find(|c| c.name == name);
+    fn candidate_from_construct_maps_name_and_insertion() {
+        // A stage keyword gets a trailing space so the next token can follow;
+        // a metric does not (an operator, not a space, comes next); a function
+        // brings its parentheses with the caret stepping inside them; a unit
+        // pads itself off a glued digit.
+        let find = |name| gt_query::catalog().iter().find(|c| c.name == name);
         let stage = Candidate::from_construct(find("where").expect("where is catalogued"));
         assert_eq!(stage.insert, "where");
-        assert!(stage.trailing_space);
+        assert_eq!(stage.suffix, " ");
         let metric = Candidate::from_construct(find("velocity").expect("velocity is catalogued"));
         assert_eq!(metric.insert, "velocity");
-        assert!(!metric.trailing_space);
+        assert_eq!(metric.suffix, "");
+        assert!(!metric.pad_after_digit);
+        let func = Candidate::from_construct(find("avg").expect("avg is catalogued"));
+        assert_eq!(func.suffix, "()");
+        assert_eq!(func.caret_back, 1);
+        let unit = Candidate::from_construct(find("km/h").expect("km/h is catalogued"));
+        assert!(unit.pad_after_digit);
+    }
+
+    #[test]
+    fn analysis_context_ties_the_next_line_to_its_chunk() {
+        // Caret inside a chunk: the chunk itself.
+        assert_eq!(analysis_context("points | draw", 6), 0..13);
+        // Caret on the line directly after a chunk (Enter pressed to continue
+        // it): the chunk extends to the caret, so `| where` is analyzed in
+        // context rather than as a fresh query.
+        let text = "points\n";
+        assert_eq!(analysis_context(text, text.len()), 0..text.len());
+        // A blank line in between is the query separator: fresh context.
+        let separated = "points\n\n";
+        assert_eq!(
+            analysis_context(separated, separated.len()),
+            separated.len()..separated.len()
+        );
+        // On the (would-be separator) line right after a chunk, typing still
+        // continues that chunk - a character typed there joins the two lines
+        // into one query, so the analysis matches what an edit would produce.
+        let two = "points | draw\n\npoints | hide";
+        assert_eq!(analysis_context(two, 14), 0..14);
+    }
+
+    #[test]
+    fn comment_only_chunks_are_skipped_not_checked() {
+        // A standalone comment paragraph between queries is documentation,
+        // not a query: it must not error (or block Run).
+        let text = "# block comment\n\npoints | draw";
+        let chunks = check_all(text, &ChannelSchema::new());
+        assert_eq!(chunks.len(), 1, "only the real query is a chunk");
+        assert!(chunks[0].result.is_ok(), "the real query checks");
+        // A chunk with a lexer-rejected character is code, not comment - it
+        // still surfaces its error.
+        let bad = check_all("Points", &ChannelSchema::new());
+        assert_eq!(bad.len(), 1);
+        assert!(bad[0].result.is_err(), "the rejected character errors");
     }
 }

@@ -44,8 +44,8 @@ pub use metric::{Quantity, QueryMetric};
 pub use parser::parse;
 pub use pipeline::{DrawContribution, PipelineOutput, QueryOutput, run_pipeline};
 pub use position::{
-    ChannelCompletions, ChannelSuggestion, Completions, channel_at, channel_completions_at,
-    completions_at, construct_at,
+    ChannelCompletions, ChannelSuggestion, CompletionTrigger, Completions, channel_at,
+    channel_completions_at, completions_at, construct_at,
 };
 pub use unit::Unit;
 
@@ -1583,8 +1583,8 @@ mod tests {
     fn norm_reduces_the_per_sample_vector_magnitude() {
         // norm(@accel) is sqrt(x²+y²+z²) per sample, on base-unit rows. Row 0 is
         // (3,4,0) -> 5 m/s2; the rest are near zero. 0.1 g is 0.981 m/s2, so
-        // max(norm) = 5 clears it and min does not. Unit "g" so the schema types
-        // it as an acceleration (from_ident has no compound "m/s2").
+        // max(norm) = 5 clears it and min does not. Unit "g", which the schema
+        // types as an acceleration.
         let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
         let provider = TestProvider::new(2).indexed_time().with_vector_channel(
             "accel",
