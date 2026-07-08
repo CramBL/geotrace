@@ -143,9 +143,16 @@ pub struct PlotSettings {
     pub split_ratio: f32,
     /// Per-metric visibility. A missing key means the metric is visible (default `true`).
     pub metric: HashMap<MetricKind, bool>,
+    /// Per-channel visibility, keyed by channel name. Missing means visible,
+    /// like `metric`. Names are global across files: an `accel` hidden once
+    /// stays hidden in the next recording carrying an `accel`.
+    pub channel: HashMap<String, bool>,
     /// Whether the advanced analysis chips (satellite utilization) are revealed.
     /// Off by default - those metrics are hidden until the user opts in.
     pub show_advanced_metrics: bool,
+    /// Whether the ad-hoc channel chips are revealed. Off by default, like
+    /// the advanced section.
+    pub show_channels: bool,
 }
 
 impl Default for PlotSettings {
@@ -155,7 +162,9 @@ impl Default for PlotSettings {
             panel_visible: true,
             split_ratio: 0.6,
             metric: HashMap::new(),
+            channel: HashMap::new(),
             show_advanced_metrics: false,
+            show_channels: false,
         }
     }
 }

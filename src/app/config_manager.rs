@@ -46,6 +46,10 @@ pub(super) struct AppSnapshot {
     /// order and length here is safe across add/remove/rename/reorder.
     pub metrics: [bool; crate::settings::MetricKind::COUNT],
     pub show_advanced_metrics: bool,
+    /// The toggled channel visibilities, sorted by name. Channels are dynamic
+    /// per-file names, so unlike `metrics` this cannot be a fixed array.
+    pub channels: Vec<(String, bool)>,
+    pub show_channels: bool,
     pub layer: crate::settings::MapLayerSetting,
     pub mapbox_token: String,
     pub sync_to_map: bool,
@@ -87,6 +91,8 @@ impl Default for AppSnapshot {
             split_ratio: StableF32::from(0.6_f32),
             metrics: [true; crate::settings::MetricKind::COUNT],
             show_advanced_metrics: false,
+            channels: Vec::new(),
+            show_channels: false,
             layer: crate::settings::MapLayerSetting::Osm,
             mapbox_token: String::new(),
             sync_to_map: true,

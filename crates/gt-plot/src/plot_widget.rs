@@ -10,7 +10,7 @@ use gt_types::satellites::Constellation;
 use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx};
 use gt_ui_types::{HighlightScope, TrackDataVisibility};
 use rayon::prelude::*;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use strum::IntoEnumIterator;
 
 /// Pixel radius within which the pointer is considered to be hovering a
@@ -303,6 +303,33 @@ const BUDGET_TRACK_MULTIPLE: usize = 8;
 
 fn metric_line_color(kind: MetricKind, file_index: usize) -> Color32 {
     shade_color(kind.color(), file_shade_factor(file_index))
+}
+
+/// The channel chip/line palette, cycled by a channel's index in the sorted
+/// union of loaded channel names. Channels are dynamic, so unlike the metrics
+/// they cannot carry a hardcoded per-variant color; hues are picked to avoid
+/// the strong metric colors (velocity yellow, EPH magenta, heading orange).
+const CHANNEL_PALETTE: [Color32; 6] = [
+    Color32::from_rgb(102, 204, 153), // spring green
+    Color32::from_rgb(153, 128, 250), // lavender
+    Color32::from_rgb(64, 175, 255),  // azure
+    Color32::from_rgb(230, 126, 179), // rose
+    Color32::from_rgb(181, 204, 92),  // olive
+    Color32::from_rgb(94, 210, 217),  // teal
+];
+
+/// The chip color of the `index`-th channel (its position in the sorted name
+/// union). The palette cycles past its length.
+fn channel_color(index: usize) -> Color32 {
+    let palette = CHANNEL_PALETTE;
+    palette
+        .get(index % palette.len())
+        .copied()
+        .unwrap_or(Color32::GRAY)
+}
+
+fn channel_line_color(index: usize, file_index: usize) -> Color32 {
+    shade_color(channel_color(index), file_shade_factor(file_index))
 }
 
 /// Full-resolution sample target for a single track filling the plot width:
@@ -613,8 +640,86 @@ fn metric_is_shown(
         && kind.constellation().is_none_or(|c| present.contains(&c))
 }
 
-/// Cached level selections for every metric of one track's series.
-#[derive(Debug, Clone, Copy, Default)]
+/// Global per-channel visibility, keyed by channel name.
+///
+/// Channels are dynamic per-file names, so this is a map rather than the flat
+/// bool fields of [`MetricVisibility`]. A name that was never toggled is
+/// visible, matching the persisted-settings convention (missing key = shown).
+/// Names persist across loads: an `accel` hidden once stays hidden in the next
+/// recording that carries an `accel`.
+#[derive(Debug, Clone, Default)]
+pub struct ChannelVisibility(HashMap<String, bool>);
+
+impl ChannelVisibility {
+    pub fn is_visible(&self, name: &str) -> bool {
+        self.0.get(name).copied().unwrap_or(true)
+    }
+
+    pub fn set(&mut self, name: &str, visible: bool) {
+        self.0.insert(name.to_owned(), visible);
+    }
+
+    /// The toggled entries, sorted by name, for persistence and
+    /// change-detection snapshots.
+    pub fn entries(&self) -> Vec<(String, bool)> {
+        let mut entries: Vec<(String, bool)> =
+            self.0.iter().map(|(k, &v)| (k.clone(), v)).collect();
+        entries.sort();
+        entries
+    }
+}
+
+/// One channel present in the loaded data, unioned across every track's
+/// series: its name, unit label, and palette index (the position in the
+/// sorted name list). Recomputed per frame - the union is a handful of
+/// entries.
+struct LoadedChannel {
+    name: String,
+    unit: Option<String>,
+    color_index: usize,
+}
+
+/// The sorted union of channels across all series, with palette indices.
+fn loaded_channels<'a>(
+    all_channels: impl Iterator<Item = &'a crate::series::ChannelSeries>,
+) -> Vec<LoadedChannel> {
+    let mut by_name: Vec<(&str, Option<&str>)> = Vec::new();
+    for channel in all_channels {
+        if !by_name.iter().any(|(name, _)| *name == channel.name) {
+            by_name.push((&channel.name, channel.unit.as_deref()));
+        }
+    }
+    by_name.sort();
+    by_name
+        .into_iter()
+        .enumerate()
+        .map(|(color_index, (name, unit))| LoadedChannel {
+            name: name.to_owned(),
+            unit: unit.map(str::to_owned),
+            color_index,
+        })
+        .collect()
+}
+
+/// Which optional chip sections are revealed, gating their lines exactly as
+/// the chips are gated.
+#[derive(Clone, Copy)]
+struct SectionGates {
+    show_advanced: bool,
+    show_channels: bool,
+}
+
+/// A chip the pointer can rest on: a metric's, or a loaded channel's (by
+/// name). Drives the hover highlight that dims every other line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HoveredChip {
+    Metric(MetricKind),
+    Channel(String),
+}
+
+/// Cached level selections for every metric of one track's series, plus one
+/// per channel component (dynamic, hence no `Copy`).
+#[derive(Debug, Clone, Default)]
 struct TripLevelCache {
     total_seen: LevelSelection,
     total_fix: LevelSelection,
@@ -648,6 +753,9 @@ struct TripLevelCache {
     slip_beidou: LevelSelection,
     slip_navic: LevelSelection,
     slip_qzss: LevelSelection,
+    /// One selection per channel component, mirroring the series' channel
+    /// structure (outer: channel, inner: component).
+    channels: Vec<Vec<LevelSelection>>,
 }
 
 impl TripLevelCache {
@@ -749,6 +857,12 @@ pub struct PlotState {
     /// Whether the advanced analysis chips (satellite utilization) are revealed.
     /// Off by default - these metrics are hidden until the user opts in.
     pub show_advanced_metrics: bool,
+    /// Whether the ad-hoc channel chips and lines are revealed. Off by
+    /// default, like the advanced section; the toggle only renders when a
+    /// loaded track carries channels.
+    pub show_channels: bool,
+    /// Global per-channel visibility - toggled via the channel chips.
+    pub channel_vis: ChannelVisibility,
     /// Analysis parameters the cached series were built with (elevation mask).
     /// Changing it via [`PlotState::set_analysis`] re-derives the affected series.
     pub analysis: AnalysisConfig,
@@ -797,6 +911,8 @@ impl Default for PlotState {
             sync_to_map: true,
             mark_masked_fix: true,
             show_advanced_metrics: false,
+            show_channels: false,
+            channel_vis: ChannelVisibility::default(),
             analysis: AnalysisConfig::default(),
             file_legend_collapsed: false,
             file_legend_offset: LEGEND_DOCK_OFFSET,
@@ -940,15 +1056,23 @@ pub fn show_track_plot(
         .flat_map(|s| s.present.iter().copied())
         .collect();
 
+    // Channels present anywhere in the loaded data, unioned like the
+    // constellations: the Channels toggle and chips render only when a track
+    // actually carries channels.
+    let channels = loaded_channels(state.series_cache.iter().flat_map(|s| s.channels.iter()));
+
     // Draw the per-metric filter row before the plot so it consumes vertical
     // space first.  `ui.available_height()` below then gives the remainder.
     let hovered_chip = metric_filter_row(
         ui,
         &mut state.metric_vis,
         &present,
+        &channels,
+        &mut state.channel_vis,
         &mut state.show_grid,
         &mut state.sync_to_map,
         &mut state.show_advanced_metrics,
+        &mut state.show_channels,
     );
 
     // Sample budgeting: each track requests ~2 points per pixel of its *visible*
@@ -1006,6 +1130,8 @@ pub fn show_track_plot(
     let level_cache = &state.level_cache;
     let last_computed_bounds = state.last_computed_bounds;
     let metric_vis = &state.metric_vis;
+    let channel_vis = &state.channel_vis;
+    let show_channels = state.show_channels;
     // Anomaly markers ride on the "Util all" line, so they show only when that
     // metric is visible and the settings toggle is on.
     let show_advanced = state.show_advanced_metrics;
@@ -1138,10 +1264,15 @@ pub fn show_track_plot(
                 multi_track,
                 cache,
                 metric_vis,
+                channel_vis,
                 &present,
-                hovered_chip,
+                &channels,
+                hovered_chip.as_ref(),
                 effective_hover_scope,
-                show_advanced,
+                SectionGates {
+                    show_advanced,
+                    show_channels,
+                },
             );
             if show_anomalies {
                 add_util_anomalies(
@@ -1386,7 +1517,7 @@ fn chip_group(
     kinds: &[MetricKind],
     show_advanced: bool,
     show_only: &mut Option<MetricKind>,
-    hovered: &mut Option<MetricKind>,
+    hovered: &mut Option<HoveredChip>,
 ) {
     // Skip the whole group - including its leading divider - when none of its
     // chips are shown (e.g. a per-constellation group with no matching data),
@@ -1412,7 +1543,82 @@ fn chip_group(
             *show_only = Some(kind);
         }
         if h {
-            *hovered = Some(kind);
+            *hovered = Some(HoveredChip::Metric(kind));
+        }
+    }
+}
+
+/// The two section-reveal toggles: Advanced (always) and Channels (only when
+/// a loaded track actually carries channels - with none there is nothing the
+/// toggle could reveal). Both sections are hidden by default.
+fn section_toggles(
+    ui: &mut egui::Ui,
+    show_advanced: &mut bool,
+    show_channels: &mut bool,
+    has_channels: bool,
+) {
+    if ui
+        .selectable_label(
+            *show_advanced,
+            format!("{} Advanced", egui_phosphor::regular::GAUGE),
+        )
+        .on_hover_text(if *show_advanced {
+            "Hide advanced metrics"
+        } else {
+            "Show advanced metrics (satellite utilization and loss-of-lock slip rate)"
+        })
+        .clicked()
+    {
+        *show_advanced = !*show_advanced;
+    }
+
+    if has_channels
+        && ui
+            .selectable_label(
+                *show_channels,
+                format!("{} Channels", egui_phosphor::regular::WAVE_SINE),
+            )
+            .on_hover_text(if *show_channels {
+                "Hide sensor channels"
+            } else {
+                "Show sensor channels recorded alongside the track"
+            })
+            .clicked()
+    {
+        *show_channels = !*show_channels;
+    }
+}
+
+/// Render the channel chip group, folding any "show only this" choice into
+/// `show_only` and the hovered channel into `hovered`. The channel sibling
+/// of [`chip_group`].
+fn channel_chip_group(
+    ui: &mut egui::Ui,
+    channels: &[LoadedChannel],
+    channel_vis: &mut ChannelVisibility,
+    show_only: &mut Option<String>,
+    hovered: &mut Option<HoveredChip>,
+) {
+    ui.separator();
+    for channel in channels {
+        let mut enabled = channel_vis.is_visible(&channel.name);
+        let label = match &channel.unit {
+            Some(unit) => format!("{} ({unit})", channel.name),
+            None => channel.name.clone(),
+        };
+        let (chip_show_only, chip_hovered) = metric_chip(
+            ui,
+            &mut enabled,
+            &label,
+            channel_color(channel.color_index),
+            Some("Sensor channel recorded alongside the track"),
+        );
+        channel_vis.set(&channel.name, enabled);
+        if chip_show_only {
+            *show_only = Some(channel.name.clone());
+        }
+        if chip_hovered {
+            *hovered = Some(HoveredChip::Channel(channel.name.clone()));
         }
     }
 }
@@ -1423,22 +1629,31 @@ fn chip_group(
 /// fill available horizontal space before wrapping - no fixed-height satellite
 /// group that forces other chips below it.
 ///
-/// Returns the `MetricKind` currently being hovered, or `None`.
-/// The caller passes this to `add_series_lines` to highlight the hovered metric
-/// and dim the rest, mirroring the standard egui-plot legend hover behaviour.
+/// Returns the chip currently being hovered (a metric's or a channel's), or
+/// `None`. The caller passes this to `add_series_lines` to highlight the
+/// hovered line and dim the rest, mirroring the standard egui-plot legend
+/// hover behaviour.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the filter row owns every plot toggle: grid/sync, the metric and channel visibility sets, and both section gates"
+)]
 fn metric_filter_row(
     ui: &mut egui::Ui,
     vis: &mut MetricVisibility,
     present: &HashSet<Constellation>,
+    channels: &[LoadedChannel],
+    channel_vis: &mut ChannelVisibility,
     show_grid: &mut bool,
     sync_to_map: &mut bool,
     show_advanced: &mut bool,
-) -> Option<MetricKind> {
+    show_channels: &mut bool,
+) -> Option<HoveredChip> {
     // The show/hide-all button and its eye icon track only the currently shown
     // chips, so they ignore advanced metrics while that section is collapsed and
     // per-constellation metrics whose constellation is absent from the data.
     let all_on = vis.all_enabled(present, *show_advanced);
     let mut show_only = None;
+    let mut show_only_channel: Option<String> = None;
     let mut hovered_chip = None;
 
     ui.horizontal_wrapped(|ui| {
@@ -1482,22 +1697,7 @@ fn metric_filter_row(
             vis.set_all(!all_on, present, *show_advanced);
         }
 
-        // Advanced toggle: reveals the advanced analysis chips (satellite
-        // utilization), hidden by default.
-        if ui
-            .selectable_label(
-                *show_advanced,
-                format!("{} Advanced", egui_phosphor::regular::GAUGE),
-            )
-            .on_hover_text(if *show_advanced {
-                "Hide advanced metrics"
-            } else {
-                "Show advanced metrics (satellite utilization and loss-of-lock slip rate)"
-            })
-            .clicked()
-        {
-            *show_advanced = !*show_advanced;
-        }
+        section_toggles(ui, show_advanced, show_channels, !channels.is_empty());
 
         // Basic groups, each separated by a divider.  Adding a new metric family
         // is just another `chip_group` call with its `MetricKind` slice.
@@ -1578,13 +1778,35 @@ fn metric_filter_row(
                 );
             }
         }
+
+        // Channel chips, shown only when revealed. One chip per channel: a
+        // vector channel toggles all its component lines together.
+        if *show_channels && !channels.is_empty() {
+            channel_chip_group(
+                ui,
+                channels,
+                channel_vis,
+                &mut show_only_channel,
+                &mut hovered_chip,
+            );
+        }
     });
 
-    // Apply "Show only this" - disable the shown metrics, then re-enable the
-    // chosen one.
-    if let Some(kind) = show_only {
+    // Apply "Show only this" - disable the shown metrics and channels, then
+    // re-enable the chosen one.
+    if show_only.is_some() || show_only_channel.is_some() {
         vis.set_all(false, present, *show_advanced);
+        if *show_channels {
+            for channel in channels {
+                channel_vis.set(&channel.name, false);
+            }
+        }
+    }
+    if let Some(kind) = show_only {
         *vis.field_mut(kind) = true;
+    }
+    if let Some(name) = show_only_channel {
+        channel_vis.set(&name, true);
     }
 
     hovered_chip
@@ -1680,6 +1902,11 @@ fn compute_level_cache(
         slip_beidou: sel(&series.slip_beidou),
         slip_navic: sel(&series.slip_navic),
         slip_qzss: sel(&series.slip_qzss),
+        channels: series
+            .channels
+            .iter()
+            .map(|c| c.components.iter().map(|comp| sel(&comp.mipmap)).collect())
+            .collect(),
     }
 }
 
@@ -1731,10 +1958,12 @@ fn add_series_lines<'a>(
     multi_track: bool,
     cache: &TripLevelCache,
     metric_vis: &MetricVisibility,
+    channel_vis: &ChannelVisibility,
     present: &HashSet<Constellation>,
-    hovered_chip: Option<MetricKind>,
+    channels: &[LoadedChannel],
+    hovered_chip: Option<&HoveredChip>,
     hover_scope: Option<HighlightScope>,
-    show_advanced: bool,
+    sections: SectionGates,
 ) {
     let prefix = if multi_track {
         format!("{}: ", series.label)
@@ -1744,36 +1973,79 @@ fn add_series_lines<'a>(
     let focused = series_matches_hover_scope(series, hover_scope);
     let has_track_focus = hover_scope.is_some();
 
+    // The hover-dim treatment every line shares: full color plus highlight
+    // while its own chip is hovered, dimmed while any other chip is.
+    let hover_treatment = |base: Color32, is_hovered_chip: bool| {
+        let (mut color, highlighted) = match hovered_chip {
+            Some(_) if is_hovered_chip => (base, true),
+            Some(_) => (base.gamma_multiply(0.2), false),
+            None => (base, false),
+        };
+        if has_track_focus && !focused {
+            color = color.gamma_multiply(0.2);
+        }
+        (color, highlighted || (has_track_focus && focused))
+    };
+    let line_style = file_line_style(series.fi);
+
     for kind in MetricKind::iter() {
         // Skip metrics with no chip on screen - collapsed advanced section, or a
         // per-constellation metric whose constellation is absent from the data -
         // so a hidden chip never leaves a stray line on the plot.
-        if !metric_is_shown(kind, present, show_advanced) {
+        if !metric_is_shown(kind, present, sections.show_advanced) {
             continue;
         }
         if !metric_vis.field(kind) {
             continue;
         }
-        let line_style = file_line_style(series.fi);
-        let (mut color, metric_highlighted) = match hovered_chip {
-            Some(h) if h == kind => (metric_line_color(kind, series.fi), true),
-            Some(_) => (
-                metric_line_color(kind, series.fi).gamma_multiply(0.2),
-                false,
-            ),
-            None => (metric_line_color(kind, series.fi), false),
-        };
-        if has_track_focus && !focused {
-            color = color.gamma_multiply(0.2);
-        }
+        let is_hovered = hovered_chip == Some(&HoveredChip::Metric(kind));
+        let (color, highlighted) = hover_treatment(metric_line_color(kind, series.fi), is_hovered);
         add_line(
             plot_ui,
             series.mipmap_for(kind).slice_at(cache.level_for(kind)),
             format!("{prefix}{}", kind.label()),
             color,
             line_style,
-            metric_highlighted || (has_track_focus && focused),
+            highlighted,
         );
+    }
+
+    // Channel lines, one per component, gated like the chips: the whole
+    // section while collapsed, then the per-channel toggle.
+    if !sections.show_channels {
+        return;
+    }
+    for (channel, selections) in series.channels.iter().zip(&cache.channels) {
+        if !channel_vis.is_visible(&channel.name) {
+            continue;
+        }
+        // The palette index comes from the cross-file union, so `accel` keeps
+        // one hue no matter which file's track is drawing.
+        let Some(color_index) = channels
+            .iter()
+            .find(|c| c.name == channel.name)
+            .map(|c| c.color_index)
+        else {
+            continue;
+        };
+        let is_hovered =
+            matches!(hovered_chip, Some(HoveredChip::Channel(name)) if *name == channel.name);
+        let (color, highlighted) =
+            hover_treatment(channel_line_color(color_index, series.fi), is_hovered);
+        let unit_suffix = channel
+            .unit
+            .as_deref()
+            .map_or(String::new(), |u| format!(" ({u})"));
+        for (component, selection) in channel.components.iter().zip(selections) {
+            add_line(
+                plot_ui,
+                component.mipmap.slice_at(*selection),
+                format!("{prefix}{}{unit_suffix}", component.label),
+                color,
+                line_style,
+                highlighted,
+            );
+        }
     }
 }
 
@@ -2137,5 +2409,53 @@ mod tests {
         let far = egui::vec2(200.0, 150.0);
         let offset = resolve_legend_offset(far, legend_size, test_plot_rect(), false, true);
         assert_eq!(offset, far);
+    }
+
+    #[test]
+    fn channel_visibility_defaults_to_visible_and_remembers_toggles() {
+        let mut vis = ChannelVisibility::default();
+        assert!(vis.is_visible("accel"), "an untoggled channel is visible");
+        vis.set("accel", false);
+        assert!(!vis.is_visible("accel"));
+        assert!(vis.is_visible("incline"), "other names stay visible");
+        vis.set("accel", true);
+        assert!(vis.is_visible("accel"));
+        vis.set("incline", false);
+        assert_eq!(
+            vis.entries(),
+            vec![("accel".to_owned(), true), ("incline".to_owned(), false)],
+            "entries list every toggled name, sorted"
+        );
+    }
+
+    #[test]
+    fn loaded_channels_union_is_sorted_and_deduplicated() {
+        use crate::series::{ChannelComponentSeries, ChannelSeries};
+        use gt_egui_mipmap::MipMap;
+
+        let channel = |name: &str, unit: Option<&str>| ChannelSeries {
+            name: name.to_owned(),
+            unit: unit.map(str::to_owned),
+            components: vec![ChannelComponentSeries {
+                label: name.to_owned(),
+                mipmap: MipMap::build(vec![]),
+            }],
+        };
+        // Two tracks' channel lists, flattened like the series cache is:
+        // `accel` appears twice and must union to one entry.
+        let lists = [
+            channel("incline", Some("deg")),
+            channel("accel", Some("g")),
+            channel("accel", Some("g")),
+        ];
+        let channels = loaded_channels(lists.iter());
+        let names: Vec<&str> = channels.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["accel", "incline"], "sorted union across series");
+        assert_eq!(channels[0].unit.as_deref(), Some("g"));
+        // Palette indices follow the sorted order, so a channel keeps one hue
+        // across files.
+        assert_eq!(channels[0].color_index, 0);
+        assert_eq!(channels[1].color_index, 1);
+        assert_eq!(channel_color(0), channel_color(CHANNEL_PALETTE.len()));
     }
 }
