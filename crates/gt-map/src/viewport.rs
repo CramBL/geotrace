@@ -4,7 +4,7 @@
 
 use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackIdx, TrackRef};
-use gt_ui_types::TrackDataVisibility;
+use gt_ui_types::{QueryMatches, TrackDataVisibility};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use walkers::MapMemory;
@@ -289,14 +289,15 @@ pub(crate) fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Re
 /// The renderers suppress invisible elements from being drawn; this function
 /// applies the *same* rules so a hidden element cannot be hovered or clicked.
 /// That means matching the renderers on every axis: file/track enablement, the
-/// per-category layer toggle, the track-level filter, and the per-point time
+/// per-category layer toggle, the track-level filter, the per-point time
 /// window (so points of a partially-overlapping track outside the window are not
-/// hit-testable either).
+/// hit-testable either), and the points a `keep`/`hide` query removed.
 pub(crate) fn is_spatial_point_visible(
     sp: &SpatialPoint,
     files: &[LoadedFile],
     visibility: &TrackDataVisibility,
     filter: &GlobalFilter,
+    query_matches: Option<&QueryMatches>,
 ) -> bool {
     let Some(file_vis) = sp.file_index.get(&visibility.files) else {
         return false;
@@ -335,6 +336,14 @@ pub(crate) fn is_spatial_point_visible(
         return false;
     }
     let pi = sp.point_index.as_usize();
+    // A `keep`/`hide` query removes TPV points from the drawn line and icons;
+    // markers stay drawn (the hidden ranges index TPV points, not the marker
+    // arrays), so only the TPV category consults the mask.
+    if sp.category == DataCategory::Tpv
+        && query_matches.is_some_and(|m| m.is_hidden(sp.track_ref(), pi))
+    {
+        return false;
+    }
     let time = match sp.category {
         DataCategory::Tpv => track.points.get(pi).map(|p| p.tpv.time().utc()),
         DataCategory::CustomMarker => track.custom_markers.get(pi).map(|m| m.time),
