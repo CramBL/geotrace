@@ -780,11 +780,16 @@ impl App {
             shared.plot_state.sync_to_map = s.map.sync_to_map;
             shared.plot_state.show_grid = s.plot.show_grid;
             shared.plot_state.show_advanced_metrics = s.plot.show_advanced_metrics;
+            shared.plot_state.show_channels = s.plot.show_channels;
             shared.plot_state.analysis = analysis;
             shared.plot_state.mark_masked_fix = s.analysis.mark_masked_fix;
             let vis = &mut shared.plot_state.metric_vis;
             for k in crate::settings::MetricKind::iter() {
                 *vis.field_mut(k) = s.plot.metric.get(&k).copied().unwrap_or(true);
+            }
+            let channel_vis = &mut shared.plot_state.channel_vis;
+            for (name, &visible) in &s.plot.channel {
+                channel_vis.set(name, visible);
             }
         }
 
@@ -831,6 +836,8 @@ impl App {
                 std::array::from_fn(|_| kinds.next().is_none_or(|k| vis.field(k)))
             },
             show_advanced_metrics: s.plot_state.show_advanced_metrics,
+            channels: s.plot_state.channel_vis.entries(),
+            show_channels: s.plot_state.show_channels,
             layer: map_layer_to_setting(self.map.layer()),
             mapbox_token: self.map.mapbox_token().to_owned(),
             sync_to_map: s.plot_state.sync_to_map,
@@ -890,7 +897,9 @@ impl App {
                 panel_visible: self.tiles_tree.tiles.is_visible(self.plot_tile_id),
                 split_ratio: self.get_split_ratio(),
                 metric,
+                channel: s.plot_state.channel_vis.entries().into_iter().collect(),
                 show_advanced_metrics: s.plot_state.show_advanced_metrics,
+                show_channels: s.plot_state.show_channels,
             },
             map: crate::settings::MapSettings {
                 layer: map_layer_to_setting(self.map.layer()),

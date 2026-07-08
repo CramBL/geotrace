@@ -6,6 +6,11 @@ use gt_types::satellites::Constellation;
 use std::collections::HashSet;
 use uom::si::angle::degree;
 
+/// Microseconds per second, for converting a channel sample's timestamp to
+/// the plot's Unix-seconds x axis. Micros rather than whole seconds so
+/// sub-second sample clocks (a 25 Hz IMU) keep their spacing.
+const MICROS_PER_SEC: f64 = 1_000_000.0;
+
 /// Mipmap series for a single track.
 ///
 /// Built from all points in the track regardless of current visibility or filter.
@@ -74,6 +79,64 @@ pub(crate) struct TrackSeries {
     pub slip_beidou: MipMap,
     pub slip_navic: MipMap,
     pub slip_qzss: MipMap,
+    /// The track's ad-hoc sensor channels, one entry per channel in the
+    /// track's own order. Dynamic (channels are per-file names), unlike the
+    /// fixed metric fields above.
+    pub channels: Vec<ChannelSeries>,
+}
+
+/// One ad-hoc channel's plot series: a line per component, on the channel's
+/// own sample clock (channels are correlated with the track by time, not
+/// resampled onto the fixes).
+#[derive(Debug, Clone)]
+pub(crate) struct ChannelSeries {
+    pub name: String,
+    /// The producer's unit label (`g`, `deg`), shown in the chip and the
+    /// line names. Purely presentational here - the plot draws raw values.
+    pub unit: Option<String>,
+    /// One line per component, in channel order. A scalar channel is a
+    /// single component labelled by the channel name alone.
+    pub components: Vec<ChannelComponentSeries>,
+}
+
+/// One channel component's line: its display label and mipmapped samples.
+#[derive(Debug, Clone)]
+pub(crate) struct ChannelComponentSeries {
+    /// `accel.x` for a vector component, `incline` for a scalar channel.
+    pub label: String,
+    pub mipmap: MipMap,
+}
+
+/// Build the per-component plot series of one channel.
+fn build_channel_series(channel: &gt_types::Channel) -> ChannelSeries {
+    let columns = channel.component_count();
+    let times: Vec<f64> = channel
+        .times
+        .iter()
+        .map(|t| t.timestamp_micros() as f64 / MICROS_PER_SEC)
+        .collect();
+    let components = (0..columns)
+        .map(|col| {
+            let pts: Vec<[f64; 2]> = times
+                .iter()
+                .zip(channel.values.chunks(columns))
+                .filter_map(|(&t, row)| row.get(col).map(|&v| [t, v]))
+                .collect();
+            let label = match channel.components.get(col) {
+                Some(component) => format!("{}.{component}", channel.name),
+                None => channel.name.clone(),
+            };
+            ChannelComponentSeries {
+                label,
+                mipmap: MipMap::build(pts),
+            }
+        })
+        .collect();
+    ChannelSeries {
+        name: channel.name.clone(),
+        unit: channel.unit.clone(),
+        components,
+    }
 }
 
 impl TrackSeries {
@@ -305,9 +368,71 @@ fn build_track_series(
         slip_all: MipMap::build(slip.all),
         slip_gps: MipMap::build(slip.gps),
         slip_glonass: MipMap::build(slip.glonass),
-        slip_galileo: MipMap::build(slip.galileo),
         slip_beidou: MipMap::build(slip.beidou),
+        slip_galileo: MipMap::build(slip.galileo),
         slip_navic: MipMap::build(slip.navic),
         slip_qzss: MipMap::build(slip.qzss),
+        channels: track.channels.iter().map(build_channel_series).collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A vector channel becomes one line per component, on the channel's own
+    /// sample clock - not resampled onto the nav points.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the values pass through untransformed, so equality is exact"
+    )]
+    fn a_vector_channel_builds_one_mipmap_per_component() {
+        let t =
+            |secs: i64| chrono::DateTime::from_timestamp(1_700_000_000 + secs, 0).expect("valid");
+        let channel = gt_types::Channel {
+            name: "accel".to_owned(),
+            unit: Some("g".to_owned()),
+            period: None,
+            description: None,
+            components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
+            times: vec![t(0), t(1)],
+            values: vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+        };
+        let series = build_channel_series(&channel);
+        assert_eq!(series.name, "accel");
+        assert_eq!(series.unit.as_deref(), Some("g"));
+        let labels: Vec<&str> = series.components.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(labels, ["accel.x", "accel.y", "accel.z"]);
+        // Each component line carries its column at the channel's timestamps.
+        let full = series.components[1].mipmap.select_indices(
+            f64::NEG_INFINITY,
+            f64::INFINITY,
+            usize::MAX,
+        );
+        let pts = series.components[1].mipmap.slice_at(full);
+        assert_eq!(pts.len(), 2);
+        assert_eq!(pts[0].x, 1_700_000_000.0);
+        assert_eq!(pts[0].y, 0.2, "y column, row 0");
+        assert_eq!(pts[1].y, 0.5, "y column, row 1");
+    }
+
+    /// A scalar channel is a single component labelled by the name alone.
+    #[test]
+    fn a_scalar_channel_builds_one_component() {
+        let t =
+            |secs: i64| chrono::DateTime::from_timestamp(1_700_000_000 + secs, 0).expect("valid");
+        let channel = gt_types::Channel {
+            name: "incline".to_owned(),
+            unit: Some("deg".to_owned()),
+            period: None,
+            description: None,
+            components: vec![],
+            times: vec![t(0), t(1)],
+            values: vec![1.5, 2.5],
+        };
+        let series = build_channel_series(&channel);
+        assert_eq!(series.components.len(), 1);
+        assert_eq!(series.components[0].label, "incline");
     }
 }

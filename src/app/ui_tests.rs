@@ -847,6 +847,78 @@ fn snapshot_app_query_match_hover() {
     harness.snapshot_loose("app_query_match_hover");
 }
 
+/// Channels plot as their own toggleable category: the Channels toggle
+/// reveals the accel chip and its component lines, the chip hides them
+/// again, and both toggles round-trip. The demo trip carries a 25 Hz accel
+/// channel, so the snapshot shows real IMU-shaped lines beneath the metrics.
+#[test]
+fn snapshot_app_plot_channels() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(DEMO_BYTES)),
+            name: "demo_trip.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+    harness.inner.run_steps(5);
+
+    // Hidden by default: no channel chip until the section is revealed.
+    assert!(
+        harness.inner.query_by_label_contains("accel (g)").is_none(),
+        "channel chips stay hidden while the section is collapsed"
+    );
+
+    harness.inner.get_by_label_contains("Channels").click();
+    harness.inner.run_steps(3);
+    assert!(
+        harness
+            .inner
+            .state()
+            .shared
+            .borrow()
+            .plot_state
+            .show_channels,
+        "the toggle reveals the channel section"
+    );
+    harness.inner.get_by_label_contains("accel (g)");
+
+    // Declutter: keep only velocity and the channel visible so the snapshot
+    // reads clearly (the accel lines sit near 1 g among km/h magnitudes).
+    {
+        let state = harness.inner.state_mut();
+        let mut shared = state.shared.borrow_mut();
+        let vis = &mut shared.plot_state.metric_vis;
+        use strum::IntoEnumIterator as _;
+        for kind in gt_types::MetricKind::iter() {
+            *vis.field_mut(kind) = kind == gt_types::MetricKind::Velocity;
+        }
+    }
+    harness.inner.run_steps(5);
+    harness.snapshot_loose("app_plot_channels");
+
+    // The chip toggles the channel's lines off without collapsing the section.
+    harness.inner.get_by_label_contains("accel (g)").click();
+    harness.inner.run_steps(3);
+    let shared = harness.inner.state().shared.borrow();
+    assert!(
+        !shared.plot_state.channel_vis.is_visible("accel"),
+        "clicking the chip hides the channel"
+    );
+    assert!(
+        shared.plot_state.show_channels,
+        "the section stays revealed"
+    );
+}
+
 /// A channel-source query end to end: filtering on a vector channel's
 /// component (`@accel.x`) runs standalone, the results list per-track sample
 /// tables (time plus each component), and the map halos the track segments
@@ -1072,6 +1144,40 @@ fn query_history_persists_across_settings_roundtrip() {
 
     harness.state_mut().apply_startup_settings(&flushed);
     assert_eq!(harness.state().query_window.history().len(), 1);
+}
+
+/// Channel plot toggles survive the settings flush/load roundtrip: the
+/// revealed section and a hidden channel come back, and the TOML encoding
+/// itself round-trips the dynamic name map.
+#[test]
+fn plot_channel_toggles_persist_across_settings_roundtrip() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+
+    {
+        let shared = harness.state_mut().shared.clone();
+        let mut shared = shared.borrow_mut();
+        shared.plot_state.show_channels = true;
+        shared.plot_state.channel_vis.set("accel", false);
+    }
+
+    let flushed = harness.state().collect_settings_for_flush();
+    assert!(flushed.plot.show_channels);
+    assert_eq!(flushed.plot.channel.get("accel"), Some(&false));
+
+    // Through the actual wire format, not just the struct.
+    let toml = toml::to_string(&flushed).expect("settings serialize");
+    let reloaded: crate::settings::Settings = toml::from_str(&toml).expect("settings parse");
+    assert!(reloaded.plot.show_channels);
+    assert_eq!(reloaded.plot.channel.get("accel"), Some(&false));
+
+    harness.state_mut().apply_startup_settings(&reloaded);
+    let shared = harness.state().shared.borrow();
+    assert!(shared.plot_state.show_channels);
+    assert!(!shared.plot_state.channel_vis.is_visible("accel"));
+    assert!(shared.plot_state.channel_vis.is_visible("incline"));
 }
 
 /// Build an app with one loaded file and the query window open. Shared setup
