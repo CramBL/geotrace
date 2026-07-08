@@ -2,6 +2,8 @@
 
 ## [unreleased]
 
+## [0.4.0] - 2026-07-08
+
 ### Added
 
 - Query window: write a short pipeline (e.g. `points | window 10 | where avg(velocity) > 30 km/h`) to find stretches of the loaded data. Includes unit-aware expressions, syntax highlighting, a built-in examples list, and a persisted query history.
