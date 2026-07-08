@@ -562,7 +562,7 @@ fn a_vector_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
             .name("accel")
             .unit("g")
             .description("device-frame acceleration")
-            .components(["x", "y", "z"].map(String::from).to_vec())
+            .components(["x", "y", "z"])
             // Two samples, row-major: [x0, y0, z0, x1, y1, z1].
             .times(vec![t0, t1])
             .values(vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02])
@@ -593,7 +593,7 @@ fn vector_channel_validation() {
     assert!(matches!(
         Channel::builder()
             .name("v")
-            .components(vec![])
+            .components(Vec::<String>::new())
             .times(t.clone())
             .values(vec![1.0])
             .build(),
@@ -603,7 +603,7 @@ fn vector_channel_validation() {
     assert!(matches!(
         Channel::builder()
             .name("v")
-            .components(["x", "Y"].map(String::from).to_vec())
+            .components(["x", "Y"])
             .times(t.clone())
             .values(vec![1.0, 2.0])
             .build(),
@@ -613,7 +613,7 @@ fn vector_channel_validation() {
     assert!(matches!(
         Channel::builder()
             .name("v")
-            .components(["x", "x"].map(String::from).to_vec())
+            .components(["x", "x"])
             .times(t.clone())
             .values(vec![1.0, 2.0])
             .build(),
@@ -623,7 +623,7 @@ fn vector_channel_validation() {
     assert!(matches!(
         Channel::builder()
             .name("v")
-            .components(["x", "y", "z"].map(String::from).to_vec())
+            .components(["x", "y", "z"])
             .times(t)
             .values(vec![1.0, 2.0])
             .build(),
@@ -645,7 +645,7 @@ fn a_single_component_vector_channel_round_trips() -> Result<(), Box<dyn std::er
         Channel::builder()
             .name("tilt")
             .unit("deg")
-            .components(vec!["angle".to_owned()])
+            .components(["angle"])
             .times(vec![t0, t0 + Duration::seconds(1)])
             .values(vec![10.0, 20.0])
             .build()?,
@@ -668,7 +668,7 @@ fn scalar_and_vector_channels_coexist() -> Result<(), Box<dyn std::error::Error>
     recorder.add_channel(
         Channel::builder()
             .name("accel")
-            .components(["x", "y", "z"].map(String::from).to_vec())
+            .components(["x", "y", "z"])
             .times(vec![t0])
             .values(vec![0.1, 0.2, 0.98])
             .build()?,

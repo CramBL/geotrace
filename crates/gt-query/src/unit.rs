@@ -428,6 +428,31 @@ mod tests {
 
     use super::*;
 
+    /// The error-help tables answer for every dimensioned quantity: a
+    /// quantity with units lists them and shows an example literal, the
+    /// unitless three (timestamp, count, condition) answer `None` in both.
+    /// Iterating the enum, so a new `Quantity` variant fails here until both
+    /// tables cover it.
+    #[test]
+    fn error_help_tables_cover_every_quantity() {
+        for quantity in Quantity::iter() {
+            let unitless = matches!(
+                quantity,
+                Quantity::Timestamp | Quantity::Count | Quantity::Condition
+            );
+            assert_eq!(
+                unit_list(quantity).is_none(),
+                unitless,
+                "{quantity} unit list"
+            );
+            assert_eq!(
+                example_literal(quantity).is_none(),
+                unitless,
+                "{quantity} example literal"
+            );
+        }
+    }
+
     #[test]
     fn speed_conversions_are_exact_enough() {
         let kmh = Unit::KM_PER_H.to_base();

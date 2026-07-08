@@ -5,7 +5,7 @@
 
 use geotrace_sdk::{Angle, DateTime, Duration, Utc, Velocity};
 use geotrace_sdk::{
-    Annotation, BuildError, Constellation, EventMarker, NavFileBuilder, NavFix, Satellite,
+    Annotation, BuildError, Channel, Constellation, EventMarker, NavFileBuilder, NavFix, Satellite,
     SatelliteReport,
 };
 use proptest::prelude::*;
@@ -729,5 +729,38 @@ fn add_dispatches_to_the_matching_typed_method() -> Result<(), BuildError> {
     assert!(via_add.nav_points().iter().any(|p| p.satellites.is_some()));
     assert_eq!(via_add.markers().len(), 1);
     assert_eq!(via_add.event_markers().len(), 1);
+    Ok(())
+}
+
+/// Every stringlike iterable spells the same component list: a literal array
+/// of `&str`, a `vec!` of `&str`, and an owned `Vec<String>` build equal
+/// channels.
+#[test]
+fn channel_components_accept_any_stringlike_iterable() -> Result<(), Box<dyn std::error::Error>> {
+    let times = vec![t(0)];
+    let values = vec![1.0, 2.0, 3.0];
+
+    let from_array = Channel::builder()
+        .name("accel")
+        .components(["x", "y", "z"])
+        .times(times.clone())
+        .values(values.clone())
+        .build()?;
+    let from_vec_of_str = Channel::builder()
+        .name("accel")
+        .components(vec!["x", "y", "z"])
+        .times(times.clone())
+        .values(values.clone())
+        .build()?;
+    let from_owned = Channel::builder()
+        .name("accel")
+        .components(vec!["x".to_owned(), "y".to_owned(), "z".to_owned()])
+        .times(times)
+        .values(values)
+        .build()?;
+
+    assert_eq!(from_array, from_vec_of_str);
+    assert_eq!(from_array, from_owned);
+    assert_eq!(from_array.components(), &["x", "y", "z"]);
     Ok(())
 }

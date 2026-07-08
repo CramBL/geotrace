@@ -668,6 +668,11 @@ impl Channel {
         #[builder(into)] unit: Option<String>,
         period: Option<Angle>,
         #[builder(into)] description: Option<String>,
+        // Any iterable of stringlike labels: `["x", "y", "z"]`, a `vec!` of
+        // `&str`, or an owned `Vec<String>` all work.
+        #[builder(with = |labels: impl IntoIterator<Item: Into<String>>| {
+            labels.into_iter().map(Into::into).collect()
+        })]
         components: Option<Vec<String>>,
         times: Vec<DateTime<Utc>>,
         values: Vec<f64>,
