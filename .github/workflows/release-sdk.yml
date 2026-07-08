@@ -245,6 +245,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "GeoTrace SDK $VERSION" \
             --notes-file "$notes" \
+            --latest=false \
             $PRERELEASE \
             "${assets[@]}"
 
