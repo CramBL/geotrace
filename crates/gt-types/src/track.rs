@@ -3,6 +3,7 @@ use crate::highlight::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
 use crate::markers::{CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker};
 use crate::mercator::MercPoint;
 use crate::nav_point::NavPoint;
+use crate::sat_label::SatLabelAnchor;
 use chrono::{DateTime, Duration, Utc};
 use geo_types::{Coord, Rect};
 use std::collections::HashMap;
@@ -317,6 +318,9 @@ pub struct LoadedTrack {
     /// Multi-resolution decimation of `points` for rendering. Empty (the
     /// default) makes renderers fall back to the full point list.
     pub lod: TrackLod,
+    /// Satellite-label anchor candidates, ascending by point index. Empty
+    /// when the track has no satellite reports.
+    pub sat_label_anchors: Vec<SatLabelAnchor>,
     pub custom_markers: Vec<CustomMarker>,
     pub generated_markers: Vec<GeneratedMarker>,
     pub event_markers: Vec<EventMarker>,

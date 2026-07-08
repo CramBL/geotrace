@@ -1621,6 +1621,7 @@ fn push_file_with_channel(harness: &mut Harness<App>, name: &str, unit: &str) {
             metadata: TrackMetadata::default(),
             points: vec![],
             lod: TrackLod::default(),
+            sat_label_anchors: Vec::new(),
             custom_markers: vec![],
             generated_markers: vec![],
             event_markers: vec![],

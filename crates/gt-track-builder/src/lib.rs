@@ -1,8 +1,10 @@
 pub mod lod;
+pub mod sat_label;
 pub mod segment;
 pub mod spatial;
 
 pub use lod::build_track_lod;
+pub use sat_label::build_sat_label_anchors;
 pub use segment::{
     DEFAULT_CLOCK_OUTLIER_SIGMAS, GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig,
     build_loaded_file, clock_discontinuity_floor_seconds, compute_track_metadata,

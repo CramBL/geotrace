@@ -615,11 +615,13 @@ pub fn build_loaded_file(
             // After ghost-position precomputation: LOD distances must see
             // the same Mercator coordinates the renderers will project.
             let lod = crate::lod::build_track_lod(&track_points_vec);
+            let sat_label_anchors = crate::sat_label::build_sat_label_anchors(&track_points_vec);
 
             LoadedTrack {
                 metadata,
                 points: track_points_vec,
                 lod,
+                sat_label_anchors,
                 custom_markers: track_custom,
                 generated_markers: track_generated,
                 event_markers: Vec::new(),

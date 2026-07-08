@@ -2476,6 +2476,7 @@ dependencies = [
  "gt-types",
  "proptest",
  "rstar 0.13.0",
+ "rstest",
  "uom",
  "vec1",
 ]

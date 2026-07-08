@@ -17,28 +17,29 @@ pub fn haversine_m(lat1: Latitude, lon1: Longitude, lat2: Latitude, lon2: Longit
     )
 }
 
+/// Haversine length, in metres, of each segment between consecutive points,
+/// in recording order. Empty for fewer than 2 points. The primitive behind
+/// every along-track distance walk ([`path_distance_km`],
+/// [`segment_length_range_m`], threshold crossings).
+pub fn segment_distances_m(points: &[NavPoint]) -> impl Iterator<Item = f64> + '_ {
+    points.windows(2).map(|w| match w {
+        [a, b] => haversine_m(a.tpv.lat(), a.tpv.lon(), b.tpv.lat(), b.tpv.lon()),
+        _ => 0.0,
+    })
+}
+
 /// Sum of haversine distances along an ordered sequence of GPS points,
 /// in kilometres. Returns `0.0` for fewer than 2 points.
 pub fn path_distance_km(points: &[NavPoint]) -> f64 {
-    points
-        .windows(2)
-        .map(|w| match w {
-            [a, b] => haversine_km(a.tpv.lat(), a.tpv.lon(), b.tpv.lat(), b.tpv.lon()),
-            _ => 0.0,
-        })
-        .sum()
+    segment_distances_m(points).sum::<f64>() / 1_000.0
 }
 
 /// Minimum and maximum haversine length, in metres, over the segments
 /// between consecutive points. `None` for fewer than 2 points (no segments).
 pub fn segment_length_range_m(points: &[NavPoint]) -> Option<(f64, f64)> {
-    let mut range: Option<(f64, f64)> = None;
-    for w in points.windows(2) {
-        let [a, b] = w else { continue };
-        let m = haversine_m(a.tpv.lat(), a.tpv.lon(), b.tpv.lat(), b.tpv.lon());
-        range = Some(range.map_or((m, m), |(min, max)| (min.min(m), max.max(m))));
-    }
-    range
+    segment_distances_m(points).fold(None, |range: Option<(f64, f64)>, m| {
+        Some(range.map_or((m, m), |(min, max)| (min.min(m), max.max(m))))
+    })
 }
 
 /// Maximum haversine distance between any two points in the set, in metres.
