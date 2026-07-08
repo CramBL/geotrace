@@ -46,6 +46,23 @@ impl DisplayCategory {
     }
 }
 
+/// The display category that masks the ink of a side-panel tree category.
+/// One-way: [`DisplayCategory::QueryHighlights`] has no tree counterpart.
+/// Satellite reports map to the satellite labels, the only ink they draw
+/// beyond the track points themselves.
+impl From<gt_types::DataCategory> for DisplayCategory {
+    fn from(category: gt_types::DataCategory) -> Self {
+        match category {
+            gt_types::DataCategory::Track => Self::Tracks,
+            gt_types::DataCategory::Tpv => Self::TrackPoints,
+            gt_types::DataCategory::SatelliteReport => Self::SatelliteLabels,
+            gt_types::DataCategory::CustomMarker => Self::CustomMarkers,
+            gt_types::DataCategory::GeneratedMarker => Self::GeneratedMarkers,
+            gt_types::DataCategory::EventMarker => Self::EventMarkers,
+        }
+    }
+}
+
 /// Every category's bit set - the `hide_all` state.
 const ALL_HIDDEN: u8 = u8::MAX >> (u8::BITS as usize - DisplayCategory::COUNT);
 
@@ -174,6 +191,26 @@ mod tests {
             assert_eq!(category.to_string(), wire);
             assert_eq!(DisplayCategory::from_str(wire), Ok(category));
         }
+    }
+
+    #[rstest::rstest]
+    #[case(gt_types::DataCategory::Track, DisplayCategory::Tracks)]
+    #[case(gt_types::DataCategory::Tpv, DisplayCategory::TrackPoints)]
+    #[case(
+        gt_types::DataCategory::SatelliteReport,
+        DisplayCategory::SatelliteLabels
+    )]
+    #[case(gt_types::DataCategory::CustomMarker, DisplayCategory::CustomMarkers)]
+    #[case(
+        gt_types::DataCategory::GeneratedMarker,
+        DisplayCategory::GeneratedMarkers
+    )]
+    #[case(gt_types::DataCategory::EventMarker, DisplayCategory::EventMarkers)]
+    fn data_category_maps_to_its_display_category(
+        #[case] data: gt_types::DataCategory,
+        #[case] expected: DisplayCategory,
+    ) {
+        assert_eq!(DisplayCategory::from(data), expected);
     }
 
     #[test]

@@ -4,7 +4,7 @@ use gt_types::{
     DataCategory, FileIdx, GeneratedMarkerKind, LoadWarning, LoadedFile, LoadedTrack, PointIdx,
     TrackIdx, TrackRef,
 };
-use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
+use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask, HighlightScope, MapHighlight};
 
 use crate::filter::{FilterPanelState, render_filter_panel};
 use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState};
@@ -27,6 +27,19 @@ pub struct PanelContext<'a> {
     /// Set when "Reset filters" is clicked, so the app can also drop the query
     /// filter (which the side panel cannot reach directly).
     pub clear_query_request: &'a mut bool,
+    /// The map's display mask, read to hint on category rows whose ink the
+    /// display toggles currently hide.
+    pub display_mask: DisplayMask,
+}
+
+/// Trailing eye-slash on a category row whose map ink is hidden by the
+/// display toggles - the tree and the mask explain each other instead of
+/// silently compounding.
+fn masked_hint(ui: &mut egui::Ui, mask: DisplayMask, category: DataCategory) {
+    if !mask.is_visible(DisplayCategory::from(category)) {
+        ui.label(egui::RichText::new(egui_phosphor::regular::EYE_SLASH).weak())
+            .on_hover_text("Hidden by the map display toggles");
+    }
 }
 
 impl<'a> PanelContext<'a> {
@@ -394,6 +407,7 @@ fn render_category_section(
     label: &str,
     visible: bool,
     expanded: bool,
+    display_mask: DisplayMask,
     tree: &mut TreeState,
     highlight: &mut MapHighlight,
     render_items: impl FnOnce(&mut egui::Ui, &mut MapHighlight),
@@ -418,6 +432,7 @@ fn render_category_section(
         if resp.clicked() {
             tree.toggle_category_expanded(track_ref, cat);
         }
+        masked_hint(ui, display_mask, cat);
         resp
     });
     if header.inner.hovered() {
@@ -473,7 +488,9 @@ fn render_track_categories(
             ctx.tree
                 .set_category_visible(track_ref, DataCategory::Track, !track_visible);
         }
-        ui.label("Track polyline")
+        let resp = ui.label("Track polyline");
+        masked_hint(ui, ctx.display_mask, DataCategory::Track);
+        resp
     });
     if track_resp.inner.hovered() {
         ctx.highlight.hover = Some(HighlightScope::TrackCategory {
@@ -490,6 +507,7 @@ fn render_track_categories(
         "Track points",
         tpv_visible,
         tpv_expanded,
+        ctx.display_mask,
         ctx.tree,
         ctx.highlight,
         |ui, highlight| {
@@ -517,6 +535,7 @@ fn render_track_categories(
         "Satellite reports",
         sat_visible,
         sat_expanded,
+        ctx.display_mask,
         ctx.tree,
         ctx.highlight,
         |ui, highlight| {
@@ -539,6 +558,7 @@ fn render_track_categories(
         "Custom markers",
         cm_visible,
         cm_expanded,
+        ctx.display_mask,
         ctx.tree,
         ctx.highlight,
         |ui, highlight| {
@@ -636,7 +656,9 @@ fn render_event_markers_section(
         }
         let arrow = expand_arrow(is_open);
         let label = format!("{arrow} Events  {count}");
-        ui.selectable_label(false, label)
+        let resp = ui.selectable_label(false, label);
+        masked_hint(ui, ctx.display_mask, DataCategory::EventMarker);
+        resp
     });
 
     if header_response.inner.clicked() {
@@ -869,7 +891,9 @@ fn render_generated_markers_section(
                 .set_category_visible(track_ref, DataCategory::GeneratedMarker, !visible);
         }
         let arrow = expand_arrow(expanded);
-        ui.selectable_label(expanded, format!("{arrow} Generated markers  {count}"))
+        let resp = ui.selectable_label(expanded, format!("{arrow} Generated markers  {count}"));
+        masked_hint(ui, ctx.display_mask, DataCategory::GeneratedMarker);
+        resp
     });
     if header.inner.clicked() {
         ctx.tree

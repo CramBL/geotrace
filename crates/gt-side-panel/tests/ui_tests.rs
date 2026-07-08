@@ -5,7 +5,7 @@ use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
 use gt_test_utils::TestHarness;
 use gt_types::{FileIdx, FixStats, LoadWarning, TrackIdx, TrackRef};
-use gt_ui_types::MapHighlight;
+use gt_ui_types::{DisplayCategory, DisplayMask, MapHighlight};
 
 struct State {
     files: LoadedFiles,
@@ -18,6 +18,7 @@ struct State {
     zoom_to_visible: bool,
     warnings_request: Option<(String, Vec<LoadWarning>)>,
     clear_query_request: bool,
+    display_mask: DisplayMask,
 }
 
 fn make_state(file_count: usize) -> State {
@@ -63,6 +64,7 @@ fn make_state_with_warnings_on(
         zoom_to_visible: false,
         warnings_request: None,
         clear_query_request: false,
+        display_mask: DisplayMask::default(),
     }
 }
 
@@ -82,6 +84,7 @@ fn make_harness(state: State) -> TestHarness<'static, State> {
                     zoom_to_visible_request: &mut s.zoom_to_visible,
                     warnings_request: &mut s.warnings_request,
                     clear_query_request: &mut s.clear_query_request,
+                    display_mask: s.display_mask,
                 };
                 show_side_panel(ui, &mut ctx);
             },
@@ -103,6 +106,30 @@ fn snapshot_one_file_expanded() {
     let mut harness = make_harness(state);
     harness.run();
     harness.snapshot("side_panel_file_expanded");
+}
+
+#[test]
+fn snapshot_masked_categories_show_hint() {
+    // Categories hidden by the map display toggles get a trailing
+    // eye-slash on their tree row - the tree state itself is untouched.
+    let mut state = make_state(1);
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    state.tree.toggle_expand_track(track);
+    state
+        .display_mask
+        .set_visible(DisplayCategory::TrackPoints, false);
+    state
+        .display_mask
+        .set_visible(DisplayCategory::GeneratedMarkers, false);
+    // Satellite labels are the one row whose label ("Satellite reports")
+    // differs from its display category - pin the mapping visually too.
+    state
+        .display_mask
+        .set_visible(DisplayCategory::SatelliteLabels, false);
+    let mut harness = make_harness(state);
+    harness.run();
+    harness.snapshot("side_panel_masked_categories");
 }
 
 #[test]
@@ -211,6 +238,7 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
         zoom_to_visible: false,
         warnings_request: None,
         clear_query_request: false,
+        display_mask: DisplayMask::default(),
     };
     // Renders the expanded track row, exercising the `fix_stats == None` fallback
     // ("No satellite data") instead of the colored tooltip.
@@ -325,6 +353,7 @@ fn snapshot_track_channels() {
         zoom_to_visible: false,
         warnings_request: None,
         clear_query_request: false,
+        display_mask: DisplayMask::default(),
     };
     let mut harness = make_harness(state);
     harness.run();

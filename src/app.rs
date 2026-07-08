@@ -1688,6 +1688,7 @@ impl eframe::App for App {
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
                             clear_query_request: &mut s.clear_query_request,
+                            display_mask: s.display_mask,
                         },
                     );
                 });
@@ -1724,6 +1725,7 @@ impl eframe::App for App {
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
                             clear_query_request: &mut s.clear_query_request,
+                            display_mask: s.display_mask,
                         },
                     );
                 });
