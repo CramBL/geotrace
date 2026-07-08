@@ -15,5 +15,8 @@ gt-types = { path = "../gt-types" }
 serde.workspace = true
 strum.workspace = true
 
+[dev-dependencies]
+rstest.workspace = true
+
 [lints]
 workspace = true
