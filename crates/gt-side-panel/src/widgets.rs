@@ -78,12 +78,36 @@ pub fn point_item_row(
     if response.hovered() {
         highlight.hover = Some(HighlightScope::Point(point_ref));
     }
+    apply_point_click(
+        ui,
+        &response,
+        point_ref,
+        lat_lon,
+        highlight,
+        map_center_request,
+        popup_pos_request,
+    );
+}
+
+/// The click reactions every point row shares (here and in the query window's
+/// match tables): clicking pins the point's map popup right of the containing
+/// panel at the row's height, clicking again unpins, double-clicking centers
+/// the map on the point.
+pub fn apply_point_click(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    point_ref: DataPointRef,
+    lat_lon: (f64, f64),
+    highlight: &mut MapHighlight,
+    map_center_request: &mut Option<(f64, f64)>,
+    popup_pos_request: &mut Option<egui::Pos2>,
+) {
     if response.clicked() {
-        if !is_sticky {
+        if highlight.sticky == Some(point_ref) {
+            highlight.sticky = None;
+        } else {
             highlight.sticky = Some(point_ref);
             *popup_pos_request = Some(egui::pos2(ui.clip_rect().max.x + 8.0, response.rect.min.y));
-        } else {
-            highlight.sticky = None;
         }
     }
     if response.double_clicked() {

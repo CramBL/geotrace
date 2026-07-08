@@ -6,6 +6,6 @@ pub mod visibility;
 
 pub use event_marker_visibility::EventMarkerVisibility;
 pub use generated_marker_visibility::GeneratedMarkerVisibility;
-pub use highlight::{DataPointRef, HighlightScope, MapHighlight};
+pub use highlight::{DataPointRef, HighlightScope, MapHighlight, MatchHighlight};
 pub use query_matches::{DrawLayer, DrawLayerMask, QueryMatches};
 pub use visibility::{FileVisibility, TrackDataVisibility, TrackVisibility};

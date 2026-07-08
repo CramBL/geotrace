@@ -2,7 +2,7 @@ use crate::AnalysisConfig;
 use crate::series::{TrackSeries, build_all_series};
 use chrono::{DateTime, Utc};
 use egui::Color32;
-use egui_plot::{Line, LineStyle, MarkerShape, PlotPoint, PlotPoints, Points, VLine};
+use egui_plot::{Line, LineStyle, MarkerShape, PlotPoint, PlotPoints, Points, Polygon, VLine};
 use gt_analysis::satellite_utilization::UtilAnomaly;
 use gt_egui_mipmap::{LevelSelection, MipMap};
 use gt_filter::GlobalFilter;
@@ -886,6 +886,9 @@ pub fn show_track_plot(
     filter: &GlobalFilter,
     hover_scope: Option<HighlightScope>,
     map_hover_time: Option<DateTime<Utc>>,
+    // Time span of the match hovered in the query results table, drawn as a
+    // shaded band beneath the series so the match shows in metric context.
+    match_hover_time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
     // When map→plot sync is enabled, this carries the Unix-second x range
     // computed from TPV points visible in the current map viewport.
     // The plot will pan/zoom to this range the first frame it changes.
@@ -1097,6 +1100,30 @@ pub fn show_track_plot(
         } else {
             None
         };
+
+        // The hovered match's time band, before the series so the lines stay
+        // on top. A single-point match has no width; a cursor line marks it.
+        if let Some((start, end)) = match_hover_time_range {
+            let (x0, x1) = (start.timestamp() as f64, end.timestamp() as f64);
+            if x0 < x1 {
+                let (y0, y1) = (bounds.min()[1], bounds.max()[1]);
+                plot_ui.polygon(
+                    Polygon::new(
+                        "Hovered match",
+                        vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
+                    )
+                    .fill_color(gt_ui_theme::HIGHLIGHT_BLUE_BAND)
+                    .stroke(egui::Stroke::NONE)
+                    .allow_hover(false),
+                );
+            } else {
+                plot_ui.vline(
+                    VLine::new("Hovered match", x0)
+                        .color(gt_ui_theme::HIGHLIGHT_BLUE_SEEK)
+                        .width(1.5),
+                );
+            }
+        }
 
         debug_assert_eq!(visible.len(), series_cache.len());
         for (si, (vis, series)) in visible.iter().zip(series_cache.iter()).enumerate() {

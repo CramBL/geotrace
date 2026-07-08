@@ -57,6 +57,9 @@ struct LinePointKey {
     /// Whether the query pipeline hides this point. Splits the line at hidden
     /// points.
     hidden: bool,
+    /// Whether the match hovered in the query results table covers this point -
+    /// drives the hover halo pass.
+    hover_matched: bool,
 }
 
 /// One visible track's prepared geometry and paint decisions for this
@@ -241,6 +244,10 @@ impl TrackLayers<'_> {
                 let track_ref = TrackRef::new(fi, ti);
                 let mut ghost_points: Vec<usize> = Vec::new();
                 let fade = entry.fade;
+                let hover_match = self
+                    .highlight
+                    .hover_match
+                    .filter(|hm| hm.track == track_ref);
                 let pts = lod_points(track, transform)
                     .filter(|(_, p)| {
                         gt_filter::point_passes_time_filter(p.tpv.time().utc(), self.filter)
@@ -274,6 +281,7 @@ impl TrackLayers<'_> {
                             bucket,
                             matched,
                             hidden,
+                            hover_matched: hover_match.is_some_and(|hm| hm.contains(pi)),
                         };
                         (key, screen_pos)
                     });
@@ -296,6 +304,8 @@ impl TrackLayers<'_> {
     /// Paint every track's query-match halos beneath its lines, for the
     /// entries that pass the `filter(index)` predicate. Runs in the same
     /// phases as the tracklines so the fade overlay dims halos consistently.
+    /// The match hovered in the results table paints last, in the highlight
+    /// blue, so it reads above the draw layers it may overlap.
     fn paint_match_halos<F>(
         &self,
         ui: &Ui,
@@ -305,10 +315,12 @@ impl TrackLayers<'_> {
     ) where
         F: Fn(usize) -> bool,
     {
-        let Some(matches) = self.query_matches else {
-            return;
-        };
-        if matches.draws.is_empty() {
+        let draws = self
+            .query_matches
+            .map(|m| (m.draws.as_slice(), m.stale))
+            .filter(|(draws, _)| !draws.is_empty());
+        let hover_match = self.highlight.hover_match;
+        if draws.is_none() && hover_match.is_none() {
             return;
         }
         let ring_radius = style.base_arrow_size;
@@ -320,8 +332,9 @@ impl TrackLayers<'_> {
             // A layer per draw query, painted in its own color; overlapping
             // halos stack because each is a separate pass. Capped at the
             // mask width, matching `QueryMatches::draw_mask`.
-            for (layer_idx, layer) in matches
-                .draws
+            for (layer_idx, layer) in draws
+                .map(|(draws, _)| draws)
+                .unwrap_or_default()
                 .iter()
                 .take(DrawLayerMask::MAX_LAYERS)
                 .enumerate()
@@ -329,25 +342,49 @@ impl TrackLayers<'_> {
                 if layer.ranges_for(track_ref).is_empty() {
                     continue;
                 }
-                let color = gt_ui_theme::query_halo_color(layer.color, matches.stale);
-                match &geo.path {
-                    VisiblePath::OffScreen => {}
-                    VisiblePath::Dot(key, pos) => {
-                        if key.matched.contains(layer_idx) {
-                            query_match_renderer::draw_match_ring(ui, *pos, ring_radius, color);
-                        }
-                    }
-                    VisiblePath::Spans(spans) => {
-                        for span in spans.iter() {
-                            query_match_renderer::paint_match_halo_span(
-                                ui,
-                                span,
-                                |key| key.matched.contains(layer_idx),
-                                ring_radius,
-                                color,
-                            );
-                        }
-                    }
+                let stale = draws.is_some_and(|(_, stale)| stale);
+                let color = gt_ui_theme::query_halo_color(layer.color, stale);
+                Self::paint_halo_path(ui, &geo.path, ring_radius, color, |key| {
+                    key.matched.contains(layer_idx)
+                });
+            }
+            if hover_match.is_some_and(|hm| hm.track == track_ref) {
+                Self::paint_halo_path(
+                    ui,
+                    &geo.path,
+                    ring_radius,
+                    gt_ui_theme::QUERY_MATCH_HOVER_HALO,
+                    |key| key.hover_matched,
+                );
+            }
+        }
+    }
+
+    /// Paint one halo pass over a track's prepared path: bands along the
+    /// points `covered` selects, a ring where the pass reduces to one point.
+    fn paint_halo_path(
+        ui: &Ui,
+        path: &VisiblePath<LinePointKey>,
+        ring_radius: f32,
+        color: egui::Color32,
+        covered: impl Fn(&LinePointKey) -> bool,
+    ) {
+        match path {
+            VisiblePath::OffScreen => {}
+            VisiblePath::Dot(key, pos) => {
+                if covered(key) {
+                    query_match_renderer::draw_match_ring(ui, *pos, ring_radius, color);
+                }
+            }
+            VisiblePath::Spans(spans) => {
+                for span in spans.iter() {
+                    query_match_renderer::paint_match_halo_span(
+                        ui,
+                        span,
+                        &covered,
+                        ring_radius,
+                        color,
+                    );
                 }
             }
         }
@@ -598,6 +635,7 @@ mod tests {
                     bucket: 0,
                     matched: DrawLayerMask::default(),
                     hidden,
+                    hover_matched: false,
                 };
                 (key, pos2(i as f32, 0.0))
             })
@@ -646,6 +684,7 @@ mod tests {
             bucket: 3,
             matched: DrawLayerMask::default(),
             hidden: false,
+            hover_matched: false,
         };
         let pts = vec![
             (key(Color32::BLUE), pos2(10.0, 10.0)),

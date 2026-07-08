@@ -23,10 +23,16 @@ use gt_query::{
     Construct, ConstructKind, Diagnostic, MetricProvider, PipelineOutput, Quantity, QueryMetric,
     RunSummary, Span, TrackInput, TrackMatches, Unit,
 };
+use gt_side_panel::widgets::apply_point_click;
 use gt_types::satellites::Constellation;
-use gt_types::{Channel, DisplayMode, FileIdx, LoadedFile, NavPoint, TrackIdx, TrackRef};
+use gt_types::{
+    Channel, DataCategory, DisplayMode, FileIdx, LoadedFile, NavPoint, PointIdx, TrackIdx, TrackRef,
+};
 use gt_ui_theme::{DEGREE_SIGN, EM_DASH};
-use gt_ui_types::{DrawLayer, DrawLayerMask, MapHighlight, QueryMatches, TrackDataVisibility};
+use gt_ui_types::{
+    DataPointRef, DrawLayer, DrawLayerMask, HighlightScope, MapHighlight, MatchHighlight,
+    QueryMatches, TrackDataVisibility,
+};
 
 use crate::settings::QueryHistoryEntry;
 
@@ -602,6 +608,7 @@ impl QueryWindow {
         visibility: &TrackDataVisibility,
         filter: &GlobalFilter,
         highlight: &mut MapHighlight,
+        requests: &mut MatchMapRequests<'_>,
     ) {
         // Collect a finished worker even while the window is closed, so its
         // results are there on reopen.
@@ -640,7 +647,7 @@ impl QueryWindow {
             .show(ctx, |ui| {
                 self.editor_ui(ui, &schema);
                 ui.separator();
-                self.results_ui(ui, files, highlight);
+                self.results_ui(ui, files, highlight, requests);
                 ui.separator();
                 self.history_examples_ui(ui);
             });
@@ -1335,14 +1342,20 @@ impl QueryWindow {
             .expand(1.0)
     }
 
-    fn results_ui(&self, ui: &mut egui::Ui, files: &[LoadedFile], highlight: &mut MapHighlight) {
+    fn results_ui(
+        &self,
+        ui: &mut egui::Ui,
+        files: &[LoadedFile],
+        highlight: &mut MapHighlight,
+        requests: &mut MatchMapRequests<'_>,
+    ) {
         let Some(results) = &self.results else {
             ui.label(egui::RichText::new("No runs yet").weak());
             return;
         };
         let stale = match &results.body {
             ResultsBody::Points(points) => {
-                points_results_ui(ui, points, files, highlight);
+                points_results_ui(ui, points, files, highlight, requests);
                 points.matches.stale
             }
             ResultsBody::Channel(channel) => {
@@ -1736,8 +1749,18 @@ struct MatchCtx<'a> {
     columns: &'a [QueryMetric],
 }
 
-/// One match: a collapsing header with the point table inside. Row hover
-/// echoes the point on the map through the plot cross-highlight ring.
+/// Map requests a match-table interaction can raise, mirroring the side
+/// panel's `PanelContext` fields: clicking a row pins its point popup,
+/// double-clicking centers the map on the point.
+pub struct MatchMapRequests<'a> {
+    pub map_center: &'a mut Option<(f64, f64)>,
+    pub popup_pos: &'a mut Option<egui::Pos2>,
+}
+
+/// One match: a collapsing header with the point table inside. Header hover
+/// echoes the whole match on the map (a halo band plus track focus) and on
+/// the plot (a shaded time band, via the app layer); row hover echoes the
+/// single point through the plot cross-highlight ring.
 fn match_ui(
     ui: &mut egui::Ui,
     ctx: &MatchCtx<'_>,
@@ -1745,6 +1768,7 @@ fn match_ui(
     range: &Range<usize>,
     stale: bool,
     highlight: &mut MapHighlight,
+    requests: &mut MatchMapRequests<'_>,
 ) {
     let header = match_header_text(ctx.files, track_ref, range);
     let id = ui.id().with(("query_match", track_ref, range.start));
@@ -1755,11 +1779,18 @@ fn match_ui(
             .on_disabled_hover_text(format!("Data changed since this run {EM_DASH} run again"));
         return;
     }
-    egui::CollapsingHeader::new(header)
+    let response = egui::CollapsingHeader::new(header)
         .id_salt(id)
         .show(ui, |ui| {
-            match_table_ui(ui, ctx, track_ref, range, highlight);
+            match_table_ui(ui, ctx, track_ref, range, highlight, requests);
         });
+    if response.header_response.hovered() {
+        highlight.hover_match = Some(MatchHighlight::new(track_ref, range));
+        // Track focus alongside the band: the map fades the other tracks and
+        // the plot dims their series, like hovering the track in the side
+        // panel.
+        highlight.hover = Some(HighlightScope::Track(track_ref));
+    }
 }
 
 fn match_table_ui(
@@ -1768,6 +1799,7 @@ fn match_table_ui(
     track_ref: TrackRef,
     range: &Range<usize>,
     highlight: &mut MapHighlight,
+    requests: &mut MatchMapRequests<'_>,
 ) {
     let columns = ctx.columns;
     let Some(points) = points_of(ctx.files, track_ref) else {
@@ -1796,7 +1828,9 @@ fn match_table_ui(
             ui.end_row();
 
             for pi in range.clone().take(MATCH_TABLE_ROW_CAP) {
-                let mut row_hovered = false;
+                // The cell responses union into one row response, so the row
+                // reacts as a whole wherever it is hovered or clicked.
+                let mut row_response: Option<egui::Response> = None;
                 for column in columns {
                     let value = if *column == QueryMetric::Accel {
                         pi.checked_sub(slice_start)
@@ -1804,14 +1838,38 @@ fn match_table_ui(
                     } else {
                         provider.value(*column, pi)
                     };
-                    let response = ui.label(format_value(*column, value));
-                    row_hovered |= response.hovered();
+                    let response = ui.add(
+                        egui::Label::new(format_value(*column, value)).sense(egui::Sense::click()),
+                    );
+                    row_response = Some(match row_response {
+                        Some(row) => row.union(response),
+                        None => response,
+                    });
                 }
-                if row_hovered {
-                    // Echo the hovered row on the map, same ring as the
-                    // plot cursor cross-highlight.
-                    highlight.plot_hover_point =
-                        Some((track_ref.fi, track_ref.index, gt_types::PointIdx::new(pi)));
+                if let Some(response) = row_response {
+                    if response.hovered() {
+                        // Echo the hovered row on the map, same ring as the
+                        // plot cursor cross-highlight.
+                        highlight.plot_hover_point =
+                            Some((track_ref.fi, track_ref.index, PointIdx::new(pi)));
+                    }
+                    if let Some(p) = points.get(pi) {
+                        // The side panel's point-row semantics: click pins the
+                        // point's map popup, double-click centers the map.
+                        apply_point_click(
+                            ui,
+                            &response,
+                            DataPointRef {
+                                track: track_ref,
+                                category: DataCategory::Tpv,
+                                point_index: PointIdx::new(pi),
+                            },
+                            (p.tpv.lat().as_degrees(), p.tpv.lon().as_degrees()),
+                            highlight,
+                            requests.map_center,
+                            requests.popup_pos,
+                        );
+                    }
                 }
                 ui.end_row();
             }
@@ -1851,6 +1909,7 @@ fn points_results_ui(
     points: &PointsResults,
     files: &[LoadedFile],
     highlight: &mut MapHighlight,
+    requests: &mut MatchMapRequests<'_>,
 ) {
     let stale = points.matches.stale;
     // One collapsible section per query, in editor order: its summary is the
@@ -1881,7 +1940,7 @@ fn points_results_ui(
                 }
                 for tm in &query.matches {
                     for range in &tm.ranges {
-                        match_ui(ui, &match_ctx, tm.track, range, stale, highlight);
+                        match_ui(ui, &match_ctx, tm.track, range, stale, highlight, requests);
                     }
                 }
             });
