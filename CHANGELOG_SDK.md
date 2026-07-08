@@ -7,6 +7,10 @@ the app).
 
 ## [unreleased]
 
+### Changed
+
+- Update `hdf5-pure` to 0.21.1.
+
 ## [0.4.0] - 2026-07-08
 
 ### Added

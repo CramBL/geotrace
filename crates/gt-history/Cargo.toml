@@ -28,7 +28,7 @@ gt-history-types = { path = "../gt-history-types" }
 
 [dev-dependencies]
 geotrace-sdk = { path = "../../sdk/rust/geotrace-sdk" }
-hdf5 = { package = "hdf5-metno", version = "0.12.5" }
+hdf5 = { package = "hdf5-metno", version = "0.13" }
 hdf5-pure.workspace = true
 insta.workspace = true
 log.workspace = true
