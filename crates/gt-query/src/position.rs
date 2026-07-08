@@ -11,8 +11,6 @@ use std::ops::Range;
 use std::str::FromStr as _;
 use std::sync::OnceLock;
 
-use strum::IntoEnumIterator as _;
-
 use crate::ast::{Func, ParamName};
 use crate::check::{ChannelInfo, ChannelSchema};
 use crate::construct::{Construct, ConstructKind, catalog};
@@ -326,9 +324,10 @@ fn units_of_quantity(quantity: Quantity) -> Vec<&'static str> {
         Quantity::Direction => Quantity::Angle,
         other => other,
     };
-    Unit::iter()
+    Unit::CANONICAL
+        .iter()
         .filter(|u| u.quantity() == quantity)
-        .map(Unit::text)
+        .filter_map(|u| u.canonical_text())
         .collect()
 }
 

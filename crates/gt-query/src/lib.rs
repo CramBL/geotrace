@@ -1907,7 +1907,7 @@ mod tests {
         fn unit_strategy() -> impl Strategy<Value = Unit> {
             // Built from the enum's own iterator so a new variant is covered
             // by the format/reparse round-trip automatically.
-            proptest::sample::select(Unit::iter().collect::<Vec<_>>())
+            proptest::sample::select(Unit::CANONICAL.to_vec())
         }
 
         fn number_strategy() -> impl Strategy<Value = NumberLit> {
@@ -2000,9 +2000,9 @@ mod tests {
                 (
                     1.0f64..1000.0,
                     prop_oneof![
-                        Just(Unit::Ms),
+                        Just(Unit::MS),
                         Just(Unit::S),
-                        Just(Unit::Min),
+                        Just(Unit::MIN),
                         Just(Unit::H),
                     ],
                 )
