@@ -61,8 +61,10 @@ pub(crate) const EDITOR_ID_SALT: &str = "query_editor";
 const AUTOCOMPLETE_VISIBLE_ROWS: usize = 5;
 
 /// Seconds the pointer must rest before the editor hover doc appears, so the
-/// tooltip does not flicker over every token the pointer crosses.
-const HOVER_DOC_DELAY_SECS: f32 = 0.4;
+/// tooltip does not flicker over every token the pointer crosses. Only entering
+/// a token arms the delay; the doc already on display survives pointer motion
+/// within its token.
+const HOVER_DOC_DELAY_SECS: f32 = 0.15;
 
 /// Seconds after the last keystroke before the caret chunk's diagnostic shows.
 /// A query is structurally broken for most of the time it is being typed
@@ -152,6 +154,10 @@ pub struct QueryWindow {
     /// before the editor renders, so the live value is already false on the
     /// very frame the Escape should only unfocus, not close.
     editor_had_focus: bool,
+    /// Editor-global byte span of the token whose hover doc is on display,
+    /// `None` while no doc shows. Keeps the doc up while the pointer moves
+    /// within the token instead of re-arming the hover delay on every twitch.
+    hover_doc_span: Option<Range<usize>>,
 }
 
 /// One completion offered in the popup: a language construct or a loaded
@@ -428,6 +434,7 @@ impl QueryWindow {
             assist_revision: 0,
             last_edit_time: None,
             editor_had_focus: false,
+            hover_doc_span: None,
         }
     }
 
@@ -527,6 +534,13 @@ impl QueryWindow {
             .iter()
             .map(|c| c.insert.clone())
             .collect()
+    }
+
+    /// Whether an editor hover doc is on display (used by the UI test to
+    /// observe the popup across pointer motion).
+    #[cfg(test)]
+    pub fn hover_doc_shown(&self) -> bool {
+        self.hover_doc_span.is_some()
     }
 
     /// The persisted query history, newest first.
@@ -1215,16 +1229,21 @@ impl QueryWindow {
 
     /// Show a documentation tooltip for the token under the pointer, in the
     /// editor. Suppressed while the completion popup is up, so the two don't
-    /// stack; shown only after the pointer has rested a moment, and only when
-    /// it actually sits on the token's own rectangle (the galley clamps a
-    /// position in the blank space right of a line to the nearest character,
-    /// which is not a hover).
+    /// stack; shown only after the pointer has rested a moment on the token
+    /// (though the doc already on display stays up while the pointer moves
+    /// within its token), and only when it actually sits on the token's own
+    /// rectangle (the galley clamps a position in the blank space right of a
+    /// line to the nearest character, which is not a hover).
     fn hover_docs(
-        &self,
+        &mut self,
         ui: &egui::Ui,
         schema: &ChannelSchema,
         output: &egui::widgets::text_edit::TextEditOutput,
     ) {
+        // Taken up front and put back only when a doc actually shows, so every
+        // bail-out below (popup up, left the editor, off any token) drops the
+        // remembered span and the next token starts with the delay armed.
+        let shown = self.hover_doc_span.take();
         if self.autocomplete.shown {
             return;
         }
@@ -1232,14 +1251,6 @@ impl QueryWindow {
             return;
         };
         if !output.response.rect.contains(pointer) {
-            return;
-        }
-        let rested = ui.input(|i| i.pointer.time_since_last_movement());
-        if rested < HOVER_DOC_DELAY_SECS {
-            // Repaint when the delay lapses so the tooltip appears without
-            // further pointer movement.
-            ui.ctx()
-                .request_repaint_after(Duration::from_secs_f32(HOVER_DOC_DELAY_SECS - rested));
             return;
         }
         let ccursor = output.galley.cursor_from_pos(pointer - output.galley_pos);
@@ -1272,6 +1283,15 @@ impl QueryWindow {
         {
             return;
         }
+        let span = chunk.start + token_span.start..chunk.start + token_span.end;
+        let rested = ui.input(|i| i.pointer.time_since_last_movement());
+        if !hover_doc_shows(shown.as_ref(), &span, rested) {
+            // Repaint when the delay lapses so the tooltip appears without
+            // further pointer movement.
+            ui.ctx()
+                .request_repaint_after(Duration::from_secs_f32(HOVER_DOC_DELAY_SECS - rested));
+            return;
+        }
         // A channel wins (its `@` is unambiguous), else a language construct,
         // else nothing under the pointer to document.
         let doc = match gt_query::channel_at(src, local, schema) {
@@ -1281,6 +1301,7 @@ impl QueryWindow {
                 None => return,
             },
         };
+        self.hover_doc_span = Some(span);
         // Drawn as an Area (rather than a hover tooltip) so it is anchored to
         // the token under the pointer.
         egui::Area::new(egui::Id::new("query_hover_doc"))
@@ -2616,6 +2637,14 @@ fn char_to_byte(text: &str, char_index: usize) -> usize {
         .map_or(text.len(), |(byte, _)| byte)
 }
 
+/// Whether the editor hover doc for the token at `span` shows this frame:
+/// instantly while it is the token whose doc is already on display (`shown`),
+/// so the doc survives pointer motion within one word, else only once the
+/// pointer has rested [`HOVER_DOC_DELAY_SECS`].
+fn hover_doc_shows(shown: Option<&Range<usize>>, span: &Range<usize>, rested_secs: f32) -> bool {
+    shown == Some(span) || rested_secs >= HOVER_DOC_DELAY_SECS
+}
+
 /// Draw the completion popup under (or, when the screen ends, above) the
 /// caret, returning the index of a clicked row.
 fn draw_autocomplete_popup(
@@ -2997,6 +3026,28 @@ mod tests {
             // the poison rules handle, so we only assert it completes.
             let _ = gt_query::run(&checked, &inputs);
         }
+    }
+
+    #[rstest]
+    // The doc on display sticks while the pointer moves within its token.
+    #[case(Some(rng(0, 5)), rng(0, 5), 0.0, true)]
+    // Entering another token re-arms the delay, however long the doc was up.
+    #[case(Some(rng(0, 5)), rng(6, 8), HOVER_DOC_DELAY_SECS - 0.01, false)]
+    // No doc up: the pointer must rest the full delay first.
+    #[case(None, rng(0, 5), HOVER_DOC_DELAY_SECS - 0.01, false)]
+    #[case(None, rng(0, 5), HOVER_DOC_DELAY_SECS, true)]
+    // A rested pointer shows the doc of a newly entered token too.
+    #[case(Some(rng(0, 5)), rng(6, 8), HOVER_DOC_DELAY_SECS, true)]
+    fn hover_doc_sticks_to_its_token_and_delays_new_ones(
+        #[case] shown: Option<Range<usize>>,
+        #[case] span: Range<usize>,
+        #[case] rested_secs: f32,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(
+            hover_doc_shows(shown.as_ref(), &span, rested_secs),
+            expected
+        );
     }
 
     #[test]
