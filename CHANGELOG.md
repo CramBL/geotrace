@@ -9,6 +9,7 @@
 ### Changed
 
 - Plot lines are slightly thinner by default so plots with many metrics enabled stay readable.
+- Satellite-count labels are now placed at diagnostically relevant points (fix-quality changes, signal dips, recoveries after loss) instead of at fixed intervals, and no longer shuffle while panning the map.
 
 ## 0.4.0 - 2026-07-08
 

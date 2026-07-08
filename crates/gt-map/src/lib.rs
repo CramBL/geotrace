@@ -5,6 +5,7 @@ mod icons;
 pub mod marker_renderer;
 mod polyline;
 mod query_match_renderer;
+mod sat_labels;
 #[cfg(test)]
 mod test_harness;
 pub mod tpv_renderer;
@@ -1559,9 +1560,9 @@ mod snapshot_tests {
                 event_marker_count: 1,
                 ..TrackMetadata::default()
             },
+            sat_label_anchors: gt_track_builder::build_sat_label_anchors(&points),
             points,
             lod: gt_types::TrackLod::default(),
-            sat_label_anchors: Vec::new(),
             custom_markers: vec![custom_marker],
             generated_markers: vec![generated_marker],
             event_markers: vec![event_marker],
