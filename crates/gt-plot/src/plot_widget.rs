@@ -272,6 +272,11 @@ const FILE_LINE_STYLES: [LineStyle; 5] = [
     LineStyle::Dashed { length: 10.0 },
     LineStyle::Dotted { spacing: 8.0 },
 ];
+/// Grid base-color intensity, as a multiplier on the theme text color.
+/// egui_plot's grid stroke width is fixed at 1.0, so with the thinner default
+/// data lines the grid at full text-color brightness would dominate; dimming
+/// it restores the lines as the visually strongest element.
+const GRID_COLOR_STRENGTH: f32 = 0.5;
 /// Default stroke width of the metric and channel plot lines.  Slightly below
 /// egui_plot's 1.0 default: many lines are enabled by default, and a thinner
 /// stroke keeps overlapping lines readable.
@@ -1174,6 +1179,11 @@ pub fn show_track_plot(
     let mut plot = egui_plot::Plot::new("track_plot")
         .height(ui.available_height())
         .show_grid(state.show_grid)
+        .grid_color(
+            ui.visuals()
+                .text_color()
+                .gamma_multiply(GRID_COLOR_STRENGTH),
+        )
         .x_axis_formatter(x_fmt)
         .label_formatter(label_fmt);
 
