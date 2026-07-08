@@ -2397,7 +2397,7 @@ impl TrackProvider<'_> {
             .and_then(|u| series(u).get(index).copied().flatten())?;
         // gt-analysis reports percent; the evaluator's ratio base is the 0-1
         // fraction, converted through the language's canonical % factor.
-        Some(percent * Unit::Percent.to_base())
+        Some(percent * Unit::PERCENT.to_base())
     }
 
     fn slip_value(
@@ -2966,7 +2966,7 @@ fn format_value(metric: QueryMetric, value: Option<f64>) -> String {
         Quantity::Length => format!("{v:.1} m"),
         Quantity::Duration => format!("{v:.3} s"),
         Quantity::Count => format!("{v:.0}"),
-        Quantity::Ratio => format!("{:.0} %", v / Unit::Percent.to_base()),
+        Quantity::Ratio => format!("{:.0} %", v / Unit::PERCENT.to_base()),
         Quantity::Rate => format!("{v:.2}/min"),
         Quantity::Condition => EM_DASH.to_owned(),
     }
@@ -3902,6 +3902,39 @@ mod tests {
             }],
         );
         assert_eq!(output.matches.len(), 1, "the y column clears the threshold");
+    }
+
+    #[test]
+    fn an_si_prefixed_channel_unit_checks_and_runs_end_to_end() {
+        // The whole app path for SI prefixes on both sides: a channel spec'd
+        // in mg (the usual IMU datasheet unit) against an mg literal. Sample
+        // 1 (80 mg) clears the 50 mg threshold; sample 0 (20 mg) does not,
+        // pinning that the channel values scale by the prefixed label too.
+        let channel = vector_channel(
+            "accel",
+            Some("mg"),
+            &["x", "y", "z"],
+            &[(0, [20.0, 0.0, 0.0]), (1, [80.0, 0.0, 0.0])],
+        );
+        let files = [file_with_channels(vec![channel.clone()])];
+        let schema = schema_from_files(&files);
+        let query = check_text("points | window 2 | where max(@accel.x) > 50 mg", &schema)
+            .expect("an mg channel compares to an mg literal");
+        // The same channel against a g literal: the units share the quantity.
+        check_text("points | window 2 | where max(@accel.x) > 0.05 g", &schema)
+            .expect("an mg channel compares to a g literal");
+
+        let points = test_points();
+        let channels = [channel];
+        let provider = provider_for(&points, &channels, None);
+        let output = gt_query::run(
+            &query,
+            &[TrackInput {
+                track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+                provider: &provider,
+            }],
+        );
+        assert_eq!(output.summary.match_count, 1, "only the 80 mg sample");
     }
 
     #[test]

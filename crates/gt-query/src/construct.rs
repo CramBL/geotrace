@@ -91,7 +91,11 @@ pub fn catalog() -> &'static [Construct] {
         out.extend(CONNECTIVES.iter().copied());
         out.extend(Func::iter().map(func_construct));
         out.extend(QueryMetric::iter().map(metric_construct));
-        out.extend(Unit::iter().map(unit_construct));
+        out.extend(
+            Unit::CANONICAL
+                .iter()
+                .filter_map(|&unit| unit.canonical_text().map(|name| unit_construct(unit, name))),
+        );
         out.extend(ParamName::iter().map(param_construct));
         out
     })
@@ -308,7 +312,7 @@ fn param_construct(param: ParamName) -> Construct {
     }
 }
 
-fn unit_construct(unit: Unit) -> Construct {
+fn unit_construct(unit: Unit, name: &'static str) -> Construct {
     let (summary, doc): (_, &str) = match unit.quantity() {
         Quantity::Angle | Quantity::Direction => ("degrees", ""),
         Quantity::Length => ("length", ""),
@@ -326,7 +330,7 @@ fn unit_construct(unit: Unit) -> Construct {
         Quantity::Count | Quantity::Timestamp | Quantity::Condition => ("", ""),
     };
     Construct {
-        name: unit.text(),
+        name,
         kind: ConstructKind::Unit,
         summary,
         doc,
@@ -464,7 +468,7 @@ mod tests {
             + DisplayMode::COUNT
             + Func::COUNT
             + QueryMetric::COUNT
-            + Unit::COUNT
+            + Unit::CANONICAL.len()
             + ParamName::COUNT;
         assert_eq!(entries.len(), expected);
     }

@@ -648,7 +648,7 @@ impl<'src> Parser<'src> {
         match tok.kind {
             Token::Percent => {
                 self.advance();
-                Ok(Some((Unit::Percent, tok.span)))
+                Ok(Some((Unit::PERCENT, tok.span)))
             }
             Token::Per => {
                 self.advance();
@@ -657,9 +657,9 @@ impl<'src> Parser<'src> {
                         return None;
                     }
                     match t.text {
-                        "s" => Some((Unit::PerS, t.span)),
-                        "min" => Some((Unit::PerMin, t.span)),
-                        "h" => Some((Unit::PerH, t.span)),
+                        "s" => Some((Unit::PER_S, t.span)),
+                        "min" => Some((Unit::PER_MIN, t.span)),
+                        "h" => Some((Unit::PER_H, t.span)),
                         _ => None,
                     }
                 });
