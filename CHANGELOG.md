@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Plot display settings: a gear button in the plot's filter row opens a small popup with an adjustable line width and the grid toggle (previously its own button in the row).
+
+### Changed
+
+- Plot lines are slightly thinner by default so plots with many metrics enabled stay readable.
+
 ## 0.4.0 - 2026-07-08
 
 ### Added

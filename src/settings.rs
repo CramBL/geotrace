@@ -138,6 +138,9 @@ impl Default for StorageSettings {
 #[serde(default)]
 pub struct PlotSettings {
     pub show_grid: bool,
+    /// Stroke width of the plot lines. Clamped to
+    /// `gt_plot::PLOT_LINE_WIDTH_RANGE` when applied.
+    pub line_width: f32,
     pub panel_visible: bool,
     /// Fraction of the window width given to the map panel (0.0–1.0).
     pub split_ratio: f32,
@@ -159,6 +162,7 @@ impl Default for PlotSettings {
     fn default() -> Self {
         Self {
             show_grid: true,
+            line_width: gt_plot::DEFAULT_PLOT_LINE_WIDTH,
             panel_visible: true,
             split_ratio: 0.6,
             metric: HashMap::new(),
