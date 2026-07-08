@@ -22,8 +22,8 @@ use egui::Context;
 use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
-    DataPointRef, EventMarkerVisibility, GeneratedMarkerVisibility, HighlightScope, MapHighlight,
-    QueryMatches, TrackDataVisibility,
+    DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
+    HighlightScope, MapHighlight, QueryMatches, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
@@ -333,6 +333,7 @@ impl NavMap {
         visibility: &TrackDataVisibility,
         highlight: &mut MapHighlight,
         filter: &GlobalFilter,
+        display_mask: DisplayMask,
         event_marker_visibility: &EventMarkerVisibility,
         generated_marker_visibility: &GeneratedMarkerVisibility,
         query_matches: Option<&QueryMatches>,
@@ -349,7 +350,8 @@ impl NavMap {
         }
 
         if zoom_to_visible
-            && let Some(bbox) = compute_visible_bounding_box(files, visibility, filter)
+            && let Some(bbox) =
+                compute_visible_bounding_box(files, visibility, filter, display_mask)
         {
             zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
         }
@@ -368,7 +370,9 @@ impl NavMap {
             if had_tracks {
                 self.blink.trigger(now);
             }
-            if let Some(bbox) = compute_visible_bounding_box(files, visibility, filter) {
+            if let Some(bbox) =
+                compute_visible_bounding_box(files, visibility, filter, display_mask)
+            {
                 zoom_to_fit(&mut self.map_memory, ui.max_rect(), bbox);
             }
             self.global_tree = gt_track_builder::build_global_tree(files);
@@ -420,7 +424,13 @@ impl NavMap {
 
         // All per-track drawing decisions for this frame, derived once and
         // shared by viewport collection and the renderers.
-        let plan = viewport::TrackPlan::compute(files, visibility, filter, self.map_memory.zoom());
+        let plan = viewport::TrackPlan::compute(
+            files,
+            visibility,
+            filter,
+            display_mask,
+            self.map_memory.zoom(),
+        );
         let visible = viewport::collect_visible_points(
             &self.global_tree,
             &plan,
@@ -464,36 +474,44 @@ impl NavMap {
                 )
             }
         };
-        let map = map
-            .with_plugin(
-                TrackLayers::builder()
-                    .files(files)
-                    .plan(&plan)
-                    .highlight(highlight)
-                    .filter(filter)
-                    .tpv_by_track(visible.tpv_by_track)
-                    .new_file_boundary(self.new_file_boundary)
-                    .blink_alpha(blink_alpha)
-                    .hover_fade_alpha(hover_fade_progress)
-                    .maybe_query_matches(query_matches)
-                    .build(),
-            )
-            .with_plugin(MarkerRenderer::new(
+        // A masked display category skips its whole plugin - the mask is
+        // the render-side AND on top of the per-track tree visibility the
+        // renderers already consume.
+        let mut map = map.with_plugin(
+            TrackLayers::builder()
+                .files(files)
+                .plan(&plan)
+                .highlight(highlight)
+                .filter(filter)
+                .tpv_by_track(visible.tpv_by_track)
+                .new_file_boundary(self.new_file_boundary)
+                .blink_alpha(blink_alpha)
+                .hover_fade_alpha(hover_fade_progress)
+                .maybe_query_matches(query_matches)
+                .display_query_highlights(display_mask.is_visible(DisplayCategory::QueryHighlights))
+                .build(),
+        );
+        if display_mask.is_visible(DisplayCategory::CustomMarkers) {
+            map = map.with_plugin(MarkerRenderer::new(
                 files,
                 visibility,
                 highlight,
                 filter,
                 visible.custom,
-            ))
-            .with_plugin(GeneratedMarkerRenderer::new(
+            ));
+        }
+        if display_mask.is_visible(DisplayCategory::GeneratedMarkers) {
+            map = map.with_plugin(GeneratedMarkerRenderer::new(
                 files,
                 visibility,
                 highlight,
                 filter,
                 generated_marker_visibility,
                 visible.generated,
-            ))
-            .with_plugin(EventMarkerRenderer::new(
+            ));
+        }
+        if display_mask.is_visible(DisplayCategory::EventMarkers) {
+            map = map.with_plugin(EventMarkerRenderer::new(
                 files,
                 visibility,
                 highlight,
@@ -501,12 +519,14 @@ impl NavMap {
                 event_marker_visibility,
                 visible.event,
             ));
+        }
 
         let map_response = ui.add(map);
 
         // Double-click anywhere on the map: zoom out to fit the visible tracks.
         if map_response.double_clicked()
-            && let Some(bbox) = compute_visible_bounding_box(files, visibility, filter)
+            && let Some(bbox) =
+                compute_visible_bounding_box(files, visibility, filter, display_mask)
         {
             zoom_to_fit(&mut self.map_memory, map_response.rect, bbox);
         }
@@ -535,7 +555,14 @@ impl NavMap {
                     .nearest_neighbor_iter([merc_x, merc_y])
                     .take_while(|sp| sp.distance_2(&[merc_x, merc_y]) <= threshold_merc_sq)
                 {
-                    if !is_spatial_point_visible(sp, files, visibility, filter, query_matches) {
+                    if !is_spatial_point_visible(
+                        sp,
+                        files,
+                        visibility,
+                        filter,
+                        display_mask,
+                        query_matches,
+                    ) {
                         continue;
                     }
                     if let Some(slot) = sp.category.hover_slot() {
@@ -1046,6 +1073,7 @@ mod tests {
             &files,
             &vis,
             &GlobalFilter::default(),
+            DisplayMask::default(),
             None
         ));
     }
@@ -1062,6 +1090,7 @@ mod tests {
             &files,
             &vis,
             &GlobalFilter::default(),
+            DisplayMask::default(),
             None
         ));
     }
@@ -1078,6 +1107,7 @@ mod tests {
             &files,
             &vis,
             &GlobalFilter::default(),
+            DisplayMask::default(),
             None
         ));
     }
@@ -1133,13 +1163,15 @@ mod tests {
         // Everything visible: the box spans both tracks (min_lat, max_lat, min_lon, max_lon).
         let filter = GlobalFilter::default();
         let all_visible =
-            compute_visible_bounding_box(&files, &vis, &filter).expect("visible data has a bbox");
+            compute_visible_bounding_box(&files, &vis, &filter, DisplayMask::default())
+                .expect("visible data has a bbox");
         assert_eq!(all_visible, (55.0, 56.0, 12.0, 13.0));
 
         // Hide the north-east track: its corner drops out of the box.
         vis.files[0].tracks[1].enabled = false;
         let only_first =
-            compute_visible_bounding_box(&files, &vis, &filter).expect("track 0 still visible");
+            compute_visible_bounding_box(&files, &vis, &filter, DisplayMask::default())
+                .expect("track 0 still visible");
         assert_eq!(only_first, (55.0, 55.0, 12.0, 12.0));
     }
 
@@ -1155,8 +1187,91 @@ mod tests {
             &files,
             &vis,
             &GlobalFilter::default(),
+            DisplayMask::default(),
             None
         ));
+    }
+
+    /// A masked display category must block hover exactly like the tree
+    /// toggle: hidden ink cannot be hit-tested.
+    #[test]
+    fn masked_track_points_block_hover() {
+        let sp = tpv_spatial_point(0, 0, 0);
+        let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
+        let vis = vis_all_visible();
+        let mut mask = DisplayMask::default();
+        mask.set_visible(DisplayCategory::TrackPoints, false);
+        assert!(!is_spatial_point_visible(
+            &sp,
+            &files,
+            &vis,
+            &GlobalFilter::default(),
+            mask,
+            None
+        ));
+    }
+
+    /// The display mask gates each plan decision independently of the tree
+    /// toggles: tracks, track points, and satellite labels have their own
+    /// categories.
+    #[test]
+    fn track_plan_respects_the_display_mask() {
+        let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
+        let vis = vis_all_visible();
+        let filter = GlobalFilter::default();
+        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+
+        let all_on =
+            viewport::TrackPlan::compute(&files, &vis, &filter, DisplayMask::default(), 15.0)
+                .entry(track)
+                .expect("track is in the plan");
+        assert!(all_on.trackline);
+        assert!(all_on.fade.is_some());
+
+        let mut mask = DisplayMask::default();
+        mask.set_visible(DisplayCategory::Tracks, false);
+        mask.set_visible(DisplayCategory::TrackPoints, false);
+        mask.set_visible(DisplayCategory::SatelliteLabels, false);
+        let all_off = viewport::TrackPlan::compute(&files, &vis, &filter, mask, 15.0)
+            .entry(track)
+            .expect("track is in the plan");
+        assert!(!all_off.trackline);
+        assert!(all_off.fade.is_none());
+        assert!(all_off.draws_nothing());
+
+        // Track points masked alone: the line and the labels stay.
+        let mut mask = DisplayMask::default();
+        mask.set_visible(DisplayCategory::TrackPoints, false);
+        let points_off = viewport::TrackPlan::compute(&files, &vis, &filter, mask, 15.0)
+            .entry(track)
+            .expect("track is in the plan");
+        assert!(points_off.trackline);
+        assert!(points_off.fade.is_none());
+        assert!(points_off.sat_labels);
+    }
+
+    /// With every position-carrying category masked there is no visible
+    /// ink to frame, so zoom-to-fit must do nothing.
+    #[test]
+    fn fully_masked_map_has_no_bounding_box() {
+        let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
+        let vis = vis_all_visible();
+        let filter = GlobalFilter::default();
+        let mut mask = DisplayMask::default();
+        for category in [
+            DisplayCategory::Tracks,
+            DisplayCategory::TrackPoints,
+            DisplayCategory::SatelliteLabels,
+            DisplayCategory::CustomMarkers,
+        ] {
+            mask.set_visible(category, false);
+        }
+        assert_eq!(
+            compute_visible_bounding_box(&files, &vis, &filter, mask),
+            None
+        );
+        mask.set_visible(DisplayCategory::Tracks, true);
+        assert!(compute_visible_bounding_box(&files, &vis, &filter, mask).is_some());
     }
 
     /// Builds a single-point [`NavPoint`] stamped at `time`.
@@ -1198,11 +1313,25 @@ mod tests {
             ..GlobalFilter::default()
         };
         assert!(
-            !is_spatial_point_visible(&tpv_spatial_point(0, 0, 0), &files, &vis, &filter, None),
+            !is_spatial_point_visible(
+                &tpv_spatial_point(0, 0, 0),
+                &files,
+                &vis,
+                &filter,
+                DisplayMask::default(),
+                None
+            ),
             "the pre-window point must not be hoverable"
         );
         assert!(
-            is_spatial_point_visible(&tpv_spatial_point(0, 0, 1), &files, &vis, &filter, None),
+            is_spatial_point_visible(
+                &tpv_spatial_point(0, 0, 1),
+                &files,
+                &vis,
+                &filter,
+                DisplayMask::default(),
+                None
+            ),
             "the in-window point must stay hoverable"
         );
     }
@@ -1241,6 +1370,7 @@ mod tests {
                 &files,
                 &vis,
                 &filter,
+                DisplayMask::default(),
                 Some(&matches)
             ),
             "the query-hidden point must not be hoverable"
@@ -1251,12 +1381,20 @@ mod tests {
                 &files,
                 &vis,
                 &filter,
+                DisplayMask::default(),
                 Some(&matches)
             ),
             "the point the query kept must stay hoverable"
         );
         assert!(
-            is_spatial_point_visible(&tpv_spatial_point(0, 0, 0), &files, &vis, &filter, None),
+            is_spatial_point_visible(
+                &tpv_spatial_point(0, 0, 0),
+                &files,
+                &vis,
+                &filter,
+                DisplayMask::default(),
+                None
+            ),
             "without a query run the point is hoverable"
         );
     }
@@ -1301,7 +1439,9 @@ mod tests {
         let found = tree
             .nearest_neighbor_iter([0.5_f64, 0.5_f64])
             .take_while(|sp| sp.distance_2(&[0.5, 0.5]) <= f64::MAX)
-            .find(|sp| is_spatial_point_visible(sp, &files, &vis, &filter, None));
+            .find(|sp| {
+                is_spatial_point_visible(sp, &files, &vis, &filter, DisplayMask::default(), None)
+            });
         assert!(found.is_some(), "should find the visible track");
         assert_eq!(
             found.unwrap().track_index,
@@ -1716,6 +1856,7 @@ mod snapshot_tests {
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
+                        gt_ui_types::DisplayMask::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         Some(&matches),
@@ -1787,6 +1928,7 @@ mod snapshot_tests {
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
+                        gt_ui_types::DisplayMask::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
@@ -1802,5 +1944,53 @@ mod snapshot_tests {
             harness.run();
         }
         harness.snapshot_loose("query_match_hover_halo");
+    }
+
+    /// Snapshot: the display mask removes the marker ink (custom, generated,
+    /// event) while the track, its icons, and the satellite labels stay.
+    /// Compare against the marker-bearing fixture in the other snapshots.
+    #[test]
+    fn snap_display_mask_hides_markers() {
+        use gt_ui_types::{DisplayCategory, DisplayMask, TrackDataVisibility};
+
+        let files = vec![make_snapshot_file()];
+        let visibility = TrackDataVisibility::from_loaded(&files);
+        let mut mask = DisplayMask::default();
+        for category in [
+            DisplayCategory::CustomMarkers,
+            DisplayCategory::GeneratedMarkers,
+            DisplayCategory::EventMarkers,
+        ] {
+            mask.set_visible(category, false);
+        }
+
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(800.0, 600.0))
+            .ui_state(
+                move |ui, map: &mut Option<NavMap>| {
+                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let mut highlight = gt_ui_types::MapHighlight::default();
+                    map.draw(
+                        ui,
+                        &files,
+                        &visibility,
+                        &mut highlight,
+                        &gt_filter::GlobalFilter::default(),
+                        mask,
+                        &gt_ui_types::EventMarkerVisibility::default(),
+                        &gt_ui_types::GeneratedMarkerVisibility::default(),
+                        None,
+                        None,
+                        false,
+                        None,
+                    );
+                },
+                None,
+            );
+
+        for _ in 0..5 {
+            harness.run();
+        }
+        harness.snapshot_loose("display_mask_hides_markers");
     }
 }
