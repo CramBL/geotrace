@@ -6,7 +6,7 @@ use std::{
 };
 
 use egui_kittest::{Harness, kittest::Queryable as _};
-use geotrace_sdk::{DateTime, Utc};
+use geotrace_sdk::{Channel, DateTime, Duration, Utc};
 use gt_test_utils::{DEMO_BYTES, GOLD_BYTES, SyntheticGtdSpec, TestHarness, synthetic_gtd_bytes};
 use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
 
@@ -847,6 +847,56 @@ fn snapshot_app_query_match_hover() {
     harness.snapshot_loose("app_query_match_hover");
 }
 
+/// A channel-source query end to end: filtering on a vector channel's
+/// component (`@accel.x`) runs standalone, the results list per-track sample
+/// tables (time plus each component), and the map halos the track segments
+/// the matched samples cover.
+#[test]
+fn snapshot_app_query_channel_source() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(accel_channel_gtd_bytes())),
+            name: "accel_demo.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+
+    {
+        let mut state = harness.inner.state().shared.borrow_mut();
+        state.zoom_to_visible_request = true;
+    }
+    let app = harness.inner.state_mut();
+    app.query_window.open = true;
+    app.query_window
+        .set_text("@accel | where @accel.x > 1 g".to_owned());
+    harness.inner.run_steps(5);
+
+    harness
+        .inner
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+        .click();
+    step_until_query_result(&mut harness.inner);
+    harness.inner.run_steps(60);
+
+    // The crafted stretches match: the per-track sample table lists them
+    // and the map draws halos over the covered segments.
+    let matched: usize = ACCEL_HIGH_RANGES.iter().map(|r| r.len()).sum();
+    harness
+        .inner
+        .get_by_label_contains(&format!("{matched} samples"));
+
+    harness.snapshot_loose("app_query_channel_source");
+}
+
 /// Several queries compose in one editor: a `hide` filter plus two colored
 /// `draw` layers, evaluated in sequence over the demo trip.
 #[test]
@@ -1320,6 +1370,52 @@ fn comment_only_chunk_does_not_block_run() {
         harness.state().query_window.matches().is_some(),
         "the comment paragraph must not disable Run"
     );
+}
+
+/// The fixture stretches whose `accel` x-component exceeds 1 g, shared by the
+/// value generation and the expected-match assertion so they cannot drift.
+const ACCEL_HIGH_RANGES: [std::ops::Range<usize>; 2] = [60..120, 180..200];
+
+/// Synthetic `.gtd` bytes whose track carries an aligned 3-component `accel`
+/// channel in g, one sample per nav fix. The [`ACCEL_HIGH_RANGES`] stretches
+/// exceed 1 g on x, so an `@accel.x` filter has multi-sample matches to table
+/// on the window and halo on the map.
+fn accel_channel_gtd_bytes() -> Vec<u8> {
+    let spec = SyntheticGtdSpec {
+        start: base_time(),
+        point_count: 240,
+        step_secs: 1,
+        start_lat_deg: 55.0,
+        start_lon_deg: 12.0,
+        lat_step_deg: 0.00005,
+        lon_step_deg: 0.00008,
+        heading_deg: 20.0,
+        speed_kmh: 28.0,
+        eph_m: 1.8,
+        sats_seen: 14,
+        sats_in_fix: 11,
+    };
+    let mut times = Vec::with_capacity(spec.point_count);
+    let mut values = Vec::with_capacity(spec.point_count * 3);
+    for i in 0..spec.point_count {
+        times.push(spec.start + Duration::seconds(i as i64));
+        let x = if ACCEL_HIGH_RANGES.iter().any(|r| r.contains(&i)) {
+            1.5
+        } else {
+            0.2
+        };
+        values.extend([x, 0.1, 0.98]);
+    }
+    let channel = Channel::builder()
+        .name("accel")
+        .unit("g")
+        .description("IMU acceleration")
+        .components(vec!["x".to_owned(), "y".to_owned(), "z".to_owned()])
+        .times(times)
+        .values(values)
+        .build()
+        .expect("fixture channel is valid");
+    gt_test_utils::synthetic_gtd_bytes_with_channels(spec, vec![channel])
 }
 
 /// A loaded file carrying one scalar channel (no points), for driving the `@`

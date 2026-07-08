@@ -378,12 +378,25 @@ pub struct SyntheticGtdSpec {
 ///
 /// This is intentionally generic so snapshot and integration tests can create
 /// overlapping tracks with controlled timing and metric values.
+pub fn synthetic_gtd_bytes(spec: SyntheticGtdSpec) -> Vec<u8> {
+    synthetic_gtd_bytes_with_channels(spec, Vec::new())
+}
+
+/// [`synthetic_gtd_bytes`] with ad-hoc channels alongside the nav data, for
+/// tests driving channel-source queries (`@name | …`) through the real load
+/// path.
 #[expect(
     clippy::expect_used,
     reason = "Fixture generation should fail loudly when test input is invalid"
 )]
-pub fn synthetic_gtd_bytes(spec: SyntheticGtdSpec) -> Vec<u8> {
+pub fn synthetic_gtd_bytes_with_channels(
+    spec: SyntheticGtdSpec,
+    channels: Vec<sdk::Channel>,
+) -> Vec<u8> {
     let mut recorder = sdk::NavFileBuilder::new().open();
+    for channel in channels {
+        recorder.add_channel(channel);
+    }
     for i in 0..spec.point_count {
         let i_i64 = i64::try_from(i).unwrap_or(0);
         let time = spec.start + Duration::seconds(i_i64 * spec.step_secs);
