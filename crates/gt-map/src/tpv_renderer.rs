@@ -96,8 +96,6 @@ pub(crate) fn draw_track_icons(
     highlight: &MapHighlight,
     filter: &GlobalFilter,
 ) {
-    let mut last_label_pos: Option<Pos2> = None;
-
     // Real fixes: indices come from the global R-tree viewport query.
     if let Some(indices) = real_fix_indices {
         for &pi in indices {
@@ -152,10 +150,8 @@ pub(crate) fn draw_track_icons(
                 },
                 eph_m,
                 pixels_per_meter,
-                point.satellites.as_ref(),
                 is_arrow_highlighted(highlight, point_ref),
                 &point_style,
-                &mut last_label_pos,
             );
         }
     }
@@ -217,10 +213,8 @@ pub(crate) fn draw_track_icons(
             &PointKind::Ghost { direction },
             None,
             0.0,
-            None,
             is_arrow_highlighted(highlight, point_ref),
             &point_style,
-            &mut last_label_pos,
         );
     }
 }
@@ -270,9 +264,9 @@ pub(crate) fn frame_style(zoom: f64) -> TpvDrawStyle {
     let size_factor = zoom_size_factor(zoom);
     TpvDrawStyle {
         base_arrow_size: base_arrow_size(zoom),
-        // Require more pixel separation between satellite-count labels when
-        // zoomed out so the label count doesn't explode at dense clusters.
-        min_label_dist: 60.0 + (1.0 - size_factor) * 120.0, // 180 px at low zoom, 60 at high
+        // Larger label-collision cells when zoomed out so the label count
+        // doesn't explode at dense clusters.
+        label_cell_px: 60.0 + (1.0 - size_factor) * 120.0, // 180 px at low zoom, 60 at high
         outline_alpha: ((zoom - 10.0) / 4.0).clamp(0.0, 1.0) as f32,
         icon_alpha: 1.0,
     }
@@ -693,7 +687,9 @@ fn seen_count_color(count: u32) -> Color32 {
 pub(crate) struct TpvDrawStyle {
     pub(crate) outline_alpha: f32,
     pub(crate) base_arrow_size: f32,
-    pub(crate) min_label_dist: f32,
+    /// On-screen size, in pixels, of a satellite-label collision cell -
+    /// at most one label draws per cell (see [`crate::sat_labels`]).
+    pub(crate) label_cell_px: f32,
     /// Opacity of the fix icon currently being drawn, in (0.0, 1.0].
     /// Decided per fix from its local on-screen spacing (see
     /// [`fix_icon_alpha`]). Below 1.0 the icon is crossfading into the
@@ -900,26 +896,18 @@ pub(crate) fn split_spans_by<K: Copy, P: Copy + PartialEq>(
     out
 }
 
-/// Renders the three visual layers for a single on-screen GPS point:
-/// the horizontal-accuracy circle, the directional icon (arrow or ghost), and
-/// the satellite-count label.
-///
-/// `last_label_pos` is updated when a label is drawn so that the caller can
-/// throttle label density across consecutive points.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "three independent drawing concerns each need distinct parameters; no natural grouping below 9"
-)]
+/// Renders the two visual layers for a single on-screen GPS point: the
+/// horizontal-accuracy circle and the directional icon (arrow or ghost).
+/// The satellite-count labels are a separate anchor-based pass, see
+/// [`draw_sat_labels`].
 fn draw_tpv_point(
     ui: &Ui,
     screen_pos: Pos2,
     point_kind: &PointKind,
     eph_m: Option<f32>,
     pixels_per_meter: f64,
-    satellites: Option<&gt_types::satellites::Satellites>,
     highlighted: bool,
     style: &TpvDrawStyle,
-    last_label_pos: &mut Option<Pos2>,
 ) {
     // Accuracy circle - rendered beneath the icon. Skipped when too small to
     // see at all, and when small enough to be entirely covered by the icon.
@@ -970,31 +958,43 @@ fn draw_tpv_point(
             );
         }
     }
+}
 
-    // Satellite-count label - throttled to avoid over-dense clusters.
-    if let Some(sats) = satellites {
-        let show =
-            last_label_pos.is_none_or(|last| screen_pos.distance(last) > style.min_label_dist);
-        if show {
-            let label = format!("{}/{}", sats.fix_count(), sats.satellite_count());
-            let text_pos =
-                screen_pos + egui::vec2(style.base_arrow_size + 3.0, -style.base_arrow_size);
-            let text_color = Color32::WHITE.gamma_multiply(style.icon_alpha);
-            let galley =
-                ui.painter()
-                    .layout_no_wrap(label, egui::FontId::proportional(12.0), text_color);
-            let text_rect = egui::Rect::from_min_size(
-                egui::pos2(text_pos.x, text_pos.y - galley.size().y),
-                galley.size(),
-            );
-            ui.painter().rect_filled(
-                text_rect.expand(2.0),
-                2.0,
-                Color32::from_rgba_unmultiplied(0, 0, 0, 160).gamma_multiply(style.icon_alpha),
-            );
-            ui.painter().galley(text_rect.min, galley, text_color);
-            *last_label_pos = Some(screen_pos);
-        }
+/// Draw the satellite-count labels for a track's selected anchor points.
+///
+/// Which anchors get a label this frame is decided by
+/// [`crate::sat_labels::select_sat_labels`]; this pass just renders them.
+/// Labels draw at full opacity regardless of the icon crossfade - the
+/// anchor selection already bounds their density, and a faded-out cluster
+/// is exactly where the surviving label carries the information.
+pub(crate) fn draw_sat_labels(
+    ui: &Ui,
+    track: &LoadedTrack,
+    label_indices: &[usize],
+    style: &TpvDrawStyle,
+    transform: &crate::transform::MercTransform,
+) {
+    for point in label_indices.iter().filter_map(|&pi| track.points.get(pi)) {
+        let Some(sats) = &point.satellites else {
+            continue;
+        };
+        let screen_pos = transform.to_screen(point.merc);
+        let label = format!("{}/{}", sats.fix_count(), sats.satellite_count());
+        let text_pos = screen_pos + egui::vec2(style.base_arrow_size + 3.0, -style.base_arrow_size);
+        let text_color = Color32::WHITE;
+        let galley =
+            ui.painter()
+                .layout_no_wrap(label, egui::FontId::proportional(12.0), text_color);
+        let text_rect = egui::Rect::from_min_size(
+            egui::pos2(text_pos.x, text_pos.y - galley.size().y),
+            galley.size(),
+        );
+        ui.painter().rect_filled(
+            text_rect.expand(2.0),
+            2.0,
+            Color32::from_rgba_unmultiplied(0, 0, 0, 160),
+        );
+        ui.painter().galley(text_rect.min, galley, text_color);
     }
 }
 

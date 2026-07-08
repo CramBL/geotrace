@@ -11,12 +11,13 @@ use std::collections::HashMap;
 
 use egui::{Color32, Response, Stroke, Ui};
 use gt_filter::GlobalFilter;
-use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, MercBounds, TrackIdx, TrackRef};
+use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
 use gt_ui_types::{DrawLayerMask, HighlightScope, MapHighlight, QueryMatches};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
 use crate::query_match_renderer;
+use crate::sat_labels::{self, SelectedLabels};
 use crate::tpv_renderer::{
     self, QUALITY_LINE_WIDTH, TpvDrawStyle, TrackIconFade, bucket_alpha, fix_icon_alpha,
     line_alpha_bucket, quality_line_color, split_spans_by,
@@ -134,6 +135,7 @@ impl Plugin for TrackLayers<'_> {
         let max_rect = ui.max_rect();
 
         let geometries = self.prepare_track_geometries(max_rect, &style, &transform);
+        let sat_labels = self.select_sat_labels(&geometries, max_rect, &style, &transform);
 
         let hover_active =
             self.highlight.fading_enabled && track_renderer::hover_is_active(self.highlight);
@@ -158,9 +160,15 @@ impl Plugin for TrackLayers<'_> {
                 self.paint_tracklines(ui, &geometries, |i| {
                     !focused.get(i).copied().unwrap_or(false)
                 });
-                self.paint_tpv_layers(ui, &geometries, &style, &transform, max_rect, |i| {
-                    !focused.get(i).copied().unwrap_or(false)
-                });
+                self.paint_tpv_layers(
+                    ui,
+                    &geometries,
+                    &sat_labels,
+                    &style,
+                    &transform,
+                    max_rect,
+                    |i| !focused.get(i).copied().unwrap_or(false),
+                );
                 paint_fade_overlay(ui, max_rect, fade);
                 self.paint_match_halos(ui, &geometries, &style, |i| {
                     focused.get(i).copied().unwrap_or(false)
@@ -168,21 +176,43 @@ impl Plugin for TrackLayers<'_> {
                 self.paint_tracklines(ui, &geometries, |i| {
                     focused.get(i).copied().unwrap_or(false)
                 });
-                self.paint_tpv_layers(ui, &geometries, &style, &transform, max_rect, |i| {
-                    focused.get(i).copied().unwrap_or(false)
-                });
+                self.paint_tpv_layers(
+                    ui,
+                    &geometries,
+                    &sat_labels,
+                    &style,
+                    &transform,
+                    max_rect,
+                    |i| focused.get(i).copied().unwrap_or(false),
+                );
             } else {
                 // No current hover target (fade-out): all tracks under the
                 // fading overlay, no focused track in Phase 3.
                 self.paint_match_halos(ui, &geometries, &style, |_| true);
                 self.paint_tracklines(ui, &geometries, |_| true);
-                self.paint_tpv_layers(ui, &geometries, &style, &transform, max_rect, |_| true);
+                self.paint_tpv_layers(
+                    ui,
+                    &geometries,
+                    &sat_labels,
+                    &style,
+                    &transform,
+                    max_rect,
+                    |_| true,
+                );
                 paint_fade_overlay(ui, max_rect, fade);
             }
         } else {
             self.paint_match_halos(ui, &geometries, &style, |_| true);
             self.paint_tracklines(ui, &geometries, |_| true);
-            self.paint_tpv_layers(ui, &geometries, &style, &transform, max_rect, |_| true);
+            self.paint_tpv_layers(
+                ui,
+                &geometries,
+                &sat_labels,
+                &style,
+                &transform,
+                max_rect,
+                |_| true,
+            );
         }
 
         self.show_hover_overlays(ui, &style, &transform);
@@ -204,12 +234,7 @@ impl TrackLayers<'_> {
         let cull_rect = max_rect.expand(CULL_MARGIN_PX);
         // Viewport bounds in Mercator space - used to skip tracks that are
         // entirely outside the visible area without iterating any points.
-        let vp_bounds = MercBounds {
-            x_min: transform.merc_x_from_screen(max_rect.min.x),
-            x_max: transform.merc_x_from_screen(max_rect.max.x),
-            y_min: transform.merc_y_from_screen(max_rect.min.y),
-            y_max: transform.merc_y_from_screen(max_rect.max.y),
-        };
+        let vp_bounds = transform.viewport_merc_bounds(max_rect);
 
         let mut geometries: Vec<TrackGeometry> = Vec::new();
         for (fi, file) in self.files.iter().enumerate() {
@@ -406,12 +431,50 @@ impl TrackLayers<'_> {
         }
     }
 
-    /// Paint the TPV layer per track: the fix-quality line, then the fix
-    /// icons on top, for the entries that pass the `filter(index)` predicate.
+    /// Resolve which satellite-label anchors get a label this frame, for
+    /// every track whose TPV layer is on. Labels are collision-resolved
+    /// across all tracks at once ([`sat_labels::select_sat_labels`]); the
+    /// per-point conditions mirror the icon pass (time filter, query
+    /// hiding).
+    fn select_sat_labels(
+        &self,
+        geometries: &[TrackGeometry],
+        max_rect: egui::Rect,
+        style: &TpvDrawStyle,
+        transform: &MercTransform,
+    ) -> SelectedLabels {
+        let viewport = transform.viewport_merc_bounds(max_rect);
+        let cell_merc = f64::from(style.label_cell_px) / transform.px_per_merc();
+        sat_labels::select_sat_labels(
+            geometries
+                .iter()
+                .enumerate()
+                .filter(|(_, geo)| geo.entry.fade.is_some())
+                .map(|(i, geo)| (i, TrackRef::new(geo.fi, geo.ti), geo.track)),
+            geometries.len(),
+            viewport,
+            cell_merc,
+            |track_ref, pi, point| {
+                gt_filter::point_passes_time_filter(point.tpv.time().utc(), self.filter)
+                    && !self
+                        .query_matches
+                        .is_some_and(|m| m.is_hidden(track_ref, pi))
+            },
+        )
+    }
+
+    /// Paint the TPV layer per track: the fix-quality line, the fix icons
+    /// on top, then the selected satellite labels, for the entries that
+    /// pass the `filter(index)` predicate.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "per-frame paint context; a wrapper struct would not add clarity"
+    )]
     fn paint_tpv_layers<F>(
         &self,
         ui: &Ui,
         geometries: &[TrackGeometry],
+        sat_labels: &SelectedLabels,
         style: &TpvDrawStyle,
         transform: &MercTransform,
         max_rect: egui::Rect,
@@ -461,6 +524,10 @@ impl TrackLayers<'_> {
                     self.highlight,
                     self.filter,
                 );
+            }
+            // Labels last so their backplates sit on top of the icons.
+            if let Some(label_indices) = sat_labels.get(i) {
+                tpv_renderer::draw_sat_labels(ui, geo.track, label_indices, style, transform);
             }
         }
     }

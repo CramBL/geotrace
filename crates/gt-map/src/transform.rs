@@ -163,6 +163,16 @@ impl MercTransform {
         (screen_y as f64 - self.clip_center_y) / self.scale.px_per_merc() + self.merc_center.y
     }
 
+    /// The screen rectangle's bounds in normalised Mercator space.
+    pub(crate) fn viewport_merc_bounds(&self, rect: egui::Rect) -> gt_types::MercBounds {
+        gt_types::MercBounds {
+            x_min: self.merc_x_from_screen(rect.min.x),
+            x_max: self.merc_x_from_screen(rect.max.x),
+            y_min: self.merc_y_from_screen(rect.min.y),
+            y_max: self.merc_y_from_screen(rect.max.y),
+        }
+    }
+
     /// The viewport-independent scale component of this transform. Lets
     /// tests derive a [`MapScale`] from a [`MercTransform::for_test`].
     #[cfg(test)]
