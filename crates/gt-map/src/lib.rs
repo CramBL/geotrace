@@ -1755,4 +1755,45 @@ mod snapshot_tests {
     fn snap_query_hide_mode() {
         snapshot_nav_map_with_matches("query_hide_mode", DisplayMode::Hide, false);
     }
+
+    /// Snapshot: the halo band for the match hovered in the query results
+    /// table - the highlight blue over the matched stretch, without any
+    /// `draw` layers underneath.
+    #[test]
+    fn snap_query_match_hover_halo() {
+        let files = vec![make_snapshot_file()];
+        let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
+        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(800.0, 600.0))
+            .ui_state(
+                move |ui, map: &mut Option<NavMap>| {
+                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let mut highlight = gt_ui_types::MapHighlight {
+                        hover_match: Some(gt_ui_types::MatchHighlight::new(track, &(150..300))),
+                        ..gt_ui_types::MapHighlight::default()
+                    };
+                    map.draw(
+                        ui,
+                        &files,
+                        &visibility,
+                        &mut highlight,
+                        &gt_filter::GlobalFilter::default(),
+                        &gt_ui_types::EventMarkerVisibility::default(),
+                        &gt_ui_types::GeneratedMarkerVisibility::default(),
+                        None,
+                        None,
+                        false,
+                        None,
+                    );
+                },
+                None,
+            );
+
+        for _ in 0..5 {
+            harness.run();
+        }
+        harness.snapshot_loose("query_match_hover_halo");
+    }
 }

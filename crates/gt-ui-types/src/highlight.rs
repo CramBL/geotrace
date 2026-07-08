@@ -8,6 +8,34 @@ pub struct DataPointRef {
     pub point_index: PointIdx,
 }
 
+/// A query-result match hovered in the results table: one track's matched
+/// point range, echoed on the map as a halo band and on the plot as a shaded
+/// time band. Stores the range as two indices (not a [`std::ops::Range`]) so
+/// it stays `Copy` like the rest of [`MapHighlight`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MatchHighlight {
+    pub track: TrackRef,
+    /// First matched point index.
+    pub start: usize,
+    /// One past the last matched point index.
+    pub end: usize,
+}
+
+impl MatchHighlight {
+    pub fn new(track: TrackRef, range: &std::ops::Range<usize>) -> Self {
+        Self {
+            track,
+            start: range.start,
+            end: range.end,
+        }
+    }
+
+    /// Whether the match covers `point_index` of its track.
+    pub fn contains(&self, point_index: usize) -> bool {
+        (self.start..self.end).contains(&point_index)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HighlightScope {
     File {
@@ -55,6 +83,11 @@ pub struct MapHighlight {
     /// When `false`, the track/map fading animation and background dimming are
     /// disabled.
     pub fading_enabled: bool,
+    /// The match hovered in the query results table, cross-highlighted on the
+    /// map and plot. Cleared by the app each frame before the query window
+    /// renders; the map and plot read it one frame behind (the query window
+    /// draws after both).
+    pub hover_match: Option<MatchHighlight>,
 }
 
 impl Default for MapHighlight {
@@ -68,6 +101,22 @@ impl Default for MapHighlight {
             plot_hover_snapped: false,
             suppress_hover_labels: false,
             fading_enabled: true,
+            hover_match: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn match_highlight_contains_is_start_inclusive_end_exclusive() {
+        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let hm = MatchHighlight::new(track, &(150..300));
+        assert!(hm.contains(150));
+        assert!(hm.contains(299));
+        assert!(!hm.contains(149));
+        assert!(!hm.contains(300));
     }
 }

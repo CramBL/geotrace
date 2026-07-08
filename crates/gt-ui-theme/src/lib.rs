@@ -17,6 +17,18 @@ pub const HIGHLIGHT_BLUE: Color32 = Color32::from_rgb(100, 200, 255);
 /// Premultiplied equivalent of `(100, 200, 255, 200)`.
 pub const HIGHLIGHT_BLUE_SEEK: Color32 = Color32::from_rgba_premultiplied(78, 157, 200, 200);
 
+/// [`HIGHLIGHT_BLUE`] at query-halo alpha - the map's halo band for the match
+/// hovered in the query results table, distinct from the draw-layer palette.
+///
+/// Premultiplied equivalent of `(100, 200, 255, 150)`.
+pub const QUERY_MATCH_HOVER_HALO: Color32 = Color32::from_rgba_premultiplied(59, 118, 150, 150);
+
+/// [`HIGHLIGHT_BLUE`] at low alpha - the plot's shaded time band for the match
+/// hovered in the query results table.
+///
+/// Premultiplied equivalent of `(100, 200, 255, 40)`.
+pub const HIGHLIGHT_BLUE_BAND: Color32 = Color32::from_rgba_premultiplied(16, 31, 40, 40);
+
 /// Background fill for a danger button in its hovered state.
 pub const DANGER_HOVER: Color32 = Color32::from_rgb(160, 35, 35);
 

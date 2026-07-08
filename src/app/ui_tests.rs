@@ -263,6 +263,72 @@ fn query_results_go_stale_when_the_filter_changes() {
     assert!(!stale_after_revert, "reverting the filter un-grays results");
 }
 
+/// Hovering a match header in the query results table cross-highlights the
+/// whole match: its range lands in `hover_match` (the map halo band and the
+/// plot time band read it) and the match's track gets hover focus.
+#[test]
+fn query_match_header_hover_highlights_the_match() {
+    use gt_ui_types::HighlightScope;
+
+    let gtd_bytes = minimal_gtd_bytes();
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.input_mut().dropped_files.push(egui::DroppedFile {
+        bytes: Some(Arc::from(gtd_bytes.as_slice())),
+        name: "test.gtd".to_owned(),
+        ..Default::default()
+    });
+    harness.step();
+    step_until_loaded(&mut harness);
+
+    {
+        let app = harness.state_mut();
+        app.query_window.open = true;
+        app.query_window
+            .set_text("points | where velocity > 1 km/h".to_owned());
+    }
+    harness.run_steps(3);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+        .click();
+    step_until_query_result(&mut harness);
+    harness.run_steps(3);
+
+    // The match header reads "test.gtd #0 — <time> — <count> points".
+    let header_pos = harness.get_by_label_contains("test.gtd #0").rect().center();
+    harness.hover_at(header_pos);
+    harness.run_steps(2);
+
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    let highlight = harness.state().shared.borrow().highlight;
+    let hover_match = highlight.hover_match.expect("header hover sets the match");
+    assert_eq!(hover_match.track, track);
+    assert!(
+        hover_match.start < hover_match.end,
+        "the hovered match covers a non-empty range"
+    );
+    assert_eq!(
+        highlight.hover,
+        Some(HighlightScope::Track(track)),
+        "the match's track gets hover focus"
+    );
+
+    // Pointer off the header: the cross-highlight clears the next frame.
+    harness.hover_at(egui::pos2(1.0, 1.0));
+    harness.run_steps(2);
+    assert!(
+        harness
+            .state()
+            .shared
+            .borrow()
+            .highlight
+            .hover_match
+            .is_none(),
+        "the highlight clears when the pointer leaves the header"
+    );
+}
+
 #[test]
 fn drag_drop_unknown_bytes_sets_error() {
     let mut harness = Harness::builder()
@@ -721,6 +787,64 @@ fn snapshot_app_query_window() {
     assert_eq!(history_len, 1, "the run above is recorded in history");
 
     harness.snapshot_loose("app_query_window");
+}
+
+/// Hovering a match header in the results table: the map draws the highlight
+/// blue halo band over the matched stretch and the plot shades the match's
+/// time span.
+#[test]
+fn snapshot_app_query_match_hover() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(DEMO_BYTES)),
+            name: "demo_trip.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+
+    {
+        let mut state = harness.inner.state().shared.borrow_mut();
+        state.zoom_to_visible_request = true;
+    }
+    let app = harness.inner.state_mut();
+    app.query_window.open = true;
+    app.query_window
+        .set_text("points | window 10 | where avg(velocity) > 25 km/h".to_owned());
+    harness.inner.run_steps(5);
+
+    harness
+        .inner
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+        .click();
+    step_until_query_result(&mut harness.inner);
+    harness.inner.run_steps(60);
+
+    // Hover the larger match's header; the cross-highlight lands on the map
+    // and plot a frame later.
+    let header_pos = harness
+        .inner
+        .get_by_label_contains("62 points")
+        .rect()
+        .center();
+    harness.inner.hover_at(header_pos);
+    harness.inner.run_steps(10);
+
+    let hover_match = harness.inner.state().shared.borrow().highlight.hover_match;
+    assert!(
+        hover_match.is_some(),
+        "hovering the header cross-highlights the match"
+    );
+
+    harness.snapshot_loose("app_query_match_hover");
 }
 
 /// Several queries compose in one editor: a `hide` filter plus two colored

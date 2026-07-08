@@ -1379,6 +1379,9 @@ struct MainBehavior<'a> {
     state: &'a mut SharedAppState,
     plot_hover_scope: Option<HighlightScope>,
     map_hover_time: Option<chrono::DateTime<chrono::Utc>>,
+    /// Time span of the match hovered in the query results table, shaded on
+    /// the plot (one frame behind the query window, like `query_matches`).
+    match_hover_time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
     toggle_plot_request: bool,
     /// Matches of the last query run, drawn as halos (one frame behind the
     /// query window, which renders after the tiles tree).
@@ -1445,6 +1448,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     &s.filter,
                     self.plot_hover_scope,
                     self.map_hover_time,
+                    self.match_hover_time_range,
                     map_sync_x_range,
                     &mut s.plot_state,
                 );
@@ -1723,6 +1727,8 @@ impl eframe::App for App {
                 Some(HighlightScope::Point(_)) | None => None,
             };
             let map_hover_time = extract_map_hover_time(&s.loaded_files, &s.highlight);
+            let match_hover_time_range =
+                extract_match_hover_time_range(&s.loaded_files, &s.highlight);
 
             // Render the tiles tree (map on top, optional plot on bottom).
             // Borrow tiles_tree and map explicitly so the borrow checker can see
@@ -1736,6 +1742,7 @@ impl eframe::App for App {
                     state: &mut s,
                     plot_hover_scope,
                     map_hover_time,
+                    match_hover_time_range,
                     toggle_plot_request: false,
                     query_matches: self.query_window.matches(),
                 };
@@ -1801,14 +1808,23 @@ impl eframe::App for App {
                 tree,
                 highlight,
                 filter,
+                map_center_request,
+                popup_pos_request,
                 ..
             } = &mut *s;
+            // The map and plot consumed last frame's hovered match above;
+            // clearing here keeps it set only while a header is hovered.
+            highlight.hover_match = None;
             self.query_window.show(
                 ui.ctx(),
                 loaded_files.view(),
                 tree.visibility(),
                 filter,
                 highlight,
+                &mut query::MatchMapRequests {
+                    map_center: map_center_request,
+                    popup_pos: popup_pos_request,
+                },
             );
         });
 
@@ -2346,6 +2362,22 @@ fn extract_map_hover_time(
         .and_then(|f| point_ref.track.index.get(&f.tracks))
         .and_then(|t| point_ref.point_index.get(&t.points))
         .map(|p| p.tpv.time().utc())
+}
+
+/// The time span of the match hovered in the query results table (first to
+/// last matched point), for the plot's shaded band.
+fn extract_match_hover_time_range(
+    files: &[LoadedFile],
+    highlight: &MapHighlight,
+) -> Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> {
+    let hm = highlight.hover_match?;
+    let track = hm
+        .track
+        .fi
+        .get(files)
+        .and_then(|f| hm.track.index.get(&f.tracks))?;
+    let time = |pi: usize| track.points.get(pi).map(|p| p.tpv.time().utc());
+    Some((time(hm.start)?, time(hm.end.checked_sub(1)?)?))
 }
 
 fn map_layer_to_setting(layer: MapLayer) -> crate::settings::MapLayerSetting {
