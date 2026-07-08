@@ -59,6 +59,8 @@ jobs:
               - 'sdk/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'tests/fixtures/gold_dataset/**'
               - 'scripts/lint-c.sh'
               - 'scripts/lint-cpp.sh'
               - '.github/actions/setup-sdk-toolchain/**'

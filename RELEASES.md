@@ -14,12 +14,13 @@ Two rules hold for both tracks:
 ## Changelog
 
 Each track has a changelog: `CHANGELOG.md` (GUI) and `CHANGELOG_SDK.md` (SDK).
-Record user-facing changes under `## [unreleased]` as you make them.
+Record app changes under `## Unreleased` in `CHANGELOG.md` and SDK changes under `## [unreleased]` in `CHANGELOG_SDK.md`.
 That section becomes the GitHub release body.
 
 The release flow promotes it for you.
-`just qa::bump-app` / `just qa::bump-sdk` turn `## [unreleased]` into `## [X.Y.Z] - YYYY-MM-DD` and leave a fresh empty `## [unreleased]` on top.
-A prerelease (`X.Y.Z-rc.N`) and its final release share one `## [X.Y.Z]` section.
+`just qa::bump-app` turns `## Unreleased` into `## X.Y.Z - YYYY-MM-DD`, which the app release metadata workflow prepends to the GitHub release body after cargo-dist creates the release.
+`just qa::bump-sdk` turns `## [unreleased]` into `## [X.Y.Z] - YYYY-MM-DD` and leaves a fresh empty `## [unreleased]` on top.
+A prerelease (`X.Y.Z-rc.N`) and its final release share one core-version section.
 The `--expect` guards refuse to tag if that section is missing.
 
 ## Scripted flow

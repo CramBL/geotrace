@@ -34,9 +34,9 @@ version = "{lock_version}"
         """\
 # Changelog
 
-## [unreleased]
+## Unreleased
 
-## [0.2.0] - 2026-06-24
+## 0.2.0 - 2026-06-24
 """,
         encoding="utf-8",
     )

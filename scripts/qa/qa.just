@@ -39,7 +39,7 @@ check-versions *ARGS:
     {{ _QA }} versions check {{ ARGS }}
 
 # Verify the GUI app (workspace) version. Pass `--expect X.Y.Z` to also require
-# that version and a matching CHANGELOG.md `## [X.Y.Z]` section.
+# that version and a matching CHANGELOG.md release section.
 [group("qa")]
 check-app *ARGS:
     {{ _QA }} versions check-app {{ ARGS }}
@@ -52,7 +52,7 @@ bump-sdk VERSION:
     {{ _QA }} versions bump-sdk {{ VERSION }}
 
 # Set the GUI app (workspace) version to VERSION and promote CHANGELOG.md's
-# [unreleased] section to it. Tag `app/vVERSION` to release.
+# unreleased section to it. Tag `app/vVERSION` to release.
 [group("qa")]
 bump-app VERSION:
     {{ _QA }} versions bump-app {{ VERSION }}

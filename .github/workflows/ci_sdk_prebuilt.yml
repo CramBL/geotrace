@@ -29,9 +29,54 @@ defaults:
     shell: bash
 
 jobs:
+  changes:
+    name: Detect SDK changes
+    runs-on: ubuntu-latest
+    outputs:
+      sdk: ${{ steps.decide.outputs.sdk }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Filter SDK paths
+        id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        with:
+          filters: |
+            sdk:
+              - 'sdk/c/**'
+              - 'sdk/integration-tests/prebuilt/**'
+              - 'sdk/rust/geotrace-c/**'
+              - 'sdk/rust/geotrace-sdk/**'
+              - 'sdk/rust/geotrace-sdk-macros/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/actions/setup-sdk-toolchain/**'
+              - '.github/workflows/ci_sdk_prebuilt.yml'
+
+      - name: Decide whether to run the SDK prebuilt suite
+        id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SDK_CHANGED: ${{ steps.filter.outputs.sdk }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "Non-PR event ($EVENT_NAME): running the SDK prebuilt suite."
+            echo "sdk=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sdk=$SDK_CHANGED" >> "$GITHUB_OUTPUT"
+          fi
+
   build-shared:
     name: Build shared / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
 
     # Shared-library demo targets Unix only: the Windows CMake setup defaults to
     # static linking (the standard Windows distribution story).  The static demo
@@ -117,6 +162,8 @@ jobs:
   build-static:
     name: Build static / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
 
     strategy:
       fail-fast: false
@@ -236,11 +283,29 @@ jobs:
 
   ci-sdk-prebuilt:
     runs-on: ubuntu-latest
-    needs: [build-shared, consume-shared, build-static, consume-static]
+    needs: [changes, build-shared, consume-shared, build-static, consume-static]
     permissions:
       contents: none
     if: always()
     steps:
-      - name: Fail if any dependency failed
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
-        run: exit 1
+      - name: Verify the SDK prebuilt suite succeeded
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SDK_CHANGED: ${{ needs.changes.outputs.sdk }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "The 'changes' detection job did not succeed (result: $CHANGES_RESULT)."
+            exit 1
+          fi
+          if [ "$SDK_CHANGED" != "true" ]; then
+            echo "No SDK changes detected; the SDK prebuilt suite was intentionally skipped. OK."
+            exit 0
+          fi
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then
+              echo "A dependency did not succeed (results: $RESULTS)."
+              exit 1
+            fi
+          done
+          echo "All SDK prebuilt jobs succeeded."
