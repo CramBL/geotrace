@@ -240,9 +240,10 @@ pub struct NavRecorder {
 
 /// A timeline object that [`NavRecorder::add`] dispatches on.
 ///
-/// Implemented for [`NavFix`], [`SatelliteReport`], [`Annotation`], and
-/// [`EventMarker`]. Per-variant styling and typed events are intentionally not
-/// `NavRecord`s: use [`add_event_marker_style`] and [`add_event`] respectively.
+/// Implemented for [`NavFix`], [`SatelliteReport`], [`Annotation`],
+/// [`EventMarker`], and [`Channel`]. Per-variant styling and typed events are
+/// intentionally not `NavRecord`s: use [`add_event_marker_style`] and
+/// [`add_event`] respectively.
 ///
 /// [`add_event_marker_style`]: NavRecorder::add_event_marker_style
 /// [`add_event`]: NavRecorder::add_event
@@ -275,9 +276,16 @@ impl NavRecord for EventMarker {
     }
 }
 
+impl NavRecord for Channel {
+    fn add_to(self, recorder: &mut NavRecorder) {
+        recorder.add_channel(self);
+    }
+}
+
 impl NavRecorder {
     /// Add any timeline object (a [`NavFix`], [`SatelliteReport`],
-    /// [`Annotation`], or [`EventMarker`]), dispatched by type via [`NavRecord`].
+    /// [`Annotation`], [`EventMarker`], or [`Channel`]), dispatched by type
+    /// via [`NavRecord`].
     ///
     /// Ergonomic sugar for the matching `add_*` method:
     ///

@@ -701,6 +701,15 @@ fn add_dispatches_to_the_matching_typed_method() -> Result<(), BuildError> {
             .build()
             .expect("valid event marker")
     };
+    let channel = || {
+        Channel::builder()
+            .name("incline")
+            .unit("deg")
+            .times(vec![t(0)])
+            .values(vec![1.5])
+            .build()
+            .expect("valid channel")
+    };
 
     // Built the explicit way.
     let mut typed = NavFileBuilder::new().open();
@@ -709,7 +718,8 @@ fn add_dispatches_to_the_matching_typed_method() -> Result<(), BuildError> {
         .add_nav_fix(simple_fix(1000))
         .add_satellite_report(simple_report(100))
         .add_annotation(annotation())
-        .add_event_marker(marker());
+        .add_event_marker(marker())
+        .add_channel(channel());
     let typed = typed.finish()?;
 
     // Built via the type-dispatched add().
@@ -719,7 +729,8 @@ fn add_dispatches_to_the_matching_typed_method() -> Result<(), BuildError> {
         .add(simple_fix(1000))
         .add(simple_report(100))
         .add(annotation())
-        .add(marker());
+        .add(marker())
+        .add(channel());
     let via_add = via_add.finish()?;
 
     // add() must produce exactly the same file as the typed methods.
@@ -729,6 +740,7 @@ fn add_dispatches_to_the_matching_typed_method() -> Result<(), BuildError> {
     assert!(via_add.nav_points().iter().any(|p| p.satellites.is_some()));
     assert_eq!(via_add.markers().len(), 1);
     assert_eq!(via_add.event_markers().len(), 1);
+    assert_eq!(via_add.channels().len(), 1);
     Ok(())
 }
 
