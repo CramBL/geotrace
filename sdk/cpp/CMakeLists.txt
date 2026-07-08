@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(GeoTraceCpp VERSION 0.3.0 LANGUAGES CXX)
+project(GeoTraceCpp VERSION 0.4.0 LANGUAGES CXX)
 
 # Default to C++17; callers may override with -DCMAKE_CXX_STANDARD=20.
 set(CMAKE_CXX_STANDARD "17" CACHE STRING "C++ standard version")
