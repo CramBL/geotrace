@@ -779,6 +779,10 @@ impl App {
             let mut shared = self.shared.borrow_mut();
             shared.plot_state.sync_to_map = s.map.sync_to_map;
             shared.plot_state.show_grid = s.plot.show_grid;
+            shared.plot_state.line_width = s.plot.line_width.clamp(
+                *gt_plot::PLOT_LINE_WIDTH_RANGE.start(),
+                *gt_plot::PLOT_LINE_WIDTH_RANGE.end(),
+            );
             shared.plot_state.show_advanced_metrics = s.plot.show_advanced_metrics;
             shared.plot_state.show_channels = s.plot.show_channels;
             shared.plot_state.analysis = analysis;
@@ -826,6 +830,7 @@ impl App {
         let vis = &s.plot_state.metric_vis;
         AppSnapshot {
             show_grid: s.plot_state.show_grid,
+            line_width: s.plot_state.line_width.into(),
             panel_visible: self.tiles_tree.tiles.is_visible(self.plot_tile_id),
             split_ratio: self.get_split_ratio().into(),
             // `from_fn` invokes the closure in index order 0..COUNT, matching
@@ -894,6 +899,7 @@ impl App {
             version: 1,
             plot: crate::settings::PlotSettings {
                 show_grid: s.plot_state.show_grid,
+                line_width: s.plot_state.line_width,
                 panel_visible: self.tiles_tree.tiles.is_visible(self.plot_tile_id),
                 split_ratio: self.get_split_ratio(),
                 metric,

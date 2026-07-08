@@ -272,6 +272,13 @@ const FILE_LINE_STYLES: [LineStyle; 5] = [
     LineStyle::Dashed { length: 10.0 },
     LineStyle::Dotted { spacing: 8.0 },
 ];
+/// Default stroke width of the metric and channel plot lines.  Slightly below
+/// egui_plot's 1.0 default: many lines are enabled by default, and a thinner
+/// stroke keeps overlapping lines readable.
+pub const DEFAULT_PLOT_LINE_WIDTH: f32 = 0.75;
+/// Allowed plot line width, shared by the display-settings slider and the
+/// clamp applied to persisted settings on load.
+pub const PLOT_LINE_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 0.5..=5.0;
 /// Default legend overlay position, anchored just inside the plot's top-left
 /// corner.
 pub const LEGEND_DOCK_OFFSET: egui::Vec2 = egui::vec2(10.0, 10.0);
@@ -849,6 +856,9 @@ pub struct PlotState {
     pub metric_vis: MetricVisibility,
     /// Whether the plot grid lines are visible.
     pub show_grid: bool,
+    /// Stroke width of the metric and channel lines, adjusted via the plot
+    /// display popup (the gear button in the chip row).
+    pub line_width: f32,
     /// When true, the plot x-range tracks the map viewport.
     pub sync_to_map: bool,
     /// Whether to draw the masked-satellite anomaly markers (a used satellite
@@ -908,6 +918,7 @@ impl Default for PlotState {
             hovered_time: None,
             metric_vis: MetricVisibility::default(),
             show_grid: true,
+            line_width: DEFAULT_PLOT_LINE_WIDTH,
             sync_to_map: true,
             mark_masked_fix: true,
             show_advanced_metrics: false,
@@ -1070,6 +1081,7 @@ pub fn show_track_plot(
         &channels,
         &mut state.channel_vis,
         &mut state.show_grid,
+        &mut state.line_width,
         &mut state.sync_to_map,
         &mut state.show_advanced_metrics,
         &mut state.show_channels,
@@ -1132,6 +1144,7 @@ pub fn show_track_plot(
     let metric_vis = &state.metric_vis;
     let channel_vis = &state.channel_vis;
     let show_channels = state.show_channels;
+    let line_width = state.line_width;
     // Anomaly markers ride on the "Util all" line, so they show only when that
     // metric is visible and the settings toggle is on.
     let show_advanced = state.show_advanced_metrics;
@@ -1273,6 +1286,7 @@ pub fn show_track_plot(
                     show_advanced,
                     show_channels,
                 },
+                line_width,
             );
             if show_anomalies {
                 add_util_anomalies(
@@ -1644,6 +1658,7 @@ fn metric_filter_row(
     channels: &[LoadedChannel],
     channel_vis: &mut ChannelVisibility,
     show_grid: &mut bool,
+    line_width: &mut f32,
     sync_to_map: &mut bool,
     show_advanced: &mut bool,
     show_channels: &mut bool,
@@ -1670,14 +1685,13 @@ fn metric_filter_row(
             *sync_to_map = !*sync_to_map;
         }
 
-        // Grid toggle.
-        if ui
-            .small_button(egui_phosphor::regular::GRID_FOUR)
-            .on_hover_text(if *show_grid { "Hide grid" } else { "Show grid" })
-            .clicked()
-        {
-            *show_grid = !*show_grid;
-        }
+        // Display settings popup: appearance knobs that are set once and left
+        // alone, kept out of the row itself so it stays uncluttered.
+        ui.menu_button(egui_phosphor::regular::GEAR, |ui| {
+            plot_display_menu(ui, show_grid, line_width);
+        })
+        .response
+        .on_hover_text("Plot display settings");
 
         // Show/hide all (currently shown metrics only).
         let eye_icon = if all_on {
@@ -1810,6 +1824,34 @@ fn metric_filter_row(
     }
 
     hovered_chip
+}
+
+/// Body of the plot display-settings popup: line width and grid visibility.
+///
+/// The popup does not capture the plot behind it, so slider edits self-preview
+/// live on the lines underneath.
+fn plot_display_menu(ui: &mut egui::Ui, show_grid: &mut bool, line_width: &mut f32) {
+    ui.set_max_width(220.0);
+    ui.strong("Plot display");
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.label("Line width");
+        ui.add(
+            egui::Slider::new(line_width, PLOT_LINE_WIDTH_RANGE)
+                .step_by(0.25)
+                .fixed_decimals(2),
+        );
+    });
+    ui.checkbox(show_grid, "Show grid");
+    ui.separator();
+    let reset_label = format!(
+        "{} Restore defaults",
+        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
+    );
+    if ui.button(reset_label).clicked() {
+        *line_width = DEFAULT_PLOT_LINE_WIDTH;
+        *show_grid = true;
+    }
 }
 
 /// A small colored toggle chip.  Left-click toggles the metric.  Right-click
@@ -1964,6 +2006,7 @@ fn add_series_lines<'a>(
     hovered_chip: Option<&HoveredChip>,
     hover_scope: Option<HighlightScope>,
     sections: SectionGates,
+    line_width: f32,
 ) {
     let prefix = if multi_track {
         format!("{}: ", series.label)
@@ -2006,6 +2049,7 @@ fn add_series_lines<'a>(
             format!("{prefix}{}", kind.label()),
             color,
             line_style,
+            line_width,
             highlighted,
         );
     }
@@ -2043,6 +2087,7 @@ fn add_series_lines<'a>(
                 format!("{prefix}{}{unit_suffix}", component.label),
                 color,
                 line_style,
+                line_width,
                 highlighted,
             );
         }
@@ -2074,6 +2119,7 @@ fn add_line<'a>(
     name: String,
     color: Color32,
     style: LineStyle,
+    width: f32,
     highlighted: bool,
 ) {
     if data.len() < 2 {
@@ -2083,6 +2129,7 @@ fn add_line<'a>(
         Line::new(name, PlotPoints::Borrowed(data))
             .color(color)
             .style(style)
+            .width(width)
             .highlight(highlighted),
     );
 }

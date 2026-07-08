@@ -37,6 +37,7 @@ impl From<f64> for StableF64 {
 #[derive(PartialEq)]
 pub(super) struct AppSnapshot {
     pub show_grid: bool,
+    pub line_width: StableF32,
     pub panel_visible: bool,
     pub split_ratio: StableF32,
     /// Per-metric visibility flags in `MetricKind::iter()` order, sized by
@@ -87,6 +88,7 @@ impl Default for AppSnapshot {
         let analysis = crate::settings::AnalysisSettings::default();
         Self {
             show_grid: true,
+            line_width: StableF32::from(gt_plot::DEFAULT_PLOT_LINE_WIDTH),
             panel_visible: true,
             split_ratio: StableF32::from(0.6_f32),
             metrics: [true; crate::settings::MetricKind::COUNT],
