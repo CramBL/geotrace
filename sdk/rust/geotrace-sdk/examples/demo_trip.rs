@@ -7,6 +7,10 @@
 //! next to them. The 59 missing seconds carry satellite reports without
 //! fixes. The builder turns those into ghost nav points, which is what the
 //! app renders as a dashed fix-lost stretch.
+//!
+//! The trip also carries a 25 Hz `accel` channel derived from its own speed
+//! and heading dynamics (see [`synthesize_accel`]) - and unlike the fixes,
+//! the IMU samples run right through the tunnel.
 // Examples favour brevity: the core's robustness restriction lints (no
 // unwrap/expect/panic/indexing, no std::env::temp_dir) are not enforced on
 // demonstration code, mirroring how clippy.toml relaxes them inside tests.
@@ -19,7 +23,7 @@
 )]
 
 use geotrace_sdk::{
-    Angle, Annotation, Constellation, EventMarker, EventMarkerStyle, MarkerIcon, Meta,
+    Angle, Annotation, Channel, Constellation, EventMarker, EventMarkerStyle, MarkerIcon, Meta,
     NavFileBuilder, NavFix, NavRecorder, Satellite, SatelliteReport, Velocity,
 };
 use std::collections::HashMap;
@@ -45,7 +49,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .open();
 
     load_event_styles(&mut recorder, base_dir)?;
-    load_satellites_and_fixes(&mut recorder, base_dir)?;
+    let fixes = load_satellites_and_fixes(&mut recorder, base_dir)?;
+    recorder.add_channel(synthesize_accel(&fixes)?);
     load_markers(&mut recorder, base_dir)?;
     load_events(&mut recorder, base_dir)?;
 
@@ -56,6 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Nav Points:    {}", nav_file.nav_points().len());
     println!("  Markers:       {}", nav_file.markers().len());
     println!("  Event Markers: {}", nav_file.event_markers().len());
+    println!("  Channels:      {}", nav_file.channels().len());
 
     println!("Verifying the demo-trip storyline...");
     verify_demo_file(base_dir.join("demo_trip.gtd"))?;
@@ -109,10 +115,19 @@ fn load_event_styles(
     Ok(())
 }
 
+/// One fix's dynamics, kept for the accel synthesis.
+struct FixDynamics {
+    time: chrono::DateTime<chrono::Utc>,
+    speed: Velocity,
+    heading: Angle,
+}
+
+/// Loads the satellite reports and fixes into the recorder, returning each
+/// fix's dynamics in trip order for [`synthesize_accel`].
 fn load_satellites_and_fixes(
     recorder: &mut NavRecorder,
     base_dir: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Vec<FixDynamics>, Box<dyn std::error::Error>> {
     let mut satellite_reports: HashMap<(String, String), Vec<Satellite>> = HashMap::new();
     let sat_file = File::open(base_dir.join("satellites.csv"))?;
     let reader = BufReader::new(sat_file);
@@ -137,6 +152,7 @@ fn load_satellites_and_fixes(
             .push(sat);
     }
 
+    let mut dynamics = Vec::new();
     let fix_file = File::open(base_dir.join("fixes.csv"))?;
     let reader = BufReader::new(fix_file);
     for line in reader.lines().skip(1) {
@@ -147,6 +163,17 @@ fn load_satellites_and_fixes(
         }
         let gps_time = parse_time(cols[1]);
         let sys_time = parse_time(cols[2]);
+        if let (Some(time), Ok(heading), Ok(speed)) = (
+            gps_time,
+            Angle::try_from_degrees_str(cols[5]),
+            Velocity::try_from_kmh_str(cols[6]),
+        ) {
+            dynamics.push(FixDynamics {
+                time,
+                speed,
+                heading,
+            });
+        }
 
         recorder.add(
             NavFix::builder()
@@ -184,7 +211,146 @@ fn load_satellites_and_fixes(
         );
     }
 
-    Ok(())
+    Ok(dynamics)
+}
+
+/// Samples per second of the synthesized IMU channel.
+const ACCEL_RATE_HZ: i64 = 25;
+/// Wall-clock length of the scripted trip, first fix to last.
+const TRIP_DURATION_S: i64 = 150;
+/// Standard gravity, m/s².
+const STANDARD_GRAVITY: f64 = 9.806_65;
+/// Vibration amplitude in g at [`VIBRATION_REFERENCE_SPEED_MPS`]; scales
+/// linearly with speed - a parked IMU is quiet.
+const VIBRATION_AT_REFERENCE_SPEED_G: f64 = 0.03;
+/// Speed the vibration amplitude is calibrated at, m/s.
+const VIBRATION_REFERENCE_SPEED_MPS: f64 = 8.0;
+/// The vertical axis shakes less than the ride plane.
+const VERTICAL_VIBRATION_SCALE: f64 = 0.5;
+
+/// Derive a device-frame `accel` channel from the trip's own dynamics, at
+/// [`ACCEL_RATE_HZ`] across the whole trip - tunnel included, an IMU does
+/// not lose the sky; that stretch is one long quiet segment between its
+/// bracketing fixes. The fixes are smoothed first: the scripted
+/// reacquisition carries jumpy GPS speeds (that noise is its storyline),
+/// and an IMU measures the true motion, not the fix error.
+fn synthesize_accel(fixes: &[FixDynamics]) -> Result<Channel, Box<dyn std::error::Error>> {
+    let fixes = &smooth_dynamics(fixes);
+    let (first, last) = match (fixes.first(), fixes.last()) {
+        (Some(first), Some(last)) if fixes.len() >= 2 => (first, last),
+        _ => return Err("accel synthesis needs at least two fixes".into()),
+    };
+    let step_ms = 1_000 / ACCEL_RATE_HZ;
+    // Fixes arrive in trip order, so the span is non-negative.
+    let count = usize::try_from((last.time - first.time).num_milliseconds() / step_ms + 1)?;
+
+    let mut noise = NoiseGen::new();
+    let mut times = Vec::with_capacity(count);
+    let mut values = Vec::with_capacity(count * 3);
+    let mut seg = 0;
+    for k in 0..count {
+        let time = first.time + geotrace_sdk::Duration::milliseconds(k as i64 * step_ms);
+        while seg + 2 < fixes.len() && fixes[seg + 1].time <= time {
+            seg += 1;
+        }
+        let (a, b) = (&fixes[seg], &fixes[seg + 1]);
+        let (v_a, v_b) = (
+            a.speed.as_meters_per_second(),
+            b.speed.as_meters_per_second(),
+        );
+        let dt = (b.time - a.time).num_milliseconds() as f64 / 1_000.0;
+        let into = (time - a.time).num_milliseconds() as f64 / 1_000.0;
+        let frac = (into / dt).clamp(0.0, 1.0);
+        let speed = v_a + (v_b - v_a) * frac;
+        let longitudinal = (v_b - v_a) / dt;
+        let yaw_rate = a.heading.signed_arc_to(b.heading).as_radians() / dt;
+        let vibration = VIBRATION_AT_REFERENCE_SPEED_G * (speed / VIBRATION_REFERENCE_SPEED_MPS);
+        times.push(time);
+        values.push(longitudinal / STANDARD_GRAVITY + vibration * noise.next());
+        values.push(speed * yaw_rate / STANDARD_GRAVITY + vibration * noise.next());
+        values.push(1.0 + VERTICAL_VIBRATION_SCALE * vibration * noise.next());
+    }
+    Ok(Channel::builder()
+        .name("accel")
+        .unit("g")
+        .description("Device-frame IMU acceleration derived from the trip's speed and heading")
+        .components(vec!["x".to_owned(), "y".to_owned(), "z".to_owned()])
+        .times(times)
+        .values(values)
+        .build()?)
+}
+
+/// Seconds of fix dynamics averaged on each side when smoothing.
+const SMOOTH_HALF_WINDOW_S: i64 = 2;
+
+/// Average each fix's speed and heading with its neighbours within
+/// [`SMOOTH_HALF_WINDOW_S`]. Headings are unwrapped into a continuous series
+/// first so averaging across the 360° seam cannot fold a bend into a spin.
+fn smooth_dynamics(fixes: &[FixDynamics]) -> Vec<FixDynamics> {
+    let mut unwrapped: Vec<f64> = Vec::with_capacity(fixes.len());
+    for fix in fixes {
+        let prev = unwrapped
+            .last()
+            .copied()
+            .unwrap_or(fix.heading.as_degrees());
+        unwrapped.push(prev + Angle::degrees(prev).signed_arc_to(fix.heading).as_degrees());
+    }
+    fixes
+        .iter()
+        .map(|fix| {
+            let near =
+                |j: &usize| (fixes[*j].time - fix.time).num_seconds().abs() <= SMOOTH_HALF_WINDOW_S;
+            let window: Vec<usize> = (0..fixes.len()).filter(near).collect();
+            let n = window.len() as f64;
+            let speed_mps = window
+                .iter()
+                .map(|&j| fixes[j].speed.as_meters_per_second())
+                .sum::<f64>()
+                / n;
+            FixDynamics {
+                time: fix.time,
+                speed: Velocity::meter_per_second(speed_mps),
+                heading: Angle::degrees(window.iter().map(|&j| unwrapped[j]).sum::<f64>() / n),
+            }
+        })
+        .collect()
+}
+
+/// Fixed LCG seed, multiplier, and increment (Knuth's MMIX parameters), so
+/// every regeneration produces the same noise.
+const LCG_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+const LCG_MULTIPLIER: u64 = 6_364_136_223_846_793_005;
+const LCG_INCREMENT: u64 = 1_442_695_040_888_963_407;
+/// One-pole low-pass coefficient turning the LCG's white noise into
+/// vibration, not hiss.
+const NOISE_SMOOTHING: f64 = 0.35;
+
+/// Smoothed noise in roughly [-1, 1] from a fixed-seed LCG: integer and
+/// basic float arithmetic only, so the generated bytes reproduce on every
+/// platform (libm's transcendentals may differ in the last ulp).
+struct NoiseGen {
+    state: u64,
+    smoothed: f64,
+}
+
+impl NoiseGen {
+    fn new() -> Self {
+        Self {
+            state: LCG_SEED,
+            smoothed: 0.0,
+        }
+    }
+
+    fn next(&mut self) -> f64 {
+        self.state = self
+            .state
+            .wrapping_mul(LCG_MULTIPLIER)
+            .wrapping_add(LCG_INCREMENT);
+        // The top 31 bits, mapped onto [-1, 1).
+        let raw = (self.state >> 33) as f64 / (1_u64 << 30) as f64 - 1.0;
+        self.smoothed += NOISE_SMOOTHING * (raw - self.smoothed);
+        self.smoothed
+    }
 }
 
 fn load_markers(
@@ -282,6 +448,31 @@ fn verify_demo_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     assert!(in_fix(last) >= 10);
     assert!(first.fix.eph_m.unwrap() > 20.0);
     assert!(last.fix.eph_m.unwrap() < 5.0);
+
+    // The derived IMU channel: [`ACCEL_RATE_HZ`] across the whole trip with
+    // no gap - the samples run right through the tunnel - and gravity on z.
+    let channels = file.channels();
+    assert_eq!(channels.len(), 1);
+    let accel = &channels[0];
+    assert_eq!(accel.name(), "accel");
+    assert_eq!(accel.unit(), Some("g"));
+    assert_eq!(accel.components(), ["x", "y", "z"]);
+    let times = accel.times();
+    assert_eq!(times.len() as i64, TRIP_DURATION_S * ACCEL_RATE_HZ + 1);
+    assert!(
+        times
+            .windows(2)
+            .all(|w| (w[1] - w[0]).num_milliseconds() == 1_000 / ACCEL_RATE_HZ)
+    );
+    let z_mean = accel.values().chunks(3).map(|row| row[2]).sum::<f64>() / times.len() as f64;
+    assert!((z_mean - 1.0).abs() < 0.05, "z mean {z_mean} sits near 1 g");
+    // The ride turns: some samples carry a distinctly nonzero lateral g.
+    let y_peak = accel
+        .values()
+        .chunks(3)
+        .map(|row| row[1].abs())
+        .fold(0.0_f64, f64::max);
+    assert!(y_peak > 0.05, "lateral peak {y_peak} shows the bends");
 
     Ok(())
 }

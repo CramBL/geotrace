@@ -105,6 +105,12 @@ impl Angle {
         self.0.to_radians()
     }
 
+    /// The shortest signed arc from `self` to `other`, in [-180, 180)
+    /// degrees, so a heading step from 359° to 1° reads as +2°, not -358°.
+    pub fn signed_arc_to(self, other: Angle) -> Angle {
+        Angle((other.0 - self.0 + 180.0).rem_euclid(360.0) - 180.0)
+    }
+
     /// Parse a decimal degree value from a string.
     pub fn try_from_degrees_str(s: impl AsRef<str>) -> Result<Self, Error> {
         let s = s.as_ref();
