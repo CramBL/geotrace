@@ -21,7 +21,7 @@ use gt_plot::PlotState;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
 use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
 use gt_types::{AssociationConfig, DataCategory, FileIdx, LoadWarning, LoadedFile, NavPoint};
-use gt_ui_types::{HighlightScope, MapHighlight, TrackDataVisibility};
+use gt_ui_types::{DisplayMask, HighlightScope, MapHighlight, TrackDataVisibility};
 use loader::{CompletedLoad, FinishedJob, LoadOutcome, LoaderManager};
 use strum::IntoEnumIterator;
 
@@ -41,6 +41,9 @@ struct SharedAppState {
     tree: TreeState,
     highlight: MapHighlight,
     filter: GlobalFilter,
+    /// Global per-category visibility of the map ink. UI to edit it lands
+    /// with the display toggle popup; until then it stays all-visible.
+    display_mask: DisplayMask,
     filter_state: FilterPanelState,
     plot_state: PlotState,
     map_center_request: Option<(f64, f64)>,
@@ -292,6 +295,7 @@ impl App {
                     ..Default::default()
                 },
                 filter: GlobalFilter::default(),
+                display_mask: DisplayMask::default(),
                 filter_state: FilterPanelState::default(),
                 plot_state: PlotState::default(),
                 map_center_request: None,
@@ -1417,6 +1421,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     s.tree.visibility(),
                     &mut s.highlight,
                     &s.filter,
+                    s.display_mask,
                     s.tree.event_marker_visibility(),
                     s.tree.generated_marker_visibility(),
                     self.query_matches,

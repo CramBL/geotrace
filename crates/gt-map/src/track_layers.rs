@@ -115,6 +115,10 @@ pub struct TrackLayers<'a> {
     hover_fade_alpha: f32,
     /// Matches of the last query run, drawn as halos beneath the tracklines.
     query_matches: Option<&'a QueryMatches>,
+    /// Whether the query-highlights display category is visible. Gates the
+    /// halo passes only - the query's keep/hide point removal is a query
+    /// semantic, not ink, and is never masked.
+    display_query_highlights: bool,
 }
 
 impl<'a> TrackLayers<'a> {}
@@ -262,7 +266,7 @@ impl TrackLayers<'_> {
                     entry.fade,
                     Some(TrackIconFade::PerFix | TrackIconFade::AllHidden)
                 );
-                if !paint_trackline && !paint_quality && !paint_icons {
+                if !paint_trackline && !paint_quality && !paint_icons && !entry.sat_labels {
                     continue;
                 }
 
@@ -340,6 +344,11 @@ impl TrackLayers<'_> {
     ) where
         F: Fn(usize) -> bool,
     {
+        // The display mask gates only the halo ink. Query keep/hide
+        // semantics (the hidden point ranges) apply regardless.
+        if !self.display_query_highlights {
+            return;
+        }
         let draws = self
             .query_matches
             .map(|m| (m.draws.as_slice(), m.stale))
@@ -449,7 +458,7 @@ impl TrackLayers<'_> {
             geometries
                 .iter()
                 .enumerate()
-                .filter(|(_, geo)| geo.entry.fade.is_some())
+                .filter(|(_, geo)| geo.entry.sat_labels)
                 .map(|(i, geo)| (i, TrackRef::new(geo.fi, geo.ti), geo.track)),
             geometries.len(),
             viewport,

@@ -4,7 +4,7 @@
 
 use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackIdx, TrackRef};
-use gt_ui_types::{QueryMatches, TrackDataVisibility};
+use gt_ui_types::{DisplayCategory, DisplayMask, QueryMatches, TrackDataVisibility};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use walkers::MapMemory;
@@ -93,11 +93,15 @@ pub(crate) fn collect_visible_points(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TrackEntry {
     /// The plain trackline layer is drawn (file and track enabled, track
-    /// layer visible, filter passed).
+    /// layer visible, filter passed, category displayed).
     pub(crate) trackline: bool,
     /// Icon-fade classification of the TPV layer. `None` when that layer
     /// is hidden or the track is disabled or filtered out.
     pub(crate) fade: Option<TrackIconFade>,
+    /// The track's satellite-label anchors are placement candidates.
+    /// Rides the TPV tree toggle but has its own display category, so
+    /// labels survive hiding the track points (and vice versa).
+    pub(crate) sat_labels: bool,
 }
 
 impl TrackEntry {
@@ -106,9 +110,9 @@ impl TrackEntry {
         self.fade.is_some_and(|f| f != TrackIconFade::AllHidden)
     }
 
-    /// Neither layer draws. The renderer can skip the track outright.
+    /// No layer draws. The renderer can skip the track outright.
     pub(crate) fn draws_nothing(self) -> bool {
-        !self.trackline && self.fade.is_none()
+        !self.trackline && self.fade.is_none() && !self.sat_labels
     }
 }
 
@@ -131,6 +135,7 @@ impl TrackPlan {
         files: &[LoadedFile],
         visibility: &TrackDataVisibility,
         filter: &GlobalFilter,
+        display_mask: DisplayMask,
         zoom: f64,
     ) -> Self {
         let scale = MapScale::from_zoom(zoom);
@@ -146,13 +151,17 @@ impl TrackPlan {
                 let enabled = file_enabled
                     && trip_vis.is_some_and(|tv| tv.enabled)
                     && track_passes_filter(&track.metadata, filter);
+                let tpv_on = enabled && trip_vis.is_some_and(|tv| tv.tpv_visible);
                 // The fade classification runs last so it is skipped for
                 // tracks that are hidden or filtered out anyway.
-                let fade = (enabled && trip_vis.is_some_and(|tv| tv.tpv_visible))
+                let fade = (tpv_on && display_mask.is_visible(DisplayCategory::TrackPoints))
                     .then(|| tpv_renderer::classify_icon_fade(track, scale, icon_size));
                 entries.push(TrackEntry {
-                    trackline: enabled && trip_vis.is_some_and(|tv| tv.track_visible),
+                    trackline: enabled
+                        && trip_vis.is_some_and(|tv| tv.track_visible)
+                        && display_mask.is_visible(DisplayCategory::Tracks),
                     fade,
+                    sat_labels: tpv_on && display_mask.is_visible(DisplayCategory::SatelliteLabels),
                 });
             }
         }
@@ -178,12 +187,27 @@ impl TrackPlan {
 /// such data exists.
 ///
 /// This matches what the renderers actually draw, so "zoom to fit" frames the
-/// visible data rather than the whole recording.
+/// visible data rather than the whole recording. The display mask counts the
+/// same way: point ink contributes only while some point-anchored category
+/// (tracks, track points, satellite labels) is displayed, custom markers only
+/// while theirs is.
 pub(crate) fn compute_visible_bounding_box(
     files: &[LoadedFile],
     visibility: &TrackDataVisibility,
     filter: &GlobalFilter,
+    display_mask: DisplayMask,
 ) -> Option<(f64, f64, f64, f64)> {
+    let points_displayed = [
+        DisplayCategory::Tracks,
+        DisplayCategory::TrackPoints,
+        DisplayCategory::SatelliteLabels,
+    ]
+    .into_iter()
+    .any(|c| display_mask.is_visible(c));
+    let custom_markers_displayed = display_mask.is_visible(DisplayCategory::CustomMarkers);
+    if !points_displayed && !custom_markers_displayed {
+        return None;
+    }
     let mut min_lat = f64::MAX;
     let mut max_lat = f64::MIN;
     let mut min_lon = f64::MAX;
@@ -207,29 +231,33 @@ pub(crate) fn compute_visible_bounding_box(
             if !track_passes_filter(&track.metadata, filter) {
                 continue;
             }
-            for point in &track.points {
-                if !point_passes_time_filter(point.tpv.time().utc(), filter) {
-                    continue;
+            if points_displayed {
+                for point in &track.points {
+                    if !point_passes_time_filter(point.tpv.time().utc(), filter) {
+                        continue;
+                    }
+                    let lat = point.tpv.lat().as_degrees();
+                    let lon = point.tpv.lon().as_degrees();
+                    min_lat = min_lat.min(lat);
+                    max_lat = max_lat.max(lat);
+                    min_lon = min_lon.min(lon);
+                    max_lon = max_lon.max(lon);
+                    any = true;
                 }
-                let lat = point.tpv.lat().as_degrees();
-                let lon = point.tpv.lon().as_degrees();
-                min_lat = min_lat.min(lat);
-                max_lat = max_lat.max(lat);
-                min_lon = min_lon.min(lon);
-                max_lon = max_lon.max(lon);
-                any = true;
             }
-            for marker in &track.custom_markers {
-                if !point_passes_time_filter(marker.time, filter) {
-                    continue;
+            if custom_markers_displayed {
+                for marker in &track.custom_markers {
+                    if !point_passes_time_filter(marker.time, filter) {
+                        continue;
+                    }
+                    let lat = marker.lat.as_degrees();
+                    let lon = marker.lon.as_degrees();
+                    min_lat = min_lat.min(lat);
+                    max_lat = max_lat.max(lat);
+                    min_lon = min_lon.min(lon);
+                    max_lon = max_lon.max(lon);
+                    any = true;
                 }
-                let lat = marker.lat.as_degrees();
-                let lon = marker.lon.as_degrees();
-                min_lat = min_lat.min(lat);
-                max_lat = max_lat.max(lat);
-                min_lon = min_lon.min(lon);
-                max_lon = max_lon.max(lon);
-                any = true;
             }
         }
     }
@@ -297,6 +325,7 @@ pub(crate) fn is_spatial_point_visible(
     files: &[LoadedFile],
     visibility: &TrackDataVisibility,
     filter: &GlobalFilter,
+    display_mask: DisplayMask,
     query_matches: Option<&QueryMatches>,
 ) -> bool {
     let Some(file_vis) = sp.file_index.get(&visibility.files) else {
@@ -311,11 +340,23 @@ pub(crate) fn is_spatial_point_visible(
     if !trip_vis.enabled {
         return false;
     }
+    // Tree toggle AND display category: an element hidden either way is
+    // not drawn, so it must not be hoverable or clickable either.
     let layer_visible = match sp.category {
-        DataCategory::Tpv => trip_vis.tpv_visible,
-        DataCategory::CustomMarker => trip_vis.custom_markers_visible,
-        DataCategory::GeneratedMarker => trip_vis.generated_markers_visible,
-        DataCategory::EventMarker => trip_vis.event_markers_visible,
+        DataCategory::Tpv => {
+            trip_vis.tpv_visible && display_mask.is_visible(DisplayCategory::TrackPoints)
+        }
+        DataCategory::CustomMarker => {
+            trip_vis.custom_markers_visible
+                && display_mask.is_visible(DisplayCategory::CustomMarkers)
+        }
+        DataCategory::GeneratedMarker => {
+            trip_vis.generated_markers_visible
+                && display_mask.is_visible(DisplayCategory::GeneratedMarkers)
+        }
+        DataCategory::EventMarker => {
+            trip_vis.event_markers_visible && display_mask.is_visible(DisplayCategory::EventMarkers)
+        }
         DataCategory::Track | DataCategory::SatelliteReport => false,
     };
     if !layer_visible {
