@@ -1425,6 +1425,69 @@ fn snapshot_query_hover_docs() {
     harness.snapshot("query_hover_docs");
 }
 
+/// The hover doc stays up while the pointer moves within its token, hides off
+/// any token, and re-arms the rest delay before the next token's doc shows.
+#[test]
+fn query_hover_doc_sticks_within_its_token() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(560.0, 460.0))
+        .eframe(build_app);
+    harness.inner.step();
+    {
+        let app = harness.inner.state_mut();
+        app.query_window.open = true;
+        app.query_window
+            .set_text("points | window 10 | where avg(velocity) > 30 km/h".to_owned());
+    }
+    harness.inner.run_steps(3);
+
+    let editor = harness
+        .inner
+        .get_by_role(egui::accesskit::Role::MultilineTextInput);
+    let rect = editor.rect();
+    // Inside the `window` token, as in `snapshot_query_hover_docs`.
+    let in_token = egui::pos2(rect.left() + 96.0, rect.top() + 10.0);
+    harness.inner.hover_at(in_token);
+    harness.inner.run_steps(40);
+    assert!(
+        harness.inner.state().query_window.hover_doc_shown(),
+        "the doc shows once the pointer has rested on the token"
+    );
+
+    // Nudge one character to the right, still inside `window`. The frame that
+    // processes the movement has a freshly reset rest timer, so only the
+    // stickiness keeps the doc up.
+    harness.inner.hover_at(in_token + egui::vec2(7.0, 0.0));
+    harness.inner.run_steps(1);
+    assert!(
+        harness.inner.state().query_window.hover_doc_shown(),
+        "the doc stays up while the pointer moves within its token"
+    );
+
+    // The blank editor space below the text is off any token.
+    harness
+        .inner
+        .hover_at(egui::pos2(rect.left() + 96.0, rect.bottom() - 10.0));
+    harness.inner.run_steps(1);
+    assert!(
+        !harness.inner.state().query_window.hover_doc_shown(),
+        "the doc hides once the pointer leaves the token"
+    );
+
+    // Back on the token: the delay is armed again, then the doc returns.
+    harness.inner.hover_at(in_token);
+    harness.inner.run_steps(1);
+    assert!(
+        !harness.inner.state().query_window.hover_doc_shown(),
+        "a token entered just now waits for the pointer to rest"
+    );
+    harness.inner.run_steps(40);
+    assert!(
+        harness.inner.state().query_window.hover_doc_shown(),
+        "the doc returns after the pointer rests on the token again"
+    );
+}
+
 #[test]
 fn snapshot_app_three_overlapping_files() {
     let (mut harness, _config_path) = TestHarness::builder()
