@@ -1421,7 +1421,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     s.tree.visibility(),
                     &mut s.highlight,
                     &s.filter,
-                    s.display_mask,
+                    &mut s.display_mask,
                     s.tree.event_marker_visibility(),
                     s.tree.generated_marker_visibility(),
                     self.query_matches,
