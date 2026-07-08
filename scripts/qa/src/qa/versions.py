@@ -3,7 +3,8 @@
 The GUI app and the SDK release on independent cadences, so their versions live
 in different places:
 
-- GUI: the workspace package version in the root ``Cargo.toml``.
+- GUI: the workspace package version in the root ``Cargo.toml`` and the root
+  ``Cargo.lock`` pins for packages that inherit it.
 - SDK: kept in lockstep across the Rust crates (``geotrace-sdk``,
   ``geotrace-sdk-macros``, ``geotrace-c``) and the macro dependency pin, the
   Python package (``Cargo.toml`` + ``pyproject.toml``), the C and C++ headers
@@ -107,7 +108,34 @@ _SDK_SPOTS: list[Spot] = [
     Spot(_PY_LOCK, _lock_version("geotrace-sdk-macros"), note="geotrace-sdk-macros lock"),
 ]
 
-_APP_SPOTS: list[Spot] = [Spot("Cargo.toml", _TOML_VERSION)]
+_APP_LOCK_CRATES: list[str] = [
+    "geotrace",
+    "gt-analysis",
+    "gt-egui-mipmap",
+    "gt-filter",
+    "gt-fmt",
+    "gt-geo-math",
+    "gt-history",
+    "gt-history-backend-pure",
+    "gt-history-backend-sys",
+    "gt-history-types",
+    "gt-loaded-files",
+    "gt-loader",
+    "gt-logfile",
+    "gt-map",
+    "gt-plot",
+    "gt-query",
+    "gt-side-panel",
+    "gt-test-utils",
+    "gt-track-builder",
+    "gt-types",
+    "gt-ui-theme",
+    "gt-ui-types",
+]
+
+_APP_SPOTS: list[Spot] = [Spot("Cargo.toml", _TOML_VERSION)] + [
+    Spot(_ROOT_LOCK, _lock_version(crate), note=f"{crate} lock") for crate in _APP_LOCK_CRATES
+]
 
 _APP_CHANGELOG = "CHANGELOG.md"
 _SDK_CHANGELOG = "CHANGELOG_SDK.md"
@@ -198,21 +226,25 @@ def _changelog_errors(root: Path, rel: str, expect: str, bump: str) -> list[str]
 
 
 def _cmd_check_app(root: Path, expect: str | None) -> int:
-    fact = _read(root, _APP_SPOTS[0])
+    facts = [_read(root, spot) for spot in _APP_SPOTS]
+    full_values = sorted({f.value for f in facts})
     errors: list[str] = []
-    if expect is not None and fact.value != expect:
-        errors.append(f"app version is {fact.value}, but the release tag is {expect}")
+    if len(full_values) != 1:
+        errors.append("app version spots disagree")
+    elif expect is not None and full_values[0] != expect:
+        errors.append(f"app version is {full_values[0]}, but the release tag is {expect}")
     if expect is not None:
         errors += _changelog_errors(root, _APP_CHANGELOG, expect, "bump-app")
 
     if errors:
         print("error: app version is inconsistent:")
-        print(f"  {fact.value:<16} {fact.label}")
+        for fact in facts:
+            print(f"  {fact.value:<16} {fact.label}")
         for err in errors:
             print(f"  -> {err}")
         return 1
 
-    print(f"app version OK: {fact.value}")
+    print(f"app version OK: {full_values[0]}")
     return 0
 
 

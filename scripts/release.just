@@ -82,6 +82,8 @@ _flow TRACK KIND VERSION:
     ask git switch -c "$branch"
     # The bump sets every version spot and promotes the changelog to $version.
     ask just qa::"$bump" "$version"
+    # Match the Linux CI lockfile guard before opening the release PR.
+    ask cargo update --workspace --locked
 
     # If the bump was a no-op (version set and changelog already promoted, e.g.
     # the first release where trunk already carries it) there is no PR to make:
