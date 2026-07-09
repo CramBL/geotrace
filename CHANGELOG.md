@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.1 - 2026-07-09
+
 ### Changed
 
 - When multiple recordings share a common directory prefix, that prefix is omitted from their labels in the side panel so only the distinct part of each name is shown.
