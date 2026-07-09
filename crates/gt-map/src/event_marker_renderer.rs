@@ -51,27 +51,15 @@ impl Plugin for EventMarkerRenderer<'_> {
             crate::transform::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         for sp in &self.visible_event {
-            let Some(file_vis) = sp.file_index.get(&self.visibility.files) else {
+            let Some(track) = crate::scope::category_in_scope(
+                self.files,
+                self.visibility,
+                self.filter,
+                sp.track_ref(),
+                DataCategory::EventMarker,
+            ) else {
                 continue;
             };
-            if !file_vis.enabled {
-                continue;
-            }
-            let Some(trip_vis) = sp.track_index.get(&file_vis.tracks) else {
-                continue;
-            };
-            if !trip_vis.enabled || !trip_vis.event_markers_visible {
-                continue;
-            }
-            let Some(file) = sp.file_index.get(self.files) else {
-                continue;
-            };
-            let Some(track) = sp.track_index.get(&file.tracks) else {
-                continue;
-            };
-            if !gt_filter::track_passes_filter(&track.metadata, self.filter) {
-                continue;
-            }
             let Some(marker) = sp.point_index.get(&track.event_markers) else {
                 continue;
             };
@@ -90,6 +78,9 @@ impl Plugin for EventMarkerRenderer<'_> {
                 point_index: sp.point_index,
             };
             let screen_pos = transform.to_screen(sp.merc);
+            let Some(file) = sp.file_index.get(self.files) else {
+                continue;
+            };
             let style_map = &file.event_marker_styles;
             let color = resolve_color(marker, style_map);
             let icon = resolve_icon(&marker.variant_path, style_map);

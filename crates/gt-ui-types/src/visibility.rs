@@ -1,4 +1,4 @@
-use gt_types::{FileIdx, LoadedFile, TrackIdx, TrackRef};
+use gt_types::{DataCategory, FileIdx, LoadedFile, TrackIdx, TrackRef};
 
 #[derive(Debug, Clone)]
 pub struct TrackDataVisibility {
@@ -23,6 +23,20 @@ pub struct TrackVisibility {
 }
 
 impl TrackVisibility {
+    /// This track's tree toggle for the given element category - the
+    /// single mapping every renderer and count consults, so the flag a
+    /// category answers to cannot drift between consumers.
+    pub fn category_visible(self, category: DataCategory) -> bool {
+        match category {
+            DataCategory::Track => self.track_visible,
+            DataCategory::Tpv => self.tpv_visible,
+            DataCategory::SatelliteReport => self.satellites_visible,
+            DataCategory::CustomMarker => self.custom_markers_visible,
+            DataCategory::GeneratedMarker => self.generated_markers_visible,
+            DataCategory::EventMarker => self.event_markers_visible,
+        }
+    }
+
     pub fn all_visible() -> Self {
         Self {
             enabled: true,
@@ -91,5 +105,41 @@ impl TrackDataVisibility {
                 file.enabled = false;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[rstest::rstest]
+    #[case(DataCategory::Track, false, |tv: &mut TrackVisibility| tv.track_visible = false)]
+    #[case(DataCategory::Tpv, false, |tv: &mut TrackVisibility| tv.tpv_visible = false)]
+    #[case(DataCategory::SatelliteReport, false, |tv: &mut TrackVisibility| tv.satellites_visible = false)]
+    #[case(DataCategory::CustomMarker, false, |tv: &mut TrackVisibility| tv.custom_markers_visible = false)]
+    #[case(DataCategory::GeneratedMarker, false, |tv: &mut TrackVisibility| tv.generated_markers_visible = false)]
+    #[case(DataCategory::EventMarker, false, |tv: &mut TrackVisibility| tv.event_markers_visible = false)]
+    fn category_visible_reads_exactly_its_flag(
+        #[case] category: DataCategory,
+        #[case] expected_after: bool,
+        #[case] clear: fn(&mut TrackVisibility),
+    ) {
+        let mut tv = TrackVisibility::all_visible();
+        assert!(tv.category_visible(category));
+        clear(&mut tv);
+        assert_eq!(tv.category_visible(category), expected_after);
+        // Exactly one category flag changed: every other category still on.
+        let others = [
+            DataCategory::Track,
+            DataCategory::Tpv,
+            DataCategory::SatelliteReport,
+            DataCategory::CustomMarker,
+            DataCategory::GeneratedMarker,
+            DataCategory::EventMarker,
+        ]
+        .into_iter()
+        .filter(|&c| c != category)
+        .all(|c| tv.category_visible(c));
+        assert!(others);
     }
 }

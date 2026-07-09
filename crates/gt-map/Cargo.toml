@@ -30,6 +30,7 @@ walkers.workspace = true
 egui_kittest.workspace = true
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 proptest.workspace = true
+rstest.workspace = true
 
 [lints]
 workspace = true
