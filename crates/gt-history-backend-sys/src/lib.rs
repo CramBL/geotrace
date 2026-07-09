@@ -142,6 +142,7 @@ impl HistoryDatabase for SysDb {
                 );
                 crate::copy::migrate_to_native(path)?;
             }
+            crate::copy::repair_unindexed_recordings(path)?;
         } else {
             Self::create_new(path)?;
         }
@@ -171,10 +172,6 @@ impl HistoryDatabase for SysDb {
     ) -> Result<DatabaseRef, DbError> {
         let _guard = DB_LOCK.lock();
         crate::copy::insert_recording(&self.path, identity, meta, tracks, settings, gtd_bytes)
-            .map(|rec_name| DatabaseRef {
-                identity: identity.to_owned(),
-                group_name: rec_name,
-            })
             .map_err(Into::into)
     }
 
@@ -231,10 +228,45 @@ impl HistoryDatabase for SysDb {
     fn delete_batch(&mut self, refs: &[DatabaseRef]) -> Result<(), DbError> {
         let _guard = DB_LOCK.lock();
         let file = hdf5::File::open_rw(&self.path).map_err(|e| DbError::Backend(e.to_string()))?;
+        let by_id = file
+            .group("by_identity")
+            .map_err(|e| DbError::Backend(e.to_string()))?;
         for db_ref in refs {
-            let path = format!("by_identity/{}/{}", db_ref.identity, db_ref.group_name);
-            if file.link_exists(&path) {
-                file.unlink(&path)
+            let storage_name = gt_history_types::identity_group_name(&db_ref.identity);
+            let id_grp = match by_id.group(&storage_name) {
+                Ok(group) => Some(group),
+                Err(encoded_err) => {
+                    if db_ref.identity.contains('/') {
+                        log::debug!(
+                            "delete_batch could not open encoded identity group for identity={:?}: {encoded_err}",
+                            db_ref.identity
+                        );
+                        None
+                    } else {
+                        match by_id.group(&db_ref.identity) {
+                            Ok(group) => Some(group),
+                            Err(raw_err) => {
+                                log::debug!(
+                                    "delete_batch could not open encoded or legacy identity group for identity={:?}: encoded={encoded_err}; legacy={raw_err}",
+                                    db_ref.identity
+                                );
+                                None
+                            }
+                        }
+                    }
+                }
+            };
+            let Some(id_grp) = id_grp else {
+                log::warn!(
+                    "delete_batch could not find identity={:?}, group={:?}",
+                    db_ref.identity,
+                    db_ref.group_name
+                );
+                continue;
+            };
+            if id_grp.link_exists(&db_ref.group_name) {
+                id_grp
+                    .unlink(&db_ref.group_name)
                     .map_err(|e| DbError::Backend(e.to_string()))?;
             }
         }

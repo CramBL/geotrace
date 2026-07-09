@@ -38,6 +38,54 @@ pub const TRACK_HIDDEN_DATASET: &str = "hidden";
 pub const GTD_VERSION_ATTR: &str = "geotrace_version";
 pub const GTD_VERSION_FALLBACK: &str = "1";
 
+const IDENTITY_GROUP_PREFIX: &str = "identity-v1-";
+
+/// Return the HDF5 child-group name used to store an identity.
+///
+/// Producer-supplied identities are opaque strings and may contain `/`, `.`, or
+/// other characters with HDF5 path semantics, so they must never be used as raw
+/// group names.
+pub fn identity_group_name(identity: &str) -> String {
+    let mut out = String::with_capacity(IDENTITY_GROUP_PREFIX.len() + identity.len() * 2);
+    out.push_str(IDENTITY_GROUP_PREFIX);
+    for byte in identity.as_bytes() {
+        use std::fmt::Write as _;
+        write!(out, "{byte:02x}").ok();
+    }
+    out
+}
+
+/// Decode an identity storage group name produced by [`identity_group_name`].
+///
+/// Returns `None` for legacy databases whose identity groups were stored under
+/// the raw identity string.
+pub fn identity_from_group_name(group_name: &str) -> Option<String> {
+    let hex = group_name.strip_prefix(IDENTITY_GROUP_PREFIX)?;
+    if !hex.len().is_multiple_of(2) {
+        return None;
+    }
+
+    let mut bytes = Vec::with_capacity(hex.len() / 2);
+    for chunk in hex.as_bytes().chunks(2) {
+        let hi = hex_nibble(*chunk.first()?)?;
+        let lo = hex_nibble(*chunk.get(1)?)?;
+        bytes.push((hi << 4) | lo);
+    }
+    String::from_utf8(bytes).ok()
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        other => {
+            let _ = other;
+            None
+        }
+    }
+}
+
 /// Returns true for attribute keys that belong to the database's recording
 /// metadata (as opposed to GTD file-format root attributes).
 pub fn is_db_recording_attr(key: &str) -> bool {
@@ -435,6 +483,22 @@ mod tests {
         ] {
             assert!(!a.same_recording(&b));
         }
+    }
+
+    #[test]
+    fn identity_group_names_round_trip_path_like_identity() {
+        let identity = "/example.invalid/history/identity/with/slashes/";
+        let group_name = identity_group_name(identity);
+        assert!(!group_name.contains('/'));
+        assert_eq!(
+            identity_from_group_name(&group_name).as_deref(),
+            Some(identity)
+        );
+    }
+
+    #[test]
+    fn legacy_identity_group_names_do_not_decode() {
+        assert_eq!(identity_from_group_name("auto:recording.gtd"), None);
     }
 }
 

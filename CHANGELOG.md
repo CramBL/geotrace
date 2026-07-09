@@ -12,6 +12,11 @@
 - Plot lines are slightly thinner by default so plots with many metrics enabled stay readable.
 - Satellite-count labels are now placed at diagnostically relevant points (fix-quality changes, signal dips, recoveries after loss) instead of at fixed intervals, and no longer shuffle while panning the map.
 
+### Fixed
+
+- History now stores producer-supplied recording identities as encoded HDF5 group names, so path-like `.gtd` identities no longer create hidden root-level database groups.
+- Opening an existing history database repairs recordings that were previously stored outside `/by_identity`, and history insert failures now log the database path, identity, and visibility check result.
+
 ## 0.4.0 - 2026-07-08
 
 ### Added

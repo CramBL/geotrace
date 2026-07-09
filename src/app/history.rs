@@ -645,10 +645,7 @@ fn render_row(
     manager: &HistoryManager,
 ) {
     let identity = &entry.db_ref.identity;
-    let (display_name, is_auto) = match identity.strip_prefix("auto:") {
-        Some(name) => (name, true),
-        None => (identity.as_str(), false),
-    };
+    let (display_name, is_auto) = identity_display_parts(identity);
 
     ui.horizontal(|ui| {
         if is_auto {
@@ -659,7 +656,9 @@ fn render_row(
             );
         }
         ui.label(display_name);
-    });
+    })
+    .response
+    .on_hover_text(identity.as_str());
 
     let ts = DateTime::<Utc>::from_timestamp_micros(entry.meta.start_us)
         .unwrap_or_default()
@@ -697,6 +696,13 @@ fn render_row(
     });
 
     ui.end_row();
+}
+
+fn identity_display_parts(identity: &str) -> (&str, bool) {
+    match identity.strip_prefix("auto:") {
+        Some(name) => (name, true),
+        None => (identity, false),
+    }
 }
 
 fn format_duration(dur: chrono::Duration) -> String {
@@ -752,4 +758,26 @@ fn date_to_end_us(s: &str) -> Option<i64> {
     let date = NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()?;
     let dt = date.and_hms_opt(23, 59, 59)?.and_utc();
     Some(dt.timestamp_micros())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::identity_display_parts;
+
+    #[test]
+    fn identity_display_keeps_full_manual_identity_visible() {
+        let identity = "/example.invalid/history/identity/with/slashes/";
+
+        assert_eq!(identity_display_parts(identity), (identity, false));
+    }
+
+    #[test]
+    fn identity_display_marks_auto_identity_without_losing_original() {
+        let identity = "auto:recording-2026-07-09.gtd";
+
+        assert_eq!(
+            identity_display_parts(identity),
+            ("recording-2026-07-09.gtd", true)
+        );
+    }
 }

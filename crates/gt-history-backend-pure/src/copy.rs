@@ -2,10 +2,11 @@ use crate::matches_attrs;
 use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
-    ATTR_SEG_GAP_US, ATTR_START_US, CURRENT_SCHEMA_VERSION, DbError, GTD_VERSION_ATTR,
+    ATTR_SEG_GAP_US, ATTR_START_US, CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, GTD_VERSION_ATTR,
     GTD_VERSION_FALLBACK, RecordingMeta, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation,
     TRACK_END_DATASET, TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange,
-    is_db_internal_group, is_db_recording_attr, make_group_name,
+    identity_from_group_name, identity_group_name, is_db_internal_group, is_db_recording_attr,
+    make_group_name,
 };
 /// Internal read-modify-write machinery for the history database.
 ///
@@ -56,6 +57,85 @@ struct GroupNode {
     attrs: Vec<(String, AttrValue)>,
     datasets: Vec<DatasetNode>,
     groups: Vec<GroupNode>,
+}
+
+fn attr_string(attrs: &[(String, AttrValue)], name: &str) -> Option<String> {
+    attrs
+        .iter()
+        .find(|entry| entry.0 == name)
+        .and_then(|entry| {
+            if let AttrValue::String(s) = &entry.1 {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+}
+
+fn ensure_identity_node<'a>(
+    identity_nodes: &'a mut Vec<GroupNode>,
+    identity: &str,
+) -> &'a mut GroupNode {
+    let storage_name = identity_group_name(identity);
+    let found = identity_nodes
+        .iter()
+        .position(|n| n.name == storage_name)
+        .or_else(|| {
+            (!identity.contains('/'))
+                .then(|| identity_nodes.iter().position(|n| n.name == identity))?
+        });
+    match found {
+        Some(index) => {
+            let node = &mut identity_nodes[index];
+            if attr_string(&node.attrs, ATTR_IDENTITY).is_none() {
+                node.attrs.push((
+                    ATTR_IDENTITY.to_owned(),
+                    AttrValue::String(identity.to_owned()),
+                ));
+            }
+            node
+        }
+        None => {
+            identity_nodes.push(GroupNode {
+                name: storage_name,
+                attrs: vec![(
+                    ATTR_IDENTITY.to_owned(),
+                    AttrValue::String(identity.to_owned()),
+                )],
+                datasets: Vec::new(),
+                groups: Vec::new(),
+            });
+            let index = identity_nodes.len() - 1;
+            &mut identity_nodes[index]
+        }
+    }
+}
+
+fn find_identity_node_mut<'a>(
+    identity_nodes: &'a mut [GroupNode],
+    identity: &str,
+) -> Option<&'a mut GroupNode> {
+    let storage_name = identity_group_name(identity);
+    identity_nodes
+        .iter_mut()
+        .find(|n| n.name == storage_name || (!identity.contains('/') && n.name == identity))
+}
+
+fn find_identity_group<'a>(
+    by_id: &'a hdf5_pure::Group<'_>,
+    identity: &str,
+) -> Result<hdf5_pure::Group<'a>, hdf5_pure::Error> {
+    let storage_name = identity_group_name(identity);
+    match by_id.group(&storage_name) {
+        Ok(group) => Ok(group),
+        Err(encoded_err) => {
+            if identity.contains('/') {
+                Err(encoded_err)
+            } else {
+                by_id.group(identity)
+            }
+        }
+    }
 }
 
 /// Write a single `DatasetNode` into a builder identified by `$gb`.
@@ -147,7 +227,7 @@ fn snapshot_by_identity(file: &hdf5_pure::File) -> Result<Vec<GroupNode>, Intern
         let id_grp = by_id.group(&id_name)?;
         let mut id_node = GroupNode {
             name: id_name.clone(),
-            attrs: Vec::new(),
+            attrs: id_grp.attrs()?.into_iter().collect(),
             datasets: Vec::new(),
             groups: Vec::new(),
         };
@@ -276,6 +356,9 @@ fn write_db(identity_nodes: &[GroupNode], db_path: &std::path::Path) -> Result<(
     let mut by_id_gb = fb.create_group("by_identity");
     for id_node in identity_nodes {
         let mut id_gb = by_id_gb.create_group(&id_node.name);
+        for (k, v) in &id_node.attrs {
+            id_gb.set_attr(k, v.clone());
+        }
         for rec_node in &id_node.groups {
             let mut rec_gb = id_gb.create_group(&rec_node.name);
             for (k, v) in &rec_node.attrs {
@@ -311,7 +394,7 @@ pub(crate) fn insert_recording(
     tracks: &[TrackRange],
     settings: StoredSegmentation,
     gtd_bytes: &[u8],
-) -> Result<String, InternalError> {
+) -> Result<DatabaseRef, InternalError> {
     let existing_db = hdf5_pure::File::open(db_path)?;
 
     // Duplicate check: re-storing a recording already present returns its
@@ -320,16 +403,31 @@ pub(crate) fn insert_recording(
         let root = existing_db.root();
         let mut found = None;
         if let Ok(by_id) = root.group("by_identity") {
-            'search: for id_name in by_id.groups()? {
-                let Ok(id_grp) = by_id.group(&id_name) else {
+            'search: for storage_name in by_id.groups()? {
+                let Ok(id_grp) = by_id.group(&storage_name) else {
                     continue;
                 };
+                let id_attrs = id_grp.attrs()?;
+                let existing_identity = id_attrs
+                    .get(ATTR_IDENTITY)
+                    .and_then(|value| {
+                        if let AttrValue::String(s) = value {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .or_else(|| identity_from_group_name(&storage_name))
+                    .unwrap_or_else(|| storage_name.clone());
                 for rec_name in id_grp.groups()? {
                     if let Ok(rec_grp) = id_grp.group(&rec_name)
                         && let Ok(attrs) = rec_grp.attrs()
                         && matches_attrs(meta, &attrs)
                     {
-                        found = Some((id_name.clone(), rec_name));
+                        found = Some(DatabaseRef {
+                            identity: existing_identity,
+                            group_name: rec_name,
+                        });
                         break 'search;
                     }
                 }
@@ -338,9 +436,13 @@ pub(crate) fn insert_recording(
         found
     };
 
-    if let Some((id_name, rec_name)) = duplicate {
-        log::debug!("Recording '{id_name}/{rec_name}' already in history");
-        return Ok(rec_name);
+    if let Some(db_ref) = duplicate {
+        log::debug!(
+            "Recording already in history as identity={:?}, group={:?}",
+            db_ref.identity,
+            db_ref.group_name
+        );
+        return Ok(db_ref);
     }
 
     // Read all existing identity data into memory.
@@ -356,22 +458,19 @@ pub(crate) fn insert_recording(
         build_new_recording(&gtd_file, &rec_name, meta, identity, tracks, settings)?;
 
     // Insert or create the identity group.
-    match identity_nodes.iter_mut().find(|n| n.name == identity) {
-        Some(id_node) => id_node.groups.push(new_recording),
-        None => identity_nodes.push(GroupNode {
-            name: identity.to_owned(),
-            attrs: Vec::new(),
-            datasets: Vec::new(),
-            groups: vec![new_recording],
-        }),
-    }
+    ensure_identity_node(&mut identity_nodes, identity)
+        .groups
+        .push(new_recording);
 
     // Release the in-memory snapshot of the old file before writing the new one,
     // matching the other mutators (delete_batch, set_tracks, set_tracks_hidden).
     drop(existing_db);
     write_db(&identity_nodes, db_path)?;
-    log::info!("Stored recording '{identity}/{rec_name}' in history database");
-    Ok(rec_name)
+    log::info!("Stored recording identity={identity:?}, group={rec_name:?} in history database");
+    Ok(DatabaseRef {
+        identity: identity.to_owned(),
+        group_name: rec_name,
+    })
 }
 
 /// Remove multiple recordings in a single read-modify-write cycle.
@@ -384,10 +483,7 @@ pub(crate) fn delete_batch(
     drop(existing_db);
 
     for db_ref in refs {
-        if let Some(id_node) = identity_nodes
-            .iter_mut()
-            .find(|n| n.name == db_ref.identity)
-        {
+        if let Some(id_node) = find_identity_node_mut(&mut identity_nodes, &db_ref.identity) {
             id_node.groups.retain(|r| r.name != db_ref.group_name);
         }
     }
@@ -413,7 +509,7 @@ pub(crate) fn set_tracks_hidden(
 
     let value = u64::from(hidden);
     let mut found_table = false;
-    if let Some(id_node) = identity_nodes.iter_mut().find(|n| n.name == identity)
+    if let Some(id_node) = find_identity_node_mut(&mut identity_nodes, identity)
         && let Some(rec) = id_node.groups.iter_mut().find(|r| r.name == group_name)
         && let Some(tracks_grp) = rec.groups.iter_mut().find(|g| g.name == TRACKS_GROUP)
         && let Some(ds) = tracks_grp
@@ -450,7 +546,7 @@ pub(crate) fn set_tracks(
     let mut identity_nodes = snapshot_by_identity(&existing_db)?;
     drop(existing_db);
 
-    if let Some(id_node) = identity_nodes.iter_mut().find(|n| n.name == identity)
+    if let Some(id_node) = find_identity_node_mut(&mut identity_nodes, identity)
         && let Some(rec) = id_node.groups.iter_mut().find(|r| r.name == group_name)
     {
         rec.groups.retain(|g| g.name != TRACKS_GROUP);
@@ -526,7 +622,7 @@ pub(crate) fn load_recording(
 ) -> Result<StoredRecording, InternalError> {
     let db = hdf5_pure::File::open(db_path)?;
     let by_id = db.root().group("by_identity")?;
-    let id_grp = by_id.group(identity)?;
+    let id_grp = find_identity_group(&by_id, identity)?;
     let rec_grp = id_grp.group(group_name)?;
 
     let tracks = read_track_table(&rec_grp);
