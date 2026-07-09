@@ -1180,6 +1180,52 @@ fn plot_channel_toggles_persist_across_settings_roundtrip() {
     assert!(shared.plot_state.channel_vis.is_visible("incline"));
 }
 
+/// The display mask persists through the actual settings wire format:
+/// hidden categories survive the round trip, missing keys mean visible.
+#[test]
+fn display_mask_persists_across_settings_roundtrip() {
+    use gt_ui_types::DisplayCategory;
+
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+
+    {
+        let shared = harness.state_mut().shared.clone();
+        let mut shared = shared.borrow_mut();
+        shared
+            .display_mask
+            .set_visible(DisplayCategory::GeneratedMarkers, false);
+        shared
+            .display_mask
+            .set_visible(DisplayCategory::SatelliteLabels, false);
+    }
+
+    let flushed = harness.state().collect_settings_for_flush();
+    let toml = toml::to_string(&flushed).expect("settings serialize");
+    let reloaded: crate::settings::Settings = toml::from_str(&toml).expect("settings parse");
+
+    harness.state_mut().apply_startup_settings(&reloaded);
+    let shared = harness.state().shared.borrow();
+    assert!(
+        !shared
+            .display_mask
+            .is_visible(DisplayCategory::GeneratedMarkers)
+    );
+    assert!(
+        !shared
+            .display_mask
+            .is_visible(DisplayCategory::SatelliteLabels)
+    );
+    assert!(shared.display_mask.is_visible(DisplayCategory::Tracks));
+
+    // A config from before the display mask existed loads as all-visible.
+    let old_config: crate::settings::Settings =
+        toml::from_str("[map]\nsync_to_map = false\n").expect("old config parses");
+    assert!(!old_config.map.display_mask.any_hidden());
+}
+
 /// Build an app with one loaded file and the query window open. Shared setup
 /// for the interactive query-history tests.
 fn app_with_query_window_open() -> Harness<'static, App> {
