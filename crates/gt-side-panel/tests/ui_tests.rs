@@ -359,3 +359,50 @@ fn snapshot_track_channels() {
     harness.run();
     harness.snapshot("side_panel_track_channels");
 }
+
+/// Two files whose names share the prefix `/home/user/gps/recordings/`.
+/// The panel should display only the part after the shared prefix, with the
+/// full path shown as hover text.
+fn make_state_with_shared_prefix() -> State {
+    let points = gt_test_utils::nav_test_data();
+    let mut files = LoadedFiles::new();
+    for name in [
+        "/home/user/gps/recordings/2024-01-15_morning_ride.gtd",
+        "/home/user/gps/recordings/2024-01-16_evening_walk.gtd",
+    ] {
+        let file = gt_track_builder::build_loaded_file(
+            name.to_owned(),
+            &points,
+            &[],
+            vec![],
+            vec![],
+            &[],
+            &gt_track_builder::SegmentationConfig::default(),
+            gt_types::FileSource::GtdPath(PathBuf::from(name)),
+            vec![],
+        );
+        files.push(file, FileHistory::None);
+    }
+    let mut tree = TreeState::new();
+    tree.sync_from_loaded_files(files.files());
+    State {
+        files,
+        tree,
+        filter: GlobalFilter::default(),
+        filter_state: FilterPanelState::default(),
+        highlight: MapHighlight::default(),
+        map_center: None,
+        popup_pos: None,
+        zoom_to_visible: false,
+        warnings_request: None,
+        clear_query_request: false,
+        display_mask: DisplayMask::default(),
+    }
+}
+
+#[test]
+fn snapshot_shared_prefix_stripped() {
+    let mut harness = make_harness(make_state_with_shared_prefix());
+    harness.run();
+    harness.snapshot("side_panel_shared_prefix");
+}

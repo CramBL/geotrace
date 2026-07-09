@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- When multiple recordings share a common directory prefix, that prefix is omitted from their labels in the side panel so only the distinct part of each name is shown.
+  The full path is still visible when hovering the label.
+
+### Fixed
+
+- Side panel file labels no longer force the panel to grow when a recording has a long name—the label is now truncated at the available width.
+
 ## 0.5.0 - 2026-07-09
 
 ### Added

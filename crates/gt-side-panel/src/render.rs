@@ -155,16 +155,41 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
         }
     });
 
+    // Compute per-file display names: strip the longest shared directory prefix
+    // so files like `/home/user/recordings/a.gtd` and `/home/user/recordings/b.gtd`
+    // display as `a.gtd` and `b.gtd` instead of their full paths.
+    let display_names: Vec<String> = {
+        let all_names: Vec<&str> = ctx
+            .files()
+            .iter()
+            .map(|f| f.metadata.filename.as_str())
+            .collect();
+        let prefix_len = strip_common_path_prefix(&all_names);
+        all_names
+            .iter()
+            .map(|n| {
+                // `prefix_len` is always a valid char boundary (guaranteed by
+                // `strip_common_path_prefix`), but use `get` to satisfy the
+                // `clippy::string_slice` lint and handle degenerate inputs safely.
+                n.get(prefix_len..)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(n)
+                    .to_owned()
+            })
+            .collect()
+    };
+
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             for fi in 0..ctx.files().len() {
-                render_file_row(ui, FileIdx::new(fi), ctx);
+                let display_name = display_names.get(fi).map_or("", String::as_str);
+                render_file_row(ui, FileIdx::new(fi), display_name, ctx);
             }
         });
 }
 
-fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
+fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, display_name: &str, ctx: &mut PanelContext<'_>) {
     let Some(file) = ctx.file(fi) else {
         return;
     };
@@ -193,9 +218,12 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, ctx: &mut PanelContext<'_>) {
         let arrow = expand_arrow(is_expanded);
         let dist = gt_fmt::format_distance(file.metadata.total_distance_km);
         let dur = gt_fmt::format_human_terse_duration(file.metadata.total_duration);
-        let label = format!("{arrow} {}  {dist}  {dur}", file.metadata.filename);
+        let label = format!("{arrow} {display_name}  {dist}  {dur}");
         let is_selected = ctx.tree.selection.contains(&file_key);
-        let resp = ui.selectable_label(is_selected, egui::RichText::new(label));
+        // `.truncate()` clips the label at the available width instead of forcing
+        // the panel to grow when the filename is long.
+        let resp =
+            ui.add(egui::Button::selectable(is_selected, egui::RichText::new(label)).truncate());
         let resp = if let Some(stats) = file.metadata.fix_stats {
             resp.on_hover_ui(|ui| {
                 ui.label(file.metadata.filename.as_str());
@@ -1003,4 +1031,109 @@ fn file_bounding_center(file: Option<&LoadedFile>) -> Option<(f64, f64)> {
         .map(|t| t.metadata.bounding_box.max().x)
         .fold(f64::NEG_INFINITY, f64::max);
     Some(((min_lat + max_lat) / 2.0, (min_lon + max_lon) / 2.0))
+}
+
+/// Returns the byte offset at which each name's *display* form begins — i.e.
+/// the length of the longest common directory prefix shared by all names.
+///
+/// Returns `0` when there is nothing meaningful to strip: fewer than two names,
+/// no name contains a path separator (so there is no directory structure to
+/// collapse), or the common bytes do not reach a separator boundary.
+fn strip_common_path_prefix(names: &[&str]) -> usize {
+    if names.len() < 2 {
+        return 0;
+    }
+    if !names.iter().any(|n| n.contains(['/', '\\'])) {
+        return 0;
+    }
+    let Some(&first) = names.first() else {
+        return 0;
+    };
+    // Count matching bytes between `first` and every other name.
+    let common_bytes = names.iter().skip(1).fold(first.len(), |acc, name| {
+        let len = first
+            .bytes()
+            .zip(name.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+        acc.min(len)
+    });
+    // `common_bytes` may land in the middle of a multi-byte character; snap to a
+    // valid char boundary before searching for the last separator. Because the
+    // leading `common_bytes` bytes are identical in all names, the resulting
+    // index is a valid char boundary in every name.
+    let common_bytes = first.floor_char_boundary(common_bytes);
+    match first.get(..common_bytes).and_then(|s| s.rfind(['/', '\\'])) {
+        // +1 to start the display name after the separator itself.
+        Some(pos) => pos + 1,
+        None => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_common_path_prefix;
+
+    #[test]
+    fn empty_slice_returns_zero() {
+        assert_eq!(strip_common_path_prefix(&[]), 0);
+    }
+
+    #[test]
+    fn single_name_returns_zero() {
+        assert_eq!(
+            strip_common_path_prefix(&["/home/user/recordings/ride.gtd"]),
+            0
+        );
+    }
+
+    #[test]
+    fn no_path_separators_returns_zero() {
+        assert_eq!(strip_common_path_prefix(&["ride_0.gtd", "ride_1.gtd"]), 0);
+    }
+
+    #[test]
+    fn shared_directory_prefix_is_stripped() {
+        let names = [
+            "/home/user/recordings/2024-01-15.gtd",
+            "/home/user/recordings/2024-01-16.gtd",
+        ];
+        assert_eq!(
+            strip_common_path_prefix(&names),
+            "/home/user/recordings/".len()
+        );
+    }
+
+    #[test]
+    fn common_bytes_mid_component_trims_to_last_separator() {
+        // "/home/user/recordings/…" vs "/home/user/recent/…" share "/home/user/"
+        // even though more bytes match inside the next component.
+        let names = ["/home/user/recordings/a.gtd", "/home/user/recent/b.gtd"];
+        assert_eq!(strip_common_path_prefix(&names), "/home/user/".len());
+    }
+
+    #[test]
+    fn no_common_directory_prefix_strips_only_root_slash() {
+        // The only shared byte is the leading '/', so we strip that.
+        let names = ["/alpha/a.gtd", "/beta/b.gtd"];
+        assert_eq!(strip_common_path_prefix(&names), 1);
+    }
+
+    #[test]
+    fn truly_no_common_prefix_returns_zero() {
+        let names = ["alpha/a.gtd", "beta/b.gtd"];
+        assert_eq!(strip_common_path_prefix(&names), 0);
+    }
+
+    #[test]
+    fn windows_backslash_separator() {
+        let names = [
+            r"C:\Users\alice\recordings\ride_a.gtd",
+            r"C:\Users\alice\recordings\ride_b.gtd",
+        ];
+        assert_eq!(
+            strip_common_path_prefix(&names),
+            r"C:\Users\alice\recordings\".len()
+        );
+    }
 }
