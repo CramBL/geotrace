@@ -189,6 +189,11 @@ pub struct MapSettings {
     pub layer: MapLayerSetting,
     pub mapbox_token: String,
     pub sync_to_map: bool,
+    /// The display toggles' per-category visibility. Serialized as the
+    /// list of hidden categories: an absent key or empty list shows
+    /// everything, and categories added later default to visible on old
+    /// config files.
+    pub display_mask: gt_ui_types::DisplayMask,
 }
 
 impl Default for MapSettings {
@@ -197,6 +202,7 @@ impl Default for MapSettings {
             layer: MapLayerSetting::Osm,
             mapbox_token: String::new(),
             sync_to_map: true,
+            display_mask: gt_ui_types::DisplayMask::default(),
         }
     }
 }

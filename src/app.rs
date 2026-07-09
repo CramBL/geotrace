@@ -782,6 +782,7 @@ impl App {
         {
             let mut shared = self.shared.borrow_mut();
             shared.plot_state.sync_to_map = s.map.sync_to_map;
+            shared.display_mask = s.map.display_mask;
             shared.plot_state.show_grid = s.plot.show_grid;
             shared.plot_state.line_width = s.plot.line_width.clamp(
                 *gt_plot::PLOT_LINE_WIDTH_RANGE.start(),
@@ -850,6 +851,7 @@ impl App {
             layer: map_layer_to_setting(self.map.layer()),
             mapbox_token: self.map.mapbox_token().to_owned(),
             sync_to_map: s.plot_state.sync_to_map,
+            display_mask: s.display_mask,
             theme,
             track_split_gap_seconds: self
                 .processing_config
@@ -915,6 +917,7 @@ impl App {
                 layer: map_layer_to_setting(self.map.layer()),
                 mapbox_token: self.map.mapbox_token().to_owned(),
                 sync_to_map: s.plot_state.sync_to_map,
+                display_mask: s.display_mask,
             },
             ui: crate::settings::UiSettings { theme },
             processing: crate::settings::ProcessingSettings {
