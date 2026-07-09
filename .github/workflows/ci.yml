@@ -48,6 +48,11 @@ jobs:
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/trunk' }}
+          cache-on-failure: true
+          add-rust-environment-hash-key: false
+          key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'sdk/rust/*/Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml') }}
 
       - name: check
         run: cargo check --workspace --features geotrace/self-update
@@ -77,6 +82,11 @@ jobs:
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/trunk' }}
+          cache-on-failure: true
+          add-rust-environment-hash-key: false
+          key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'sdk/rust/*/Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml') }}
 
       - name: Clippy
         run: |
@@ -110,6 +120,11 @@ jobs:
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/trunk' }}
+          cache-on-failure: true
+          add-rust-environment-hash-key: false
+          key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'sdk/rust/*/Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml') }}
 
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
@@ -164,6 +179,11 @@ jobs:
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/trunk' }}
+          cache-on-failure: true
+          add-rust-environment-hash-key: false
+          key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'sdk/rust/*/Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml') }}
 
       - name: Examples
         run: bash scripts/examples.sh
@@ -185,6 +205,11 @@ jobs:
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/trunk' }}
+          cache-on-failure: true
+          add-rust-environment-hash-key: false
+          key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'sdk/rust/*/Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml') }}
 
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
@@ -193,6 +218,11 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            scripts/qa/pyproject.toml
+            scripts/qa/uv.lock
 
       - name: Check formatting
         run: cargo fmt --all --check
@@ -242,6 +272,11 @@ jobs:
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/trunk' }}
+          cache-on-failure: true
+          add-rust-environment-hash-key: false
+          key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'sdk/rust/*/Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml') }}
 
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
