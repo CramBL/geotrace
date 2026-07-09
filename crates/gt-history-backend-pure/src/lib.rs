@@ -1,8 +1,8 @@
 use gt_history_types::{
-    ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_MARKER_COUNT,
+    ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION,
     DatabaseRef, DbError, HistoryDatabase, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR,
-    StoredRecording, StoredSegmentation, TrackRange,
+    StoredRecording, StoredSegmentation, TrackRange, identity_from_group_name,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 use parking_lot::Mutex;
@@ -39,10 +39,6 @@ impl HistoryDatabase for PureDb {
     ) -> Result<DatabaseRef, DbError> {
         let _guard = DB_LOCK.lock();
         copy::insert_recording(&self.path, identity, meta, tracks, settings, gtd_bytes)
-            .map(|rec_name| DatabaseRef {
-                identity: identity.to_owned(),
-                group_name: rec_name,
-            })
             .map_err(Into::into)
     }
 
@@ -101,6 +97,12 @@ impl HistoryDatabase for PureDb {
             let Ok(id_grp) = by_id.group(&identity) else {
                 continue;
             };
+            let id_attrs = id_grp
+                .attrs()
+                .map_err(|e| DbError::Backend(e.to_string()))?;
+            let display_identity = string_attr(&id_attrs, ATTR_IDENTITY)
+                .or_else(|| identity_from_group_name(&identity))
+                .unwrap_or_else(|| identity.clone());
             for rec_name in id_grp
                 .groups()
                 .map_err(|e| DbError::Backend(e.to_string()))?
@@ -116,7 +118,7 @@ impl HistoryDatabase for PureDb {
                     let hidden_tracks = tracks.iter().filter(|t| t.hidden).count();
                     entries.push(RecordingEntry {
                         db_ref: DatabaseRef {
-                            identity: identity.clone(),
+                            identity: display_identity.clone(),
                             group_name: rec_name,
                         },
                         meta,
@@ -234,6 +236,13 @@ impl PureDb {
 
     fn migrate(path: &Path, _from_version: i64) -> Result<(), DbError> {
         copy::write_schema_version(path).map_err(Into::into)
+    }
+}
+
+fn string_attr(attrs: &std::collections::HashMap<String, AttrValue>, name: &str) -> Option<String> {
+    match attrs.get(name) {
+        Some(AttrValue::String(value)) => Some(value.clone()),
+        _ => None,
     }
 }
 

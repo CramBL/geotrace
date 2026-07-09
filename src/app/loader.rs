@@ -233,10 +233,26 @@ impl LoaderManager {
                         let series = gt_plot::prepare_file_series(0, &file, analysis);
                         // Read the bytes once for both the content fingerprint
                         // and the optional history insert.
-                        let bytes = std::fs::read(&path).ok();
-                        let meta = bytes
-                            .as_deref()
-                            .and_then(|b| gt_history::extract_meta(b).ok());
+                        let bytes = match std::fs::read(&path) {
+                            Ok(bytes) => Some(bytes),
+                            Err(e) => {
+                                log::warn!(
+                                    "Could not reread '{log_name}' for history storage from {}: {e}",
+                                    path.display()
+                                );
+                                None
+                            }
+                        };
+                        let meta = match bytes.as_deref().map(gt_history::extract_meta) {
+                            Some(Ok(meta)) => Some(meta),
+                            Some(Err(e)) => {
+                                log::warn!(
+                                    "Could not extract history metadata from '{log_name}': {e}"
+                                );
+                                None
+                            }
+                            None => None,
+                        };
                         log::debug!("Parsed '{log_name}': {} track(s)", file.tracks.len());
                         let db_ref = store_in_history(
                             db_path.as_deref(),
@@ -334,7 +350,15 @@ impl LoaderManager {
                             let applied_current_marker_settings = open
                                 .as_ref()
                                 .is_some_and(HistoryOpen::applied_current_marker_settings);
-                            let meta = gt_history::extract_meta(&bytes).ok();
+                            let meta = match gt_history::extract_meta(&bytes) {
+                                Ok(meta) => Some(meta),
+                                Err(e) => {
+                                    log::warn!(
+                                        "Could not extract history metadata from '{log_name}': {e}"
+                                    );
+                                    None
+                                }
+                            };
                             log::debug!("Parsed '{log_name}': {} track(s)", file.tracks.len());
                             // Store first (de-duplicates against the existing
                             // recording, keeping its stored track table) while the
@@ -917,18 +941,47 @@ fn store_in_history(
             return None;
         }
     };
+    log::debug!(
+        "Storing '{filename}' in history at {} with identity={identity:?}, start_us={}, nav_points={}, tracks={}",
+        path.display(),
+        meta.start_us,
+        meta.nav_point_count,
+        tracks.len()
+    );
     match db.insert(identity, meta, &tracks, settings, bytes) {
         Ok(db_ref) => {
-            log::info!(
-                "Stored '{filename}' in history as {}/{} ({} track(s))",
-                db_ref.identity,
-                db_ref.group_name,
-                tracks.len()
-            );
+            match db.list_recordings() {
+                Ok(entries) => {
+                    if entries.iter().any(|entry| entry.db_ref == db_ref) {
+                        log::info!(
+                            "Stored '{filename}' in history as identity={:?}, group={:?} ({} track(s))",
+                            db_ref.identity,
+                            db_ref.group_name,
+                            tracks.len()
+                        );
+                    } else {
+                        log::error!(
+                            "Stored '{filename}' in history as identity={:?}, group={:?}, but it is not visible in the history listing",
+                            db_ref.identity,
+                            db_ref.group_name
+                        );
+                    }
+                }
+                Err(e) => {
+                    log::error!(
+                        "Stored '{filename}' in history as identity={:?}, group={:?}, but listing the history failed: {e}",
+                        db_ref.identity,
+                        db_ref.group_name
+                    );
+                }
+            }
             Some(db_ref)
         }
         Err(e) => {
-            log::warn!("Failed to store '{filename}' in history: {e}");
+            log::warn!(
+                "Failed to store '{filename}' in history at {} with identity={identity:?}: {e}",
+                path.display()
+            );
             None
         }
     }

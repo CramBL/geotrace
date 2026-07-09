@@ -1,10 +1,10 @@
 use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
-    ATTR_SEG_GAP_US, ATTR_START_US, DbError, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
+    ATTR_SEG_GAP_US, ATTR_START_US, DatabaseRef, DbError, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
     RecordingEntry, RecordingMeta, StoredRecording, StoredSegmentation, TRACK_END_DATASET,
-    TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange, is_db_internal_group,
-    is_db_recording_attr, make_group_name,
+    TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange, identity_from_group_name,
+    identity_group_name, is_db_internal_group, is_db_recording_attr, make_group_name,
 };
 use hdf5::Group;
 use std::path::Path;
@@ -54,6 +54,197 @@ pub(crate) fn matches_attrs(meta: &RecordingMeta, group: &Group) -> bool {
         marker_count,
         event_marker_count,
     )
+}
+
+fn read_recording_meta(group: &Group) -> Option<RecordingMeta> {
+    let read_i64 = |name: &str| group.attr(name).and_then(|a| a.read_scalar::<i64>()).ok();
+    let read_u64 = |name: &str| group.attr(name).and_then(|a| a.read_scalar::<u64>()).ok();
+
+    Some(RecordingMeta {
+        start_us: read_i64(ATTR_START_US)?,
+        end_us: read_i64(ATTR_END_US).unwrap_or(0),
+        nav_point_count: read_u64(ATTR_NAV_POINT_COUNT)?,
+        sat_report_count: read_u64(ATTR_SAT_REPORT_COUNT)?,
+        marker_count: read_u64(ATTR_MARKER_COUNT)?,
+        event_marker_count: read_u64(ATTR_EVENT_MARKER_COUNT)?,
+        gtd_size_bytes: read_u64(ATTR_GTD_SIZE_BYTES).unwrap_or(0),
+    })
+}
+
+fn read_group_string_attr(group: &Group, name: &str) -> Result<String, InternalError> {
+    let attr = group.attr(name)?;
+    let descriptor = attr
+        .dtype()?
+        .to_descriptor()
+        .map_err(|e| InternalError::Hdf5(hdf5::Error::from(e.to_string())))?;
+    read_string_attr(&attr, &descriptor)
+}
+
+fn recording_identity(group: &Group) -> Option<String> {
+    read_group_string_attr(group, ATTR_IDENTITY).ok()
+}
+
+fn identity_for_group(group: &Group, storage_name: &str) -> String {
+    read_group_string_attr(group, ATTR_IDENTITY)
+        .ok()
+        .or_else(|| identity_from_group_name(storage_name))
+        .unwrap_or_else(|| storage_name.to_owned())
+}
+
+fn ensure_identity_group(by_id: &Group, identity: &str) -> Result<Group, InternalError> {
+    let storage_name = identity_group_name(identity);
+    let id_grp = by_id
+        .create_group(&storage_name)
+        .or_else(|_| by_id.group(&storage_name))?;
+    if id_grp.attr(ATTR_IDENTITY).is_err() {
+        write_string_attr(&id_grp, ATTR_IDENTITY, identity)?;
+    }
+    Ok(id_grp)
+}
+
+fn open_identity_group(by_id: &Group, identity: &str) -> Result<Group, InternalError> {
+    let storage_name = identity_group_name(identity);
+    match by_id.group(&storage_name) {
+        Ok(group) => Ok(group),
+        Err(encoded_err) => {
+            if identity.contains('/') {
+                Err(encoded_err.into())
+            } else {
+                by_id.group(identity).map_err(Into::into)
+            }
+        }
+    }
+}
+
+fn is_indexed_recording_path(path: &str, identity: &str) -> bool {
+    let Some((parent, _)) = path.rsplit_once('/') else {
+        return false;
+    };
+    if parent == format!("/by_identity/{}", identity_group_name(identity)) {
+        return true;
+    }
+    !identity.contains('/') && parent == format!("/by_identity/{identity}")
+}
+
+fn collect_recording_group_paths(
+    group: &Group,
+    path: &str,
+    out: &mut Vec<String>,
+) -> Result<(), InternalError> {
+    if read_recording_meta(group).is_some() && recording_identity(group).is_some() {
+        out.push(path.to_owned());
+        return Ok(());
+    }
+
+    for name in group.member_names()? {
+        let child_path = if path == "/" {
+            format!("/{name}")
+        } else {
+            format!("{path}/{name}")
+        };
+        if let Ok(child) = group.group(&name) {
+            collect_recording_group_paths(&child, &child_path, out)?;
+        }
+    }
+    Ok(())
+}
+
+fn find_indexed_recording(
+    file: &hdf5::File,
+    meta: &RecordingMeta,
+) -> Result<Option<DatabaseRef>, InternalError> {
+    let Ok(by_id) = file.group("by_identity") else {
+        return Ok(None);
+    };
+    for storage_name in by_id.member_names()? {
+        let Ok(id_grp) = by_id.group(&storage_name) else {
+            continue;
+        };
+        let identity = identity_for_group(&id_grp, &storage_name);
+        for rec_name in id_grp.member_names()? {
+            if let Ok(rec_grp) = id_grp.group(&rec_name)
+                && matches_attrs(meta, &rec_grp)
+            {
+                return Ok(Some(DatabaseRef {
+                    identity,
+                    group_name: rec_name,
+                }));
+            }
+        }
+    }
+    Ok(None)
+}
+
+pub(crate) fn repair_unindexed_recordings(db_path: &Path) -> Result<(), InternalError> {
+    let file = hdf5::File::open_rw(db_path)?;
+    let root = file.group("/")?;
+    let mut paths = Vec::new();
+    collect_recording_group_paths(&root, "/", &mut paths)?;
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    let by_id = file.group("by_identity")?;
+    let mut repaired = 0_usize;
+    let mut removed_duplicates = 0_usize;
+    for path in paths {
+        let rec_grp = file.group(&path)?;
+        let Some(identity) = recording_identity(&rec_grp) else {
+            log::warn!("History recording at {path:?} has no identity; leaving it in place");
+            continue;
+        };
+        if is_indexed_recording_path(&path, &identity) {
+            continue;
+        }
+
+        let Some(meta) = read_recording_meta(&rec_grp) else {
+            log::warn!(
+                "History recording at {path:?} has incomplete metadata; leaving it in place"
+            );
+            continue;
+        };
+        let Some(rec_name) = path.rsplit('/').next().filter(|name| !name.is_empty()) else {
+            log::warn!("History recording at {path:?} has no group name; leaving it in place");
+            continue;
+        };
+
+        if let Some(existing) = find_indexed_recording(&file, &meta)? {
+            file.unlink(&path)?;
+            removed_duplicates += 1;
+            log::warn!(
+                "Removed unindexed duplicate history recording at {path:?}; indexed as identity={:?}, group={:?}",
+                existing.identity,
+                existing.group_name
+            );
+            continue;
+        }
+
+        let id_grp = ensure_identity_group(&by_id, &identity)?;
+        if id_grp.link_exists(rec_name) {
+            file.unlink(&path)?;
+            removed_duplicates += 1;
+            log::warn!(
+                "Removed unindexed history recording at {path:?}; destination group already exists for identity={identity:?}, group={rec_name:?}"
+            );
+            continue;
+        }
+
+        rec_grp.copy_to(&id_grp, rec_name)?;
+        file.unlink(&path)?;
+        repaired += 1;
+        log::warn!(
+            "Moved unindexed history recording from {path:?} into /by_identity using identity={identity:?}, group={rec_name:?}"
+        );
+    }
+
+    if repaired > 0 || removed_duplicates > 0 {
+        file.flush()?;
+        log::warn!(
+            "Repaired history database at {}: moved {repaired} recording(s), removed {removed_duplicates} duplicate orphan(s)",
+            db_path.display()
+        );
+    }
+    Ok(())
 }
 
 pub(crate) fn is_duplicate(
@@ -243,11 +434,18 @@ pub(crate) fn is_native_writable(db_path: &Path) -> bool {
         return false;
     };
     match file.create_group(WRITE_PROBE_GROUP) {
-        Ok(_) => {
+        Ok(probe_group) => {
+            drop(probe_group);
             file.unlink(WRITE_PROBE_GROUP).ok();
             true
         }
-        Err(_) => false,
+        Err(create_err) => {
+            log::debug!(
+                "History database at {} is not native-writable: {create_err}",
+                db_path.display()
+            );
+            false
+        }
     }
 }
 
@@ -336,7 +534,7 @@ pub(crate) fn insert_recording(
     tracks: &[TrackRange],
     settings: StoredSegmentation,
     gtd_bytes: &[u8],
-) -> Result<String, InternalError> {
+) -> Result<DatabaseRef, InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
 
     // Duplicate check: re-storing a recording already present returns its
@@ -345,12 +543,18 @@ pub(crate) fn insert_recording(
     if let Ok(by_id) = file.group("by_identity") {
         for id_name in by_id.member_names()? {
             if let Ok(id_grp) = by_id.group(&id_name) {
+                let existing_identity = identity_for_group(&id_grp, &id_name);
                 for rec_name in id_grp.member_names()? {
                     if let Ok(rec_grp) = id_grp.group(&rec_name)
                         && matches_attrs(meta, &rec_grp)
                     {
-                        log::debug!("Recording '{id_name}/{rec_name}' already in history");
-                        return Ok(rec_name);
+                        log::debug!(
+                            "Recording already in history as identity={existing_identity:?}, group={rec_name:?}"
+                        );
+                        return Ok(DatabaseRef {
+                            identity: existing_identity,
+                            group_name: rec_name,
+                        });
                     }
                 }
             }
@@ -360,9 +564,7 @@ pub(crate) fn insert_recording(
     // Determine name, create group. A UUID makes the name collision-free even
     // for recordings that start within the same second.
     let by_id = file.group("by_identity")?;
-    let id_grp = by_id
-        .create_group(identity)
-        .or_else(|_| by_id.group(identity))?;
+    let id_grp = ensure_identity_group(&by_id, identity)?;
     let group_name = make_group_name(meta.start_us, &uuid::Uuid::new_v4().to_string());
     let rec_grp = id_grp.create_group(&group_name)?;
 
@@ -385,7 +587,10 @@ pub(crate) fn insert_recording(
     // Store the computed track ranges in a DB-internal subgroup.
     write_track_table(&rec_grp, tracks)?;
 
-    Ok(group_name)
+    Ok(DatabaseRef {
+        identity: identity.to_owned(),
+        group_name,
+    })
 }
 
 /// Write (creating or overwriting) the segmentation settings the stored tracks
@@ -713,10 +918,9 @@ pub(crate) fn load_recording(
     // drops every handle before the read.
     let (tracks, segmentation) = {
         let db = hdf5::File::open(db_path)?;
-        let rec_grp = db
-            .group("by_identity")?
-            .group(identity)?
-            .group(group_name)?;
+        let by_id = db.group("by_identity")?;
+        let id_grp = open_identity_group(&by_id, identity)?;
+        let rec_grp = id_grp.group(group_name)?;
 
         let tracks = read_track_table(&rec_grp);
         let segmentation = read_segmentation(&rec_grp);
@@ -762,10 +966,9 @@ pub(crate) fn set_tracks(
     settings: StoredSegmentation,
 ) -> Result<(), InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
-    let rec_grp = file
-        .group("by_identity")?
-        .group(identity)?
-        .group(group_name)?;
+    let by_id = file.group("by_identity")?;
+    let id_grp = open_identity_group(&by_id, identity)?;
+    let rec_grp = id_grp.group(group_name)?;
     write_track_table(&rec_grp, tracks)?;
     write_segmentation_attrs(&rec_grp, settings)?;
     Ok(())
@@ -780,10 +983,9 @@ pub(crate) fn set_tracks_hidden(
     hidden: bool,
 ) -> Result<(), InternalError> {
     let file = hdf5::File::open_rw(db_path)?;
-    let rec_grp = file
-        .group("by_identity")?
-        .group(identity)?
-        .group(group_name)?;
+    let by_id = file.group("by_identity")?;
+    let id_grp = open_identity_group(&by_id, identity)?;
+    let rec_grp = id_grp.group(group_name)?;
     let Ok(grp) = rec_grp.group(TRACKS_GROUP) else {
         log::warn!("set_tracks_hidden on {identity}/{group_name} which has no track table");
         return Ok(());
@@ -807,24 +1009,16 @@ pub(crate) fn list_recordings(
     let file = hdf5::File::open(db_path)?;
     let by_id = file.group("by_identity")?;
     let mut entries = Vec::new();
-    for identity in by_id.member_names()? {
-        if let Ok(id_grp) = by_id.group(&identity) {
+    for storage_name in by_id.member_names()? {
+        if let Ok(id_grp) = by_id.group(&storage_name) {
+            let identity = identity_for_group(&id_grp, &storage_name);
             for rec_name in id_grp.member_names()? {
                 if let Ok(rec_grp) = id_grp.group(&rec_name) {
-                    // Extract meta
-                    let read_i64 =
-                        |name: &str| rec_grp.attr(name).and_then(|a| a.read_scalar::<i64>()).ok();
-                    let read_u64 =
-                        |name: &str| rec_grp.attr(name).and_then(|a| a.read_scalar::<u64>()).ok();
-
-                    let meta = RecordingMeta {
-                        start_us: read_i64(ATTR_START_US).unwrap_or(0),
-                        end_us: read_i64(ATTR_END_US).unwrap_or(0),
-                        nav_point_count: read_u64(ATTR_NAV_POINT_COUNT).unwrap_or(0),
-                        sat_report_count: read_u64(ATTR_SAT_REPORT_COUNT).unwrap_or(0),
-                        marker_count: read_u64(ATTR_MARKER_COUNT).unwrap_or(0),
-                        event_marker_count: read_u64(ATTR_EVENT_MARKER_COUNT).unwrap_or(0),
-                        gtd_size_bytes: read_u64(ATTR_GTD_SIZE_BYTES).unwrap_or(0),
+                    let Some(meta) = read_recording_meta(&rec_grp) else {
+                        log::warn!(
+                            "Skipping malformed history recording identity={identity:?}, group={rec_name:?}: missing metadata"
+                        );
+                        continue;
                     };
                     let tracks = read_track_table(&rec_grp);
                     let hidden_tracks = tracks.iter().filter(|t| t.hidden).count();

@@ -315,7 +315,9 @@ fn insert_creates_recording_group() {
 
     let file = hdf5_pure::File::open(&db_path).expect("open file");
     let by_id = file.root().group("by_identity").expect("by_identity");
-    let id_grp = by_id.group("test_device").expect("identity group");
+    let id_grp = by_id
+        .group(&gt_history::identity_group_name("test_device"))
+        .expect("identity group");
     let groups = id_grp.groups().expect("recording groups");
     assert!(
         groups.contains(&db_ref.group_name),
@@ -350,7 +352,7 @@ fn insert_duplicate_returns_same_group_name() {
     let id_grp = file
         .root()
         .group("by_identity")
-        .and_then(|b| b.group("device_a"))
+        .and_then(|b| b.group(&gt_history::identity_group_name("device_a")))
         .expect("identity group");
     let groups = id_grp.groups().expect("groups");
     assert_eq!(groups.len(), 1, "expected 1 group, found: {groups:?}");
@@ -376,8 +378,8 @@ fn insert_different_identities_are_independent() {
     let by_id = file.root().group("by_identity").expect("by_identity");
     let identity_names = by_id.groups().expect("identity groups");
 
-    assert!(identity_names.contains(&"alpha".to_owned()));
-    assert!(identity_names.contains(&"beta".to_owned()));
+    assert!(identity_names.contains(&gt_history::identity_group_name("alpha")));
+    assert!(identity_names.contains(&gt_history::identity_group_name("beta")));
 }
 
 #[test]
@@ -427,7 +429,7 @@ fn nav_point_data_round_trips() {
     let rec_grp = file
         .root()
         .group("by_identity")
-        .and_then(|b| b.group(&db_ref.identity))
+        .and_then(|b| b.group(&gt_history::identity_group_name(&db_ref.identity)))
         .and_then(|i| i.group(&db_ref.group_name))
         .expect("recording group");
     let nav_grp = rec_grp.group("nav_points").expect("nav_points group");
@@ -745,6 +747,114 @@ fn sys_insert_with_colon_identity_into_fresh_db() {
     assert_eq!(db.list_recordings().expect("list").len(), 1);
 }
 
+#[test_log::test]
+fn path_like_identity_is_stored_as_one_listed_identity() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("history.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let bytes = make_gtd_bytes(1_000, 5);
+    let meta = extract_meta(&bytes).expect("meta");
+    let identity = "/example.invalid/history/identity/with/slashes/";
+
+    let db_ref = db
+        .insert_simple(identity, &meta, &bytes)
+        .expect("insert path-like identity");
+    assert_eq!(db_ref.identity, identity);
+
+    let entries = db.list_recordings().expect("list");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].db_ref.identity, identity);
+    assert_eq!(entries[0].db_ref.group_name, db_ref.group_name);
+    let loaded_bytes = db.load_bytes(&db_ref).expect("load");
+    let loaded_meta = extract_meta(&loaded_bytes).expect("loaded meta");
+    assert!(meta.same_recording(&loaded_meta));
+
+    db.insert_simple(identity, &meta, &bytes)
+        .expect("deduplicated reinsert");
+    assert_eq!(db.list_recordings().expect("list after reinsert").len(), 1);
+
+    #[cfg(feature = "backend-sys")]
+    {
+        let file = hdf5::File::open(&db_path).expect("open hdf5");
+        let by_id = file.group("by_identity").expect("by_identity");
+        by_id
+            .group(&gt_history::identity_group_name(identity))
+            .expect("encoded identity group");
+        assert!(
+            file.group("/home").is_err(),
+            "path-like identities must not create root-level groups"
+        );
+    }
+}
+
+#[cfg(feature = "backend-sys")]
+#[test_log::test]
+fn open_repairs_absolute_identity_recording_stored_outside_by_identity() {
+    use hdf5::types::VarLenUnicode;
+    use std::str::FromStr as _;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("history.h5");
+    let identity = "/example.invalid/history/identity/with/slashes/";
+    let group_name = "2026-01-02T03:04:05Z_00000000-1111-2222-3333-444444444444";
+    let bytes = make_gtd_bytes(1_000, 5);
+    let meta = extract_meta(&bytes).expect("meta");
+
+    Database::open_or_create(&db_path).expect("create");
+    {
+        let file = hdf5::File::open_rw(&db_path).expect("open raw");
+        let by_id = file.group("by_identity").expect("by_identity");
+        let id_grp = by_id.create_group(identity).expect("buggy identity group");
+        let rec_grp = id_grp.create_group(group_name).expect("recording group");
+        let identity_attr = VarLenUnicode::from_str(identity).expect("identity string");
+        rec_grp
+            .new_attr::<VarLenUnicode>()
+            .create("identity")
+            .expect("identity attr")
+            .write_scalar(&identity_attr)
+            .expect("write identity");
+        rec_grp
+            .new_attr::<i64>()
+            .create("start_us")
+            .expect("start_us attr")
+            .write_scalar(&meta.start_us)
+            .expect("write start_us");
+        rec_grp
+            .new_attr::<i64>()
+            .create("end_us")
+            .expect("end_us attr")
+            .write_scalar(&meta.end_us)
+            .expect("write end_us");
+        for (name, value) in [
+            ("nav_point_count", meta.nav_point_count),
+            ("sat_report_count", meta.sat_report_count),
+            ("marker_count", meta.marker_count),
+            ("event_marker_count", meta.event_marker_count),
+            ("gtd_size_bytes", meta.gtd_size_bytes),
+        ] {
+            rec_grp
+                .new_attr::<u64>()
+                .create(name)
+                .expect("count attr")
+                .write_scalar(&value)
+                .expect("write count");
+        }
+    }
+
+    let db = Database::open_or_create(&db_path).expect("repair on open");
+    let entries = db.list_recordings().expect("list repaired");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].db_ref.identity, identity);
+    assert_eq!(entries[0].db_ref.group_name, group_name);
+
+    let file = hdf5::File::open(&db_path).expect("open repaired hdf5");
+    let by_id = file.group("by_identity").expect("by_identity");
+    by_id
+        .group(&gt_history::identity_group_name(identity))
+        .and_then(|id| id.group(group_name))
+        .expect("moved recording");
+}
+
 /// Regression: a stale "open for write" superblock flag (e.g. from a crash)
 /// makes libhdf5 refuse the file. `clear_write_lock` must repair it so the
 /// database opens again with all recordings intact.
@@ -965,7 +1075,9 @@ fn open_with_older_schema_version_migrates_data() {
     {
         let existing = hdf5_pure::File::open(&db_path).expect("open");
         let by_id = existing.root().group("by_identity").expect("by_identity");
-        let id_grp = by_id.group("dev").expect("id_grp");
+        let id_grp = by_id
+            .group(&gt_history::identity_group_name("dev"))
+            .expect("id_grp");
         let rec_names = id_grp.groups().expect("groups");
 
         let mut fb = hdf5_pure::FileBuilder::new();
@@ -1188,14 +1300,15 @@ fn sys_backend_structural_parity_repro() {
     let root = file.root();
 
     let by_id = root.group("by_identity").expect("by_identity missing");
-    let id_grp = by_id.group("device").expect("identity group missing");
+    let id_grp = by_id
+        .group(&gt_history::identity_group_name("device"))
+        .expect("identity group missing");
 
     let rec_names = id_grp.groups().expect("recording names missing");
     assert!(!rec_names.is_empty(), "No recordings found under 'device'");
 
-    let rec_grp = id_grp
-        .group(&rec_names[0])
-        .expect("recording group missing");
+    let rec_name = rec_names.first().expect("recording name");
+    let rec_grp = id_grp.group(rec_name).expect("recording group missing");
     assert!(
         rec_grp.group("nav_points").is_ok(),
         "nav_points group missing in sys-backend database"
