@@ -8,6 +8,7 @@ pub mod marker_renderer;
 mod polyline;
 mod query_match_renderer;
 mod sat_labels;
+mod scope;
 #[cfg(test)]
 mod test_harness;
 pub mod tpv_renderer;

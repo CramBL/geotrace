@@ -2390,6 +2390,7 @@ dependencies = [
  "gt-ui-types",
  "proptest",
  "rstar 0.13.0",
+ "rstest",
  "smallvec",
  "strum",
  "uom",

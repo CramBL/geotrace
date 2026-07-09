@@ -328,52 +328,22 @@ pub(crate) fn is_spatial_point_visible(
     display_mask: DisplayMask,
     query_matches: Option<&QueryMatches>,
 ) -> bool {
-    let Some(file_vis) = sp.file_index.get(&visibility.files) else {
-        return false;
-    };
-    if !file_vis.enabled {
-        return false;
-    }
-    let Some(trip_vis) = sp.track_index.get(&file_vis.tracks) else {
-        return false;
-    };
-    if !trip_vis.enabled {
+    // Tracklines and raw satellite reports have no hover target of their own.
+    if matches!(
+        sp.category,
+        DataCategory::Track | DataCategory::SatelliteReport
+    ) {
         return false;
     }
-    // Tree toggle AND display category: an element hidden either way is
-    // not drawn, so it must not be hoverable or clickable either.
-    let layer_visible = match sp.category {
-        DataCategory::Tpv => {
-            trip_vis.tpv_visible && display_mask.is_visible(DisplayCategory::TrackPoints)
-        }
-        DataCategory::CustomMarker => {
-            trip_vis.custom_markers_visible
-                && display_mask.is_visible(DisplayCategory::CustomMarkers)
-        }
-        DataCategory::GeneratedMarker => {
-            trip_vis.generated_markers_visible
-                && display_mask.is_visible(DisplayCategory::GeneratedMarkers)
-        }
-        DataCategory::EventMarker => {
-            trip_vis.event_markers_visible && display_mask.is_visible(DisplayCategory::EventMarkers)
-        }
-        DataCategory::Track | DataCategory::SatelliteReport => false,
-    };
-    if !layer_visible {
-        return false;
-    }
-
-    // Apply the same filtering the renderers do: drop whole tracks that fail the
-    // filter, then drop the individual point/marker if it sits outside the time
-    // window.
-    let Some(track) = sp
-        .file_index
-        .get(files)
-        .and_then(|file| sp.track_index.get(&file.tracks))
+    // The gating the renderers apply (enablement, tree toggle, filter),
+    // plus the display category: an element hidden either way is not
+    // drawn, so it must not be hoverable or clickable either.
+    let Some(track) =
+        crate::scope::category_in_scope(files, visibility, filter, sp.track_ref(), sp.category)
     else {
         return false;
     };
-    if !track_passes_filter(&track.metadata, filter) {
+    if !display_mask.is_visible(DisplayCategory::from(sp.category)) {
         return false;
     }
     let pi = sp.point_index.as_usize();

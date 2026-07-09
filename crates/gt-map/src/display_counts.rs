@@ -8,15 +8,14 @@
 //! toggle popup shows next to each row, and why a viewport-dependent
 //! number would be wrong here.
 //!
-//! TODO(display-mask): the in-scope predicates here re-derive the gating
-//! that each renderer also implements (see the marker renderers and
-//! `track_layers`). Extract shared scope predicates so the counts cannot
-//! drift from what actually draws.
+//! The gating comes from the crate's `scope` module, the same predicates
+//! the renderers apply, so the counts cannot drift from what actually
+//! draws.
 
 use std::ops::Range;
 
-use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
-use gt_types::{FileIdx, LoadedFile, TrackIdx, TrackRef};
+use gt_filter::{GlobalFilter, point_passes_time_filter};
+use gt_types::{DataCategory, FileIdx, LoadedFile, TrackIdx, TrackRef};
 use gt_ui_types::{
     DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, QueryMatches,
     TrackDataVisibility,
@@ -76,19 +75,13 @@ impl DisplayCounts {
     ) -> Self {
         let mut counts = Self::default();
         for (fi, file) in files.iter().enumerate() {
-            let file_vis = FileIdx::new(fi).get(&visibility.files);
-            if !file_vis.is_some_and(|fv| fv.enabled) {
-                continue;
-            }
-            for (ti, track) in file.tracks.iter().enumerate() {
-                let Some(trip_vis) = file_vis.and_then(|fv| TrackIdx::new(ti).get(&fv.tracks))
+            for ti in 0..file.tracks.len() {
+                let track_ref = TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti));
+                let Some((track, trip_vis)) =
+                    crate::scope::track_in_scope(files, visibility, filter, track_ref)
                 else {
                     continue;
                 };
-                if !trip_vis.enabled || !track_passes_filter(&track.metadata, filter) {
-                    continue;
-                }
-                let track_ref = TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti));
                 const NO_RANGES: &[Range<usize>] = &[];
                 let hidden_ranges = query_matches.map_or(NO_RANGES, |m| m.hidden_ranges(track_ref));
                 let point_in_scope = |pi: usize| {
@@ -98,13 +91,13 @@ impl DisplayCounts {
                     })
                 };
 
-                if trip_vis.track_visible {
+                if trip_vis.category_visible(DataCategory::Track) {
                     // Counted per track regardless of query-hide coverage:
                     // "Tracks" answers "is this track's line eligible to
                     // draw", not "does it currently draw any pixels".
                     counts.tracks += 1;
                 }
-                if trip_vis.tpv_visible {
+                if trip_vis.category_visible(DataCategory::Tpv) {
                     counts.track_points += (0..track.points.len())
                         .filter(|&pi| point_in_scope(pi))
                         .count();
@@ -114,14 +107,14 @@ impl DisplayCounts {
                         .filter(|a| point_in_scope(a.point.as_usize()))
                         .count();
                 }
-                if trip_vis.custom_markers_visible {
+                if trip_vis.category_visible(DataCategory::CustomMarker) {
                     counts.custom_markers += track
                         .custom_markers
                         .iter()
                         .filter(|m| point_passes_time_filter(m.time, filter))
                         .count();
                 }
-                if trip_vis.generated_markers_visible {
+                if trip_vis.category_visible(DataCategory::GeneratedMarker) {
                     counts.generated_markers += track
                         .generated_markers
                         .iter()
@@ -131,7 +124,7 @@ impl DisplayCounts {
                         })
                         .count();
                 }
-                if trip_vis.event_markers_visible {
+                if trip_vis.category_visible(DataCategory::EventMarker) {
                     counts.event_markers += track
                         .event_markers
                         .iter()

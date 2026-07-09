@@ -111,27 +111,15 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             crate::transform::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         for sp in &self.visible_generated {
-            let Some(file_vis) = sp.file_index.get(&self.visibility.files) else {
+            let Some(track) = crate::scope::category_in_scope(
+                self.files,
+                self.visibility,
+                self.filter,
+                sp.track_ref(),
+                DataCategory::GeneratedMarker,
+            ) else {
                 continue;
             };
-            if !file_vis.enabled {
-                continue;
-            }
-            let Some(trip_vis) = sp.track_index.get(&file_vis.tracks) else {
-                continue;
-            };
-            if !trip_vis.enabled || !trip_vis.generated_markers_visible {
-                continue;
-            }
-            let Some(file) = sp.file_index.get(self.files) else {
-                continue;
-            };
-            let Some(track) = sp.track_index.get(&file.tracks) else {
-                continue;
-            };
-            if !gt_filter::track_passes_filter(&track.metadata, self.filter) {
-                continue;
-            }
             let Some(marker) = sp.point_index.get(&track.generated_markers) else {
                 continue;
             };
