@@ -816,6 +816,43 @@ fn snapshot_app_query_window() {
     harness.snapshot_loose("app_query_window");
 }
 
+/// The query editor under the light theme, so the syntax-highlight colours
+/// (keywords, numbers, idents, comments) are verified on the white editor
+/// background where the dark-tuned palette was unreadable. Focused on the
+/// editor: it sets highlighted text but does not run the query.
+#[test]
+fn snapshot_app_query_editor_light() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(DEMO_BYTES)),
+            name: "demo_trip.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+
+    harness.inner.ctx.set_theme(egui::ThemePreference::Light);
+    let app = harness.inner.state_mut();
+    app.query_window.open = true;
+    // Exercises every token class: keywords, numeric literals, a unit, idents,
+    // and a comment.
+    app.query_window.set_text(
+        "points\n| window 10\n| where avg(velocity) > 25 km/h # keep the fast bits\n| table time, velocity"
+            .to_owned(),
+    );
+    harness.inner.run_steps(8);
+
+    harness.snapshot_loose("app_query_editor_light");
+}
+
 /// Hovering a match header in the results table: the map draws the highlight
 /// blue halo band over the matched stretch and the plot shades the match's
 /// time span.
