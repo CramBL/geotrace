@@ -4,6 +4,23 @@ use std::ops::{Deref, Index, IndexMut};
 use gt_history_types::{DatabaseRef, RecordingMeta};
 use gt_types::{FileIdx, LoadedFile};
 
+/// Prefix marking an identity that GeoTrace derived automatically (from the
+/// recording's title/device/filename) rather than one supplied explicitly via
+/// the SDK. Produced by `gt_loader::derive_identity`.
+pub const AUTO_IDENTITY_PREFIX: &str = "auto:";
+
+/// Split an identity into its user-facing text and whether it was auto-derived.
+///
+/// The stored identity keeps the [`AUTO_IDENTITY_PREFIX`] marker, but that
+/// marker is internal bookkeeping and must not be shown verbatim; every place
+/// that displays an identity strips it through this one helper.
+pub fn display_identity(identity: &str) -> (&str, bool) {
+    match identity.strip_prefix(AUTO_IDENTITY_PREFIX) {
+        Some(name) => (name, true),
+        None => (identity, false),
+    }
+}
+
 /// App/session-side history metadata for one loaded file.
 ///
 /// This is not persisted history schema. It describes how the currently loaded
@@ -58,6 +75,18 @@ impl FileHistory {
         match self {
             Self::Recording { identity, .. } => Cow::Borrowed(identity.as_str()),
             Self::None => Cow::Borrowed(file.metadata.filename.as_str()),
+        }
+    }
+
+    /// The recording identity, if this file has one. Unlike [`identity_key`],
+    /// returns `None` (rather than the filename) for files with no history
+    /// association, so callers can distinguish a real identity from a fallback.
+    ///
+    /// [`identity_key`]: Self::identity_key
+    fn identity(&self) -> Option<&str> {
+        match self {
+            Self::Recording { identity, .. } => Some(identity.as_str()),
+            Self::None => None,
         }
     }
 }
@@ -135,6 +164,11 @@ impl<'a> LoadedFileEntry<'a> {
 
     pub fn identity_key(&self) -> Cow<'a, str> {
         self.history.identity_key(self.file)
+    }
+
+    /// The recording identity, or `None` for files not associated with history.
+    pub fn identity(&self) -> Option<&'a str> {
+        self.history.identity()
     }
 
     pub fn is_stored_in_history(&self) -> bool {
@@ -257,5 +291,38 @@ impl<'a> IntoIterator for &'a mut LoadedFiles {
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter_mut()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FileHistory, RecordingMeta, display_identity};
+
+    fn meta() -> RecordingMeta {
+        RecordingMeta {
+            start_us: 0,
+            end_us: 0,
+            nav_point_count: 0,
+            sat_report_count: 0,
+            marker_count: 0,
+            event_marker_count: 0,
+            gtd_size_bytes: 0,
+        }
+    }
+
+    #[test]
+    fn identity_is_some_for_recordings_and_none_otherwise() {
+        let recording = FileHistory::recording("auto:ride.gtd".to_owned(), meta(), None);
+        assert_eq!(recording.identity(), Some("auto:ride.gtd"));
+        assert_eq!(FileHistory::None.identity(), None);
+    }
+
+    #[test]
+    fn display_identity_strips_auto_prefix() {
+        assert_eq!(
+            display_identity("auto:Morning ride"),
+            ("Morning ride", true)
+        );
+        assert_eq!(display_identity("explicit-id"), ("explicit-id", false));
     }
 }

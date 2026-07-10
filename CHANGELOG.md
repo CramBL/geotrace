@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- Settings now has a "Recording name" template that sets how recordings are labelled in the side panel.
+  Combine `{title}`, `{device}`, `{identity}` and `{filename}`; empty fields and their separators drop out.
+  Defaults to the filename, as before.
+
 ### Changed
 
 - Each recording's distance and duration in the side panel now carry a road and clock icon.

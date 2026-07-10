@@ -1,8 +1,9 @@
 use gt_filter::GlobalFilter;
+use gt_fmt::{NameFields, render_name_template};
 use gt_loaded_files::LoadedFilesView;
 use gt_types::{
-    DataCategory, FileIdx, GeneratedMarkerKind, LoadWarning, LoadedFile, LoadedTrack, PointIdx,
-    TrackIdx, TrackRef,
+    DataCategory, FileIdx, FileMetadata, GeneratedMarkerKind, LoadWarning, LoadedFile, LoadedTrack,
+    PointIdx, TrackIdx, TrackRef,
 };
 use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask, HighlightScope, MapHighlight};
 
@@ -30,6 +31,9 @@ pub struct PanelContext<'a> {
     /// The map's display mask, read to hint on category rows whose ink the
     /// display toggles currently hide.
     pub display_mask: DisplayMask,
+    /// User template for the recording name shown on each file row. See
+    /// [`gt_fmt::render_name_template`].
+    pub recording_name_template: &'a str,
 }
 
 /// Trailing eye-slash on a category row whose map ink is hidden by the
@@ -53,6 +57,12 @@ impl<'a> PanelContext<'a> {
 
     fn file_stored_in_history(&self, file: FileIdx) -> bool {
         self.loaded_files.file_stored_in_history(file)
+    }
+
+    /// The recording identity for a file, or `None` if it has none. Used by the
+    /// `{identity}` display-name token.
+    fn identity(&self, file: FileIdx) -> Option<&'a str> {
+        self.loaded_files.entry_for(file).and_then(|e| e.identity())
     }
 }
 
@@ -159,22 +169,27 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     // so files like `/home/user/recordings/a.gtd` and `/home/user/recordings/b.gtd`
     // display as `a.gtd` and `b.gtd` instead of their full paths.
     let display_names: Vec<String> = {
-        let all_names: Vec<&str> = ctx
-            .files()
-            .iter()
-            .map(|f| f.metadata.filename.as_str())
-            .collect();
+        let files = ctx.files();
+        let all_names: Vec<&str> = files.iter().map(|f| f.metadata.filename.as_str()).collect();
         let prefix_len = strip_common_path_prefix(&all_names);
-        all_names
+        files
             .iter()
-            .map(|n| {
+            .enumerate()
+            .map(|(i, f)| {
+                let name = f.metadata.filename.as_str();
                 // `prefix_len` is always a valid char boundary (guaranteed by
                 // `strip_common_path_prefix`), but use `get` to satisfy the
                 // `clippy::string_slice` lint and handle degenerate inputs safely.
-                n.get(prefix_len..)
+                let stripped = name
+                    .get(prefix_len..)
                     .filter(|s| !s.is_empty())
-                    .unwrap_or(n)
-                    .to_owned()
+                    .unwrap_or(name);
+                recording_display_name(
+                    ctx.recording_name_template,
+                    &f.metadata,
+                    ctx.identity(FileIdx::new(i)),
+                    stripped,
+                )
             })
             .collect()
     };
@@ -1045,6 +1060,27 @@ fn file_bounding_center(file: Option<&LoadedFile>) -> Option<(f64, f64)> {
     Some(((min_lat + max_lat) / 2.0, (min_lon + max_lon) / 2.0))
 }
 
+/// Build a file's side-panel display name from the user template.
+///
+/// `identity` is the file's raw recording identity (or `None`); its internal
+/// `auto:` marker is stripped for the `{identity}` token so it never leaks into
+/// the label. `filename` is the already-common-prefix-stripped name used for the
+/// `{filename}` token and as the ultimate fallback.
+fn recording_display_name(
+    template: &str,
+    metadata: &FileMetadata,
+    identity: Option<&str>,
+    filename: &str,
+) -> String {
+    let fields = NameFields {
+        title: metadata.title.as_deref(),
+        device: metadata.device.as_deref(),
+        identity: identity.map(|id| gt_loaded_files::display_identity(id).0),
+        filename,
+    };
+    render_name_template(template, &fields)
+}
+
 /// Returns the byte offset at which each name's *display* form begins — i.e.
 /// the length of the longest common directory prefix shared by all names.
 ///
@@ -1084,7 +1120,35 @@ fn strip_common_path_prefix(names: &[&str]) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_common_path_prefix;
+    use super::{FileMetadata, recording_display_name, strip_common_path_prefix};
+
+    #[test]
+    fn display_name_strips_auto_prefix_from_identity_token() {
+        let meta = FileMetadata::default();
+        assert_eq!(
+            recording_display_name("{identity}", &meta, Some("auto:Morning ride"), "ride.gtd"),
+            "Morning ride"
+        );
+    }
+
+    #[test]
+    fn display_name_uses_metadata_and_falls_back_to_filename() {
+        let meta = FileMetadata {
+            title: Some("Morning ride".to_owned()),
+            device: Some("uBlox F9P".to_owned()),
+            ..FileMetadata::default()
+        };
+        assert_eq!(
+            recording_display_name("{title} — {device}", &meta, None, "ride.gtd"),
+            "Morning ride — uBlox F9P"
+        );
+        // No title/device and no identity: the filename carries the label.
+        let empty = FileMetadata::default();
+        assert_eq!(
+            recording_display_name("{title}", &empty, None, "ride.gtd"),
+            "ride.gtd"
+        );
+    }
 
     #[test]
     fn empty_slice_returns_zero() {

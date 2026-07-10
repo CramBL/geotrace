@@ -215,16 +215,25 @@ pub enum MapLayerSetting {
     Satellite,
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+/// Default recording-name template: show just the (prefix-stripped) filename,
+/// preserving the historical behavior for users who never change it.
+pub const DEFAULT_RECORDING_NAME_TEMPLATE: &str = "{filename}";
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct UiSettings {
     pub theme: ThemeSetting,
+    /// Template for the recording name shown in the side panel. Supports the
+    /// `{title}`, `{device}`, `{identity}` and `{filename}` tokens; see
+    /// [`gt_fmt::render_name_template`].
+    pub recording_name_template: String,
 }
 
 impl Default for UiSettings {
     fn default() -> Self {
         Self {
             theme: ThemeSetting::System,
+            recording_name_template: DEFAULT_RECORDING_NAME_TEMPLATE.to_owned(),
         }
     }
 }

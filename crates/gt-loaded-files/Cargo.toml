@@ -9,7 +9,6 @@ authors.workspace = true
 
 [lib]
 doctest = false
-test = false
 
 [dependencies]
 gt-history-types = { path = "../gt-history-types" }

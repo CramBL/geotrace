@@ -705,10 +705,7 @@ fn identity_cell(ui: &mut egui::Ui, identity: &str) {
 }
 
 fn identity_display_parts(identity: &str) -> (&str, bool) {
-    match identity.strip_prefix("auto:") {
-        Some(name) => (name, true),
-        None => (identity, false),
-    }
+    gt_loaded_files::display_identity(identity)
 }
 
 fn format_duration(dur: chrono::Duration) -> String {
