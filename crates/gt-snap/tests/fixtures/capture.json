@@ -1,0 +1,51 @@
+{
+  "captured_at": "2026-07-10T22:29:30.104597880+00:00",
+  "scenarios": [
+    {
+      "http_status": 200,
+      "name": "clean_drive",
+      "osm_changeset": 185397177
+    },
+    {
+      "http_status": 200,
+      "name": "clean_drive_unfiltered",
+      "osm_changeset": 185397177
+    },
+    {
+      "http_status": 200,
+      "name": "dense_10hz",
+      "osm_changeset": 185397177
+    },
+    {
+      "http_status": 200,
+      "name": "partially_snappable",
+      "osm_changeset": 185397177
+    },
+    {
+      "http_status": 400,
+      "name": "unsnappable",
+      "osm_changeset": null
+    },
+    {
+      "http_status": 200,
+      "name": "teleport_gap",
+      "osm_changeset": 185397177
+    },
+    {
+      "http_status": 400,
+      "name": "bad_request",
+      "osm_changeset": null
+    },
+    {
+      "http_status": 400,
+      "name": "oversized",
+      "osm_changeset": null
+    },
+    {
+      "http_status": 413,
+      "name": "too_large_body",
+      "osm_changeset": null
+    }
+  ],
+  "server": "https://valhalla1.openstreetmap.de"
+}

@@ -1,0 +1,42 @@
+---
+source: crates/gt-snap/tests/fixtures_are_valid.rs
+expression: statuses
+---
+[
+    (
+        "clean_drive",
+        200,
+    ),
+    (
+        "clean_drive_unfiltered",
+        200,
+    ),
+    (
+        "dense_10hz",
+        200,
+    ),
+    (
+        "partially_snappable",
+        200,
+    ),
+    (
+        "unsnappable",
+        400,
+    ),
+    (
+        "teleport_gap",
+        200,
+    ),
+    (
+        "bad_request",
+        400,
+    ),
+    (
+        "oversized",
+        400,
+    ),
+    (
+        "too_large_body",
+        413,
+    ),
+]

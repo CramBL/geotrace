@@ -1,0 +1,22 @@
+[package]
+name = "gt-snap"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+# No unit tests in the lib (the fixture checks are integration tests);
+# skip compiling its test harness.
+test = false
+
+[dev-dependencies]
+chrono.workspace = true
+insta.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

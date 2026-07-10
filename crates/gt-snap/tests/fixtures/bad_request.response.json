@@ -1,0 +1,6 @@
+{
+  "error": "Insufficiently specified required parameter 'shape' or 'encoded_polyline'",
+  "error_code": 114,
+  "status": "Bad Request",
+  "status_code": 400
+}
