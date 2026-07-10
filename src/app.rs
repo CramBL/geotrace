@@ -1375,6 +1375,14 @@ impl App {
             },
             Response::Mutated { op, result } => match result {
                 Ok(()) => {
+                    // Keep loaded recordings pointing at the renamed identity so
+                    // later history operations on them still resolve.
+                    if let history_db::DbOp::IdentityRenamed { old, new } = &op {
+                        self.shared
+                            .borrow_mut()
+                            .loaded_files
+                            .rename_identity(old, new);
+                    }
                     self.history_window.invalidate();
                     self.toasts.info(mutation_toast(&op));
                 }
@@ -1433,6 +1441,10 @@ fn mutation_toast(op: &history_db::DbOp) -> String {
                 DeleteReason::Prune => format!("Pruned {count} {rec} from history"),
                 DeleteReason::AutoPrune => format!("Auto-pruned {count} {rec}"),
             }
+        }
+        DbOp::IdentityRenamed { new, .. } => {
+            let (name, _) = gt_loaded_files::display_identity(new);
+            format!("Renamed identity to \"{name}\"")
         }
     }
 }

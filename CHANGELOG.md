@@ -9,6 +9,7 @@
   Defaults to the filename, as before.
 - Recordings with metadata now show a note icon in the side panel; click it to open a resizable dialog with the title, device, identity and notes.
 - The History window marks recordings that carry metadata with a note icon and shows their title, device and notes on hover.
+- Recording identities can be renamed from the History window: click the pencil, type a new name, press Enter. Recordings sharing the old name move together, and renaming onto an existing name merges into it.
 
 ### Changed
 

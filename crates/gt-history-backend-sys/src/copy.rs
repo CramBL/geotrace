@@ -17,6 +17,9 @@ pub(crate) enum InternalError {
     Hdf5(#[from] hdf5::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// A rename could not proceed without losing or overwriting data.
+    #[error("{0}")]
+    Conflict(String),
 }
 
 impl From<InternalError> for DbError {
@@ -24,6 +27,7 @@ impl From<InternalError> for DbError {
         match e {
             InternalError::Hdf5(e) => DbError::Backend(e.to_string()),
             InternalError::Io(e) => DbError::Io(e),
+            InternalError::Conflict(msg) => DbError::Backend(msg),
         }
     }
 }
@@ -115,6 +119,86 @@ fn open_identity_group(by_id: &Group, identity: &str) -> Result<Group, InternalE
             }
         }
     }
+}
+
+/// Overwrite (or add) the `identity` string attribute on a group. The plain
+/// [`write_meta_attrs`] path skips existing attrs, and string attrs cannot be
+/// rewritten in place, so this deletes any existing attribute first.
+fn overwrite_identity_attr(group: &Group, identity: &str) -> Result<(), InternalError> {
+    if group.attr(ATTR_IDENTITY).is_ok() {
+        group.delete_attr(ATTR_IDENTITY)?;
+    }
+    write_string_attr(group, ATTR_IDENTITY, identity)
+}
+
+/// Rename an identity, moving all its recordings under the `new` identity group.
+///
+/// Recordings are object-copied into the destination and the old identity group
+/// is unlinked (there is no HDF5 move primitive), mirroring
+/// [`repair_unindexed_recordings`]. If `new` already exists the recordings merge
+/// into it. A no-op when `old` is absent or equal to `new`.
+///
+/// Because this copies rather than moves, the file grows by the recordings'
+/// size; the system-HDF5 backend does not reclaim the vacated space (the
+/// whole-file-rewrite pure backend does).
+pub(crate) fn rename_identity(
+    db_path: &std::path::Path,
+    old: &str,
+    new: &str,
+) -> Result<(), InternalError> {
+    if old == new {
+        return Ok(());
+    }
+    if new.trim().is_empty() {
+        log::warn!("rename_identity: refusing to rename {old:?} to an empty identity");
+        return Ok(());
+    }
+
+    let file = hdf5::File::open_rw(db_path)?;
+    let Ok(by_id) = file.group("by_identity") else {
+        return Ok(());
+    };
+    let Ok(src) = open_identity_group(&by_id, old) else {
+        log::warn!("rename_identity: identity {old:?} not found");
+        return Ok(());
+    };
+    // Merge into an existing target - including a legacy raw-named group - rather
+    // than creating a second group for the same identity; only create when none
+    // exists.
+    let dst = match open_identity_group(&by_id, new) {
+        Ok(existing) => existing,
+        Err(_) => ensure_identity_group(&by_id, new)?,
+    };
+
+    let rec_names = src.member_names()?;
+    // Refuse before touching anything if any recording would overwrite one under
+    // the destination (group names are UUID-suffixed, so unreachable in practice
+    // - but never silently drop data). The copy-then-unlink below is not atomic,
+    // so this must be checked up front.
+    if let Some(dup) = rec_names.iter().find(|name| dst.link_exists(name)) {
+        return Err(InternalError::Conflict(format!(
+            "cannot merge identity {old:?} into {new:?}: recording {dup:?} exists in both"
+        )));
+    }
+
+    for rec_name in &rec_names {
+        let rec = src.group(rec_name)?;
+        rec.copy_to(&dst, rec_name)?;
+        // The copy still carries the old identity attribute; rewrite it.
+        overwrite_identity_attr(&dst.group(rec_name)?, new)?;
+    }
+
+    // Drop the now-vacated old identity group (under whichever name it existed).
+    let old_storage = identity_group_name(old);
+    if by_id.link_exists(&old_storage) {
+        by_id.unlink(&old_storage)?;
+    } else if !old.contains('/') && by_id.link_exists(old) {
+        by_id.unlink(old)?;
+    }
+
+    file.flush()?;
+    log::info!("Renamed history identity {old:?} to {new:?}");
+    Ok(())
 }
 
 fn is_indexed_recording_path(path: &str, identity: &str) -> bool {

@@ -398,6 +398,16 @@ pub trait HistoryDatabase {
     fn delete_batch(&mut self, refs: &[DatabaseRef]) -> Result<(), DbError>;
     fn path(&self) -> &Path;
 
+    /// Rename an identity, moving all its recordings under `new`.
+    ///
+    /// Renaming touches only the grouping label - content-addressed duplicate
+    /// detection (see [`RecordingMeta::same_recording`]) is unaffected. If `new`
+    /// already exists the recordings merge into it. A no-op when `old` is absent
+    /// or equal to `new`. Callers must pass a non-empty `new`. Any loaded
+    /// recordings under `old` keep a stale [`DatabaseRef`] until the caller
+    /// refreshes them.
+    fn rename_identity(&mut self, old: &str, new: &str) -> Result<(), DbError>;
+
     /// Compute which recordings would be removed by a given prune mode.
     fn prune_candidates(&self, mode: &PruneMode) -> Result<Vec<DatabaseRef>, DbError> {
         let entries = self.list_recordings()?;

@@ -23,6 +23,9 @@ pub(crate) enum InternalError {
     Hdf5(#[from] hdf5_pure::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// A rename could not proceed without losing or overwriting data.
+    #[error("{0}")]
+    Conflict(String),
 }
 
 impl From<InternalError> for DbError {
@@ -30,6 +33,7 @@ impl From<InternalError> for DbError {
         match e {
             InternalError::Hdf5(e) => DbError::Backend(e.to_string()),
             InternalError::Io(e) => DbError::Io(e),
+            InternalError::Conflict(msg) => DbError::Backend(msg),
         }
     }
 }
@@ -491,6 +495,88 @@ pub(crate) fn delete_batch(
 
     write_db(&identity_nodes, db_path)?;
     log::info!("Deleted {} recording(s) in batch prune", refs.len());
+    Ok(())
+}
+
+/// Overwrite (or add) the `identity` string attribute on a node.
+fn set_identity_attr(node: &mut GroupNode, identity: &str) {
+    node.attrs.retain(|(k, _)| k != ATTR_IDENTITY);
+    node.attrs.push((
+        ATTR_IDENTITY.to_owned(),
+        AttrValue::String(identity.to_owned()),
+    ));
+}
+
+/// Rename an identity: move all its recordings under the `new` identity group,
+/// rewriting the `identity` attribute on the identity group and every recording.
+///
+/// If `new` already exists the recordings merge into it. A no-op when `old` is
+/// absent or equal to `new`. The whole database is rewritten (as with every pure
+/// mutation), so no stale space is left behind.
+pub(crate) fn rename_identity(
+    db_path: &std::path::Path,
+    old: &str,
+    new: &str,
+) -> Result<(), InternalError> {
+    if old == new {
+        return Ok(());
+    }
+    if new.trim().is_empty() {
+        log::warn!("rename_identity: refusing to rename {old:?} to an empty identity");
+        return Ok(());
+    }
+
+    let existing_db = hdf5_pure::File::open(db_path)?;
+    let mut identity_nodes = snapshot_by_identity(&existing_db)?;
+    drop(existing_db);
+
+    let old_storage = identity_group_name(old);
+    let Some(old_idx) = identity_nodes
+        .iter()
+        .position(|n| n.name == old_storage || (!old.contains('/') && n.name == old))
+    else {
+        log::warn!("rename_identity: identity {old:?} not found");
+        return Ok(());
+    };
+    let mut old_node = identity_nodes.remove(old_idx);
+    for rec in &mut old_node.groups {
+        set_identity_attr(rec, new);
+    }
+
+    let new_storage = identity_group_name(new);
+    match identity_nodes
+        .iter_mut()
+        .find(|n| n.name == new_storage || (!new.contains('/') && n.name == new))
+    {
+        Some(target) => {
+            // Merge into the existing target identity group. A recording-group
+            // name collision would overwrite one recording with another, so
+            // refuse rather than lose data. (Group names are UUID-suffixed, so
+            // this is unreachable in practice; the whole file is untouched
+            // because `write_db` has not run yet.)
+            if let Some(dup) = old_node
+                .groups
+                .iter()
+                .find(|rec| target.groups.iter().any(|t| t.name == rec.name))
+            {
+                return Err(InternalError::Conflict(format!(
+                    "cannot merge identity {old:?} into {new:?}: recording {:?} exists in both",
+                    dup.name
+                )));
+            }
+            target.groups.append(&mut old_node.groups);
+        }
+        None => {
+            // Simple rename: re-home the node under the new (encoded) name.
+            old_node.name = new_storage;
+            set_identity_attr(&mut old_node, new);
+            identity_nodes.push(old_node);
+        }
+    }
+
+    identity_nodes.retain(|n| !n.groups.is_empty());
+    write_db(&identity_nodes, db_path)?;
+    log::info!("Renamed history identity {old:?} to {new:?}");
     Ok(())
 }
 

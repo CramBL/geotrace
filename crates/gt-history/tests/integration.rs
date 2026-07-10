@@ -548,6 +548,87 @@ fn list_recordings_surfaces_sdk_metadata() {
 }
 
 #[test]
+fn rename_identity_moves_recordings_to_a_fresh_name() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes_a = make_gtd_bytes(1_000, 3);
+    let bytes_b = make_gtd_bytes(2_000, 5);
+    db.insert_simple(
+        "auto:old",
+        &extract_meta(&bytes_a).expect("meta a"),
+        &bytes_a,
+    )
+    .expect("insert a");
+    db.insert_simple(
+        "auto:old",
+        &extract_meta(&bytes_b).expect("meta b"),
+        &bytes_b,
+    )
+    .expect("insert b");
+
+    db.rename_identity("auto:old", "Trip 2025").expect("rename");
+
+    let entries = db.list_recordings().expect("list");
+    assert_eq!(entries.len(), 2, "both recordings survive the rename");
+    assert!(
+        entries.iter().all(|e| e.db_ref.identity == "Trip 2025"),
+        "every recording now reports the new identity"
+    );
+    // The renamed recordings still load (their group data moved intact).
+    for entry in &entries {
+        db.load_bytes(&entry.db_ref)
+            .expect("load renamed recording");
+    }
+}
+
+#[test]
+fn rename_identity_merges_into_an_existing_name() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes_a = make_gtd_bytes(1_000, 3);
+    let bytes_b = make_gtd_bytes(2_000, 5);
+    db.insert_simple("auto:a", &extract_meta(&bytes_a).expect("meta a"), &bytes_a)
+        .expect("insert a");
+    db.insert_simple("keep", &extract_meta(&bytes_b).expect("meta b"), &bytes_b)
+        .expect("insert b");
+
+    db.rename_identity("auto:a", "keep").expect("rename-merge");
+
+    let entries = db.list_recordings().expect("list");
+    assert_eq!(entries.len(), 2);
+    assert!(
+        entries.iter().all(|e| e.db_ref.identity == "keep"),
+        "both recordings share the merged identity"
+    );
+}
+
+#[test]
+fn rename_identity_no_op_when_absent_or_unchanged() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes = make_gtd_bytes(1_000, 3);
+    db.insert_simple("auto:only", &extract_meta(&bytes).expect("meta"), &bytes)
+        .expect("insert");
+
+    db.rename_identity("does-not-exist", "whatever")
+        .expect("absent old is a no-op");
+    db.rename_identity("auto:only", "auto:only")
+        .expect("same name is a no-op");
+    db.rename_identity("auto:only", "   ")
+        .expect("whitespace-only new is a no-op");
+
+    let entries = db.list_recordings().expect("list");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].db_ref.identity, "auto:only");
+}
+
+#[test]
 fn list_recordings_empty_database() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
@@ -934,6 +1015,57 @@ fn open_repairs_absolute_identity_recording_stored_outside_by_identity() {
         .group(&gt_history::identity_group_name(identity))
         .and_then(|id| id.group(group_name))
         .expect("moved recording");
+}
+
+/// Renaming onto an identity that exists only as a legacy raw-named group must
+/// merge into it, not spawn a second (encoded-name) group for the same identity.
+#[cfg(feature = "backend-sys")]
+#[test_log::test]
+fn rename_identity_merges_into_a_legacy_raw_named_target() {
+    use hdf5::types::VarLenUnicode;
+    use std::str::FromStr as _;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("history.h5");
+    Database::open_or_create(&db_path).expect("create");
+
+    // Hand-build a legacy raw-named (pre-encoding) identity group "keep".
+    {
+        let file = hdf5::File::open_rw(&db_path).expect("open raw");
+        let by_id = file.group("by_identity").expect("by_identity");
+        let id_grp = by_id.create_group("keep").expect("legacy identity group");
+        let attr = VarLenUnicode::from_str("keep").expect("identity string");
+        id_grp
+            .new_attr::<VarLenUnicode>()
+            .create("identity")
+            .expect("identity attr")
+            .write_scalar(&attr)
+            .expect("write identity");
+    }
+
+    // A normally-indexed recording under a different identity, then rename it
+    // onto the legacy "keep".
+    let mut db = Database::open_or_create(&db_path).expect("reopen");
+    let bytes = make_gtd_bytes(1_000, 3);
+    db.insert_simple("auto:a", &extract_meta(&bytes).expect("meta"), &bytes)
+        .expect("insert");
+    db.rename_identity("auto:a", "keep")
+        .expect("rename onto legacy");
+
+    let entries = db.list_recordings().expect("list");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].db_ref.identity, "keep");
+
+    // The merge must reuse the legacy group, not create an encoded twin.
+    let file = hdf5::File::open(&db_path).expect("open hdf5");
+    let by_id = file.group("by_identity").expect("by_identity");
+    assert!(by_id.group("keep").is_ok(), "legacy target group kept");
+    assert!(
+        by_id
+            .group(&gt_history::identity_group_name("keep"))
+            .is_err(),
+        "no duplicate encoded group for the same identity"
+    );
 }
 
 /// Regression: a stale "open for write" superblock flag (e.g. from a crash)
