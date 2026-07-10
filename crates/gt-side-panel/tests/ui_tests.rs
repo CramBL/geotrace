@@ -406,3 +406,94 @@ fn snapshot_shared_prefix_stripped() {
     harness.run();
     harness.snapshot("side_panel_shared_prefix");
 }
+
+fn make_state_with_long_name() -> State {
+    let points = gt_test_utils::nav_test_data();
+    let mut files = LoadedFiles::new();
+    let name = "this_is_an_extremely_long_recording_filename_that_should_be_truncated_at_the_available_panel_width.gtd";
+    let file = gt_track_builder::build_loaded_file(
+        name.to_owned(),
+        &points,
+        &[],
+        vec![],
+        vec![],
+        &[],
+        &gt_track_builder::SegmentationConfig::default(),
+        gt_types::FileSource::GtdPath(PathBuf::from(name)),
+        vec![],
+    );
+    files.push(file, FileHistory::None);
+    let mut tree = TreeState::new();
+    tree.sync_from_loaded_files(files.files());
+    State {
+        files,
+        tree,
+        filter: GlobalFilter::default(),
+        filter_state: FilterPanelState::default(),
+        highlight: MapHighlight::default(),
+        map_center: None,
+        popup_pos: None,
+        zoom_to_visible: false,
+        warnings_request: None,
+        clear_query_request: false,
+        display_mask: DisplayMask::default(),
+    }
+}
+
+/// Render `show_side_panel` inside a resizable [`egui::Panel::left`] - the same
+/// container the real app uses (`src/app.rs`) - in a window wide enough that the
+/// panel *could* grow, then return the panel's settled width. A resizable panel
+/// grows to fit any child that reports a width wider than the panel, so a file
+/// label that requests its full natural text width (the pre-fix behaviour) drags
+/// the whole panel wider.
+fn settled_docked_panel_width(state: State) -> f32 {
+    let width = std::rc::Rc::new(std::cell::Cell::new(-1.0_f32));
+    let width_probe = std::rc::Rc::clone(&width);
+    let mut harness = gt_test_utils::TestHarness::builder()
+        .size(egui::vec2(1200.0, 600.0))
+        .ui_state(
+            move |ui, s: &mut State| {
+                egui::CentralPanel::default().show_inside(ui, |ui| {
+                    let resp = egui::Panel::left("track_data_panel")
+                        .min_size(240.0)
+                        .show_inside(ui, |ui| {
+                            let mut ctx = PanelContext {
+                                loaded_files: s.files.view(),
+                                tree: &mut s.tree,
+                                highlight: &mut s.highlight,
+                                filter: &mut s.filter,
+                                filter_state: &mut s.filter_state,
+                                map_center_request: &mut s.map_center,
+                                popup_pos_request: &mut s.popup_pos,
+                                zoom_to_visible_request: &mut s.zoom_to_visible,
+                                warnings_request: &mut s.warnings_request,
+                                clear_query_request: &mut s.clear_query_request,
+                                display_mask: s.display_mask,
+                            };
+                            show_side_panel(ui, &mut ctx);
+                        });
+                    width_probe.set(resp.response.rect.width());
+                });
+            },
+            state,
+        );
+    // A resizable panel persists its width across frames, so let it settle.
+    for _ in 0..6 {
+        harness.run();
+    }
+    width.get()
+}
+
+/// A long recording name must not widen the side panel: the file label truncates
+/// at the available width instead of forcing the panel to grow (CHANGELOG 0.5.1).
+/// Before the `Button::selectable(..).truncate()` fix the label requested its full
+/// natural text width, so this same panel settled ~500px wider for the long name.
+#[test]
+fn long_filename_does_not_widen_panel() {
+    let short = settled_docked_panel_width(make_state(1));
+    let long = settled_docked_panel_width(make_state_with_long_name());
+    assert!(
+        (long - short).abs() < 1.0,
+        "long filename widened the panel: short={short}px, long={long}px"
+    );
+}

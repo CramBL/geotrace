@@ -2,8 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- Each recording's distance and duration in the side panel now carry a road and clock icon.
+
 ### Fixed
 
+- A long recording name no longer hides its distance and duration in the side panel, only the name is truncated.
 - Satellite counts, signal quality, and other status colors are now readable in light mode, previously the yellow and green shades washed out against the light background.
 - Plot series lines and query editor syntax highlighting are now readable in light mode too, the plot also gets a faint-grey canvas so the lines stand out.
 - Focusing a track no longer washes the whole map to white, the dimming is now a gentle veil, lighter still in dark mode.

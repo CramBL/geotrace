@@ -218,33 +218,45 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, display_name: &str, ctx: &mut
         let arrow = expand_arrow(is_expanded);
         let dist = gt_fmt::format_distance(file.metadata.total_distance_km);
         let dur = gt_fmt::format_human_terse_duration(file.metadata.total_duration);
-        let label = format!("{arrow} {display_name}  {dist}  {dur}");
         let is_selected = ctx.tree.selection.contains(&file_key);
-        // `.truncate()` clips the label at the available width instead of forcing
-        // the panel to grow when the filename is long.
-        let resp =
-            ui.add(egui::Button::selectable(is_selected, egui::RichText::new(label)).truncate());
-        let resp = if let Some(stats) = file.metadata.fix_stats {
+        // Truncate only the identity: the distance and duration stay pinned on the
+        // right so a long recording name clips itself instead of hiding the metrics
+        // or forcing the panel to grow. `Sides::shrink_left` lays the right group
+        // out first, then truncates the identity into whatever width is left.
+        let (resp, ()) = egui::Sides::new().shrink_left().truncate().show(
+            ui,
+            |ui| {
+                let label = format!("{arrow} {display_name}");
+                ui.add(egui::Button::selectable(is_selected, egui::RichText::new(label)).truncate())
+            },
+            |ui| {
+                // Right widgets are laid out right-to-left, so add trailing items first.
+                if !file.load_warnings.is_empty() {
+                    let icon = egui::RichText::new(egui_phosphor::regular::WARNING)
+                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode));
+                    if ui
+                        .add(egui::Label::new(icon).sense(egui::Sense::click()))
+                        .on_hover_text("Data quality warnings - click for details")
+                        .clicked()
+                    {
+                        *ctx.warnings_request =
+                            Some((file.metadata.filename.clone(), file.load_warnings.clone()));
+                    }
+                }
+                ui.label(format!("{} {dur}", egui_phosphor::regular::CLOCK))
+                    .on_hover_text("Total duration");
+                ui.label(format!("{} {dist}", egui_phosphor::regular::ROAD_HORIZON))
+                    .on_hover_text("Total distance");
+            },
+        );
+        if let Some(stats) = file.metadata.fix_stats {
             resp.on_hover_ui(|ui| {
                 ui.label(file.metadata.filename.as_str());
                 fix_stats_tooltip_row(ui, stats);
             })
         } else {
             resp.on_hover_text(file.metadata.filename.as_str())
-        };
-        if !file.load_warnings.is_empty() {
-            let icon = egui::RichText::new(egui_phosphor::regular::WARNING)
-                .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode));
-            if ui
-                .add(egui::Label::new(icon).sense(egui::Sense::click()))
-                .on_hover_text("Data quality warnings - click for details")
-                .clicked()
-            {
-                *ctx.warnings_request =
-                    Some((file.metadata.filename.clone(), file.load_warnings.clone()));
-            }
         }
-        resp
     });
 
     let file_label_resp = row_response.inner;
