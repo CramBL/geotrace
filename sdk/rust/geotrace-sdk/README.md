@@ -19,6 +19,32 @@ let nav_file = recorder.finish()?;
 nav_file.write_to_file("track.gtd")?;
 ```
 
+## Channel units
+
+Use a recognized `Unit` so GeoTrace can dimension-check and convert channel values in queries.
+Values stay in their declared scale for storage and plotting, so a channel declared as `Unit::MG` should contain and display milli-g values.
+
+```rust
+use geotrace_sdk::{Channel, ChannelUnit, Unit};
+
+let acceleration = Channel::builder()
+    .name("accel")
+    .unit(Unit::MG)
+    .times(times.clone())
+    .values(milli_g_values)
+    .build()?;
+
+let vendor_measurement = Channel::builder()
+    .name("quality")
+    .unit(ChannelUnit::custom("vendor score")?)
+    .times(times)
+    .values(scores)
+    .build()?;
+```
+
+Custom units are preserved for display but treated as dimensionless because GeoTrace has no safe conversion rule for them.
+Unknown labels in existing files are matched against recognized aliases first and otherwise preserved as custom units.
+
 ## Examples
 
 - [**from_csv.rs**](examples/from_csv.rs) - Convert GPS data exported as CSV rows into a `.gtd` file.

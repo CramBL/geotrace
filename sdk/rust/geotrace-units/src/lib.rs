@@ -192,20 +192,32 @@ impl BaseUnit {
 /// A recognized unit, optionally scaled by an SI prefix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Unit {
-    pub prefix: Option<SiPrefix>,
-    pub base: BaseUnit,
+    prefix: Option<SiPrefix>,
+    base: BaseUnit,
 }
 
 impl Unit {
     pub const DEG: Self = Self::base(BaseUnit::Deg);
     pub const M: Self = Self::base(BaseUnit::M);
+    pub const NM: Self = Self::prefixed(SiPrefix::Nano, BaseUnit::M);
+    pub const UM: Self = Self::prefixed(SiPrefix::Micro, BaseUnit::M);
+    pub const MM: Self = Self::prefixed(SiPrefix::Milli, BaseUnit::M);
+    pub const CM: Self = Self::prefixed(SiPrefix::Centi, BaseUnit::M);
     pub const KM: Self = Self::prefixed(SiPrefix::Kilo, BaseUnit::M);
     pub const KM_PER_H: Self = Self::base(BaseUnit::KmPerH);
     pub const M_PER_S: Self = Self::base(BaseUnit::MPerS);
+    pub const MM_PER_S: Self = Self::prefixed(SiPrefix::Milli, BaseUnit::MPerS);
+    pub const CM_PER_S: Self = Self::prefixed(SiPrefix::Centi, BaseUnit::MPerS);
     pub const KN: Self = Self::base(BaseUnit::Kn);
     pub const M_PER_S2: Self = Self::base(BaseUnit::MPerS2);
+    pub const MM_PER_S2: Self = Self::prefixed(SiPrefix::Milli, BaseUnit::MPerS2);
+    pub const CM_PER_S2: Self = Self::prefixed(SiPrefix::Centi, BaseUnit::MPerS2);
     pub const G: Self = Self::base(BaseUnit::G);
+    pub const UG: Self = Self::prefixed(SiPrefix::Micro, BaseUnit::G);
+    pub const MG: Self = Self::prefixed(SiPrefix::Milli, BaseUnit::G);
     pub const KM_PER_H_PER_S: Self = Self::base(BaseUnit::KmPerHPerS);
+    pub const NS: Self = Self::prefixed(SiPrefix::Nano, BaseUnit::S);
+    pub const US: Self = Self::prefixed(SiPrefix::Micro, BaseUnit::S);
     pub const MS: Self = Self::prefixed(SiPrefix::Milli, BaseUnit::S);
     pub const S: Self = Self::base(BaseUnit::S);
     pub const MIN: Self = Self::base(BaseUnit::Min);
@@ -215,16 +227,29 @@ impl Unit {
     pub const PER_MIN: Self = Self::base(BaseUnit::PerMin);
     pub const PER_H: Self = Self::base(BaseUnit::PerH);
 
-    pub const CANONICAL: [Self; 17] = [
+    /// Every unit accepted as recognized channel metadata.
+    pub const CANONICAL: [Self; 29] = [
         Self::DEG,
         Self::M,
+        Self::NM,
+        Self::UM,
+        Self::MM,
+        Self::CM,
         Self::KM,
         Self::KM_PER_H,
         Self::M_PER_S,
+        Self::MM_PER_S,
+        Self::CM_PER_S,
         Self::KN,
         Self::M_PER_S2,
+        Self::MM_PER_S2,
+        Self::CM_PER_S2,
         Self::G,
+        Self::UG,
+        Self::MG,
         Self::KM_PER_H_PER_S,
+        Self::NS,
+        Self::US,
         Self::MS,
         Self::S,
         Self::MIN,
@@ -568,9 +593,15 @@ mod tests {
 
     #[test]
     fn every_base_has_a_canonical_round_trip() {
-        assert_eq!(Unit::CANONICAL.len(), BaseUnit::COUNT + 2);
-        for base in BaseUnit::iter() {
-            let unit = Unit::base(base);
+        let prefixed_count = BaseUnit::iter()
+            .map(|base| {
+                SiPrefix::iter()
+                    .filter(|prefix| base.accepts_prefix(*prefix))
+                    .count()
+            })
+            .sum::<usize>();
+        assert_eq!(Unit::CANONICAL.len(), BaseUnit::COUNT + prefixed_count);
+        for unit in Unit::CANONICAL {
             let text = unit.to_string();
             assert_eq!(Unit::from_label(&text), Some(unit), "{text}");
         }

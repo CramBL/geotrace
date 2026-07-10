@@ -52,19 +52,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
 
     // A vector channel: `values` is row-major, one row of x/y/z per
-    // timestamp. Declaring the unit as `g` (or `mg`) lets GeoTrace's query
+    // timestamp. Declaring the unit as `mg` lets GeoTrace's query
     // language compare it against acceleration literals.
     recorder.add(
         Channel::builder()
             .name("accel")
-            .unit(Unit::G)
+            .unit(Unit::MG)
             .description("IMU acceleration")
             .components(["x", "y", "z"])
             .times(times)
             .values(vec![
-                0.0, 0.2, 0.98, //
-                0.1, 0.2, 0.98, //
-                0.2, 0.2, 0.98,
+                0.0, 200.0, 980.0, //
+                100.0, 200.0, 980.0, //
+                200.0, 200.0, 980.0,
             ])
             .build()?,
     );
