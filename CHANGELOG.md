@@ -4,8 +4,9 @@
 
 ### Fixed
 
-- Satellite counts, signal quality, and other status colors are now readable in light mode—previously the yellow and green shades washed out against the light background.
-- Plot series lines and query editor syntax highlighting are now readable in light mode too; the plot also gets a faint-grey canvas so the lines stand out.
+- Satellite counts, signal quality, and other status colors are now readable in light mode, previously the yellow and green shades washed out against the light background.
+- Plot series lines and query editor syntax highlighting are now readable in light mode too, the plot also gets a faint-grey canvas so the lines stand out.
+- Focusing a track no longer washes the whole map to white, the dimming is now a gentle veil, lighter still in dark mode.
 
 ## 0.5.1 - 2026-07-09
 
@@ -16,13 +17,13 @@
 
 ### Fixed
 
-- Side panel file labels no longer force the panel to grow when a recording has a long name—the label is now truncated at the available width.
+- Side panel file labels no longer force the panel to grow when a recording has a long name, the label is now truncated at the available width.
 
 ## 0.5.0 - 2026-07-09
 
 ### Added
 
-- Map display toggles: an eye button above the map/satellite switch opens a popup where each kind of map element (tracks, track points, satellite labels, the three marker types, query highlights) can be hidden or shown, with a live count of each. Hiding is purely visual - filters, the track list, and deletion are unaffected. `only` (or alt-click) shows a single category, pressing it again restores the previous state. When anything is hidden the eye turns into a tinted crossed-out eye as a reminder.
+- Map display toggles: an eye button above the map/satellite switch opens a popup where each kind of map element (tracks, track points, satellite labels, the three marker types, query highlights) can be hidden or shown, with a live count of each. Hiding is purely visual, filters, the track list, and deletion are unaffected. `only` (or alt-click) shows a single category, pressing it again restores the previous state. When anything is hidden the eye turns into a tinted crossed-out eye as a reminder.
 - Plot display settings: a gear button in the plot's filter row opens a small popup with an adjustable line width and the grid toggle (previously its own button in the row).
 
 ### Changed
