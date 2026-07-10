@@ -19,9 +19,15 @@ pub fn quantity(unit: Unit) -> Quantity {
 }
 
 pub fn dimension(unit: Unit) -> Dimension {
-    quantity(unit)
-        .dimension()
-        .unwrap_or(Dimension::DIMENSIONLESS)
+    match unit.quantity() {
+        PhysicalQuantity::Angle => Dimension::ANGLE,
+        PhysicalQuantity::Length => Dimension::LENGTH,
+        PhysicalQuantity::Speed => Dimension::SPEED,
+        PhysicalQuantity::Acceleration => Dimension::ACCELERATION,
+        PhysicalQuantity::Duration => Dimension::TIME,
+        PhysicalQuantity::Ratio => Dimension::DIMENSIONLESS,
+        PhysicalQuantity::Rate => Dimension::RATE,
+    }
 }
 
 /// Example literal used in "needs a unit" error help, per quantity.
