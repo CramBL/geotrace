@@ -629,6 +629,33 @@ fn snapshot_app_with_file_loaded() {
     harness.snapshot_with_tolerance("app_with_file_loaded", 2.5, 4);
 }
 
+/// The same loaded-file view under the light theme, so the side panel, chip row,
+/// and plot are all exercised on a light background - the general light-mode
+/// baseline alongside the plot- and badge-specific ones.
+#[test]
+fn snapshot_app_with_file_loaded_light() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(GOLD_BYTES)),
+            name: "gold.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+    harness.inner.ctx.set_theme(egui::ThemePreference::Light);
+    harness.inner.run_steps(60);
+
+    harness.snapshot_with_tolerance("app_with_file_loaded_light", 2.5, 4);
+}
+
 /// Snapshot of the app zoomed into the cluster of Sahara desert tracks from
 /// the gold dataset. All other tracks (antimeridian, southern hemisphere, etc.)
 /// are hidden so only the closely-spaced Sahara tracks fill the map.
@@ -917,6 +944,62 @@ fn snapshot_app_plot_channels() {
         shared.plot_state.show_channels,
         "the section stays revealed"
     );
+}
+
+/// Light-theme plot render with a spread of series enabled. The plot canvas is
+/// pure-ish white on a light theme, where the dark-mode series palette was
+/// invisible; this is the baseline that guards the theme-aware `metric_color`
+/// light variants so a regression there fails CI instead of only being caught
+/// by eye in dark mode.
+#[test]
+fn snapshot_app_plot_light() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(DEMO_BYTES)),
+            name: "demo_trip.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+
+    // Force the light theme (startup settings default to system/dark in tests).
+    harness.inner.ctx.set_theme(egui::ThemePreference::Light);
+
+    // Enable a spread of seen/fix series across constellations so the snapshot
+    // exercises the light palette's constellation coding and the seen-vs-fix
+    // depth separation. (Util/slip families are advanced-gated and covered by
+    // the contrast test rather than shown here.)
+    {
+        use gt_types::MetricKind as M;
+        let shown = [
+            M::SatsSeen,
+            M::SatsFix,
+            M::GpsSeen,
+            M::GpsFix,
+            M::GlonassSeen,
+            M::GalileoSeen,
+            M::BeidouSeen,
+            M::Velocity,
+        ];
+        let state = harness.inner.state_mut();
+        let mut shared = state.shared.borrow_mut();
+        let vis = &mut shared.plot_state.metric_vis;
+        use strum::IntoEnumIterator as _;
+        for kind in M::iter() {
+            *vis.field_mut(kind) = shown.contains(&kind);
+        }
+    }
+    harness.inner.run_steps(8);
+
+    harness.snapshot_loose("app_plot_light");
 }
 
 /// A channel-source query end to end: filtering on a vector channel's
