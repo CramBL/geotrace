@@ -78,6 +78,46 @@ fn make_gtd_bytes(start_us: i64, n: u64) -> Vec<u8> {
     std::fs::read(tmp.path()).expect("read temp gtd")
 }
 
+/// Like [`make_gtd_bytes`] but sets the SDK metadata root attributes the History
+/// listing reads (`meta_title`/`meta_device`/`meta_notes`), each only when
+/// `Some`, mirroring how `geotrace_sdk` writes them.
+#[expect(
+    clippy::expect_used,
+    reason = "test helper; panicking on I/O failure is the right behaviour"
+)]
+fn make_gtd_bytes_with_meta(
+    start_us: i64,
+    n: u64,
+    title: Option<&str>,
+    device: Option<&str>,
+    notes: Option<&str>,
+) -> Vec<u8> {
+    use hdf5_pure::AttrValue;
+
+    let tmp = tempfile::NamedTempFile::new().expect("temp file");
+    let timestamps: Vec<i64> = (0..n).map(|i| start_us + i as i64).collect();
+    let shape = [n];
+
+    let mut fb = hdf5_pure::FileBuilder::new();
+    if let Some(title) = title {
+        fb.set_attr("meta_title", AttrValue::String(title.to_owned()));
+    }
+    if let Some(device) = device {
+        fb.set_attr("meta_device", AttrValue::String(device.to_owned()));
+    }
+    if let Some(notes) = notes {
+        fb.set_attr("meta_notes", AttrValue::String(notes.to_owned()));
+    }
+    let mut nav_gb = fb.create_group("nav_points");
+    let ds = nav_gb.create_dataset("time");
+    ds.with_shape(&shape);
+    ds.with_i64_data(&timestamps);
+    fb.add_group(nav_gb.finish());
+    fb.write(tmp.path()).expect("write temp gtd");
+
+    std::fs::read(tmp.path()).expect("read temp gtd")
+}
+
 /// Like [`make_gtd_bytes`] but stores **chunked, deflate-compressed** datasets
 /// (time + lat + lon), matching how real recordings are encoded - so the
 /// free-space tests exercise reclaiming chunked/filtered storage, not just
@@ -464,6 +504,47 @@ fn list_recordings_returns_entries_sorted_descending() {
         entries[0].meta.start_us >= entries[1].meta.start_us,
         "entries should be sorted descending by start_us"
     );
+}
+
+#[test]
+fn list_recordings_surfaces_sdk_metadata() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let with_meta = make_gtd_bytes_with_meta(
+        1_000,
+        3,
+        Some("Morning ride"),
+        Some("uBlox F9P"),
+        Some("cross-town commute"),
+    );
+    let meta = extract_meta(&with_meta).expect("meta");
+    db.insert_simple("auto:ride", &meta, &with_meta)
+        .expect("insert with metadata");
+
+    // A recording with no SDK metadata attributes.
+    let plain = make_gtd_bytes(2_000, 3);
+    let plain_meta = extract_meta(&plain).expect("plain meta");
+    db.insert_simple("auto:plain", &plain_meta, &plain)
+        .expect("insert plain");
+
+    let entries = db.list_recordings().expect("list");
+    let labelled = entries
+        .iter()
+        .find(|e| e.db_ref.identity == "auto:ride")
+        .expect("labelled entry present");
+    assert_eq!(labelled.title.as_deref(), Some("Morning ride"));
+    assert_eq!(labelled.device.as_deref(), Some("uBlox F9P"));
+    assert_eq!(labelled.notes.as_deref(), Some("cross-town commute"));
+
+    let plain_entry = entries
+        .iter()
+        .find(|e| e.db_ref.identity == "auto:plain")
+        .expect("plain entry present");
+    assert_eq!(plain_entry.title, None);
+    assert_eq!(plain_entry.device, None);
+    assert_eq!(plain_entry.notes, None);
 }
 
 #[test]

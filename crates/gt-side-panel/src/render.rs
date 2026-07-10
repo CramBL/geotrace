@@ -10,8 +10,8 @@ use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask, HighlightScope, Ma
 use crate::filter::{FilterPanelState, render_filter_panel};
 use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState};
 use crate::widgets::{
-    checkbox_width, expand_arrow, fix_stats_tooltip_row, has_metadata_details, paint_map_hover_bg,
-    point_item_row, tri_checkbox,
+    MetadataView, checkbox_width, expand_arrow, fix_stats_tooltip_row, has_metadata_details,
+    paint_map_hover_bg, point_item_row, tri_checkbox,
 };
 
 /// A recording's metadata, captured when its note icon is clicked so the app can
@@ -249,7 +249,7 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, display_name: &str, ctx: &mut
         // dialog, so metadata is one click away without pushing a block under the
         // row. Only shown when there is something to reveal.
         let identity = ctx.identity(fi);
-        if has_metadata_details(&file.metadata, identity) {
+        if has_metadata_details(&MetadataView::from_file_metadata(&file.metadata, identity)) {
             // A frameless button (not a Label) so the pointer reads as clickable
             // and the icon highlights on hover, instead of showing a text cursor.
             let icon = ui

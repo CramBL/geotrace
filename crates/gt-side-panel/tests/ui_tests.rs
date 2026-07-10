@@ -540,20 +540,18 @@ fn snapshot_recording_name_template() {
 fn snapshot_metadata_detail_rows_content() {
     // Directly exercise the grid renderer used by the recording-details dialog,
     // independent of the note-icon click that opens it.
-    let meta = gt_types::FileMetadata {
-        title: Some("Morning ride".to_owned()),
-        device: Some("uBlox F9P".to_owned()),
-        notes: Some("cross-town commute".to_owned()),
-        ..gt_types::FileMetadata::default()
-    };
     let mut h = TestHarness::builder()
         .size(egui::vec2(480.0, 120.0))
         .ui(move |ui| {
             ui.add_space(4.0);
             gt_side_panel::widgets::metadata_detail_rows(
                 ui,
-                &meta,
-                Some("auto:Morning ride::uBlox F9P"),
+                &gt_side_panel::widgets::MetadataView {
+                    title: Some("Morning ride"),
+                    device: Some("uBlox F9P"),
+                    identity: Some("auto:Morning ride::uBlox F9P"),
+                    notes: Some("cross-town commute"),
+                },
             );
         });
     h.run();

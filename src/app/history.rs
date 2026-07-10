@@ -1,5 +1,6 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use gt_history::{DatabaseRef, PruneMode, RecordingEntry, RecordingMeta};
+use gt_side_panel::widgets::{MetadataView, has_metadata_details, metadata_detail_rows};
 use gt_ui_theme::warning_amber;
 
 use crate::app::history_db::{DeleteReason, HistoryManager};
@@ -645,7 +646,7 @@ fn render_row(
     already_loaded: bool,
     manager: &HistoryManager,
 ) {
-    identity_cell(ui, &entry.db_ref.identity);
+    identity_cell(ui, entry);
 
     let ts = DateTime::<Utc>::from_timestamp_micros(entry.meta.start_us)
         .unwrap_or_default()
@@ -686,10 +687,22 @@ fn render_row(
 }
 
 /// Render the identity column cell: an optional `auto` badge plus the identity,
-/// truncated so a long name clips itself rather than growing the window. The
-/// full identity stays available on hover.
-fn identity_cell(ui: &mut egui::Ui, identity: &str) {
+/// truncated so a long name clips itself rather than growing the window. A note
+/// icon marks recordings that carry SDK metadata. The full identity, and any
+/// title/device/notes, stay available on hover.
+fn identity_cell(ui: &mut egui::Ui, entry: &RecordingEntry) {
+    let identity = entry.db_ref.identity.as_str();
     let (display_name, is_auto) = identity_display_parts(identity);
+    // The full identity is the hover's first line, so leave it out of the view:
+    // the note icon and rows are for the SDK's title/device/notes only. Every
+    // recording has an identity, so including it would badge every row.
+    let meta = MetadataView {
+        title: entry.title.as_deref(),
+        device: entry.device.as_deref(),
+        identity: None,
+        notes: entry.notes.as_deref(),
+    };
+    let has_metadata = has_metadata_details(&meta);
     ui.horizontal(|ui| {
         if is_auto {
             ui.label(
@@ -698,10 +711,16 @@ fn identity_cell(ui: &mut egui::Ui, identity: &str) {
                     .color(ui.visuals().weak_text_color()),
             );
         }
+        if has_metadata {
+            ui.label(egui::RichText::new(egui_phosphor::regular::NOTE).weak());
+        }
         ui.add(egui::Label::new(display_name).truncate());
     })
     .response
-    .on_hover_text(identity);
+    .on_hover_ui(|ui| {
+        ui.label(identity);
+        metadata_detail_rows(ui, &meta);
+    });
 }
 
 fn identity_display_parts(identity: &str) -> (&str, bool) {
@@ -767,7 +786,34 @@ fn date_to_end_us(s: &str) -> Option<i64> {
 mod tests {
     use gt_test_utils::TestHarness;
 
-    use super::{identity_cell, identity_display_parts};
+    use super::{
+        DatabaseRef, RecordingEntry, RecordingMeta, identity_cell, identity_display_parts,
+    };
+
+    /// A listing entry for `identity` with no tracks and no SDK metadata, for the
+    /// identity-cell layout tests.
+    fn entry_with_identity(identity: &str) -> RecordingEntry {
+        RecordingEntry {
+            db_ref: DatabaseRef {
+                identity: identity.to_owned(),
+                group_name: "rec0".to_owned(),
+            },
+            meta: RecordingMeta {
+                start_us: 0,
+                end_us: 0,
+                nav_point_count: 0,
+                sat_report_count: 0,
+                marker_count: 0,
+                event_marker_count: 0,
+                gtd_size_bytes: 0,
+            },
+            total_tracks: 0,
+            hidden_tracks: 0,
+            title: None,
+            device: None,
+            notes: None,
+        }
+    }
 
     /// Settled width of the History window, mirroring the real container: a
     /// resizable [`egui::Window`] holding the identity grid in a vertical scroll
@@ -777,7 +823,7 @@ mod tests {
     fn history_window_width(identity: &str) -> f32 {
         let width = std::rc::Rc::new(std::cell::Cell::new(-1.0_f32));
         let probe = std::rc::Rc::clone(&width);
-        let identity = identity.to_owned();
+        let entry = entry_with_identity(identity);
         let mut harness = TestHarness::builder()
             .size(egui::vec2(1600.0, 500.0))
             .ui(move |ui| {
@@ -790,7 +836,7 @@ mod tests {
                                 .num_columns(6)
                                 .min_col_width(80.0)
                                 .show(ui, |ui| {
-                                    identity_cell(ui, &identity);
+                                    identity_cell(ui, &entry);
                                     ui.label("2026-01-15 12:00");
                                     ui.label("1h 02m");
                                     ui.label("12.3k");
