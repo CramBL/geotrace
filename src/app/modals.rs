@@ -79,7 +79,9 @@ pub fn show_delete_confirmation(
                         match key {
                             NodeKey::File(fi) => {
                                 if let Some(file) = fi.get(loaded_files) {
-                                    ui.label(&file.metadata.filename);
+                                    let name = file.metadata.filename.as_str();
+                                    ui.add(egui::Label::new(name).truncate())
+                                        .on_hover_text(name);
                                 }
                             }
                             NodeKey::Track(TrackRef { fi, index: ti }) => {
@@ -90,10 +92,12 @@ pub fn show_delete_confirmation(
                                     let dur = gt_fmt::format_human_terse_duration(
                                         track.metadata.duration,
                                     );
-                                    ui.label(format!(
+                                    let label = format!(
                                         "  {} / #{}  {dist}  {dur}",
                                         file.metadata.filename, track.metadata.index
-                                    ));
+                                    );
+                                    ui.add(egui::Label::new(label.as_str()).truncate())
+                                        .on_hover_text(label.as_str());
                                 }
                             }
                         }
@@ -359,7 +363,9 @@ pub fn show_orphaned_event_markers_popup(
                         {
                             ui.separator();
                         }
-                        ui.monospace(format!("{}  {}", ts.format("%Y-%m-%d %H:%M:%S"), path));
+                        let line = format!("{}  {}", ts.format("%Y-%m-%d %H:%M:%S"), path);
+                        ui.add(egui::Label::new(egui::RichText::new(&line).monospace()).truncate())
+                            .on_hover_text(&line);
                         prev_ts = Some(*ts);
                     }
                 });
@@ -389,7 +395,8 @@ pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<
         .resizable(true)
         .min_width(540.0)
         .show(ui.ctx(), |ui| {
-            ui.label(egui::RichText::new(filename.as_str()).strong());
+            ui.add(egui::Label::new(egui::RichText::new(filename.as_str()).strong()).truncate())
+                .on_hover_text(filename.as_str());
             ui.separator();
             egui::ScrollArea::vertical()
                 .max_height(400.0)
