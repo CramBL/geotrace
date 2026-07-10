@@ -69,6 +69,12 @@ examples:
 gen-fixture:
     cargo run -p geotrace-c --bin gen_fixture
 
+# Refresh the gt-snap live-API fixtures from the Valhalla server (network!).
+# Fixtures are frozen once committed - review the resulting diff like code.
+[group("native")]
+snap-fixtures:
+    cargo run -p gt-snap --example fetch_fixtures
+
 [group("native")]
 sdk-doc:
     RUSTDOCFLAGS="-D warnings" cargo doc -p geotrace-sdk --no-deps

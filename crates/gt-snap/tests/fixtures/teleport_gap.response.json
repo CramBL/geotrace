@@ -1,0 +1,601 @@
+{
+  "alternate_paths": [],
+  "edges": [
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 742322419
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 742322419
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 654821502
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 496181694
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 1355324264
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 1355324264
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 129370598
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 129370598
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 129370598
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 680691471
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 27212548
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "service_other",
+      "surface": "paved_smooth",
+      "way_id": 1366539120
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "service_other",
+      "surface": "paved_smooth",
+      "way_id": 44091158
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 576405197
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 576405197
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 201983347
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 237193334
+    },
+    {
+      "names": [
+        "H.C. Andersens Boulevard"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 50,
+      "surface": "paved_smooth",
+      "way_id": 237193334
+    },
+    {
+      "names": [
+        "Randersgade"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 30,
+      "surface": "paved_smooth",
+      "way_id": 27417317
+    },
+    {
+      "names": [
+        "Århusgade"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 30,
+      "surface": "paved_smooth",
+      "way_id": 28612121
+    },
+    {
+      "names": [
+        "Århusgade"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 30,
+      "surface": "paved_smooth",
+      "way_id": 28612121
+    },
+    {
+      "names": [
+        "Århusgade"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 30,
+      "surface": "paved_smooth",
+      "way_id": 28612121
+    },
+    {
+      "names": [
+        "Århusgade"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 30,
+      "surface": "paved_smooth",
+      "way_id": 28612121
+    },
+    {
+      "names": [
+        "Århusgade"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 30,
+      "surface": "paved_smooth",
+      "way_id": 28612121
+    },
+    {
+      "names": [
+        "Århusgade"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 30,
+      "surface": "paved_smooth",
+      "way_id": 28612121
+    },
+    {
+      "names": [
+        "Århusgade"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 30,
+      "surface": "paved_smooth",
+      "way_id": 28612121
+    },
+    {
+      "names": [
+        "Århusgade"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 30,
+      "surface": "paved_smooth",
+      "way_id": 28612121
+    },
+    {
+      "names": [
+        "Århusgade"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 30,
+      "surface": "paved_smooth",
+      "way_id": 28612121
+    },
+    {
+      "names": [
+        "Århusgade"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 30,
+      "surface": "paved_smooth",
+      "way_id": 28612121
+    },
+    {
+      "names": [
+        "Århusgade"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 30,
+      "surface": "paved_smooth",
+      "way_id": 28612121
+    },
+    {
+      "names": [
+        "Århusgade"
+      ],
+      "road_class": "tertiary",
+      "speed_limit": 30,
+      "surface": "paved_smooth",
+      "way_id": 28612121
+    }
+  ],
+  "matched_points": [
+    {
+      "distance_along_edge": 0.0,
+      "distance_from_trace_point": 3.65084,
+      "edge_index": 0,
+      "lat": 55.678743,
+      "lon": 12.564487,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 1.0,
+      "distance_from_trace_point": 21.994808,
+      "edge_index": 1,
+      "lat": 55.6785,
+      "lon": 12.564779,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 1.0,
+      "distance_from_trace_point": 49.859259,
+      "edge_index": 3,
+      "lat": 55.678323,
+      "lon": 12.564986,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.704356,
+      "distance_from_trace_point": 2.139912,
+      "edge_index": 4,
+      "lat": 55.677478,
+      "lon": 12.565901,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 1.0,
+      "distance_from_trace_point": 19.607448,
+      "edge_index": 6,
+      "lat": 55.677234,
+      "lon": 12.566165,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.755798,
+      "distance_from_trace_point": 3.068315,
+      "edge_index": 7,
+      "lat": 55.676682,
+      "lon": 12.566739,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 1.0,
+      "distance_from_trace_point": 27.703282,
+      "edge_index": 8,
+      "lat": 55.676432,
+      "lon": 12.567001,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.0,
+      "distance_from_trace_point": 36.625505,
+      "edge_index": 9,
+      "lat": 55.675574,
+      "lon": 12.568052,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 1.0,
+      "distance_from_trace_point": 19.009492,
+      "edge_index": 9,
+      "lat": 55.675368,
+      "lon": 12.568444,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 1.0,
+      "distance_from_trace_point": 15.859353,
+      "edge_index": 10,
+      "lat": 55.675225,
+      "lon": 12.568747,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.0,
+      "distance_from_trace_point": 8.076088,
+      "edge_index": 11,
+      "lat": 55.674774,
+      "lon": 12.569657,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 1.0,
+      "distance_from_trace_point": 39.607994,
+      "edge_index": 11,
+      "lat": 55.674654,
+      "lon": 12.569619,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.0,
+      "distance_from_trace_point": 40.381278,
+      "edge_index": 12,
+      "lat": 55.673854,
+      "lon": 12.571254,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.146532,
+      "distance_from_trace_point": 0.371758,
+      "edge_index": 13,
+      "lat": 55.673846,
+      "lon": 12.571503,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.853842,
+      "distance_from_trace_point": 4.30317,
+      "edge_index": 14,
+      "lat": 55.673517,
+      "lon": 12.572093,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 1.0,
+      "distance_from_trace_point": 42.10243,
+      "edge_index": 15,
+      "lat": 55.673417,
+      "lon": 12.572287,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.0,
+      "distance_from_trace_point": 16.452714,
+      "edge_index": 16,
+      "lat": 55.67276,
+      "lon": 12.573622,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.225572,
+      "distance_from_trace_point": 3.813892,
+      "edge_index": 17,
+      "lat": 55.672568,
+      "lon": 12.574072,
+      "type": "matched"
+    },
+    {
+      "lat": 55.672126,
+      "lon": 12.574627,
+      "type": "unmatched"
+    },
+    {
+      "lat": 55.6718,
+      "lon": 12.57522,
+      "type": "unmatched"
+    },
+    {
+      "distance_along_edge": 0.694039,
+      "distance_from_trace_point": 0.295225,
+      "edge_index": 18,
+      "lat": 55.70606,
+      "lon": 12.580534,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.282288,
+      "distance_from_trace_point": 7.958495,
+      "edge_index": 19,
+      "lat": 55.706192,
+      "lon": 12.580736,
+      "type": "interpolated"
+    },
+    {
+      "distance_along_edge": 0.56135,
+      "distance_from_trace_point": 3.519483,
+      "edge_index": 19,
+      "lat": 55.706213,
+      "lon": 12.580974,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.812289,
+      "distance_from_trace_point": 8.91672,
+      "edge_index": 19,
+      "lat": 55.706232,
+      "lon": 12.581187,
+      "type": "interpolated"
+    },
+    {
+      "distance_along_edge": 0.267206,
+      "distance_from_trace_point": 4.472049,
+      "edge_index": 20,
+      "lat": 55.706253,
+      "lon": 12.581424,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.401223,
+      "distance_from_trace_point": 0.045697,
+      "edge_index": 21,
+      "lat": 55.706275,
+      "lon": 12.581662,
+      "type": "interpolated"
+    },
+    {
+      "distance_along_edge": 0.489655,
+      "distance_from_trace_point": 5.448476,
+      "edge_index": 22,
+      "lat": 55.706294,
+      "lon": 12.581875,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.180054,
+      "distance_from_trace_point": 1.055128,
+      "edge_index": 23,
+      "lat": 55.706316,
+      "lon": 12.582113,
+      "type": "interpolated"
+    },
+    {
+      "distance_along_edge": 1.0,
+      "distance_from_trace_point": 3.284881,
+      "edge_index": 23,
+      "lat": 55.70634,
+      "lon": 12.582364,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.0,
+      "distance_from_trace_point": 3.42984,
+      "edge_index": 25,
+      "lat": 55.706364,
+      "lon": 12.582573,
+      "type": "interpolated"
+    },
+    {
+      "distance_along_edge": 0.170341,
+      "distance_from_trace_point": 0.154107,
+      "edge_index": 26,
+      "lat": 55.706388,
+      "lon": 12.582799,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.640685,
+      "distance_from_trace_point": 3.125751,
+      "edge_index": 26,
+      "lat": 55.706414,
+      "lon": 12.583038,
+      "type": "interpolated"
+    },
+    {
+      "distance_along_edge": 0.131977,
+      "distance_from_trace_point": 3.366948,
+      "edge_index": 27,
+      "lat": 55.706436,
+      "lon": 12.583247,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.451796,
+      "distance_from_trace_point": 0.190201,
+      "edge_index": 28,
+      "lat": 55.706463,
+      "lon": 12.583486,
+      "type": "interpolated"
+    },
+    {
+      "distance_along_edge": 0.175126,
+      "distance_from_trace_point": 2.907069,
+      "edge_index": 29,
+      "lat": 55.70649,
+      "lon": 12.583723,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.402474,
+      "distance_from_trace_point": 3.53769,
+      "edge_index": 29,
+      "lat": 55.706512,
+      "lon": 12.583933,
+      "type": "interpolated"
+    },
+    {
+      "distance_along_edge": 0.661316,
+      "distance_from_trace_point": 0.203536,
+      "edge_index": 29,
+      "lat": 55.706537,
+      "lon": 12.584172,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.920158,
+      "distance_from_trace_point": 3.130617,
+      "edge_index": 29,
+      "lat": 55.706563,
+      "lon": 12.584411,
+      "type": "interpolated"
+    },
+    {
+      "distance_along_edge": 0.363753,
+      "distance_from_trace_point": 3.438474,
+      "edge_index": 30,
+      "lat": 55.706585,
+      "lon": 12.58462,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 1.0,
+      "distance_from_trace_point": 0.166579,
+      "edge_index": 30,
+      "lat": 55.70661,
+      "lon": 12.584857,
+      "type": "matched"
+    }
+  ],
+  "osm_changeset": 185397177,
+  "shape": "mpjeiBo_{}VbH{I|@gAbCcDrDyEjDaEzs@ex@jCwClD_EjDyDna@{b@xGcHhAoAnCwCtt@u`AxKoW|G{Qf[{w@lFhA`q@ceBeA{ItAuCnS{c@Zs@lDqI~g@krAjEaOrDaKgl`A}rKq@PgDx@YuG_Cmk@s@eQK{B_AkU{@cRm@aL]wGmBw^k@uKa@sGcEux@oAiV",
+  "units": "kilometers"
+}

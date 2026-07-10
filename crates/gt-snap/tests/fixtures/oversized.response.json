@@ -1,0 +1,6 @@
+{
+  "error": "Too many shape points: (16001). The limit is 16000",
+  "error_code": 153,
+  "status": "Bad Request",
+  "status_code": 400
+}

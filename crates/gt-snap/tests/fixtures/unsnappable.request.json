@@ -1,0 +1,124 @@
+{
+  "costing": "auto",
+  "filters": {
+    "action": "include",
+    "attributes": [
+      "matched.point",
+      "matched.type",
+      "matched.edge_index",
+      "matched.distance_along_edge",
+      "matched.distance_from_trace_point",
+      "matched.begin_route_discontinuity",
+      "matched.end_route_discontinuity",
+      "shape",
+      "osm_changeset",
+      "edge.names",
+      "edge.way_id",
+      "edge.road_class",
+      "edge.speed_limit",
+      "edge.surface"
+    ]
+  },
+  "shape": [
+    {
+      "lat": 55.67997,
+      "lon": 12.66,
+      "time": 1767268800
+    },
+    {
+      "lat": 55.679684,
+      "lon": 12.660737,
+      "time": 1767268801
+    },
+    {
+      "lat": 55.679398,
+      "lon": 12.661474,
+      "time": 1767268802
+    },
+    {
+      "lat": 55.679023,
+      "lon": 12.662211,
+      "time": 1767268803
+    },
+    {
+      "lat": 55.678737,
+      "lon": 12.662947,
+      "time": 1767268804
+    },
+    {
+      "lat": 55.678451,
+      "lon": 12.663684,
+      "time": 1767268805
+    },
+    {
+      "lat": 55.678075,
+      "lon": 12.664421,
+      "time": 1767268806
+    },
+    {
+      "lat": 55.677789,
+      "lon": 12.665158,
+      "time": 1767268807
+    },
+    {
+      "lat": 55.677504,
+      "lon": 12.665895,
+      "time": 1767268808
+    },
+    {
+      "lat": 55.677128,
+      "lon": 12.666632,
+      "time": 1767268809
+    },
+    {
+      "lat": 55.676842,
+      "lon": 12.667368,
+      "time": 1767268810
+    },
+    {
+      "lat": 55.676556,
+      "lon": 12.668105,
+      "time": 1767268811
+    },
+    {
+      "lat": 55.676181,
+      "lon": 12.668842,
+      "time": 1767268812
+    },
+    {
+      "lat": 55.675895,
+      "lon": 12.669579,
+      "time": 1767268813
+    },
+    {
+      "lat": 55.675609,
+      "lon": 12.670316,
+      "time": 1767268814
+    },
+    {
+      "lat": 55.675233,
+      "lon": 12.671053,
+      "time": 1767268815
+    },
+    {
+      "lat": 55.674947,
+      "lon": 12.671789,
+      "time": 1767268816
+    },
+    {
+      "lat": 55.674662,
+      "lon": 12.672526,
+      "time": 1767268817
+    },
+    {
+      "lat": 55.674286,
+      "lon": 12.673263,
+      "time": 1767268818
+    },
+    {
+      "lat": 55.674,
+      "lon": 12.674,
+      "time": 1767268819
+    }
+  ]
+}

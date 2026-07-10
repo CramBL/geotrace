@@ -1,0 +1,178 @@
+{
+  "alternate_paths": [],
+  "edges": [
+    {
+      "names": [
+        "Islands Brygge"
+      ],
+      "road_class": "residential",
+      "speed_limit": 40,
+      "surface": "paved_smooth",
+      "way_id": 237111840
+    },
+    {
+      "names": [
+        "Islands Brygge"
+      ],
+      "road_class": "residential",
+      "speed_limit": 40,
+      "surface": "paved_smooth",
+      "way_id": 237111840
+    },
+    {
+      "names": [
+        "Islands Brygge"
+      ],
+      "road_class": "residential",
+      "speed_limit": 40,
+      "surface": "paved_smooth",
+      "way_id": 237111840
+    },
+    {
+      "road_class": "service_other",
+      "surface": "paved_smooth",
+      "way_id": 148936077
+    },
+    {
+      "road_class": "service_other",
+      "surface": "paved_smooth",
+      "way_id": 946807354
+    }
+  ],
+  "matched_points": [
+    {
+      "lat": 55.66677,
+      "lon": 12.5723,
+      "type": "unmatched"
+    },
+    {
+      "lat": 55.666632,
+      "lon": 12.572484,
+      "type": "unmatched"
+    },
+    {
+      "lat": 55.666493,
+      "lon": 12.572668,
+      "type": "unmatched"
+    },
+    {
+      "lat": 55.666265,
+      "lon": 12.572853,
+      "type": "unmatched"
+    },
+    {
+      "lat": 55.666126,
+      "lon": 12.573037,
+      "type": "unmatched"
+    },
+    {
+      "lat": 55.665988,
+      "lon": 12.573221,
+      "type": "unmatched"
+    },
+    {
+      "lat": 55.665759,
+      "lon": 12.573405,
+      "type": "unmatched"
+    },
+    {
+      "lat": 55.665621,
+      "lon": 12.573589,
+      "type": "unmatched"
+    },
+    {
+      "lat": 55.665483,
+      "lon": 12.573774,
+      "type": "unmatched"
+    },
+    {
+      "distance_along_edge": 0.0,
+      "distance_from_trace_point": 36.016645,
+      "edge_index": 0,
+      "end_route_discontinuity": true,
+      "lat": 55.66509,
+      "lon": 12.574456,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.210734,
+      "distance_from_trace_point": 17.470814,
+      "edge_index": 1,
+      "lat": 55.66502,
+      "lon": 12.574365,
+      "type": "interpolated"
+    },
+    {
+      "distance_along_edge": 0.546343,
+      "distance_from_trace_point": 0.948534,
+      "edge_index": 1,
+      "lat": 55.664982,
+      "lon": 12.574313,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.184364,
+      "distance_from_trace_point": 25.308977,
+      "edge_index": 2,
+      "lat": 55.664885,
+      "lon": 12.574185,
+      "type": "matched"
+    },
+    {
+      "lat": 55.664611,
+      "lon": 12.574695,
+      "type": "unmatched"
+    },
+    {
+      "distance_along_edge": 0.0,
+      "distance_from_trace_point": 21.922216,
+      "edge_index": 3,
+      "lat": 55.664507,
+      "lon": 12.575225,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 1.0,
+      "distance_from_trace_point": 20.350048,
+      "edge_index": 3,
+      "lat": 55.664395,
+      "lon": 12.575247,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 1.0,
+      "distance_from_trace_point": 32.174997,
+      "edge_index": 3,
+      "lat": 55.664395,
+      "lon": 12.575247,
+      "type": "interpolated"
+    },
+    {
+      "distance_along_edge": 1.0,
+      "distance_from_trace_point": 48.816249,
+      "edge_index": 3,
+      "lat": 55.664395,
+      "lon": 12.575247,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.0,
+      "distance_from_trace_point": 17.672829,
+      "edge_index": 4,
+      "lat": 55.663585,
+      "lon": 12.575698,
+      "type": "matched"
+    },
+    {
+      "distance_along_edge": 0.133458,
+      "distance_from_trace_point": 0.78035,
+      "edge_index": 4,
+      "lat": 55.663593,
+      "lon": 12.575801,
+      "type": "matched"
+    }
+  ],
+  "osm_changeset": 185397177,
+  "shape": "c{odiBqnn~VxAtBdFrHvArBtV}_A|Ek@tq@e[OoE",
+  "units": "kilometers"
+}

@@ -84,7 +84,7 @@ fn enforce_architecture() {
     deny_imports(
         &mut builder,
         "domain_crates_do_not_import_ui",
-        "^(gt_types|gt_history_types|gt_analysis|gt_query|gt_geo_math|gt_filter|gt_track_builder)($|::.*)",
+        "^(gt_types|gt_history_types|gt_analysis|gt_query|gt_geo_math|gt_filter|gt_track_builder|gt_snap)($|::.*)",
         UI_AND_APP_IMPORTS,
     );
 
