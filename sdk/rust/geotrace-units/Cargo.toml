@@ -13,6 +13,9 @@ repository.workspace = true
 [package.metadata.dist]
 dist = false
 
+[lib]
+doctest = false
+
 [dependencies]
 strum.workspace = true
 thiserror.workspace = true
