@@ -16,7 +16,7 @@ use crate::check::{ChannelInfo, ChannelSchema};
 use crate::construct::{Construct, ConstructKind, catalog};
 use crate::lexer::{self, Token, TokenClass};
 use crate::metric::{Quantity, QueryMetric};
-use crate::unit::Unit;
+use crate::unit::{self, Unit};
 
 /// Completions offered at a cursor position.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -326,7 +326,7 @@ fn units_of_quantity(quantity: Quantity) -> Vec<&'static str> {
     };
     Unit::CANONICAL
         .iter()
-        .filter(|u| u.quantity() == quantity)
+        .filter(|u| unit::quantity(**u) == quantity)
         .filter_map(|u| u.canonical_text())
         .collect()
 }
@@ -434,7 +434,7 @@ fn channel_quantity(text: &str, schema: &ChannelSchema) -> Option<Quantity> {
         info.unit
             .as_deref()
             .and_then(Unit::from_label)
-            .map_or(Quantity::Count, Unit::quantity),
+            .map_or(Quantity::Count, unit::quantity),
     )
 }
 
@@ -983,6 +983,7 @@ mod tests {
                 unit: Some("m/s2".to_owned()),
                 period_deg: None,
                 components: vec![],
+                conflicting_units: Vec::new(),
             },
         );
         schema.insert(
@@ -991,6 +992,7 @@ mod tests {
                 unit: None,
                 period_deg: None,
                 components: vec![],
+                conflicting_units: Vec::new(),
             },
         );
         schema.insert(
@@ -999,6 +1001,7 @@ mod tests {
                 unit: Some("deg".to_owned()),
                 period_deg: Some(360.0),
                 components: vec![],
+                conflicting_units: Vec::new(),
             },
         );
         schema.insert(
@@ -1007,6 +1010,7 @@ mod tests {
                 unit: Some("deg".to_owned()),
                 period_deg: None,
                 components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
+                conflicting_units: Vec::new(),
             },
         );
         schema

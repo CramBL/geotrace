@@ -7,7 +7,7 @@
     reason = "test code may use expect() for infallible test invariants"
 )]
 
-use geotrace_sdk::{Angle, DateTime, Duration, Utc, Velocity};
+use geotrace_sdk::{Angle, DateTime, Duration, Unit, Utc, Velocity};
 use geotrace_sdk::{
     Annotation, Channel, Constellation, MarkerIcon, NavFile, NavFileBuilder, NavFix, Satellite,
     SatelliteReport,
@@ -84,7 +84,7 @@ fn snapshot_inspect_populated_file() -> Result<(), Box<dyn std::error::Error>> {
     recorder.add_channel(
         Channel::builder()
             .name("incline")
-            .unit("deg")
+            .unit(Unit::DEG)
             .times(vec![t0, t1])
             .values(vec![1.5, 2.0])
             .build()?,
@@ -92,7 +92,7 @@ fn snapshot_inspect_populated_file() -> Result<(), Box<dyn std::error::Error>> {
     recorder.add_channel(
         Channel::builder()
             .name("accel")
-            .unit("g")
+            .unit(Unit::G)
             .components(["x", "y", "z"].map(String::from).to_vec())
             .times(vec![t0, t1])
             .values(vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02])

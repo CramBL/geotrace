@@ -106,6 +106,14 @@ TEST_CASE("channels: a malformed channel throws InvalidChannelError") {
         ch.values = {1.0, 2.0};
         CHECK_THROWS_AS(FileBuilder{}.add_channel(ch), InvalidChannelError);
     }
+    SUBCASE("unrecognized unit") {
+        Channel ch{};
+        ch.name = "shaft_speed";
+        ch.unit = "rpm";
+        ch.times = {T0};
+        ch.values = {1200.0};
+        CHECK_THROWS_AS(FileBuilder{}.add_channel(ch), InvalidChannelError);
+    }
     SUBCASE("duplicate channel name at finish") {
         Channel ch{};
         ch.name = "accel";
@@ -114,6 +122,20 @@ TEST_CASE("channels: a malformed channel throws InvalidChannelError") {
         CHECK_THROWS_AS(FileBuilder{}.add_channel(ch).add_channel(ch).finish(),
                         InvalidChannelError);
     }
+}
+
+TEST_CASE("channels: a custom unit is an explicit display-only escape hatch") {
+    Channel ch{};
+    ch.name = "shaft_speed";
+    ch.unit = "rpm";
+    ch.unit_mode = geotrace::ChannelUnitMode::Custom;
+    ch.times = {T0};
+    ch.values = {1200.0};
+
+    auto file = NavFile::from_bytes(FileBuilder{}.add_channel(ch).finish().to_bytes());
+    auto read = file.channel(0);
+    CHECK(read.unit == "rpm");
+    CHECK(read.unit_mode == geotrace::ChannelUnitMode::Custom);
 }
 
 TEST_CASE("channels: try_channel reports out-of-range without throwing") {

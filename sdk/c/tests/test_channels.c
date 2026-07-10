@@ -114,6 +114,25 @@ Test(channels, invalid_name_is_rejected) {
     gtd_builder_destroy(b);
 }
 
+Test(channels, unrecognized_unit_requires_custom_mode) {
+    GtdFileBuilder *b = gtd_builder_create();
+    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
+    double v = 1200.0;
+    GtdChannel ch = {0};
+    ch.name = "shaft_speed";
+    ch.unit = "rpm";
+    ch.period_deg = GTD_NONE_F64;
+    ch.times = &t;
+    ch.n_times = 1;
+    ch.values = &v;
+    ch.n_values = 1;
+    cr_assert_eq(gtd_builder_add_channel(b, &ch), GTD_ERR_INVALID_CHANNEL);
+
+    ch.unit_mode = GTD_CHANNEL_UNIT_CUSTOM;
+    cr_assert_eq(gtd_builder_add_channel(b, &ch), GTD_OK);
+    gtd_builder_destroy(b);
+}
+
 Test(channels, length_mismatch_is_rejected) {
     GtdFileBuilder *b = gtd_builder_create();
     GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);

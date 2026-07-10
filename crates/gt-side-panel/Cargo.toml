@@ -23,6 +23,7 @@ uom.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true
+geotrace-units = { path = "../../sdk/rust/geotrace-units" }
 gt-filter = { path = "../gt-filter" }
 gt-history-types = { path = "../gt-history-types" }
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }

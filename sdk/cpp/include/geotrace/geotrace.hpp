@@ -575,9 +575,17 @@ struct EventMarkerStyle {
  * row-major: `times.size()` rows of one column (scalar) or `components.size()`
  * columns (vector).
  */
+enum class ChannelUnitMode {
+    /** Validate and convert a recognized unit such as `mg` or `m/s2`. */
+    Recognized,
+    /** Preserve a display-only label and treat its values as unitless. */
+    Custom,
+};
+
 struct Channel {
     std::string name;
-    std::string unit;                    // empty = none
+    std::string unit; // empty = none
+    ChannelUnitMode unit_mode = ChannelUnitMode::Recognized;
     std::optional<Angle> period;         // wrap period, none = linear
     std::string description;             // empty = none
     std::vector<std::string> components; // empty = scalar channel
@@ -588,7 +596,8 @@ struct Channel {
 /** Channel data returned by `NavFile::channel()`. String fields are copies. */
 struct ChannelView {
     std::string name;
-    std::string unit;                    // empty = none
+    std::string unit; // empty = none
+    ChannelUnitMode unit_mode = ChannelUnitMode::Recognized;
     std::optional<Angle> period;         // none = linear
     std::string description;             // empty = none
     std::vector<std::string> components; // empty = scalar channel
@@ -897,6 +906,8 @@ class FileBuilder {
         GtdChannel c{};
         c.name = ch.name.c_str();
         c.unit = ch.unit.empty() ? nullptr : ch.unit.c_str();
+        c.unit_mode = ch.unit_mode == ChannelUnitMode::Custom ? GTD_CHANNEL_UNIT_CUSTOM
+                                                              : GTD_CHANNEL_UNIT_RECOGNIZED;
         c.period_deg = detail::to_c(period_deg);
         c.description = ch.description.empty() ? nullptr : ch.description.c_str();
         c.components = components.empty() ? nullptr : components.data();
@@ -1213,6 +1224,8 @@ class NavFile {
         ChannelView v{};
         v.name = info.name;
         v.unit = info.has_unit ? std::string{info.unit} : std::string{};
+        v.unit_mode =
+            info.unit_is_custom != 0 ? ChannelUnitMode::Custom : ChannelUnitMode::Recognized;
         v.period = info.period_deg.present
                        ? std::optional<Angle>{Angle::degrees(info.period_deg.value)}
                        : std::nullopt;

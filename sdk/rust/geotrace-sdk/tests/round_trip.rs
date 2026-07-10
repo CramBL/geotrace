@@ -4,7 +4,7 @@
 )]
 #![expect(clippy::cognitive_complexity, reason = "comprehensive round-trip test")]
 
-use geotrace_sdk::{Angle, DateTime, Duration, Utc, Velocity};
+use geotrace_sdk::{Angle, ChannelUnit, DateTime, Duration, Unit, Utc, Velocity};
 use geotrace_sdk::{
     Annotation, Channel, Constellation, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix,
     Satellite, SatelliteReport,
@@ -375,7 +375,7 @@ fn channels_round_trip() -> Result<(), Box<dyn std::error::Error>> {
     recorder.add_channel(
         Channel::builder()
             .name("tilt")
-            .unit("deg")
+            .unit(Unit::DEG)
             .period(Angle::degrees(360.0))
             .times(vec![t0, t1])
             .values(vec![10.0, 350.0])
@@ -385,7 +385,7 @@ fn channels_round_trip() -> Result<(), Box<dyn std::error::Error>> {
     recorder.add_channel(
         Channel::builder()
             .name("accel_mag")
-            .unit("g")
+            .unit(Unit::G)
             .description("accelerometer magnitude")
             .times(vec![t0, t1, t2])
             .values(vec![0.98, 1.02, 1.15])
@@ -400,7 +400,7 @@ fn channels_round_trip() -> Result<(), Box<dyn std::error::Error>> {
 
     let accel = &rt.channels()[0];
     assert_eq!(accel.name(), "accel_mag");
-    assert_eq!(accel.unit(), Some("g"));
+    assert_eq!(accel.unit(), Some(&ChannelUnit::from(Unit::G)));
     assert_eq!(accel.period(), None);
     assert_eq!(accel.description(), Some("accelerometer magnitude"));
     assert_eq!(accel.times(), &[t0, t1, t2]);
@@ -408,7 +408,7 @@ fn channels_round_trip() -> Result<(), Box<dyn std::error::Error>> {
 
     let tilt = &rt.channels()[1];
     assert_eq!(tilt.name(), "tilt");
-    assert_eq!(tilt.unit(), Some("deg"));
+    assert_eq!(tilt.unit(), Some(&ChannelUnit::from(Unit::DEG)));
     assert_eq!(tilt.period(), Some(Angle::degrees(360.0)));
     assert_eq!(tilt.description(), None);
     assert_eq!(tilt.times(), &[t0, t1]);
@@ -487,7 +487,7 @@ fn an_empty_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     recorder.add_channel(
         Channel::builder()
             .name("empty")
-            .unit("g")
+            .unit(Unit::G)
             .times(vec![])
             .values(vec![])
             .build()?,
@@ -501,16 +501,53 @@ fn an_empty_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-fn a_whitespace_only_unit_becomes_none() -> Result<(), Box<dyn std::error::Error>> {
-    let channel = Channel::builder()
-        .name("accel")
-        .unit("   ")
-        .description("  \t ")
-        .times(vec![base()])
-        .values(vec![1.0])
-        .build()?;
-    assert_eq!(channel.unit(), None);
-    assert_eq!(channel.description(), None);
+fn an_invalid_custom_unit_is_rejected() {
+    assert!(matches!(
+        ChannelUnit::custom("   "),
+        Err(geotrace_sdk::UnitParseError::EmptyCustom)
+    ));
+}
+
+#[test]
+fn channel_period_requires_a_positive_angular_unit() {
+    let build = |unit: Option<ChannelUnit>, period: Option<Angle>| {
+        Channel::builder()
+            .name("bearing")
+            .maybe_unit(unit)
+            .maybe_period(period)
+            .times(vec![base()])
+            .values(vec![10.0])
+            .build()
+    };
+
+    assert!(matches!(
+        build(Some(Unit::G.into()), Some(Angle::degrees(360.0))),
+        Err(geotrace_sdk::ChannelError::PeriodNeedsAngularUnit { .. })
+    ));
+    assert!(matches!(
+        build(Some(Unit::DEG.into()), Some(Angle::degrees(0.0))),
+        Err(geotrace_sdk::ChannelError::InvalidPeriod { .. })
+    ));
+    build(Some(Unit::DEG.into()), Some(Angle::degrees(360.0)))
+        .expect("positive angular period is valid");
+}
+
+#[test]
+fn a_custom_unit_round_trips_without_scaling_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let mut recorder = NavFileBuilder::new().open();
+    recorder.add_channel(
+        Channel::builder()
+            .name("shaft_speed")
+            .unit(ChannelUnit::custom("rpm")?)
+            .times(vec![base()])
+            .values(vec![1200.0])
+            .build()?,
+    );
+    let round_tripped = round_trip(&recorder.finish()?)?;
+    let unit = round_tripped.channels()[0].unit();
+    assert!(matches!(unit, Some(ChannelUnit::Custom(_))));
+    assert_eq!(unit.map(ToString::to_string).as_deref(), Some("rpm"));
+    assert_eq!(round_tripped.channels()[0].values(), [1200.0]);
     Ok(())
 }
 
@@ -560,7 +597,7 @@ fn a_vector_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     recorder.add_channel(
         Channel::builder()
             .name("accel")
-            .unit("g")
+            .unit(Unit::G)
             .description("device-frame acceleration")
             .components(["x", "y", "z"])
             // Two samples, row-major: [x0, y0, z0, x1, y1, z1].
@@ -576,7 +613,7 @@ fn a_vector_channel_round_trips() -> Result<(), Box<dyn std::error::Error>> {
     assert!(accel.is_vector());
     assert_eq!(accel.component_count(), 3);
     assert_eq!(accel.components(), &["x", "y", "z"]);
-    assert_eq!(accel.unit(), Some("g"));
+    assert_eq!(accel.unit(), Some(&ChannelUnit::from(Unit::G)));
     assert_eq!(accel.times(), &[t0, t1]);
     let rows: Vec<Vec<f64>> = accel.rows().map(<[f64]>::to_vec).collect();
     assert_eq!(rows, vec![vec![0.1, 0.2, 0.98], vec![-0.1, 0.3, 1.02]]);
@@ -644,7 +681,7 @@ fn a_single_component_vector_channel_round_trips() -> Result<(), Box<dyn std::er
     recorder.add_channel(
         Channel::builder()
             .name("tilt")
-            .unit("deg")
+            .unit(Unit::DEG)
             .components(["angle"])
             .times(vec![t0, t0 + Duration::seconds(1)])
             .values(vec![10.0, 20.0])
@@ -676,7 +713,7 @@ fn scalar_and_vector_channels_coexist() -> Result<(), Box<dyn std::error::Error>
     recorder.add_channel(
         Channel::builder()
             .name("temp")
-            .unit("degc")
+            .unit(ChannelUnit::custom("degc")?)
             .times(vec![t0])
             .values(vec![21.5])
             .build()?,
@@ -700,7 +737,7 @@ fn a_vector_channel_preserves_its_period() -> Result<(), Box<dyn std::error::Err
     recorder.add_channel(
         Channel::builder()
             .name("bearing")
-            .unit("deg")
+            .unit(Unit::DEG)
             .period(Angle::degrees(360.0))
             .components(["fwd", "aft"].map(String::from).to_vec())
             .times(vec![t0])

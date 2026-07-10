@@ -64,7 +64,7 @@ fn write_channels(nav_file: &NavFile, fb: &mut FileBuilder) {
 
         let mut grp = root.create_group(&channel.name);
         if let Some(unit) = &channel.unit {
-            grp.set_attr("unit", AttrValue::String(unit.clone()));
+            grp.set_attr("unit", AttrValue::String(unit.to_string()));
         }
         if let Some(period) = channel.period {
             grp.set_attr("period_deg", AttrValue::F64(period.as_degrees()));

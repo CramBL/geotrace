@@ -710,7 +710,7 @@ fn render_channels_section(
         for channel in &track.channels {
             let unit = channel
                 .unit
-                .as_deref()
+                .as_ref()
                 .map(|u| format!(" ({u})"))
                 .unwrap_or_default();
             let components = if channel.is_vector() {

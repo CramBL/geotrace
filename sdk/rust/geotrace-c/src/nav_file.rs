@@ -1,7 +1,7 @@
 use std::ffi::{CString, c_char};
 use std::io::Cursor;
 
-use geotrace_sdk::NavFile;
+use geotrace_sdk::{ChannelUnit, NavFile};
 
 use crate::error::{GtdStatus, run_catching_panics, set_last_error, status_for_error};
 use crate::{
@@ -385,7 +385,8 @@ pub unsafe extern "C" fn gtd_nav_file_get_channel(
         fill_c_str(&mut out.name, ch.name());
         if let Some(unit) = ch.unit() {
             out.has_unit = 1;
-            fill_c_str(&mut out.unit, unit);
+            fill_c_str(&mut out.unit, &unit.to_string());
+            out.unit_is_custom = u8::from(matches!(unit, ChannelUnit::Custom(_)));
         }
         out.period_deg = ch
             .period()

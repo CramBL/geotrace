@@ -1068,6 +1068,7 @@ mod tests {
                 unit: unit.map(str::to_owned),
                 period_deg,
                 components: vec![],
+                conflicting_units: Vec::new(),
             },
         );
         schema
@@ -1082,6 +1083,7 @@ mod tests {
                 unit: unit.map(str::to_owned),
                 period_deg: None,
                 components: components.iter().map(|c| (*c).to_owned()).collect(),
+                conflicting_units: Vec::new(),
             },
         );
         schema
@@ -1177,6 +1179,7 @@ mod tests {
                 unit: Some("g".to_owned()),
                 period_deg: None,
                 components: vec![],
+                conflicting_units: Vec::new(),
             },
         );
         let err = check(
@@ -1290,6 +1293,7 @@ mod tests {
                 unit: Some("g".to_owned()),
                 period_deg: None,
                 components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
+                conflicting_units: Vec::new(),
             },
         );
         let err = check(
@@ -1318,6 +1322,7 @@ mod tests {
                 unit: Some("g".to_owned()),
                 period_deg: None,
                 components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
+                conflicting_units: Vec::new(),
             },
         );
         schema.insert(
@@ -1326,6 +1331,7 @@ mod tests {
                 unit: Some("deg".to_owned()),
                 period_deg: None,
                 components: vec![],
+                conflicting_units: Vec::new(),
             },
         );
         schema
@@ -1436,6 +1442,7 @@ mod tests {
                 unit: Some("deg".to_owned()),
                 period_deg: None,
                 components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
+                conflicting_units: Vec::new(),
             },
         );
         let err = check(&parse(src).unwrap(), &schema).unwrap_err();

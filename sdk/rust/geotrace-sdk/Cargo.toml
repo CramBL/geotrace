@@ -24,6 +24,7 @@ dist = false
 bon.workspace = true
 chrono.workspace = true
 geotrace-sdk-macros = { path = "../geotrace-sdk-macros", version = "0.4.0" }
+geotrace-units = { path = "../geotrace-units", version = "0.4.0" }
 hdf5-pure.workspace = true
 log.workspace = true
 strum.workspace = true

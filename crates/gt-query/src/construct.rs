@@ -18,7 +18,7 @@ use strum::IntoEnumIterator as _;
 
 use crate::ast::{Func, ParamName};
 use crate::metric::{Quantity, QueryMetric};
-use crate::unit::Unit;
+use crate::unit::{self, Unit};
 
 /// The category of a construct - drives grouping and the hover header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -313,7 +313,7 @@ fn param_construct(param: ParamName) -> Construct {
 }
 
 fn unit_construct(unit: Unit, name: &'static str) -> Construct {
-    let (summary, doc): (_, &str) = match unit.quantity() {
+    let (summary, doc): (_, &str) = match unit::quantity(unit) {
         Quantity::Angle | Quantity::Direction => ("degrees", ""),
         Quantity::Length => ("length", ""),
         Quantity::Speed => ("speed", ""),

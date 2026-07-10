@@ -1,0 +1,33 @@
+---
+source: sdk/rust/geotrace-units/src/lib.rs
+expression: catalog
+---
+deg | Angle | 1.000000000000
+m | Length | 1.000000000000
+nm | Length | 0.000000001000
+um | Length | 0.000001000000
+mm | Length | 0.001000000000
+cm | Length | 0.010000000000
+km | Length | 1000.000000000000
+km/h | Speed | 0.277777777778
+m/s | Speed | 1.000000000000
+mm/s | Speed | 0.001000000000
+cm/s | Speed | 0.010000000000
+kn | Speed | 0.514444444444
+m/s2 | Acceleration | 1.000000000000
+mm/s2 | Acceleration | 0.001000000000
+cm/s2 | Acceleration | 0.010000000000
+g | Acceleration | 9.806650000000
+ug | Acceleration | 0.000009806650
+mg | Acceleration | 0.009806650000
+km/h/s | Acceleration | 0.277777777778
+s | Duration | 1.000000000000
+ns | Duration | 0.000000001000
+us | Duration | 0.000001000000
+ms | Duration | 0.001000000000
+min | Duration | 60.000000000000
+h | Duration | 3600.000000000000
+% | Ratio | 0.010000000000
+per s | Rate | 60.000000000000
+per min | Rate | 1.000000000000
+per h | Rate | 0.016666666667

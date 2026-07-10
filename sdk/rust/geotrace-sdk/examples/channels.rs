@@ -20,7 +20,9 @@
 
 use std::{env, error::Error, fs};
 
-use geotrace_sdk::{Angle, Channel, DateTime, Duration, NavFile, NavFileBuilder, NavFix, Utc};
+use geotrace_sdk::{
+    Angle, Channel, DateTime, Duration, NavFile, NavFileBuilder, NavFix, Unit, Utc,
+};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let t0 = "2024-06-01T08:00:00Z".parse::<DateTime<Utc>>()?;
@@ -42,7 +44,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     recorder.add(
         Channel::builder()
             .name("incline")
-            .unit("deg")
+            .unit(Unit::DEG)
             .description("boom inclinometer")
             .times(times.clone())
             .values(vec![1.0, 1.5, 2.0])
@@ -55,7 +57,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     recorder.add(
         Channel::builder()
             .name("accel")
-            .unit("g")
+            .unit(Unit::G)
             .description("IMU acceleration")
             .components(["x", "y", "z"])
             .times(times)

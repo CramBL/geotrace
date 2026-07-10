@@ -10,8 +10,8 @@
 )]
 
 use geotrace_sdk::{
-    Angle, Annotation, Channel, Constellation, EventMarker, EventMarkerStyle, MarkerIcon, Meta,
-    NavFileBuilder, NavFix, NavRecorder, Satellite, SatelliteReport, Velocity,
+    Angle, Annotation, Channel, ChannelUnit, Constellation, EventMarker, EventMarkerStyle,
+    MarkerIcon, Meta, NavFileBuilder, NavFix, NavRecorder, Satellite, SatelliteReport, Velocity,
 };
 use std::collections::HashMap;
 use std::fs::File;
@@ -318,7 +318,7 @@ fn load_channels(
     // One accumulator per channel, keyed by name in first-seen order. Each CSV
     // row is one sample; the metadata columns repeat and are read once.
     struct Acc {
-        unit: Option<String>,
+        unit: Option<ChannelUnit>,
         period_deg: Option<f64>,
         description: Option<String>,
         components: Option<Vec<String>>,
@@ -350,7 +350,9 @@ fn load_channels(
             channels.push((
                 cols[0].to_string(),
                 Acc {
-                    unit: (!cols[1].is_empty()).then(|| cols[1].to_string()),
+                    unit: (!cols[1].is_empty())
+                        .then(|| cols[1].parse::<ChannelUnit>())
+                        .transpose()?,
                     period_deg: (!cols[2].is_empty()).then(|| cols[2].parse()).transpose()?,
                     description: (!cols[3].is_empty()).then(|| cols[3].to_string()),
                     components: (!cols[4].is_empty()).then(|| split(cols[4])),

@@ -54,6 +54,7 @@ members = [
     "sdk/rust/geotrace-c",
     "sdk/rust/geotrace-sdk",
     "sdk/rust/geotrace-sdk-macros",
+    "sdk/rust/geotrace-units",
 ]
 
 [workspace.package]
@@ -253,6 +254,7 @@ egui-phosphor.workspace = true
 egui_extras.workspace = true
 egui_tiles.workspace = true
 env_logger.workspace = true
+geotrace-units = { path = "sdk/rust/geotrace-units" }
 gt-analysis = { path = "crates/gt-analysis" }
 gt-filter = { path = "crates/gt-filter" }
 gt-fmt = { path = "crates/gt-fmt" }

@@ -4,17 +4,18 @@
 //! `geotrace_sdk._geotrace_sdk`.  The public `geotrace_sdk` package re-exports
 //! everything from this module via `python/geotrace_sdk/__init__.py`.
 
-use chrono::{DateTime, FixedOffset, Utc};
 use std::path::PathBuf;
+
+use chrono::{DateTime, FixedOffset, Utc};
 use geotrace_sdk::{
-    Angle, Annotation, BuildError, Channel, Constellation, EventMarker, EventMarkerColor,
-    EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon, Meta,
-    NavFile, NavFileBuilder, NavRecorder, NavFix, NavPoint, Satellite, SatelliteReport, Velocity,
+    Angle, Annotation, BuildError, Channel, ChannelUnit, Constellation, EventMarker,
+    EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker,
+    MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, NavPoint, NavRecorder, Satellite,
+    SatelliteReport, Velocity,
 };
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-
 
 fn to_fixed(dt: DateTime<Utc>) -> DateTime<FixedOffset> {
     dt.fixed_offset()
@@ -46,8 +47,6 @@ fn file_err(e: geotrace_sdk::Error) -> PyErr {
 fn consumed_err() -> PyErr {
     PyRuntimeError::new_err("builder already consumed by finish()")
 }
-
-
 
 /// GNSS constellation identifier.
 #[pyclass(eq, from_py_object, name = "Constellation")]
@@ -117,8 +116,6 @@ mod py_constellation_tests {
         }
     }
 }
-
-
 
 /// Visual icon for a map annotation marker.
 #[pyclass(eq, from_py_object, name = "MarkerIcon")]
@@ -195,8 +192,6 @@ impl From<PyMarkerIcon> for MarkerIcon {
         }
     }
 }
-
-
 
 /// One tracked satellite with optional signal metrics.
 #[pyclass(from_py_object, name = "Satellite")]
@@ -279,11 +274,12 @@ impl PySatellite {
         // below, so a rename can't desync `__repr__` from the actual Python
         // member name (see `py_constellation_repr_name_matches_pyo3_name`).
         let name = format!("{:?}", PyConstellation::from(self.inner.constellation)).to_uppercase();
-        format!("Satellite(constellation=Constellation.{name}, prn={})", self.inner.prn)
+        format!(
+            "Satellite(constellation=Constellation.{name}, prn={})",
+            self.inner.prn
+        )
     }
 }
-
-
 
 /// A set of satellites tracked at a point in time.
 ///
@@ -358,6 +354,51 @@ impl PySatelliteReport {
     }
 }
 
+/// A recognized channel unit or an explicit display-only custom unit.
+#[pyclass(skip_from_py_object, name = "ChannelUnit")]
+#[derive(Debug, Clone)]
+pub struct PyChannelUnit {
+    inner: ChannelUnit,
+}
+
+#[pymethods]
+impl PyChannelUnit {
+    /// Parse a unit GeoTrace understands and can scale in queries.
+    #[staticmethod]
+    fn recognized(label: &str) -> PyResult<Self> {
+        label
+            .parse::<ChannelUnit>()
+            .map(|inner| Self { inner })
+            .map_err(|error| PyValueError::new_err(error.to_string()))
+    }
+
+    /// Construct a display-only unit whose values are dimensionless in queries.
+    #[staticmethod]
+    fn custom(label: &str) -> PyResult<Self> {
+        ChannelUnit::custom(label)
+            .map(|inner| Self { inner })
+            .map_err(|error| PyValueError::new_err(error.to_string()))
+    }
+
+    #[getter]
+    fn label(&self) -> String {
+        self.inner.to_string()
+    }
+
+    #[getter]
+    fn is_custom(&self) -> bool {
+        matches!(self.inner, ChannelUnit::Custom(_))
+    }
+
+    fn __str__(&self) -> String {
+        self.inner.to_string()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("ChannelUnit({:?})", self.inner.to_string())
+    }
+}
+
 /// A named scalar or vector sensor channel sampled at its own rate.
 ///
 /// Pass `components` (e.g. `["x", "y", "z"]`) for a vector channel whose values
@@ -378,11 +419,12 @@ impl PyChannel {
         name: String,
         times: Vec<DateTime<FixedOffset>>,
         values: Vec<f64>,
-        unit: Option<String>,
+        unit: Option<&Bound<'_, PyAny>>,
         period_deg: Option<f64>,
         description: Option<String>,
         components: Option<Vec<String>>,
     ) -> PyResult<Self> {
+        let unit = unit.map(parse_python_channel_unit).transpose()?;
         let inner = Channel::builder()
             .name(name)
             .maybe_unit(unit)
@@ -404,8 +446,11 @@ impl PyChannel {
 
     /// The unit of the values (`"g"`, `"deg"`), or `None`.
     #[getter]
-    fn unit(&self) -> Option<&str> {
-        self.inner.unit()
+    fn unit(&self) -> Option<PyChannelUnit> {
+        self.inner
+            .unit()
+            .cloned()
+            .map(|inner| PyChannelUnit { inner })
     }
 
     /// The wrap period in degrees for an angular channel, or `None` if linear.
@@ -456,6 +501,18 @@ impl PyChannel {
             self.inner.components().len()
         )
     }
+}
+
+fn parse_python_channel_unit(value: &Bound<'_, PyAny>) -> PyResult<ChannelUnit> {
+    if let Ok(unit) = value.extract::<PyRef<'_, PyChannelUnit>>() {
+        return Ok(unit.inner.clone());
+    }
+    let label = value.extract::<String>().map_err(|_| {
+        PyValueError::new_err("unit must be a recognized string or ChannelUnit.custom(...)")
+    })?;
+    label
+        .parse::<ChannelUnit>()
+        .map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
 /// A single GPS/GNSS fix: position, optional heading, and optional speed.
@@ -558,8 +615,6 @@ impl PyNavFix {
     }
 }
 
-
-
 /// A user-defined map annotation with an optional label and icon.
 ///
 /// `time` must be a timezone-aware `datetime.datetime`.
@@ -573,11 +628,7 @@ pub struct PyAnnotation {
 impl PyAnnotation {
     #[new]
     #[pyo3(signature = (time, *, label=None, icon=None))]
-    fn new(
-        time: DateTime<FixedOffset>,
-        label: Option<String>,
-        icon: Option<PyMarkerIcon>,
-    ) -> Self {
+    fn new(time: DateTime<FixedOffset>, label: Option<String>, icon: Option<PyMarkerIcon>) -> Self {
         let inner = Annotation::builder()
             .time(time.to_utc())
             .maybe_label(label)
@@ -614,8 +665,6 @@ impl PyAnnotation {
         format!("Annotation(time={:?})", self.inner.time)
     }
 }
-
-
 
 /// Optional file-level metadata for a `.gtd` file.
 #[pyclass(skip_from_py_object, name = "Meta")]
@@ -678,8 +727,6 @@ impl PyMeta {
         format!("Meta(title={:?})", self.inner.title)
     }
 }
-
-
 
 /// A nav fix combined with its associated satellite report, as read from a file.
 #[pyclass(skip_from_py_object, name = "NavPoint")]
@@ -750,8 +797,6 @@ impl PyNavPoint {
     }
 }
 
-
-
 /// A map annotation with its interpolated position on the nav track.
 #[pyclass(skip_from_py_object, name = "Marker")]
 #[derive(Debug, Clone)]
@@ -807,8 +852,6 @@ impl PyMarker {
         )
     }
 }
-
-
 
 /// An event marker to add to the nav track.
 ///
@@ -878,8 +921,6 @@ impl PyEventMarker {
     }
 }
 
-
-
 /// Per-variant icon and color style stored in the file.
 ///
 /// ``variant_path`` must exactly match a path used in an event marker.
@@ -898,7 +939,11 @@ impl PyEventMarkerStyle {
     #[new]
     #[pyo3(signature = (variant_path, *, icon=None, color=None))]
     fn new(variant_path: String, icon: Option<PyMarkerIcon>, color: Option<String>) -> Self {
-        Self { variant_path, icon, color }
+        Self {
+            variant_path,
+            icon,
+            color,
+        }
     }
 
     #[getter]
@@ -922,8 +967,6 @@ impl PyEventMarkerStyle {
         format!("EventMarkerStyle(variant_path={:?})", self.variant_path)
     }
 }
-
-
 
 /// A resolved event marker as read from a ``NavFile``, with an interpolated
 /// map position.
@@ -973,8 +1016,6 @@ impl PyEventMarkerPoint {
         )
     }
 }
-
-
 
 /// A parsed `.gtd` navigation data file.
 ///
@@ -1097,8 +1138,6 @@ impl PyNavFile {
         )
     }
 }
-
-
 
 /// Dispatch target for [`PyNavFileBuilder::add`].
 #[derive(FromPyObject)]
@@ -1292,13 +1331,12 @@ impl PyNavFileBuilder {
         } else {
             self.config.take().ok_or_else(consumed_err)?.open()
         };
-        recorder.finish()
+        recorder
+            .finish()
             .map(|f| PyNavFile { inner: f })
             .map_err(build_err)
     }
 }
-
-
 
 #[pymodule]
 fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -1306,6 +1344,7 @@ fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMarkerIcon>()?;
     m.add_class::<PySatellite>()?;
     m.add_class::<PySatelliteReport>()?;
+    m.add_class::<PyChannelUnit>()?;
     m.add_class::<PyChannel>()?;
     m.add_class::<PyNavFix>()?;
     m.add_class::<PyAnnotation>()?;

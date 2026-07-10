@@ -876,14 +876,16 @@ fn precompute_ghost_positions(points: &mut [NavPoint]) {
 mod tests {
     use std::path::PathBuf;
 
-    use super::*;
     use chrono::TimeZone;
+    use geotrace_units::Unit;
     use gt_types::coordinates::{Latitude, Longitude};
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::time_types::{GpsTime, SysTime};
     use gt_types::tpv::TimePositionVelocity;
     use uom::si::angle::degree;
     use uom::si::f64::Angle;
+
+    use super::*;
 
     /// A point at GPS second `gps_secs` whose system clock is `sys_ahead_ms`
     /// ahead of GPS (so the GPS−system offset is `-sys_ahead_ms`).
@@ -1158,7 +1160,7 @@ mod tests {
         ];
         let channel = Channel {
             name: "incline".to_owned(),
-            unit: Some("deg".to_owned()),
+            unit: Some(Unit::DEG.into()),
             period: None,
             description: None,
             components: vec![],
@@ -1219,7 +1221,7 @@ mod tests {
         ];
         let channel = Channel {
             name: "accel".to_owned(),
-            unit: Some("g".to_owned()),
+            unit: Some(Unit::G.into()),
             period: None,
             description: None,
             components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],

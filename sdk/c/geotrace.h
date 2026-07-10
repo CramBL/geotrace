@@ -193,6 +193,12 @@ typedef struct {
     GtdOptF64 snr_dbhz;      /**< Signal-to-noise ratio in dB·Hz. */
 } GtdSatellite;
 
+/** How a channel unit label should be interpreted on the write path. */
+typedef enum {
+    GTD_CHANNEL_UNIT_RECOGNIZED = 0, /**< Validate as a recognized, convertible unit. */
+    GTD_CHANNEL_UNIT_CUSTOM = 1, /**< Preserve as display-only; queries treat values as unitless. */
+} GtdChannelUnitMode;
+
 /**
  * A scalar or vector channel to add via `gtd_builder_add_channel()`.
  *
@@ -203,8 +209,9 @@ typedef struct {
  * `n_times * (n_components > 0 ? n_components : 1)`.
  */
 typedef struct {
-    const char *name;     /**< Channel name (a lowercase identifier). */
-    const char *unit;     /**< Unit of the values, or NULL. */
+    const char *name;             /**< Channel name (a lowercase identifier). */
+    const char *unit;             /**< Unit of the values, or NULL. */
+    GtdChannelUnitMode unit_mode; /**< Recognized by default; set CUSTOM as an escape hatch. */
     GtdOptF64 period_deg; /**< Wrap period in degrees for an angular channel, or `GTD_NONE_F64`. */
     const char *description; /**< Human-readable description, or NULL. */
     const char *const
@@ -292,6 +299,7 @@ typedef struct {
     char name[256];          /**< Channel name. */
     uint8_t has_unit;        /**< Non-zero if @ref unit is set. */
     char unit[64];           /**< Unit of the values, when @ref has_unit. */
+    uint8_t unit_is_custom;  /**< Non-zero when the unit is display-only and not convertible. */
     GtdOptF64 period_deg;    /**< Wrap period in degrees, or absent for a linear channel. */
     uint8_t has_description; /**< Non-zero if @ref description is set. */
     char description[1024];  /**< Description, when @ref has_description. */
@@ -459,8 +467,9 @@ GtdStatus gtd_builder_add_event_marker_style(GtdFileBuilder *b, const char *vari
  * @param b       Builder handle.
  * @param channel Channel description.  Not retained after the call returns.
  *
- * @return `GTD_ERR_INVALID_CHANNEL` if the name or a component label is
- *         malformed, or `values` is not `n_times * max(n_components, 1)` long.
+ * @return `GTD_ERR_INVALID_CHANNEL` if the unit is unrecognized without
+ *         `GTD_CHANNEL_UNIT_CUSTOM`, the name or a component label is malformed,
+ *         or `values` is not `n_times * max(n_components, 1)` long.
  */
 GtdStatus gtd_builder_add_channel(GtdFileBuilder *b, const GtdChannel *channel);
 

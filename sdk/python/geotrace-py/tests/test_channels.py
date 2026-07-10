@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from geotrace_sdk import Channel, NavFile, NavFileBuilder, NavFix
+from geotrace_sdk import Channel, ChannelUnit, NavFile, NavFileBuilder, NavFix
 
 T0 = datetime(2024, 6, 1, 9, 0, 0, tzinfo=UTC)
 T1 = T0 + timedelta(seconds=1)
@@ -59,7 +59,8 @@ def test_scalar_and_vector_channels_round_trip() -> None:
     assert incline == incline_channel
     assert not incline.is_vector
     assert incline.components == []
-    assert incline.unit == "deg"
+    assert incline.unit.label == "deg"
+    assert not incline.unit.is_custom
     assert incline.period_deg == 360.0
     assert incline.description == "boom"
     assert incline.values == [1.5, 2.0]
@@ -84,6 +85,15 @@ def test_malformed_channel_raises() -> None:
         Channel("accel", [T0], [1.0, 2.0])
     with pytest.raises(ValueError):  # a duplicate component label
         Channel("accel", [T0], [1.0, 2.0], components=["x", "x"])
+    with pytest.raises(ValueError):
+        Channel("accel", [T0], [1.0], unit="gm")
+
+
+def test_custom_channel_unit_is_an_explicit_escape_hatch() -> None:
+    rpm = ChannelUnit.custom("rpm")
+    channel = Channel("shaft_speed", [T0], [1200.0], unit=rpm)
+    assert channel.unit.label == "rpm"
+    assert channel.unit.is_custom
 
 
 def test_duplicate_channel_name_raises_at_finish() -> None:

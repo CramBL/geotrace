@@ -134,7 +134,7 @@ fn build_channel_series(channel: &gt_types::Channel) -> ChannelSeries {
         .collect();
     ChannelSeries {
         name: channel.name.clone(),
-        unit: channel.unit.clone(),
+        unit: channel.unit.as_ref().map(ToString::to_string),
         components,
     }
 }
@@ -378,6 +378,8 @@ fn build_track_series(
 
 #[cfg(test)]
 mod tests {
+    use geotrace_units::Unit;
+
     use super::*;
 
     /// A vector channel becomes one line per component, on the channel's own
@@ -392,7 +394,7 @@ mod tests {
             |secs: i64| chrono::DateTime::from_timestamp(1_700_000_000 + secs, 0).expect("valid");
         let channel = gt_types::Channel {
             name: "accel".to_owned(),
-            unit: Some("g".to_owned()),
+            unit: Some(Unit::G.into()),
             period: None,
             description: None,
             components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
@@ -424,7 +426,7 @@ mod tests {
             |secs: i64| chrono::DateTime::from_timestamp(1_700_000_000 + secs, 0).expect("valid");
         let channel = gt_types::Channel {
             name: "incline".to_owned(),
-            unit: Some("deg".to_owned()),
+            unit: Some(Unit::DEG.into()),
             period: None,
             description: None,
             components: vec![],

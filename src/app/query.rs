@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use egui::text::{CCursor, CCursorRange, LayoutJob};
+use geotrace_units::ChannelUnit;
 use gt_analysis::loss_of_lock::{self, SECS_PER_MIN, SlipRatePerPoint};
 use gt_analysis::satellite_utilization::{self, UtilPerPoint};
 use gt_filter::GlobalFilter;
@@ -395,6 +396,9 @@ struct ChannelResults {
 /// One track's channel-source matches and the timeline they index into.
 struct ChannelTrackResult {
     track: TrackRef,
+    /// This track's declared display unit. The evaluator timeline below is in
+    /// base units; tables convert it back through this metadata.
+    unit: Option<ChannelUnit>,
     /// Matched sample-index ranges into `timeline`.
     ranges: Vec<Range<usize>>,
     timeline: ChannelTimeline,
@@ -1573,8 +1577,8 @@ fn run_channel_worker(
     let name = query.source_channel().unwrap_or_default();
     // Component labels for the table headers, from any track carrying the
     // channel. Components are structural (the channel's shape), not per-track
-    // content, so first-vs-last does not matter here unlike the unit collision
-    // schema_from_files resolves last-wins.
+    // content, so the first compatible definition is sufficient. Incompatible
+    // definitions are rejected while checking the query.
     let components = tracks
         .iter()
         .flat_map(|s| &s.channels)
@@ -1591,6 +1595,11 @@ fn run_channel_worker(
                 track: tm.track,
                 ranges: tm.ranges,
                 timeline: provider.1.channel_timeline(name),
+                unit: tracks
+                    .iter()
+                    .find(|snapshot| snapshot.track_ref == tm.track)
+                    .and_then(|snapshot| snapshot.channels.iter().find(|c| c.name == name))
+                    .and_then(|channel| channel.unit.clone()),
             })
         })
         .collect();
@@ -1972,8 +1981,8 @@ fn channel_results_ui(ui: &mut egui::Ui, channel: &ChannelResults, files: &[Load
 
 /// One track's matched channel samples as a table: `time` plus one column per
 /// component (or the channel name for a scalar). Capped like the point tables.
-/// Values print in the evaluator's base units (a `g` channel shows m/s2), the
-/// same convention the query language and the provider timeline use.
+/// Values are evaluated in base units, then converted back to each track's
+/// declared unit for display.
 fn channel_track_ui(
     ui: &mut egui::Ui,
     channel: &ChannelResults,
@@ -2003,12 +2012,17 @@ fn channel_track_ui(
     } else {
         channel.components.clone()
     };
+    let unit_suffix = track
+        .unit
+        .as_ref()
+        .map_or_else(String::new, |unit| format!(" ({unit})"));
+    let from_base = channel_from_base_scale(track.unit.as_ref());
     egui::Grid::new(ui.id().with(("channel_table", track.track)))
         .striped(true)
         .show(ui, |ui| {
             ui.strong("time");
             for header in &value_headers {
-                ui.strong(header.as_str());
+                ui.strong(format!("{header}{unit_suffix}"));
             }
             ui.end_row();
 
@@ -2031,7 +2045,7 @@ fn channel_track_ui(
                 ui.label(time);
                 for col in 0..columns {
                     let value = track.timeline.values.get(sample * columns + col);
-                    ui.label(value.map_or_else(String::new, |v| format!("{v:.3}")));
+                    ui.label(value.map_or_else(String::new, |v| format!("{:.3}", v * from_base)));
                 }
                 ui.end_row();
             }
@@ -2045,6 +2059,11 @@ fn channel_track_ui(
             .weak(),
         );
     }
+}
+
+fn channel_from_base_scale(unit: Option<&ChannelUnit>) -> f64 {
+    unit.and_then(ChannelUnit::as_recognized)
+        .map_or(1.0, Unit::from_base)
 }
 
 /// Coarse age for a history entry, at minute granularity or coarser.
@@ -2430,8 +2449,8 @@ impl TrackProvider<'_> {
         let channel = self.channels.iter().find(|c| c.name == name)?;
         let to_base = channel
             .unit
-            .as_deref()
-            .and_then(Unit::from_label)
+            .as_ref()
+            .and_then(|unit| unit.as_recognized())
             .map_or(1.0, Unit::to_base);
         Some((channel, channel.component_count(), to_base))
     }
@@ -2577,26 +2596,54 @@ impl MetricProvider for TrackProvider<'_> {
 
 /// The schema the editor checks against: every scalar or vector channel across
 /// the loaded files, keyed by name. A channel is queryable if any loaded track
-/// carries it; a run over a track lacking it reports the window as skipped. On
-/// a name collision the last track's metadata wins (channels rarely collide,
-/// and a debug tool need not choose between conflicting units).
+/// carries it; a run over a track lacking it reports the window as skipped.
+/// Compatible units such as `g` and `mg` share a base dimension. Incompatible
+/// definitions remain in the schema as an explicit diagnostic.
 fn schema_from_files(files: &[LoadedFile]) -> ChannelSchema {
     use uom::si::angle::degree;
 
     let mut schema = ChannelSchema::new();
     for file in files {
         for channel in file.tracks.iter().flat_map(|t| &t.channels) {
+            let unit = channel.unit.as_ref().map(ToString::to_string);
+            if let Some(existing) = schema.get(&channel.name).cloned() {
+                let mut merged = existing;
+                if !channel_units_compatible(merged.unit.as_deref(), channel.unit.as_ref()) {
+                    let mut labels = vec![
+                        merged.unit.clone().unwrap_or_else(|| "unitless".to_owned()),
+                        unit.clone().unwrap_or_else(|| "unitless".to_owned()),
+                    ];
+                    labels.sort();
+                    labels.dedup();
+                    merged.conflicting_units.extend(labels);
+                    merged.conflicting_units.sort();
+                    merged.conflicting_units.dedup();
+                }
+                schema.insert(&channel.name, merged);
+                continue;
+            }
             schema.insert(
                 &channel.name,
                 ChannelInfo {
-                    unit: channel.unit.clone(),
+                    unit,
                     period_deg: channel.period.map(|p| p.get::<degree>()),
                     components: channel.components.clone(),
+                    conflicting_units: Vec::new(),
                 },
             );
         }
     }
     schema
+}
+
+fn channel_units_compatible(existing: Option<&str>, incoming: Option<&ChannelUnit>) -> bool {
+    match (existing, incoming) {
+        (None, None) => true,
+        (Some(existing), Some(ChannelUnit::Recognized(incoming))) => Unit::from_label(existing)
+            .is_some_and(|existing| existing.quantity() == incoming.quantity()),
+        (Some(existing), Some(ChannelUnit::Custom(incoming))) => existing == incoming.as_str(),
+        _ => false,
+    }
 }
 
 fn check_text(text: &str, schema: &ChannelSchema) -> Result<CheckedQuery, Diagnostic> {
@@ -3507,7 +3554,7 @@ mod tests {
     fn scalar_channel(name: &str, unit: Option<&str>, samples: &[(i64, f64)]) -> Channel {
         Channel {
             name: name.to_owned(),
-            unit: unit.map(str::to_owned),
+            unit: unit.map(ChannelUnit::from_file_label),
             period: None,
             description: None,
             components: vec![],
@@ -3530,7 +3577,7 @@ mod tests {
     ) -> Channel {
         Channel {
             name: name.to_owned(),
-            unit: unit.map(str::to_owned),
+            unit: unit.map(ChannelUnit::from_file_label),
             period: None,
             description: None,
             components: components.iter().map(|c| (*c).to_owned()).collect(),
@@ -3939,6 +3986,59 @@ mod tests {
             }],
         );
         assert_eq!(output.summary.match_count, 1, "only the 80 mg sample");
+    }
+
+    #[test]
+    fn channel_results_convert_base_values_back_to_the_declared_unit() {
+        let unit = ChannelUnit::recognized(Unit::from_label("mg").expect("mg is recognized"));
+        let base_value = 80.0 * Unit::from_label("mg").expect("mg is recognized").to_base();
+        let displayed = base_value * channel_from_base_scale(Some(&unit));
+        assert!((displayed - 80.0).abs() < 1e-12);
+
+        let custom = ChannelUnit::custom("rpm").expect("valid custom unit");
+        assert!((channel_from_base_scale(Some(&custom)) - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn schema_accepts_compatible_scales_and_rejects_incompatible_units() {
+        let mg = vector_channel(
+            "accel",
+            Some("mg"),
+            &["x", "y", "z"],
+            &[(0, [20.0, 0.0, 0.0])],
+        );
+        let g = vector_channel(
+            "accel",
+            Some("g"),
+            &["x", "y", "z"],
+            &[(0, [0.02, 0.0, 0.0])],
+        );
+        let compatible = [
+            file_with_channels(vec![mg.clone()]),
+            file_with_channels(vec![g]),
+        ];
+        let schema = schema_from_files(&compatible);
+        check_text("points | window 2 | where max(@accel.x) > 10 mg", &schema)
+            .expect("g and mg are compatible acceleration units");
+
+        let degrees = vector_channel(
+            "accel",
+            Some("deg"),
+            &["x", "y", "z"],
+            &[(0, [20.0, 0.0, 0.0])],
+        );
+        let incompatible = [
+            file_with_channels(vec![mg]),
+            file_with_channels(vec![degrees]),
+        ];
+        let schema = schema_from_files(&incompatible);
+        let err = check_text("points | window 2 | where max(@accel.x) > 10 mg", &schema)
+            .expect_err("acceleration and angle units conflict");
+        assert_eq!(
+            err.message,
+            "@accel has incompatible units across loaded files"
+        );
+        assert_eq!(err.help.as_deref(), Some("found deg, mg"));
     }
 
     #[test]
