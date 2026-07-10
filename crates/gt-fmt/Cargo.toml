@@ -12,7 +12,12 @@ doctest = false
 [dependencies]
 chrono.workspace = true
 gt-types = { path = "../gt-types" }
+strum.workspace = true
 uom.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+rstest.workspace = true
 
 [lints]
 workspace = true

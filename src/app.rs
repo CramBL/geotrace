@@ -57,6 +57,9 @@ struct SharedAppState {
     /// Set by the side panel's "Reset filters", consumed by the app to also
     /// clear the query filter (the query window is not part of shared state).
     clear_query_request: bool,
+    /// User template for the recording name shown in the side panel. See
+    /// [`gt_fmt::render_name_template`].
+    recording_name_template: String,
 }
 
 impl SharedAppState {
@@ -303,6 +306,8 @@ impl App {
                 zoom_to_visible_request: false,
                 warnings_popup: None,
                 clear_query_request: false,
+                recording_name_template: crate::settings::DEFAULT_RECORDING_NAME_TEMPLATE
+                    .to_owned(),
             })),
             load_error: None,
             unassociated_log_lines: None,
@@ -624,6 +629,33 @@ impl App {
                         ui.end_row();
                     });
 
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui_phosphor::regular::TEXT_AA);
+                    ui.strong("Display");
+                });
+                ui.separator();
+                egui::Grid::new("display_grid")
+                    .num_columns(2)
+                    .spacing([8.0, 6.0])
+                    .show(ui, |ui| {
+                        ui.label(format!("{} Recording name", egui_phosphor::regular::TAG))
+                            .on_hover_text(
+                                "Template for the name shown for each recording in the side \
+                                 panel. Tokens: {title} {device} {identity} {filename}. Empty \
+                                 tokens and their separators are dropped; unknown text is kept.",
+                            );
+                        let mut template = self.shared.borrow().recording_name_template.clone();
+                        if ui
+                            .text_edit_singleline(&mut template)
+                            .on_hover_text("Tokens: {title} {device} {identity} {filename}")
+                            .changed()
+                        {
+                            self.shared.borrow_mut().recording_name_template = template;
+                        }
+                        ui.end_row();
+                    });
+
                 // Only meaningful in dist builds. Builds without the self-update
                 // feature carry no update check to toggle.
                 #[cfg(feature = "self-update")]
@@ -783,6 +815,7 @@ impl App {
             let mut shared = self.shared.borrow_mut();
             shared.plot_state.sync_to_map = s.map.sync_to_map;
             shared.display_mask = s.map.display_mask;
+            shared.recording_name_template = s.ui.recording_name_template.clone();
             shared.plot_state.show_grid = s.plot.show_grid;
             shared.plot_state.line_width = s.plot.line_width.clamp(
                 *gt_plot::PLOT_LINE_WIDTH_RANGE.start(),
@@ -853,6 +886,7 @@ impl App {
             sync_to_map: s.plot_state.sync_to_map,
             display_mask: s.display_mask,
             theme,
+            recording_name_template: s.recording_name_template.clone(),
             track_split_gap_seconds: self
                 .processing_config
                 .track_layout
@@ -919,7 +953,10 @@ impl App {
                 sync_to_map: s.plot_state.sync_to_map,
                 display_mask: s.display_mask,
             },
-            ui: crate::settings::UiSettings { theme },
+            ui: crate::settings::UiSettings {
+                theme,
+                recording_name_template: s.recording_name_template.clone(),
+            },
             processing: crate::settings::ProcessingSettings {
                 track_split_gap_seconds: self
                     .processing_config
@@ -1695,6 +1732,7 @@ impl eframe::App for App {
                             warnings_request: &mut s.warnings_popup,
                             clear_query_request: &mut s.clear_query_request,
                             display_mask: s.display_mask,
+                            recording_name_template: &s.recording_name_template,
                         },
                     );
                 });
@@ -1732,6 +1770,7 @@ impl eframe::App for App {
                             warnings_request: &mut s.warnings_popup,
                             clear_query_request: &mut s.clear_query_request,
                             display_mask: s.display_mask,
+                            recording_name_template: &s.recording_name_template,
                         },
                     );
                 });

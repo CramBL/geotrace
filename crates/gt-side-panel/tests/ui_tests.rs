@@ -1,3 +1,8 @@
+#![expect(
+    clippy::literal_string_with_formatting_args,
+    reason = "recording-name templates intentionally contain {token} placeholders, not format args"
+)]
+
 use std::path::PathBuf;
 
 use gt_filter::GlobalFilter;
@@ -19,6 +24,7 @@ struct State {
     warnings_request: Option<(String, Vec<LoadWarning>)>,
     clear_query_request: bool,
     display_mask: DisplayMask,
+    recording_name_template: String,
 }
 
 fn make_state(file_count: usize) -> State {
@@ -66,6 +72,7 @@ fn make_state_with_warnings_on(
         warnings_request: None,
         clear_query_request: false,
         display_mask: DisplayMask::default(),
+        recording_name_template: "{filename}".to_owned(),
     }
 }
 
@@ -86,6 +93,7 @@ fn make_harness(state: State) -> TestHarness<'static, State> {
                     warnings_request: &mut s.warnings_request,
                     clear_query_request: &mut s.clear_query_request,
                     display_mask: s.display_mask,
+                    recording_name_template: &s.recording_name_template,
                 };
                 show_side_panel(ui, &mut ctx);
             },
@@ -241,6 +249,7 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
         warnings_request: None,
         clear_query_request: false,
         display_mask: DisplayMask::default(),
+        recording_name_template: "{filename}".to_owned(),
     };
     // Renders the expanded track row, exercising the `fix_stats == None` fallback
     // ("No satellite data") instead of the colored tooltip.
@@ -357,6 +366,7 @@ fn snapshot_track_channels() {
         warnings_request: None,
         clear_query_request: false,
         display_mask: DisplayMask::default(),
+        recording_name_template: "{filename}".to_owned(),
     };
     let mut harness = make_harness(state);
     harness.run();
@@ -401,6 +411,7 @@ fn make_state_with_shared_prefix() -> State {
         warnings_request: None,
         clear_query_request: false,
         display_mask: DisplayMask::default(),
+        recording_name_template: "{filename}".to_owned(),
     }
 }
 
@@ -442,7 +453,62 @@ fn make_state_with_long_name() -> State {
         warnings_request: None,
         clear_query_request: false,
         display_mask: DisplayMask::default(),
+        recording_name_template: "{filename}".to_owned(),
     }
+}
+
+/// Two recordings carrying SDK title/device metadata, for exercising the
+/// recording-name template.
+fn make_state_with_metadata() -> State {
+    let points = gt_test_utils::nav_test_data();
+    let mut files = LoadedFiles::new();
+    for (name, title, device) in [
+        ("ride_0.gtd", "Morning ride", "uBlox F9P"),
+        ("ride_1.gtd", "Evening walk", "uBlox F9P"),
+    ] {
+        let file = gt_track_builder::build_loaded_file(
+            name.to_owned(),
+            &points,
+            &[],
+            vec![],
+            vec![],
+            &[],
+            &gt_track_builder::SegmentationConfig::default(),
+            gt_types::FileSource::GtdPath(PathBuf::from(name)),
+            gt_track_builder::FileMeta {
+                title: Some(title.to_owned()),
+                device: Some(device.to_owned()),
+                notes: None,
+            },
+            vec![],
+        );
+        files.push(file, FileHistory::None);
+    }
+    let mut tree = TreeState::new();
+    tree.sync_from_loaded_files(files.files());
+    State {
+        files,
+        tree,
+        filter: GlobalFilter::default(),
+        filter_state: FilterPanelState::default(),
+        highlight: MapHighlight::default(),
+        map_center: None,
+        popup_pos: None,
+        zoom_to_visible: false,
+        warnings_request: None,
+        clear_query_request: false,
+        display_mask: DisplayMask::default(),
+        recording_name_template: "{title} — {device}".to_owned(),
+    }
+}
+
+#[test]
+fn snapshot_recording_name_template() {
+    // A non-default template renders "{title} — {device}" for each row instead
+    // of the filename.
+    let mut harness = make_harness(make_state_with_metadata());
+    harness.run();
+    harness.snapshot("side_panel_name_template");
 }
 
 /// Render `show_side_panel` inside a resizable [`egui::Panel::left`] - the same
@@ -474,6 +540,7 @@ fn settled_docked_panel_width(state: State) -> f32 {
                                 warnings_request: &mut s.warnings_request,
                                 clear_query_request: &mut s.clear_query_request,
                                 display_mask: s.display_mask,
+                                recording_name_template: &s.recording_name_template,
                             };
                             show_side_panel(ui, &mut ctx);
                         });
