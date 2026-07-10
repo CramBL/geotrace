@@ -2356,6 +2356,7 @@ dependencies = [
  "gt-track-builder",
  "gt-types",
  "proptest",
+ "rstest",
  "strum",
  "tempfile",
  "thiserror 2.0.18",

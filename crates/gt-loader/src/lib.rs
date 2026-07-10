@@ -132,9 +132,21 @@ pub fn load_gtd_file_with_progress(
         &channels,
         config,
         source,
+        file_meta_from_nav(&nav_file),
         load_warnings,
     );
     Ok(LoadedGtd { file, identity })
+}
+
+/// Capture the recording's SDK file metadata (title/device/notes) for display in
+/// the app. The identity is handled separately by [`derive_identity`].
+fn file_meta_from_nav(nav_file: &NavFile) -> gt_track_builder::FileMeta {
+    let meta = nav_file.meta();
+    gt_track_builder::FileMeta {
+        title: meta.title.clone(),
+        device: meta.device.clone(),
+        notes: meta.notes.clone(),
+    }
 }
 
 /// Like [`load_bytes`] but calls `progress(fraction, stage)` at key milestones.
@@ -175,6 +187,7 @@ pub fn load_gtd_bytes_with_progress(
         &channels,
         config,
         source,
+        file_meta_from_nav(&nav_file),
         load_warnings,
     );
     Ok(LoadedGtd { file, identity })
@@ -514,6 +527,7 @@ mod tests {
         NavFile, NavFileBuilder, NavFix, Satellite as SdkSat, SatelliteReport, Utc, Velocity,
     };
     use proptest::prelude::*;
+    use rstest::rstest;
     use strum::EnumCount;
     use uom::si::velocity::meter_per_second as uom_mps;
 
@@ -571,6 +585,38 @@ mod tests {
         );
         assert_eq!(accel.times.len(), 2);
         assert_eq!(accel.values, vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02]);
+    }
+
+    #[rstest]
+    #[case(Some("Morning ride"), Some("uBlox F9P"), Some("cross-town commute"))]
+    #[case(None, None, None)]
+    fn loaded_file_carries_sdk_metadata(
+        #[case] title: Option<&str>,
+        #[case] device: Option<&str>,
+        #[case] notes: Option<&str>,
+    ) {
+        let t0 = base();
+        let mut builder = NavFileBuilder::new();
+        if let Some(title) = title {
+            builder = builder.with_title(title);
+        }
+        if let Some(device) = device {
+            builder = builder.with_device(device);
+        }
+        if let Some(notes) = notes {
+            builder = builder.with_notes(notes);
+        }
+        let mut recorder = builder.open();
+        for i in 0..3i64 {
+            recorder.add_nav_fix(minimal_fix(t0 + Duration::seconds(i)));
+        }
+        let mut bytes = Vec::new();
+        recorder.finish().unwrap().write(&mut bytes).unwrap();
+
+        let file = load_bytes(&bytes, "ride.gtd".to_owned()).unwrap();
+        assert_eq!(file.metadata.title.as_deref(), title);
+        assert_eq!(file.metadata.device.as_deref(), device);
+        assert_eq!(file.metadata.notes.as_deref(), notes);
     }
 
     #[test]

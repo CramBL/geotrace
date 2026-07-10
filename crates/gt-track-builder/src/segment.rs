@@ -548,6 +548,27 @@ pub fn compute_track_metadata(
     }
 }
 
+/// Optional file-level metadata carried from the recording's SDK metadata into
+/// the built [`LoadedFile`]. All fields are absent for sources that have none.
+#[derive(Debug, Clone, Default)]
+pub struct FileMeta {
+    pub title: Option<String>,
+    pub device: Option<String>,
+    pub notes: Option<String>,
+}
+
+impl From<&FileMetadata> for FileMeta {
+    /// Recover the metadata inputs from an already-built [`FileMetadata`], so a
+    /// re-segmentation preserves them without re-listing the field names.
+    fn from(metadata: &FileMetadata) -> Self {
+        Self {
+            title: metadata.title.clone(),
+            device: metadata.device.clone(),
+            notes: metadata.notes.clone(),
+        }
+    }
+}
+
 /// Segments `points` into tracks and builds a fully-populated `LoadedFile`.
 #[expect(
     clippy::expect_used,
@@ -566,6 +587,7 @@ pub fn build_loaded_file(
     channels: &[Channel],
     config: &SegmentationConfig,
     source: FileSource,
+    file_meta: FileMeta,
     mut load_warnings: Vec<LoadWarning>,
 ) -> LoadedFile {
     let ranges = segment_tracks(points, &config.track_layout);
@@ -729,6 +751,9 @@ pub fn build_loaded_file(
             total_duration,
             time_range: file_time_range,
             fix_stats: file_fix_stats,
+            title: file_meta.title,
+            device: file_meta.device,
+            notes: file_meta.notes,
         },
         tracks: loaded_tracks,
         event_marker_styles: event_marker_styles
@@ -1081,6 +1106,7 @@ mod tests {
             &[],
             &SegmentationConfig::default(),
             FileSource::GtdPath(PathBuf::from("test.gtd")),
+            FileMeta::default(),
             vec![],
         );
         assert!(f.tracks.is_empty());
@@ -1104,6 +1130,7 @@ mod tests {
             &[],
             &SegmentationConfig::default(),
             FileSource::GtdPath(PathBuf::from("ride.gtd")),
+            FileMeta::default(),
             vec![],
         );
         assert_eq!(f.tracks.len(), 2);
@@ -1147,6 +1174,7 @@ mod tests {
             std::slice::from_ref(&channel),
             &SegmentationConfig::default(),
             FileSource::GtdPath(PathBuf::from("ride.gtd")),
+            FileMeta::default(),
             vec![],
         );
         assert_eq!(f.tracks.len(), 2);
@@ -1213,6 +1241,7 @@ mod tests {
             std::slice::from_ref(&channel),
             &SegmentationConfig::default(),
             FileSource::GtdPath(PathBuf::from("ride.gtd")),
+            FileMeta::default(),
             vec![],
         );
 
@@ -1256,6 +1285,7 @@ mod tests {
             std::slice::from_ref(&channel),
             &SegmentationConfig::default(),
             FileSource::GtdPath(PathBuf::from("ride.gtd")),
+            FileMeta::default(),
             vec![],
         );
         assert_eq!(f.tracks.len(), 2);
@@ -1517,6 +1547,7 @@ mod tests {
             &[],
             &SegmentationConfig::default(),
             FileSource::GtdPath(PathBuf::from("test.gtd")),
+            FileMeta::default(),
             vec![],
         );
         assert_eq!(f.tracks.len(), 2, "expected two tracks");
@@ -1526,6 +1557,38 @@ mod tests {
         assert_eq!(stats.fix_loss_count, 2);
         // max taken across tracks, not summed
         assert_eq!(stats.max_continuous_no_fix, Duration::seconds(120));
+    }
+
+    #[test]
+    fn build_loaded_file_carries_file_meta() {
+        let pts = vec![make_point_with_fix(0, true), make_point_with_fix(60, true)];
+        let file_meta = FileMeta {
+            title: Some("Morning ride".to_owned()),
+            device: Some("uBlox F9P".to_owned()),
+            notes: Some("cross-town".to_owned()),
+        };
+        let f = build_loaded_file(
+            "ride.gtd".to_owned(),
+            &pts,
+            &[],
+            vec![],
+            vec![],
+            &[],
+            &SegmentationConfig::default(),
+            FileSource::GtdPath(PathBuf::from("ride.gtd")),
+            file_meta,
+            vec![],
+        );
+        assert_eq!(f.metadata.title.as_deref(), Some("Morning ride"));
+        assert_eq!(f.metadata.device.as_deref(), Some("uBlox F9P"));
+        assert_eq!(f.metadata.notes.as_deref(), Some("cross-town"));
+
+        // Round-trip: rebuilding from the built metadata (the re-segmentation
+        // path) preserves the fields.
+        let recovered = FileMeta::from(&f.metadata);
+        assert_eq!(recovered.title.as_deref(), Some("Morning ride"));
+        assert_eq!(recovered.device.as_deref(), Some("uBlox F9P"));
+        assert_eq!(recovered.notes.as_deref(), Some("cross-town"));
     }
 
     proptest::proptest! {

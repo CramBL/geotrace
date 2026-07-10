@@ -347,6 +347,12 @@ pub struct FileMetadata {
     pub time_range: TimeRange,
     /// Aggregated fix stats across all tracks. `None` when no track has satellite reports.
     pub fix_stats: Option<FixStats>,
+    /// Optional file title from the recording's SDK metadata.
+    pub title: Option<String>,
+    /// Optional producing device/sensor from the recording's SDK metadata.
+    pub device: Option<String>,
+    /// Optional free-text notes from the recording's SDK metadata.
+    pub notes: Option<String>,
 }
 
 /// Sentinel default for use in test helpers via struct-update syntax (`..FileMetadata::default()`).
@@ -361,6 +367,9 @@ impl Default for FileMetadata {
             total_duration: Duration::zero(),
             time_range: TimeRange::new(DateTime::<Utc>::UNIX_EPOCH, DateTime::<Utc>::UNIX_EPOCH),
             fix_stats: None,
+            title: None,
+            device: None,
+            notes: None,
         }
     }
 }

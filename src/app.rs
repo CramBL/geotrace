@@ -1038,6 +1038,7 @@ impl App {
                 let all_channels = gt_track_builder::reassemble_channels(&file.tracks);
                 let filename = file.metadata.filename.clone();
                 let source = file.source.clone();
+                let file_meta = gt_track_builder::FileMeta::from(&file.metadata);
                 *file = gt_track_builder::build_loaded_file(
                     filename,
                     &all_points,
@@ -1047,6 +1048,7 @@ impl App {
                     &all_channels,
                     &config,
                     source,
+                    file_meta,
                     file.load_warnings.clone(),
                 );
             }

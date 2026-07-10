@@ -47,6 +47,7 @@ fn make_state_with_warnings_on(
             &[],
             &gt_track_builder::SegmentationConfig::default(),
             gt_types::FileSource::GtdPath(PathBuf::from(format!("ride_{i}.gtd"))),
+            gt_track_builder::FileMeta::default(),
             w,
         );
         files.push(file, FileHistory::None);
@@ -213,6 +214,7 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
         &[],
         &gt_track_builder::SegmentationConfig::default(),
         gt_types::FileSource::GtdPath(PathBuf::from("no_sats.gtd")),
+        gt_track_builder::FileMeta::default(),
         vec![],
     );
     assert_eq!(file.tracks.len(), 1);
@@ -330,6 +332,7 @@ fn snapshot_track_channels() {
         &[accel, incline, raw],
         &gt_track_builder::SegmentationConfig::default(),
         gt_types::FileSource::GtdPath(PathBuf::from("sensors.gtd")),
+        gt_track_builder::FileMeta::default(),
         vec![],
     );
 
@@ -379,6 +382,7 @@ fn make_state_with_shared_prefix() -> State {
             &[],
             &gt_track_builder::SegmentationConfig::default(),
             gt_types::FileSource::GtdPath(PathBuf::from(name)),
+            gt_track_builder::FileMeta::default(),
             vec![],
         );
         files.push(file, FileHistory::None);
@@ -420,6 +424,7 @@ fn make_state_with_long_name() -> State {
         &[],
         &gt_track_builder::SegmentationConfig::default(),
         gt_types::FileSource::GtdPath(PathBuf::from(name)),
+        gt_track_builder::FileMeta::default(),
         vec![],
     );
     files.push(file, FileHistory::None);
