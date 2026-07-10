@@ -227,8 +227,29 @@ impl Unit {
     pub const PER_MIN: Self = Self::base(BaseUnit::PerMin);
     pub const PER_H: Self = Self::base(BaseUnit::PerH);
 
+    /// Compact unit catalog suitable for query suggestions.
+    pub const CANONICAL: [Self; 17] = [
+        Self::DEG,
+        Self::M,
+        Self::KM,
+        Self::KM_PER_H,
+        Self::M_PER_S,
+        Self::KN,
+        Self::M_PER_S2,
+        Self::G,
+        Self::KM_PER_H_PER_S,
+        Self::MS,
+        Self::S,
+        Self::MIN,
+        Self::H,
+        Self::PERCENT,
+        Self::PER_S,
+        Self::PER_MIN,
+        Self::PER_H,
+    ];
+
     /// Every unit accepted as recognized channel metadata.
-    pub const CANONICAL: [Self; 29] = [
+    pub const RECOGNIZED: [Self; 29] = [
         Self::DEG,
         Self::M,
         Self::NM,
@@ -600,8 +621,8 @@ mod tests {
                     .count()
             })
             .sum::<usize>();
-        assert_eq!(Unit::CANONICAL.len(), BaseUnit::COUNT + prefixed_count);
-        for unit in Unit::CANONICAL {
+        assert_eq!(Unit::RECOGNIZED.len(), BaseUnit::COUNT + prefixed_count);
+        for unit in Unit::RECOGNIZED {
             let text = unit.to_string();
             assert_eq!(Unit::from_label(&text), Some(unit), "{text}");
         }
