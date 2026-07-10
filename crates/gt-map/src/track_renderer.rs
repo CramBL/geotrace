@@ -5,9 +5,23 @@ use gt_ui_types::{HighlightScope, MapHighlight};
 
 /// Alpha multiplier for elements on non-focused tracks while hover is active.
 ///
-/// Used both by marker renderers (which draw after the overlay) and to compute
-/// the overlay's opacity: `overlay_alpha = 1.0 - HOVER_FADE_ALPHA`.
+/// Used by marker renderers, which draw at this alpha on top of the fade
+/// overlay. The overlay's own opacity is [`FOCUS_SCRIM_MAX_ALPHA_LIGHT`] /
+/// [`FOCUS_SCRIM_MAX_ALPHA_DARK`], tuned independently.
 pub(crate) const HOVER_FADE_ALPHA: f32 = 0.15;
+
+/// Peak opacity of the focus scrim painted over the whole viewport when a track
+/// is focused, in light and dark themes respectively.
+///
+/// The scrim is a flat rect of `extreme_bg_color` (near-white in light mode,
+/// near-black in dark) and unavoidably covers the map tiles as well as the
+/// non-focused tracks it means to dim. A heavy scrim therefore flattens the
+/// whole map to that background color rather than fading it, so these stay
+/// gentle: enough to push non-focused geometry back while keeping the map
+/// legible. Dark mode is lighter still, since a dark scrim reads as heavier at
+/// equal opacity.
+pub(crate) const FOCUS_SCRIM_MAX_ALPHA_LIGHT: f32 = 0.4;
+pub(crate) const FOCUS_SCRIM_MAX_ALPHA_DARK: f32 = 0.3;
 
 /// Stroke for a track's plain line: thicker highlight blue when the track
 /// is hovered or sticky-selected, its palette color at full opacity otherwise.

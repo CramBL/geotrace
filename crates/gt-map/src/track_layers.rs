@@ -625,25 +625,37 @@ fn paint_trackline_path(
 /// track geometry drawn before this call.
 ///
 /// `progress` is the animated fade value in [0.0, 1.0] produced by
-/// [`crate::HoverFadeState`].  The overlay's opacity is scaled so that at
-/// `progress = 1.0` the tracks visible beneath it appear at approximately
-/// `HOVER_FADE_ALPHA` brightness.
+/// [`crate::HoverFadeState`].  At `progress = 1.0` the overlay reaches its
+/// theme's peak opacity ([`track_renderer::FOCUS_SCRIM_MAX_ALPHA_LIGHT`] /
+/// [`track_renderer::FOCUS_SCRIM_MAX_ALPHA_DARK`]).
 /// Using a single rect rather than per-track alpha prevents the accumulation
 /// artifact where N overlapping faded tracks at alpha `1/N` each would sum to
 /// full visibility at busy intersections.
 fn paint_fade_overlay(ui: &Ui, max_rect: egui::Rect, progress: f32) {
-    let max_alpha = (1.0 - track_renderer::HOVER_FADE_ALPHA) * 255.0;
-    #[expect(
-        clippy::cast_sign_loss,
-        reason = "max_alpha and progress.clamp(0,1) are both non-negative"
-    )]
-    let alpha = (max_alpha * progress.clamp(0.0, 1.0)) as u8;
-    let bg = ui.visuals().extreme_bg_color;
+    let visuals = ui.visuals();
+    let alpha = focus_scrim_alpha(visuals.dark_mode, progress);
+    let bg = visuals.extreme_bg_color;
     ui.painter().rect_filled(
         max_rect,
         0.0,
         egui::Color32::from_rgba_unmultiplied(bg.r(), bg.g(), bg.b(), alpha),
     );
+}
+
+/// The scrim's alpha for a theme and animation `progress`, scaling the theme's
+/// peak opacity by `progress` clamped to [0.0, 1.0].
+fn focus_scrim_alpha(dark_mode: bool, progress: f32) -> u8 {
+    let max_alpha = if dark_mode {
+        track_renderer::FOCUS_SCRIM_MAX_ALPHA_DARK
+    } else {
+        track_renderer::FOCUS_SCRIM_MAX_ALPHA_LIGHT
+    } * 255.0;
+    #[expect(
+        clippy::cast_sign_loss,
+        reason = "max_alpha and progress.clamp(0,1) are both non-negative"
+    )]
+    let alpha = (max_alpha * progress.clamp(0.0, 1.0)) as u8;
+    alpha
 }
 
 /// Paint a track's fix-quality line from its prepared geometry: each edge
@@ -696,7 +708,7 @@ mod tests {
 
     use gt_ui_types::DrawLayerMask;
 
-    use super::{LinePointKey, shown_runs};
+    use super::{LinePointKey, focus_scrim_alpha, shown_runs};
     use crate::polyline::{VisiblePath, visible_path};
 
     /// A span of points with the given `hidden` flags, at increasing x.
@@ -768,5 +780,29 @@ mod tests {
         ];
         let path = visible_path(pts.into_iter(), rect);
         assert!(matches!(path, VisiblePath::Spans(_)));
+    }
+
+    #[test]
+    fn focus_scrim_is_gentle_and_subtler_in_dark_mode() {
+        // Regression: the scrim used to reach ~217/255, whiting out the whole
+        // map in light mode. Both themes now stay well below opaque, and dark
+        // mode is lighter still.
+        let light = focus_scrim_alpha(false, 1.0);
+        let dark = focus_scrim_alpha(true, 1.0);
+        assert!(
+            light < 128,
+            "light scrim {light} should not wash out the map"
+        );
+        assert!(
+            dark < light,
+            "dark scrim {dark} should be subtler than light {light}"
+        );
+    }
+
+    #[test]
+    fn focus_scrim_scales_with_progress() {
+        assert_eq!(focus_scrim_alpha(false, 0.0), 0);
+        // Clamped above 1.0 so the animation overshooting cannot exceed the peak.
+        assert_eq!(focus_scrim_alpha(true, 2.0), focus_scrim_alpha(true, 1.0));
     }
 }
