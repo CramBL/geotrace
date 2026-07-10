@@ -35,11 +35,20 @@ int main() {
 
         geotrace::Channel accel{};
         accel.name = "accel";
-        accel.unit = "g";
+        accel.unit = "mg";
+        accel.unit_mode = geotrace::ChannelUnitMode::Recognized;
         accel.components = {"x", "y", "z"};
         accel.times = {t0, t1};
-        accel.values = {0.1, 0.2, 0.98, -0.1, 0.3, 1.02};
+        accel.values = {100.0, 200.0, 980.0, -100.0, 300.0, 1020.0};
         builder.add(accel);
+
+        geotrace::Channel quality{};
+        quality.name = "quality";
+        quality.unit = "vendor score";
+        quality.unit_mode = geotrace::ChannelUnitMode::Custom;
+        quality.times = {t0, t1};
+        quality.values = {80.0, 81.0};
+        builder.add(quality);
 
         auto file = builder.finish();
 

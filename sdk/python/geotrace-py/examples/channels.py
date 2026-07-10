@@ -12,7 +12,7 @@ import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from geotrace_sdk import Channel, NavFile, NavFileBuilder, NavFix
+from geotrace_sdk import Channel, ChannelUnit, NavFile, NavFileBuilder, NavFix
 
 START = datetime(2024, 6, 1, 8, 0, 0, tzinfo=UTC)
 
@@ -36,9 +36,27 @@ def main() -> None:
             "accel",
             times,
             # Row-major: three samples of (x, y, z).
-            [0.0, 0.2, 0.98, 0.1, 0.2, 1.00, 0.2, 0.2, 1.02],
-            unit="g",
+            [
+                0.0,
+                200.0,
+                980.0,
+                100.0,
+                200.0,
+                1000.0,
+                200.0,
+                200.0,
+                1020.0,
+            ],
+            unit=ChannelUnit.recognized("mg"),
             components=["x", "y", "z"],
+        )
+    )
+    builder.add(
+        Channel(
+            "quality",
+            times,
+            [80.0, 81.0, 82.0],
+            unit=ChannelUnit.custom("vendor score"),
         )
     )
 

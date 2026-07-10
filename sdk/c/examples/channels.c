@@ -4,7 +4,7 @@
  * A channel is a named time series sampled at its own rate, correlated with the
  * nav track by timestamp.  It can be scalar (an inclinometer angle) or a vector
  * whose components share one sample clock (an accelerometer's x/y/z axes).  This
- * example writes one of each, reads the file back, and prints their metadata.
+ * example also shows recognized milli-g values and a custom display-only unit.
  */
 
 #include "../geotrace.h"
@@ -30,12 +30,14 @@ int main(void) {
     GtdTimestamp times[3];
     double incline_vals[3];
     double accel_vals[9]; /* 3 samples x 3 components, row-major */
+    double quality_vals[3];
     for (size_t i = 0; i < 3; i++) {
         times[i] = gtd_ts_from_seconds(BASE_EPOCH + i);
         incline_vals[i] = 1.0 + ((double)i * 0.5);
-        accel_vals[(i * 3) + 0] = 0.1 * (double)i;
-        accel_vals[(i * 3) + 1] = 0.2;
-        accel_vals[(i * 3) + 2] = 0.98;
+        accel_vals[(i * 3) + 0] = 100.0 * (double)i;
+        accel_vals[(i * 3) + 1] = 200.0;
+        accel_vals[(i * 3) + 2] = 980.0;
+        quality_vals[i] = 80.0 + (double)i;
     }
 
     GtdChannel incline = {0};
@@ -56,7 +58,8 @@ int main(void) {
     const char *comps[3] = {"x", "y", "z"};
     GtdChannel accel = {0};
     accel.name = "accel";
-    accel.unit = "g";
+    accel.unit = "mg";
+    accel.unit_mode = GTD_CHANNEL_UNIT_RECOGNIZED;
     accel.period_deg = GTD_NONE_F64;
     accel.components = comps;
     accel.n_components = 3;
@@ -66,6 +69,21 @@ int main(void) {
     accel.n_values = 9;
     if (gtd_builder_add_channel(b, &accel) != GTD_OK) {
         fprintf(stderr, "add_channel(accel): %s\n", gtd_last_error());
+        gtd_builder_destroy(b);
+        return 1;
+    }
+
+    GtdChannel quality = {0};
+    quality.name = "quality";
+    quality.unit = "vendor score";
+    quality.unit_mode = GTD_CHANNEL_UNIT_CUSTOM;
+    quality.period_deg = GTD_NONE_F64;
+    quality.times = times;
+    quality.n_times = 3;
+    quality.values = quality_vals;
+    quality.n_values = 3;
+    if (gtd_builder_add_channel(b, &quality) != GTD_OK) {
+        fprintf(stderr, "add_channel(quality): %s\n", gtd_last_error());
         gtd_builder_destroy(b);
         return 1;
     }
