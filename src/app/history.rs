@@ -1,6 +1,6 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use gt_history::{DatabaseRef, PruneMode, RecordingEntry, RecordingMeta};
-use gt_ui_theme::WARNING_AMBER;
+use gt_ui_theme::warning_amber;
 
 use crate::app::history_db::{DeleteReason, HistoryManager};
 
@@ -164,7 +164,7 @@ impl PruneDialog {
                             let confirm_btn = ui
                                 .button(
                                     egui::RichText::new("Delete these recordings")
-                                        .color(WARNING_AMBER),
+                                        .color(warning_amber(ui.visuals().dark_mode)),
                                 )
                                 .on_hover_text(
                                     "This cannot be undone. The original source files are unaffected.",
@@ -339,13 +339,13 @@ impl HistoryWindow {
                 if !manager.available() {
                     ui.label(
                         egui::RichText::new("History database is unavailable.")
-                            .color(WARNING_AMBER),
+                            .color(warning_amber(ui.visuals().dark_mode)),
                     );
                     return;
                 }
 
                 if let Some(err) = &self.error {
-                    ui.label(egui::RichText::new(err).color(WARNING_AMBER));
+                    ui.label(egui::RichText::new(err).color(warning_amber(ui.visuals().dark_mode)));
                     ui.add_space(4.0);
                 }
 
@@ -611,7 +611,7 @@ impl HistoryWindow {
                             if ui
                                 .button(
                                     egui::RichText::new("Delete hidden tracks")
-                                        .color(WARNING_AMBER),
+                                        .color(warning_amber(ui.visuals().dark_mode)),
                                 )
                                 .on_hover_text(
                                     "This cannot be undone. The original source files are unaffected.",

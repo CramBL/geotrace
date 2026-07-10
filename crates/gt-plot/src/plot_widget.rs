@@ -1192,6 +1192,7 @@ pub fn show_track_plot(
         plot = plot.include_x(full_x_min).include_x(full_x_max);
     }
 
+    let dark_mode = ui.visuals().dark_mode;
     let plot_response = plot.show(ui, |plot_ui| {
         let bounds = plot_ui.plot_bounds();
         let plot_x_min = bounds.min()[0];
@@ -1305,6 +1306,7 @@ pub fn show_track_plot(
                     multi_track,
                     anomaly_pointer,
                     &mut hovered_anomaly,
+                    dark_mode,
                 );
             }
         }
@@ -2202,6 +2204,7 @@ fn add_util_anomalies<'a>(
     multi_track: bool,
     pointer: Option<egui::Pos2>,
     nearest: &mut Option<(f32, AnomalyHover)>,
+    dark_mode: bool,
 ) {
     if series.util_anomalies.is_empty() {
         return;
@@ -2215,7 +2218,7 @@ fn add_util_anomalies<'a>(
     plot_ui.points(
         Points::new("Masked-out used satellites", PlotPoints::Owned(points))
             .shape(MarkerShape::Cross)
-            .color(gt_ui_theme::ERROR_INDICATOR)
+            .color(gt_ui_theme::error_indicator(dark_mode))
             .radius(ANOMALY_MARKER_RADIUS)
             // Hover is handled with a custom tooltip, so suppress egui_plot's own.
             .allow_hover(false),

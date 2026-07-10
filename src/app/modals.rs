@@ -5,7 +5,7 @@ use gt_history::DatabaseRef;
 use gt_map::{MapLayer, NavMap};
 use gt_side_panel::{NodeKey, TreeState};
 use gt_types::{LoadWarning, TrackRef};
-use gt_ui_theme::WARNING_AMBER;
+use gt_ui_theme::warning_amber;
 
 use gt_loaded_files::{LoadedFiles, LoadedFilesView};
 
@@ -402,7 +402,7 @@ pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<
                             for w in warnings.iter() {
                                 ui.label(
                                     egui::RichText::new(egui_phosphor::regular::WARNING)
-                                        .color(WARNING_AMBER),
+                                        .color(warning_amber(ui.visuals().dark_mode)),
                                 );
                                 ui.label(egui::RichText::new(w.count.to_string()).strong());
                                 ui.label(&w.issue);

@@ -2503,6 +2503,7 @@ version = "0.5.1"
 dependencies = [
  "egui",
  "gt-types",
+ "strum",
 ]
 
 [[package]]

@@ -30,7 +30,7 @@ impl PartialEq<u32> for Prn {
 }
 
 /// Signal quality tier derived from an [`Snr`] value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter)]
 pub enum SignalQuality {
     /// ≥ 40 dB-Hz - excellent lock.
     Excellent,

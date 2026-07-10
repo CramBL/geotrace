@@ -2888,7 +2888,7 @@ fn syntax_color(class: TokenClass, default: egui::Color32, dark_mode: bool) -> e
         TokenClass::Ident => gt_ui_theme::query_syntax_ident(dark_mode),
         TokenClass::Comment => gt_ui_theme::QUERY_SYNTAX_COMMENT,
         TokenClass::Punctuation => default,
-        TokenClass::Error => gt_ui_theme::ERROR_INDICATOR,
+        TokenClass::Error => gt_ui_theme::error_indicator(dark_mode),
     }
 }
 
@@ -2924,11 +2924,12 @@ fn append_query_syntax(
 fn error_message_layout(ui: &egui::Ui, message: &str) -> LayoutJob {
     let body = egui::TextStyle::Body.resolve(ui.style());
     let mono = egui::TextStyle::Monospace.resolve(ui.style());
+    let error_color = gt_ui_theme::error_indicator(ui.visuals().dark_mode);
     let mut job = LayoutJob::default();
     job.append(
         &format!("{} ", egui_phosphor::regular::WARNING_OCTAGON),
         0.0,
-        text_format(&body, gt_ui_theme::ERROR_INDICATOR),
+        text_format(&body, error_color),
     );
     let mut in_code = false;
     for part in message.split('`') {
@@ -2941,7 +2942,7 @@ fn error_message_layout(ui: &egui::Ui, message: &str) -> LayoutJob {
                     ..Default::default()
                 }
             } else {
-                text_format(&body, gt_ui_theme::ERROR_INDICATOR)
+                text_format(&body, error_color)
             };
             job.append(part, 0.0, format);
         }
@@ -2977,6 +2978,8 @@ fn format_value(metric: QueryMetric, value: Option<f64>) -> String {
 fn highlight_layout(ui: &egui::Ui, text: &str, diagnostics: &[Span]) -> LayoutJob {
     let font = egui::TextStyle::Monospace.resolve(ui.style());
     let default_color = ui.visuals().text_color();
+    let dark_mode = ui.visuals().dark_mode;
+    let error_color = gt_ui_theme::error_indicator(dark_mode);
     let underlines: Vec<(usize, usize)> = diagnostics
         .iter()
         .map(|span| (span.start, span.end.max(span.start + 1)))
@@ -2998,7 +3001,7 @@ fn highlight_layout(ui: &egui::Ui, text: &str, diagnostics: &[Span]) -> LayoutJo
             font_id: font.clone(),
             color,
             underline: if underlined {
-                egui::Stroke::new(2.0, gt_ui_theme::ERROR_INDICATOR)
+                egui::Stroke::new(2.0, error_color)
             } else {
                 egui::Stroke::NONE
             },
@@ -3014,7 +3017,7 @@ fn highlight_layout(ui: &egui::Ui, text: &str, diagnostics: &[Span]) -> LayoutJo
         for range in segments(cursor..span.start, &underlines) {
             append(range, default_color);
         }
-        let color = syntax_color(class, default_color, ui.visuals().dark_mode);
+        let color = syntax_color(class, default_color, dark_mode);
         for range in segments(span.start..span.end, &underlines) {
             append(range, color);
         }
