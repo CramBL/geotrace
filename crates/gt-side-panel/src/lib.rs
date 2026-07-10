@@ -4,7 +4,7 @@ pub mod tree;
 pub mod widgets;
 
 pub use filter::{FilterPanelState, render_filter_panel};
-pub use render::{PanelContext, show_side_panel};
+pub use render::{PanelContext, RecordingDetails, show_side_panel};
 pub use tree::{
     CategoriesExpanded, CheckState, DeleteConfirmState, FileNode, NodeKey, TrackNode, TreeState,
 };

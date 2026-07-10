@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use egui_kittest::kittest::Queryable as _;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
@@ -25,6 +26,7 @@ struct State {
     clear_query_request: bool,
     display_mask: DisplayMask,
     recording_name_template: String,
+    metadata_request: Option<gt_side_panel::RecordingDetails>,
 }
 
 fn make_state(file_count: usize) -> State {
@@ -73,6 +75,7 @@ fn make_state_with_warnings_on(
         clear_query_request: false,
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
+        metadata_request: None,
     }
 }
 
@@ -94,6 +97,7 @@ fn make_harness(state: State) -> TestHarness<'static, State> {
                     clear_query_request: &mut s.clear_query_request,
                     display_mask: s.display_mask,
                     recording_name_template: &s.recording_name_template,
+                    metadata_request: &mut s.metadata_request,
                 };
                 show_side_panel(ui, &mut ctx);
             },
@@ -250,6 +254,7 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
         clear_query_request: false,
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
+        metadata_request: None,
     };
     // Renders the expanded track row, exercising the `fix_stats == None` fallback
     // ("No satellite data") instead of the colored tooltip.
@@ -367,6 +372,7 @@ fn snapshot_track_channels() {
         clear_query_request: false,
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
+        metadata_request: None,
     };
     let mut harness = make_harness(state);
     harness.run();
@@ -412,6 +418,7 @@ fn make_state_with_shared_prefix() -> State {
         clear_query_request: false,
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
+        metadata_request: None,
     }
 }
 
@@ -454,6 +461,7 @@ fn make_state_with_long_name() -> State {
         clear_query_request: false,
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
+        metadata_request: None,
     }
 }
 
@@ -462,9 +470,14 @@ fn make_state_with_long_name() -> State {
 fn make_state_with_metadata() -> State {
     let points = gt_test_utils::nav_test_data();
     let mut files = LoadedFiles::new();
-    for (name, title, device) in [
-        ("ride_0.gtd", "Morning ride", "uBlox F9P"),
-        ("ride_1.gtd", "Evening walk", "uBlox F9P"),
+    for (name, title, device, notes) in [
+        (
+            "ride_0.gtd",
+            "Morning ride",
+            "uBlox F9P",
+            "cross-town commute",
+        ),
+        ("ride_1.gtd", "Evening walk", "uBlox F9P", "along the river"),
     ] {
         let file = gt_track_builder::build_loaded_file(
             name.to_owned(),
@@ -478,11 +491,21 @@ fn make_state_with_metadata() -> State {
             gt_track_builder::FileMeta {
                 title: Some(title.to_owned()),
                 device: Some(device.to_owned()),
-                notes: None,
+                notes: Some(notes.to_owned()),
             },
             vec![],
         );
-        files.push(file, FileHistory::None);
+        let meta = gt_history_types::RecordingMeta {
+            start_us: 0,
+            end_us: 0,
+            nav_point_count: 0,
+            sat_report_count: 0,
+            marker_count: 0,
+            event_marker_count: 0,
+            gtd_size_bytes: 0,
+        };
+        let identity = format!("auto:{title}::{device}");
+        files.push(file, FileHistory::recording(identity, meta, None));
     }
     let mut tree = TreeState::new();
     tree.sync_from_loaded_files(files.files());
@@ -499,16 +522,115 @@ fn make_state_with_metadata() -> State {
         clear_query_request: false,
         display_mask: DisplayMask::default(),
         recording_name_template: "{title} — {device}".to_owned(),
+        metadata_request: None,
     }
 }
 
 #[test]
 fn snapshot_recording_name_template() {
     // A non-default template renders "{title} — {device}" for each row instead
-    // of the filename.
+    // of the filename, and recordings with metadata show the details note icon
+    // between the checkbox and the name.
     let mut harness = make_harness(make_state_with_metadata());
     harness.run();
     harness.snapshot("side_panel_name_template");
+}
+
+#[test]
+fn snapshot_metadata_detail_rows_content() {
+    // Directly exercise the grid renderer used by the recording-details dialog,
+    // independent of the note-icon click that opens it.
+    let meta = gt_types::FileMetadata {
+        title: Some("Morning ride".to_owned()),
+        device: Some("uBlox F9P".to_owned()),
+        notes: Some("cross-town commute".to_owned()),
+        ..gt_types::FileMetadata::default()
+    };
+    let mut h = TestHarness::builder()
+        .size(egui::vec2(480.0, 120.0))
+        .ui(move |ui| {
+            ui.add_space(4.0);
+            gt_side_panel::widgets::metadata_detail_rows(
+                ui,
+                &meta,
+                Some("auto:Morning ride::uBlox F9P"),
+            );
+        });
+    h.run();
+    h.snapshot("metadata_detail_rows_content");
+}
+
+#[test]
+fn clicking_note_icon_requests_recording_details() {
+    // The note icon's click is the whole point of the feature: it must populate
+    // `metadata_request` with the file's metadata and identity for the app to
+    // open the details dialog. One file, so the NOTE glyph is unambiguous.
+    let points = gt_test_utils::nav_test_data();
+    let mut files = LoadedFiles::new();
+    let file = gt_track_builder::build_loaded_file(
+        "ride.gtd".to_owned(),
+        &points,
+        &[],
+        vec![],
+        vec![],
+        &[],
+        &gt_track_builder::SegmentationConfig::default(),
+        gt_types::FileSource::GtdPath(PathBuf::from("ride.gtd")),
+        gt_track_builder::FileMeta {
+            title: Some("Morning ride".to_owned()),
+            device: Some("uBlox F9P".to_owned()),
+            notes: None,
+        },
+        vec![],
+    );
+    let meta = gt_history_types::RecordingMeta {
+        start_us: 0,
+        end_us: 0,
+        nav_point_count: 0,
+        sat_report_count: 0,
+        marker_count: 0,
+        event_marker_count: 0,
+        gtd_size_bytes: 0,
+    };
+    files.push(
+        file,
+        FileHistory::recording("auto:Morning ride::uBlox F9P".to_owned(), meta, None),
+    );
+    let mut tree = TreeState::new();
+    tree.sync_from_loaded_files(files.files());
+    let state = State {
+        files,
+        tree,
+        filter: GlobalFilter::default(),
+        filter_state: FilterPanelState::default(),
+        highlight: MapHighlight::default(),
+        map_center: None,
+        popup_pos: None,
+        zoom_to_visible: false,
+        warnings_request: None,
+        clear_query_request: false,
+        display_mask: DisplayMask::default(),
+        recording_name_template: "{filename}".to_owned(),
+        metadata_request: None,
+    };
+    let mut harness = make_harness(state);
+    harness.run();
+    assert!(harness.state().metadata_request.is_none());
+    harness
+        .inner
+        .get_by_label(egui_phosphor::regular::NOTE)
+        .click();
+    harness.run();
+    let request = harness
+        .state()
+        .metadata_request
+        .as_ref()
+        .expect("clicking the note icon sets the details request");
+    assert_eq!(request.metadata.title.as_deref(), Some("Morning ride"));
+    assert_eq!(
+        request.identity.as_deref(),
+        Some("auto:Morning ride::uBlox F9P")
+    );
 }
 
 /// Render `show_side_panel` inside a resizable [`egui::Panel::left`] - the same
@@ -541,6 +663,7 @@ fn settled_docked_panel_width(state: State) -> f32 {
                                 clear_query_request: &mut s.clear_query_request,
                                 display_mask: s.display_mask,
                                 recording_name_template: &s.recording_name_template,
+                                metadata_request: &mut s.metadata_request,
                             };
                             show_side_panel(ui, &mut ctx);
                         });

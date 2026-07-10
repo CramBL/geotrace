@@ -2200,3 +2200,26 @@ fn snapshot_load_warnings_dialog() {
     harness.run();
     harness.snapshot("load_warnings_dialog");
 }
+
+#[test]
+fn snapshot_recording_details_dialog() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1024.0, 768.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness.inner.state().shared.borrow_mut().metadata_popup =
+        Some(gt_side_panel::RecordingDetails {
+            metadata: gt_types::FileMetadata {
+                filename: "ride_2025-05-23.gtd".to_owned(),
+                title: Some("Morning commute".to_owned()),
+                device: Some("uBlox ZED-F9P".to_owned()),
+                notes: Some("Rooftop antenna, clear sky.".to_owned()),
+                ..gt_types::FileMetadata::default()
+            },
+            // A long, auto-derived, path-like identity to show the dialog gives
+            // it room instead of clipping it.
+            identity: Some("auto:/home/user/recordings/2025/05/ride_2025-05-23.gtd".to_owned()),
+        });
+    harness.run();
+    harness.snapshot("recording_details_dialog");
+}
