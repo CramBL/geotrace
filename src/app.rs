@@ -1638,7 +1638,7 @@ impl eframe::App for App {
                     if let Some(new_version) = self.update_checker.badge_version() {
                         ui.separator();
                         let text = egui::RichText::new("Update available")
-                            .color(gt_ui_theme::WARNING_AMBER);
+                            .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode));
                         if ui
                             .add(egui::Label::new(text).sense(egui::Sense::click()))
                             .on_hover_text(format!(
@@ -1951,7 +1951,7 @@ impl eframe::App for App {
             if let Some(error) = &self.load_error {
                 ui.horizontal(|ui| {
                     ui.colored_label(
-                        gt_ui_theme::ERROR_INDICATOR,
+                        gt_ui_theme::error_indicator(ui.visuals().dark_mode),
                         format!("{} {error}", egui_phosphor::regular::WARNING),
                     );
                     dismiss = ui.small_button(egui_phosphor::regular::X).clicked();
@@ -2044,14 +2044,14 @@ impl eframe::App for App {
                         egui::RichText::new(
                             "Only continue if no other program is using the database - otherwise it could be corrupted.",
                         )
-                        .color(gt_ui_theme::WARNING_AMBER),
+                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                     );
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         if ui
                             .button(
                                 egui::RichText::new("Clear lock and open")
-                                    .color(gt_ui_theme::WARNING_AMBER),
+                                    .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                             )
                             .clicked()
                         {
@@ -2094,7 +2094,7 @@ impl eframe::App for App {
                         if ui
                             .button(
                                 egui::RichText::new("Recreate database")
-                                    .color(gt_ui_theme::WARNING_AMBER),
+                                    .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                             )
                             .clicked()
                         {
@@ -2229,7 +2229,7 @@ impl eframe::App for App {
                         if ui
                             .button(
                                 egui::RichText::new("Delete these recordings")
-                                    .color(gt_ui_theme::WARNING_AMBER),
+                                    .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                             )
                             .on_hover_text(
                                 "This cannot be undone. The original source files are unaffected.",

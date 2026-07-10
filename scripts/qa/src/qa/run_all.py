@@ -4,13 +4,19 @@ import argparse
 import sys
 from pathlib import Path
 
-from qa import check_em_dash, check_floating_comments, check_narrative_comments
+from qa import (
+    check_em_dash,
+    check_floating_comments,
+    check_narrative_comments,
+    check_raw_colors,
+)
 from qa._check import repo_root, run_check
 
 _CHECKS = [
     check_em_dash.DEFINITION,
     check_floating_comments.DEFINITION,
     check_narrative_comments.DEFINITION,
+    check_raw_colors.DEFINITION,
 ]
 
 

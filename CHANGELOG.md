@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Satellite counts, signal quality, and other status colors are now readable in light mode—previously the yellow and green shades washed out against the light background.
+
 ## 0.5.1 - 2026-07-09
 
 ### Changed

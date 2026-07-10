@@ -190,7 +190,7 @@ impl UpdateChecker {
                         }
                         InstallStatus::Failed(err) => {
                             ui.colored_label(
-                                gt_ui_theme::WARNING_AMBER,
+                                gt_ui_theme::warning_amber(ui.visuals().dark_mode),
                                 format!("Update failed: {err}"),
                             );
                             ui.add_space(8.0);

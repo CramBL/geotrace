@@ -435,10 +435,11 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
                     let fix = sats.fix_count();
                     let seen = sats.satellite_count();
                     ui.label("Satellites");
+                    let dark_mode = ui.visuals().dark_mode;
                     ui.horizontal(|ui| {
-                        ui.colored_label(fix_count_color(fix), fix.to_string());
+                        ui.colored_label(fix_count_color(fix, dark_mode), fix.to_string());
                         ui.label("/");
-                        ui.colored_label(seen_count_color(seen), seen.to_string());
+                        ui.colored_label(seen_count_color(seen, dark_mode), seen.to_string());
                     });
                     ui.end_row();
 
@@ -514,13 +515,16 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
                                 ui.label(egui::RichText::new("Fix").weak().small());
                                 ui.end_row();
 
+                                let dark_mode = ui.visuals().dark_mode;
+                                // A satellite contributing to the fix reads as the
+                                // "good" tier green; an idle one is de-emphasised
+                                // with egui's own weak-text colour, which already
+                                // tracks the theme.
+                                let in_fix_color = gt_ui_theme::SatCountTier::Good.color(dark_mode);
+                                let muted_color = ui.visuals().weak_text_color();
                                 for sat in const_sats {
                                     let in_fix = sat.in_fix();
-                                    let prn_color = if in_fix {
-                                        Color32::GREEN
-                                    } else {
-                                        Color32::GRAY
-                                    };
+                                    let prn_color = if in_fix { in_fix_color } else { muted_color };
                                     ui.label(
                                         egui::RichText::new(format!("{}{:02}", prefix, sat.prn()))
                                             .color(prn_color),
@@ -529,20 +533,22 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
                                         Some(snr) => {
                                             ui.label(
                                                 egui::RichText::new(format!("{:.1}", snr.value()))
-                                                    .color(gt_ui_theme::snr_color(snr.quality())),
+                                                    .color(gt_ui_theme::snr_color(
+                                                        snr.quality(),
+                                                        dark_mode,
+                                                    )),
                                             );
                                         }
                                         None => {
                                             ui.label(
-                                                egui::RichText::new(EM_DASH)
-                                                    .color(Color32::from_gray(110)),
+                                                egui::RichText::new(EM_DASH).color(muted_color),
                                             );
                                         }
                                     }
                                     if in_fix {
                                         ui.label(
                                             egui::RichText::new(egui_phosphor::regular::CHECK)
-                                                .color(Color32::GREEN),
+                                                .color(in_fix_color),
                                         );
                                     } else {
                                         ui.label("");
@@ -569,19 +575,20 @@ fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
 
     let fix = sats.fix_count();
     let seen = sats.satellite_count();
+    let dark_mode = ui.visuals().dark_mode;
 
     // Total summary row - bold to signal it is the aggregate.
     ui.label(egui::RichText::new("Satellites").strong());
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(fix.to_string())
-                .color(fix_count_color(fix))
+                .color(fix_count_color(fix, dark_mode))
                 .strong(),
         );
         ui.label(egui::RichText::new("/").strong());
         ui.label(
             egui::RichText::new(seen.to_string())
-                .color(seen_count_color(seen))
+                .color(seen_count_color(seen, dark_mode))
                 .strong(),
         );
     });
@@ -606,9 +613,12 @@ fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
             .count() as u32;
         ui.label(constellation.display_name());
         ui.horizontal(|ui| {
-            ui.colored_label(fix_count_color(const_fix), const_fix.to_string());
+            ui.colored_label(fix_count_color(const_fix, dark_mode), const_fix.to_string());
             ui.label("/");
-            ui.colored_label(seen_count_color(const_total), const_total.to_string());
+            ui.colored_label(
+                seen_count_color(const_total, dark_mode),
+                const_total.to_string(),
+            );
         });
         ui.end_row();
     }
@@ -657,28 +667,16 @@ fn format_signed_delta(delta_ms: i64) -> String {
     }
 }
 
-/// Color for the "fix used" count in the satellite badge.
-fn fix_count_color(count: u32) -> Color32 {
-    if count == 0 {
-        Color32::RED
-    } else if count <= 2 {
-        Color32::from_rgb(255, 140, 0) // orange
-    } else if count <= 4 {
-        Color32::YELLOW
-    } else {
-        Color32::GREEN
-    }
+/// Color for the "fix used" count in the satellite badge, legible on the
+/// current theme. Pass `ui.visuals().dark_mode`.
+fn fix_count_color(count: u32, dark_mode: bool) -> Color32 {
+    gt_ui_theme::fix_count_tier(count).color(dark_mode)
 }
 
-/// Color for the "total seen" count in the satellite badge.
-fn seen_count_color(count: u32) -> Color32 {
-    if count < 5 {
-        Color32::from_rgb(255, 140, 0) // orange
-    } else if count < 8 {
-        Color32::YELLOW
-    } else {
-        Color32::GREEN
-    }
+/// Color for the "total seen" count in the satellite badge, legible on the
+/// current theme. Pass `ui.visuals().dark_mode`.
+fn seen_count_color(count: u32, dark_mode: bool) -> Color32 {
+    gt_ui_theme::seen_count_tier(count).color(dark_mode)
 }
 
 /// Zoom-derived visual parameters computed once per frame and shared across
@@ -1160,6 +1158,7 @@ fn alpha_u8(alpha: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_harness::TestHarness;
     use egui::Color32;
     use gt_types::MercPoint;
     use gt_types::NavPoint;
@@ -1185,6 +1184,47 @@ mod tests {
             .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, prn <= fix_count))
             .collect();
         Satellites::new(None, None, satellites)
+    }
+
+    /// A report spanning several constellations with a spread of SNR values and
+    /// fix membership, so the satellite badge exercises every count tier, the
+    /// full SNR gradient, and both the in-fix and idle PRN colours.
+    fn sats_multi_constellation() -> Satellites {
+        let satellites = vec![
+            Satellite::new(Constellation::Gps, 1, None, None, Some(48.0), true),
+            Satellite::new(Constellation::Gps, 2, None, None, Some(41.0), true),
+            Satellite::new(Constellation::Gps, 3, None, None, Some(33.0), true),
+            Satellite::new(Constellation::Gps, 4, None, None, Some(22.0), false),
+            Satellite::new(Constellation::Galileo, 5, None, None, Some(37.0), true),
+            Satellite::new(Constellation::Galileo, 6, None, None, Some(14.0), false),
+            Satellite::new(Constellation::Glonass, 7, None, None, None, false),
+            Satellite::new(Constellation::Beidou, 8, None, None, Some(45.0), true),
+        ];
+        Satellites::new(None, None, satellites)
+    }
+
+    /// The satellite badge (counts, SNR gradient, PRN colours) must stay
+    /// legible on both themes. These render the same content under light and
+    /// dark visuals; the light baseline is what catches colours that only read
+    /// on a dark surface.
+    #[test]
+    fn satellite_badge_dark() {
+        let point = make_point(Some(sats_multi_constellation()));
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(320.0, 620.0))
+            .theme(true)
+            .ui(move |ui| show_sticky_tpv_content(ui, &point));
+        harness.snapshot("satellite_badge_dark");
+    }
+
+    #[test]
+    fn satellite_badge_light() {
+        let point = make_point(Some(sats_multi_constellation()));
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(320.0, 620.0))
+            .theme(false)
+            .ui(move |ui| show_sticky_tpv_content(ui, &point));
+        harness.snapshot("satellite_badge_light");
     }
 
     fn track_with_points(points: Vec<NavPoint>) -> LoadedTrack {

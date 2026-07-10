@@ -12,6 +12,7 @@ doctest = false
 [dependencies]
 egui.workspace = true
 gt-types = { path = "../gt-types" }
+strum.workspace = true
 
 [lints]
 workspace = true

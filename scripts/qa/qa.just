@@ -18,6 +18,10 @@ check-narrative-comments:
     {{ _QA }} check-narrative-comments
 
 [group("qa")]
+check-raw-colors:
+    {{ _QA }} check-raw-colors
+
+[group("qa")]
 qa-lint:
     {{ _QA }} ruff check {{ source_directory() }}/src
     {{ _QA }} mypy --strict {{ source_directory() }}/src

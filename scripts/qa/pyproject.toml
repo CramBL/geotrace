@@ -8,6 +8,7 @@ check-all = "qa.run_all:main"
 check-em-dash = "qa.check_em_dash:main"
 check-floating-comments = "qa.check_floating_comments:main"
 check-narrative-comments = "qa.check_narrative_comments:main"
+check-raw-colors = "qa.check_raw_colors:main"
 generate-gold = "qa.generate_gold_dataset:main"
 versions = "qa.versions:main"
 

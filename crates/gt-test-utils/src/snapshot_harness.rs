@@ -129,6 +129,7 @@ impl<'a, State> TestHarness<'a, State> {
 pub struct TestHarnessBuilder<'a> {
     size: Option<egui::Vec2>,
     fading_enabled: bool,
+    dark_mode: Option<bool>,
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
@@ -137,6 +138,7 @@ impl Default for TestHarnessBuilder<'_> {
         Self {
             size: None,
             fading_enabled: false,
+            dark_mode: None,
             _marker: std::marker::PhantomData,
         }
     }
@@ -153,6 +155,29 @@ impl<'a> TestHarnessBuilder<'a> {
         self
     }
 
+    /// Force the context into light or dark visuals before rendering, so a
+    /// widget can be snapshotted under both themes. Without this the harness
+    /// uses egui's default (dark) visuals, which is why light-mode regressions
+    /// went uncaught. `true` selects dark, `false` light.
+    pub fn theme(mut self, dark_mode: bool) -> Self {
+        self.dark_mode = Some(dark_mode);
+        self
+    }
+
+    /// Apply the requested theme to a freshly built harness and re-run so the
+    /// first snapshot reflects it.
+    fn apply_theme<State>(&self, inner: &mut Harness<'a, State>) {
+        if let Some(dark_mode) = self.dark_mode {
+            let visuals = if dark_mode {
+                egui::Visuals::dark()
+            } else {
+                egui::Visuals::light()
+            };
+            inner.ctx.set_visuals(visuals);
+            inner.run();
+        }
+    }
+
     /// Build a harness for a simple UI closure.
     pub fn ui<F>(self, f: F) -> TestHarness<'a>
     where
@@ -162,8 +187,9 @@ impl<'a> TestHarnessBuilder<'a> {
         if let Some(sz) = self.size {
             builder = builder.with_size(sz);
         }
-        let inner = builder.build_ui(f);
+        let mut inner = builder.build_ui(f);
         install_icon_assets(&inner.ctx);
+        self.apply_theme(&mut inner);
         TestHarness {
             inner,
             _temp_dir: None,
@@ -180,8 +206,9 @@ impl<'a> TestHarnessBuilder<'a> {
         if let Some(sz) = self.size {
             builder = builder.with_size(sz);
         }
-        let inner = builder.build_ui_state(f, state);
+        let mut inner = builder.build_ui_state(f, state);
         install_icon_assets(&inner.ctx);
+        self.apply_theme(&mut inner);
         TestHarness {
             inner,
             _temp_dir: None,

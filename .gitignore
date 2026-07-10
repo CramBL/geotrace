@@ -3,6 +3,11 @@
 tests/tmp/
 tests/snapshots/*.diff.png
 tests/snapshots/*.old.png
+# egui_kittest writes these next to any snapshot baseline on failure, including
+# the per-crate test dirs, so ignore them everywhere - only the baseline .png is tracked.
+**/tests/snapshots/*.diff.png
+**/tests/snapshots/*.old.png
+**/tests/snapshots/*.new.png
 
 # Python SDK (geotrace-py)
 sdk/python/geotrace-py/.venv/
