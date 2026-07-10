@@ -3,24 +3,45 @@ use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 
 use crate::tree::CheckState;
 
-/// Whether a file carries any SDK metadata or identity worth a details dialog.
+/// A borrowed view of the metadata fields shown in the recording-details UI.
 ///
-/// Kept in step with the fields rendered by [`metadata_detail_rows`].
-pub fn has_metadata_details(metadata: &FileMetadata, identity: Option<&str>) -> bool {
-    metadata.title.is_some()
-        || metadata.device.is_some()
-        || metadata.notes.is_some()
-        || identity.is_some()
+/// Lets the side panel (from a [`FileMetadata`]) and the History window (from a
+/// `RecordingEntry`) share one presence check and one renderer without either
+/// manufacturing the other's struct. A caller sets `identity` to `None` when the
+/// identity is shown elsewhere (e.g. the History row already displays it).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MetadataView<'a> {
+    pub title: Option<&'a str>,
+    pub device: Option<&'a str>,
+    pub identity: Option<&'a str>,
+    pub notes: Option<&'a str>,
 }
 
-/// Render the metadata fields present on a recording as a two-column grid
-/// (weak label, value), in a stable order: title, device, identity, notes.
-/// Values wrap to the available width, so the enclosing (resizable) dialog
-/// governs how much is shown.
+impl<'a> MetadataView<'a> {
+    /// View of a loaded file's SDK metadata, with the recording `identity`
+    /// supplied separately (it lives outside [`FileMetadata`]).
+    pub fn from_file_metadata(metadata: &'a FileMetadata, identity: Option<&'a str>) -> Self {
+        Self {
+            title: metadata.title.as_deref(),
+            device: metadata.device.as_deref(),
+            identity,
+            notes: metadata.notes.as_deref(),
+        }
+    }
+}
+
+/// Whether the view carries any field worth a details reveal.
 ///
-/// Whether there is anything to render is decided by [`has_metadata_details`]
-/// before the dialog opens.
-pub fn metadata_detail_rows(ui: &mut egui::Ui, metadata: &FileMetadata, identity: Option<&str>) {
+/// Kept in step with the fields rendered by [`metadata_detail_rows`].
+pub fn has_metadata_details(view: &MetadataView<'_>) -> bool {
+    view.title.is_some() || view.device.is_some() || view.identity.is_some() || view.notes.is_some()
+}
+
+/// Render the present metadata fields as a two-column grid (weak label, value),
+/// in a stable order: title, device, identity, notes. Values wrap to the
+/// available width, so the enclosing (resizable) container governs how much is
+/// shown. Renders nothing when the view is empty.
+pub fn metadata_detail_rows(ui: &mut egui::Ui, view: &MetadataView<'_>) {
     egui::Grid::new("recording_metadata_grid")
         .num_columns(2)
         .spacing([12.0, 6.0])
@@ -32,17 +53,17 @@ pub fn metadata_detail_rows(ui: &mut egui::Ui, metadata: &FileMetadata, identity
                 ui.add(egui::Label::new(value).wrap());
                 ui.end_row();
             };
-            if let Some(title) = metadata.title.as_deref() {
+            if let Some(title) = view.title {
                 row("Title", title);
             }
-            if let Some(device) = metadata.device.as_deref() {
+            if let Some(device) = view.device {
                 row("Device", device);
             }
-            if let Some(identity) = identity {
+            if let Some(identity) = view.identity {
                 // Strip the internal `auto:` marker; never show it verbatim.
                 row("Identity", gt_loaded_files::display_identity(identity).0);
             }
-            if let Some(notes) = metadata.notes.as_deref() {
+            if let Some(notes) = view.notes {
                 row("Notes", notes);
             }
         });

@@ -8,6 +8,7 @@
   Combine `{title}`, `{device}`, `{identity}` and `{filename}`; empty fields and their separators drop out.
   Defaults to the filename, as before.
 - Recordings with metadata now show a note icon in the side panel; click it to open a resizable dialog with the title, device, identity and notes.
+- The History window marks recordings that carry metadata with a note icon and shows their title, device and notes on hover.
 
 ### Changed
 

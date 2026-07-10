@@ -38,6 +38,16 @@ pub const TRACK_HIDDEN_DATASET: &str = "hidden";
 pub const GTD_VERSION_ATTR: &str = "geotrace_version";
 pub const GTD_VERSION_FALLBACK: &str = "1";
 
+/// GTD root attributes carrying the recording's SDK metadata (title, device,
+/// notes). Written on the GTD root by `geotrace_sdk` and copied verbatim onto
+/// each recording group, so the history listing can read them via
+/// [`RecordingEntry`] without re-parsing the embedded GTD file. These are GTD
+/// attributes, not DB bookkeeping - deliberately absent from
+/// [`is_db_recording_attr`] so they are restored to the root on load.
+pub const GTD_META_TITLE_ATTR: &str = "meta_title";
+pub const GTD_META_DEVICE_ATTR: &str = "meta_device";
+pub const GTD_META_NOTES_ATTR: &str = "meta_notes";
+
 const IDENTITY_GROUP_PREFIX: &str = "identity-v1-";
 
 /// Return the HDF5 child-group name used to store an identity.
@@ -238,6 +248,12 @@ pub struct RecordingEntry {
     pub total_tracks: usize,
     /// How many of those tracks are currently hidden.
     pub hidden_tracks: usize,
+    /// Recording title, from the GTD [`GTD_META_TITLE_ATTR`] attribute.
+    pub title: Option<String>,
+    /// Producing device, from the GTD [`GTD_META_DEVICE_ATTR`] attribute.
+    pub device: Option<String>,
+    /// Free-text notes, from the GTD [`GTD_META_NOTES_ATTR`] attribute.
+    pub notes: Option<String>,
 }
 
 /// A recording read back from history: the reconstructed GTD bytes plus the

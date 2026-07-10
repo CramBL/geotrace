@@ -461,8 +461,10 @@ pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<Recordi
                 .show(ui, |ui| {
                     gt_side_panel::widgets::metadata_detail_rows(
                         ui,
-                        &details.metadata,
-                        details.identity.as_deref(),
+                        &gt_side_panel::widgets::MetadataView::from_file_metadata(
+                            &details.metadata,
+                            details.identity.as_deref(),
+                        ),
                     );
                 });
         });
