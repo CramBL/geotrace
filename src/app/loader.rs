@@ -43,8 +43,12 @@ pub struct FinishedJob {
     pub filename: String,
     /// Total wall-clock time the job took, frozen at the moment of completion.
     pub elapsed_secs: f32,
-    /// When the job completed - used to drive the fade-out animation.
-    pub completed_at: std::time::Instant,
+    /// egui frame time (`Context::input().time`, seconds) when the job
+    /// completed, used to drive the fade-out animation. Frame time rather than
+    /// [`std::time::Instant`] so the animation is a pure function of the
+    /// deterministic clock the test harness advances - a wall-clock read here
+    /// leaks into snapshots and makes them racy.
+    pub completed_at: f64,
 }
 
 /// Final result produced by a background load thread.
@@ -609,10 +613,10 @@ impl LoaderManager {
         completed
     }
 
-    /// Remove entries from `finishing_jobs` that have fully faded (> 3 s since completion).
-    pub fn expire_finished(&mut self) {
-        self.finishing_jobs
-            .retain(|j| j.completed_at.elapsed().as_secs_f32() < 3.0);
+    /// Remove entries from `finishing_jobs` that have fully faded (> 3 s since
+    /// completion). `now` is the current egui frame time (`Context::input().time`).
+    pub fn expire_finished(&mut self, now: f64) {
+        self.finishing_jobs.retain(|j| now - j.completed_at < 3.0);
     }
 }
 
