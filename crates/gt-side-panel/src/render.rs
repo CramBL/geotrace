@@ -10,9 +10,18 @@ use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask, HighlightScope, Ma
 use crate::filter::{FilterPanelState, render_filter_panel};
 use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState};
 use crate::widgets::{
-    checkbox_width, expand_arrow, fix_stats_tooltip_row, paint_map_hover_bg, point_item_row,
-    tri_checkbox,
+    checkbox_width, expand_arrow, fix_stats_tooltip_row, has_metadata_details, paint_map_hover_bg,
+    point_item_row, tri_checkbox,
 };
+
+/// A recording's metadata, captured when its note icon is clicked so the app can
+/// open the details dialog. Owns its data so it outlives the source file.
+#[derive(Debug, Clone)]
+pub struct RecordingDetails {
+    pub metadata: gt_types::FileMetadata,
+    /// The raw recording identity, if any; stripped for display by the dialog.
+    pub identity: Option<String>,
+}
 
 pub struct PanelContext<'a> {
     pub loaded_files: LoadedFilesView<'a>,
@@ -34,6 +43,9 @@ pub struct PanelContext<'a> {
     /// User template for the recording name shown on each file row. See
     /// [`gt_fmt::render_name_template`].
     pub recording_name_template: &'a str,
+    /// Set by clicking a file row's note icon. Consumed by the app to open the
+    /// recording-details dialog.
+    pub metadata_request: &'a mut Option<RecordingDetails>,
 }
 
 /// Trailing eye-slash on a category row whose map ink is hidden by the
@@ -226,9 +238,30 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, display_name: &str, ctx: &mut
     let map_hover_bg = gt_ui_theme::map_hover_color(ui.visuals().dark_mode);
 
     let row_response = ui.horizontal(|ui| {
+        // Keep the checkbox, note icon and expand arrow visually grouped rather
+        // than spread out by the default item spacing.
+        ui.spacing_mut().item_spacing.x = 2.0;
         let chk_resp = tri_checkbox(ui, check);
         if chk_resp.clicked() {
             ctx.tree.toggle_file_check(fi);
+        }
+        // A note icon between the checkbox and the expand arrow opens the details
+        // dialog, so metadata is one click away without pushing a block under the
+        // row. Only shown when there is something to reveal.
+        let identity = ctx.identity(fi);
+        if has_metadata_details(&file.metadata, identity) {
+            // A frameless button (not a Label) so the pointer reads as clickable
+            // and the icon highlights on hover, instead of showing a text cursor.
+            let icon = ui
+                .add(egui::Button::new(egui_phosphor::regular::NOTE).frame(false))
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text("Recording details");
+            if icon.clicked() {
+                *ctx.metadata_request = Some(RecordingDetails {
+                    metadata: file.metadata.clone(),
+                    identity: identity.map(str::to_owned),
+                });
+            }
         }
         let arrow = expand_arrow(is_expanded);
         let dist = gt_fmt::format_distance(file.metadata.total_distance_km);

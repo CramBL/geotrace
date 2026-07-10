@@ -27,7 +27,7 @@ use strum::IntoEnumIterator;
 
 use modals::{
     show_delete_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
-    show_orphaned_event_markers_popup, show_unassociated_popup,
+    show_orphaned_event_markers_popup, show_recording_details_dialog, show_unassociated_popup,
 };
 
 /// Pane variants for the central area tiles tree.
@@ -54,6 +54,8 @@ struct SharedAppState {
     zoom_to_visible_request: bool,
     /// Filename and warnings for the currently open data quality warnings dialog, if any.
     warnings_popup: Option<(String, Vec<LoadWarning>)>,
+    /// The recording whose metadata-details dialog is open, if any.
+    metadata_popup: Option<gt_side_panel::RecordingDetails>,
     /// Set by the side panel's "Reset filters", consumed by the app to also
     /// clear the query filter (the query window is not part of shared state).
     clear_query_request: bool,
@@ -305,6 +307,7 @@ impl App {
                 popup_pos_request: None,
                 zoom_to_visible_request: false,
                 warnings_popup: None,
+                metadata_popup: None,
                 clear_query_request: false,
                 recording_name_template: crate::settings::DEFAULT_RECORDING_NAME_TEMPLATE
                     .to_owned(),
@@ -1733,6 +1736,7 @@ impl eframe::App for App {
                             clear_query_request: &mut s.clear_query_request,
                             display_mask: s.display_mask,
                             recording_name_template: &s.recording_name_template,
+                            metadata_request: &mut s.metadata_popup,
                         },
                     );
                 });
@@ -1771,6 +1775,7 @@ impl eframe::App for App {
                             clear_query_request: &mut s.clear_query_request,
                             display_mask: s.display_mask,
                             recording_name_template: &s.recording_name_template,
+                            metadata_request: &mut s.metadata_popup,
                         },
                     );
                 });
@@ -2055,6 +2060,7 @@ impl eframe::App for App {
         show_unassociated_popup(ui, &mut self.unassociated_log_lines);
         show_orphaned_event_markers_popup(ui, &mut self.orphaned_event_markers);
         show_load_warnings_dialog(ui, &mut self.shared.borrow_mut().warnings_popup);
+        show_recording_details_dialog(ui, &mut self.shared.borrow_mut().metadata_popup);
 
         let prev_storage = self.storage_enabled;
         let loaded_metas: Vec<gt_history::RecordingMeta> = {

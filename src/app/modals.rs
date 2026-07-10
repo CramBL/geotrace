@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::{DateTime, Utc};
 use gt_history::DatabaseRef;
 use gt_map::{MapLayer, NavMap};
-use gt_side_panel::{NodeKey, TreeState};
+use gt_side_panel::{NodeKey, RecordingDetails, TreeState};
 use gt_types::{LoadWarning, TrackRef};
 use gt_ui_theme::warning_amber;
 
@@ -426,6 +426,49 @@ pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<
 
     if dismiss {
         *popup = None;
+    }
+}
+
+/// Resizable dialog listing a recording's metadata (title, device, identity,
+/// notes). Opened from a file row's note icon. Roomy and resizable so long
+/// identities or notes containing full file paths can be read in full.
+pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<RecordingDetails>) {
+    let Some(details) = request else {
+        return;
+    };
+    let escape_pressed = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+
+    // The titlebar close button drives `open`; Escape also dismisses. A
+    // read-only viewer needs no explicit footer button.
+    let mut open = true;
+    egui::Window::new("Recording details")
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(true)
+        .min_width(420.0)
+        .default_width(480.0)
+        .show(ui.ctx(), |ui| {
+            ui.add(
+                egui::Label::new(egui::RichText::new(details.metadata.filename.as_str()).strong())
+                    .truncate(),
+            )
+            .on_hover_text(details.metadata.filename.as_str());
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .max_height(400.0)
+                .show(ui, |ui| {
+                    gt_side_panel::widgets::metadata_detail_rows(
+                        ui,
+                        &details.metadata,
+                        details.identity.as_deref(),
+                    );
+                });
+        });
+
+    if !open || escape_pressed {
+        *request = None;
     }
 }
 

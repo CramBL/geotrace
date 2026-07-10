@@ -1,7 +1,52 @@
-use gt_types::FixStats;
+use gt_types::{FileMetadata, FixStats};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 
 use crate::tree::CheckState;
+
+/// Whether a file carries any SDK metadata or identity worth a details dialog.
+///
+/// Kept in step with the fields rendered by [`metadata_detail_rows`].
+pub fn has_metadata_details(metadata: &FileMetadata, identity: Option<&str>) -> bool {
+    metadata.title.is_some()
+        || metadata.device.is_some()
+        || metadata.notes.is_some()
+        || identity.is_some()
+}
+
+/// Render the metadata fields present on a recording as a two-column grid
+/// (weak label, value), in a stable order: title, device, identity, notes.
+/// Values wrap to the available width, so the enclosing (resizable) dialog
+/// governs how much is shown.
+///
+/// Whether there is anything to render is decided by [`has_metadata_details`]
+/// before the dialog opens.
+pub fn metadata_detail_rows(ui: &mut egui::Ui, metadata: &FileMetadata, identity: Option<&str>) {
+    egui::Grid::new("recording_metadata_grid")
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            let mut row = |label: &str, value: &str| {
+                // No colon after the label, per DESIGN.md; the weak label vs.
+                // normal value weighting carries the distinction.
+                ui.label(egui::RichText::new(label).weak());
+                ui.add(egui::Label::new(value).wrap());
+                ui.end_row();
+            };
+            if let Some(title) = metadata.title.as_deref() {
+                row("Title", title);
+            }
+            if let Some(device) = metadata.device.as_deref() {
+                row("Device", device);
+            }
+            if let Some(identity) = identity {
+                // Strip the internal `auto:` marker; never show it verbatim.
+                row("Identity", gt_loaded_files::display_identity(identity).0);
+            }
+            if let Some(notes) = metadata.notes.as_deref() {
+                row("Notes", notes);
+            }
+        });
+}
 
 /// Caret icon for an expand/collapse toggle.
 pub fn expand_arrow(expanded: bool) -> &'static str {
