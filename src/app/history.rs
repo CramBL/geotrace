@@ -155,7 +155,8 @@ impl PruneDialog {
                             .show(ui, |ui| {
                                 for r in refs {
                                     let label = format!("{}/{}", r.identity, r.group_name);
-                                    ui.label(label);
+                                    ui.add(egui::Label::new(label.as_str()).truncate())
+                                        .on_hover_text(label.as_str());
                                 }
                             });
 
@@ -644,21 +645,7 @@ fn render_row(
     already_loaded: bool,
     manager: &HistoryManager,
 ) {
-    let identity = &entry.db_ref.identity;
-    let (display_name, is_auto) = identity_display_parts(identity);
-
-    ui.horizontal(|ui| {
-        if is_auto {
-            ui.label(
-                egui::RichText::new("auto")
-                    .small()
-                    .color(ui.visuals().weak_text_color()),
-            );
-        }
-        ui.label(display_name);
-    })
-    .response
-    .on_hover_text(identity.as_str());
+    identity_cell(ui, &entry.db_ref.identity);
 
     let ts = DateTime::<Utc>::from_timestamp_micros(entry.meta.start_us)
         .unwrap_or_default()
@@ -696,6 +683,25 @@ fn render_row(
     });
 
     ui.end_row();
+}
+
+/// Render the identity column cell: an optional `auto` badge plus the identity,
+/// truncated so a long name clips itself rather than growing the window. The
+/// full identity stays available on hover.
+fn identity_cell(ui: &mut egui::Ui, identity: &str) {
+    let (display_name, is_auto) = identity_display_parts(identity);
+    ui.horizontal(|ui| {
+        if is_auto {
+            ui.label(
+                egui::RichText::new("auto")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+        }
+        ui.add(egui::Label::new(display_name).truncate());
+    })
+    .response
+    .on_hover_text(identity);
 }
 
 fn identity_display_parts(identity: &str) -> (&str, bool) {
@@ -762,7 +768,66 @@ fn date_to_end_us(s: &str) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
-    use super::identity_display_parts;
+    use gt_test_utils::TestHarness;
+
+    use super::{identity_cell, identity_display_parts};
+
+    /// Settled width of the History window, mirroring the real container: a
+    /// resizable [`egui::Window`] holding the identity grid in a vertical scroll
+    /// area. A resizable window runs a sizing pass over its content, the path
+    /// where an un-truncated label reports its full text width and stretches the
+    /// window.
+    fn history_window_width(identity: &str) -> f32 {
+        let width = std::rc::Rc::new(std::cell::Cell::new(-1.0_f32));
+        let probe = std::rc::Rc::clone(&width);
+        let identity = identity.to_owned();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(1600.0, 500.0))
+            .ui(move |ui| {
+                let resp = egui::Window::new("History")
+                    .resizable(true)
+                    .default_width(640.0)
+                    .show(ui.ctx(), |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            egui::Grid::new("history_list")
+                                .num_columns(6)
+                                .min_col_width(80.0)
+                                .show(ui, |ui| {
+                                    identity_cell(ui, &identity);
+                                    ui.label("2026-01-15 12:00");
+                                    ui.label("1h 02m");
+                                    ui.label("12.3k");
+                                    ui.label("4.5 MB");
+                                    ui.label("");
+                                    ui.end_row();
+                                });
+                        });
+                    });
+                if let Some(resp) = resp {
+                    probe.set(resp.response.rect.width());
+                }
+            });
+        for _ in 0..6 {
+            harness.run();
+        }
+        width.get()
+    }
+
+    /// A long recording identity truncates in the History window rather than
+    /// stretching it: a short, a long, and a much longer identity all settle the
+    /// resizable window at the same width. Without the truncation the identity
+    /// column would size to its full text and the window would grow with it.
+    #[test]
+    fn long_identity_does_not_widen_history_window() {
+        let short = history_window_width("auto:ride.gtd");
+        let long = history_window_width(&"a/very/long/recording/identity/".repeat(4));
+        let longer = history_window_width(&"a/very/long/recording/identity/".repeat(12));
+        assert!(
+            (long - short).abs() < 1.0 && (longer - short).abs() < 1.0,
+            "identity length changed the history window width: \
+             short={short}px long={long}px longer={longer}px",
+        );
+    }
 
     #[test]
     fn identity_display_keeps_full_manual_identity_visible() {

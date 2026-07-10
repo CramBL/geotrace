@@ -1880,23 +1880,28 @@ impl eframe::App for App {
                 .anchor(egui::Align2::RIGHT_BOTTOM, [-8.0, -8.0])
                 .show(ui.ctx(), |ui| {
                     ui.set_min_width(260.0);
+                    // Cap the width so a long recording name truncates instead of
+                    // stretching this auto-sized overlay across the window.
+                    ui.set_max_width(340.0);
 
                     for job in &self.loader.loading_jobs {
                         let elapsed = job.started_at.elapsed().as_secs_f32();
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.label(egui::RichText::new(&job.filename).strong());
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!("{elapsed:.1}s"))
-                                            .small()
-                                            .weak(),
-                                    );
-                                },
-                            );
-                        });
+                        egui::Sides::new().shrink_left().truncate().show(
+                            ui,
+                            |ui| {
+                                ui.spinner();
+                                ui.add(
+                                    egui::Label::new(egui::RichText::new(&job.filename).strong())
+                                        .truncate(),
+                                )
+                                .on_hover_text(&job.filename);
+                            },
+                            |ui| {
+                                ui.label(
+                                    egui::RichText::new(format!("{elapsed:.1}s")).small().weak(),
+                                );
+                            },
+                        );
                         ui.add(
                             egui::ProgressBar::new(job.progress)
                                 .animate(true)
@@ -1922,24 +1927,30 @@ impl eframe::App for App {
                         let color = egui::Color32::from_rgba_unmultiplied(140, 210, 140, alpha);
                         let weak_color =
                             egui::Color32::from_rgba_unmultiplied(120, 170, 120, alpha);
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(egui_phosphor::regular::CHECK)
-                                    .color(color)
-                                    .small(),
-                            );
-                            ui.label(egui::RichText::new(&job.filename).color(color).strong());
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!("{:.1}s", job.elapsed_secs))
-                                            .color(weak_color)
-                                            .small(),
-                                    );
-                                },
-                            );
-                        });
+                        egui::Sides::new().shrink_left().truncate().show(
+                            ui,
+                            |ui| {
+                                ui.label(
+                                    egui::RichText::new(egui_phosphor::regular::CHECK)
+                                        .color(color)
+                                        .small(),
+                                );
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&job.filename).color(color).strong(),
+                                    )
+                                    .truncate(),
+                                )
+                                .on_hover_text(&job.filename);
+                            },
+                            |ui| {
+                                ui.label(
+                                    egui::RichText::new(format!("{:.1}s", job.elapsed_secs))
+                                        .color(weak_color)
+                                        .small(),
+                                );
+                            },
+                        );
                         ui.add_space(2.0);
                     }
                 });
@@ -2128,10 +2139,13 @@ impl eframe::App for App {
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .show(ui.ctx(), |ui| {
-                    ui.label(format!(
+                    // Bound the width so a long recording name wraps this sentence
+                    // instead of stretching the dialog across the screen.
+                    ui.set_max_width(460.0);
+                    ui.add(egui::Label::new(format!(
                         "'{}' was stored with a different track-splitting setting than the current one.",
                         prompt.filename
-                    ));
+                    )).wrap());
                     ui.add_space(4.0);
                     egui::Grid::new("resegment_settings")
                         .num_columns(3)
@@ -2212,6 +2226,9 @@ impl eframe::App for App {
                 .collapsible(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .show(ui.ctx(), |ui| {
+                    // Bound the width so a long recording identity truncates instead
+                    // of stretching this auto-sized dialog.
+                    ui.set_max_width(460.0);
                     let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
                     ui.label(format!(
                         "{n} {rec_label} will be deleted to keep storage under {max_gb:.1} GB"
@@ -2221,7 +2238,9 @@ impl eframe::App for App {
                         .max_height(200.0)
                         .show(ui, |ui| {
                             for r in refs {
-                                ui.label(format!("{}/{}", r.identity, r.group_name));
+                                let label = format!("{}/{}", r.identity, r.group_name);
+                                ui.add(egui::Label::new(label.as_str()).truncate())
+                                    .on_hover_text(label.as_str());
                             }
                         });
                     ui.add_space(4.0);
