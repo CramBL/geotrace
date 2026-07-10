@@ -1058,7 +1058,7 @@ impl App {
     }
 
     /// Process a completed background load: integrate the result into shared state.
-    fn handle_completed_load(&mut self, completed: CompletedLoad) {
+    fn handle_completed_load(&mut self, completed: CompletedLoad, now: f64) {
         match completed.outcome {
             Ok(LoadOutcome::GtdFile {
                 file,
@@ -1090,7 +1090,7 @@ impl App {
                 self.loader.finishing_jobs.push(FinishedJob {
                     filename: completed.filename,
                     elapsed_secs: completed.elapsed_secs,
-                    completed_at: std::time::Instant::now(),
+                    completed_at: now,
                 });
                 if was_stored {
                     // The recording list now has a new entry, refresh it.
@@ -1121,7 +1121,7 @@ impl App {
                 self.loader.finishing_jobs.push(FinishedJob {
                     filename: completed.filename,
                     elapsed_secs: completed.elapsed_secs,
-                    completed_at: std::time::Instant::now(),
+                    completed_at: now,
                 });
             }
             Err(e) => {
@@ -1519,8 +1519,9 @@ impl eframe::App for App {
         // Drain background load results first so newly loaded data is
         // visible in the same frame that it arrives.
         let completed_loads: Vec<CompletedLoad> = self.loader.drain();
+        let frame_time = ui.ctx().input(|i| i.time);
         for completed in completed_loads {
-            self.handle_completed_load(completed);
+            self.handle_completed_load(completed, frame_time);
         }
 
         // Apply any results the history worker has finished since last frame.
@@ -1865,8 +1866,9 @@ impl eframe::App for App {
         // Loading progress overlay in the bottom-right corner. Shows in-flight
         // jobs with a live elapsed timer, plus recently completed jobs that fade
         // out over ~3 seconds so the user can see how long it took.
+        let now = ui.ctx().input(|i| i.time);
         let any_finishing = !self.loader.finishing_jobs.is_empty();
-        self.loader.expire_finished();
+        self.loader.expire_finished(now);
 
         if !self.loader.loading_jobs.is_empty() || any_finishing {
             // Keep repainting while jobs are active or fading.
@@ -1905,7 +1907,7 @@ impl eframe::App for App {
                     }
 
                     for job in &self.loader.finishing_jobs {
-                        let since = job.completed_at.elapsed().as_secs_f32();
+                        let since = (now - job.completed_at) as f32;
                         // Fully opaque for the first 2 s, then fade to transparent by 3 s.
                         #[expect(
                             clippy::cast_sign_loss,
