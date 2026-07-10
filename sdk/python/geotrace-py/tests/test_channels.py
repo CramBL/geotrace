@@ -59,8 +59,10 @@ def test_scalar_and_vector_channels_round_trip() -> None:
     assert incline == incline_channel
     assert not incline.is_vector
     assert incline.components == []
-    assert incline.unit.label == "deg"
-    assert not incline.unit.is_custom
+    incline_unit = incline.unit
+    assert incline_unit is not None
+    assert incline_unit.label == "deg"
+    assert not incline_unit.is_custom
     assert incline.period_deg == 360.0
     assert incline.description == "boom"
     assert incline.values == [1.5, 2.0]
@@ -92,8 +94,10 @@ def test_malformed_channel_raises() -> None:
 def test_custom_channel_unit_is_an_explicit_escape_hatch() -> None:
     rpm = ChannelUnit.custom("rpm")
     channel = Channel("shaft_speed", [T0], [1200.0], unit=rpm)
-    assert channel.unit.label == "rpm"
-    assert channel.unit.is_custom
+    unit = channel.unit
+    assert unit is not None
+    assert unit.label == "rpm"
+    assert unit.is_custom
 
 
 def test_duplicate_channel_name_raises_at_finish() -> None:

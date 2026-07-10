@@ -575,7 +575,7 @@ struct EventMarkerStyle {
  * row-major: `times.size()` rows of one column (scalar) or `components.size()`
  * columns (vector).
  */
-enum class ChannelUnitMode {
+enum class ChannelUnitMode : std::uint8_t {
     /** Validate and convert a recognized unit such as `mg` or `m/s2`. */
     Recognized,
     /** Preserve a display-only label and treat its values as unitless. */

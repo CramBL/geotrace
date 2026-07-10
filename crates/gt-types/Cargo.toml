@@ -10,10 +10,10 @@ authors.workspace = true
 doctest = false
 
 [dependencies]
-geotrace-units = { path = "../../sdk/rust/geotrace-units" }
 bon.workspace = true
 chrono.workspace = true
 geo-types.workspace = true
+geotrace-units = { path = "../../sdk/rust/geotrace-units" }
 rstar.workspace = true
 serde.workspace = true
 strum.workspace = true
