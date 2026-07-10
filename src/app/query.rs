@@ -2883,10 +2883,10 @@ fn text_format(font: &egui::FontId, color: egui::Color32) -> egui::TextFormat {
 /// hover doc so they can't diverge.
 fn syntax_color(class: TokenClass, default: egui::Color32, dark_mode: bool) -> egui::Color32 {
     match class {
-        TokenClass::Keyword => gt_ui_theme::QUERY_SYNTAX_KEYWORD,
-        TokenClass::Number => gt_ui_theme::QUERY_SYNTAX_NUMBER,
+        TokenClass::Keyword => gt_ui_theme::query_syntax_keyword(dark_mode),
+        TokenClass::Number => gt_ui_theme::query_syntax_number(dark_mode),
         TokenClass::Ident => gt_ui_theme::query_syntax_ident(dark_mode),
-        TokenClass::Comment => gt_ui_theme::QUERY_SYNTAX_COMMENT,
+        TokenClass::Comment => gt_ui_theme::query_syntax_comment(dark_mode),
         TokenClass::Punctuation => default,
         TokenClass::Error => gt_ui_theme::error_indicator(dark_mode),
     }

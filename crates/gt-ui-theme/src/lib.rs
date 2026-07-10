@@ -324,10 +324,15 @@ pub const THEMED_FOREGROUNDS: &[(&str, ThemedColor)] = &[
     ("FIX_QUALITY_GREEN", FIX_QUALITY_GREEN),
     ("FIX_QUALITY_YELLOW", FIX_QUALITY_YELLOW),
     ("FIX_QUALITY_RED", FIX_QUALITY_RED),
-    (
-        "QUERY_SYNTAX_IDENT",
-        ThemedColor::new(QUERY_SYNTAX_IDENT, QUERY_SYNTAX_IDENT_LIGHT),
-    ),
+];
+
+/// The query editor's syntax-highlight colours. Checked against the editor
+/// background (the theme's `extreme_bg_color`) rather than the panel fill.
+pub const QUERY_SYNTAX_COLORS: &[(&str, ThemedColor)] = &[
+    ("KEYWORD", QUERY_SYNTAX_KEYWORD),
+    ("NUMBER", QUERY_SYNTAX_NUMBER),
+    ("IDENT", QUERY_SYNTAX_IDENT),
+    ("COMMENT", QUERY_SYNTAX_COMMENT),
 ];
 
 /// Linearly interpolates a colour channel from `a` toward `b` by `num/den`
@@ -385,31 +390,121 @@ pub fn query_halo_color(index: usize, stale: bool) -> Color32 {
 }
 
 /// Query editor syntax highlighting: keywords (`points`, `where`, `and`, …).
-pub const QUERY_SYNTAX_KEYWORD: Color32 = Color32::from_rgb(198, 120, 221);
+///
+/// The code editor uses the theme's `extreme_bg_color` (near-black on dark,
+/// white on light), so each token colour (this and its siblings below) carries
+/// a light variant deepened enough to read on white, like the rest of the
+/// themed palette.
+pub const QUERY_SYNTAX_KEYWORD: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(198, 120, 221),
+    Color32::from_rgb(137, 42, 168),
+);
 
-/// Query editor syntax highlighting: numeric literals.
-pub const QUERY_SYNTAX_NUMBER: Color32 = Color32::from_rgb(229, 192, 123);
+/// Numeric literals.
+pub const QUERY_SYNTAX_NUMBER: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(229, 192, 123),
+    Color32::from_rgb(140, 96, 18),
+);
 
-/// Query editor syntax highlighting: metric, unit, and parameter names. Bright
-/// for dark backgrounds; use [`query_syntax_ident`] to keep it legible on a
-/// light editor too.
-pub const QUERY_SYNTAX_IDENT: Color32 = Color32::from_rgb(120, 200, 255);
+/// Metric, unit, and parameter names.
+pub const QUERY_SYNTAX_IDENT: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(120, 200, 255),
+    Color32::from_rgb(20, 110, 190),
+);
 
-/// The identifier syntax colour, darkened for a light editor background where
-/// [`QUERY_SYNTAX_IDENT`] is too pale to read.
-pub const QUERY_SYNTAX_IDENT_LIGHT: Color32 = Color32::from_rgb(20, 110, 190);
+/// Comments.
+pub const QUERY_SYNTAX_COMMENT: ThemedColor = ThemedColor::new(
+    Color32::from_rgb(128, 148, 128),
+    Color32::from_rgb(92, 110, 92),
+);
 
 /// The identifier syntax colour for the given theme. Pass `ui.visuals().dark_mode`.
-pub fn query_syntax_ident(dark_mode: bool) -> Color32 {
-    if dark_mode {
-        QUERY_SYNTAX_IDENT
-    } else {
-        QUERY_SYNTAX_IDENT_LIGHT
-    }
+pub const fn query_syntax_ident(dark_mode: bool) -> Color32 {
+    QUERY_SYNTAX_IDENT.resolve(dark_mode)
 }
 
-/// Query editor syntax highlighting: comments.
-pub const QUERY_SYNTAX_COMMENT: Color32 = Color32::from_rgb(128, 148, 128);
+/// The keyword syntax colour for the given theme. Pass `ui.visuals().dark_mode`.
+pub const fn query_syntax_keyword(dark_mode: bool) -> Color32 {
+    QUERY_SYNTAX_KEYWORD.resolve(dark_mode)
+}
+
+/// The numeric-literal syntax colour for the given theme. Pass `ui.visuals().dark_mode`.
+pub const fn query_syntax_number(dark_mode: bool) -> Color32 {
+    QUERY_SYNTAX_NUMBER.resolve(dark_mode)
+}
+
+/// The comment syntax colour for the given theme. Pass `ui.visuals().dark_mode`.
+pub const fn query_syntax_comment(dark_mode: bool) -> Color32 {
+    QUERY_SYNTAX_COMMENT.resolve(dark_mode)
+}
+
+/// The themed plot-line colour for a metric series.
+///
+/// The dark variant is the vivid palette tuned for the near-black plot canvas.
+/// On the light canvas every hue has to be dark enough to read, which flattens
+/// the brightness axis that separates the families in dark mode, so the light
+/// variant re-encodes that separation as *depth*: within a constellation the
+/// `fix` line is darkest, `seen` mid, and `util`/`slip` sit at their own depths.
+/// Hue is preserved, so the constellation colour-coding survives both themes.
+/// The light values are contrast-tuned against [`PLOT_CANVAS_LIGHT`] and, with
+/// the whole set, checked by the crate's contrast test via `MetricKind`
+/// iteration.
+pub const fn metric_themed_color(kind: gt_types::MetricKind) -> ThemedColor {
+    use gt_types::MetricKind as M;
+    // Hue names describe the dark variant; the light variant is the same hue
+    // deepened for the light canvas. (dark, light):
+    let (dark, light) = match kind {
+        M::SatsSeen => ((80, 200, 255), (52, 131, 168)), // powder blue
+        M::SatsFix => ((0, 100, 220), (0, 81, 180)),     // deep blue
+        M::GpsSeen => ((0, 220, 80), (0, 140, 51)),      // lime green
+        M::GpsFix => ((0, 140, 40), (0, 100, 28)),       // forest green
+        M::GlonassSeen => ((255, 140, 30), (183, 100, 21)), // golden
+        M::GlonassFix => ((200, 80, 0), (143, 57, 0)),   // amber
+        M::GalileoSeen => ((255, 50, 110), (229, 44, 98)), // hot pink
+        M::GalileoFix => ((155, 30, 255), (123, 23, 203)), // purple
+        M::BeidouSeen => ((0, 230, 230), (0, 137, 137)), // cyan
+        M::BeidouFix => ((0, 160, 160), (0, 95, 95)),    // teal
+        M::NavicSeen => ((160, 120, 255), (137, 103, 219)), // violet
+        M::NavicFix => ((110, 70, 210), (94, 60, 180)),  // deep violet
+        M::QzssSeen => ((240, 110, 90), (196, 90, 73)),  // coral
+        M::QzssFix => ((190, 60, 45), (151, 47, 35)),    // brick red
+        M::Velocity => ((255, 220, 0), (142, 123, 0)),   // bright yellow
+        M::Eph => ((220, 20, 220), (215, 19, 215)),      // magenta
+        M::HeadingDeg => ((255, 100, 50), (209, 81, 40)), // red-orange
+        M::ClockDeltaMs => ((200, 200, 200), (123, 123, 123)), // light gray
+        // Utilization echoes each constellation's hue, lightened in dark mode.
+        M::UtilAll => ((245, 245, 245), (122, 122, 122)), // near-white
+        M::UtilGps => ((150, 255, 150), (74, 127, 74)),   // pale green
+        M::UtilGlonass => ((255, 200, 130), (142, 111, 72)), // pale orange
+        M::UtilGalileo => ((255, 150, 190), (163, 95, 121)), // pale pink
+        M::UtilBeidou => ((150, 245, 245), (74, 122, 122)), // pale cyan
+        M::UtilNavic => ((205, 185, 255), (122, 110, 152)), // pale violet
+        M::UtilQzss => ((255, 185, 170), (147, 107, 98)), // pale coral
+        // Slip rate uses a hot "warning" palette, distinct hue per constellation.
+        M::SlipAll => ((255, 80, 80), (219, 68, 68)), // bright red
+        M::SlipGps => ((255, 150, 60), (152, 89, 35)), // orange
+        M::SlipGlonass => ((230, 200, 70), (119, 103, 36)), // amber-yellow
+        M::SlipGalileo => ((235, 110, 200), (159, 74, 135)), // magenta
+        M::SlipBeidou => ((120, 190, 235), (69, 110, 136)), // steel blue
+        M::SlipNavic => ((170, 140, 245), (112, 92, 161)), // violet
+        M::SlipQzss => ((245, 140, 110), (151, 86, 68)), // salmon
+    };
+    ThemedColor::new(
+        Color32::from_rgb(dark.0, dark.1, dark.2),
+        Color32::from_rgb(light.0, light.1, light.2),
+    )
+}
+
+/// The plot-line colour for a metric series in the current theme. Pass
+/// `ui.visuals().dark_mode`.
+pub const fn metric_color(kind: gt_types::MetricKind, dark_mode: bool) -> Color32 {
+    metric_themed_color(kind).resolve(dark_mode)
+}
+
+/// The plot canvas fill on a light theme: a faint grey rather than pure white,
+/// so the deepened light-variant series lines (see [`metric_themed_color`])
+/// keep a little separation from the background.
+pub const PLOT_CANVAS_LIGHT: Color32 = Color32::from_gray(232);
 
 /// Colors used for log-entry markers, cycling over the marker's log index.
 pub const LOG_COLORS: [Color32; 8] = [
@@ -503,6 +598,59 @@ mod tests {
         assert!(
             failures.is_empty(),
             "illegible themed colours:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    #[test]
+    fn plot_metric_colors_are_legible_on_the_canvas() {
+        use strum::IntoEnumIterator;
+
+        // The plot canvas, not the panel: near-black in dark mode, faint grey
+        // (PLOT_CANVAS_LIGHT) in light mode. Series lines are graphical objects,
+        // so the 3.0 non-text bar applies.
+        let dark_canvas = egui::Visuals::dark().extreme_bg_color;
+        let mut failures = Vec::new();
+        for kind in gt_types::MetricKind::iter() {
+            let color = metric_themed_color(kind);
+            let d = contrast_ratio(color.dark(), dark_canvas);
+            if d < MIN_CONTRAST {
+                failures.push(format!("{kind:?}.dark on canvas: {d:.2} < {MIN_CONTRAST}"));
+            }
+            let l = contrast_ratio(color.light(), PLOT_CANVAS_LIGHT);
+            if l < MIN_CONTRAST {
+                failures.push(format!("{kind:?}.light on canvas: {l:.2} < {MIN_CONTRAST}"));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "illegible plot series colours:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    #[test]
+    fn query_syntax_colors_are_legible_in_the_editor() {
+        // The code editor uses the theme's extreme_bg_color: near-black on dark,
+        // white on light. Syntax highlighting is small text, so hold it to the
+        // stricter 4.5 body-text bar.
+        const EDITOR_MIN: f64 = 4.5;
+        let dark_bg = egui::Visuals::dark().extreme_bg_color;
+        let light_bg = egui::Visuals::light().extreme_bg_color;
+        let mut failures = Vec::new();
+        for (name, color) in QUERY_SYNTAX_COLORS {
+            let d = contrast_ratio(color.dark(), dark_bg);
+            if d < EDITOR_MIN {
+                failures.push(format!("{name}.dark: {d:.2} < {EDITOR_MIN}"));
+            }
+            let l = contrast_ratio(color.light(), light_bg);
+            if l < EDITOR_MIN {
+                failures.push(format!("{name}.light: {l:.2} < {EDITOR_MIN}"));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "illegible query syntax colours:\n{}",
             failures.join("\n")
         );
     }

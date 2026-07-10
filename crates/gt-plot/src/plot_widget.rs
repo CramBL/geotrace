@@ -30,7 +30,6 @@ const ANOMALY_TOOLTIP_GAP: f32 = 12.0;
 /// [`MetricVisibility::field`] and [`MetricVisibility::field_mut`], adding a
 /// variant forces a compile error here until every arm is filled in.
 trait MetricKindUi {
-    fn color(self) -> Color32;
     fn label(self) -> &'static str;
     fn hover_text(self) -> Option<&'static str>;
     /// Whether this metric belongs to the advanced analysis group, hidden behind
@@ -93,47 +92,6 @@ impl MetricKindUi for MetricKind {
                 | Self::SlipNavic
                 | Self::SlipQzss
         )
-    }
-
-    fn color(self) -> Color32 {
-        match self {
-            Self::SatsSeen => Color32::from_rgb(80, 200, 255), // powder blue
-            Self::SatsFix => Color32::from_rgb(0, 100, 220),   // deep blue
-            Self::GpsSeen => Color32::from_rgb(0, 220, 80),    // lime green
-            Self::GpsFix => Color32::from_rgb(0, 140, 40),     // forest green
-            Self::GlonassSeen => Color32::from_rgb(255, 140, 30), // golden
-            Self::GlonassFix => Color32::from_rgb(200, 80, 0), // amber
-            Self::GalileoSeen => Color32::from_rgb(255, 50, 110), // hot pink
-            Self::GalileoFix => Color32::from_rgb(155, 30, 255), // purple
-            Self::BeidouSeen => Color32::from_rgb(0, 230, 230), // cyan
-            Self::BeidouFix => Color32::from_rgb(0, 160, 160), // teal
-            Self::NavicSeen => Color32::from_rgb(160, 120, 255), // violet
-            Self::NavicFix => Color32::from_rgb(110, 70, 210), // deep violet
-            Self::QzssSeen => Color32::from_rgb(240, 110, 90), // coral
-            Self::QzssFix => Color32::from_rgb(190, 60, 45),   // brick red
-            Self::Velocity => Color32::from_rgb(255, 220, 0),  // bright yellow
-            Self::Eph => Color32::from_rgb(220, 20, 220),      // magenta
-            Self::HeadingDeg => Color32::from_rgb(255, 100, 50), // red-orange
-            Self::ClockDeltaMs => Color32::from_rgb(200, 200, 200), // light gray
-            // Utilization echoes each constellation's hue, lightened, so the
-            // family reads as "utilization" while staying constellation-coded.
-            Self::UtilAll => Color32::from_rgb(245, 245, 245), // near-white
-            Self::UtilGps => Color32::from_rgb(150, 255, 150), // pale green
-            Self::UtilGlonass => Color32::from_rgb(255, 200, 130), // pale orange
-            Self::UtilGalileo => Color32::from_rgb(255, 150, 190), // pale pink
-            Self::UtilBeidou => Color32::from_rgb(150, 245, 245), // pale cyan
-            Self::UtilNavic => Color32::from_rgb(205, 185, 255), // pale violet
-            Self::UtilQzss => Color32::from_rgb(255, 185, 170), // pale coral
-            // Slip rate uses a hot "warning" palette so a rising loss-of-lock
-            // rate reads as a problem, with a distinct hue per constellation.
-            Self::SlipAll => Color32::from_rgb(255, 80, 80), // bright red
-            Self::SlipGps => Color32::from_rgb(255, 150, 60), // orange
-            Self::SlipGlonass => Color32::from_rgb(230, 200, 70), // amber-yellow
-            Self::SlipGalileo => Color32::from_rgb(235, 110, 200), // magenta
-            Self::SlipBeidou => Color32::from_rgb(120, 190, 235), // steel blue
-            Self::SlipNavic => Color32::from_rgb(170, 140, 245), // violet
-            Self::SlipQzss => Color32::from_rgb(245, 140, 110), // salmon
-        }
     }
 
     fn label(self) -> &'static str {
@@ -313,8 +271,11 @@ const SWATCH_DOT_RADIUS: f32 = 1.7;
 /// starts sharing the budget between them.  See [`budget_cap`].
 const BUDGET_TRACK_MULTIPLE: usize = 8;
 
-fn metric_line_color(kind: MetricKind, file_index: usize) -> Color32 {
-    shade_color(kind.color(), file_shade_factor(file_index))
+fn metric_line_color(kind: MetricKind, file_index: usize, dark_mode: bool) -> Color32 {
+    shade_color(
+        gt_ui_theme::metric_color(kind, dark_mode),
+        file_shade_factor(file_index),
+    )
 }
 
 /// The channel chip/line palette, cycled by a channel's index in the sorted
@@ -1193,6 +1154,13 @@ pub fn show_track_plot(
     }
 
     let dark_mode = ui.visuals().dark_mode;
+    // On a light theme, give the plot a faint-grey canvas rather than egui's
+    // pure white so the deepened light-variant series lines keep a little
+    // separation from the background. Scoped to this plot: restored right after.
+    let saved_extreme_bg = ui.visuals().extreme_bg_color;
+    if !dark_mode {
+        ui.visuals_mut().extreme_bg_color = gt_ui_theme::PLOT_CANVAS_LIGHT;
+    }
     let plot_response = plot.show(ui, |plot_ui| {
         let bounds = plot_ui.plot_bounds();
         let plot_x_min = bounds.min()[0];
@@ -1298,6 +1266,7 @@ pub fn show_track_plot(
                     show_channels,
                 },
                 line_width,
+                dark_mode,
             );
             if show_anomalies {
                 add_util_anomalies(
@@ -1327,6 +1296,9 @@ pub fn show_track_plot(
             .pointer_coordinate()
             .and_then(|c| DateTime::from_timestamp(c.x as i64, 0));
     });
+    if !dark_mode {
+        ui.visuals_mut().extreme_bg_color = saved_extreme_bg;
+    }
 
     // Persist the newly computed level cache (only when a recompute happened).
     if let Some(bounds) = new_computed_bounds {
@@ -1557,12 +1529,13 @@ fn chip_group(
         return;
     }
     ui.separator();
+    let dark_mode = ui.visuals().dark_mode;
     for kind in shown {
         let (s, h) = metric_chip(
             ui,
             vis.field_mut(kind),
             kind.label(),
-            kind.color(),
+            gt_ui_theme::metric_color(kind, dark_mode),
             kind.hover_text(),
         );
         if s {
@@ -2019,6 +1992,7 @@ fn add_series_lines<'a>(
     hover_scope: Option<HighlightScope>,
     sections: SectionGates,
     line_width: f32,
+    dark_mode: bool,
 ) {
     let prefix = if multi_track {
         format!("{}: ", series.label)
@@ -2054,7 +2028,8 @@ fn add_series_lines<'a>(
             continue;
         }
         let is_hovered = hovered_chip == Some(&HoveredChip::Metric(kind));
-        let (color, highlighted) = hover_treatment(metric_line_color(kind, series.fi), is_hovered);
+        let (color, highlighted) =
+            hover_treatment(metric_line_color(kind, series.fi, dark_mode), is_hovered);
         add_line(
             plot_ui,
             series.mipmap_for(kind).slice_at(cache.level_for(kind)),
@@ -2388,20 +2363,24 @@ mod tests {
 
     #[test]
     fn file_shading_distinguishes_adjacent_files() {
-        let a = metric_line_color(MetricKind::SatsSeen, 0);
-        let b = metric_line_color(MetricKind::SatsSeen, 1);
+        let a = metric_line_color(MetricKind::SatsSeen, 0, true);
+        let b = metric_line_color(MetricKind::SatsSeen, 1, true);
         assert_ne!(a, b);
     }
 
     #[test]
     fn sats_seen_and_sats_fix_stay_visually_separate_across_files() {
-        for fi in 0..FILE_SHADE_FACTORS.len() * 5 {
-            let seen = metric_line_color(MetricKind::SatsSeen, fi);
-            let fix = metric_line_color(MetricKind::SatsFix, fi);
-            assert!(
-                seen.g() > fix.g(),
-                "Sats seen should remain the lighter blue family: fi={fi}, seen={seen:?}, fix={fix:?}"
-            );
+        // The seen line stays the lighter-green blue and fix the deeper one in
+        // both themes, so the pair never collapses into one colour.
+        for dark_mode in [true, false] {
+            for fi in 0..FILE_SHADE_FACTORS.len() * 5 {
+                let seen = metric_line_color(MetricKind::SatsSeen, fi, dark_mode);
+                let fix = metric_line_color(MetricKind::SatsFix, fi, dark_mode);
+                assert!(
+                    seen.g() > fix.g(),
+                    "seen should stay the lighter blue: dark={dark_mode}, fi={fi}, seen={seen:?}, fix={fix:?}"
+                );
+            }
         }
     }
 
