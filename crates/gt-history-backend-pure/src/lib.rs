@@ -178,6 +178,11 @@ impl HistoryDatabase for PureDb {
         copy::delete_batch(&self.path, refs).map_err(Into::into)
     }
 
+    fn rename_identity(&mut self, old: &str, new: &str) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        copy::rename_identity(&self.path, old, new).map_err(Into::into)
+    }
+
     fn path(&self) -> &Path {
         &self.path
     }

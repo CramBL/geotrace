@@ -228,6 +228,16 @@ pub struct HistoryWindow {
     /// Whether a recording-list request is in flight (drives the spinner and
     /// prevents re-requesting every frame while waiting).
     list_pending: bool,
+    /// In-progress inline identity rename, if any.
+    rename: Option<RenameEdit>,
+}
+
+/// State for the inline identity-rename editor on one History row.
+struct RenameEdit {
+    /// The current (old) identity of the row being edited - identifies the row.
+    identity: String,
+    /// The editable buffer, seeded with the identity's display form.
+    buffer: String,
 }
 
 impl HistoryWindow {
@@ -244,6 +254,7 @@ impl HistoryWindow {
             prune: PruneDialog::new(),
             confirm_delete_hidden: false,
             list_pending: false,
+            rename: None,
         }
     }
 
@@ -324,13 +335,20 @@ impl HistoryWindow {
 
         let mut open = self.open;
 
-        // While the confirmation dialog is up, let Escape dismiss it rather than
-        // the whole History window.
-        if !self.confirm_delete_hidden
+        // Escape closes the whole window only when nothing more local wants it:
+        // while the confirmation dialog is up it dismisses that, and while an
+        // inline rename is open it must reach the editor to cancel it (so the
+        // key is left unconsumed here in that case, via short-circuit).
+        if self.rename.is_none()
+            && !self.confirm_delete_hidden
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             open = false;
         }
+
+        // Take the inline-rename state out so `render_row` can mutate it while
+        // `self.entries` is borrowed immutably for the list; restored after.
+        let mut rename = std::mem::take(&mut self.rename);
 
         egui::Window::new("History")
             .open(&mut open)
@@ -561,7 +579,7 @@ impl HistoryWindow {
                                     let already_loaded = loaded_metas
                                         .iter()
                                         .any(|m| m.same_recording(&entry.meta));
-                                    render_row(ui, entry, already_loaded, manager);
+                                    render_row(ui, entry, already_loaded, manager, &mut rename);
                                 }
                             });
                     });
@@ -589,6 +607,8 @@ impl HistoryWindow {
                     ui.weak(path.display().to_string());
                 }
             });
+
+        self.rename = rename;
 
         // Confirmation for the destructive "delete hidden data" action, mirroring
         // the prune/auto-prune confirm flow (no permanent delete without a prompt).
@@ -645,8 +665,18 @@ fn render_row(
     entry: &RecordingEntry,
     already_loaded: bool,
     manager: &HistoryManager,
+    rename: &mut Option<RenameEdit>,
 ) {
-    identity_cell(ui, entry);
+    // Identity column: the inline editor when this row is being renamed,
+    // otherwise the normal cell.
+    if rename
+        .as_ref()
+        .is_some_and(|r| r.identity == entry.db_ref.identity)
+    {
+        render_rename_editor(ui, rename, manager);
+    } else {
+        identity_cell(ui, entry);
+    }
 
     let ts = DateTime::<Utc>::from_timestamp_micros(entry.meta.start_us)
         .unwrap_or_default()
@@ -678,12 +708,54 @@ fn render_row(
         } else if open.clicked() {
             manager.open(entry.db_ref.clone());
         }
+        if ui
+            .small_button(egui_phosphor::regular::PENCIL_SIMPLE)
+            .on_hover_text("Rename identity")
+            .clicked()
+        {
+            let identity = entry.db_ref.identity.clone();
+            let buffer = identity_display_parts(&identity).0.to_owned();
+            *rename = Some(RenameEdit { identity, buffer });
+        }
         if ui.small_button("Delete").clicked() {
             manager.delete_recordings(vec![entry.db_ref.clone()], DeleteReason::Manual);
         }
     });
 
     ui.end_row();
+}
+
+/// Render the inline identity-rename editor in the identity column. Commits on
+/// Enter, cancels on focus loss (click-away or Escape); either way the editor
+/// closes. A no-op commit (empty, or unchanged from the displayed name) does not
+/// send a rename. `rename` is guaranteed `Some` by the caller.
+fn render_rename_editor(
+    ui: &mut egui::Ui,
+    rename: &mut Option<RenameEdit>,
+    manager: &HistoryManager,
+) {
+    let Some(edit) = rename.as_mut() else {
+        return;
+    };
+    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let resp = ui.add(
+        egui::TextEdit::singleline(&mut edit.buffer)
+            .desired_width(f32::INFINITY)
+            .hint_text("Identity"),
+    );
+    if resp.lost_focus() {
+        let old = std::mem::take(&mut edit.identity);
+        let new = edit.buffer.trim().to_owned();
+        let unchanged = new == identity_display_parts(&old).0;
+        *rename = None;
+        if enter && !new.is_empty() && !unchanged {
+            manager.rename_identity(old, new);
+        }
+    } else {
+        // Keep focus in the freshly-opened editor until the user commits or
+        // clicks away.
+        resp.request_focus();
+    }
 }
 
 /// Render the identity column cell: an optional `auto` badge plus the identity,
@@ -784,11 +856,189 @@ fn date_to_end_us(s: &str) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
+    use egui_kittest::kittest::Queryable as _;
+    use gt_history::HistoryDatabase as _;
     use gt_test_utils::TestHarness;
 
+    use crate::app::history_db::Response;
+
     use super::{
-        DatabaseRef, RecordingEntry, RecordingMeta, identity_cell, identity_display_parts,
+        DatabaseRef, HistoryManager, HistoryWindow, RecordingEntry, RecordingMeta, identity_cell,
+        identity_display_parts,
     };
+
+    /// Harness state for driving the History window: the window, a live (empty)
+    /// manager so the list branch renders, and the settings toggles `show` needs.
+    struct HistoryHarness {
+        window: HistoryWindow,
+        manager: HistoryManager,
+        storage_enabled: bool,
+        auto_prune_enabled: bool,
+        auto_prune_max_bytes: u64,
+        auto_prune_confirm: bool,
+        _dir: tempfile::TempDir,
+    }
+
+    fn history_harness(entries: Vec<RecordingEntry>) -> HistoryHarness {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db =
+            gt_history::Database::open_or_create(&dir.path().join("history.h5")).expect("open db");
+        let manager = HistoryManager::spawn(db, egui::Context::default());
+        let mut window = HistoryWindow::new();
+        window.open = true;
+        // Populate directly so the list renders without a worker round-trip.
+        window.set_entries(entries);
+        HistoryHarness {
+            window,
+            manager,
+            storage_enabled: true,
+            auto_prune_enabled: false,
+            auto_prune_max_bytes: 0,
+            auto_prune_confirm: true,
+            _dir: dir,
+        }
+    }
+
+    fn show_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
+        s.window.show(
+            ui.ctx(),
+            &s.manager,
+            &[],
+            &mut s.storage_enabled,
+            &mut s.auto_prune_enabled,
+            &mut s.auto_prune_max_bytes,
+            &mut s.auto_prune_confirm,
+        );
+    }
+
+    /// A harness backed by a real database holding one recording, with no
+    /// pre-seeded entries - the list arrives from the worker (see [`pump_history`]).
+    fn history_harness_with_recording(identity: &str) -> HistoryHarness {
+        use gt_history::{StoredSegmentation, TrackRange};
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let mut db =
+            gt_history::Database::open_or_create(&dir.path().join("history.h5")).expect("open db");
+        let bytes = gt_test_utils::GOLD_BYTES;
+        let meta = gt_history::extract_meta(bytes).expect("meta");
+        let tracks = [TrackRange {
+            start: 0,
+            end: meta.nav_point_count,
+            hidden: false,
+        }];
+        let settings = StoredSegmentation {
+            track_split_gap_us: 300_000_000,
+            detect_clock_discontinuities: true,
+            clock_discontinuity_sigmas: 5.0,
+        };
+        db.insert(identity, &meta, &tracks, settings, bytes)
+            .expect("insert recording");
+        let manager = HistoryManager::spawn(db, egui::Context::default());
+        let mut window = HistoryWindow::new();
+        window.open = true;
+        HistoryHarness {
+            window,
+            manager,
+            storage_enabled: true,
+            auto_prune_enabled: false,
+            auto_prune_max_bytes: 0,
+            auto_prune_confirm: true,
+            _dir: dir,
+        }
+    }
+
+    /// Drive one frame like the app does: drain the worker's responses into the
+    /// window (list refresh, mutation acknowledgements) and then render it.
+    fn pump_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
+        for resp in s.manager.poll() {
+            match resp {
+                Response::Listed(Ok(entries)) => s.window.set_entries(entries),
+                Response::Mutated { result: Ok(()), .. } => s.window.invalidate(),
+                _ => {}
+            }
+        }
+        show_history(ui, s);
+    }
+
+    /// Run frames (yielding to the worker thread) until `pred` holds or the
+    /// budget is exhausted; returns whether it held.
+    fn run_until(
+        h: &mut TestHarness<HistoryHarness>,
+        pred: impl Fn(&mut TestHarness<HistoryHarness>) -> bool,
+    ) -> bool {
+        for _ in 0..100 {
+            // Single-frame `step` (not `run`): the History window paints a spinner
+            // while a list request is in flight, so it never reaches a quiescent
+            // state for `run` to converge on.
+            h.step();
+            if pred(h) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+        false
+    }
+
+    #[test]
+    fn rename_workflow_updates_the_listed_identity_end_to_end() {
+        // Full workflow against a real worker + database: the row lists, the user
+        // edits the identity inline, and after the async rename the list shows the
+        // new name.
+        let harness = history_harness_with_recording("auto:ride.gtd");
+        let mut h = TestHarness::builder()
+            .size(egui::vec2(900.0, 500.0))
+            .ui_state(pump_history, harness);
+
+        // The recording lists under its stripped identity.
+        assert!(
+            run_until(&mut h, |h| h
+                .inner
+                .query_by_label_contains("ride.gtd")
+                .is_some()),
+            "recording should appear in the History list"
+        );
+
+        // Open the inline editor. `request_focus` applies the frame after the
+        // editor first renders, so settle a couple of frames before typing.
+        h.inner
+            .get_by_label(egui_phosphor::regular::PENCIL_SIMPLE)
+            .click();
+        h.step();
+        h.step();
+        // Append to the seeded name and commit with Enter.
+        h.inner.event(egui::Event::Text(" v2".to_owned()));
+        h.step();
+        h.inner.key_press(egui::Key::Enter);
+        h.step();
+
+        // After the worker renames and the window re-lists, the new identity shows.
+        assert!(
+            run_until(&mut h, |h| h
+                .inner
+                .query_by_label_contains("ride.gtd v2")
+                .is_some()),
+            "the renamed identity should appear in the refreshed list"
+        );
+    }
+
+    #[test]
+    fn clicking_rename_opens_inline_identity_editor() {
+        let harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
+        let mut h = TestHarness::builder()
+            .size(egui::vec2(900.0, 500.0))
+            .ui_state(show_history, harness);
+        h.run();
+        // The rename pencil is present; clicking it swaps the identity cell for
+        // the inline text editor (seeded with the `auto:`-stripped name).
+        h.inner
+            .get_by_label(egui_phosphor::regular::PENCIL_SIMPLE)
+            .click();
+        h.run();
+        assert!(
+            h.inner.query_all_by_value("ride.gtd").next().is_some(),
+            "inline editor should show the stripped identity as its value"
+        );
+    }
 
     /// A listing entry for `identity` with no tracks and no SDK metadata, for the
     /// identity-cell layout tests.

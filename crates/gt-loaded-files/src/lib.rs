@@ -235,6 +235,25 @@ impl LoadedFiles {
         debug_assert_eq!(self.files.len(), self.history.len());
     }
 
+    /// Re-point loaded recordings after their history identity was renamed from
+    /// `old` to `new`. Only the identity changes; the recording `group_name` is
+    /// stable across a rename, so the [`DatabaseRef`] stays valid.
+    pub fn rename_identity(&mut self, old: &str, new: &str) {
+        for history in &mut self.history {
+            if let FileHistory::Recording {
+                identity, db_ref, ..
+            } = history
+                && identity == old
+            {
+                identity.clear();
+                identity.push_str(new);
+                if let Some(db_ref) = db_ref {
+                    db_ref.identity = new.to_owned();
+                }
+            }
+        }
+    }
+
     pub fn remove_file(&mut self, index: usize) -> Option<(LoadedFile, FileHistory)> {
         if index >= self.files.len() {
             return None;
@@ -296,7 +315,8 @@ impl<'a> IntoIterator for &'a mut LoadedFiles {
 
 #[cfg(test)]
 mod tests {
-    use super::{FileHistory, RecordingMeta, display_identity};
+    use super::{DatabaseRef, FileHistory, LoadedFiles, RecordingMeta, display_identity};
+    use gt_types::{FileMetadata, LoadedFile};
 
     fn meta() -> RecordingMeta {
         RecordingMeta {
@@ -324,5 +344,50 @@ mod tests {
             ("Morning ride", true)
         );
         assert_eq!(display_identity("explicit-id"), ("explicit-id", false));
+    }
+
+    fn empty_file() -> LoadedFile {
+        LoadedFile {
+            metadata: FileMetadata::default(),
+            tracks: Vec::new(),
+            event_marker_styles: std::collections::HashMap::new(),
+            orphaned_event_markers: Vec::new(),
+            source: gt_types::FileSource::GtdPath(std::path::PathBuf::new()),
+            load_warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn rename_identity_repoints_matching_loaded_recordings() {
+        let mut files = LoadedFiles::new();
+        files.push(
+            empty_file(),
+            FileHistory::recording(
+                "auto:old".to_owned(),
+                meta(),
+                Some(DatabaseRef {
+                    identity: "auto:old".to_owned(),
+                    group_name: "rec0".to_owned(),
+                }),
+            ),
+        );
+        // A different identity, left untouched.
+        files.push(
+            empty_file(),
+            FileHistory::recording("other".to_owned(), meta(), None),
+        );
+
+        files.rename_identity("auto:old", "Trip");
+
+        let renamed = files.view().entry_for(gt_types::FileIdx::new(0)).unwrap();
+        assert_eq!(renamed.identity(), Some("Trip"));
+        assert_eq!(
+            renamed.history().db_ref().map(|r| r.identity.as_str()),
+            Some("Trip"),
+            "the db_ref identity is patched too, group_name unchanged"
+        );
+
+        let untouched = files.view().entry_for(gt_types::FileIdx::new(1)).unwrap();
+        assert_eq!(untouched.identity(), Some("other"));
     }
 }

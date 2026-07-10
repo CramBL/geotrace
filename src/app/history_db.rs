@@ -37,9 +37,22 @@ pub enum DeleteReason {
 
 /// A completed mutation, carried back so the UI can show the right toast.
 pub enum DbOp {
-    TracksHidden { count: usize },
-    TracksDeleted { count: usize },
-    RecordingsDeleted { count: usize, reason: DeleteReason },
+    TracksHidden {
+        count: usize,
+    },
+    TracksDeleted {
+        count: usize,
+    },
+    RecordingsDeleted {
+        count: usize,
+        reason: DeleteReason,
+    },
+    /// An identity was renamed. Carries both names so loaded recordings filed
+    /// under `old` can be re-pointed to `new`.
+    IdentityRenamed {
+        old: String,
+        new: String,
+    },
 }
 
 /// A unit of work for the worker thread.
@@ -61,6 +74,10 @@ enum Request {
     DeleteRecordings {
         refs: Vec<DatabaseRef>,
         reason: DeleteReason,
+    },
+    RenameIdentity {
+        old: String,
+        new: String,
     },
     PrunePreview(PruneMode),
     AutoPrune {
@@ -172,6 +189,10 @@ impl HistoryManager {
         self.send(Request::DeleteRecordings { refs, reason });
     }
 
+    pub fn rename_identity(&self, old: String, new: String) {
+        self.send(Request::RenameIdentity { old, new });
+    }
+
     pub fn prune_preview(&self, mode: PruneMode) {
         self.send(Request::PrunePreview(mode));
     }
@@ -259,6 +280,13 @@ fn handle_request(db: &mut Database, req: Request) -> Response {
             let result = db.delete_batch(&refs);
             Response::Mutated {
                 op: DbOp::RecordingsDeleted { count, reason },
+                result,
+            }
+        }
+        Request::RenameIdentity { old, new } => {
+            let result = db.rename_identity(&old, &new);
+            Response::Mutated {
+                op: DbOp::IdentityRenamed { old, new },
                 result,
             }
         }

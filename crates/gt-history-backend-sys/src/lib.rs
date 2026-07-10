@@ -273,6 +273,11 @@ impl HistoryDatabase for SysDb {
         Ok(())
     }
 
+    fn rename_identity(&mut self, old: &str, new: &str) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        crate::copy::rename_identity(&self.path, old, new).map_err(Into::into)
+    }
+
     fn path(&self) -> &Path {
         &self.path
     }
