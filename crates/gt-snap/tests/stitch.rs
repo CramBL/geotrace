@@ -1,40 +1,17 @@
 //! Validate stitching of chunk outcomes into a `SnapResult`.
 
+mod support;
+
 use std::fs;
 
-use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
+use support::points;
 
 use gt_snap::fixtures_dir;
 use gt_snap::request_plan::{self, CHUNK_POINTS, RequestPlan};
 use gt_snap::snapped_track::SHAPE_POLYLINE_PRECISION;
 use gt_snap::stitch::{self, ChunkOutcome, SnapWarning, SnapWarningReporter};
 use gt_snap::wire::{Costing, SnapPointKind, TraceAttributesResponse};
-use gt_types::nav_point::NavPoint;
-use gt_types::time_types::GpsTime;
-use gt_types::tpv::TimePositionVelocity;
-use gt_types::{Latitude, Longitude};
-
-/// 2026-01-01T12:00:00Z (valid constant; the epoch fallback would fail the
-/// time-based assertions loudly).
-fn base_time() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_767_268_800, 0).unwrap_or_default()
-}
-
-/// `count` 1 Hz points walking north.
-fn points(count: usize) -> Vec<NavPoint> {
-    (0..count)
-        .map(|i| {
-            let time = base_time() + chrono::Duration::seconds(i as i64);
-            let tpv = TimePositionVelocity::builder()
-                .time(GpsTime::from_utc(time))
-                .lat(Latitude::new(55.0 + i as f64 * 1e-5))
-                .lon(Longitude::new(12.0))
-                .build();
-            NavPoint::new(tpv, None)
-        })
-        .collect()
-}
 
 /// A synthetic success response with `count` matched points, every one
 /// `kind`, all errors `error_m`, no shape (geometry is exercised separately

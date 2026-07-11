@@ -75,6 +75,12 @@ gen-fixture:
 snap-fixtures:
     cargo run -p gt-snap --example fetch_fixtures
 
+# Run the gt-snap live-API smoke test against the real Valhalla server
+# (network!) - the on-demand drift check for the API boundary.
+[group("native")]
+snap-live-test:
+    cargo nextest run --profile live -p gt-snap
+
 [group("native")]
 sdk-doc:
     RUSTDOCFLAGS="-D warnings" cargo doc -p geotrace-sdk --no-deps

@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use gt_types::{NavPoint, PointIdx};
 
-use crate::wire::ShapePoint;
+use crate::wire::{Costing, ShapePoint, TraceAttributesRequest, TraceOptions};
 
 /// Minimum time between two sent points; input at a higher rate is thinned.
 pub const MIN_POINT_INTERVAL: Duration = Duration::from_secs(1);
@@ -68,6 +68,18 @@ impl Chunk {
     /// (see [`owned`](Self::owned)).
     pub fn owned_sent(&self) -> &[SentPoint] {
         self.sent.get(self.owned.clone()).unwrap_or_default()
+    }
+
+    /// The wire request sending this chunk: all sent points (overlap
+    /// included), the production attribute filter, and the plan's derived
+    /// accuracy when present.
+    pub fn request(&self, costing: Costing, gps_accuracy_m: Option<f64>) -> TraceAttributesRequest {
+        let mut request =
+            TraceAttributesRequest::new(costing, self.sent.iter().map(|s| s.shape_point).collect());
+        request.trace_options = gps_accuracy_m.map(|gps_accuracy| TraceOptions {
+            gps_accuracy: Some(gps_accuracy),
+        });
+        request
     }
 }
 

@@ -1,0 +1,237 @@
+//! Validate plan sending and outcome classification with a canned transport.
+//!
+//! No network: the canned transport replays captured fixture bodies and
+//! synthetic statuses, exercising the same classification path production
+//! uses (static dispatch through the `Transport` trait).
+
+mod support;
+
+use std::cell::RefCell;
+use std::fs;
+
+use support::points;
+
+use gt_snap::fixtures_dir;
+use gt_snap::request_plan::{self, CHUNK_POINTS};
+use gt_snap::stitch::{ChunkOutcome, SnapWarningReporter};
+use gt_snap::transport::{self, HttpResponse, Transport, TransportError};
+use gt_snap::wire::Costing;
+
+fn fixture_body(name: &str) -> Result<String, String> {
+    let path = fixtures_dir().join(name);
+    fs::read_to_string(&path).map_err(|err| format!("reading {}: {err}", path.display()))
+}
+
+/// A canned transport replaying a scripted sequence of results. Panics if
+/// the script runs dry (a test sent more requests than it declared).
+struct CannedTransport {
+    script: RefCell<Vec<Result<HttpResponse, TransportError>>>,
+    requests_seen: RefCell<usize>,
+}
+
+impl CannedTransport {
+    fn new(script: Vec<Result<HttpResponse, TransportError>>) -> Self {
+        Self {
+            script: RefCell::new(script),
+            requests_seen: RefCell::new(0),
+        }
+    }
+
+    fn requests_seen(&self) -> usize {
+        *self.requests_seen.borrow()
+    }
+}
+
+impl Transport for CannedTransport {
+    fn send(
+        &self,
+        _request: &gt_snap::wire::TraceAttributesRequest,
+    ) -> Result<HttpResponse, TransportError> {
+        *self.requests_seen.borrow_mut() += 1;
+        let mut script = self.script.borrow_mut();
+        if script.is_empty() {
+            // A dry script means the test under-declared its requests;
+            // surface it as a transport error the assertions will trip on.
+            return Err(TransportError {
+                detail: "canned transport script ran dry".to_owned(),
+            });
+        }
+        script.remove(0)
+    }
+}
+
+fn ok(body: String) -> Result<HttpResponse, TransportError> {
+    Ok(HttpResponse { status: 200, body })
+}
+
+fn status(code: u16, body: &str) -> Result<HttpResponse, TransportError> {
+    Ok(HttpResponse {
+        status: code,
+        body: body.to_owned(),
+    })
+}
+
+fn connection_reset() -> Result<HttpResponse, TransportError> {
+    Err(TransportError {
+        detail: "connection reset".to_owned(),
+    })
+}
+
+#[test]
+fn fixture_success_body_classifies_and_stitches_end_to_end() {
+    // The captured partially_snappable response has 20 matched points; a
+    // 20-point plan is one chunk.
+    let plan = request_plan::plan(&points(20));
+    let transport = CannedTransport::new(vec![ok(fixture_body(
+        "partially_snappable.response.json",
+    )
+    .expect("fixture"))]);
+
+    let mut progress = Vec::new();
+    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |done, total| {
+        progress.push((done, total));
+    });
+
+    assert_eq!(progress, vec![(1, 1)]);
+    assert!(matches!(outcomes.first(), Some(ChunkOutcome::Success(_))));
+
+    // The full offline pipeline: plan -> outcomes -> result.
+    let reporter = SnapWarningReporter::default();
+    let result = stitch_all(&plan, &outcomes, &reporter);
+    assert_eq!(result.kind_counts.total(), 20);
+    assert!(!result.partial);
+}
+
+fn stitch_all(
+    plan: &gt_snap::request_plan::RequestPlan,
+    outcomes: &[ChunkOutcome],
+    reporter: &SnapWarningReporter,
+) -> gt_snap::stitch::SnapResult {
+    gt_snap::stitch::stitch(plan, Costing::Auto, outcomes, reporter)
+}
+
+#[test]
+fn off_network_error_becomes_off_network_outcome_without_retry() {
+    let plan = request_plan::plan(&points(10));
+    let transport = CannedTransport::new(vec![status(
+        400,
+        &fixture_body("unsnappable.response.json").expect("fixture"),
+    )]);
+
+    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |_, _| {});
+
+    assert_eq!(outcomes, vec![ChunkOutcome::OffNetwork]);
+    assert_eq!(transport.requests_seen(), 1, "4xx is never retried");
+}
+
+#[test]
+fn deterministic_client_error_fails_without_retry() {
+    let plan = request_plan::plan(&points(10));
+    let transport = CannedTransport::new(vec![status(
+        400,
+        &fixture_body("bad_request.response.json").expect("fixture"),
+    )]);
+
+    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |_, _| {});
+
+    assert!(
+        matches!(outcomes.first(), Some(ChunkOutcome::Failed(detail)) if detail.contains("114"))
+    );
+    assert_eq!(transport.requests_seen(), 1);
+}
+
+#[test]
+fn html_error_body_fails_without_retry() {
+    let plan = request_plan::plan(&points(10));
+    let transport = CannedTransport::new(vec![status(
+        413,
+        &fixture_body("too_large_body.response.json").expect("fixture"),
+    )]);
+
+    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |_, _| {});
+
+    assert!(
+        matches!(outcomes.first(), Some(ChunkOutcome::Failed(detail)) if detail.contains("non-JSON"))
+    );
+    assert_eq!(transport.requests_seen(), 1);
+}
+
+#[test]
+fn transient_transport_failure_gets_one_retry_then_succeeds() {
+    let plan = request_plan::plan(&points(10));
+    let transport = CannedTransport::new(vec![
+        connection_reset(),
+        ok(fixture_body("clean_drive.response.json").expect("fixture")),
+    ]);
+
+    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |_, _| {});
+
+    assert!(matches!(outcomes.first(), Some(ChunkOutcome::Success(_))));
+    assert_eq!(transport.requests_seen(), 2);
+}
+
+#[test]
+fn server_error_gets_one_retry_then_fails() {
+    let plan = request_plan::plan(&points(10));
+    let transport = CannedTransport::new(vec![
+        status(503, "upstream overloaded"),
+        status(503, "upstream overloaded"),
+    ]);
+
+    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |_, _| {});
+
+    assert!(
+        matches!(outcomes.first(), Some(ChunkOutcome::Failed(detail)) if detail.contains("503"))
+    );
+    assert_eq!(transport.requests_seen(), 2, "exactly one retry");
+}
+
+#[test]
+fn failed_chunk_does_not_stop_later_chunks() {
+    let plan = request_plan::plan(&points(CHUNK_POINTS + 1));
+    assert_eq!(plan.chunks.len(), 2, "precondition");
+    let transport = CannedTransport::new(vec![
+        connection_reset(),
+        connection_reset(),
+        ok(fixture_body("clean_drive.response.json").expect("fixture")),
+    ]);
+
+    let mut progress = Vec::new();
+    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |done, total| {
+        progress.push((done, total));
+    });
+
+    assert_eq!(progress, vec![(1, 2), (2, 2)]);
+    assert!(matches!(outcomes.first(), Some(ChunkOutcome::Failed(_))));
+    // The second chunk was still attempted (its canned success consumed).
+    assert_eq!(transport.requests_seen(), 3);
+}
+
+#[test]
+fn unparsable_success_body_is_a_failure() {
+    let plan = request_plan::plan(&points(10));
+    let transport = CannedTransport::new(vec![status(200, "not json")]);
+
+    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |_, _| {});
+
+    assert!(
+        matches!(outcomes.first(), Some(ChunkOutcome::Failed(detail)) if detail.contains("unparsable success body"))
+    );
+}
+
+proptest::proptest! {
+    /// The classifier consumes untrusted network responses: any status code
+    /// crossed with any body must produce outcomes, never a panic. (Curated
+    /// fixture bodies are exercised by the tests above; this covers
+    /// everything else, mirroring the shape-decoder fuzz tests.)
+    #[test]
+    fn arbitrary_responses_never_panic(code in proptest::prelude::any::<u16>(), body in ".{0,512}") {
+        let plan = request_plan::plan(&points(5));
+        let transport = CannedTransport::new(vec![
+            status(code, &body),
+            status(code, &body), // a transient classification retries once
+        ]);
+        let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |_, _| {});
+        proptest::prop_assert_eq!(outcomes.len(), plan.chunks.len());
+    }
+}

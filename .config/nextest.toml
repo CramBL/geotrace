@@ -2,7 +2,9 @@
 # The gt-arch architecture check (cargo-pup) is slow and needs a pinned nightly
 # toolchain, so it is excluded from the normal test run and exercised on its own
 # via `just pup` / the dedicated CI job (which uses the `arch` profile below).
-default-filter = "not package(gt-arch)"
+# The gt-snap live-API smoke test hits the real Valhalla server and is run
+# on demand via `just snap-live-test` (the `live` profile below), never in CI.
+default-filter = "not package(gt-arch) and not binary_id(gt-snap::live_api)"
 # Print each failure's output as it happens and again in a summary at the end,
 # so failures stay visible at the bottom of long CI logs. Inherited by the ci
 # and arch profiles below.
@@ -16,3 +18,16 @@ status-level = "all"
 fail-fast = false
 status-level = "all"
 default-filter = "package(gt-arch)"
+
+# On-demand live tests against the real map-matching server. One thread so
+# a run stays within the server's 1 request/s fair-use budget.
+[profile.live]
+default-filter = "binary_id(gt-snap::live_api)"
+status-level = "all"
+
+[[profile.live.overrides]]
+filter = "binary_id(gt-snap::live_api)"
+test-group = "live"
+
+[test-groups]
+live = { max-threads = 1 }
