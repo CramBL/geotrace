@@ -44,6 +44,7 @@
 #include <vector>
 
 #include <geotrace.h> // C SDK (already has extern "C" guards)
+#include <geotrace/unit_catalog.hpp>
 
 #define GEOTRACE_CPP_VERSION       "0.4.0"
 #define GEOTRACE_CPP_VERSION_MAJOR 0
@@ -285,18 +286,16 @@ struct Status {
 /**
  * The result of a fallible operation: either a value or a `Status` error.
  *
- * Modelled on Rust's `Result`. Inspect `is_ok()` / `error()` and read `value`,
+ * Modelled on Rust's `Result`. Inspect `is_ok()` / `error()` and call `value()`,
  * or call `value_or_throw()` to throw the error (or abort without exceptions).
- * `T` must be default-constructible. The value is unspecified when `is_err()`.
  */
 template <typename T> struct Result {
-    T value;
     Status status;
 
-    Result(T v) : value(std::move(v)) {}
+    Result(T v) : value_(std::move(v)) {}
     // An error result must carry a real error: an ok status here would falsely
     // report success with a default-constructed value.
-    Result(Status s) : value(), status(std::move(s)) { assert(status.is_err()); }
+    Result(Status s) : status(std::move(s)) { assert(status.is_err()); }
     Result() = delete;
 
     bool is_ok() const noexcept { return status.is_ok(); }
@@ -304,14 +303,27 @@ template <typename T> struct Result {
     explicit operator bool() const noexcept { return is_ok(); }
     const Status &error() const noexcept { return status; }
 
+    const T &value() const & {
+        assert(value_.has_value());
+        return *value_;
+    }
+    T &value() & {
+        assert(value_.has_value());
+        return *value_;
+    }
+
     const T &value_or_throw() const & {
         status.throw_on_failure();
-        return value;
+        return value();
     }
     T value_or_throw() && {
         status.throw_on_failure();
-        return std::move(value);
+        assert(value_.has_value());
+        return std::move(*value_);
     }
+
+  private:
+    std::optional<T> value_;
 };
 
 /**
@@ -575,12 +587,8 @@ struct EventMarkerStyle {
  * row-major: `times.size()` rows of one column (scalar) or `components.size()`
  * columns (vector).
  */
-#include <geotrace/unit_catalog.hpp>
-
 class ChannelUnit {
   public:
-    ChannelUnit() = default;
-
     static ChannelUnit recognized(RecognizedUnit unit) {
         return ChannelUnit{recognized_unit_label(unit), false};
     }
@@ -648,8 +656,8 @@ class ChannelUnit {
 #endif
     }
 
-    std::string label_ = "m";
-    bool custom_ = false;
+    std::string label_;
+    bool custom_;
 };
 
 struct Channel {

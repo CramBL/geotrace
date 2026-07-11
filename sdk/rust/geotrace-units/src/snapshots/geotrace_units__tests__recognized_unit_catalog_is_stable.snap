@@ -2,32 +2,32 @@
 source: sdk/rust/geotrace-units/src/lib.rs
 expression: catalog
 ---
-deg | Angle | 1.000000000000
-m | Length | 1.000000000000
-nm | Length | 0.000000001000
-um | Length | 0.000001000000
-mm | Length | 0.001000000000
-cm | Length | 0.010000000000
-km | Length | 1000.000000000000
-km/h | Speed | 0.277777777778
-m/s | Speed | 1.000000000000
-mm/s | Speed | 0.001000000000
-cm/s | Speed | 0.010000000000
-kn | Speed | 0.514444444444
-m/s2 | Acceleration | 1.000000000000
-mm/s2 | Acceleration | 0.001000000000
-cm/s2 | Acceleration | 0.010000000000
-g | Acceleration | 9.806650000000
-ug | Acceleration | 0.000009806650
-mg | Acceleration | 0.009806650000
-km/h/s | Acceleration | 0.277777777778
-s | Duration | 1.000000000000
-ns | Duration | 0.000000001000
-us | Duration | 0.000001000000
-ms | Duration | 0.001000000000
-min | Duration | 60.000000000000
-h | Duration | 3600.000000000000
-% | Ratio | 0.010000000000
-per s | Rate | 60.000000000000
-per min | Rate | 1.000000000000
-per h | Rate | 0.016666666667
+deg | DEG | Deg | DEG | Angle | 1.000000000000
+m | M | M | M | Length | 1.000000000000
+nm | NM | Nm | NM | Length | 0.000000001000
+um | UM | Um | UM | Length | 0.000001000000
+mm | MM | Mm | MM | Length | 0.001000000000
+cm | CM | Cm | CM | Length | 0.010000000000
+km | KM | Km | KM | Length | 1000.000000000000
+km/h | KM_PER_H | KmPerH | KM_PER_H | Speed | 0.277777777778
+m/s | M_PER_S | MPerS | M_PER_S | Speed | 1.000000000000
+mm/s | MM_PER_S | MmPerS | MM_PER_S | Speed | 0.001000000000
+cm/s | CM_PER_S | CmPerS | CM_PER_S | Speed | 0.010000000000
+kn | KN | Kn | KN | Speed | 0.514444444444
+m/s2 | M_PER_S2 | MPerS2 | M_PER_S2 | Acceleration | 1.000000000000
+mm/s2 | MM_PER_S2 | MmPerS2 | MM_PER_S2 | Acceleration | 0.001000000000
+cm/s2 | CM_PER_S2 | CmPerS2 | CM_PER_S2 | Acceleration | 0.010000000000
+g | G | G | G | Acceleration | 9.806650000000
+ug | UG | Ug | UG | Acceleration | 0.000009806650
+mg | MG | Mg | MG | Acceleration | 0.009806650000
+km/h/s | KM_PER_H_PER_S | KmPerHPerS | KM_PER_H_PER_S | Acceleration | 0.277777777778
+ns | NS | Ns | NS | Duration | 0.000000001000
+us | US | Us | US | Duration | 0.000001000000
+ms | MS | Ms | MS | Duration | 0.001000000000
+s | S | S | S | Duration | 1.000000000000
+min | MIN | Min | MIN | Duration | 60.000000000000
+h | H | H | H | Duration | 3600.000000000000
+% | PERCENT | Percent | PERCENT | Ratio | 0.010000000000
+per s | PER_S | PerS | PER_S | Rate | 60.000000000000
+per min | PER_MIN | PerMin | PER_MIN | Rate | 1.000000000000
+per h | PER_H | PerH | PER_H | Rate | 0.016666666667

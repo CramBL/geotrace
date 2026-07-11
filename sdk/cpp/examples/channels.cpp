@@ -48,7 +48,7 @@ int main() {
             std::cerr << quality_unit.error().description << '\n';
             return 1;
         }
-        quality.unit = quality_unit.value;
+        quality.unit = quality_unit.value();
         quality.times = {t0, t1};
         quality.values = {80.0, 81.0};
         builder.add(quality);

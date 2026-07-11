@@ -79,3 +79,5 @@ add_cpp_test(test_result_api)
 # no-exceptions branch (the compiler keeps exceptions, so doctest still works).
 add_cpp_test(test_no_exceptions)
 target_compile_definitions(test_no_exceptions PRIVATE GEOTRACE_CPP_NO_EXCEPTIONS)
+
+add_cpp_test(test_unit_catalog_header)

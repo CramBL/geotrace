@@ -21,6 +21,8 @@ using geotrace::Timestamp;
 static const Timestamp T0 = Timestamp::from_seconds(1700000000ULL);
 static const Timestamp T1 = Timestamp::from_seconds(1700000001ULL);
 
+static_assert(!std::is_default_constructible_v<ChannelUnit>);
+
 TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
     std::vector<std::uint8_t> bytes;
     {
@@ -160,7 +162,7 @@ TEST_CASE("channels: generated unit catalog exposes every canonical label") {
         const auto unit = static_cast<RecognizedUnit>(raw);
         const auto parsed = ChannelUnit::try_parse_recognized(recognized_unit_label(unit));
         REQUIRE(parsed.is_ok());
-        labels.push_back(parsed.value.label());
+        labels.push_back(parsed.value().label());
     }
     CHECK(labels.size() == std::size_t{29});
     std::sort(labels.begin(), labels.end());

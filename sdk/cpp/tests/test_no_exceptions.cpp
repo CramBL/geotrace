@@ -57,7 +57,7 @@ TEST_CASE("first error wins: a later valid call does not overwrite it") {
 TEST_CASE("a valid build succeeds without exceptions") {
     const auto r = FileBuilder{}.add(one_fix()).try_finish();
     CHECK(r.is_ok());
-    CHECK(r.value.nav_point_count() == std::size_t{1});
+    CHECK(r.value().nav_point_count() == std::size_t{1});
 }
 
 TEST_CASE("try_open reports an error by value, never aborting") {
@@ -75,5 +75,5 @@ TEST_CASE("unit factories report invalid user input without terminating") {
 
     const auto custom = ChannelUnit::try_custom("rotations");
     REQUIRE(custom.is_ok());
-    CHECK(custom.value.label() == "rotations");
+    CHECK(custom.value().label() == "rotations");
 }

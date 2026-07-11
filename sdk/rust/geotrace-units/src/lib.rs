@@ -62,7 +62,7 @@ impl SiPrefix {
     }
 
     /// Canonical spelling before the base unit.
-    pub fn text(self) -> &'static str {
+    pub const fn text(self) -> &'static str {
         match self {
             Self::Nano => "n",
             Self::Micro => "u",
@@ -144,7 +144,7 @@ impl BaseUnit {
     }
 
     /// Canonical wire spelling.
-    pub fn text(self) -> &'static str {
+    pub const fn text(self) -> &'static str {
         match self {
             Self::Deg => "deg",
             Self::M => "m",
@@ -200,10 +200,24 @@ impl BaseUnit {
 }
 
 /// A recognized unit, optionally scaled by an SI prefix.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Unit {
     prefix: Option<SiPrefix>,
     base: BaseUnit,
+    label: &'static str,
+}
+
+#[expect(
+    clippy::missing_fields_in_debug,
+    reason = "the internal label repeats the established prefix and base debug representation"
+)]
+impl fmt::Debug for Unit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Unit")
+            .field("prefix", &self.prefix)
+            .field("base", &self.base)
+            .finish()
+    }
 }
 
 /// Stable language-binding names for a recognized [Unit].
@@ -218,26 +232,26 @@ pub struct UnitBinding {
 impl Unit {
     pub const DEG: Self = Self::base(BaseUnit::Deg);
     pub const M: Self = Self::base(BaseUnit::M);
-    pub const NM: Self = Self::prefixed(SiPrefix::Nano, BaseUnit::M);
-    pub const UM: Self = Self::prefixed(SiPrefix::Micro, BaseUnit::M);
-    pub const MM: Self = Self::prefixed(SiPrefix::Milli, BaseUnit::M);
-    pub const CM: Self = Self::prefixed(SiPrefix::Centi, BaseUnit::M);
-    pub const KM: Self = Self::prefixed(SiPrefix::Kilo, BaseUnit::M);
+    pub const NM: Self = Self::with_label(SiPrefix::Nano, BaseUnit::M, "nm");
+    pub const UM: Self = Self::with_label(SiPrefix::Micro, BaseUnit::M, "um");
+    pub const MM: Self = Self::with_label(SiPrefix::Milli, BaseUnit::M, "mm");
+    pub const CM: Self = Self::with_label(SiPrefix::Centi, BaseUnit::M, "cm");
+    pub const KM: Self = Self::with_label(SiPrefix::Kilo, BaseUnit::M, "km");
     pub const KM_PER_H: Self = Self::base(BaseUnit::KmPerH);
     pub const M_PER_S: Self = Self::base(BaseUnit::MPerS);
-    pub const MM_PER_S: Self = Self::prefixed(SiPrefix::Milli, BaseUnit::MPerS);
-    pub const CM_PER_S: Self = Self::prefixed(SiPrefix::Centi, BaseUnit::MPerS);
+    pub const MM_PER_S: Self = Self::with_label(SiPrefix::Milli, BaseUnit::MPerS, "mm/s");
+    pub const CM_PER_S: Self = Self::with_label(SiPrefix::Centi, BaseUnit::MPerS, "cm/s");
     pub const KN: Self = Self::base(BaseUnit::Kn);
     pub const M_PER_S2: Self = Self::base(BaseUnit::MPerS2);
-    pub const MM_PER_S2: Self = Self::prefixed(SiPrefix::Milli, BaseUnit::MPerS2);
-    pub const CM_PER_S2: Self = Self::prefixed(SiPrefix::Centi, BaseUnit::MPerS2);
+    pub const MM_PER_S2: Self = Self::with_label(SiPrefix::Milli, BaseUnit::MPerS2, "mm/s2");
+    pub const CM_PER_S2: Self = Self::with_label(SiPrefix::Centi, BaseUnit::MPerS2, "cm/s2");
     pub const G: Self = Self::base(BaseUnit::G);
-    pub const UG: Self = Self::prefixed(SiPrefix::Micro, BaseUnit::G);
-    pub const MG: Self = Self::prefixed(SiPrefix::Milli, BaseUnit::G);
+    pub const UG: Self = Self::with_label(SiPrefix::Micro, BaseUnit::G, "ug");
+    pub const MG: Self = Self::with_label(SiPrefix::Milli, BaseUnit::G, "mg");
     pub const KM_PER_H_PER_S: Self = Self::base(BaseUnit::KmPerHPerS);
-    pub const NS: Self = Self::prefixed(SiPrefix::Nano, BaseUnit::S);
-    pub const US: Self = Self::prefixed(SiPrefix::Micro, BaseUnit::S);
-    pub const MS: Self = Self::prefixed(SiPrefix::Milli, BaseUnit::S);
+    pub const NS: Self = Self::with_label(SiPrefix::Nano, BaseUnit::S, "ns");
+    pub const US: Self = Self::with_label(SiPrefix::Micro, BaseUnit::S, "us");
+    pub const MS: Self = Self::with_label(SiPrefix::Milli, BaseUnit::S, "ms");
     pub const S: Self = Self::base(BaseUnit::S);
     pub const MIN: Self = Self::base(BaseUnit::Min);
     pub const H: Self = Self::base(BaseUnit::H);
@@ -257,39 +271,6 @@ impl Unit {
         Self::M_PER_S2,
         Self::G,
         Self::KM_PER_H_PER_S,
-        Self::MS,
-        Self::S,
-        Self::MIN,
-        Self::H,
-        Self::PERCENT,
-        Self::PER_S,
-        Self::PER_MIN,
-        Self::PER_H,
-    ];
-
-    /// Every unit accepted as recognized channel metadata.
-    pub const RECOGNIZED: [Self; 29] = [
-        Self::DEG,
-        Self::M,
-        Self::NM,
-        Self::UM,
-        Self::MM,
-        Self::CM,
-        Self::KM,
-        Self::KM_PER_H,
-        Self::M_PER_S,
-        Self::MM_PER_S,
-        Self::CM_PER_S,
-        Self::KN,
-        Self::M_PER_S2,
-        Self::MM_PER_S2,
-        Self::CM_PER_S2,
-        Self::G,
-        Self::UG,
-        Self::MG,
-        Self::KM_PER_H_PER_S,
-        Self::NS,
-        Self::US,
         Self::MS,
         Self::S,
         Self::MIN,
@@ -480,27 +461,32 @@ impl Unit {
 
     /// Canonical metadata spelling for a recognized unit.
     pub fn label(self) -> &'static str {
-        const LABELS: [&str; 29] = [
-            "deg", "m", "nm", "um", "mm", "cm", "km", "km/h", "m/s", "mm/s", "cm/s", "kn", "m/s2",
-            "mm/s2", "cm/s2", "g", "ug", "mg", "km/h/s", "ns", "us", "ms", "s", "min", "h", "%",
-            "per s", "per min", "per h",
-        ];
-        Self::RECOGNIZED
-            .into_iter()
-            .zip(LABELS)
-            .find_map(|(unit, label)| (unit == self).then_some(label))
-            .unwrap_or_default()
+        self.label
+    }
+
+    /// Iterate over every recognized channel unit in stable catalog order.
+    pub fn recognized() -> impl ExactSizeIterator<Item = Self> {
+        Self::BINDINGS.iter().map(|binding| binding.unit)
     }
 
     const fn base(base: BaseUnit) -> Self {
-        Self { prefix: None, base }
+        Self {
+            prefix: None,
+            base,
+            label: base.text(),
+        }
     }
 
-    const fn prefixed(prefix: SiPrefix, base: BaseUnit) -> Self {
+    const fn with_label(prefix: SiPrefix, base: BaseUnit, label: &'static str) -> Self {
         Self {
             prefix: Some(prefix),
             base,
+            label,
         }
+    }
+
+    fn from_parts(prefix: SiPrefix, base: BaseUnit) -> Option<Self> {
+        Self::recognized().find(|unit| unit.prefix == Some(prefix) && unit.base == base)
     }
 
     pub fn quantity(self) -> PhysicalQuantity {
@@ -536,7 +522,8 @@ impl Unit {
         let (prefix, rest) = SiPrefix::split(ident)?;
         let base = BaseUnit::from_ident(rest)?;
         base.accepts_prefix(prefix)
-            .then_some(Self::prefixed(prefix, base))
+            .then(|| Self::from_parts(prefix, base))
+            .flatten()
     }
 
     pub fn from_pair(first: &str, second: &str) -> Option<Self> {
@@ -556,7 +543,8 @@ impl Unit {
             _ => return None,
         };
         base.accepts_prefix(prefix)
-            .then_some(Self::prefixed(prefix, base))
+            .then(|| Self::from_parts(prefix, base))
+            .flatten()
     }
 
     pub fn from_triple(first: &str, second: &str, third: &str) -> Option<Self> {
@@ -591,15 +579,7 @@ impl Unit {
 
 impl fmt::Display for Unit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(prefix) = self.prefix {
-            write!(f, "{}", prefix.text())?;
-            match self.base {
-                BaseUnit::MPerS => return f.write_str("m/s"),
-                BaseUnit::MPerS2 => return f.write_str("m/s2"),
-                _ => {}
-            }
-        }
-        f.write_str(self.base.text())
+        f.write_str(self.label)
     }
 }
 
@@ -866,8 +846,8 @@ mod tests {
                     .count()
             })
             .sum::<usize>();
-        assert_eq!(Unit::RECOGNIZED.len(), BaseUnit::COUNT + prefixed_count);
-        for unit in Unit::RECOGNIZED {
+        assert_eq!(Unit::recognized().len(), BaseUnit::COUNT + prefixed_count);
+        for unit in Unit::recognized() {
             let text = unit.to_string();
             assert_eq!(Unit::from_label(&text), Some(unit), "{text}");
         }
@@ -875,9 +855,8 @@ mod tests {
 
     #[test]
     fn binding_catalog_is_exhaustive_and_canonical() {
-        assert_eq!(Unit::BINDINGS.len(), Unit::RECOGNIZED.len());
-        for (binding, recognized) in Unit::BINDINGS.iter().zip(Unit::RECOGNIZED) {
-            assert_eq!(binding.unit, recognized);
+        assert_eq!(Unit::BINDINGS.len(), Unit::recognized().len());
+        for binding in Unit::BINDINGS {
             assert_eq!(Unit::from_label(binding.unit.label()), Some(binding.unit));
             assert!(!binding.rust.is_empty());
             assert!(!binding.cpp.is_empty());
@@ -926,27 +905,19 @@ mod tests {
     #[test]
     fn recognized_unit_catalog_is_stable() {
         let mut catalog = String::new();
-        for base in BaseUnit::iter() {
-            let bare = Unit::base(base);
+        for binding in Unit::BINDINGS {
+            let unit = binding.unit;
             writeln!(
                 &mut catalog,
-                "{} | {:?} | {:.12}",
-                bare,
-                bare.quantity(),
-                bare.to_base()
+                "{} | {} | {} | {} | {:?} | {:.12}",
+                unit.label(),
+                binding.rust,
+                binding.cpp,
+                binding.python,
+                unit.quantity(),
+                unit.to_base()
             )
             .expect("writing to a String cannot fail");
-            for prefix in SiPrefix::iter().filter(|prefix| base.accepts_prefix(*prefix)) {
-                let unit = Unit::prefixed(prefix, base);
-                writeln!(
-                    &mut catalog,
-                    "{} | {:?} | {:.12}",
-                    unit,
-                    unit.quantity(),
-                    unit.to_base()
-                )
-                .expect("writing to a String cannot fail");
-            }
         }
         insta::assert_snapshot!(catalog);
     }

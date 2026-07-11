@@ -31,14 +31,13 @@ typedef struct {
     size_t sample_count;
 } FrozenGtdChannelInfoV040;
 
-_Static_assert(sizeof(GtdChannel) == sizeof(FrozenGtdChannelV040), "GtdChannel 0.4 ABI changed");
-_Static_assert(sizeof(GtdChannelInfo) == sizeof(FrozenGtdChannelInfoV040),
-               "GtdChannelInfo 0.4 ABI changed");
-_Static_assert(offsetof(GtdChannel, period_deg) == offsetof(FrozenGtdChannelV040, period_deg),
-               "GtdChannel 0.4 field offsets changed");
-_Static_assert(offsetof(GtdChannelInfo, period_deg) ==
-                   offsetof(FrozenGtdChannelInfoV040, period_deg),
-               "GtdChannelInfo 0.4 field offsets changed");
+Test(channels, published_v040_layout_is_preserved) {
+    cr_assert_eq(sizeof(GtdChannel), sizeof(FrozenGtdChannelV040));
+    cr_assert_eq(sizeof(GtdChannelInfo), sizeof(FrozenGtdChannelInfoV040));
+    cr_assert_eq(offsetof(GtdChannel, period_deg), offsetof(FrozenGtdChannelV040, period_deg));
+    cr_assert_eq(offsetof(GtdChannelInfo, period_deg),
+                 offsetof(FrozenGtdChannelInfoV040, period_deg));
+}
 
 Test(channels, frozen_v040_input_layout_calls_current_library) {
     GtdFileBuilder *b = gtd_builder_create();
