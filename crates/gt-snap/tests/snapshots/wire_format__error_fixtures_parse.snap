@@ -1,0 +1,33 @@
+---
+source: crates/gt-snap/tests/wire_format.rs
+expression: digests
+---
+[
+    (
+        "bad_request",
+        ErrorResponse {
+            error: "Insufficiently specified required parameter 'shape' or 'encoded_polyline'",
+            error_code: MissingShape,
+            status: "Bad Request",
+            status_code: 400,
+        },
+    ),
+    (
+        "oversized",
+        ErrorResponse {
+            error: "Too many shape points: (16001). The limit is 16000",
+            error_code: TooManyShapePoints,
+            status: "Bad Request",
+            status_code: 400,
+        },
+    ),
+    (
+        "unsnappable",
+        ErrorResponse {
+            error: "Map Match algorithm failed to find path: walk_or_snap algorithm failed to snap the shape points to the correct shape.",
+            error_code: OffNetwork,
+            status: "Bad Request",
+            status_code: 400,
+        },
+    ),
+]

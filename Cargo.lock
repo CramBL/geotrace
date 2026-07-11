@@ -2462,7 +2462,9 @@ dependencies = [
  "chrono",
  "insta",
  "reqwest 0.12.28",
+ "serde",
  "serde_json",
+ "strum",
 ]
 
 [[package]]

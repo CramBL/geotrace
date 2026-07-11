@@ -31,6 +31,7 @@ use std::{env, fs, thread};
 
 use serde_json::{Value, json};
 
+use gt_snap::wire::{Costing, ShapePoint, TraceAttributesRequest};
 use gt_snap::{
     CLIENT_ID_HEADER, DEFAULT_SERVER_URL, FIXTURE_SCENARIOS, REQUEST_INTERVAL,
     TRACE_ATTRIBUTES_PATH, fixtures_dir,
@@ -43,28 +44,6 @@ const BASE_TIME_UNIX: i64 = 1_767_268_800;
 /// Coordinate rounding sent to the server: six decimals is about 0.1 m,
 /// tighter than any GNSS receiver and keeps request bodies small.
 const COORD_DECIMALS: i32 = 6;
-
-/// The attribute filter production requests will send: the matched-point
-/// group, the matched shape, the map-data version for cache metadata, and the
-/// edge attribute subset shown on snapped-track hover (see the feature
-/// inventory in docs/snap/design.md). Captured reality check: `osm_changeset`
-/// is dropped by the server unless explicitly included here.
-const INCLUDED_ATTRIBUTES: &[&str] = &[
-    "matched.point",
-    "matched.type",
-    "matched.edge_index",
-    "matched.distance_along_edge",
-    "matched.distance_from_trace_point",
-    "matched.begin_route_discontinuity",
-    "matched.end_route_discontinuity",
-    "shape",
-    "osm_changeset",
-    "edge.names",
-    "edge.way_id",
-    "edge.road_class",
-    "edge.speed_limit",
-    "edge.surface",
-];
 
 /// Observed FOSSGIS per-request shape point limit (error_code 153 names it).
 /// One point past it captures the limit error.
@@ -182,43 +161,51 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 /// The request body for one named scenario.
 ///
+/// Well-formed scenarios are built through the production wire types
+/// ([`TraceAttributesRequest`]), so the fixtures exercise exactly the
+/// serialization the client will send. Only the deliberately malformed
+/// `bad_request` stays a raw JSON literal.
+///
 /// Panics on an unknown name: the scenario list and this table must stay in
 /// sync, and the fixture validation test pins both to [`FIXTURE_SCENARIOS`].
 fn scenario_request(name: &str) -> Value {
+    let typed = |request: TraceAttributesRequest| {
+        serde_json::to_value(request).expect("serializing a request never fails")
+    };
     match name {
         // ~40 points at 1 Hz along the boulevard with small deterministic
         // jitter: every point should come back `matched`.
-        "clean_drive" => filtered(json!({
-            "costing": "auto",
-            "shape": trace(40, BOULEVARD_ROUTE, Some(1.0)),
-        })),
+        "clean_drive" => typed(TraceAttributesRequest::new(
+            Costing::Auto,
+            trace(40, BOULEVARD_ROUTE, Some(1.0)),
+        )),
         // The same trace without an attribute filter: documents everything
         // the server can return, so the deliberate filter subset stays an
         // informed choice.
-        "clean_drive_unfiltered" => json!({
-            "costing": "auto",
-            "shape": trace(40, BOULEVARD_ROUTE, Some(1.0)),
-        }),
+        "clean_drive_unfiltered" => typed(TraceAttributesRequest::unfiltered(
+            Costing::Auto,
+            trace(40, BOULEVARD_ROUTE, Some(1.0)),
+        )),
         // 150 points at ~1.5 m spacing (10 Hz driving) with no timestamps:
         // spacing below the default interpolation distance, so most points
         // come back `interpolated`.
-        "dense_10hz" => filtered(json!({
-            "costing": "auto",
-            "shape": trace(150, BOULEVARD_DENSE, None),
-        })),
+        "dense_10hz" => typed(TraceAttributesRequest::new(
+            Costing::Auto,
+            trace(150, BOULEVARD_DENSE, None),
+        )),
         // A line across the harbor: some points snap to bridges and quays,
         // the rest are unmatched - the mixed result the error plot surfaces.
-        "partially_snappable" => filtered(json!({
-            "costing": "auto",
-            "shape": trace(20, HARBOR_LINE, Some(1.0)),
-        })),
+        "partially_snappable" => typed(TraceAttributesRequest::new(
+            Costing::Auto,
+            trace(20, HARBOR_LINE, Some(1.0)),
+        )),
         // Open sea: fully off the road network. Captured reality check: the
         // server rejects the whole request (400, error_code 444) instead of
         // returning per-point `unmatched`.
-        "unsnappable" => filtered(json!({
-            "costing": "auto",
-            "shape": trace(20, SEA_LINE, Some(1.0)),
-        })),
+        "unsnappable" => typed(TraceAttributesRequest::new(
+            Costing::Auto,
+            trace(20, SEA_LINE, Some(1.0)),
+        )),
         // Two clean street segments ~4 km apart, far beyond the default
         // breakage distance. Captured reality check: the server does NOT set
         // route discontinuity flags for the jump - it marks the boundary
@@ -229,46 +216,38 @@ fn scenario_request(name: &str) -> Value {
         "teleport_gap" => {
             let mut shape = trace(20, BOULEVARD_ROUTE, Some(1.0));
             shape.extend(trace_from(20, OSTERBRO_ROUTE, Some(1.0), 20));
-            filtered(json!({ "costing": "auto", "shape": shape }))
+            typed(TraceAttributesRequest::new(Costing::Auto, shape))
         }
         // No shape at all: captures the server's real 400 error payload
-        // (error_code 114).
-        "bad_request" => filtered(json!({ "costing": "auto" })),
+        // (error_code 114). Deliberately malformed, so not expressible
+        // through the typed request.
+        "bad_request" => json!({ "costing": "auto" }),
         // One point past the server's shape limit: captures the limit error
         // (400, error_code 153), which names the maximum - the observation
         // that set the chunk-size constant.
-        "oversized" => filtered(json!({
-            "costing": "auto",
-            "shape": trace(
+        "oversized" => typed(TraceAttributesRequest::new(
+            Costing::Auto,
+            trace(
                 OBSERVED_POINT_LIMIT + 1,
                 &[BOULEVARD_ROUTE[0], ROSKILDE],
                 Some(1.0),
             ),
-        })),
+        )),
         // A body so large the reverse proxy rejects it before Valhalla sees
         // it: captures the HTML 413 page - the client must survive non-JSON
         // error bodies.
-        "too_large_body" => filtered(json!({
-            "costing": "auto",
-            "shape": trace(30_000, &[BOULEVARD_ROUTE[0], ROSKILDE], Some(1.0)),
-        })),
+        "too_large_body" => typed(TraceAttributesRequest::new(
+            Costing::Auto,
+            trace(30_000, &[BOULEVARD_ROUTE[0], ROSKILDE], Some(1.0)),
+        )),
         other => panic!("unknown fixture scenario {other:?}"),
     }
-}
-
-/// Attach the production attribute filter to a request body.
-fn filtered(mut request: Value) -> Value {
-    request["filters"] = json!({
-        "action": "include",
-        "attributes": INCLUDED_ATTRIBUTES,
-    });
-    request
 }
 
 /// `count` shape points spread evenly along the anchor chain `route`, with
 /// deterministic cross-track jitter. `seconds_per_point` adds `time` values
 /// from [`BASE_TIME_UNIX`]; `None` omits timestamps.
-fn trace(count: usize, route: &[Coord], seconds_per_point: Option<f64>) -> Vec<Value> {
+fn trace(count: usize, route: &[Coord], seconds_per_point: Option<f64>) -> Vec<ShapePoint> {
     trace_from(count, route, seconds_per_point, 0)
 }
 
@@ -278,22 +257,18 @@ fn trace_from(
     route: &[Coord],
     seconds_per_point: Option<f64>,
     time_offset: usize,
-) -> Vec<Value> {
+) -> Vec<ShapePoint> {
     (0..count)
         .map(|i| {
             let t = i as f64 / (count - 1).max(1) as f64;
             let (lat, lon) = point_along(route, t);
             // A -1, 0, +1 zigzag: realistic noise, deterministic re-capture.
             let jitter = JITTER_DEG * ((i % 3) as f64 - 1.0);
-            let lat = round_coord(lat + jitter);
-            let lon = round_coord(lon);
-            match seconds_per_point {
-                Some(step) => json!({
-                    "lat": lat,
-                    "lon": lon,
-                    "time": BASE_TIME_UNIX + ((time_offset + i) as f64 * step) as i64,
-                }),
-                None => json!({ "lat": lat, "lon": lon }),
+            ShapePoint {
+                lat: round_coord(lat + jitter),
+                lon: round_coord(lon),
+                time: seconds_per_point
+                    .map(|step| BASE_TIME_UNIX + ((time_offset + i) as f64 * step) as i64),
             }
         })
         .collect()
