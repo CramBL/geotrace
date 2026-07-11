@@ -126,13 +126,13 @@ impl Default for AppSnapshot {
 }
 
 /// Detects settings changes and drives debounced write-through to disk.
-pub(super) struct ConfigManager {
+pub(super) struct SettingsAutosaver {
     dirty: bool,
     last_changed: Option<Instant>,
     prev_snapshot: AppSnapshot,
 }
 
-impl ConfigManager {
+impl SettingsAutosaver {
     pub fn new(initial: AppSnapshot) -> Self {
         Self {
             dirty: false,

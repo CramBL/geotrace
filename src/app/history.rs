@@ -3,7 +3,7 @@ use gt_history::{DatabaseRef, PruneMode, RecordingEntry, RecordingMeta};
 use gt_side_panel::widgets::{MetadataView, has_metadata_details, metadata_detail_rows};
 use gt_ui_theme::warning_amber;
 
-use crate::app::history_db::{DeleteReason, HistoryManager};
+use crate::app::history_db::{DeleteReason, HistoryWorker};
 
 /// Which pruning mode is selected in the Prune dialog.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -66,9 +66,9 @@ impl PruneDialog {
         }
     }
 
-    /// Show the Prune dialog. Sends preview/delete requests to `manager`. The
+    /// Show the Prune dialog. Sends preview/delete requests to `worker`. The
     /// results arrive asynchronously via [`HistoryWindow::set_prune_preview`].
-    fn show(&mut self, ctx: &egui::Context, manager: &HistoryManager) {
+    fn show(&mut self, ctx: &egui::Context, worker: &HistoryWorker) {
         if !self.open {
             return;
         }
@@ -189,7 +189,7 @@ impl PruneDialog {
         self.open = open;
 
         if do_preview {
-            manager.prune_preview(self.to_prune_mode());
+            worker.prune_preview(self.to_prune_mode());
             self.preview_pending = true;
         }
         if do_cancel_preview {
@@ -200,7 +200,7 @@ impl PruneDialog {
             self.open = false;
             self.reset();
             if !refs.is_empty() {
-                manager.delete_recordings(refs, DeleteReason::Prune);
+                worker.delete_recordings(refs, DeleteReason::Prune);
             }
         }
     }
@@ -290,7 +290,7 @@ impl HistoryWindow {
         self.prune.set_preview(refs);
     }
 
-    /// Show the History window. All database work is sent to `manager`. Results
+    /// Show the History window. All database work is sent to `worker`. Results
     /// arrive asynchronously and are applied via [`HistoryWindow::set_entries`]
     /// and friends.
     ///
@@ -303,7 +303,7 @@ impl HistoryWindow {
     pub fn show(
         &mut self,
         ctx: &egui::Context,
-        manager: &HistoryManager,
+        worker: &HistoryWorker,
         loaded_metas: &[RecordingMeta],
         storage_enabled: &mut bool,
         auto_prune_enabled: &mut bool,
@@ -316,13 +316,13 @@ impl HistoryWindow {
 
         // Request the recording list once when it is missing. The worker replies
         // via `set_entries`. A spinner shows until then.
-        if self.entries.is_none() && !self.list_pending && manager.available() {
-            manager.list();
+        if self.entries.is_none() && !self.list_pending && worker.available() {
+            worker.list();
             self.list_pending = true;
         }
 
         // Show Prune dialog (a separate window).
-        self.prune.show(ctx, manager);
+        self.prune.show(ctx, worker);
 
         // Hidden tracks live inside otherwise-visible recordings (there is no
         // recording-level hide). Count them across all recordings so the toolbar
@@ -356,7 +356,7 @@ impl HistoryWindow {
             .default_width(640.0)
             .default_height(480.0)
             .show(ctx, |ui| {
-                if !manager.available() {
+                if !worker.available() {
                     ui.label(
                         egui::RichText::new("History database is unavailable.")
                             .color(warning_amber(ui.visuals().dark_mode)),
@@ -579,7 +579,7 @@ impl HistoryWindow {
                                     let already_loaded = loaded_metas
                                         .iter()
                                         .any(|m| m.same_recording(&entry.meta));
-                                    render_row(ui, entry, already_loaded, manager, &mut rename);
+                                    render_row(ui, entry, already_loaded, worker, &mut rename);
                                 }
                             });
                     });
@@ -603,7 +603,7 @@ impl HistoryWindow {
                         ui.weak(format!("- {hidden_count} hidden {track_label}"));
                     }
                 });
-                if let Some(path) = manager.path() {
+                if let Some(path) = worker.path() {
                     ui.weak(path.display().to_string());
                 }
             });
@@ -648,7 +648,7 @@ impl HistoryWindow {
                         });
                     });
                 if do_delete {
-                    manager.delete_hidden_tracks();
+                    worker.delete_hidden_tracks();
                     self.confirm_delete_hidden = false;
                 } else if cancel {
                     self.confirm_delete_hidden = false;
@@ -664,7 +664,7 @@ fn render_row(
     ui: &mut egui::Ui,
     entry: &RecordingEntry,
     already_loaded: bool,
-    manager: &HistoryManager,
+    worker: &HistoryWorker,
     rename: &mut Option<RenameEdit>,
 ) {
     // Identity column: the inline editor when this row is being renamed,
@@ -673,7 +673,7 @@ fn render_row(
         .as_ref()
         .is_some_and(|r| r.identity == entry.db_ref.identity)
     {
-        render_rename_editor(ui, rename, manager);
+        render_rename_editor(ui, rename, worker);
     } else {
         identity_cell(ui, entry);
     }
@@ -706,7 +706,7 @@ fn render_row(
         if already_loaded {
             open.on_hover_text("Already loaded");
         } else if open.clicked() {
-            manager.open(entry.db_ref.clone());
+            worker.open(entry.db_ref.clone());
         }
         if ui
             .small_button(egui_phosphor::regular::PENCIL_SIMPLE)
@@ -718,7 +718,7 @@ fn render_row(
             *rename = Some(RenameEdit { identity, buffer });
         }
         if ui.small_button("Delete").clicked() {
-            manager.delete_recordings(vec![entry.db_ref.clone()], DeleteReason::Manual);
+            worker.delete_recordings(vec![entry.db_ref.clone()], DeleteReason::Manual);
         }
     });
 
@@ -732,7 +732,7 @@ fn render_row(
 fn render_rename_editor(
     ui: &mut egui::Ui,
     rename: &mut Option<RenameEdit>,
-    manager: &HistoryManager,
+    worker: &HistoryWorker,
 ) {
     let Some(edit) = rename.as_mut() else {
         return;
@@ -749,7 +749,7 @@ fn render_rename_editor(
         let unchanged = new == identity_display_parts(&old).0;
         *rename = None;
         if enter && !new.is_empty() && !unchanged {
-            manager.rename_identity(old, new);
+            worker.rename_identity(old, new);
         }
     } else {
         // Keep focus in the freshly-opened editor until the user commits or
@@ -863,15 +863,15 @@ mod tests {
     use crate::app::history_db::Response;
 
     use super::{
-        DatabaseRef, HistoryManager, HistoryWindow, RecordingEntry, RecordingMeta, identity_cell,
+        DatabaseRef, HistoryWindow, HistoryWorker, RecordingEntry, RecordingMeta, identity_cell,
         identity_display_parts,
     };
 
     /// Harness state for driving the History window: the window, a live (empty)
-    /// manager so the list branch renders, and the settings toggles `show` needs.
+    /// worker so the list branch renders, and the settings toggles `show` needs.
     struct HistoryHarness {
         window: HistoryWindow,
-        manager: HistoryManager,
+        worker: HistoryWorker,
         storage_enabled: bool,
         auto_prune_enabled: bool,
         auto_prune_max_bytes: u64,
@@ -883,14 +883,14 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let db =
             gt_history::Database::open_or_create(&dir.path().join("history.h5")).expect("open db");
-        let manager = HistoryManager::spawn(db, egui::Context::default());
+        let worker = HistoryWorker::spawn(db, egui::Context::default());
         let mut window = HistoryWindow::new();
         window.open = true;
         // Populate directly so the list renders without a worker round-trip.
         window.set_entries(entries);
         HistoryHarness {
             window,
-            manager,
+            worker,
             storage_enabled: true,
             auto_prune_enabled: false,
             auto_prune_max_bytes: 0,
@@ -902,7 +902,7 @@ mod tests {
     fn show_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
         s.window.show(
             ui.ctx(),
-            &s.manager,
+            &s.worker,
             &[],
             &mut s.storage_enabled,
             &mut s.auto_prune_enabled,
@@ -933,12 +933,12 @@ mod tests {
         };
         db.insert(identity, &meta, &tracks, settings, bytes)
             .expect("insert recording");
-        let manager = HistoryManager::spawn(db, egui::Context::default());
+        let worker = HistoryWorker::spawn(db, egui::Context::default());
         let mut window = HistoryWindow::new();
         window.open = true;
         HistoryHarness {
             window,
-            manager,
+            worker,
             storage_enabled: true,
             auto_prune_enabled: false,
             auto_prune_max_bytes: 0,
@@ -950,7 +950,7 @@ mod tests {
     /// Drive one frame like the app does: drain the worker's responses into the
     /// window (list refresh, mutation acknowledgements) and then render it.
     fn pump_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
-        for resp in s.manager.poll() {
+        for resp in s.worker.poll() {
             match resp {
                 Response::Listed(Ok(entries)) => s.window.set_entries(entries),
                 Response::Mutated { result: Ok(()), .. } => s.window.invalidate(),

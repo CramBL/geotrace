@@ -1,16 +1,15 @@
 mod auto_prune;
-mod config_manager;
 mod history;
 mod history_db;
 mod loader;
 mod modals;
 mod query;
+mod settings_autosave;
 #[cfg(feature = "self-update")]
 mod update;
 
 use std::{cell::RefCell, env, path::PathBuf, rc::Rc, str, sync::Arc};
 
-use config_manager::{AppSnapshot, ConfigManager};
 use egui_tiles::{
     Container, Linear, LinearDir, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse,
 };
@@ -22,7 +21,8 @@ use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
 use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
 use gt_types::{AssociationConfig, DataCategory, FileIdx, LoadWarning, LoadedFile, NavPoint};
 use gt_ui_types::{DisplayMask, HighlightScope, MapHighlight, TrackDataVisibility};
-use loader::{CompletedLoad, FinishedJob, LoadOutcome, LoaderManager};
+use loader::{CompletedLoad, FinishedJob, LoadJobs, LoadOutcome};
+use settings_autosave::{AppSnapshot, SettingsAutosaver};
 use strum::IntoEnumIterator;
 
 use modals::{
@@ -111,7 +111,7 @@ pub struct App {
     /// Egui context - cloned into background threads for `request_repaint`.
     ctx: egui::Context,
     /// Manages background load threads and the file-picker dialog thread.
-    loader: LoaderManager,
+    loader: LoadJobs,
 
     /// Tiles tree for the central area - map (top) and plot (bottom).
     tiles_tree: Tree<MainPane>,
@@ -121,7 +121,7 @@ pub struct App {
     plot_tile_id: TileId,
 
     /// Detects settings changes and drives debounced write-through to disk.
-    config: ConfigManager,
+    config: SettingsAutosaver,
     /// Path to config file - if None, settings are not loaded from or saved to disk.
     config_path: Option<PathBuf>,
 
@@ -134,7 +134,7 @@ pub struct App {
 
     /// Background worker that owns the history database. All reads and edits go
     /// through it so the UI thread never blocks on disk I/O.
-    history: history_db::HistoryManager,
+    history: history_db::HistoryWorker,
     /// Set when the database could not be opened because it is marked as locked
     /// (open for write). Drives a confirmation dialog offering to clear it.
     pending_history_unlock: Option<PathBuf>,
@@ -240,7 +240,7 @@ impl App {
         }
 
         let map = NavMap::new(cc.egui_ctx.clone());
-        let loader = LoaderManager::new(cc.egui_ctx.clone());
+        let loader = LoadJobs::new(cc.egui_ctx.clone());
 
         // Build the central-area tiles tree: map on top, plot on bottom.
         // The split ratio and panel visibility are applied from settings below.
@@ -261,7 +261,7 @@ impl App {
             match gt_history::default_path() {
                 Ok(path) => match gt_history::Database::open_or_create(&path) {
                     Ok(db) => (
-                        history_db::HistoryManager::spawn(db, cc.egui_ctx.clone()),
+                        history_db::HistoryWorker::spawn(db, cc.egui_ctx.clone()),
                         None,
                         None,
                     ),
@@ -270,25 +270,25 @@ impl App {
                             "History database at {} is locked (marked open for write)",
                             path.display()
                         );
-                        (history_db::HistoryManager::disabled(), Some(path), None)
+                        (history_db::HistoryWorker::disabled(), Some(path), None)
                     }
                     Err(e) => {
                         log::error!("History database at {} is unusable: {e}", path.display());
-                        (history_db::HistoryManager::disabled(), None, Some(path))
+                        (history_db::HistoryWorker::disabled(), None, Some(path))
                     }
                 },
                 Err(e) => {
                     log::error!("Failed to locate history database: {e}");
-                    (history_db::HistoryManager::disabled(), None, None)
+                    (history_db::HistoryWorker::disabled(), None, None)
                 }
             }
         };
         #[cfg(test)]
         let (history, pending_history_unlock, pending_db_corruption): (
-            history_db::HistoryManager,
+            history_db::HistoryWorker,
             Option<PathBuf>,
             Option<PathBuf>,
-        ) = (history_db::HistoryManager::disabled(), None, None);
+        ) = (history_db::HistoryWorker::disabled(), None, None);
 
         let mut app = Self {
             map,
@@ -321,7 +321,7 @@ impl App {
             tiles_tree,
             map_tile_id,
             plot_tile_id,
-            config: ConfigManager::new(AppSnapshot::default()),
+            config: SettingsAutosaver::new(AppSnapshot::default()),
             config_path,
             settings_open: false,
             processing_config: SegmentationConfig::default(),
@@ -347,7 +347,7 @@ impl App {
 
         app.apply_startup_settings(&loaded_settings);
         let initial_snapshot = app.collect_snapshot();
-        app.config = ConfigManager::new(initial_snapshot);
+        app.config = SettingsAutosaver::new(initial_snapshot);
 
         for path in paths {
             let ext = path
@@ -1189,7 +1189,7 @@ impl App {
             .and_then(|()| gt_history::Database::open_or_create(path));
         match result {
             Ok(db) => {
-                self.history = history_db::HistoryManager::spawn(db, ctx.clone());
+                self.history = history_db::HistoryWorker::spawn(db, ctx.clone());
                 self.sync_db_path();
                 self.history_window.invalidate();
                 self.toasts.info("Recovered the history database");
@@ -1229,7 +1229,7 @@ impl App {
 
         match gt_history::Database::open_or_create(path) {
             Ok(db) => {
-                self.history = history_db::HistoryManager::spawn(db, ctx.clone());
+                self.history = history_db::HistoryWorker::spawn(db, ctx.clone());
                 self.sync_db_path();
                 self.history_window.invalidate();
                 self.toasts.info("Created a fresh history database");
@@ -2354,7 +2354,7 @@ impl eframe::App for App {
 }
 
 fn handle_dropped_bytes_dispatch(
-    loader: &mut LoaderManager,
+    loader: &mut LoadJobs,
     load_error: &mut Option<String>,
     nav_points: Vec<NavPoint>,
     bytes: Arc<[u8]>,
