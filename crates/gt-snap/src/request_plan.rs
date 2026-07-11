@@ -63,6 +63,14 @@ pub struct Chunk {
     pub owned: Range<usize>,
 }
 
+impl Chunk {
+    /// The subslice of [`sent`](Self::sent) this chunk is authoritative for
+    /// (see [`owned`](Self::owned)).
+    pub fn owned_sent(&self) -> &[SentPoint] {
+        self.sent.get(self.owned.clone()).unwrap_or_default()
+    }
+}
+
 /// The full request plan for one track: the chunk sequence plus the derived
 /// accuracy shared by every chunk's `trace_options`.
 #[derive(Debug, Clone, PartialEq)]

@@ -12,6 +12,8 @@
 //! shows non-contiguous edge ranges on unbroken routes, so splitting is
 //! driven exclusively by point evidence.
 
+use std::ops::Range;
+
 use crate::wire::{SnapPointKind, SnappedPoint, TraceAttributesResponse};
 
 /// Precision of the wire's encoded shape polylines: 6 decimal digits
@@ -67,13 +69,26 @@ pub enum SnappedTrackError {
 pub fn snapped_track_segments(
     response: &TraceAttributesResponse,
 ) -> Result<Vec<SnappedTrackSegment>, SnappedTrackError> {
+    snapped_track_segments_in(response, 0..response.snapped_points.len())
+}
+
+/// Like [`snapped_track_segments`], but considering only the points in
+/// `points` (a range of indices into the response's snapped points).
+///
+/// Stitching uses this to build each chunk's geometry from its owned points
+/// only, so overlap regions are not drawn twice.
+pub fn snapped_track_segments_in(
+    response: &TraceAttributesResponse,
+    points: Range<usize>,
+) -> Result<Vec<SnappedTrackSegment>, SnappedTrackError> {
     let Some(encoded) = response.shape.as_deref() else {
         return Ok(Vec::new());
     };
     let shape = decode_shape(encoded)?;
 
+    let considered = response.snapped_points.get(points).unwrap_or_default();
     let mut segments = Vec::new();
-    for group in point_groups(&response.snapped_points) {
+    for group in point_groups(considered) {
         if let Some((begin, end)) = group_shape_range(&group, response, shape.len())? {
             segments.push(SnappedTrackSegment {
                 positions: shape

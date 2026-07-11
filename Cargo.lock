@@ -2463,6 +2463,7 @@ dependencies = [
  "geo-types",
  "gt-types",
  "insta",
+ "parking_lot",
  "polyline",
  "proptest",
  "reqwest 0.12.28",
