@@ -1,5 +1,6 @@
 pub mod channel;
 pub mod coordinates;
+pub mod env;
 pub mod highlight;
 pub mod markers;
 pub mod mercator;

@@ -64,6 +64,7 @@ pub struct ShapePoint {
     Copy,
     PartialEq,
     Eq,
+    Hash,
     strum::Display,
     strum::EnumString,
     strum::EnumCount,
