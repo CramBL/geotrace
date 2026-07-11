@@ -4,11 +4,11 @@
 //! app, background threads reporting over an mpsc channel, `request_repaint`
 //! on every message so results appear without user input.
 //!
-//! Phase 1 is manual-only: tracks enter a FIFO queue via
+//! Snapping is manual-only for now: tracks enter a FIFO queue via
 //! [`SnapScheduler::request_snap`], and one run is in flight at a time so the
 //! server's fair-use budget is shared globally (the transport also paces
-//! individual requests). The auto queue with visibility priorities is
-//! phase 2 (docs/snap/design.md).
+//! individual requests). An automatic mode with a visibility-driven priority
+//! queue is planned future work.
 //!
 //! Results are cached per [`SnapCacheKey`] - track content fingerprint plus
 //! request parameters - so a result survives file removals and index shifts,
@@ -56,7 +56,7 @@ impl SnapCacheKey {
 #[derive(Debug)]
 #[expect(
     dead_code,
-    reason = "consumed by the snapped-track renderer and snap error plot (PRs 10-11)"
+    reason = "consumers land with the snapped-track renderer and the snap error plot"
 )]
 pub struct SnapRun {
     pub result: SnapResult,
@@ -140,7 +140,7 @@ impl SnapScheduler {
         not(test),
         expect(
             dead_code,
-            reason = "consumed by the side-panel trigger and renderers (PRs 9-11)"
+            reason = "consumers land with the side-panel snap trigger and the renderers"
         )
     )]
     pub fn run_for(&self, track: &LoadedTrack, costing: Costing) -> Option<Arc<SnapRun>> {
@@ -150,7 +150,10 @@ impl SnapScheduler {
     /// The transient activity for a track (queued, in flight, or failed).
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "consumed by the side-panel trigger (PR 9)")
+        expect(
+            dead_code,
+            reason = "the consumer lands with the side-panel snap trigger"
+        )
     )]
     pub fn activity_for(&self, track: TrackRef) -> Option<&SnapActivity> {
         self.activity.get(&track)
@@ -166,7 +169,10 @@ impl SnapScheduler {
     // Unlike run_for/activity_for, tests never call this directly (they
     // inject messages via the channel), so this is dead in test builds too
     // and deliberately not cfg_attr-gated like its siblings.
-    #[expect(dead_code, reason = "consumed by the side-panel trigger (PR 9)")]
+    #[expect(
+        dead_code,
+        reason = "the consumer lands with the side-panel snap trigger"
+    )]
     pub fn request_snap(&mut self, track_ref: TrackRef, track: &LoadedTrack, costing: Costing) {
         if Self::offline() {
             return;
