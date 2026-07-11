@@ -2203,7 +2203,10 @@ fn snapshot_load_warnings_dialog() {
 
 /// The standard settings-window snapshot is 400 px tall and clips after the
 /// Analysis section; this taller one captures the Display and Snap to road
-/// sections below it.
+/// sections below it. Feature-gated like `snapshot_settings_window`: the
+/// update checkbox renders within this window height, so the baseline must be
+/// generated under the same feature set CI tests with.
+#[cfg(feature = "self-update")]
 #[test]
 fn snapshot_settings_window_snap_section() {
     let (mut harness, _config_path) = TestHarness::builder()
