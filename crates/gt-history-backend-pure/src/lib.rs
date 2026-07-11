@@ -2,8 +2,8 @@ use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_START_US, CURRENT_SCHEMA_VERSION,
     DatabaseRef, DbError, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR,
-    HistoryDatabase, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR, StoredRecording,
-    StoredSegmentation, TrackRange, identity_from_group_name,
+    GTD_META_TRAVEL_MODE_ATTR, HistoryDatabase, RecordingEntry, RecordingMeta, SCHEMA_VERSION_ATTR,
+    StoredRecording, StoredSegmentation, TrackRange, identity_from_group_name,
 };
 use hdf5_pure::{AttrValue, FileBuilder};
 use parking_lot::Mutex;
@@ -128,6 +128,7 @@ impl HistoryDatabase for PureDb {
                         title: string_attr(&attrs, GTD_META_TITLE_ATTR),
                         device: string_attr(&attrs, GTD_META_DEVICE_ATTR),
                         notes: string_attr(&attrs, GTD_META_NOTES_ATTR),
+                        travel_mode: string_attr(&attrs, GTD_META_TRAVEL_MODE_ATTR),
                     });
                 }
             }

@@ -79,8 +79,8 @@ fn make_gtd_bytes(start_us: i64, n: u64) -> Vec<u8> {
 }
 
 /// Like [`make_gtd_bytes`] but sets the SDK metadata root attributes the History
-/// listing reads (`meta_title`/`meta_device`/`meta_notes`), each only when
-/// `Some`, mirroring how `geotrace_sdk` writes them.
+/// listing reads (`meta_title`/`meta_device`/`meta_notes`/`meta_travel_mode`),
+/// each only when `Some`, mirroring how `geotrace_sdk` writes them.
 #[expect(
     clippy::expect_used,
     reason = "test helper; panicking on I/O failure is the right behaviour"
@@ -91,6 +91,7 @@ fn make_gtd_bytes_with_meta(
     title: Option<&str>,
     device: Option<&str>,
     notes: Option<&str>,
+    travel_mode: Option<&str>,
 ) -> Vec<u8> {
     use hdf5_pure::AttrValue;
 
@@ -107,6 +108,12 @@ fn make_gtd_bytes_with_meta(
     }
     if let Some(notes) = notes {
         fb.set_attr("meta_notes", AttrValue::String(notes.to_owned()));
+    }
+    if let Some(travel_mode) = travel_mode {
+        fb.set_attr(
+            "meta_travel_mode",
+            AttrValue::String(travel_mode.to_owned()),
+        );
     }
     let mut nav_gb = fb.create_group("nav_points");
     let ds = nav_gb.create_dataset("time");
@@ -518,6 +525,7 @@ fn list_recordings_surfaces_sdk_metadata() {
         Some("Morning ride"),
         Some("uBlox F9P"),
         Some("cross-town commute"),
+        Some("bicycle"),
     );
     let meta = extract_meta(&with_meta).expect("meta");
     db.insert_simple("auto:ride", &meta, &with_meta)
@@ -537,6 +545,7 @@ fn list_recordings_surfaces_sdk_metadata() {
     assert_eq!(labelled.title.as_deref(), Some("Morning ride"));
     assert_eq!(labelled.device.as_deref(), Some("uBlox F9P"));
     assert_eq!(labelled.notes.as_deref(), Some("cross-town commute"));
+    assert_eq!(labelled.travel_mode.as_deref(), Some("bicycle"));
 
     let plain_entry = entries
         .iter()
@@ -545,6 +554,7 @@ fn list_recordings_surfaces_sdk_metadata() {
     assert_eq!(plain_entry.title, None);
     assert_eq!(plain_entry.device, None);
     assert_eq!(plain_entry.notes, None);
+    assert_eq!(plain_entry.travel_mode, None);
 }
 
 #[test]

@@ -2214,6 +2214,7 @@ fn snapshot_recording_details_dialog() {
                 title: Some("Morning commute".to_owned()),
                 device: Some("uBlox ZED-F9P".to_owned()),
                 notes: Some("Rooftop antenna, clear sky.".to_owned()),
+                travel_mode: Some(gt_types::TravelMode::Bicycle),
                 ..gt_types::FileMetadata::default()
             },
             // A long, auto-derived, path-like identity to show the dialog gives

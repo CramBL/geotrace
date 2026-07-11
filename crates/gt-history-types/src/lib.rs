@@ -39,14 +39,15 @@ pub const GTD_VERSION_ATTR: &str = "geotrace_version";
 pub const GTD_VERSION_FALLBACK: &str = "1";
 
 /// GTD root attributes carrying the recording's SDK metadata (title, device,
-/// notes). Written on the GTD root by `geotrace_sdk` and copied verbatim onto
-/// each recording group, so the history listing can read them via
+/// notes, travel mode). Written on the GTD root by `geotrace_sdk` and copied
+/// verbatim onto each recording group, so the history listing can read them via
 /// [`RecordingEntry`] without re-parsing the embedded GTD file. These are GTD
 /// attributes, not DB bookkeeping - deliberately absent from
 /// [`is_db_recording_attr`] so they are restored to the root on load.
 pub const GTD_META_TITLE_ATTR: &str = "meta_title";
 pub const GTD_META_DEVICE_ATTR: &str = "meta_device";
 pub const GTD_META_NOTES_ATTR: &str = "meta_notes";
+pub const GTD_META_TRAVEL_MODE_ATTR: &str = "meta_travel_mode";
 
 const IDENTITY_GROUP_PREFIX: &str = "identity-v1-";
 
@@ -254,6 +255,11 @@ pub struct RecordingEntry {
     pub device: Option<String>,
     /// Free-text notes, from the GTD [`GTD_META_NOTES_ATTR`] attribute.
     pub notes: Option<String>,
+    /// Declared travel mode wire value, from the GTD
+    /// [`GTD_META_TRAVEL_MODE_ATTR`] attribute. Kept as the raw wire string
+    /// (the DB stores attributes verbatim); parse with
+    /// `gt_types::TravelMode::from_wire` for display or matching.
+    pub travel_mode: Option<String>,
 }
 
 /// A recording read back from history: the reconstructed GTD bytes plus the

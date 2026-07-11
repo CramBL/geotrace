@@ -2,10 +2,11 @@ use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
     ATTR_SEG_GAP_US, ATTR_START_US, DatabaseRef, DbError, GTD_META_DEVICE_ATTR,
-    GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
-    RecordingEntry, RecordingMeta, StoredRecording, StoredSegmentation, TRACK_END_DATASET,
-    TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange, identity_from_group_name,
-    identity_group_name, is_db_internal_group, is_db_recording_attr, make_group_name,
+    GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR, GTD_META_TRAVEL_MODE_ATTR, GTD_VERSION_ATTR,
+    GTD_VERSION_FALLBACK, RecordingEntry, RecordingMeta, StoredRecording, StoredSegmentation,
+    TRACK_END_DATASET, TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange,
+    identity_from_group_name, identity_group_name, is_db_internal_group, is_db_recording_attr,
+    make_group_name,
 };
 use hdf5::Group;
 use std::path::Path;
@@ -1119,6 +1120,8 @@ pub(crate) fn list_recordings(
                         title: read_group_string_attr(&rec_grp, GTD_META_TITLE_ATTR).ok(),
                         device: read_group_string_attr(&rec_grp, GTD_META_DEVICE_ATTR).ok(),
                         notes: read_group_string_attr(&rec_grp, GTD_META_NOTES_ATTR).ok(),
+                        travel_mode: read_group_string_attr(&rec_grp, GTD_META_TRAVEL_MODE_ATTR)
+                            .ok(),
                     });
                 }
             }
