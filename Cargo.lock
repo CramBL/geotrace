@@ -2461,6 +2461,7 @@ version = "0.5.1"
 dependencies = [
  "chrono",
  "geo-types",
+ "gt-types",
  "insta",
  "polyline",
  "proptest",

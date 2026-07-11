@@ -13,6 +13,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+pub mod request_plan;
 pub mod snapped_track;
 pub mod wire;
 
