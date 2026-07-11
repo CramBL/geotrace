@@ -39,14 +39,7 @@ fn points(count: usize, step_ms: i64, eph: impl Fn(usize) -> Option<f32>) -> Vec
 fn distinct_sent_indices(plan: &RequestPlan) -> Vec<usize> {
     plan.chunks
         .iter()
-        .flat_map(|chunk| {
-            chunk
-                .sent
-                .get(chunk.owned.clone())
-                .unwrap_or_default()
-                .iter()
-                .map(|sent| sent.point.as_usize())
-        })
+        .flat_map(|chunk| chunk.owned_sent().iter().map(|sent| sent.point.as_usize()))
         .collect()
 }
 

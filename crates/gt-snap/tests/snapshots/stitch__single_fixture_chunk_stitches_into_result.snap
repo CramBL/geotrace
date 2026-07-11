@@ -1,0 +1,19 @@
+---
+source: crates/gt-snap/tests/stitch.rs
+expression: "(result.kind_counts, result.points.len(), result.segments.len(),\nresult.confidence_score, result.osm_changeset,)"
+---
+(
+    SnapKindCounts {
+        snapped: 8,
+        interpolated: 2,
+        unsnapped: 10,
+    },
+    20,
+    3,
+    Some(
+        1.0,
+    ),
+    Some(
+        185397177,
+    ),
+)

@@ -15,6 +15,7 @@ use std::time::Duration;
 
 pub mod request_plan;
 pub mod snapped_track;
+pub mod stitch;
 pub mod wire;
 
 /// Base URL of the default map-matching server: the public Valhalla instance
