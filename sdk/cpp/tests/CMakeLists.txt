@@ -74,8 +74,11 @@ add_cpp_test(test_channels)
 add_cpp_test(test_exceptions)
 add_cpp_test(test_event_kind)
 add_cpp_test(test_result_api)
+target_compile_definitions(test_result_api PRIVATE NDEBUG)
 
 # Exercise the non-throwing path at runtime by forcing the header onto its
 # no-exceptions branch (the compiler keeps exceptions, so doctest still works).
 add_cpp_test(test_no_exceptions)
 target_compile_definitions(test_no_exceptions PRIVATE GEOTRACE_CPP_NO_EXCEPTIONS)
+
+add_cpp_test(test_unit_catalog_header)

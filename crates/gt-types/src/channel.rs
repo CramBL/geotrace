@@ -7,6 +7,7 @@
 //! when a file is segmented.
 
 use chrono::{DateTime, Utc};
+use geotrace_units::ChannelUnit;
 use uom::si::f64::Angle;
 
 /// A named scalar or vector sensor channel.
@@ -21,7 +22,7 @@ use uom::si::f64::Angle;
 pub struct Channel {
     pub name: String,
     /// Unit of the values (`"g"`, `"deg"`), or `None`.
-    pub unit: Option<String>,
+    pub unit: Option<ChannelUnit>,
     /// Wrap period of an angular channel (a heading wraps at 360°), or `None`
     /// for a linear value.
     pub period: Option<Angle>,
@@ -79,6 +80,7 @@ impl Channel {
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone;
+    use geotrace_units::Unit;
 
     use super::*;
 
@@ -91,7 +93,7 @@ mod tests {
     fn vector_channel() -> Channel {
         Channel {
             name: "accel".to_owned(),
-            unit: Some("g".to_owned()),
+            unit: Some(Unit::G.into()),
             period: None,
             description: None,
             components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
@@ -128,7 +130,10 @@ mod tests {
         assert_eq!(sliced.values, vec![1.0, 1.1, 2.0, 2.0, 2.1, 3.0]);
         // Metadata is carried through unchanged.
         assert_eq!(sliced.components, ["x", "y", "z"]);
-        assert_eq!(sliced.unit.as_deref(), Some("g"));
+        assert_eq!(
+            sliced.unit.as_ref().map(ToString::to_string).as_deref(),
+            Some("g")
+        );
     }
 
     #[test]

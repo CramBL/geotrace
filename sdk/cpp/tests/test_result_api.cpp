@@ -42,11 +42,11 @@ TEST_CASE("try_from_bytes on garbage returns a data error without throwing") {
 TEST_CASE("try_finish builds a valid file and round-trips via Result") {
     const Result<NavFile> built = FileBuilder{}.add(one_fix()).try_finish();
     REQUIRE(built.is_ok());
-    const Result<std::vector<std::uint8_t>> bytes = built.value.try_to_bytes();
+    const Result<std::vector<std::uint8_t>> bytes = built.value().try_to_bytes();
     REQUIRE(bytes.is_ok());
-    const Result<NavFile> reread = NavFile::try_from_bytes(bytes.value);
+    const Result<NavFile> reread = NavFile::try_from_bytes(bytes.value());
     CHECK(reread.is_ok());
-    CHECK(reread.value.nav_point_count() == std::size_t{1});
+    CHECK(reread.value().nav_point_count() == std::size_t{1});
 }
 
 TEST_CASE("try_nav_point reports out-of-range without throwing; in-range is ok") {
@@ -59,4 +59,10 @@ TEST_CASE("try_nav_point reports out-of-range without throwing; in-range is ok")
 
 TEST_CASE("value_or_throw rethrows the typed exception on error") {
     CHECK_THROWS_AS(NavFile::try_open("/no/such/file.gtd").value_or_throw(), IoError);
+}
+
+TEST_CASE("value access on an error is defined in release builds") {
+    const auto result = NavFile::try_open("/no/such/file.gtd");
+    CHECK(result.get_if() == nullptr);
+    CHECK_THROWS_AS(result.value(), IoError);
 }

@@ -192,6 +192,7 @@ dependencies = [
  "bon",
  "chrono",
  "geotrace-sdk-macros",
+ "geotrace-units",
  "hdf5-pure",
  "log",
  "strum",
@@ -209,10 +210,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "geotrace-units"
+version = "0.4.0"
+dependencies = [
+ "strum",
+ "thiserror",
+ "uom",
+]
+
+[[package]]
 name = "hdf5-pure"
-version = "0.19.0"
+version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ef777d9bda57bda94501fa4fec22e4b54ff2160c714ff43db7e65c8e18c44b0"
+checksum = "4c36cb09ddc5a5a0d10680cf7fe4b82173b1d15c2b2277b868005add93186682"
 dependencies = [
  "byteorder",
  "flate2",

@@ -10,11 +10,11 @@ authors.workspace = true
 doctest = false
 
 [dependencies]
+geotrace-units = { path = "../../sdk/rust/geotrace-units" }
 gt-types = { path = "../gt-types" }
 logos.workspace = true
 nalgebra.workspace = true
 strum.workspace = true
-uom.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

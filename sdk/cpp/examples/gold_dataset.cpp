@@ -342,7 +342,8 @@ void load_channels(geotrace::FileBuilder &b, const fs::path &base) {
         if (ch == nullptr) {
             geotrace::Channel channel;
             channel.name = cols[0];
-            channel.unit = cols[1];
+            if (!cols[1].empty())
+                channel.unit = geotrace::ChannelUnit::parse_recognized(cols[1]);
             if (!cols[2].empty())
                 channel.period = geotrace::Angle::degrees(std::stod(cols[2]));
             channel.description = cols[3];

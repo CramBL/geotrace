@@ -1,8 +1,8 @@
 use std::ffi::c_char;
 
 use geotrace_sdk::{
-    Angle, Annotation, BuildError, Channel, EventMarker, EventMarkerColor, EventMarkerStyle,
-    NavFileBuilder, NavRecorder, SatelliteReport, Velocity,
+    Angle, Annotation, BuildError, Channel, ChannelUnit, EventMarker, EventMarkerColor,
+    EventMarkerStyle, NavFileBuilder, NavRecorder, SatelliteReport, Velocity,
 };
 
 use crate::error::{GtdStatus, run_catching_panics, set_last_error};
@@ -334,12 +334,26 @@ pub unsafe extern "C" fn gtd_builder_add_channel(
     b: *mut GtdFileBuilder,
     channel: *const GtdChannel,
 ) -> GtdStatus {
+    // SAFETY: this forwards the caller's pointers unchanged.
+    unsafe { gtd_builder_add_channel_with_unit_mode(b, channel, 0) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_builder_add_channel_with_unit_mode(
+    b: *mut GtdFileBuilder,
+    channel: *const GtdChannel,
+    unit_mode: u32,
+) -> GtdStatus {
     run_catching_panics(|| {
         let b = nonnull_mut!(b);
         let ch = nonnull_ref!(channel);
 
         let name = cstr!(ch.name);
-        let unit = cstr_opt!(ch.unit).map(str::to_owned);
+        let unit_label = cstr_opt!(ch.unit);
+        let unit = match parse_channel_unit(unit_label, unit_mode) {
+            Ok(unit) => unit,
+            Err(status) => return status,
+        };
         let description = cstr_opt!(ch.description).map(str::to_owned);
 
         // A null or empty component list is a scalar channel.
@@ -418,6 +432,27 @@ pub unsafe extern "C" fn gtd_builder_add_channel(
                 GtdStatus::ErrInvalidChannel
             }
         }
+    })
+}
+
+fn parse_channel_unit(
+    label: Option<&str>,
+    unit_mode: u32,
+) -> Result<Option<ChannelUnit>, GtdStatus> {
+    let Some(label) = label else {
+        return Ok(None);
+    };
+    let parsed = match unit_mode {
+        0 => label.parse(),
+        1 => ChannelUnit::custom(label),
+        _ => {
+            set_last_error("unit_mode is not a valid GtdChannelUnitMode");
+            return Err(GtdStatus::ErrInvalidChannel);
+        }
+    };
+    parsed.map(Some).map_err(|error| {
+        set_last_error(error);
+        GtdStatus::ErrInvalidChannel
     })
 }
 

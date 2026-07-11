@@ -9,6 +9,7 @@ use crate::types::{
 };
 use crate::write;
 use crate::{Angle, Velocity};
+use geotrace_units::ChannelUnit;
 use hdf5_pure::File;
 use strum::IntoEnumIterator;
 
@@ -392,7 +393,7 @@ fn read_channels(file: &File) -> Result<Vec<Channel>, Error> {
 
         channels.push(Channel {
             name,
-            unit: string_attr(&attrs, "unit"),
+            unit: string_attr(&attrs, "unit").map(ChannelUnit::from_file_label),
             period: f64_attr(&attrs, "period_deg").map(Angle::degrees),
             description: string_attr(&attrs, "description"),
             components,

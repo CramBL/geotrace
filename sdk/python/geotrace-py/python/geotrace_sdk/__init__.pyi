@@ -7,6 +7,8 @@ from enum import Enum
 from os import PathLike
 from typing import Any, final
 
+from ._unit_catalog import UnitCatalog
+
 StrPath = str | bytes | PathLike[str]
 
 __version__: str
@@ -122,6 +124,40 @@ class SatelliteReport:
     def __eq__(self, other: object) -> bool: ...
 
 @final
+class ChannelUnit:
+    """A recognized channel unit or an explicit display-only custom unit."""
+
+    @staticmethod
+    def recognized(label: str) -> ChannelUnit:
+        """Parse a unit GeoTrace understands and can scale in queries."""
+        ...
+
+    @staticmethod
+    def custom(label: str) -> ChannelUnit:
+        """Construct a display-only unit treated as dimensionless in queries."""
+        ...
+
+    @property
+    def label(self) -> str: ...
+    @property
+    def is_custom(self) -> bool: ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+@final
+class Unit(UnitCatalog):
+    """A recognized, convertible channel unit."""
+
+    @property
+    def label(self) -> str: ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+@final
 class Channel:
     """A named scalar or vector sensor channel sampled at its own rate.
 
@@ -134,7 +170,7 @@ class Channel:
         name: Channel identifier (a lowercase identifier), referenced as ``@name``.
         times: Sample timestamps, one per row of ``values``.
         values: Row-major sample values.
-        unit: Unit of the values (``"g"``, ``"deg"``), or ``None``.
+        unit: Recognized unit string, :class:`ChannelUnit`, or ``None``.
         period_deg: Wrap period in degrees for an angular channel, or ``None``.
         description: Human description, or ``None``.
         components: Vector component labels, or ``None`` for a scalar channel.
@@ -150,7 +186,7 @@ class Channel:
         times: list[datetime],
         values: list[float],
         *,
-        unit: str | None = None,
+        unit: str | Unit | ChannelUnit | None = None,
         period_deg: float | None = None,
         description: str | None = None,
         components: list[str] | None = None,
@@ -158,7 +194,7 @@ class Channel:
     @property
     def name(self) -> str: ...
     @property
-    def unit(self) -> str | None: ...
+    def unit(self) -> ChannelUnit | None: ...
     @property
     def period_deg(self) -> float | None: ...
     @property

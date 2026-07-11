@@ -24,7 +24,7 @@
 
 use geotrace_sdk::{
     Angle, Annotation, Channel, Constellation, EventMarker, EventMarkerStyle, MarkerIcon, Meta,
-    NavFileBuilder, NavFix, NavRecorder, Satellite, SatelliteReport, Velocity,
+    NavFileBuilder, NavFix, NavRecorder, Satellite, SatelliteReport, Unit, Velocity,
 };
 use std::collections::HashMap;
 use std::fs::File;
@@ -272,7 +272,7 @@ fn synthesize_accel(fixes: &[FixDynamics]) -> Result<Channel, Box<dyn std::error
     }
     Ok(Channel::builder()
         .name("accel")
-        .unit("g")
+        .unit(Unit::G)
         .description("Device-frame IMU acceleration derived from the trip's speed and heading")
         .components(["x", "y", "z"])
         .times(times)
@@ -455,7 +455,7 @@ fn verify_demo_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     assert_eq!(channels.len(), 1);
     let accel = &channels[0];
     assert_eq!(accel.name(), "accel");
-    assert_eq!(accel.unit(), Some("g"));
+    assert_eq!(accel.unit().map(ToString::to_string).as_deref(), Some("g"));
     assert_eq!(accel.components(), ["x", "y", "z"]);
     let times = accel.times();
     assert_eq!(times.len() as i64, TRIP_DURATION_S * ACCEL_RATE_HZ + 1);

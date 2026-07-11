@@ -57,11 +57,24 @@ TEST_CASE("first error wins: a later valid call does not overwrite it") {
 TEST_CASE("a valid build succeeds without exceptions") {
     const auto r = FileBuilder{}.add(one_fix()).try_finish();
     CHECK(r.is_ok());
-    CHECK(r.value.nav_point_count() == std::size_t{1});
+    CHECK(r.value().nav_point_count() == std::size_t{1});
 }
 
 TEST_CASE("try_open reports an error by value, never aborting") {
     const auto r = NavFile::try_open("/no/such/file.gtd");
     CHECK(r.is_err());
     CHECK(r.error().code == GTD_ERR_IO);
+    CHECK(r.get_if() == nullptr);
+}
+using geotrace::ChannelUnit;
+
+TEST_CASE("unit factories report invalid user input without terminating") {
+    CHECK(ChannelUnit::try_custom("\xC2\xA0").is_err());
+    CHECK(ChannelUnit::try_custom("bad\xC2\x85unit").is_err());
+    CHECK(ChannelUnit::try_custom("m/s\xC2\xB2").is_err());
+    CHECK(ChannelUnit::try_parse_recognized("unknown").is_err());
+
+    const auto custom = ChannelUnit::try_custom("rotations");
+    REQUIRE(custom.is_ok());
+    CHECK(custom.value().label() == "rotations");
 }

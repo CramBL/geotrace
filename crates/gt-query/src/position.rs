@@ -11,12 +11,14 @@ use std::ops::Range;
 use std::str::FromStr as _;
 use std::sync::OnceLock;
 
+use geotrace_units::ChannelUnit;
+
 use crate::ast::{Func, ParamName};
 use crate::check::{ChannelInfo, ChannelSchema};
 use crate::construct::{Construct, ConstructKind, catalog};
 use crate::lexer::{self, Token, TokenClass};
 use crate::metric::{Quantity, QueryMetric};
-use crate::unit::Unit;
+use crate::unit::{self, Unit};
 
 /// Completions offered at a cursor position.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -326,7 +328,7 @@ fn units_of_quantity(quantity: Quantity) -> Vec<&'static str> {
     };
     Unit::CANONICAL
         .iter()
-        .filter(|u| u.quantity() == quantity)
+        .filter(|u| unit::quantity(**u) == quantity)
         .filter_map(|u| u.canonical_text())
         .collect()
 }
@@ -432,9 +434,9 @@ fn channel_quantity(text: &str, schema: &ChannelSchema) -> Option<Quantity> {
     }
     Some(
         info.unit
-            .as_deref()
-            .and_then(Unit::from_label)
-            .map_or(Quantity::Count, Unit::quantity),
+            .as_ref()
+            .and_then(ChannelUnit::as_recognized)
+            .map_or(Quantity::Count, unit::quantity),
     )
 }
 
@@ -980,9 +982,10 @@ mod tests {
         schema.insert(
             "accel",
             ChannelInfo {
-                unit: Some("m/s2".to_owned()),
+                unit: Some(Unit::M_PER_S2.into()),
                 period_deg: None,
                 components: vec![],
+                conflicts: Vec::new(),
             },
         );
         schema.insert(
@@ -991,22 +994,25 @@ mod tests {
                 unit: None,
                 period_deg: None,
                 components: vec![],
+                conflicts: Vec::new(),
             },
         );
         schema.insert(
             "bearing",
             ChannelInfo {
-                unit: Some("deg".to_owned()),
+                unit: Some(Unit::DEG.into()),
                 period_deg: Some(360.0),
                 components: vec![],
+                conflicts: Vec::new(),
             },
         );
         schema.insert(
             "gyro",
             ChannelInfo {
-                unit: Some("deg".to_owned()),
+                unit: Some(Unit::DEG.into()),
                 period_deg: None,
                 components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
+                conflicts: Vec::new(),
             },
         );
         schema

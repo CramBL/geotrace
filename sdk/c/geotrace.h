@@ -193,6 +193,22 @@ typedef struct {
     GtdOptF64 snr_dbhz;      /**< Signal-to-noise ratio in dB·Hz. */
 } GtdSatellite;
 
+/** How a channel unit label should be interpreted on the write path. */
+typedef enum {
+    GTD_CHANNEL_UNIT_RECOGNIZED = 0, /**< Validate as a recognized, convertible unit. */
+    GTD_CHANNEL_UNIT_CUSTOM = 1, /**< Preserve as display-only; queries treat values as unitless. */
+} GtdChannelUnitMode;
+
+/**
+ * Validate and canonicalize a channel unit label.
+ *
+ * Call with @p out NULL and @p out_capacity zero to query the required byte
+ * length, including the terminating NUL, then call again with a large enough
+ * buffer. Validation and Unicode handling are identical to the Rust SDK.
+ */
+GtdStatus gtd_channel_unit_parse(const char *label, uint32_t unit_mode, char *out,
+                                 size_t out_capacity, size_t *required_len);
+
 /**
  * A scalar or vector channel to add via `gtd_builder_add_channel()`.
  *
@@ -204,7 +220,7 @@ typedef struct {
  */
 typedef struct {
     const char *name;     /**< Channel name (a lowercase identifier). */
-    const char *unit;     /**< Unit of the values, or NULL. */
+    const char *unit;     /**< Recognized unit of the values, or NULL. */
     GtdOptF64 period_deg; /**< Wrap period in degrees for an angular channel, or `GTD_NONE_F64`. */
     const char *description; /**< Human-readable description, or NULL. */
     const char *const
@@ -459,10 +475,23 @@ GtdStatus gtd_builder_add_event_marker_style(GtdFileBuilder *b, const char *vari
  * @param b       Builder handle.
  * @param channel Channel description.  Not retained after the call returns.
  *
- * @return `GTD_ERR_INVALID_CHANNEL` if the name or a component label is
- *         malformed, or `values` is not `n_times * max(n_components, 1)` long.
+ * @return `GTD_ERR_INVALID_CHANNEL` if the unit is unrecognized, the name or a
+ *         component label is malformed, or `values` is not
+ *         `n_times * max(n_components, 1)` long.
  */
 GtdStatus gtd_builder_add_channel(GtdFileBuilder *b, const GtdChannel *channel);
+
+/**
+ * Add a channel with an explicit recognized/custom interpretation for its unit.
+ *
+ * This entry point preserves the layout of @ref GtdChannel while allowing a
+ * display-only custom label through @ref GTD_CHANNEL_UNIT_CUSTOM.
+ *
+ * @return `GTD_ERR_INVALID_CHANNEL` for an invalid unit/mode combination or
+ *         malformed channel metadata.
+ */
+GtdStatus gtd_builder_add_channel_with_unit_mode(GtdFileBuilder *b, const GtdChannel *channel,
+                                                 GtdChannelUnitMode unit_mode);
 
 /**
  * Finalise the builder and produce a `GtdNavFile` handle.
@@ -661,6 +690,16 @@ size_t gtd_nav_file_channel_count(const GtdNavFile *f);
  * @return `GTD_ERR_NULL_ARGUMENT` if @p idx is out of range.
  */
 GtdStatus gtd_nav_file_get_channel(const GtdNavFile *f, size_t idx, GtdChannelInfo *out);
+
+/**
+ * Read a channel unit without the fixed-size @ref GtdChannelInfo buffer limit.
+ *
+ * Pass NULL @p out and zero @p cap to query the required byte length, including
+ * the trailing null byte. A channel without a unit reports zero. @p is_custom
+ * may be NULL when the recognized/custom distinction is not needed.
+ */
+GtdStatus gtd_nav_file_get_channel_unit(const GtdNavFile *f, size_t idx, char *out, size_t cap,
+                                        size_t *required_len, uint8_t *is_custom);
 
 /**
  * Copy the label of a vector channel's component into @p out (null-terminated,

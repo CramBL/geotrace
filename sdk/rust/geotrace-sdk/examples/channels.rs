@@ -3,9 +3,9 @@
 //! A [`Channel`] is a named time series sampled at its own rate, correlated
 //! with the nav track by timestamp - not resampled onto the fixes. It can be
 //! scalar (an inclinometer angle) or a vector whose components share one
-//! sample clock (an accelerometer's x/y/z axes). This example writes one of
-//! each, reads the file back, and prints their metadata - the data GeoTrace
-//! queries as `@incline` and `@accel.x`.
+//! sample clock (an accelerometer's x/y/z axes). This example also shows
+//! recognized milli-g values and a custom display-only unit, then reads the
+//! file back and prints its channel metadata.
 
 // Examples favour brevity: the core's robustness restriction lints (no
 // unwrap/expect/panic/indexing, no std::env::temp_dir) are not enforced on
@@ -20,7 +20,9 @@
 
 use std::{env, error::Error, fs};
 
-use geotrace_sdk::{Angle, Channel, DateTime, Duration, NavFile, NavFileBuilder, NavFix, Utc};
+use geotrace_sdk::{
+    Angle, Channel, ChannelUnit, DateTime, Duration, NavFile, NavFileBuilder, NavFix, Unit, Utc,
+};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let t0 = "2024-06-01T08:00:00Z".parse::<DateTime<Utc>>()?;
@@ -42,7 +44,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     recorder.add(
         Channel::builder()
             .name("incline")
-            .unit("deg")
+            .unit(Unit::DEG)
             .description("boom inclinometer")
             .times(times.clone())
             .values(vec![1.0, 1.5, 2.0])
@@ -50,20 +52,30 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
 
     // A vector channel: `values` is row-major, one row of x/y/z per
-    // timestamp. Declaring the unit as `g` (or `mg`) lets GeoTrace's query
+    // timestamp. Declaring the unit as `mg` lets GeoTrace's query
     // language compare it against acceleration literals.
     recorder.add(
         Channel::builder()
             .name("accel")
-            .unit("g")
+            .unit(Unit::MG)
             .description("IMU acceleration")
             .components(["x", "y", "z"])
-            .times(times)
+            .times(times.clone())
             .values(vec![
-                0.0, 0.2, 0.98, //
-                0.1, 0.2, 0.98, //
-                0.2, 0.2, 0.98,
+                0.0, 200.0, 980.0, //
+                100.0, 200.0, 980.0, //
+                200.0, 200.0, 980.0,
             ])
+            .build()?,
+    );
+
+    // A custom unit is displayed verbatim and remains dimensionless in queries.
+    recorder.add(
+        Channel::builder()
+            .name("quality")
+            .unit(ChannelUnit::custom("vendor score")?)
+            .times(times)
+            .values(vec![80.0, 81.0, 82.0])
             .build()?,
     );
 

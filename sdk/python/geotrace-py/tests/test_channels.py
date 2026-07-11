@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from geotrace_sdk import Channel, NavFile, NavFileBuilder, NavFix
+from geotrace_sdk import Channel, ChannelUnit, NavFile, NavFileBuilder, NavFix, Unit
 
 T0 = datetime(2024, 6, 1, 9, 0, 0, tzinfo=UTC)
 T1 = T0 + timedelta(seconds=1)
@@ -59,7 +59,10 @@ def test_scalar_and_vector_channels_round_trip() -> None:
     assert incline == incline_channel
     assert not incline.is_vector
     assert incline.components == []
-    assert incline.unit == "deg"
+    incline_unit = incline.unit
+    assert incline_unit is not None
+    assert incline_unit.label == "deg"
+    assert not incline_unit.is_custom
     assert incline.period_deg == 360.0
     assert incline.description == "boom"
     assert incline.values == [1.5, 2.0]
@@ -84,6 +87,50 @@ def test_malformed_channel_raises() -> None:
         Channel("accel", [T0], [1.0, 2.0])
     with pytest.raises(ValueError):  # a duplicate component label
         Channel("accel", [T0], [1.0, 2.0], components=["x", "x"])
+    with pytest.raises(ValueError):
+        Channel("accel", [T0], [1.0], unit="gm")
+
+
+def test_custom_channel_unit_is_an_explicit_escape_hatch() -> None:
+    rpm = ChannelUnit.custom("rpm")
+    channel = Channel("shaft_speed", [T0], [1200.0], unit=rpm)
+    unit = channel.unit
+    assert unit is not None
+    assert unit.label == "rpm"
+    assert unit.is_custom
+    assert unit == rpm
+    assert hash(unit) == hash(rpm)
+
+
+def test_recognized_unit_constants_are_first_class_values() -> None:
+    channel = Channel("accel", [T0], [980.0], unit=Unit.MG)
+    unit = channel.unit
+    assert unit is not None
+    assert unit == ChannelUnit.recognized("mg")
+    assert unit.label == Unit.MG.label
+
+
+def test_generated_recognized_unit_catalog_is_complete() -> None:
+    units = {
+        value.label
+        for name in dir(Unit)
+        if name.isupper() and isinstance((value := getattr(Unit, name)), Unit)
+    }
+    assert units == {
+        "%", "cm", "cm/s", "cm/s2", "deg", "g", "h", "km", "km/h", "km/h/s",
+        "kn", "m", "m/s", "m/s2", "mg", "min", "mm", "mm/s", "mm/s2", "ms",
+        "nm", "ns", "per h", "per min", "per s", "s", "ug", "um", "us",
+    }
+
+
+def test_long_custom_unit_round_trips_losslessly() -> None:
+    label = "x" * 159
+    builder = NavFileBuilder()
+    builder.add(Channel("quality", [T0], [1.0], unit=ChannelUnit.custom(label)))
+    unit = _write_and_read(builder).channels[0].unit
+    assert unit is not None
+    assert unit.label == label
+    assert unit.is_custom
 
 
 def test_duplicate_channel_name_raises_at_finish() -> None:

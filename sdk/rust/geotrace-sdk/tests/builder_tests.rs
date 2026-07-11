@@ -3,7 +3,7 @@
     reason = "test functions mix ? propagation with assert! - both are correct in test code"
 )]
 
-use geotrace_sdk::{Angle, DateTime, Duration, Utc, Velocity};
+use geotrace_sdk::{Angle, DateTime, Duration, Unit, Utc, Velocity};
 use geotrace_sdk::{
     Annotation, BuildError, Channel, Constellation, EventMarker, NavFileBuilder, NavFix, Satellite,
     SatelliteReport,
@@ -704,7 +704,7 @@ fn add_dispatches_to_the_matching_typed_method() -> Result<(), BuildError> {
     let channel = || {
         Channel::builder()
             .name("incline")
-            .unit("deg")
+            .unit(Unit::DEG)
             .times(vec![t(0)])
             .values(vec![1.5])
             .build()

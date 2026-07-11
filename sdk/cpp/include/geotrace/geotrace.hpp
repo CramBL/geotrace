@@ -44,6 +44,7 @@
 #include <vector>
 
 #include <geotrace.h> // C SDK (already has extern "C" guards)
+#include <geotrace/unit_catalog.hpp>
 
 #define GEOTRACE_CPP_VERSION       "0.4.0"
 #define GEOTRACE_CPP_VERSION_MAJOR 0
@@ -285,33 +286,45 @@ struct Status {
 /**
  * The result of a fallible operation: either a value or a `Status` error.
  *
- * Modelled on Rust's `Result`. Inspect `is_ok()` / `error()` and read `value`,
+ * Modelled on Rust's `Result`. Inspect `is_ok()` / `error()` and call `value()`,
  * or call `value_or_throw()` to throw the error (or abort without exceptions).
- * `T` must be default-constructible. The value is unspecified when `is_err()`.
  */
 template <typename T> struct Result {
-    T value;
-    Status status;
-
-    Result(T v) : value(std::move(v)) {}
+    Result(T v) : value_(std::move(v)) {}
     // An error result must carry a real error: an ok status here would falsely
     // report success with a default-constructed value.
-    Result(Status s) : value(), status(std::move(s)) { assert(status.is_err()); }
+    Result(Status s) : status_(std::move(s)) { assert(status_.is_err()); }
     Result() = delete;
 
-    bool is_ok() const noexcept { return status.is_ok(); }
-    bool is_err() const noexcept { return status.is_err(); }
+    bool is_ok() const noexcept { return status_.is_ok(); }
+    bool is_err() const noexcept { return status_.is_err(); }
     explicit operator bool() const noexcept { return is_ok(); }
-    const Status &error() const noexcept { return status; }
+    const Status &error() const noexcept { return status_; }
 
-    const T &value_or_throw() const & {
-        status.throw_on_failure();
-        return value;
+    const T *get_if() const noexcept { return value_ ? &*value_ : nullptr; }
+    T *get_if() noexcept { return value_ ? &*value_ : nullptr; }
+
+    const T &value() const & {
+        status_.throw_on_failure();
+        assert(value_.has_value());
+        return *value_;
     }
+    T &value() & {
+        status_.throw_on_failure();
+        assert(value_.has_value());
+        return *value_;
+    }
+
+    const T &value_or_throw() const & { return value(); }
     T value_or_throw() && {
-        status.throw_on_failure();
-        return std::move(value);
+        status_.throw_on_failure();
+        assert(value_.has_value());
+        return std::move(*value_);
     }
+
+  private:
+    std::optional<T> value_;
+    Status status_;
 };
 
 /**
@@ -575,9 +588,65 @@ struct EventMarkerStyle {
  * row-major: `times.size()` rows of one column (scalar) or `components.size()`
  * columns (vector).
  */
+class ChannelUnit {
+  public:
+    static ChannelUnit recognized(RecognizedUnit unit) {
+        return ChannelUnit{recognized_unit_label(unit), false};
+    }
+
+    static ChannelUnit custom(std::string label) {
+        return try_custom(std::move(label)).value_or_throw();
+    }
+
+    static Result<ChannelUnit> try_custom(std::string label) {
+        return try_parse(std::move(label), GTD_CHANNEL_UNIT_CUSTOM, true);
+    }
+
+    static ChannelUnit parse_recognized(std::string_view label) {
+        return try_parse_recognized(label).value_or_throw();
+    }
+
+    static Result<ChannelUnit> try_parse_recognized(std::string_view label) {
+        return try_parse(std::string{label}, GTD_CHANNEL_UNIT_RECOGNIZED, false);
+    }
+
+    const std::string &label() const noexcept { return label_; }
+    bool is_custom() const noexcept { return custom_; }
+
+    friend bool operator==(const ChannelUnit &a, const ChannelUnit &b) noexcept {
+        return a.custom_ == b.custom_ && a.label_ == b.label_;
+    }
+
+  private:
+    friend class NavFile;
+
+    ChannelUnit(std::string label, bool custom) : label_{std::move(label)}, custom_{custom} {}
+
+    static ChannelUnit from_file_label(std::string label, bool custom) {
+        return custom ? ChannelUnit{std::move(label), true} : parse_recognized(label);
+    }
+
+    static Result<ChannelUnit> try_parse(std::string label, GtdChannelUnitMode mode, bool custom) {
+        std::size_t required = 0;
+        GtdStatus status = ::gtd_channel_unit_parse(label.c_str(), static_cast<std::uint32_t>(mode),
+                                                    nullptr, 0, &required);
+        if (status != GTD_OK)
+            return Status::from(status);
+        std::vector<char> canonical(required);
+        status = ::gtd_channel_unit_parse(label.c_str(), static_cast<std::uint32_t>(mode),
+                                          canonical.data(), canonical.size(), &required);
+        if (status != GTD_OK)
+            return Status::from(status);
+        return ChannelUnit{std::string{canonical.data()}, custom};
+    }
+
+    std::string label_;
+    bool custom_;
+};
+
 struct Channel {
     std::string name;
-    std::string unit;                    // empty = none
+    std::optional<ChannelUnit> unit;
     std::optional<Angle> period;         // wrap period, none = linear
     std::string description;             // empty = none
     std::vector<std::string> components; // empty = scalar channel
@@ -588,7 +657,7 @@ struct Channel {
 /** Channel data returned by `NavFile::channel()`. String fields are copies. */
 struct ChannelView {
     std::string name;
-    std::string unit;                    // empty = none
+    std::optional<ChannelUnit> unit;
     std::optional<Angle> period;         // none = linear
     std::string description;             // empty = none
     std::vector<std::string> components; // empty = scalar channel
@@ -896,7 +965,7 @@ class FileBuilder {
 
         GtdChannel c{};
         c.name = ch.name.c_str();
-        c.unit = ch.unit.empty() ? nullptr : ch.unit.c_str();
+        c.unit = ch.unit ? ch.unit->label().c_str() : nullptr;
         c.period_deg = detail::to_c(period_deg);
         c.description = ch.description.empty() ? nullptr : ch.description.c_str();
         c.components = components.empty() ? nullptr : components.data();
@@ -905,7 +974,9 @@ class FileBuilder {
         c.n_times = times.size();
         c.values = ch.values.data();
         c.n_values = ch.values.size();
-        record(::gtd_builder_add_channel(impl_.get(), &c));
+        const auto mode =
+            ch.unit && ch.unit->is_custom() ? GTD_CHANNEL_UNIT_CUSTOM : GTD_CHANNEL_UNIT_RECOGNIZED;
+        record(::gtd_builder_add_channel_with_unit_mode(impl_.get(), &c, mode));
         return *this;
     }
 
@@ -1212,7 +1283,22 @@ class NavFile {
 
         ChannelView v{};
         v.name = info.name;
-        v.unit = info.has_unit ? std::string{info.unit} : std::string{};
+        size_t unit_len = 0;
+        std::uint8_t unit_is_custom = 0;
+        const GtdStatus unit_size_status = ::gtd_nav_file_get_channel_unit(
+            impl_.get(), idx, nullptr, 0, &unit_len, &unit_is_custom);
+        if (unit_size_status != GTD_OK)
+            return Status::from(unit_size_status);
+        if (unit_len > 0) {
+            std::vector<char> unit_buffer(unit_len);
+            const GtdStatus unit_status =
+                ::gtd_nav_file_get_channel_unit(impl_.get(), idx, unit_buffer.data(),
+                                                unit_buffer.size(), &unit_len, &unit_is_custom);
+            if (unit_status != GTD_OK)
+                return Status::from(unit_status);
+            const std::string label{unit_buffer.data()};
+            v.unit = ChannelUnit::from_file_label(label, unit_is_custom != 0);
+        }
         v.period = info.period_deg.present
                        ? std::optional<Angle>{Angle::degrees(info.period_deg.value)}
                        : std::nullopt;

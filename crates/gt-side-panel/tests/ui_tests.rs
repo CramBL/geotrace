@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use egui_kittest::kittest::Queryable as _;
+use geotrace_units::Unit;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
@@ -311,7 +312,7 @@ fn snapshot_track_channels() {
     let points = gt_test_utils::stationary_nav_data(10);
     let accel = gt_types::Channel {
         name: "accel".to_owned(),
-        unit: Some("g".to_owned()),
+        unit: Some(Unit::G.into()),
         period: None,
         description: None,
         components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
@@ -320,7 +321,7 @@ fn snapshot_track_channels() {
     };
     let incline = gt_types::Channel {
         name: "incline".to_owned(),
-        unit: Some("deg".to_owned()),
+        unit: Some(Unit::DEG.into()),
         period: None,
         description: None,
         components: vec![],

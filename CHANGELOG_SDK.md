@@ -7,9 +7,18 @@ the app).
 
 ## [unreleased]
 
+### Added
+
+- Add typed recognized channel units, including native sensor scales such as milli-g, and an explicit display-only custom-unit escape hatch.
+- Add lossless C channel-unit accessors without changing the existing 0.4 struct layouts.
+
 ### Changed
 
 - Update `hdf5-pure` to 0.21.1.
+- Rust channel builders now accept `Unit` or `ChannelUnit` instead of arbitrary unit strings.
+- C++ channels use `RecognizedUnit` and `ChannelUnit` values instead of a string/mode pair.
+- Python channels accept `Unit` constants such as `Unit.MG`; recognized strings remain accepted for compatibility, and returned `ChannelUnit` values support equality and hashing.
+- C callers use `gtd_builder_add_channel_with_unit_mode` for custom labels; `gtd_builder_add_channel` retains the frozen 0.4 struct layout and recognized-unit default.
 
 ## [0.4.0] - 2026-07-08
 

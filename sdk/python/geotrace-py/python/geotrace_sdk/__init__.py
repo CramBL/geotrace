@@ -30,6 +30,7 @@ from importlib.metadata import version as _dist_version
 from geotrace_sdk._geotrace_sdk import (
     Annotation,
     Channel,
+    ChannelUnit,
     Constellation,
     EventMarker,
     EventMarkerPoint,
@@ -43,6 +44,7 @@ from geotrace_sdk._geotrace_sdk import (
     NavPoint,
     Satellite,
     SatelliteReport,
+    Unit,
 )
 from geotrace_sdk.event_kind import event_kind
 
@@ -55,6 +57,7 @@ __all__ = [
     "__version__",
     "Annotation",
     "Channel",
+    "ChannelUnit",
     "Constellation",
     "EventMarker",
     "EventMarkerPoint",
@@ -68,5 +71,6 @@ __all__ = [
     "NavPoint",
     "Satellite",
     "SatelliteReport",
+    "Unit",
     "event_kind",
 ]

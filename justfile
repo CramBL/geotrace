@@ -93,7 +93,7 @@ setup-pup:
 ci: build-images ci-essentials ci-extras ci-sdks
 
 [group("ci")]
-ci-essentials: fmt-check clippy check test examples qa::qa-lint qa::test qa::check-all qa::check-versions doc
+ci-essentials: fmt-check clippy check test examples qa::qa-lint qa::test qa::check-all qa::check-versions doc check-unit-bindings
 
 [group("ci")]
 ci-extras: osv-scanner sort-check shear typos pup msrv sdk-msrv sdk-doc

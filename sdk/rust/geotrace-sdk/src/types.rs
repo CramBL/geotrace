@@ -1,9 +1,10 @@
 use std::{fs::File, io, path::Path};
 
-use crate::{Angle, Velocity};
 use chrono::{DateTime, Utc};
+use geotrace_units::{ChannelUnit, PhysicalQuantity};
 
 use crate::error::{ChannelError, Error, EventMarkerError};
+use crate::{Angle, Velocity};
 
 /// A single GPS/GNSS fix: position, heading, and optional speed at a point in time.
 ///
@@ -634,7 +635,7 @@ pub struct EventMarkerPoint {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Channel {
     pub(crate) name: String,
-    pub(crate) unit: Option<String>,
+    pub(crate) unit: Option<ChannelUnit>,
     pub(crate) period: Option<Angle>,
     pub(crate) description: Option<String>,
     /// Vector component labels (`["x", "y", "z"]`), or empty for a scalar
@@ -655,17 +656,18 @@ impl Channel {
     /// `@name`. Pass `components` (e.g. `["x", "y", "z"]`) to make a vector
     /// channel whose `value` dataset has one column per component; each label
     /// must be a unique identifier, referenced as `@name.label`. Omit it for a
-    /// scalar channel. Empty or whitespace-only units and descriptions become
-    /// `None`.
+    /// scalar channel. Use a recognized [`ChannelUnit`] when GeoTrace should
+    /// scale and dimension-check the values. Use [`ChannelUnit::custom`] for a
+    /// deliberate display-only label whose values remain dimensionless.
     ///
     /// `values` is row-major: `times.len()` rows of one column (scalar) or
     /// `components.len()` columns (vector). Returns `Err` if the name or a
-    /// component label is malformed, or `values` is not `times.len() ×
-    /// columns` long.
+    /// component label is malformed, `values` is not `times.len() × columns`
+    /// long, or a wrap period is invalid or paired with a non-angular unit.
     #[builder(finish_fn = build)]
     pub fn new(
         #[builder(into)] name: String,
-        #[builder(into)] unit: Option<String>,
+        #[builder(into)] unit: Option<ChannelUnit>,
         period: Option<Angle>,
         #[builder(into)] description: Option<String>,
         // Any iterable of stringlike labels: `["x", "y", "z"]`, a `vec!` of
@@ -678,6 +680,12 @@ impl Channel {
         values: Vec<f64>,
     ) -> Result<Self, ChannelError> {
         crate::error::validate_channel_name(&name)?;
+        if let Some(unit) = unit.as_ref().filter(|unit| !unit.is_writable()) {
+            return Err(ChannelError::UnwritableUnit {
+                name,
+                unit: unit.to_string(),
+            });
+        }
         // `None` is a scalar channel; `Some(list)` is a vector channel, and an
         // explicitly empty list is rejected by `validate_components`.
         let components = match components {
@@ -696,9 +704,22 @@ impl Channel {
                 actual: values.len(),
             });
         }
+        if let Some(period) = period {
+            let degrees = period.as_degrees();
+            if !(degrees.is_finite() && degrees > 0.0) {
+                return Err(ChannelError::InvalidPeriod { name });
+            }
+            let angular = unit
+                .as_ref()
+                .and_then(ChannelUnit::as_recognized)
+                .is_some_and(|unit| unit.quantity() == PhysicalQuantity::Angle);
+            if !angular {
+                return Err(ChannelError::PeriodNeedsAngularUnit { name });
+            }
+        }
         Ok(Self {
             name,
-            unit: unit.filter(|s| !s.trim().is_empty()),
+            unit,
             period,
             description: description.filter(|s| !s.trim().is_empty()),
             components,
@@ -714,9 +735,9 @@ impl Channel {
         &self.name
     }
 
-    /// The unit of the channel's values (`"g"`, `"deg"`), when declared.
-    pub fn unit(&self) -> Option<&str> {
-        self.unit.as_deref()
+    /// The recognized or custom unit of the channel's values, when declared.
+    pub fn unit(&self) -> Option<&ChannelUnit> {
+        self.unit.as_ref()
     }
 
     /// The wrap period of an angular channel (`360°` for a heading), or `None`

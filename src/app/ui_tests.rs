@@ -6,7 +6,7 @@ use std::{
 };
 
 use egui_kittest::{Harness, kittest::Queryable as _};
-use geotrace_sdk::{Channel, DateTime, Duration, Utc};
+use geotrace_sdk::{Channel, ChannelUnit, DateTime, Duration, Unit, Utc};
 use gt_test_utils::{DEMO_BYTES, GOLD_BYTES, SyntheticGtdSpec, TestHarness, synthetic_gtd_bytes};
 use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
 
@@ -1755,7 +1755,7 @@ fn accel_channel_gtd_bytes() -> Vec<u8> {
     }
     let channel = Channel::builder()
         .name("accel")
-        .unit("g")
+        .unit(Unit::G)
         .description("IMU acceleration")
         .components(["x", "y", "z"])
         .times(times)
@@ -1774,7 +1774,7 @@ fn push_file_with_channel(harness: &mut Harness<App>, name: &str, unit: &str) {
     };
     let channel = Channel {
         name: name.to_owned(),
-        unit: Some(unit.to_owned()),
+        unit: Some(ChannelUnit::from_file_label(unit)),
         period: None,
         description: None,
         components: vec![],

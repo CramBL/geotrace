@@ -349,7 +349,7 @@ fn from_nav_file(nav_file: &NavFile) -> Result<NavFileContents, LoadError> {
 fn convert_channel(sdk: &geotrace_sdk::Channel) -> Channel {
     Channel {
         name: sdk.name().to_owned(),
-        unit: sdk.unit().map(str::to_owned),
+        unit: sdk.unit().cloned(),
         period: sdk.period().map(to_uom_angle),
         description: sdk.description().map(str::to_owned),
         components: sdk.components().to_vec(),
@@ -524,7 +524,7 @@ mod tests {
     use super::*;
     use geotrace_sdk::{
         Angle, Annotation, Constellation as SdkConst, DateTime, Duration, MarkerIcon as SdkIcon,
-        NavFile, NavFileBuilder, NavFix, Satellite as SdkSat, SatelliteReport, Utc, Velocity,
+        NavFile, NavFileBuilder, NavFix, Satellite as SdkSat, SatelliteReport, Unit, Utc, Velocity,
     };
     use proptest::prelude::*;
     use rstest::rstest;
@@ -557,8 +557,8 @@ mod tests {
         }
         recorder.add_channel(
             geotrace_sdk::Channel::builder()
-                .name("accel")
-                .unit("g")
+                .name("orientation")
+                .unit(Unit::DEG)
                 .period(Angle::degrees(360.0))
                 .components(["x", "y", "z"].map(String::from).to_vec())
                 .times(vec![t0, t0 + Duration::seconds(2)])
@@ -574,17 +574,26 @@ mod tests {
         assert_eq!(file.tracks.len(), 1);
         let channels = &file.tracks[0].channels;
         assert_eq!(channels.len(), 1);
-        let accel = &channels[0];
-        assert_eq!(accel.name, "accel");
-        assert!(accel.is_vector());
-        assert_eq!(accel.components, ["x", "y", "z"]);
-        assert_eq!(accel.unit.as_deref(), Some("g"));
+        let orientation = &channels[0];
+        assert_eq!(orientation.name, "orientation");
+        assert!(orientation.is_vector());
+        assert_eq!(orientation.components, ["x", "y", "z"]);
         assert_eq!(
-            accel.period.map(|a| a.get::<uom::si::angle::degree>()),
+            orientation
+                .unit
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("deg")
+        );
+        assert_eq!(
+            orientation
+                .period
+                .map(|a| a.get::<uom::si::angle::degree>()),
             Some(360.0)
         );
-        assert_eq!(accel.times.len(), 2);
-        assert_eq!(accel.values, vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02]);
+        assert_eq!(orientation.times.len(), 2);
+        assert_eq!(orientation.values, vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02]);
     }
 
     #[rstest]
@@ -661,7 +670,7 @@ mod tests {
         recorder.add_channel(
             geotrace_sdk::Channel::builder()
                 .name("accel")
-                .unit("g")
+                .unit(Unit::G)
                 .components(["x", "y", "z"].map(String::from).to_vec())
                 .times(vec![t0, t0 + Duration::seconds(4)])
                 .values(vec![0.1, 0.2, 0.98, -0.1, 0.3, 1.02])

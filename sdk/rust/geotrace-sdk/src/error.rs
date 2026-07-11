@@ -80,6 +80,15 @@ pub enum ChannelError {
         expected: usize,
         actual: usize,
     },
+
+    #[error("channel {name:?}: wrap period must be finite and positive")]
+    InvalidPeriod { name: String },
+
+    #[error("channel {name:?}: wrap period requires a recognized angular unit")]
+    PeriodNeedsAngularUnit { name: String },
+
+    #[error("channel {name:?}: legacy unit metadata {unit:?} is not valid writer input")]
+    UnwritableUnit { name: String, unit: String },
 }
 
 /// A lowercase identifier: a lowercase letter or underscore, then lowercase
