@@ -444,7 +444,7 @@ impl NavMap {
             map_rect_estimate,
         );
 
-        let is_offline = std::env::var("GEOTRACE_OFFLINE").is_ok();
+        let is_offline = gt_types::env::offline();
         let map = if is_offline {
             Map::new(None, &mut self.map_memory, walkers::lat_lon(55.676, 12.565))
         } else {

@@ -5,6 +5,7 @@ mod loader;
 mod modals;
 mod query;
 mod settings_autosave;
+mod snap;
 #[cfg(feature = "self-update")]
 mod update;
 
@@ -112,6 +113,9 @@ pub struct App {
     ctx: egui::Context,
     /// Manages background load threads and the file-picker dialog thread.
     loader: LoadJobs,
+    /// Schedules snap-to-road runs and holds per-track snap activity and the
+    /// session result cache.
+    snap: snap::SnapScheduler,
 
     /// Tiles tree for the central area - map (top) and plot (bottom).
     tiles_tree: Tree<MainPane>,
@@ -241,6 +245,7 @@ impl App {
 
         let map = NavMap::new(cc.egui_ctx.clone());
         let loader = LoadJobs::new(cc.egui_ctx.clone());
+        let snap = snap::SnapScheduler::new(cc.egui_ctx.clone());
 
         // Build the central-area tiles tree: map on top, plot on bottom.
         // The split ratio and panel visibility are applied from settings below.
@@ -318,6 +323,7 @@ impl App {
             mapbox_token_input: String::new(),
             ctx: cc.egui_ctx.clone(),
             loader,
+            snap,
             tiles_tree,
             map_tile_id,
             plot_tile_id,
@@ -857,9 +863,7 @@ impl App {
     /// build (avoids hitting GitHub during development), and not offline.
     #[cfg(feature = "self-update")]
     fn should_check_for_updates(&self) -> bool {
-        self.update_check_on_startup
-            && !cfg!(debug_assertions)
-            && env::var_os("GEOTRACE_OFFLINE").is_none()
+        self.update_check_on_startup && !cfg!(debug_assertions) && !gt_types::env::offline()
     }
 
     /// Snapshot of all settings-relevant state for change detection.
@@ -1095,8 +1099,7 @@ impl App {
             s.plot_state.rebuild_all(&s.loaded_files);
             s.tree.reset_for_files(&s.loaded_files);
         }
-        let s = self.shared.borrow();
-        self.map.rebuild_spatial_index(&s.loaded_files);
+        self.on_track_indices_changed();
     }
 
     /// Process a completed background load: integrate the result into shared state.
@@ -1256,6 +1259,17 @@ impl App {
     /// Apply the history side of a "remove" confirmation: hide the affected
     /// recordings, or permanently delete them when the user opted in. The toast
     /// is shown when the worker confirms via [`Self::handle_history_response`].
+    /// Bookkeeping after any structural change to `loaded_files` (removal,
+    /// re-segmentation): track indices shifted, so the spatial index and all
+    /// `TrackRef`-keyed transient state must be rebuilt or dropped. Every
+    /// mutation site must call this - pairing the two here keeps a future
+    /// mutation site from forgetting one of them.
+    fn on_track_indices_changed(&mut self) {
+        self.snap.reset_track_states();
+        let s = self.shared.borrow();
+        self.map.rebuild_spatial_index(&s.loaded_files);
+    }
+
     fn apply_remove_outcome(&self, outcome: &modals::RemoveOutcome) {
         for removal in &outcome.affected {
             if outcome.permanent {
@@ -1582,6 +1596,9 @@ impl eframe::App for App {
         for resp in self.history.poll() {
             self.handle_history_response(resp);
         }
+
+        // Apply finished snap runs and progress updates.
+        self.snap.poll();
 
         // Consume a pending file-picker result and dispatch the chosen path.
         if let Some(path) = self.loader.drain_file_dialog() {
@@ -2045,10 +2062,7 @@ impl eframe::App for App {
             }
         };
         if let Some(count) = unloaded {
-            {
-                let s = self.shared.borrow();
-                self.map.rebuild_spatial_index(&s.loaded_files);
-            }
+            self.on_track_indices_changed();
             log::info!("Unloaded {count} item(s) from view");
         }
 
@@ -2062,10 +2076,7 @@ impl eframe::App for App {
             outcome
         };
         if let Some(outcome) = remove_outcome {
-            {
-                let s = self.shared.borrow();
-                self.map.rebuild_spatial_index(&s.loaded_files);
-            }
+            self.on_track_indices_changed();
             self.apply_remove_outcome(&outcome);
         }
 

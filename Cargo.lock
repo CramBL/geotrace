@@ -1981,6 +1981,7 @@ dependencies = [
  "gt-plot",
  "gt-query",
  "gt-side-panel",
+ "gt-snap",
  "gt-test-utils",
  "gt-track-builder",
  "gt-types",

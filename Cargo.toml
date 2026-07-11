@@ -265,6 +265,7 @@ gt-logfile = { path = "crates/gt-logfile" }
 gt-map = { path = "crates/gt-map" }
 gt-plot = { path = "crates/gt-plot" }
 gt-query = { path = "crates/gt-query" }
+gt-snap = { path = "crates/gt-snap" }
 gt-side-panel = { path = "crates/gt-side-panel" }
 gt-track-builder = { path = "crates/gt-track-builder" }
 gt-types = { path = "crates/gt-types" }
