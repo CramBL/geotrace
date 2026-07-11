@@ -1,38 +1,13 @@
 //! Validate downsampling, chunking, and gps_accuracy derivation.
 
-use chrono::{DateTime, Utc};
+mod support;
+
 use rstest::rstest;
+use support::points_with as points;
 
 use gt_snap::request_plan::{
     self, CHUNK_OVERLAP_POINTS, CHUNK_POINTS, GPS_ACCURACY_RANGE_M, RequestPlan,
 };
-use gt_types::nav_point::NavPoint;
-use gt_types::time_types::GpsTime;
-use gt_types::tpv::TimePositionVelocity;
-use gt_types::{Latitude, Longitude};
-
-/// 2026-01-01T12:00:00Z. The fallback (epoch) is unreachable for this valid
-/// constant and would fail every time-based assertion loudly if it weren't.
-fn base_time() -> DateTime<Utc> {
-    DateTime::from_timestamp(1_767_268_800, 0).unwrap_or_default()
-}
-
-/// `count` points spaced `step_ms` apart, walking north, each with the eph
-/// produced by `eph(i)`.
-fn points(count: usize, step_ms: i64, eph: impl Fn(usize) -> Option<f32>) -> Vec<NavPoint> {
-    (0..count)
-        .map(|i| {
-            let time = base_time() + chrono::Duration::milliseconds(i as i64 * step_ms);
-            let tpv = TimePositionVelocity::builder()
-                .time(GpsTime::from_utc(time))
-                .lat(Latitude::new(55.0 + i as f64 * 1e-5))
-                .lon(Longitude::new(12.0))
-                .maybe_eph_m(eph(i))
-                .build();
-            NavPoint::new(tpv, None)
-        })
-        .collect()
-}
 
 /// Distinct sent-point track indices across a plan's chunks, in order,
 /// counting overlap points once.
