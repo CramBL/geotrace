@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from geotrace_sdk import Channel, ChannelUnit, NavFile, NavFileBuilder, NavFix
+from geotrace_sdk import Channel, ChannelUnit, NavFile, NavFileBuilder, NavFix, Unit
 
 T0 = datetime(2024, 6, 1, 9, 0, 0, tzinfo=UTC)
 T1 = T0 + timedelta(seconds=1)
@@ -97,6 +97,26 @@ def test_custom_channel_unit_is_an_explicit_escape_hatch() -> None:
     unit = channel.unit
     assert unit is not None
     assert unit.label == "rpm"
+    assert unit.is_custom
+    assert unit == rpm
+    assert hash(unit) == hash(rpm)
+
+
+def test_recognized_unit_constants_are_first_class_values() -> None:
+    channel = Channel("accel", [T0], [980.0], unit=Unit.MG)
+    unit = channel.unit
+    assert unit is not None
+    assert unit == ChannelUnit.recognized("mg")
+    assert unit.label == Unit.MG.label
+
+
+def test_long_custom_unit_round_trips_losslessly() -> None:
+    label = "x" * 159
+    builder = NavFileBuilder()
+    builder.add(Channel("quality", [T0], [1.0], unit=ChannelUnit.custom(label)))
+    unit = _write_and_read(builder).channels[0].unit
+    assert unit is not None
+    assert unit.label == label
     assert unit.is_custom
 
 

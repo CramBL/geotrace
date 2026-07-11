@@ -680,6 +680,12 @@ impl Channel {
         values: Vec<f64>,
     ) -> Result<Self, ChannelError> {
         crate::error::validate_channel_name(&name)?;
+        if let Some(ChannelUnit::Unrecognized(unit)) = &unit {
+            return Err(ChannelError::UnwritableUnit {
+                name,
+                unit: unit.clone(),
+            });
+        }
         // `None` is a scalar channel; `Some(list)` is a vector channel, and an
         // explicitly empty list is rejected by `validate_components`.
         let components = match components {

@@ -386,7 +386,6 @@ pub unsafe extern "C" fn gtd_nav_file_get_channel(
         if let Some(unit) = ch.unit() {
             out.has_unit = 1;
             fill_c_str(&mut out.unit, &unit.to_string());
-            out.unit_is_custom = u8::from(matches!(unit, ChannelUnit::Custom(_)));
         }
         out.period_deg = ch
             .period()
@@ -397,6 +396,51 @@ pub unsafe extern "C" fn gtd_nav_file_get_channel(
         }
         out.component_count = ch.components().len();
         out.sample_count = ch.times().len();
+        GtdStatus::Ok
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_nav_file_get_channel_unit(
+    f: *const GtdNavFile,
+    idx: usize,
+    out: *mut c_char,
+    cap: usize,
+    required_len: *mut usize,
+    is_custom: *mut u8,
+) -> GtdStatus {
+    run_catching_panics(|| {
+        let f = nonnull_ref!(f);
+        let required_len = nonnull_mut!(required_len);
+        let Some(ch) = f.file.channels().get(idx) else {
+            set_last_error(format!("channel index {idx} is out of range"));
+            return GtdStatus::ErrNullArgument;
+        };
+        let Some(unit) = ch.unit() else {
+            *required_len = 0;
+            if !is_custom.is_null() {
+                // SAFETY: non-null output pointer is caller-owned.
+                unsafe { *is_custom = 0 };
+            }
+            return GtdStatus::Ok;
+        };
+
+        let label = unit.to_string();
+        *required_len = label.len().saturating_add(1);
+        if !is_custom.is_null() {
+            // SAFETY: non-null output pointer is caller-owned.
+            unsafe { *is_custom = u8::from(!matches!(unit, ChannelUnit::Recognized(_))) };
+        }
+        if cap == 0 {
+            return GtdStatus::Ok;
+        }
+        if out.is_null() {
+            set_last_error("out buffer is null but cap > 0");
+            return GtdStatus::ErrNullArgument;
+        }
+        // SAFETY: out points to cap writable bytes by the C API contract.
+        let buffer = unsafe { std::slice::from_raw_parts_mut(out, cap) };
+        fill_c_str(buffer, &label);
         GtdStatus::Ok
     })
 }

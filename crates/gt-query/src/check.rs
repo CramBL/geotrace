@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use gt_types::DisplayMode;
 
 use crate::Diagnostic;
+use geotrace_units::ChannelUnit;
+
 use crate::ast::{
     BinaryOp, ChannelRef, Expr, Func, NumberLit, ParamDecl, ParamName, Query, Source, Span,
     UnaryOp, Window as AstWindow,
@@ -17,24 +19,39 @@ use crate::ast::{
 use crate::dimension::Dimension;
 use crate::fmt::Superscript;
 use crate::metric::{Quantity, QueryMetric};
-use crate::unit::{self, Unit, example_literal, unit_list};
+use crate::unit::{self, example_literal, unit_list};
 
 /// What a query needs to know about one ad-hoc channel to type-check a
 /// reference to it.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChannelInfo {
-    /// Canonical recognized unit (`"g"`, `"m/s2"`), a custom display label,
-    /// or `None`. Custom labels are treated as bare numbers.
-    pub unit: Option<String>,
+    /// Recognized or custom unit. Custom labels are treated as bare numbers.
+    pub unit: Option<ChannelUnit>,
     /// Wrap period in degrees for an angular channel, or `None` for a linear
     /// value. A present period marks the channel circular (a direction).
     pub period_deg: Option<f64>,
     /// Vector component labels (`["x", "y", "z"]`), or empty for a scalar
     /// channel.
     pub components: Vec<String>,
-    /// Distinct unit labels found for this name when loaded files disagree.
-    /// Empty for a usable schema entry.
-    pub conflicting_units: Vec<String>,
+    /// Metadata disagreements found while merging loaded channel definitions.
+    pub conflicts: Vec<ChannelConflict>,
+}
+
+/// One incompatible metadata definition found for a shared channel name.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ChannelConflict {
+    Unit {
+        expected: Option<ChannelUnit>,
+        found: Option<ChannelUnit>,
+    },
+    Components {
+        expected: Vec<String>,
+        found: Vec<String>,
+    },
+    Period {
+        expected_deg: Option<f64>,
+        found_deg: Option<f64>,
+    },
 }
 
 /// The channels a query may reference, keyed by name. The app builds this from
@@ -452,8 +469,8 @@ fn base_with_exponent(name: &str, exponent: i8) -> String {
 fn channel_value_type(info: &ChannelInfo) -> ValueType {
     let Some(quantity) = info
         .unit
-        .as_deref()
-        .and_then(Unit::from_label)
+        .as_ref()
+        .and_then(ChannelUnit::as_recognized)
         .map(unit::quantity)
     else {
         return ValueType::Dimensionless(Kind::Number);
@@ -628,7 +645,7 @@ pub fn check(query: &Query, schema: &ChannelSchema) -> Result<CheckedQuery, Diag
             let Some(info) = schema.get(&c.name) else {
                 return Err(err(c.span, format!("no such channel @{}", c.name)));
             };
-            reject_unit_conflict(&c.name, info, c.span)?;
+            reject_channel_conflicts(&c.name, info, c.span)?;
             CheckedSource::Channel(c.name.clone())
         }
     };
@@ -958,7 +975,7 @@ impl Checker<'_> {
         let Some(info) = self.schema.get(&c.name) else {
             return Err(err(c.span, format!("no such channel @{}", c.name)));
         };
-        reject_unit_conflict(&c.name, info, c.span)?;
+        reject_channel_conflicts(&c.name, info, c.span)?;
         let component = resolve_component(c, info)?;
         self.per_sample_ok(&c.name, in_agg, c.span, &c.to_string())?;
         Ok((
@@ -985,7 +1002,7 @@ impl Checker<'_> {
         let Some(info) = self.schema.get(&c.name) else {
             return Err(err(c.span, format!("no such channel @{}", c.name)));
         };
-        reject_unit_conflict(&c.name, info, c.span)?;
+        reject_channel_conflicts(&c.name, info, c.span)?;
         if c.component.is_some() {
             return Err(err_hint(
                 c.span,
@@ -1204,15 +1221,44 @@ impl Checker<'_> {
     }
 }
 
-fn reject_unit_conflict(name: &str, info: &ChannelInfo, span: Span) -> Result<(), Diagnostic> {
-    if info.conflicting_units.is_empty() {
+fn reject_channel_conflicts(name: &str, info: &ChannelInfo, span: Span) -> Result<(), Diagnostic> {
+    if info.conflicts.is_empty() {
         return Ok(());
     }
+    let details = info
+        .conflicts
+        .iter()
+        .map(ChannelConflict::description)
+        .collect::<Vec<_>>()
+        .join("; ");
     Err(err_hint(
         span,
-        format!("@{name} has incompatible units across loaded files"),
-        format!("found {}", info.conflicting_units.join(", ")),
+        format!("@{name} has incompatible metadata across loaded files"),
+        details,
     ))
+}
+
+impl ChannelConflict {
+    fn description(&self) -> String {
+        match self {
+            Self::Unit { expected, found } => format!(
+                "units {} and {}",
+                display_optional_unit(expected.as_ref()),
+                display_optional_unit(found.as_ref())
+            ),
+            Self::Components { expected, found } => {
+                format!("components {expected:?} and {found:?}")
+            }
+            Self::Period {
+                expected_deg,
+                found_deg,
+            } => format!("periods {expected_deg:?} and {found_deg:?}"),
+        }
+    }
+}
+
+fn display_optional_unit(unit: Option<&ChannelUnit>) -> String {
+    unit.map_or_else(|| "unitless".to_owned(), ToString::to_string)
 }
 
 /// The value type an aggregate produces from its argument. Where the argument

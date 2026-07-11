@@ -4,6 +4,17 @@
 //! labels. Recognized units carry dimensional and scaling information. A
 //! [`CustomUnit`] is preserved and displayed verbatim, but its values are
 //! dimensionless because GeoTrace cannot safely infer conversions for it.
+//!
+//! ```
+//! use geotrace_units::{ChannelUnit, Unit};
+//!
+//! let acceleration = ChannelUnit::recognized(Unit::MG);
+//! assert_eq!(acceleration.to_string(), "mg");
+//!
+//! let score = ChannelUnit::custom("vendor score")?;
+//! assert!(score.as_recognized().is_none());
+//! # Ok::<(), geotrace_units::UnitParseError>(())
+//! ```
 
 use std::{fmt, str::FromStr};
 
@@ -15,7 +26,6 @@ const S_PER_MIN: f64 = 60.0;
 const MIN_PER_H: f64 = 60.0;
 const PERCENT: f64 = 100.0;
 const PER_S_TO_PER_MIN: f64 = 60.0;
-const MAX_CUSTOM_UNIT_BYTES: usize = 63;
 
 /// The physical quantity represented by a recognized [`Unit`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -422,12 +432,6 @@ impl CustomUnit {
         if trimmed.is_empty() {
             return Err(UnitParseError::EmptyCustom);
         }
-        if trimmed.len() > MAX_CUSTOM_UNIT_BYTES {
-            return Err(UnitParseError::CustomTooLong {
-                len: trimmed.len(),
-                max: MAX_CUSTOM_UNIT_BYTES,
-            });
-        }
         if trimmed.chars().any(char::is_control) {
             return Err(UnitParseError::CustomControlCharacter);
         }
@@ -455,6 +459,9 @@ impl fmt::Display for CustomUnit {
 pub enum ChannelUnit {
     Recognized(Unit),
     Custom(CustomUnit),
+    /// Losslessly preserved file metadata that is not valid writer input.
+    #[doc(hidden)]
+    Unrecognized(String),
 }
 
 impl ChannelUnit {
@@ -472,14 +479,17 @@ impl ChannelUnit {
         let label = label.into();
         match Unit::from_label(&label) {
             Some(unit) => Self::Recognized(unit),
-            None => Self::Custom(CustomUnit(label)),
+            None => match CustomUnit::new(label.clone()) {
+                Ok(unit) if unit.as_str() == label => Self::Custom(unit),
+                Ok(_) | Err(_) => Self::Unrecognized(label),
+            },
         }
     }
 
     pub fn as_recognized(&self) -> Option<Unit> {
         match self {
             Self::Recognized(unit) => Some(*unit),
-            Self::Custom(_) => None,
+            Self::Custom(_) | Self::Unrecognized(_) => None,
         }
     }
 }
@@ -489,6 +499,7 @@ impl fmt::Display for ChannelUnit {
         match self {
             Self::Recognized(unit) => unit.fmt(f),
             Self::Custom(unit) => unit.fmt(f),
+            Self::Unrecognized(label) => label.fmt(f),
         }
     }
 }
@@ -513,8 +524,6 @@ pub enum UnitParseError {
     Unrecognized { label: String },
     #[error("a custom channel unit cannot be empty")]
     EmptyCustom,
-    #[error("custom channel unit is {len} bytes; the maximum is {max}")]
-    CustomTooLong { len: usize, max: usize },
     #[error("a custom channel unit cannot contain control characters")]
     CustomControlCharacter,
     #[error("channel unit {label:?} is recognized; use ChannelUnit::recognized instead")]
@@ -541,6 +550,7 @@ fn normalize_label(label: &str) -> String {
 mod tests {
     use std::fmt::Write as _;
 
+    use proptest::prelude::*;
     use strum::{EnumCount as _, IntoEnumIterator as _};
 
     use super::*;
@@ -589,7 +599,7 @@ mod tests {
         let label = " future\nunit ";
         let parsed = ChannelUnit::from_file_label(label);
         assert_eq!(parsed.to_string(), label);
-        assert!(matches!(parsed, ChannelUnit::Custom(_)));
+        assert!(matches!(parsed, ChannelUnit::Unrecognized(_)));
     }
 
     #[test]
@@ -601,10 +611,6 @@ mod tests {
         assert!(matches!(
             ChannelUnit::custom("bad\nunit"),
             Err(UnitParseError::CustomControlCharacter)
-        ));
-        assert!(matches!(
-            ChannelUnit::custom("x".repeat(MAX_CUSTOM_UNIT_BYTES + 1)),
-            Err(UnitParseError::CustomTooLong { .. })
         ));
         assert!(matches!(
             ChannelUnit::custom("m/s²"),
@@ -692,5 +698,21 @@ mod tests {
             }
         }
         insta::assert_snapshot!(catalog);
+    }
+
+    proptest! {
+        #[test]
+        fn arbitrary_file_labels_never_panic_and_preserve_unknown_text(label in any::<String>()) {
+            let parsed = ChannelUnit::from_file_label(label.clone());
+            if Unit::from_label(&label).is_none() {
+                prop_assert_eq!(parsed.to_string(), label);
+            }
+        }
+
+        #[test]
+        fn normalization_is_idempotent(label in any::<String>()) {
+            let once = normalize_label(&label);
+            prop_assert_eq!(normalize_label(&once), once);
+        }
     }
 }

@@ -141,6 +141,49 @@ class ChannelUnit:
     def is_custom(self) -> bool: ...
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
+@final
+class Unit:
+    """A recognized, convertible channel unit."""
+
+    DEG: Unit
+    M: Unit
+    NM: Unit
+    UM: Unit
+    MM: Unit
+    CM: Unit
+    KM: Unit
+    KM_PER_H: Unit
+    M_PER_S: Unit
+    MM_PER_S: Unit
+    CM_PER_S: Unit
+    KN: Unit
+    M_PER_S2: Unit
+    MM_PER_S2: Unit
+    CM_PER_S2: Unit
+    G: Unit
+    UG: Unit
+    MG: Unit
+    KM_PER_H_PER_S: Unit
+    NS: Unit
+    US: Unit
+    MS: Unit
+    S: Unit
+    MIN: Unit
+    H: Unit
+    PERCENT: Unit
+    PER_S: Unit
+    PER_MIN: Unit
+    PER_H: Unit
+
+    @property
+    def label(self) -> str: ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
 
 @final
 class Channel:
@@ -171,7 +214,7 @@ class Channel:
         times: list[datetime],
         values: list[float],
         *,
-        unit: str | ChannelUnit | None = None,
+        unit: str | Unit | ChannelUnit | None = None,
         period_deg: float | None = None,
         description: str | None = None,
         components: list[str] | None = None,

@@ -12,7 +12,7 @@ import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from geotrace_sdk import Channel, ChannelUnit, NavFile, NavFileBuilder, NavFix
+from geotrace_sdk import Channel, ChannelUnit, NavFile, NavFileBuilder, NavFix, Unit
 
 START = datetime(2024, 6, 1, 8, 0, 0, tzinfo=UTC)
 
@@ -47,7 +47,7 @@ def main() -> None:
                 200.0,
                 1020.0,
             ],
-            unit=ChannelUnit.recognized("mg"),
+            unit=Unit.MG,
             components=["x", "y", "z"],
         )
     )

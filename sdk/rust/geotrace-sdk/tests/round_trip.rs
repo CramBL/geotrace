@@ -509,6 +509,21 @@ fn an_invalid_custom_unit_is_rejected() {
 }
 
 #[test]
+fn legacy_invalid_unit_metadata_cannot_be_new_writer_input() {
+    let result = Channel::builder()
+        .name("legacy")
+        .unit(ChannelUnit::from_file_label("bad\nunit"))
+        .times(vec![base()])
+        .values(vec![1.0])
+        .build();
+
+    assert!(matches!(
+        result,
+        Err(geotrace_sdk::ChannelError::UnwritableUnit { .. })
+    ));
+}
+
+#[test]
 fn channel_period_requires_a_positive_angular_unit() {
     let build = |unit: Option<ChannelUnit>, period: Option<Angle>| {
         Channel::builder()

@@ -26,7 +26,7 @@ TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
 
         Channel incline{};
         incline.name = "incline";
-        incline.unit = "deg";
+        incline.unit = geotrace::ChannelUnit::recognized(geotrace::RecognizedUnit::Deg);
         incline.period = Angle::degrees(360.0);
         incline.description = "boom inclinometer";
         incline.times = {T0, T1};
@@ -34,7 +34,7 @@ TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
 
         Channel accel{};
         accel.name = "accel";
-        accel.unit = "g";
+        accel.unit = geotrace::ChannelUnit::recognized(geotrace::RecognizedUnit::G);
         accel.components = {"x", "y", "z"};
         accel.times = {T0, T1};
         accel.values = {0.1, 0.2, 0.98, -0.1, 0.3, 1.02};
@@ -58,7 +58,8 @@ TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
     auto accel = file.channel(0);
     CHECK(accel.name == "accel");
     CHECK(accel.is_vector());
-    CHECK(accel.unit == "g");
+    REQUIRE(accel.unit.has_value());
+    CHECK(accel.unit->label() == "g");
     CHECK(accel.components == std::vector<std::string>{"x", "y", "z"});
     CHECK_FALSE(accel.period.has_value());
     REQUIRE(accel.times.size() == 2);
@@ -78,7 +79,7 @@ TEST_CASE("channels: scalar and vector survive write → from_bytes → read") {
     // The bare channel round-trips with all optional fields absent.
     auto temp = file.channel(2);
     CHECK(temp.name == "temp");
-    CHECK(temp.unit.empty());
+    CHECK(!temp.unit.has_value());
     CHECK(temp.description.empty());
     CHECK_FALSE(temp.period.has_value());
 }
@@ -107,12 +108,7 @@ TEST_CASE("channels: a malformed channel throws InvalidChannelError") {
         CHECK_THROWS_AS(FileBuilder{}.add_channel(ch), InvalidChannelError);
     }
     SUBCASE("unrecognized unit") {
-        Channel ch{};
-        ch.name = "shaft_speed";
-        ch.unit = "rpm";
-        ch.times = {T0};
-        ch.values = {1200.0};
-        CHECK_THROWS_AS(FileBuilder{}.add_channel(ch), InvalidChannelError);
+        CHECK_THROWS_AS(geotrace::ChannelUnit::parse_recognized("rpm"), std::invalid_argument);
     }
     SUBCASE("duplicate channel name at finish") {
         Channel ch{};
@@ -127,15 +123,30 @@ TEST_CASE("channels: a malformed channel throws InvalidChannelError") {
 TEST_CASE("channels: a custom unit is an explicit display-only escape hatch") {
     Channel ch{};
     ch.name = "shaft_speed";
-    ch.unit = "rpm";
-    ch.unit_mode = geotrace::ChannelUnitMode::Custom;
+    ch.unit = geotrace::ChannelUnit::custom("rpm");
     ch.times = {T0};
     ch.values = {1200.0};
 
     auto file = NavFile::from_bytes(FileBuilder{}.add_channel(ch).finish().to_bytes());
     auto read = file.channel(0);
-    CHECK(read.unit == "rpm");
-    CHECK(read.unit_mode == geotrace::ChannelUnitMode::Custom);
+    REQUIRE(read.unit.has_value());
+    CHECK(read.unit->label() == "rpm");
+    CHECK(read.unit->is_custom());
+}
+
+TEST_CASE("channels: long custom units round-trip losslessly") {
+    const std::string label(159, 'x');
+    Channel ch{};
+    ch.name = "quality";
+    ch.unit = geotrace::ChannelUnit::custom(label);
+    ch.times = {T0};
+    ch.values = {1.0};
+
+    auto file = NavFile::from_bytes(FileBuilder{}.add_channel(ch).finish().to_bytes());
+    auto read = file.channel(0);
+    REQUIRE(read.unit.has_value());
+    CHECK(read.unit->label() == label);
+    CHECK(read.unit->is_custom());
 }
 
 TEST_CASE("channels: try_channel reports out-of-range without throwing") {

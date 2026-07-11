@@ -575,17 +575,170 @@ struct EventMarkerStyle {
  * row-major: `times.size()` rows of one column (scalar) or `components.size()`
  * columns (vector).
  */
-enum class ChannelUnitMode : std::uint8_t {
-    /** Validate and convert a recognized unit such as `mg` or `m/s2`. */
-    Recognized,
-    /** Preserve a display-only label and treat its values as unitless. */
-    Custom,
+enum class RecognizedUnit : std::uint8_t {
+    Deg,
+    M,
+    Nm,
+    Um,
+    Mm,
+    Cm,
+    Km,
+    KmPerH,
+    MPerS,
+    MmPerS,
+    CmPerS,
+    Kn,
+    MPerS2,
+    MmPerS2,
+    CmPerS2,
+    G,
+    Ug,
+    Mg,
+    KmPerHPerS,
+    Ns,
+    Us,
+    Ms,
+    S,
+    Min,
+    H,
+    Percent,
+    PerS,
+    PerMin,
+    PerH,
+};
+
+class ChannelUnit {
+  public:
+    static ChannelUnit recognized(RecognizedUnit unit) {
+        return ChannelUnit{recognized_label(unit), false};
+    }
+
+    static ChannelUnit custom(std::string label) {
+        const auto first = label.find_first_not_of(" \t\n\r\f\v");
+        if (first == std::string::npos)
+            invalid_unit("a custom channel unit cannot be empty");
+        const auto last = label.find_last_not_of(" \t\n\r\f\v");
+        label = label.substr(first, last - first + 1);
+        for (const unsigned char byte : label) {
+            if (byte < 0x20U || byte == 0x7fU)
+                invalid_unit("a custom channel unit cannot contain control characters");
+        }
+        if (recognized_from_label(label).has_value())
+            invalid_unit("a custom channel unit must not use a recognized label");
+        return ChannelUnit{std::move(label), true};
+    }
+
+    static ChannelUnit parse_recognized(std::string_view label) {
+        const auto unit = recognized_from_label(label);
+        if (!unit)
+            invalid_unit("unrecognized channel unit");
+        return recognized(*unit);
+    }
+
+    const std::string &label() const noexcept { return label_; }
+    bool is_custom() const noexcept { return custom_; }
+
+    friend bool operator==(const ChannelUnit &a, const ChannelUnit &b) noexcept {
+        return a.custom_ == b.custom_ && a.label_ == b.label_;
+    }
+
+  private:
+    friend class NavFile;
+
+    ChannelUnit(std::string label, bool custom) : label_{std::move(label)}, custom_{custom} {}
+
+    static ChannelUnit from_file_label(std::string label, bool custom) {
+        return custom ? ChannelUnit{std::move(label), true} : parse_recognized(label);
+    }
+
+    static const char *recognized_label(RecognizedUnit unit) {
+        switch (unit) {
+        case RecognizedUnit::Deg:
+            return "deg";
+        case RecognizedUnit::M:
+            return "m";
+        case RecognizedUnit::Nm:
+            return "nm";
+        case RecognizedUnit::Um:
+            return "um";
+        case RecognizedUnit::Mm:
+            return "mm";
+        case RecognizedUnit::Cm:
+            return "cm";
+        case RecognizedUnit::Km:
+            return "km";
+        case RecognizedUnit::KmPerH:
+            return "km/h";
+        case RecognizedUnit::MPerS:
+            return "m/s";
+        case RecognizedUnit::MmPerS:
+            return "mm/s";
+        case RecognizedUnit::CmPerS:
+            return "cm/s";
+        case RecognizedUnit::Kn:
+            return "kn";
+        case RecognizedUnit::MPerS2:
+            return "m/s2";
+        case RecognizedUnit::MmPerS2:
+            return "mm/s2";
+        case RecognizedUnit::CmPerS2:
+            return "cm/s2";
+        case RecognizedUnit::G:
+            return "g";
+        case RecognizedUnit::Ug:
+            return "ug";
+        case RecognizedUnit::Mg:
+            return "mg";
+        case RecognizedUnit::KmPerHPerS:
+            return "km/h/s";
+        case RecognizedUnit::Ns:
+            return "ns";
+        case RecognizedUnit::Us:
+            return "us";
+        case RecognizedUnit::Ms:
+            return "ms";
+        case RecognizedUnit::S:
+            return "s";
+        case RecognizedUnit::Min:
+            return "min";
+        case RecognizedUnit::H:
+            return "h";
+        case RecognizedUnit::Percent:
+            return "%";
+        case RecognizedUnit::PerS:
+            return "per s";
+        case RecognizedUnit::PerMin:
+            return "per min";
+        case RecognizedUnit::PerH:
+            return "per h";
+        }
+        invalid_unit("invalid recognized channel unit");
+    }
+
+    static std::optional<RecognizedUnit> recognized_from_label(std::string_view label) {
+        for (std::uint8_t raw = 0; raw <= static_cast<std::uint8_t>(RecognizedUnit::PerH); ++raw) {
+            const auto unit = static_cast<RecognizedUnit>(raw);
+            if (label == recognized_label(unit))
+                return unit;
+        }
+        return std::nullopt;
+    }
+
+    [[noreturn]] static void invalid_unit(const char *message) {
+#if GEOTRACE_CPP_EXCEPTIONS
+        throw std::invalid_argument{message};
+#else
+        detail::abort_with(message);
+#endif
+    }
+
+    std::string label_;
+    bool custom_;
 };
 
 struct Channel {
     std::string name;
-    std::string unit; // empty = none
-    ChannelUnitMode unit_mode = ChannelUnitMode::Recognized;
+    std::optional<ChannelUnit> unit;
     std::optional<Angle> period;         // wrap period, none = linear
     std::string description;             // empty = none
     std::vector<std::string> components; // empty = scalar channel
@@ -596,8 +749,7 @@ struct Channel {
 /** Channel data returned by `NavFile::channel()`. String fields are copies. */
 struct ChannelView {
     std::string name;
-    std::string unit; // empty = none
-    ChannelUnitMode unit_mode = ChannelUnitMode::Recognized;
+    std::optional<ChannelUnit> unit;
     std::optional<Angle> period;         // none = linear
     std::string description;             // empty = none
     std::vector<std::string> components; // empty = scalar channel
@@ -905,9 +1057,7 @@ class FileBuilder {
 
         GtdChannel c{};
         c.name = ch.name.c_str();
-        c.unit = ch.unit.empty() ? nullptr : ch.unit.c_str();
-        c.unit_mode = ch.unit_mode == ChannelUnitMode::Custom ? GTD_CHANNEL_UNIT_CUSTOM
-                                                              : GTD_CHANNEL_UNIT_RECOGNIZED;
+        c.unit = ch.unit ? ch.unit->label().c_str() : nullptr;
         c.period_deg = detail::to_c(period_deg);
         c.description = ch.description.empty() ? nullptr : ch.description.c_str();
         c.components = components.empty() ? nullptr : components.data();
@@ -916,7 +1066,9 @@ class FileBuilder {
         c.n_times = times.size();
         c.values = ch.values.data();
         c.n_values = ch.values.size();
-        record(::gtd_builder_add_channel(impl_.get(), &c));
+        const auto mode =
+            ch.unit && ch.unit->is_custom() ? GTD_CHANNEL_UNIT_CUSTOM : GTD_CHANNEL_UNIT_RECOGNIZED;
+        record(::gtd_builder_add_channel_with_unit_mode(impl_.get(), &c, mode));
         return *this;
     }
 
@@ -1223,9 +1375,22 @@ class NavFile {
 
         ChannelView v{};
         v.name = info.name;
-        v.unit = info.has_unit ? std::string{info.unit} : std::string{};
-        v.unit_mode =
-            info.unit_is_custom != 0 ? ChannelUnitMode::Custom : ChannelUnitMode::Recognized;
+        size_t unit_len = 0;
+        std::uint8_t unit_is_custom = 0;
+        const GtdStatus unit_size_status = ::gtd_nav_file_get_channel_unit(
+            impl_.get(), idx, nullptr, 0, &unit_len, &unit_is_custom);
+        if (unit_size_status != GTD_OK)
+            return Status::from(unit_size_status);
+        if (unit_len > 0) {
+            std::vector<char> unit_buffer(unit_len);
+            const GtdStatus unit_status =
+                ::gtd_nav_file_get_channel_unit(impl_.get(), idx, unit_buffer.data(),
+                                                unit_buffer.size(), &unit_len, &unit_is_custom);
+            if (unit_status != GTD_OK)
+                return Status::from(unit_status);
+            const std::string label{unit_buffer.data()};
+            v.unit = ChannelUnit::from_file_label(label, unit_is_custom != 0);
+        }
         v.period = info.period_deg.present
                        ? std::optional<Angle>{Angle::degrees(info.period_deg.value)}
                        : std::nullopt;

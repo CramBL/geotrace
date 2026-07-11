@@ -4,6 +4,8 @@
 //! `geotrace_sdk._geotrace_sdk`.  The public `geotrace_sdk` package re-exports
 //! everything from this module via `python/geotrace_sdk/__init__.py`.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash as _, Hasher as _};
 use std::path::PathBuf;
 
 use chrono::{DateTime, FixedOffset, Utc};
@@ -11,7 +13,7 @@ use geotrace_sdk::{
     Angle, Annotation, BuildError, Channel, ChannelUnit, Constellation, EventMarker,
     EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker,
     MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, NavPoint, NavRecorder, Satellite,
-    SatelliteReport, Velocity,
+    SatelliteReport, Unit, Velocity,
 };
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -355,8 +357,8 @@ impl PySatelliteReport {
 }
 
 /// A recognized channel unit or an explicit display-only custom unit.
-#[pyclass(skip_from_py_object, name = "ChannelUnit")]
-#[derive(Debug, Clone)]
+#[pyclass(eq, skip_from_py_object, name = "ChannelUnit")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PyChannelUnit {
     inner: ChannelUnit,
 }
@@ -387,7 +389,7 @@ impl PyChannelUnit {
 
     #[getter]
     fn is_custom(&self) -> bool {
-        matches!(self.inner, ChannelUnit::Custom(_))
+        !matches!(self.inner, ChannelUnit::Recognized(_))
     }
 
     fn __str__(&self) -> String {
@@ -396,6 +398,182 @@ impl PyChannelUnit {
 
     fn __repr__(&self) -> String {
         format!("ChannelUnit({:?})", self.inner.to_string())
+    }
+
+    fn __hash__(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.inner.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+/// A recognized, convertible channel unit.
+#[pyclass(eq, skip_from_py_object, name = "Unit")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PyUnit {
+    inner: Unit,
+}
+
+#[pymethods]
+#[allow(
+    non_snake_case,
+    reason = "Python unit constants follow the conventional uppercase spelling"
+)]
+impl PyUnit {
+    #[classattr]
+    fn DEG() -> Self {
+        Self { inner: Unit::DEG }
+    }
+    #[classattr]
+    fn M() -> Self {
+        Self { inner: Unit::M }
+    }
+    #[classattr]
+    fn NM() -> Self {
+        Self { inner: Unit::NM }
+    }
+    #[classattr]
+    fn UM() -> Self {
+        Self { inner: Unit::UM }
+    }
+    #[classattr]
+    fn MM() -> Self {
+        Self { inner: Unit::MM }
+    }
+    #[classattr]
+    fn CM() -> Self {
+        Self { inner: Unit::CM }
+    }
+    #[classattr]
+    fn KM() -> Self {
+        Self { inner: Unit::KM }
+    }
+    #[classattr]
+    fn KM_PER_H() -> Self {
+        Self {
+            inner: Unit::KM_PER_H,
+        }
+    }
+    #[classattr]
+    fn M_PER_S() -> Self {
+        Self {
+            inner: Unit::M_PER_S,
+        }
+    }
+    #[classattr]
+    fn MM_PER_S() -> Self {
+        Self {
+            inner: Unit::MM_PER_S,
+        }
+    }
+    #[classattr]
+    fn CM_PER_S() -> Self {
+        Self {
+            inner: Unit::CM_PER_S,
+        }
+    }
+    #[classattr]
+    fn KN() -> Self {
+        Self { inner: Unit::KN }
+    }
+    #[classattr]
+    fn M_PER_S2() -> Self {
+        Self {
+            inner: Unit::M_PER_S2,
+        }
+    }
+    #[classattr]
+    fn MM_PER_S2() -> Self {
+        Self {
+            inner: Unit::MM_PER_S2,
+        }
+    }
+    #[classattr]
+    fn CM_PER_S2() -> Self {
+        Self {
+            inner: Unit::CM_PER_S2,
+        }
+    }
+    #[classattr]
+    fn G() -> Self {
+        Self { inner: Unit::G }
+    }
+    #[classattr]
+    fn UG() -> Self {
+        Self { inner: Unit::UG }
+    }
+    #[classattr]
+    fn MG() -> Self {
+        Self { inner: Unit::MG }
+    }
+    #[classattr]
+    fn KM_PER_H_PER_S() -> Self {
+        Self {
+            inner: Unit::KM_PER_H_PER_S,
+        }
+    }
+    #[classattr]
+    fn NS() -> Self {
+        Self { inner: Unit::NS }
+    }
+    #[classattr]
+    fn US() -> Self {
+        Self { inner: Unit::US }
+    }
+    #[classattr]
+    fn MS() -> Self {
+        Self { inner: Unit::MS }
+    }
+    #[classattr]
+    fn S() -> Self {
+        Self { inner: Unit::S }
+    }
+    #[classattr]
+    fn MIN() -> Self {
+        Self { inner: Unit::MIN }
+    }
+    #[classattr]
+    fn H() -> Self {
+        Self { inner: Unit::H }
+    }
+    #[classattr]
+    fn PERCENT() -> Self {
+        Self {
+            inner: Unit::PERCENT,
+        }
+    }
+    #[classattr]
+    fn PER_S() -> Self {
+        Self { inner: Unit::PER_S }
+    }
+    #[classattr]
+    fn PER_MIN() -> Self {
+        Self {
+            inner: Unit::PER_MIN,
+        }
+    }
+    #[classattr]
+    fn PER_H() -> Self {
+        Self { inner: Unit::PER_H }
+    }
+
+    #[getter]
+    fn label(&self) -> String {
+        self.inner.to_string()
+    }
+
+    fn __str__(&self) -> String {
+        self.inner.to_string()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Unit({:?})", self.inner.to_string())
+    }
+
+    fn __hash__(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.inner.hash(&mut hasher);
+        hasher.finish()
     }
 }
 
@@ -504,6 +682,9 @@ impl PyChannel {
 }
 
 fn parse_python_channel_unit(value: &Bound<'_, PyAny>) -> PyResult<ChannelUnit> {
+    if let Ok(unit) = value.extract::<PyRef<'_, PyUnit>>() {
+        return Ok(unit.inner.into());
+    }
     if let Ok(unit) = value.extract::<PyRef<'_, PyChannelUnit>>() {
         return Ok(unit.inner.clone());
     }
@@ -1344,6 +1525,7 @@ fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMarkerIcon>()?;
     m.add_class::<PySatellite>()?;
     m.add_class::<PySatelliteReport>()?;
+    m.add_class::<PyUnit>()?;
     m.add_class::<PyChannelUnit>()?;
     m.add_class::<PyChannel>()?;
     m.add_class::<PyNavFix>()?;

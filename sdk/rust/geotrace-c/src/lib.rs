@@ -196,7 +196,6 @@ impl GtdSatellite {
 pub struct GtdChannel {
     pub name: *const c_char,
     pub unit: *const c_char,
-    pub unit_mode: u32,
     pub period_deg: GtdOptF64,
     pub description: *const c_char,
     pub components: *const *const c_char,
@@ -216,7 +215,6 @@ pub struct GtdChannelInfo {
     pub name: [c_char; 256],
     pub has_unit: u8,
     pub unit: [c_char; 64],
-    pub unit_is_custom: u8,
     pub period_deg: GtdOptF64,
     pub has_description: u8,
     pub description: [c_char; 1024],

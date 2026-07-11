@@ -20,9 +20,9 @@ use gt_filter::GlobalFilter;
 use gt_loaded_files::LoadedFilesView;
 use gt_query::lexer::{self, TokenClass};
 use gt_query::{
-    ChannelInfo, ChannelSamples, ChannelSchema, ChannelTimeline, CheckedQuery, CompletionTrigger,
-    Construct, ConstructKind, Diagnostic, MetricProvider, PipelineOutput, Quantity, QueryMetric,
-    RunSummary, Span, TrackInput, TrackMatches, Unit,
+    ChannelConflict, ChannelInfo, ChannelSamples, ChannelSchema, ChannelTimeline, CheckedQuery,
+    CompletionTrigger, Construct, ConstructKind, Diagnostic, MetricProvider, PipelineOutput,
+    Quantity, QueryMetric, RunSummary, Span, TrackInput, TrackMatches, Unit,
 };
 use gt_side_panel::widgets::apply_point_click;
 use gt_types::satellites::Constellation;
@@ -2605,19 +2605,26 @@ fn schema_from_files(files: &[LoadedFile]) -> ChannelSchema {
     let mut schema = ChannelSchema::new();
     for file in files {
         for channel in file.tracks.iter().flat_map(|t| &t.channels) {
-            let unit = channel.unit.as_ref().map(ToString::to_string);
             if let Some(existing) = schema.get(&channel.name).cloned() {
                 let mut merged = existing;
-                if !channel_units_compatible(merged.unit.as_deref(), channel.unit.as_ref()) {
-                    let mut labels = vec![
-                        merged.unit.clone().unwrap_or_else(|| "unitless".to_owned()),
-                        unit.clone().unwrap_or_else(|| "unitless".to_owned()),
-                    ];
-                    labels.sort();
-                    labels.dedup();
-                    merged.conflicting_units.extend(labels);
-                    merged.conflicting_units.sort();
-                    merged.conflicting_units.dedup();
+                if !channel_units_compatible(merged.unit.as_ref(), channel.unit.as_ref()) {
+                    merged.conflicts.push(ChannelConflict::Unit {
+                        expected: merged.unit.clone(),
+                        found: channel.unit.clone(),
+                    });
+                }
+                if merged.components != channel.components {
+                    merged.conflicts.push(ChannelConflict::Components {
+                        expected: merged.components.clone(),
+                        found: channel.components.clone(),
+                    });
+                }
+                let period_deg = channel.period.map(|period| period.get::<degree>());
+                if merged.period_deg != period_deg {
+                    merged.conflicts.push(ChannelConflict::Period {
+                        expected_deg: merged.period_deg,
+                        found_deg: period_deg,
+                    });
                 }
                 schema.insert(&channel.name, merged);
                 continue;
@@ -2625,10 +2632,10 @@ fn schema_from_files(files: &[LoadedFile]) -> ChannelSchema {
             schema.insert(
                 &channel.name,
                 ChannelInfo {
-                    unit,
+                    unit: channel.unit.clone(),
                     period_deg: channel.period.map(|p| p.get::<degree>()),
                     components: channel.components.clone(),
-                    conflicting_units: Vec::new(),
+                    conflicts: Vec::new(),
                 },
             );
         }
@@ -2636,12 +2643,21 @@ fn schema_from_files(files: &[LoadedFile]) -> ChannelSchema {
     schema
 }
 
-fn channel_units_compatible(existing: Option<&str>, incoming: Option<&ChannelUnit>) -> bool {
+fn channel_units_compatible(
+    existing: Option<&ChannelUnit>,
+    incoming: Option<&ChannelUnit>,
+) -> bool {
     match (existing, incoming) {
         (None, None) => true,
-        (Some(existing), Some(ChannelUnit::Recognized(incoming))) => Unit::from_label(existing)
-            .is_some_and(|existing| existing.quantity() == incoming.quantity()),
-        (Some(existing), Some(ChannelUnit::Custom(incoming))) => existing == incoming.as_str(),
+        (Some(ChannelUnit::Recognized(existing)), Some(ChannelUnit::Recognized(incoming))) => {
+            existing.quantity() == incoming.quantity()
+        }
+        (Some(ChannelUnit::Custom(existing)), Some(ChannelUnit::Custom(incoming))) => {
+            existing == incoming
+        }
+        (Some(ChannelUnit::Unrecognized(existing)), Some(ChannelUnit::Unrecognized(incoming))) => {
+            existing == incoming
+        }
         _ => false,
     }
 }
@@ -3103,6 +3119,8 @@ fn segments(range: Range<usize>, underlines: &[(usize, usize)]) -> Vec<Range<usi
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
+    use uom::si::angle::degree;
+    use uom::si::f64::Angle;
 
     use super::*;
 
@@ -3329,8 +3347,7 @@ mod tests {
         use gt_types::satellites::{Satellite, Satellites};
         use gt_types::time_types::GpsTime;
         use gt_types::tpv::TimePositionVelocity;
-        use uom::si::angle::degree;
-        use uom::si::f64::{Angle, Velocity};
+        use uom::si::f64::Velocity;
         use uom::si::velocity::kilometer_per_hour;
 
         let time = |secs: i64| {
@@ -4036,9 +4053,63 @@ mod tests {
             .expect_err("acceleration and angle units conflict");
         assert_eq!(
             err.message,
-            "@accel has incompatible units across loaded files"
+            "@accel has incompatible metadata across loaded files"
         );
-        assert_eq!(err.help.as_deref(), Some("found deg, mg"));
+        assert_eq!(err.help.as_deref(), Some("units mg and deg"));
+    }
+
+    #[test]
+    fn schema_rejects_shape_component_order_and_period_conflicts() {
+        let scalar = scalar_channel("sensor", Some("deg"), &[(0, 1.0)]);
+        let vector = vector_channel(
+            "sensor",
+            Some("deg"),
+            &["x", "y", "z"],
+            &[(0, [1.0, 2.0, 3.0])],
+        );
+        let schema = schema_from_files(&[
+            file_with_channels(vec![scalar]),
+            file_with_channels(vec![vector]),
+        ]);
+        let err = check_text("points | window 2 | where max(@sensor) > 1 deg", &schema)
+            .expect_err("scalar and vector definitions conflict");
+        assert_eq!(
+            err.help.as_deref(),
+            Some("components [] and [\"x\", \"y\", \"z\"]")
+        );
+
+        let xyz = vector_channel(
+            "sensor",
+            Some("deg"),
+            &["x", "y", "z"],
+            &[(0, [1.0, 2.0, 3.0])],
+        );
+        let zyx = vector_channel(
+            "sensor",
+            Some("deg"),
+            &["z", "y", "x"],
+            &[(0, [1.0, 2.0, 3.0])],
+        );
+        let schema =
+            schema_from_files(&[file_with_channels(vec![xyz]), file_with_channels(vec![zyx])]);
+        let err = check_text("points | window 2 | where max(@sensor.x) > 1 deg", &schema)
+            .expect_err("component order must agree");
+        assert_eq!(
+            err.help.as_deref(),
+            Some("components [\"x\", \"y\", \"z\"] and [\"z\", \"y\", \"x\"]")
+        );
+
+        let mut linear = scalar_channel("sensor", Some("deg"), &[(0, 1.0)]);
+        let mut circular = linear.clone();
+        linear.period = None;
+        circular.period = Some(Angle::new::<degree>(360.0));
+        let schema = schema_from_files(&[
+            file_with_channels(vec![linear]),
+            file_with_channels(vec![circular]),
+        ]);
+        let err = check_text("points | window 2 | where max(@sensor) > 1 deg", &schema)
+            .expect_err("linear and circular definitions conflict");
+        assert_eq!(err.help.as_deref(), Some("periods None and Some(360.0)"));
     }
 
     #[test]

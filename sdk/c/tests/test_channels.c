@@ -1,9 +1,60 @@
 #include "../geotrace.h"
 #include <criterion/criterion.h>
 #include <math.h>
+#include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define assert_near(a, b, eps) cr_assert(fabs((a) - (b)) < (eps))
+
+typedef struct {
+    const char *name;
+    const char *unit;
+    GtdOptF64 period_deg;
+    const char *description;
+    const char *const *components;
+    size_t n_components;
+    const GtdTimestamp *times;
+    size_t n_times;
+    const double *values;
+    size_t n_values;
+} FrozenGtdChannelV040;
+
+typedef struct {
+    char name[256];
+    uint8_t has_unit;
+    char unit[64];
+    GtdOptF64 period_deg;
+    uint8_t has_description;
+    char description[1024];
+    size_t component_count;
+    size_t sample_count;
+} FrozenGtdChannelInfoV040;
+
+_Static_assert(sizeof(GtdChannel) == sizeof(FrozenGtdChannelV040), "GtdChannel 0.4 ABI changed");
+_Static_assert(sizeof(GtdChannelInfo) == sizeof(FrozenGtdChannelInfoV040),
+               "GtdChannelInfo 0.4 ABI changed");
+_Static_assert(offsetof(GtdChannel, period_deg) == offsetof(FrozenGtdChannelV040, period_deg),
+               "GtdChannel 0.4 field offsets changed");
+_Static_assert(offsetof(GtdChannelInfo, period_deg) ==
+                   offsetof(FrozenGtdChannelInfoV040, period_deg),
+               "GtdChannelInfo 0.4 field offsets changed");
+
+Test(channels, frozen_v040_input_layout_calls_current_library) {
+    GtdFileBuilder *b = gtd_builder_create();
+    GtdTimestamp time = gtd_ts_from_seconds(1700000000ULL);
+    double value = 1.0;
+    FrozenGtdChannelV040 channel = {0};
+    channel.name = "incline";
+    channel.unit = "deg";
+    channel.period_deg = GTD_NONE_F64;
+    channel.times = &time;
+    channel.n_times = 1;
+    channel.values = &value;
+    channel.n_values = 1;
+    cr_assert_eq(gtd_builder_add_channel(b, (const GtdChannel *)&channel), GTD_OK);
+    gtd_builder_destroy(b);
+}
 
 /* Write a scalar and a vector channel, then read them back from a byte buffer. */
 Test(channels, round_trip) {
@@ -128,9 +179,43 @@ Test(channels, unrecognized_unit_requires_custom_mode) {
     ch.n_values = 1;
     cr_assert_eq(gtd_builder_add_channel(b, &ch), GTD_ERR_INVALID_CHANNEL);
 
-    ch.unit_mode = GTD_CHANNEL_UNIT_CUSTOM;
-    cr_assert_eq(gtd_builder_add_channel(b, &ch), GTD_OK);
+    cr_assert_eq(gtd_builder_add_channel_with_unit_mode(b, &ch, GTD_CHANNEL_UNIT_CUSTOM), GTD_OK);
     gtd_builder_destroy(b);
+}
+
+Test(channels, long_custom_unit_uses_lossless_accessor) {
+    GtdFileBuilder *b = gtd_builder_create();
+    char label[160];
+    memset(label, 'x', sizeof(label) - 1);
+    label[sizeof(label) - 1] = '\0';
+    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
+    double value = 1.0;
+    GtdChannel ch = {0};
+    ch.name = "quality";
+    ch.unit = label;
+    ch.period_deg = GTD_NONE_F64;
+    ch.times = &t;
+    ch.n_times = 1;
+    ch.values = &value;
+    ch.n_values = 1;
+    cr_assert_eq(gtd_builder_add_channel_with_unit_mode(b, &ch, GTD_CHANNEL_UNIT_CUSTOM), GTD_OK);
+
+    GtdNavFile *file = NULL;
+    cr_assert_eq(gtd_builder_finish(b, &file), GTD_OK);
+    size_t required_len = 0;
+    uint8_t is_custom = 0;
+    cr_assert_eq(gtd_nav_file_get_channel_unit(file, 0, NULL, 0, &required_len, &is_custom),
+                 GTD_OK);
+    cr_assert_eq(required_len, sizeof(label));
+    cr_assert_eq(is_custom, 1);
+    char *read_label = malloc(required_len);
+    cr_assert_not_null(read_label);
+    cr_assert_eq(
+        gtd_nav_file_get_channel_unit(file, 0, read_label, required_len, &required_len, &is_custom),
+        GTD_OK);
+    cr_assert_str_eq(read_label, label);
+    free(read_label);
+    gtd_nav_file_destroy(file);
 }
 
 Test(channels, length_mismatch_is_rejected) {

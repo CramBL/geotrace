@@ -334,13 +334,23 @@ pub unsafe extern "C" fn gtd_builder_add_channel(
     b: *mut GtdFileBuilder,
     channel: *const GtdChannel,
 ) -> GtdStatus {
+    // SAFETY: this forwards the caller's pointers unchanged.
+    unsafe { gtd_builder_add_channel_with_unit_mode(b, channel, 0) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_builder_add_channel_with_unit_mode(
+    b: *mut GtdFileBuilder,
+    channel: *const GtdChannel,
+    unit_mode: u32,
+) -> GtdStatus {
     run_catching_panics(|| {
         let b = nonnull_mut!(b);
         let ch = nonnull_ref!(channel);
 
         let name = cstr!(ch.name);
         let unit_label = cstr_opt!(ch.unit);
-        let unit = match parse_channel_unit(unit_label, ch.unit_mode) {
+        let unit = match parse_channel_unit(unit_label, unit_mode) {
             Ok(unit) => unit,
             Err(status) => return status,
         };

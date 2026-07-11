@@ -33,7 +33,7 @@ mod position;
 mod unit;
 
 pub use ast::{ParamName, Query, Span};
-pub use check::{ChannelInfo, ChannelSchema, CheckedQuery, Params, Window, check};
+pub use check::{ChannelConflict, ChannelInfo, ChannelSchema, CheckedQuery, Params, Window, check};
 pub use construct::{Construct, ConstructKind, catalog};
 pub use dimension::Dimension;
 pub use eval::{
@@ -87,6 +87,7 @@ impl Diagnostic {
 mod tests {
     use std::collections::BTreeMap;
 
+    use geotrace_units::ChannelUnit;
     use gt_types::{DisplayMode, FileIdx, TrackIdx, TrackRef};
     use rstest::rstest;
 
@@ -1065,10 +1066,10 @@ mod tests {
         schema.insert(
             name,
             ChannelInfo {
-                unit: unit.map(str::to_owned),
+                unit: unit.map(ChannelUnit::from_file_label),
                 period_deg,
                 components: vec![],
-                conflicting_units: Vec::new(),
+                conflicts: Vec::new(),
             },
         );
         schema
@@ -1080,10 +1081,10 @@ mod tests {
         schema.insert(
             name,
             ChannelInfo {
-                unit: unit.map(str::to_owned),
+                unit: unit.map(ChannelUnit::from_file_label),
                 period_deg: None,
                 components: components.iter().map(|c| (*c).to_owned()).collect(),
-                conflicting_units: Vec::new(),
+                conflicts: Vec::new(),
             },
         );
         schema
@@ -1176,10 +1177,10 @@ mod tests {
         schema.insert(
             "ay",
             ChannelInfo {
-                unit: Some("g".to_owned()),
+                unit: Some(Unit::G.into()),
                 period_deg: None,
                 components: vec![],
-                conflicting_units: Vec::new(),
+                conflicts: Vec::new(),
             },
         );
         let err = check(
@@ -1290,10 +1291,10 @@ mod tests {
         schema.insert(
             "accel2",
             ChannelInfo {
-                unit: Some("g".to_owned()),
+                unit: Some(Unit::G.into()),
                 period_deg: None,
                 components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
-                conflicting_units: Vec::new(),
+                conflicts: Vec::new(),
             },
         );
         let err = check(
@@ -1319,19 +1320,19 @@ mod tests {
         schema.insert(
             "accel2",
             ChannelInfo {
-                unit: Some("g".to_owned()),
+                unit: Some(Unit::G.into()),
                 period_deg: None,
                 components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
-                conflicting_units: Vec::new(),
+                conflicts: Vec::new(),
             },
         );
         schema.insert(
             "incline",
             ChannelInfo {
-                unit: Some("deg".to_owned()),
+                unit: Some(Unit::DEG.into()),
                 period_deg: None,
                 components: vec![],
-                conflicting_units: Vec::new(),
+                conflicts: Vec::new(),
             },
         );
         schema
@@ -1439,10 +1440,10 @@ mod tests {
         schema.insert(
             "gyro",
             ChannelInfo {
-                unit: Some("deg".to_owned()),
+                unit: Some(Unit::DEG.into()),
                 period_deg: None,
                 components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
-                conflicting_units: Vec::new(),
+                conflicts: Vec::new(),
             },
         );
         let err = check(&parse(src).unwrap(), &schema).unwrap_err();

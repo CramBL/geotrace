@@ -59,7 +59,6 @@ int main(void) {
     GtdChannel accel = {0};
     accel.name = "accel";
     accel.unit = "mg";
-    accel.unit_mode = GTD_CHANNEL_UNIT_RECOGNIZED;
     accel.period_deg = GTD_NONE_F64;
     accel.components = comps;
     accel.n_components = 3;
@@ -76,13 +75,12 @@ int main(void) {
     GtdChannel quality = {0};
     quality.name = "quality";
     quality.unit = "vendor score";
-    quality.unit_mode = GTD_CHANNEL_UNIT_CUSTOM;
     quality.period_deg = GTD_NONE_F64;
     quality.times = times;
     quality.n_times = 3;
     quality.values = quality_vals;
     quality.n_values = 3;
-    if (gtd_builder_add_channel(b, &quality) != GTD_OK) {
+    if (gtd_builder_add_channel_with_unit_mode(b, &quality, GTD_CHANNEL_UNIT_CUSTOM) != GTD_OK) {
         fprintf(stderr, "add_channel(quality): %s\n", gtd_last_error());
         gtd_builder_destroy(b);
         return 1;
