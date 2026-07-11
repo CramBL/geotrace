@@ -45,13 +45,13 @@ use geotrace_sdk::{
     EventMarkerColor as SdkEventMarkerColor, EventMarkerIconChoice as SdkEventMarkerIconChoice,
     EventMarkerPoint, EventMarkerStyle as SdkEventMarkerStyle, Marker as SdkMarker,
     MarkerIcon as SdkMarkerIcon, NavFile, NavFileBuilder, Satellite as SdkSatellite,
-    SatelliteReport, collect_satellite_warnings,
+    SatelliteReport, TravelMode as SdkTravelMode, collect_satellite_warnings,
 };
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::{GpsTime, SysTime};
 use gt_types::{
     Channel, CustomMarker, EventMarker, EventMarkerStyle, FileSource, Latitude, LoadWarning,
-    LoadedFile, Longitude, MarkerColor, MarkerIcon, NavPoint, TimePositionVelocity,
+    LoadedFile, Longitude, MarkerColor, MarkerIcon, NavPoint, TimePositionVelocity, TravelMode,
 };
 
 pub struct LoadedGtd {
@@ -138,14 +138,31 @@ pub fn load_gtd_file_with_progress(
     Ok(LoadedGtd { file, identity })
 }
 
-/// Capture the recording's SDK file metadata (title/device/notes) for display in
-/// the app. The identity is handled separately by [`derive_identity`].
+/// Capture the recording's SDK file metadata (title/device/notes/travel mode)
+/// for display in the app. The identity is handled separately by
+/// [`derive_identity`].
 fn file_meta_from_nav(nav_file: &NavFile) -> gt_track_builder::FileMeta {
     let meta = nav_file.meta();
     gt_track_builder::FileMeta {
         title: meta.title.clone(),
         device: meta.device.clone(),
         notes: meta.notes.clone(),
+        travel_mode: meta.travel_mode.as_ref().map(convert_travel_mode),
+    }
+}
+
+/// Map the SDK's wire-format travel mode onto the app type. Unknown wire
+/// values stay preserved verbatim across the boundary.
+fn convert_travel_mode(mode: &SdkTravelMode) -> TravelMode {
+    match mode {
+        SdkTravelMode::Car => TravelMode::Car,
+        SdkTravelMode::Motorcycle => TravelMode::Motorcycle,
+        SdkTravelMode::Bicycle => TravelMode::Bicycle,
+        SdkTravelMode::Pedestrian => TravelMode::Pedestrian,
+        SdkTravelMode::Boat => TravelMode::Boat,
+        SdkTravelMode::Rail => TravelMode::Rail,
+        SdkTravelMode::Aircraft => TravelMode::Aircraft,
+        SdkTravelMode::Unknown(raw) => TravelMode::Unknown(raw.clone()),
     }
 }
 
@@ -528,7 +545,7 @@ mod tests {
     };
     use proptest::prelude::*;
     use rstest::rstest;
-    use strum::EnumCount;
+    use strum::{EnumCount, IntoEnumIterator};
     use uom::si::velocity::meter_per_second as uom_mps;
 
     fn base() -> DateTime<Utc> {
@@ -597,12 +614,27 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Some("Morning ride"), Some("uBlox F9P"), Some("cross-town commute"))]
-    #[case(None, None, None)]
+    #[case(
+        Some("Morning ride"),
+        Some("uBlox F9P"),
+        Some("cross-town commute"),
+        Some(SdkTravelMode::Bicycle),
+        Some(TravelMode::Bicycle)
+    )]
+    #[case(
+        None,
+        None,
+        None,
+        Some(SdkTravelMode::Unknown("hovercraft".to_owned())),
+        Some(TravelMode::Unknown("hovercraft".to_owned()))
+    )]
+    #[case(None, None, None, None, None)]
     fn loaded_file_carries_sdk_metadata(
         #[case] title: Option<&str>,
         #[case] device: Option<&str>,
         #[case] notes: Option<&str>,
+        #[case] sdk_travel_mode: Option<SdkTravelMode>,
+        #[case] travel_mode: Option<TravelMode>,
     ) {
         let t0 = base();
         let mut builder = NavFileBuilder::new();
@@ -615,6 +647,9 @@ mod tests {
         if let Some(notes) = notes {
             builder = builder.with_notes(notes);
         }
+        if let Some(mode) = sdk_travel_mode {
+            builder = builder.with_travel_mode(mode);
+        }
         let mut recorder = builder.open();
         for i in 0..3i64 {
             recorder.add_nav_fix(minimal_fix(t0 + Duration::seconds(i)));
@@ -626,6 +661,20 @@ mod tests {
         assert_eq!(file.metadata.title.as_deref(), title);
         assert_eq!(file.metadata.device.as_deref(), device);
         assert_eq!(file.metadata.notes.as_deref(), notes);
+        assert_eq!(file.metadata.travel_mode, travel_mode);
+    }
+
+    /// The SDK and app travel-mode enums are structurally identical; every SDK
+    /// variant must map onto the app variant of the same name. Iterating the
+    /// app enum and converting its wire form back through the SDK type pins
+    /// the two variant sets together, so adding a variant to one without the
+    /// other fails here.
+    #[test]
+    fn convert_travel_mode_covers_every_variant() {
+        for app_mode in TravelMode::iter() {
+            let sdk_mode = SdkTravelMode::from_lower_case(app_mode.to_string());
+            assert_eq!(convert_travel_mode(&sdk_mode), app_mode);
+        }
     }
 
     #[test]

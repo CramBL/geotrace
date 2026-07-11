@@ -12,7 +12,7 @@ use gt_types::satellites::SlipEvent;
 use gt_types::time_types::GpsTime;
 use gt_types::track::{
     FileMetadata, FileSource, FixStats, LoadWarning, LoadedFile, LoadedTrack, SegmentLengthRange,
-    TimeRange, TrackMetadata,
+    TimeRange, TrackMetadata, TravelMode,
 };
 use std::ops::Range;
 use uom::si::f64::Length;
@@ -555,6 +555,7 @@ pub struct FileMeta {
     pub title: Option<String>,
     pub device: Option<String>,
     pub notes: Option<String>,
+    pub travel_mode: Option<TravelMode>,
 }
 
 impl From<&FileMetadata> for FileMeta {
@@ -565,6 +566,7 @@ impl From<&FileMetadata> for FileMeta {
             title: metadata.title.clone(),
             device: metadata.device.clone(),
             notes: metadata.notes.clone(),
+            travel_mode: metadata.travel_mode.clone(),
         }
     }
 }
@@ -754,6 +756,7 @@ pub fn build_loaded_file(
             title: file_meta.title,
             device: file_meta.device,
             notes: file_meta.notes,
+            travel_mode: file_meta.travel_mode,
         },
         tracks: loaded_tracks,
         event_marker_styles: event_marker_styles
@@ -1568,6 +1571,7 @@ mod tests {
             title: Some("Morning ride".to_owned()),
             device: Some("uBlox F9P".to_owned()),
             notes: Some("cross-town".to_owned()),
+            travel_mode: Some(TravelMode::Bicycle),
         };
         let f = build_loaded_file(
             "ride.gtd".to_owned(),
@@ -1584,6 +1588,7 @@ mod tests {
         assert_eq!(f.metadata.title.as_deref(), Some("Morning ride"));
         assert_eq!(f.metadata.device.as_deref(), Some("uBlox F9P"));
         assert_eq!(f.metadata.notes.as_deref(), Some("cross-town"));
+        assert_eq!(f.metadata.travel_mode, Some(TravelMode::Bicycle));
 
         // Round-trip: rebuilding from the built metadata (the re-segmentation
         // path) preserves the fields.
@@ -1591,6 +1596,7 @@ mod tests {
         assert_eq!(recovered.title.as_deref(), Some("Morning ride"));
         assert_eq!(recovered.device.as_deref(), Some("uBlox F9P"));
         assert_eq!(recovered.notes.as_deref(), Some("cross-town"));
+        assert_eq!(recovered.travel_mode, Some(TravelMode::Bicycle));
     }
 
     proptest::proptest! {

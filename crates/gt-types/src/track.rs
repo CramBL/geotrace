@@ -339,6 +339,75 @@ impl TrackRef {
     }
 }
 
+/// Platform a recording was made on, declared by the recorder via the SDK's
+/// `travel_mode` metadata field.
+///
+/// Mirrors `geotrace_sdk::TravelMode` (the structurally-identical wire-format
+/// type); `gt-loader` converts between the two. Keep the variant sets in sync.
+/// Wire values outside the known set are preserved in [`TravelMode::Unknown`],
+/// never dropped - unexpected declarations are signal, not noise.
+///
+/// `Display`/`FromStr` (via `strum`) give the lower snake_case wire form used
+/// by [`TravelMode::from_wire`].
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    strum::EnumCount,
+    strum::EnumIter,
+)]
+#[strum(serialize_all = "snake_case")]
+pub enum TravelMode {
+    Car,
+    Motorcycle,
+    Bicycle,
+    Pedestrian,
+    Boat,
+    Rail,
+    Aircraft,
+    /// A wire value not in the known set, preserved verbatim.
+    #[strum(default)]
+    Unknown(String),
+}
+
+impl TravelMode {
+    /// Parses the lower snake_case wire form (the `meta_travel_mode` attribute
+    /// value).
+    ///
+    /// Never fails: values outside the known set become
+    /// [`TravelMode::Unknown`], preserving the input verbatim.
+    pub fn from_wire(s: impl AsRef<str>) -> Self {
+        let s = s.as_ref();
+        match s.parse() {
+            Ok(mode) => mode,
+            // `#[strum(default)]` makes parsing infallible; keep the explicit
+            // fallback so removing the default cannot introduce a panic here.
+            Err(_) => TravelMode::Unknown(s.to_owned()),
+        }
+    }
+
+    /// Canonical human-readable name, e.g. `TravelMode::Car.display_name() == "Car"`.
+    ///
+    /// Single source of truth for this type's display spelling - call sites
+    /// should format through this rather than re-typing the name. Unknown
+    /// values display their preserved wire form verbatim.
+    pub fn display_name(&self) -> &str {
+        match self {
+            TravelMode::Car => "Car",
+            TravelMode::Motorcycle => "Motorcycle",
+            TravelMode::Bicycle => "Bicycle",
+            TravelMode::Pedestrian => "Pedestrian",
+            TravelMode::Boat => "Boat",
+            TravelMode::Rail => "Rail",
+            TravelMode::Aircraft => "Aircraft",
+            TravelMode::Unknown(raw) => raw,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FileMetadata {
     pub filename: String,
@@ -353,6 +422,8 @@ pub struct FileMetadata {
     pub device: Option<String>,
     /// Optional free-text notes from the recording's SDK metadata.
     pub notes: Option<String>,
+    /// Optional declared travel mode from the recording's SDK metadata.
+    pub travel_mode: Option<TravelMode>,
 }
 
 /// Sentinel default for use in test helpers via struct-update syntax (`..FileMetadata::default()`).
@@ -370,6 +441,7 @@ impl Default for FileMetadata {
             title: None,
             device: None,
             notes: None,
+            travel_mode: None,
         }
     }
 }
@@ -432,4 +504,50 @@ pub struct LoadedFile {
     pub source: FileSource,
     /// Data quality warnings detected when the file was loaded (empty when clean).
     pub load_warnings: Vec<LoadWarning>,
+}
+
+#[cfg(test)]
+mod travel_mode_tests {
+    use strum::{EnumCount, IntoEnumIterator};
+
+    use super::*;
+
+    /// The wire form is the `meta_travel_mode` attribute value produced by the
+    /// SDK. Every variant must round-trip through it, and unknown values must
+    /// be preserved verbatim rather than dropped.
+    #[test]
+    fn from_wire_round_trips_every_variant() {
+        for mode in TravelMode::iter() {
+            assert_eq!(TravelMode::from_wire(mode.to_string()), mode);
+        }
+        assert_eq!(
+            TravelMode::from_wire("hovercraft"),
+            TravelMode::Unknown("hovercraft".into())
+        );
+    }
+
+    /// Pin the display spellings so a variant rename cannot silently change
+    /// what the metadata rows show. The table length is asserted against
+    /// `EnumCount` so a new variant cannot be forgotten here.
+    #[test]
+    fn display_names_are_stable() {
+        let known = [
+            (TravelMode::Car, "Car"),
+            (TravelMode::Motorcycle, "Motorcycle"),
+            (TravelMode::Bicycle, "Bicycle"),
+            (TravelMode::Pedestrian, "Pedestrian"),
+            (TravelMode::Boat, "Boat"),
+            (TravelMode::Rail, "Rail"),
+            (TravelMode::Aircraft, "Aircraft"),
+        ];
+        // Every variant except the `Unknown` carrier must appear in the table.
+        assert_eq!(known.len(), TravelMode::COUNT - 1);
+        for (mode, display) in known {
+            assert_eq!(mode.display_name(), display);
+        }
+        assert_eq!(
+            TravelMode::Unknown("hovercraft".into()).display_name(),
+            "hovercraft"
+        );
+    }
 }

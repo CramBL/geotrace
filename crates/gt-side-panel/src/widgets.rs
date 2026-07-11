@@ -1,4 +1,4 @@
-use gt_types::{FileMetadata, FixStats};
+use gt_types::{FileMetadata, FixStats, TravelMode};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 
 use crate::tree::CheckState;
@@ -13,6 +13,8 @@ use crate::tree::CheckState;
 pub struct MetadataView<'a> {
     pub title: Option<&'a str>,
     pub device: Option<&'a str>,
+    /// Display form of the declared travel mode (see [`TravelMode::display_name`]).
+    pub travel_mode: Option<&'a str>,
     pub identity: Option<&'a str>,
     pub notes: Option<&'a str>,
 }
@@ -24,6 +26,7 @@ impl<'a> MetadataView<'a> {
         Self {
             title: metadata.title.as_deref(),
             device: metadata.device.as_deref(),
+            travel_mode: metadata.travel_mode.as_ref().map(TravelMode::display_name),
             identity,
             notes: metadata.notes.as_deref(),
         }
@@ -34,13 +37,17 @@ impl<'a> MetadataView<'a> {
 ///
 /// Kept in step with the fields rendered by [`metadata_detail_rows`].
 pub fn has_metadata_details(view: &MetadataView<'_>) -> bool {
-    view.title.is_some() || view.device.is_some() || view.identity.is_some() || view.notes.is_some()
+    view.title.is_some()
+        || view.device.is_some()
+        || view.travel_mode.is_some()
+        || view.identity.is_some()
+        || view.notes.is_some()
 }
 
 /// Render the present metadata fields as a two-column grid (weak label, value),
-/// in a stable order: title, device, identity, notes. Values wrap to the
-/// available width, so the enclosing (resizable) container governs how much is
-/// shown. Renders nothing when the view is empty.
+/// in a stable order: title, device, travel mode, identity, notes. Values wrap
+/// to the available width, so the enclosing (resizable) container governs how
+/// much is shown. Renders nothing when the view is empty.
 pub fn metadata_detail_rows(ui: &mut egui::Ui, view: &MetadataView<'_>) {
     egui::Grid::new("recording_metadata_grid")
         .num_columns(2)
@@ -58,6 +65,9 @@ pub fn metadata_detail_rows(ui: &mut egui::Ui, view: &MetadataView<'_>) {
             }
             if let Some(device) = view.device {
                 row("Device", device);
+            }
+            if let Some(travel_mode) = view.travel_mode {
+                row("Travel mode", travel_mode);
             }
             if let Some(identity) = view.identity {
                 // Strip the internal `auto:` marker; never show it verbatim.

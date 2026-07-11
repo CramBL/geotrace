@@ -493,6 +493,7 @@ fn make_state_with_metadata() -> State {
                 title: Some(title.to_owned()),
                 device: Some(device.to_owned()),
                 notes: Some(notes.to_owned()),
+                travel_mode: None,
             },
             vec![],
         );
@@ -542,7 +543,7 @@ fn snapshot_metadata_detail_rows_content() {
     // Directly exercise the grid renderer used by the recording-details dialog,
     // independent of the note-icon click that opens it.
     let mut h = TestHarness::builder()
-        .size(egui::vec2(480.0, 120.0))
+        .size(egui::vec2(480.0, 150.0))
         .ui(move |ui| {
             ui.add_space(4.0);
             gt_side_panel::widgets::metadata_detail_rows(
@@ -550,6 +551,7 @@ fn snapshot_metadata_detail_rows_content() {
                 &gt_side_panel::widgets::MetadataView {
                     title: Some("Morning ride"),
                     device: Some("uBlox F9P"),
+                    travel_mode: Some("Bicycle"),
                     identity: Some("auto:Morning ride::uBlox F9P"),
                     notes: Some("cross-town commute"),
                 },
@@ -579,6 +581,7 @@ fn clicking_note_icon_requests_recording_details() {
             title: Some("Morning ride".to_owned()),
             device: Some("uBlox F9P".to_owned()),
             notes: None,
+            travel_mode: None,
         },
         vec![],
     );

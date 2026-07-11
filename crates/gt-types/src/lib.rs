@@ -33,5 +33,5 @@ pub use tpv::TimePositionVelocityBuilder;
 pub use track::{
     AssociationConfig, FileMetadata, FileSource, FixStats, LOD_BASE_TOLERANCE_MERC, LoadWarning,
     LoadedFile, LoadedTrack, MarkerRequirement, MercBounds, SegmentLengthRange, SpatialPoint,
-    TimeRange, TrackLod, TrackMetadata, merc_bounds_for_rect,
+    TimeRange, TrackLod, TrackMetadata, TravelMode, merc_bounds_for_rect,
 };

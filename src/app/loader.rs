@@ -706,6 +706,7 @@ pub(super) fn build_log_loaded_file(
             title: None,
             device: None,
             notes: None,
+            travel_mode: None,
         },
         tracks: vec![track],
         event_marker_styles: std::collections::HashMap::new(),

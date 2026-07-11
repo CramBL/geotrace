@@ -1,6 +1,7 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use gt_history::{DatabaseRef, PruneMode, RecordingEntry, RecordingMeta};
 use gt_side_panel::widgets::{MetadataView, has_metadata_details, metadata_detail_rows};
+use gt_types::TravelMode;
 use gt_ui_theme::warning_amber;
 
 use crate::app::history_db::{DeleteReason, HistoryWorker};
@@ -768,9 +769,11 @@ fn identity_cell(ui: &mut egui::Ui, entry: &RecordingEntry) {
     // The full identity is the hover's first line, so leave it out of the view:
     // the note icon and rows are for the SDK's title/device/notes only. Every
     // recording has an identity, so including it would badge every row.
+    let travel_mode = entry.travel_mode.as_deref().map(travel_mode_display);
     let meta = MetadataView {
         title: entry.title.as_deref(),
         device: entry.device.as_deref(),
+        travel_mode: travel_mode.as_deref(),
         identity: None,
         notes: entry.notes.as_deref(),
     };
@@ -797,6 +800,13 @@ fn identity_cell(ui: &mut egui::Ui, entry: &RecordingEntry) {
 
 fn identity_display_parts(identity: &str) -> (&str, bool) {
     gt_loaded_files::display_identity(identity)
+}
+
+/// Display form of a History entry's raw travel-mode wire value (the DB stores
+/// the `meta_travel_mode` attribute verbatim): known modes get their human
+/// spelling, unknown wire values pass through verbatim.
+fn travel_mode_display(wire: &str) -> String {
+    TravelMode::from_wire(wire).display_name().to_owned()
 }
 
 fn format_duration(dur: chrono::Duration) -> String {
@@ -864,7 +874,7 @@ mod tests {
 
     use super::{
         DatabaseRef, HistoryWindow, HistoryWorker, RecordingEntry, RecordingMeta, identity_cell,
-        identity_display_parts,
+        identity_display_parts, travel_mode_display,
     };
 
     /// Harness state for driving the History window: the window, a live (empty)
@@ -1062,7 +1072,37 @@ mod tests {
             title: None,
             device: None,
             notes: None,
+            travel_mode: None,
         }
+    }
+
+    /// The DB hands the listing the raw `meta_travel_mode` wire value; the
+    /// hover must show the human spelling for known modes and the preserved
+    /// wire value verbatim for unknown ones.
+    #[rstest::rstest]
+    #[case("bicycle", "Bicycle")]
+    #[case("hovercraft", "hovercraft")]
+    fn travel_mode_display_humanizes_the_wire_value(#[case] wire: &str, #[case] expected: &str) {
+        assert_eq!(travel_mode_display(wire), expected);
+    }
+
+    /// A travel mode alone must badge the row with the note icon, proving
+    /// `identity_cell` feeds the field into the shared metadata presence check.
+    #[test]
+    fn travel_mode_alone_shows_the_metadata_note_icon() {
+        let mut entry = entry_with_identity("auto:ride.gtd");
+        entry.travel_mode = Some("bicycle".to_owned());
+        let harness = history_harness(vec![entry]);
+        let mut h = TestHarness::builder()
+            .size(egui::vec2(900.0, 500.0))
+            .ui_state(show_history, harness);
+        h.run();
+        assert!(
+            h.inner
+                .query_by_label(egui_phosphor::regular::NOTE)
+                .is_some(),
+            "the note icon should appear for an entry whose only metadata is a travel mode"
+        );
     }
 
     /// Settled width of the History window, mirroring the real container: a
