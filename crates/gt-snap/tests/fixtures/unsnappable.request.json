@@ -17,7 +17,9 @@
       "edge.way_id",
       "edge.road_class",
       "edge.speed_limit",
-      "edge.surface"
+      "edge.surface",
+      "edge.begin_shape_index",
+      "edge.end_shape_index"
     ]
   },
   "shape": [

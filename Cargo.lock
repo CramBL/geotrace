@@ -2460,11 +2460,16 @@ name = "gt-snap"
 version = "0.5.1"
 dependencies = [
  "chrono",
+ "geo-types",
  "insta",
+ "polyline",
+ "proptest",
  "reqwest 0.12.28",
+ "rstest",
  "serde",
  "serde_json",
  "strum",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -4447,6 +4452,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50596ddc09eb5ad5f75cacd40209568e66df71baf86e1499a0e99c4cff12a5a6"
 dependencies = [
  "arrayvec",
+]
+
+[[package]]
+name = "polyline"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f19cbf429afe5a5186d4c6ca7b246b446b2d18919eefdddb521792d57c874f67"
+dependencies = [
+ "geo-types",
 ]
 
 [[package]]

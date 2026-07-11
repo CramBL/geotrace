@@ -13,6 +13,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+pub mod snapped_track;
 pub mod wire;
 
 /// Base URL of the default map-matching server: the public Valhalla instance

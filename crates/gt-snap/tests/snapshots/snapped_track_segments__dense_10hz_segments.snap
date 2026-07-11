@@ -1,0 +1,7 @@
+---
+source: crates/gt-snap/tests/snapped_track_segments.rs
+expression: digest(&segments)
+---
+[
+    "15 positions, (55.676045, 12.567420) -> (55.674404, 12.570180)",
+]
