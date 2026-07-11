@@ -2,6 +2,11 @@
 //! compound multi-hover labels, candidate resolution, and row rendering
 //! for the click-disambiguation popup.
 
+use egui::Frame;
+use egui_phosphor::regular::ARROWS_SPLIT as ICON_ARROWS_SPLIT;
+use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
+use egui_phosphor::regular::FLAG as ICON_FLAG;
+use egui_phosphor::regular::MAP_PIN as ICON_MAP_PIN;
 use gt_types::{CustomMarker, DataCategory, EventMarker, GeneratedMarker, LoadedFile, NavPoint};
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::DataPointRef;
@@ -38,7 +43,7 @@ pub(crate) fn draw_multi_hover_label_contents(
     files: &[LoadedFile],
 ) {
     for candidate in candidates.iter().flatten().copied() {
-        egui::Frame::popup(ui.style()).show(ui, |ui| {
+        Frame::popup(ui.style()).show(ui, |ui| {
             draw_candidate_section(ui, candidate, files);
         });
     }
@@ -160,10 +165,10 @@ pub(crate) fn draw_disambig_row(
 
 pub(crate) fn category_icon(cat: DataCategory) -> &'static str {
     match cat {
-        DataCategory::Tpv | DataCategory::SatelliteReport => egui_phosphor::regular::CROSSHAIR,
-        DataCategory::EventMarker => egui_phosphor::regular::FLAG,
-        DataCategory::CustomMarker => egui_phosphor::regular::MAP_PIN,
-        DataCategory::GeneratedMarker => egui_phosphor::regular::ARROWS_SPLIT,
+        DataCategory::Tpv | DataCategory::SatelliteReport => ICON_CROSSHAIR,
+        DataCategory::EventMarker => ICON_FLAG,
+        DataCategory::CustomMarker => ICON_MAP_PIN,
+        DataCategory::GeneratedMarker => ICON_ARROWS_SPLIT,
         DataCategory::Track => "",
     }
 }

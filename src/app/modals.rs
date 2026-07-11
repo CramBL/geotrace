@@ -1,3 +1,5 @@
+use egui::{Grid, Label, RichText, ScrollArea, Window};
+use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
@@ -61,13 +63,13 @@ pub fn show_delete_confirmation(
     let mut do_cancel = escape_pressed;
 
     let item_label = if count == 1 { "item" } else { "items" };
-    egui::Window::new(format!("Remove {count} {item_label}?"))
+    Window::new(format!("Remove {count} {item_label}?"))
         .collapsible(false)
         .resizable(true)
         .min_width(420.0)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ui.ctx(), |ui| {
-            egui::ScrollArea::vertical()
+            ScrollArea::vertical()
                 .max_height(500.0)
                 .show(ui, |ui| {
                     let items: Vec<_> = tree
@@ -80,7 +82,7 @@ pub fn show_delete_confirmation(
                             NodeKey::File(fi) => {
                                 if let Some(file) = fi.get(loaded_files) {
                                     let name = file.metadata.filename.as_str();
-                                    ui.add(egui::Label::new(name).truncate())
+                                    ui.add(Label::new(name).truncate())
                                         .on_hover_text(name);
                                 }
                             }
@@ -96,7 +98,7 @@ pub fn show_delete_confirmation(
                                         "  {} / #{}  {dist}  {dur}",
                                         file.metadata.filename, track.metadata.index
                                     );
-                                    ui.add(egui::Label::new(label.as_str()).truncate())
+                                    ui.add(Label::new(label.as_str()).truncate())
                                         .on_hover_text(label.as_str());
                                 }
                             }
@@ -106,7 +108,7 @@ pub fn show_delete_confirmation(
             ui.separator();
             if affected_tracks == 0 {
                 ui.label(
-                    egui::RichText::new("This only removes them from the current view.")
+                    RichText::new("This only removes them from the current view.")
                         .weak()
                         .small(),
                 );
@@ -123,7 +125,7 @@ pub fn show_delete_confirmation(
                         "Removes them from the view and hides {affected_tracks} {track_label} in {affected_recordings} {rec_label} in history."
                     )
                 };
-                ui.label(egui::RichText::new(detail).weak().small());
+                ui.label(RichText::new(detail).weak().small());
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
@@ -303,26 +305,24 @@ pub fn show_unassociated_popup(ui: &egui::Ui, lines: &mut Option<Vec<(DateTime<U
         .ctx()
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     let mut dismiss = escape_pressed;
-    egui::Window::new(format!("{count} log entries could not be associated"))
+    Window::new(format!("{count} log entries could not be associated"))
         .collapsible(false)
         .resizable(true)
         .min_width(480.0)
         .show(ui.ctx(), |ui| {
-            egui::ScrollArea::vertical()
-                .max_height(400.0)
-                .show(ui, |ui| {
-                    let ten_min = chrono::Duration::minutes(10);
-                    let mut prev_ts: Option<DateTime<Utc>> = None;
-                    for (ts, line) in unassociated.iter() {
-                        if let Some(prev) = prev_ts
-                            && ts.signed_duration_since(prev) > ten_min
-                        {
-                            ui.separator();
-                        }
-                        ui.monospace(format!("{}  {}", ts.format("%Y-%m-%d %H:%M:%S"), line));
-                        prev_ts = Some(*ts);
+            ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
+                let ten_min = chrono::Duration::minutes(10);
+                let mut prev_ts: Option<DateTime<Utc>> = None;
+                for (ts, line) in unassociated.iter() {
+                    if let Some(prev) = prev_ts
+                        && ts.signed_duration_since(prev) > ten_min
+                    {
+                        ui.separator();
                     }
-                });
+                    ui.monospace(format!("{}  {}", ts.format("%Y-%m-%d %H:%M:%S"), line));
+                    prev_ts = Some(*ts);
+                }
+            });
             if ui.button("Dismiss").clicked() {
                 dismiss = true;
             }
@@ -347,28 +347,26 @@ pub fn show_orphaned_event_markers_popup(
         .ctx()
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     let mut dismiss = enter_pressed || escape_pressed;
-    egui::Window::new(format!("{count} event markers outside track range"))
+    Window::new(format!("{count} event markers outside track range"))
         .collapsible(false)
         .resizable(true)
         .min_width(480.0)
         .show(ui.ctx(), |ui| {
-            egui::ScrollArea::vertical()
-                .max_height(400.0)
-                .show(ui, |ui| {
-                    let ten_min = chrono::Duration::minutes(10);
-                    let mut prev_ts: Option<DateTime<Utc>> = None;
-                    for (ts, path) in orphans.iter() {
-                        if let Some(prev) = prev_ts
-                            && ts.signed_duration_since(prev) > ten_min
-                        {
-                            ui.separator();
-                        }
-                        let line = format!("{}  {}", ts.format("%Y-%m-%d %H:%M:%S"), path);
-                        ui.add(egui::Label::new(egui::RichText::new(&line).monospace()).truncate())
-                            .on_hover_text(&line);
-                        prev_ts = Some(*ts);
+            ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
+                let ten_min = chrono::Duration::minutes(10);
+                let mut prev_ts: Option<DateTime<Utc>> = None;
+                for (ts, path) in orphans.iter() {
+                    if let Some(prev) = prev_ts
+                        && ts.signed_duration_since(prev) > ten_min
+                    {
+                        ui.separator();
                     }
-                });
+                    let line = format!("{}  {}", ts.format("%Y-%m-%d %H:%M:%S"), path);
+                    ui.add(Label::new(RichText::new(&line).monospace()).truncate())
+                        .on_hover_text(&line);
+                    prev_ts = Some(*ts);
+                }
+            });
             if ui.button("Dismiss").clicked() {
                 dismiss = true;
             }
@@ -390,34 +388,32 @@ pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     let mut dismiss = enter_pressed || escape_pressed;
 
-    egui::Window::new("Data quality warnings")
+    Window::new("Data quality warnings")
         .collapsible(false)
         .resizable(true)
         .min_width(540.0)
         .show(ui.ctx(), |ui| {
-            ui.add(egui::Label::new(egui::RichText::new(filename.as_str()).strong()).truncate())
+            ui.add(Label::new(RichText::new(filename.as_str()).strong()).truncate())
                 .on_hover_text(filename.as_str());
             ui.separator();
-            egui::ScrollArea::vertical()
-                .max_height(400.0)
-                .show(ui, |ui| {
-                    egui::Grid::new("load_warnings_grid")
-                        .num_columns(4)
-                        .striped(true)
-                        .spacing([12.0, 6.0])
-                        .show(ui, |ui| {
-                            for w in warnings.iter() {
-                                ui.label(
-                                    egui::RichText::new(egui_phosphor::regular::WARNING)
-                                        .color(warning_amber(ui.visuals().dark_mode)),
-                                );
-                                ui.label(egui::RichText::new(w.count.to_string()).strong());
-                                ui.label(&w.issue);
-                                ui.add(egui::Label::new(&w.description).wrap());
-                                ui.end_row();
-                            }
-                        });
-                });
+            ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
+                Grid::new("load_warnings_grid")
+                    .num_columns(4)
+                    .striped(true)
+                    .spacing([12.0, 6.0])
+                    .show(ui, |ui| {
+                        for w in warnings.iter() {
+                            ui.label(
+                                RichText::new(ICON_WARNING)
+                                    .color(warning_amber(ui.visuals().dark_mode)),
+                            );
+                            ui.label(RichText::new(w.count.to_string()).strong());
+                            ui.label(&w.issue);
+                            ui.add(Label::new(&w.description).wrap());
+                            ui.end_row();
+                        }
+                    });
+            });
             ui.separator();
             if ui.button("Dismiss").clicked() {
                 dismiss = true;
@@ -443,7 +439,7 @@ pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<Recordi
     // The titlebar close button drives `open`; Escape also dismisses. A
     // read-only viewer needs no explicit footer button.
     let mut open = true;
-    egui::Window::new("Recording details")
+    Window::new("Recording details")
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -451,22 +447,19 @@ pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<Recordi
         .default_width(480.0)
         .show(ui.ctx(), |ui| {
             ui.add(
-                egui::Label::new(egui::RichText::new(details.metadata.filename.as_str()).strong())
-                    .truncate(),
+                Label::new(RichText::new(details.metadata.filename.as_str()).strong()).truncate(),
             )
             .on_hover_text(details.metadata.filename.as_str());
             ui.separator();
-            egui::ScrollArea::vertical()
-                .max_height(400.0)
-                .show(ui, |ui| {
-                    gt_side_panel::widgets::metadata_detail_rows(
-                        ui,
-                        &gt_side_panel::widgets::MetadataView::from_file_metadata(
-                            &details.metadata,
-                            details.identity.as_deref(),
-                        ),
-                    );
-                });
+            ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
+                gt_side_panel::widgets::metadata_detail_rows(
+                    ui,
+                    &gt_side_panel::widgets::MetadataView::from_file_metadata(
+                        &details.metadata,
+                        details.identity.as_deref(),
+                    ),
+                );
+            });
         });
 
     if !open || escape_pressed {
@@ -555,7 +548,7 @@ pub fn show_mapbox_token_dialog(ui: &egui::Ui, map: &mut NavMap, token_input: &m
     }
 
     let mut open = true;
-    egui::Window::new("Mapbox API Token Required")
+    Window::new("Mapbox API Token Required")
         .collapsible(false)
         .resizable(false)
         .open(&mut open)

@@ -3,6 +3,14 @@
 //! visible tracks, and a results area whose matches also draw on the map as
 //! halos.
 
+use egui::{
+    Area, Button, CollapsingHeader, Frame, Grid, Label, RichText, ScrollArea, TextEdit, Window,
+};
+use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
+use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
+use egui_phosphor::regular::TRASH as ICON_TRASH;
+use egui_phosphor::regular::WARNING_OCTAGON as ICON_WARNING_OCTAGON;
+use egui_phosphor::regular::X as ICON_X;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
@@ -508,7 +516,7 @@ impl QueryWindow {
     /// The byte offset of the editor caret, from the text edit's stored state.
     /// Zero before the editor has ever been focused.
     fn caret_byte(&self, ctx: &egui::Context, editor_id: egui::Id) -> usize {
-        let caret_char = egui::TextEdit::load_state(ctx, editor_id)
+        let caret_char = TextEdit::load_state(ctx, editor_id)
             .and_then(|state| state.cursor.char_range())
             .map_or(0, |range| range.primary.index);
         char_to_byte(&self.text, caret_char)
@@ -642,7 +650,7 @@ impl QueryWindow {
         // inside `editor_ui` - must be read before the window renders).
         let editor_was_focused = self.editor_had_focus;
         let mut open = self.open;
-        egui::Window::new("Query")
+        Window::new("Query")
             .open(&mut open)
             .default_width(460.0)
             .default_height(520.0)
@@ -707,22 +715,22 @@ impl QueryWindow {
         let mut clear_history = false;
         let now = Utc::now();
 
-        egui::CollapsingHeader::new("Query history")
+        CollapsingHeader::new("Query history")
             .default_open(false)
             .show(ui, |ui| {
                 if self.history.is_empty() {
-                    ui.label(egui::RichText::new("No queries run yet").weak());
+                    ui.label(RichText::new("No queries run yet").weak());
                     return;
                 }
                 if ui
-                    .small_button(egui_phosphor::regular::TRASH)
+                    .small_button(ICON_TRASH)
                     .on_hover_text("Clear the query history (pinned queries are kept)")
                     .clicked()
                 {
                     clear_history = true;
                 }
                 // A table so the age and remove columns line up across rows.
-                egui::Grid::new(ui.id().with("query_history_grid"))
+                Grid::new(ui.id().with("query_history_grid"))
                     .num_columns(4)
                     .spacing(egui::vec2(8.0, 4.0))
                     .show(ui, |ui| {
@@ -733,7 +741,7 @@ impl QueryWindow {
                                 "Pin so this query is never evicted"
                             };
                             if ui
-                                .selectable_label(entry.pinned, egui_phosphor::regular::PUSH_PIN)
+                                .selectable_label(entry.pinned, ICON_PUSH_PIN)
                                 .on_hover_text(pin_hover)
                                 .clicked()
                             {
@@ -754,9 +762,9 @@ impl QueryWindow {
                                     .map_or_else(String::new, |last_run| {
                                         format_history_age(now - last_run)
                                     });
-                            ui.label(egui::RichText::new(age).weak());
+                            ui.label(RichText::new(age).weak());
                             if ui
-                                .small_button(egui_phosphor::regular::X)
+                                .small_button(ICON_X)
                                 .on_hover_text("Remove from history")
                                 .clicked()
                             {
@@ -767,7 +775,7 @@ impl QueryWindow {
                     });
             });
 
-        egui::CollapsingHeader::new("Examples")
+        CollapsingHeader::new("Examples")
             .default_open(false)
             .show(ui, |ui| {
                 for example in EXAMPLES {
@@ -901,7 +909,7 @@ impl QueryWindow {
             job.wrap.max_width = wrap_width;
             ui.fonts_mut(|f| f.layout_job(job))
         };
-        let output = egui::TextEdit::multiline(&mut self.text)
+        let output = TextEdit::multiline(&mut self.text)
             .id(editor_id)
             .code_editor()
             .desired_rows(5)
@@ -935,7 +943,7 @@ impl QueryWindow {
             let all_ok = self.all_ok();
             let mixed = all_ok && self.run_kind() == RunKind::MixedChannel;
             let runnable = all_ok && !in_flight && !mixed;
-            let run = ui.add_enabled(runnable, egui::Button::new("Run"));
+            let run = ui.add_enabled(runnable, Button::new("Run"));
             let run = match (all_ok, in_flight, mixed) {
                 (false, _, _) if self.chunks.is_empty() => {
                     run.on_disabled_hover_text("Type a query to run")
@@ -951,7 +959,7 @@ impl QueryWindow {
                 self.run_requested = true;
             }
 
-            let cancel = ui.add_enabled(in_flight, egui::Button::new("Cancel"));
+            let cancel = ui.add_enabled(in_flight, Button::new("Cancel"));
             let cancel = if in_flight {
                 cancel
             } else {
@@ -962,7 +970,7 @@ impl QueryWindow {
             }
 
             let clearable = !self.text.is_empty();
-            let clear = ui.add_enabled(clearable, egui::Button::new("Clear"));
+            let clear = ui.add_enabled(clearable, Button::new("Clear"));
             let clear = if clearable {
                 clear
             } else {
@@ -1090,11 +1098,11 @@ impl QueryWindow {
         self.text.replace_range(range, &insertion);
 
         let caret_char = self.text.get(..caret_byte).map_or(0, |s| s.chars().count());
-        let mut state = egui::TextEdit::load_state(ui.ctx(), editor_id).unwrap_or_default();
+        let mut state = TextEdit::load_state(ui.ctx(), editor_id).unwrap_or_default();
         state
             .cursor
             .set_char_range(Some(CCursorRange::one(CCursor::new(caret_char))));
-        egui::TextEdit::store_state(ui.ctx(), editor_id, state);
+        TextEdit::store_state(ui.ctx(), editor_id, state);
         ui.ctx().memory_mut(|m| m.request_focus(editor_id));
 
         self.autocomplete.items.clear();
@@ -1315,13 +1323,13 @@ impl QueryWindow {
         self.hover_doc_span = Some(span);
         // Drawn as an Area (rather than a hover tooltip) so it is anchored to
         // the token under the pointer.
-        egui::Area::new(egui::Id::new("query_hover_doc"))
+        Area::new(egui::Id::new("query_hover_doc"))
             .order(egui::Order::Tooltip)
             .fixed_pos(pointer + egui::vec2(12.0, 18.0))
             .constrain(true)
             .interactable(false)
             .show(ui.ctx(), |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| match &doc {
+                Frame::popup(ui.style()).show(ui, |ui| match &doc {
                     HoverDoc::Channel(channel) => channel_tooltip_ui(ui, channel),
                     HoverDoc::Construct(construct) => construct_tooltip_ui(ui, construct),
                 });
@@ -1354,7 +1362,7 @@ impl QueryWindow {
         requests: &mut MatchMapRequests<'_>,
     ) {
         let Some(results) = &self.results else {
-            ui.label(egui::RichText::new("No runs yet").weak());
+            ui.label(RichText::new("No runs yet").weak());
             return;
         };
         let stale = match &results.body {
@@ -1369,7 +1377,7 @@ impl QueryWindow {
         };
         if stale {
             ui.label(
-                egui::RichText::new(format!("Data changed since this run {EM_DASH} run again"))
+                RichText::new(format!("Data changed since this run {EM_DASH} run again"))
                     .weak()
                     .italics(),
             );
@@ -1784,15 +1792,13 @@ fn match_ui(
     if stale {
         // Grayed out, not hidden: the rows reference point indices that may
         // no longer address the same data.
-        ui.add_enabled(false, egui::Label::new(header))
+        ui.add_enabled(false, Label::new(header))
             .on_disabled_hover_text(format!("Data changed since this run {EM_DASH} run again"));
         return;
     }
-    let response = egui::CollapsingHeader::new(header)
-        .id_salt(id)
-        .show(ui, |ui| {
-            match_table_ui(ui, ctx, track_ref, range, highlight, requests);
-        });
+    let response = CollapsingHeader::new(header).id_salt(id).show(ui, |ui| {
+        match_table_ui(ui, ctx, track_ref, range, highlight, requests);
+    });
     if response.header_response.hovered() {
         highlight.hover_match = Some(MatchHighlight::new(track_ref, range));
         // Track focus alongside the band: the map fades the other tracks and
@@ -1828,7 +1834,7 @@ fn match_table_ui(
         len: points.len().saturating_sub(slice_start),
     };
 
-    egui::Grid::new(ui.id().with("match_table"))
+    Grid::new(ui.id().with("match_table"))
         .striped(true)
         .show(ui, |ui| {
             for column in columns {
@@ -1847,9 +1853,8 @@ fn match_table_ui(
                     } else {
                         provider.value(*column, pi)
                     };
-                    let response = ui.add(
-                        egui::Label::new(format_value(*column, value)).sense(egui::Sense::click()),
-                    );
+                    let response = ui
+                        .add(Label::new(format_value(*column, value)).sense(egui::Sense::click()));
                     row_response = Some(match row_response {
                         Some(row) => row.union(response),
                         None => response,
@@ -1885,7 +1890,7 @@ fn match_table_ui(
         });
     if range.len() > MATCH_TABLE_ROW_CAP {
         ui.label(
-            egui::RichText::new(format!(
+            RichText::new(format!(
                 "{EM_DASH} {} more points",
                 range.len() - MATCH_TABLE_ROW_CAP
             ))
@@ -1945,7 +1950,7 @@ fn points_results_ui(
             })
             .body(|ui| {
                 if matches == 0 {
-                    ui.label(egui::RichText::new("No matches").weak());
+                    ui.label(RichText::new("No matches").weak());
                 }
                 for tm in &query.matches {
                     for range in &tm.ranges {
@@ -1971,7 +1976,7 @@ fn channel_results_ui(ui: &mut egui::Ui, channel: &ChannelResults, files: &[Load
                 .map(|t| t.ranges.iter().map(Range::len).sum::<usize>())
                 .sum();
             if total == 0 {
-                ui.label(egui::RichText::new("No matches").weak());
+                ui.label(RichText::new("No matches").weak());
             }
             for track in &channel.tracks {
                 channel_track_ui(ui, channel, track, files);
@@ -1998,7 +2003,7 @@ fn channel_track_ui(
         |f| f.metadata.filename.clone(),
     );
     ui.label(
-        egui::RichText::new(format!(
+        RichText::new(format!(
             "{file} #{} {EM_DASH} {matched} {}",
             track.track.index,
             gt_fmt::pluralize(matched, "sample", "samples"),
@@ -2017,7 +2022,7 @@ fn channel_track_ui(
         .as_ref()
         .map_or_else(String::new, |unit| format!(" ({unit})"));
     let from_base = channel_from_base_scale(track.unit.as_ref());
-    egui::Grid::new(ui.id().with(("channel_table", track.track)))
+    Grid::new(ui.id().with(("channel_table", track.track)))
         .striped(true)
         .show(ui, |ui| {
             ui.strong("time");
@@ -2052,7 +2057,7 @@ fn channel_track_ui(
         });
     if matched > MATCH_TABLE_ROW_CAP {
         ui.label(
-            egui::RichText::new(format!(
+            RichText::new(format!(
                 "{EM_DASH} {} more samples",
                 matched - MATCH_TABLE_ROW_CAP
             ))
@@ -2793,7 +2798,7 @@ fn draw_autocomplete_popup(
     // above; `constrain` still clamps any residual overshoot.
     let visible_rows = autocomplete.items.len().clamp(1, AUTOCOMPLETE_VISIBLE_ROWS);
     let footer = if overflow > 0 { row_height } else { 0.0 };
-    let frame_padding = egui::Frame::popup(ui.style()).total_margin().sum().y;
+    let frame_padding = Frame::popup(ui.style()).total_margin().sum().y;
     let est_height = row_height * visible_rows as f32 + footer + frame_padding;
     let pos = if autocomplete.caret_pos.y + est_height > ui.ctx().content_rect().bottom() {
         autocomplete.caret_top - egui::vec2(0.0, est_height)
@@ -2801,19 +2806,19 @@ fn draw_autocomplete_popup(
         autocomplete.caret_pos
     };
 
-    egui::Area::new(editor_id.with("autocomplete"))
+    Area::new(editor_id.with("autocomplete"))
         .order(egui::Order::Foreground)
         .fixed_pos(pos)
         .constrain(true)
         .show(ui.ctx(), |ui| {
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
+            Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_min_width(220.0);
                 ui.set_max_width(380.0);
                 if let Some(notice) = autocomplete.notice {
-                    ui.label(egui::RichText::new(notice).weak().italics());
+                    ui.label(RichText::new(notice).weak().italics());
                     return;
                 }
-                egui::ScrollArea::vertical()
+                ScrollArea::vertical()
                     .max_height(max_height)
                     .show(ui, |ui| {
                         for (index, candidate) in autocomplete.items.iter().enumerate() {
@@ -2830,13 +2835,9 @@ fn draw_autocomplete_popup(
                     });
                 if overflow > 0 {
                     ui.label(
-                        egui::RichText::new(format!(
-                            "{} {} more below",
-                            egui_phosphor::regular::CARET_DOWN,
-                            overflow,
-                        ))
-                        .weak()
-                        .small(),
+                        RichText::new(format!("{ICON_CARET_DOWN} {} more below", overflow))
+                            .weak()
+                            .small(),
                     );
                 }
             });
@@ -2928,7 +2929,7 @@ fn tooltip_header(ui: &mut egui::Ui, name: &str, kind_label: &str) {
         let mut colored = LayoutJob::default();
         append_query_syntax(&mut colored, &mono, default, dark, name);
         ui.label(colored);
-        ui.label(egui::RichText::new(kind_label).weak().small());
+        ui.label(RichText::new(kind_label).weak().small());
     });
 }
 
@@ -2990,7 +2991,7 @@ fn error_message_layout(ui: &egui::Ui, message: &str) -> LayoutJob {
     let error_color = gt_ui_theme::error_indicator(ui.visuals().dark_mode);
     let mut job = LayoutJob::default();
     job.append(
-        &format!("{} ", egui_phosphor::regular::WARNING_OCTAGON),
+        &format!("{ICON_WARNING_OCTAGON} "),
         0.0,
         text_format(&body, error_color),
     );

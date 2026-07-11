@@ -1,3 +1,9 @@
+use egui::{Button, Grid, Label, RichText, WidgetText};
+use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
+use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
+use egui_phosphor::regular::CHECK_SQUARE as ICON_CHECK_SQUARE;
+use egui_phosphor::regular::MINUS_SQUARE as ICON_MINUS_SQUARE;
+use egui_phosphor::regular::SQUARE as ICON_SQUARE;
 use gt_types::{FileMetadata, FixStats, TravelMode};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
 
@@ -49,15 +55,15 @@ pub fn has_metadata_details(view: &MetadataView<'_>) -> bool {
 /// to the available width, so the enclosing (resizable) container governs how
 /// much is shown. Renders nothing when the view is empty.
 pub fn metadata_detail_rows(ui: &mut egui::Ui, view: &MetadataView<'_>) {
-    egui::Grid::new("recording_metadata_grid")
+    Grid::new("recording_metadata_grid")
         .num_columns(2)
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
             let mut row = |label: &str, value: &str| {
                 // No colon after the label, per DESIGN.md; the weak label vs.
                 // normal value weighting carries the distinction.
-                ui.label(egui::RichText::new(label).weak());
-                ui.add(egui::Label::new(value).wrap());
+                ui.label(RichText::new(label).weak());
+                ui.add(Label::new(value).wrap());
                 ui.end_row();
             };
             if let Some(title) = view.title {
@@ -82,9 +88,9 @@ pub fn metadata_detail_rows(ui: &mut egui::Ui, view: &MetadataView<'_>) {
 /// Caret icon for an expand/collapse toggle.
 pub fn expand_arrow(expanded: bool) -> &'static str {
     if expanded {
-        egui_phosphor::regular::CARET_DOWN
+        ICON_CARET_DOWN
     } else {
-        egui_phosphor::regular::CARET_RIGHT
+        ICON_CARET_RIGHT
     }
 }
 
@@ -99,14 +105,14 @@ pub fn checkbox_width(ui: &egui::Ui) -> f32 {
 
 pub fn tri_checkbox(ui: &mut egui::Ui, state: CheckState) -> egui::Response {
     let icon = match state {
-        CheckState::On => egui_phosphor::regular::CHECK_SQUARE,
-        CheckState::Off => egui_phosphor::regular::SQUARE,
-        CheckState::Mixed => egui_phosphor::regular::MINUS_SQUARE,
+        CheckState::On => ICON_CHECK_SQUARE,
+        CheckState::Off => ICON_SQUARE,
+        CheckState::Mixed => ICON_MINUS_SQUARE,
     };
     let icon_size = ui.spacing().icon_width + 4.0;
     let side = checkbox_width(ui);
     ui.add(
-        egui::Button::new(egui::RichText::new(icon).size(icon_size))
+        Button::new(RichText::new(icon).size(icon_size))
             .frame(false)
             .min_size(egui::vec2(side, side)),
     )
@@ -144,7 +150,7 @@ pub fn fix_stats_tooltip_row(ui: &mut egui::Ui, stats: FixStats) {
 pub fn point_item_row(
     ui: &mut egui::Ui,
     point_ref: DataPointRef,
-    label: impl Into<egui::WidgetText>,
+    label: impl Into<WidgetText>,
     lat_lon: (f64, f64),
     highlight: &mut MapHighlight,
     map_center_request: &mut Option<(f64, f64)>,

@@ -2,6 +2,18 @@ use crate::AnalysisConfig;
 use crate::series::{TrackSeries, build_all_series};
 use chrono::{DateTime, Utc};
 use egui::Color32;
+use egui::{Area, Button, Frame, Label, RichText, Slider, Tooltip};
+use egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE as ICON_ARROW_COUNTER_CLOCKWISE;
+use egui_phosphor::regular::ARROW_LINE_UP_LEFT as ICON_ARROW_LINE_UP_LEFT;
+use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
+use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
+use egui_phosphor::regular::DOTS_SIX as ICON_DOTS_SIX;
+use egui_phosphor::regular::EYE as ICON_EYE;
+use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
+use egui_phosphor::regular::GAUGE as ICON_GAUGE;
+use egui_phosphor::regular::GEAR as ICON_GEAR;
+use egui_phosphor::regular::LINK as ICON_LINK;
+use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
 use egui_plot::{Line, LineStyle, MarkerShape, PlotPoint, PlotPoints, Points, Span, VLine};
 use gt_analysis::satellite_utilization::UtilAnomaly;
 use gt_egui_mipmap::{LevelSelection, MipMap};
@@ -1002,7 +1014,7 @@ pub fn show_track_plot(
     if visible_count == 0 {
         ui.centered_and_justified(|ui| {
             ui.label(
-                egui::RichText::new("Load a .gtd file to see track metrics")
+                RichText::new("Load a .gtd file to see track metrics")
                     .weak()
                     .italics(),
             );
@@ -1321,7 +1333,7 @@ pub fn show_track_plot(
     if let Some((_, hover)) = hovered_anomaly
         && plot_response.response.hovered()
     {
-        egui::Tooltip::always_open(
+        Tooltip::always_open(
             ui.ctx().clone(),
             plot_response.response.layer_id,
             egui::Id::new("util_anomaly_tooltip"),
@@ -1362,7 +1374,7 @@ fn show_file_legend_overlay(
     let show_redock_icon = !legend_is_docked(state.file_legend_offset);
     let legend_id = ui.id().with("plot_file_legend_overlay");
     let drag_bg_size = state.file_legend_size;
-    let area = egui::Area::new(legend_id)
+    let area = Area::new(legend_id)
         .order(egui::Order::Foreground)
         .movable(false)
         .current_pos(plot_rect.min + state.file_legend_offset)
@@ -1377,7 +1389,7 @@ fn show_file_legend_overlay(
             let drag_response =
                 ui.interact(drag_rect, legend_id.with("drag_bg"), egui::Sense::drag());
 
-            let hovered_file = egui::Frame::default()
+            let hovered_file = Frame::default()
                 .inner_margin(egui::Margin::symmetric(8, 4))
                 .corner_radius(ui.visuals().window_corner_radius)
                 .fill(ui.visuals().extreme_bg_color)
@@ -1393,12 +1405,7 @@ fn show_file_legend_overlay(
                             );
                             if show_redock_icon
                                 && ui
-                                    .add_sized(
-                                        dock_btn_size,
-                                        egui::Button::new(
-                                            egui_phosphor::regular::ARROW_LINE_UP_LEFT,
-                                        ),
-                                    )
+                                    .add_sized(dock_btn_size, Button::new(ICON_ARROW_LINE_UP_LEFT))
                                     .on_hover_text("Re-dock legend to top-left")
                                     .clicked()
                             {
@@ -1406,16 +1413,14 @@ fn show_file_legend_overlay(
                             }
                             ui.add_sized(
                                 dock_btn_size,
-                                egui::Label::new(
-                                    egui::RichText::new(egui_phosphor::regular::DOTS_SIX).weak(),
-                                ),
+                                Label::new(RichText::new(ICON_DOTS_SIX).weak()),
                             )
                             .on_hover_cursor(egui::CursorIcon::Grab)
                             .on_hover_text("Drag to move legend");
                             let fold_icon = if state.file_legend_collapsed {
-                                egui_phosphor::regular::CARET_RIGHT
+                                ICON_CARET_RIGHT
                             } else {
-                                egui_phosphor::regular::CARET_DOWN
+                                ICON_CARET_DOWN
                             };
                             if ui
                                 .small_button(fold_icon)
@@ -1441,7 +1446,7 @@ fn show_file_legend_overlay(
                                         style,
                                         ui.visuals().text_color(),
                                     );
-                                    let name = ui.label(egui::RichText::new(file_name).small());
+                                    let name = ui.label(RichText::new(file_name).small());
                                     swatch.hovered() || name.hovered()
                                 });
                                 if row.response.hovered() || row.inner {
@@ -1557,10 +1562,7 @@ fn section_toggles(
     has_channels: bool,
 ) {
     if ui
-        .selectable_label(
-            *show_advanced,
-            format!("{} Advanced", egui_phosphor::regular::GAUGE),
-        )
+        .selectable_label(*show_advanced, format!("{ICON_GAUGE} Advanced"))
         .on_hover_text(if *show_advanced {
             "Hide advanced metrics"
         } else {
@@ -1573,10 +1575,7 @@ fn section_toggles(
 
     if has_channels
         && ui
-            .selectable_label(
-                *show_channels,
-                format!("{} Channels", egui_phosphor::regular::WAVE_SINE),
-            )
+            .selectable_label(*show_channels, format!("{ICON_WAVE_SINE} Channels"))
             .on_hover_text(if *show_channels {
                 "Hide sensor channels"
             } else {
@@ -1659,7 +1658,7 @@ fn metric_filter_row(
     ui.horizontal_wrapped(|ui| {
         // Sync toggle.
         if ui
-            .selectable_label(*sync_to_map, egui_phosphor::regular::LINK)
+            .selectable_label(*sync_to_map, ICON_LINK)
             .on_hover_text(if *sync_to_map {
                 "Syncing plot time range to map viewport — click to disable"
             } else {
@@ -1672,18 +1671,14 @@ fn metric_filter_row(
 
         // Display settings popup: appearance knobs that are set once and left
         // alone, kept out of the row itself so it stays uncluttered.
-        ui.menu_button(egui_phosphor::regular::GEAR, |ui| {
+        ui.menu_button(ICON_GEAR, |ui| {
             plot_display_menu(ui, show_grid, line_width);
         })
         .response
         .on_hover_text("Plot display settings");
 
         // Show/hide all (currently shown metrics only).
-        let eye_icon = if all_on {
-            egui_phosphor::regular::EYE_SLASH
-        } else {
-            egui_phosphor::regular::EYE
-        };
+        let eye_icon = if all_on { ICON_EYE_SLASH } else { ICON_EYE };
         if ui
             .small_button(eye_icon)
             .on_hover_text(if all_on {
@@ -1822,17 +1817,14 @@ fn plot_display_menu(ui: &mut egui::Ui, show_grid: &mut bool, line_width: &mut f
     ui.horizontal(|ui| {
         ui.label("Line width");
         ui.add(
-            egui::Slider::new(line_width, PLOT_LINE_WIDTH_RANGE)
+            Slider::new(line_width, PLOT_LINE_WIDTH_RANGE)
                 .step_by(0.25)
                 .fixed_decimals(2),
         );
     });
     ui.checkbox(show_grid, "Show grid");
     ui.separator();
-    let reset_label = format!(
-        "{} Restore defaults",
-        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
-    );
+    let reset_label = format!("{ICON_ARROW_COUNTER_CLOCKWISE} Restore defaults");
     if ui.button(reset_label).clicked() {
         *line_width = DEFAULT_PLOT_LINE_WIDTH;
         *show_grid = true;
@@ -1862,7 +1854,7 @@ fn metric_chip(
     } else {
         Color32::from_gray(100)
     };
-    let btn = egui::Button::new(egui::RichText::new(name).color(text_color).small())
+    let btn = Button::new(RichText::new(name).color(text_color).small())
         .fill(fill)
         .corner_radius(4.0);
     let response = ui.add(btn);

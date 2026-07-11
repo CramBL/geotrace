@@ -1,5 +1,7 @@
 use egui::epaint::{PathShape, PathStroke};
 use egui::{Color32, PopupAnchor, Pos2, Stroke, Ui, Vec2};
+use egui::{Grid, RichText, Tooltip};
+use egui_phosphor::regular::CHECK as ICON_CHECK;
 use gt_filter::{self as filter, GlobalFilter};
 use gt_types::coordinates::Latitude;
 use gt_types::satellites::Constellation;
@@ -242,7 +244,7 @@ pub(crate) fn show_tooltip(
         .with("tpv_hover")
         .with(point_ref.track)
         .with(point_ref.point_index);
-    egui::Tooltip::always_open(
+    Tooltip::always_open(
         ui.ctx().clone(),
         ui.layer_id(),
         tooltip_id,
@@ -311,7 +313,7 @@ pub(crate) fn draw_plot_hover_ring(
 }
 
 pub(crate) fn show_hover_table(ui: &mut Ui, p: &NavPoint) {
-    egui::Grid::new("hover_grid")
+    Grid::new("hover_grid")
         .striped(true)
         .num_columns(2)
         .show(ui, |ui| {
@@ -399,76 +401,74 @@ pub(crate) fn show_hover_table(ui: &mut Ui, p: &NavPoint) {
 /// breakdown grouped by constellation.
 pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
     // Basic metrics (2-column grid).
-    egui::Grid::new("sticky_tpv_basic")
-        .num_columns(2)
-        .show(ui, |ui| {
-            ui.label("Speed");
-            match p.tpv.velocity_kmh() {
-                Some(v) => {
-                    ui.label(format!("{:.1} km/h", v));
-                }
-                None => {
-                    ui.label(EM_DASH);
-                }
-            };
-            ui.end_row();
-
-            ui.label("Heading");
-            match p.tpv.heading() {
-                Some(h) => {
-                    ui.label(format!("{:.1}{DEGREE_SIGN}", h.get::<degree>()));
-                }
-                None => {
-                    ui.label(EM_DASH);
-                }
-            };
-            ui.end_row();
-
-            if let Some(eph) = p.tpv.eph_m() {
-                ui.label("Accuracy");
-                ui.label(format!("±{eph:.1} m"));
-                ui.end_row();
+    Grid::new("sticky_tpv_basic").num_columns(2).show(ui, |ui| {
+        ui.label("Speed");
+        match p.tpv.velocity_kmh() {
+            Some(v) => {
+                ui.label(format!("{:.1} km/h", v));
             }
+            None => {
+                ui.label(EM_DASH);
+            }
+        };
+        ui.end_row();
 
-            match &p.satellites {
-                Some(sats) => {
-                    let fix = sats.fix_count();
-                    let seen = sats.satellite_count();
-                    ui.label("Satellites");
-                    let dark_mode = ui.visuals().dark_mode;
-                    ui.horizontal(|ui| {
-                        ui.colored_label(fix_count_color(fix, dark_mode), fix.to_string());
-                        ui.label("/");
-                        ui.colored_label(seen_count_color(seen, dark_mode), seen.to_string());
-                    });
-                    ui.end_row();
+        ui.label("Heading");
+        match p.tpv.heading() {
+            Some(h) => {
+                ui.label(format!("{:.1}{DEGREE_SIGN}", h.get::<degree>()));
+            }
+            None => {
+                ui.label(EM_DASH);
+            }
+        };
+        ui.end_row();
 
-                    // Time delta between the GPS fix and the satellite report.
-                    // A nonzero delta means the satellite data is from a slightly
-                    // different moment than the fix - worth showing for diagnostics.
-                    if let Some(sat_gps_time) = sats.gps_time() {
-                        let sat_delta_ms = (p.tpv.time() - sat_gps_time).num_milliseconds();
-                        if sat_delta_ms != 0 {
-                            ui.label(format!("Sat {DELTA}t"));
-                            ui.label(format_signed_delta(sat_delta_ms));
-                            ui.end_row();
-                        }
+        if let Some(eph) = p.tpv.eph_m() {
+            ui.label("Accuracy");
+            ui.label(format!("±{eph:.1} m"));
+            ui.end_row();
+        }
+
+        match &p.satellites {
+            Some(sats) => {
+                let fix = sats.fix_count();
+                let seen = sats.satellite_count();
+                ui.label("Satellites");
+                let dark_mode = ui.visuals().dark_mode;
+                ui.horizontal(|ui| {
+                    ui.colored_label(fix_count_color(fix, dark_mode), fix.to_string());
+                    ui.label("/");
+                    ui.colored_label(seen_count_color(seen, dark_mode), seen.to_string());
+                });
+                ui.end_row();
+
+                // Time delta between the GPS fix and the satellite report.
+                // A nonzero delta means the satellite data is from a slightly
+                // different moment than the fix - worth showing for diagnostics.
+                if let Some(sat_gps_time) = sats.gps_time() {
+                    let sat_delta_ms = (p.tpv.time() - sat_gps_time).num_milliseconds();
+                    if sat_delta_ms != 0 {
+                        ui.label(format!("Sat {DELTA}t"));
+                        ui.label(format_signed_delta(sat_delta_ms));
+                        ui.end_row();
                     }
                 }
-                None => {
-                    // No satellite report for this point - omit the row.
-                }
             }
+            None => {
+                // No satellite report for this point - omit the row.
+            }
+        }
 
-            // GPS/system-clock delta: how far the GPS clock leads the host clock.
-            // Only shown when the fix carries a system timestamp.
-            if let Some(sys) = p.tpv.sys_time() {
-                let clock_delta_ms = p.tpv.time().offset_from_sys(sys).num_milliseconds();
-                ui.label(format!("Clock {DELTA}t"));
-                ui.label(format_signed_delta(clock_delta_ms));
-                ui.end_row();
-            }
-        });
+        // GPS/system-clock delta: how far the GPS clock leads the host clock.
+        // Only shown when the fix carries a system timestamp.
+        if let Some(sys) = p.tpv.sys_time() {
+            let clock_delta_ms = p.tpv.time().offset_from_sys(sys).num_milliseconds();
+            ui.label(format!("Clock {DELTA}t"));
+            ui.label(format_signed_delta(clock_delta_ms));
+            ui.end_row();
+        }
+    });
 
     // Comprehensive per-PRN satellite table grouped by constellation.
     if let Some(sats) = &p.satellites {
@@ -503,16 +503,14 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
                         ui.add_space(12.0);
                     }
                     ui.vertical(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!("{name} ({})", const_sats.len())).strong(),
-                        );
-                        egui::Grid::new(("sticky_sats", *id))
+                        ui.label(RichText::new(format!("{name} ({})", const_sats.len())).strong());
+                        Grid::new(("sticky_sats", *id))
                             .num_columns(3)
                             .striped(true)
                             .show(ui, |ui| {
-                                ui.label(egui::RichText::new("PRN").weak().small());
-                                ui.label(egui::RichText::new("SNR").weak().small());
-                                ui.label(egui::RichText::new("Fix").weak().small());
+                                ui.label(RichText::new("PRN").weak().small());
+                                ui.label(RichText::new("SNR").weak().small());
+                                ui.label(RichText::new("Fix").weak().small());
                                 ui.end_row();
 
                                 let dark_mode = ui.visuals().dark_mode;
@@ -526,30 +524,26 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
                                     let in_fix = sat.in_fix();
                                     let prn_color = if in_fix { in_fix_color } else { muted_color };
                                     ui.label(
-                                        egui::RichText::new(format!("{}{:02}", prefix, sat.prn()))
+                                        RichText::new(format!("{}{:02}", prefix, sat.prn()))
                                             .color(prn_color),
                                     );
                                     match sat.snr() {
                                         Some(snr) => {
                                             ui.label(
-                                                egui::RichText::new(format!("{:.1}", snr.value()))
-                                                    .color(gt_ui_theme::snr_color(
+                                                RichText::new(format!("{:.1}", snr.value())).color(
+                                                    gt_ui_theme::snr_color(
                                                         snr.quality(),
                                                         dark_mode,
-                                                    )),
+                                                    ),
+                                                ),
                                             );
                                         }
                                         None => {
-                                            ui.label(
-                                                egui::RichText::new(EM_DASH).color(muted_color),
-                                            );
+                                            ui.label(RichText::new(EM_DASH).color(muted_color));
                                         }
                                     }
                                     if in_fix {
-                                        ui.label(
-                                            egui::RichText::new(egui_phosphor::regular::CHECK)
-                                                .color(in_fix_color),
-                                        );
+                                        ui.label(RichText::new(ICON_CHECK).color(in_fix_color));
                                     } else {
                                         ui.label("");
                                     }
@@ -578,16 +572,16 @@ fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
     let dark_mode = ui.visuals().dark_mode;
 
     // Total summary row - bold to signal it is the aggregate.
-    ui.label(egui::RichText::new("Satellites").strong());
+    ui.label(RichText::new("Satellites").strong());
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new(fix.to_string())
+            RichText::new(fix.to_string())
                 .color(fix_count_color(fix, dark_mode))
                 .strong(),
         );
-        ui.label(egui::RichText::new("/").strong());
+        ui.label(RichText::new("/").strong());
         ui.label(
-            egui::RichText::new(seen.to_string())
+            RichText::new(seen.to_string())
                 .color(seen_count_color(seen, dark_mode))
                 .strong(),
         );

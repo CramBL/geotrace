@@ -1,4 +1,6 @@
+use egui::Grid;
 use egui::{Color32, Pos2, Response, Stroke, Ui};
+use egui_phosphor::regular::ARROW_RIGHT as ICON_ARROW_RIGHT;
 use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, LoadedFile, SpatialPoint};
 use gt_ui_types::{
@@ -225,7 +227,7 @@ pub(crate) fn show_slip_table(ui: &mut Ui, event: &gt_types::satellites::SlipEve
     // Galileo, BeiDou, NavIC, QZSS), which is the grouping we want here.
     slips.sort_by_key(|s| (s.constellation, s.prn.value()));
 
-    egui::Grid::new("slip_detail_grid")
+    Grid::new("slip_detail_grid")
         .num_columns(5)
         .striped(true)
         .show(ui, |ui| {
@@ -275,7 +277,7 @@ fn slip_change(from: Option<f32>, to: Option<Option<f32>>, unit: &str) -> String
             if after == before {
                 before
             } else {
-                format!("{before} {} {after}", egui_phosphor::regular::ARROW_RIGHT)
+                format!("{before} {ICON_ARROW_RIGHT} {after}")
             }
         }
     }

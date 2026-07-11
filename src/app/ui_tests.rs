@@ -1,3 +1,9 @@
+use egui::TextEdit;
+use egui_phosphor::regular::ARROW_LINE_UP_LEFT as ICON_ARROW_LINE_UP_LEFT;
+use egui_phosphor::regular::DOTS_SIX as ICON_DOTS_SIX;
+use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
+use egui_phosphor::regular::TERMINAL_WINDOW as ICON_TERMINAL_WINDOW;
+use egui_phosphor::regular::X as ICON_X;
 use std::path::PathBuf;
 use std::{
     sync::Arc,
@@ -373,7 +379,7 @@ fn panel_detached_renders_without_panic() {
 /// application.  This code path is still present and unfixed in eframe 0.34.2.
 ///
 /// The fix is to avoid creating a separate OS surface for the panel at all.
-/// `egui::Window` renders the detached panel as a floating overlay inside the
+/// `Window` renders the detached panel as a floating overlay inside the
 /// *same* OS window, so there is only one Wayland surface - the compositor
 /// cannot suspend it independently of the main window.
 ///
@@ -484,9 +490,7 @@ fn legend_redock_icon_resets_offset_to_default() {
     let mut harness = harness_with_three_files_loaded();
     detach_legend(&mut harness, egui::vec2(220.0, 120.0));
 
-    harness
-        .get_by_label(egui_phosphor::regular::ARROW_LINE_UP_LEFT)
-        .click();
+    harness.get_by_label(ICON_ARROW_LINE_UP_LEFT).click();
     harness.step();
 
     let offset = harness
@@ -514,7 +518,7 @@ fn dragging_files_header_moves_legend_overlay() {
         .borrow()
         .plot_state
         .file_legend_offset;
-    let drag_handle = harness.get_by_label(egui_phosphor::regular::DOTS_SIX);
+    let drag_handle = harness.get_by_label(ICON_DOTS_SIX);
     let start = drag_handle.rect().center();
     let end = start + egui::vec2(120.0, 70.0);
     harness.drag_at(start);
@@ -542,7 +546,7 @@ fn dragging_files_header_moves_legend_overlay() {
 fn dragging_files_header_far_across_many_frames_does_not_snap_back() {
     let mut harness = harness_with_three_files_loaded();
 
-    let drag_handle = harness.get_by_label(egui_phosphor::regular::DOTS_SIX);
+    let drag_handle = harness.get_by_label(ICON_DOTS_SIX);
     let start = drag_handle.rect().center();
     harness.drag_at(start);
     harness.step();
@@ -576,7 +580,7 @@ fn dragging_legend_near_top_left_redocks_automatically() {
     let mut harness = harness_with_three_files_loaded();
     detach_legend(&mut harness, egui::vec2(220.0, 120.0));
 
-    let drag_handle = harness.get_by_label(egui_phosphor::regular::DOTS_SIX);
+    let drag_handle = harness.get_by_label(ICON_DOTS_SIX);
     let start = drag_handle.rect().center();
     let end = start - egui::vec2(210.0, 110.0);
     harness.drag_at(start);
@@ -1411,9 +1415,7 @@ fn query_history_pin_and_delete_via_ui() {
     harness.run_steps(3);
 
     let revision_before = harness.state().query_window.history_revision();
-    harness
-        .get_by_label(egui_phosphor::regular::PUSH_PIN)
-        .click();
+    harness.get_by_label(ICON_PUSH_PIN).click();
     harness.run_steps(3);
     {
         let window = &harness.state().query_window;
@@ -1424,7 +1426,7 @@ fn query_history_pin_and_delete_via_ui() {
         );
     }
 
-    harness.get_by_label(egui_phosphor::regular::X).click();
+    harness.get_by_label(ICON_X).click();
     harness.run_steps(3);
     assert!(
         harness.state().query_window.history().is_empty(),
@@ -1881,7 +1883,7 @@ fn toolbar_context_menu_clears_query_filter() {
     assert!(harness.state().query_window.filter_active());
 
     harness
-        .get_by_label_contains(egui_phosphor::regular::TERMINAL_WINDOW)
+        .get_by_label_contains(ICON_TERMINAL_WINDOW)
         .click_secondary();
     harness.run_steps(2);
     harness.get_by_label_contains("Clear query filter").click();
@@ -1898,13 +1900,13 @@ fn toolbar_context_menu_clears_query_filter() {
 fn focus_query_editor_at_end(harness: &Harness<App>, text: &str) {
     let editor_id = egui::Id::new(super::query::EDITOR_ID_SALT);
     harness.ctx.memory_mut(|m| m.request_focus(editor_id));
-    let mut state = egui::TextEdit::load_state(&harness.ctx, editor_id).unwrap_or_default();
+    let mut state = TextEdit::load_state(&harness.ctx, editor_id).unwrap_or_default();
     state
         .cursor
         .set_char_range(Some(egui::text::CCursorRange::one(
             egui::text::CCursor::new(text.chars().count()),
         )));
-    egui::TextEdit::store_state(&harness.ctx, editor_id, state);
+    TextEdit::store_state(&harness.ctx, editor_id, state);
 }
 
 /// The autocomplete popup: candidates under the caret, the top one

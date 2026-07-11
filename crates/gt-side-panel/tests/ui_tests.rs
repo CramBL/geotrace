@@ -3,6 +3,8 @@
     reason = "recording-name templates intentionally contain {token} placeholders, not format args"
 )]
 
+use egui::CentralPanel;
+use egui_phosphor::regular::NOTE as ICON_NOTE;
 use std::path::PathBuf;
 
 use egui_kittest::kittest::Queryable as _;
@@ -618,10 +620,7 @@ fn clicking_note_icon_requests_recording_details() {
     let mut harness = make_harness(state);
     harness.run();
     assert!(harness.state().metadata_request.is_none());
-    harness
-        .inner
-        .get_by_label(egui_phosphor::regular::NOTE)
-        .click();
+    harness.inner.get_by_label(ICON_NOTE).click();
     harness.run();
     let request = harness
         .state()
@@ -648,7 +647,7 @@ fn settled_docked_panel_width(state: State) -> f32 {
         .size(egui::vec2(1200.0, 600.0))
         .ui_state(
             move |ui, s: &mut State| {
-                egui::CentralPanel::default().show_inside(ui, |ui| {
+                CentralPanel::default().show_inside(ui, |ui| {
                     let resp = egui::Panel::left("track_data_panel")
                         .min_size(240.0)
                         .show_inside(ui, |ui| {

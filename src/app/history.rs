@@ -1,4 +1,8 @@
 use chrono::{DateTime, NaiveDate, Utc};
+use egui::{Button, Checkbox, DragValue, Grid, Label, RichText, ScrollArea, TextEdit, Window};
+use egui_phosphor::regular::NOTE as ICON_NOTE;
+use egui_phosphor::regular::PENCIL_SIMPLE as ICON_PENCIL_SIMPLE;
+use egui_phosphor::regular::X as ICON_X;
 use gt_history::{DatabaseRef, PruneMode, RecordingEntry, RecordingMeta};
 use gt_side_panel::widgets::{MetadataView, has_metadata_details, metadata_detail_rows};
 use gt_types::TravelMode;
@@ -83,7 +87,7 @@ impl PruneDialog {
             open = false;
         }
 
-        egui::Window::new("Prune History…")
+        Window::new("Prune History…")
             .open(&mut open)
             .resizable(true)
             .collapsible(false)
@@ -107,7 +111,7 @@ impl PruneDialog {
                         let prev = self.age_days;
                         ui.horizontal(|ui| {
                             ui.label("Remove recordings older than");
-                            ui.add(egui::DragValue::new(&mut self.age_days).range(1..=3650));
+                            ui.add(DragValue::new(&mut self.age_days).range(1..=3650));
                             ui.label("days");
                         });
                         self.age_days != prev
@@ -117,7 +121,7 @@ impl PruneDialog {
                         ui.horizontal(|ui| {
                             ui.label("Keep total size under");
                             ui.add(
-                                egui::DragValue::new(&mut self.size_limit_mb).range(1..=100_000),
+                                DragValue::new(&mut self.size_limit_mb).range(1..=100_000),
                             );
                             ui.label("MB");
                         });
@@ -127,7 +131,7 @@ impl PruneDialog {
                         let prev = self.keep_count;
                         ui.horizontal(|ui| {
                             ui.label("Keep at most");
-                            ui.add(egui::DragValue::new(&mut self.keep_count).range(1..=10_000));
+                            ui.add(DragValue::new(&mut self.keep_count).range(1..=10_000));
                             ui.label("recordings per identity");
                         });
                         self.keep_count != prev
@@ -152,12 +156,12 @@ impl PruneDialog {
                         let n = refs.len();
                         let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
                         ui.label(format!("{n} {rec_label} will be deleted"));
-                        egui::ScrollArea::vertical()
+                        ScrollArea::vertical()
                             .max_height(200.0)
                             .show(ui, |ui| {
                                 for r in refs {
                                     let label = format!("{}/{}", r.identity, r.group_name);
-                                    ui.add(egui::Label::new(label.as_str()).truncate())
+                                    ui.add(Label::new(label.as_str()).truncate())
                                         .on_hover_text(label.as_str());
                                 }
                             });
@@ -166,7 +170,7 @@ impl PruneDialog {
                         ui.horizontal(|ui| {
                             let confirm_btn = ui
                                 .button(
-                                    egui::RichText::new("Delete these recordings")
+                                    RichText::new("Delete these recordings")
                                         .color(warning_amber(ui.visuals().dark_mode)),
                                 )
                                 .on_hover_text(
@@ -351,7 +355,7 @@ impl HistoryWindow {
         // `self.entries` is borrowed immutably for the list; restored after.
         let mut rename = std::mem::take(&mut self.rename);
 
-        egui::Window::new("History")
+        Window::new("History")
             .open(&mut open)
             .resizable(true)
             .default_width(640.0)
@@ -359,14 +363,14 @@ impl HistoryWindow {
             .show(ctx, |ui| {
                 if !worker.available() {
                     ui.label(
-                        egui::RichText::new("History database is unavailable.")
+                        RichText::new("History database is unavailable.")
                             .color(warning_amber(ui.visuals().dark_mode)),
                     );
                     return;
                 }
 
                 if let Some(err) = &self.error {
-                    ui.label(egui::RichText::new(err).color(warning_amber(ui.visuals().dark_mode)));
+                    ui.label(RichText::new(err).color(warning_amber(ui.visuals().dark_mode)));
                     ui.add_space(4.0);
                 }
 
@@ -384,7 +388,7 @@ impl HistoryWindow {
                 ui.horizontal(|ui| {
                     crate::terms::term_label(
                         ui,
-                        egui::RichText::new("Identity"),
+                        RichText::new("Identity"),
                         crate::terms::IDENTITY,
                     );
                     ui.text_edit_singleline(&mut self.filter_text);
@@ -395,7 +399,7 @@ impl HistoryWindow {
                             "Delete hidden data…".to_owned()
                         };
                         let delete_hidden = ui
-                            .add_enabled(hidden_count > 0, egui::Button::new(delete_hidden_label))
+                            .add_enabled(hidden_count > 0, Button::new(delete_hidden_label))
                             .on_hover_text(if hidden_count > 0 {
                                 "Permanently delete every hidden track from the original recordings"
                             } else {
@@ -416,26 +420,26 @@ impl HistoryWindow {
                 ui.horizontal(|ui| {
                     ui.label("Points ≥");
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.filter_min_points).desired_width(60.0),
+                        TextEdit::singleline(&mut self.filter_min_points).desired_width(60.0),
                     );
                     ui.label("≤");
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.filter_max_points).desired_width(60.0),
+                        TextEdit::singleline(&mut self.filter_max_points).desired_width(60.0),
                     );
                     ui.separator();
                     ui.label("Date");
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.filter_date_from)
+                        TextEdit::singleline(&mut self.filter_date_from)
                             .desired_width(90.0)
                             .hint_text("YYYY-MM-DD"),
                     );
                     ui.label("–");
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.filter_date_to)
+                        TextEdit::singleline(&mut self.filter_date_to)
                             .desired_width(90.0)
                             .hint_text("YYYY-MM-DD"),
                     );
-                    if filter_active && ui.small_button(egui_phosphor::regular::X).clicked() {
+                    if filter_active && ui.small_button(ICON_X).clicked() {
                         self.filter_text.clear();
                         self.filter_min_points.clear();
                         self.filter_max_points.clear();
@@ -455,7 +459,7 @@ impl HistoryWindow {
 
                     ui.add_enabled(
                         storage_on,
-                        egui::Checkbox::new(auto_prune_enabled, "Auto-prune when over"),
+                        Checkbox::new(auto_prune_enabled, "Auto-prune when over"),
                     )
                     .on_hover_text(if storage_on {
                         "Automatically delete the oldest recordings when storage exceeds the threshold"
@@ -467,7 +471,7 @@ impl HistoryWindow {
                         *auto_prune_max_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     ui.add_enabled(
                         prune_on,
-                        egui::DragValue::new(&mut max_gb)
+                        DragValue::new(&mut max_gb)
                             .range(0.1..=1_000.0)
                             .speed(0.1),
                     )
@@ -494,7 +498,7 @@ impl HistoryWindow {
 
                     ui.add_enabled(
                         prune_on,
-                        egui::Checkbox::new(auto_prune_confirm, "Confirm before pruning"),
+                        Checkbox::new(auto_prune_confirm, "Confirm before pruning"),
                     )
                     .on_hover_text(if prune_on {
                         "Show a confirmation dialog before auto-pruning deletes recordings"
@@ -556,17 +560,17 @@ impl HistoryWindow {
                 let available = ui.available_size();
                 let list_height = (available.y - footer_height - 8.0).max(100.0);
 
-                egui::ScrollArea::vertical()
+                ScrollArea::vertical()
                     .max_height(list_height)
                     .show(ui, |ui| {
-                        egui::Grid::new("history_list")
+                        Grid::new("history_list")
                             .num_columns(6)
                             .striped(true)
                             .min_col_width(80.0)
                             .show(ui, |ui| {
                                 crate::terms::term_label(
                                     ui,
-                                    egui::RichText::new("Identity").strong(),
+                                    RichText::new("Identity").strong(),
                                     crate::terms::IDENTITY,
                                 );
                                 ui.strong("Date");
@@ -620,7 +624,7 @@ impl HistoryWindow {
                 let mut do_delete = false;
                 let mut cancel =
                     ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-                egui::Window::new("Delete hidden data?")
+                Window::new("Delete hidden data?")
                     .collapsible(false)
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
@@ -633,7 +637,7 @@ impl HistoryWindow {
                         ui.horizontal(|ui| {
                             if ui
                                 .button(
-                                    egui::RichText::new("Delete hidden tracks")
+                                    RichText::new("Delete hidden tracks")
                                         .color(warning_amber(ui.visuals().dark_mode)),
                                 )
                                 .on_hover_text(
@@ -703,14 +707,14 @@ fn render_row(
     ui.label(format_size(entry.meta.gtd_size_bytes));
 
     ui.horizontal(|ui| {
-        let open = ui.add_enabled(!already_loaded, egui::Button::new("Open").small());
+        let open = ui.add_enabled(!already_loaded, Button::new("Open").small());
         if already_loaded {
             open.on_hover_text("Already loaded");
         } else if open.clicked() {
             worker.open(entry.db_ref.clone());
         }
         if ui
-            .small_button(egui_phosphor::regular::PENCIL_SIMPLE)
+            .small_button(ICON_PENCIL_SIMPLE)
             .on_hover_text("Rename identity")
             .clicked()
         {
@@ -740,7 +744,7 @@ fn render_rename_editor(
     };
     let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
     let resp = ui.add(
-        egui::TextEdit::singleline(&mut edit.buffer)
+        TextEdit::singleline(&mut edit.buffer)
             .desired_width(f32::INFINITY)
             .hint_text("Identity"),
     );
@@ -781,15 +785,15 @@ fn identity_cell(ui: &mut egui::Ui, entry: &RecordingEntry) {
     ui.horizontal(|ui| {
         if is_auto {
             ui.label(
-                egui::RichText::new("auto")
+                RichText::new("auto")
                     .small()
                     .color(ui.visuals().weak_text_color()),
             );
         }
         if has_metadata {
-            ui.label(egui::RichText::new(egui_phosphor::regular::NOTE).weak());
+            ui.label(RichText::new(ICON_NOTE).weak());
         }
-        ui.add(egui::Label::new(display_name).truncate());
+        ui.add(Label::new(display_name).truncate());
     })
     .response
     .on_hover_ui(|ui| {
@@ -873,8 +877,9 @@ mod tests {
     use crate::app::history_db::Response;
 
     use super::{
-        DatabaseRef, HistoryWindow, HistoryWorker, RecordingEntry, RecordingMeta, identity_cell,
-        identity_display_parts, travel_mode_display,
+        DatabaseRef, Grid, HistoryWindow, HistoryWorker, ICON_NOTE, ICON_PENCIL_SIMPLE,
+        RecordingEntry, RecordingMeta, ScrollArea, Window, identity_cell, identity_display_parts,
+        travel_mode_display,
     };
 
     /// Harness state for driving the History window: the window, a live (empty)
@@ -1010,9 +1015,7 @@ mod tests {
 
         // Open the inline editor. `request_focus` applies the frame after the
         // editor first renders, so settle a couple of frames before typing.
-        h.inner
-            .get_by_label(egui_phosphor::regular::PENCIL_SIMPLE)
-            .click();
+        h.inner.get_by_label(ICON_PENCIL_SIMPLE).click();
         h.step();
         h.step();
         // Append to the seeded name and commit with Enter.
@@ -1040,9 +1043,7 @@ mod tests {
         h.run();
         // The rename pencil is present; clicking it swaps the identity cell for
         // the inline text editor (seeded with the `auto:`-stripped name).
-        h.inner
-            .get_by_label(egui_phosphor::regular::PENCIL_SIMPLE)
-            .click();
+        h.inner.get_by_label(ICON_PENCIL_SIMPLE).click();
         h.run();
         assert!(
             h.inner.query_all_by_value("ride.gtd").next().is_some(),
@@ -1098,15 +1099,13 @@ mod tests {
             .ui_state(show_history, harness);
         h.run();
         assert!(
-            h.inner
-                .query_by_label(egui_phosphor::regular::NOTE)
-                .is_some(),
+            h.inner.query_by_label(ICON_NOTE).is_some(),
             "the note icon should appear for an entry whose only metadata is a travel mode"
         );
     }
 
     /// Settled width of the History window, mirroring the real container: a
-    /// resizable [`egui::Window`] holding the identity grid in a vertical scroll
+    /// resizable [`Window`] holding the identity grid in a vertical scroll
     /// area. A resizable window runs a sizing pass over its content, the path
     /// where an un-truncated label reports its full text width and stretches the
     /// window.
@@ -1117,12 +1116,12 @@ mod tests {
         let mut harness = TestHarness::builder()
             .size(egui::vec2(1600.0, 500.0))
             .ui(move |ui| {
-                let resp = egui::Window::new("History")
+                let resp = Window::new("History")
                     .resizable(true)
                     .default_width(640.0)
                     .show(ui.ctx(), |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            egui::Grid::new("history_list")
+                        ScrollArea::vertical().show(ui, |ui| {
+                            Grid::new("history_list")
                                 .num_columns(6)
                                 .min_col_width(80.0)
                                 .show(ui, |ui| {

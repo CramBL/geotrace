@@ -20,6 +20,7 @@
 //! GeoTrace installer assets. SDK releases (tagged `geotrace-sdk-v*`) carry no
 //! such assets, so they are ignored here automatically.
 
+use egui::{Button, RichText, Window};
 use std::{sync::Arc, thread};
 
 use axoupdater::{AxoUpdater, ReleaseSource, ReleaseSourceType};
@@ -163,7 +164,7 @@ impl UpdateChecker {
 
         let current_version = self.current_version.as_str();
         let install_status = self.install.lock();
-        egui::Window::new("Update available")
+        Window::new("Update available")
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
@@ -203,8 +204,8 @@ impl UpdateChecker {
                         }
                         InstallStatus::Idle => {
                             // Primary action: prominent, green, and the obvious default.
-                            let update = egui::Button::new(
-                                egui::RichText::new("Update and restart")
+                            let update = Button::new(
+                                RichText::new("Update and restart")
                                     .color(egui::Color32::WHITE)
                                     .strong(),
                             )
