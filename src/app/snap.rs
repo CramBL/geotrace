@@ -26,7 +26,8 @@ use gt_snap::stitch::{self, SnapResult, SnapWarning, SnapWarningReporter};
 use gt_snap::transport::HttpTransport;
 use gt_snap::wire::Costing;
 use gt_snap::{DEFAULT_SERVER_URL, transport};
-use gt_types::{LoadedTrack, TrackRef, TravelMode};
+use gt_types::mercator::{self, MercPoint};
+use gt_types::{Latitude, LoadedTrack, Longitude, TrackRef, TravelMode};
 
 /// The costing a track snaps with: the file's declared travel mode beats the
 /// configured default costing, and declarations without a road-network
@@ -67,16 +68,40 @@ impl SnapCacheKey {
     }
 }
 
-/// A completed snap run: the stitched result plus the run's warnings.
+/// A completed snap run: the stitched result, the run's warnings, and the
+/// map-ready projection of the snapped-track segments.
 #[derive(Debug)]
 pub struct SnapRun {
     pub result: SnapResult,
-    /// Consumed once the snapped-track renderer and the snap error plot land.
-    #[expect(
-        dead_code,
-        reason = "consumers land with the snapped-track renderer and the snap error plot"
-    )]
+    /// Consumed once the snap error plot lands.
+    #[expect(dead_code, reason = "the consumer lands with the snap error plot")]
     pub warnings: Vec<SnapWarning>,
+    /// The result's snapped-track segments in normalized Mercator, projected
+    /// once at completion (on the worker thread) - the map redraws every
+    /// frame but a cached run's geometry never changes. Shared with the map
+    /// via [`gt_ui_types::SnappedTracks`].
+    pub segments_merc: Arc<Vec<Vec<MercPoint>>>,
+}
+
+impl SnapRun {
+    pub(crate) fn new(result: SnapResult, warnings: Vec<SnapWarning>) -> Self {
+        let segments_merc = result
+            .segments
+            .iter()
+            .map(|segment| {
+                segment
+                    .positions
+                    .iter()
+                    .map(|p| mercator::normalize(Latitude::new(p.lat), Longitude::new(p.lon)))
+                    .collect()
+            })
+            .collect();
+        Self {
+            result,
+            warnings,
+            segments_merc: Arc::new(segments_merc),
+        }
+    }
 }
 
 /// Transient per-track state while a run is queued or in flight, or after a
@@ -202,6 +227,13 @@ impl SnapScheduler {
             plan,
         });
         self.start_next_if_idle();
+    }
+
+    /// Insert a completed run directly into the session cache, bypassing the
+    /// worker. Tests only - production runs arrive via the message channel.
+    #[cfg(test)]
+    pub fn insert_run(&mut self, key: SnapCacheKey, run: SnapRun) {
+        self.cache.insert(key, Arc::new(run));
     }
 
     /// Forget all transient per-track activity. Call after file/track
@@ -350,10 +382,7 @@ fn spawn_run(
                 SnapMessage::Done {
                     track,
                     key,
-                    run: Box::new(SnapRun {
-                        result,
-                        warnings: reporter.warnings(),
-                    }),
+                    run: Box::new(SnapRun::new(result, reporter.warnings())),
                 }
             };
             tx.send(message).ok();
@@ -424,15 +453,15 @@ mod tests {
         SnapMessage::Done {
             track,
             key,
-            run: Box::new(SnapRun {
-                result: stitch::stitch(
+            run: Box::new(SnapRun::new(
+                stitch::stitch(
                     &request_plan::plan(&[]),
                     Costing::Auto,
                     &[],
                     &SnapWarningReporter::default(),
                 ),
-                warnings: Vec::new(),
-            }),
+                Vec::new(),
+            )),
         }
     }
 

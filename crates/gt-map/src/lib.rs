@@ -12,6 +12,7 @@ mod polyline;
 mod query_match_renderer;
 mod sat_labels;
 mod scope;
+mod snapped_track_renderer;
 #[cfg(test)]
 mod test_harness;
 pub mod tpv_renderer;
@@ -29,7 +30,7 @@ use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
-    HighlightScope, MapHighlight, QueryMatches, TrackDataVisibility,
+    HighlightScope, MapHighlight, QueryMatches, SnappedTracks, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
@@ -41,6 +42,7 @@ use crate::hover_labels::{
     draw_disambig_row, draw_multi_hover_label_contents, should_show_compound_label,
 };
 use crate::marker_renderer::MarkerRenderer;
+use crate::snapped_track_renderer::SnappedTrackRenderer;
 use crate::track_layers::TrackLayers;
 use crate::transform::{MapScale, MercTransform};
 use crate::viewport::{
@@ -346,6 +348,7 @@ impl NavMap {
         event_marker_visibility: &EventMarkerVisibility,
         generated_marker_visibility: &GeneratedMarkerVisibility,
         query_matches: Option<&QueryMatches>,
+        snapped_tracks: Option<&SnappedTracks>,
         center_request: Option<(f64, f64)>,
         zoom_to_visible: bool,
         sticky_pos_override: Option<egui::Pos2>,
@@ -500,6 +503,11 @@ impl NavMap {
                 .display_query_highlights(display_mask.is_visible(DisplayCategory::QueryHighlights))
                 .build(),
         );
+        if let Some(snapped) = snapped_tracks
+            && !snapped.is_empty()
+        {
+            map = map.with_plugin(SnappedTrackRenderer::new(snapped));
+        }
         if display_mask.is_visible(DisplayCategory::CustomMarkers) {
             map = map.with_plugin(MarkerRenderer::new(
                 files,
@@ -1873,6 +1881,7 @@ mod snapshot_tests {
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         Some(&matches),
                         None,
+                        None,
                         false,
                         None,
                     );
@@ -1886,6 +1895,80 @@ mod snapshot_tests {
             harness.run();
         }
         harness.snapshot_loose(name);
+    }
+
+    /// Snapshot: dashed translucent snapped-track polylines beside the
+    /// recorded track, with the empty stretch between the two segments
+    /// rendering as a gap (a route discontinuity) - the recorded track
+    /// beneath is never painted over or hidden. Requires `GEOTRACE_OFFLINE=1`
+    /// (set by `just test`) so no map tiles render.
+    #[test]
+    fn snap_snapped_track_polylines() {
+        use std::sync::Arc;
+
+        use gt_types::mercator::MercPoint;
+        use gt_ui_types::{SnappedTracks, TrackDataVisibility};
+
+        /// Nudge north (smaller Mercator y) by roughly ten pixels at the
+        /// test's zoom, so the snapped line reads beside the recorded one
+        /// instead of on top of it.
+        const OFFSET_MERC_Y: f64 = -1.5e-6;
+
+        let files = vec![make_snapshot_file()];
+        let visibility = TrackDataVisibility::from_loaded(&files);
+        let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let points = files
+            .first()
+            .and_then(|f| f.tracks.first())
+            .map(|t| t.points.clone())
+            .unwrap_or_default();
+        let segment = |range: std::ops::Range<usize>| -> Vec<MercPoint> {
+            points
+                .get(range)
+                .unwrap_or_default()
+                .iter()
+                .map(|p| MercPoint {
+                    x: p.merc.x,
+                    y: p.merc.y + OFFSET_MERC_Y,
+                })
+                .collect()
+        };
+        let snapped = SnappedTracks {
+            segments_by_track: std::collections::HashMap::from([(
+                track_ref,
+                Arc::new(vec![segment(100..400), segment(600..950)]),
+            )]),
+        };
+
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(800.0, 600.0))
+            .ui_state(
+                move |ui, map: &mut Option<NavMap>| {
+                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let mut highlight = gt_ui_types::MapHighlight::default();
+                    map.draw(
+                        ui,
+                        &files,
+                        &visibility,
+                        &mut highlight,
+                        &gt_filter::GlobalFilter::default(),
+                        &mut gt_ui_types::DisplayMask::default(),
+                        &gt_ui_types::EventMarkerVisibility::default(),
+                        &gt_ui_types::GeneratedMarkerVisibility::default(),
+                        None,
+                        Some(&snapped),
+                        None,
+                        false,
+                        None,
+                    );
+                },
+                None,
+            );
+
+        for _ in 0..5 {
+            harness.run();
+        }
+        harness.snapshot_loose("snapped_track_polylines");
     }
 
     /// Snapshot: match halos along the track, including the single-point
@@ -1945,6 +2028,7 @@ mod snapshot_tests {
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
                         None,
+                        None,
                         false,
                         None,
                     );
@@ -1991,6 +2075,7 @@ mod snapshot_tests {
                         &mut mask.clone(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
+                        None,
                         None,
                         None,
                         false,

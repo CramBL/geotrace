@@ -160,6 +160,10 @@ pub struct App {
     /// The track whose snap trigger raised the consent dialog. Queued when
     /// the dialog is accepted, dropped when it is declined.
     pending_snap: Option<TrackRef>,
+    /// Tracks whose completed snapped track is toggled off the map. Session
+    /// state, like the snap cache; cleared with the other per-track snap
+    /// state when indices shift.
+    hidden_snapped: std::collections::HashSet<TrackRef>,
 
     /// Tiles tree for the central area - map (top) and plot (bottom).
     tiles_tree: Tree<MainPane>,
@@ -371,6 +375,7 @@ impl App {
             snap_settings: crate::settings::SnapSettings::default(),
             snap_consent_prompt: false,
             pending_snap: None,
+            hidden_snapped: std::collections::HashSet::new(),
             tiles_tree,
             map_tile_id,
             plot_tile_id,
@@ -1004,6 +1009,7 @@ impl App {
                                 interpolated: run.result.kind_counts.interpolated,
                                 unsnapped: run.result.kind_counts.unsnapped,
                                 confidence_score: run.result.confidence_score,
+                                shown: !self.hidden_snapped.contains(&track_ref),
                             },
                             None => continue,
                         },
@@ -1013,6 +1019,44 @@ impl App {
             }
         }
         rows
+    }
+
+    /// The map's snapped-track geometry: one entry per tree-visible track
+    /// whose completed run is not toggled hidden. The per-run projection is
+    /// shared via `Arc`, so assembling this each frame is cheap.
+    fn snapped_tracks_view(&self) -> gt_ui_types::SnappedTracks {
+        let shared = self.shared.borrow();
+        let visibility = shared.tree.visibility();
+        let mut snapped = gt_ui_types::SnappedTracks::default();
+        for (fi, file) in shared.loaded_files.files().iter().enumerate() {
+            let fi = FileIdx::new(fi);
+            let declared = file.metadata.travel_mode.as_ref();
+            let Some(costing) = snap::resolve_costing(declared, self.snap_settings.costing) else {
+                continue;
+            };
+            for (ti, track) in file.tracks.iter().enumerate() {
+                let track_ref = TrackRef::new(fi, TrackIdx::new(ti));
+                if self.hidden_snapped.contains(&track_ref) {
+                    continue;
+                }
+                let track_shown = fi.get(&visibility.files).is_some_and(|fv| {
+                    fv.enabled
+                        && track_ref
+                            .index
+                            .get(&fv.tracks)
+                            .is_some_and(|tv| tv.enabled && tv.track_visible)
+                });
+                if !track_shown {
+                    continue;
+                }
+                if let Some(run) = self.snap.run_for(track, costing) {
+                    snapped
+                        .segments_by_track
+                        .insert(track_ref, Arc::clone(&run.segments_merc));
+                }
+            }
+        }
+        snapped
     }
 
     /// Act on a snap trigger from the side panel: route through the consent
@@ -1446,6 +1490,7 @@ impl App {
     /// mutation site from forgetting one of them.
     fn on_track_indices_changed(&mut self) {
         self.snap.reset_track_states();
+        self.hidden_snapped.clear();
         let s = self.shared.borrow();
         self.map.rebuild_spatial_index(&s.loaded_files);
     }
@@ -1656,6 +1701,8 @@ struct MainBehavior<'a> {
     /// Matches of the last query run, drawn as halos (one frame behind the
     /// query window, which renders after the tiles tree).
     query_matches: Option<&'a gt_ui_types::QueryMatches>,
+    /// Snapped-track geometry of completed, shown snap runs.
+    snapped_tracks: &'a gt_ui_types::SnappedTracks,
 }
 
 impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
@@ -1676,6 +1723,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     s.tree.event_marker_visibility(),
                     s.tree.generated_marker_visibility(),
                     self.query_matches,
+                    Some(self.snapped_tracks),
                     center_req,
                     zoom_to_visible,
                     popup_pos,
@@ -1923,6 +1971,7 @@ impl eframe::App for App {
             rows: &snap_rows,
         };
         let mut snap_request: Option<TrackRef> = None;
+        let mut snap_visibility_request: Option<TrackRef> = None;
 
         let detached = self.shared.borrow().tree.detached;
         if !detached {
@@ -1950,6 +1999,7 @@ impl eframe::App for App {
                             metadata_request: &mut s.metadata_popup,
                             snap: snap_view,
                             snap_request: &mut snap_request,
+                            snap_visibility_request: &mut snap_visibility_request,
                         },
                     );
                 });
@@ -1991,6 +2041,7 @@ impl eframe::App for App {
                             metadata_request: &mut s.metadata_popup,
                             snap: snap_view,
                             snap_request: &mut snap_request,
+                            snap_visibility_request: &mut snap_visibility_request,
                         },
                     );
                 });
@@ -2002,11 +2053,20 @@ impl eframe::App for App {
         if let Some(track_ref) = snap_request {
             self.handle_snap_request(track_ref);
         }
+        if let Some(track_ref) = snap_visibility_request
+            && !self.hidden_snapped.remove(&track_ref)
+        {
+            self.hidden_snapped.insert(track_ref);
+        }
 
         // "Reset filters" also drops the query filter so the map fully clears.
         if std::mem::take(&mut self.shared.borrow_mut().clear_query_request) {
             self.query_window.clear_filter();
         }
+
+        // Assembled after the panel so a visibility toggle takes effect in
+        // the same frame's map render.
+        let snapped_tracks = self.snapped_tracks_view();
 
         CentralPanel::default().show_inside(ui, |ui| {
             let panel_rect = ui.max_rect();
@@ -2036,6 +2096,7 @@ impl eframe::App for App {
                     match_hover_time_range,
                     toggle_plot_request: false,
                     query_matches: self.query_window.matches(),
+                    snapped_tracks: &snapped_tracks,
                 };
                 tiles_tree.ui(&mut behavior, ui);
                 toggle_plot_request = behavior.toggle_plot_request;

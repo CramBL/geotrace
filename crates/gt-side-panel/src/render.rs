@@ -76,6 +76,8 @@ pub enum SnapRowView {
         unsnapped: usize,
         /// Run confidence in `0..=1`, when the server reported one.
         confidence_score: Option<f64>,
+        /// Whether the snapped track is currently drawn on the map.
+        shown: bool,
     },
 }
 
@@ -108,6 +110,10 @@ pub struct PanelContext<'a> {
     /// routes it through the consent dialog when consent is pending and
     /// queues the run otherwise.
     pub snap_request: &'a mut Option<TrackRef>,
+    /// Set by the snapped-track visibility toggle (the status glyph or the
+    /// context-menu entry) of a completed run. Consumed by the app, which
+    /// flips whether that track's snapped track draws on the map.
+    pub snap_visibility_request: &'a mut Option<TrackRef>,
 }
 
 /// Trailing eye-slash on a category row whose map ink is hidden by the
@@ -478,6 +484,19 @@ fn snap_action(row: &SnapRowView, snap: SnapPanelView<'_>) -> Option<SnapAction>
     Some(action)
 }
 
+/// Extra dimming applied to the status glyph while the snapped track is
+/// hidden, so the toggle state is readable at a glance.
+const HIDDEN_GLYPH_ALPHA: f32 = 0.5;
+
+/// The toggle hint appended to the snap status hover.
+fn snapped_track_toggle_label(shown: bool) -> &'static str {
+    if shown {
+        "Snapped track shown on the map - click to hide"
+    } else {
+        "Snapped track hidden - click to show"
+    }
+}
+
 /// The completed-run breakdown shown in the snap status hover: per-kind point
 /// counts and the run confidence.
 fn snap_status_rows(
@@ -517,15 +536,39 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
             interpolated,
             unsnapped,
             confidence_score,
+            shown,
         } = row
         else {
             return;
         };
-        let (snapped, interpolated, unsnapped, confidence_score) =
-            (*snapped, *interpolated, *unsnapped, *confidence_score);
-        ui.label(RichText::new(ICON_PATH).weak()).on_hover_ui(|ui| {
-            snap_status_rows(ui, snapped, interpolated, unsnapped, confidence_score);
-        });
+        let (snapped, interpolated, unsnapped, confidence_score, shown) = (
+            *snapped,
+            *interpolated,
+            *unsnapped,
+            *confidence_score,
+            *shown,
+        );
+        // The status glyph doubles as the per-track visibility toggle: weak
+        // while the snapped track draws, extra-faint while hidden.
+        let text = if shown {
+            RichText::new(ICON_PATH).weak()
+        } else {
+            RichText::new(ICON_PATH).weak().color(
+                ui.visuals()
+                    .weak_text_color()
+                    .gamma_multiply(HIDDEN_GLYPH_ALPHA),
+            )
+        };
+        let glyph = ui
+            .add(Button::new(text).frame(false))
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_ui(|ui| {
+                snap_status_rows(ui, snapped, interpolated, unsnapped, confidence_score);
+                ui.label(RichText::new(snapped_track_toggle_label(shown)).weak());
+            });
+        if glyph.clicked() {
+            *ctx.snap_visibility_request = Some(track_ref);
+        }
         return;
     };
 
@@ -581,16 +624,31 @@ fn snap_menu_entry(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContex
                 interpolated,
                 unsnapped,
                 confidence_score,
+                shown,
             } = row
             else {
                 return;
             };
-            let (snapped, interpolated, unsnapped, confidence_score) =
-                (*snapped, *interpolated, *unsnapped, *confidence_score);
+            let (snapped, interpolated, unsnapped, confidence_score, shown) = (
+                *snapped,
+                *interpolated,
+                *unsnapped,
+                *confidence_score,
+                *shown,
+            );
             ui.add_enabled(false, Button::new("Snap to road"))
                 .on_disabled_hover_ui(|ui| {
                     snap_status_rows(ui, snapped, interpolated, unsnapped, confidence_score);
                 });
+            let toggle_label = if shown {
+                "Hide snapped track"
+            } else {
+                "Show snapped track"
+            };
+            if ui.button(toggle_label).clicked() {
+                *ctx.snap_visibility_request = Some(track_ref);
+                ui.close();
+            }
         }
     }
 }
@@ -1522,6 +1580,7 @@ mod snap_action_tests {
             interpolated: 2,
             unsnapped: 3,
             confidence_score: None,
+            shown: true,
         }
     }
 

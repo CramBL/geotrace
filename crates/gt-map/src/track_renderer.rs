@@ -213,7 +213,7 @@ pub(crate) fn draw_track_with_ghost<K: Copy>(
 }
 
 /// Draw a polyline as a dashed line with the given dash and gap lengths in screen pixels.
-fn draw_dashed_line(
+pub(crate) fn draw_dashed_line(
     painter: &egui::Painter,
     points: &[egui::Pos2],
     stroke: Stroke,
