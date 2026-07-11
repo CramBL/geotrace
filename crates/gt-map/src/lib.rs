@@ -1,3 +1,6 @@
+use egui::{Area, Frame, Grid, Label, RichText, ScrollArea, Window};
+use egui_phosphor::regular::GLOBE_HEMISPHERE_WEST as ICON_GLOBE_HEMISPHERE_WEST;
+use egui_phosphor::regular::MAP_TRIFOLD as ICON_MAP_TRIFOLD;
 pub mod display_counts;
 mod display_toggle;
 pub mod event_marker_renderer;
@@ -594,22 +597,14 @@ impl NavMap {
         };
 
         // Layer toggle - floating panel anchored to the bottom-right of the map.
-        let layer_toggle = egui::Area::new(egui::Id::new("map_layer_toggle"))
+        let layer_toggle = Area::new(egui::Id::new("map_layer_toggle"))
             .fixed_pos(egui::pos2(map_rect.right() - 8.0, map_rect.bottom() - 8.0))
             .pivot(egui::Align2::RIGHT_BOTTOM)
             .show(ui.ctx(), |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                Frame::popup(ui.style()).show(ui, |ui| {
                     for (layer, icon, label) in [
-                        (
-                            MapLayer::OpenStreetMap,
-                            egui_phosphor::regular::MAP_TRIFOLD,
-                            "Map",
-                        ),
-                        (
-                            MapLayer::Satellite,
-                            egui_phosphor::regular::GLOBE_HEMISPHERE_WEST,
-                            "Satellite",
-                        ),
+                        (MapLayer::OpenStreetMap, ICON_MAP_TRIFOLD, "Map"),
+                        (MapLayer::Satellite, ICON_GLOBE_HEMISPHERE_WEST, "Satellite"),
                     ] {
                         let selected = self.layer == layer;
                         if ui
@@ -682,11 +677,11 @@ impl NavMap {
         let disambig_candidates = self.disambiguation_candidates;
         if disambig_candidates.iter().any(|c| c.is_some()) {
             let disambig_pos = self.disambiguation_pos;
-            let area_resp = egui::Area::new(egui::Id::new("map_disambig"))
+            let area_resp = Area::new(egui::Id::new("map_disambig"))
                 .fixed_pos(disambig_pos)
                 .order(egui::Order::Foreground)
                 .show(ui.ctx(), |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    Frame::popup(ui.style()).show(ui, |ui| {
                         ui.set_min_width(160.0);
                         for candidate in disambig_candidates.iter().flatten().copied() {
                             if draw_disambig_row(
@@ -733,13 +728,12 @@ impl NavMap {
                 ui.close();
                 return;
             };
-            ui.add(egui::Label::new(
-                egui::RichText::new(file.metadata.filename.as_str()).weak(),
+            ui.add(Label::new(
+                RichText::new(file.metadata.filename.as_str()).weak(),
             ));
             if file.tracks.len() > 1 {
-                ui.add(egui::Label::new(
-                    egui::RichText::new(format!("#{}", point_ref.track.index.as_usize() + 1))
-                        .weak(),
+                ui.add(Label::new(
+                    RichText::new(format!("#{}", point_ref.track.index.as_usize() + 1)).weak(),
                 ));
             }
             ui.separator();
@@ -781,7 +775,7 @@ impl NavMap {
             highlight.suppress_hover_labels,
         ) && let Some(cursor_pos) = ui.input(|i| i.pointer.hover_pos())
         {
-            egui::Area::new(egui::Id::new("map_multi_hover_labels"))
+            Area::new(egui::Id::new("map_multi_hover_labels"))
                 .fixed_pos(cursor_pos + egui::vec2(15.0, 10.0))
                 .order(egui::Order::Tooltip)
                 .show(ui.ctx(), |ui| {
@@ -869,7 +863,7 @@ fn show_sticky_popup(
             )
     };
 
-    egui::Window::new(title)
+    Window::new(title)
         .id(egui::Id::new(("sticky_popup", sticky_ref)))
         .default_pos(default_pos)
         .collapsible(false)
@@ -886,13 +880,11 @@ fn show_sticky_popup(
                     // Cap the window height so satellite tables never overflow the
                     // screen. The ScrollArea only activates past the cap.
                     let max_h = (ui.ctx().viewport_rect().height() * 0.75).min(500.0);
-                    egui::ScrollArea::vertical()
-                        .max_height(max_h)
-                        .show(ui, |ui| {
-                            crate::tpv_renderer::show_sticky_tpv_content(ui, point);
-                        });
+                    ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
+                        crate::tpv_renderer::show_sticky_tpv_content(ui, point);
+                    });
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new("Click to deselect").small().weak());
+                    ui.label(RichText::new("Click to deselect").small().weak());
                 }
             }
             DataCategory::CustomMarker => {
@@ -903,15 +895,15 @@ fn show_sticky_popup(
                     .and_then(|f| sticky_ref.track.index.get(&f.tracks))
                     .and_then(|t| sticky_ref.point_index.get(&t.custom_markers))
                 {
-                    egui::Grid::new("sticky_marker_grid")
+                    Grid::new("sticky_marker_grid")
                         .num_columns(2)
                         .show(ui, |ui| {
                             ui.label("Label");
-                            ui.add(egui::Label::new(marker.label.as_str()).selectable(true));
+                            ui.add(Label::new(marker.label.as_str()).selectable(true));
                             ui.end_row();
                         });
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new("Click to deselect").small().weak());
+                    ui.label(RichText::new("Click to deselect").small().weak());
                 }
             }
             DataCategory::GeneratedMarker => {
@@ -927,29 +919,27 @@ fn show_sticky_popup(
                     // the position, and (for a slip) the per-satellite table.
                     let header =
                         crate::generated_marker_renderer::generated_marker_header(&marker.kind);
-                    egui::Grid::new("sticky_gen_grid")
-                        .num_columns(2)
-                        .show(ui, |ui| {
-                            ui.label("Event");
-                            ui.add(egui::Label::new(header).selectable(true));
-                            ui.end_row();
-                            ui.label("Position");
-                            ui.add(
-                                egui::Label::new(format!(
-                                    "{:.6}, {:.6}",
-                                    marker.lat.as_degrees(),
-                                    marker.lon.as_degrees()
-                                ))
-                                .selectable(true),
-                            );
-                            ui.end_row();
-                        });
+                    Grid::new("sticky_gen_grid").num_columns(2).show(ui, |ui| {
+                        ui.label("Event");
+                        ui.add(Label::new(header).selectable(true));
+                        ui.end_row();
+                        ui.label("Position");
+                        ui.add(
+                            Label::new(format!(
+                                "{:.6}, {:.6}",
+                                marker.lat.as_degrees(),
+                                marker.lon.as_degrees()
+                            ))
+                            .selectable(true),
+                        );
+                        ui.end_row();
+                    });
                     if let gt_types::GeneratedMarkerKind::Slip(event) = &marker.kind {
                         ui.add_space(4.0);
                         crate::generated_marker_renderer::show_slip_table(ui, event);
                     }
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new("Click to deselect").small().weak());
+                    ui.label(RichText::new("Click to deselect").small().weak());
                 }
             }
             DataCategory::SatelliteReport => {
@@ -961,13 +951,11 @@ fn show_sticky_popup(
                     .and_then(|t| sticky_ref.point_index.get(&t.points))
                 {
                     let max_h = (ui.ctx().viewport_rect().height() * 0.75).min(500.0);
-                    egui::ScrollArea::vertical()
-                        .max_height(max_h)
-                        .show(ui, |ui| {
-                            crate::tpv_renderer::show_sticky_tpv_content(ui, point);
-                        });
+                    ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
+                        crate::tpv_renderer::show_sticky_tpv_content(ui, point);
+                    });
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new("Click to deselect").small().weak());
+                    ui.label(RichText::new("Click to deselect").small().weak());
                 }
             }
             DataCategory::Track => {}
@@ -979,20 +967,20 @@ fn show_sticky_popup(
                     .and_then(|f| sticky_ref.track.index.get(&f.tracks))
                     .and_then(|t| sticky_ref.point_index.get(&t.event_markers))
                 {
-                    egui::Grid::new("sticky_event_marker_grid")
+                    Grid::new("sticky_event_marker_grid")
                         .num_columns(2)
                         .show(ui, |ui| {
                             ui.label("Event");
-                            ui.add(egui::Label::new(marker.variant_path.as_str()).selectable(true));
+                            ui.add(Label::new(marker.variant_path.as_str()).selectable(true));
                             ui.end_row();
                             if let Some(ann) = &marker.annotation {
                                 ui.label("Note");
-                                ui.add(egui::Label::new(ann.as_str()).selectable(true));
+                                ui.add(Label::new(ann.as_str()).selectable(true));
                                 ui.end_row();
                             }
                         });
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new("Click to deselect").small().weak());
+                    ui.label(RichText::new("Click to deselect").small().weak());
                 }
             }
         });
@@ -1799,7 +1787,7 @@ mod snapshot_tests {
         let mut harness = TestHarness::builder()
             .size(egui::vec2(300.0, 90.0))
             .ui(move |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_min_width(200.0);
                     for candidate in candidates.iter().flatten().copied() {
                         draw_disambig_row(ui, candidate, &files, sticky == Some(candidate));

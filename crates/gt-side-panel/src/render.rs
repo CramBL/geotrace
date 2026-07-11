@@ -1,3 +1,11 @@
+use egui::{Button, Label, RichText, ScrollArea, Sides, TextEdit};
+use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
+use egui_phosphor::regular::CLOCK as ICON_CLOCK;
+use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
+use egui_phosphor::regular::NOTE as ICON_NOTE;
+use egui_phosphor::regular::ROAD_HORIZON as ICON_ROAD_HORIZON;
+use egui_phosphor::regular::TRASH as ICON_TRASH;
+use egui_phosphor::regular::WARNING as ICON_WARNING;
 use gt_filter::GlobalFilter;
 use gt_fmt::{NameFields, render_name_template};
 use gt_loaded_files::LoadedFilesView;
@@ -53,7 +61,7 @@ pub struct PanelContext<'a> {
 /// silently compounding.
 fn masked_hint(ui: &mut egui::Ui, mask: DisplayMask, category: DataCategory) {
     if !mask.is_visible(DisplayCategory::from(category)) {
-        ui.label(egui::RichText::new(egui_phosphor::regular::EYE_SLASH).weak())
+        ui.label(RichText::new(ICON_EYE_SLASH).weak())
             .on_hover_text("Hidden by the map display toggles");
     }
 }
@@ -87,7 +95,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
                     ctx.tree.detached = false;
                 }
             } else if ui
-                .small_button(egui_phosphor::regular::ARROW_SQUARE_OUT)
+                .small_button(ICON_ARROW_SQUARE_OUT)
                 .on_hover_text("Pop out")
                 .clicked()
             {
@@ -150,10 +158,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
             }
             ui.add_enabled(
                 has_filtered,
-                egui::Button::new(format!(
-                    "{} Remove filtered data",
-                    egui_phosphor::regular::TRASH
-                )),
+                Button::new(format!("{ICON_TRASH} Remove filtered data")),
             )
             .clicked()
         })
@@ -206,7 +211,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
             .collect()
     };
 
-    egui::ScrollArea::vertical()
+    ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             for fi in 0..ctx.files().len() {
@@ -253,7 +258,7 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, display_name: &str, ctx: &mut
             // A frameless button (not a Label) so the pointer reads as clickable
             // and the icon highlights on hover, instead of showing a text cursor.
             let icon = ui
-                .add(egui::Button::new(egui_phosphor::regular::NOTE).frame(false))
+                .add(Button::new(ICON_NOTE).frame(false))
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text("Recording details");
             if icon.clicked() {
@@ -271,19 +276,19 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, display_name: &str, ctx: &mut
         // right so a long recording name clips itself instead of hiding the metrics
         // or forcing the panel to grow. `Sides::shrink_left` lays the right group
         // out first, then truncates the identity into whatever width is left.
-        let (resp, ()) = egui::Sides::new().shrink_left().truncate().show(
+        let (resp, ()) = Sides::new().shrink_left().truncate().show(
             ui,
             |ui| {
                 let label = format!("{arrow} {display_name}");
-                ui.add(egui::Button::selectable(is_selected, egui::RichText::new(label)).truncate())
+                ui.add(Button::selectable(is_selected, RichText::new(label)).truncate())
             },
             |ui| {
                 // Right widgets are laid out right-to-left, so add trailing items first.
                 if !file.load_warnings.is_empty() {
-                    let icon = egui::RichText::new(egui_phosphor::regular::WARNING)
+                    let icon = RichText::new(ICON_WARNING)
                         .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode));
                     if ui
-                        .add(egui::Label::new(icon).sense(egui::Sense::click()))
+                        .add(Label::new(icon).sense(egui::Sense::click()))
                         .on_hover_text("Data quality warnings - click for details")
                         .clicked()
                     {
@@ -291,9 +296,9 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, display_name: &str, ctx: &mut
                             Some((file.metadata.filename.clone(), file.load_warnings.clone()));
                     }
                 }
-                ui.label(format!("{} {dur}", egui_phosphor::regular::CLOCK))
+                ui.label(format!("{ICON_CLOCK} {dur}"))
                     .on_hover_text("Total duration");
-                ui.label(format!("{} {dist}", egui_phosphor::regular::ROAD_HORIZON))
+                ui.label(format!("{ICON_ROAD_HORIZON} {dist}"))
                     .on_hover_text("Total distance");
             },
         );
@@ -409,7 +414,7 @@ fn render_track_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Pane
         let dist = gt_fmt::format_distance(track.metadata.distance_km);
         let dur = gt_fmt::format_human_terse_duration(track.metadata.duration);
         let label = format!("{arrow} #{}  {dist}  {dur}", track.metadata.index);
-        let mut text = egui::RichText::new(label);
+        let mut text = RichText::new(label);
         if !passes {
             text = text.weak();
         }
@@ -424,7 +429,7 @@ fn render_track_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Pane
         );
         let fix_stats = track.metadata.fix_stats;
         let resp = resp.on_hover_ui(|ui| {
-            ui.label(egui::RichText::new(&time_header).strong());
+            ui.label(RichText::new(&time_header).strong());
             match fix_stats {
                 Some(stats) => fix_stats_tooltip_row(ui, stats),
                 None => {
@@ -770,7 +775,7 @@ fn render_event_markers_section(
         ui.add_space(16.0);
         let mut text = filter_text.to_owned();
         let resp = ui.add(
-            egui::TextEdit::singleline(&mut text)
+            TextEdit::singleline(&mut text)
                 .hint_text("Filter…")
                 .desired_width(120.0)
                 .id(egui::Id::new(("event_filter", header_id))),

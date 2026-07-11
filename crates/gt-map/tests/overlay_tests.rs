@@ -1,3 +1,4 @@
+use egui::ComboBox;
 use egui::accesskit;
 use egui_kittest::{Harness, kittest::Queryable as _};
 use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
@@ -289,7 +290,7 @@ fn egui_any_popup_open_true_when_combobox_expanded() {
         .with_size(egui::Vec2::new(300.0, 200.0))
         .build_ui_state(
             |ui, selected: &mut usize| {
-                egui::ComboBox::from_label("Pick")
+                ComboBox::from_label("Pick")
                     .selected_text(items[*selected])
                     .show_ui(ui, |ui| {
                         for (i, item) in items.iter().enumerate() {

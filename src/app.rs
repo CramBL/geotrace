@@ -1,3 +1,30 @@
+use egui::{
+    Button, CentralPanel, DragValue, Grid, Label, MenuBar, ProgressBar, RichText, ScrollArea,
+    Sides, WidgetText, Window,
+};
+use egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE as ICON_ARROW_COUNTER_CLOCKWISE;
+use egui_phosphor::regular::ARROWS_IN_LINE_HORIZONTAL as ICON_ARROWS_IN_LINE_HORIZONTAL;
+use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
+use egui_phosphor::regular::CHART_LINE_UP as ICON_CHART_LINE_UP;
+use egui_phosphor::regular::CHECK as ICON_CHECK;
+use egui_phosphor::regular::CHECK_CIRCLE as ICON_CHECK_CIRCLE;
+use egui_phosphor::regular::CLOCK as ICON_CLOCK;
+use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_CLOCK_COUNTER_CLOCKWISE;
+use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
+use egui_phosphor::regular::GAUGE as ICON_GAUGE;
+use egui_phosphor::regular::GEAR as ICON_GEAR;
+use egui_phosphor::regular::LINK_BREAK as ICON_LINK_BREAK;
+use egui_phosphor::regular::MAP_PIN as ICON_MAP_PIN;
+use egui_phosphor::regular::SCISSORS as ICON_SCISSORS;
+use egui_phosphor::regular::SLIDERS_HORIZONTAL as ICON_SLIDERS_HORIZONTAL;
+use egui_phosphor::regular::TAG as ICON_TAG;
+use egui_phosphor::regular::TERMINAL_WINDOW as ICON_TERMINAL_WINDOW;
+use egui_phosphor::regular::TEXT_AA as ICON_TEXT_AA;
+use egui_phosphor::regular::TRASH as ICON_TRASH;
+use egui_phosphor::regular::WARNING as ICON_WARNING;
+use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
+use egui_phosphor::regular::X as ICON_X;
+use egui_phosphor::regular::X_CIRCLE as ICON_X_CIRCLE;
 mod auto_prune;
 mod history;
 mod history_db;
@@ -448,24 +475,24 @@ impl App {
         }
         let mut open = self.settings_open;
         let mut apply = false;
-        egui::Window::new("Settings")
+        Window::new("Settings")
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .min_width(360.0)
             .show(ui.ctx(), |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui_phosphor::regular::SLIDERS_HORIZONTAL);
+                    ui.label(ICON_SLIDERS_HORIZONTAL);
                     ui.strong("Processing");
                 });
                 ui.separator();
-                egui::Grid::new("settings_grid")
+                Grid::new("settings_grid")
                     .num_columns(2)
                     .spacing([8.0, 6.0])
                     .show(ui, |ui| {
                         ui.label(format!(
                             "{} Track split gap",
-                            egui_phosphor::regular::SCISSORS
+                            ICON_SCISSORS
                         ))
                         .on_hover_text(
                             "Consecutive GPS points separated by more than this gap \
@@ -487,7 +514,7 @@ impl App {
 
                         ui.label(format!(
                             "{} Log marker window",
-                            egui_phosphor::regular::ARROWS_IN_LINE_HORIZONTAL
+                            ICON_ARROWS_IN_LINE_HORIZONTAL
                         ))
                         .on_hover_text(
                             "Maximum time between a log entry's timestamp and the nearest \
@@ -508,13 +535,13 @@ impl App {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let apply_label =
-                        format!("{} Apply to loaded data", egui_phosphor::regular::CHECK);
+                        format!("{ICON_CHECK} Apply to loaded data");
                     if ui.button(apply_label).clicked() {
                         apply = true;
                     }
                     let reset_label = format!(
                         "{} Restore Defaults",
-                        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
+                        ICON_ARROW_COUNTER_CLOCKWISE
                     );
                     if ui.button(reset_label).clicked() {
                         let defaults = crate::settings::ProcessingSettings::default();
@@ -536,11 +563,11 @@ impl App {
                 ui.add_space(12.0);
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.label(egui_phosphor::regular::GAUGE);
+                    ui.label(ICON_GAUGE);
                     ui.strong("Analysis");
                 });
                 ui.separator();
-                egui::Grid::new("analysis_grid")
+                Grid::new("analysis_grid")
                     .num_columns(2)
                     .spacing([8.0, 6.0])
                     .show(ui, |ui| {
@@ -558,10 +585,10 @@ impl App {
                              naturally rejects, which lowers the utilization rate and inflates the \
                              slip rate with routine horizon fades; a 30° mask considers only \
                              high, clean satellites.";
-                        ui.label(format!("{} Elevation mask", egui_phosphor::regular::FUNNEL))
+                        ui.label(format!("{ICON_FUNNEL} Elevation mask"))
                             .on_hover_text(mask_help);
                         ui.add(
-                            egui::DragValue::new(&mut analysis.elevation_mask_deg)
+                            DragValue::new(&mut analysis.elevation_mask_deg)
                                 .range(0.0..=90.0)
                                 .speed(1.0)
                                 .fixed_decimals(0)
@@ -577,10 +604,10 @@ impl App {
                              For example, a low threshold like 3 dB-Hz flags ordinary signal \
                              fluctuation as slips and inflates the rate; a high threshold like \
                              25 dB-Hz reports only near-total dropouts and may miss real slips.";
-                        ui.label(format!("{} SNR drop threshold", egui_phosphor::regular::WAVE_SINE))
+                        ui.label(format!("{ICON_WAVE_SINE} SNR drop threshold"))
                             .on_hover_text(snr_help);
                         ui.add(
-                            egui::DragValue::new(&mut analysis.snr_drop_db)
+                            DragValue::new(&mut analysis.snr_drop_db)
                                 .range(1.0..=60.0)
                                 .speed(0.5)
                                 .fixed_decimals(0)
@@ -593,10 +620,10 @@ impl App {
                             "Trailing window over which the slip rate is averaged, in minutes. \
                              The plotted value is the slips counted in the window divided by its \
                              length, in slips per minute.";
-                        ui.label(format!("{} Slip window", egui_phosphor::regular::CLOCK))
+                        ui.label(format!("{ICON_CLOCK} Slip window"))
                             .on_hover_text(window_help);
                         ui.add(
-                            egui::DragValue::new(&mut analysis.slip_window_min)
+                            DragValue::new(&mut analysis.slip_window_min)
                                 .range(1.0..=120.0)
                                 .speed(1.0)
                                 .fixed_decimals(0)
@@ -628,7 +655,7 @@ impl App {
                              show with the 'Util all' plot.";
                         ui.label(format!(
                             "{} Mark masked-out used satellites",
-                            egui_phosphor::regular::WARNING
+                            ICON_WARNING
                         ))
                         .on_hover_text(mark_help);
                         let mut mark = self.shared.borrow().plot_state.mark_masked_fix;
@@ -640,15 +667,15 @@ impl App {
 
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    ui.label(egui_phosphor::regular::TEXT_AA);
+                    ui.label(ICON_TEXT_AA);
                     ui.strong("Display");
                 });
                 ui.separator();
-                egui::Grid::new("display_grid")
+                Grid::new("display_grid")
                     .num_columns(2)
                     .spacing([8.0, 6.0])
                     .show(ui, |ui| {
-                        ui.label(format!("{} Recording name", egui_phosphor::regular::TAG))
+                        ui.label(format!("{ICON_TAG} Recording name"))
                             .on_hover_text(
                                 "Template for the name shown for each recording in the side \
                                  panel. Tokens: {title} {device} {identity} {filename}. Empty \
@@ -698,18 +725,18 @@ impl App {
         ui.add_space(12.0);
         ui.separator();
         ui.horizontal(|ui| {
-            ui.label(egui_phosphor::regular::MAP_PIN);
+            ui.label(ICON_MAP_PIN);
             ui.strong("Generated markers");
         });
         ui.separator();
-        egui::Grid::new("generated_markers_grid")
+        Grid::new("generated_markers_grid")
             .num_columns(2)
             .spacing([8.0, 6.0])
             .show(ui, |ui| {
                 let fix_lost_help =
                     "Mark each epoch where the GNSS fix dropped (the receiver stopped resolving \
                      a position). For example, entering a tunnel typically drops the fix.";
-                ui.label(format!("{} GNSS fix lost", egui_phosphor::regular::X_CIRCLE))
+                ui.label(format!("{ICON_X_CIRCLE} GNSS fix lost"))
                     .on_hover_text(fix_lost_help);
                 ui.checkbox(&mut self.processing_config.generated_markers.detect_gnss_fix_lost, "")
                     .on_hover_text(fix_lost_help);
@@ -720,7 +747,7 @@ impl App {
                      how long it was gone.";
                 ui.label(format!(
                     "{} GNSS fix regained",
-                    egui_phosphor::regular::CHECK_CIRCLE
+                    ICON_CHECK_CIRCLE
                 ))
                 .on_hover_text(fix_regained_help);
                 ui.checkbox(&mut self.processing_config.generated_markers.detect_gnss_fix_regained, "")
@@ -737,7 +764,7 @@ impl App {
                      Surfaced for inspection; the underlying data is never altered.";
                 ui.label(format!(
                     "{} Clock discontinuity",
-                    egui_phosphor::regular::WARNING
+                    ICON_WARNING
                 ))
                 .on_hover_text(clock_help);
                 ui.horizontal(|ui| {
@@ -748,7 +775,7 @@ impl App {
                     let floor_s = gt_track_builder::clock_discontinuity_floor_seconds(sigmas);
                     let sensitivity = ui.add_enabled(
                         detect_on,
-                        egui::DragValue::new(&mut self.processing_config.generated_markers.clock_discontinuity_sigmas)
+                        DragValue::new(&mut self.processing_config.generated_markers.clock_discontinuity_sigmas)
                             .range(1.0..=20.0)
                             .speed(0.1)
                             .fixed_decimals(1)
@@ -777,7 +804,7 @@ impl App {
                      satellite slipped and its before/after elevation, azimuth, and SNR. \
                      Detection uses the elevation mask and SNR-drop threshold from the Analysis \
                      section, so the markers and the slip-rate plot agree.";
-                ui.label(format!("{} Satellite slip", egui_phosphor::regular::LINK_BREAK))
+                ui.label(format!("{ICON_LINK_BREAK} Satellite slip"))
                     .on_hover_text(slip_help);
                 ui.checkbox(&mut self.processing_config.generated_markers.detect_slips, "")
                     .on_hover_text(slip_help);
@@ -1515,7 +1542,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
-                                .button(egui_phosphor::regular::CARET_DOWN)
+                                .button(ICON_CARET_DOWN)
                                 .on_hover_text("Hide plot")
                                 .clicked()
                             {
@@ -1548,7 +1575,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
         UiResponse::None
     }
 
-    fn tab_title_for_pane(&mut self, pane: &MainPane) -> egui::WidgetText {
+    fn tab_title_for_pane(&mut self, pane: &MainPane) -> WidgetText {
         match pane {
             MainPane::Map => "Map".into(),
             MainPane::Plot => "Plot".into(),
@@ -1627,7 +1654,7 @@ impl eframe::App for App {
         }
 
         egui::Panel::top("top_panel").show_inside(ui, |ui| {
-            egui::MenuBar::new().ui(ui, |ui| {
+            MenuBar::new().ui(ui, |ui| {
                 // Left zone - file actions
                 if ui.button("Open…").clicked() {
                     self.loader.open_file_dialog();
@@ -1640,7 +1667,7 @@ impl eframe::App for App {
                     ui.separator();
 
                     if ui
-                        .selectable_label(self.settings_open, egui_phosphor::regular::GEAR)
+                        .selectable_label(self.settings_open, ICON_GEAR)
                         .on_hover_text("Settings")
                         .clicked()
                     {
@@ -1648,10 +1675,7 @@ impl eframe::App for App {
                     }
 
                     if ui
-                        .selectable_label(
-                            self.history_window.open,
-                            egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE,
-                        )
+                        .selectable_label(self.history_window.open, ICON_CLOCK_COUNTER_CLOCKWISE)
                         .on_hover_text("Browse and re-open previously recorded sessions")
                         .clicked()
                     {
@@ -1666,13 +1690,10 @@ impl eframe::App for App {
                     let query_active = self.query_window.filter_active();
                     let show_alert = query_active && !self.query_window.open;
                     let query_label = if show_alert {
-                        egui::RichText::new(format!(
-                            "{} !",
-                            egui_phosphor::regular::TERMINAL_WINDOW
-                        ))
-                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode))
+                        RichText::new(format!("{ICON_TERMINAL_WINDOW} !"))
+                            .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode))
                     } else {
-                        egui::RichText::new(egui_phosphor::regular::TERMINAL_WINDOW)
+                        RichText::new(ICON_TERMINAL_WINDOW)
                     };
                     let query_button = ui.selectable_label(self.query_window.open, query_label);
                     let query_button = if query_active {
@@ -1690,10 +1711,7 @@ impl eframe::App for App {
                     if query_active {
                         query_button.context_menu(|ui| {
                             if ui
-                                .button(format!(
-                                    "{} Clear query filter",
-                                    egui_phosphor::regular::TRASH
-                                ))
+                                .button(format!("{ICON_TRASH} Clear query filter"))
                                 .clicked()
                             {
                                 self.query_window.clear_filter();
@@ -1708,10 +1726,10 @@ impl eframe::App for App {
                     #[cfg(feature = "self-update")]
                     if let Some(new_version) = self.update_checker.badge_version() {
                         ui.separator();
-                        let text = egui::RichText::new("Update available")
+                        let text = RichText::new("Update available")
                             .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode));
                         if ui
-                            .add(egui::Label::new(text).sense(egui::Sense::click()))
+                            .add(Label::new(text).sense(egui::Sense::click()))
                             .on_hover_text(format!(
                                 "GeoTrace {new_version} is available (current: {}). Update \
                                  through your package manager, or open the releases page.",
@@ -1778,7 +1796,7 @@ impl eframe::App for App {
             let mut is_open = !ui
                 .ctx()
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            egui::Window::new("Track data")
+            Window::new("Track data")
                 .id(egui::Id::new("detached_panel"))
                 .open(&mut is_open)
                 .default_pos(egui::pos2(10.0, 30.0))
@@ -1818,7 +1836,7 @@ impl eframe::App for App {
             self.query_window.clear_filter();
         }
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        CentralPanel::default().show_inside(ui, |ui| {
             let panel_rect = ui.max_rect();
             let mut s = self.shared.borrow_mut();
             let plot_hover_scope = match s.highlight.hover {
@@ -1891,10 +1909,7 @@ impl eframe::App for App {
                     btn_size,
                 );
                 if ui
-                    .put(
-                        btn_rect,
-                        egui::Button::new(egui_phosphor::regular::CHART_LINE_UP).small(),
-                    )
+                    .put(btn_rect, Button::new(ICON_CHART_LINE_UP).small())
                     .on_hover_text("Show plot")
                     .clicked()
                 {
@@ -1949,7 +1964,7 @@ impl eframe::App for App {
             // Keep repainting while jobs are active or fading.
             ui.ctx().request_repaint();
 
-            egui::Window::new("##loading_progress")
+            Window::new("##loading_progress")
                 .title_bar(false)
                 .resizable(false)
                 .anchor(egui::Align2::RIGHT_BOTTOM, [-8.0, -8.0])
@@ -1961,24 +1976,21 @@ impl eframe::App for App {
 
                     for job in &self.loader.loading_jobs {
                         let elapsed = job.started_at.elapsed().as_secs_f32();
-                        egui::Sides::new().shrink_left().truncate().show(
+                        Sides::new().shrink_left().truncate().show(
                             ui,
                             |ui| {
                                 ui.spinner();
                                 ui.add(
-                                    egui::Label::new(egui::RichText::new(&job.filename).strong())
-                                        .truncate(),
+                                    Label::new(RichText::new(&job.filename).strong()).truncate(),
                                 )
                                 .on_hover_text(&job.filename);
                             },
                             |ui| {
-                                ui.label(
-                                    egui::RichText::new(format!("{elapsed:.1}s")).small().weak(),
-                                );
+                                ui.label(RichText::new(format!("{elapsed:.1}s")).small().weak());
                             },
                         );
                         ui.add(
-                            egui::ProgressBar::new(job.progress)
+                            ProgressBar::new(job.progress)
                                 .animate(true)
                                 .desired_width(240.0)
                                 .text(job.stage),
@@ -2002,25 +2014,19 @@ impl eframe::App for App {
                         let color = egui::Color32::from_rgba_unmultiplied(140, 210, 140, alpha);
                         let weak_color =
                             egui::Color32::from_rgba_unmultiplied(120, 170, 120, alpha);
-                        egui::Sides::new().shrink_left().truncate().show(
+                        Sides::new().shrink_left().truncate().show(
                             ui,
                             |ui| {
-                                ui.label(
-                                    egui::RichText::new(egui_phosphor::regular::CHECK)
-                                        .color(color)
-                                        .small(),
-                                );
+                                ui.label(RichText::new(ICON_CHECK).color(color).small());
                                 ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(&job.filename).color(color).strong(),
-                                    )
-                                    .truncate(),
+                                    Label::new(RichText::new(&job.filename).color(color).strong())
+                                        .truncate(),
                                 )
                                 .on_hover_text(&job.filename);
                             },
                             |ui| {
                                 ui.label(
-                                    egui::RichText::new(format!("{:.1}s", job.elapsed_secs))
+                                    RichText::new(format!("{:.1}s", job.elapsed_secs))
                                         .color(weak_color)
                                         .small(),
                                 );
@@ -2038,9 +2044,9 @@ impl eframe::App for App {
                 ui.horizontal(|ui| {
                     ui.colored_label(
                         gt_ui_theme::error_indicator(ui.visuals().dark_mode),
-                        format!("{} {error}", egui_phosphor::regular::WARNING),
+                        format!("{ICON_WARNING} {error}"),
                     );
-                    dismiss = ui.small_button(egui_phosphor::regular::X).clicked();
+                    dismiss = ui.small_button(ICON_X).clicked();
                 });
             }
         });
@@ -2111,7 +2117,7 @@ impl eframe::App for App {
             let mut cancel = ui
                 .ctx()
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            egui::Window::new("History database locked")
+            Window::new("History database locked")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
@@ -2122,7 +2128,7 @@ impl eframe::App for App {
                     );
                     ui.add_space(4.0);
                     ui.label(
-                        egui::RichText::new(
+                        RichText::new(
                             "Only continue if no other program is using the database - otherwise it could be corrupted.",
                         )
                         .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
@@ -2131,7 +2137,7 @@ impl eframe::App for App {
                     ui.horizontal(|ui| {
                         if ui
                             .button(
-                                egui::RichText::new("Clear lock and open")
+                                RichText::new("Clear lock and open")
                                     .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                             )
                             .clicked()
@@ -2158,7 +2164,7 @@ impl eframe::App for App {
             let mut cancel = ui
                 .ctx()
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            egui::Window::new("History database is corrupted")
+            Window::new("History database is corrupted")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
@@ -2174,7 +2180,7 @@ impl eframe::App for App {
                     ui.horizontal(|ui| {
                         if ui
                             .button(
-                                egui::RichText::new("Recreate database")
+                                RichText::new("Recreate database")
                                     .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                             )
                             .clicked()
@@ -2204,7 +2210,7 @@ impl eframe::App for App {
                 .ctx()
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             let fmt_gap = |us: i64| format!("{} s", us / 1_000_000);
-            egui::Window::new("Track splitting differs")
+            Window::new("Track splitting differs")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
@@ -2212,12 +2218,12 @@ impl eframe::App for App {
                     // Bound the width so a long recording name wraps this sentence
                     // instead of stretching the dialog across the screen.
                     ui.set_max_width(460.0);
-                    ui.add(egui::Label::new(format!(
+                    ui.add(Label::new(format!(
                         "'{}' was stored with a different track-splitting setting than the current one.",
                         prompt.filename
                     )).wrap());
                     ui.add_space(4.0);
-                    egui::Grid::new("resegment_settings")
+                    Grid::new("resegment_settings")
                         .num_columns(3)
                         .spacing([16.0, 4.0])
                         .show(ui, |ui| {
@@ -2291,7 +2297,7 @@ impl eframe::App for App {
             let mut cancel = ui
                 .ctx()
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            egui::Window::new("Auto-prune")
+            Window::new("Auto-prune")
                 .resizable(false)
                 .collapsible(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
@@ -2304,20 +2310,18 @@ impl eframe::App for App {
                         "{n} {rec_label} will be deleted to keep storage under {max_gb:.1} GB"
                     ));
                     ui.add_space(4.0);
-                    egui::ScrollArea::vertical()
-                        .max_height(200.0)
-                        .show(ui, |ui| {
-                            for r in refs {
-                                let label = format!("{}/{}", r.identity, r.group_name);
-                                ui.add(egui::Label::new(label.as_str()).truncate())
-                                    .on_hover_text(label.as_str());
-                            }
-                        });
+                    ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                        for r in refs {
+                            let label = format!("{}/{}", r.identity, r.group_name);
+                            ui.add(Label::new(label.as_str()).truncate())
+                                .on_hover_text(label.as_str());
+                        }
+                    });
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         if ui
                             .button(
-                                egui::RichText::new("Delete these recordings")
+                                RichText::new("Delete these recordings")
                                     .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                             )
                             .on_hover_text(
@@ -2563,19 +2567,19 @@ fn compound_duration_input(
     let mut changed = false;
     if show_days {
         changed |= ui
-            .add(egui::DragValue::new(&mut d).range(0..=max_d).suffix("d"))
+            .add(DragValue::new(&mut d).range(0..=max_d).suffix("d"))
             .changed();
     }
     if show_hours {
         changed |= ui
-            .add(egui::DragValue::new(&mut h).range(0..=23).suffix("h"))
+            .add(DragValue::new(&mut h).range(0..=23).suffix("h"))
             .changed();
     }
     changed |= ui
-        .add(egui::DragValue::new(&mut m).range(0..=max_m).suffix("m"))
+        .add(DragValue::new(&mut m).range(0..=max_m).suffix("m"))
         .changed();
     changed |= ui
-        .add(egui::DragValue::new(&mut s).range(0..=59).suffix("s"))
+        .add(DragValue::new(&mut s).range(0..=59).suffix("s"))
         .changed();
 
     if changed {

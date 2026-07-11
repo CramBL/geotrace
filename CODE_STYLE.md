@@ -161,6 +161,9 @@ let m: std::collections::HashMap<_, _> = …;
 fn foo(x: some_crate::SomeType) { … }
 ```
 
+**Exception for GUI Types:**
+Unambiguous UI components should follow the standard type rule and be fully imported (e.g., `use egui::{Button, RichText};`). However, `egui` contains many generic types (`Context`, `Response`, `Id`, `Rect`). To avoid namespace pollution and confusion, these generic types, as well as the ubiquitous `egui::Ui`, should be qualified at the module level.
+
 Never fully import **functions** - always retain at least the parent module so the call site is self-documenting.
 Import the parent module and qualify the call with it, even across crates:
 
@@ -264,7 +267,7 @@ Never write raw Unicode escape sequences (`\u{XXXX}`) for special characters dir
 Such escapes are opaque to reviewers and make the intent hard to see at a glance.
 Instead, use:
 
-- An [`egui_phosphor`](https://docs.rs/egui-phosphor) icon constant when the character is a visual icon (e.g. `egui_phosphor::regular::MAGNIFYING_GLASS`).
+- An [`egui_phosphor`](https://docs.rs/egui-phosphor) icon constant when the character is a visual icon. Because these constants are highly useful in `format!` macros (e.g. `format!("{ICON_MAGNIFYING_GLASS} Search")`), you should fully import or alias them (e.g. `use egui_phosphor::regular::MAGNIFYING_GLASS as ICON_MAGNIFYING_GLASS;`) instead of writing out the full path at the call site.
 - A named `const &str` when the character is a typographic symbol that appears inline with text - for example `const EM_DASH: &str = "—";` or `const ELLIPSIS: &str = "…";`.
   Define the constant in the narrowest scope that covers all callers (file-level `const` in the module that owns the UI, crate-level if shared across files in a crate).
   The constant body may contain the literal Unicode character directly (the restriction is on escape sequences, not on non-ASCII characters in source).

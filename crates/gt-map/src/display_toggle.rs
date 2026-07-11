@@ -5,7 +5,10 @@
 //! ([`DisplayCounts`]), so an over-inked map explains itself: the row with
 //! the four-digit count is the switch that fixes it.
 
+use egui::Button;
 use egui::{Align2, Area, Frame, Id, RichText, Ui};
+use egui_phosphor::regular::EYE as ICON_EYE;
+use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
 use gt_ui_types::{DisplayCategory, DisplayMask};
 use strum::IntoEnumIterator;
 
@@ -93,11 +96,7 @@ pub(crate) fn show_display_toggle(
         .show(ui.ctx(), |ui| {
             Frame::popup(ui.style()).show(ui, |ui| {
                 let any_hidden = mask.any_hidden();
-                let glyph = if any_hidden {
-                    egui_phosphor::regular::EYE_SLASH
-                } else {
-                    egui_phosphor::regular::EYE
-                };
+                let glyph = if any_hidden { ICON_EYE_SLASH } else { ICON_EYE };
                 let text = if any_hidden {
                     RichText::new(glyph).color(ui.visuals().warn_fg_color)
                 } else {
@@ -114,7 +113,7 @@ pub(crate) fn show_display_toggle(
                 }
                 response.context_menu(|ui| {
                     if ui
-                        .add_enabled(mask.any_hidden(), egui::Button::new("Show all"))
+                        .add_enabled(mask.any_hidden(), Button::new("Show all"))
                         .on_disabled_hover_text("Everything is already shown")
                         .clicked()
                     {
@@ -170,11 +169,7 @@ pub(crate) fn popup_contents(
         let count = counts.get(category);
         let visible = mask.is_visible(category);
         ui.horizontal(|ui| {
-            let glyph = if visible {
-                egui_phosphor::regular::EYE
-            } else {
-                egui_phosphor::regular::EYE_SLASH
-            };
+            let glyph = if visible { ICON_EYE } else { ICON_EYE_SLASH };
             let text = if visible {
                 RichText::new(format!("{glyph} {}", label(category)))
             } else {
@@ -182,7 +177,7 @@ pub(crate) fn popup_contents(
             };
             let in_scope = count > 0;
             let row = ui
-                .add_enabled(in_scope, egui::Button::selectable(false, text))
+                .add_enabled(in_scope, Button::selectable(false, text))
                 .on_hover_text(row_hover_text(category, visible))
                 .on_disabled_hover_text(format!(
                     "No {} in the loaded recordings",
@@ -219,7 +214,7 @@ pub(crate) fn popup_contents(
     ui.separator();
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(mask.any_hidden(), egui::Button::new("Show all"))
+            .add_enabled(mask.any_hidden(), Button::new("Show all"))
             .on_disabled_hover_text("Everything is already shown")
             .clicked()
         {
@@ -229,7 +224,7 @@ pub(crate) fn popup_contents(
         if ui
             .add_enabled(
                 mask.hidden_count() < DisplayCategory::iter().count(),
-                egui::Button::new("Hide all"),
+                Button::new("Hide all"),
             )
             .on_disabled_hover_text("Everything is already hidden")
             .clicked()

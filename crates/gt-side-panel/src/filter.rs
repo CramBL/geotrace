@@ -1,5 +1,10 @@
 use chrono::{DateTime, Duration, Utc};
 use egui::Ui;
+use egui::{Grid, TextEdit};
+use egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE as ICON_ARROW_COUNTER_CLOCKWISE;
+use egui_phosphor::regular::ARROWS_OUT_SIMPLE as ICON_ARROWS_OUT_SIMPLE;
+use egui_phosphor::regular::BOUNDING_BOX as ICON_BOUNDING_BOX;
+use egui_phosphor::regular::CLOCK as ICON_CLOCK;
 use gt_filter::GlobalFilter;
 use gt_types::{LoadedFile, MarkerRequirement};
 use gt_ui_theme::EM_DASH;
@@ -81,34 +86,26 @@ pub fn render_filter_panel(
 
     // Three-column grid: label | text edit | unit.  All filter inputs in one
     // aligned block so they line up neatly regardless of label length.
-    let (dist_changed, dur_changed, spread_changed) = egui::Grid::new("filter_inputs")
+    let (dist_changed, dur_changed, spread_changed) = Grid::new("filter_inputs")
         .num_columns(3)
         .spacing([6.0, 4.0])
         .show(ui, |ui| {
-            ui.label(format!(
-                "{} Min dist",
-                egui_phosphor::regular::ARROWS_OUT_SIMPLE
-            ));
-            let dist =
-                ui.add(egui::TextEdit::singleline(&mut state.distance_input).desired_width(60.0));
+            ui.label(format!("{ICON_ARROWS_OUT_SIMPLE} Min dist"));
+            let dist = ui.add(TextEdit::singleline(&mut state.distance_input).desired_width(60.0));
             ui.label("km");
             ui.end_row();
 
-            ui.label(format!("{} Min dur", egui_phosphor::regular::CLOCK));
+            ui.label(format!("{ICON_CLOCK} Min dur"));
             let dur = ui.add(
-                egui::TextEdit::singleline(&mut state.duration_input)
+                TextEdit::singleline(&mut state.duration_input)
                     .desired_width(60.0)
                     .hint_text("1h30m"),
             );
             ui.label(""); // no unit for duration
             ui.end_row();
 
-            ui.label(format!(
-                "{} Min spread",
-                egui_phosphor::regular::BOUNDING_BOX
-            ));
-            let spread =
-                ui.add(egui::TextEdit::singleline(&mut state.spread_input).desired_width(60.0));
+            ui.label(format!("{ICON_BOUNDING_BOX} Min spread"));
+            let spread = ui.add(TextEdit::singleline(&mut state.spread_input).desired_width(60.0));
             ui.label("m");
             ui.end_row();
 
@@ -167,10 +164,7 @@ pub fn render_filter_panel(
     });
 
     if ui
-        .small_button(format!(
-            "{} Reset filters",
-            egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
-        ))
+        .small_button(format!("{ICON_ARROW_COUNTER_CLOCKWISE} Reset filters"))
         .clicked()
     {
         *filter = GlobalFilter::default();

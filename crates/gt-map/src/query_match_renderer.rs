@@ -2,6 +2,7 @@
 //! stretches a query matched, rings for single-point matches, and the match
 //! header shown in the hover tooltip.
 
+use egui::RichText;
 use egui::{Color32, Pos2, Stroke, Ui};
 use gt_types::{LoadedFile, LoadedTrack, TrackRef};
 
@@ -95,7 +96,7 @@ pub(crate) fn match_header_ui(
     ui.strong(heading);
     if stale {
         ui.label(
-            egui::RichText::new(format!("Data changed since this run {em_dash} run again"))
+            RichText::new(format!("Data changed since this run {em_dash} run again"))
                 .weak()
                 .italics(),
         );
