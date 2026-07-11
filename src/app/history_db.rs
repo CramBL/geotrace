@@ -3,7 +3,7 @@
 //! Every history operation - listing, loading a recording, hiding tracks,
 //! deleting recordings, prune previews, auto-prune - runs on a dedicated thread
 //! that owns the [`Database`]. The UI thread sends [`Request`]s and drains
-//! [`Response`]s once per frame (see [`HistoryManager::poll`]), so a slow disk
+//! [`Response`]s once per frame (see [`HistoryWorker::poll`]), so a slow disk
 //! or a large recording never stalls a render. Inserts still happen on the load
 //! threads, which open the database by path. The global database lock keeps the
 //! two paths safe.
@@ -86,7 +86,7 @@ enum Request {
     },
 }
 
-/// A result delivered back to the UI thread, drained via [`HistoryManager::poll`].
+/// A result delivered back to the UI thread, drained via [`HistoryWorker::poll`].
 pub enum Response {
     Listed(Result<Vec<RecordingEntry>, DbError>),
     Opened {
@@ -102,16 +102,16 @@ pub enum Response {
 }
 
 /// Owns the history-database worker thread and the channels to talk to it.
-pub struct HistoryManager {
+pub struct HistoryWorker {
     req_tx: Option<Sender<Request>>,
     resp_rx: Receiver<Response>,
     handle: Option<JoinHandle<()>>,
     path: Option<PathBuf>,
 }
 
-impl HistoryManager {
-    /// A manager with no backing database (history unavailable, or test builds).
-    /// All requests are dropped and [`HistoryManager::poll`] never yields anything.
+impl HistoryWorker {
+    /// A worker with no backing database (history unavailable, or test builds).
+    /// All requests are dropped and [`HistoryWorker::poll`] never yields anything.
     pub fn disabled() -> Self {
         // The sender is dropped immediately, so the receiver is always empty.
         let (_, resp_rx) = mpsc::channel::<Response>();
@@ -211,7 +211,7 @@ impl HistoryManager {
     }
 }
 
-impl Drop for HistoryManager {
+impl Drop for HistoryWorker {
     fn drop(&mut self) {
         // Dropping the request sender disconnects the worker's `recv`, ending its
         // loop. Then join so the thread is gone before we return.
@@ -403,7 +403,7 @@ mod tests {
     use gt_history::{StoredSegmentation, TrackRange};
     use gt_test_utils::{SyntheticGtdSpec, synthetic_gtd_bytes};
 
-    // Brings in `HistoryManager`, `Request`/`Response`, `Database`, `Context`,
+    // Brings in `HistoryWorker`, `Request`/`Response`, `Database`, `Context`,
     // `PruneMode`, `AutoPruneOutcome`, etc. without re-importing sibling modules.
     use super::*;
 
@@ -425,10 +425,10 @@ mod tests {
     }
 
     /// Block until the worker delivers exactly one response, or time out.
-    fn next_response(manager: &HistoryManager) -> Response {
+    fn next_response(worker: &HistoryWorker) -> Response {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let mut batch = manager.poll();
+            let mut batch = worker.poll();
             if !batch.is_empty() {
                 return batch.remove(0);
             }
@@ -472,13 +472,13 @@ mod tests {
         }
 
         let db = Database::open_or_create(&path).expect("reopen");
-        let manager = HistoryManager::spawn(db, Context::default());
-        assert!(manager.available());
-        assert_eq!(manager.path(), Some(path.as_path()));
+        let worker = HistoryWorker::spawn(db, Context::default());
+        assert!(worker.available());
+        assert_eq!(worker.path(), Some(path.as_path()));
 
         // List
-        manager.list();
-        let Response::Listed(Ok(entries)) = next_response(&manager) else {
+        worker.list();
+        let Response::Listed(Ok(entries)) = next_response(&worker) else {
             panic!("expected a Listed response");
         };
         assert_eq!(entries.len(), 1);
@@ -486,8 +486,8 @@ mod tests {
         let db_ref = entries[0].db_ref.clone();
 
         // Open returns the stored recording (bytes + tracks).
-        manager.open(db_ref.clone());
-        let Response::Opened { result, .. } = next_response(&manager) else {
+        worker.open(db_ref.clone());
+        let Response::Opened { result, .. } = next_response(&worker) else {
             panic!("expected an Opened response");
         };
         let stored = result.expect("open ok");
@@ -495,11 +495,11 @@ mod tests {
         assert_eq!(stored.tracks.len(), 2);
 
         // Hide one track.
-        manager.set_tracks_hidden(db_ref.clone(), vec![0], true);
+        worker.set_tracks_hidden(db_ref.clone(), vec![0], true);
         let Response::Mutated {
             op: DbOp::TracksHidden { count },
             result,
-        } = next_response(&manager)
+        } = next_response(&worker)
         else {
             panic!("expected a TracksHidden mutation");
         };
@@ -507,32 +507,32 @@ mod tests {
         result.expect("hide ok");
 
         // Prune preview reports candidates without deleting.
-        manager.prune_preview(PruneMode::ByCount { keep: 0 });
-        let Response::PrunePreview(Ok(candidates)) = next_response(&manager) else {
+        worker.prune_preview(PruneMode::ByCount { keep: 0 });
+        let Response::PrunePreview(Ok(candidates)) = next_response(&worker) else {
             panic!("expected a PrunePreview response");
         };
         assert_eq!(candidates.len(), 1);
 
         // Auto-prune with an enormous budget leaves everything in place.
-        manager.auto_prune(u64::MAX, false);
-        let Response::AutoPruned(Ok(AutoPruneOutcome::NotNeeded)) = next_response(&manager) else {
+        worker.auto_prune(u64::MAX, false);
+        let Response::AutoPruned(Ok(AutoPruneOutcome::NotNeeded)) = next_response(&worker) else {
             panic!("expected AutoPruned(NotNeeded)");
         };
 
         // Delete the recording.
-        manager.delete_recordings(vec![db_ref], DeleteReason::Manual);
+        worker.delete_recordings(vec![db_ref], DeleteReason::Manual);
         let Response::Mutated {
             op: DbOp::RecordingsDeleted { count, .. },
             result,
-        } = next_response(&manager)
+        } = next_response(&worker)
         else {
             panic!("expected a RecordingsDeleted mutation");
         };
         assert_eq!(count, 1);
         result.expect("delete ok");
 
-        manager.list();
-        let Response::Listed(Ok(entries)) = next_response(&manager) else {
+        worker.list();
+        let Response::Listed(Ok(entries)) = next_response(&worker) else {
             panic!("expected a Listed response");
         };
         assert!(entries.is_empty(), "recording should be gone after delete");
@@ -570,24 +570,24 @@ mod tests {
         }
 
         let db = Database::open_or_create(&path).expect("reopen");
-        let manager = HistoryManager::spawn(db, Context::default());
+        let worker = HistoryWorker::spawn(db, Context::default());
 
         // Hide the first track, then permanently delete all hidden tracks.
         let db_ref = {
-            manager.list();
-            let Response::Listed(Ok(entries)) = next_response(&manager) else {
+            worker.list();
+            let Response::Listed(Ok(entries)) = next_response(&worker) else {
                 panic!("expected Listed");
             };
             entries[0].db_ref.clone()
         };
-        manager.set_tracks_hidden(db_ref, vec![0], true);
-        next_response(&manager);
+        worker.set_tracks_hidden(db_ref, vec![0], true);
+        next_response(&worker);
 
-        manager.delete_hidden_tracks();
+        worker.delete_hidden_tracks();
         let Response::Mutated {
             op: DbOp::TracksDeleted { count },
             result,
-        } = next_response(&manager)
+        } = next_response(&worker)
         else {
             panic!("expected TracksDeleted");
         };
@@ -595,8 +595,8 @@ mod tests {
         result.expect("delete ok");
 
         // The recording now has a single ten-point track and no hidden tracks.
-        manager.list();
-        let Response::Listed(Ok(entries)) = next_response(&manager) else {
+        worker.list();
+        let Response::Listed(Ok(entries)) = next_response(&worker) else {
             panic!("expected Listed");
         };
         assert_eq!(entries.len(), 1);
@@ -605,8 +605,8 @@ mod tests {
         assert_eq!(entries[0].meta.nav_point_count, 10);
 
         let new_ref = entries[0].db_ref.clone();
-        manager.open(new_ref);
-        let Response::Opened { result, .. } = next_response(&manager) else {
+        worker.open(new_ref);
+        let Response::Opened { result, .. } = next_response(&worker) else {
             panic!("expected Opened");
         };
         let stored = result.expect("open ok");
@@ -621,11 +621,11 @@ mod tests {
     }
 
     #[test]
-    fn disabled_manager_is_inert() {
-        let manager = HistoryManager::disabled();
-        assert!(!manager.available());
-        assert!(manager.path().is_none());
-        manager.list();
-        assert!(manager.poll().is_empty());
+    fn disabled_worker_is_inert() {
+        let worker = HistoryWorker::disabled();
+        assert!(!worker.available());
+        assert!(worker.path().is_none());
+        worker.list();
+        assert!(worker.poll().is_empty());
     }
 }

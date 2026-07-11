@@ -95,7 +95,7 @@ pub enum LoadMessage {
     },
 }
 
-/// The result of a single completed background load, returned by `LoaderManager::drain`.
+/// The result of a single completed background load, returned by `LoadJobs::drain`.
 pub(super) struct CompletedLoad {
     pub filename: String,
     pub elapsed_secs: f32,
@@ -144,7 +144,7 @@ impl HistoryOpen {
 /// Manages the file-loading channel and all background load threads.
 ///
 /// `loading_jobs` and `finishing_jobs` are public for the progress overlay UI.
-pub(super) struct LoaderManager {
+pub(super) struct LoadJobs {
     ctx: Context,
     load_tx: mpsc::Sender<LoadMessage>,
     load_rx: mpsc::Receiver<LoadMessage>,
@@ -162,7 +162,7 @@ pub(super) struct LoaderManager {
     pub analysis_config: AnalysisConfig,
 }
 
-impl LoaderManager {
+impl LoadJobs {
     pub fn new(ctx: Context) -> Self {
         let (load_tx, load_rx) = mpsc::channel::<LoadMessage>();
         Self {
@@ -1125,10 +1125,10 @@ mod tests {
     }
 
     /// Block until a background load finishes, or time out.
-    fn drain_until_complete(manager: &mut LoaderManager) -> CompletedLoad {
+    fn drain_until_complete(jobs: &mut LoadJobs) -> CompletedLoad {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            if let Some(done) = manager.drain().into_iter().next() {
+            if let Some(done) = jobs.drain().into_iter().next() {
                 return done;
             }
             assert!(Instant::now() < deadline, "load did not finish in time");
@@ -1144,11 +1144,11 @@ mod tests {
         let gtd_path = write_sample_gtd(dir.path());
         let db_path = dir.path().join("history.h5");
 
-        let mut manager = LoaderManager::new(egui::Context::default());
-        manager.db_path = Some(db_path.clone());
-        manager.spawn_gtd_path(gtd_path, SegmentationConfig::default());
+        let mut jobs = LoadJobs::new(egui::Context::default());
+        jobs.db_path = Some(db_path.clone());
+        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default());
 
-        let completed = drain_until_complete(&mut manager);
+        let completed = drain_until_complete(&mut jobs);
         let outcome = completed.outcome.expect("load should succeed");
         let LoadOutcome::GtdFile { history, .. } = outcome else {
             panic!("expected a GtdFile outcome");
@@ -1174,11 +1174,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let gtd_path = write_sample_gtd(dir.path());
 
-        let mut manager = LoaderManager::new(egui::Context::default());
-        manager.db_path = None;
-        manager.spawn_gtd_path(gtd_path, SegmentationConfig::default());
+        let mut jobs = LoadJobs::new(egui::Context::default());
+        jobs.db_path = None;
+        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default());
 
-        let completed = drain_until_complete(&mut manager);
+        let completed = drain_until_complete(&mut jobs);
         let outcome = completed.outcome.expect("load should succeed");
         let LoadOutcome::GtdFile { history, .. } = outcome else {
             panic!("expected a GtdFile outcome");
@@ -1198,10 +1198,10 @@ mod tests {
         let gtd_path = write_sample_gtd(dir.path());
         let db_path = dir.path().join("history.h5");
 
-        let mut manager = LoaderManager::new(egui::Context::default());
-        manager.db_path = Some(db_path.clone());
-        manager.spawn_gtd_path(gtd_path, SegmentationConfig::default());
-        let completed = drain_until_complete(&mut manager);
+        let mut jobs = LoadJobs::new(egui::Context::default());
+        jobs.db_path = Some(db_path.clone());
+        jobs.spawn_gtd_path(gtd_path, SegmentationConfig::default());
+        let completed = drain_until_complete(&mut jobs);
         let LoadOutcome::GtdFile { history, .. } = completed.outcome.expect("load should succeed")
         else {
             panic!("expected a GtdFile outcome");
