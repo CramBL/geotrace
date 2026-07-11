@@ -536,7 +536,7 @@ mod tests {
     /// beats the configured default, road-less platforms are unsnappable, and
     /// absent or unknown declarations fall back to the configured default.
     /// Exhaustive over [`TravelMode`]: a new variant fails to compile in
-    /// `resolve_costing`'s match before it can silently mis-resolve here.
+    /// `resolve_costing`'s match before it can silently resolve wrongly here.
     #[rstest::rstest]
     #[case(None, Some(Costing::Pedestrian))]
     #[case(Some(TravelMode::Car), Some(Costing::Auto))]
