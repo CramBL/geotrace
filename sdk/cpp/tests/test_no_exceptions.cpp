@@ -64,6 +64,7 @@ TEST_CASE("try_open reports an error by value, never aborting") {
     const auto r = NavFile::try_open("/no/such/file.gtd");
     CHECK(r.is_err());
     CHECK(r.error().code == GTD_ERR_IO);
+    CHECK(r.get_if() == nullptr);
 }
 using geotrace::ChannelUnit;
 

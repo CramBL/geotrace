@@ -301,19 +301,21 @@ template <typename T> struct Result {
     explicit operator bool() const noexcept { return is_ok(); }
     const Status &error() const noexcept { return status_; }
 
+    const T *get_if() const noexcept { return value_ ? &*value_ : nullptr; }
+    T *get_if() noexcept { return value_ ? &*value_ : nullptr; }
+
     const T &value() const & {
+        status_.throw_on_failure();
         assert(value_.has_value());
         return *value_;
     }
     T &value() & {
+        status_.throw_on_failure();
         assert(value_.has_value());
         return *value_;
     }
 
-    const T &value_or_throw() const & {
-        status_.throw_on_failure();
-        return value();
-    }
+    const T &value_or_throw() const & { return value(); }
     T value_or_throw() && {
         status_.throw_on_failure();
         assert(value_.has_value());
@@ -636,23 +638,6 @@ class ChannelUnit {
         if (status != GTD_OK)
             return Status::from(status);
         return ChannelUnit{std::string{canonical.data()}, custom};
-    }
-
-    static std::optional<RecognizedUnit> recognized_from_label(std::string_view label) {
-        for (std::uint8_t raw = 0; raw <= static_cast<std::uint8_t>(RecognizedUnit::PerH); ++raw) {
-            const auto unit = static_cast<RecognizedUnit>(raw);
-            if (label == recognized_unit_label(unit))
-                return unit;
-        }
-        return std::nullopt;
-    }
-
-    [[noreturn]] static void invalid_unit(const char *message) {
-#if GEOTRACE_CPP_EXCEPTIONS
-        throw std::invalid_argument{message};
-#else
-        detail::abort_with(message);
-#endif
     }
 
     std::string label_;
