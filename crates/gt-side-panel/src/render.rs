@@ -1,8 +1,11 @@
+use std::collections::HashMap;
+
 use egui::{Button, Label, RichText, ScrollArea, Sides, TextEdit};
 use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CLOCK as ICON_CLOCK;
 use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
+use egui_phosphor::regular::PATH as ICON_PATH;
 use egui_phosphor::regular::ROAD_HORIZON as ICON_ROAD_HORIZON;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
@@ -13,6 +16,7 @@ use gt_types::{
     DataCategory, FileIdx, FileMetadata, GeneratedMarkerKind, LoadWarning, LoadedFile, LoadedTrack,
     PointIdx, TrackIdx, TrackRef,
 };
+use gt_ui_theme::ELLIPSIS;
 use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask, HighlightScope, MapHighlight};
 
 use crate::filter::{FilterPanelState, render_filter_panel};
@@ -29,6 +33,50 @@ pub struct RecordingDetails {
     pub metadata: gt_types::FileMetadata,
     /// The raw recording identity, if any; stripped for display by the dialog.
     pub identity: Option<String>,
+}
+
+/// Snap-to-road state for the whole panel, resolved by the app each frame.
+///
+/// A panel-local view (like [`RecordingDetails`] for gt-history) so the panel
+/// needs no dependency on the snap machinery: the app maps its scheduler and
+/// settings into plain data, the panel only renders it.
+#[derive(Clone, Copy)]
+pub struct SnapPanelView<'a> {
+    /// `GEOTRACE_OFFLINE` is set: every snap trigger is grayed out.
+    pub offline: bool,
+    /// Upload consent has not been acknowledged for the configured server, so
+    /// the trigger carries the `…` suffix - a click opens the consent dialog.
+    pub consent_pending: bool,
+    /// Per-track snap state. Tracks without an entry are [`SnapRowView::Idle`].
+    pub rows: &'a HashMap<TrackRef, SnapRowView>,
+}
+
+/// One track's snap state as the panel shows it, mirroring the app's
+/// scheduler states plus the settings-derived unsnappable case.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SnapRowView {
+    /// Snappable, no run this session. The default for tracks without an entry.
+    Idle,
+    /// The file declares a travel mode without a road network (boat, rail,
+    /// aircraft); the value is the mode's display name for the hover text.
+    Unsnappable {
+        travel_mode: String,
+    },
+    Queued,
+    InFlight {
+        completed_chunks: usize,
+        total_chunks: usize,
+    },
+    Failed {
+        error: String,
+    },
+    Done {
+        snapped: usize,
+        interpolated: usize,
+        unsnapped: usize,
+        /// Run confidence in `0..=1`, when the server reported one.
+        confidence_score: Option<f64>,
+    },
 }
 
 pub struct PanelContext<'a> {
@@ -54,6 +102,12 @@ pub struct PanelContext<'a> {
     /// Set by clicking a file row's note icon. Consumed by the app to open the
     /// recording-details dialog.
     pub metadata_request: &'a mut Option<RecordingDetails>,
+    /// Snap-to-road state per track, resolved by the app.
+    pub snap: SnapPanelView<'a>,
+    /// Set by clicking a track's snap trigger. Consumed by the app, which
+    /// routes it through the consent dialog when consent is pending and
+    /// queues the run otherwise.
+    pub snap_request: &'a mut Option<TrackRef>,
 }
 
 /// Trailing eye-slash on a category row whose map ink is hidden by the
@@ -365,6 +419,182 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, display_name: &str, ctx: &mut
     }
 }
 
+/// What the snap trigger can do for a track right now: whether it is
+/// clickable, why not when grayed, and whether a click still needs the
+/// consent dialog (the `…` suffix). `None` when a completed run leaves
+/// nothing to trigger - the row then shows the status glyph instead.
+struct SnapAction {
+    enabled: bool,
+    hover: String,
+    consent_pending: bool,
+}
+
+/// The trigger state for a track, shared by the row button and the context
+/// menu entry so the two can never disagree.
+fn snap_action(row: &SnapRowView, snap: SnapPanelView<'_>) -> Option<SnapAction> {
+    let action = match row {
+        // A completed run leaves nothing to trigger; its status glyph stays
+        // fully usable offline (cached results are local).
+        SnapRowView::Done { .. } => return None,
+        // Unsnappable beats offline: it is the permanent condition, and its
+        // hover names the declared mode.
+        SnapRowView::Unsnappable { travel_mode } => SnapAction {
+            enabled: false,
+            hover: format!(
+                "Not snappable - the declared travel mode {travel_mode} has no road network"
+            ),
+            consent_pending: false,
+        },
+        _ if snap.offline => SnapAction {
+            enabled: false,
+            hover: "Snapping is disabled while GEOTRACE_OFFLINE is set".to_owned(),
+            consent_pending: false,
+        },
+        SnapRowView::Queued => SnapAction {
+            enabled: false,
+            hover: "Queued for snapping".to_owned(),
+            consent_pending: false,
+        },
+        SnapRowView::InFlight {
+            completed_chunks,
+            total_chunks,
+        } => SnapAction {
+            enabled: false,
+            hover: format!("Snapping - completed {completed_chunks} of {total_chunks} chunks"),
+            consent_pending: false,
+        },
+        SnapRowView::Failed { error } => SnapAction {
+            enabled: true,
+            hover: format!("Snap to road failed - {error}. Click to retry."),
+            consent_pending: snap.consent_pending,
+        },
+        SnapRowView::Idle => SnapAction {
+            enabled: true,
+            hover: "Snap to road - match this track against the OpenStreetMap road network"
+                .to_owned(),
+            consent_pending: snap.consent_pending,
+        },
+    };
+    Some(action)
+}
+
+/// The completed-run breakdown shown in the snap status hover: per-kind point
+/// counts and the run confidence.
+fn snap_status_rows(
+    ui: &mut egui::Ui,
+    snapped: usize,
+    interpolated: usize,
+    unsnapped: usize,
+    confidence_score: Option<f64>,
+) {
+    ui.label(RichText::new("Snapped to road").strong());
+    egui::Grid::new("snap_status_grid")
+        .num_columns(2)
+        .spacing([12.0, 4.0])
+        .show(ui, |ui| {
+            let mut row = |label: &str, value: String| {
+                ui.label(RichText::new(label).weak());
+                ui.label(value);
+                ui.end_row();
+            };
+            row("Snapped", gt_fmt::format_count(snapped));
+            row("Interpolated", gt_fmt::format_count(interpolated));
+            row("Unsnapped", gt_fmt::format_count(unsnapped));
+            if let Some(score) = confidence_score {
+                row("Confidence", gt_fmt::format_fraction_percent(score));
+            }
+        });
+}
+
+/// The trailing per-track snap control: the manual trigger while a run is
+/// possible (grayed with hover text when it is not, never hidden), and the
+/// run's status glyph with the breakdown hover once complete.
+fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'_>) {
+    let row = ctx.snap.rows.get(&track_ref).unwrap_or(&SnapRowView::Idle);
+    let Some(action) = snap_action(row, ctx.snap) else {
+        let SnapRowView::Done {
+            snapped,
+            interpolated,
+            unsnapped,
+            confidence_score,
+        } = row
+        else {
+            return;
+        };
+        let (snapped, interpolated, unsnapped, confidence_score) =
+            (*snapped, *interpolated, *unsnapped, *confidence_score);
+        ui.label(RichText::new(ICON_PATH).weak()).on_hover_ui(|ui| {
+            snap_status_rows(ui, snapped, interpolated, unsnapped, confidence_score);
+        });
+        return;
+    };
+
+    let failed = matches!(row, SnapRowView::Failed { .. });
+    let label = if action.consent_pending {
+        format!("{ICON_PATH}{ELLIPSIS}")
+    } else {
+        ICON_PATH.to_owned()
+    };
+    let mut text = RichText::new(label);
+    if failed {
+        text = text.color(gt_ui_theme::warning_amber(ui.visuals().dark_mode));
+    }
+    let button = ui.add_enabled(action.enabled, Button::new(text).frame(false));
+    let button = if action.enabled {
+        button
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(&action.hover)
+    } else {
+        button.on_disabled_hover_text(&action.hover)
+    };
+    if button.clicked() {
+        *ctx.snap_request = Some(track_ref);
+    }
+}
+
+/// The context-menu counterpart of [`snap_control`]: same action state, text
+/// label instead of the icon. A completed run shows the entry disabled with
+/// the status hover, per the never-hide rule.
+fn snap_menu_entry(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'_>) {
+    let row = ctx.snap.rows.get(&track_ref).unwrap_or(&SnapRowView::Idle);
+    match snap_action(row, ctx.snap) {
+        Some(action) => {
+            let label = if action.consent_pending {
+                format!("Snap to road{ELLIPSIS}")
+            } else {
+                "Snap to road".to_owned()
+            };
+            let button = ui.add_enabled(action.enabled, Button::new(label));
+            let button = if action.enabled {
+                button.on_hover_text(&action.hover)
+            } else {
+                button.on_disabled_hover_text(&action.hover)
+            };
+            if button.clicked() {
+                *ctx.snap_request = Some(track_ref);
+                ui.close();
+            }
+        }
+        None => {
+            let SnapRowView::Done {
+                snapped,
+                interpolated,
+                unsnapped,
+                confidence_score,
+            } = row
+            else {
+                return;
+            };
+            let (snapped, interpolated, unsnapped, confidence_score) =
+                (*snapped, *interpolated, *unsnapped, *confidence_score);
+            ui.add_enabled(false, Button::new("Snap to road"))
+                .on_disabled_hover_ui(|ui| {
+                    snap_status_rows(ui, snapped, interpolated, unsnapped, confidence_score);
+                });
+        }
+    }
+}
+
 fn render_track_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut PanelContext<'_>) {
     let track_ref = TrackRef::new(fi, ti);
     let (track, passes, is_expanded, panel_hovered, map_hovered, key) = {
@@ -437,6 +667,7 @@ fn render_track_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Pane
                 }
             }
         });
+        snap_control(ui, track_ref, ctx);
         (resp, newly_enabled)
     });
 
@@ -470,6 +701,7 @@ fn render_track_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Pane
             *ctx.zoom_to_visible_request = true;
             ui.close();
         }
+        snap_menu_entry(ui, track_ref, ctx);
         ui.separator();
         if ui.button("Unload").clicked() {
             ctx.tree.pending_unload = Some(vec![key]);
@@ -1249,5 +1481,105 @@ mod tests {
             strip_common_path_prefix(&names),
             r"C:\Users\alice\recordings\".len()
         );
+    }
+}
+
+#[cfg(test)]
+mod snap_action_tests {
+    use std::collections::HashMap;
+
+    use rstest::rstest;
+
+    use super::*;
+
+    fn view(offline: bool, consent_pending: bool) -> SnapPanelView<'static> {
+        // The rows map is irrelevant to snap_action; a leaked empty map keeps
+        // the borrow 'static for the test helper.
+        static EMPTY: std::sync::OnceLock<HashMap<TrackRef, SnapRowView>> =
+            std::sync::OnceLock::new();
+        SnapPanelView {
+            offline,
+            consent_pending,
+            rows: EMPTY.get_or_init(HashMap::new),
+        }
+    }
+
+    fn unsnappable() -> SnapRowView {
+        SnapRowView::Unsnappable {
+            travel_mode: "Boat".to_owned(),
+        }
+    }
+
+    fn failed() -> SnapRowView {
+        SnapRowView::Failed {
+            error: "server unreachable".to_owned(),
+        }
+    }
+
+    fn done() -> SnapRowView {
+        SnapRowView::Done {
+            snapped: 1,
+            interpolated: 2,
+            unsnapped: 3,
+            confidence_score: None,
+        }
+    }
+
+    /// Pins the trigger's priority order: Done never has an action (its
+    /// status glyph stays usable offline), Unsnappable beats offline (the
+    /// permanent condition names the mode), offline grays everything else,
+    /// only Idle and Failed are clickable, and only clickable states carry
+    /// the consent-pending `…` suffix.
+    #[rstest]
+    #[case(SnapRowView::Idle, false, Some(true))]
+    #[case(SnapRowView::Idle, true, Some(false))]
+    #[case(failed(), false, Some(true))]
+    #[case(failed(), true, Some(false))]
+    #[case(unsnappable(), false, Some(false))]
+    #[case(unsnappable(), true, Some(false))]
+    #[case(SnapRowView::Queued, false, Some(false))]
+    #[case(SnapRowView::Queued, true, Some(false))]
+    #[case(SnapRowView::InFlight { completed_chunks: 1, total_chunks: 2 }, false, Some(false))]
+    #[case(SnapRowView::InFlight { completed_chunks: 1, total_chunks: 2 }, true, Some(false))]
+    #[case(done(), false, None)]
+    #[case(done(), true, None)]
+    fn action_enablement_per_state_and_offline(
+        #[case] row: SnapRowView,
+        #[case] offline: bool,
+        #[case] expected_enabled: Option<bool>,
+    ) {
+        let action = snap_action(&row, view(offline, false));
+        assert_eq!(action.map(|a| a.enabled), expected_enabled);
+    }
+
+    /// The disabled hover must name the reason: the declared travel mode for
+    /// unsnappable tracks (even offline - the permanent condition wins), and
+    /// the offline switch for everything else.
+    #[rstest]
+    #[case(unsnappable(), "Boat")]
+    #[case(SnapRowView::Idle, "GEOTRACE_OFFLINE")]
+    #[case(failed(), "GEOTRACE_OFFLINE")]
+    fn offline_hover_names_the_blocking_condition(
+        #[case] row: SnapRowView,
+        #[case] expected_substring: &str,
+    ) {
+        let action = snap_action(&row, view(true, false)).map(|a| a.hover);
+        let hover = action.unwrap_or_default();
+        assert!(
+            hover.contains(expected_substring),
+            "hover {hover:?} should mention {expected_substring:?}"
+        );
+    }
+
+    /// The `…` suffix marks a click that still needs the consent dialog - so
+    /// it only ever appears on clickable states, never on grayed ones.
+    #[rstest]
+    #[case(SnapRowView::Idle, true)]
+    #[case(failed(), true)]
+    #[case(unsnappable(), false)]
+    #[case(SnapRowView::Queued, false)]
+    fn consent_suffix_only_on_clickable_states(#[case] row: SnapRowView, #[case] expected: bool) {
+        let action = snap_action(&row, view(false, true));
+        assert_eq!(action.map(|a| a.consent_pending), Some(expected));
     }
 }

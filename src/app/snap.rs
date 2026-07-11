@@ -33,13 +33,6 @@ use gt_types::{LoadedTrack, TrackRef, TravelMode};
 /// counterpart (boat, rail, aircraft) make the track unsnappable (`None`).
 /// Unknown declarations fall back to the configured default - an
 /// unrecognized platform is no reason to refuse a manual snap.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the consumer lands with the side-panel snap trigger"
-    )
-)]
 pub fn resolve_costing(declared: Option<&TravelMode>, configured: Costing) -> Option<Costing> {
     match declared {
         None | Some(TravelMode::Unknown(_)) => Some(configured),
@@ -76,12 +69,13 @@ impl SnapCacheKey {
 
 /// A completed snap run: the stitched result plus the run's warnings.
 #[derive(Debug)]
-#[expect(
-    dead_code,
-    reason = "consumers land with the snapped-track renderer and the snap error plot"
-)]
 pub struct SnapRun {
     pub result: SnapResult,
+    /// Consumed once the snapped-track renderer and the snap error plot land.
+    #[expect(
+        dead_code,
+        reason = "consumers land with the snapped-track renderer and the snap error plot"
+    )]
     pub warnings: Vec<SnapWarning>,
 }
 
@@ -173,25 +167,11 @@ impl SnapScheduler {
 
     /// The cached run for a track under the given costing, if one completed
     /// this session.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "consumers land with the side-panel snap trigger and the renderers"
-        )
-    )]
     pub fn run_for(&self, track: &LoadedTrack, costing: Costing) -> Option<Arc<SnapRun>> {
         self.cache.get(&SnapCacheKey::new(track, costing)).cloned()
     }
 
     /// The transient activity for a track (queued, in flight, or failed).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the consumer lands with the side-panel snap trigger"
-        )
-    )]
     pub fn activity_for(&self, track: TrackRef) -> Option<&SnapActivity> {
         self.activity.get(&track)
     }
@@ -203,13 +183,6 @@ impl SnapScheduler {
 
     /// Queue a snap run for a track. No-ops when offline, when the result is
     /// already cached, or when the track is already queued or in flight.
-    // Unlike run_for/activity_for, tests never call this directly (they
-    // inject messages via the channel), so this is dead in test builds too
-    // and deliberately not cfg_attr-gated like its siblings.
-    #[expect(
-        dead_code,
-        reason = "the consumer lands with the side-panel snap trigger"
-    )]
     pub fn request_snap(&mut self, track_ref: TrackRef, track: &LoadedTrack, costing: Costing) {
         if Self::offline() {
             return;

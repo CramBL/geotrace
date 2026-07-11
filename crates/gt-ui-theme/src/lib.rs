@@ -2,6 +2,9 @@ use egui::Color32;
 
 /// U+2014 EM DASH - used as a placeholder when a value is absent.
 pub const EM_DASH: &str = "—";
+/// U+2026 HORIZONTAL ELLIPSIS - truncation marker, and the button-label
+/// suffix for actions that need further input after the click (DESIGN.md).
+pub const ELLIPSIS: &str = "…";
 /// U+2212 MINUS SIGN - visually distinct from the ASCII hyphen-minus.
 pub const MINUS_SIGN: &str = "−";
 /// U+0394 GREEK CAPITAL LETTER DELTA - used as a mathematical difference symbol.
