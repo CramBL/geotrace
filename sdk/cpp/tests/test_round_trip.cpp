@@ -2,6 +2,7 @@
 #include <geotrace/geotrace.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 using geotrace::Angle;
