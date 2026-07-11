@@ -1,10 +1,12 @@
 #include <doctest/doctest.h>
 #include <geotrace/geotrace.hpp>
+#include <geotrace/unit_catalog.hpp>
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 using geotrace::Angle;

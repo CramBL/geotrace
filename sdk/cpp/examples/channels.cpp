@@ -7,6 +7,7 @@
  */
 
 #include <geotrace/geotrace.hpp>
+#include <geotrace/unit_catalog.hpp>
 
 #include <cstddef>
 #include <iostream>

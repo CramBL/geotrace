@@ -290,18 +290,16 @@ struct Status {
  * or call `value_or_throw()` to throw the error (or abort without exceptions).
  */
 template <typename T> struct Result {
-    Status status;
-
     Result(T v) : value_(std::move(v)) {}
     // An error result must carry a real error: an ok status here would falsely
     // report success with a default-constructed value.
-    Result(Status s) : status(std::move(s)) { assert(status.is_err()); }
+    Result(Status s) : status_(std::move(s)) { assert(status_.is_err()); }
     Result() = delete;
 
-    bool is_ok() const noexcept { return status.is_ok(); }
-    bool is_err() const noexcept { return status.is_err(); }
+    bool is_ok() const noexcept { return status_.is_ok(); }
+    bool is_err() const noexcept { return status_.is_err(); }
     explicit operator bool() const noexcept { return is_ok(); }
-    const Status &error() const noexcept { return status; }
+    const Status &error() const noexcept { return status_; }
 
     const T &value() const & {
         assert(value_.has_value());
@@ -313,17 +311,18 @@ template <typename T> struct Result {
     }
 
     const T &value_or_throw() const & {
-        status.throw_on_failure();
+        status_.throw_on_failure();
         return value();
     }
     T value_or_throw() && {
-        status.throw_on_failure();
+        status_.throw_on_failure();
         assert(value_.has_value());
         return std::move(*value_);
     }
 
   private:
     std::optional<T> value_;
+    Status status_;
 };
 
 /**
