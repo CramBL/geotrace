@@ -4,6 +4,16 @@
 [group("container-sdk")]
 build-c: (_sdk "cargo build -p geotrace-c --release")
 
+# Regenerate C++ and Python recognized-unit catalogs from the Rust catalog.
+[group("utils")]
+generate-unit-bindings:
+    cargo run -p geotrace-units --example generate_bindings
+
+# Verify committed recognized-unit bindings match the Rust catalog.
+[group("ci")]
+check-unit-bindings:
+    cargo run -p geotrace-units --example generate_bindings -- --check
+
 # Build and run the C SDK unit/integration tests.
 [group("container-sdk")]
 test-c: (_sdk "bash" "scripts/test-c.sh")

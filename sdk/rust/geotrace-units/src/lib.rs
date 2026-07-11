@@ -206,6 +206,15 @@ pub struct Unit {
     base: BaseUnit,
 }
 
+/// Stable language-binding names for a recognized [Unit].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnitBinding {
+    pub unit: Unit,
+    pub rust: &'static str,
+    pub cpp: &'static str,
+    pub python: &'static str,
+}
+
 impl Unit {
     pub const DEG: Self = Self::base(BaseUnit::Deg);
     pub const M: Self = Self::base(BaseUnit::M);
@@ -290,6 +299,198 @@ impl Unit {
         Self::PER_MIN,
         Self::PER_H,
     ];
+
+    /// Canonical catalog used to generate the C++ and Python bindings.
+    pub const BINDINGS: [UnitBinding; 29] = [
+        UnitBinding {
+            unit: Self::DEG,
+            rust: "DEG",
+            cpp: "Deg",
+            python: "DEG",
+        },
+        UnitBinding {
+            unit: Self::M,
+            rust: "M",
+            cpp: "M",
+            python: "M",
+        },
+        UnitBinding {
+            unit: Self::NM,
+            rust: "NM",
+            cpp: "Nm",
+            python: "NM",
+        },
+        UnitBinding {
+            unit: Self::UM,
+            rust: "UM",
+            cpp: "Um",
+            python: "UM",
+        },
+        UnitBinding {
+            unit: Self::MM,
+            rust: "MM",
+            cpp: "Mm",
+            python: "MM",
+        },
+        UnitBinding {
+            unit: Self::CM,
+            rust: "CM",
+            cpp: "Cm",
+            python: "CM",
+        },
+        UnitBinding {
+            unit: Self::KM,
+            rust: "KM",
+            cpp: "Km",
+            python: "KM",
+        },
+        UnitBinding {
+            unit: Self::KM_PER_H,
+            rust: "KM_PER_H",
+            cpp: "KmPerH",
+            python: "KM_PER_H",
+        },
+        UnitBinding {
+            unit: Self::M_PER_S,
+            rust: "M_PER_S",
+            cpp: "MPerS",
+            python: "M_PER_S",
+        },
+        UnitBinding {
+            unit: Self::MM_PER_S,
+            rust: "MM_PER_S",
+            cpp: "MmPerS",
+            python: "MM_PER_S",
+        },
+        UnitBinding {
+            unit: Self::CM_PER_S,
+            rust: "CM_PER_S",
+            cpp: "CmPerS",
+            python: "CM_PER_S",
+        },
+        UnitBinding {
+            unit: Self::KN,
+            rust: "KN",
+            cpp: "Kn",
+            python: "KN",
+        },
+        UnitBinding {
+            unit: Self::M_PER_S2,
+            rust: "M_PER_S2",
+            cpp: "MPerS2",
+            python: "M_PER_S2",
+        },
+        UnitBinding {
+            unit: Self::MM_PER_S2,
+            rust: "MM_PER_S2",
+            cpp: "MmPerS2",
+            python: "MM_PER_S2",
+        },
+        UnitBinding {
+            unit: Self::CM_PER_S2,
+            rust: "CM_PER_S2",
+            cpp: "CmPerS2",
+            python: "CM_PER_S2",
+        },
+        UnitBinding {
+            unit: Self::G,
+            rust: "G",
+            cpp: "G",
+            python: "G",
+        },
+        UnitBinding {
+            unit: Self::UG,
+            rust: "UG",
+            cpp: "Ug",
+            python: "UG",
+        },
+        UnitBinding {
+            unit: Self::MG,
+            rust: "MG",
+            cpp: "Mg",
+            python: "MG",
+        },
+        UnitBinding {
+            unit: Self::KM_PER_H_PER_S,
+            rust: "KM_PER_H_PER_S",
+            cpp: "KmPerHPerS",
+            python: "KM_PER_H_PER_S",
+        },
+        UnitBinding {
+            unit: Self::NS,
+            rust: "NS",
+            cpp: "Ns",
+            python: "NS",
+        },
+        UnitBinding {
+            unit: Self::US,
+            rust: "US",
+            cpp: "Us",
+            python: "US",
+        },
+        UnitBinding {
+            unit: Self::MS,
+            rust: "MS",
+            cpp: "Ms",
+            python: "MS",
+        },
+        UnitBinding {
+            unit: Self::S,
+            rust: "S",
+            cpp: "S",
+            python: "S",
+        },
+        UnitBinding {
+            unit: Self::MIN,
+            rust: "MIN",
+            cpp: "Min",
+            python: "MIN",
+        },
+        UnitBinding {
+            unit: Self::H,
+            rust: "H",
+            cpp: "H",
+            python: "H",
+        },
+        UnitBinding {
+            unit: Self::PERCENT,
+            rust: "PERCENT",
+            cpp: "Percent",
+            python: "PERCENT",
+        },
+        UnitBinding {
+            unit: Self::PER_S,
+            rust: "PER_S",
+            cpp: "PerS",
+            python: "PER_S",
+        },
+        UnitBinding {
+            unit: Self::PER_MIN,
+            rust: "PER_MIN",
+            cpp: "PerMin",
+            python: "PER_MIN",
+        },
+        UnitBinding {
+            unit: Self::PER_H,
+            rust: "PER_H",
+            cpp: "PerH",
+            python: "PER_H",
+        },
+    ];
+
+    /// Canonical metadata spelling for a recognized unit.
+    pub fn label(self) -> &'static str {
+        const LABELS: [&str; 29] = [
+            "deg", "m", "nm", "um", "mm", "cm", "km", "km/h", "m/s", "mm/s", "cm/s", "kn", "m/s2",
+            "mm/s2", "cm/s2", "g", "ug", "mg", "km/h/s", "ns", "us", "ms", "s", "min", "h", "%",
+            "per s", "per min", "per h",
+        ];
+        Self::RECOGNIZED
+            .into_iter()
+            .zip(LABELS)
+            .find_map(|(unit, label)| (unit == self).then_some(label))
+            .unwrap_or_default()
+    }
 
     const fn base(base: BaseUnit) -> Self {
         Self { prefix: None, base }
@@ -454,23 +655,45 @@ impl fmt::Display for CustomUnit {
     }
 }
 
-/// A recognized, convertible unit or an explicit display-only custom label.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ChannelUnit {
+enum ChannelUnitValue {
     Recognized(Unit),
     Custom(CustomUnit),
-    /// Losslessly preserved file metadata that is not valid writer input.
-    #[doc(hidden)]
-    Unrecognized(String),
+    Legacy(String),
 }
+
+/// The classification of a channel unit read from a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChannelUnitKind {
+    Recognized,
+    Custom,
+    /// Losslessly preserved metadata that is not valid writer input.
+    Legacy,
+}
+
+/// A recognized, convertible unit or an explicit display-only custom label.
+///
+/// Malformed legacy metadata can only be produced by [ChannelUnit::from_file_label].
+/// Its private representation cannot be constructed as writable metadata.
+///
+/// ```compile_fail
+/// use geotrace_units::ChannelUnit;
+/// let _ = ChannelUnit("legacy".to_owned());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ChannelUnit(ChannelUnitValue);
 
 impl ChannelUnit {
     pub fn recognized(unit: Unit) -> Self {
-        Self::Recognized(unit)
+        Self(ChannelUnitValue::Recognized(unit))
     }
+}
 
+impl ChannelUnit {
     pub fn custom(label: impl Into<String>) -> Result<Self, UnitParseError> {
-        CustomUnit::new(label).map(Self::Custom)
+        CustomUnit::new(label)
+            .map(ChannelUnitValue::Custom)
+            .map(Self)
     }
 
     /// Parse existing file metadata as far as possible, preserving unsupported
@@ -478,35 +701,51 @@ impl ChannelUnit {
     pub fn from_file_label(label: impl Into<String>) -> Self {
         let label = label.into();
         match Unit::from_label(&label) {
-            Some(unit) => Self::Recognized(unit),
+            Some(unit) => Self::recognized(unit),
             None => match CustomUnit::new(label.clone()) {
-                Ok(unit) if unit.as_str() == label => Self::Custom(unit),
-                Ok(_) | Err(_) => Self::Unrecognized(label),
+                Ok(unit) if unit.as_str() == label => Self(ChannelUnitValue::Custom(unit)),
+                Ok(_) | Err(_) => Self(ChannelUnitValue::Legacy(label)),
             },
         }
     }
 
+    pub fn kind(&self) -> ChannelUnitKind {
+        match self.0 {
+            ChannelUnitValue::Recognized(_) => ChannelUnitKind::Recognized,
+            ChannelUnitValue::Custom(_) => ChannelUnitKind::Custom,
+            ChannelUnitValue::Legacy(_) => ChannelUnitKind::Legacy,
+        }
+    }
+
+    pub fn label(&self) -> &str {
+        match &self.0 {
+            ChannelUnitValue::Recognized(unit) => unit.label(),
+            ChannelUnitValue::Custom(unit) => unit.as_str(),
+            ChannelUnitValue::Legacy(label) => label,
+        }
+    }
+
+    pub fn is_writable(&self) -> bool {
+        self.kind() != ChannelUnitKind::Legacy
+    }
+
     pub fn as_recognized(&self) -> Option<Unit> {
-        match self {
-            Self::Recognized(unit) => Some(*unit),
-            Self::Custom(_) | Self::Unrecognized(_) => None,
+        match self.0 {
+            ChannelUnitValue::Recognized(unit) => Some(unit),
+            ChannelUnitValue::Custom(_) | ChannelUnitValue::Legacy(_) => None,
         }
     }
 }
 
 impl fmt::Display for ChannelUnit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Recognized(unit) => unit.fmt(f),
-            Self::Custom(unit) => unit.fmt(f),
-            Self::Unrecognized(label) => label.fmt(f),
-        }
+        f.write_str(self.label())
     }
 }
 
 impl From<Unit> for ChannelUnit {
     fn from(unit: Unit) -> Self {
-        Self::Recognized(unit)
+        Self::recognized(unit)
     }
 }
 
@@ -514,7 +753,7 @@ impl FromStr for ChannelUnit {
     type Err = UnitParseError;
 
     fn from_str(label: &str) -> Result<Self, Self::Err> {
-        label.parse::<Unit>().map(Self::Recognized)
+        label.parse::<Unit>().map(Self::recognized)
     }
 }
 
@@ -578,7 +817,7 @@ mod tests {
         ] {
             let parsed = ChannelUnit::from_file_label(label);
             assert_eq!(parsed.to_string(), expected);
-            assert!(matches!(parsed, ChannelUnit::Recognized(_)));
+            assert_eq!(parsed.kind(), ChannelUnitKind::Recognized);
         }
     }
 
@@ -599,7 +838,7 @@ mod tests {
         let label = " future\nunit ";
         let parsed = ChannelUnit::from_file_label(label);
         assert_eq!(parsed.to_string(), label);
-        assert!(matches!(parsed, ChannelUnit::Unrecognized(_)));
+        assert_eq!(parsed.kind(), ChannelUnitKind::Legacy);
     }
 
     #[test]
@@ -631,6 +870,18 @@ mod tests {
         for unit in Unit::RECOGNIZED {
             let text = unit.to_string();
             assert_eq!(Unit::from_label(&text), Some(unit), "{text}");
+        }
+    }
+
+    #[test]
+    fn binding_catalog_is_exhaustive_and_canonical() {
+        assert_eq!(Unit::BINDINGS.len(), Unit::RECOGNIZED.len());
+        for (binding, recognized) in Unit::BINDINGS.iter().zip(Unit::RECOGNIZED) {
+            assert_eq!(binding.unit, recognized);
+            assert_eq!(Unit::from_label(binding.unit.label()), Some(binding.unit));
+            assert!(!binding.rust.is_empty());
+            assert!(!binding.cpp.is_empty());
+            assert!(!binding.python.is_empty());
         }
     }
 

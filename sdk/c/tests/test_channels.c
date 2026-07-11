@@ -268,3 +268,37 @@ Test(channels, duplicate_name_fails_at_finish) {
     cr_assert_eq(gtd_builder_finish(b, &f), GTD_ERR_INVALID_CHANNEL);
     cr_assert_null(f);
 }
+
+Test(channels, unit_validation_uses_shared_unicode_rules) {
+    struct UnitCase {
+        const char *label;
+        GtdChannelUnitMode mode;
+        GtdStatus expected;
+        const char *canonical;
+    } cases[] = {
+        {"\xC2\xA0", GTD_CHANNEL_UNIT_CUSTOM, GTD_ERR_INVALID_CHANNEL, NULL},
+        {"\xE2\x80\x83", GTD_CHANNEL_UNIT_CUSTOM, GTD_ERR_INVALID_CHANNEL, NULL},
+        {"bad\xC2\x85"
+         "unit",
+         GTD_CHANNEL_UNIT_CUSTOM, GTD_ERR_INVALID_CHANNEL, NULL},
+        {"micrograms", GTD_CHANNEL_UNIT_CUSTOM, GTD_OK, "micrograms"},
+        {"m/s\xC2\xB2", GTD_CHANNEL_UNIT_RECOGNIZED, GTD_OK, "m/s2"},
+        {"m/s\xC2\xB2", GTD_CHANNEL_UNIT_CUSTOM, GTD_ERR_INVALID_CHANNEL, NULL},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        size_t required = 0;
+        cr_assert_eq(gtd_channel_unit_parse(cases[i].label, cases[i].mode, NULL, 0, &required),
+                     cases[i].expected);
+        if (cases[i].expected != GTD_OK) {
+            continue;
+        }
+        char *canonical = malloc(required);
+        cr_assert_not_null(canonical);
+        cr_assert_eq(
+            gtd_channel_unit_parse(cases[i].label, cases[i].mode, canonical, required, &required),
+            GTD_OK);
+        cr_assert_str_eq(canonical, cases[i].canonical);
+        free(canonical);
+    }
+}

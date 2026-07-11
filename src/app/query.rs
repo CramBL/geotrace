@@ -2649,14 +2649,14 @@ fn channel_units_compatible(
 ) -> bool {
     match (existing, incoming) {
         (None, None) => true,
-        (Some(ChannelUnit::Recognized(existing)), Some(ChannelUnit::Recognized(incoming))) => {
-            existing.quantity() == incoming.quantity()
-        }
-        (Some(ChannelUnit::Custom(existing)), Some(ChannelUnit::Custom(incoming))) => {
-            existing == incoming
-        }
-        (Some(ChannelUnit::Unrecognized(existing)), Some(ChannelUnit::Unrecognized(incoming))) => {
-            existing == incoming
+        (Some(existing), Some(incoming)) => {
+            match (existing.as_recognized(), incoming.as_recognized()) {
+                (Some(existing), Some(incoming)) => existing.quantity() == incoming.quantity(),
+                (None, None) => {
+                    existing.kind() == incoming.kind() && existing.label() == incoming.label()
+                }
+                _ => false,
+            }
         }
         _ => false,
     }

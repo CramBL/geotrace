@@ -41,7 +41,9 @@ pub use builder::{
     NavFileBuilder, NavRecord, NavRecorder, SatelliteWarning, collect_satellite_warnings,
 };
 pub use error::{BuildError, ChannelError, Error, EventMarkerError};
-pub use geotrace_units::{ChannelUnit, CustomUnit, PhysicalQuantity, Unit, UnitParseError};
+pub use geotrace_units::{
+    ChannelUnit, ChannelUnitKind, CustomUnit, PhysicalQuantity, Unit, UnitParseError,
+};
 pub use types::{
     Annotation, Channel, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,
     EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint,

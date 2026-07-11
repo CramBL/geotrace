@@ -560,7 +560,10 @@ fn a_custom_unit_round_trips_without_scaling_metadata() -> Result<(), Box<dyn st
     );
     let round_tripped = round_trip(&recorder.finish()?)?;
     let unit = round_tripped.channels()[0].unit();
-    assert!(matches!(unit, Some(ChannelUnit::Custom(_))));
+    assert_eq!(
+        unit.map(ChannelUnit::kind),
+        Some(geotrace_sdk::ChannelUnitKind::Custom)
+    );
     assert_eq!(unit.map(ToString::to_string).as_deref(), Some("rpm"));
     assert_eq!(round_tripped.channels()[0].values(), [1200.0]);
     Ok(())

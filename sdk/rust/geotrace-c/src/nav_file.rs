@@ -1,7 +1,7 @@
 use std::ffi::{CString, c_char};
 use std::io::Cursor;
 
-use geotrace_sdk::{ChannelUnit, NavFile};
+use geotrace_sdk::NavFile;
 
 use crate::error::{GtdStatus, run_catching_panics, set_last_error, status_for_error};
 use crate::{
@@ -429,7 +429,7 @@ pub unsafe extern "C" fn gtd_nav_file_get_channel_unit(
         *required_len = label.len().saturating_add(1);
         if !is_custom.is_null() {
             // SAFETY: non-null output pointer is caller-owned.
-            unsafe { *is_custom = u8::from(!matches!(unit, ChannelUnit::Recognized(_))) };
+            unsafe { *is_custom = u8::from(unit.as_recognized().is_none()) };
         }
         if cap == 0 {
             return GtdStatus::Ok;

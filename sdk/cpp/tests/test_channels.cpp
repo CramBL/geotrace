@@ -1,16 +1,21 @@
 #include <doctest/doctest.h>
 #include <geotrace/geotrace.hpp>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 using geotrace::Angle;
 using geotrace::Channel;
+using geotrace::ChannelUnit;
 using geotrace::FileBuilder;
 using geotrace::InvalidChannelError;
 using geotrace::NavFile;
 using geotrace::NavFix;
+using geotrace::recognized_unit_label;
+using geotrace::RecognizedUnit;
 using geotrace::Timestamp;
 
 static const Timestamp T0 = Timestamp::from_seconds(1700000000ULL);
@@ -108,7 +113,7 @@ TEST_CASE("channels: a malformed channel throws InvalidChannelError") {
         CHECK_THROWS_AS(FileBuilder{}.add_channel(ch), InvalidChannelError);
     }
     SUBCASE("unrecognized unit") {
-        CHECK_THROWS_AS(geotrace::ChannelUnit::parse_recognized("rpm"), std::invalid_argument);
+        CHECK_THROWS_AS(geotrace::ChannelUnit::parse_recognized("rpm"), InvalidChannelError);
     }
     SUBCASE("duplicate channel name at finish") {
         Channel ch{};
@@ -147,6 +152,19 @@ TEST_CASE("channels: long custom units round-trip losslessly") {
     REQUIRE(read.unit.has_value());
     CHECK(read.unit->label() == label);
     CHECK(read.unit->is_custom());
+}
+
+TEST_CASE("channels: generated unit catalog exposes every canonical label") {
+    std::vector<std::string> labels;
+    for (std::uint8_t raw = 0; raw <= static_cast<std::uint8_t>(RecognizedUnit::PerH); ++raw) {
+        const auto unit = static_cast<RecognizedUnit>(raw);
+        const auto parsed = ChannelUnit::try_parse_recognized(recognized_unit_label(unit));
+        REQUIRE(parsed.is_ok());
+        labels.push_back(parsed.value.label());
+    }
+    CHECK(labels.size() == std::size_t{29});
+    std::sort(labels.begin(), labels.end());
+    CHECK(std::adjacent_find(labels.begin(), labels.end()) == labels.end());
 }
 
 TEST_CASE("channels: try_channel reports out-of-range without throwing") {

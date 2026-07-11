@@ -200,6 +200,16 @@ typedef enum {
 } GtdChannelUnitMode;
 
 /**
+ * Validate and canonicalize a channel unit label.
+ *
+ * Call with @p out NULL and @p out_capacity zero to query the required byte
+ * length, including the terminating NUL, then call again with a large enough
+ * buffer. Validation and Unicode handling are identical to the Rust SDK.
+ */
+GtdStatus gtd_channel_unit_parse(const char *label, uint32_t unit_mode, char *out,
+                                 size_t out_capacity, size_t *required_len);
+
+/**
  * A scalar or vector channel to add via `gtd_builder_add_channel()`.
  *
  * A scalar channel leaves @ref components NULL and @ref n_components zero; a

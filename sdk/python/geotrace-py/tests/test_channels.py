@@ -110,6 +110,19 @@ def test_recognized_unit_constants_are_first_class_values() -> None:
     assert unit.label == Unit.MG.label
 
 
+def test_generated_recognized_unit_catalog_is_complete() -> None:
+    units = {
+        value.label
+        for name in dir(Unit)
+        if name.isupper() and isinstance((value := getattr(Unit, name)), Unit)
+    }
+    assert units == {
+        "%", "cm", "cm/s", "cm/s2", "deg", "g", "h", "km", "km/h", "km/h/s",
+        "kn", "m", "m/s", "m/s2", "mg", "min", "mm", "mm/s", "mm/s2", "ms",
+        "nm", "ns", "per h", "per min", "per s", "s", "ug", "um", "us",
+    }
+
+
 def test_long_custom_unit_round_trips_losslessly() -> None:
     label = "x" * 159
     builder = NavFileBuilder()

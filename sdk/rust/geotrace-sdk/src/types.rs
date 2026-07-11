@@ -680,10 +680,10 @@ impl Channel {
         values: Vec<f64>,
     ) -> Result<Self, ChannelError> {
         crate::error::validate_channel_name(&name)?;
-        if let Some(ChannelUnit::Unrecognized(unit)) = &unit {
+        if let Some(unit) = unit.as_ref().filter(|unit| !unit.is_writable()) {
             return Err(ChannelError::UnwritableUnit {
                 name,
-                unit: unit.clone(),
+                unit: unit.to_string(),
             });
         }
         // `None` is a scalar channel; `Some(list)` is a vector channel, and an

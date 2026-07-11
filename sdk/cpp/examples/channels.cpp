@@ -43,7 +43,12 @@ int main() {
 
         geotrace::Channel quality{};
         quality.name = "quality";
-        quality.unit = geotrace::ChannelUnit::custom("vendor score");
+        const auto quality_unit = geotrace::ChannelUnit::try_custom("vendor score");
+        if (quality_unit.is_err()) {
+            std::cerr << quality_unit.error().description << '\n';
+            return 1;
+        }
+        quality.unit = quality_unit.value;
         quality.times = {t0, t1};
         quality.values = {80.0, 81.0};
         builder.add(quality);

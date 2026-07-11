@@ -7,6 +7,8 @@ from enum import Enum
 from os import PathLike
 from typing import Any, final
 
+from ._unit_catalog import UnitCatalog
+
 StrPath = str | bytes | PathLike[str]
 
 __version__: str
@@ -145,38 +147,8 @@ class ChannelUnit:
     def __hash__(self) -> int: ...
 
 @final
-class Unit:
+class Unit(UnitCatalog):
     """A recognized, convertible channel unit."""
-
-    DEG: Unit
-    M: Unit
-    NM: Unit
-    UM: Unit
-    MM: Unit
-    CM: Unit
-    KM: Unit
-    KM_PER_H: Unit
-    M_PER_S: Unit
-    MM_PER_S: Unit
-    CM_PER_S: Unit
-    KN: Unit
-    M_PER_S2: Unit
-    MM_PER_S2: Unit
-    CM_PER_S2: Unit
-    G: Unit
-    UG: Unit
-    MG: Unit
-    KM_PER_H_PER_S: Unit
-    NS: Unit
-    US: Unit
-    MS: Unit
-    S: Unit
-    MIN: Unit
-    H: Unit
-    PERCENT: Unit
-    PER_S: Unit
-    PER_MIN: Unit
-    PER_H: Unit
 
     @property
     def label(self) -> str: ...

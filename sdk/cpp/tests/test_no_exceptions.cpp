@@ -65,3 +65,15 @@ TEST_CASE("try_open reports an error by value, never aborting") {
     CHECK(r.is_err());
     CHECK(r.error().code == GTD_ERR_IO);
 }
+using geotrace::ChannelUnit;
+
+TEST_CASE("unit factories report invalid user input without terminating") {
+    CHECK(ChannelUnit::try_custom("\xC2\xA0").is_err());
+    CHECK(ChannelUnit::try_custom("bad\xC2\x85unit").is_err());
+    CHECK(ChannelUnit::try_custom("m/s\xC2\xB2").is_err());
+    CHECK(ChannelUnit::try_parse_recognized("unknown").is_err());
+
+    const auto custom = ChannelUnit::try_custom("rotations");
+    REQUIRE(custom.is_ok());
+    CHECK(custom.value.label() == "rotations");
+}
