@@ -14,6 +14,7 @@ pub struct Settings {
     pub storage: StorageSettings,
     pub update: UpdateSettings,
     pub query: QuerySettings,
+    pub snap: SnapSettings,
 }
 
 impl Default for Settings {
@@ -28,7 +29,54 @@ impl Default for Settings {
             storage: StorageSettings::default(),
             update: UpdateSettings::default(),
             query: QuerySettings::default(),
+            snap: SnapSettings::default(),
         }
+    }
+}
+
+/// Snap-to-road configuration: the matching server, the default costing, and
+/// the upload-consent acknowledgment.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct SnapSettings {
+    /// Base URL of the Valhalla map-matching server. Defaults to the public
+    /// FOSSGIS instance; self-hosters point this at their own server.
+    pub server_url: String,
+    /// Costing for tracks without a declared travel mode. A file's declared
+    /// travel mode always beats this setting.
+    pub costing: gt_snap::wire::Costing,
+    /// Host of the server the user has acknowledged uploading recorded
+    /// location data to, `None` until the first consent. Consent is per host,
+    /// so changing the server URL to a different host re-prompts; see
+    /// [`SnapSettings::consent_granted`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consent_host: Option<String>,
+}
+
+impl Default for SnapSettings {
+    fn default() -> Self {
+        Self {
+            server_url: gt_snap::DEFAULT_SERVER_URL.to_owned(),
+            costing: gt_snap::wire::Costing::Auto,
+            consent_host: None,
+        }
+    }
+}
+
+impl SnapSettings {
+    /// Whether the user has acknowledged uploads to the currently configured
+    /// server's host. `false` for an unparsable server URL: without a host to
+    /// compare, no earlier acknowledgment can apply.
+    pub fn consent_granted(&self) -> bool {
+        match (&self.consent_host, gt_snap::server_host(&self.server_url)) {
+            (Some(acknowledged), Some(current)) => *acknowledged == current,
+            _ => false,
+        }
+    }
+
+    /// Record consent for the currently configured server's host.
+    pub fn acknowledge_consent(&mut self) {
+        self.consent_host = gt_snap::server_host(&self.server_url);
     }
 }
 
@@ -310,4 +358,52 @@ pub fn load_settings() -> Settings {
         return Settings::default();
     };
     load_settings_from(&path)
+}
+
+#[cfg(test)]
+mod snap_settings_tests {
+    use super::*;
+
+    #[test]
+    fn consent_is_per_host_and_survives_url_detail_changes() {
+        let mut snap = SnapSettings::default();
+        assert!(!snap.consent_granted(), "no consent before acknowledgment");
+
+        snap.acknowledge_consent();
+        assert!(snap.consent_granted());
+
+        // Same host, different port/path/scheme details still count.
+        snap.server_url = format!("{}/", gt_snap::DEFAULT_SERVER_URL);
+        assert!(snap.consent_granted());
+
+        // A different host must re-prompt.
+        snap.server_url = "http://localhost:8002".to_owned();
+        assert!(!snap.consent_granted());
+
+        snap.acknowledge_consent();
+        assert!(snap.consent_granted());
+    }
+
+    #[test]
+    fn unparsable_server_url_never_counts_as_consented() {
+        let mut snap = SnapSettings::default();
+        snap.acknowledge_consent();
+        snap.server_url = "not a url".to_owned();
+        assert!(!snap.consent_granted());
+
+        // Acknowledging against an unparsable URL records nothing.
+        snap.acknowledge_consent();
+        assert_eq!(snap.consent_host, None);
+        assert!(!snap.consent_granted());
+    }
+
+    /// The section is new; older config files without it must load with the
+    /// FOSSGIS default server and no consent.
+    #[test]
+    fn snap_settings_default_from_absent_toml_section() {
+        let settings: Settings = toml::from_str("").unwrap_or_default();
+        assert_eq!(settings.snap.server_url, gt_snap::DEFAULT_SERVER_URL);
+        assert_eq!(settings.snap.costing, gt_snap::wire::Costing::Auto);
+        assert_eq!(settings.snap.consent_host, None);
+    }
 }

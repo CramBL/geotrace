@@ -79,6 +79,9 @@ pub(super) struct AppSnapshot {
     /// bumps this counter on every change and the dirty-check watches the
     /// number.
     pub query_history_revision: u64,
+    /// Snap settings are compared as the whole persisted struct - it is
+    /// small, `PartialEq`, and already the on-disk shape.
+    pub snap: crate::settings::SnapSettings,
 }
 
 impl Default for AppSnapshot {
@@ -121,6 +124,7 @@ impl Default for AppSnapshot {
             update_check_on_startup: true,
             skipped_version: None,
             query_history_revision: 0,
+            snap: crate::settings::SnapSettings::default(),
         }
     }
 }

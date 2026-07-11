@@ -18,7 +18,7 @@ use gt_snap::wire::{
     Costing, ErrorCode, ErrorResponse, FilterAction, RoadClass, SnapPointKind, Surface,
     TraceAttributesRequest, TraceAttributesResponse, TraceOptions,
 };
-use gt_snap::{FIXTURE_SCENARIOS, fixtures_dir};
+use gt_snap::{DEFAULT_SERVER_URL, FIXTURE_SCENARIOS, fixtures_dir, server_host};
 
 /// The fixture scenarios whose response is a successful match.
 const SUCCESS_SCENARIOS: &[&str] = &[
@@ -253,6 +253,41 @@ fn wire_names_are_stable() {
         assert_eq!(FilterAction::deserialize(de), Ok(action), "{wire:?}");
         assert_eq!(action.to_string(), wire);
     }
+}
+
+/// Pin the costing display spellings so a variant rename cannot silently
+/// change the settings combo. The table length is asserted against
+/// `EnumCount` so a new variant cannot be forgotten here.
+#[test]
+fn costing_display_name_is_canonical_spelling() {
+    let expected = [
+        (Costing::Auto, "Auto"),
+        (Costing::Bicycle, "Bicycle"),
+        (Costing::Pedestrian, "Pedestrian"),
+    ];
+    assert_eq!(expected.len(), Costing::COUNT);
+    for (costing, name) in expected {
+        assert_eq!(costing.display_name(), name);
+    }
+}
+
+/// `server_host` is the granularity of the app's upload-consent bookkeeping:
+/// scheme, port, and path changes keep consent, a host change re-prompts, and
+/// URLs without a parsable host never count as consented.
+#[test]
+fn server_host_extracts_the_host_and_only_the_host() {
+    assert_eq!(
+        server_host(DEFAULT_SERVER_URL).as_deref(),
+        Some("valhalla1.openstreetmap.de")
+    );
+    assert_eq!(
+        server_host("http://localhost:8002/some/path").as_deref(),
+        Some("localhost")
+    );
+    assert_eq!(server_host("not a url"), None);
+    assert_eq!(server_host(""), None);
+    // A host-less URL must not count as a host either.
+    assert_eq!(server_host("file:///tmp/x"), None);
 }
 
 /// Open-world enums: known wire names parse to their variant, anything else

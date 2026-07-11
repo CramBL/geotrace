@@ -37,6 +37,17 @@ pub const CLIENT_ID_HEADER: (&str, &str) = ("X-Client-Id", "geotrace");
 /// the server to throttle us.
 pub const REQUEST_INTERVAL: Duration = Duration::from_secs(1);
 
+/// The host component of a server base URL, or `None` when the URL does not
+/// parse or has no host.
+///
+/// This is the granularity at which the app tracks upload consent: recorded
+/// location data leaves the machine, so acknowledgment is per host and a URL
+/// change to a different host must re-prompt.
+pub fn server_host(url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    parsed.host_str().map(str::to_owned)
+}
+
 /// The canonical fixture scenarios captured from the live server.
 ///
 /// Each entry names a `NAME.request.json` / `NAME.response.json` pair under
