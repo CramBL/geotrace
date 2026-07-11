@@ -58,7 +58,7 @@ test-all-backends:
 
 [group("native")]
 test-snapshots *ARGS:
-    GEOTRACE_OFFLINE=1 cargo nextest run --workspace --features geotrace/self-update -E "test(snapshot) or test(snap)" {{ ARGS }}
+    GEOTRACE_OFFLINE=1 cargo nextest run --workspace --features geotrace/self-update -E "test(snapshot)" {{ ARGS }}
 
 [group("native")]
 examples:

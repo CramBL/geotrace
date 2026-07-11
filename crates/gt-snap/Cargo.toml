@@ -8,15 +8,19 @@ authors.workspace = true
 
 [lib]
 doctest = false
-# No unit tests in the lib (the fixture checks are integration tests);
-# skip compiling its test harness.
+# No unit tests in the lib (the wire and fixture checks are integration
+# tests); skip compiling its test harness.
 test = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+strum.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true
 insta.workspace = true
 reqwest.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

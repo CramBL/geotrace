@@ -1,0 +1,34 @@
+---
+source: crates/gt-snap/tests/wire_format.rs
+expression: "ResponseDigest::of(&response)"
+---
+ResponseDigest {
+    points: 40,
+    snapped: 29,
+    interpolated: 9,
+    unsnapped: 2,
+    discontinuity_indices: [],
+    first_point: Some(
+        "SnappedPoint { lat: 55.678743, lon: 12.564487, kind: Snapped, edge_index: Some(0), distance_along_edge: Some(0.0), distance_from_trace_point: Some(3.65084), begin_route_discontinuity: false, end_route_discontinuity: false }",
+    ),
+    edges: 31,
+    road_classes: {
+        "ServiceOther",
+        "Tertiary",
+    },
+    surfaces: {
+        "PavedSmooth",
+    },
+    speed_limits: {
+        30,
+        50,
+    },
+    shape_chars: 195,
+    osm_changeset: Some(
+        185397177,
+    ),
+    confidence_score: Some(
+        1.0,
+    ),
+    warnings: 0,
+}

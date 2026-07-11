@@ -1,22 +1,3 @@
 {
-  "costing": "auto",
-  "filters": {
-    "action": "include",
-    "attributes": [
-      "matched.point",
-      "matched.type",
-      "matched.edge_index",
-      "matched.distance_along_edge",
-      "matched.distance_from_trace_point",
-      "matched.begin_route_discontinuity",
-      "matched.end_route_discontinuity",
-      "shape",
-      "osm_changeset",
-      "edge.names",
-      "edge.way_id",
-      "edge.road_class",
-      "edge.speed_limit",
-      "edge.surface"
-    ]
-  }
+  "costing": "auto"
 }

@@ -13,6 +13,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+pub mod wire;
+
 /// Base URL of the default map-matching server: the public Valhalla instance
 /// hosted by FOSSGIS e.V. Free under a fair-usage policy - published apps must
 /// identify themselves (see [`CLIENT_ID_HEADER`]) and stay within

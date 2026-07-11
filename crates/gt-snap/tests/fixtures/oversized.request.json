@@ -12,6 +12,7 @@
       "matched.end_route_discontinuity",
       "shape",
       "osm_changeset",
+      "confidence_score",
       "edge.names",
       "edge.way_id",
       "edge.road_class",
