@@ -37,7 +37,7 @@ use gt_types::satellites::Constellation;
 use gt_types::{
     Channel, DataCategory, DisplayMode, FileIdx, LoadedFile, NavPoint, PointIdx, TrackIdx, TrackRef,
 };
-use gt_ui_theme::{DEGREE_SIGN, EM_DASH};
+use gt_ui_theme::{DEGREE_SIGN, ELLIPSIS, EM_DASH};
 use gt_ui_types::{
     DataPointRef, DrawLayer, DrawLayerMask, HighlightScope, MapHighlight, MatchHighlight,
     QueryMatches, TrackDataVisibility,
@@ -62,9 +62,6 @@ const MICROS_PER_SEC: f64 = 1_000_000.0;
 /// Max width of an editor hover tooltip, shared by the construct and channel
 /// tooltips so they stay the same size.
 const TOOLTIP_MAX_WIDTH: f32 = 360.0;
-
-/// Ellipsis appended to an elided history line.
-const ELLIPSIS: &str = "…";
 
 /// Id salt for the query editor's text field. Fixed (not derived from the
 /// enclosing `Ui`) so the autocomplete caret/focus plumbing - and the UI

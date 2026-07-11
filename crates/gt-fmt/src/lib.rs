@@ -31,6 +31,18 @@ pub fn format_fix_percentage(stats: FixStats) -> String {
     format!("{}% fix", fix_percentage(stats))
 }
 
+/// Formats a `0..=1` fraction as a whole percentage, e.g. `0.87` -> `"87%"`.
+///
+/// Rounds half-up like [`fix_percentage`] and clamps to `[0, 100]`, so an
+/// out-of-range or non-finite input degrades to a bound instead of nonsense.
+pub fn format_fraction_percent(fraction: f64) -> String {
+    // `clamp` propagates NaN, so map non-finite inputs to the lower bound
+    // explicitly.
+    let percent = (fraction * 100.0 + 0.5).floor().clamp(0.0, 100.0);
+    let percent = if percent.is_finite() { percent } else { 0.0 };
+    format!("{percent}%")
+}
+
 /// Formats the remaining tooltip details (time without fix, loss count, max
 /// continuous gap), each prefixed by `TOOLTIP_JOINER`.
 ///
@@ -213,6 +225,22 @@ mod tests {
     #[test]
     fn format_fix_percentage_appends_suffix() {
         assert_eq!(format_fix_percentage(fix_stats(85, 15, 0, 15)), "85% fix");
+    }
+
+    #[rstest::rstest]
+    #[case(0.87, "87%")]
+    #[case(0.874, "87%")]
+    #[case(0.875, "88%")]
+    #[case(0.0, "0%")]
+    #[case(1.0, "100%")]
+    #[case(-0.5, "0%")]
+    #[case(1.5, "100%")]
+    #[case(f64::NAN, "0%")]
+    fn format_fraction_percent_rounds_half_up_and_clamps(
+        #[case] fraction: f64,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(format_fraction_percent(fraction), expected);
     }
 
     #[test]

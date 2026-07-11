@@ -29,6 +29,7 @@ gt-history-types = { path = "../gt-history-types" }
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 gt-track-builder = { path = "../gt-track-builder" }
 gt-ui-types = { path = "../gt-ui-types" }
+rstest.workspace = true
 
 [lints]
 workspace = true

@@ -2288,6 +2288,134 @@ fn snap_consent_escape_declines_without_persisting() {
     );
 }
 
+/// Push a file built with the given travel mode into the app's loaded files,
+/// returning the ref of its single track.
+fn push_file_with_travel_mode(
+    harness: &mut Harness<'_, App>,
+    name: &str,
+    travel_mode: Option<gt_types::TravelMode>,
+) -> gt_types::TrackRef {
+    let points = gt_test_utils::nav_test_data();
+    let file = gt_track_builder::build_loaded_file(
+        name.to_owned(),
+        &points,
+        &[],
+        vec![],
+        vec![],
+        &[],
+        &gt_track_builder::SegmentationConfig::default(),
+        gt_types::FileSource::GtdPath(std::path::PathBuf::from(name)),
+        gt_track_builder::FileMeta {
+            travel_mode,
+            ..gt_track_builder::FileMeta::default()
+        },
+        vec![],
+    );
+    let state = harness.state_mut();
+    let mut shared = state.shared.borrow_mut();
+    shared
+        .loaded_files
+        .push(file, gt_loaded_files::FileHistory::None);
+    let fi = gt_types::FileIdx::new(shared.loaded_files.files().len() - 1);
+    let files = shared.loaded_files.files().to_vec();
+    shared.tree.sync_from_loaded_files(&files);
+    gt_types::TrackRef::new(fi, gt_types::TrackIdx::new(0))
+}
+
+/// A boat-declared file's track resolves to the unsnappable row (hover names
+/// the mode), while an undeclared file stays idle (no entry).
+#[test]
+fn snap_row_views_marks_declared_roadless_modes_unsnappable() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    let boat =
+        push_file_with_travel_mode(&mut harness, "boat.gtd", Some(gt_types::TravelMode::Boat));
+    let plain = push_file_with_travel_mode(&mut harness, "plain.gtd", None);
+
+    let rows = harness.state().snap_row_views();
+
+    assert_eq!(
+        rows.get(&boat),
+        Some(&gt_side_panel::SnapRowView::Unsnappable {
+            travel_mode: "Boat".to_owned()
+        })
+    );
+    assert_eq!(rows.get(&plain), None, "an undeclared file stays idle");
+}
+
+/// The full consent round trip for a snap trigger: the request parks on
+/// `pending_snap` and raises the dialog, agreeing takes it (the run is
+/// queued - a no-op under the test suite's GEOTRACE_OFFLINE, so only the
+/// take is observable), declining drops it.
+#[test]
+fn snap_request_parks_on_consent_and_agree_takes_it() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
+
+    harness.state_mut().handle_snap_request(track);
+    assert!(harness.state().snap_consent_prompt);
+    assert_eq!(harness.state().pending_snap, Some(track));
+    harness.step();
+
+    // First synthetic click settles the startup map-layer popup (see
+    // snap_consent_agree_persists_the_server_host), the second lands.
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Agree")
+        .click();
+    harness.run_steps(3);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Agree")
+        .click();
+    harness.run_steps(3);
+
+    assert!(!harness.state().snap_consent_prompt);
+    assert_eq!(
+        harness.state().pending_snap,
+        None,
+        "agreeing must take the parked request and queue it"
+    );
+    assert!(harness.state().snap_settings.consent_granted());
+}
+
+#[test]
+fn snap_request_parked_on_consent_is_dropped_on_decline() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
+
+    harness.state_mut().handle_snap_request(track);
+    harness.step();
+
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+
+    assert!(!harness.state().snap_consent_prompt);
+    assert_eq!(
+        harness.state().pending_snap,
+        None,
+        "declining must drop the parked request"
+    );
+    assert!(!harness.state().snap_settings.consent_granted());
+    assert_eq!(
+        harness.state().snap.activity_for(track),
+        None,
+        "nothing may be queued without consent"
+    );
+}
+
 #[test]
 fn snapshot_recording_details_dialog() {
     let (mut harness, _config_path) = TestHarness::builder()

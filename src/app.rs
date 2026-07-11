@@ -36,6 +36,7 @@ mod snap;
 #[cfg(feature = "self-update")]
 mod update;
 
+use std::collections::HashMap;
 use std::{cell::RefCell, env, path::PathBuf, rc::Rc, str, sync::Arc};
 
 use egui_tiles::{
@@ -45,10 +46,14 @@ use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_map::{MapContextAction, MapLayer, NavMap};
 use gt_plot::PlotState;
-use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
+use gt_side_panel::{
+    FilterPanelState, PanelContext, SnapPanelView, SnapRowView, TreeState, show_side_panel,
+};
 use gt_snap::wire::Costing;
 use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
-use gt_types::{AssociationConfig, DataCategory, FileIdx, LoadWarning, LoadedFile, NavPoint};
+use gt_types::{
+    AssociationConfig, DataCategory, FileIdx, LoadWarning, LoadedFile, NavPoint, TrackIdx, TrackRef,
+};
 use gt_ui_types::{DisplayMask, HighlightScope, MapHighlight, TrackDataVisibility};
 use loader::{CompletedLoad, FinishedJob, LoadJobs, LoadOutcome};
 use settings_autosave::{AppSnapshot, SettingsAutosaver};
@@ -148,10 +153,13 @@ pub struct App {
     /// Persisted snap-to-road configuration: server URL, default costing, and
     /// the upload-consent acknowledgment.
     snap_settings: crate::settings::SnapSettings,
-    /// Whether the snap upload-consent dialog is currently shown. Lowered by
-    /// the dialog; raised by the side panel's manual snap trigger once that
-    /// lands - until then only tests raise it.
+    /// Whether the snap upload-consent dialog is currently shown. Raised by
+    /// the side panel's manual snap trigger while consent is pending; lowered
+    /// by the dialog.
     snap_consent_prompt: bool,
+    /// The track whose snap trigger raised the consent dialog. Queued when
+    /// the dialog is accepted, dropped when it is declined.
+    pending_snap: Option<TrackRef>,
 
     /// Tiles tree for the central area - map (top) and plot (bottom).
     tiles_tree: Tree<MainPane>,
@@ -362,6 +370,7 @@ impl App {
             snap,
             snap_settings: crate::settings::SnapSettings::default(),
             snap_consent_prompt: false,
+            pending_snap: None,
             tiles_tree,
             map_tile_id,
             plot_tile_id,
@@ -954,6 +963,85 @@ impl App {
     #[cfg(feature = "self-update")]
     fn should_check_for_updates(&self) -> bool {
         self.update_check_on_startup && !cfg!(debug_assertions) && !gt_types::env::offline()
+    }
+
+    /// The side panel's per-track snap view: scheduler activity and cached
+    /// runs resolved against each file's declared travel mode and the
+    /// configured costing. Tracks in the default idle state get no entry.
+    fn snap_row_views(&self) -> HashMap<TrackRef, SnapRowView> {
+        let shared = self.shared.borrow();
+        let mut rows = HashMap::new();
+        for (fi, file) in shared.loaded_files.files().iter().enumerate() {
+            let declared = file.metadata.travel_mode.as_ref();
+            let costing = snap::resolve_costing(declared, self.snap_settings.costing);
+            for (ti, track) in file.tracks.iter().enumerate() {
+                let track_ref = TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti));
+                let row = match costing {
+                    None => {
+                        // `resolve_costing` returns `None` only for a declared
+                        // road-less mode, so `declared` is present here; skip
+                        // (= idle) defensively rather than unwrap.
+                        let Some(mode) = declared else { continue };
+                        SnapRowView::Unsnappable {
+                            travel_mode: mode.display_name().to_owned(),
+                        }
+                    }
+                    Some(costing) => match self.snap.activity_for(track_ref) {
+                        Some(snap::SnapActivity::Queued) => SnapRowView::Queued,
+                        Some(snap::SnapActivity::InFlight {
+                            completed_chunks,
+                            total_chunks,
+                        }) => SnapRowView::InFlight {
+                            completed_chunks: *completed_chunks,
+                            total_chunks: *total_chunks,
+                        },
+                        Some(snap::SnapActivity::Failed { error }) => SnapRowView::Failed {
+                            error: error.clone(),
+                        },
+                        None => match self.snap.run_for(track, costing) {
+                            Some(run) => SnapRowView::Done {
+                                snapped: run.result.kind_counts.snapped,
+                                interpolated: run.result.kind_counts.interpolated,
+                                unsnapped: run.result.kind_counts.unsnapped,
+                                confidence_score: run.result.confidence_score,
+                            },
+                            None => continue,
+                        },
+                    },
+                };
+                rows.insert(track_ref, row);
+            }
+        }
+        rows
+    }
+
+    /// Act on a snap trigger from the side panel: route through the consent
+    /// dialog while consent is pending, queue the run otherwise.
+    fn handle_snap_request(&mut self, track_ref: TrackRef) {
+        if self.snap_settings.consent_granted() {
+            self.queue_snap(track_ref);
+        } else {
+            self.pending_snap = Some(track_ref);
+            self.snap_consent_prompt = true;
+        }
+    }
+
+    /// Queue a snap run for a track, resolving its costing from the file's
+    /// declared travel mode and the configured default.
+    fn queue_snap(&mut self, track_ref: TrackRef) {
+        let shared = self.shared.borrow();
+        let files = shared.loaded_files.files();
+        let Some(file) = track_ref.fi.get(files) else {
+            return;
+        };
+        let Some(track) = track_ref.resolve(files) else {
+            return;
+        };
+        let declared = file.metadata.travel_mode.as_ref();
+        let Some(costing) = snap::resolve_costing(declared, self.snap_settings.costing) else {
+            return;
+        };
+        self.snap.request_snap(track_ref, track, costing);
     }
 
     /// Snapshot of all settings-relevant state for change detection.
@@ -1825,6 +1913,17 @@ impl eframe::App for App {
             }
         }
 
+        // Snap view for the side panel, resolved once per frame and shared by
+        // the docked and detached call sites. The trigger's request is drained
+        // after the panel, mirroring the other panel requests.
+        let snap_rows = self.snap_row_views();
+        let snap_view = SnapPanelView {
+            offline: snap::SnapScheduler::offline(),
+            consent_pending: !self.snap_settings.consent_granted(),
+            rows: &snap_rows,
+        };
+        let mut snap_request: Option<TrackRef> = None;
+
         let detached = self.shared.borrow().tree.detached;
         if !detached {
             egui::Panel::left("track_data_panel")
@@ -1849,6 +1948,8 @@ impl eframe::App for App {
                             display_mask: s.display_mask,
                             recording_name_template: &s.recording_name_template,
                             metadata_request: &mut s.metadata_popup,
+                            snap: snap_view,
+                            snap_request: &mut snap_request,
                         },
                     );
                 });
@@ -1888,12 +1989,18 @@ impl eframe::App for App {
                             display_mask: s.display_mask,
                             recording_name_template: &s.recording_name_template,
                             metadata_request: &mut s.metadata_popup,
+                            snap: snap_view,
+                            snap_request: &mut snap_request,
                         },
                     );
                 });
             if !is_open {
                 self.shared.borrow_mut().tree.detached = false;
             }
+        }
+
+        if let Some(track_ref) = snap_request {
+            self.handle_snap_request(track_ref);
         }
 
         // "Reset filters" also drops the query filter so the map fully clears.
@@ -2023,10 +2130,16 @@ impl eframe::App for App {
                 Some(SnapConsentChoice::Accepted) => {
                     self.snap_settings.acknowledge_consent();
                     self.snap_consent_prompt = false;
+                    // The click that raised the dialog proceeds now that
+                    // uploads are acknowledged.
+                    if let Some(track_ref) = self.pending_snap.take() {
+                        self.queue_snap(track_ref);
+                    }
                 }
                 Some(SnapConsentChoice::Declined) => {
                     // Not persisted: the next manual snap trigger re-prompts.
                     self.snap_consent_prompt = false;
+                    self.pending_snap = None;
                 }
                 None => {}
             }

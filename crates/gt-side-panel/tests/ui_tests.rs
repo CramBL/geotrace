@@ -5,13 +5,17 @@
 
 use egui::CentralPanel;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
+use egui_phosphor::regular::PATH as ICON_PATH;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use egui_kittest::kittest::Queryable as _;
 use geotrace_units::Unit;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles};
-use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
+use gt_side_panel::{
+    FilterPanelState, PanelContext, SnapPanelView, SnapRowView, TreeState, show_side_panel,
+};
 use gt_test_utils::TestHarness;
 use gt_types::{FileIdx, FixStats, LoadWarning, TrackIdx, TrackRef};
 use gt_ui_types::{DisplayCategory, DisplayMask, MapHighlight};
@@ -30,6 +34,10 @@ struct State {
     display_mask: DisplayMask,
     recording_name_template: String,
     metadata_request: Option<gt_side_panel::RecordingDetails>,
+    snap_rows: HashMap<TrackRef, SnapRowView>,
+    snap_offline: bool,
+    snap_consent_pending: bool,
+    snap_request: Option<TrackRef>,
 }
 
 fn make_state(file_count: usize) -> State {
@@ -79,6 +87,10 @@ fn make_state_with_warnings_on(
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
+        snap_rows: HashMap::new(),
+        snap_offline: false,
+        snap_consent_pending: false,
+        snap_request: None,
     }
 }
 
@@ -101,6 +113,12 @@ fn make_harness(state: State) -> TestHarness<'static, State> {
                     display_mask: s.display_mask,
                     recording_name_template: &s.recording_name_template,
                     metadata_request: &mut s.metadata_request,
+                    snap: SnapPanelView {
+                        offline: s.snap_offline,
+                        consent_pending: s.snap_consent_pending,
+                        rows: &s.snap_rows,
+                    },
+                    snap_request: &mut s.snap_request,
                 };
                 show_side_panel(ui, &mut ctx);
             },
@@ -146,6 +164,122 @@ fn snapshot_masked_categories_show_hint() {
     let mut harness = make_harness(state);
     harness.run();
     harness.snapshot("side_panel_masked_categories");
+}
+
+/// One track per snap state, exercising every rendering of the trigger: idle
+/// (plain icon), unsnappable/queued/in-flight (grayed, per the never-hide
+/// rule), failed (amber retry), and done (weak status glyph).
+#[test]
+fn snapshot_snap_trigger_states() {
+    let mut state = make_state(6);
+    let track = |i: usize| TrackRef::new(FileIdx::new(i), TrackIdx::new(0));
+    for i in 0..6 {
+        state.tree.toggle_expand_file(FileIdx::new(i));
+    }
+    // File 0 stays idle: no entry.
+    state.snap_rows.insert(
+        track(1),
+        SnapRowView::Unsnappable {
+            travel_mode: "Boat".to_owned(),
+        },
+    );
+    state.snap_rows.insert(track(2), SnapRowView::Queued);
+    state.snap_rows.insert(
+        track(3),
+        SnapRowView::InFlight {
+            completed_chunks: 2,
+            total_chunks: 5,
+        },
+    );
+    state.snap_rows.insert(
+        track(4),
+        SnapRowView::Failed {
+            error: "server unreachable".to_owned(),
+        },
+    );
+    state.snap_rows.insert(
+        track(5),
+        SnapRowView::Done {
+            snapped: 120,
+            interpolated: 340,
+            unsnapped: 12,
+            confidence_score: Some(0.87),
+        },
+    );
+    let mut harness = make_harness(state);
+    harness.run();
+    harness.snapshot("side_panel_snap_states");
+}
+
+/// Under `GEOTRACE_OFFLINE` every snap trigger is grayed out, never hidden.
+#[test]
+fn snapshot_snap_trigger_offline() {
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    state.snap_offline = true;
+    let mut harness = make_harness(state);
+    harness.run();
+    harness.snapshot("side_panel_snap_offline");
+}
+
+#[test]
+fn clicking_snap_trigger_requests_snap() {
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    let mut harness = make_harness(state);
+    harness.run();
+
+    harness.inner.get_by_label(ICON_PATH).click();
+    harness.run();
+
+    assert_eq!(
+        harness.state().snap_request,
+        Some(TrackRef::new(FileIdx::new(0), TrackIdx::new(0))),
+        "clicking the snap trigger must hand the track to the app"
+    );
+}
+
+/// While consent is pending a click opens the consent dialog first, so the
+/// trigger carries the `…` suffix (and only then, per DESIGN.md).
+#[test]
+fn snap_trigger_carries_ellipsis_only_while_consent_pending() {
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    state.snap_consent_pending = true;
+    let mut harness = make_harness(state);
+    harness.run();
+
+    let suffixed = format!("{ICON_PATH}…");
+    harness.inner.get_by_label(&suffixed).click();
+    harness.run();
+    assert_eq!(
+        harness.state().snap_request,
+        Some(TrackRef::new(FileIdx::new(0), TrackIdx::new(0))),
+        "the suffixed trigger must still hand the track to the app"
+    );
+
+    harness.state_mut().snap_consent_pending = false;
+    harness.run();
+    assert!(
+        harness.inner.query_by_label(&suffixed).is_none(),
+        "the suffix must disappear once consent is granted"
+    );
+    assert!(harness.inner.query_by_label(ICON_PATH).is_some());
+}
+
+/// A grayed trigger (offline here) must not produce a request.
+#[test]
+fn disabled_snap_trigger_does_not_request() {
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    state.snap_offline = true;
+    let mut harness = make_harness(state);
+    harness.run();
+
+    harness.inner.get_by_label(ICON_PATH).click();
+    harness.run();
+
+    assert_eq!(harness.state().snap_request, None);
 }
 
 #[test]
@@ -258,6 +392,10 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
+        snap_rows: HashMap::new(),
+        snap_offline: false,
+        snap_consent_pending: false,
+        snap_request: None,
     };
     // Renders the expanded track row, exercising the `fix_stats == None` fallback
     // ("No satellite data") instead of the colored tooltip.
@@ -376,6 +514,10 @@ fn snapshot_track_channels() {
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
+        snap_rows: HashMap::new(),
+        snap_offline: false,
+        snap_consent_pending: false,
+        snap_request: None,
     };
     let mut harness = make_harness(state);
     harness.run();
@@ -422,6 +564,10 @@ fn make_state_with_shared_prefix() -> State {
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
+        snap_rows: HashMap::new(),
+        snap_offline: false,
+        snap_consent_pending: false,
+        snap_request: None,
     }
 }
 
@@ -465,6 +611,10 @@ fn make_state_with_long_name() -> State {
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
+        snap_rows: HashMap::new(),
+        snap_offline: false,
+        snap_consent_pending: false,
+        snap_request: None,
     }
 }
 
@@ -527,6 +677,10 @@ fn make_state_with_metadata() -> State {
         display_mask: DisplayMask::default(),
         recording_name_template: "{title} — {device}".to_owned(),
         metadata_request: None,
+        snap_rows: HashMap::new(),
+        snap_offline: false,
+        snap_consent_pending: false,
+        snap_request: None,
     }
 }
 
@@ -616,6 +770,10 @@ fn clicking_note_icon_requests_recording_details() {
         display_mask: DisplayMask::default(),
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
+        snap_rows: HashMap::new(),
+        snap_offline: false,
+        snap_consent_pending: false,
+        snap_request: None,
     };
     let mut harness = make_harness(state);
     harness.run();
@@ -665,6 +823,12 @@ fn settled_docked_panel_width(state: State) -> f32 {
                                 display_mask: s.display_mask,
                                 recording_name_template: &s.recording_name_template,
                                 metadata_request: &mut s.metadata_request,
+                                snap: SnapPanelView {
+                                    offline: s.snap_offline,
+                                    consent_pending: s.snap_consent_pending,
+                                    rows: &s.snap_rows,
+                                },
+                                snap_request: &mut s.snap_request,
                             };
                             show_side_panel(ui, &mut ctx);
                         });
