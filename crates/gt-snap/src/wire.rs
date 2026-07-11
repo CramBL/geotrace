@@ -116,12 +116,29 @@ impl AttributeFilter {
     }
 }
 
+/// The `trace_options` tuning parameters this client sets.
+///
+/// Only `gps_accuracy` is modeled for now (derived from the track's eph, see
+/// `request_plan`); search radius and turn penalty stay server-default until
+/// the phase 2 advanced settings. Captured reality: out-of-range values are
+/// rejected (400, code 158), not clamped, so senders must bound values
+/// client-side.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct TraceOptions {
+    /// Expected GNSS accuracy in meters; tells the matcher how far off-road
+    /// a point may plausibly lie.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gps_accuracy: Option<f64>,
+}
+
 /// A `trace_attributes` request body.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TraceAttributesRequest {
     pub costing: Costing,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filters: Option<AttributeFilter>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_options: Option<TraceOptions>,
     pub shape: Vec<ShapePoint>,
 }
 
@@ -132,6 +149,7 @@ impl TraceAttributesRequest {
         Self {
             costing,
             filters: Some(AttributeFilter::production()),
+            trace_options: None,
             shape,
         }
     }
@@ -143,6 +161,7 @@ impl TraceAttributesRequest {
         Self {
             costing,
             filters: None,
+            trace_options: None,
             shape,
         }
     }

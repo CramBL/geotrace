@@ -11,12 +11,12 @@ use std::fs;
 use serde::Deserialize;
 use serde::de::IntoDeserializer;
 use serde::de::value::{Error as DeError, StrDeserializer};
-use serde_json::Value;
+use serde_json::{Value, json};
 use strum::EnumCount;
 
 use gt_snap::wire::{
     Costing, ErrorCode, ErrorResponse, FilterAction, RoadClass, SnapPointKind, Surface,
-    TraceAttributesRequest, TraceAttributesResponse,
+    TraceAttributesRequest, TraceAttributesResponse, TraceOptions,
 };
 use gt_snap::{FIXTURE_SCENARIOS, fixtures_dir};
 
@@ -184,6 +184,23 @@ fn bad_request_fixture_is_not_a_valid_typed_request() {
     let body = read_fixture("bad_request.request.json").expect("fixture");
     serde_json::from_str::<TraceAttributesRequest>(&body)
         .expect_err("a request without a shape must not be expressible");
+}
+
+/// The `trace_options` payload shape: present accuracy serializes under
+/// Valhalla's field name, absent accuracy serializes to nothing (which is
+/// why the captured fixture requests - all without trace_options - still
+/// roundtrip unchanged).
+#[test]
+fn trace_options_serialize_gps_accuracy_only_when_present() {
+    let with = TraceOptions {
+        gps_accuracy: Some(12.5),
+    };
+    assert_eq!(
+        serde_json::to_value(with).expect("serialize"),
+        json!({ "gps_accuracy": 12.5 })
+    );
+    let without = TraceOptions { gps_accuracy: None };
+    assert_eq!(serde_json::to_value(without).expect("serialize"), json!({}));
 }
 
 /// No live exemplar of a `warnings` array exists (out-of-range options

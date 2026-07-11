@@ -13,6 +13,7 @@ doctest = false
 test = false
 
 [dependencies]
+gt-types = { path = "../gt-types" }
 polyline.workspace = true
 serde.workspace = true
 serde_json.workspace = true
