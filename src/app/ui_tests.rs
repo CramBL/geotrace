@@ -2201,6 +2201,88 @@ fn snapshot_load_warnings_dialog() {
     harness.snapshot("load_warnings_dialog");
 }
 
+/// The standard settings-window snapshot is 400 px tall and clips after the
+/// Analysis section; this taller one captures the Display and Snap to road
+/// sections below it.
+#[test]
+fn snapshot_settings_window_snap_section() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(700.0, 1100.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness.inner.state_mut().settings_open = true;
+    harness.run();
+    harness.snapshot("settings_window_snap_section");
+}
+
+#[test]
+fn snapshot_snap_consent_dialog() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1024.0, 768.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness.inner.state_mut().snap_consent_prompt = true;
+    harness.run();
+    harness.snapshot("snap_consent_dialog");
+}
+
+#[test]
+fn snap_consent_agree_persists_the_server_host() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    assert!(!harness.state().snap_settings.consent_granted());
+    harness.state_mut().snap_consent_prompt = true;
+    harness.step();
+
+    // A fresh app renders the map-layer popup open, and the first synthetic
+    // click is spent dismissing it before the dialog's buttons receive
+    // anything - so click once to settle the popup, then click for real.
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Agree")
+        .click();
+    harness.run_steps(3);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Agree")
+        .click();
+    harness.run_steps(3);
+
+    assert!(!harness.state().snap_consent_prompt, "dialog must close");
+    assert!(
+        harness.state().snap_settings.consent_granted(),
+        "agreeing must record consent for the configured server's host"
+    );
+}
+
+#[test]
+fn snap_consent_escape_declines_without_persisting() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state_mut().snap_consent_prompt = true;
+    harness.step();
+
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+
+    assert!(
+        !harness.state().snap_consent_prompt,
+        "Escape must close the dialog"
+    );
+    assert!(
+        !harness.state().snap_settings.consent_granted(),
+        "declining must not record consent - the next trigger re-prompts"
+    );
+}
+
 #[test]
 fn snapshot_recording_details_dialog() {
     let (mut harness, _config_path) = TestHarness::builder()

@@ -26,7 +26,29 @@ use gt_snap::stitch::{self, SnapResult, SnapWarning, SnapWarningReporter};
 use gt_snap::transport::HttpTransport;
 use gt_snap::wire::Costing;
 use gt_snap::{DEFAULT_SERVER_URL, transport};
-use gt_types::{LoadedTrack, TrackRef};
+use gt_types::{LoadedTrack, TrackRef, TravelMode};
+
+/// The costing a track snaps with: the file's declared travel mode beats the
+/// configured default costing, and declarations without a road-network
+/// counterpart (boat, rail, aircraft) make the track unsnappable (`None`).
+/// Unknown declarations fall back to the configured default - an
+/// unrecognized platform is no reason to refuse a manual snap.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the consumer lands with the side-panel snap trigger"
+    )
+)]
+pub fn resolve_costing(declared: Option<&TravelMode>, configured: Costing) -> Option<Costing> {
+    match declared {
+        None | Some(TravelMode::Unknown(_)) => Some(configured),
+        Some(TravelMode::Car | TravelMode::Motorcycle) => Some(Costing::Auto),
+        Some(TravelMode::Bicycle) => Some(Costing::Bicycle),
+        Some(TravelMode::Pedestrian) => Some(Costing::Pedestrian),
+        Some(TravelMode::Boat | TravelMode::Rail | TravelMode::Aircraft) => None,
+    }
+}
 
 /// Content fingerprint of a track plus the request parameters, identifying a
 /// snap result independent of file/track indices (which shift on removal).
@@ -110,8 +132,11 @@ pub struct SnapScheduler {
     ctx: Context,
     tx: mpsc::Sender<SnapMessage>,
     rx: mpsc::Receiver<SnapMessage>,
+    /// Base URL of the matching server the next transport is built against.
+    server_url: String,
     /// Shared across runs so request pacing carries over run boundaries.
-    /// Lazily built; `None` until the first run (or after a build failure).
+    /// Lazily built; `None` until the first run (or after a build failure or
+    /// a server-URL change).
     http: Option<Arc<HttpTransport>>,
     queue: VecDeque<PendingRun>,
     in_flight: Option<TrackRef>,
@@ -126,12 +151,24 @@ impl SnapScheduler {
             ctx,
             tx,
             rx,
+            server_url: DEFAULT_SERVER_URL.to_owned(),
             http: None,
             queue: VecDeque::new(),
             in_flight: None,
             activity: HashMap::new(),
             cache: HashMap::new(),
         }
+    }
+
+    /// Point future runs at a different matching server. Drops the cached
+    /// transport so the next run builds against the new URL; a run already in
+    /// flight finishes against the old server.
+    pub fn set_server_url(&mut self, url: &str) {
+        if self.server_url == url {
+            return;
+        }
+        url.clone_into(&mut self.server_url);
+        self.http = None;
     }
 
     /// The cached run for a track under the given costing, if one completed
@@ -283,7 +320,7 @@ impl SnapScheduler {
         if let Some(http) = &self.http {
             return Ok(Arc::clone(http));
         }
-        let http = HttpTransport::new(DEFAULT_SERVER_URL)
+        let http = HttpTransport::new(&self.server_url)
             .map(Arc::new)
             .map_err(|err| format!("{err:#}"))?;
         self.http = Some(Arc::clone(&http));
@@ -493,6 +530,48 @@ mod tests {
             scheduler.run_for(&track, Costing::Auto).is_some(),
             "content-keyed cache survives index resets"
         );
+    }
+
+    /// The mapping from the design doc's travel-mode table: declared platform
+    /// beats the configured default, road-less platforms are unsnappable, and
+    /// absent or unknown declarations fall back to the configured default.
+    /// Exhaustive over [`TravelMode`]: a new variant fails to compile in
+    /// `resolve_costing`'s match before it can silently mis-resolve here.
+    #[rstest::rstest]
+    #[case(None, Some(Costing::Pedestrian))]
+    #[case(Some(TravelMode::Car), Some(Costing::Auto))]
+    #[case(Some(TravelMode::Motorcycle), Some(Costing::Auto))]
+    #[case(Some(TravelMode::Bicycle), Some(Costing::Bicycle))]
+    #[case(Some(TravelMode::Pedestrian), Some(Costing::Pedestrian))]
+    #[case(Some(TravelMode::Boat), None)]
+    #[case(Some(TravelMode::Rail), None)]
+    #[case(Some(TravelMode::Aircraft), None)]
+    #[case(Some(TravelMode::Unknown("hovercraft".to_owned())), Some(Costing::Pedestrian))]
+    fn resolve_costing_follows_the_travel_mode_table(
+        #[case] declared: Option<TravelMode>,
+        #[case] expected: Option<Costing>,
+    ) {
+        // Pedestrian as the configured default so the fallback cases are
+        // distinguishable from the Car/Motorcycle mapping to Auto.
+        assert_eq!(
+            resolve_costing(declared.as_ref(), Costing::Pedestrian),
+            expected
+        );
+    }
+
+    #[test]
+    fn changing_the_server_url_drops_the_cached_transport() {
+        let mut scheduler = scheduler();
+        scheduler.http = HttpTransport::new(DEFAULT_SERVER_URL).map(Arc::new).ok();
+        assert!(scheduler.http.is_some());
+
+        // Same URL: the shared transport (and its request pacing) is kept.
+        scheduler.set_server_url(DEFAULT_SERVER_URL);
+        assert!(scheduler.http.is_some());
+
+        scheduler.set_server_url("http://localhost:8002");
+        assert!(scheduler.http.is_none());
+        assert_eq!(scheduler.server_url, "http://localhost:8002");
     }
 
     #[test]

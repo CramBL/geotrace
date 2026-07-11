@@ -474,6 +474,75 @@ pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<Recordi
     }
 }
 
+/// The user's decision in the snap upload-consent dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapConsentChoice {
+    /// Uploads to the configured server's host are acknowledged.
+    Accepted,
+    /// No acknowledgment; the manual snap action stays available and re-prompts.
+    Declined,
+}
+
+/// Show the one-time snap upload-consent dialog naming the configured server
+/// and what is uploaded. Returns `None` while the dialog stays open.
+///
+/// Recorded location data leaves the machine, so nothing is ever sent before
+/// this dialog has been accepted for the configured server's host (see
+/// `SnapSettings::consent_granted`). Escape, Cancel, and the close button all
+/// decline; declining is not persisted, so the next manual trigger re-prompts.
+pub fn show_snap_consent_dialog(ui: &egui::Ui, server_url: &str) -> Option<SnapConsentChoice> {
+    let enter_pressed = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let escape_pressed = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+
+    let mut choice = None;
+    if enter_pressed {
+        choice = Some(SnapConsentChoice::Accepted);
+    }
+    if escape_pressed {
+        choice = Some(SnapConsentChoice::Declined);
+    }
+
+    let mut open = true;
+    egui::Window::new("Snap to road")
+        .collapsible(false)
+        .resizable(false)
+        .min_width(420.0)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ui.ctx(), |ui| {
+            ui.label(
+                "Snap to road matches a recorded track against the OpenStreetMap road network.",
+            );
+            ui.add_space(4.0);
+            ui.label("The track's recorded positions and timestamps are uploaded to");
+            ui.monospace(server_url);
+            ui.add_space(4.0);
+            ui.label(
+                "Nothing is uploaded until you agree. The acknowledgment is remembered for this \
+                 server and asked again when the server changes.",
+            );
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    choice = Some(SnapConsentChoice::Declined);
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Agree").clicked() {
+                        choice = Some(SnapConsentChoice::Accepted);
+                    }
+                });
+            });
+        });
+    if !open {
+        choice = Some(SnapConsentChoice::Declined);
+    }
+    choice
+}
+
 pub fn show_mapbox_token_dialog(ui: &egui::Ui, map: &mut NavMap, token_input: &mut String) {
     // ESC dismisses the dialog - same effect as the cancel button.
     let esc_pressed = ui

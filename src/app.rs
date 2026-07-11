@@ -19,6 +19,7 @@ use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_map::{MapContextAction, MapLayer, NavMap};
 use gt_plot::PlotState;
 use gt_side_panel::{FilterPanelState, PanelContext, TreeState, show_side_panel};
+use gt_snap::wire::Costing;
 use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
 use gt_types::{AssociationConfig, DataCategory, FileIdx, LoadWarning, LoadedFile, NavPoint};
 use gt_ui_types::{DisplayMask, HighlightScope, MapHighlight, TrackDataVisibility};
@@ -27,8 +28,9 @@ use settings_autosave::{AppSnapshot, SettingsAutosaver};
 use strum::IntoEnumIterator;
 
 use modals::{
-    show_delete_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
-    show_orphaned_event_markers_popup, show_recording_details_dialog, show_unassociated_popup,
+    SnapConsentChoice, show_delete_confirmation, show_load_warnings_dialog,
+    show_mapbox_token_dialog, show_orphaned_event_markers_popup, show_recording_details_dialog,
+    show_snap_consent_dialog, show_unassociated_popup,
 };
 
 /// Pane variants for the central area tiles tree.
@@ -116,6 +118,13 @@ pub struct App {
     /// Schedules snap-to-road runs and holds per-track snap activity and the
     /// session result cache.
     snap: snap::SnapScheduler,
+    /// Persisted snap-to-road configuration: server URL, default costing, and
+    /// the upload-consent acknowledgment.
+    snap_settings: crate::settings::SnapSettings,
+    /// Whether the snap upload-consent dialog is currently shown. Lowered by
+    /// the dialog; raised by the side panel's manual snap trigger once that
+    /// lands - until then only tests raise it.
+    snap_consent_prompt: bool,
 
     /// Tiles tree for the central area - map (top) and plot (bottom).
     tiles_tree: Tree<MainPane>,
@@ -324,6 +333,8 @@ impl App {
             ctx: cc.egui_ctx.clone(),
             loader,
             snap,
+            snap_settings: crate::settings::SnapSettings::default(),
+            snap_consent_prompt: false,
             tiles_tree,
             map_tile_id,
             plot_tile_id,
@@ -665,6 +676,56 @@ impl App {
                         ui.end_row();
                     });
 
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui_phosphor::regular::PATH);
+                    ui.strong("Snap to road");
+                });
+                ui.separator();
+                egui::Grid::new("snap_grid")
+                    .num_columns(2)
+                    .spacing([8.0, 6.0])
+                    .show(ui, |ui| {
+                        let url_help = "Base URL of the Valhalla map-matching server tracks are \
+                                        snapped against. The default is the free public instance \
+                                        hosted by FOSSGIS e.V.; point it at your own server to \
+                                        avoid its fair-use rate limit. Recorded positions are \
+                                        only uploaded after a one-time acknowledgment per server.";
+                        ui.label(format!("{} Server URL", egui_phosphor::regular::GLOBE_SIMPLE))
+                            .on_hover_text(url_help);
+                        let mut server_url = self.snap_settings.server_url.clone();
+                        if ui
+                            .text_edit_singleline(&mut server_url)
+                            .on_hover_text(url_help)
+                            .changed()
+                        {
+                            self.snap.set_server_url(&server_url);
+                            self.snap_settings.server_url = server_url;
+                        }
+                        ui.end_row();
+
+                        let costing_help = "Road network tracks are matched against when the \
+                                            recording does not declare a travel mode - auto is \
+                                            Valhalla's name for the motor-vehicle network. A \
+                                            declared travel mode always wins over this setting.";
+                        ui.label(format!("{} Costing", egui_phosphor::regular::CAR))
+                            .on_hover_text(costing_help);
+                        egui::ComboBox::from_id_salt("snap_costing")
+                            .selected_text(self.snap_settings.costing.display_name())
+                            .show_ui(ui, |ui| {
+                                for costing in Costing::iter() {
+                                    ui.selectable_value(
+                                        &mut self.snap_settings.costing,
+                                        costing,
+                                        costing.display_name(),
+                                    );
+                                }
+                            })
+                            .response
+                            .on_hover_text(costing_help);
+                        ui.end_row();
+                    });
+
                 // Only meaningful in dist builds. Builds without the self-update
                 // feature carry no update check to toggle.
                 #[cfg(feature = "self-update")]
@@ -856,6 +917,8 @@ impl App {
         self.update_check_on_startup = s.update.check_on_startup;
         self.skipped_version = s.update.skipped_version.clone();
         self.query_window.set_history(s.query.history.clone());
+        self.snap_settings = s.snap.clone();
+        self.snap.set_server_url(&s.snap.server_url);
         self.sync_db_path();
     }
 
@@ -930,6 +993,7 @@ impl App {
             update_check_on_startup: self.update_check_on_startup,
             skipped_version: self.skipped_version.clone(),
             query_history_revision: self.query_window.history_revision(),
+            snap: self.snap_settings.clone(),
         }
     }
 
@@ -1009,6 +1073,7 @@ impl App {
             query: crate::settings::QuerySettings {
                 history: self.query_window.history().to_vec(),
             },
+            snap: self.snap_settings.clone(),
         }
     }
 
@@ -1936,6 +2001,20 @@ impl eframe::App for App {
 
         if self.map.layer() == MapLayer::Satellite && !self.map.has_mapbox_token() {
             show_mapbox_token_dialog(ui, &mut self.map, &mut self.mapbox_token_input);
+        }
+
+        if self.snap_consent_prompt {
+            match show_snap_consent_dialog(ui, &self.snap_settings.server_url) {
+                Some(SnapConsentChoice::Accepted) => {
+                    self.snap_settings.acknowledge_consent();
+                    self.snap_consent_prompt = false;
+                }
+                Some(SnapConsentChoice::Declined) => {
+                    // Not persisted: the next manual snap trigger re-prompts.
+                    self.snap_consent_prompt = false;
+                }
+                None => {}
+            }
         }
 
         // Loading progress overlay in the bottom-right corner. Shows in-flight

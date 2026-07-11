@@ -68,6 +68,7 @@ pub struct ShapePoint {
     strum::Display,
     strum::EnumString,
     strum::EnumCount,
+    strum::EnumIter,
     Serialize,
     Deserialize,
 )]
@@ -77,6 +78,22 @@ pub enum Costing {
     Auto,
     Bicycle,
     Pedestrian,
+}
+
+impl Costing {
+    /// Canonical human-readable name shown in the UI, e.g. the costing combo.
+    ///
+    /// Single source of truth for this type's display spelling - call sites
+    /// should format through this rather than re-typing the name. "Auto" is
+    /// Valhalla's name for the motor-vehicle road network, kept as-is so the
+    /// UI matches the server vocabulary users find in Valhalla docs.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Costing::Auto => "Auto",
+            Costing::Bicycle => "Bicycle",
+            Costing::Pedestrian => "Pedestrian",
+        }
+    }
 }
 
 /// Whether an attribute filter includes or excludes the listed attributes.
