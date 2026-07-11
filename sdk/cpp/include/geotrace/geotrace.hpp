@@ -447,6 +447,17 @@ enum class MarkerIcon : std::uint8_t {
     Auto,
 };
 
+/** Platform a recording was made on, declared by the recorder. */
+enum class TravelMode : std::uint8_t {
+    Car,
+    Motorcycle,
+    Bicycle,
+    Pedestrian,
+    Boat,
+    Rail,
+    Aircraft,
+};
+
 namespace detail {
 
 inline GtdConstellation to_c(Constellation c) noexcept {
@@ -521,6 +532,46 @@ inline GtdMarkerIcon to_c(MarkerIcon icon) noexcept {
     return GTD_ICON_AUTO;
 }
 
+inline GtdTravelMode to_c(TravelMode mode) noexcept {
+    switch (mode) {
+    case TravelMode::Car:
+        return GTD_TRAVEL_MODE_CAR;
+    case TravelMode::Motorcycle:
+        return GTD_TRAVEL_MODE_MOTORCYCLE;
+    case TravelMode::Bicycle:
+        return GTD_TRAVEL_MODE_BICYCLE;
+    case TravelMode::Pedestrian:
+        return GTD_TRAVEL_MODE_PEDESTRIAN;
+    case TravelMode::Boat:
+        return GTD_TRAVEL_MODE_BOAT;
+    case TravelMode::Rail:
+        return GTD_TRAVEL_MODE_RAIL;
+    case TravelMode::Aircraft:
+        return GTD_TRAVEL_MODE_AIRCRAFT;
+    }
+    return GTD_TRAVEL_MODE_CAR;
+}
+
+inline TravelMode from_c(GtdTravelMode mode) noexcept {
+    switch (mode) {
+    case GTD_TRAVEL_MODE_CAR:
+        return TravelMode::Car;
+    case GTD_TRAVEL_MODE_MOTORCYCLE:
+        return TravelMode::Motorcycle;
+    case GTD_TRAVEL_MODE_BICYCLE:
+        return TravelMode::Bicycle;
+    case GTD_TRAVEL_MODE_PEDESTRIAN:
+        return TravelMode::Pedestrian;
+    case GTD_TRAVEL_MODE_BOAT:
+        return TravelMode::Boat;
+    case GTD_TRAVEL_MODE_RAIL:
+        return TravelMode::Rail;
+    case GTD_TRAVEL_MODE_AIRCRAFT:
+        return TravelMode::Aircraft;
+    }
+    return TravelMode::Car;
+}
+
 inline GtdTimestamp to_c(Timestamp ts) noexcept {
     return GtdTimestamp{ts.unix_micros};
 }
@@ -530,6 +581,24 @@ inline Timestamp from_c(GtdTimestamp ts) noexcept {
 }
 
 } // namespace detail
+
+/** Wire name of @p mode, e.g. `"car"` for `TravelMode::Car`. */
+inline std::string_view travel_mode_name(TravelMode mode) noexcept {
+    return std::string_view{::gtd_travel_mode_name(detail::to_c(mode))};
+}
+
+/**
+ * Parse a wire name (as produced by travel_mode_name() or read from
+ * NavFile::travel_mode()) back into a travel mode.
+ *
+ * Returns `std::nullopt` for names outside the known set.
+ */
+inline std::optional<TravelMode> travel_mode_from_name(const std::string &name) noexcept {
+    GtdTravelMode mode{};
+    if (::gtd_travel_mode_from_name(name.c_str(), &mode) != GTD_OK)
+        return std::nullopt;
+    return detail::from_c(mode);
+}
 
 /** A single GPS navigation fix. */
 struct NavFix {
@@ -877,6 +946,12 @@ class FileBuilder {
         return *this;
     }
 
+    /** Declare the platform the recording was made on. */
+    FileBuilder &travel_mode(TravelMode v) {
+        record(::gtd_builder_set_travel_mode(impl_.get(), detail::to_c(v)));
+        return *this;
+    }
+
     /** Downgrade out-of-range annotation errors to warnings. */
     FileBuilder &lenient() noexcept {
         ::gtd_builder_set_lenient(impl_.get());
@@ -1174,6 +1249,19 @@ class NavFile {
     }
     std::string_view identity() const noexcept {
         const char *s = ::gtd_nav_file_identity(impl_.get());
+        return s ? std::string_view{s} : std::string_view{};
+    }
+
+    /**
+     * Travel mode wire name, or an empty view when the field is absent.
+     *
+     * The value is the raw wire string (e.g. `"car"`); pass it to
+     * travel_mode_from_name() for the typed enum. A file written by a newer
+     * SDK may carry a wire name outside the known set - such values are still
+     * returned here verbatim, never dropped.
+     */
+    std::string_view travel_mode() const noexcept {
+        const char *s = ::gtd_nav_file_travel_mode(impl_.get());
         return s ? std::string_view{s} : std::string_view{};
     }
 

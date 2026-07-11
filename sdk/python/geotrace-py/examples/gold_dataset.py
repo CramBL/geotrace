@@ -28,6 +28,7 @@ from geotrace_sdk import (
     NavFix,
     Satellite,
     SatelliteReport,
+    TravelMode,
 )
 
 _ICONS = {
@@ -90,7 +91,13 @@ def _rows(path: Path) -> list[list[str]]:
 
 def _load_meta(base: Path) -> Meta:
     cols = _rows(base / "meta.csv")[0]
-    return Meta(title=cols[0], device=cols[1], notes=cols[2], identity=cols[3])
+    return Meta(
+        title=cols[0],
+        device=cols[1],
+        notes=cols[2],
+        identity=cols[3],
+        travel_mode=cols[4],
+    )
 
 
 def _load_event_styles(builder: NavFileBuilder, base: Path) -> None:
@@ -224,6 +231,7 @@ def _verify(path: Path) -> None:
     assert meta.title is not None and "Gold Dataset 🏆" in meta.title
     assert meta.device is not None and "Synthetic Generator 🧬" in meta.device
     assert meta.notes is not None and "🛰️" in meta.notes
+    assert meta.travel_mode == TravelMode.BICYCLE
 
     points = file.points
     assert len(points) == 199, f"expected 199 nav points, got {len(points)}"

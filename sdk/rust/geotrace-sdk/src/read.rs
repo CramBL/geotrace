@@ -5,7 +5,7 @@ use crate::builder::{micros_to_datetime, u64_to_opt_datetime};
 use crate::error::Error;
 use crate::types::{
     Annotation, Channel, Constellation, EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon,
-    Meta, NavFile, NavFix, NavPoint, Satellite, SatelliteReport,
+    Meta, NavFile, NavFix, NavPoint, Satellite, SatelliteReport, TravelMode,
 };
 use crate::write;
 use crate::{Angle, Velocity};
@@ -54,6 +54,13 @@ fn read_meta(attrs: &HashMap<String, hdf5_pure::AttrValue>) -> Meta {
         device: string_attr(attrs, "meta_device"),
         notes: string_attr(attrs, "meta_notes"),
         identity: string_attr(attrs, "meta_identity"),
+        travel_mode: string_attr(attrs, "meta_travel_mode").map(|raw| {
+            let mode = TravelMode::from_lower_case(&raw);
+            if matches!(mode, TravelMode::Unknown(_)) {
+                log::warn!("unknown meta_travel_mode value {raw:?}, preserving it as-is");
+            }
+            mode
+        }),
     }
 }
 

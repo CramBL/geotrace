@@ -218,12 +218,15 @@ static void load_meta(GtdFileBuilder *b, const char *base) {
     fclose(f);
     rtrim(line);
     char *cols[CSV_MAX_COLS];
-    if (split_csv(line, cols, CSV_MAX_COLS) < 4)
-        FAIL("meta.csv: need 4 columns");
+    if (split_csv(line, cols, CSV_MAX_COLS) < 5)
+        FAIL("meta.csv: need 5 columns");
     CHECK_SDK(gtd_builder_set_title(b, cols[0]), "set_title");
     CHECK_SDK(gtd_builder_set_device(b, cols[1]), "set_device");
     CHECK_SDK(gtd_builder_set_notes(b, cols[2]), "set_notes");
     CHECK_SDK(gtd_builder_set_identity(b, cols[3]), "set_identity");
+    GtdTravelMode travel_mode;
+    CHECK_SDK(gtd_travel_mode_from_name(cols[4], &travel_mode), "travel_mode_from_name");
+    CHECK_SDK(gtd_builder_set_travel_mode(b, travel_mode), "set_travel_mode");
 }
 
 static void load_event_styles(GtdFileBuilder *b, const char *base) {
@@ -513,11 +516,13 @@ static void verify_counts(const GtdNavFile *f) {
     const char *device = gtd_nav_file_device(f);
     const char *notes = gtd_nav_file_notes(f);
     const char *identity = gtd_nav_file_identity(f);
+    const char *travel_mode = gtd_nav_file_travel_mode(f);
 
     CHECK(title && strstr(title, "Gold Dataset") != NULL, "title missing");
     CHECK(device && strstr(device, "Synthetic Generator") != NULL, "device missing");
     CHECK(notes && strstr(notes, "cross-SDK") != NULL, "notes missing");
     CHECK(identity && strcmp(identity, "gold-standard-v2") == 0, "identity wrong");
+    CHECK(travel_mode && strcmp(travel_mode, "bicycle") == 0, "travel mode wrong");
 
     size_t np = gtd_nav_file_nav_point_count(f);
     if (np != 199)

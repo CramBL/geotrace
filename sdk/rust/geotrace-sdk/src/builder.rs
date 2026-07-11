@@ -6,7 +6,7 @@ use crate::time_types::{GpsTime, SysTime};
 use crate::types::{
     Annotation, Channel, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,
     EventMarkerPoint, EventMarkerStyle, Marker, Meta, NavFile, NavFix, NavPoint, Satellite,
-    SatelliteReport,
+    SatelliteReport, TravelMode,
 };
 use crate::variant_path::EventKind;
 
@@ -179,6 +179,13 @@ impl NavFileBuilder {
     pub fn with_identity(mut self, id: impl Into<String>) -> Self {
         let m = self.meta.get_or_insert_with(Meta::default);
         m.identity = Some(id.into());
+        self
+    }
+
+    /// Declare the platform the recording was made on.
+    pub fn with_travel_mode(mut self, mode: TravelMode) -> Self {
+        let m = self.meta.get_or_insert_with(Meta::default);
+        m.travel_mode = Some(mode);
         self
     }
 

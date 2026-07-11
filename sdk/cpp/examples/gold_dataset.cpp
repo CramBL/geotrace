@@ -190,9 +190,12 @@ void load_meta(geotrace::FileBuilder &b, const fs::path &base) {
     if (!std::getline(f, line))
         throw geotrace::IoError("meta.csv: missing data row");
     auto cols = split_csv(rtrim(std::move(line)));
-    if (cols.size() < 4)
-        throw geotrace::IoError("meta.csv: need 4 columns");
-    b.title(cols[0]).device(cols[1]).notes(cols[2]).identity(cols[3]);
+    if (cols.size() < 5)
+        throw geotrace::IoError("meta.csv: need 5 columns");
+    auto travel_mode = geotrace::travel_mode_from_name(cols[4]);
+    if (!travel_mode)
+        throw geotrace::IoError("meta.csv: unknown travel mode: " + cols[4]);
+    b.title(cols[0]).device(cols[1]).notes(cols[2]).identity(cols[3]).travel_mode(*travel_mode);
 }
 
 void load_event_styles(geotrace::FileBuilder &b, const fs::path &base) {
@@ -375,6 +378,7 @@ void verify_counts(const geotrace::NavFile &file) {
     check(file.device().find("Synthetic Generator") != std::string_view::npos, "device missing");
     check(file.notes().find("cross-SDK") != std::string_view::npos, "notes missing");
     check(file.identity() == "gold-standard-v2", "identity wrong");
+    check(file.travel_mode() == "bicycle", "travel mode wrong");
 
     auto np = file.nav_point_count();
     if (np != 199)

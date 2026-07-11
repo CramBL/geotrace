@@ -13,7 +13,7 @@ use geotrace_sdk::{
     Angle, Annotation, BuildError, Channel, ChannelUnit, Constellation, EventMarker,
     EventMarkerColor, EventMarkerIconChoice, EventMarkerPoint, EventMarkerStyle, Marker,
     MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix, NavPoint, NavRecorder, Satellite,
-    SatelliteReport, Unit, Velocity,
+    SatelliteReport, TravelMode, Unit, Velocity,
 };
 use pyo3::exceptions::{PyIOError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -191,6 +191,75 @@ impl From<PyMarkerIcon> for MarkerIcon {
             PyMarkerIcon::Download => Self::Download,
             PyMarkerIcon::Upload => Self::Upload,
             PyMarkerIcon::Wrench => Self::Wrench,
+        }
+    }
+}
+
+/// Platform a recording was made on, declared by the recorder.
+#[pyclass(eq, from_py_object, name = "TravelMode")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PyTravelMode {
+    #[pyo3(name = "CAR")]
+    Car,
+    #[pyo3(name = "MOTORCYCLE")]
+    Motorcycle,
+    #[pyo3(name = "BICYCLE")]
+    Bicycle,
+    #[pyo3(name = "PEDESTRIAN")]
+    Pedestrian,
+    #[pyo3(name = "BOAT")]
+    Boat,
+    #[pyo3(name = "RAIL")]
+    Rail,
+    #[pyo3(name = "AIRCRAFT")]
+    Aircraft,
+}
+
+impl From<PyTravelMode> for TravelMode {
+    fn from(mode: PyTravelMode) -> Self {
+        match mode {
+            PyTravelMode::Car => Self::Car,
+            PyTravelMode::Motorcycle => Self::Motorcycle,
+            PyTravelMode::Bicycle => Self::Bicycle,
+            PyTravelMode::Pedestrian => Self::Pedestrian,
+            PyTravelMode::Boat => Self::Boat,
+            PyTravelMode::Rail => Self::Rail,
+            PyTravelMode::Aircraft => Self::Aircraft,
+        }
+    }
+}
+
+impl PyTravelMode {
+    /// [`TravelMode::Unknown`] has no Python enum member - its preserved wire
+    /// value crosses into Python as a plain `str` instead (see
+    /// [`PyMeta::travel_mode`]).
+    fn from_travel_mode(mode: &TravelMode) -> Option<Self> {
+        match mode {
+            TravelMode::Car => Some(Self::Car),
+            TravelMode::Motorcycle => Some(Self::Motorcycle),
+            TravelMode::Bicycle => Some(Self::Bicycle),
+            TravelMode::Pedestrian => Some(Self::Pedestrian),
+            TravelMode::Boat => Some(Self::Boat),
+            TravelMode::Rail => Some(Self::Rail),
+            TravelMode::Aircraft => Some(Self::Aircraft),
+            TravelMode::Unknown(_) => None,
+        }
+    }
+}
+
+/// `Meta(travel_mode=...)` accepts the enum or a wire-name string, so values
+/// read back as a preserved unknown `str` can be written again unchanged.
+#[derive(FromPyObject)]
+enum TravelModeArg {
+    Mode(PyTravelMode),
+    Name(String),
+}
+
+impl From<TravelModeArg> for TravelMode {
+    fn from(arg: TravelModeArg) -> Self {
+        match arg {
+            TravelModeArg::Mode(mode) => mode.into(),
+            TravelModeArg::Name(name) => TravelMode::from_lower_case(name),
         }
     }
 }
@@ -696,18 +765,20 @@ pub struct PyMeta {
 #[pymethods]
 impl PyMeta {
     #[new]
-    #[pyo3(signature = (*, title=None, device=None, notes=None, identity=None))]
+    #[pyo3(signature = (*, title=None, device=None, notes=None, identity=None, travel_mode=None))]
     fn new(
         title: Option<String>,
         device: Option<String>,
         notes: Option<String>,
         identity: Option<String>,
+        travel_mode: Option<TravelModeArg>,
     ) -> Self {
         let inner = Meta::builder()
             .maybe_title(title)
             .maybe_device(device)
             .maybe_notes(notes)
             .maybe_identity(identity)
+            .maybe_travel_mode(travel_mode.map(TravelMode::from))
             .build();
         Self { inner }
     }
@@ -736,11 +807,22 @@ impl PyMeta {
         self.inner.identity.as_deref()
     }
 
+    /// Platform the recording was made on: a `TravelMode`, or the raw wire
+    /// name as `str` when it is outside the known set (preserved, never
+    /// dropped), or `None` when absent.
+    #[getter]
+    fn travel_mode<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        match &self.inner.travel_mode {
+            None => Ok(None),
+            Some(mode) => match PyTravelMode::from_travel_mode(mode) {
+                Some(known) => Ok(Some(known.into_pyobject(py)?.into_any())),
+                None => Ok(Some(mode.name().into_pyobject(py)?.into_any())),
+            },
+        }
+    }
+
     fn __eq__(&self, other: &Self) -> bool {
-        self.inner.title == other.inner.title
-            && self.inner.device == other.inner.device
-            && self.inner.notes == other.inner.notes
-            && self.inner.identity == other.inner.identity
+        self.inner == other.inner
     }
 
     fn __repr__(&self) -> String {
@@ -1362,6 +1444,7 @@ impl PyNavFileBuilder {
 fn _geotrace_sdk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyConstellation>()?;
     m.add_class::<PyMarkerIcon>()?;
+    m.add_class::<PyTravelMode>()?;
     m.add_class::<PySatellite>()?;
     m.add_class::<PySatelliteReport>()?;
     m.add_class::<PyUnit>()?;

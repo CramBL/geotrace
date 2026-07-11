@@ -318,6 +318,52 @@ mod marker_icon_tests {
 }
 
 #[cfg(test)]
+mod travel_mode_tests {
+    use strum::{EnumCount, IntoEnumIterator};
+
+    use super::*;
+
+    /// `name()` is a hand-written match (it must borrow from `Unknown`), while
+    /// `Display` and `from_lower_case` are strum-derived. Round-tripping every
+    /// variant through both pins the three representations together.
+    #[test]
+    fn name_display_and_from_lower_case_agree() {
+        for mode in TravelMode::iter() {
+            assert_eq!(mode.name(), mode.to_string());
+            assert_eq!(TravelMode::from_lower_case(mode.name()), mode);
+        }
+    }
+
+    /// The wire form is part of the on-disk `.gtd` format (`meta_travel_mode`).
+    /// Pin it down so a variant rename - which would silently change `strum`'s
+    /// derived snake_case form - is caught here rather than at file-read time.
+    #[test]
+    fn name_is_stable_wire_form() {
+        let known = [
+            (TravelMode::Car, "car"),
+            (TravelMode::Motorcycle, "motorcycle"),
+            (TravelMode::Bicycle, "bicycle"),
+            (TravelMode::Pedestrian, "pedestrian"),
+            (TravelMode::Boat, "boat"),
+            (TravelMode::Rail, "rail"),
+            (TravelMode::Aircraft, "aircraft"),
+        ];
+        // Every variant except the `Unknown` carrier must appear in the table.
+        assert_eq!(known.len(), TravelMode::COUNT - 1);
+        for (mode, wire) in known {
+            assert_eq!(mode.name(), wire);
+        }
+    }
+
+    #[test]
+    fn unknown_values_are_preserved_verbatim() {
+        let mode = TravelMode::from_lower_case("hovercraft");
+        assert_eq!(mode, TravelMode::Unknown("hovercraft".into()));
+        assert_eq!(mode.name(), "hovercraft");
+    }
+}
+
+#[cfg(test)]
 mod constellation_tests {
     use strum::IntoEnumIterator;
 
@@ -402,6 +448,73 @@ mod constellation_tests {
     }
 }
 
+/// Platform a recording was made on, declared by the recorder.
+///
+/// The field describes what carried the receiver, not how an application
+/// should process the data - consumers derive their own behavior from it
+/// (the GeoTrace app, for example, picks a snap-to-road costing).
+///
+/// `Display`/`FromStr` (via `strum`) give the lower snake_case wire form used
+/// by [`TravelMode::name`] and [`TravelMode::from_lower_case`]. Wire values
+/// outside the known set parse into [`TravelMode::Unknown`] so they survive a
+/// read-write round trip instead of being dropped.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    strum::EnumCount,
+    strum::EnumIter,
+)]
+#[strum(serialize_all = "snake_case")]
+pub enum TravelMode {
+    Car,
+    Motorcycle,
+    Bicycle,
+    Pedestrian,
+    Boat,
+    Rail,
+    Aircraft,
+    /// A wire value not in the known set, preserved verbatim.
+    #[strum(default)]
+    Unknown(String),
+}
+
+impl TravelMode {
+    /// Lower snake_case wire form, e.g. `TravelMode::Car.name() == "car"`.
+    ///
+    /// For [`TravelMode::Unknown`] this is the preserved original wire value.
+    /// Inverse of [`TravelMode::from_lower_case`].
+    pub fn name(&self) -> &str {
+        match self {
+            TravelMode::Car => "car",
+            TravelMode::Motorcycle => "motorcycle",
+            TravelMode::Bicycle => "bicycle",
+            TravelMode::Pedestrian => "pedestrian",
+            TravelMode::Boat => "boat",
+            TravelMode::Rail => "rail",
+            TravelMode::Aircraft => "aircraft",
+            TravelMode::Unknown(raw) => raw,
+        }
+    }
+
+    /// Parses the lower snake_case wire form produced by [`TravelMode::name`].
+    ///
+    /// Never fails: values outside the known set become
+    /// [`TravelMode::Unknown`], preserving the input verbatim.
+    pub fn from_lower_case(s: impl AsRef<str>) -> Self {
+        let s = s.as_ref();
+        match s.parse() {
+            Ok(mode) => mode,
+            // `#[strum(default)]` makes parsing infallible; keep the explicit
+            // fallback so removing the default cannot introduce a panic here.
+            Err(_) => TravelMode::Unknown(s.to_owned()),
+        }
+    }
+}
+
 /// Optional file-level metadata.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Meta {
@@ -415,6 +528,8 @@ pub struct Meta {
     /// When set, all recordings with the same identity string are stored under
     /// the same group in the database and appear together in the History window.
     pub identity: Option<String>,
+    /// Platform the recording was made on.
+    pub travel_mode: Option<TravelMode>,
 }
 
 #[bon::bon]
@@ -428,12 +543,14 @@ impl Meta {
         #[builder(into)] device: Option<String>,
         #[builder(into)] notes: Option<String>,
         #[builder(into)] identity: Option<String>,
+        travel_mode: Option<TravelMode>,
     ) -> Self {
         Self {
             title: title.filter(|s| !s.trim().is_empty()),
             device: device.filter(|s| !s.trim().is_empty()),
             notes: notes.filter(|s| !s.trim().is_empty()),
             identity: identity.filter(|s| !s.trim().is_empty()),
+            travel_mode,
         }
     }
 }

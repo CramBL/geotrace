@@ -11,7 +11,8 @@
 
 use geotrace_sdk::{
     Angle, Annotation, Channel, ChannelUnit, Constellation, EventMarker, EventMarkerStyle,
-    MarkerIcon, Meta, NavFileBuilder, NavFix, NavRecorder, Satellite, SatelliteReport, Velocity,
+    MarkerIcon, Meta, NavFileBuilder, NavFix, NavRecorder, Satellite, SatelliteReport, TravelMode,
+    Velocity,
 };
 use std::collections::HashMap;
 use std::fs::File;
@@ -64,12 +65,13 @@ fn load_meta(base_dir: &Path) -> Result<Meta, Box<dyn std::error::Error>> {
     let mut lines = reader.lines().skip(1);
     if let Some(Ok(line)) = lines.next() {
         let cols: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
-        if cols.len() >= 4 {
+        if cols.len() >= 5 {
             return Ok(Meta::builder()
                 .maybe_title(Some(cols[0]))
                 .maybe_device(Some(cols[1]))
                 .maybe_notes(Some(cols[2]))
                 .maybe_identity(Some(cols[3]))
+                .travel_mode(TravelMode::from_lower_case(cols[4]))
                 .build());
         }
     }
@@ -243,6 +245,7 @@ fn verify_gold_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     );
     assert!(meta.notes.as_ref().unwrap().contains("🛰️"));
     assert_eq!(meta.identity.as_ref().unwrap(), "gold-standard-v2");
+    assert_eq!(meta.travel_mode, Some(TravelMode::Bicycle));
 
     let points = file.nav_points();
     assert_eq!(points.len(), 199);

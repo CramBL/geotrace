@@ -44,6 +44,18 @@ class MarkerIcon(Enum):
     WRENCH = 13
 
 @final
+class TravelMode(Enum):
+    """Platform a recording was made on, declared by the recorder."""
+
+    CAR = 0
+    MOTORCYCLE = 1
+    BICYCLE = 2
+    PEDESTRIAN = 3
+    BOAT = 4
+    RAIL = 5
+    AIRCRAFT = 6
+
+@final
 class Satellite:
     """One tracked satellite with optional signal metrics.
 
@@ -311,6 +323,8 @@ class Meta:
         device: Sensor or device that produced the data, or ``None``.
         notes: Free-text notes, or ``None``.
         identity: Opaque producer identity string, or ``None``.
+        travel_mode: Platform the recording was made on: a ``TravelMode``
+            or its wire-name string (e.g. ``"car"``), or ``None``.
     """
 
     def __init__(
@@ -320,6 +334,7 @@ class Meta:
         device: str | None = None,
         notes: str | None = None,
         identity: str | None = None,
+        travel_mode: TravelMode | str | None = None,
     ) -> None: ...
     @property
     def title(self) -> str | None: ...
@@ -329,6 +344,16 @@ class Meta:
     def notes(self) -> str | None: ...
     @property
     def identity(self) -> str | None: ...
+    @property
+    def travel_mode(self) -> TravelMode | str | None:
+        """The declared travel mode.
+
+        A ``TravelMode`` member for known values. A wire value outside the
+        known set is preserved and returned as its raw ``str``, never
+        dropped. ``None`` when absent.
+        """
+        ...
+
     def __eq__(self, other: object) -> bool: ...
 
 @final

@@ -48,6 +48,7 @@ TEST_CASE("NavFile: absent metadata returns empty string_view") {
     CHECK(file.device() == "");
     CHECK(file.notes() == "");
     CHECK(file.identity() == "");
+    CHECK(file.travel_mode() == "");
     CHECK(file.title().empty());
 }
 
