@@ -9,6 +9,7 @@ the app).
 
 ### Added
 
+- Add an optional `travel_mode` metadata field declaring the platform a recording was made on: `car`, `motorcycle`, `bicycle`, `pedestrian`, `boat`, `rail`, or `aircraft`. Values outside the known set are preserved on read, never dropped.
 - Add typed recognized channel units, including native sensor scales such as milli-g, and an explicit display-only custom-unit escape hatch.
 - Add lossless C channel-unit accessors without changing the existing 0.4 struct layouts.
 

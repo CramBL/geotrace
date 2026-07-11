@@ -7,7 +7,7 @@
 use geotrace_sdk::{Angle, ChannelUnit, DateTime, Duration, Unit, Utc, Velocity};
 use geotrace_sdk::{
     Annotation, Channel, Constellation, MarkerIcon, Meta, NavFile, NavFileBuilder, NavFix,
-    Satellite, SatelliteReport,
+    Satellite, SatelliteReport, TravelMode,
 };
 
 #[expect(clippy::expect_used, reason = "fixed timestamp is always valid")]
@@ -312,6 +312,77 @@ fn identity_via_meta_builder() -> Result<(), Box<dyn std::error::Error>> {
     let nav_file = recorder.finish()?;
     let rt = round_trip(&nav_file)?;
     assert_eq!(rt.meta().identity.as_deref(), Some("route-a"));
+    Ok(())
+}
+
+#[test]
+fn travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+    let t0 = base();
+    let mut recorder = NavFileBuilder::new()
+        .with_travel_mode(TravelMode::Bicycle)
+        .open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .gps_time(t0)
+            .lat(Angle::degrees(51.5))
+            .lon(Angle::degrees(-0.1))
+            .build(),
+    );
+    let nav_file = recorder.finish()?;
+    assert_eq!(nav_file.meta().travel_mode, Some(TravelMode::Bicycle));
+
+    let rt = round_trip(&nav_file)?;
+    assert_eq!(rt.meta().travel_mode, Some(TravelMode::Bicycle));
+    Ok(())
+}
+
+/// A wire value outside the known set must survive a read-write round trip
+/// verbatim - readers warn about it but never drop it.
+#[test]
+fn unknown_travel_mode_round_trips() -> Result<(), Box<dyn std::error::Error>> {
+    let t0 = base();
+    let meta = Meta::builder()
+        .travel_mode(TravelMode::Unknown("hovercraft".into()))
+        .build();
+    let mut recorder = NavFileBuilder::new().with_meta(meta).open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .gps_time(t0)
+            .lat(Angle::degrees(51.5))
+            .lon(Angle::degrees(-0.1))
+            .build(),
+    );
+    let nav_file = recorder.finish()?;
+
+    let rt = round_trip(&nav_file)?;
+    assert_eq!(
+        rt.meta().travel_mode,
+        Some(TravelMode::Unknown("hovercraft".into()))
+    );
+
+    let rt2 = round_trip(&rt)?;
+    assert_eq!(
+        rt2.meta().travel_mode,
+        Some(TravelMode::Unknown("hovercraft".into()))
+    );
+    Ok(())
+}
+
+#[test]
+fn no_travel_mode_deserialises_as_none() -> Result<(), Box<dyn std::error::Error>> {
+    let t0 = base();
+    let mut recorder = NavFileBuilder::new().with_title("No travel mode").open();
+    recorder.add_nav_fix(
+        NavFix::builder()
+            .gps_time(t0)
+            .lat(Angle::degrees(51.5))
+            .lon(Angle::degrees(-0.1))
+            .build(),
+    );
+    let nav_file = recorder.finish()?;
+
+    let rt = round_trip(&nav_file)?;
+    assert_eq!(rt.meta().travel_mode, None);
     Ok(())
 }
 

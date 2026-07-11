@@ -47,7 +47,7 @@ pub use geotrace_units::{
 pub use types::{
     Annotation, Channel, Constellation, EventMarker, EventMarkerColor, EventMarkerIconChoice,
     EventMarkerPoint, EventMarkerStyle, Marker, MarkerIcon, Meta, NavFile, NavFix, NavPoint,
-    Satellite, SatelliteReport,
+    Satellite, SatelliteReport, TravelMode,
 };
 pub use units::{Angle, Timestamp, Velocity};
 #[doc(hidden)]

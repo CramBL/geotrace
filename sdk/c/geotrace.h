@@ -175,6 +175,42 @@ typedef enum {
 /** @} */
 
 /**
+ * @defgroup travel_mode Travel mode
+ * @{
+ */
+
+/** Platform a recording was made on, declared by the recorder. */
+typedef enum {
+    GTD_TRAVEL_MODE_CAR = 0,        /**< Passenger car. */
+    GTD_TRAVEL_MODE_MOTORCYCLE = 1, /**< Motorcycle. */
+    GTD_TRAVEL_MODE_BICYCLE = 2,    /**< Bicycle. */
+    GTD_TRAVEL_MODE_PEDESTRIAN = 3, /**< On foot. */
+    GTD_TRAVEL_MODE_BOAT = 4,       /**< Boat or ship. */
+    GTD_TRAVEL_MODE_RAIL = 5,       /**< Train or tram. */
+    GTD_TRAVEL_MODE_AIRCRAFT = 6,   /**< Aircraft. */
+} GtdTravelMode;
+
+/**
+ * Return the wire name of @p mode, e.g. `"car"` for `GTD_TRAVEL_MODE_CAR`.
+ *
+ * The returned pointer is a static string and always valid.
+ */
+const char *gtd_travel_mode_name(GtdTravelMode mode);
+
+/**
+ * Parse a wire name (as produced by `gtd_travel_mode_name()` or read from
+ * `gtd_nav_file_travel_mode()`) back into a travel mode.
+ *
+ * @param name Wire name, e.g. `"bicycle"`.
+ * @param out  Caller-allocated result, written on success.
+ *
+ * @return `GTD_ERR_PARSE` if @p name is not a known travel mode.
+ */
+GtdStatus gtd_travel_mode_from_name(const char *name, GtdTravelMode *out);
+
+/** @} */
+
+/**
  * @defgroup satellite Satellite data
  * @{
  */
@@ -371,6 +407,14 @@ GtdStatus gtd_builder_set_notes(GtdFileBuilder *b, const char *notes);
  * @return `GTD_ERR_INTERNAL` if data has already been added.
  */
 GtdStatus gtd_builder_set_identity(GtdFileBuilder *b, const char *identity);
+
+/**
+ * Declare the platform the recording was made on (optional).
+ *
+ * Must be called before the first `gtd_builder_add_*` call.
+ * @return `GTD_ERR_INTERNAL` if data has already been added.
+ */
+GtdStatus gtd_builder_set_travel_mode(GtdFileBuilder *b, GtdTravelMode mode);
 
 /**
  * Enable lenient mode.
@@ -647,6 +691,18 @@ const char *gtd_nav_file_notes(const GtdNavFile *f);
  * The returned pointer is valid for the lifetime of @p f.
  */
 const char *gtd_nav_file_identity(const GtdNavFile *f);
+
+/**
+ * Return the travel mode wire name, or NULL if not set.
+ *
+ * The value is the raw wire string (e.g. `"car"`); pass it to
+ * `gtd_travel_mode_from_name()` for the typed enum. A file written by a newer
+ * SDK may carry a wire name that fails to parse - such values are still
+ * returned here verbatim, never dropped.
+ *
+ * The returned pointer is valid for the lifetime of @p f.
+ */
+const char *gtd_nav_file_travel_mode(const GtdNavFile *f);
 
 /**
  * Return the number of event markers in the file.

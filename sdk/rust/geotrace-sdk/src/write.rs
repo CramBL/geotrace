@@ -32,6 +32,12 @@ pub(crate) fn build_hdf5(nav_file: &NavFile) -> Result<Vec<u8>, Error> {
     if let Some(identity) = &nav_file.meta.identity {
         fb.set_attr("meta_identity", AttrValue::String(identity.clone()));
     }
+    if let Some(travel_mode) = &nav_file.meta.travel_mode {
+        fb.set_attr(
+            "meta_travel_mode",
+            AttrValue::String(travel_mode.name().to_owned()),
+        );
+    }
 
     write_nav_points(nav_file, &mut fb);
     write_satellite_data(nav_file, &mut fb);

@@ -13,6 +13,9 @@ using geotrace::NavFix;
 using geotrace::Satellite;
 using geotrace::SatelliteReport;
 using geotrace::Timestamp;
+using geotrace::travel_mode_from_name;
+using geotrace::travel_mode_name;
+using geotrace::TravelMode;
 using geotrace::Velocity;
 
 static constexpr double LAT = 51.5074;
@@ -148,6 +151,32 @@ TEST_CASE("round-trip: metadata survives write → to_bytes → from_bytes") {
 
     CHECK(file2.title() == "test title");
     CHECK(file2.device() == "test device");
+}
+
+TEST_CASE("round-trip: travel mode survives write → to_bytes → from_bytes") {
+    NavFix fix{};
+    fix.gps_time = T0;
+    fix.lat = Angle::degrees(0.0);
+    fix.lon = Angle::degrees(0.0);
+
+    auto file = FileBuilder{}.travel_mode(TravelMode::Rail).add_nav_fix(fix).finish();
+
+    auto bytes = file.to_bytes();
+    auto file2 = NavFile::from_bytes(bytes);
+
+    CHECK(file2.travel_mode() == "rail");
+    CHECK(travel_mode_from_name(std::string{file2.travel_mode()}) == TravelMode::Rail);
+}
+
+TEST_CASE("travel mode names round-trip through travel_mode_from_name") {
+    for (auto mode :
+         {TravelMode::Car, TravelMode::Motorcycle, TravelMode::Bicycle, TravelMode::Pedestrian,
+          TravelMode::Boat, TravelMode::Rail, TravelMode::Aircraft}) {
+        auto name = travel_mode_name(mode);
+        CHECK_FALSE(name.empty());
+        CHECK(travel_mode_from_name(std::string{name}) == mode);
+    }
+    CHECK(travel_mode_from_name("hovercraft") == std::nullopt);
 }
 
 TEST_CASE("round-trip: velocity unit conversions are consistent") {

@@ -11,11 +11,13 @@ from geotrace_sdk import (
     Annotation,
     Constellation,
     MarkerIcon,
+    Meta,
     NavFile,
     NavFileBuilder,
     NavFix,
     Satellite,
     SatelliteReport,
+    TravelMode,
 )
 
 T0 = datetime(2024, 6, 1, 9, 0, 0, tzinfo=UTC)
@@ -168,6 +170,34 @@ def test_roundtrip_to_bytes() -> None:
         assert abs(reopened.points[0].lat - 51.5) < 1e-5
     finally:
         Path(path).unlink()
+
+
+def test_roundtrip_travel_mode() -> None:
+    b = NavFileBuilder()
+    b.with_meta(Meta(travel_mode=TravelMode.PEDESTRIAN))
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    nav_file = _write_and_read(b)
+
+    assert nav_file.meta.travel_mode == TravelMode.PEDESTRIAN
+
+
+def test_roundtrip_unknown_travel_mode_preserved() -> None:
+    # A wire value outside the known set (e.g. written by a newer SDK) must
+    # survive a round trip verbatim as a str, never be dropped.
+    b = NavFileBuilder()
+    b.with_meta(Meta(travel_mode="hovercraft"))
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    nav_file = _write_and_read(b)
+
+    assert nav_file.meta.travel_mode == "hovercraft"
+
+
+def test_roundtrip_no_travel_mode() -> None:
+    b = NavFileBuilder()
+    b.add(NavFix(lat=51.5, lon=-0.1, gps_time=T0))
+    nav_file = _write_and_read(b)
+
+    assert nav_file.meta.travel_mode is None
 
 
 def test_open_missing_file_raises() -> None:

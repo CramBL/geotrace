@@ -6,6 +6,7 @@ Test(null_guards, builder_null) {
     cr_assert_eq(gtd_builder_set_device(NULL, "x"), GTD_ERR_NULL_ARGUMENT);
     cr_assert_eq(gtd_builder_set_notes(NULL, "x"), GTD_ERR_NULL_ARGUMENT);
     cr_assert_eq(gtd_builder_set_identity(NULL, "x"), GTD_ERR_NULL_ARGUMENT);
+    cr_assert_eq(gtd_builder_set_travel_mode(NULL, GTD_TRAVEL_MODE_CAR), GTD_ERR_NULL_ARGUMENT);
 
     GtdTimestamp t = gtd_ts_from_seconds(0);
     cr_assert_eq(
@@ -26,6 +27,7 @@ Test(null_guards, nav_file_null) {
     cr_assert_null(gtd_nav_file_device(NULL));
     cr_assert_null(gtd_nav_file_notes(NULL));
     cr_assert_null(gtd_nav_file_identity(NULL));
+    cr_assert_null(gtd_nav_file_travel_mode(NULL));
 
     GtdNavPointInfo pi;
     cr_assert_eq(gtd_nav_file_get_nav_point(NULL, 0, &pi), GTD_ERR_NULL_ARGUMENT);
@@ -35,6 +37,12 @@ Test(null_guards, nav_file_null) {
 
     GtdEventMarkerInfo em;
     cr_assert_eq(gtd_nav_file_get_event_marker(NULL, 0, &em), GTD_ERR_NULL_ARGUMENT);
+}
+
+Test(null_guards, travel_mode_from_name_null) {
+    GtdTravelMode mode;
+    cr_assert_eq(gtd_travel_mode_from_name(NULL, &mode), GTD_ERR_NULL_ARGUMENT);
+    cr_assert_eq(gtd_travel_mode_from_name("car", NULL), GTD_ERR_NULL_ARGUMENT);
 }
 
 Test(null_guards, open_null_path) {

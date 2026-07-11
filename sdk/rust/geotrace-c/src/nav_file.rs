@@ -16,6 +16,7 @@ pub struct GtdNavFile {
     device: Option<CString>,
     notes: Option<CString>,
     identity: Option<CString>,
+    travel_mode: Option<CString>,
 }
 
 impl GtdNavFile {
@@ -26,6 +27,12 @@ impl GtdNavFile {
             device: file.meta().device.as_deref().and_then(to_cstring),
             notes: file.meta().notes.as_deref().and_then(to_cstring),
             identity: file.meta().identity.as_deref().and_then(to_cstring),
+            travel_mode: file
+                .meta()
+                .travel_mode
+                .as_ref()
+                .map(geotrace_sdk::TravelMode::name)
+                .and_then(to_cstring),
             file,
         }
     }
@@ -306,6 +313,19 @@ pub unsafe extern "C" fn gtd_nav_file_identity(f: *const GtdNavFile) -> *const c
     // SAFETY: same as gtd_nav_file_title
     unsafe {
         (*f).identity
+            .as_ref()
+            .map_or(std::ptr::null(), |cs| cs.as_c_str().as_ptr())
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_nav_file_travel_mode(f: *const GtdNavFile) -> *const c_char {
+    if f.is_null() {
+        return std::ptr::null();
+    }
+    // SAFETY: same as gtd_nav_file_title
+    unsafe {
+        (*f).travel_mode
             .as_ref()
             .map_or(std::ptr::null(), |cs| cs.as_c_str().as_ptr())
     }

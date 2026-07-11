@@ -67,6 +67,77 @@ Test(builder, to_bytes_round_trip) {
     gtd_free_bytes(buf, len);
 }
 
+Test(builder, travel_mode_round_trip) {
+    GtdFileBuilder *b = gtd_builder_create();
+    cr_assert_not_null(b);
+
+    cr_assert_eq(gtd_builder_set_travel_mode(b, GTD_TRAVEL_MODE_BICYCLE), GTD_OK);
+
+    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
+    cr_assert_eq(gtd_builder_add_nav_fix(b, t, gtd_ts_none(), 51.5074, -0.1278, GTD_NONE_F64,
+                                         GTD_NONE_F64, GTD_NONE_F64),
+                 GTD_OK);
+
+    GtdNavFile *f = NULL;
+    cr_assert_eq(gtd_builder_finish(b, &f), GTD_OK);
+
+    uint8_t *buf = NULL;
+    size_t len = 0;
+    cr_assert_eq(gtd_nav_file_to_bytes(f, &buf, &len), GTD_OK);
+    gtd_nav_file_destroy(f);
+
+    GtdNavFile *f2 = NULL;
+    cr_assert_eq(gtd_nav_file_from_bytes(buf, len, &f2), GTD_OK);
+
+    const char *name = gtd_nav_file_travel_mode(f2);
+    cr_assert_not_null(name);
+    cr_assert_str_eq(name, "bicycle");
+
+    GtdTravelMode mode;
+    cr_assert_eq(gtd_travel_mode_from_name(name, &mode), GTD_OK);
+    cr_assert_eq(mode, GTD_TRAVEL_MODE_BICYCLE);
+
+    gtd_nav_file_destroy(f2);
+    gtd_free_bytes(buf, len);
+}
+
+Test(builder, travel_mode_absent_is_null) {
+    GtdFileBuilder *b = gtd_builder_create();
+    cr_assert_not_null(b);
+
+    GtdTimestamp t = gtd_ts_from_seconds(1700000000ULL);
+    cr_assert_eq(gtd_builder_add_nav_fix(b, t, gtd_ts_none(), 51.5074, -0.1278, GTD_NONE_F64,
+                                         GTD_NONE_F64, GTD_NONE_F64),
+                 GTD_OK);
+
+    GtdNavFile *f = NULL;
+    cr_assert_eq(gtd_builder_finish(b, &f), GTD_OK);
+
+    cr_assert_null(gtd_nav_file_travel_mode(f));
+
+    gtd_nav_file_destroy(f);
+}
+
+Test(travel_mode, name_round_trips_through_from_name) {
+    const GtdTravelMode all[] = {
+        GTD_TRAVEL_MODE_CAR,      GTD_TRAVEL_MODE_MOTORCYCLE, GTD_TRAVEL_MODE_BICYCLE,
+        GTD_TRAVEL_MODE_BOAT,     GTD_TRAVEL_MODE_PEDESTRIAN, GTD_TRAVEL_MODE_RAIL,
+        GTD_TRAVEL_MODE_AIRCRAFT,
+    };
+    for (size_t i = 0; i < sizeof(all) / sizeof(all[0]); i++) {
+        const char *name = gtd_travel_mode_name(all[i]);
+        cr_assert_not_null(name);
+        GtdTravelMode parsed;
+        cr_assert_eq(gtd_travel_mode_from_name(name, &parsed), GTD_OK);
+        cr_assert_eq(parsed, all[i]);
+    }
+}
+
+Test(travel_mode, from_name_rejects_unknown) {
+    GtdTravelMode mode;
+    cr_assert_eq(gtd_travel_mode_from_name("hovercraft", &mode), GTD_ERR_PARSE);
+}
+
 Test(builder, no_fixes_error) {
     GtdFileBuilder *b = gtd_builder_create();
     cr_assert_not_null(b);

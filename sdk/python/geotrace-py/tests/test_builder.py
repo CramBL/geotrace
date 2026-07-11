@@ -14,6 +14,7 @@ from geotrace_sdk import (
     NavFix,
     Satellite,
     SatelliteReport,
+    TravelMode,
 )
 
 T0 = datetime(2024, 6, 1, 9, 0, 0, tzinfo=UTC)
@@ -169,6 +170,31 @@ def test_meta_eq() -> None:
     meta_c = Meta(title="Other")
     assert meta_a == meta_b
     assert meta_a != meta_c
+
+
+def test_meta_travel_mode_enum() -> None:
+    meta = Meta(travel_mode=TravelMode.BICYCLE)
+    assert meta.travel_mode == TravelMode.BICYCLE
+
+
+def test_meta_travel_mode_wire_name() -> None:
+    meta = Meta(travel_mode="car")
+    assert meta.travel_mode == TravelMode.CAR
+
+
+def test_meta_travel_mode_unknown_preserved_as_str() -> None:
+    meta = Meta(travel_mode="hovercraft")
+    assert meta.travel_mode == "hovercraft"
+
+
+def test_meta_travel_mode_absent() -> None:
+    assert Meta().travel_mode is None
+
+
+def test_meta_travel_mode_affects_eq() -> None:
+    assert Meta(travel_mode=TravelMode.CAR) == Meta(travel_mode="car")
+    assert Meta(travel_mode=TravelMode.CAR) != Meta(travel_mode=TravelMode.RAIL)
+    assert Meta(travel_mode=TravelMode.CAR) != Meta()
 
 
 def _three_point_builder() -> NavFileBuilder:

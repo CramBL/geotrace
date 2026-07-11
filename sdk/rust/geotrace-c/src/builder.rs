@@ -2,12 +2,13 @@ use std::ffi::c_char;
 
 use geotrace_sdk::{
     Angle, Annotation, BuildError, Channel, ChannelUnit, EventMarker, EventMarkerColor,
-    EventMarkerStyle, NavFileBuilder, NavRecorder, SatelliteReport, Velocity,
+    EventMarkerStyle, NavFileBuilder, NavRecorder, SatelliteReport, TravelMode, Velocity,
 };
 
 use crate::error::{GtdStatus, run_catching_panics, set_last_error};
 use crate::{
-    GtdChannel, GtdMarkerIcon, GtdNavFile, GtdOptF64, GtdSatellite, GtdTimestamp, ts_to_datetime,
+    GtdChannel, GtdMarkerIcon, GtdNavFile, GtdOptF64, GtdSatellite, GtdTimestamp, GtdTravelMode,
+    ts_to_datetime,
 };
 
 /// Opaque handle for a file-under-construction.
@@ -104,6 +105,19 @@ impl GtdFileBuilder {
         }
     }
 
+    fn set_travel_mode(&mut self, mode: TravelMode) -> GtdStatus {
+        match self.builder.take() {
+            Some(b) => {
+                self.builder = Some(b.with_travel_mode(mode));
+                GtdStatus::Ok
+            }
+            None => {
+                set_last_error("metadata must be set before adding data");
+                GtdStatus::ErrInternal
+            }
+        }
+    }
+
     fn set_lenient(&mut self) {
         match self.builder.take() {
             Some(b) => {
@@ -179,6 +193,17 @@ pub unsafe extern "C" fn gtd_builder_set_identity(
         let b = nonnull_mut!(b);
         let s = cstr!(identity);
         b.set_identity(s)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gtd_builder_set_travel_mode(
+    b: *mut GtdFileBuilder,
+    mode: GtdTravelMode,
+) -> GtdStatus {
+    run_catching_panics(|| {
+        let b = nonnull_mut!(b);
+        b.set_travel_mode(mode.into())
     })
 }
 

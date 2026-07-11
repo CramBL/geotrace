@@ -44,6 +44,7 @@ from geotrace_sdk._geotrace_sdk import (
     NavPoint,
     Satellite,
     SatelliteReport,
+    TravelMode,
     Unit,
 )
 from geotrace_sdk.event_kind import event_kind
@@ -71,6 +72,7 @@ __all__ = [
     "NavPoint",
     "Satellite",
     "SatelliteReport",
+    "TravelMode",
     "Unit",
     "event_kind",
 ]

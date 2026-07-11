@@ -510,6 +510,7 @@ def main() -> None:
             "notes": "Standard test dataset for cross-SDK verification. "
             "Includes emoji 🛰️ and long notes: " + "B" * 200,
             "identity": "gold-standard-v2",
+            "travel_mode": "bicycle",
         }
     ]
 
@@ -531,7 +532,9 @@ def main() -> None:
     )
     write_csv(dest_dir / "markers.csv", markers, ["time", "label", "icon"])
     write_csv(dest_dir / "events.csv", events, ["sys_time", "variant_path", "annotation"])
-    write_csv(dest_dir / "meta.csv", meta, ["title", "device", "notes", "identity"])
+    write_csv(
+        dest_dir / "meta.csv", meta, ["title", "device", "notes", "identity", "travel_mode"]
+    )
     write_csv(dest_dir / "event_styles.csv", event_styles, ["variant_path", "icon", "color"])
 
 
