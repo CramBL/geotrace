@@ -38,6 +38,8 @@ pub const INCLUDED_ATTRIBUTES: &[&str] = &[
     "edge.road_class",
     "edge.speed_limit",
     "edge.surface",
+    "edge.begin_shape_index",
+    "edge.end_shape_index",
 ];
 
 /// One input shape point: a recorded position, optionally timestamped.
@@ -271,6 +273,14 @@ pub struct Edge {
     pub speed_limit: Option<u32>,
     #[serde(default)]
     pub surface: Option<Surface>,
+    /// Index range this edge covers in the decoded response shape.
+    /// Drives the snapped-track segment split. Captured reality: consecutive
+    /// edges' ranges are NOT always contiguous even on an unbroken route, so
+    /// index gaps alone never indicate a break.
+    #[serde(default)]
+    pub begin_shape_index: Option<usize>,
+    #[serde(default)]
+    pub end_shape_index: Option<usize>,
 }
 
 /// A successful `trace_attributes` response, trimmed to the modeled subset.

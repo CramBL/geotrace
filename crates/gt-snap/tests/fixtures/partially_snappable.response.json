@@ -3,6 +3,8 @@
   "confidence_score": 1.0,
   "edges": [
     {
+      "begin_shape_index": 0,
+      "end_shape_index": 1,
       "names": [
         "Islands Brygge"
       ],
@@ -12,6 +14,8 @@
       "way_id": 237111840
     },
     {
+      "begin_shape_index": 1,
+      "end_shape_index": 2,
       "names": [
         "Islands Brygge"
       ],
@@ -21,6 +25,8 @@
       "way_id": 237111840
     },
     {
+      "begin_shape_index": 2,
+      "end_shape_index": 3,
       "names": [
         "Islands Brygge"
       ],
@@ -30,11 +36,15 @@
       "way_id": 237111840
     },
     {
+      "begin_shape_index": 4,
+      "end_shape_index": 5,
       "road_class": "service_other",
       "surface": "paved_smooth",
       "way_id": 148936077
     },
     {
+      "begin_shape_index": 6,
+      "end_shape_index": 7,
       "road_class": "service_other",
       "surface": "paved_smooth",
       "way_id": 946807354

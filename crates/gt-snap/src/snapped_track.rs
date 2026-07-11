@@ -1,0 +1,173 @@
+//! Decode a response's matched shape into snapped-track polyline segments.
+//!
+//! The server returns the matched geometry as ONE encoded polyline even when
+//! the match breaks (captured reality: a 4 km teleport is a plain geometric
+//! jump inside the shape). The reliable break evidence lives in the snapped
+//! points: explicit route discontinuity flags, and runs of unsnapped points.
+//! Each break splits the shape between the edge coverage of the two
+//! neighboring point groups, via the edges' `begin_shape_index` /
+//! `end_shape_index`.
+//!
+//! Index gaps between consecutive edges are NOT breaks: captured reality
+//! shows non-contiguous edge ranges on unbroken routes, so splitting is
+//! driven exclusively by point evidence.
+
+use crate::wire::{SnapPointKind, SnappedPoint, TraceAttributesResponse};
+
+/// Precision of the wire's encoded shape polylines: 6 decimal digits
+/// (`trace_attributes` returns "6 digit precision" shapes). Decode and any
+/// test-side encode must share this constant or they silently drift.
+pub const SHAPE_POLYLINE_PRECISION: u32 = 6;
+
+/// One vertex of the snapped track, degrees.
+///
+/// Deliberately a named-field struct rather than a tuple or `geo` type: the
+/// polyline decoder speaks x/y, and lat/lon transpositions are exactly the
+/// bug class named fields prevent.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Position {
+    pub lat: f64,
+    pub lon: f64,
+}
+
+/// A maximal unbroken stretch of the snapped track, ready to draw as one
+/// polyline. Breaks between segments render as gaps.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SnappedTrackSegment {
+    pub positions: Vec<Position>,
+}
+
+/// Why the snapped track could not be assembled from a response.
+///
+/// These indicate response inconsistencies (drift between the shape, the
+/// points, and the edges), not user-facing conditions; the caller reports
+/// them per chunk through the warning reporter.
+#[derive(Debug, PartialEq, thiserror::Error)]
+pub enum SnappedTrackError {
+    #[error("undecodable shape polyline: {0}")]
+    UndecodableShape(#[from] polyline::errors::PolylineError),
+    #[error("point references edge {edge} but the response has {edges} edges")]
+    EdgeIndexOutOfBounds { edge: u64, edges: usize },
+    #[error("edge {edge} covers shape indices {begin}..={end} but the shape has {points} points")]
+    ShapeIndexOutOfBounds {
+        edge: u64,
+        begin: usize,
+        end: usize,
+        points: usize,
+    },
+    #[error("edge {edge} carries no shape index range")]
+    MissingShapeRange { edge: u64 },
+}
+
+/// Decode the response shape and split it into snapped-track segments.
+///
+/// A response without a shape (or without any snapped point) yields no
+/// segments. Unsnapped points contribute no geometry; a run of them between
+/// snapped points is a break, as are the explicit discontinuity flags.
+pub fn snapped_track_segments(
+    response: &TraceAttributesResponse,
+) -> Result<Vec<SnappedTrackSegment>, SnappedTrackError> {
+    let Some(encoded) = response.shape.as_deref() else {
+        return Ok(Vec::new());
+    };
+    let shape = decode_shape(encoded)?;
+
+    let mut segments = Vec::new();
+    for group in point_groups(&response.snapped_points) {
+        if let Some((begin, end)) = group_shape_range(&group, response, shape.len())? {
+            segments.push(SnappedTrackSegment {
+                positions: shape
+                    .get(begin..=end)
+                    .unwrap_or_default() // range is validated above; defensive only
+                    .to_vec(),
+            });
+        }
+    }
+    Ok(segments)
+}
+
+/// Decode the wire polyline into positions.
+fn decode_shape(encoded: &str) -> Result<Vec<Position>, SnappedTrackError> {
+    let line = polyline::decode_polyline(encoded, SHAPE_POLYLINE_PRECISION)?;
+    Ok(line
+        .coords()
+        .map(|coord| Position {
+            lat: coord.y,
+            lon: coord.x,
+        })
+        .collect())
+}
+
+/// Group consecutive snapped/interpolated points into unbroken stretches.
+///
+/// A new group starts after a run of unsnapped points, before a point with
+/// `begin_route_discontinuity`, and after a point with
+/// `end_route_discontinuity`.
+fn point_groups(points: &[SnappedPoint]) -> Vec<Vec<&SnappedPoint>> {
+    let mut groups: Vec<Vec<&SnappedPoint>> = Vec::new();
+    let mut current: Vec<&SnappedPoint> = Vec::new();
+    let mut gap_pending = false;
+    for point in points {
+        if point.kind == SnapPointKind::Unsnapped {
+            gap_pending = !current.is_empty();
+            continue;
+        }
+        if (gap_pending || point.begin_route_discontinuity) && !current.is_empty() {
+            groups.push(std::mem::take(&mut current));
+        }
+        gap_pending = false;
+        current.push(point);
+        if point.end_route_discontinuity {
+            groups.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        groups.push(current);
+    }
+    groups
+}
+
+/// The shape index range covered by a group's edges, or `None` for a group
+/// with no edge association at all.
+///
+/// Ranges from a group's edges are unioned via min/max; edges are not
+/// required to appear in shape-index order within a group.
+fn group_shape_range(
+    group: &[&SnappedPoint],
+    response: &TraceAttributesResponse,
+    shape_points: usize,
+) -> Result<Option<(usize, usize)>, SnappedTrackError> {
+    let mut range: Option<(usize, usize)> = None;
+    for point in group {
+        let Some(raw_edge_index) = point.edge_index else {
+            continue;
+        };
+        let edge = usize::try_from(raw_edge_index)
+            .ok()
+            .and_then(|index| response.edges.get(index));
+        let Some(edge) = edge else {
+            return Err(SnappedTrackError::EdgeIndexOutOfBounds {
+                edge: raw_edge_index,
+                edges: response.edges.len(),
+            });
+        };
+        let (Some(begin), Some(end)) = (edge.begin_shape_index, edge.end_shape_index) else {
+            return Err(SnappedTrackError::MissingShapeRange {
+                edge: raw_edge_index,
+            });
+        };
+        if end >= shape_points || begin > end {
+            return Err(SnappedTrackError::ShapeIndexOutOfBounds {
+                edge: raw_edge_index,
+                begin,
+                end,
+                points: shape_points,
+            });
+        }
+        range = Some(match range {
+            Some((lo, hi)) => (lo.min(begin), hi.max(end)),
+            None => (begin, end),
+        });
+    }
+    Ok(range)
+}

@@ -3,6 +3,8 @@
   "confidence_score": 1.0,
   "edges": [
     {
+      "begin_shape_index": 0,
+      "end_shape_index": 2,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -12,6 +14,8 @@
       "way_id": 281562358
     },
     {
+      "begin_shape_index": 2,
+      "end_shape_index": 3,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -21,6 +25,8 @@
       "way_id": 281562358
     },
     {
+      "begin_shape_index": 3,
+      "end_shape_index": 4,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -30,6 +36,8 @@
       "way_id": 1426573200
     },
     {
+      "begin_shape_index": 4,
+      "end_shape_index": 5,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -39,6 +47,8 @@
       "way_id": 210984643
     },
     {
+      "begin_shape_index": 5,
+      "end_shape_index": 6,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -48,6 +58,8 @@
       "way_id": 680691471
     },
     {
+      "begin_shape_index": 6,
+      "end_shape_index": 7,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -57,6 +69,8 @@
       "way_id": 680691471
     },
     {
+      "begin_shape_index": 7,
+      "end_shape_index": 8,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -66,6 +80,8 @@
       "way_id": 27212548
     },
     {
+      "begin_shape_index": 8,
+      "end_shape_index": 10,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -75,6 +91,8 @@
       "way_id": 27212548
     },
     {
+      "begin_shape_index": 10,
+      "end_shape_index": 11,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -84,6 +102,8 @@
       "way_id": 751162445
     },
     {
+      "begin_shape_index": 11,
+      "end_shape_index": 12,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -92,6 +112,8 @@
       "way_id": 1366539120
     },
     {
+      "begin_shape_index": 12,
+      "end_shape_index": 13,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -100,6 +122,8 @@
       "way_id": 66824944
     },
     {
+      "begin_shape_index": 13,
+      "end_shape_index": 14,
       "names": [
         "H.C. Andersens Boulevard"
       ],

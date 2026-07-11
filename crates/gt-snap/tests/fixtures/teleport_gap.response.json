@@ -3,6 +3,8 @@
   "confidence_score": 1.0,
   "edges": [
     {
+      "begin_shape_index": 0,
+      "end_shape_index": 2,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -12,6 +14,8 @@
       "way_id": 742322419
     },
     {
+      "begin_shape_index": 2,
+      "end_shape_index": 3,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -21,6 +25,8 @@
       "way_id": 742322419
     },
     {
+      "begin_shape_index": 3,
+      "end_shape_index": 4,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -30,6 +36,8 @@
       "way_id": 654821502
     },
     {
+      "begin_shape_index": 4,
+      "end_shape_index": 5,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -39,6 +47,8 @@
       "way_id": 496181694
     },
     {
+      "begin_shape_index": 6,
+      "end_shape_index": 7,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -48,6 +58,8 @@
       "way_id": 1355324264
     },
     {
+      "begin_shape_index": 7,
+      "end_shape_index": 8,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -57,6 +69,8 @@
       "way_id": 1355324264
     },
     {
+      "begin_shape_index": 8,
+      "end_shape_index": 9,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -66,6 +80,8 @@
       "way_id": 129370598
     },
     {
+      "begin_shape_index": 10,
+      "end_shape_index": 12,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -75,6 +91,8 @@
       "way_id": 129370598
     },
     {
+      "begin_shape_index": 12,
+      "end_shape_index": 13,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -84,6 +102,8 @@
       "way_id": 129370598
     },
     {
+      "begin_shape_index": 14,
+      "end_shape_index": 15,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -93,6 +113,8 @@
       "way_id": 680691471
     },
     {
+      "begin_shape_index": 15,
+      "end_shape_index": 16,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -102,6 +124,8 @@
       "way_id": 27212548
     },
     {
+      "begin_shape_index": 17,
+      "end_shape_index": 18,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -110,6 +134,8 @@
       "way_id": 1366539120
     },
     {
+      "begin_shape_index": 19,
+      "end_shape_index": 20,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -118,6 +144,8 @@
       "way_id": 44091158
     },
     {
+      "begin_shape_index": 20,
+      "end_shape_index": 21,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -127,6 +155,8 @@
       "way_id": 576405197
     },
     {
+      "begin_shape_index": 22,
+      "end_shape_index": 23,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -136,6 +166,8 @@
       "way_id": 576405197
     },
     {
+      "begin_shape_index": 23,
+      "end_shape_index": 24,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -145,6 +177,8 @@
       "way_id": 201983347
     },
     {
+      "begin_shape_index": 25,
+      "end_shape_index": 26,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -154,6 +188,8 @@
       "way_id": 237193334
     },
     {
+      "begin_shape_index": 26,
+      "end_shape_index": 27,
       "names": [
         "H.C. Andersens Boulevard"
       ],
@@ -163,6 +199,8 @@
       "way_id": 237193334
     },
     {
+      "begin_shape_index": 28,
+      "end_shape_index": 30,
       "names": [
         "Randersgade"
       ],
@@ -172,6 +210,8 @@
       "way_id": 27417317
     },
     {
+      "begin_shape_index": 30,
+      "end_shape_index": 32,
       "names": [
         "Århusgade"
       ],
@@ -181,6 +221,8 @@
       "way_id": 28612121
     },
     {
+      "begin_shape_index": 32,
+      "end_shape_index": 33,
       "names": [
         "Århusgade"
       ],
@@ -190,6 +232,8 @@
       "way_id": 28612121
     },
     {
+      "begin_shape_index": 33,
+      "end_shape_index": 34,
       "names": [
         "Århusgade"
       ],
@@ -199,6 +243,8 @@
       "way_id": 28612121
     },
     {
+      "begin_shape_index": 34,
+      "end_shape_index": 35,
       "names": [
         "Århusgade"
       ],
@@ -208,6 +254,8 @@
       "way_id": 28612121
     },
     {
+      "begin_shape_index": 35,
+      "end_shape_index": 36,
       "names": [
         "Århusgade"
       ],
@@ -217,6 +265,8 @@
       "way_id": 28612121
     },
     {
+      "begin_shape_index": 36,
+      "end_shape_index": 37,
       "names": [
         "Århusgade"
       ],
@@ -226,6 +276,8 @@
       "way_id": 28612121
     },
     {
+      "begin_shape_index": 37,
+      "end_shape_index": 38,
       "names": [
         "Århusgade"
       ],
@@ -235,6 +287,8 @@
       "way_id": 28612121
     },
     {
+      "begin_shape_index": 38,
+      "end_shape_index": 39,
       "names": [
         "Århusgade"
       ],
@@ -244,6 +298,8 @@
       "way_id": 28612121
     },
     {
+      "begin_shape_index": 39,
+      "end_shape_index": 40,
       "names": [
         "Århusgade"
       ],
@@ -253,6 +309,8 @@
       "way_id": 28612121
     },
     {
+      "begin_shape_index": 40,
+      "end_shape_index": 41,
       "names": [
         "Århusgade"
       ],
@@ -262,6 +320,8 @@
       "way_id": 28612121
     },
     {
+      "begin_shape_index": 41,
+      "end_shape_index": 42,
       "names": [
         "Århusgade"
       ],
@@ -271,6 +331,8 @@
       "way_id": 28612121
     },
     {
+      "begin_shape_index": 42,
+      "end_shape_index": 43,
       "names": [
         "Århusgade"
       ],
