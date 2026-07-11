@@ -121,7 +121,7 @@ impl AttributeFilter {
 ///
 /// Only `gps_accuracy` is modeled for now (derived from the track's eph, see
 /// `request_plan`); search radius and turn penalty stay server-default until
-/// the phase 2 advanced settings. Captured reality: out-of-range values are
+/// advanced settings expose them. Captured reality: out-of-range values are
 /// rejected (400, code 158), not clamped, so senders must bound values
 /// client-side.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
