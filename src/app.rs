@@ -13,7 +13,6 @@ use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_CLOCK_COUNTER_CLOCKW
 use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
 use egui_phosphor::regular::GAUGE as ICON_GAUGE;
 use egui_phosphor::regular::GEAR as ICON_GEAR;
-use egui_phosphor::regular::INFO as ICON_INFO;
 use egui_phosphor::regular::LINK_BREAK as ICON_LINK_BREAK;
 use egui_phosphor::regular::MAP_PIN as ICON_MAP_PIN;
 use egui_phosphor::regular::SCISSORS as ICON_SCISSORS;
@@ -1911,10 +1910,18 @@ impl eframe::App for App {
 
         egui::Panel::top("top_panel").show_inside(ui, |ui| {
             MenuBar::new().ui(ui, |ui| {
-                // Left zone - file actions
-                if ui.button("Open…").clicked() {
-                    self.loader.open_file_dialog();
-                }
+                // Left zone - the File menu
+                ui.menu_button("File", |ui| {
+                    if ui.button("Open…").clicked() {
+                        self.loader.open_file_dialog();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("About GeoTrace").clicked() {
+                        self.about_open = true;
+                        ui.close();
+                    }
+                });
 
                 // Right zone - utility windows and preferences, trailing-aligned
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1928,14 +1935,6 @@ impl eframe::App for App {
                         .clicked()
                     {
                         self.settings_open = !self.settings_open;
-                    }
-
-                    if ui
-                        .selectable_label(self.about_open, ICON_INFO)
-                        .on_hover_text("About GeoTrace - version and attributions")
-                        .clicked()
-                    {
-                        self.about_open = !self.about_open;
                     }
 
                     if ui
