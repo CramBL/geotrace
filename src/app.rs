@@ -1048,14 +1048,7 @@ impl App {
                 if self.hidden_snapped.contains(&track_ref) {
                     continue;
                 }
-                let track_shown = fi.get(&visibility.files).is_some_and(|fv| {
-                    fv.enabled
-                        && track_ref
-                            .index
-                            .get(&fv.tracks)
-                            .is_some_and(|tv| tv.enabled && tv.track_visible)
-                });
-                if !track_shown {
+                if !visibility.track_shown(track_ref) {
                     continue;
                 }
                 if let Some(run) = self.snap.latest_run_for(track) {
@@ -1138,8 +1131,12 @@ impl App {
         let Some(costing) = snap::resolve_costing(declared, self.snap_settings.costing) else {
             return;
         };
-        self.snap
-            .request_snap(track_ref, track, self.snap_settings.params(costing));
+        self.snap.request_snap(
+            track_ref,
+            track,
+            self.snap_settings.params(costing),
+            snap::SnapPriority::Manual,
+        );
     }
 
     /// Snapshot of all settings-relevant state for change detection.
@@ -1882,8 +1879,11 @@ impl eframe::App for App {
             self.handle_history_response(resp);
         }
 
-        // Apply finished snap runs and progress updates.
+        // Apply finished snap runs and progress updates, and let the queue
+        // react to visibility changes (parked entries may become eligible).
         self.snap.poll();
+        self.snap
+            .set_visibility(self.shared.borrow().tree.visibility());
 
         // Consume a pending file-picker result and dispatch the chosen path.
         if let Some(path) = self.loader.drain_file_dialog() {

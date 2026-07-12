@@ -85,6 +85,19 @@ impl TrackDataVisibility {
             .is_some_and(|f| f.enabled && track_ref.index.get(&f.tracks).is_some_and(|t| t.enabled))
     }
 
+    /// Whether the given track's line is shown on the map: its file and the
+    /// track are enabled, and the track-line toggle is on. The predicate the
+    /// snapped-track rendering and the snap queue's visibility priority use.
+    pub fn track_shown(&self, track_ref: TrackRef) -> bool {
+        track_ref.fi.get(&self.files).is_some_and(|f| {
+            f.enabled
+                && track_ref
+                    .index
+                    .get(&f.tracks)
+                    .is_some_and(|t| t.enabled && t.track_visible)
+        })
+    }
+
     /// Show only the given file. Hide all others. Trip visibility within files
     /// is preserved so that re-enabling a file restores its previous state.
     pub fn show_only_file(&mut self, fi: FileIdx) {
@@ -141,5 +154,36 @@ mod tests {
         .filter(|&c| c != category)
         .all(|c| tv.category_visible(c));
         assert!(others);
+    }
+
+    /// `track_shown` requires the file, the track, and the track-line
+    /// toggle; any one of them off hides the track. Out-of-range refs are
+    /// simply not shown.
+    #[rstest::rstest]
+    #[case::all_on(true, true, true, true)]
+    #[case::file_disabled(false, true, true, false)]
+    #[case::track_disabled(true, false, true, false)]
+    #[case::trackline_hidden(true, true, false, false)]
+    fn track_shown_needs_file_track_and_line(
+        #[case] file_enabled: bool,
+        #[case] track_enabled: bool,
+        #[case] track_visible: bool,
+        #[case] expected: bool,
+    ) {
+        let mut tv = TrackVisibility::all_visible();
+        tv.enabled = track_enabled;
+        tv.track_visible = track_visible;
+        let vis = TrackDataVisibility {
+            files: vec![FileVisibility {
+                enabled: file_enabled,
+                tracks: vec![tv],
+            }],
+        };
+        let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        assert_eq!(vis.track_shown(track_ref), expected);
+        assert!(
+            !vis.track_shown(TrackRef::new(FileIdx::new(1), TrackIdx::new(0))),
+            "an out-of-range ref is never shown"
+        );
     }
 }
