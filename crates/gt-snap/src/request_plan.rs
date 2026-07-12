@@ -115,13 +115,7 @@ impl SnapParams {
                 .turn_penalty_factor
                 .map(|v| clamp_to(&TURN_PENALTY_FACTOR_RANGE, v)),
         };
-        (options
-            != TraceOptions {
-                gps_accuracy: None,
-                search_radius: None,
-                turn_penalty_factor: None,
-            })
-        .then_some(options)
+        (options != TraceOptions::default()).then_some(options)
     }
 }
 

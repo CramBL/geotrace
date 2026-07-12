@@ -141,7 +141,7 @@ impl AttributeFilter {
 /// are built through `request_plan::SnapParams`, which clamps to the
 /// empirically pinned ranges (the `option_out_of_bounds` fixture is the
 /// rejection exemplar).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct TraceOptions {
     /// Expected GNSS accuracy in meters; tells the matcher how far off-road
     /// a point may plausibly lie.
