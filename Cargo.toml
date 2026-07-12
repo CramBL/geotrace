@@ -292,6 +292,7 @@ egui_kittest.workspace = true
 geotrace-sdk = { path = "sdk/rust/geotrace-sdk" }
 gt-test-utils = { path = "crates/gt-test-utils", features = ["snapshot"] }
 rstest.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 
 [profile.release]

@@ -1994,6 +1994,7 @@ dependencies = [
  "rstest",
  "semver",
  "serde",
+ "serde_json",
  "strum",
  "tempfile",
  "tokio",

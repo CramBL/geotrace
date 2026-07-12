@@ -180,6 +180,8 @@ fn done_row(shown: bool) -> SnapRowView {
         confidence_score: Some(0.87),
         shown,
         stale: None,
+        partial: false,
+        warnings: Vec::new(),
     }
 }
 
@@ -224,6 +226,41 @@ fn snapshot_snap_trigger_states() {
     harness.snapshot("side_panel_snap_states");
 }
 
+/// A partial run with warnings: the status hover must surface the partial
+/// marker and every warning line - anomalies are signal, never hidden. The
+/// snapshot captures the opened hover tooltip.
+#[test]
+fn snapshot_snap_status_hover_with_warnings() {
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    state.snap_rows.insert(
+        TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+        SnapRowView::Done {
+            snapped: 120,
+            interpolated: 340,
+            unsnapped: 12,
+            confidence_score: Some(0.87),
+            shown: true,
+            stale: None,
+            partial: true,
+            warnings: vec![
+                "Chunk 3 failed - its points carry no snap data (HTTP 502)".to_owned(),
+                "The map data updated mid-run (OSM changeset 100 to 200)".to_owned(),
+            ],
+        },
+    );
+    let mut harness = make_harness_sized(state, egui::vec2(560.0, 480.0));
+    harness.run();
+
+    harness.inner.get_by_label(ICON_PATH).hover();
+    // Tooltips appear after egui's hover delay; keep stepping until the
+    // delay has elapsed and the tooltip laid itself out.
+    for _ in 0..60 {
+        harness.run();
+    }
+    harness.snapshot("side_panel_snap_status_warnings");
+}
+
 /// A stale run's row for the stale-state tests: the [`done_row`] fixture
 /// with one named parameter difference.
 fn stale_row() -> SnapRowView {
@@ -236,6 +273,8 @@ fn stale_row() -> SnapRowView {
         stale: Some(vec![
             "Snapped as Bicycle - would now snap as Auto".to_owned(),
         ]),
+        partial: false,
+        warnings: Vec::new(),
     }
 }
 
@@ -389,6 +428,8 @@ fn clicking_done_glyph_requests_visibility_toggle() {
             confidence_score: None,
             shown: true,
             stale: None,
+            partial: false,
+            warnings: Vec::new(),
         },
     );
     let mut harness = make_harness(state);
@@ -421,6 +462,8 @@ fn context_menu_toggles_snapped_track_visibility() {
             confidence_score: None,
             shown: true,
             stale: None,
+            partial: false,
+            warnings: Vec::new(),
         },
     );
     let mut harness = make_harness(state);
