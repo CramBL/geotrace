@@ -6,11 +6,19 @@
 //! immutable once a run completes; see `gt_ui_types::SnappedTracks`). Breaks
 //! between segments render as gaps - route discontinuities and unsnapped
 //! runs - and the recorded track underneath is never painted over or hidden.
+//!
+//! Dashing emits one shape per dash period of *screen-space* path length,
+//! which grows linearly with zoom regardless of the segment's vertex count.
+//! Segments therefore go through the [`visible_path`] culling machinery like
+//! the recorded trackline: off-screen stretches never generate dashes and
+//! sub-pixel detail is merged, bounding the per-frame shape count by what is
+//! actually on screen.
 
 use egui::{Pos2, Response, Stroke, Ui};
 use gt_ui_types::SnappedTracks;
 use walkers::{MapMemory, Plugin, Projector};
 
+use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
 use crate::track_renderer::draw_dashed_line;
 use crate::transform::MercTransform;
 
@@ -45,6 +53,10 @@ impl Plugin for SnappedTrackRenderer<'_> {
         map_memory: &MapMemory,
     ) {
         let transform = MercTransform::new(projector, map_memory, ui.max_rect().center());
+        let cull_rect = ui.max_rect().expand(CULL_MARGIN_PX);
+        // Reused across spans so stripping the (unit) styling keys costs one
+        // allocation per frame, not one per span.
+        let mut span_points: Vec<Pos2> = Vec::new();
         for (track_ref, segments) in &self.snapped.segments_by_track {
             let color =
                 gt_ui_theme::track_color(track_ref.fi.as_usize(), track_ref.index.as_usize())
@@ -53,20 +65,29 @@ impl Plugin for SnappedTrackRenderer<'_> {
             // `.iter()` is load-bearing: `segments` is `&Arc<Vec<_>>`, which
             // only reaches the Vec's iterator through Deref method resolution.
             for segment in segments.iter() {
-                // Segments are bounded by the run's sent-point count (thinned
-                // to at most 1 point/s), so projecting every vertex per frame
-                // stays cheap without the trackline's culling machinery.
-                let points: Vec<Pos2> = segment
-                    .iter()
-                    .map(|&merc| transform.to_screen(merc))
-                    .collect();
-                draw_dashed_line(
-                    ui.painter(),
-                    &points,
-                    stroke,
-                    SNAPPED_DASH_PX,
-                    SNAPPED_GAP_PX,
-                );
+                // Segments carry no per-point styling, so the key is unit.
+                let points = segment.iter().map(|&merc| ((), transform.to_screen(merc)));
+                match visible_path(points, cull_rect) {
+                    VisiblePath::OffScreen => {}
+                    // A segment collapsed below one pixel (extreme zoom-out)
+                    // stays discoverable as a dot, like the recorded track.
+                    VisiblePath::Dot((), pos) => {
+                        ui.painter().circle_filled(pos, stroke.width, stroke.color);
+                    }
+                    VisiblePath::Spans(spans) => {
+                        for span in spans.iter() {
+                            span_points.clear();
+                            span_points.extend(span.iter().map(|&((), pos)| pos));
+                            draw_dashed_line(
+                                ui.painter(),
+                                &span_points,
+                                stroke,
+                                SNAPPED_DASH_PX,
+                                SNAPPED_GAP_PX,
+                            );
+                        }
+                    }
+                }
             }
         }
     }
