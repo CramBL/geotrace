@@ -82,6 +82,11 @@ pub enum SnapRowView {
         /// server that differ from the current settings. Each entry names
         /// one difference; the row offers a re-run. `None` = current.
         stale: Option<Vec<String>>,
+        /// At least one chunk failed and left a gap in the result.
+        partial: bool,
+        /// The run's warnings, pre-rendered by the app (the panel has no
+        /// gt-snap dependency), shown in the status hover.
+        warnings: Vec<String>,
     },
 }
 
@@ -518,14 +523,17 @@ fn snapped_track_toggle_label(shown: bool) -> &'static str {
     }
 }
 
-/// The completed-run breakdown shown in the snap status hover: per-kind point
-/// counts and the run confidence.
+/// The completed-run breakdown shown in the snap status hover: per-kind
+/// point counts, the run confidence, the partial marker, and the run's
+/// warnings - anomalies are surfaced here, never hidden.
 fn snap_status_rows(
     ui: &mut egui::Ui,
     snapped: usize,
     interpolated: usize,
     unsnapped: usize,
     confidence_score: Option<f64>,
+    partial: bool,
+    warnings: &[String],
 ) {
     ui.label(RichText::new("Snapped to road").strong());
     egui::Grid::new("snap_status_grid")
@@ -544,6 +552,16 @@ fn snap_status_rows(
                 row("Confidence", gt_fmt::format_fraction_percent(score));
             }
         });
+    let amber = gt_ui_theme::warning_amber(ui.visuals().dark_mode);
+    if partial {
+        ui.label(
+            RichText::new("Partial result - failed chunks left gaps without snap data")
+                .color(amber),
+        );
+    }
+    for warning in warnings {
+        ui.label(RichText::new(warning).color(amber));
+    }
 }
 
 /// The trailing per-track snap control: the manual trigger while a run is
@@ -561,36 +579,49 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
         confidence_score,
         shown,
         stale,
+        partial,
+        warnings,
     } = row
     {
-        let (snapped, interpolated, unsnapped, confidence_score, shown) = (
+        let (snapped, interpolated, unsnapped, confidence_score, shown, partial) = (
             *snapped,
             *interpolated,
             *unsnapped,
             *confidence_score,
             *shown,
+            *partial,
         );
         // The status glyph doubles as the per-track visibility toggle: weak
-        // while the snapped track draws, extra-faint while hidden. A stale
-        // run's glyph turns warning-colored so the outdated result is
-        // visible at a glance, never silently current-looking.
-        let text = match (stale, shown) {
-            (Some(_), _) => {
-                RichText::new(ICON_PATH).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode))
-            }
-            (None, true) => RichText::new(ICON_PATH).weak(),
-            (None, false) => RichText::new(ICON_PATH).weak().color(
+        // while the snapped track draws, extra-faint while hidden. Stale and
+        // partial runs turn the glyph warning-colored so an outdated or
+        // gappy result is visible at a glance, never silently fine-looking;
+        // the hover names which condition applies.
+        let text = if stale.is_some() || partial {
+            RichText::new(ICON_PATH).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode))
+        } else if shown {
+            RichText::new(ICON_PATH).weak()
+        } else {
+            RichText::new(ICON_PATH).weak().color(
                 ui.visuals()
                     .weak_text_color()
                     .gamma_multiply(HIDDEN_GLYPH_ALPHA),
-            ),
+            )
         };
         let stale = stale.clone();
+        let warnings = warnings.clone();
         let glyph = ui
             .add(Button::new(text).frame(false))
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_ui(|ui| {
-                snap_status_rows(ui, snapped, interpolated, unsnapped, confidence_score);
+                snap_status_rows(
+                    ui,
+                    snapped,
+                    interpolated,
+                    unsnapped,
+                    confidence_score,
+                    partial,
+                    &warnings,
+                );
                 if let Some(reasons) = &stale {
                     ui.label(
                         RichText::new(format!("Stale - {}", reasons.join(", ")))
@@ -666,16 +697,32 @@ fn snap_menu_entry(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContex
                 interpolated,
                 unsnapped,
                 confidence_score,
+                partial,
+                warnings,
                 ..
             } = row
             else {
                 return;
             };
-            let (snapped, interpolated, unsnapped, confidence_score) =
-                (*snapped, *interpolated, *unsnapped, *confidence_score);
+            let (snapped, interpolated, unsnapped, confidence_score, partial) = (
+                *snapped,
+                *interpolated,
+                *unsnapped,
+                *confidence_score,
+                *partial,
+            );
+            let warnings = warnings.clone();
             ui.add_enabled(false, Button::new("Snap to road"))
                 .on_disabled_hover_ui(|ui| {
-                    snap_status_rows(ui, snapped, interpolated, unsnapped, confidence_score);
+                    snap_status_rows(
+                        ui,
+                        snapped,
+                        interpolated,
+                        unsnapped,
+                        confidence_score,
+                        partial,
+                        &warnings,
+                    );
                 });
         }
     }
@@ -1622,6 +1669,8 @@ mod snap_action_tests {
             confidence_score: None,
             shown: true,
             stale: None,
+            partial: false,
+            warnings: Vec::new(),
         }
     }
 
@@ -1635,6 +1684,8 @@ mod snap_action_tests {
             stale: Some(vec![
                 "Snapped as Bicycle - would now snap as Auto".to_owned(),
             ]),
+            partial: false,
+            warnings: Vec::new(),
         }
     }
 

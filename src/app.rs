@@ -1020,6 +1020,8 @@ impl App {
                                     confidence_score: run.result.confidence_score,
                                     shown: !self.hidden_snapped.contains(&track_ref),
                                     stale: (!reasons.is_empty()).then_some(reasons),
+                                    partial: run.result.partial,
+                                    warnings: run.warnings.iter().map(snap::warning_line).collect(),
                                 }
                             }
                             None => continue,

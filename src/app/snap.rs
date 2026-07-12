@@ -126,13 +126,9 @@ impl SnapCacheKey {
 #[derive(Debug)]
 pub struct SnapRun {
     pub result: SnapResult,
-    /// Collected per run; a user-facing warnings surface is future work
-    /// (the failure summary in [`SnapActivity::Failed`] is derived from
-    /// these at run time).
-    #[expect(
-        dead_code,
-        reason = "no consumer yet - a warnings surface is future work"
-    )]
+    /// Collected per run, shown in the snap status hover via
+    /// [`warning_line`]; a run that produced no result at all instead
+    /// surfaces through [`SnapActivity::Failed`]'s summary.
     pub warnings: Vec<SnapWarning>,
     /// Host of the server the run was sent to, for staleness against the
     /// current server setting.
@@ -167,6 +163,49 @@ impl SnapRun {
             server_host,
             segments_merc: Arc::new(segments_merc),
         }
+    }
+}
+
+/// One [`SnapWarning`] as the snap status hover shows it.
+///
+/// Lives app-side so the panel needs no gt-snap dependency; chunk indices
+/// are shown 1-based, matching the progress display ("completed 2 of 5").
+pub fn warning_line(warning: &SnapWarning) -> String {
+    match warning {
+        SnapWarning::ChunkFailed {
+            chunk_index,
+            detail,
+        } => format!(
+            "Chunk {} failed - its points carry no snap data ({detail})",
+            chunk_index + 1
+        ),
+        SnapWarning::PointCountMismatch {
+            chunk_index,
+            sent,
+            received,
+        } => format!(
+            "Chunk {} returned {received} points for {sent} sent - its results were discarded",
+            chunk_index + 1
+        ),
+        SnapWarning::Geometry {
+            chunk_index,
+            detail,
+        } => format!(
+            "Chunk {} contributed no snapped-track geometry ({detail})",
+            chunk_index + 1
+        ),
+        SnapWarning::OsmChangesetMismatch { first, later } => {
+            format!("The map data updated mid-run (OSM changeset {first} to {later})")
+        }
+        SnapWarning::Server {
+            chunk_index,
+            warnings,
+        } => format!(
+            "The server attached {} {} to chunk {}",
+            warnings.len(),
+            gt_fmt::pluralize(warnings.len(), "warning", "warnings"),
+            chunk_index + 1
+        ),
     }
 }
 
@@ -860,5 +899,57 @@ mod tests {
             stale_reasons(&run, effective, current_host.as_deref()),
             expected,
         );
+    }
+
+    /// Every warning variant renders to a hover line carrying its key facts
+    /// (1-based chunk numbers, counts, the failure detail). The table length
+    /// is pinned to the enum so a new variant fails here instead of
+    /// silently shipping without a rendering.
+    #[test]
+    fn warning_lines_cover_every_variant() {
+        use strum::EnumCount;
+
+        let cases = [
+            (
+                SnapWarning::ChunkFailed {
+                    chunk_index: 2,
+                    detail: "HTTP 502".to_owned(),
+                },
+                "Chunk 3 failed - its points carry no snap data (HTTP 502)",
+            ),
+            (
+                SnapWarning::PointCountMismatch {
+                    chunk_index: 0,
+                    sent: 1000,
+                    received: 998,
+                },
+                "Chunk 1 returned 998 points for 1000 sent - its results were discarded",
+            ),
+            (
+                SnapWarning::Geometry {
+                    chunk_index: 1,
+                    detail: "edge 7 carries no shape index range".to_owned(),
+                },
+                "Chunk 2 contributed no snapped-track geometry (edge 7 carries no shape index range)",
+            ),
+            (
+                SnapWarning::OsmChangesetMismatch {
+                    first: 100,
+                    later: 200,
+                },
+                "The map data updated mid-run (OSM changeset 100 to 200)",
+            ),
+            (
+                SnapWarning::Server {
+                    chunk_index: 4,
+                    warnings: vec![serde_json::json!({"code": 1})],
+                },
+                "The server attached 1 warning to chunk 5",
+            ),
+        ];
+        assert_eq!(cases.len(), SnapWarning::COUNT);
+        for (warning, expected) in cases {
+            assert_eq!(warning_line(&warning), expected);
+        }
     }
 }
