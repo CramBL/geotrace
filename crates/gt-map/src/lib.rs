@@ -1621,7 +1621,8 @@ mod snapshot_tests {
 
     use super::*;
     use crate::test_harness::TestHarness;
-    use gt_types::{DataCategory, DisplayMode, FileIdx, PointIdx, TrackIdx, TrackRef};
+    use gt_types::mercator::MercPoint;
+    use gt_types::{DataCategory, DisplayMode, FileIdx, NavPoint, PointIdx, TrackIdx, TrackRef};
     use gt_ui_types::DataPointRef;
 
     fn tpv_ref() -> DataPointRef {
@@ -1897,22 +1898,21 @@ mod snapshot_tests {
         harness.snapshot_loose(name);
     }
 
-    /// Snapshot: dashed translucent snapped-track polylines beside the
-    /// recorded track, with the empty stretch between the two segments
-    /// rendering as a gap (a route discontinuity) - the recorded track
-    /// beneath is never painted over or hidden. Requires `GEOTRACE_OFFLINE=1`
-    /// (set by `just test`) so no map tiles render.
-    #[test]
-    fn snap_snapped_track_polylines() {
+    /// Nudge north (smaller Mercator y) by roughly ten pixels at the
+    /// snapped-track snapshot tests' zoom, so the snapped line reads beside
+    /// the recorded one instead of on top of it.
+    const SNAPPED_OFFSET_MERC_Y: f64 = -1.5e-6;
+
+    /// Snapshot the map with `make_snapshot_file`'s track plus the snapped
+    /// segments `segments_for` derives from its points. Requires
+    /// `GEOTRACE_OFFLINE=1` (set by `just test`) so no map tiles render.
+    fn snapshot_snapped_tracks(
+        name: &str,
+        segments_for: impl Fn(&[NavPoint]) -> Vec<Vec<MercPoint>>,
+    ) {
         use std::sync::Arc;
 
-        use gt_types::mercator::MercPoint;
         use gt_ui_types::{SnappedTracks, TrackDataVisibility};
-
-        /// Nudge north (smaller Mercator y) by roughly ten pixels at the
-        /// test's zoom, so the snapped line reads beside the recorded one
-        /// instead of on top of it.
-        const OFFSET_MERC_Y: f64 = -1.5e-6;
 
         let files = vec![make_snapshot_file()];
         let visibility = TrackDataVisibility::from_loaded(&files);
@@ -1922,21 +1922,10 @@ mod snapshot_tests {
             .and_then(|f| f.tracks.first())
             .map(|t| t.points.clone())
             .unwrap_or_default();
-        let segment = |range: std::ops::Range<usize>| -> Vec<MercPoint> {
-            points
-                .get(range)
-                .unwrap_or_default()
-                .iter()
-                .map(|p| MercPoint {
-                    x: p.merc.x,
-                    y: p.merc.y + OFFSET_MERC_Y,
-                })
-                .collect()
-        };
         let snapped = SnappedTracks {
             segments_by_track: std::collections::HashMap::from([(
                 track_ref,
-                Arc::new(vec![segment(100..400), segment(600..950)]),
+                Arc::new(segments_for(&points)),
             )]),
         };
 
@@ -1968,7 +1957,90 @@ mod snapshot_tests {
         for _ in 0..5 {
             harness.run();
         }
-        harness.snapshot_loose("snapped_track_polylines");
+        harness.snapshot_loose(name);
+    }
+
+    /// A snapped segment following the recorded points in `range`, nudged
+    /// north by [`SNAPPED_OFFSET_MERC_Y`].
+    fn snapped_segment(points: &[NavPoint], range: std::ops::Range<usize>) -> Vec<MercPoint> {
+        points
+            .get(range)
+            .unwrap_or_default()
+            .iter()
+            .map(|p| MercPoint {
+                x: p.merc.x,
+                y: p.merc.y + SNAPPED_OFFSET_MERC_Y,
+            })
+            .collect()
+    }
+
+    /// Snapshot: dashed translucent snapped-track polylines beside the
+    /// recorded track, with the empty stretch between the two segments
+    /// rendering as a gap (a route discontinuity) - the recorded track
+    /// beneath is never painted over or hidden.
+    #[test]
+    fn snap_snapped_track_polylines() {
+        snapshot_snapped_tracks("snapped_track_polylines", |points| {
+            vec![
+                snapped_segment(points, 100..400),
+                snapped_segment(points, 600..950),
+            ]
+        });
+    }
+
+    /// Snapshot: a snapped segment whose tail runs far past the viewport.
+    /// The culling in `SnappedTrackRenderer` must not clip visible geometry:
+    /// the dashed line has to reach the viewport edge exactly, while the
+    /// off-screen stretch generates no dashes at all (partially visible
+    /// segments keep exact endpoints; only provably invisible ones are
+    /// dropped).
+    #[test]
+    fn snap_snapped_track_culled_tail() {
+        /// Mercator step between synthetic tail points, ≈ 5 viewport widths
+        /// beyond the fitted view over 60 points, so most of the tail is
+        /// provably off-screen.
+        const TAIL_STEP_MERC_X: f64 = 2e-5;
+
+        snapshot_snapped_tracks("snapped_track_culled_tail", |points| {
+            let mut segment = snapped_segment(points, 100..400);
+            if let Some(&end) = segment.last() {
+                segment.extend((1..=60).map(|i| MercPoint {
+                    x: end.x + f64::from(i) * TAIL_STEP_MERC_X,
+                    y: end.y,
+                }));
+            }
+            vec![segment]
+        });
+    }
+
+    /// Snapshot: a snapped segment whose on-screen extent packs below one
+    /// pixel draws as a dot instead of vanishing - the `VisiblePath::Dot`
+    /// case, reached when snapped geometry collapses at low zoom. The dot
+    /// sits north of the recorded track's midpoint.
+    #[test]
+    fn snap_snapped_track_collapsed_dot() {
+        /// Mercator spacing of the collapsed cluster's points, ≈ 0.1 px at
+        /// the fitted zoom - far below the sub-pixel merge threshold.
+        const CLUSTER_STEP_MERC_X: f64 = 2e-8;
+
+        /// Extra northward offset so the dot is clearly separate from the
+        /// recorded trackline.
+        const CLUSTER_OFFSET_MERC_Y: f64 = -6e-6;
+
+        snapshot_snapped_tracks("snapped_track_collapsed_dot", |points| {
+            let mid = points.len() / 2;
+            let Some(base) = points.get(mid) else {
+                return vec![];
+            };
+            vec![
+                (0..4)
+                    .map(|i| MercPoint {
+                        x: base.merc.x + f64::from(i) * CLUSTER_STEP_MERC_X,
+                        y: base.merc.y + CLUSTER_OFFSET_MERC_Y,
+                    })
+                    .collect(),
+            ]
+        });
     }
 
     /// Snapshot: match halos along the track, including the single-point
