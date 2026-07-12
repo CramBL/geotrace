@@ -60,7 +60,7 @@ use settings_autosave::{AppSnapshot, SettingsAutosaver};
 use strum::IntoEnumIterator;
 
 use modals::{
-    SnapConsentChoice, show_delete_confirmation, show_load_warnings_dialog,
+    SnapConsentChoice, show_about_dialog, show_delete_confirmation, show_load_warnings_dialog,
     show_mapbox_token_dialog, show_orphaned_event_markers_popup, show_recording_details_dialog,
     show_snap_consent_dialog, show_unassociated_popup,
 };
@@ -179,6 +179,8 @@ pub struct App {
 
     /// Whether the Settings window is currently open.
     settings_open: bool,
+    /// Whether the About dialog is currently open.
+    about_open: bool,
     /// Active segmentation config - applied to all new file loads and re-segmentation.
     processing_config: SegmentationConfig,
     /// Active association config - applied to all new log loads.
@@ -382,6 +384,7 @@ impl App {
             config: SettingsAutosaver::new(AppSnapshot::default()),
             config_path,
             settings_open: false,
+            about_open: false,
             processing_config: SegmentationConfig::default(),
             assoc_config: AssociationConfig::default(),
             history,
@@ -1907,10 +1910,18 @@ impl eframe::App for App {
 
         egui::Panel::top("top_panel").show_inside(ui, |ui| {
             MenuBar::new().ui(ui, |ui| {
-                // Left zone - file actions
-                if ui.button("Open…").clicked() {
-                    self.loader.open_file_dialog();
-                }
+                // Left zone - the File menu
+                ui.menu_button("File", |ui| {
+                    if ui.button("Open…").clicked() {
+                        self.loader.open_file_dialog();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button("About GeoTrace").clicked() {
+                        self.about_open = true;
+                        ui.close();
+                    }
+                });
 
                 // Right zone - utility windows and preferences, trailing-aligned
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2238,6 +2249,8 @@ impl eframe::App for App {
         if self.map.layer() == MapLayer::Satellite && !self.map.has_mapbox_token() {
             show_mapbox_token_dialog(ui, &mut self.map, &mut self.mapbox_token_input);
         }
+
+        show_about_dialog(ui, &mut self.about_open);
 
         if self.snap_consent_prompt {
             match show_snap_consent_dialog(ui, &self.snap_settings.server_url) {

@@ -240,6 +240,12 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **stage** | One step of a query pipeline, separated by `\|`: the source (`points`), `with`, `window`, `where`, `draw`, `table`. | parser stage methods in `gt-query` |
 | **match** | A maximal stretch of consecutive points satisfying a query, drawn on the map as a halo. Not "trace" (TPV trace), "span" (renderer), or "segment" (track building). | `QueryMatches`, `TrackMatches`, `match_at` |
 | **query history** | The remembered list of previously run queries. Always written in full - bare "history" means the recording-history database (`gt-history`). | `QueryHistoryEntry`, `QuerySettings::history` |
+| **snap** / **snap to road** | Matching a track against the OpenStreetMap road network (Valhalla map matching), and the act of requesting it for one track. Not "match" (query matches) or "trace" (TPV traces). | `gt-snap`, `SnapScheduler`, `SnapResult` |
+| **snapped track** | The matched road geometry drawn on the map alongside the recorded track. Not "ghost track" - a ghost is a heading-less nav point. | `SnappedTracks`, `SnappedTrackSegment` |
+| **snap error** | Distance in meters from a recorded point to its snapped position. | `MetricKind::SnapError`, `SnapErrorSeries` |
+| **snapped / interpolated / unsnapped** | Per-point match kind, mirroring Valhalla's `matched` / `interpolated` / `unmatched` wire names. | `SnapPointKind`, `SnapErrorKind`, `SnapKindCounts` |
+| **discontinuity** | A stretch Valhalla could not connect through the road network; rendered as a gap in the snapped track. | `begin_route_discontinuity`, `snapped_track::point_groups` |
+| **travel mode** | Optional `.gtd` metadata declaring the recording platform (car, bicycle, boat, ...). Declared by the recorder via the SDKs; the app derives the default snap costing from it. | `TravelMode`, `meta_travel_mode`, `resolve_costing` |
 
 Terms to avoid and their replacements:
 
