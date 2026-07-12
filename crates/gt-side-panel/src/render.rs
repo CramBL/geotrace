@@ -79,9 +79,9 @@ pub enum SnapRowView {
         /// Whether the snapped track is currently drawn on the map.
         shown: bool,
         /// `Some` when the run is stale - produced under parameters or a
-        /// server that differ from the current settings. The lines name
-        /// each difference; the row offers a re-run. `None` = current.
-        stale: Option<String>,
+        /// server that differ from the current settings. Each entry names
+        /// one difference; the row offers a re-run. `None` = current.
+        stale: Option<Vec<String>>,
     },
 }
 
@@ -471,7 +471,10 @@ fn snap_action(row: &SnapRowView, snap: SnapPanelView<'_>) -> Option<SnapAction>
             ..
         } => SnapAction {
             enabled: true,
-            hover: format!("{reasons}\nClick to snap again with the current settings."),
+            hover: format!(
+                "{}\nClick to snap again with the current settings.",
+                reasons.join("\n")
+            ),
             consent_pending: snap.consent_pending,
         },
         SnapRowView::Queued => SnapAction {
@@ -590,7 +593,7 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
                 snap_status_rows(ui, snapped, interpolated, unsnapped, confidence_score);
                 if let Some(reasons) = &stale {
                     ui.label(
-                        RichText::new(format!("Stale - {}", stale_hover_line(reasons)))
+                        RichText::new(format!("Stale - {}", reasons.join(", ")))
                             .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
                     );
                 }
@@ -626,11 +629,6 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
     if button.clicked() {
         *ctx.snap_request = Some(track_ref);
     }
-}
-
-/// The stale reasons flattened into one hover line ("a - b, c - d").
-fn stale_hover_line(reasons: &str) -> String {
-    reasons.lines().collect::<Vec<_>>().join(", ")
 }
 
 /// The context-menu counterpart of [`snap_control`]: same action state, text
@@ -1634,7 +1632,9 @@ mod snap_action_tests {
             unsnapped: 3,
             confidence_score: None,
             shown: true,
-            stale: Some("Snapped as Bicycle - would now snap as Auto".to_owned()),
+            stale: Some(vec![
+                "Snapped as Bicycle - would now snap as Auto".to_owned(),
+            ]),
         }
     }
 

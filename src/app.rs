@@ -1019,7 +1019,7 @@ impl App {
                                     unsnapped: run.result.kind_counts.unsnapped,
                                     confidence_score: run.result.confidence_score,
                                     shown: !self.hidden_snapped.contains(&track_ref),
-                                    stale: (!reasons.is_empty()).then(|| reasons.join("\n")),
+                                    stale: (!reasons.is_empty()).then_some(reasons),
                                 }
                             }
                             None => continue,

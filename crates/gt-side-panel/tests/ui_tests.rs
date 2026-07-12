@@ -233,7 +233,9 @@ fn stale_row() -> SnapRowView {
         unsnapped: 12,
         confidence_score: Some(0.87),
         shown: true,
-        stale: Some("Snapped as Bicycle - would now snap as Auto".to_owned()),
+        stale: Some(vec![
+            "Snapped as Bicycle - would now snap as Auto".to_owned(),
+        ]),
     }
 }
 
