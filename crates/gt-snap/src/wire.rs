@@ -270,7 +270,12 @@ where
 }
 
 /// Valhalla's road classification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumCount, Deserialize)]
+///
+/// `Serialize` exists for persisting cached snap results, not for requests.
+/// [`Unknown`](Self::Unknown) serializes as `"unknown"`, which the
+/// `#[serde(other)]` catch-all folds back into `Unknown` on decode, so
+/// roundtrips are stable even for classes this client does not model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumCount, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RoadClass {
     Motorway,
@@ -287,7 +292,10 @@ pub enum RoadClass {
 }
 
 /// Valhalla's surface classification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumCount, Deserialize)]
+///
+/// `Serialize` exists for persisting cached snap results; the `Unknown`
+/// roundtrip works like [`RoadClass`]'s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumCount, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Surface {
     PavedSmooth,
@@ -304,7 +312,9 @@ pub enum Surface {
 }
 
 /// One matched edge, trimmed to the requested attribute subset.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+///
+/// `Serialize` exists for persisting cached snap results, not for requests.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Edge {
     #[serde(default)]
     pub names: Vec<String>,

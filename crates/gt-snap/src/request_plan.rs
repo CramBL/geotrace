@@ -68,17 +68,24 @@ pub const TURN_PENALTY_FACTOR_RANGE: RangeInclusive<f64> = 0.0..=100_000.0;
 /// built ([`SnapParams::trace_options`]): the server rejects out-of-range
 /// trace options (400, error 158) instead of clamping, so no code path may
 /// send unbounded values.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// Serde derives exist for persisting a run's parameters with its cached
+/// result; the options default so parameters added later decode absent
+/// from older stored results.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SnapParams {
     pub costing: Costing,
     /// Meters around each input point searched for candidate road edges,
     /// bounded by [`SEARCH_RADIUS_RANGE_M`].
+    #[serde(default)]
     pub search_radius_m: Option<f64>,
     /// Cost multiplier penalizing route reversals, bounded by
     /// [`TURN_PENALTY_FACTOR_RANGE`].
+    #[serde(default)]
     pub turn_penalty_factor: Option<f64>,
     /// Expected GNSS accuracy in meters, replacing the eph-derived value;
     /// bounded by [`GPS_ACCURACY_OVERRIDE_RANGE_M`].
+    #[serde(default)]
     pub gps_accuracy_override_m: Option<f64>,
 }
 

@@ -59,7 +59,13 @@ impl fmt::Display for TrackIdx {
 }
 
 /// Typed wrapper for a point index into `loaded_files[fi].tracks[ti].points[pi]`.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+///
+/// Serializes as the bare index (`transparent`): point indices appear in
+/// persisted snap results, where a wrapper object would only add noise.
+#[derive(
+    Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
 pub struct PointIdx(usize);
 
 impl PointIdx {

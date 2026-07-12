@@ -14,6 +14,8 @@
 
 use std::ops::Range;
 
+use serde::{Deserialize, Serialize};
+
 use crate::wire::{SnapPointKind, SnappedPoint, TraceAttributesResponse};
 
 /// Precision of the wire's encoded shape polylines: 6 decimal digits
@@ -26,7 +28,10 @@ pub const SHAPE_POLYLINE_PRECISION: u32 = 6;
 /// Deliberately a named-field struct rather than a tuple or `geo` type: the
 /// polyline decoder speaks x/y, and lat/lon transpositions are exactly the
 /// bug class named fields prevent.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// Serde derives exist for persisting cached snap results (see
+/// [`crate::stitch::SnapResult`]).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Position {
     pub lat: f64,
     pub lon: f64,
@@ -34,7 +39,8 @@ pub struct Position {
 
 /// A maximal unbroken stretch of the snapped track, ready to draw as one
 /// polyline. Breaks between segments render as gaps.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct SnappedTrackSegment {
     pub positions: Vec<Position>,
 }
