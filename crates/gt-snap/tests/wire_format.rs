@@ -23,6 +23,7 @@ use gt_snap::{DEFAULT_SERVER_URL, FIXTURE_SCENARIOS, fixtures_dir, server_host};
 /// The fixture scenarios whose response is a successful match.
 const SUCCESS_SCENARIOS: &[&str] = &[
     "clean_drive",
+    "clean_drive_tuned",
     "clean_drive_unfiltered",
     "dense_10hz",
     "partially_snappable",
@@ -30,7 +31,12 @@ const SUCCESS_SCENARIOS: &[&str] = &[
 ];
 
 /// The fixture scenarios whose response is a Valhalla JSON error.
-const ERROR_SCENARIOS: &[&str] = &["bad_request", "oversized", "unsnappable"];
+const ERROR_SCENARIOS: &[&str] = &[
+    "bad_request",
+    "option_out_of_bounds",
+    "oversized",
+    "unsnappable",
+];
 
 /// The fixture scenarios whose response is not JSON at all (rejected by the
 /// reverse proxy before Valhalla sees them).
@@ -186,21 +192,31 @@ fn bad_request_fixture_is_not_a_valid_typed_request() {
         .expect_err("a request without a shape must not be expressible");
 }
 
-/// The `trace_options` payload shape: present accuracy serializes under
-/// Valhalla's field name, absent accuracy serializes to nothing (which is
-/// why the captured fixture requests - all without trace_options - still
-/// roundtrip unchanged).
+/// The `trace_options` payload shape: each present option serializes under
+/// Valhalla's field name, absent options serialize to nothing (which is why
+/// captured fixture requests without trace_options still roundtrip
+/// unchanged).
 #[test]
-fn trace_options_serialize_gps_accuracy_only_when_present() {
-    let with = TraceOptions {
+fn trace_options_serialize_only_present_options() {
+    let all = TraceOptions {
         gps_accuracy: Some(12.5),
+        search_radius: Some(25.0),
+        turn_penalty_factor: Some(300.0),
     };
     assert_eq!(
-        serde_json::to_value(with).expect("serialize"),
-        json!({ "gps_accuracy": 12.5 })
+        serde_json::to_value(all).expect("serialize"),
+        json!({
+            "gps_accuracy": 12.5,
+            "search_radius": 25.0,
+            "turn_penalty_factor": 300.0,
+        })
     );
-    let without = TraceOptions { gps_accuracy: None };
-    assert_eq!(serde_json::to_value(without).expect("serialize"), json!({}));
+    let none = TraceOptions {
+        gps_accuracy: None,
+        search_radius: None,
+        turn_penalty_factor: None,
+    };
+    assert_eq!(serde_json::to_value(none).expect("serialize"), json!({}));
 }
 
 /// No live exemplar of a `warnings` array exists (out-of-range options

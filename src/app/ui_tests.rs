@@ -2464,8 +2464,8 @@ fn inject_completed_run(harness: &mut Harness<'_, App>, track: gt_types::TrackRe
         kind_counts: gt_snap::stitch::SnapKindCounts::default(),
         confidence_score: None,
         osm_changeset: None,
-        costing: Costing::Auto,
-        gps_accuracy_m: None,
+        params: gt_snap::request_plan::SnapParams::new(Costing::Auto),
+        gps_accuracy_sent_m: None,
         partial: false,
     };
     let key = {

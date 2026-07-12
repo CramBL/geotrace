@@ -8,6 +8,10 @@ expression: statuses
         200,
     ),
     (
+        "clean_drive_tuned",
+        200,
+    ),
+    (
         "clean_drive_unfiltered",
         200,
     ),
@@ -29,6 +33,10 @@ expression: statuses
     ),
     (
         "bad_request",
+        400,
+    ),
+    (
+        "option_out_of_bounds",
         400,
     ),
     (

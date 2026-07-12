@@ -8,10 +8,16 @@ use serde_json::{Value, json};
 use support::points;
 
 use gt_snap::fixtures_dir;
-use gt_snap::request_plan::{self, CHUNK_POINTS, RequestPlan};
+use gt_snap::request_plan::{self, CHUNK_POINTS, RequestPlan, SnapParams};
 use gt_snap::snapped_track::SHAPE_POLYLINE_PRECISION;
 use gt_snap::stitch::{self, ChunkOutcome, SnapWarning, SnapWarningReporter};
 use gt_snap::wire::{Costing, SnapPointKind, TraceAttributesResponse};
+
+/// The params every scenario in this file stitches with: default advanced
+/// options, auto costing.
+fn auto_params() -> SnapParams {
+    SnapParams::new(Costing::Auto)
+}
 
 /// A synthetic success response with `count` matched points, every one
 /// `kind`, all errors `error_m`, no shape (geometry is exercised separately
@@ -76,7 +82,7 @@ fn single_fixture_chunk_stitches_into_result() {
     let reporter = SnapWarningReporter::default();
     let result = stitch::stitch(
         &plan,
-        Costing::Auto,
+        auto_params(),
         &[ChunkOutcome::Success(response)],
         &reporter,
     );
@@ -103,7 +109,7 @@ fn owned_ranges_select_results_across_chunks() {
         uniform_response(sizes[1], SnapPointKind::Interpolated, 2.0).expect("outcome"),
     ];
     let reporter = SnapWarningReporter::default();
-    let result = stitch::stitch(&plan, Costing::Auto, &outcomes, &reporter);
+    let result = stitch::stitch(&plan, auto_params(), &outcomes, &reporter);
 
     assert_eq!(result.points.len(), plan.sent_point_count());
     // Every point appears exactly once, ascending by track index.
@@ -136,7 +142,7 @@ fn off_network_chunk_becomes_unsnapped_points() {
         ChunkOutcome::OffNetwork,
     ];
     let reporter = SnapWarningReporter::default();
-    let result = stitch::stitch(&plan, Costing::Auto, &outcomes, &reporter);
+    let result = stitch::stitch(&plan, auto_params(), &outcomes, &reporter);
 
     assert!(reporter.is_empty(), "off-network is not a failure");
     assert!(!result.partial);
@@ -161,7 +167,7 @@ fn failed_chunk_leaves_gap_and_marks_partial() {
         uniform_response(sizes[1], SnapPointKind::Snapped, 1.0).expect("outcome"),
     ];
     let reporter = SnapWarningReporter::default();
-    let result = stitch::stitch(&plan, Costing::Auto, &outcomes, &reporter);
+    let result = stitch::stitch(&plan, auto_params(), &outcomes, &reporter);
 
     assert!(result.partial);
     assert_eq!(result.points.len(), plan.chunks[1].owned.len());
@@ -194,7 +200,7 @@ fn point_count_mismatch_fails_the_chunk() {
         uniform_response(sizes[1], SnapPointKind::Snapped, 1.0).expect("outcome"),
     ];
     let reporter = SnapWarningReporter::default();
-    let result = stitch::stitch(&plan, Costing::Auto, &outcomes, &reporter);
+    let result = stitch::stitch(&plan, auto_params(), &outcomes, &reporter);
 
     assert!(result.partial);
     assert_eq!(
@@ -226,7 +232,7 @@ fn confidence_takes_the_minimum_and_changeset_mismatch_warns() {
     let reporter = SnapWarningReporter::default();
     let result = stitch::stitch(
         &plan,
-        Costing::Auto,
+        auto_params(),
         &[make(sizes[0], 0.9, 100), make(sizes[1], 0.4, 200)],
         &reporter,
     );
@@ -253,7 +259,7 @@ fn server_warnings_are_passed_through() {
     let reporter = SnapWarningReporter::default();
     stitch::stitch(
         &plan,
-        Costing::Auto,
+        auto_params(),
         &[ChunkOutcome::Success(response)],
         &reporter,
     );
@@ -275,7 +281,7 @@ fn edge_references_survive_cross_chunk_concatenation() {
         uniform_response(sizes[1], SnapPointKind::Snapped, 1.0).expect("outcome"),
     ];
     let reporter = SnapWarningReporter::default();
-    let result = stitch::stitch(&plan, Costing::Auto, &outcomes, &reporter);
+    let result = stitch::stitch(&plan, auto_params(), &outcomes, &reporter);
 
     // Each chunk contributed one edge; points of the second chunk must
     // reference the second edge, not the first.
@@ -291,7 +297,7 @@ fn edge_references_survive_cross_chunk_concatenation() {
 fn outcome_count_mismatch_is_a_bug() {
     let plan = two_chunk_plan();
     let reporter = SnapWarningReporter::default();
-    stitch::stitch(&plan, Costing::Auto, &[], &reporter);
+    stitch::stitch(&plan, auto_params(), &[], &reporter);
 }
 
 /// A success response carrying real geometry: `count` matched points all on
@@ -343,7 +349,7 @@ fn continuous_chunks_join_into_one_segment() {
         shaped_response(sizes[1]).expect("outcome"),
     ];
     let reporter = SnapWarningReporter::default();
-    let result = stitch::stitch(&plan, Costing::Auto, &outcomes, &reporter);
+    let result = stitch::stitch(&plan, auto_params(), &outcomes, &reporter);
 
     assert!(reporter.is_empty());
     // Both boundary points are snappable, so the cut mid-road is bridged:
@@ -361,7 +367,7 @@ fn off_network_boundary_keeps_segments_split() {
         ChunkOutcome::OffNetwork,
     ];
     let reporter = SnapWarningReporter::default();
-    let result = stitch::stitch(&plan, Costing::Auto, &outcomes, &reporter);
+    let result = stitch::stitch(&plan, auto_params(), &outcomes, &reporter);
 
     // Chunk 0 contributes its segment; chunk 1 contributes none. Nothing
     // was joined and nothing lost.
@@ -380,7 +386,7 @@ fn geometry_error_reports_warning_and_never_welds_across() {
         shaped_response(sizes[2]).expect("outcome"),
     ];
     let reporter = SnapWarningReporter::default();
-    let result = stitch::stitch(&plan, Costing::Auto, &outcomes, &reporter);
+    let result = stitch::stitch(&plan, auto_params(), &outcomes, &reporter);
 
     // The middle chunk's geometry failed: one Geometry warning, its points
     // still present and kinded, and the third chunk must NOT weld onto the
@@ -407,7 +413,7 @@ fn shapeless_previous_chunk_loses_no_geometry() {
         shaped_response(sizes[1]).expect("outcome"),
     ];
     let reporter = SnapWarningReporter::default();
-    let result = stitch::stitch(&plan, Costing::Auto, &outcomes, &reporter);
+    let result = stitch::stitch(&plan, auto_params(), &outcomes, &reporter);
 
     // The second chunk's leading segment survives intact: nothing to join
     // onto must never consume (and drop) it.

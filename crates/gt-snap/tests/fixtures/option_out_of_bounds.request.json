@@ -1,0 +1,40 @@
+{
+  "costing": "auto",
+  "filters": {
+    "action": "include",
+    "attributes": [
+      "matched.point",
+      "matched.type",
+      "matched.edge_index",
+      "matched.distance_along_edge",
+      "matched.distance_from_trace_point",
+      "matched.begin_route_discontinuity",
+      "matched.end_route_discontinuity",
+      "shape",
+      "osm_changeset",
+      "confidence_score",
+      "edge.names",
+      "edge.way_id",
+      "edge.road_class",
+      "edge.speed_limit",
+      "edge.surface",
+      "edge.begin_shape_index",
+      "edge.end_shape_index"
+    ]
+  },
+  "shape": [
+    {
+      "lat": 55.67871,
+      "lon": 12.56449,
+      "time": 1767268800
+    },
+    {
+      "lat": 55.6718,
+      "lon": 12.57522,
+      "time": 1767268801
+    }
+  ],
+  "trace_options": {
+    "search_radius": 101.0
+  }
+}

@@ -55,12 +55,14 @@ pub fn server_host(url: &str) -> Option<String> {
 /// the client must handle; the capture harness builds the matching requests.
 pub const FIXTURE_SCENARIOS: &[&str] = &[
     "clean_drive",
+    "clean_drive_tuned",
     "clean_drive_unfiltered",
     "dense_10hz",
     "partially_snappable",
     "unsnappable",
     "teleport_gap",
     "bad_request",
+    "option_out_of_bounds",
     "oversized",
     "too_large_body",
 ];

@@ -20,11 +20,9 @@ use std::time::Instant;
 
 use parking_lot::Mutex;
 
-use crate::request_plan::RequestPlan;
+use crate::request_plan::{RequestPlan, SnapParams};
 use crate::stitch::ChunkOutcome;
-use crate::wire::{
-    Costing, ErrorCode, ErrorResponse, TraceAttributesRequest, TraceAttributesResponse,
-};
+use crate::wire::{ErrorCode, ErrorResponse, TraceAttributesRequest, TraceAttributesResponse};
 use crate::{CLIENT_ID_HEADER, REQUEST_INTERVAL, TRACE_ATTRIBUTES_PATH};
 
 /// Retries per failed chunk send (transient failures only).
@@ -124,13 +122,13 @@ impl Transport for HttpTransport {
 pub fn send_plan<T: Transport>(
     transport: &T,
     plan: &RequestPlan,
-    costing: Costing,
+    params: &SnapParams,
     mut progress: impl FnMut(usize, usize),
 ) -> Vec<ChunkOutcome> {
     let total = plan.chunks.len();
     let mut outcomes = Vec::with_capacity(total);
     for (index, chunk) in plan.chunks.iter().enumerate() {
-        let request = chunk.request(costing, plan.gps_accuracy_m);
+        let request = chunk.request(params, plan.gps_accuracy_m);
         outcomes.push(send_chunk(transport, &request));
         progress(index + 1, total);
     }

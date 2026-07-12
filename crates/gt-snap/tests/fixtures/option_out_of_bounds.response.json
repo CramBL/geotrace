@@ -1,0 +1,6 @@
+{
+  "error": "Input trace option is out of bounds",
+  "error_code": 158,
+  "status": "Bad Request",
+  "status_code": 400
+}

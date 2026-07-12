@@ -136,17 +136,24 @@ impl AttributeFilter {
 
 /// The `trace_options` tuning parameters this client sets.
 ///
-/// Only `gps_accuracy` is modeled for now (derived from the track's eph, see
-/// `request_plan`); search radius and turn penalty stay server-default until
-/// advanced settings expose them. Captured reality: out-of-range values are
-/// rejected (400, code 158), not clamped, so senders must bound values
-/// client-side.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// Captured reality: out-of-range values are rejected (400, code 158), not
+/// clamped, so senders must bound values client-side - production requests
+/// are built through `request_plan::SnapParams`, which clamps to the
+/// empirically pinned ranges (the `option_out_of_bounds` fixture is the
+/// rejection exemplar).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct TraceOptions {
     /// Expected GNSS accuracy in meters; tells the matcher how far off-road
     /// a point may plausibly lie.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gps_accuracy: Option<f64>,
+    /// Meters around each input point searched for candidate road edges.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_radius: Option<f64>,
+    /// Cost multiplier penalizing route reversals; raising it smooths
+    /// wandering matches at intersections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_penalty_factor: Option<f64>,
 }
 
 /// A `trace_attributes` request body.

@@ -71,9 +71,10 @@ gen-fixture:
 
 # Refresh the gt-snap live-API fixtures from the Valhalla server (network!).
 # Fixtures are frozen once committed - review the resulting diff like code.
+# Name scenarios to capture only those (additive); no args captures all.
 [group("native")]
-snap-fixtures:
-    cargo run -p gt-snap --example fetch_fixtures
+snap-fixtures *SCENARIOS:
+    cargo run -p gt-snap --example fetch_fixtures -- {{ SCENARIOS }}
 
 # Run the gt-snap live-API smoke test against the real Valhalla server
 # (network!) - the on-demand drift check for the API boundary.

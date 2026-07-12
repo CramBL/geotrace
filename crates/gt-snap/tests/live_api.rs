@@ -15,7 +15,7 @@ mod support;
 use support::base_time;
 
 use gt_snap::DEFAULT_SERVER_URL;
-use gt_snap::request_plan;
+use gt_snap::request_plan::{self, SnapParams};
 use gt_snap::stitch::{self, ChunkOutcome, SnapWarningReporter};
 use gt_snap::transport::{self, HttpTransport};
 use gt_snap::wire::Costing;
@@ -53,7 +53,12 @@ fn full_pipeline_against_live_server() {
     assert_eq!(plan.chunks.len(), 1);
 
     let transport = HttpTransport::new(DEFAULT_SERVER_URL).expect("transport builds");
-    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |_, _| {});
+    let outcomes = transport::send_plan(
+        &transport,
+        &plan,
+        &SnapParams::new(Costing::Auto),
+        |_, _| {},
+    );
     assert_eq!(outcomes.len(), 1);
     assert!(
         matches!(outcomes.first(), Some(ChunkOutcome::Success(_))),
@@ -61,7 +66,7 @@ fn full_pipeline_against_live_server() {
     );
 
     let reporter = SnapWarningReporter::default();
-    let result = stitch::stitch(&plan, Costing::Auto, &outcomes, &reporter);
+    let result = stitch::stitch(&plan, SnapParams::new(Costing::Auto), &outcomes, &reporter);
 
     // Structural invariants, not values.
     assert_eq!(result.points.len(), plan.sent_point_count());
