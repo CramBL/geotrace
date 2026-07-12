@@ -2416,6 +2416,88 @@ fn snap_request_parked_on_consent_is_dropped_on_decline() {
     );
 }
 
+/// Inject a completed run with one snapped segment for `track` straight into
+/// the scheduler cache, keyed the way `snapped_tracks_view` will look it up.
+fn inject_completed_run(harness: &mut Harness<'_, App>, track: gt_types::TrackRef) {
+    use crate::app::snap::{SnapCacheKey, SnapRun};
+    use gt_snap::snapped_track::{Position, SnappedTrackSegment};
+    use gt_snap::stitch::SnapResult;
+    use gt_snap::wire::Costing;
+
+    let result = SnapResult {
+        points: Vec::new(),
+        segments: vec![SnappedTrackSegment {
+            positions: vec![
+                Position {
+                    lat: 55.68,
+                    lon: 12.56,
+                },
+                Position {
+                    lat: 55.69,
+                    lon: 12.57,
+                },
+            ],
+        }],
+        edges: Vec::new(),
+        kind_counts: gt_snap::stitch::SnapKindCounts::default(),
+        confidence_score: None,
+        osm_changeset: None,
+        costing: Costing::Auto,
+        gps_accuracy_m: None,
+        partial: false,
+    };
+    let key = {
+        let state = harness.state();
+        let shared = state.shared.borrow();
+        let loaded_track = track
+            .resolve(shared.loaded_files.files())
+            .expect("track just pushed");
+        SnapCacheKey::new(loaded_track, Costing::Auto)
+    };
+    harness
+        .state_mut()
+        .snap
+        .insert_run(key, SnapRun::new(result, Vec::new()));
+}
+
+/// The map's snapped-track geometry follows the completed run's toggle and
+/// the track's tree visibility - hidden either way means no entry.
+#[test]
+fn snapped_tracks_view_respects_toggle_and_tree_visibility() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
+    inject_completed_run(&mut harness, track);
+
+    let view = harness.state().snapped_tracks_view();
+    let segments = view
+        .segments_by_track
+        .get(&track)
+        .expect("a shown completed run must reach the map");
+    assert_eq!(segments.len(), 1, "one snapped segment was injected");
+    assert_eq!(
+        segments.first().map(Vec::len),
+        Some(2),
+        "both positions must be projected"
+    );
+
+    // Toggled hidden: gone from the map view.
+    harness.state_mut().hidden_snapped.insert(track);
+    assert!(harness.state().snapped_tracks_view().is_empty());
+    harness.state_mut().hidden_snapped.remove(&track);
+
+    // Track unchecked in the tree: gone as well.
+    harness
+        .state()
+        .shared
+        .borrow_mut()
+        .tree
+        .toggle_track_check(track);
+    assert!(harness.state().snapped_tracks_view().is_empty());
+}
+
 #[test]
 fn snapshot_recording_details_dialog() {
     let (mut harness, _config_path) = TestHarness::builder()

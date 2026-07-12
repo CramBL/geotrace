@@ -38,6 +38,7 @@ struct State {
     snap_offline: bool,
     snap_consent_pending: bool,
     snap_request: Option<TrackRef>,
+    snap_visibility_request: Option<TrackRef>,
 }
 
 fn make_state(file_count: usize) -> State {
@@ -91,39 +92,43 @@ fn make_state_with_warnings_on(
         snap_offline: false,
         snap_consent_pending: false,
         snap_request: None,
+        snap_visibility_request: None,
     }
 }
 
 fn make_harness(state: State) -> TestHarness<'static, State> {
-    TestHarness::builder()
-        .size(egui::vec2(280.0, 600.0))
-        .ui_state(
-            |ui, s: &mut State| {
-                let mut ctx = PanelContext {
-                    loaded_files: s.files.view(),
-                    tree: &mut s.tree,
-                    highlight: &mut s.highlight,
-                    filter: &mut s.filter,
-                    filter_state: &mut s.filter_state,
-                    map_center_request: &mut s.map_center,
-                    popup_pos_request: &mut s.popup_pos,
-                    zoom_to_visible_request: &mut s.zoom_to_visible,
-                    warnings_request: &mut s.warnings_request,
-                    clear_query_request: &mut s.clear_query_request,
-                    display_mask: s.display_mask,
-                    recording_name_template: &s.recording_name_template,
-                    metadata_request: &mut s.metadata_request,
-                    snap: SnapPanelView {
-                        offline: s.snap_offline,
-                        consent_pending: s.snap_consent_pending,
-                        rows: &s.snap_rows,
-                    },
-                    snap_request: &mut s.snap_request,
-                };
-                show_side_panel(ui, &mut ctx);
-            },
-            state,
-        )
+    make_harness_sized(state, egui::vec2(280.0, 600.0))
+}
+
+fn make_harness_sized(state: State, size: egui::Vec2) -> TestHarness<'static, State> {
+    TestHarness::builder().size(size).ui_state(
+        |ui, s: &mut State| {
+            let mut ctx = PanelContext {
+                loaded_files: s.files.view(),
+                tree: &mut s.tree,
+                highlight: &mut s.highlight,
+                filter: &mut s.filter,
+                filter_state: &mut s.filter_state,
+                map_center_request: &mut s.map_center,
+                popup_pos_request: &mut s.popup_pos,
+                zoom_to_visible_request: &mut s.zoom_to_visible,
+                warnings_request: &mut s.warnings_request,
+                clear_query_request: &mut s.clear_query_request,
+                display_mask: s.display_mask,
+                recording_name_template: &s.recording_name_template,
+                metadata_request: &mut s.metadata_request,
+                snap: SnapPanelView {
+                    offline: s.snap_offline,
+                    consent_pending: s.snap_consent_pending,
+                    rows: &s.snap_rows,
+                },
+                snap_request: &mut s.snap_request,
+                snap_visibility_request: &mut s.snap_visibility_request,
+            };
+            show_side_panel(ui, &mut ctx);
+        },
+        state,
+    )
 }
 
 #[test]
@@ -171,9 +176,9 @@ fn snapshot_masked_categories_show_hint() {
 /// rule), failed (amber retry), and done (weak status glyph).
 #[test]
 fn snapshot_snap_trigger_states() {
-    let mut state = make_state(6);
+    let mut state = make_state(7);
     let track = |i: usize| TrackRef::new(FileIdx::new(i), TrackIdx::new(0));
-    for i in 0..6 {
+    for i in 0..7 {
         state.tree.toggle_expand_file(FileIdx::new(i));
     }
     // File 0 stays idle: no entry.
@@ -204,9 +209,23 @@ fn snapshot_snap_trigger_states() {
             interpolated: 340,
             unsnapped: 12,
             confidence_score: Some(0.87),
+            shown: true,
         },
     );
-    let mut harness = make_harness(state);
+    // A completed run whose snapped track is toggled hidden: the status
+    // glyph dims further.
+    state.snap_rows.insert(
+        track(6),
+        SnapRowView::Done {
+            snapped: 120,
+            interpolated: 340,
+            unsnapped: 12,
+            confidence_score: Some(0.87),
+            shown: false,
+        },
+    );
+    // Taller than the default harness: seven expanded files must all fit.
+    let mut harness = make_harness_sized(state, egui::vec2(280.0, 720.0));
     harness.run();
     harness.snapshot("side_panel_snap_states");
 }
@@ -280,6 +299,68 @@ fn disabled_snap_trigger_does_not_request() {
     harness.run();
 
     assert_eq!(harness.state().snap_request, None);
+}
+
+/// Clicking a completed run's status glyph requests the snapped-track
+/// visibility toggle (and not a snap run).
+#[test]
+fn clicking_done_glyph_requests_visibility_toggle() {
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    state.snap_rows.insert(
+        track,
+        SnapRowView::Done {
+            snapped: 10,
+            interpolated: 20,
+            unsnapped: 0,
+            confidence_score: None,
+            shown: true,
+        },
+    );
+    let mut harness = make_harness(state);
+    harness.run();
+
+    harness.inner.get_by_label(ICON_PATH).click();
+    harness.run();
+
+    assert_eq!(harness.state().snap_visibility_request, Some(track));
+    assert_eq!(
+        harness.state().snap_request,
+        None,
+        "the status glyph must not queue a snap run"
+    );
+}
+
+/// The context menu's snapped-track entry mirrors the status glyph: it
+/// requests the visibility toggle for the right-clicked track.
+#[test]
+fn context_menu_toggles_snapped_track_visibility() {
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    state.snap_rows.insert(
+        track,
+        SnapRowView::Done {
+            snapped: 10,
+            interpolated: 20,
+            unsnapped: 0,
+            confidence_score: None,
+            shown: true,
+        },
+    );
+    let mut harness = make_harness(state);
+    harness.run();
+
+    harness
+        .inner
+        .get_by_label_contains("#1  4.6 km")
+        .click_secondary();
+    harness.run();
+    harness.inner.get_by_label("Hide snapped track").click();
+    harness.run();
+
+    assert_eq!(harness.state().snap_visibility_request, Some(track));
 }
 
 #[test]
@@ -396,6 +477,7 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
         snap_offline: false,
         snap_consent_pending: false,
         snap_request: None,
+        snap_visibility_request: None,
     };
     // Renders the expanded track row, exercising the `fix_stats == None` fallback
     // ("No satellite data") instead of the colored tooltip.
@@ -518,6 +600,7 @@ fn snapshot_track_channels() {
         snap_offline: false,
         snap_consent_pending: false,
         snap_request: None,
+        snap_visibility_request: None,
     };
     let mut harness = make_harness(state);
     harness.run();
@@ -568,6 +651,7 @@ fn make_state_with_shared_prefix() -> State {
         snap_offline: false,
         snap_consent_pending: false,
         snap_request: None,
+        snap_visibility_request: None,
     }
 }
 
@@ -615,6 +699,7 @@ fn make_state_with_long_name() -> State {
         snap_offline: false,
         snap_consent_pending: false,
         snap_request: None,
+        snap_visibility_request: None,
     }
 }
 
@@ -681,6 +766,7 @@ fn make_state_with_metadata() -> State {
         snap_offline: false,
         snap_consent_pending: false,
         snap_request: None,
+        snap_visibility_request: None,
     }
 }
 
@@ -774,6 +860,7 @@ fn clicking_note_icon_requests_recording_details() {
         snap_offline: false,
         snap_consent_pending: false,
         snap_request: None,
+        snap_visibility_request: None,
     };
     let mut harness = make_harness(state);
     harness.run();
@@ -829,6 +916,7 @@ fn settled_docked_panel_width(state: State) -> f32 {
                                     rows: &s.snap_rows,
                                 },
                                 snap_request: &mut s.snap_request,
+                                snap_visibility_request: &mut s.snap_visibility_request,
                             };
                             show_side_panel(ui, &mut ctx);
                         });
