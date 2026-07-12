@@ -467,6 +467,46 @@ pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<Recordi
     }
 }
 
+/// Show the About dialog: version and the data/service attributions.
+///
+/// Map tiles and snap-to-road matching both build on OpenStreetMap data
+/// (ODbL), and the default matching server is run by FOSSGIS e.V. - the
+/// credits live here, always reachable from the menu bar.
+pub fn show_about_dialog(ui: &egui::Ui, open: &mut bool) {
+    if !*open {
+        return;
+    }
+    let escape_pressed = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+
+    let mut keep_open = true;
+    Window::new("About GeoTrace")
+        .open(&mut keep_open)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ui.ctx(), |ui| {
+            ui.label(RichText::new(format!("GeoTrace {}", env!("CARGO_PKG_VERSION"))).strong());
+            ui.label("GPS/GNSS navigation data visualizer");
+            ui.separator();
+            ui.label("Map tiles and road-network matching build on OpenStreetMap data");
+            ui.hyperlink_to(
+                "© OpenStreetMap contributors",
+                "https://www.openstreetmap.org/copyright",
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label("The default snap to road server is hosted by");
+                ui.hyperlink_to("FOSSGIS e.V.", "https://www.fossgis.de/");
+            });
+        });
+
+    if !keep_open || escape_pressed {
+        *open = false;
+    }
+}
+
 /// The user's decision in the snap upload-consent dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapConsentChoice {

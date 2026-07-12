@@ -4,6 +4,11 @@
 
 ### Added
 
+- Snap to road: match a track against the OpenStreetMap road network from its side-panel action.
+  The match draws as a dashed line on the map (toggleable per track), and the new "Snap error (m)" plot metric shows each point's distance to the road, right next to EPH.
+  Recordings that declare a travel mode are matched against the right network automatically.
+  Nothing is uploaded without a one-time consent naming the server, which is configurable in Settings (default: the public instance hosted by FOSSGIS e.V.).
+- An About dialog with version and data attributions, from the menu bar's info button.
 - Settings now has a "Recording name" template that sets how recordings are labelled in the side panel.
   Combine `{title}`, `{device}`, `{identity}` and `{filename}`; empty fields and their separators drop out.
   Defaults to the filename, as before.

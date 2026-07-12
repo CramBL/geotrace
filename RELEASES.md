@@ -34,6 +34,9 @@ The sections below document what each step does, for running it by hand.
 
 ## GUI app
 
+Before the first release that ships snap to road, announce GeoTrace in the GitHub Discussions of the [FOSSGIS routing server](https://github.com/fossgis-routing-server) - the usage policy asks published apps using the public Valhalla server to say hello.
+One-time obligation, not per release.
+
 Bump on a branch and open a PR:
 
 ```sh

@@ -13,6 +13,7 @@ use egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE as ICON_CLOCK_COUNTER_CLOCKW
 use egui_phosphor::regular::FUNNEL as ICON_FUNNEL;
 use egui_phosphor::regular::GAUGE as ICON_GAUGE;
 use egui_phosphor::regular::GEAR as ICON_GEAR;
+use egui_phosphor::regular::INFO as ICON_INFO;
 use egui_phosphor::regular::LINK_BREAK as ICON_LINK_BREAK;
 use egui_phosphor::regular::MAP_PIN as ICON_MAP_PIN;
 use egui_phosphor::regular::SCISSORS as ICON_SCISSORS;
@@ -60,7 +61,7 @@ use settings_autosave::{AppSnapshot, SettingsAutosaver};
 use strum::IntoEnumIterator;
 
 use modals::{
-    SnapConsentChoice, show_delete_confirmation, show_load_warnings_dialog,
+    SnapConsentChoice, show_about_dialog, show_delete_confirmation, show_load_warnings_dialog,
     show_mapbox_token_dialog, show_orphaned_event_markers_popup, show_recording_details_dialog,
     show_snap_consent_dialog, show_unassociated_popup,
 };
@@ -179,6 +180,8 @@ pub struct App {
 
     /// Whether the Settings window is currently open.
     settings_open: bool,
+    /// Whether the About dialog is currently open.
+    about_open: bool,
     /// Active segmentation config - applied to all new file loads and re-segmentation.
     processing_config: SegmentationConfig,
     /// Active association config - applied to all new log loads.
@@ -382,6 +385,7 @@ impl App {
             config: SettingsAutosaver::new(AppSnapshot::default()),
             config_path,
             settings_open: false,
+            about_open: false,
             processing_config: SegmentationConfig::default(),
             assoc_config: AssociationConfig::default(),
             history,
@@ -1927,6 +1931,14 @@ impl eframe::App for App {
                     }
 
                     if ui
+                        .selectable_label(self.about_open, ICON_INFO)
+                        .on_hover_text("About GeoTrace - version and attributions")
+                        .clicked()
+                    {
+                        self.about_open = !self.about_open;
+                    }
+
+                    if ui
                         .selectable_label(self.history_window.open, ICON_CLOCK_COUNTER_CLOCKWISE)
                         .on_hover_text("Browse and re-open previously recorded sessions")
                         .clicked()
@@ -2238,6 +2250,8 @@ impl eframe::App for App {
         if self.map.layer() == MapLayer::Satellite && !self.map.has_mapbox_token() {
             show_mapbox_token_dialog(ui, &mut self.map, &mut self.mapbox_token_input);
         }
+
+        show_about_dialog(ui, &mut self.about_open);
 
         if self.snap_consent_prompt {
             match show_snap_consent_dialog(ui, &self.snap_settings.server_url) {
