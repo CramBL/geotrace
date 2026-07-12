@@ -2474,12 +2474,20 @@ fn inject_completed_run(harness: &mut Harness<'_, App>, track: gt_types::TrackRe
         let loaded_track = track
             .resolve(shared.loaded_files.files())
             .expect("track just pushed");
-        SnapCacheKey::new(loaded_track, Costing::Auto)
+        SnapCacheKey::new(
+            loaded_track,
+            gt_snap::request_plan::SnapParams::new(Costing::Auto),
+            gt_snap::server_host(gt_snap::DEFAULT_SERVER_URL),
+        )
     };
-    harness
-        .state_mut()
-        .snap
-        .insert_run(key, SnapRun::new(result, Vec::new()));
+    harness.state_mut().snap.insert_run(
+        key,
+        SnapRun::new(
+            result,
+            Vec::new(),
+            gt_snap::server_host(gt_snap::DEFAULT_SERVER_URL),
+        ),
+    );
 }
 
 /// The map's snapped-track geometry follows the completed run's toggle and

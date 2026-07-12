@@ -10,9 +10,20 @@
 //! individual requests). An automatic mode with a visibility-driven priority
 //! queue is planned future work.
 //!
-//! Results are cached per [`SnapCacheKey`] - track content fingerprint plus
-//! request parameters - so a result survives file removals and index shifts,
-//! and re-requesting a snapped track is a cache hit, never a request.
+//! Two content-keyed stores hold completed runs, so both survive file
+//! removals and index shifts:
+//!
+//! - The **cache** ([`SnapCacheKey`]: content fingerprint + parameters +
+//!   server host) deduplicates requests - re-requesting a known combination
+//!   is a cache hit, never a request.
+//! - The **latest-run store** ([`TrackContentKey`]) holds the run each track
+//!   currently displays. A cache hit promotes the cached run to latest, so
+//!   switching parameters back and forth redisplays instantly.
+//!
+//! A latest run whose parameters or server host differ from what a fresh
+//! run would use *now* is **stale**: still shown (results are never
+//! silently dropped), but marked, with the difference spelled out and a
+//! re-run offered ([`stale_reasons`]).
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -25,7 +36,7 @@ use gt_snap::request_plan::{self, RequestPlan, SnapParams};
 use gt_snap::stitch::{self, SnapResult, SnapWarning, SnapWarningReporter};
 use gt_snap::transport::HttpTransport;
 use gt_snap::wire::Costing;
-use gt_snap::{DEFAULT_SERVER_URL, transport};
+use gt_snap::{DEFAULT_SERVER_URL, server_host, transport};
 use gt_types::mercator::{self, MercPoint};
 use gt_types::{Latitude, LoadedTrack, Longitude, TrackRef, TravelMode};
 
@@ -44,32 +55,74 @@ pub fn resolve_costing(declared: Option<&TravelMode>, configured: Costing) -> Op
     }
 }
 
-/// Content fingerprint of a track plus the request parameters, identifying a
-/// snap result independent of file/track indices (which shift on removal).
-/// Tracks are immutable once loaded, so time range + point count pin the
-/// content for session-cache purposes.
+/// Content fingerprint of a track, identifying it independent of file/track
+/// indices (which shift on removal). Tracks are immutable once loaded, so
+/// time range + point count pin the content for session-store purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SnapCacheKey {
+pub struct TrackContentKey {
     start_us: i64,
     end_us: i64,
     tpv_count: usize,
-    costing: Costing,
 }
 
-impl SnapCacheKey {
-    pub fn new(track: &LoadedTrack, costing: Costing) -> Self {
+impl TrackContentKey {
+    pub fn new(track: &LoadedTrack) -> Self {
         let range = track.metadata.time_range;
         Self {
             start_us: range.start.timestamp_micros(),
             end_us: range.end.timestamp_micros(),
             tpv_count: track.metadata.tpv_count,
-            costing,
         }
     }
 }
 
-/// A completed snap run: the stitched result, the run's warnings, and the
-/// map-ready projection of the snapped-track segments.
+/// [`SnapParams`] in hashable form: the float options as their bit
+/// patterns. Bit equality is the right identity for cache purposes - the
+/// values come from settings, not arithmetic, so equal settings produce
+/// equal bits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct SnapParamsKey {
+    costing: Costing,
+    search_radius_bits: Option<u64>,
+    turn_penalty_bits: Option<u64>,
+    gps_accuracy_bits: Option<u64>,
+}
+
+impl From<SnapParams> for SnapParamsKey {
+    fn from(params: SnapParams) -> Self {
+        Self {
+            costing: params.costing,
+            search_radius_bits: params.search_radius_m.map(f64::to_bits),
+            turn_penalty_bits: params.turn_penalty_factor.map(f64::to_bits),
+            gps_accuracy_bits: params.gps_accuracy_override_m.map(f64::to_bits),
+        }
+    }
+}
+
+/// Identity of one snap result in the dedupe cache: track content, request
+/// parameters, and the server host the run would go to. Host included so a
+/// server change never masquerades old results as current ones - the same
+/// parameters against a different server are a different run.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SnapCacheKey {
+    content: TrackContentKey,
+    params: SnapParamsKey,
+    host: Option<String>,
+}
+
+impl SnapCacheKey {
+    pub fn new(track: &LoadedTrack, params: SnapParams, host: Option<String>) -> Self {
+        Self {
+            content: TrackContentKey::new(track),
+            params: params.into(),
+            host,
+        }
+    }
+}
+
+/// A completed snap run: the stitched result, the run's warnings, the host
+/// it ran against, and the map-ready projection of the snapped-track
+/// segments.
 #[derive(Debug)]
 pub struct SnapRun {
     pub result: SnapResult,
@@ -81,6 +134,9 @@ pub struct SnapRun {
         reason = "no consumer yet - a warnings surface is future work"
     )]
     pub warnings: Vec<SnapWarning>,
+    /// Host of the server the run was sent to, for staleness against the
+    /// current server setting.
+    pub server_host: Option<String>,
     /// The result's snapped-track segments in normalized Mercator, projected
     /// once at completion (on the worker thread) - the map redraws every
     /// frame but a cached run's geometry never changes. Shared with the map
@@ -89,7 +145,11 @@ pub struct SnapRun {
 }
 
 impl SnapRun {
-    pub(crate) fn new(result: SnapResult, warnings: Vec<SnapWarning>) -> Self {
+    pub(crate) fn new(
+        result: SnapResult,
+        warnings: Vec<SnapWarning>,
+        server_host: Option<String>,
+    ) -> Self {
         let segments_merc = result
             .segments
             .iter()
@@ -104,13 +164,76 @@ impl SnapRun {
         Self {
             result,
             warnings,
+            server_host,
             segments_merc: Arc::new(segments_merc),
         }
     }
 }
 
+/// Why a run is stale: each line names one difference between how the run
+/// was produced and how a fresh run would be produced now. Empty = fresh.
+///
+/// Compares the *configured* parameters (the gps-accuracy override, not the
+/// eph-derived value actually sent) plus the server host, per the design:
+/// a settings change never invalidates or re-runs anything, but the user
+/// must always be able to see that the shown result predates the settings.
+pub fn stale_reasons(
+    run: &SnapRun,
+    effective: SnapParams,
+    current_host: Option<&str>,
+) -> Vec<String> {
+    let stored = run.result.params;
+    let mut reasons = Vec::new();
+    if stored.costing != effective.costing {
+        reasons.push(format!(
+            "Snapped as {} - would now snap as {}",
+            stored.costing.display_name(),
+            effective.costing.display_name()
+        ));
+    }
+    let meters = |v: Option<f64>| match v {
+        Some(v) => format!("{v} m"),
+        None => "unset".to_owned(),
+    };
+    let plain = |v: Option<f64>| match v {
+        Some(v) => v.to_string(),
+        None => "unset".to_owned(),
+    };
+    if stored.search_radius_m != effective.search_radius_m {
+        reasons.push(format!(
+            "Search radius was {} - the setting is now {}",
+            meters(stored.search_radius_m),
+            meters(effective.search_radius_m)
+        ));
+    }
+    if stored.turn_penalty_factor != effective.turn_penalty_factor {
+        reasons.push(format!(
+            "Turn penalty factor was {} - the setting is now {}",
+            plain(stored.turn_penalty_factor),
+            plain(effective.turn_penalty_factor)
+        ));
+    }
+    if stored.gps_accuracy_override_m != effective.gps_accuracy_override_m {
+        reasons.push(format!(
+            "GPS accuracy override was {} - the setting is now {}",
+            meters(stored.gps_accuracy_override_m),
+            meters(effective.gps_accuracy_override_m)
+        ));
+    }
+    if run.server_host.as_deref() != current_host {
+        let name = |host: Option<&str>| host.unwrap_or("an unknown server").to_owned();
+        reasons.push(format!(
+            "Snapped against {} - the server is now {}",
+            name(run.server_host.as_deref()),
+            name(current_host)
+        ));
+    }
+    reasons
+}
+
 /// Transient per-track state while a run is queued or in flight, or after a
-/// failure. Completed runs live in the cache instead ([`SnapScheduler::run_for`]).
+/// failure. Completed runs live in the content-keyed stores instead
+/// ([`SnapScheduler::latest_run_for`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SnapActivity {
     Queued,
@@ -148,6 +271,9 @@ struct PendingRun {
     key: SnapCacheKey,
     params: SnapParams,
     plan: RequestPlan,
+    /// Host the run will go to, recorded on the completed [`SnapRun`] for
+    /// staleness against later server changes.
+    server_host: Option<String>,
 }
 
 /// Schedules snap runs - FIFO queue, one in flight at a time so the server's
@@ -166,7 +292,12 @@ pub struct SnapScheduler {
     queue: VecDeque<PendingRun>,
     in_flight: Option<TrackRef>,
     activity: HashMap<TrackRef, SnapActivity>,
+    /// Dedupe store: every completed run this session, by content +
+    /// parameters + host. Never displayed from directly.
     cache: HashMap<SnapCacheKey, Arc<SnapRun>>,
+    /// Display store: the run each track currently shows. Content-keyed,
+    /// so it survives index shifts like the cache does.
+    latest: HashMap<TrackContentKey, Arc<SnapRun>>,
 }
 
 impl SnapScheduler {
@@ -182,6 +313,7 @@ impl SnapScheduler {
             in_flight: None,
             activity: HashMap::new(),
             cache: HashMap::new(),
+            latest: HashMap::new(),
         }
     }
 
@@ -196,10 +328,15 @@ impl SnapScheduler {
         self.http = None;
     }
 
-    /// The cached run for a track under the given costing, if one completed
-    /// this session.
-    pub fn run_for(&self, track: &LoadedTrack, costing: Costing) -> Option<Arc<SnapRun>> {
-        self.cache.get(&SnapCacheKey::new(track, costing)).cloned()
+    /// The run a track currently displays, if any completed this session.
+    pub fn latest_run_for(&self, track: &LoadedTrack) -> Option<Arc<SnapRun>> {
+        self.latest.get(&TrackContentKey::new(track)).cloned()
+    }
+
+    /// The host the next run would go to - the staleness comparison side of
+    /// [`SnapRun::server_host`].
+    pub fn current_host(&self) -> Option<String> {
+        server_host(&self.server_url)
     }
 
     /// The transient activity for a track (queued, in flight, or failed).
@@ -212,40 +349,52 @@ impl SnapScheduler {
         gt_types::env::offline()
     }
 
-    /// Queue a snap run for a track. No-ops when offline, when the result is
-    /// already cached, or when the track is already queued or in flight.
-    pub fn request_snap(&mut self, track_ref: TrackRef, track: &LoadedTrack, costing: Costing) {
-        if Self::offline() {
+    /// Queue a snap run for a track. No-ops when offline or when the track
+    /// is already queued or in flight. A cache hit for the same content,
+    /// parameters, and host promotes the cached run to the track's displayed
+    /// run instead of re-requesting - switching parameters back to a known
+    /// combination is instant and costs no server budget.
+    pub fn request_snap(&mut self, track_ref: TrackRef, track: &LoadedTrack, params: SnapParams) {
+        // The cache lookup comes before the offline gate: promotion is
+        // local, and cached results stay fully usable offline.
+        let key = SnapCacheKey::new(track, params, self.current_host());
+        if let Some(run) = self.cache.get(&key) {
+            self.latest.insert(key.content, Arc::clone(run));
             return;
         }
-        let key = SnapCacheKey::new(track, costing);
-        if self.cache.contains_key(&key) || self.activity.contains_key(&track_ref) {
+        if Self::offline() || self.activity.contains_key(&track_ref) {
             return;
         }
         let plan = request_plan::plan(&track.points);
         if plan.chunks.is_empty() {
             return;
         }
+        let server_host = key.host.clone();
         self.activity.insert(track_ref, SnapActivity::Queued);
         self.queue.push_back(PendingRun {
             track: track_ref,
             key,
-            params: SnapParams::new(costing),
+            params,
             plan,
+            server_host,
         });
         self.start_next_if_idle();
     }
 
-    /// Insert a completed run directly into the session cache, bypassing the
-    /// worker. Tests only - production runs arrive via the message channel.
+    /// Insert a completed run directly into the cache and the display
+    /// store, bypassing the worker. Tests only - production runs arrive via
+    /// the message channel.
     #[cfg(test)]
     pub fn insert_run(&mut self, key: SnapCacheKey, run: SnapRun) {
-        self.cache.insert(key, Arc::new(run));
+        let run = Arc::new(run);
+        self.latest.insert(key.content, Arc::clone(&run));
+        self.cache.insert(key, run);
     }
 
     /// Forget all transient per-track activity. Call after file/track
-    /// removals shift indices; the content-keyed cache is unaffected, and an
-    /// in-flight run finishes into the cache under its stable key.
+    /// removals shift indices; the content-keyed cache and display stores
+    /// are unaffected, and an in-flight run finishes into them under its
+    /// stable key.
     pub fn reset_track_states(&mut self) {
         self.queue.clear();
         self.activity.clear();
@@ -279,7 +428,9 @@ impl SnapScheduler {
                     }
                 }
                 SnapMessage::Done { track, key, run } => {
-                    self.cache.insert(key, Arc::from(run));
+                    let run: Arc<SnapRun> = Arc::from(run);
+                    self.latest.insert(key.content, Arc::clone(&run));
+                    self.cache.insert(key, run);
                     self.activity.remove(&track);
                     if self.in_flight == Some(track) {
                         self.in_flight = None;
@@ -356,6 +507,7 @@ fn spawn_run(
         key,
         params,
         plan,
+        server_host,
     } = pending;
     thread::Builder::new()
         .name(format!(
@@ -393,7 +545,7 @@ fn spawn_run(
                 SnapMessage::Done {
                     track,
                     key,
-                    run: Box::new(SnapRun::new(result, reporter.warnings())),
+                    run: Box::new(SnapRun::new(result, reporter.warnings(), server_host)),
                 }
             };
             tx.send(message).ok();
@@ -460,19 +612,28 @@ mod tests {
         SnapScheduler::new(Context::default())
     }
 
+    fn key(track: &LoadedTrack, params: SnapParams) -> SnapCacheKey {
+        SnapCacheKey::new(track, params, server_host(DEFAULT_SERVER_URL))
+    }
+
+    fn empty_run(params: SnapParams) -> SnapRun {
+        SnapRun::new(
+            stitch::stitch(
+                &request_plan::plan(&[]),
+                params,
+                &[],
+                &SnapWarningReporter::default(),
+            ),
+            Vec::new(),
+            server_host(DEFAULT_SERVER_URL),
+        )
+    }
+
     fn done_message(track: TrackRef, key: SnapCacheKey) -> SnapMessage {
         SnapMessage::Done {
             track,
             key,
-            run: Box::new(SnapRun::new(
-                stitch::stitch(
-                    &request_plan::plan(&[]),
-                    SnapParams::new(Costing::Auto),
-                    &[],
-                    &SnapWarningReporter::default(),
-                ),
-                Vec::new(),
-            )),
+            run: Box::new(empty_run(SnapParams::new(Costing::Auto))),
         }
     }
 
@@ -483,28 +644,35 @@ mod tests {
     fn done_message_moves_run_into_cache_and_clears_activity() {
         let mut scheduler = scheduler();
         let track = track(10);
-        let key = SnapCacheKey::new(&track, Costing::Auto);
+        let key = key(&track, SnapParams::new(Costing::Auto));
         scheduler.activity.insert(track_ref(), SnapActivity::Queued);
         scheduler.in_flight = Some(track_ref());
 
         scheduler.tx.send(done_message(track_ref(), key)).ok();
         assert!(scheduler.poll());
 
-        assert!(scheduler.run_for(&track, Costing::Auto).is_some());
+        assert!(scheduler.latest_run_for(&track).is_some());
         assert_eq!(scheduler.activity_for(track_ref()), None);
         assert_eq!(scheduler.in_flight, None);
     }
 
     #[test]
-    fn cache_key_distinguishes_costing_but_not_indices() {
+    fn cache_key_distinguishes_params_and_host_but_not_indices() {
         let track = track(10);
-        assert_eq!(
-            SnapCacheKey::new(&track, Costing::Auto),
-            SnapCacheKey::new(&track, Costing::Auto),
-        );
+        let auto = SnapParams::new(Costing::Auto);
+        assert_eq!(key(&track, auto), key(&track, auto));
         assert_ne!(
-            SnapCacheKey::new(&track, Costing::Auto),
-            SnapCacheKey::new(&track, Costing::Bicycle),
+            key(&track, auto),
+            key(&track, SnapParams::new(Costing::Bicycle))
+        );
+        let tuned = SnapParams {
+            search_radius_m: Some(25.0),
+            ..auto
+        };
+        assert_ne!(key(&track, auto), key(&track, tuned));
+        assert_ne!(
+            key(&track, auto),
+            SnapCacheKey::new(&track, auto, server_host("http://localhost:8002")),
         );
     }
 
@@ -531,7 +699,7 @@ mod tests {
     fn done_after_reset_still_lands_in_cache() {
         let mut scheduler = scheduler();
         let track = track(10);
-        let key = SnapCacheKey::new(&track, Costing::Auto);
+        let key = key(&track, SnapParams::new(Costing::Auto));
         scheduler.activity.insert(track_ref(), SnapActivity::Queued);
         scheduler.in_flight = Some(track_ref());
         scheduler.reset_track_states();
@@ -540,8 +708,8 @@ mod tests {
         scheduler.poll();
 
         assert!(
-            scheduler.run_for(&track, Costing::Auto).is_some(),
-            "content-keyed cache survives index resets"
+            scheduler.latest_run_for(&track).is_some(),
+            "content-keyed stores survive index resets"
         );
     }
 
@@ -609,5 +777,88 @@ mod tests {
             })
         );
         assert_eq!(scheduler.in_flight, None);
+    }
+    /// A cache hit promotes the cached run to the track's displayed run
+    /// without any queue or network activity - switching parameters back to
+    /// a known combination is instant.
+    #[test]
+    fn cache_hit_promotes_cached_run_to_latest() {
+        let mut scheduler = scheduler();
+        let track = track(10);
+        let auto = SnapParams::new(Costing::Auto);
+        let bicycle = SnapParams::new(Costing::Bicycle);
+
+        // Two completed runs for the same track under different params.
+        scheduler.insert_run(key(&track, auto), empty_run(auto));
+        scheduler.insert_run(key(&track, bicycle), empty_run(bicycle));
+        assert_eq!(
+            scheduler
+                .latest_run_for(&track)
+                .map(|r| r.result.params.costing),
+            Some(Costing::Bicycle),
+            "the most recently inserted run displays"
+        );
+
+        // Requesting auto again: cache hit, promoted, nothing queued.
+        // (request_snap's offline gate sits after the cache lookup, so this
+        // path is exercised even under GEOTRACE_OFFLINE.)
+        scheduler.request_snap(track_ref(), &track, auto);
+        assert_eq!(
+            scheduler
+                .latest_run_for(&track)
+                .map(|r| r.result.params.costing),
+            Some(Costing::Auto),
+        );
+        assert!(scheduler.queue.is_empty());
+        assert_eq!(scheduler.activity_for(track_ref()), None);
+    }
+
+    /// Staleness reasons: each differing component contributes one line
+    /// naming the stored and the current value; identical runs are fresh.
+    #[rstest::rstest]
+    #[case::fresh(SnapParams::new(Costing::Auto), server_host(DEFAULT_SERVER_URL), &[])]
+    #[case::costing_differs(
+        SnapParams::new(Costing::Bicycle),
+        server_host(DEFAULT_SERVER_URL),
+        &["Snapped as Auto - would now snap as Bicycle"],
+    )]
+    #[case::search_radius_differs(
+        SnapParams { search_radius_m: Some(25.0), ..SnapParams::new(Costing::Auto) },
+        server_host(DEFAULT_SERVER_URL),
+        &["Search radius was unset - the setting is now 25 m"],
+    )]
+    #[case::turn_penalty_differs(
+        SnapParams { turn_penalty_factor: Some(300.0), ..SnapParams::new(Costing::Auto) },
+        server_host(DEFAULT_SERVER_URL),
+        &["Turn penalty factor was unset - the setting is now 300"],
+    )]
+    #[case::gps_accuracy_differs(
+        SnapParams { gps_accuracy_override_m: Some(10.0), ..SnapParams::new(Costing::Auto) },
+        server_host(DEFAULT_SERVER_URL),
+        &["GPS accuracy override was unset - the setting is now 10 m"],
+    )]
+    #[case::host_differs(
+        SnapParams::new(Costing::Auto),
+        server_host("http://localhost:8002"),
+        &["Snapped against valhalla1.openstreetmap.de - the server is now localhost"],
+    )]
+    #[case::multiple_differences(
+        SnapParams { search_radius_m: Some(25.0), ..SnapParams::new(Costing::Bicycle) },
+        server_host(DEFAULT_SERVER_URL),
+        &[
+            "Snapped as Auto - would now snap as Bicycle",
+            "Search radius was unset - the setting is now 25 m",
+        ],
+    )]
+    fn stale_reasons_name_each_difference(
+        #[case] effective: SnapParams,
+        #[case] current_host: Option<String>,
+        #[case] expected: &[&str],
+    ) {
+        let run = empty_run(SnapParams::new(Costing::Auto));
+        assert_eq!(
+            stale_reasons(&run, effective, current_host.as_deref()),
+            expected,
+        );
     }
 }
