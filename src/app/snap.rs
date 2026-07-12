@@ -4,11 +4,13 @@
 //! app, background threads reporting over an mpsc channel, `request_repaint`
 //! on every message so results appear without user input.
 //!
-//! Snapping is manual-only for now: tracks enter a FIFO queue via
-//! [`SnapScheduler::request_snap`], and one run is in flight at a time so the
-//! server's fair-use budget is shared globally (the transport also paces
-//! individual requests). An automatic mode with a visibility-driven priority
-//! queue is planned future work.
+//! Tracks enter a priority queue via [`SnapScheduler::request_snap`], and
+//! one run is in flight at a time so the server's fair-use budget is shared
+//! globally (the transport also paces individual requests). Manual entries
+//! run first (FIFO among themselves); automatic entries run only while
+//! their track is shown on the map, and stay parked while hidden - server
+//! load is bounded by what the user actually inspects. Nothing enqueues
+//! automatic entries yet; auto mode lands on this machinery next.
 //!
 //! Two content-keyed stores hold completed runs, so both survive file
 //! removals and index shifts:
@@ -25,7 +27,7 @@
 //! silently dropped), but marked, with the difference spelled out and a
 //! re-run offered ([`stale_reasons`]).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -39,6 +41,7 @@ use gt_snap::wire::Costing;
 use gt_snap::{DEFAULT_SERVER_URL, server_host, transport};
 use gt_types::mercator::{self, MercPoint};
 use gt_types::{Latitude, LoadedTrack, Longitude, TrackRef, TravelMode};
+use gt_ui_types::TrackDataVisibility;
 
 /// The costing a track snaps with: the file's declared travel mode beats the
 /// configured default costing, and declarations without a road-network
@@ -304,9 +307,30 @@ enum SnapMessage {
     },
 }
 
+/// Why a run entered the queue: manual triggers outrank automatic entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapPriority {
+    /// A user trigger: served before any automatic entry, FIFO among
+    /// manuals, and never gated on visibility - the user asked for exactly
+    /// this track.
+    Manual,
+    /// Enqueued by auto mode: served only while its track is shown on the
+    /// map, parked (not dropped) while hidden.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "nothing enqueues automatic entries yet - auto mode \
+                      lands on this machinery next"
+        )
+    )]
+    Auto,
+}
+
 /// One queued request, carrying everything the worker thread needs.
 struct PendingRun {
     track: TrackRef,
+    priority: SnapPriority,
     key: SnapCacheKey,
     params: SnapParams,
     plan: RequestPlan,
@@ -329,6 +353,11 @@ pub struct SnapScheduler {
     /// a server-URL change).
     http: Option<Arc<HttpTransport>>,
     queue: VecDeque<PendingRun>,
+    /// The queued tracks currently shown on the map, per
+    /// [`Self::set_visibility`]. Gates which [`SnapPriority::Auto`] entries
+    /// may dequeue; scoped to the queue so frame-to-frame comparison stays
+    /// proportional to pending work, not to the loaded data.
+    visible: HashSet<TrackRef>,
     in_flight: Option<TrackRef>,
     activity: HashMap<TrackRef, SnapActivity>,
     /// Dedupe store: every completed run this session, by content +
@@ -349,6 +378,7 @@ impl SnapScheduler {
             server_url: DEFAULT_SERVER_URL.to_owned(),
             http: None,
             queue: VecDeque::new(),
+            visible: HashSet::new(),
             in_flight: None,
             activity: HashMap::new(),
             cache: HashMap::new(),
@@ -389,16 +419,31 @@ impl SnapScheduler {
     }
 
     /// Queue a snap run for a track. No-ops when offline or when the track
-    /// is already queued or in flight. A cache hit for the same content,
-    /// parameters, and host promotes the cached run to the track's displayed
-    /// run instead of re-requesting - switching parameters back to a known
-    /// combination is instant and costs no server budget.
-    pub fn request_snap(&mut self, track_ref: TrackRef, track: &LoadedTrack, params: SnapParams) {
+    /// is already queued or in flight - except that a manual request for a
+    /// track queued automatically promotes it to the front of the queue. A
+    /// cache hit for the same content, parameters, and host promotes the
+    /// cached run to the track's displayed run instead of re-requesting -
+    /// switching parameters back to a known combination is instant and
+    /// costs no server budget.
+    pub fn request_snap(
+        &mut self,
+        track_ref: TrackRef,
+        track: &LoadedTrack,
+        params: SnapParams,
+        priority: SnapPriority,
+    ) {
         // The cache lookup comes before the offline gate: promotion is
         // local, and cached results stay fully usable offline.
         let key = SnapCacheKey::new(track, params, self.current_host());
         if let Some(run) = self.cache.get(&key) {
             self.latest.insert(key.content, Arc::clone(run));
+            return;
+        }
+        if let Some(position) = self.queue.iter().position(|p| p.track == track_ref) {
+            if priority == SnapPriority::Manual {
+                self.promote_to_front(position);
+                self.start_next_if_idle();
+            }
             return;
         }
         if Self::offline() || self.activity.contains_key(&track_ref) {
@@ -412,12 +457,38 @@ impl SnapScheduler {
         self.activity.insert(track_ref, SnapActivity::Queued);
         self.queue.push_back(PendingRun {
             track: track_ref,
+            priority,
             key,
             params,
             plan,
             server_host,
         });
         self.start_next_if_idle();
+    }
+
+    /// Move the queue entry at `position` to the front as a manual entry -
+    /// the user singled it out, so it outranks everything still waiting.
+    fn promote_to_front(&mut self, position: usize) {
+        if let Some(mut entry) = self.queue.remove(position) {
+            entry.priority = SnapPriority::Manual;
+            self.queue.push_front(entry);
+        }
+    }
+
+    /// Update which tracks are shown on the map. Called every frame; when
+    /// the set changes, a parked automatic entry may have become eligible,
+    /// so the worker gets a start poke.
+    pub fn set_visibility(&mut self, visibility: &TrackDataVisibility) {
+        let visible: HashSet<TrackRef> = self
+            .queue
+            .iter()
+            .map(|p| p.track)
+            .filter(|&t| visibility.track_shown(t))
+            .collect();
+        if visible != self.visible {
+            self.visible = visible;
+            self.start_next_if_idle();
+        }
     }
 
     /// Insert a completed run directly into the cache and the display
@@ -495,7 +566,10 @@ impl SnapScheduler {
         if self.in_flight.is_some() {
             return;
         }
-        let Some(pending) = self.queue.pop_front() else {
+        let Some(position) = next_eligible(&self.queue, &self.visible) else {
+            return;
+        };
+        let Some(pending) = self.queue.remove(position) else {
             return;
         };
         let transport = match self.transport() {
@@ -530,6 +604,25 @@ impl SnapScheduler {
     }
 }
 
+/// The queue position to run next: the oldest manual entry, else the
+/// oldest automatic entry whose track is currently shown. Automatic
+/// entries of hidden tracks stay parked - they neither run nor block the
+/// entries behind them.
+fn next_eligible(queue: &VecDeque<PendingRun>, visible: &HashSet<TrackRef>) -> Option<usize> {
+    let mut first_shown_auto = None;
+    for (position, pending) in queue.iter().enumerate() {
+        match pending.priority {
+            SnapPriority::Manual => return Some(position),
+            SnapPriority::Auto => {
+                if first_shown_auto.is_none() && visible.contains(&pending.track) {
+                    first_shown_auto = Some(position);
+                }
+            }
+        }
+    }
+    first_shown_auto
+}
+
 /// Run one snap on a worker thread, reporting progress and the final result.
 #[expect(
     clippy::expect_used,
@@ -543,6 +636,7 @@ fn spawn_run(
 ) {
     let PendingRun {
         track,
+        priority: _,
         key,
         params,
         plan,
@@ -841,7 +935,7 @@ mod tests {
         // Requesting auto again: cache hit, promoted, nothing queued.
         // (request_snap's offline gate sits after the cache lookup, so this
         // path is exercised even under GEOTRACE_OFFLINE.)
-        scheduler.request_snap(track_ref(), &track, auto);
+        scheduler.request_snap(track_ref(), &track, auto, SnapPriority::Manual);
         assert_eq!(
             scheduler
                 .latest_run_for(&track)
@@ -899,6 +993,118 @@ mod tests {
             stale_reasons(&run, effective, current_host.as_deref()),
             expected,
         );
+    }
+
+    fn pending(track: &LoadedTrack, track_ref: TrackRef, priority: SnapPriority) -> PendingRun {
+        PendingRun {
+            track: track_ref,
+            priority,
+            key: key(track, SnapParams::new(Costing::Auto)),
+            params: SnapParams::new(Costing::Auto),
+            plan: request_plan::plan(&[]),
+            server_host: None,
+        }
+    }
+
+    fn nth_track_ref(n: usize) -> TrackRef {
+        TrackRef::new(FileIdx::new(n), TrackIdx::new(0))
+    }
+
+    /// Dequeue order over (priority, shown-on-map) queue configurations:
+    /// the oldest manual wins regardless of visibility, hidden automatic
+    /// entries park without blocking the entries behind them.
+    #[rstest::rstest]
+    #[case::empty(&[], None)]
+    #[case::manual_fifo(&[(SnapPriority::Manual, true), (SnapPriority::Manual, true)], Some(0))]
+    #[case::manual_outranks_earlier_auto(&[(SnapPriority::Auto, true), (SnapPriority::Manual, false)], Some(1))]
+    #[case::hidden_auto_parks(&[(SnapPriority::Auto, false)], None)]
+    #[case::hidden_auto_does_not_block(&[(SnapPriority::Auto, false), (SnapPriority::Auto, true)], Some(1))]
+    #[case::shown_auto_fifo(&[(SnapPriority::Auto, true), (SnapPriority::Auto, true)], Some(0))]
+    fn next_eligible_orders_by_priority_and_visibility(
+        #[case] entries: &[(SnapPriority, bool)],
+        #[case] expected: Option<usize>,
+    ) {
+        let track = track(10);
+        let mut queue = VecDeque::new();
+        let mut visible = HashSet::new();
+        for (n, &(priority, shown)) in entries.iter().enumerate() {
+            let track_ref = nth_track_ref(n);
+            if shown {
+                visible.insert(track_ref);
+            }
+            queue.push_back(pending(&track, track_ref, priority));
+        }
+        assert_eq!(next_eligible(&queue, &visible), expected);
+    }
+
+    /// A manual request for a track already queued automatically promotes
+    /// it to the front as a manual entry; an automatic re-request leaves
+    /// the queue untouched. Neither duplicates the entry.
+    #[test]
+    fn manual_request_promotes_queued_auto_entry() {
+        let mut scheduler = scheduler();
+        // A sentinel in-flight run keeps the test from spawning a worker.
+        scheduler.in_flight = Some(nth_track_ref(9));
+        let track = track(10);
+        let (a, b) = (nth_track_ref(0), nth_track_ref(1));
+        scheduler
+            .queue
+            .push_back(pending(&track, a, SnapPriority::Auto));
+        scheduler
+            .queue
+            .push_back(pending(&track, b, SnapPriority::Auto));
+
+        scheduler.request_snap(
+            b,
+            &track,
+            SnapParams::new(Costing::Auto),
+            SnapPriority::Auto,
+        );
+        assert_eq!(
+            scheduler.queue.front().map(|p| p.track),
+            Some(a),
+            "an automatic re-request must not reorder the queue"
+        );
+
+        scheduler.request_snap(
+            b,
+            &track,
+            SnapParams::new(Costing::Auto),
+            SnapPriority::Manual,
+        );
+        assert_eq!(
+            scheduler.queue.front().map(|p| (p.track, p.priority)),
+            Some((b, SnapPriority::Manual)),
+        );
+        assert_eq!(scheduler.queue.len(), 2, "promotion must not duplicate");
+    }
+
+    /// Hiding a queued track parks its automatic entry; showing it again
+    /// makes it eligible - visibility gates dequeueing, never drops work.
+    #[test]
+    fn visibility_change_parks_and_unparks_auto_entries() {
+        use gt_ui_types::{FileVisibility, TrackVisibility};
+
+        let mut scheduler = scheduler();
+        scheduler.in_flight = Some(nth_track_ref(9));
+        let track = track(10);
+        scheduler
+            .queue
+            .push_back(pending(&track, nth_track_ref(0), SnapPriority::Auto));
+
+        let mut vis = TrackDataVisibility {
+            files: vec![FileVisibility {
+                enabled: true,
+                tracks: vec![TrackVisibility::all_visible()],
+            }],
+        };
+        vis.files[0].tracks[0].track_visible = false;
+        scheduler.set_visibility(&vis);
+        assert_eq!(next_eligible(&scheduler.queue, &scheduler.visible), None);
+
+        vis.files[0].tracks[0].track_visible = true;
+        scheduler.set_visibility(&vis);
+        assert_eq!(next_eligible(&scheduler.queue, &scheduler.visible), Some(0));
     }
 
     /// Every warning variant renders to a hover line carrying its key facts
