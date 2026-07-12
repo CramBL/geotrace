@@ -6,8 +6,10 @@ use rstest::rstest;
 use support::points_with as points;
 
 use gt_snap::request_plan::{
-    self, CHUNK_OVERLAP_POINTS, CHUNK_POINTS, GPS_ACCURACY_RANGE_M, RequestPlan,
+    self, CHUNK_OVERLAP_POINTS, CHUNK_POINTS, GPS_ACCURACY_OVERRIDE_RANGE_M, GPS_ACCURACY_RANGE_M,
+    RequestPlan, SEARCH_RADIUS_RANGE_M, SnapParams, TURN_PENALTY_FACTOR_RANGE,
 };
+use gt_snap::wire::{Costing, TraceOptions};
 
 /// Distinct sent-point track indices across a plan's chunks, in order,
 /// counting overlap points once.
@@ -126,4 +128,76 @@ fn gps_accuracy_derives_from_sent_points_only() {
     let pts = points(50, 100, |i| Some(if i % 10 == 0 { 10.0 } else { 900.0 }));
     let plan = request_plan::plan(&pts);
     assert_eq!(plan.gps_accuracy_m, Some(10.0));
+}
+
+/// Advanced options: raw override values vs. the trace options actually
+/// sent - everything clamps to the server-accepted ranges (the server
+/// rejects out-of-range options with error 158 instead of clamping).
+#[rstest]
+#[case::in_range_passes_through(Some(25.0), Some(25.0))]
+#[case::above_cap_clamps(Some(250.0), Some(*SEARCH_RADIUS_RANGE_M.end()))]
+#[case::negative_clamps_to_zero(Some(-5.0), Some(*SEARCH_RADIUS_RANGE_M.start()))]
+#[case::unset_stays_server_default(None, None)]
+fn search_radius_is_clamped_at_request_build(
+    #[case] configured: Option<f64>,
+    #[case] sent: Option<f64>,
+) {
+    let params = SnapParams {
+        search_radius_m: configured,
+        ..SnapParams::new(Costing::Auto)
+    };
+    let sent_options = params.trace_options(None);
+    assert_eq!(sent_options.and_then(|o| o.search_radius), sent);
+}
+
+#[rstest]
+#[case::in_range_passes_through(Some(500.0), Some(500.0))]
+#[case::above_cap_clamps(Some(1.0e9), Some(*TURN_PENALTY_FACTOR_RANGE.end()))]
+#[case::negative_clamps_to_zero(Some(-1.0), Some(*TURN_PENALTY_FACTOR_RANGE.start()))]
+#[case::unset_stays_server_default(None, None)]
+fn turn_penalty_factor_is_clamped_at_request_build(
+    #[case] configured: Option<f64>,
+    #[case] sent: Option<f64>,
+) {
+    let params = SnapParams {
+        turn_penalty_factor: configured,
+        ..SnapParams::new(Costing::Auto)
+    };
+    let sent_options = params.trace_options(None);
+    assert_eq!(sent_options.and_then(|o| o.turn_penalty_factor), sent);
+}
+
+/// gps_accuracy precedence: the clamped override beats the derived value,
+/// the derived value fills in when no override is set, and the override's
+/// range is the server's full range, wider than the derivation clamp.
+#[rstest]
+#[case::override_beats_derived(Some(50.0), Some(12.0), Some(50.0))]
+#[case::override_clamps_to_server_range(Some(150.0), Some(12.0), Some(*GPS_ACCURACY_OVERRIDE_RANGE_M.end()))]
+#[case::derived_fills_absent_override(None, Some(12.0), Some(12.0))]
+#[case::neither_stays_server_default(None, None, None)]
+fn gps_accuracy_override_beats_derived(
+    #[case] configured: Option<f64>,
+    #[case] derived: Option<f64>,
+    #[case] sent: Option<f64>,
+) {
+    let params = SnapParams {
+        gps_accuracy_override_m: configured,
+        ..SnapParams::new(Costing::Auto)
+    };
+    assert_eq!(params.gps_accuracy_sent_m(derived), sent);
+}
+
+/// All-default params send no trace_options at all; the chunk request
+/// carries them only when something differs from the server default.
+#[test]
+fn default_params_send_no_trace_options() {
+    assert_eq!(SnapParams::new(Costing::Auto).trace_options(None), None);
+    assert_eq!(
+        SnapParams::new(Costing::Auto).trace_options(Some(12.0)),
+        Some(TraceOptions {
+            gps_accuracy: Some(12.0),
+            search_radius: None,
+            turn_penalty_factor: None,
+        })
+    );
 }

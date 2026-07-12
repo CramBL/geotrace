@@ -17,9 +17,9 @@ use serde_json::Value;
 
 use gt_types::PointIdx;
 
-use crate::request_plan::{Chunk, RequestPlan};
+use crate::request_plan::{Chunk, RequestPlan, SnapParams};
 use crate::snapped_track::{self, Position, SnappedTrackError, SnappedTrackSegment};
-use crate::wire::{Costing, Edge, SnapPointKind, TraceAttributesResponse};
+use crate::wire::{Edge, SnapPointKind, TraceAttributesResponse};
 
 /// The outcome of sending one chunk, as classified by the transport.
 #[derive(Debug, Clone, PartialEq)]
@@ -142,10 +142,12 @@ pub struct SnapResult {
     /// OSM data version of the first successful chunk; a mid-run version
     /// change is reported as a warning.
     pub osm_changeset: Option<u64>,
-    /// The costing the run matched against.
-    pub costing: Costing,
-    /// The derived accuracy the run sent, if any.
-    pub gps_accuracy_m: Option<f64>,
+    /// The parameters the run was requested with, as provenance: staleness
+    /// against the current settings compares these.
+    pub params: SnapParams,
+    /// The `gps_accuracy` the run actually sent: the clamped override when
+    /// set, else the eph-derived value. `None` = server default.
+    pub gps_accuracy_sent_m: Option<f64>,
     /// True when at least one chunk failed and left a gap.
     pub partial: bool,
 }
@@ -156,7 +158,7 @@ pub struct SnapResult {
 /// error in the transport, not a recoverable condition.
 pub fn stitch(
     plan: &RequestPlan,
-    costing: Costing,
+    params: SnapParams,
     outcomes: &[ChunkOutcome],
     reporter: &SnapWarningReporter,
 ) -> SnapResult {
@@ -173,8 +175,8 @@ pub fn stitch(
         kind_counts: SnapKindCounts::default(),
         confidence_score: None,
         osm_changeset: None,
-        costing,
-        gps_accuracy_m: plan.gps_accuracy_m,
+        gps_accuracy_sent_m: params.gps_accuracy_sent_m(plan.gps_accuracy_m),
+        params,
         partial: false,
     };
 

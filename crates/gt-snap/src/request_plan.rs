@@ -40,6 +40,96 @@ const _: () = assert!(
 /// bound keeps outlier eph from letting the match wander off the road.
 pub const GPS_ACCURACY_RANGE_M: RangeInclusive<f64> = 5.0..=30.0;
 
+/// Server-accepted range for `trace_options.search_radius`, meters.
+/// Pinned empirically against the FOSSGIS server (2026-07): 100 is
+/// accepted, 101 and negative values are rejected with error 158.
+pub const SEARCH_RADIUS_RANGE_M: RangeInclusive<f64> = 0.0..=100.0;
+
+/// Server-accepted range for a user-supplied `gps_accuracy`, meters.
+/// Pinned empirically like [`SEARCH_RADIUS_RANGE_M`]. Deliberately wider
+/// than [`GPS_ACCURACY_RANGE_M`], which bounds the value *derived* from
+/// eph - an explicit override may use the server's full range.
+pub const GPS_ACCURACY_OVERRIDE_RANGE_M: RangeInclusive<f64> = 0.0..=100.0;
+
+/// Client-side range for `trace_options.turn_penalty_factor`.
+/// Empirically the server enforces only the lower bound (negative values
+/// are rejected with error 158; 10^9 was accepted), so the upper bound is
+/// this client's own sanity cap - Valhalla's guidance suggests around 500
+/// to smooth wandering matches, and far larger values stop changing the
+/// match.
+pub const TURN_PENALTY_FACTOR_RANGE: RangeInclusive<f64> = 0.0..=100_000.0;
+
+/// The user-facing parameters of a snap run: the costing plus the optional
+/// advanced trace options. An unset option means server default - except
+/// [`gps_accuracy_override_m`](Self::gps_accuracy_override_m), where unset
+/// means derived from the track's eph.
+///
+/// Values are clamped to the server-accepted ranges when the request is
+/// built ([`SnapParams::trace_options`]): the server rejects out-of-range
+/// trace options (400, error 158) instead of clamping, so no code path may
+/// send unbounded values.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SnapParams {
+    pub costing: Costing,
+    /// Meters around each input point searched for candidate road edges,
+    /// bounded by [`SEARCH_RADIUS_RANGE_M`].
+    pub search_radius_m: Option<f64>,
+    /// Cost multiplier penalizing route reversals, bounded by
+    /// [`TURN_PENALTY_FACTOR_RANGE`].
+    pub turn_penalty_factor: Option<f64>,
+    /// Expected GNSS accuracy in meters, replacing the eph-derived value;
+    /// bounded by [`GPS_ACCURACY_OVERRIDE_RANGE_M`].
+    pub gps_accuracy_override_m: Option<f64>,
+}
+
+impl SnapParams {
+    /// Parameters with every advanced option at its default.
+    pub fn new(costing: Costing) -> Self {
+        Self {
+            costing,
+            search_radius_m: None,
+            turn_penalty_factor: None,
+            gps_accuracy_override_m: None,
+        }
+    }
+
+    /// The `gps_accuracy` a run with these parameters sends, given the
+    /// plan's eph-derived value: the clamped override when set, else the
+    /// derived value, else the server default (`None`).
+    pub fn gps_accuracy_sent_m(&self, derived_m: Option<f64>) -> Option<f64> {
+        self.gps_accuracy_override_m
+            .map(|v| clamp_to(&GPS_ACCURACY_OVERRIDE_RANGE_M, v))
+            .or(derived_m)
+    }
+
+    /// The `trace_options` a run with these parameters sends, all values
+    /// clamped to their server-accepted ranges. `None` when every option is
+    /// at its server default.
+    pub fn trace_options(&self, derived_gps_accuracy_m: Option<f64>) -> Option<TraceOptions> {
+        let options = TraceOptions {
+            gps_accuracy: self.gps_accuracy_sent_m(derived_gps_accuracy_m),
+            search_radius: self
+                .search_radius_m
+                .map(|v| clamp_to(&SEARCH_RADIUS_RANGE_M, v)),
+            turn_penalty_factor: self
+                .turn_penalty_factor
+                .map(|v| clamp_to(&TURN_PENALTY_FACTOR_RANGE, v)),
+        };
+        (options
+            != TraceOptions {
+                gps_accuracy: None,
+                search_radius: None,
+                turn_penalty_factor: None,
+            })
+        .then_some(options)
+    }
+}
+
+/// Clamp a value into an inclusive range.
+fn clamp_to(range: &RangeInclusive<f64>, value: f64) -> f64 {
+    value.clamp(*range.start(), *range.end())
+}
+
 /// One point selected for sending, tied back to its origin.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SentPoint {
@@ -71,14 +161,18 @@ impl Chunk {
     }
 
     /// The wire request sending this chunk: all sent points (overlap
-    /// included), the production attribute filter, and the plan's derived
-    /// accuracy when present.
-    pub fn request(&self, costing: Costing, gps_accuracy_m: Option<f64>) -> TraceAttributesRequest {
-        let mut request =
-            TraceAttributesRequest::new(costing, self.sent.iter().map(|s| s.shape_point).collect());
-        request.trace_options = gps_accuracy_m.map(|gps_accuracy| TraceOptions {
-            gps_accuracy: Some(gps_accuracy),
-        });
+    /// included), the production attribute filter, and the parameters'
+    /// trace options resolved against the plan's derived accuracy.
+    pub fn request(
+        &self,
+        params: &SnapParams,
+        derived_gps_accuracy_m: Option<f64>,
+    ) -> TraceAttributesRequest {
+        let mut request = TraceAttributesRequest::new(
+            params.costing,
+            self.sent.iter().map(|s| s.shape_point).collect(),
+        );
+        request.trace_options = params.trace_options(derived_gps_accuracy_m);
         request
     }
 }

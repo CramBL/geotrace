@@ -12,10 +12,16 @@ use std::fs;
 use support::points;
 
 use gt_snap::fixtures_dir;
-use gt_snap::request_plan::{self, CHUNK_POINTS};
+use gt_snap::request_plan::{self, CHUNK_POINTS, SnapParams};
 use gt_snap::stitch::{ChunkOutcome, SnapWarningReporter};
 use gt_snap::transport::{self, HttpResponse, Transport, TransportError};
 use gt_snap::wire::Costing;
+
+/// The params every scenario in this file runs with: default advanced
+/// options, auto costing.
+fn auto_params() -> SnapParams {
+    SnapParams::new(Costing::Auto)
+}
 
 fn fixture_body(name: &str) -> Result<String, String> {
     let path = fixtures_dir().join(name);
@@ -88,7 +94,7 @@ fn fixture_success_body_classifies_and_stitches_end_to_end() {
     .expect("fixture"))]);
 
     let mut progress = Vec::new();
-    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |done, total| {
+    let outcomes = transport::send_plan(&transport, &plan, &auto_params(), |done, total| {
         progress.push((done, total));
     });
 
@@ -107,7 +113,7 @@ fn stitch_all(
     outcomes: &[ChunkOutcome],
     reporter: &SnapWarningReporter,
 ) -> gt_snap::stitch::SnapResult {
-    gt_snap::stitch::stitch(plan, Costing::Auto, outcomes, reporter)
+    gt_snap::stitch::stitch(plan, auto_params(), outcomes, reporter)
 }
 
 #[test]
@@ -118,7 +124,7 @@ fn off_network_error_becomes_off_network_outcome_without_retry() {
         &fixture_body("unsnappable.response.json").expect("fixture"),
     )]);
 
-    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |_, _| {});
+    let outcomes = transport::send_plan(&transport, &plan, &auto_params(), |_, _| {});
 
     assert_eq!(outcomes, vec![ChunkOutcome::OffNetwork]);
     assert_eq!(transport.requests_seen(), 1, "4xx is never retried");
@@ -132,7 +138,7 @@ fn deterministic_client_error_fails_without_retry() {
         &fixture_body("bad_request.response.json").expect("fixture"),
     )]);
 
-    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |_, _| {});
+    let outcomes = transport::send_plan(&transport, &plan, &auto_params(), |_, _| {});
 
     assert!(
         matches!(outcomes.first(), Some(ChunkOutcome::Failed(detail)) if detail.contains("114"))
@@ -148,7 +154,7 @@ fn html_error_body_fails_without_retry() {
         &fixture_body("too_large_body.response.json").expect("fixture"),
     )]);
 
-    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |_, _| {});
+    let outcomes = transport::send_plan(&transport, &plan, &auto_params(), |_, _| {});
 
     assert!(
         matches!(outcomes.first(), Some(ChunkOutcome::Failed(detail)) if detail.contains("non-JSON"))
@@ -164,7 +170,7 @@ fn transient_transport_failure_gets_one_retry_then_succeeds() {
         ok(fixture_body("clean_drive.response.json").expect("fixture")),
     ]);
 
-    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |_, _| {});
+    let outcomes = transport::send_plan(&transport, &plan, &auto_params(), |_, _| {});
 
     assert!(matches!(outcomes.first(), Some(ChunkOutcome::Success(_))));
     assert_eq!(transport.requests_seen(), 2);
@@ -178,7 +184,7 @@ fn server_error_gets_one_retry_then_fails() {
         status(503, "upstream overloaded"),
     ]);
 
-    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |_, _| {});
+    let outcomes = transport::send_plan(&transport, &plan, &auto_params(), |_, _| {});
 
     assert!(
         matches!(outcomes.first(), Some(ChunkOutcome::Failed(detail)) if detail.contains("503"))
@@ -197,7 +203,7 @@ fn failed_chunk_does_not_stop_later_chunks() {
     ]);
 
     let mut progress = Vec::new();
-    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |done, total| {
+    let outcomes = transport::send_plan(&transport, &plan, &auto_params(), |done, total| {
         progress.push((done, total));
     });
 
@@ -212,7 +218,7 @@ fn unparsable_success_body_is_a_failure() {
     let plan = request_plan::plan(&points(10));
     let transport = CannedTransport::new(vec![status(200, "not json")]);
 
-    let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |_, _| {});
+    let outcomes = transport::send_plan(&transport, &plan, &auto_params(), |_, _| {});
 
     assert!(
         matches!(outcomes.first(), Some(ChunkOutcome::Failed(detail)) if detail.contains("unparsable success body"))
@@ -231,7 +237,7 @@ proptest::proptest! {
             status(code, &body),
             status(code, &body), // a transient classification retries once
         ]);
-        let outcomes = transport::send_plan(&transport, &plan, Costing::Auto, |_, _| {});
+        let outcomes = transport::send_plan(&transport, &plan, &auto_params(), |_, _| {});
         proptest::prop_assert_eq!(outcomes.len(), plan.chunks.len());
     }
 }

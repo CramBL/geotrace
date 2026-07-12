@@ -21,7 +21,7 @@ use std::thread;
 
 use egui::Context;
 
-use gt_snap::request_plan::{self, RequestPlan};
+use gt_snap::request_plan::{self, RequestPlan, SnapParams};
 use gt_snap::stitch::{self, SnapResult, SnapWarning, SnapWarningReporter};
 use gt_snap::transport::HttpTransport;
 use gt_snap::wire::Costing;
@@ -146,6 +146,7 @@ enum SnapMessage {
 struct PendingRun {
     track: TrackRef,
     key: SnapCacheKey,
+    params: SnapParams,
     plan: RequestPlan,
 }
 
@@ -229,6 +230,7 @@ impl SnapScheduler {
         self.queue.push_back(PendingRun {
             track: track_ref,
             key,
+            params: SnapParams::new(costing),
             plan,
         });
         self.start_next_if_idle();
@@ -349,8 +351,12 @@ fn spawn_run(
     transport: Arc<HttpTransport>,
     pending: PendingRun,
 ) {
-    let PendingRun { track, key, plan } = pending;
-    let costing = key.costing;
+    let PendingRun {
+        track,
+        key,
+        params,
+        plan,
+    } = pending;
     thread::Builder::new()
         .name(format!(
             "snap-{}-{}",
@@ -363,7 +369,7 @@ fn spawn_run(
             let outcomes = transport::send_plan(
                 transport.as_ref(),
                 &plan,
-                costing,
+                &params,
                 move |completed_chunks, total_chunks| {
                     progress_tx
                         .send(SnapMessage::Progress {
@@ -376,7 +382,7 @@ fn spawn_run(
                 },
             );
             let reporter = SnapWarningReporter::default();
-            let result = stitch::stitch(&plan, costing, &outcomes, &reporter);
+            let result = stitch::stitch(&plan, params, &outcomes, &reporter);
             let message = if result.points.is_empty() && result.partial {
                 // Nothing usable came back: every chunk failed.
                 SnapMessage::Failed {
@@ -461,7 +467,7 @@ mod tests {
             run: Box::new(SnapRun::new(
                 stitch::stitch(
                     &request_plan::plan(&[]),
-                    Costing::Auto,
+                    SnapParams::new(Costing::Auto),
                     &[],
                     &SnapWarningReporter::default(),
                 ),

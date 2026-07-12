@@ -13,6 +13,15 @@ expression: digests
         },
     ),
     (
+        "option_out_of_bounds",
+        ErrorResponse {
+            error: "Input trace option is out of bounds",
+            error_code: TraceOptionOutOfBounds,
+            status: "Bad Request",
+            status_code: 400,
+        },
+    ),
+    (
         "oversized",
         ErrorResponse {
             error: "Too many shape points: (16001). The limit is 16000",

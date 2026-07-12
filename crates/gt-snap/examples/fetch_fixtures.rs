@@ -10,8 +10,11 @@
 //! explicit act and the resulting diff is reviewed like code.
 //! See `docs/snap/design.md` ("Testing") and `docs/snap/implementation-plan.md`.
 //!
-//! Usage: `just snap-fixtures`, or
-//! `cargo run -p gt-snap --example fetch_fixtures`.
+//! Usage: `just snap-fixtures [SCENARIO...]`, or
+//! `cargo run -p gt-snap --example fetch_fixtures -- [SCENARIO...]`.
+//! Naming scenarios captures only those (an additive capture: entries for
+//! untouched scenarios are kept in `capture.json`); no arguments re-captures
+//! everything.
 //! Point it at a self-hosted server with `GEOTRACE_SNAP_SERVER=http://localhost:8002`.
 
 // Examples favour brevity: the core's robustness restriction lints (no
@@ -25,13 +28,15 @@
     reason = "capture tool: development-only code"
 )]
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::time::Duration;
 use std::{env, fs, thread};
 
 use serde_json::{Value, json};
 
-use gt_snap::wire::{Costing, ShapePoint, TraceAttributesRequest};
+use gt_snap::request_plan::{SEARCH_RADIUS_RANGE_M, SnapParams};
+use gt_snap::wire::{Costing, ShapePoint, TraceAttributesRequest, TraceOptions};
 use gt_snap::{
     CLIENT_ID_HEADER, DEFAULT_SERVER_URL, FIXTURE_SCENARIOS, REQUEST_INTERVAL,
     TRACE_ATTRIBUTES_PATH, fixtures_dir,
@@ -93,18 +98,58 @@ const ROSKILDE: Coord = (55.642, 12.081);
 /// send byte-identical requests.
 const JITTER_DEG: f64 = 3.0e-5;
 
+/// The tuned scenario's non-default trace options: values inside the
+/// server-accepted ranges but distinct from any default, so the fixture pins
+/// both the tuned-request serialization and the server accepting it.
+const TUNED_PARAMS: SnapParams = SnapParams {
+    costing: Costing::Auto,
+    search_radius_m: Some(25.0),
+    turn_penalty_factor: Some(300.0),
+    gps_accuracy_override_m: Some(10.0),
+};
+
 fn main() -> Result<(), Box<dyn Error>> {
     let server = env::var("GEOTRACE_SNAP_SERVER").unwrap_or_else(|_| DEFAULT_SERVER_URL.to_owned());
     let url = format!("{server}{TRACE_ATTRIBUTES_PATH}");
     let dir = fixtures_dir();
     fs::create_dir_all(&dir)?;
 
+    // Positional args select a scenario subset for an additive capture;
+    // no args re-captures everything.
+    let args: Vec<String> = env::args().skip(1).collect();
+    let selected: Vec<&str> = if args.is_empty() {
+        FIXTURE_SCENARIOS.to_vec()
+    } else {
+        args.iter()
+            .map(|name| {
+                FIXTURE_SCENARIOS
+                    .iter()
+                    .copied()
+                    .find(|&s| s == name)
+                    .unwrap_or_else(|| panic!("unknown fixture scenario {name:?}"))
+            })
+            .collect()
+    };
+
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(60))
         .build()?;
 
-    let mut summaries = Vec::new();
-    for (i, &name) in FIXTURE_SCENARIOS.iter().enumerate() {
+    // Start from the existing per-scenario metadata so a subset capture
+    // keeps the untouched scenarios' recorded entries.
+    let mut summaries_by_name: BTreeMap<String, Value> =
+        match fs::read_to_string(dir.join("capture.json")) {
+            Ok(existing) => serde_json::from_str::<Value>(&existing)?
+                .get("scenarios")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|s| Some((s.get("name")?.as_str()?.to_owned(), s.clone())))
+                .collect(),
+            Err(_) => BTreeMap::new(),
+        };
+
+    for (i, &name) in selected.iter().enumerate() {
         if i > 0 {
             // The public server's fair-use limit: 1 request per user per second.
             thread::sleep(REQUEST_INTERVAL);
@@ -139,13 +184,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         fs::write(dir.join(format!("{name}.response.json")), body_pretty)?;
 
         println!("{name}: HTTP {status}");
-        summaries.push(json!({
-            "name": name,
-            "http_status": status,
-            "osm_changeset": osm_changeset,
-        }));
+        summaries_by_name.insert(
+            name.to_owned(),
+            json!({
+                "name": name,
+                "http_status": status,
+                "osm_changeset": osm_changeset,
+            }),
+        );
     }
 
+    // Emit in canonical scenario order regardless of capture order.
+    let summaries: Vec<Value> = FIXTURE_SCENARIOS
+        .iter()
+        .filter_map(|&name| summaries_by_name.get(name).cloned())
+        .collect();
     let capture = json!({
         "captured_at": chrono::Utc::now().to_rfc3339(),
         "server": server,
@@ -179,6 +232,18 @@ fn scenario_request(name: &str) -> Value {
             Costing::Auto,
             trace(40, BOULEVARD_ROUTE, Some(1.0)),
         )),
+        // The clean drive with every advanced trace option set, built through
+        // the production params path ([`SnapParams::trace_options`]): pins the
+        // tuned-request serialization and the server accepting in-range
+        // values.
+        "clean_drive_tuned" => {
+            let mut request = TraceAttributesRequest::new(
+                TUNED_PARAMS.costing,
+                trace(40, BOULEVARD_ROUTE, Some(1.0)),
+            );
+            request.trace_options = TUNED_PARAMS.trace_options(None);
+            typed(request)
+        }
         // The same trace without an attribute filter: documents everything
         // the server can return, so the deliberate filter subset stays an
         // informed choice.
@@ -222,6 +287,20 @@ fn scenario_request(name: &str) -> Value {
         // (error_code 114). Deliberately malformed, so not expressible
         // through the typed request.
         "bad_request" => json!({ "costing": "auto" }),
+        // One trace option just past the server's bound: captures the real
+        // rejection (400, error_code 158) that the client-side clamps in
+        // [`SnapParams`] exist to prevent. Raw [`TraceOptions`], bypassing
+        // the clamping deliberately.
+        "option_out_of_bounds" => {
+            let mut request =
+                TraceAttributesRequest::new(Costing::Auto, trace(2, BOULEVARD_ROUTE, Some(1.0)));
+            request.trace_options = Some(TraceOptions {
+                gps_accuracy: None,
+                search_radius: Some(SEARCH_RADIUS_RANGE_M.end() + 1.0),
+                turn_penalty_factor: None,
+            });
+            typed(request)
+        }
         // One point past the server's shape limit: captures the limit error
         // (400, error_code 153), which names the maximum - the observation
         // that set the chunk-size constant.
