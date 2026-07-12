@@ -78,6 +78,10 @@ pub enum SnapRowView {
         confidence_score: Option<f64>,
         /// Whether the snapped track is currently drawn on the map.
         shown: bool,
+        /// `Some` when the run is stale - produced under parameters or a
+        /// server that differ from the current settings. The lines name
+        /// each difference; the row offers a re-run. `None` = current.
+        stale: Option<String>,
     },
 }
 
@@ -444,9 +448,9 @@ struct SnapAction {
 /// menu entry so the two can never disagree.
 fn snap_action(row: &SnapRowView, snap: SnapPanelView<'_>) -> Option<SnapAction> {
     let action = match row {
-        // A completed run leaves nothing to trigger; its status glyph stays
-        // fully usable offline (cached results are local).
-        SnapRowView::Done { .. } => return None,
+        // A current completed run leaves nothing to trigger; its status
+        // glyph stays fully usable offline (cached results are local).
+        SnapRowView::Done { stale: None, .. } => return None,
         // Unsnappable beats offline: it is the permanent condition, and its
         // hover names the declared mode.
         SnapRowView::Unsnappable { travel_mode } => SnapAction {
@@ -460,6 +464,15 @@ fn snap_action(row: &SnapRowView, snap: SnapPanelView<'_>) -> Option<SnapAction>
             enabled: false,
             hover: "Snapping is disabled while GEOTRACE_OFFLINE is set".to_owned(),
             consent_pending: false,
+        },
+        // A stale run keeps its status glyph; this action is the re-run.
+        SnapRowView::Done {
+            stale: Some(reasons),
+            ..
+        } => SnapAction {
+            enabled: true,
+            hover: format!("{reasons}\nClick to snap again with the current settings."),
+            consent_pending: snap.consent_pending,
         },
         SnapRowView::Queued => SnapAction {
             enabled: false,
@@ -535,17 +548,18 @@ fn snap_status_rows(
 /// run's status glyph with the breakdown hover once complete.
 fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'_>) {
     let row = ctx.snap.rows.get(&track_ref).unwrap_or(&SnapRowView::Idle);
-    let Some(action) = snap_action(row, ctx.snap) else {
-        let SnapRowView::Done {
-            snapped,
-            interpolated,
-            unsnapped,
-            confidence_score,
-            shown,
-        } = row
-        else {
-            return;
-        };
+
+    // A completed run always shows its status glyph (fresh or stale); a
+    // stale run additionally gets the re-run trigger from `snap_action`.
+    if let SnapRowView::Done {
+        snapped,
+        interpolated,
+        unsnapped,
+        confidence_score,
+        shown,
+        stale,
+    } = row
+    {
         let (snapped, interpolated, unsnapped, confidence_score, shown) = (
             *snapped,
             *interpolated,
@@ -554,30 +568,43 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
             *shown,
         );
         // The status glyph doubles as the per-track visibility toggle: weak
-        // while the snapped track draws, extra-faint while hidden.
-        let text = if shown {
-            RichText::new(ICON_PATH).weak()
-        } else {
-            RichText::new(ICON_PATH).weak().color(
+        // while the snapped track draws, extra-faint while hidden. A stale
+        // run's glyph turns warning-colored so the outdated result is
+        // visible at a glance, never silently current-looking.
+        let text = match (stale, shown) {
+            (Some(_), _) => {
+                RichText::new(ICON_PATH).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode))
+            }
+            (None, true) => RichText::new(ICON_PATH).weak(),
+            (None, false) => RichText::new(ICON_PATH).weak().color(
                 ui.visuals()
                     .weak_text_color()
                     .gamma_multiply(HIDDEN_GLYPH_ALPHA),
-            )
+            ),
         };
+        let stale = stale.clone();
         let glyph = ui
             .add(Button::new(text).frame(false))
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .on_hover_ui(|ui| {
                 snap_status_rows(ui, snapped, interpolated, unsnapped, confidence_score);
+                if let Some(reasons) = &stale {
+                    ui.label(
+                        RichText::new(format!("Stale - {}", stale_hover_line(reasons)))
+                            .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                    );
+                }
                 ui.label(RichText::new(snapped_track_toggle_label(shown)).weak());
             });
         if glyph.clicked() {
             *ctx.snap_visibility_request = Some(track_ref);
         }
         masked_display_hint(ui, ctx.display_mask, DisplayCategory::SnappedTracks);
+    }
+
+    let Some(action) = snap_action(row, ctx.snap) else {
         return;
     };
-
     let failed = matches!(row, SnapRowView::Failed { .. });
     let label = if action.consent_pending {
         format!("{ICON_PATH}{ELLIPSIS}")
@@ -601,6 +628,11 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
     }
 }
 
+/// The stale reasons flattened into one hover line ("a - b, c - d").
+fn stale_hover_line(reasons: &str) -> String {
+    reasons.lines().collect::<Vec<_>>().join(", ")
+}
+
 /// The context-menu counterpart of [`snap_control`]: same action state, text
 /// label instead of the icon. A completed run shows the entry disabled with
 /// the status hover, per the never-hide rule.
@@ -608,10 +640,16 @@ fn snap_menu_entry(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContex
     let row = ctx.snap.rows.get(&track_ref).unwrap_or(&SnapRowView::Idle);
     match snap_action(row, ctx.snap) {
         Some(action) => {
-            let label = if action.consent_pending {
-                format!("Snap to road{ELLIPSIS}")
+            // A stale completed run re-runs; everything else is a first run.
+            let verb = if matches!(row, SnapRowView::Done { .. }) {
+                "Snap again"
             } else {
-                "Snap to road".to_owned()
+                "Snap to road"
+            };
+            let label = if action.consent_pending {
+                format!("{verb}{ELLIPSIS}")
+            } else {
+                verb.to_owned()
             };
             let button = ui.add_enabled(action.enabled, Button::new(label));
             let button = if action.enabled {
@@ -630,31 +668,29 @@ fn snap_menu_entry(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContex
                 interpolated,
                 unsnapped,
                 confidence_score,
-                shown,
+                ..
             } = row
             else {
                 return;
             };
-            let (snapped, interpolated, unsnapped, confidence_score, shown) = (
-                *snapped,
-                *interpolated,
-                *unsnapped,
-                *confidence_score,
-                *shown,
-            );
+            let (snapped, interpolated, unsnapped, confidence_score) =
+                (*snapped, *interpolated, *unsnapped, *confidence_score);
             ui.add_enabled(false, Button::new("Snap to road"))
                 .on_disabled_hover_ui(|ui| {
                     snap_status_rows(ui, snapped, interpolated, unsnapped, confidence_score);
                 });
-            let toggle_label = if shown {
-                "Hide snapped track"
-            } else {
-                "Show snapped track"
-            };
-            if ui.button(toggle_label).clicked() {
-                *ctx.snap_visibility_request = Some(track_ref);
-                ui.close();
-            }
+        }
+    }
+    // The visibility toggle applies to any completed run, stale or not.
+    if let SnapRowView::Done { shown, .. } = row {
+        let toggle_label = if *shown {
+            "Hide snapped track"
+        } else {
+            "Show snapped track"
+        };
+        if ui.button(toggle_label).clicked() {
+            *ctx.snap_visibility_request = Some(track_ref);
+            ui.close();
         }
     }
 }
@@ -1587,14 +1623,27 @@ mod snap_action_tests {
             unsnapped: 3,
             confidence_score: None,
             shown: true,
+            stale: None,
         }
     }
 
-    /// Pins the trigger's priority order: Done never has an action (its
-    /// status glyph stays usable offline), Unsnappable beats offline (the
-    /// permanent condition names the mode), offline grays everything else,
-    /// only Idle and Failed are clickable, and only clickable states carry
-    /// the consent-pending `…` suffix.
+    fn stale_done() -> SnapRowView {
+        SnapRowView::Done {
+            snapped: 1,
+            interpolated: 2,
+            unsnapped: 3,
+            confidence_score: None,
+            shown: true,
+            stale: Some("Snapped as Bicycle - would now snap as Auto".to_owned()),
+        }
+    }
+
+    /// Pins the trigger's priority order: a current Done never has an action
+    /// (its status glyph stays usable offline), a stale Done offers the
+    /// re-run (grayed offline - it needs the network), Unsnappable beats
+    /// offline (the permanent condition names the mode), offline grays
+    /// everything else, only Idle, Failed, and stale Done are clickable, and
+    /// only clickable states carry the consent-pending `…` suffix.
     #[rstest]
     #[case(SnapRowView::Idle, false, Some(true))]
     #[case(SnapRowView::Idle, true, Some(false))]
@@ -1608,6 +1657,8 @@ mod snap_action_tests {
     #[case(SnapRowView::InFlight { completed_chunks: 1, total_chunks: 2 }, true, Some(false))]
     #[case(done(), false, None)]
     #[case(done(), true, None)]
+    #[case(stale_done(), false, Some(true))]
+    #[case(stale_done(), true, Some(false))]
     fn action_enablement_per_state_and_offline(
         #[case] row: SnapRowView,
         #[case] offline: bool,
@@ -1641,6 +1692,7 @@ mod snap_action_tests {
     #[rstest]
     #[case(SnapRowView::Idle, true)]
     #[case(failed(), true)]
+    #[case(stale_done(), true)]
     #[case(unsnappable(), false)]
     #[case(SnapRowView::Queued, false)]
     fn consent_suffix_only_on_clickable_states(#[case] row: SnapRowView, #[case] expected: bool) {

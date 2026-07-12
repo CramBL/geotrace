@@ -179,6 +179,7 @@ fn done_row(shown: bool) -> SnapRowView {
         unsnapped: 12,
         confidence_score: Some(0.87),
         shown,
+        stale: None,
     }
 }
 
@@ -221,6 +222,64 @@ fn snapshot_snap_trigger_states() {
     let mut harness = make_harness_sized(state, egui::vec2(280.0, 720.0));
     harness.run();
     harness.snapshot("side_panel_snap_states");
+}
+
+/// A stale run's row for the stale-state tests: the [`done_row`] fixture
+/// with one named parameter difference.
+fn stale_row() -> SnapRowView {
+    SnapRowView::Done {
+        snapped: 120,
+        interpolated: 340,
+        unsnapped: 12,
+        confidence_score: Some(0.87),
+        shown: true,
+        stale: Some("Snapped as Bicycle - would now snap as Auto".to_owned()),
+    }
+}
+
+/// A stale completed run: the status glyph turns warning-colored and the
+/// re-run trigger appears next to it - the outdated result stays visible
+/// but can never pass as current.
+#[test]
+fn snapshot_snap_stale_run() {
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    state.snap_rows.insert(
+        TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+        stale_row(),
+    );
+    let mut harness = make_harness(state);
+    harness.run();
+    harness.snapshot("side_panel_snap_stale");
+}
+
+/// Clicking a stale run's re-run trigger requests a snap (not the
+/// visibility toggle) - the two controls sit side by side, status glyph
+/// first, trigger second.
+#[test]
+fn clicking_stale_trigger_requests_snap() {
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    state.snap_rows.insert(track, stale_row());
+    let mut harness = make_harness(state);
+    harness.run();
+
+    let triggers: Vec<_> = harness.inner.get_all_by_label(ICON_PATH).collect();
+    assert_eq!(triggers.len(), 2, "status glyph plus re-run trigger");
+    triggers
+        .into_iter()
+        .nth(1)
+        .expect("second glyph is the trigger")
+        .click();
+    harness.run();
+
+    assert_eq!(harness.state().snap_request, Some(track));
+    assert_eq!(
+        harness.state().snap_visibility_request,
+        None,
+        "the re-run trigger must not toggle visibility"
+    );
 }
 
 /// A completed run whose ink the map display toggles hide: the status glyph
@@ -327,6 +386,7 @@ fn clicking_done_glyph_requests_visibility_toggle() {
             unsnapped: 0,
             confidence_score: None,
             shown: true,
+            stale: None,
         },
     );
     let mut harness = make_harness(state);
@@ -358,6 +418,7 @@ fn context_menu_toggles_snapped_track_visibility() {
             unsnapped: 0,
             confidence_score: None,
             shown: true,
+            stale: None,
         },
     );
     let mut harness = make_harness(state);

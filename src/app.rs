@@ -1006,14 +1006,22 @@ impl App {
                         Some(snap::SnapActivity::Failed { error }) => SnapRowView::Failed {
                             error: error.clone(),
                         },
-                        None => match self.snap.run_for(track, costing) {
-                            Some(run) => SnapRowView::Done {
-                                snapped: run.result.kind_counts.snapped,
-                                interpolated: run.result.kind_counts.interpolated,
-                                unsnapped: run.result.kind_counts.unsnapped,
-                                confidence_score: run.result.confidence_score,
-                                shown: !self.hidden_snapped.contains(&track_ref),
-                            },
+                        None => match self.snap.latest_run_for(track) {
+                            Some(run) => {
+                                let reasons = snap::stale_reasons(
+                                    &run,
+                                    self.snap_settings.params(costing),
+                                    self.snap.current_host().as_deref(),
+                                );
+                                SnapRowView::Done {
+                                    snapped: run.result.kind_counts.snapped,
+                                    interpolated: run.result.kind_counts.interpolated,
+                                    unsnapped: run.result.kind_counts.unsnapped,
+                                    confidence_score: run.result.confidence_score,
+                                    shown: !self.hidden_snapped.contains(&track_ref),
+                                    stale: (!reasons.is_empty()).then(|| reasons.join("\n")),
+                                }
+                            }
                             None => continue,
                         },
                     },
@@ -1033,10 +1041,6 @@ impl App {
         let mut snapped = gt_ui_types::SnappedTracks::default();
         for (fi, file) in shared.loaded_files.files().iter().enumerate() {
             let fi = FileIdx::new(fi);
-            let declared = file.metadata.travel_mode.as_ref();
-            let Some(costing) = snap::resolve_costing(declared, self.snap_settings.costing) else {
-                continue;
-            };
             for (ti, track) in file.tracks.iter().enumerate() {
                 let track_ref = TrackRef::new(fi, TrackIdx::new(ti));
                 if self.hidden_snapped.contains(&track_ref) {
@@ -1052,7 +1056,7 @@ impl App {
                 if !track_shown {
                     continue;
                 }
-                if let Some(run) = self.snap.run_for(track, costing) {
+                if let Some(run) = self.snap.latest_run_for(track) {
                     snapped
                         .segments_by_track
                         .insert(track_ref, Arc::clone(&run.segments_merc));
@@ -1071,13 +1075,9 @@ impl App {
         let shared = self.shared.borrow();
         let mut series = gt_ui_types::SnapErrorSeries::default();
         for (fi, file) in shared.loaded_files.files().iter().enumerate() {
-            let declared = file.metadata.travel_mode.as_ref();
-            let Some(costing) = snap::resolve_costing(declared, self.snap_settings.costing) else {
-                continue;
-            };
             for (ti, track) in file.tracks.iter().enumerate() {
                 let track_ref = TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti));
-                let Some(run) = self.snap.run_for(track, costing) else {
+                let Some(run) = self.snap.latest_run_for(track) else {
                     continue;
                 };
                 let points: Vec<gt_ui_types::SnapErrorPoint> = run
@@ -1136,7 +1136,8 @@ impl App {
         let Some(costing) = snap::resolve_costing(declared, self.snap_settings.costing) else {
             return;
         };
-        self.snap.request_snap(track_ref, track, costing);
+        self.snap
+            .request_snap(track_ref, track, self.snap_settings.params(costing));
     }
 
     /// Snapshot of all settings-relevant state for change detection.

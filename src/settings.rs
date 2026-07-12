@@ -78,6 +78,13 @@ impl SnapSettings {
     pub fn acknowledge_consent(&mut self) {
         self.consent_host = gt_snap::server_host(&self.server_url);
     }
+
+    /// The parameters a fresh snap run would use under the given costing.
+    /// The single source for run parameters, so staleness detection picks
+    /// up every future setting (advanced trace options) automatically.
+    pub fn params(&self, costing: gt_snap::wire::Costing) -> gt_snap::request_plan::SnapParams {
+        gt_snap::request_plan::SnapParams::new(costing)
+    }
 }
 
 /// Persisted state for the query window: the history of run queries.
