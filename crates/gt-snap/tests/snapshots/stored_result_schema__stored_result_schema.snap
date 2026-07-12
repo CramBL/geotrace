@@ -1,0 +1,124 @@
+---
+source: crates/gt-snap/tests/stored_result_schema.rs
+expression: pretty
+---
+{
+  "result": {
+    "confidence_score": 0.87,
+    "edges": [
+      {
+        "begin_shape_index": 0,
+        "end_shape_index": 1,
+        "names": [
+          "H.C. Andersens Boulevard"
+        ],
+        "road_class": "tertiary",
+        "speed_limit": 50,
+        "surface": "paved_smooth",
+        "way_id": 496181694
+      },
+      {
+        "begin_shape_index": null,
+        "end_shape_index": null,
+        "names": [],
+        "road_class": "unknown",
+        "speed_limit": null,
+        "surface": "unknown",
+        "way_id": null
+      }
+    ],
+    "gps_accuracy_sent_m": 10.0,
+    "kind_counts": {
+      "interpolated": 1,
+      "snapped": 1,
+      "unsnapped": 1
+    },
+    "osm_changeset": 1783810896,
+    "params": {
+      "costing": "bicycle",
+      "gps_accuracy_override_m": 10.0,
+      "search_radius_m": 25.0,
+      "turn_penalty_factor": 300.0
+    },
+    "partial": true,
+    "points": [
+      {
+        "edge": 0,
+        "error_m": 3.25,
+        "kind": "matched",
+        "point": 0,
+        "snapped": {
+          "lat": 55.6787,
+          "lon": 12.5645
+        }
+      },
+      {
+        "edge": 1,
+        "error_m": 1.5,
+        "kind": "interpolated",
+        "point": 4,
+        "snapped": {
+          "lat": 55.6779,
+          "lon": 12.5654
+        }
+      },
+      {
+        "edge": null,
+        "error_m": null,
+        "kind": "unmatched",
+        "point": 9,
+        "snapped": null
+      }
+    ],
+    "segments": [
+      [
+        {
+          "lat": 55.6787,
+          "lon": 12.5645
+        },
+        {
+          "lat": 55.6779,
+          "lon": 12.5654
+        }
+      ]
+    ]
+  },
+  "warnings": [
+    {
+      "chunk_failed": {
+        "chunk_index": 2,
+        "detail": "HTTP 502 Bad Gateway"
+      }
+    },
+    {
+      "point_count_mismatch": {
+        "chunk_index": 3,
+        "received": 998,
+        "sent": 1000
+      }
+    },
+    {
+      "geometry": {
+        "chunk_index": 4,
+        "detail": "edge 7 carries no shape index range"
+      }
+    },
+    {
+      "osm_changeset_mismatch": {
+        "first": 185397177,
+        "later": 1783810896
+      }
+    },
+    {
+      "server": {
+        "chunk_index": 5,
+        "warnings": [
+          {
+            "code": 1,
+            "text": "synthetic"
+          }
+        ]
+      }
+    }
+  ]
+}

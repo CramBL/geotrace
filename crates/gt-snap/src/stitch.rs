@@ -13,6 +13,7 @@
 //! the result partial.
 
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use gt_types::PointIdx;
@@ -37,7 +38,12 @@ pub enum ChunkOutcome {
 
 /// One warning accumulated while stitching. Structured per the warning
 /// reporter pattern (CODE_STYLE.md); the app decides how to surface them.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Serde derives exist for persisting a run's warnings with its cached
+/// [`SnapResult`]; snake_case tags keep the stored form stable against
+/// variant renames being caught in review.
+#[derive(Debug, Clone, PartialEq, strum::EnumCount, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SnapWarning {
     /// A chunk failed after retry; its owned points carry no snap data.
     ChunkFailed { chunk_index: usize, detail: String },
@@ -87,7 +93,7 @@ impl SnapWarningReporter {
 
 /// Per-kind totals over a run's points with snap data, shown in the
 /// side-panel snap status.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapKindCounts {
     pub snapped: usize,
     pub interpolated: usize,
@@ -112,43 +118,60 @@ impl SnapKindCounts {
 ///
 /// Points of failed chunks have no entry at all - absence of data is not a
 /// kind. Unsnapped points have an entry with no error, position, or edge.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SnapPoint {
     pub point: PointIdx,
     pub kind: SnapPointKind,
     /// The snap error in meters (`distance_from_trace_point`).
+    #[serde(default)]
     pub error_m: Option<f64>,
     /// The snapped position on the road network.
+    #[serde(default)]
     pub snapped: Option<Position>,
     /// Index into [`SnapResult::edges`] for hover attributes.
+    #[serde(default)]
     pub edge: Option<usize>,
 }
 
 /// The stitched result of one snap run over one track.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Serde derives exist for the persistent cache in the recording history
+/// database. Optional and collection fields carry `#[serde(default)]` so
+/// fields added later decode absent from older stored results instead of
+/// failing the whole blob; the schema is pinned by a snapshot test
+/// (`stored_result_schema`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SnapResult {
     /// Per sent point with data, ascending by track index. Sent points of
     /// failed chunks are absent.
+    #[serde(default)]
     pub points: Vec<SnapPoint>,
     /// The snapped-track geometry, split at discontinuities, unmatched
     /// runs, and failed chunks.
+    #[serde(default)]
     pub segments: Vec<SnappedTrackSegment>,
     /// Edge attributes referenced by [`SnapPoint::edge`], concatenated
     /// across chunks.
+    #[serde(default)]
     pub edges: Vec<Edge>,
+    #[serde(default)]
     pub kind_counts: SnapKindCounts,
     /// Most conservative (lowest) confidence across the successful chunks.
+    #[serde(default)]
     pub confidence_score: Option<f64>,
     /// OSM data version of the first successful chunk; a mid-run version
     /// change is reported as a warning.
+    #[serde(default)]
     pub osm_changeset: Option<u64>,
     /// The parameters the run was requested with, as provenance: staleness
     /// against the current settings compares these.
     pub params: SnapParams,
     /// The `gps_accuracy` the run actually sent: the clamped override when
     /// set, else the eph-derived value. `None` = server default.
+    #[serde(default)]
     pub gps_accuracy_sent_m: Option<f64>,
     /// True when at least one chunk failed and left a gap.
+    #[serde(default)]
     pub partial: bool,
 }
 
