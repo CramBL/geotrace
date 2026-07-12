@@ -38,6 +38,7 @@ fn label(category: DisplayCategory) -> &'static str {
         DisplayCategory::GeneratedMarkers => "Generated markers",
         DisplayCategory::EventMarkers => "Event markers",
         DisplayCategory::QueryHighlights => "Query highlights",
+        DisplayCategory::SnappedTracks => "Snapped tracks",
     }
 }
 
@@ -249,6 +250,7 @@ mod tests {
             DisplayCategory::GeneratedMarkers => 1482,
             DisplayCategory::EventMarkers => 96,
             DisplayCategory::QueryHighlights => 0,
+            DisplayCategory::SnappedTracks => 3,
         })
     }
 

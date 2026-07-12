@@ -120,7 +120,12 @@ pub struct PanelContext<'a> {
 /// display toggles - the tree and the mask explain each other instead of
 /// silently compounding.
 fn masked_hint(ui: &mut egui::Ui, mask: DisplayMask, category: DataCategory) {
-    if !mask.is_visible(DisplayCategory::from(category)) {
+    masked_display_hint(ui, mask, DisplayCategory::from(category));
+}
+
+/// [`masked_hint`] for ink without a tree data category (the snapped track).
+fn masked_display_hint(ui: &mut egui::Ui, mask: DisplayMask, category: DisplayCategory) {
+    if !mask.is_visible(category) {
         ui.label(RichText::new(ICON_EYE_SLASH).weak())
             .on_hover_text("Hidden by the map display toggles");
     }
@@ -569,6 +574,7 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
         if glyph.clicked() {
             *ctx.snap_visibility_request = Some(track_ref);
         }
+        masked_display_hint(ui, ctx.display_mask, DisplayCategory::SnappedTracks);
         return;
     };
 
