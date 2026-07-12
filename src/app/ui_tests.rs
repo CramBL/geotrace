@@ -11,7 +11,7 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 
-use egui_kittest::{Harness, kittest::Queryable as _};
+use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use geotrace_sdk::{Channel, ChannelUnit, DateTime, Duration, Unit, Utc};
 use gt_test_utils::{DEMO_BYTES, GOLD_BYTES, SyntheticGtdSpec, TestHarness, synthetic_gtd_bytes};
 use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
@@ -2416,16 +2416,38 @@ fn snap_request_parked_on_consent_is_dropped_on_decline() {
     );
 }
 
-/// Inject a completed run with one snapped segment for `track` straight into
-/// the scheduler cache, keyed the way `snapped_tracks_view` will look it up.
+/// Inject a completed run for `track` straight into the scheduler cache,
+/// keyed the way the app's view builders look it up: one snapped segment for
+/// the map, and per-point results for the plot - errors for the first sixty
+/// points with an unsnapped stretch at indices 20..25, so the snap error
+/// series has a line break and markers to show.
 fn inject_completed_run(harness: &mut Harness<'_, App>, track: gt_types::TrackRef) {
     use crate::app::snap::{SnapCacheKey, SnapRun};
     use gt_snap::snapped_track::{Position, SnappedTrackSegment};
-    use gt_snap::stitch::SnapResult;
-    use gt_snap::wire::Costing;
+    use gt_snap::stitch::{SnapPoint, SnapResult};
+    use gt_snap::wire::{Costing, SnapPointKind};
 
+    let points: Vec<SnapPoint> = (0..60)
+        .map(|i| {
+            let kind = if (20..25).contains(&i) {
+                SnapPointKind::Unsnapped
+            } else if i % 2 == 0 {
+                SnapPointKind::Snapped
+            } else {
+                SnapPointKind::Interpolated
+            };
+            SnapPoint {
+                point: gt_types::PointIdx::new(i),
+                kind,
+                error_m: (kind != SnapPointKind::Unsnapped)
+                    .then(|| 2.0 + f64::from(u8::try_from(i % 7).unwrap_or(0))),
+                snapped: None,
+                edge: None,
+            }
+        })
+        .collect();
     let result = SnapResult {
-        points: Vec::new(),
+        points,
         segments: vec![SnappedTrackSegment {
             positions: vec![
                 Position {
@@ -2496,6 +2518,113 @@ fn snapped_tracks_view_respects_toggle_and_tree_visibility() {
         .tree
         .toggle_track_check(track);
     assert!(harness.state().snapped_tracks_view().is_empty());
+}
+
+/// The plot's snap error series from an injected completed run: the mint
+/// line breaks over the unsnapped stretch and cross markers sit on the
+/// baseline there. Only Eph stays enabled alongside so the snapshot shows
+/// the claimed-accuracy vs. observed-deviation overlay the metric exists for.
+#[test]
+fn snapshot_app_plot_snap_error() {
+    let gtd_bytes = minimal_gtd_bytes();
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.input_mut().dropped_files.push(egui::DroppedFile {
+        bytes: Some(Arc::from(gtd_bytes.as_slice())),
+        name: "ride.gtd".to_owned(),
+        ..Default::default()
+    });
+    harness.step();
+    step_until_loaded(&mut harness);
+    let track = gt_types::TrackRef::new(gt_types::FileIdx::new(0), gt_types::TrackIdx::new(0));
+    inject_completed_run(&mut harness, track);
+    harness.run_steps(5);
+
+    {
+        let state = harness.state_mut();
+        let mut shared = state.shared.borrow_mut();
+        let vis = &mut shared.plot_state.metric_vis;
+        use strum::IntoEnumIterator as _;
+        for kind in gt_types::MetricKind::iter() {
+            *vis.field_mut(kind) = matches!(
+                kind,
+                gt_types::MetricKind::Eph | gt_types::MetricKind::SnapError
+            );
+        }
+    }
+    harness.run_steps(5);
+
+    let mut harness = gt_test_utils::TestHarness::from_harness(harness);
+    harness.snapshot_loose("app_plot_snap_error");
+}
+
+/// Without a completed run the snap error chip renders disabled - visible,
+/// not hidden - and enabling runs changes nothing else about the chip row.
+#[test]
+fn snap_error_chip_is_disabled_until_a_run_completes() {
+    let gtd_bytes = minimal_gtd_bytes();
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.input_mut().dropped_files.push(egui::DroppedFile {
+        bytes: Some(Arc::from(gtd_bytes.as_slice())),
+        name: "ride.gtd".to_owned(),
+        ..Default::default()
+    });
+    harness.step();
+    step_until_loaded(&mut harness);
+    let track = gt_types::TrackRef::new(gt_types::FileIdx::new(0), gt_types::TrackIdx::new(0));
+    harness.run_steps(3);
+
+    let chip = harness.get_by_label("Snap error (m)");
+    assert!(
+        chip.accesskit_node().is_disabled(),
+        "the chip must render disabled while no run has completed"
+    );
+
+    inject_completed_run(&mut harness, track);
+    harness.run_steps(3);
+    let chip = harness.get_by_label("Snap error (m)");
+    assert!(
+        !chip.accesskit_node().is_disabled(),
+        "a completed run enables the chip"
+    );
+}
+
+/// `snap_error_view` resolves each sent point's `PointIdx` to its plot time
+/// and mirrors the kind; unsnapped points keep `error_m: None`.
+#[test]
+fn snap_error_view_resolves_point_times_and_kinds() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
+    inject_completed_run(&mut harness, track);
+
+    let view = harness.state().snap_error_view();
+    let points = view
+        .points_by_track
+        .get(&track)
+        .expect("the completed run must reach the plot view");
+    assert_eq!(points.len(), 60, "one entry per injected sent point");
+
+    let shared = harness.state().shared.borrow();
+    let loaded = track
+        .resolve(shared.loaded_files.files())
+        .expect("track present");
+    let first_time = loaded.points[0].tpv.time().as_secs_f64();
+    assert!(
+        (points[0].x_secs - first_time).abs() < f64::EPSILON,
+        "x must be the point's own plot time"
+    );
+    assert_eq!(points[0].kind, gt_ui_types::SnapErrorKind::Snapped);
+    assert_eq!(points[20].kind, gt_ui_types::SnapErrorKind::Unsnapped);
+    assert_eq!(points[20].error_m, None);
+    assert_eq!(points[21].kind, gt_ui_types::SnapErrorKind::Unsnapped);
+    assert_eq!(points[25].kind, gt_ui_types::SnapErrorKind::Interpolated);
+    assert!(points[25].error_m.is_some());
 }
 
 #[test]

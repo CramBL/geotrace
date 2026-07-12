@@ -1059,6 +1059,54 @@ impl App {
         snapped
     }
 
+    /// The plot's snap error series: per sent point of each completed run,
+    /// the point's plot time, its snap error, and its match kind. Unlike the
+    /// map geometry this is not gated on visibility or the snapped-track
+    /// toggle - the plot filters by its own track visibility, and hiding the
+    /// snapped geometry on the map does not retract the error data.
+    fn snap_error_view(&self) -> gt_ui_types::SnapErrorSeries {
+        let shared = self.shared.borrow();
+        let mut series = gt_ui_types::SnapErrorSeries::default();
+        for (fi, file) in shared.loaded_files.files().iter().enumerate() {
+            let declared = file.metadata.travel_mode.as_ref();
+            let Some(costing) = snap::resolve_costing(declared, self.snap_settings.costing) else {
+                continue;
+            };
+            for (ti, track) in file.tracks.iter().enumerate() {
+                let track_ref = TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti));
+                let Some(run) = self.snap.run_for(track, costing) else {
+                    continue;
+                };
+                let points: Vec<gt_ui_types::SnapErrorPoint> = run
+                    .result
+                    .points
+                    .iter()
+                    .filter_map(|p| {
+                        let nav = p.point.get(&track.points)?;
+                        Some(gt_ui_types::SnapErrorPoint {
+                            x_secs: nav.tpv.time().as_secs_f64(),
+                            error_m: p.error_m,
+                            kind: Self::snap_error_kind(p.kind),
+                        })
+                    })
+                    .collect();
+                series.points_by_track.insert(track_ref, Arc::new(points));
+            }
+        }
+        series
+    }
+
+    /// Map gt-snap's wire-format point kind onto the plot's plain mirror
+    /// (a mirror so `gt-ui-types` stays free of the gt-snap dependency;
+    /// this method is the one place both types are visible).
+    fn snap_error_kind(kind: gt_snap::wire::SnapPointKind) -> gt_ui_types::SnapErrorKind {
+        match kind {
+            gt_snap::wire::SnapPointKind::Snapped => gt_ui_types::SnapErrorKind::Snapped,
+            gt_snap::wire::SnapPointKind::Interpolated => gt_ui_types::SnapErrorKind::Interpolated,
+            gt_snap::wire::SnapPointKind::Unsnapped => gt_ui_types::SnapErrorKind::Unsnapped,
+        }
+    }
+
     /// Act on a snap trigger from the side panel: route through the consent
     /// dialog while consent is pending, queue the run otherwise.
     fn handle_snap_request(&mut self, track_ref: TrackRef) {
@@ -1703,6 +1751,8 @@ struct MainBehavior<'a> {
     query_matches: Option<&'a gt_ui_types::QueryMatches>,
     /// Snapped-track geometry of completed, shown snap runs.
     snapped_tracks: &'a gt_ui_types::SnappedTracks,
+    /// Snap error per track of completed snap runs, for the plot.
+    snap_error: &'a gt_ui_types::SnapErrorSeries,
 }
 
 impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
@@ -1769,6 +1819,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     self.map_hover_time,
                     self.match_hover_time_range,
                     map_sync_x_range,
+                    self.snap_error,
                     &mut s.plot_state,
                 );
             }
@@ -2067,6 +2118,7 @@ impl eframe::App for App {
         // Assembled after the panel so a visibility toggle takes effect in
         // the same frame's map render.
         let snapped_tracks = self.snapped_tracks_view();
+        let snap_error = self.snap_error_view();
 
         CentralPanel::default().show_inside(ui, |ui| {
             let panel_rect = ui.max_rect();
@@ -2097,6 +2149,7 @@ impl eframe::App for App {
                     toggle_plot_request: false,
                     query_matches: self.query_window.matches(),
                     snapped_tracks: &snapped_tracks,
+                    snap_error: &snap_error,
                 };
                 tiles_tree.ui(&mut behavior, ui);
                 toggle_plot_request = behavior.toggle_plot_request;

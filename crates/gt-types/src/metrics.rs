@@ -57,6 +57,11 @@ pub enum MetricKind {
     SlipBeidou,
     SlipNavic,
     SlipQzss,
+    /// Distance in meters from a recorded point to its road-snapped position
+    /// (see `docs/snap/design.md`). Values exist only for points sent in a
+    /// completed snap run; meters, so it overlays [`MetricKind::Eph`] on the
+    /// shared y-axis for the claimed-accuracy vs. observed-deviation read.
+    SnapError,
 }
 
 #[cfg(test)]
@@ -109,6 +114,7 @@ mod tests {
             (MetricKind::SlipBeidou, "slip_beidou"),
             (MetricKind::SlipNavic, "slip_navic"),
             (MetricKind::SlipQzss, "slip_qzss"),
+            (MetricKind::SnapError, "snap_error"),
         ];
         assert_eq!(expected.len(), MetricKind::COUNT);
         for (kind, wire) in expected {

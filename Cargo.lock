@@ -2431,6 +2431,7 @@ dependencies = [
  "gt-ui-theme",
  "gt-ui-types",
  "rayon",
+ "rstest",
  "strum",
  "uom",
 ]

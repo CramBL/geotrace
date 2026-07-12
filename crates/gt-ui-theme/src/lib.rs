@@ -491,6 +491,9 @@ pub const fn metric_themed_color(kind: gt_types::MetricKind) -> ThemedColor {
         M::SlipBeidou => ((120, 190, 235), (69, 110, 136)), // steel blue
         M::SlipNavic => ((170, 140, 245), (112, 92, 161)), // violet
         M::SlipQzss => ((245, 140, 110), (151, 86, 68)), // salmon
+        // Mint green: distinct from Eph's magenta, which it is designed to
+        // overlay (claimed accuracy vs. observed road deviation).
+        M::SnapError => ((60, 255, 180), (0, 143, 94)),
     };
     ThemedColor::new(
         Color32::from_rgb(dark.0, dark.1, dark.2),

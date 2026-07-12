@@ -19,8 +19,10 @@ use gt_analysis::satellite_utilization::UtilAnomaly;
 use gt_egui_mipmap::{LevelSelection, MipMap};
 use gt_filter::GlobalFilter;
 use gt_types::satellites::Constellation;
-use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx};
-use gt_ui_types::{HighlightScope, TrackDataVisibility};
+use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx, TrackRef};
+use gt_ui_types::{
+    HighlightScope, SnapErrorKind, SnapErrorPoint, SnapErrorSeries, TrackDataVisibility,
+};
 use rayon::prelude::*;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use strum::IntoEnumIterator;
@@ -82,7 +84,8 @@ impl MetricKindUi for MetricKind {
             | Self::HeadingDeg
             | Self::ClockDeltaMs
             | Self::UtilAll
-            | Self::SlipAll => None,
+            | Self::SlipAll
+            | Self::SnapError => None,
         }
     }
 
@@ -140,6 +143,7 @@ impl MetricKindUi for MetricKind {
             Self::SlipBeidou => "BeiDou slip (/min)",
             Self::SlipNavic => "NavIC slip (/min)",
             Self::SlipQzss => "QZSS slip (/min)",
+            Self::SnapError => "Snap error (m)",
         }
     }
 
@@ -149,6 +153,12 @@ impl MetricKindUi for MetricKind {
                 "Estimated Horizontal Position error - the GPS receiver's own estimate of how \
                  far the reported position may be from the true position, in metres. \
                  Lower is more accurate.",
+            ),
+            Self::SnapError => Some(
+                "Distance from each recorded point to its road-snapped position, in metres - \
+                 the observed deviation from the road network. Plot it next to EPH to compare \
+                 the receiver's claimed accuracy with the observed deviation. Values exist only \
+                 for points sent in a completed snap run.",
             ),
             Self::ClockDeltaMs => Some(
                 "GPS clock lead over the host system clock, in milliseconds. \
@@ -471,6 +481,7 @@ pub struct MetricVisibility {
     pub slip_beidou: bool,
     pub slip_navic: bool,
     pub slip_qzss: bool,
+    pub snap_error: bool,
 }
 
 impl Default for MetricVisibility {
@@ -508,6 +519,7 @@ impl Default for MetricVisibility {
             slip_beidou: true,
             slip_navic: true,
             slip_qzss: true,
+            snap_error: true,
         }
     }
 }
@@ -548,6 +560,7 @@ impl MetricVisibility {
             MetricKind::SlipBeidou => self.slip_beidou,
             MetricKind::SlipNavic => self.slip_navic,
             MetricKind::SlipQzss => self.slip_qzss,
+            MetricKind::SnapError => self.snap_error,
         }
     }
 
@@ -586,6 +599,7 @@ impl MetricVisibility {
             MetricKind::SlipBeidou => &mut self.slip_beidou,
             MetricKind::SlipNavic => &mut self.slip_navic,
             MetricKind::SlipQzss => &mut self.slip_qzss,
+            MetricKind::SnapError => &mut self.snap_error,
         }
     }
 
@@ -744,8 +758,10 @@ struct TripLevelCache {
 }
 
 impl TripLevelCache {
-    fn level_for(&self, kind: MetricKind) -> LevelSelection {
-        match kind {
+    /// `None` for metrics with no mipmap: snap error draws from the external
+    /// per-run series, not from `TrackSeries`.
+    fn level_for(&self, kind: MetricKind) -> Option<LevelSelection> {
+        Some(match kind {
             MetricKind::SatsSeen => self.total_seen,
             MetricKind::SatsFix => self.total_fix,
             MetricKind::GpsSeen => self.gps_seen,
@@ -778,13 +794,16 @@ impl TripLevelCache {
             MetricKind::SlipBeidou => self.slip_beidou,
             MetricKind::SlipNavic => self.slip_navic,
             MetricKind::SlipQzss => self.slip_qzss,
-        }
+            MetricKind::SnapError => return None,
+        })
     }
 }
 
 impl crate::series::TrackSeries {
-    fn mipmap_for(&self, kind: MetricKind) -> &gt_egui_mipmap::MipMap {
-        match kind {
+    /// `None` for metrics with no mipmap, mirroring
+    /// [`TripLevelCache::level_for`].
+    fn mipmap_for(&self, kind: MetricKind) -> Option<&gt_egui_mipmap::MipMap> {
+        Some(match kind {
             MetricKind::SatsSeen => &self.total_seen,
             MetricKind::SatsFix => &self.total_fix,
             MetricKind::GpsSeen => &self.gps_seen,
@@ -817,7 +836,8 @@ impl crate::series::TrackSeries {
             MetricKind::SlipBeidou => &self.slip_beidou,
             MetricKind::SlipNavic => &self.slip_navic,
             MetricKind::SlipQzss => &self.slip_qzss,
-        }
+            MetricKind::SnapError => return None,
+        })
     }
 }
 
@@ -998,6 +1018,9 @@ pub fn show_track_plot(
     // computed from TPV points visible in the current map viewport.
     // The plot will pan/zoom to this range the first frame it changes.
     map_sync_x_range: Option<(f64, f64)>,
+    // Snap error per track, resolved by the app from completed snap runs
+    // (see `gt_ui_types::SnapErrorSeries`).
+    snap_error: &SnapErrorSeries,
     state: &mut PlotState,
 ) {
     // Compute the per-series visibility mask once so the three downstream
@@ -1050,6 +1073,11 @@ pub fn show_track_plot(
     // actually carries channels.
     let channels = loaded_channels(state.series_cache.iter().flat_map(|s| s.channels.iter()));
 
+    // Whether any visible track has a completed snap run: gates the snap
+    // error chip (disabled with hover text until a run completes) and the
+    // per-point hover hit-testing.
+    let snap_error_available = snap_error_available(&state.series_cache, &visible, snap_error);
+
     // Draw the per-metric filter row before the plot so it consumes vertical
     // space first.  `ui.available_height()` below then gives the remainder.
     let hovered_chip = metric_filter_row(
@@ -1063,6 +1091,7 @@ pub fn show_track_plot(
         &mut state.sync_to_map,
         &mut state.show_advanced_metrics,
         &mut state.show_channels,
+        snap_error_available,
     );
 
     // Sample budgeting: each track requests ~2 points per pixel of its *visible*
@@ -1148,6 +1177,9 @@ pub fn show_track_plot(
     // screen-space distance, resolved across all visible series inside the plot
     // closure and turned into a tooltip after it returns.
     let mut hovered_anomaly: Option<(f32, AnomalyHover)> = None;
+    // Nearest snap error point under the pointer, same mechanism.
+    let mut hovered_snap: Option<(f32, SnapErrorHover)> = None;
+    let show_snap_error = snap_error_available && state.metric_vis.field(MetricKind::SnapError);
 
     let mut plot = egui_plot::Plot::new("track_plot")
         .height(ui.available_height())
@@ -1230,6 +1262,11 @@ pub fn show_track_plot(
         } else {
             None
         };
+        let snap_pointer = if show_snap_error {
+            plot_ui.response().hover_pos()
+        } else {
+            None
+        };
 
         // The hovered match's time band, before the series so the lines stay
         // on top. A `Span` rather than a polygon: it fills the plot's full
@@ -1279,6 +1316,12 @@ pub fn show_track_plot(
                 },
                 line_width,
                 dark_mode,
+                snap_error
+                    .points_by_track
+                    .get(&series_track_ref(series))
+                    .map(|points| points.as_slice()),
+                snap_pointer,
+                &mut hovered_snap,
             );
             if show_anomalies {
                 add_util_anomalies(
@@ -1329,19 +1372,7 @@ pub fn show_track_plot(
     state.plot_cursor_snapped =
         plot_response.response.hovered() && plot_response.hovered_plot_item.is_some();
 
-    // Surface the masked-out satellites for the anomaly marker under the pointer.
-    if let Some((_, hover)) = hovered_anomaly
-        && plot_response.response.hovered()
-    {
-        Tooltip::always_open(
-            ui.ctx().clone(),
-            plot_response.response.layer_id,
-            egui::Id::new("util_anomaly_tooltip"),
-            egui::PopupAnchor::Pointer,
-        )
-        .gap(ANOMALY_TOOLTIP_GAP)
-        .show(|ui| hover.show(ui));
-    }
+    show_nearest_point_tooltips(ui, &plot_response.response, hovered_anomaly, hovered_snap);
 
     state.legend_hover_file = show_file_legend_overlay(
         ui,
@@ -1513,12 +1544,17 @@ pub fn legend_is_docked(offset: egui::Vec2) -> bool {
 
 /// Render one separator-delimited group of metric chips, folding any
 /// "show only this" choice into `show_only` and the hovered metric into `hovered`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "chip rendering needs the visibility set, both gating inputs, and both fold-out results"
+)]
 fn chip_group(
     ui: &mut egui::Ui,
     vis: &mut MetricVisibility,
     present: &HashSet<Constellation>,
     kinds: &[MetricKind],
     show_advanced: bool,
+    snap_error_available: bool,
     show_only: &mut Option<MetricKind>,
     hovered: &mut Option<HoveredChip>,
 ) {
@@ -1536,6 +1572,18 @@ fn chip_group(
     ui.separator();
     let dark_mode = ui.visuals().dark_mode;
     for kind in shown {
+        // The snap error chip stays visible but disabled until a visible
+        // track has a completed run - never hidden, per DESIGN.md.
+        if kind == MetricKind::SnapError && !snap_error_available {
+            disabled_metric_chip(
+                ui,
+                kind.label(),
+                gt_ui_theme::metric_color(kind, dark_mode),
+                "No completed snap run for the visible tracks - run snap to road from the \
+                 side panel first",
+            );
+            continue;
+        }
         let (s, h) = metric_chip(
             ui,
             vis.field_mut(kind),
@@ -1646,6 +1694,7 @@ fn metric_filter_row(
     sync_to_map: &mut bool,
     show_advanced: &mut bool,
     show_channels: &mut bool,
+    snap_error_available: bool,
 ) -> Option<HoveredChip> {
     // The show/hide-all button and its eye icon track only the currently shown
     // chips, so they ignore advanced metrics while that section is collapsed and
@@ -1702,6 +1751,7 @@ fn metric_filter_row(
                 MetricKind::SatsFix,
                 MetricKind::Velocity,
                 MetricKind::Eph,
+                MetricKind::SnapError,
                 MetricKind::HeadingDeg,
                 MetricKind::ClockDeltaMs,
             ],
@@ -1729,6 +1779,7 @@ fn metric_filter_row(
                 present,
                 group,
                 *show_advanced,
+                snap_error_available,
                 &mut show_only,
                 &mut hovered_chip,
             );
@@ -1767,6 +1818,7 @@ fn metric_filter_row(
                     present,
                     group,
                     *show_advanced,
+                    snap_error_available,
                     &mut show_only,
                     &mut hovered_chip,
                 );
@@ -1829,6 +1881,15 @@ fn plot_display_menu(ui: &mut egui::Ui, show_grid: &mut bool, line_width: &mut f
         *line_width = DEFAULT_PLOT_LINE_WIDTH;
         *show_grid = true;
     }
+}
+
+/// A [`metric_chip`] rendered disabled: off-state visuals, no interaction,
+/// hover text explaining what to do first.
+fn disabled_metric_chip(ui: &mut egui::Ui, name: &str, color: Color32, hover: &str) {
+    let btn = Button::new(RichText::new(name).color(Color32::from_gray(100)).small())
+        .fill(color.gamma_multiply(0.12))
+        .corner_radius(4.0);
+    ui.add_enabled(false, btn).on_disabled_hover_text(hover);
 }
 
 /// A small colored toggle chip.  Left-click toggles the metric.  Right-click
@@ -1985,6 +2046,9 @@ fn add_series_lines<'a>(
     sections: SectionGates,
     line_width: f32,
     dark_mode: bool,
+    snap_error_points: Option<&[SnapErrorPoint]>,
+    snap_pointer: Option<egui::Pos2>,
+    hovered_snap: &mut Option<(f32, SnapErrorHover)>,
 ) {
     let prefix = if multi_track {
         format!("{}: ", series.label)
@@ -2022,14 +2086,44 @@ fn add_series_lines<'a>(
         let is_hovered = hovered_chip == Some(&HoveredChip::Metric(kind));
         let (color, highlighted) =
             hover_treatment(metric_line_color(kind, series.fi, dark_mode), is_hovered);
+        // Snap error has no mipmap; it draws from the external per-run
+        // series right after this loop.
+        let (Some(mipmap), Some(level)) = (series.mipmap_for(kind), cache.level_for(kind)) else {
+            continue;
+        };
         add_line(
             plot_ui,
-            series.mipmap_for(kind).slice_at(cache.level_for(kind)),
+            mipmap.slice_at(level),
             format!("{prefix}{}", kind.label()),
             color,
             line_style,
             line_width,
             highlighted,
+        );
+    }
+
+    if metric_vis.field(MetricKind::SnapError)
+        && let Some(points) = snap_error_points
+    {
+        let is_hovered = hovered_chip == Some(&HoveredChip::Metric(MetricKind::SnapError));
+        let (color, highlighted) = hover_treatment(
+            metric_line_color(MetricKind::SnapError, series.fi, dark_mode),
+            is_hovered,
+        );
+        add_snap_error_series(
+            plot_ui,
+            series,
+            multi_track,
+            points,
+            snap_pointer,
+            hovered_snap,
+            SnapErrorStyle {
+                color,
+                style: line_style,
+                width: line_width,
+                highlighted,
+                dark_mode,
+            },
         );
     }
 
@@ -2071,6 +2165,67 @@ fn add_series_lines<'a>(
             );
         }
     }
+}
+
+/// Surface the custom nearest-point hovers - the masked-out satellites of an
+/// anomaly marker, and the kind and error of a snap point - as tooltips
+/// anchored at the pointer. These items suppress egui_plot's own labels.
+fn show_nearest_point_tooltips(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    hovered_anomaly: Option<(f32, AnomalyHover)>,
+    hovered_snap: Option<(f32, SnapErrorHover)>,
+) {
+    if !response.hovered() {
+        return;
+    }
+    if let Some((_, hover)) = hovered_anomaly {
+        pointer_tooltip(ui, response, "util_anomaly_tooltip", |ui| hover.show(ui));
+    }
+    if let Some((_, hover)) = hovered_snap {
+        pointer_tooltip(ui, response, "snap_error_tooltip", |ui| hover.show(ui));
+    }
+}
+
+/// A custom tooltip anchored at the pointer, for the nearest-point hovers
+/// (anomaly markers, snap error points) that suppress egui_plot's own labels.
+fn pointer_tooltip(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    id: &str,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    Tooltip::always_open(
+        ui.ctx().clone(),
+        response.layer_id,
+        egui::Id::new(id),
+        egui::PopupAnchor::Pointer,
+    )
+    .gap(ANOMALY_TOOLTIP_GAP)
+    .show(add_contents);
+}
+
+/// Whether any visible track has an entry in the snap error series.
+fn snap_error_available(
+    series_cache: &[TrackSeries],
+    visible: &[bool],
+    snap_error: &SnapErrorSeries,
+) -> bool {
+    series_cache
+        .iter()
+        .zip(visible.iter())
+        .any(|(series, &is_vis)| {
+            is_vis
+                && snap_error
+                    .points_by_track
+                    .contains_key(&series_track_ref(series))
+        })
+}
+
+/// The [`TrackRef`] a series was built from, for keying into per-track
+/// external data like the snap error series.
+fn series_track_ref(series: &TrackSeries) -> TrackRef {
+    TrackRef::new(FileIdx::new(series.fi), TrackIdx::new(series.ti))
 }
 
 fn series_matches_hover_scope(series: &TrackSeries, hover_scope: Option<HighlightScope>) -> bool {
@@ -2203,6 +2358,143 @@ fn add_util_anomalies<'a>(
     }
 }
 
+/// Plot y where an unsnapped point's marker sits: rejected points carry no
+/// error value, so the marker rests on the axis baseline and the hover text
+/// explains the rejection.
+const UNSNAPPED_MARKER_Y: f64 = 0.0;
+
+/// Stroke/hover treatment for one track's snap error series, bundled so
+/// [`add_snap_error_series`] stays under the argument-count lint.
+#[derive(Clone, Copy)]
+struct SnapErrorStyle {
+    color: Color32,
+    style: LineStyle,
+    width: f32,
+    highlighted: bool,
+    dark_mode: bool,
+}
+
+/// Pre-formatted tooltip contents for one hovered snap error point.
+struct SnapErrorHover {
+    /// Track label, shown only when more than one track is visible.
+    track: Option<String>,
+    time: String,
+    /// Kind plus error, e.g. `Interpolated - error 3.2 m`.
+    line: String,
+}
+
+impl SnapErrorHover {
+    fn new(series: &TrackSeries, multi_track: bool, point: &SnapErrorPoint) -> Self {
+        let time = DateTime::from_timestamp(point.x_secs as i64, 0)
+            .map(|dt| dt.format("%H:%M:%S").to_string())
+            .unwrap_or_default();
+        let line = match (point.kind, point.error_m) {
+            (SnapErrorKind::Unsnapped, _) | (_, None) => {
+                "Unsnapped - the road network rejected this point".to_owned()
+            }
+            (SnapErrorKind::Snapped, Some(error)) => {
+                format!("Snapped - error {error:.1} m")
+            }
+            (SnapErrorKind::Interpolated, Some(error)) => {
+                format!("Interpolated - error {error:.1} m")
+            }
+        };
+        Self {
+            track: multi_track.then(|| series.label.clone()),
+            time,
+            line,
+        }
+    }
+
+    fn show(&self, ui: &mut egui::Ui) {
+        ui.strong("Snap error");
+        if let Some(track) = &self.track {
+            ui.label(track);
+        }
+        ui.label(format!("at {}", self.time));
+        ui.separator();
+        ui.label(&self.line);
+    }
+}
+
+/// The drawable line runs of a snap error series: maximal stretches of
+/// consecutive valued points, split wherever a point carries no error (the
+/// road network rejected it, so the line honestly breaks there). Runs of a
+/// single point produce no visible line geometry and are dropped - the
+/// point's value stays reachable through the custom hover.
+fn snap_error_runs(points: &[SnapErrorPoint]) -> Vec<Vec<PlotPoint>> {
+    let mut runs = Vec::new();
+    let mut run: Vec<PlotPoint> = Vec::new();
+    let mut flush = |run: &mut Vec<PlotPoint>| {
+        if run.len() >= 2 {
+            runs.push(std::mem::take(run));
+        } else {
+            run.clear();
+        }
+    };
+    for point in points {
+        match point.error_m {
+            Some(error) => run.push(PlotPoint::new(point.x_secs, error)),
+            None => flush(&mut run),
+        }
+    }
+    flush(&mut run);
+    runs
+}
+
+/// Draw one track's snap error series: line runs split at unsnapped points
+/// (the road network rejected those, so the line honestly breaks) plus a
+/// baseline marker per unsnapped point. Hover is a custom kind-aware tooltip
+/// (like the anomaly markers), so egui_plot's own labels are suppressed on
+/// every item here.
+fn add_snap_error_series(
+    plot_ui: &mut egui_plot::PlotUi<'_>,
+    series: &TrackSeries,
+    multi_track: bool,
+    points: &[SnapErrorPoint],
+    pointer: Option<egui::Pos2>,
+    nearest: &mut Option<(f32, SnapErrorHover)>,
+    style: SnapErrorStyle,
+) {
+    for run in snap_error_runs(points) {
+        plot_ui.line(
+            Line::new(MetricKind::SnapError.label(), PlotPoints::Owned(run))
+                .color(style.color)
+                .style(style.style)
+                .width(style.width)
+                .highlight(style.highlighted)
+                .allow_hover(false),
+        );
+    }
+
+    let unsnapped: Vec<PlotPoint> = points
+        .iter()
+        .filter(|p| p.kind == SnapErrorKind::Unsnapped)
+        .map(|p| PlotPoint::new(p.x_secs, UNSNAPPED_MARKER_Y))
+        .collect();
+    if !unsnapped.is_empty() {
+        plot_ui.points(
+            Points::new("Unsnapped points", PlotPoints::Owned(unsnapped))
+                .shape(MarkerShape::Cross)
+                .color(gt_ui_theme::error_indicator(style.dark_mode))
+                .radius(ANOMALY_MARKER_RADIUS)
+                .allow_hover(false),
+        );
+    }
+
+    let Some(ptr) = pointer else {
+        return;
+    };
+    for point in points {
+        let y = point.error_m.unwrap_or(UNSNAPPED_MARKER_Y);
+        let screen = plot_ui.screen_from_plot(PlotPoint::new(point.x_secs, y));
+        let dist = screen.distance(ptr);
+        if dist <= ANOMALY_HOVER_RADIUS_PX && nearest.as_ref().is_none_or(|(d, _)| dist < *d) {
+            *nearest = Some((dist, SnapErrorHover::new(series, multi_track, point)));
+        }
+    }
+}
+
 /// Given a set of visible tracks and a plot-hovered time (in seconds since
 /// epoch), find the `(file_index, track_index, point_index)` of the closest
 /// TPV point across all visible tracks.
@@ -2260,7 +2552,62 @@ pub fn find_closest_tpv(
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
+
+    /// Shorthand for a snap error point at time `x` with the given error.
+    fn sep(x: f64, error_m: Option<f64>) -> SnapErrorPoint {
+        SnapErrorPoint {
+            x_secs: x,
+            error_m,
+            kind: if error_m.is_some() {
+                SnapErrorKind::Snapped
+            } else {
+                SnapErrorKind::Unsnapped
+            },
+        }
+    }
+
+    /// The line runs split exactly at valueless points, and runs of a single
+    /// point (leading, interior, or trailing) are dropped - one point draws
+    /// no line and would clutter the legend.
+    #[rstest::rstest]
+    #[case::empty(&[], &[])]
+    #[case::one_unbroken_run(&[(0.0, Some(1.0)), (1.0, Some(2.0)), (2.0, Some(3.0))], &[3])]
+    #[case::interior_break(
+        &[(0.0, Some(1.0)), (1.0, Some(2.0)), (2.0, None), (3.0, Some(4.0)), (4.0, Some(5.0))],
+        &[2, 2]
+    )]
+    #[case::leading_single_point_dropped(
+        &[(0.0, Some(1.0)), (1.0, None), (2.0, Some(3.0)), (3.0, Some(4.0))],
+        &[2]
+    )]
+    #[case::trailing_single_point_dropped(
+        &[(0.0, Some(1.0)), (1.0, Some(2.0)), (2.0, None), (3.0, Some(4.0))],
+        &[2]
+    )]
+    #[case::all_unsnapped(&[(0.0, None), (1.0, None)], &[])]
+    fn snap_error_runs_split_at_valueless_points(
+        #[case] input: &[(f64, Option<f64>)],
+        #[case] expected_run_lengths: &[usize],
+    ) {
+        let points: Vec<SnapErrorPoint> = input.iter().map(|&(x, e)| sep(x, e)).collect();
+        let runs = snap_error_runs(&points);
+        let lengths: Vec<usize> = runs.iter().map(Vec::len).collect();
+        assert_eq!(lengths, expected_run_lengths);
+        // Every emitted vertex carries its point's own x and error value.
+        for run in &runs {
+            for vertex in run {
+                // The test x values are small exact-in-f64 literals, so
+                // bit-equality is the right lookup here.
+                let source = points
+                    .iter()
+                    .find(|p| p.x_secs.to_bits() == vertex.x.to_bits())
+                    .expect("vertex maps to a source point");
+                assert_eq!(source.error_m, Some(vertex.y));
+            }
+        }
+    }
 
     /// Every per-constellation metric maps to a constellation and every
     /// all-constellation metric maps to `None`, with the two groups together

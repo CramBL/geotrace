@@ -290,6 +290,11 @@ mod tests {
     /// Every plot metric is reachable from a query, no plot metric is covered
     /// twice, and the extra query-only metrics are exactly the five per-point
     /// fields. A new `MetricKind` variant fails here until it is wired up.
+    ///
+    /// `SnapError` is the deliberate exception: `snap_error` lands as a query
+    /// metric in the snap feature's phase 3, alongside the ad-hoc metric
+    /// registry (see `docs/snap/design.md`, "Query integration"). Until then
+    /// it is the one plot metric a query cannot reference.
     #[test]
     fn covers_every_metric_kind() {
         let mapped: Vec<MetricKind> = QueryMetric::iter()
@@ -298,8 +303,15 @@ mod tests {
         let mut deduped = mapped.clone();
         deduped.dedup();
         assert_eq!(mapped.len(), deduped.len(), "a MetricKind is mapped twice");
-        assert_eq!(mapped.len(), MetricKind::COUNT);
-        assert_eq!(QueryMetric::COUNT, MetricKind::COUNT + 5);
+        let unmapped: Vec<MetricKind> = MetricKind::iter()
+            .filter(|kind| !mapped.contains(kind))
+            .collect();
+        assert_eq!(
+            unmapped,
+            vec![MetricKind::SnapError],
+            "exactly SnapError awaits its phase-3 query wiring"
+        );
+        assert_eq!(QueryMetric::COUNT, MetricKind::COUNT + 5 - unmapped.len());
     }
 
     /// The DSL name is the `MetricKind` wire name with the unit suffix

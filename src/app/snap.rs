@@ -73,8 +73,13 @@ impl SnapCacheKey {
 #[derive(Debug)]
 pub struct SnapRun {
     pub result: SnapResult,
-    /// Consumed once the snap error plot lands.
-    #[expect(dead_code, reason = "the consumer lands with the snap error plot")]
+    /// Collected per run; a user-facing warnings surface is future work
+    /// (the failure summary in [`SnapActivity::Failed`] is derived from
+    /// these at run time).
+    #[expect(
+        dead_code,
+        reason = "no consumer yet - a warnings surface is future work"
+    )]
     pub warnings: Vec<SnapWarning>,
     /// The result's snapped-track segments in normalized Mercator, projected
     /// once at completion (on the worker thread) - the map redraws every

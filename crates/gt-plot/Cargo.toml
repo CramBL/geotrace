@@ -25,5 +25,8 @@ rayon.workspace = true
 strum.workspace = true
 uom.workspace = true
 
+[dev-dependencies]
+rstest.workspace = true
+
 [lints]
 workspace = true
