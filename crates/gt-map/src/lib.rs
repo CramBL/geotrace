@@ -503,7 +503,8 @@ impl NavMap {
                 .display_query_highlights(display_mask.is_visible(DisplayCategory::QueryHighlights))
                 .build(),
         );
-        if let Some(snapped) = snapped_tracks
+        if display_mask.is_visible(DisplayCategory::SnappedTracks)
+            && let Some(snapped) = snapped_tracks
             && !snapped.is_empty()
         {
             map = map.with_plugin(SnappedTrackRenderer::new(snapped));
@@ -639,6 +640,7 @@ impl NavMap {
                     event_marker_visibility,
                     generated_marker_visibility,
                     query_matches,
+                    snapped_tracks,
                 )
             },
         );
@@ -1623,7 +1625,7 @@ mod snapshot_tests {
     use crate::test_harness::TestHarness;
     use gt_types::mercator::MercPoint;
     use gt_types::{DataCategory, DisplayMode, FileIdx, NavPoint, PointIdx, TrackIdx, TrackRef};
-    use gt_ui_types::DataPointRef;
+    use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask};
 
     fn tpv_ref() -> DataPointRef {
         DataPointRef {
@@ -1904,10 +1906,12 @@ mod snapshot_tests {
     const SNAPPED_OFFSET_MERC_Y: f64 = -1.5e-6;
 
     /// Snapshot the map with `make_snapshot_file`'s track plus the snapped
-    /// segments `segments_for` derives from its points. Requires
-    /// `GEOTRACE_OFFLINE=1` (set by `just test`) so no map tiles render.
+    /// segments `segments_for` derives from its points, drawn under `mask`.
+    /// Requires `GEOTRACE_OFFLINE=1` (set by `just test`) so no map tiles
+    /// render.
     fn snapshot_snapped_tracks(
         name: &str,
+        mask: DisplayMask,
         segments_for: impl Fn(&[NavPoint]) -> Vec<Vec<MercPoint>>,
     ) {
         use std::sync::Arc;
@@ -1935,13 +1939,14 @@ mod snapshot_tests {
                 move |ui, map: &mut Option<NavMap>| {
                     let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
                     let mut highlight = gt_ui_types::MapHighlight::default();
+                    let mut mask = mask;
                     map.draw(
                         ui,
                         &files,
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
-                        &mut gt_ui_types::DisplayMask::default(),
+                        &mut mask,
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
@@ -1980,12 +1985,16 @@ mod snapshot_tests {
     /// beneath is never painted over or hidden.
     #[test]
     fn snap_snapped_track_polylines() {
-        snapshot_snapped_tracks("snapped_track_polylines", |points| {
-            vec![
-                snapped_segment(points, 100..400),
-                snapped_segment(points, 600..950),
-            ]
-        });
+        snapshot_snapped_tracks(
+            "snapped_track_polylines",
+            DisplayMask::default(),
+            |points| {
+                vec![
+                    snapped_segment(points, 100..400),
+                    snapped_segment(points, 600..950),
+                ]
+            },
+        );
     }
 
     /// Snapshot: a snapped segment whose tail runs far past the viewport.
@@ -2001,16 +2010,20 @@ mod snapshot_tests {
         /// provably off-screen.
         const TAIL_STEP_MERC_X: f64 = 2e-5;
 
-        snapshot_snapped_tracks("snapped_track_culled_tail", |points| {
-            let mut segment = snapped_segment(points, 100..400);
-            if let Some(&end) = segment.last() {
-                segment.extend((1..=60).map(|i| MercPoint {
-                    x: end.x + f64::from(i) * TAIL_STEP_MERC_X,
-                    y: end.y,
-                }));
-            }
-            vec![segment]
-        });
+        snapshot_snapped_tracks(
+            "snapped_track_culled_tail",
+            DisplayMask::default(),
+            |points| {
+                let mut segment = snapped_segment(points, 100..400);
+                if let Some(&end) = segment.last() {
+                    segment.extend((1..=60).map(|i| MercPoint {
+                        x: end.x + f64::from(i) * TAIL_STEP_MERC_X,
+                        y: end.y,
+                    }));
+                }
+                vec![segment]
+            },
+        );
     }
 
     /// Snapshot: a snapped segment whose on-screen extent packs below one
@@ -2027,18 +2040,37 @@ mod snapshot_tests {
         /// recorded trackline.
         const CLUSTER_OFFSET_MERC_Y: f64 = -6e-6;
 
-        snapshot_snapped_tracks("snapped_track_collapsed_dot", |points| {
-            let mid = points.len() / 2;
-            let Some(base) = points.get(mid) else {
-                return vec![];
-            };
+        snapshot_snapped_tracks(
+            "snapped_track_collapsed_dot",
+            DisplayMask::default(),
+            |points| {
+                let mid = points.len() / 2;
+                let Some(base) = points.get(mid) else {
+                    return vec![];
+                };
+                vec![
+                    (0..4)
+                        .map(|i| MercPoint {
+                            x: base.merc.x + f64::from(i) * CLUSTER_STEP_MERC_X,
+                            y: base.merc.y + CLUSTER_OFFSET_MERC_Y,
+                        })
+                        .collect(),
+                ]
+            },
+        );
+    }
+
+    /// Snapshot: hiding the snapped-tracks display category removes the
+    /// dashed ink entirely - only the recorded track remains - without
+    /// touching the underlying snapped geometry.
+    #[test]
+    fn snap_snapped_track_hidden_by_display_mask() {
+        let mut mask = DisplayMask::default();
+        mask.set_visible(DisplayCategory::SnappedTracks, false);
+        snapshot_snapped_tracks("snapped_track_hidden_by_display_mask", mask, |points| {
             vec![
-                (0..4)
-                    .map(|i| MercPoint {
-                        x: base.merc.x + f64::from(i) * CLUSTER_STEP_MERC_X,
-                        y: base.merc.y + CLUSTER_OFFSET_MERC_Y,
-                    })
-                    .collect(),
+                snapped_segment(points, 100..400),
+                snapped_segment(points, 600..950),
             ]
         });
     }

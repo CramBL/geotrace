@@ -36,6 +36,8 @@ pub enum DisplayCategory {
     EventMarkers,
     /// Query-match halos and rings.
     QueryHighlights,
+    /// The snapped-track polylines (the snap-to-road reference geometry).
+    SnappedTracks,
 }
 
 impl DisplayCategory {
@@ -179,6 +181,7 @@ mod tests {
             (DisplayCategory::GeneratedMarkers, "generated_markers"),
             (DisplayCategory::EventMarkers, "event_markers"),
             (DisplayCategory::QueryHighlights, "query_highlights"),
+            (DisplayCategory::SnappedTracks, "snapped_tracks"),
         ];
         assert_eq!(expected.len(), DisplayCategory::COUNT);
         for (category, wire) in expected {

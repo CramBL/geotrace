@@ -17,7 +17,7 @@ use std::ops::Range;
 use gt_filter::{GlobalFilter, point_passes_time_filter};
 use gt_types::{DataCategory, FileIdx, LoadedFile, TrackIdx, TrackRef};
 use gt_ui_types::{
-    DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, QueryMatches,
+    DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, QueryMatches, SnappedTracks,
     TrackDataVisibility,
 };
 
@@ -35,6 +35,7 @@ pub struct DisplayCounts {
     generated_markers: usize,
     event_markers: usize,
     query_highlights: usize,
+    snapped_tracks: usize,
 }
 
 impl DisplayCounts {
@@ -47,6 +48,7 @@ impl DisplayCounts {
             DisplayCategory::GeneratedMarkers => self.generated_markers,
             DisplayCategory::EventMarkers => self.event_markers,
             DisplayCategory::QueryHighlights => self.query_highlights,
+            DisplayCategory::SnappedTracks => self.snapped_tracks,
         }
     }
 
@@ -62,6 +64,7 @@ impl DisplayCounts {
             generated_markers: get(DisplayCategory::GeneratedMarkers),
             event_markers: get(DisplayCategory::EventMarkers),
             query_highlights: get(DisplayCategory::QueryHighlights),
+            snapped_tracks: get(DisplayCategory::SnappedTracks),
         }
     }
 
@@ -72,8 +75,16 @@ impl DisplayCounts {
         event_marker_visibility: &EventMarkerVisibility,
         generated_marker_visibility: &GeneratedMarkerVisibility,
         query_matches: Option<&QueryMatches>,
+        snapped_tracks: Option<&SnappedTracks>,
     ) -> Self {
-        let mut counts = Self::default();
+        // Snapped geometry arrives pre-scoped (the app applies tree
+        // visibility and the per-track glyph toggle before the map sees
+        // it), so its count is exactly the tracks whose snapped track
+        // would draw - re-deriving scope here could only drift from that.
+        let mut counts = Self {
+            snapped_tracks: snapped_tracks.map_or(0, |s| s.segments_by_track.len()),
+            ..Self::default()
+        };
         for (fi, file) in files.iter().enumerate() {
             for ti in 0..file.tracks.len() {
                 let track_ref = TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti));
@@ -258,6 +269,7 @@ mod tests {
             &EventMarkerVisibility::default(),
             &GeneratedMarkerVisibility::default(),
             query_matches,
+            None,
         )
     }
 
@@ -273,11 +285,38 @@ mod tests {
             (DisplayCategory::GeneratedMarkers, 1),
             (DisplayCategory::EventMarkers, 1),
             (DisplayCategory::QueryHighlights, 0),
+            (DisplayCategory::SnappedTracks, 0),
         ];
         assert_eq!(expected.len(), DisplayCategory::iter().count());
         for (category, n) in expected {
             assert_eq!(counts.get(category), n, "{category}");
         }
+    }
+
+    /// Snapped geometry is counted straight from the pre-scoped
+    /// [`SnappedTracks`] view - one per track with a shown run - rather
+    /// than re-derived from the files.
+    #[test]
+    fn snapped_tracks_are_counted_from_the_prescoped_view() {
+        use std::sync::Arc;
+
+        let files = vec![fixture()];
+        let snapped = SnappedTracks {
+            segments_by_track: HashMap::from([(
+                TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+                Arc::new(vec![Vec::new()]),
+            )]),
+        };
+        let counts = DisplayCounts::compute(
+            &files,
+            &vis_all(),
+            &GlobalFilter::default(),
+            &EventMarkerVisibility::default(),
+            &GeneratedMarkerVisibility::default(),
+            None,
+            Some(&snapped),
+        );
+        assert_eq!(counts.get(DisplayCategory::SnappedTracks), 1);
     }
 
     #[test]

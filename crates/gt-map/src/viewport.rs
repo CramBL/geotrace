@@ -190,7 +190,8 @@ impl TrackPlan {
 /// visible data rather than the whole recording. The display mask counts the
 /// same way: point ink contributes only while some point-anchored category
 /// (tracks, track points, satellite labels) is displayed, custom markers only
-/// while theirs is.
+/// while theirs is. Snapped tracks deliberately never contribute: they
+/// annotate a recorded track that is already framed.
 pub(crate) fn compute_visible_bounding_box(
     files: &[LoadedFile],
     visibility: &TrackDataVisibility,

@@ -171,6 +171,17 @@ fn snapshot_masked_categories_show_hint() {
     harness.snapshot("side_panel_masked_categories");
 }
 
+/// A completed-run row with fixture counts, shown or hidden on the map.
+fn done_row(shown: bool) -> SnapRowView {
+    SnapRowView::Done {
+        snapped: 120,
+        interpolated: 340,
+        unsnapped: 12,
+        confidence_score: Some(0.87),
+        shown,
+    }
+}
+
 /// One track per snap state, exercising every rendering of the trigger: idle
 /// (plain icon), unsnappable/queued/in-flight (grayed, per the never-hide
 /// rule), failed (amber retry), and done (weak status glyph).
@@ -202,32 +213,32 @@ fn snapshot_snap_trigger_states() {
             error: "server unreachable".to_owned(),
         },
     );
-    state.snap_rows.insert(
-        track(5),
-        SnapRowView::Done {
-            snapped: 120,
-            interpolated: 340,
-            unsnapped: 12,
-            confidence_score: Some(0.87),
-            shown: true,
-        },
-    );
+    state.snap_rows.insert(track(5), done_row(true));
     // A completed run whose snapped track is toggled hidden: the status
     // glyph dims further.
-    state.snap_rows.insert(
-        track(6),
-        SnapRowView::Done {
-            snapped: 120,
-            interpolated: 340,
-            unsnapped: 12,
-            confidence_score: Some(0.87),
-            shown: false,
-        },
-    );
+    state.snap_rows.insert(track(6), done_row(false));
     // Taller than the default harness: seven expanded files must all fit.
     let mut harness = make_harness_sized(state, egui::vec2(280.0, 720.0));
     harness.run();
     harness.snapshot("side_panel_snap_states");
+}
+
+/// A completed run whose ink the map display toggles hide: the status glyph
+/// gains the trailing eye-slash hint, same as masked tree category rows.
+#[test]
+fn snapshot_snap_glyph_masked_category() {
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    state.snap_rows.insert(
+        TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+        done_row(true),
+    );
+    state
+        .display_mask
+        .set_visible(DisplayCategory::SnappedTracks, false);
+    let mut harness = make_harness(state);
+    harness.run();
+    harness.snapshot("side_panel_snap_glyph_masked");
 }
 
 /// Under `GEOTRACE_OFFLINE` every snap trigger is grayed out, never hidden.
