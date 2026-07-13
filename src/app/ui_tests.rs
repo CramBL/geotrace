@@ -2231,6 +2231,57 @@ fn snapshot_snap_consent_dialog() {
     harness.snapshot("snap_consent_dialog");
 }
 
+/// The consent dialog once the mode choice was already made: a single
+/// plain Agree, no mode paragraph.
+#[test]
+fn snapshot_snap_consent_dialog_mode_chosen() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1024.0, 768.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness.inner.state_mut().snap_settings.auto_snap = Some(false);
+    harness.inner.state_mut().snap_consent_prompt = true;
+    harness.run();
+    harness.snapshot("snap_consent_dialog_mode_chosen");
+}
+
+/// The one-time auto prompt for uploads acknowledged before auto mode
+/// existed.
+#[test]
+fn snapshot_snap_auto_prompt() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1024.0, 768.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness
+        .inner
+        .state_mut()
+        .snap_settings
+        .acknowledge_consent();
+    let state = harness.inner.state_mut();
+    let mut shared = state.shared.borrow_mut();
+    let points = gt_test_utils::nav_test_data();
+    let file = gt_track_builder::build_loaded_file(
+        "ride.gtd".to_owned(),
+        &points,
+        &[],
+        vec![],
+        vec![],
+        &[],
+        &gt_track_builder::SegmentationConfig::default(),
+        gt_types::FileSource::GtdPath(std::path::PathBuf::from("ride.gtd")),
+        gt_track_builder::FileMeta::default(),
+        vec![],
+    );
+    shared
+        .loaded_files
+        .push(file, gt_loaded_files::FileHistory::None);
+    shared.sync_tree_from_loaded_files();
+    drop(shared);
+    harness.run();
+    harness.snapshot("snap_auto_prompt");
+}
+
 #[test]
 fn snap_consent_agree_persists_the_server_host() {
     let mut harness = Harness::builder()
@@ -2245,11 +2296,11 @@ fn snap_consent_agree_persists_the_server_host() {
     // click is spent dismissing it before the dialog's buttons receive
     // anything - so click once to settle the popup, then click for real.
     harness
-        .get_by_role_and_label(egui::accesskit::Role::Button, "Agree")
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Agree - manual only")
         .click();
     harness.run_steps(3);
     harness
-        .get_by_role_and_label(egui::accesskit::Role::Button, "Agree")
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Agree - manual only")
         .click();
     harness.run_steps(3);
 
@@ -2257,6 +2308,11 @@ fn snap_consent_agree_persists_the_server_host() {
     assert!(
         harness.state().snap_settings.consent_granted(),
         "agreeing must record consent for the configured server's host"
+    );
+    assert_eq!(
+        harness.state().snap_settings.auto_snap,
+        Some(false),
+        "the agree variant must persist the mode choice"
     );
 }
 
@@ -2285,6 +2341,85 @@ fn snap_consent_escape_declines_without_persisting() {
     assert!(
         !harness.state().snap_settings.consent_granted(),
         "declining must not record consent - the next trigger re-prompts"
+    );
+    assert_eq!(
+        harness.state().snap_settings.auto_snap,
+        Some(false),
+        "declined consent must never leave auto uploads armed"
+    );
+}
+
+/// Uploads acknowledged before auto mode existed: the one-time prompt
+/// appears once a snappable track is loaded, and its answer persists.
+#[test]
+fn auto_prompt_asks_once_after_earlier_consent() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state_mut().snap_settings.acknowledge_consent();
+    harness.step();
+    assert_eq!(
+        harness.state().snap_settings.auto_snap,
+        None,
+        "no prompt without a snappable track"
+    );
+
+    push_file_with_travel_mode(&mut harness, "ride.gtd", None);
+    harness.run_steps(2);
+
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Snap automatically")
+        .click();
+    harness.run_steps(3);
+
+    assert_eq!(harness.state().snap_settings.auto_snap, Some(true));
+    assert!(harness.state().snap_settings.auto_snap_active());
+}
+
+/// Auto mode armed without acknowledged uploads (the settings checkbox):
+/// the consent dialog opens on the first load with a snappable track, and
+/// nothing is enqueued before it is answered.
+#[test]
+fn auto_without_consent_prompts_before_anything_is_sent() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state_mut().snap_settings.auto_snap = Some(true);
+    harness.step();
+    assert!(
+        !harness.state().snap_consent_prompt,
+        "no prompt without a snappable track"
+    );
+
+    let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
+    harness.run_steps(2);
+
+    assert!(harness.state().snap_consent_prompt);
+    assert!(
+        harness.state().snap.activity_for(track).is_none(),
+        "nothing may be enqueued before consent"
+    );
+}
+
+/// `GEOTRACE_OFFLINE` (set by `just test`) pauses auto mode: the sweep
+/// enqueues nothing even with auto active and an unsnapped track loaded.
+#[test]
+fn auto_sweep_is_paused_offline() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state_mut().snap_settings.acknowledge_consent();
+    harness.state_mut().snap_settings.auto_snap = Some(true);
+    let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
+    harness.run_steps(3);
+
+    assert!(harness.state().snap_settings.auto_snap_active());
+    assert!(
+        harness.state().snap.activity_for(track).is_none(),
+        "offline must pause the auto queue"
     );
 }
 
@@ -2365,11 +2500,11 @@ fn snap_request_parks_on_consent_and_agree_takes_it() {
     // First synthetic click settles the startup map-layer popup (see
     // snap_consent_agree_persists_the_server_host), the second lands.
     harness
-        .get_by_role_and_label(egui::accesskit::Role::Button, "Agree")
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Agree - snap automatically")
         .click();
     harness.run_steps(3);
     harness
-        .get_by_role_and_label(egui::accesskit::Role::Button, "Agree")
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Agree - snap automatically")
         .click();
     harness.run_steps(3);
 
@@ -2380,6 +2515,7 @@ fn snap_request_parks_on_consent_and_agree_takes_it() {
         "agreeing must take the parked request and queue it"
     );
     assert!(harness.state().snap_settings.consent_granted());
+    assert_eq!(harness.state().snap_settings.auto_snap, Some(true));
 }
 
 #[test]

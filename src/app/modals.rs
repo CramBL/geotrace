@@ -510,9 +510,13 @@ pub fn show_about_dialog(ui: &egui::Ui, open: &mut bool) {
 /// The user's decision in the snap upload-consent dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapConsentChoice {
-    /// Uploads to the configured server's host are acknowledged.
-    Accepted,
-    /// No acknowledgment; the manual snap action stays available and re-prompts.
+    /// Uploads to the configured server's host are acknowledged. `auto_snap`
+    /// carries the mode choice when the dialog asked for one (`None` = the
+    /// choice was already made earlier and was not asked again).
+    Accepted { auto_snap: Option<bool> },
+    /// No acknowledgment; the manual snap action stays available and
+    /// re-prompts. Auto mode turns off - a declined consent must never
+    /// leave automatic uploads armed.
     Declined,
 }
 
@@ -521,9 +525,16 @@ pub enum SnapConsentChoice {
 ///
 /// Recorded location data leaves the machine, so nothing is ever sent before
 /// this dialog has been accepted for the configured server's host (see
-/// `SnapSettings::consent_granted`). Escape, Cancel, and the close button all
-/// decline; declining is not persisted, so the next manual trigger re-prompts.
-pub fn show_snap_consent_dialog(ui: &egui::Ui, server_url: &str) -> Option<SnapConsentChoice> {
+/// `SnapSettings::consent_granted`). With `ask_auto` the dialog also asks
+/// whether tracks should snap automatically from now on - both agree
+/// buttons acknowledge uploads, they differ only in that choice. Escape,
+/// Cancel, and the close button all decline; the acknowledgment is not
+/// persisted on decline, so the next manual trigger re-prompts.
+pub fn show_snap_consent_dialog(
+    ui: &egui::Ui,
+    server_url: &str,
+    ask_auto: bool,
+) -> Option<SnapConsentChoice> {
     let enter_pressed = ui
         .ctx()
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
@@ -531,9 +542,13 @@ pub fn show_snap_consent_dialog(ui: &egui::Ui, server_url: &str) -> Option<SnapC
         .ctx()
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
 
+    // Enter agrees with the default mode: automatic when the choice is
+    // being asked (the design default), unchanged otherwise.
     let mut choice = None;
     if enter_pressed {
-        choice = Some(SnapConsentChoice::Accepted);
+        choice = Some(SnapConsentChoice::Accepted {
+            auto_snap: ask_auto.then_some(true),
+        });
     }
     if escape_pressed {
         choice = Some(SnapConsentChoice::Declined);
@@ -558,20 +573,105 @@ pub fn show_snap_consent_dialog(ui: &egui::Ui, server_url: &str) -> Option<SnapC
                 "Nothing is uploaded until you agree. The acknowledgment is remembered for this \
                  server and asked again when the server changes.",
             );
+            if ask_auto {
+                ui.add_space(4.0);
+                ui.label(
+                    "Snapping can run automatically: every track you load and show on the map \
+                     is uploaded and matched without a click. Manual only uploads a track when \
+                     you trigger it. Changeable anytime in the settings.",
+                );
+            }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 if ui.button("Cancel").clicked() {
                     choice = Some(SnapConsentChoice::Declined);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Agree").clicked() {
-                        choice = Some(SnapConsentChoice::Accepted);
+                    if ask_auto {
+                        if ui.button("Agree - snap automatically").clicked() {
+                            choice = Some(SnapConsentChoice::Accepted {
+                                auto_snap: Some(true),
+                            });
+                        }
+                        if ui.button("Agree - manual only").clicked() {
+                            choice = Some(SnapConsentChoice::Accepted {
+                                auto_snap: Some(false),
+                            });
+                        }
+                    } else if ui.button("Agree").clicked() {
+                        choice = Some(SnapConsentChoice::Accepted { auto_snap: None });
                     }
                 });
             });
         });
     if !open {
         choice = Some(SnapConsentChoice::Declined);
+    }
+    choice
+}
+
+/// The user's decision in the one-time auto-snap prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapAutoChoice {
+    /// Loaded tracks snap automatically from now on.
+    Automatic,
+    /// Snapping stays click-triggered.
+    ManualOnly,
+}
+
+/// One-time prompt for users who acknowledged uploads before auto mode
+/// existed: asks whether loaded tracks should snap automatically from now
+/// on. Returns `None` while the dialog stays open.
+///
+/// Escape and the close button choose manual only - dismissing a dialog
+/// must never silently expand what gets uploaded.
+pub fn show_snap_auto_prompt(ui: &egui::Ui, server_url: &str) -> Option<SnapAutoChoice> {
+    let enter_pressed = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let escape_pressed = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+
+    let mut choice = None;
+    if enter_pressed {
+        choice = Some(SnapAutoChoice::Automatic);
+    }
+    if escape_pressed {
+        choice = Some(SnapAutoChoice::ManualOnly);
+    }
+
+    let mut open = true;
+    egui::Window::new("Snap to road automatically?")
+        .collapsible(false)
+        .resizable(false)
+        .min_width(420.0)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ui.ctx(), |ui| {
+            ui.label(
+                "Snap to road can now run automatically: every track you load and show on the \
+                 map is uploaded and matched without a click.",
+            );
+            ui.add_space(4.0);
+            ui.label("Your earlier acknowledgment still applies; uploads go to");
+            ui.monospace(server_url);
+            ui.add_space(4.0);
+            ui.label("Changeable anytime in the settings.");
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Manual only").clicked() {
+                    choice = Some(SnapAutoChoice::ManualOnly);
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Snap automatically").clicked() {
+                        choice = Some(SnapAutoChoice::Automatic);
+                    }
+                });
+            });
+        });
+    if !open {
+        choice = Some(SnapAutoChoice::ManualOnly);
     }
     choice
 }

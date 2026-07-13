@@ -9,8 +9,7 @@
 //! globally (the transport also paces individual requests). Manual entries
 //! run first (FIFO among themselves); automatic entries run only while
 //! their track is shown on the map, and stay parked while hidden - server
-//! load is bounded by what the user actually inspects. Nothing enqueues
-//! automatic entries yet; auto mode lands on this machinery next.
+//! load is bounded by what the user actually inspects.
 //!
 //! Two content-keyed stores hold completed runs, so both survive file
 //! removals and index shifts:
@@ -316,14 +315,6 @@ pub enum SnapPriority {
     Manual,
     /// Enqueued by auto mode: served only while its track is shown on the
     /// map, parked (not dropped) while hidden.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "nothing enqueues automatic entries yet - auto mode \
-                      lands on this machinery next"
-        )
-    )]
     Auto,
 }
 

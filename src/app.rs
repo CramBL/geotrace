@@ -60,9 +60,10 @@ use settings_autosave::{AppSnapshot, SettingsAutosaver};
 use strum::IntoEnumIterator;
 
 use modals::{
-    SnapConsentChoice, show_about_dialog, show_delete_confirmation, show_load_warnings_dialog,
-    show_mapbox_token_dialog, show_orphaned_event_markers_popup, show_recording_details_dialog,
-    show_snap_consent_dialog, show_unassociated_popup,
+    SnapAutoChoice, SnapConsentChoice, show_about_dialog, show_delete_confirmation,
+    show_load_warnings_dialog, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
+    show_recording_details_dialog, show_snap_auto_prompt, show_snap_consent_dialog,
+    show_unassociated_popup,
 };
 
 /// Pane variants for the central area tiles tree.
@@ -157,6 +158,9 @@ pub struct App {
     /// the side panel's manual snap trigger while consent is pending; lowered
     /// by the dialog.
     snap_consent_prompt: bool,
+    /// Auto mode should sweep for unsnapped tracks: set when files load,
+    /// indices shift, or auto mode turns on; consumed once per frame.
+    snap_auto_sweep: bool,
     /// The track whose snap trigger raised the consent dialog. Queued when
     /// the dialog is accepted, dropped when it is declined.
     pending_snap: Option<TrackRef>,
@@ -376,6 +380,7 @@ impl App {
             snap,
             snap_settings: crate::settings::SnapSettings::default(),
             snap_consent_prompt: false,
+            snap_auto_sweep: false,
             pending_snap: None,
             hidden_snapped: std::collections::HashSet::new(),
             tiles_tree,
@@ -768,6 +773,24 @@ impl App {
                             .response
                             .on_hover_text(costing_help);
                         ui.end_row();
+
+                        let auto_help = "Automatically snap loaded tracks that are shown on \
+                                         the map. Hidden tracks wait until shown, and a \
+                                         manual trigger always jumps the queue. Enabling asks \
+                                         for upload consent first when it has not been given \
+                                         for the configured server.";
+                        ui.label(format!("{} Auto snap", egui_phosphor::regular::LIGHTNING))
+                            .on_hover_text(auto_help);
+                        let mut auto = self.snap_settings.auto_snap == Some(true);
+                        if ui
+                            .checkbox(&mut auto, "Snap to road automatically")
+                            .on_hover_text(auto_help)
+                            .changed()
+                        {
+                            self.snap_settings.auto_snap = Some(auto);
+                            self.snap_auto_sweep = auto;
+                        }
+                        ui.end_row();
                     });
 
                 // Only meaningful in dist builds. Builds without the self-update
@@ -1116,6 +1139,50 @@ impl App {
         }
     }
 
+    /// Whether any loaded track can snap (no road-less declared mode).
+    /// Gates the consent and auto-choice prompts: neither shows on an
+    /// empty session.
+    fn any_snappable_track(&self) -> bool {
+        let shared = self.shared.borrow();
+        shared.loaded_files.files().iter().any(|file| {
+            !file.tracks.is_empty()
+                && snap::resolve_costing(
+                    file.metadata.travel_mode.as_ref(),
+                    self.snap_settings.costing,
+                )
+                .is_some()
+        })
+    }
+
+    /// Enqueue an automatic run for every snappable track without a
+    /// displayed run. Hidden tracks park in the queue until shown; tracks
+    /// with transient activity (queued, in flight, failed) are left alone
+    /// by the scheduler, and stale runs are re-run manually only.
+    fn queue_auto_snaps(&mut self) {
+        // Offline pauses auto mode entirely (the scheduler would refuse
+        // each request anyway; skipping documents the pause and saves the
+        // per-track planning work).
+        if snap::SnapScheduler::offline() || !self.snap_settings.auto_snap_active() {
+            return;
+        }
+        let shared = self.shared.borrow();
+        for (fi, file) in shared.loaded_files.files().iter().enumerate() {
+            let declared = file.metadata.travel_mode.as_ref();
+            let Some(costing) = snap::resolve_costing(declared, self.snap_settings.costing) else {
+                continue;
+            };
+            let params = self.snap_settings.params(costing);
+            for (ti, track) in file.tracks.iter().enumerate() {
+                let track_ref = TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti));
+                if self.snap.latest_run_for(track).is_some() {
+                    continue;
+                }
+                self.snap
+                    .request_snap(track_ref, track, params, snap::SnapPriority::Auto);
+            }
+        }
+    }
+
     /// Queue a snap run for a track, resolving its costing from the file's
     /// declared travel mode and the configured default.
     fn queue_snap(&mut self, track_ref: TrackRef) {
@@ -1417,6 +1484,7 @@ impl App {
                     self.history_window.invalidate();
                     self.check_auto_prune();
                 }
+                self.snap_auto_sweep = true;
                 if applied_current_marker_settings {
                     self.toasts
                         .info("Applied current marker settings to loaded data");
@@ -1541,6 +1609,7 @@ impl App {
     /// mutation site from forgetting one of them.
     fn on_track_indices_changed(&mut self) {
         self.snap.reset_track_states();
+        self.snap_auto_sweep = true;
         self.hidden_snapped.clear();
         let s = self.shared.borrow();
         self.map.rebuild_spatial_index(&s.loaded_files);
@@ -1884,6 +1953,9 @@ impl eframe::App for App {
         self.snap.poll();
         self.snap
             .set_visibility(self.shared.borrow().tree.visibility());
+        if std::mem::take(&mut self.snap_auto_sweep) {
+            self.queue_auto_snaps();
+        }
 
         // Consume a pending file-picker result and dispatch the chosen path.
         if let Some(path) = self.loader.drain_file_dialog() {
@@ -2255,23 +2327,52 @@ impl eframe::App for App {
 
         show_about_dialog(ui, &mut self.about_open);
 
+        // Auto mode armed without acknowledged uploads (the checkbox was
+        // enabled, or the server host changed): consent is asked on the
+        // first load with a snappable track, before anything is sent.
+        if self.snap_settings.auto_snap == Some(true)
+            && !self.snap_settings.consent_granted()
+            && !self.snap_consent_prompt
+            && self.any_snappable_track()
+        {
+            self.snap_consent_prompt = true;
+        }
+
         if self.snap_consent_prompt {
-            match show_snap_consent_dialog(ui, &self.snap_settings.server_url) {
-                Some(SnapConsentChoice::Accepted) => {
+            let ask_auto = self.snap_settings.auto_snap.is_none();
+            match show_snap_consent_dialog(ui, &self.snap_settings.server_url, ask_auto) {
+                Some(SnapConsentChoice::Accepted { auto_snap }) => {
                     self.snap_settings.acknowledge_consent();
+                    if let Some(auto) = auto_snap {
+                        self.snap_settings.auto_snap = Some(auto);
+                    }
                     self.snap_consent_prompt = false;
                     // The click that raised the dialog proceeds now that
                     // uploads are acknowledged.
                     if let Some(track_ref) = self.pending_snap.take() {
                         self.queue_snap(track_ref);
                     }
+                    self.snap_auto_sweep = true;
                 }
                 Some(SnapConsentChoice::Declined) => {
-                    // Not persisted: the next manual snap trigger re-prompts.
+                    // The acknowledgment stays unset (the next manual
+                    // trigger re-prompts), but the auto choice persists as
+                    // off: declined consent never leaves auto uploads armed.
+                    self.snap_settings.auto_snap = Some(false);
                     self.snap_consent_prompt = false;
                     self.pending_snap = None;
                 }
                 None => {}
+            }
+        } else if self.snap_settings.auto_snap.is_none()
+            && self.snap_settings.consent_granted()
+            && self.any_snappable_track()
+        {
+            // Uploads were acknowledged before auto mode existed: ask the
+            // mode choice once, before anything would auto-upload.
+            if let Some(choice) = show_snap_auto_prompt(ui, &self.snap_settings.server_url) {
+                self.snap_settings.auto_snap = Some(choice == SnapAutoChoice::Automatic);
+                self.snap_auto_sweep = true;
             }
         }
 

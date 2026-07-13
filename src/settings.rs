@@ -51,6 +51,14 @@ pub struct SnapSettings {
     /// [`SnapSettings::consent_granted`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub consent_host: Option<String>,
+    /// Whether loaded tracks snap automatically: `Some(true)` = auto,
+    /// `Some(false)` = manual only, `None` = never chosen. The choice is
+    /// asked exactly once - inside the consent dialog, or as its own prompt
+    /// for users who acknowledged uploads before auto mode existed - so
+    /// uploads never silently expand; afterwards the settings checkbox
+    /// changes it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_snap: Option<bool>,
 }
 
 impl Default for SnapSettings {
@@ -59,6 +67,7 @@ impl Default for SnapSettings {
             server_url: gt_snap::DEFAULT_SERVER_URL.to_owned(),
             costing: gt_snap::wire::Costing::Auto,
             consent_host: None,
+            auto_snap: None,
         }
     }
 }
@@ -77,6 +86,12 @@ impl SnapSettings {
     /// Record consent for the currently configured server's host.
     pub fn acknowledge_consent(&mut self) {
         self.consent_host = gt_snap::server_host(&self.server_url);
+    }
+
+    /// Auto mode is active: chosen on, and uploads to the configured server
+    /// acknowledged. Nothing auto-enqueues while this is `false`.
+    pub fn auto_snap_active(&self) -> bool {
+        self.auto_snap == Some(true) && self.consent_granted()
     }
 
     /// The parameters a fresh snap run would use under the given costing.
