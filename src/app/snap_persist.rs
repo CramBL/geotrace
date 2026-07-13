@@ -5,8 +5,8 @@
 //! versioned serde-JSON envelope holding the latest run of every track that
 //! has one, each keyed by the track's content fingerprint. Content keys
 //! rather than track indices, so re-segmentation or index shifts can never
-//! mis-attach a run to the wrong track - a non-matching entry is simply
-//! never restored.
+//! attach a run to the wrong track - a non-matching entry is simply never
+//! restored.
 //!
 //! Decoding is tolerant: an unreadable or newer-versioned blob is treated
 //! as absent (with a warning) rather than failing the recording. The inner
