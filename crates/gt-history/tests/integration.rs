@@ -1980,3 +1980,105 @@ fn set_tracks_replaces_the_table_and_settings() {
         "the replacement clears the old hidden mark"
     );
 }
+
+/// The snap blob round trip: absent until stored (older recordings simply
+/// have none), replaced wholesale on rewrite - shrinking included - and an
+/// empty blob is a value, not absence.
+#[test_log::test]
+fn snap_blob_roundtrips_and_overwrites() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut db = Database::open_or_create(&dir.path().join("geotrace.h5")).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+
+    assert_eq!(
+        db.snap_blob(&db_ref).expect("read"),
+        None,
+        "a recording without a stored run carries no blob"
+    );
+
+    let first: Vec<u8> = (0..200u16).map(|i| (i % 251) as u8).collect();
+    db.set_snap_blob(&db_ref, &first).expect("store");
+    assert_eq!(db.snap_blob(&db_ref).expect("read"), Some(first));
+
+    let shorter = vec![7u8; 32];
+    db.set_snap_blob(&db_ref, &shorter).expect("overwrite");
+    assert_eq!(
+        db.snap_blob(&db_ref).expect("read"),
+        Some(shorter),
+        "a rewrite replaces the blob wholesale"
+    );
+
+    db.set_snap_blob(&db_ref, &[]).expect("store empty");
+    assert_eq!(
+        db.snap_blob(&db_ref).expect("read"),
+        Some(Vec::new()),
+        "an empty blob is stored, not treated as absence"
+    );
+}
+
+/// The snap subgroup is DB bookkeeping: storing a blob must not change the
+/// reconstructed GTD bytes, and each recording keeps its own blob.
+#[test_log::test]
+fn snap_blob_stays_out_of_the_reconstructed_gtd() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut db = Database::open_or_create(&dir.path().join("geotrace.h5")).expect("open");
+    let a = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let b = insert_two_track(&mut db, "dev", 2_000_000_000, 50);
+
+    let baseline = db.load_bytes(&a).expect("load");
+    db.set_snap_blob(&a, b"snap run bytes").expect("store");
+
+    assert_eq!(
+        db.load_bytes(&a).expect("load"),
+        baseline,
+        "the blob must never leak into the reconstructed GTD file"
+    );
+    assert_eq!(
+        db.snap_blob(&b).expect("read"),
+        None,
+        "blobs are per recording"
+    );
+}
+
+/// Deleting a recording drops its blob with the group; a same-content
+/// reinsert starts blank.
+#[test_log::test]
+fn snap_blob_is_dropped_with_its_recording() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut db = Database::open_or_create(&dir.path().join("geotrace.h5")).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    db.set_snap_blob(&db_ref, &[1, 2, 3]).expect("store");
+
+    db.delete_batch(std::slice::from_ref(&db_ref))
+        .expect("delete");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+
+    assert_eq!(
+        db.snap_blob(&db_ref).expect("read"),
+        None,
+        "a reinserted recording starts without a blob"
+    );
+}
+
+/// Rewriting a recording's snap blob many times must not grow the database
+/// file without bound - the fixed-shape byte dataset is reclaimed by the
+/// free-space manager on every unlink-and-recreate (unlike variable-length
+/// values, which leak in libhdf5's global heap; see
+/// `file_size_stays_bounded_across_delete_reinsert_cycles`).
+#[test_log::test]
+fn file_size_stays_bounded_across_snap_blob_rewrites() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let db_ref = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
+    let file_size = |path: &std::path::Path| std::fs::metadata(path).expect("metadata").len();
+
+    let blob_of = |fill: u8| vec![fill; 16 * 1024];
+    db.set_snap_blob(&db_ref, &blob_of(0)).expect("store");
+    let baseline = file_size(&db_path);
+
+    for cycle in 0..40u8 {
+        db.set_snap_blob(&db_ref, &blob_of(cycle)).expect("rewrite");
+    }
+    assert_size_snapshot("snap_blob_rewrites", baseline, file_size(&db_path));
+}

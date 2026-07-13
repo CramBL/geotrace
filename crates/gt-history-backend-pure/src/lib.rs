@@ -82,6 +82,17 @@ impl HistoryDatabase for PureDb {
         .map_err(Into::into)
     }
 
+    fn set_snap_blob(&mut self, db_ref: &DatabaseRef, blob: &[u8]) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        copy::set_snap_blob(&self.path, &db_ref.identity, &db_ref.group_name, blob)
+            .map_err(Into::into)
+    }
+
+    fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError> {
+        let _guard = DB_LOCK.lock();
+        copy::snap_blob(&self.path, &db_ref.identity, &db_ref.group_name).map_err(Into::into)
+    }
+
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {
         let _guard = DB_LOCK.lock();
         let file =
