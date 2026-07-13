@@ -62,9 +62,9 @@ pub fn resolve_costing(declared: Option<&TravelMode>, configured: Costing) -> Op
 /// time range + point count pin the content for session-store purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TrackContentKey {
-    start_us: i64,
-    end_us: i64,
-    tpv_count: usize,
+    pub(crate) start_us: i64,
+    pub(crate) end_us: i64,
+    pub(crate) tpv_count: usize,
 }
 
 impl TrackContentKey {
@@ -483,6 +483,36 @@ impl SnapScheduler {
         }
     }
 
+    /// Seed a run restored from the recording history database into the
+    /// session stores. A run completed this session wins over the stored
+    /// one (it is strictly newer), so restoration never clobbers; a queued
+    /// automatic entry for the track is cancelled - its answer just
+    /// arrived from disk. Manual entries proceed: the user explicitly
+    /// asked for a fresh run.
+    pub fn restore_run(&mut self, track_ref: TrackRef, track: &LoadedTrack, run: SnapRun) {
+        // Cancel first: a pending automatic fetch is answered by this run.
+        if let Some(position) = self
+            .queue
+            .iter()
+            .position(|p| p.track == track_ref && p.priority == SnapPriority::Auto)
+        {
+            self.queue.remove(position);
+            self.activity.remove(&track_ref);
+        }
+        let content = TrackContentKey::new(track);
+        if self.latest.contains_key(&content) {
+            return;
+        }
+        let key = SnapCacheKey {
+            content,
+            params: run.result.params.into(),
+            host: run.server_host.clone(),
+        };
+        let run = Arc::new(run);
+        self.latest.insert(content, Arc::clone(&run));
+        self.cache.insert(key, run);
+    }
+
     /// Insert a completed run directly into the cache and the display
     /// store, bypassing the worker. Tests only - production runs arrive via
     /// the message channel.
@@ -505,10 +535,12 @@ impl SnapScheduler {
         self.in_flight = None;
     }
 
-    /// Drain worker messages; returns `true` when anything changed (the
-    /// caller repaints). Also starts the next queued run when idle.
-    pub fn poll(&mut self) -> bool {
+    /// Drain worker messages, returning the content keys of runs that
+    /// completed - the caller persists their files' runs to the history
+    /// database. Also starts the next queued run when idle.
+    pub fn poll(&mut self) -> Vec<TrackContentKey> {
         let mut changed = false;
+        let mut completed = Vec::new();
         while let Ok(message) = self.rx.try_recv() {
             changed = true;
             match message {
@@ -532,6 +564,7 @@ impl SnapScheduler {
                 SnapMessage::Done { track, key, run } => {
                     let run: Arc<SnapRun> = Arc::from(run);
                     self.latest.insert(key.content, Arc::clone(&run));
+                    completed.push(key.content);
                     self.cache.insert(key, run);
                     self.activity.remove(&track);
                     if self.in_flight == Some(track) {
@@ -551,7 +584,7 @@ impl SnapScheduler {
         if changed {
             self.start_next_if_idle();
         }
-        changed
+        completed
     }
 
     fn start_next_if_idle(&mut self) {
@@ -703,34 +736,11 @@ mod tests {
     }
 
     fn track(points: usize) -> LoadedTrack {
-        let points = fixtures::nav_points_from(
+        fixtures::loaded_track_from(
             chrono::DateTime::from_timestamp(1_767_268_800, 0).unwrap_or_default(),
             points,
             1,
-        );
-        LoadedTrack {
-            metadata: gt_types::track::TrackMetadata {
-                time_range: gt_types::track::TimeRange::new(
-                    points
-                        .first()
-                        .map(|p| p.tpv.time().utc())
-                        .unwrap_or_default(),
-                    points
-                        .last()
-                        .map(|p| p.tpv.time().utc())
-                        .unwrap_or_default(),
-                ),
-                tpv_count: points.len(),
-                ..gt_types::track::TrackMetadata::default()
-            },
-            points,
-            lod: gt_types::track::TrackLod::default(),
-            sat_label_anchors: Vec::new(),
-            custom_markers: Vec::new(),
-            generated_markers: Vec::new(),
-            event_markers: Vec::new(),
-            channels: Vec::new(),
-        }
+        )
     }
 
     fn scheduler() -> SnapScheduler {
@@ -774,7 +784,7 @@ mod tests {
         scheduler.in_flight = Some(track_ref());
 
         scheduler.tx.send(done_message(track_ref(), key)).ok();
-        assert!(scheduler.poll());
+        assert_eq!(scheduler.poll().len(), 1, "one completion reported");
 
         assert!(scheduler.latest_run_for(&track).is_some());
         assert_eq!(scheduler.activity_for(track_ref()), None);
@@ -1122,6 +1132,64 @@ mod tests {
         vis.files[0].tracks[0].track_visible = true;
         scheduler.set_visibility(&vis);
         assert_eq!(next_eligible(&scheduler.queue, &scheduler.visible), Some(0));
+    }
+
+    /// A restored run seeds the display and dedupe stores and cancels a
+    /// pending automatic entry (its answer just arrived from disk); manual
+    /// entries survive, and a session run is never clobbered.
+    #[test]
+    fn restored_run_seeds_stores_and_cancels_auto_entry() {
+        let mut scheduler = scheduler();
+        scheduler.in_flight = Some(nth_track_ref(9));
+        let track = track(10);
+
+        scheduler
+            .queue
+            .push_back(pending(&track, track_ref(), SnapPriority::Auto));
+        scheduler.activity.insert(track_ref(), SnapActivity::Queued);
+
+        scheduler.restore_run(
+            track_ref(),
+            &track,
+            empty_run(SnapParams::new(Costing::Auto)),
+        );
+        assert!(scheduler.latest_run_for(&track).is_some());
+        assert!(scheduler.queue.is_empty(), "the parked answer arrived");
+        assert_eq!(scheduler.activity_for(track_ref()), None);
+
+        // A second restore (or an older stored run) never clobbers.
+        scheduler.restore_run(
+            track_ref(),
+            &track,
+            empty_run(SnapParams::new(Costing::Bicycle)),
+        );
+        assert_eq!(
+            scheduler
+                .latest_run_for(&track)
+                .map(|r| r.result.params.costing),
+            Some(Costing::Auto),
+        );
+    }
+
+    /// A manual entry outlives restoration: the user explicitly asked for
+    /// a fresh run, so the stored one only fills the display until then.
+    #[test]
+    fn restore_keeps_manual_entries_queued() {
+        let mut scheduler = scheduler();
+        scheduler.in_flight = Some(nth_track_ref(9));
+        let track = track(10);
+        scheduler
+            .queue
+            .push_back(pending(&track, track_ref(), SnapPriority::Manual));
+
+        scheduler.restore_run(
+            track_ref(),
+            &track,
+            empty_run(SnapParams::new(Costing::Auto)),
+        );
+
+        assert!(scheduler.latest_run_for(&track).is_some());
+        assert_eq!(scheduler.queue.len(), 1, "the manual request still runs");
     }
 
     /// Every warning variant renders to a hover line carrying its key facts

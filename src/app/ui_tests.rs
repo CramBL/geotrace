@@ -2430,6 +2430,20 @@ fn push_file_with_travel_mode(
     name: &str,
     travel_mode: Option<gt_types::TravelMode>,
 ) -> gt_types::TrackRef {
+    push_file_with(
+        harness,
+        name,
+        travel_mode,
+        gt_loaded_files::FileHistory::None,
+    )
+}
+
+fn push_file_with(
+    harness: &mut Harness<'_, App>,
+    name: &str,
+    travel_mode: Option<gt_types::TravelMode>,
+    history: gt_loaded_files::FileHistory,
+) -> gt_types::TrackRef {
     let points = gt_test_utils::nav_test_data();
     let file = gt_track_builder::build_loaded_file(
         name.to_owned(),
@@ -2448,9 +2462,7 @@ fn push_file_with_travel_mode(
     );
     let state = harness.state_mut();
     let mut shared = state.shared.borrow_mut();
-    shared
-        .loaded_files
-        .push(file, gt_loaded_files::FileHistory::None);
+    shared.loaded_files.push(file, history);
     let fi = gt_types::FileIdx::new(shared.loaded_files.files().len() - 1);
     let files = shared.loaded_files.files().to_vec();
     shared.tree.sync_from_loaded_files(&files);
@@ -2550,6 +2562,118 @@ fn snap_request_parked_on_consent_is_dropped_on_decline() {
         None,
         "nothing may be queued without consent"
     );
+}
+
+/// The persistence glue end to end, against a real temporary database:
+/// a completed run of a history-stored file is written into the
+/// recording's snap blob via the worker, and feeding the stored blob back
+/// through the response handler seeds a fresh scheduler's stores.
+#[test]
+fn snap_runs_persist_and_restore_through_the_app() {
+    use geotrace_sdk::{Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix};
+    use gt_history::{Database, HistoryDatabase, StoredSegmentation, TrackRange};
+
+    // One real recording so the blob has a valid group to live in.
+    let t0 = DateTime::from_timestamp(1_000, 0).expect("valid timestamp");
+    let mut recorder = NavFileBuilder::new().open();
+    for i in 0..10i64 {
+        recorder.add_nav_fix(
+            NavFix::builder()
+                .gps_time(t0 + SdkDuration::seconds(i))
+                .lat(Angle::degrees(55.68))
+                .lon(Angle::degrees(12.56))
+                .heading(Angle::degrees(0.0))
+                .build(),
+        );
+    }
+    let nav_file = recorder.finish().expect("valid nav file");
+    let mut bytes = Vec::new();
+    nav_file.write(&mut bytes).expect("write bytes");
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open");
+    let meta = gt_history::extract_meta(&bytes).expect("meta");
+    let tracks = [TrackRange {
+        start: 0,
+        end: meta.nav_point_count,
+        hidden: false,
+    }];
+    let settings = StoredSegmentation {
+        track_split_gap_us: 300_000_000,
+        detect_clock_discontinuities: false,
+        clock_discontinuity_sigmas: 5.0,
+    };
+    let db_ref = db
+        .insert("dev", &meta, &tracks, settings, &bytes)
+        .expect("insert");
+
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state_mut().history = crate::app::history_db::HistoryWorker::spawn(
+        Database::open_or_create(&db_path).expect("reopen"),
+        egui::Context::default(),
+    );
+
+    // A loaded file associated with the stored recording, with a completed
+    // run in the session stores.
+    let track = push_file_with(
+        &mut harness,
+        "ride.gtd",
+        None,
+        gt_loaded_files::FileHistory::recording("dev".to_owned(), meta, Some(db_ref.clone())),
+    );
+    inject_completed_run(&mut harness, track);
+
+    // Persist leg: the worker writes the recording's blob.
+    let content = {
+        let state = harness.state();
+        let shared = state.shared.borrow();
+        let loaded = track
+            .resolve(shared.loaded_files.files())
+            .expect("track present");
+        crate::app::snap::TrackContentKey::new(loaded)
+    };
+    harness.state().persist_snap_runs(&[content]);
+    let blob = wait_for(|| {
+        Database::open_or_create(&db_path)
+            .ok()
+            .and_then(|db| db.snap_blob(&db_ref).ok())
+            .flatten()
+    });
+
+    // Restore leg: a fresh scheduler seeded through the response handler.
+    harness.state_mut().snap = crate::app::snap::SnapScheduler::new(egui::Context::default());
+    harness
+        .state_mut()
+        .handle_history_response(crate::app::history_db::Response::SnapRunsLoaded {
+            db_ref,
+            blob: Ok(Some(blob)),
+        });
+    let state = harness.state();
+    let shared = state.shared.borrow();
+    let loaded = track
+        .resolve(shared.loaded_files.files())
+        .expect("track present");
+    let restored = state
+        .snap
+        .latest_run_for(loaded)
+        .expect("stored run restored into the fresh session");
+    assert_eq!(restored.result.points.len(), 60);
+}
+
+/// Poll `read` until it yields a value, with a bounded wait - the history
+/// worker runs on its own thread.
+fn wait_for<T>(read: impl Fn() -> Option<T>) -> T {
+    for _ in 0..200 {
+        if let Some(value) = read() {
+            return value;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("timed out waiting for the history worker");
 }
 
 /// Inject a completed run for `track` straight into the scheduler cache,

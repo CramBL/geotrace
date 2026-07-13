@@ -33,6 +33,7 @@ mod modals;
 mod query;
 mod settings_autosave;
 mod snap;
+mod snap_persist;
 #[cfg(feature = "self-update")]
 mod update;
 
@@ -1459,6 +1460,11 @@ impl App {
                     completed.filename,
                     file.tracks.len()
                 );
+                // Stored recordings may carry cached snap runs; fetch them
+                // (the response restores them into the session stores).
+                if let Some(db_ref) = history.db_ref() {
+                    self.history.load_snap_runs(db_ref.clone());
+                }
                 let orphans: Vec<(chrono::DateTime<chrono::Utc>, String)> = file
                     .orphaned_event_markers
                     .iter()
@@ -1766,6 +1772,80 @@ impl App {
                 self.pending_auto_prune = Some(candidates);
             }
             Response::AutoPruned(Err(e)) => log::error!("Auto-prune failed: {e}"),
+            // A failed cache write costs only the persisted copy - the
+            // session stores keep working - so this logs instead of toasting.
+            Response::SnapRunsStored(result) => {
+                if let Err(e) = result {
+                    log::warn!("Storing snap runs failed: {e}");
+                }
+            }
+            Response::SnapRunsLoaded { db_ref, blob } => match blob {
+                Ok(Some(bytes)) => self.restore_snap_runs(&db_ref, &bytes),
+                Ok(None) => {}
+                Err(e) => log::warn!("Loading stored snap runs failed: {e}"),
+            },
+        }
+    }
+
+    /// Seed a recording's stored snap runs into the session stores. Runs
+    /// are matched to tracks by content fingerprint, so index shifts or a
+    /// re-segmentation since storage simply leave non-matching entries
+    /// unrestored. Each run restores once, to its first matching track
+    /// among the files loaded from this recording; the content-keyed
+    /// stores serve every duplicate of that track from the same entry.
+    fn restore_snap_runs(&mut self, db_ref: &gt_history::DatabaseRef, blob: &[u8]) {
+        let Some(stored) = snap_persist::decode(blob) else {
+            return;
+        };
+        let shared = self.shared.borrow();
+        let view = shared.loaded_files.view();
+        for run in stored {
+            let target = view.entries().enumerate().find_map(|(fi, entry)| {
+                if entry.history().db_ref() != Some(db_ref) {
+                    return None;
+                }
+                entry
+                    .file()
+                    .tracks
+                    .iter()
+                    .position(|track| run.matches(track))
+                    .map(|ti| TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti)))
+            });
+            let Some(track_ref) = target else {
+                continue;
+            };
+            let Some(track) = track_ref.resolve(view.files()) else {
+                continue;
+            };
+            self.snap.restore_run(track_ref, track, run.into_run());
+        }
+    }
+
+    /// Persist the latest snap runs of every history-stored file that owns
+    /// one of the just-completed tracks. The whole file's runs are written
+    /// each time (the blob holds all of them), so the stored copy always
+    /// mirrors the session's latest state.
+    fn persist_snap_runs(&self, completed: &[snap::TrackContentKey]) {
+        let shared = self.shared.borrow();
+        for entry in shared.loaded_files.view().entries() {
+            let file = entry.file();
+            let affected = file
+                .tracks
+                .iter()
+                .any(|track| completed.contains(&snap::TrackContentKey::new(track)));
+            if !affected {
+                continue;
+            }
+            let Some(db_ref) = entry.history().db_ref().cloned() else {
+                continue;
+            };
+            let runs: Vec<(&gt_types::LoadedTrack, std::sync::Arc<snap::SnapRun>)> = file
+                .tracks
+                .iter()
+                .filter_map(|track| self.snap.latest_run_for(track).map(|run| (track, run)))
+                .collect();
+            let blob = snap_persist::encode(runs.iter().map(|(track, run)| (*track, run.as_ref())));
+            self.history.store_snap_runs(db_ref, blob);
         }
     }
 }
@@ -1948,9 +2028,13 @@ impl eframe::App for App {
             self.handle_history_response(resp);
         }
 
-        // Apply finished snap runs and progress updates, and let the queue
-        // react to visibility changes (parked entries may become eligible).
-        self.snap.poll();
+        // Apply finished snap runs and progress updates, persist completed
+        // runs of history-stored files, and let the queue react to
+        // visibility changes (parked entries may become eligible).
+        let completed_snaps = self.snap.poll();
+        if !completed_snaps.is_empty() {
+            self.persist_snap_runs(&completed_snaps);
+        }
         self.snap
             .set_visibility(self.shared.borrow().tree.visibility());
         if std::mem::take(&mut self.snap_auto_sweep) {

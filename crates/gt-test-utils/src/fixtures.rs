@@ -240,6 +240,41 @@ pub fn nav_data_with_gap(first_count: usize, second_count: usize) -> Vec<NavPoin
 ///
 /// Points move slightly north-east (0.001°/step) to avoid zero-distance degenerate tracks.
 /// No satellite reports. Useful when tests need full control over timestamps.
+/// A [`gt_types::LoadedTrack`] over [`nav_points_from`]'s points: metadata
+/// time range and tpv count derived from the points, everything else
+/// default. The shared builder for tests that need a track with a stable
+/// content fingerprint (time range + point count).
+pub fn loaded_track_from(
+    start: chrono::DateTime<chrono::Utc>,
+    count: usize,
+    step_secs: i64,
+) -> gt_types::LoadedTrack {
+    let points = nav_points_from(start, count, step_secs);
+    gt_types::LoadedTrack {
+        metadata: gt_types::track::TrackMetadata {
+            time_range: gt_types::track::TimeRange::new(
+                points
+                    .first()
+                    .map(|p| p.tpv.time().utc())
+                    .unwrap_or_default(),
+                points
+                    .last()
+                    .map(|p| p.tpv.time().utc())
+                    .unwrap_or_default(),
+            ),
+            tpv_count: points.len(),
+            ..gt_types::track::TrackMetadata::default()
+        },
+        points,
+        lod: gt_types::track::TrackLod::default(),
+        sat_label_anchors: Vec::new(),
+        custom_markers: Vec::new(),
+        generated_markers: Vec::new(),
+        event_markers: Vec::new(),
+        channels: Vec::new(),
+    }
+}
+
 pub fn nav_points_from(
     start: chrono::DateTime<chrono::Utc>,
     count: usize,
