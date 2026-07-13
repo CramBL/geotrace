@@ -3,10 +3,10 @@ use gt_history_types::{
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
     ATTR_SEG_GAP_US, ATTR_START_US, DatabaseRef, DbError, GTD_META_DEVICE_ATTR,
     GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR, GTD_META_TRAVEL_MODE_ATTR, GTD_VERSION_ATTR,
-    GTD_VERSION_FALLBACK, RecordingEntry, RecordingMeta, StoredRecording, StoredSegmentation,
-    TRACK_END_DATASET, TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange,
-    identity_from_group_name, identity_group_name, is_db_internal_group, is_db_recording_attr,
-    make_group_name,
+    GTD_VERSION_FALLBACK, RecordingEntry, RecordingMeta, SNAP_BLOB_DATASET, SNAP_GROUP,
+    StoredRecording, StoredSegmentation, TRACK_END_DATASET, TRACK_HIDDEN_DATASET,
+    TRACK_START_DATASET, TRACKS_GROUP, TrackRange, identity_from_group_name, identity_group_name,
+    is_db_internal_group, is_db_recording_attr, make_group_name,
 };
 use hdf5::Group;
 use std::path::Path;
@@ -1058,6 +1058,52 @@ pub(crate) fn set_tracks(
     write_track_table(&rec_grp, tracks)?;
     write_segmentation_attrs(&rec_grp, settings)?;
     Ok(())
+}
+
+/// Replace a recording's stored snap run with the given opaque bytes.
+///
+/// A fixed-shape `u8` dataset in the `__geotrace_snap__` subgroup,
+/// unlinked and recreated on rewrite - variable-length values leak in
+/// libhdf5's global heap across rewrite cycles, fixed-shape datasets are
+/// reclaimed by the free-space manager.
+pub(crate) fn set_snap_blob(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+    blob: &[u8],
+) -> Result<(), InternalError> {
+    let file = hdf5::File::open_rw(db_path)?;
+    let by_id = file.group("by_identity")?;
+    let id_grp = open_identity_group(&by_id, identity)?;
+    let rec_grp = id_grp.group(group_name)?;
+    if rec_grp.link_exists(SNAP_GROUP) {
+        rec_grp.unlink(SNAP_GROUP)?;
+    }
+    let grp = rec_grp.create_group(SNAP_GROUP)?;
+    grp.new_dataset::<u8>()
+        .shape([blob.len()])
+        .create(SNAP_BLOB_DATASET)?
+        .write_raw(blob)?;
+    Ok(())
+}
+
+/// The stored snap run bytes of a recording, `None` when it carries none.
+pub(crate) fn snap_blob(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+) -> Result<Option<Vec<u8>>, InternalError> {
+    let file = hdf5::File::open(db_path)?;
+    let by_id = file.group("by_identity")?;
+    let id_grp = open_identity_group(&by_id, identity)?;
+    let rec_grp = id_grp.group(group_name)?;
+    let Ok(grp) = rec_grp.group(SNAP_GROUP) else {
+        return Ok(None);
+    };
+    let Ok(dataset) = grp.dataset(SNAP_BLOB_DATASET) else {
+        return Ok(None);
+    };
+    Ok(dataset.read_raw::<u8>().ok())
 }
 
 /// Set or clear the hidden flag on the given tracks (by index) of a recording.

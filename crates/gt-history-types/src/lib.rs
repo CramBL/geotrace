@@ -33,6 +33,15 @@ pub const TRACK_START_DATASET: &str = "start";
 pub const TRACK_END_DATASET: &str = "end";
 pub const TRACK_HIDDEN_DATASET: &str = "hidden";
 
+/// DB-internal subgroup (under each recording group) holding the recording's
+/// cached snap-to-road run as one opaque byte dataset. The bytes are the
+/// app's own serialization (a versioned envelope); the history layer never
+/// inspects them. Prefixed like [`TRACKS_GROUP`], skipped when
+/// reconstructing the GTD file, and dropped automatically when the
+/// recording group is deleted.
+pub const SNAP_GROUP: &str = "__geotrace_snap__";
+pub const SNAP_BLOB_DATASET: &str = "blob";
+
 /// The GTD file-format root attribute carrying the format version, and the
 /// value assumed for recordings stored before it was preserved.
 pub const GTD_VERSION_ATTR: &str = "geotrace_version";
@@ -121,7 +130,7 @@ pub fn is_db_recording_attr(key: &str) -> bool {
 /// bookkeeping (not part of the GTD file), so they are skipped when
 /// reconstructing the original GTD file on load.
 pub fn is_db_internal_group(name: &str) -> bool {
-    name == TRACKS_GROUP
+    name == TRACKS_GROUP || name == SNAP_GROUP
 }
 
 /// One stored track: a half-open index range `[start, end)` into the recording's
@@ -394,6 +403,16 @@ pub trait HistoryDatabase {
         track_indices: &[usize],
         hidden: bool,
     ) -> Result<(), DbError>;
+
+    /// Store the serialized snap run for a recording, replacing any prior
+    /// one. The bytes are opaque to the history layer - the app owns the
+    /// format (a versioned envelope), the database only keeps them with the
+    /// recording so they prune with it.
+    fn set_snap_blob(&mut self, db_ref: &DatabaseRef, blob: &[u8]) -> Result<(), DbError>;
+
+    /// The stored snap run bytes for a recording, or `None` when it carries
+    /// none (never snapped, or stored before snap persistence existed).
+    fn snap_blob(&self, db_ref: &DatabaseRef) -> Result<Option<Vec<u8>>, DbError>;
 
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError>;
     /// Whether a recording with the same content already exists (content-addressed

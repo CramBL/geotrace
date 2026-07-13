@@ -3,10 +3,10 @@ use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
     ATTR_SEG_GAP_US, ATTR_START_US, CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, GTD_VERSION_ATTR,
-    GTD_VERSION_FALLBACK, RecordingMeta, SCHEMA_VERSION_ATTR, StoredRecording, StoredSegmentation,
-    TRACK_END_DATASET, TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP, TrackRange,
-    identity_from_group_name, identity_group_name, is_db_internal_group, is_db_recording_attr,
-    make_group_name,
+    GTD_VERSION_FALLBACK, RecordingMeta, SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET, SNAP_GROUP,
+    StoredRecording, StoredSegmentation, TRACK_END_DATASET, TRACK_HIDDEN_DATASET,
+    TRACK_START_DATASET, TRACKS_GROUP, TrackRange, identity_from_group_name, identity_group_name,
+    is_db_internal_group, is_db_recording_attr, make_group_name,
 };
 /// Internal read-modify-write machinery for the history database.
 ///
@@ -272,6 +272,21 @@ fn track_table_node(tracks: &[TrackRange]) -> GroupNode {
                 attrs: Vec::new(),
             },
         ],
+        groups: Vec::new(),
+    }
+}
+
+/// The `__geotrace_snap__` subgroup node holding one opaque byte dataset.
+fn snap_blob_node(blob: &[u8]) -> GroupNode {
+    GroupNode {
+        name: SNAP_GROUP.to_owned(),
+        attrs: Vec::new(),
+        datasets: vec![DatasetNode {
+            name: SNAP_BLOB_DATASET.to_owned(),
+            shape: vec![blob.len() as u64],
+            data: DatasetData::U8(blob.to_vec()),
+            attrs: Vec::new(),
+        }],
         groups: Vec::new(),
     }
 }
@@ -656,6 +671,49 @@ pub(crate) fn set_tracks(
 
     write_db(&identity_nodes, db_path)?;
     Ok(())
+}
+
+/// Replace a recording's stored snap run with the given opaque bytes.
+/// A no-op when the recording is absent, like [`set_tracks`].
+pub(crate) fn set_snap_blob(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+    blob: &[u8],
+) -> Result<(), InternalError> {
+    let existing_db = hdf5_pure::File::open(db_path)?;
+    let mut identity_nodes = snapshot_by_identity(&existing_db)?;
+    drop(existing_db);
+
+    if let Some(id_node) = find_identity_node_mut(&mut identity_nodes, identity)
+        && let Some(rec) = id_node.groups.iter_mut().find(|r| r.name == group_name)
+    {
+        rec.groups.retain(|g| g.name != SNAP_GROUP);
+        rec.groups.push(snap_blob_node(blob));
+    }
+
+    write_db(&identity_nodes, db_path)?;
+    Ok(())
+}
+
+/// The stored snap run bytes of a recording, `None` when it carries none.
+pub(crate) fn snap_blob(
+    db_path: &std::path::Path,
+    identity: &str,
+    group_name: &str,
+) -> Result<Option<Vec<u8>>, InternalError> {
+    let file = hdf5_pure::File::open(db_path)?;
+    let root = file.root();
+    let by_id = root.group("by_identity")?;
+    let id_grp = find_identity_group(&by_id, identity)?;
+    let rec_grp = id_grp.group(group_name)?;
+    let Ok(grp) = rec_grp.group(SNAP_GROUP) else {
+        return Ok(None);
+    };
+    let Ok(dataset) = grp.dataset(SNAP_BLOB_DATASET) else {
+        return Ok(None);
+    };
+    Ok(dataset.read_u8().ok())
 }
 
 /// Read the stored track ranges from a recording group (empty if absent).
