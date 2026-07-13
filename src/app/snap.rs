@@ -339,9 +339,10 @@ struct PendingRun {
     server_host: Option<String>,
 }
 
-/// Schedules snap runs - FIFO queue, one in flight at a time so the server's
-/// fair-use budget stays global - and owns the per-track activity states and
-/// the session result cache they resolve into.
+/// Schedules snap runs - a priority queue ([`next_eligible`]) with one run
+/// in flight at a time so the server's fair-use budget stays global - and
+/// owns the per-track activity states and the session result stores they
+/// resolve into.
 pub struct SnapScheduler {
     ctx: Context,
     tx: mpsc::Sender<SnapMessage>,
@@ -1037,9 +1038,9 @@ mod tests {
         assert_eq!(next_eligible(&queue, &visible), expected);
     }
 
-    /// A manual request for a track already queued automatically promotes
-    /// it to the front as a manual entry; an automatic re-request leaves
-    /// the queue untouched. Neither duplicates the entry.
+    /// A manual request for a track already queued - automatically or
+    /// manually - promotes it to the front as a manual entry; an automatic
+    /// re-request leaves the queue untouched. Nothing duplicates entries.
     #[test]
     fn manual_request_promotes_queued_auto_entry() {
         let mut scheduler = scheduler();
@@ -1077,6 +1078,31 @@ mod tests {
             Some((b, SnapPriority::Manual)),
         );
         assert_eq!(scheduler.queue.len(), 2, "promotion must not duplicate");
+
+        // Promote `a` past the already-manual `b`, leaving `b` manual and
+        // non-front; a second manual click on `b` still moves it to the
+        // front without duplicating - the last click wins the queue order.
+        scheduler.request_snap(
+            a,
+            &track,
+            SnapParams::new(Costing::Auto),
+            SnapPriority::Manual,
+        );
+        assert_eq!(
+            scheduler.queue.front().map(|p| (p.track, p.priority)),
+            Some((a, SnapPriority::Manual)),
+        );
+        scheduler.request_snap(
+            b,
+            &track,
+            SnapParams::new(Costing::Auto),
+            SnapPriority::Manual,
+        );
+        assert_eq!(
+            scheduler.queue.front().map(|p| (p.track, p.priority)),
+            Some((b, SnapPriority::Manual)),
+        );
+        assert_eq!(scheduler.queue.len(), 2, "re-promotion must not duplicate");
     }
 
     /// Hiding a queued track parks its automatic entry; showing it again
