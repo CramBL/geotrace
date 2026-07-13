@@ -3,6 +3,6 @@ source: crates/gt-snap/tests/snapped_track_segments.rs
 expression: digest(&segments)
 ---
 [
-    "28 positions, (55.678743, 12.564488) -> (55.672569, 12.574072)",
-    "16 positions, (55.706061, 12.580535) -> (55.706611, 12.584858)",
+    "28 positions, (55.678743, 12.564488) -> (55.672569, 12.574072), 18 spans covering 0..28 via edges 0..=17",
+    "16 positions, (55.706061, 12.580535) -> (55.706611, 12.584858), 13 spans covering 0..16 via edges 18..=30",
 ]

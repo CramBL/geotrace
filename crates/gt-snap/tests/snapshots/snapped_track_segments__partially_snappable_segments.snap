@@ -3,7 +3,7 @@ source: crates/gt-snap/tests/snapped_track_segments.rs
 expression: digest(&segments)
 ---
 [
-    "2 positions, (55.665090, 12.574457) -> (55.665045, 12.574398)",
-    "3 positions, (55.665045, 12.574398) -> (55.664886, 12.574186)",
-    "4 positions, (55.664507, 12.575225) -> (55.663593, 12.575802)",
+    "2 positions, (55.665090, 12.574457) -> (55.665045, 12.574398), 2 spans covering 0..2 via edges 0..=1",
+    "3 positions, (55.665045, 12.574398) -> (55.664886, 12.574186), 3 spans covering 0..3 via edges 0..=2",
+    "4 positions, (55.664507, 12.575225) -> (55.663593, 12.575802), 2 spans covering 0..4 via edges 3..=4",
 ]

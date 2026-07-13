@@ -9,7 +9,7 @@ use serde_json::json;
 use strum::EnumCount;
 
 use gt_snap::request_plan::SnapParams;
-use gt_snap::snapped_track::{Position, SnappedTrackSegment};
+use gt_snap::snapped_track::{Position, SnappedEdgeSpan, SnappedTrackSegment};
 use gt_snap::stitch::{SnapKindCounts, SnapPoint, SnapResult, SnapWarning};
 use gt_snap::wire::{Costing, Edge, RoadClass, SnapPointKind, Surface};
 
@@ -59,6 +59,11 @@ fn exhaustive_result() -> SnapResult {
                     lon: 12.5654,
                 },
             ],
+            edge_spans: vec![SnappedEdgeSpan {
+                start: 0,
+                end: 2,
+                edge: 0,
+            }],
         }],
         edges: vec![
             Edge {

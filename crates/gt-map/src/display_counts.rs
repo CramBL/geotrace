@@ -82,7 +82,7 @@ impl DisplayCounts {
         // it), so its count is exactly the tracks whose snapped track
         // would draw - re-deriving scope here could only drift from that.
         let mut counts = Self {
-            snapped_tracks: snapped_tracks.map_or(0, |s| s.segments_by_track.len()),
+            snapped_tracks: snapped_tracks.map_or(0, |s| s.by_track.len()),
             ..Self::default()
         };
         for (fi, file) in files.iter().enumerate() {
@@ -302,9 +302,9 @@ mod tests {
 
         let files = vec![fixture()];
         let snapped = SnappedTracks {
-            segments_by_track: HashMap::from([(
+            by_track: HashMap::from([(
                 TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
-                Arc::new(vec![Vec::new()]),
+                Arc::new(gt_ui_types::SnappedTrackGeometry::default()),
             )]),
         };
         let counts = DisplayCounts::compute(

@@ -355,7 +355,20 @@ fn continuous_chunks_join_into_one_segment() {
     // Both boundary points are snappable, so the cut mid-road is bridged:
     // one segment carrying both chunks' 4 positions.
     assert_eq!(result.segments.len(), 1);
-    assert_eq!(result.segments.first().map(|s| s.positions.len()), Some(8));
+    let segment = result.segments.first().expect("one segment");
+    assert_eq!(segment.positions.len(), 8);
+
+    // The joined segment's edge spans came along: the second chunk's span
+    // is shifted onto the merged vertex sequence and references the
+    // result-global (rebased) edge, exactly like the per-point references.
+    let last_span = segment.edge_spans.last().expect("spans joined");
+    assert_eq!(last_span.end, segment.positions.len());
+    assert!(last_span.start >= 4, "second chunk's span was offset");
+    assert_eq!(last_span.edge, result.edges.len() - 1);
+    assert!(
+        result.edges.get(last_span.edge).is_some(),
+        "span references a result-global edge"
+    );
 }
 
 #[test]

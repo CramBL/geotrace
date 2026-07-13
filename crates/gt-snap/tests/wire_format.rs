@@ -287,6 +287,47 @@ fn costing_display_name_is_canonical_spelling() {
     }
 }
 
+/// Pins the UI spelling of every road class shown on snapped-track hover,
+/// exhaustively like [`costing_display_name_is_canonical_spelling`].
+#[test]
+fn road_class_display_name_is_canonical_spelling() {
+    let expected = [
+        (RoadClass::Motorway, "Motorway"),
+        (RoadClass::Trunk, "Trunk"),
+        (RoadClass::Primary, "Primary"),
+        (RoadClass::Secondary, "Secondary"),
+        (RoadClass::Tertiary, "Tertiary"),
+        (RoadClass::Unclassified, "Unclassified"),
+        (RoadClass::Residential, "Residential"),
+        (RoadClass::ServiceOther, "Service or other"),
+        (RoadClass::Unknown, "Unknown"),
+    ];
+    assert_eq!(expected.len(), RoadClass::COUNT);
+    for (road_class, name) in expected {
+        assert_eq!(road_class.display_name(), name);
+    }
+}
+
+/// Pins the UI spelling of every surface shown on snapped-track hover.
+#[test]
+fn surface_display_name_is_canonical_spelling() {
+    let expected = [
+        (Surface::PavedSmooth, "Paved smooth"),
+        (Surface::Paved, "Paved"),
+        (Surface::PavedRough, "Paved rough"),
+        (Surface::Compacted, "Compacted"),
+        (Surface::Dirt, "Dirt"),
+        (Surface::Gravel, "Gravel"),
+        (Surface::Path, "Path"),
+        (Surface::Impassable, "Impassable"),
+        (Surface::Unknown, "Unknown"),
+    ];
+    assert_eq!(expected.len(), Surface::COUNT);
+    for (surface, name) in expected {
+        assert_eq!(surface.display_name(), name);
+    }
+}
+
 /// `server_host` is the granularity of the app's upload-consent bookkeeping:
 /// scheme, port, and path changes keep consent, a host change re-prompts, and
 /// URLs without a parsable host never count as consented.

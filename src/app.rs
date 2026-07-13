@@ -1077,8 +1077,8 @@ impl App {
                 }
                 if let Some(run) = self.snap.latest_run_for(track) {
                     snapped
-                        .segments_by_track
-                        .insert(track_ref, Arc::clone(&run.segments_merc));
+                        .by_track
+                        .insert(track_ref, Arc::clone(&run.geometry));
                 }
             }
         }

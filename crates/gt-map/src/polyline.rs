@@ -154,7 +154,7 @@ pub(crate) fn visible_path<K: Copy + PartialEq>(
 /// True when the segment a-b provably cannot intersect `rect`: both endpoints
 /// lie beyond the same edge. Conservative - segments passing diagonally near
 /// a corner are kept even when they miss the rect.
-fn segment_outside(a: egui::Pos2, b: egui::Pos2, rect: egui::Rect) -> bool {
+pub(crate) fn segment_outside(a: egui::Pos2, b: egui::Pos2, rect: egui::Rect) -> bool {
     (a.x < rect.min.x && b.x < rect.min.x)
         || (a.x > rect.max.x && b.x > rect.max.x)
         || (a.y < rect.min.y && b.y < rect.min.y)

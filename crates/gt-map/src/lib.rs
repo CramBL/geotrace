@@ -507,7 +507,11 @@ impl NavMap {
             && let Some(snapped) = snapped_tracks
             && !snapped.is_empty()
         {
-            map = map.with_plugin(SnappedTrackRenderer::new(snapped));
+            // Edge hover yields while the recorded data owns the pointer.
+            map = map.with_plugin(SnappedTrackRenderer::new(
+                snapped,
+                highlight.hover.is_none(),
+            ));
         }
         if display_mask.is_visible(DisplayCategory::CustomMarkers) {
             map = map.with_plugin(MarkerRenderer::new(
@@ -1906,13 +1910,15 @@ mod snapshot_tests {
     const SNAPPED_OFFSET_MERC_Y: f64 = -1.5e-6;
 
     /// Snapshot the map with `make_snapshot_file`'s track plus the snapped
-    /// segments `segments_for` derives from its points, drawn under `mask`.
-    /// Requires `GEOTRACE_OFFLINE=1` (set by `just test`) so no map tiles
-    /// render.
-    fn snapshot_snapped_tracks(
+    /// geometry `geometry_for` derives from its points, drawn under `mask`.
+    /// With `hover`, the pointer is parked there before the snapshot (frames
+    /// are stepped past egui's tooltip delay). Requires `GEOTRACE_OFFLINE=1`
+    /// (set by `just test`) so no map tiles render.
+    fn snapshot_snapped_tracks_with(
         name: &str,
         mask: DisplayMask,
-        segments_for: impl Fn(&[NavPoint]) -> Vec<Vec<MercPoint>>,
+        hover: Option<egui::Pos2>,
+        geometry_for: impl Fn(&[NavPoint]) -> gt_ui_types::SnappedTrackGeometry,
     ) {
         use std::sync::Arc;
 
@@ -1927,9 +1933,9 @@ mod snapshot_tests {
             .map(|t| t.points.clone())
             .unwrap_or_default();
         let snapped = SnappedTracks {
-            segments_by_track: std::collections::HashMap::from([(
+            by_track: std::collections::HashMap::from([(
                 track_ref,
-                Arc::new(segments_for(&points)),
+                Arc::new(geometry_for(&points)),
             )]),
         };
 
@@ -1962,7 +1968,36 @@ mod snapshot_tests {
         for _ in 0..5 {
             harness.run();
         }
+        if let Some(pos) = hover {
+            harness.inner.hover_at(pos);
+            // Tooltips appear after egui's hover delay; keep stepping until
+            // it elapsed and the tooltip laid itself out.
+            for _ in 0..60 {
+                harness.run();
+            }
+        }
         harness.snapshot_loose(name);
+    }
+
+    /// [`snapshot_snapped_tracks_with`] for bare polylines (no edge data,
+    /// no hover).
+    fn snapshot_snapped_tracks(
+        name: &str,
+        mask: DisplayMask,
+        segments_for: impl Fn(&[NavPoint]) -> Vec<Vec<MercPoint>>,
+    ) {
+        snapshot_snapped_tracks_with(name, mask, None, |points| {
+            gt_ui_types::SnappedTrackGeometry {
+                segments: segments_for(points)
+                    .into_iter()
+                    .map(|points| gt_ui_types::SnappedSegment {
+                        points,
+                        edge_spans: Vec::new(),
+                    })
+                    .collect(),
+                edges: Vec::new(),
+            }
+        });
     }
 
     /// A snapped segment following the recorded points in `range`, nudged
@@ -2073,6 +2108,63 @@ mod snapshot_tests {
                 snapped_segment(points, 600..950),
             ]
         });
+    }
+
+    /// Snapshot: hovering the snapped line shows the matched edge's
+    /// attributes. The synthetic segment runs horizontally through the
+    /// viewport center (zoom-to-fit centers the recorded track's bounds),
+    /// so parking the pointer at the center hits it deterministically.
+    #[test]
+    fn snap_snapped_track_edge_hover() {
+        /// Half-width of the synthetic segment, Mercator units - wide
+        /// enough to cross the whole fitted viewport.
+        const SEGMENT_HALF_WIDTH_MERC: f64 = 1.0e-4;
+
+        snapshot_snapped_tracks_with(
+            "snapped_track_edge_hover",
+            DisplayMask::default(),
+            Some(egui::pos2(400.0, 300.0)),
+            |points| {
+                let (min, max) = points.iter().fold(
+                    ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN)),
+                    |(min, max), p| {
+                        (
+                            (min.0.min(p.merc.x), min.1.min(p.merc.y)),
+                            (max.0.max(p.merc.x), max.1.max(p.merc.y)),
+                        )
+                    },
+                );
+                let center = MercPoint {
+                    x: f64::midpoint(min.0, max.0),
+                    y: f64::midpoint(min.1, max.1),
+                };
+                gt_ui_types::SnappedTrackGeometry {
+                    segments: vec![gt_ui_types::SnappedSegment {
+                        points: vec![
+                            MercPoint {
+                                x: center.x - SEGMENT_HALF_WIDTH_MERC,
+                                y: center.y,
+                            },
+                            MercPoint {
+                                x: center.x + SEGMENT_HALF_WIDTH_MERC,
+                                y: center.y,
+                            },
+                        ],
+                        edge_spans: vec![gt_ui_types::SnappedEdgeSpan {
+                            start: 0,
+                            end: 2,
+                            edge: 0,
+                        }],
+                    }],
+                    edges: vec![gt_ui_types::SnappedEdgeInfo {
+                        name: Some("H.C. Andersens Boulevard".to_owned()),
+                        road_class: Some("Tertiary".to_owned()),
+                        speed_limit_kmh: Some(50),
+                        surface: Some("Paved smooth".to_owned()),
+                    }],
+                }
+            },
+        );
     }
 
     /// Snapshot: match halos along the track, including the single-point
