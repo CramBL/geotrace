@@ -291,6 +291,25 @@ pub enum RoadClass {
     Unknown,
 }
 
+impl RoadClass {
+    /// Canonical human-readable name shown in the UI (snapped-track hover).
+    /// Single source of truth for this type's display spelling, like
+    /// [`Costing::display_name`].
+    pub fn display_name(self) -> &'static str {
+        match self {
+            RoadClass::Motorway => "Motorway",
+            RoadClass::Trunk => "Trunk",
+            RoadClass::Primary => "Primary",
+            RoadClass::Secondary => "Secondary",
+            RoadClass::Tertiary => "Tertiary",
+            RoadClass::Unclassified => "Unclassified",
+            RoadClass::Residential => "Residential",
+            RoadClass::ServiceOther => "Service or other",
+            RoadClass::Unknown => "Unknown",
+        }
+    }
+}
+
 /// Valhalla's surface classification.
 ///
 /// `Serialize` exists for persisting cached snap results; the `Unknown`
@@ -309,6 +328,23 @@ pub enum Surface {
     /// Forward compatibility: a surface this client does not know yet.
     #[serde(other)]
     Unknown,
+}
+
+impl Surface {
+    /// Canonical human-readable name shown in the UI (snapped-track hover).
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Surface::PavedSmooth => "Paved smooth",
+            Surface::Paved => "Paved",
+            Surface::PavedRough => "Paved rough",
+            Surface::Compacted => "Compacted",
+            Surface::Dirt => "Dirt",
+            Surface::Gravel => "Gravel",
+            Surface::Path => "Path",
+            Surface::Impassable => "Impassable",
+            Surface::Unknown => "Unknown",
+        }
+    }
 }
 
 /// One matched edge, trimmed to the requested attribute subset.

@@ -13,5 +13,7 @@ pub use generated_marker_visibility::GeneratedMarkerVisibility;
 pub use highlight::{DataPointRef, HighlightScope, MapHighlight, MatchHighlight};
 pub use query_matches::{DrawLayer, DrawLayerMask, QueryMatches};
 pub use snap_error_series::{SnapErrorKind, SnapErrorPoint, SnapErrorSeries};
-pub use snapped_tracks::SnappedTracks;
+pub use snapped_tracks::{
+    SnappedEdgeInfo, SnappedEdgeSpan, SnappedSegment, SnappedTrackGeometry, SnappedTracks,
+};
 pub use visibility::{FileVisibility, TrackDataVisibility, TrackVisibility};

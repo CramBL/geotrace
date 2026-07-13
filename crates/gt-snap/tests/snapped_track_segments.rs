@@ -21,7 +21,8 @@ fn parse_response(scenario: &str) -> Result<TraceAttributesResponse, String> {
 }
 
 /// A digest of assembled segments, sized for snapshot review: per segment
-/// the vertex count plus first and last position.
+/// the vertex count, first and last position, and the edge-span coverage
+/// (span count plus the covered vertex range and referenced edge range).
 fn digest(segments: &[SnappedTrackSegment]) -> Vec<String> {
     segments
         .iter()
@@ -33,9 +34,63 @@ fn digest(segments: &[SnappedTrackSegment]) -> Vec<String> {
                 ),
                 _ => "empty".to_owned(),
             };
-            format!("{} positions, {ends}", segment.positions.len())
+            let spans = match (segment.edge_spans.first(), segment.edge_spans.last()) {
+                (Some(first), Some(last)) => format!(
+                    "{} spans covering {}..{} via edges {}..={}",
+                    segment.edge_spans.len(),
+                    first.start,
+                    last.end,
+                    first.edge,
+                    last.edge,
+                ),
+                _ => "no spans".to_owned(),
+            };
+            format!("{} positions, {ends}, {spans}", segment.positions.len())
         })
         .collect()
+}
+
+/// Edge spans are internally coherent on every fixture: sorted, within the
+/// segment's vertices, gapless between consecutive spans (adjacent edges
+/// share their boundary vertex), and referencing existing edges.
+///
+/// Full coverage is a captured-reality pin, not a general guarantee: all
+/// four fixtures happen to have contiguous edge shape ranges. The contract
+/// explicitly permits uncovered vertices (see
+/// [`SnappedTrackSegment::edge_spans`] and
+/// `shape_index_gaps_leave_vertices_uncovered`).
+#[rstest]
+#[case::clean_drive("clean_drive")]
+#[case::dense_10hz("dense_10hz")]
+#[case::partially_snappable("partially_snappable")]
+#[case::teleport_gap("teleport_gap")]
+fn edge_spans_cover_segments_coherently(#[case] scenario: &str) {
+    let response = parse_response(scenario).expect("fixture parses");
+    let segments = snapped_track::snapped_track_segments(&response).expect("segments assemble");
+    assert!(!segments.is_empty());
+    for segment in &segments {
+        assert!(!segment.edge_spans.is_empty(), "every segment has spans");
+        let mut previous_end = 0;
+        for span in &segment.edge_spans {
+            assert!(span.start < span.end, "spans are non-empty");
+            assert!(span.end <= segment.positions.len(), "spans stay in bounds");
+            assert!(
+                span.start <= previous_end,
+                "no vertex gap between consecutive spans"
+            );
+            assert!(
+                response.edges.get(span.edge).is_some(),
+                "span references an existing edge"
+            );
+            previous_end = previous_end.max(span.end);
+        }
+        assert_eq!(
+            previous_end,
+            segment.positions.len(),
+            "captured reality: these fixtures' edge ranges are contiguous, \
+             so coverage is total here (not a general guarantee)"
+        );
+    }
 }
 
 /// Every success fixture assembles without error; the digests pin segment
@@ -168,6 +223,37 @@ fn synthetic_split_behavior(
     let segments = snapped_track::snapped_track_segments(&response).expect("assembles");
     let position_counts: Vec<usize> = segments.iter().map(|s| s.positions.len()).collect();
     assert_eq!(position_counts, expected_position_counts);
+}
+
+/// A shape-index gap between two edges (legal per the wire format - see
+/// the module doc on non-contiguous edge ranges) leaves the gapped
+/// vertices uncovered by every span: the documented "uncovered" branch of
+/// the span contract, exercised positively since no fixture captures it.
+#[test]
+fn shape_index_gaps_leave_vertices_uncovered() {
+    let points = json!([
+        point(SnapPointKind::Snapped, Some(0)),
+        point(SnapPointKind::Snapped, Some(1)),
+    ]);
+    // Edge 0 covers shape 0..=1, edge 1 covers 3..=3: vertex 2 is gapped.
+    let edges = json!([
+        { "begin_shape_index": 0, "end_shape_index": 1 },
+        { "begin_shape_index": 3, "end_shape_index": 3 },
+    ]);
+    let response = synthetic_response(&points, &edges).expect("synthetic response");
+    let segments = snapped_track::snapped_track_segments(&response).expect("assembles");
+
+    let segment = segments.first().expect("one segment");
+    assert_eq!(segments.len(), 1, "an index gap alone is not a break");
+    assert_eq!(segment.positions.len(), 4);
+    let covered = |vertex: usize| {
+        segment
+            .edge_spans
+            .iter()
+            .any(|span| span.start <= vertex && vertex < span.end)
+    };
+    assert!(covered(0) && covered(1) && covered(3));
+    assert!(!covered(2), "the gapped vertex stays uncovered");
 }
 
 #[test]

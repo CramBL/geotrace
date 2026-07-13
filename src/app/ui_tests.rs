@@ -2719,6 +2719,7 @@ fn inject_completed_run(harness: &mut Harness<'_, App>, track: gt_types::TrackRe
                     lon: 12.57,
                 },
             ],
+            edge_spans: Vec::new(),
         }],
         edges: Vec::new(),
         kind_counts: gt_snap::stitch::SnapKindCounts::default(),
@@ -2762,13 +2763,17 @@ fn snapped_tracks_view_respects_toggle_and_tree_visibility() {
     inject_completed_run(&mut harness, track);
 
     let view = harness.state().snapped_tracks_view();
-    let segments = view
-        .segments_by_track
+    let geometry = view
+        .by_track
         .get(&track)
         .expect("a shown completed run must reach the map");
-    assert_eq!(segments.len(), 1, "one snapped segment was injected");
     assert_eq!(
-        segments.first().map(Vec::len),
+        geometry.segments.len(),
+        1,
+        "one snapped segment was injected"
+    );
+    assert_eq!(
+        geometry.segments.first().map(|s| s.points.len()),
         Some(2),
         "both positions must be projected"
     );

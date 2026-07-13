@@ -281,7 +281,14 @@ pub fn stitch(
         let (starts_snappable, ends_snappable) = owned_boundary_snappable(chunk, response);
         let contributed_geometry =
             match snapped_track::snapped_track_segments_in(response, chunk.owned.clone()) {
-                Ok(segments) => {
+                Ok(mut segments) => {
+                    // Chunk-local edge references become result-global, like
+                    // the per-point edge indices below.
+                    for segment in &mut segments {
+                        for span in &mut segment.edge_spans {
+                            span.edge += edge_base;
+                        }
+                    }
                     let contributed = !segments.is_empty();
                     let mut segments = segments.into_iter();
                     // The cut between two chunks falls mid-road: the
@@ -295,7 +302,16 @@ pub fn stitch(
                         && let Some(prev) = result.segments.last_mut()
                         && let Some(next) = segments.next()
                     {
+                        let offset = prev.positions.len();
                         prev.positions.extend(next.positions);
+                        prev.edge_spans
+                            .extend(next.edge_spans.into_iter().map(|span| {
+                                snapped_track::SnappedEdgeSpan {
+                                    start: span.start + offset,
+                                    end: span.end + offset,
+                                    edge: span.edge,
+                                }
+                            }));
                     }
                     result.segments.extend(segments);
                     contributed

@@ -71,16 +71,25 @@ expression: pretty
       }
     ],
     "segments": [
-      [
-        {
-          "lat": 55.6787,
-          "lon": 12.5645
-        },
-        {
-          "lat": 55.6779,
-          "lon": 12.5654
-        }
-      ]
+      {
+        "edge_spans": [
+          {
+            "edge": 0,
+            "end": 2,
+            "start": 0
+          }
+        ],
+        "positions": [
+          {
+            "lat": 55.6787,
+            "lon": 12.5645
+          },
+          {
+            "lat": 55.6779,
+            "lon": 12.5654
+          }
+        ]
+      }
     ]
   },
   "warnings": [

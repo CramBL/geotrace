@@ -38,9 +38,11 @@ use gt_snap::stitch::{self, SnapResult, SnapWarning, SnapWarningReporter};
 use gt_snap::transport::HttpTransport;
 use gt_snap::wire::Costing;
 use gt_snap::{DEFAULT_SERVER_URL, server_host, transport};
-use gt_types::mercator::{self, MercPoint};
+use gt_types::mercator::{self};
 use gt_types::{Latitude, LoadedTrack, Longitude, TrackRef, TravelMode};
-use gt_ui_types::TrackDataVisibility;
+use gt_ui_types::{
+    SnappedEdgeInfo, SnappedEdgeSpan, SnappedSegment, SnappedTrackGeometry, TrackDataVisibility,
+};
 
 /// The costing a track snaps with: the file's declared travel mode beats the
 /// configured default costing, and declarations without a road-network
@@ -135,11 +137,11 @@ pub struct SnapRun {
     /// Host of the server the run was sent to, for staleness against the
     /// current server setting.
     pub server_host: Option<String>,
-    /// The result's snapped-track segments in normalized Mercator, projected
-    /// once at completion (on the worker thread) - the map redraws every
-    /// frame but a cached run's geometry never changes. Shared with the map
-    /// via [`gt_ui_types::SnappedTracks`].
-    pub segments_merc: Arc<Vec<Vec<MercPoint>>>,
+    /// The result's map-ready geometry - projected segments plus the edge
+    /// hover rows - built once at completion (on the worker thread): the
+    /// map redraws every frame but a cached run never changes. Shared with
+    /// the map via [`gt_ui_types::SnappedTracks`].
+    pub geometry: Arc<SnappedTrackGeometry>,
 }
 
 impl SnapRun {
@@ -148,22 +150,41 @@ impl SnapRun {
         warnings: Vec<SnapWarning>,
         server_host: Option<String>,
     ) -> Self {
-        let segments_merc = result
+        let segments = result
             .segments
             .iter()
-            .map(|segment| {
-                segment
+            .map(|segment| SnappedSegment {
+                points: segment
                     .positions
                     .iter()
                     .map(|p| mercator::normalize(Latitude::new(p.lat), Longitude::new(p.lon)))
-                    .collect()
+                    .collect(),
+                edge_spans: segment
+                    .edge_spans
+                    .iter()
+                    .map(|span| SnappedEdgeSpan {
+                        start: span.start,
+                        end: span.end,
+                        edge: span.edge,
+                    })
+                    .collect(),
+            })
+            .collect();
+        let edges = result
+            .edges
+            .iter()
+            .map(|edge| SnappedEdgeInfo {
+                name: (!edge.names.is_empty()).then(|| edge.names.join(", ")),
+                road_class: edge.road_class.map(|c| c.display_name().to_owned()),
+                speed_limit_kmh: edge.speed_limit,
+                surface: edge.surface.map(|s| s.display_name().to_owned()),
             })
             .collect();
         Self {
             result,
             warnings,
             server_host,
-            segments_merc: Arc::new(segments_merc),
+            geometry: Arc::new(SnappedTrackGeometry { segments, edges }),
         }
     }
 }
