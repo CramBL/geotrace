@@ -84,6 +84,13 @@ enum Request {
         max_bytes: u64,
         confirm: bool,
     },
+    /// Store a recording's serialized snap runs (opaque to the database).
+    StoreSnapRuns {
+        db_ref: DatabaseRef,
+        blob: Vec<u8>,
+    },
+    /// Fetch a recording's stored snap runs, if any.
+    LoadSnapRuns(DatabaseRef),
 }
 
 /// A result delivered back to the UI thread, drained via [`HistoryWorker::poll`].
@@ -99,6 +106,15 @@ pub enum Response {
     },
     PrunePreview(Result<Vec<DatabaseRef>, DbError>),
     AutoPruned(Result<AutoPruneOutcome, DbError>),
+    /// Outcome of a snap-run store. Failures cost only the cache entry
+    /// (the session stores keep working), so the app logs rather than
+    /// toasts.
+    SnapRunsStored(Result<(), DbError>),
+    /// A recording's stored snap runs, `None` when it carries none.
+    SnapRunsLoaded {
+        db_ref: DatabaseRef,
+        blob: Result<Option<Vec<u8>>, DbError>,
+    },
 }
 
 /// Owns the history-database worker thread and the channels to talk to it.
@@ -197,6 +213,14 @@ impl HistoryWorker {
         self.send(Request::PrunePreview(mode));
     }
 
+    pub fn store_snap_runs(&self, db_ref: DatabaseRef, blob: Vec<u8>) {
+        self.send(Request::StoreSnapRuns { db_ref, blob });
+    }
+
+    pub fn load_snap_runs(&self, db_ref: DatabaseRef) {
+        self.send(Request::LoadSnapRuns(db_ref));
+    }
+
     pub fn auto_prune(&self, max_bytes: u64, confirm: bool) {
         self.send(Request::AutoPrune { max_bytes, confirm });
     }
@@ -291,6 +315,13 @@ fn handle_request(db: &mut Database, req: Request) -> Response {
             }
         }
         Request::PrunePreview(mode) => Response::PrunePreview(db.prune_candidates(&mode)),
+        Request::StoreSnapRuns { db_ref, blob } => {
+            Response::SnapRunsStored(db.set_snap_blob(&db_ref, &blob))
+        }
+        Request::LoadSnapRuns(db_ref) => {
+            let blob = db.snap_blob(&db_ref);
+            Response::SnapRunsLoaded { db_ref, blob }
+        }
         Request::AutoPrune { max_bytes, confirm } => {
             Response::AutoPruned(auto_prune::run(db, max_bytes, confirm))
         }
@@ -334,6 +365,11 @@ fn purge_tracks(
 /// then replace the stored recording. Surviving tracks keep their hidden flag and
 /// are range-shifted onto the compacted point sequence. When nothing survives the
 /// whole recording is deleted instead (an empty re-encode would fail).
+///
+/// The delete-and-reinsert intentionally drops any stored snap runs with the
+/// old recording group (pinned by gt-history's
+/// `snap_blob_is_dropped_with_its_recording`): the purge shifts point
+/// indices, so the stored runs could no longer be matched to their points.
 fn purge_tracks_with_stored(
     db: &mut Database,
     db_ref: &DatabaseRef,
