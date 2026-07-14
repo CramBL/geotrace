@@ -2371,10 +2371,18 @@ fn auto_prompt_asks_once_after_earlier_consent() {
     push_file_with_travel_mode(&mut harness, "ride.gtd", None);
     harness.run_steps(2);
 
+    // First synthetic click settles the startup map-layer popup (see
+    // snap_consent_agree_persists_the_server_host), the second lands.
     harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Snap automatically")
         .click();
     harness.run_steps(3);
+    if harness.state().snap_settings.auto_snap.is_none() {
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Snap automatically")
+            .click();
+        harness.run_steps(3);
+    }
 
     assert_eq!(harness.state().snap_settings.auto_snap, Some(true));
     assert!(harness.state().snap_settings.auto_snap_active());

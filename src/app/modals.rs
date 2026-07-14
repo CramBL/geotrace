@@ -582,10 +582,10 @@ pub fn show_snap_consent_dialog(
                 );
             }
             ui.add_space(8.0);
+            // All buttons grouped bottom-right, the affirmative rightmost
+            // (the row lays them out right to left; the horizontal wrapper
+            // keeps the layout from claiming the window's full height).
             ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
-                    choice = Some(SnapConsentChoice::Declined);
-                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ask_auto {
                         if ui.button("Agree - snap automatically").clicked() {
@@ -600,6 +600,9 @@ pub fn show_snap_consent_dialog(
                         }
                     } else if ui.button("Agree").clicked() {
                         choice = Some(SnapConsentChoice::Accepted { auto_snap: None });
+                    }
+                    if ui.button("Cancel").clicked() {
+                        choice = Some(SnapConsentChoice::Declined);
                     }
                 });
             });
@@ -650,8 +653,8 @@ pub fn show_snap_auto_prompt(ui: &egui::Ui, server_url: &str) -> Option<SnapAuto
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ui.ctx(), |ui| {
             ui.label(
-                "Snap to road can now run automatically: every track you load and show on the \
-                 map is uploaded and matched without a click.",
+                "Snap to road can run automatically: every track you load and show on the map \
+                 is uploaded and matched without a click.",
             );
             ui.add_space(4.0);
             ui.label("Your earlier acknowledgment still applies; uploads go to");
@@ -659,13 +662,16 @@ pub fn show_snap_auto_prompt(ui: &egui::Ui, server_url: &str) -> Option<SnapAuto
             ui.add_space(4.0);
             ui.label("Changeable anytime in the settings.");
             ui.add_space(8.0);
+            // All buttons grouped bottom-right, the affirmative rightmost
+            // (the row lays them out right to left; the horizontal wrapper
+            // keeps the layout from claiming the window's full height).
             ui.horizontal(|ui| {
-                if ui.button("Manual only").clicked() {
-                    choice = Some(SnapAutoChoice::ManualOnly);
-                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Snap automatically").clicked() {
                         choice = Some(SnapAutoChoice::Automatic);
+                    }
+                    if ui.button("Manual only").clicked() {
+                        choice = Some(SnapAutoChoice::ManualOnly);
                     }
                 });
             });
