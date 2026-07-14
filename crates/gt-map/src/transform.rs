@@ -133,10 +133,17 @@ impl MercTransform {
     /// origin, with the world `total_px` pixels wide.
     #[cfg(test)]
     pub(crate) fn for_test(total_px: f64) -> Self {
+        Self::for_test_centered(total_px, Latitude::new(0.0))
+    }
+
+    /// Like [`MercTransform::for_test`], with the viewport centred on the
+    /// given latitude (for scale math that depends on the centre).
+    #[cfg(test)]
+    pub(crate) fn for_test_centered(total_px: f64, lat: Latitude) -> Self {
         Self {
             clip_center_x: 0.0,
             clip_center_y: 0.0,
-            merc_center: mercator::normalize(Latitude::new(0.0), Longitude::new(0.0)),
+            merc_center: mercator::normalize(lat, Longitude::new(0.0)),
             scale: MapScale { total_px },
         }
     }
@@ -186,6 +193,16 @@ impl MercTransform {
         self.scale.pixels_per_meter(lat)
     }
 
+    /// Pixels per metre at the viewport centre's latitude - the scale gate
+    /// for meter-sized annotations (the snap error whiskers). Inverts the
+    /// Mercator y of the centre; one trigonometric round trip per frame.
+    pub(crate) fn pixels_per_meter_at_center(&self) -> f64 {
+        let lat_rad = (std::f64::consts::PI * (1.0 - 2.0 * self.merc_center.y))
+            .sinh()
+            .atan();
+        self.pixels_per_meter(Latitude::new(lat_rad.to_degrees()))
+    }
+
     /// Pixels per Mercator unit. See [`MapScale`].
     #[inline]
     pub(crate) fn px_per_merc(&self) -> f64 {
@@ -212,7 +229,7 @@ pub(crate) fn lod_points<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::wrap_longitude_degrees;
+    use super::{Latitude, MercTransform, wrap_longitude_degrees};
 
     /// Asserts `a` and `b` are within `1e-9` of each other - tight enough to
     /// catch a wrong wrap while tolerating ordinary `f64` rounding noise.
@@ -247,6 +264,26 @@ mod tests {
         assert_deg_close(
             wrap_longitude_degrees(-541.0),
             wrap_longitude_degrees(-181.0),
+        );
+    }
+
+    /// The centre-latitude scale inverts `mercator::normalize`'s y exactly:
+    /// for a viewport centred at a known latitude, the derived pixels per
+    /// metre must match the direct computation at that latitude.
+    #[rstest::rstest]
+    #[case::equator(0.0)]
+    #[case::mid_north(45.0)]
+    #[case::copenhagen_ish(55.68)]
+    #[case::mid_south(-55.0)]
+    #[case::near_pole(84.0)]
+    fn pixels_per_meter_at_center_inverts_the_projection(#[case] lat_deg: f64) {
+        let lat = Latitude::new(lat_deg);
+        let transform = MercTransform::for_test_centered(1_000_000.0, lat);
+        let direct = transform.pixels_per_meter(lat);
+        let derived = transform.pixels_per_meter_at_center();
+        assert!(
+            ((derived - direct) / direct).abs() < 1e-12,
+            "lat {lat_deg}: derived {derived} vs direct {direct}"
         );
     }
 }

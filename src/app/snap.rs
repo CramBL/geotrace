@@ -42,6 +42,7 @@ use gt_types::mercator::{self};
 use gt_types::{Latitude, LoadedTrack, Longitude, TrackRef, TravelMode};
 use gt_ui_types::{
     SnappedEdgeInfo, SnappedEdgeSpan, SnappedSegment, SnappedTrackGeometry, TrackDataVisibility,
+    WhiskerAnchor,
 };
 
 /// The costing a track snaps with: the file's declared travel mode beats the
@@ -180,11 +181,28 @@ impl SnapRun {
                 surface: edge.surface.map(|s| s.display_name().to_owned()),
             })
             .collect();
+        let whiskers = result
+            .points
+            .iter()
+            .filter_map(|point| {
+                point.snapped.map(|snapped| WhiskerAnchor {
+                    point: point.point,
+                    snapped: mercator::normalize(
+                        Latitude::new(snapped.lat),
+                        Longitude::new(snapped.lon),
+                    ),
+                })
+            })
+            .collect();
         Self {
             result,
             warnings,
             server_host,
-            geometry: Arc::new(SnappedTrackGeometry { segments, edges }),
+            geometry: Arc::new(SnappedTrackGeometry {
+                segments,
+                edges,
+                whiskers,
+            }),
         }
     }
 }
@@ -1153,6 +1171,53 @@ mod tests {
         vis.files[0].tracks[0].track_visible = true;
         scheduler.set_visibility(&vis);
         assert_eq!(next_eligible(&scheduler.queue, &scheduler.visible), Some(0));
+    }
+
+    /// [`SnapRun::new`] builds one whisker anchor per point with a snapped
+    /// position - unsnapped points (and points of failed chunks, absent
+    /// entirely) contribute none - and normalizes the position.
+    #[test]
+    fn snap_run_builds_whiskers_from_snapped_points_only() {
+        use gt_snap::snapped_track::Position;
+        use gt_snap::stitch::SnapPoint;
+        use gt_snap::wire::SnapPointKind;
+        use gt_types::PointIdx;
+
+        let mut result = stitch::stitch(
+            &request_plan::plan(&[]),
+            SnapParams::new(Costing::Auto),
+            &[],
+            &SnapWarningReporter::default(),
+        );
+        result.points = vec![
+            SnapPoint {
+                point: PointIdx::new(3),
+                kind: SnapPointKind::Snapped,
+                error_m: Some(2.0),
+                snapped: Some(Position {
+                    lat: 55.68,
+                    lon: 12.56,
+                }),
+                edge: None,
+            },
+            SnapPoint {
+                point: PointIdx::new(4),
+                kind: SnapPointKind::Unsnapped,
+                error_m: None,
+                snapped: None,
+                edge: None,
+            },
+        ];
+
+        let run = SnapRun::new(result, Vec::new(), None);
+
+        assert_eq!(run.geometry.whiskers.len(), 1);
+        let anchor = run.geometry.whiskers.first().expect("one anchor");
+        assert_eq!(anchor.point, PointIdx::new(3));
+        assert_eq!(
+            anchor.snapped,
+            mercator::normalize(Latitude::new(55.68), Longitude::new(12.56)),
+        );
     }
 
     /// A restored run seeds the display and dedupe stores and cancels a
