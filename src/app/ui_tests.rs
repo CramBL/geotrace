@@ -2372,7 +2372,10 @@ fn auto_prompt_asks_once_after_earlier_consent() {
     harness.run_steps(2);
 
     // First synthetic click settles the startup map-layer popup (see
-    // snap_consent_agree_persists_the_server_host), the second lands.
+    // snap_consent_agree_persists_the_server_host); the second only fires
+    // while the prompt is still open - unlike the sibling consent dialogs,
+    // this prompt sometimes receives the first click already, and a second
+    // Enter-equivalent click after it closed would go to the map.
     harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Snap automatically")
         .click();
