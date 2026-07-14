@@ -2215,6 +2215,9 @@ fn snapshot_settings_window_snap_section() {
         .size(egui::vec2(700.0, 1100.0))
         .eframe(build_app);
     harness.inner.step();
+    // Search radius set (its drag value active), the other two unset
+    // (grayed, never hidden) - both states of the optional rows visible.
+    harness.inner.state_mut().snap_settings.search_radius_m = Some(25.0);
     harness.inner.state_mut().settings_open = true;
     harness.run();
     harness.snapshot("settings_window_snap_section");
