@@ -34,9 +34,9 @@ impl Default for Settings {
     }
 }
 
-/// Snap-to-road configuration: the matching server, the default costing, and
-/// the upload-consent acknowledgment.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// Snap-to-road configuration: the matching server, the default costing,
+/// the upload-consent acknowledgment, and the advanced trace options.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct SnapSettings {
     /// Base URL of the Valhalla map-matching server. Defaults to the public
@@ -59,6 +59,21 @@ pub struct SnapSettings {
     /// changes it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_snap: Option<bool>,
+    /// Advanced: meters around each input point searched for candidate
+    /// road edges. `None` = server default. Bounded by
+    /// [`gt_snap::request_plan::SEARCH_RADIUS_RANGE_M`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_radius_m: Option<f64>,
+    /// Advanced: cost multiplier penalizing route reversals; raising it
+    /// smooths wandering matches at intersections. `None` = server default.
+    /// Bounded by [`gt_snap::request_plan::TURN_PENALTY_FACTOR_RANGE`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_penalty_factor: Option<f64>,
+    /// Advanced: expected GNSS accuracy in meters, replacing the value
+    /// derived from the track's eph. `None` = derived. Bounded by
+    /// [`gt_snap::request_plan::GPS_ACCURACY_OVERRIDE_RANGE_M`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gps_accuracy_override_m: Option<f64>,
 }
 
 impl Default for SnapSettings {
@@ -68,6 +83,9 @@ impl Default for SnapSettings {
             costing: gt_snap::wire::Costing::Auto,
             consent_host: None,
             auto_snap: None,
+            search_radius_m: None,
+            turn_penalty_factor: None,
+            gps_accuracy_override_m: None,
         }
     }
 }
@@ -94,11 +112,18 @@ impl SnapSettings {
         self.auto_snap == Some(true) && self.consent_granted()
     }
 
-    /// The parameters a fresh snap run would use under the given costing.
-    /// The single source for run parameters, so staleness detection picks
-    /// up every future setting (advanced trace options) automatically.
+    /// The parameters a fresh snap run would use under the given costing:
+    /// the advanced trace options as configured. The single source for run
+    /// parameters, so staleness detection picks up every setting
+    /// automatically ([`SnapParams`](gt_snap::request_plan::SnapParams)
+    /// clamps to the server-accepted ranges at request build).
     pub fn params(&self, costing: gt_snap::wire::Costing) -> gt_snap::request_plan::SnapParams {
-        gt_snap::request_plan::SnapParams::new(costing)
+        gt_snap::request_plan::SnapParams {
+            costing,
+            search_radius_m: self.search_radius_m,
+            turn_penalty_factor: self.turn_penalty_factor,
+            gps_accuracy_override_m: self.gps_accuracy_override_m,
+        }
     }
 }
 
@@ -385,6 +410,52 @@ pub fn load_settings() -> Settings {
 #[cfg(test)]
 mod snap_settings_tests {
     use super::*;
+
+    /// Every advanced option flows into the run parameters - the params
+    /// helper is the single source, so a field forgotten here would leave
+    /// a setting that never reaches a request (and never marks staleness).
+    #[test]
+    fn params_carry_every_advanced_option() {
+        let snap = SnapSettings {
+            search_radius_m: Some(25.0),
+            turn_penalty_factor: Some(500.0),
+            gps_accuracy_override_m: Some(10.0),
+            ..SnapSettings::default()
+        };
+        let params = snap.params(gt_snap::wire::Costing::Bicycle);
+        assert_eq!(
+            params,
+            gt_snap::request_plan::SnapParams {
+                costing: gt_snap::wire::Costing::Bicycle,
+                search_radius_m: Some(25.0),
+                turn_penalty_factor: Some(500.0),
+                gps_accuracy_override_m: Some(10.0),
+            }
+        );
+        assert_eq!(
+            SnapSettings::default().params(gt_snap::wire::Costing::Auto),
+            gt_snap::request_plan::SnapParams::new(gt_snap::wire::Costing::Auto),
+            "defaults leave every option unset"
+        );
+    }
+
+    /// The advanced options roundtrip through the settings TOML; unset
+    /// options are omitted, so old config files stay valid.
+    #[test]
+    fn advanced_options_roundtrip_through_toml() {
+        let mut settings = Settings::default();
+        settings.snap.search_radius_m = Some(25.0);
+        let serialized = toml::to_string(&settings).expect("serialize");
+        let restored: Settings = toml::from_str(&serialized).expect("deserialize");
+        assert_eq!(restored.snap.search_radius_m, Some(25.0));
+        assert_eq!(restored.snap.turn_penalty_factor, None);
+
+        let unset = toml::to_string(&Settings::default()).expect("serialize");
+        assert!(
+            !unset.contains("search_radius_m"),
+            "unset options stay out of the file"
+        );
+    }
 
     #[test]
     fn consent_is_per_host_and_survives_url_detail_changes() {
