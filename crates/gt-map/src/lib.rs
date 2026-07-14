@@ -510,6 +510,7 @@ impl NavMap {
             // Edge hover yields while the recorded data owns the pointer.
             map = map.with_plugin(SnappedTrackRenderer::new(
                 snapped,
+                files,
                 highlight.hover.is_none(),
             ));
         }
@@ -1996,6 +1997,7 @@ mod snapshot_tests {
                     })
                     .collect(),
                 edges: Vec::new(),
+                whiskers: Vec::new(),
             }
         });
     }
@@ -2162,8 +2164,166 @@ mod snapshot_tests {
                         speed_limit_kmh: Some(50),
                         surface: Some("Paved smooth".to_owned()),
                     }],
+                    whiskers: Vec::new(),
                 }
             },
+        );
+    }
+
+    /// Eastward Mercator offset of the synthetic whisker tests' snapped
+    /// positions: ~9 m at the fixture latitude, so whiskers are clearly
+    /// longer than the strokes they connect.
+    const WHISKER_OFFSET_MERC_X: f64 = 4.0e-7;
+
+    /// Whisker anchors and the matching snapped polyline for a run over
+    /// `points`: every recorded point snaps [`WHISKER_OFFSET_MERC_X`] east.
+    fn whisker_geometry(points: &[NavPoint]) -> gt_ui_types::SnappedTrackGeometry {
+        let snapped: Vec<MercPoint> = points
+            .iter()
+            .map(|p| MercPoint {
+                x: p.merc.x + WHISKER_OFFSET_MERC_X,
+                y: p.merc.y,
+            })
+            .collect();
+        gt_ui_types::SnappedTrackGeometry {
+            segments: vec![gt_ui_types::SnappedSegment {
+                points: snapped.clone(),
+                edge_spans: Vec::new(),
+            }],
+            edges: Vec::new(),
+            whiskers: points
+                .iter()
+                .zip(snapped)
+                .enumerate()
+                .map(|(i, (_, snapped))| gt_ui_types::WhiskerAnchor {
+                    point: PointIdx::new(i),
+                    snapped,
+                })
+                .collect(),
+        }
+    }
+
+    /// A file whose single track spans only ~55 m, so zoom-to-fit lands
+    /// far above the whisker scale gate.
+    fn make_short_walk_file() -> gt_types::LoadedFile {
+        use gt_types::time_types::GpsTime;
+        use gt_types::{
+            FileMetadata, Latitude, LoadedFile, LoadedTrack, Longitude, TimeRange, TrackMetadata,
+            merc_bounds_for_rect,
+        };
+
+        let t0 = chrono::DateTime::from_timestamp(1_767_268_800, 0).unwrap_or_default();
+        let points: Vec<gt_types::NavPoint> = (0..6)
+            .map(|i| {
+                let tpv = gt_types::TimePositionVelocity::builder()
+                    .time(GpsTime::from_utc(t0 + chrono::Duration::seconds(i)))
+                    .lat(Latitude::new(55.68 + i as f64 * 1.0e-4))
+                    .lon(Longitude::new(12.56))
+                    .build();
+                gt_types::NavPoint::new(tpv, None)
+            })
+            .collect();
+        let bb = gt_types::Rect::new(
+            gt_types::Coord { x: 12.56, y: 55.68 },
+            gt_types::Coord {
+                x: 12.56,
+                y: 55.6805,
+            },
+        );
+        let n = points.len();
+        let track = LoadedTrack {
+            metadata: TrackMetadata {
+                time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
+                bounding_box: bb,
+                merc_bounds: merc_bounds_for_rect(bb),
+                tpv_count: n,
+                ..TrackMetadata::default()
+            },
+            sat_label_anchors: Vec::new(),
+            points,
+            lod: gt_types::TrackLod::default(),
+            custom_markers: Vec::new(),
+            generated_markers: Vec::new(),
+            event_markers: Vec::new(),
+            channels: Vec::new(),
+        };
+        LoadedFile {
+            metadata: FileMetadata {
+                filename: "short_walk.gtd".to_string(),
+                time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
+                ..FileMetadata::default()
+            },
+            tracks: vec![track],
+            event_marker_styles: std::collections::HashMap::new(),
+            orphaned_event_markers: vec![],
+            source: gt_types::FileSource::GtdPath(PathBuf::from("short_walk.gtd")),
+            load_warnings: vec![],
+        }
+    }
+
+    /// Snapshot: above the scale gate (a ~55 m track fitted into the
+    /// viewport) every snapped point gets its error whisker - a thin line
+    /// from the recorded point to the snapped position.
+    #[test]
+    fn snap_snapped_track_whiskers_at_high_zoom() {
+        use std::sync::Arc;
+
+        use gt_ui_types::{SnappedTracks, TrackDataVisibility};
+
+        let files = vec![make_short_walk_file()];
+        let visibility = TrackDataVisibility::from_loaded(&files);
+        let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let points = files
+            .first()
+            .and_then(|f| f.tracks.first())
+            .map(|t| t.points.clone())
+            .unwrap_or_default();
+        let snapped = SnappedTracks {
+            by_track: std::collections::HashMap::from([(
+                track_ref,
+                Arc::new(whisker_geometry(&points)),
+            )]),
+        };
+
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(800.0, 600.0))
+            .ui_state(
+                move |ui, map: &mut Option<NavMap>| {
+                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let mut highlight = gt_ui_types::MapHighlight::default();
+                    map.draw(
+                        ui,
+                        &files,
+                        &visibility,
+                        &mut highlight,
+                        &gt_filter::GlobalFilter::default(),
+                        &mut gt_ui_types::DisplayMask::default(),
+                        &gt_ui_types::EventMarkerVisibility::default(),
+                        &gt_ui_types::GeneratedMarkerVisibility::default(),
+                        None,
+                        Some(&snapped),
+                        None,
+                        false,
+                        None,
+                    );
+                },
+                None,
+            );
+        for _ in 0..5 {
+            harness.run();
+        }
+        harness.snapshot_loose("snapped_track_whiskers");
+    }
+
+    /// Snapshot: below the scale gate (the standard km-scale fixture) the
+    /// same whisker anchors draw nothing - only the dashed snapped line.
+    #[test]
+    fn snap_snapped_track_whiskers_hidden_below_gate() {
+        snapshot_snapped_tracks_with(
+            "snapped_track_whiskers_below_gate",
+            DisplayMask::default(),
+            None,
+            whisker_geometry,
         );
     }
 

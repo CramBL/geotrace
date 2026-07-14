@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use gt_types::TrackRef;
 use gt_types::mercator::MercPoint;
+use gt_types::{PointIdx, TrackRef};
 
 /// Snapped-track geometry for the map: one entry per track with a completed,
 /// currently shown snap run.
@@ -31,6 +31,20 @@ pub struct SnappedTrackGeometry {
     pub segments: Vec<SnappedSegment>,
     /// Hover rows referenced by the segments' edge spans.
     pub edges: Vec<SnappedEdgeInfo>,
+    /// One anchor per sent point with a snapped position, for the error
+    /// whiskers (recorded point to snapped position at high zoom). The
+    /// recorded end lives on the track itself, resolved at draw time.
+    pub whiskers: Vec<WhiskerAnchor>,
+}
+
+/// The snapped end of one error whisker, addressed back to its recorded
+/// point.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WhiskerAnchor {
+    /// The recorded point the whisker starts at.
+    pub point: PointIdx,
+    /// The snapped position the whisker ends at, normalized Mercator.
+    pub snapped: MercPoint,
 }
 
 /// One unbroken snapped polyline with its per-vertex edge attribution.

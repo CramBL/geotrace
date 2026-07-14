@@ -22,6 +22,7 @@
 //! proportional to the geometry near the pointer.
 
 use egui::{Pos2, Rect, Response, RichText, Stroke, Ui};
+use gt_types::LoadedFile;
 use gt_ui_types::{SnappedEdgeInfo, SnappedTracks};
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -46,6 +47,17 @@ const SNAPPED_GAP_PX: f32 = 4.0;
 /// and the recorded elements should win the contested band around them.
 const SNAPPED_HOVER_RADIUS_PX: f32 = 10.0;
 
+/// Scale gate for the error whiskers, pixels per metre at the viewport
+/// centre. At 1 px/m a typical snap error (a few metres) spans a legible
+/// few pixels; further out the whiskers would collapse into noise on the
+/// trackline. Roughly zoom 16-17 at mid latitudes.
+const WHISKER_MIN_PX_PER_METER: f64 = 1.0;
+
+/// Whisker stroke width, screen pixels. Hairline - the whisker makes the
+/// error's direction and size legible without competing with the lines it
+/// connects.
+const WHISKER_STROKE_WIDTH: f32 = 1.0;
+
 /// The nearest snapped-line hit under the cursor.
 struct HoverHit {
     distance_sq: f32,
@@ -57,15 +69,19 @@ struct HoverHit {
 
 pub struct SnappedTrackRenderer<'a> {
     snapped: &'a SnappedTracks,
+    /// The loaded files, resolving whisker anchors to their recorded
+    /// points' positions.
+    files: &'a [LoadedFile],
     /// Hover is disabled while the recorded data owns the pointer (an
     /// active hover on recorded elements) - the primary data wins.
     hover_enabled: bool,
 }
 
 impl<'a> SnappedTrackRenderer<'a> {
-    pub fn new(snapped: &'a SnappedTracks, hover_enabled: bool) -> Self {
+    pub fn new(snapped: &'a SnappedTracks, files: &'a [LoadedFile], hover_enabled: bool) -> Self {
         Self {
             snapped,
+            files,
             hover_enabled,
         }
     }
@@ -87,6 +103,8 @@ impl Plugin for SnappedTrackRenderer<'_> {
         let cursor_rect = pointer
             .map(|p| Rect::from_center_size(p, egui::Vec2::splat(2.0 * SNAPPED_HOVER_RADIUS_PX)));
 
+        let draw_whiskers = transform.pixels_per_meter_at_center() >= WHISKER_MIN_PX_PER_METER;
+
         // Reused across segments so projection and key-stripping cost one
         // allocation per frame, not one per segment or span.
         let mut projected: Vec<Pos2> = Vec::new();
@@ -100,6 +118,24 @@ impl Plugin for SnappedTrackRenderer<'_> {
                 gt_ui_theme::track_color(track_ref.fi.as_usize(), track_ref.index.as_usize())
                     .gamma_multiply(SNAPPED_ALPHA);
             let stroke = Stroke::new(SNAPPED_STROKE_WIDTH, color);
+
+            // Error whiskers: recorded point to snapped position, gated on
+            // scale and culled per pair like the dashing.
+            if draw_whiskers && let Some(track) = track_ref.resolve(self.files) {
+                let whisker_stroke = Stroke::new(WHISKER_STROKE_WIDTH, color);
+                for anchor in &geometry.whiskers {
+                    let Some(recorded) = anchor.point.get(&track.points) else {
+                        continue;
+                    };
+                    let from = transform.to_screen(recorded.merc);
+                    let to = transform.to_screen(anchor.snapped);
+                    if segment_outside(from, to, cull_rect) {
+                        continue;
+                    }
+                    ui.painter().line_segment([from, to], whisker_stroke);
+                }
+            }
+
             for (segment_index, segment) in geometry.segments.iter().enumerate() {
                 projected.clear();
                 projected.extend(segment.points.iter().map(|&merc| transform.to_screen(merc)));
