@@ -246,6 +246,9 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **snapped / interpolated / unsnapped** | Per-point match kind, mirroring Valhalla's `matched` / `interpolated` / `unmatched` wire names. | `SnapPointKind`, `SnapErrorKind`, `SnapKindCounts` |
 | **discontinuity** | A stretch Valhalla could not connect through the road network; rendered as a gap in the snapped track. | `begin_route_discontinuity`, `snapped_track::point_groups` |
 | **travel mode** | Optional `.gtd` metadata declaring the recording platform (car, bicycle, boat, ...). Declared by the recorder via the SDKs; the app derives the default snap costing from it. | `TravelMode`, `meta_travel_mode`, `resolve_costing` |
+| **stale** (snap) | A completed snap run whose parameters or server host differ from what a fresh run would use now. Always shown and marked, never silently dropped or auto re-run. | `stale_reasons`, `SnapRowView::Done::stale` |
+| **auto snap** | The mode where loaded tracks snap automatically while shown on the map. Off until explicitly chosen; never active without upload consent. | `SnapSettings::auto_snap`, `SnapPriority::Auto` |
+| **error whisker** | The thin line from a recorded point to its snapped position, drawn at high zoom to make the snap error spatially legible. | `WhiskerAnchor`, `WHISKER_MIN_PX_PER_METER` |
 
 Terms to avoid and their replacements:
 

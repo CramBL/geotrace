@@ -8,6 +8,16 @@
   The match draws as a dashed line on the map (toggleable per track), and the new "Snap error (m)" plot metric shows each point's distance to the road, right next to EPH.
   Recordings that declare a travel mode are matched against the right network automatically.
   Nothing is uploaded without a one-time consent naming the server, which is configurable in Settings (default: the public instance hosted by FOSSGIS e.V.).
+- Snap to road can now run automatically: with "Snap to road automatically" on, tracks are matched as you load and show them, visible tracks first.
+  The choice is part of the consent dialog and can be changed in Settings anytime; nothing changes for existing setups until you opt in.
+- Snap results of recordings stored in history are kept across sessions - reopening a recording shows its snapped track without re-uploading anything.
+- Results that were matched under different settings than the current ones are marked stale (amber icon, the differences listed on hover) with a one-click re-run.
+  Failed stretches and match warnings now show in the same hover.
+- Hovering the snapped line shows the matched road's name, class, speed limit, and surface.
+  Zoomed in far enough, thin whiskers connect each recorded point to its position on the road, making the error visible on the map itself.
+- "Snap again as" in a track's context menu re-matches it as auto, bicycle, or pedestrian - also the escape hatch when a recording declares the wrong travel mode.
+- Advanced snap settings: search radius, turn penalty, and a GPS accuracy override, for tuning the matcher against unusually noisy receivers.
+- The map display toggle gains a "Snapped tracks" row, and snapped-track rendering no longer slows the map down at street-level zoom.
 - A File menu in the top-left with Open and the new About dialog (version and data attributions).
 - Settings now has a "Recording name" template that sets how recordings are labelled in the side panel.
   Combine `{title}`, `{device}`, `{identity}` and `{filename}`; empty fields and their separators drop out.
