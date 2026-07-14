@@ -2371,10 +2371,21 @@ fn auto_prompt_asks_once_after_earlier_consent() {
     push_file_with_travel_mode(&mut harness, "ride.gtd", None);
     harness.run_steps(2);
 
+    // First synthetic click settles the startup map-layer popup (see
+    // snap_consent_agree_persists_the_server_host); the second only fires
+    // while the prompt is still open - unlike the sibling consent dialogs,
+    // this prompt sometimes receives the first click already, and a second
+    // Enter-equivalent click after it closed would go to the map.
     harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Snap automatically")
         .click();
     harness.run_steps(3);
+    if harness.state().snap_settings.auto_snap.is_none() {
+        harness
+            .get_by_role_and_label(egui::accesskit::Role::Button, "Snap automatically")
+            .click();
+        harness.run_steps(3);
+    }
 
     assert_eq!(harness.state().snap_settings.auto_snap, Some(true));
     assert!(harness.state().snap_settings.auto_snap_active());
@@ -2564,6 +2575,39 @@ fn snap_request_parked_on_consent_is_dropped_on_decline() {
         harness.state().snap.activity_for(track),
         None,
         "nothing may be queued without consent"
+    );
+}
+
+/// The snap error series is built once per run: consecutive frames hand
+/// out the same `Arc` (the plot's mipmap cache keys off it), and a new run
+/// for the track produces a new one.
+#[test]
+fn snap_error_series_is_stable_across_frames() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
+    inject_completed_run(&mut harness, track);
+
+    let first = harness.state_mut().snap_error_view();
+    let second = harness.state_mut().snap_error_view();
+    let (a, b) = (
+        first.points_by_track.get(&track).expect("series present"),
+        second.points_by_track.get(&track).expect("series present"),
+    );
+    assert!(
+        Arc::ptr_eq(a, b),
+        "consecutive frames must reuse the same series allocation"
+    );
+
+    // A new run for the same track invalidates: fresh points, fresh Arc.
+    inject_completed_run(&mut harness, track);
+    let third = harness.state_mut().snap_error_view();
+    let c = third.points_by_track.get(&track).expect("series present");
+    assert!(
+        !Arc::ptr_eq(a, c),
+        "a new run must produce a new series allocation"
     );
 }
 
@@ -3000,7 +3044,7 @@ fn snap_error_view_resolves_point_times_and_kinds() {
     let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
     inject_completed_run(&mut harness, track);
 
-    let view = harness.state().snap_error_view();
+    let view = harness.state_mut().snap_error_view();
     let points = view
         .points_by_track
         .get(&track)

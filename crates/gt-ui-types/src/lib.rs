@@ -1,3 +1,4 @@
+pub mod arc_identity;
 pub mod display_mask;
 pub mod event_marker_visibility;
 pub mod generated_marker_visibility;
@@ -7,6 +8,7 @@ pub mod snap_error_series;
 pub mod snapped_tracks;
 pub mod visibility;
 
+pub use arc_identity::ArcIdentity;
 pub use display_mask::{DisplayCategory, DisplayMask};
 pub use event_marker_visibility::EventMarkerVisibility;
 pub use generated_marker_visibility::GeneratedMarkerVisibility;

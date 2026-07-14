@@ -36,6 +36,19 @@ pub struct RemoveOutcome {
 /// Returns `Some` in the one frame when items were actually removed, so the
 /// caller can rebuild caches that depend on file indices and apply the chosen
 /// history operation (hide or permanent delete) to `affected`.
+/// The button row of a modal dialog: buttons grouped bottom-right with the
+/// affirmative (or destructive action) rightmost - `add_contents` adds them
+/// in right-to-left order. The horizontal wrapper keeps the layout from
+/// claiming the window's full height.
+fn dialog_button_row(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        ui.with_layout(
+            egui::Layout::right_to_left(egui::Align::Center),
+            add_contents,
+        );
+    });
+}
+
 pub fn show_delete_confirmation(
     ui: &egui::Ui,
     tree: &mut TreeState,
@@ -128,15 +141,13 @@ pub fn show_delete_confirmation(
                 ui.label(RichText::new(detail).weak().small());
             }
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
+            dialog_button_row(ui, |ui| {
+                if ui.button("Remove").clicked() {
+                    do_delete = true;
+                }
                 if ui.button("Cancel").clicked() {
                     do_cancel = true;
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Remove").clicked() {
-                        do_delete = true;
-                    }
-                });
             });
         });
 
@@ -582,26 +593,24 @@ pub fn show_snap_consent_dialog(
                 );
             }
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
+            dialog_button_row(ui, |ui| {
+                if ask_auto {
+                    if ui.button("Agree - snap automatically").clicked() {
+                        choice = Some(SnapConsentChoice::Accepted {
+                            auto_snap: Some(true),
+                        });
+                    }
+                    if ui.button("Agree - manual only").clicked() {
+                        choice = Some(SnapConsentChoice::Accepted {
+                            auto_snap: Some(false),
+                        });
+                    }
+                } else if ui.button("Agree").clicked() {
+                    choice = Some(SnapConsentChoice::Accepted { auto_snap: None });
+                }
                 if ui.button("Cancel").clicked() {
                     choice = Some(SnapConsentChoice::Declined);
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ask_auto {
-                        if ui.button("Agree - snap automatically").clicked() {
-                            choice = Some(SnapConsentChoice::Accepted {
-                                auto_snap: Some(true),
-                            });
-                        }
-                        if ui.button("Agree - manual only").clicked() {
-                            choice = Some(SnapConsentChoice::Accepted {
-                                auto_snap: Some(false),
-                            });
-                        }
-                    } else if ui.button("Agree").clicked() {
-                        choice = Some(SnapConsentChoice::Accepted { auto_snap: None });
-                    }
-                });
             });
         });
     if !open {
@@ -650,8 +659,8 @@ pub fn show_snap_auto_prompt(ui: &egui::Ui, server_url: &str) -> Option<SnapAuto
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ui.ctx(), |ui| {
             ui.label(
-                "Snap to road can now run automatically: every track you load and show on the \
-                 map is uploaded and matched without a click.",
+                "Snap to road can run automatically: every track you load and show on the map \
+                 is uploaded and matched without a click.",
             );
             ui.add_space(4.0);
             ui.label("Your earlier acknowledgment still applies; uploads go to");
@@ -659,15 +668,13 @@ pub fn show_snap_auto_prompt(ui: &egui::Ui, server_url: &str) -> Option<SnapAuto
             ui.add_space(4.0);
             ui.label("Changeable anytime in the settings.");
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
+            dialog_button_row(ui, |ui| {
+                if ui.button("Snap automatically").clicked() {
+                    choice = Some(SnapAutoChoice::Automatic);
+                }
                 if ui.button("Manual only").clicked() {
                     choice = Some(SnapAutoChoice::ManualOnly);
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Snap automatically").clicked() {
-                        choice = Some(SnapAutoChoice::Automatic);
-                    }
-                });
             });
         });
     if !open {
