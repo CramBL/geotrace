@@ -2564,6 +2564,127 @@ fn snap_request_parked_on_consent_is_dropped_on_decline() {
     );
 }
 
+/// The costing override flow: a "Snap again as" choice beats the declared
+/// travel mode - a boat-declared (unsnappable) track becomes snappable
+/// under the chosen costing, and clearing state on index changes does not
+/// lose the content-keyed override.
+#[test]
+fn costing_override_beats_the_declared_mode() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    let track =
+        push_file_with_travel_mode(&mut harness, "boat.gtd", Some(gt_types::TravelMode::Boat));
+    harness.run_steps(2);
+
+    {
+        let state = harness.state();
+        let shared = state.shared.borrow();
+        let files = shared.loaded_files.files();
+        let file = track.fi.get(files).expect("file");
+        let loaded = track.resolve(files).expect("track");
+        assert_eq!(
+            state.effective_costing(file, loaded),
+            None,
+            "boat: unsnappable"
+        );
+    }
+
+    // The override request stores the override; consent is pending in a
+    // fresh app, so the run parks on the consent dialog rather than
+    // sending anything.
+    harness
+        .state_mut()
+        .handle_snap_costing_request(track, gt_ui_types::SnapCosting::Pedestrian);
+    {
+        let state = harness.state();
+        assert!(state.snap_consent_prompt);
+        assert_eq!(state.pending_snap, Some(track));
+        let shared = state.shared.borrow();
+        let files = shared.loaded_files.files();
+        let file = track.fi.get(files).expect("file");
+        let loaded = track.resolve(files).expect("track");
+        assert_eq!(
+            state.effective_costing(file, loaded),
+            Some(gt_snap::wire::Costing::Pedestrian),
+            "the override beats the road-less declaration"
+        );
+    }
+}
+
+/// With consent already granted, a "Snap again as" choice must dispatch
+/// under the chosen costing - not the plainly resolved one. Discriminated
+/// via cache promotion: with runs cached under both costings (auto being
+/// the displayed one), the override request redisplays the bicycle run
+/// only when the dispatch actually resolves the override (regression test
+/// for the dispatch ignoring it and hitting the auto entry instead).
+#[test]
+fn costing_override_reaches_the_dispatched_run() {
+    use crate::app::snap::{SnapCacheKey, SnapRun};
+    use gt_snap::request_plan::SnapParams;
+    use gt_snap::stitch::{self, SnapWarningReporter};
+    use gt_snap::wire::Costing;
+
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state_mut().snap_settings.acknowledge_consent();
+    let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
+    harness.step();
+
+    let seeded = |harness: &Harness<'_, App>, costing: Costing| {
+        let state = harness.state();
+        let shared = state.shared.borrow();
+        let loaded = track.resolve(shared.loaded_files.files()).expect("track");
+        let params = SnapParams::new(costing);
+        let key = SnapCacheKey::new(
+            loaded,
+            params,
+            gt_snap::server_host(gt_snap::DEFAULT_SERVER_URL),
+        );
+        let run = SnapRun::new(
+            stitch::stitch(
+                &gt_snap::request_plan::plan(&[]),
+                params,
+                &[],
+                &SnapWarningReporter::default(),
+            ),
+            Vec::new(),
+            gt_snap::server_host(gt_snap::DEFAULT_SERVER_URL),
+        );
+        (key, run)
+    };
+    // Bicycle first, then auto: auto is the displayed run, bicycle sits
+    // only in the dedupe cache.
+    let (key, run) = seeded(&harness, Costing::Bicycle);
+    harness.state_mut().snap.insert_run(key, run);
+    let (key, run) = seeded(&harness, Costing::Auto);
+    harness.state_mut().snap.insert_run(key, run);
+
+    harness
+        .state_mut()
+        .handle_snap_costing_request(track, gt_ui_types::SnapCosting::Bicycle);
+
+    let state = harness.state();
+    assert!(
+        !state.snap_consent_prompt,
+        "consent was granted - the request must not re-prompt"
+    );
+    let shared = state.shared.borrow();
+    let loaded = track.resolve(shared.loaded_files.files()).expect("track");
+    let displayed = state
+        .snap
+        .latest_run_for(loaded)
+        .expect("a run is displayed");
+    assert_eq!(
+        displayed.result.params.costing,
+        Costing::Bicycle,
+        "the dispatch resolved the override, promoting the bicycle entry"
+    );
+}
+
 /// The persistence glue end to end, against a real temporary database:
 /// a completed run of a history-stored file is written into the
 /// recording's snap blob via the worker, and feeding the stored blob back

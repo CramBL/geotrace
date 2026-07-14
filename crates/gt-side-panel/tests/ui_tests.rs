@@ -18,7 +18,7 @@ use gt_side_panel::{
 };
 use gt_test_utils::TestHarness;
 use gt_types::{FileIdx, FixStats, LoadWarning, TrackIdx, TrackRef};
-use gt_ui_types::{DisplayCategory, DisplayMask, MapHighlight};
+use gt_ui_types::{DisplayCategory, DisplayMask, MapHighlight, SnapCosting};
 
 struct State {
     files: LoadedFiles,
@@ -39,6 +39,8 @@ struct State {
     snap_consent_pending: bool,
     snap_request: Option<TrackRef>,
     snap_visibility_request: Option<TrackRef>,
+    snap_costing_choices: Vec<(SnapCosting, String)>,
+    snap_costing_request: Option<(TrackRef, SnapCosting)>,
 }
 
 fn make_state(file_count: usize) -> State {
@@ -93,6 +95,12 @@ fn make_state_with_warnings_on(
         snap_consent_pending: false,
         snap_request: None,
         snap_visibility_request: None,
+        snap_costing_choices: vec![
+            (SnapCosting::Auto, "Auto".to_owned()),
+            (SnapCosting::Bicycle, "Bicycle".to_owned()),
+            (SnapCosting::Pedestrian, "Pedestrian".to_owned()),
+        ],
+        snap_costing_request: None,
     }
 }
 
@@ -121,9 +129,11 @@ fn make_harness_sized(state: State, size: egui::Vec2) -> TestHarness<'static, St
                     offline: s.snap_offline,
                     consent_pending: s.snap_consent_pending,
                     rows: &s.snap_rows,
+                    costing_choices: &s.snap_costing_choices,
                 },
                 snap_request: &mut s.snap_request,
                 snap_visibility_request: &mut s.snap_visibility_request,
+                snap_costing_request: &mut s.snap_costing_request,
             };
             show_side_panel(ui, &mut ctx);
         },
@@ -480,6 +490,91 @@ fn context_menu_toggles_snapped_track_visibility() {
     assert_eq!(harness.state().snap_visibility_request, Some(track));
 }
 
+/// The "Snap again as" submenu: hovering it on a completed run's context
+/// menu opens the costing choices; clicking one requests the costing
+/// re-run (and not a plain snap or a visibility toggle).
+#[test]
+fn costing_submenu_requests_the_chosen_costing() {
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    state.snap_rows.insert(track, done_row(true));
+    let mut harness = make_harness(state);
+    harness.run();
+
+    harness
+        .inner
+        .get_by_label_contains("#1  4.6 km")
+        .click_secondary();
+    harness.run();
+    harness.inner.get_by_label_contains("Snap again as").hover();
+    harness.inner.run_steps(3);
+    harness.inner.get_by_label("Bicycle").click();
+    harness.run();
+
+    assert_eq!(
+        harness.state().snap_costing_request,
+        Some((track, SnapCosting::Bicycle)),
+    );
+    assert_eq!(harness.state().snap_request, None);
+    assert_eq!(harness.state().snap_visibility_request, None);
+}
+
+/// A declared road-less mode gets the "Snap as" override submenu - wrong
+/// declarations happen, and the submenu is the escape hatch.
+#[test]
+fn unsnappable_rows_offer_the_costing_override() {
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    state.snap_rows.insert(
+        track,
+        SnapRowView::Unsnappable {
+            travel_mode: "Boat".to_owned(),
+        },
+    );
+    let mut harness = make_harness(state);
+    harness.run();
+
+    harness
+        .inner
+        .get_by_label_contains("#1  4.6 km")
+        .click_secondary();
+    harness.run();
+    harness.inner.get_by_label_contains("Snap as").hover();
+    harness.inner.run_steps(3);
+    harness.inner.get_by_label("Pedestrian").click();
+    harness.run();
+
+    assert_eq!(
+        harness.state().snap_costing_request,
+        Some((track, SnapCosting::Pedestrian)),
+    );
+}
+
+/// Snapshot: the open context menu of a completed run, with the costing
+/// submenu expanded.
+#[test]
+fn snapshot_snap_costing_submenu() {
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    state.snap_rows.insert(
+        TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+        done_row(true),
+    );
+    let mut harness = make_harness_sized(state, egui::vec2(420.0, 600.0));
+    harness.run();
+
+    harness
+        .inner
+        .get_by_label_contains("#1  4.6 km")
+        .click_secondary();
+    harness.run();
+    harness.inner.get_by_label_contains("Snap again as").hover();
+    harness.inner.run_steps(3);
+    harness.snapshot("side_panel_snap_costing_submenu");
+}
+
 #[test]
 fn snapshot_generated_markers_grouped() {
     // `nav_test_data` drops PRNs 9-12 (above the mask) at one epoch, producing a
@@ -595,6 +690,8 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
         snap_consent_pending: false,
         snap_request: None,
         snap_visibility_request: None,
+        snap_costing_choices: Vec::new(),
+        snap_costing_request: None,
     };
     // Renders the expanded track row, exercising the `fix_stats == None` fallback
     // ("No satellite data") instead of the colored tooltip.
@@ -718,6 +815,8 @@ fn snapshot_track_channels() {
         snap_consent_pending: false,
         snap_request: None,
         snap_visibility_request: None,
+        snap_costing_choices: Vec::new(),
+        snap_costing_request: None,
     };
     let mut harness = make_harness(state);
     harness.run();
@@ -769,6 +868,8 @@ fn make_state_with_shared_prefix() -> State {
         snap_consent_pending: false,
         snap_request: None,
         snap_visibility_request: None,
+        snap_costing_choices: Vec::new(),
+        snap_costing_request: None,
     }
 }
 
@@ -817,6 +918,8 @@ fn make_state_with_long_name() -> State {
         snap_consent_pending: false,
         snap_request: None,
         snap_visibility_request: None,
+        snap_costing_choices: Vec::new(),
+        snap_costing_request: None,
     }
 }
 
@@ -884,6 +987,8 @@ fn make_state_with_metadata() -> State {
         snap_consent_pending: false,
         snap_request: None,
         snap_visibility_request: None,
+        snap_costing_choices: Vec::new(),
+        snap_costing_request: None,
     }
 }
 
@@ -978,6 +1083,8 @@ fn clicking_note_icon_requests_recording_details() {
         snap_consent_pending: false,
         snap_request: None,
         snap_visibility_request: None,
+        snap_costing_choices: Vec::new(),
+        snap_costing_request: None,
     };
     let mut harness = make_harness(state);
     harness.run();
@@ -1031,9 +1138,11 @@ fn settled_docked_panel_width(state: State) -> f32 {
                                     offline: s.snap_offline,
                                     consent_pending: s.snap_consent_pending,
                                     rows: &s.snap_rows,
+                                    costing_choices: &s.snap_costing_choices,
                                 },
                                 snap_request: &mut s.snap_request,
                                 snap_visibility_request: &mut s.snap_visibility_request,
+                                snap_costing_request: &mut s.snap_costing_request,
                             };
                             show_side_panel(ui, &mut ctx);
                         });

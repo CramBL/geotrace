@@ -162,6 +162,12 @@ pub struct App {
     /// Auto mode should sweep for unsnapped tracks: set when files load,
     /// indices shift, or auto mode turns on; consumed once per frame.
     snap_auto_sweep: bool,
+    /// Session-only per-track costing overrides ("Snap again as…"). The
+    /// override beats the declared travel mode and the configured default;
+    /// content-keyed so it survives index shifts like the run stores. Not
+    /// persisted: after a restart the stored run goes stale against the
+    /// resolved default again - consistent, never misleading.
+    snap_costing_overrides: HashMap<snap::TrackContentKey, Costing>,
     /// The track whose snap trigger raised the consent dialog. Queued when
     /// the dialog is accepted, dropped when it is declined.
     pending_snap: Option<TrackRef>,
@@ -382,6 +388,7 @@ impl App {
             snap_settings: crate::settings::SnapSettings::default(),
             snap_consent_prompt: false,
             snap_auto_sweep: false,
+            snap_costing_overrides: HashMap::new(),
             pending_snap: None,
             hidden_snapped: std::collections::HashSet::new(),
             tiles_tree,
@@ -997,6 +1004,72 @@ impl App {
         self.update_check_on_startup && !cfg!(debug_assertions) && !gt_types::env::offline()
     }
 
+    /// The costing a track would snap with now: the session override beats
+    /// the declared travel mode, which beats the configured default. An
+    /// override makes even a road-less declared mode snappable - overriding
+    /// wrong declarations is what it exists for.
+    fn effective_costing(
+        &self,
+        file: &gt_types::LoadedFile,
+        track: &gt_types::LoadedTrack,
+    ) -> Option<Costing> {
+        if let Some(&costing) = self
+            .snap_costing_overrides
+            .get(&snap::TrackContentKey::new(track))
+        {
+            return Some(costing);
+        }
+        snap::resolve_costing(
+            file.metadata.travel_mode.as_ref(),
+            self.snap_settings.costing,
+        )
+    }
+
+    /// The wire costing for a panel-side mirror choice. Exhaustive both
+    /// ways, so a costing added to either side fails to compile here.
+    fn costing_from_choice(choice: gt_ui_types::SnapCosting) -> Costing {
+        match choice {
+            gt_ui_types::SnapCosting::Auto => Costing::Auto,
+            gt_ui_types::SnapCosting::Bicycle => Costing::Bicycle,
+            gt_ui_types::SnapCosting::Pedestrian => Costing::Pedestrian,
+        }
+    }
+
+    /// The re-run submenu's choices, labeled from the wire type's canonical
+    /// spelling (the single source, [`Costing::display_name`]).
+    fn costing_choices() -> Vec<(gt_ui_types::SnapCosting, String)> {
+        use strum::IntoEnumIterator;
+        gt_ui_types::SnapCosting::iter()
+            .map(|choice| {
+                let label = Self::costing_from_choice(choice).display_name().to_owned();
+                (choice, label)
+            })
+            .collect()
+    }
+
+    /// Act on a "Snap again as" choice: store the session override and run
+    /// the track under it, through the consent dialog while consent is
+    /// pending. The fresh run is not stale (the override feeds the
+    /// effective parameters); a cached run under the chosen costing
+    /// redisplays without a request.
+    fn handle_snap_costing_request(
+        &mut self,
+        track_ref: TrackRef,
+        choice: gt_ui_types::SnapCosting,
+    ) {
+        {
+            let shared = self.shared.borrow();
+            let Some(track) = track_ref.resolve(shared.loaded_files.files()) else {
+                return;
+            };
+            self.snap_costing_overrides.insert(
+                snap::TrackContentKey::new(track),
+                Self::costing_from_choice(choice),
+            );
+        }
+        self.handle_snap_request(track_ref);
+    }
+
     /// The side panel's per-track snap view: scheduler activity and cached
     /// runs resolved against each file's declared travel mode and the
     /// configured costing. Tracks in the default idle state get no entry.
@@ -1005,14 +1078,14 @@ impl App {
         let mut rows = HashMap::new();
         for (fi, file) in shared.loaded_files.files().iter().enumerate() {
             let declared = file.metadata.travel_mode.as_ref();
-            let costing = snap::resolve_costing(declared, self.snap_settings.costing);
             for (ti, track) in file.tracks.iter().enumerate() {
                 let track_ref = TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti));
-                let row = match costing {
+                let row = match self.effective_costing(file, track) {
                     None => {
-                        // `resolve_costing` returns `None` only for a declared
-                        // road-less mode, so `declared` is present here; skip
-                        // (= idle) defensively rather than unwrap.
+                        // Without an override, `effective_costing` returns
+                        // `None` only for a declared road-less mode, so
+                        // `declared` is present here; skip (= idle)
+                        // defensively rather than unwrap.
                         let Some(mode) = declared else { continue };
                         SnapRowView::Unsnappable {
                             travel_mode: mode.display_name().to_owned(),
@@ -1168,24 +1241,26 @@ impl App {
         }
         let shared = self.shared.borrow();
         for (fi, file) in shared.loaded_files.files().iter().enumerate() {
-            let declared = file.metadata.travel_mode.as_ref();
-            let Some(costing) = snap::resolve_costing(declared, self.snap_settings.costing) else {
-                continue;
-            };
-            let params = self.snap_settings.params(costing);
             for (ti, track) in file.tracks.iter().enumerate() {
                 let track_ref = TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti));
+                let Some(costing) = self.effective_costing(file, track) else {
+                    continue;
+                };
                 if self.snap.latest_run_for(track).is_some() {
                     continue;
                 }
-                self.snap
-                    .request_snap(track_ref, track, params, snap::SnapPriority::Auto);
+                self.snap.request_snap(
+                    track_ref,
+                    track,
+                    self.snap_settings.params(costing),
+                    snap::SnapPriority::Auto,
+                );
             }
         }
     }
 
-    /// Queue a snap run for a track, resolving its costing from the file's
-    /// declared travel mode and the configured default.
+    /// Queue a snap run for a track under its effective costing (session
+    /// override, else declared travel mode, else the configured default).
     fn queue_snap(&mut self, track_ref: TrackRef) {
         let shared = self.shared.borrow();
         let files = shared.loaded_files.files();
@@ -1195,8 +1270,7 @@ impl App {
         let Some(track) = track_ref.resolve(files) else {
             return;
         };
-        let declared = file.metadata.travel_mode.as_ref();
-        let Some(costing) = snap::resolve_costing(declared, self.snap_settings.costing) else {
+        let Some(costing) = self.effective_costing(file, track) else {
             return;
         };
         self.snap.request_snap(
@@ -2186,13 +2260,16 @@ impl eframe::App for App {
         // the docked and detached call sites. The trigger's request is drained
         // after the panel, mirroring the other panel requests.
         let snap_rows = self.snap_row_views();
+        let snap_costing_choices = Self::costing_choices();
         let snap_view = SnapPanelView {
             offline: snap::SnapScheduler::offline(),
             consent_pending: !self.snap_settings.consent_granted(),
             rows: &snap_rows,
+            costing_choices: &snap_costing_choices,
         };
         let mut snap_request: Option<TrackRef> = None;
         let mut snap_visibility_request: Option<TrackRef> = None;
+        let mut snap_costing_request: Option<(TrackRef, gt_ui_types::SnapCosting)> = None;
 
         let detached = self.shared.borrow().tree.detached;
         if !detached {
@@ -2221,6 +2298,7 @@ impl eframe::App for App {
                             snap: snap_view,
                             snap_request: &mut snap_request,
                             snap_visibility_request: &mut snap_visibility_request,
+                            snap_costing_request: &mut snap_costing_request,
                         },
                     );
                 });
@@ -2263,6 +2341,7 @@ impl eframe::App for App {
                             snap: snap_view,
                             snap_request: &mut snap_request,
                             snap_visibility_request: &mut snap_visibility_request,
+                            snap_costing_request: &mut snap_costing_request,
                         },
                     );
                 });
@@ -2273,6 +2352,9 @@ impl eframe::App for App {
 
         if let Some(track_ref) = snap_request {
             self.handle_snap_request(track_ref);
+        }
+        if let Some((track_ref, choice)) = snap_costing_request {
+            self.handle_snap_costing_request(track_ref, choice);
         }
         if let Some(track_ref) = snap_visibility_request
             && !self.hidden_snapped.remove(&track_ref)
