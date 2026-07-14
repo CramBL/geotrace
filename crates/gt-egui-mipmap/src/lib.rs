@@ -57,6 +57,15 @@ pub struct LevelSelection {
     clip_end: usize,
 }
 
+impl LevelSelection {
+    /// Whether this selection reads the finest (original) level - i.e. the
+    /// view shows full detail and every selected point is a real data point
+    /// rather than a downsampled aggregate.
+    pub fn is_full_detail(&self) -> bool {
+        self.level_idx == 0
+    }
+}
+
 /// A cascade of progressively downsampled time-series levels.
 ///
 /// `levels[0]` is the original (finest) data.

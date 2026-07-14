@@ -21,7 +21,8 @@ use gt_filter::GlobalFilter;
 use gt_types::satellites::Constellation;
 use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::{
-    HighlightScope, SnapErrorKind, SnapErrorPoint, SnapErrorSeries, TrackDataVisibility,
+    ArcIdentity, HighlightScope, SnapErrorKind, SnapErrorPoint, SnapErrorSeries,
+    TrackDataVisibility,
 };
 use rayon::prelude::*;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -158,7 +159,9 @@ impl MetricKindUi for MetricKind {
                 "Distance from each recorded point to its road-snapped position, in metres - \
                  the observed deviation from the road network. Plot it next to EPH to compare \
                  the receiver's claimed accuracy with the observed deviation. Values exist only \
-                 for points sent in a completed snap run.",
+                 for points sent in a completed snap run. Zoomed in, a dot marks a point the \
+                 matcher placed independently; the plain line between dots is interpolated \
+                 along the road; a cross at the baseline is a point the road network rejected.",
             ),
             Self::ClockDeltaMs => Some(
                 "GPS clock lead over the host system clock, in milliseconds. \
@@ -899,6 +902,9 @@ pub struct PlotState {
     /// the plot via `set_plot_bounds_x`.  Used to detect changes and avoid
     /// re-applying the same range every frame (which would prevent manual zoom).
     applied_map_x_range: Option<(u64, u64)>,
+    /// Per-track snap error mipmaps and marker lists, rebuilt only when a
+    /// track's series `Arc` changes (see [`sync_snap_error_cache`]).
+    snap_error_cache: HashMap<TrackRef, SnapErrorPlotCache>,
     /// Whether the plot cursor was snapped close to a data point on the most
     /// recently rendered frame.
     ///
@@ -931,6 +937,7 @@ impl Default for PlotState {
             level_cache: Vec::new(),
             last_computed_bounds: None,
             applied_map_x_range: None,
+            snap_error_cache: HashMap::new(),
             plot_cursor_snapped: false,
         }
     }
@@ -1141,11 +1148,14 @@ pub fn show_track_plot(
     }
     let has_full_range = full_x_min.is_finite() && full_x_max.is_finite();
 
+    sync_snap_error_cache(&mut state.snap_error_cache, snap_error);
+
     // Split borrows: extract immutable refs to the caches and metric visibility
     // before the closure so the borrow checker can see they are disjoint from
     // the mutable fields written after the closure (`hovered_time`, `level_cache`,
     // `last_computed_bounds`).
     let series_cache = &state.series_cache;
+    let snap_error_cache = &state.snap_error_cache;
     let level_cache = &state.level_cache;
     let last_computed_bounds = state.last_computed_bounds;
     let metric_vis = &state.metric_vis;
@@ -1316,10 +1326,13 @@ pub fn show_track_plot(
                 },
                 line_width,
                 dark_mode,
-                snap_error
-                    .points_by_track
-                    .get(&series_track_ref(series))
-                    .map(|points| points.as_slice()),
+                snap_error_cache.get(&series_track_ref(series)),
+                SnapErrorViewport {
+                    x_min: eff_x_min,
+                    x_max: eff_x_max,
+                    width: available_width,
+                    cap: sample_cap,
+                },
                 snap_pointer,
                 &mut hovered_snap,
             );
@@ -2046,7 +2059,8 @@ fn add_series_lines<'a>(
     sections: SectionGates,
     line_width: f32,
     dark_mode: bool,
-    snap_error_points: Option<&[SnapErrorPoint]>,
+    snap_error: Option<&'a SnapErrorPlotCache>,
+    snap_viewport: SnapErrorViewport,
     snap_pointer: Option<egui::Pos2>,
     hovered_snap: &mut Option<(f32, SnapErrorHover)>,
 ) {
@@ -2103,7 +2117,7 @@ fn add_series_lines<'a>(
     }
 
     if metric_vis.field(MetricKind::SnapError)
-        && let Some(points) = snap_error_points
+        && let Some(snap_cache) = snap_error
     {
         let is_hovered = hovered_chip == Some(&HoveredChip::Metric(MetricKind::SnapError));
         let (color, highlighted) = hover_treatment(
@@ -2112,9 +2126,11 @@ fn add_series_lines<'a>(
         );
         add_snap_error_series(
             plot_ui,
+            &prefix,
             series,
             multi_track,
-            points,
+            snap_cache,
+            snap_viewport,
             snap_pointer,
             hovered_snap,
             SnapErrorStyle {
@@ -2363,6 +2379,76 @@ fn add_util_anomalies<'a>(
 /// explains the rejection.
 const UNSNAPPED_MARKER_Y: f64 = 0.0;
 
+/// Radius of the snapped-point markers on the snap error line. Small - the
+/// markers annotate the line's anchor points, they are not anomaly flags.
+const SNAPPED_MARKER_RADIUS: f32 = 2.5;
+
+/// Per-track plot-side cache of a snap error series: the line runs as
+/// mipmap cascades (downsampled like every other metric), plus the raw
+/// per-kind point lists for the marker overlays. Rebuilt only when the
+/// track's series [`Arc`] changes - the app hands out one `Arc` per
+/// completed run, so this rebuilds once per run, not per frame.
+#[derive(Debug, Clone)]
+pub(crate) struct SnapErrorPlotCache {
+    /// Identity of the source series, for invalidation.
+    source: ArcIdentity,
+    /// One cascade per drawable line run (maximal valued stretches; see
+    /// [`snap_error_runs`]).
+    runs: Vec<MipMap>,
+    /// Snapped-kind points, ascending by x - the anchor markers.
+    snapped: Vec<PlotPoint>,
+    /// Unsnapped points at the baseline, ascending by x.
+    unsnapped: Vec<PlotPoint>,
+}
+
+/// Bring the per-track snap caches in line with the frame's series: drop
+/// tracks that left the series, (re)build entries whose source changed.
+fn sync_snap_error_cache(
+    cache: &mut HashMap<TrackRef, SnapErrorPlotCache>,
+    series: &SnapErrorSeries,
+) {
+    cache.retain(|track, _| series.points_by_track.contains_key(track));
+    for (&track, points) in &series.points_by_track {
+        let source = ArcIdentity::of(points);
+        if cache.get(&track).is_some_and(|c| c.source == source) {
+            continue;
+        }
+        let runs = snap_error_runs(points)
+            .into_iter()
+            .map(|run| MipMap::build(run.iter().map(|p| [p.x, p.y]).collect()))
+            .collect();
+        let snapped = points
+            .iter()
+            .filter(|p| p.kind == SnapErrorKind::Snapped)
+            .filter_map(|p| p.error_m.map(|e| PlotPoint::new(p.x_secs, e)))
+            .collect();
+        let unsnapped = points
+            .iter()
+            .filter(|p| p.kind == SnapErrorKind::Unsnapped)
+            .map(|p| PlotPoint::new(p.x_secs, UNSNAPPED_MARKER_Y))
+            .collect();
+        cache.insert(
+            track,
+            SnapErrorPlotCache {
+                source,
+                runs,
+                snapped,
+                unsnapped,
+            },
+        );
+    }
+}
+
+/// The viewport parameters the snap error series selects its mipmap levels
+/// with - the same inputs every other metric's level selection uses.
+#[derive(Debug, Clone, Copy)]
+struct SnapErrorViewport {
+    x_min: f64,
+    x_max: f64,
+    width: f32,
+    cap: usize,
+}
+
 /// Stroke/hover treatment for one track's snap error series, bundled so
 /// [`add_snap_error_series`] stays under the argument-count lint.
 #[derive(Clone, Copy)]
@@ -2374,46 +2460,34 @@ struct SnapErrorStyle {
     dark_mode: bool,
 }
 
-/// Pre-formatted tooltip contents for one hovered snap error point.
+/// Pre-formatted tooltip contents for one hovered unsnapped marker - the
+/// only snap point with a custom hover: the kind is the whole message, and
+/// the marker sits at the baseline rather than on the line. Snapped and
+/// interpolated points hover natively through egui_plot's labels.
 struct SnapErrorHover {
     /// Track label, shown only when more than one track is visible.
     track: Option<String>,
     time: String,
-    /// Kind plus error, e.g. `Interpolated - error 3.2 m`.
-    line: String,
 }
 
 impl SnapErrorHover {
-    fn new(series: &TrackSeries, multi_track: bool, point: &SnapErrorPoint) -> Self {
-        let time = DateTime::from_timestamp(point.x_secs as i64, 0)
+    fn new(series: &TrackSeries, multi_track: bool, x_secs: f64) -> Self {
+        let time = DateTime::from_timestamp(x_secs as i64, 0)
             .map(|dt| dt.format("%H:%M:%S").to_string())
             .unwrap_or_default();
-        let line = match (point.kind, point.error_m) {
-            (SnapErrorKind::Unsnapped, _) | (_, None) => {
-                "Unsnapped - the road network rejected this point".to_owned()
-            }
-            (SnapErrorKind::Snapped, Some(error)) => {
-                format!("Snapped - error {error:.1} m")
-            }
-            (SnapErrorKind::Interpolated, Some(error)) => {
-                format!("Interpolated - error {error:.1} m")
-            }
-        };
         Self {
             track: multi_track.then(|| series.label.clone()),
             time,
-            line,
         }
     }
 
     fn show(&self, ui: &mut egui::Ui) {
-        ui.strong("Snap error");
+        ui.strong("Unsnapped");
         if let Some(track) = &self.track {
             ui.label(track);
         }
-        ui.label(format!("at {}", self.time));
-        ui.separator();
-        ui.label(&self.line);
+        ui.label(&self.time);
+        ui.label("The road network rejected this point");
     }
 }
 
@@ -2442,39 +2516,99 @@ fn snap_error_runs(points: &[SnapErrorPoint]) -> Vec<Vec<PlotPoint>> {
     runs
 }
 
-/// Draw one track's snap error series: line runs split at unsnapped points
-/// (the road network rejected those, so the line honestly breaks) plus a
-/// baseline marker per unsnapped point. Hover is a custom kind-aware tooltip
-/// (like the anomaly markers), so egui_plot's own labels are suppressed on
-/// every item here.
-fn add_snap_error_series(
-    plot_ui: &mut egui_plot::PlotUi<'_>,
+/// Draw one track's snap error series from its plot cache: mipmapped line
+/// runs split at unsnapped points (the road network rejected those, so the
+/// line honestly breaks), snapped-point anchor markers while zoomed to full
+/// detail, and a baseline cross per unsnapped point.
+///
+/// The line and the anchor markers hover natively - egui_plot places the
+/// standard name/time/value label on the line, interpolated between points,
+/// so nothing clips at the plot edge. Only the unsnapped crosses keep a
+/// custom tooltip: there the kind is the whole message.
+/// Level selection per run, exactly like the other metrics, plus whether
+/// every viewport-visible run reads its finest level. The anchor markers
+/// only draw at full detail - coarser levels merge points, so a marker
+/// would no longer name a real point. Runs outside the viewport neither
+/// draw nor veto the markers.
+fn select_run_levels(runs: &[MipMap], viewport: SnapErrorViewport) -> (Vec<LevelSelection>, bool) {
+    let mut full_detail = true;
+    let selections = runs
+        .iter()
+        .map(|run| {
+            let target = track_target(
+                run.x_range(),
+                viewport.x_min,
+                viewport.x_max,
+                viewport.width,
+                viewport.cap,
+            );
+            let selection = run.select_indices(viewport.x_min, viewport.x_max, target);
+            // Only runs whose data actually intersects the viewport get a
+            // vote: a selection always keeps one boundary point (so lines
+            // stay connected off-screen), so slice emptiness cannot tell
+            // an off-viewport run apart - and its zero visible width
+            // forces a coarse level that would wrongly veto the markers.
+            let visible = run
+                .x_range()
+                .is_some_and(|(lo, hi)| lo <= viewport.x_max && hi >= viewport.x_min);
+            if visible {
+                full_detail &= selection.is_full_detail();
+            }
+            selection
+        })
+        .collect();
+    (selections, full_detail)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors add_series_lines' argument list; a struct would only relabel it"
+)]
+fn add_snap_error_series<'a>(
+    plot_ui: &mut egui_plot::PlotUi<'a>,
+    prefix: &str,
     series: &TrackSeries,
     multi_track: bool,
-    points: &[SnapErrorPoint],
+    cache: &'a SnapErrorPlotCache,
+    viewport: SnapErrorViewport,
     pointer: Option<egui::Pos2>,
     nearest: &mut Option<(f32, SnapErrorHover)>,
     style: SnapErrorStyle,
 ) {
-    for run in snap_error_runs(points) {
-        plot_ui.line(
-            Line::new(MetricKind::SnapError.label(), PlotPoints::Owned(run))
-                .color(style.color)
-                .style(style.style)
-                .width(style.width)
-                .highlight(style.highlighted)
-                .allow_hover(false),
+    let (selections, full_detail) = select_run_levels(&cache.runs, viewport);
+    for (run, selection) in cache.runs.iter().zip(selections) {
+        add_line(
+            plot_ui,
+            run.slice_at(selection),
+            format!("{prefix}{}", MetricKind::SnapError.label()),
+            style.color,
+            style.style,
+            style.width,
+            style.highlighted,
         );
     }
 
-    let unsnapped: Vec<PlotPoint> = points
-        .iter()
-        .filter(|p| p.kind == SnapErrorKind::Unsnapped)
-        .map(|p| PlotPoint::new(p.x_secs, UNSNAPPED_MARKER_Y))
-        .collect();
-    if !unsnapped.is_empty() {
+    if full_detail && !cache.snapped.is_empty() {
+        let start = cache.snapped.partition_point(|p| p.x < viewport.x_min);
+        let end = cache.snapped.partition_point(|p| p.x <= viewport.x_max);
+        let visible = cache.snapped.get(start..end).unwrap_or_default();
+        if !visible.is_empty() {
+            plot_ui.points(
+                Points::new(
+                    format!("{prefix}{} - snapped", MetricKind::SnapError.label()),
+                    PlotPoints::Borrowed(visible),
+                )
+                .shape(MarkerShape::Circle)
+                .color(style.color)
+                .radius(SNAPPED_MARKER_RADIUS)
+                .highlight(style.highlighted),
+            );
+        }
+    }
+
+    if !cache.unsnapped.is_empty() {
         plot_ui.points(
-            Points::new("Unsnapped points", PlotPoints::Owned(unsnapped))
+            Points::new("Unsnapped points", PlotPoints::Borrowed(&cache.unsnapped))
                 .shape(MarkerShape::Cross)
                 .color(gt_ui_theme::error_indicator(style.dark_mode))
                 .radius(ANOMALY_MARKER_RADIUS)
@@ -2485,12 +2619,11 @@ fn add_snap_error_series(
     let Some(ptr) = pointer else {
         return;
     };
-    for point in points {
-        let y = point.error_m.unwrap_or(UNSNAPPED_MARKER_Y);
-        let screen = plot_ui.screen_from_plot(PlotPoint::new(point.x_secs, y));
+    for point in &cache.unsnapped {
+        let screen = plot_ui.screen_from_plot(*point);
         let dist = screen.distance(ptr);
         if dist <= ANOMALY_HOVER_RADIUS_PX && nearest.as_ref().is_none_or(|(d, _)| dist < *d) {
-            *nearest = Some((dist, SnapErrorHover::new(series, multi_track, point)));
+            *nearest = Some((dist, SnapErrorHover::new(series, multi_track, point.x)));
         }
     }
 }
@@ -2552,8 +2685,106 @@ pub fn find_closest_tpv(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
 
     use super::*;
+
+    /// A viewport over `0..=x_max` seconds, `width` px wide, with the
+    /// given per-track sample cap.
+    fn viewport(x_max: f64, width: f32, cap: usize) -> SnapErrorViewport {
+        SnapErrorViewport {
+            x_min: 0.0,
+            x_max,
+            width,
+            cap,
+        }
+    }
+
+    /// A run cascade over `count` one-per-second points starting at
+    /// `start` seconds.
+    fn run_from(start: usize, count: usize) -> MipMap {
+        MipMap::build((0..count).map(|i| [(start + i) as f64, 1.0]).collect())
+    }
+
+    /// A run cascade over `count` one-per-second points from time zero.
+    fn run_of(count: usize) -> MipMap {
+        run_from(0, count)
+    }
+
+    /// The anchor-marker gate: dots draw only while every viewport-visible
+    /// run reads its finest mipmap level. A downsampled run vetoes; a run
+    /// entirely outside the viewport neither draws nor vetoes; no runs at
+    /// all leave the gate open (the marker overlay then has nothing to
+    /// draw from anyway, but the gate must not mask a future source).
+    #[rstest::rstest]
+    #[case::no_runs(vec![], viewport(100.0, 800.0, 4096), true)]
+    #[case::single_run_at_full_detail(vec![run_of(100)], viewport(100.0, 800.0, 4096), true)]
+    #[case::single_run_downsampled(vec![run_of(4096)], viewport(4096.0, 100.0, 64), false)]
+    #[case::downsampled_run_vetoes_the_full_one(
+        vec![run_of(100), run_of(4096)],
+        viewport(4096.0, 100.0, 64),
+        false
+    )]
+    #[case::off_viewport_run_does_not_veto(
+        vec![run_of(64), run_from(100_000, 4096)],
+        viewport(100.0, 800.0, 4096),
+        true
+    )]
+    fn marker_gate_requires_full_detail_on_every_visible_run(
+        #[case] runs: Vec<MipMap>,
+        #[case] viewport: SnapErrorViewport,
+        #[case] expected: bool,
+    ) {
+        let (selections, full_detail) = select_run_levels(&runs, viewport);
+        assert_eq!(selections.len(), runs.len(), "one selection per run");
+        assert_eq!(full_detail, expected);
+    }
+
+    /// The plot-side snap cache follows the series by `Arc` identity: an
+    /// unchanged `Arc` is reused, a replaced one rebuilds its entry, and a
+    /// track that left the series is pruned.
+    #[test]
+    fn snap_cache_syncs_by_arc_identity() {
+        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let points = Arc::new(vec![
+            sep(0.0, Some(1.0)),
+            sep(1.0, Some(2.0)),
+            sep(2.0, None),
+            sep(3.0, Some(3.0)),
+            sep(4.0, Some(4.0)),
+        ]);
+        let mut series = SnapErrorSeries::default();
+        series.points_by_track.insert(track, Arc::clone(&points));
+
+        let mut cache = HashMap::new();
+        sync_snap_error_cache(&mut cache, &series);
+        let entry = cache.get(&track).expect("entry built");
+        assert_eq!(entry.runs.len(), 2, "one cascade per line run");
+        assert_eq!(entry.snapped.len(), 4);
+        assert_eq!(entry.unsnapped.len(), 1);
+        let built_source = entry.source;
+
+        // Same Arc: the entry is reused, not rebuilt.
+        sync_snap_error_cache(&mut cache, &series);
+        assert_eq!(
+            cache.get(&track).map(|e| e.source),
+            Some(built_source),
+            "an unchanged series keeps its cache entry"
+        );
+
+        // A new run (new Arc) rebuilds; a removed track prunes.
+        series.points_by_track.insert(
+            track,
+            Arc::new(vec![sep(0.0, Some(1.0)), sep(1.0, Some(2.0))]),
+        );
+        sync_snap_error_cache(&mut cache, &series);
+        assert_ne!(cache.get(&track).map(|e| e.source), Some(built_source));
+        assert_eq!(cache.get(&track).map(|e| e.runs.len()), Some(1));
+
+        series.points_by_track.clear();
+        sync_snap_error_cache(&mut cache, &series);
+        assert!(cache.is_empty(), "tracks that left the series are pruned");
+    }
 
     /// Shorthand for a snap error point at time `x` with the given error.
     fn sep(x: f64, error_m: Option<f64>) -> SnapErrorPoint {
