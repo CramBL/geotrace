@@ -17,7 +17,9 @@ use gt_types::{
     PointIdx, TrackIdx, TrackRef,
 };
 use gt_ui_theme::ELLIPSIS;
-use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask, HighlightScope, MapHighlight};
+use gt_ui_types::{
+    DataPointRef, DisplayCategory, DisplayMask, HighlightScope, MapHighlight, SnapCosting,
+};
 
 use crate::filter::{FilterPanelState, render_filter_panel};
 use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState};
@@ -49,6 +51,9 @@ pub struct SnapPanelView<'a> {
     pub consent_pending: bool,
     /// Per-track snap state. Tracks without an entry are [`SnapRowView::Idle`].
     pub rows: &'a HashMap<TrackRef, SnapRowView>,
+    /// The costing choices of the re-run submenu, labels pre-rendered by
+    /// the app from the wire type's canonical spelling.
+    pub costing_choices: &'a [(SnapCosting, String)],
 }
 
 /// One track's snap state as the panel shows it, mirroring the app's
@@ -123,6 +128,10 @@ pub struct PanelContext<'a> {
     /// context-menu entry) of a completed run. Consumed by the app, which
     /// flips whether that track's snapped track draws on the map.
     pub snap_visibility_request: &'a mut Option<TrackRef>,
+    /// Set by the "Snap again as" submenu: re-run the track under an
+    /// explicit costing. Consumed by the app, which stores the session
+    /// override and queues the run (through the consent dialog if pending).
+    pub snap_costing_request: &'a mut Option<(TrackRef, SnapCosting)>,
 }
 
 /// Trailing eye-slash on a category row whose map ink is hidden by the
@@ -467,7 +476,7 @@ fn snap_action(row: &SnapRowView, snap: SnapPanelView<'_>) -> Option<SnapAction>
         },
         _ if snap.offline => SnapAction {
             enabled: false,
-            hover: "Snapping is disabled while GEOTRACE_OFFLINE is set".to_owned(),
+            hover: OFFLINE_HOVER.to_owned(),
             consent_pending: false,
         },
         // A stale run keeps its status glyph; this action is the re-run.
@@ -510,9 +519,35 @@ fn snap_action(row: &SnapRowView, snap: SnapPanelView<'_>) -> Option<SnapAction>
     Some(action)
 }
 
+/// The re-run submenu's label for a row, `None` for rows without one.
+/// "Snap again as" re-runs an existing (completed or failed) run under an
+/// explicit costing; "Snap as" overrides a road-less declared travel mode
+/// that never ran. In-progress rows finish first, idle rows keep the plain
+/// action.
+fn costing_submenu_label(row: &SnapRowView) -> Option<&'static str> {
+    match row {
+        SnapRowView::Done { .. } | SnapRowView::Failed { .. } => Some("Snap again as"),
+        SnapRowView::Unsnappable { .. } => Some("Snap as"),
+        SnapRowView::Idle | SnapRowView::Queued | SnapRowView::InFlight { .. } => None,
+    }
+}
+
 /// Extra dimming applied to the status glyph while the snapped track is
 /// hidden, so the toggle state is readable at a glance.
 const HIDDEN_GLYPH_ALPHA: f32 = 0.5;
+
+/// Hover text of every snap control grayed out by `GEOTRACE_OFFLINE`.
+const OFFLINE_HOVER: &str = "Snapping is disabled while GEOTRACE_OFFLINE is set";
+
+/// The label with the `…` suffix while a click still needs the consent
+/// dialog (the suffix marks exactly that, per the design).
+fn consent_suffixed(label: &str, consent_pending: bool) -> String {
+    if consent_pending {
+        format!("{label}{ELLIPSIS}")
+    } else {
+        label.to_owned()
+    }
+}
 
 /// The toggle hint appended to the snap status hover.
 fn snapped_track_toggle_label(shown: bool) -> &'static str {
@@ -640,11 +675,7 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
         return;
     };
     let failed = matches!(row, SnapRowView::Failed { .. });
-    let label = if action.consent_pending {
-        format!("{ICON_PATH}{ELLIPSIS}")
-    } else {
-        ICON_PATH.to_owned()
-    };
+    let label = consent_suffixed(ICON_PATH, action.consent_pending);
     let mut text = RichText::new(label);
     if failed {
         text = text.color(gt_ui_theme::warning_amber(ui.visuals().dark_mode));
@@ -675,11 +706,7 @@ fn snap_menu_entry(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContex
             } else {
                 "Snap to road"
             };
-            let label = if action.consent_pending {
-                format!("{verb}{ELLIPSIS}")
-            } else {
-                verb.to_owned()
-            };
+            let label = consent_suffixed(verb, action.consent_pending);
             let button = ui.add_enabled(action.enabled, Button::new(label));
             let button = if action.enabled {
                 button.on_hover_text(&action.hover)
@@ -726,6 +753,27 @@ fn snap_menu_entry(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContex
                 });
         }
     }
+    // The explicit-costing re-run submenu: completed and failed runs can
+    // re-run under any costing (costing comparisons), and a declared
+    // road-less mode can be overridden (wrong declarations happen). Tracks
+    // queued or in flight finish first; idle tracks keep the plain action.
+    if let Some(label) = costing_submenu_label(row) {
+        let label = consent_suffixed(label, ctx.snap.consent_pending);
+        if ctx.snap.offline {
+            ui.add_enabled(false, Button::new(label))
+                .on_disabled_hover_text(OFFLINE_HOVER);
+        } else {
+            ui.menu_button(label, |ui| {
+                for (costing, name) in ctx.snap.costing_choices {
+                    if ui.button(name).clicked() {
+                        *ctx.snap_costing_request = Some((track_ref, *costing));
+                        ui.close();
+                    }
+                }
+            });
+        }
+    }
+
     // The visibility toggle applies to any completed run, stale or not.
     if let SnapRowView::Done { shown, .. } = row {
         let toggle_label = if *shown {
@@ -1646,6 +1694,7 @@ mod snap_action_tests {
             offline,
             consent_pending,
             rows: EMPTY.get_or_init(HashMap::new),
+            costing_choices: &[],
         }
     }
 

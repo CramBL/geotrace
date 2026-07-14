@@ -78,6 +78,17 @@ impl SnappedSegment {
     }
 }
 
+/// The map-matching costing choices, mirrored plainly (like
+/// `SnapErrorKind`) so the panel needs no gt-snap dependency. The app maps
+/// this onto the wire costing with exhaustive matches, and sources display
+/// labels from the wire type's canonical spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumCount, strum::EnumIter)]
+pub enum SnapCosting {
+    Auto,
+    Bicycle,
+    Pedestrian,
+}
+
 /// Hover attributes of one matched road edge, pre-rendered by the app.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SnappedEdgeInfo {

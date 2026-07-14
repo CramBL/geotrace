@@ -14,7 +14,7 @@ pub use highlight::{DataPointRef, HighlightScope, MapHighlight, MatchHighlight};
 pub use query_matches::{DrawLayer, DrawLayerMask, QueryMatches};
 pub use snap_error_series::{SnapErrorKind, SnapErrorPoint, SnapErrorSeries};
 pub use snapped_tracks::{
-    SnappedEdgeInfo, SnappedEdgeSpan, SnappedSegment, SnappedTrackGeometry, SnappedTracks,
-    WhiskerAnchor,
+    SnapCosting, SnappedEdgeInfo, SnappedEdgeSpan, SnappedSegment, SnappedTrackGeometry,
+    SnappedTracks, WhiskerAnchor,
 };
 pub use visibility::{FileVisibility, TrackDataVisibility, TrackVisibility};
