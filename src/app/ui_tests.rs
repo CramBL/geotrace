@@ -269,6 +269,65 @@ fn query_results_go_stale_when_the_filter_changes() {
     assert!(!stale_after_revert, "reverting the filter un-grays results");
 }
 
+/// `snap_error` evaluates over a completed run's values without any network
+/// step: points with a value match the draw query, and a re-snap grays the
+/// results out through the fingerprint.
+#[test]
+fn query_matches_on_snap_error_after_a_run() {
+    let gtd_bytes = minimal_gtd_bytes();
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.input_mut().dropped_files.push(egui::DroppedFile {
+        bytes: Some(Arc::from(gtd_bytes.as_slice())),
+        name: "test.gtd".to_owned(),
+        ..Default::default()
+    });
+    harness.step();
+    step_until_loaded(&mut harness);
+    let track = gt_types::TrackRef::new(gt_types::FileIdx::new(0), gt_types::TrackIdx::new(0));
+    inject_completed_run(&mut harness, track);
+
+    {
+        let app = harness.state_mut();
+        app.query_window.open = true;
+        app.query_window
+            .set_text("points | where snap_error >= 2 m | draw".to_owned());
+    }
+    harness.run_steps(3);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
+        .click();
+    step_until_query_result(&mut harness);
+    harness.run_steps(3);
+    let matches = harness
+        .state()
+        .query_window
+        .matches()
+        .expect("run produced results");
+    assert!(!matches.stale, "fresh results are not stale");
+    assert!(
+        matches
+            .draws
+            .first()
+            .is_some_and(|layer| !layer.ranges.is_empty()),
+        "snapped points must match the snap_error draw"
+    );
+
+    // A re-snap produces new values: the results gray out.
+    inject_completed_run(&mut harness, track);
+    harness.run_steps(3);
+    assert!(
+        harness
+            .state()
+            .query_window
+            .matches()
+            .expect("results kept while stale")
+            .stale,
+        "a new run must gray snap_error results out"
+    );
+}
+
 /// Hovering a match header in the query results table cross-highlights the
 /// whole match: its range lands in `hover_match` (the map halo band and the
 /// plot time band read it) and the match's track gets hover focus.

@@ -53,7 +53,8 @@ use gt_side_panel::{
 use gt_snap::wire::Costing;
 use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
 use gt_types::{
-    AssociationConfig, DataCategory, FileIdx, LoadWarning, LoadedFile, NavPoint, TrackIdx, TrackRef,
+    AssociationConfig, DataCategory, FileIdx, LoadWarning, LoadedFile, LoadedTrack, NavPoint,
+    TrackIdx, TrackRef,
 };
 use gt_ui_types::{DisplayMask, HighlightScope, MapHighlight, TrackDataVisibility};
 use loader::{CompletedLoad, FinishedJob, LoadJobs, LoadOutcome};
@@ -137,6 +138,64 @@ impl Default for StartupOptions {
     }
 }
 
+/// Snap error data derived from one run for one track: the plot series and
+/// the dense per-point values the query providers read. Built once per run
+/// (see [`App::with_snap_error_derived`]).
+struct SnapErrorDerived {
+    /// Identity of the source run, for invalidation.
+    run: gt_ui_types::ArcIdentity,
+    /// The plot series, one entry per sent point.
+    series: Arc<Vec<gt_ui_types::SnapErrorPoint>>,
+    /// One slot per track point; `Some` exactly for sent points that came
+    /// back snapped or interpolated - the fixed `snap_error` semantics
+    /// (see docs/snap/design.md, "Query integration").
+    values: Arc<Vec<Option<f64>>>,
+}
+
+impl SnapErrorDerived {
+    fn build(run: gt_ui_types::ArcIdentity, source: &snap::SnapRun, track: &LoadedTrack) -> Self {
+        let mut values = vec![None; track.points.len()];
+        let series = source
+            .result
+            .points
+            .iter()
+            .filter_map(|p| {
+                let nav = p.point.get(&track.points)?;
+                if matches!(
+                    p.kind,
+                    gt_snap::wire::SnapPointKind::Snapped
+                        | gt_snap::wire::SnapPointKind::Interpolated
+                ) && let (Some(error), Some(slot)) =
+                    (p.error_m, values.get_mut(p.point.as_usize()))
+                {
+                    *slot = Some(error);
+                }
+                Some(gt_ui_types::SnapErrorPoint {
+                    x_secs: nav.tpv.time().as_secs_f64(),
+                    error_m: p.error_m,
+                    kind: Self::kind(p.kind),
+                })
+            })
+            .collect();
+        Self {
+            run,
+            series: Arc::new(series),
+            values: Arc::new(values),
+        }
+    }
+
+    /// Map gt-snap's wire-format point kind onto the plot's plain mirror
+    /// (a mirror so `gt-ui-types` stays free of the gt-snap dependency;
+    /// this function is the one place both types are visible).
+    fn kind(kind: gt_snap::wire::SnapPointKind) -> gt_ui_types::SnapErrorKind {
+        match kind {
+            gt_snap::wire::SnapPointKind::Snapped => gt_ui_types::SnapErrorKind::Snapped,
+            gt_snap::wire::SnapPointKind::Interpolated => gt_ui_types::SnapErrorKind::Interpolated,
+            gt_snap::wire::SnapPointKind::Unsnapped => gt_ui_types::SnapErrorKind::Unsnapped,
+        }
+    }
+}
+
 pub struct App {
     map: NavMap,
     shared: Rc<RefCell<SharedAppState>>,
@@ -162,17 +221,11 @@ pub struct App {
     /// Auto mode should sweep for unsnapped tracks: set when files load,
     /// indices shift, or auto mode turns on; consumed once per frame.
     snap_auto_sweep: bool,
-    /// Per-run plot series for the snap error metric, keyed by track
-    /// content and invalidated by the run's `Arc` identity - the plot's
-    /// mipmap cache keys off the series `Arc`, so it must stay stable
-    /// across frames and change exactly when the run does.
-    snap_error_series_cache: HashMap<
-        snap::TrackContentKey,
-        (
-            gt_ui_types::ArcIdentity,
-            Arc<Vec<gt_ui_types::SnapErrorPoint>>,
-        ),
-    >,
+    /// Per-run derived snap error data, keyed by track content and
+    /// invalidated by the run's `Arc` identity. Downstream caches (the
+    /// plot's mipmaps, the query fingerprint) key off the `Arc`s, so they
+    /// must stay stable across frames and change exactly when the run does.
+    snap_error_cache: HashMap<snap::TrackContentKey, SnapErrorDerived>,
     /// Session-only per-track costing overrides ("Snap again as…"). The
     /// override beats the declared travel mode and the configured default;
     /// content-keyed so it survives index shifts like the run stores. Not
@@ -399,7 +452,7 @@ impl App {
             snap_settings: crate::settings::SnapSettings::default(),
             snap_consent_prompt: false,
             snap_auto_sweep: false,
-            snap_error_series_cache: HashMap::new(),
+            snap_error_cache: HashMap::new(),
             snap_costing_overrides: HashMap::new(),
             pending_snap: None,
             hidden_snapped: std::collections::HashSet::new(),
@@ -1239,8 +1292,37 @@ impl App {
     /// toggle - the plot filters by its own track visibility, and hiding the
     /// snapped geometry on the map does not retract the error data.
     fn snap_error_view(&mut self) -> gt_ui_types::SnapErrorSeries {
-        let shared = self.shared.borrow();
         let mut series = gt_ui_types::SnapErrorSeries::default();
+        self.with_snap_error_derived(&mut series, |track_ref, derived, series| {
+            series
+                .points_by_track
+                .insert(track_ref, Arc::clone(&derived.series));
+        });
+        series
+    }
+
+    /// Per-track dense snap error values for the query providers, one entry
+    /// per track with a completed run.
+    fn snap_error_values(&mut self) -> HashMap<TrackRef, Arc<Vec<Option<f64>>>> {
+        let mut values = HashMap::new();
+        self.with_snap_error_derived(&mut values, |track_ref, derived, values| {
+            values.insert(track_ref, Arc::clone(&derived.values));
+        });
+        values
+    }
+
+    /// Walk every track with a completed run, handing `f` its cached
+    /// derived data. The data is built once per run and reused by `Arc`
+    /// identity: downstream (the plot's mipmap cache, the query
+    /// fingerprint) keys off the pointers, so a fresh allocation per frame
+    /// would defeat every cache below this point. Entries for unloaded
+    /// tracks are pruned.
+    fn with_snap_error_derived<T>(
+        &mut self,
+        out: &mut T,
+        mut f: impl FnMut(TrackRef, &SnapErrorDerived, &mut T),
+    ) {
+        let shared = self.shared.borrow();
         let mut seen: HashSet<snap::TrackContentKey> = HashSet::new();
         for (fi, file) in shared.loaded_files.files().iter().enumerate() {
             for (ti, track) in file.tracks.iter().enumerate() {
@@ -1248,52 +1330,26 @@ impl App {
                 let Some(run) = self.snap.latest_run_for(track) else {
                     continue;
                 };
-                // The series is built once per run and reused by `Arc`
-                // identity: downstream (the plot's mipmap cache) keys off
-                // the pointer, so handing out a fresh allocation per frame
-                // would defeat every cache below this point.
                 let content = snap::TrackContentKey::new(track);
                 seen.insert(content);
                 let run_id = gt_ui_types::ArcIdentity::of(&run);
-                let points = match self.snap_error_series_cache.get(&content) {
-                    Some((cached_id, points)) if *cached_id == run_id => Arc::clone(points),
-                    _ => {
-                        let points: Arc<Vec<gt_ui_types::SnapErrorPoint>> = Arc::new(
-                            run.result
-                                .points
-                                .iter()
-                                .filter_map(|p| {
-                                    let nav = p.point.get(&track.points)?;
-                                    Some(gt_ui_types::SnapErrorPoint {
-                                        x_secs: nav.tpv.time().as_secs_f64(),
-                                        error_m: p.error_m,
-                                        kind: Self::snap_error_kind(p.kind),
-                                    })
-                                })
-                                .collect(),
-                        );
-                        self.snap_error_series_cache
-                            .insert(content, (run_id, Arc::clone(&points)));
-                        points
-                    }
+                if self
+                    .snap_error_cache
+                    .get(&content)
+                    .is_none_or(|derived| derived.run != run_id)
+                {
+                    self.snap_error_cache
+                        .insert(content, SnapErrorDerived::build(run_id, &run, track));
+                }
+                // Present by construction: inserted just above when absent.
+                let Some(derived) = self.snap_error_cache.get(&content) else {
+                    continue;
                 };
-                series.points_by_track.insert(track_ref, points);
+                f(track_ref, derived, out);
             }
         }
-        self.snap_error_series_cache
+        self.snap_error_cache
             .retain(|content, _| seen.contains(content));
-        series
-    }
-
-    /// Map gt-snap's wire-format point kind onto the plot's plain mirror
-    /// (a mirror so `gt-ui-types` stays free of the gt-snap dependency;
-    /// this method is the one place both types are visible).
-    fn snap_error_kind(kind: gt_snap::wire::SnapPointKind) -> gt_ui_types::SnapErrorKind {
-        match kind {
-            gt_snap::wire::SnapPointKind::Snapped => gt_ui_types::SnapErrorKind::Snapped,
-            gt_snap::wire::SnapPointKind::Interpolated => gt_ui_types::SnapErrorKind::Interpolated,
-            gt_snap::wire::SnapPointKind::Unsnapped => gt_ui_types::SnapErrorKind::Unsnapped,
-        }
     }
 
     /// Act on a snap trigger from the side panel: route through the consent
@@ -2534,6 +2590,7 @@ impl eframe::App for App {
         // the same frame's map render.
         let snapped_tracks = self.snapped_tracks_view();
         let snap_error = self.snap_error_view();
+        let snap_error_values = self.snap_error_values();
 
         CentralPanel::default().show_inside(ui, |ui| {
             let panel_rect = ui.max_rect();
@@ -2634,9 +2691,12 @@ impl eframe::App for App {
             highlight.hover_match = None;
             self.query_window.show(
                 ui.ctx(),
-                loaded_files.view(),
-                tree.visibility(),
-                filter,
+                query::RunInputs {
+                    loaded_files: loaded_files.view(),
+                    visibility: tree.visibility(),
+                    filter,
+                    snap_errors: &snap_error_values,
+                },
                 highlight,
                 &mut query::MatchMapRequests {
                     map_center: map_center_request,

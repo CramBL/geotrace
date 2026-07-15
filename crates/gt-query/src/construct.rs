@@ -448,6 +448,16 @@ fn metric_docs(metric: QueryMetric) -> (&'static str, &'static str, &'static [&'
              slip_window`.",
             &["with mask 15 deg, snr_drop 10, slip_window 5 min | where slip_all > 2 per min"],
         ),
+        QueryMetric::SnapError => (
+            "distance to the road-snapped position",
+            "Distance from the recorded point to its road-snapped position, \
+             in metres - the observed deviation from the road network. Needs \
+             a completed snap run; points the road network rejected, points \
+             thinned before upload, and tracks without a run carry no value. \
+             Never triggers an upload. Compare against eph to weigh the \
+             receiver's claimed accuracy against observed deviation.",
+            &["where snap_error > eph"],
+        ),
     }
 }
 

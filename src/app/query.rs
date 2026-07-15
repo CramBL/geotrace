@@ -39,8 +39,8 @@ use gt_types::{
 };
 use gt_ui_theme::{DEGREE_SIGN, ELLIPSIS, EM_DASH};
 use gt_ui_types::{
-    DataPointRef, DrawLayer, DrawLayerMask, HighlightScope, MapHighlight, MatchHighlight,
-    QueryMatches, TrackDataVisibility,
+    ArcIdentity, DataPointRef, DrawLayer, DrawLayerMask, HighlightScope, MapHighlight,
+    MatchHighlight, QueryMatches, TrackDataVisibility,
 };
 
 use crate::settings::QueryHistoryEntry;
@@ -356,6 +356,10 @@ struct RunFingerprint {
     /// track-level global filter, in tree order.
     tracks: Vec<TrackRef>,
     filter: GlobalFilter,
+    /// The snap run each evaluated track's `snap_error` values came from
+    /// (by `Arc` identity, absent without a run) - a re-snap changes the
+    /// values, so results referencing them gray out like any other input.
+    snap_runs: Vec<Option<ArcIdentity>>,
 }
 
 /// Everything one run produced and the UI needs to show it: either a points
@@ -425,6 +429,10 @@ struct PanelQuery {
 struct TrackQueryData {
     util: Option<UtilPerPoint>,
     slip: Option<SlipRatePerPoint>,
+    /// Dense per-point snap error values from the track's latest completed
+    /// snap run at spawn time, shared with the app's per-run cache. `None`
+    /// for tracks without a run.
+    snap_error: Option<Arc<Vec<Option<f64>>>>,
     /// Index of the first point inside the global time filter - the offset
     /// between slice-relative evaluation indices and absolute point indices.
     slice_start: usize,
@@ -613,12 +621,11 @@ impl QueryWindow {
     pub fn show(
         &mut self,
         ctx: &egui::Context,
-        loaded_files: LoadedFilesView<'_>,
-        visibility: &TrackDataVisibility,
-        filter: &GlobalFilter,
+        inputs: RunInputs<'_>,
         highlight: &mut MapHighlight,
         requests: &mut MatchMapRequests<'_>,
     ) {
+        let RunInputs { loaded_files, .. } = inputs;
         // Collect a finished worker even while the window is closed, so its
         // results are there on reopen.
         self.drain_completed();
@@ -630,8 +637,7 @@ impl QueryWindow {
         // Results gray out when anything they depend on changed: loaded
         // files, track visibility, or the global filter.
         if let Some(results) = &mut self.results {
-            let stale =
-                current_fingerprint(loaded_files, visibility, filter) != results.fingerprint;
+            let stale = current_fingerprint(inputs) != results.fingerprint;
             match &mut results.body {
                 ResultsBody::Points(p) => p.matches.stale = stale,
                 ResultsBody::Channel(c) => c.matches.stale = stale,
@@ -697,7 +703,7 @@ impl QueryWindow {
             self.run_requested = false;
             if self.running.is_none() {
                 self.record_run(&self.text.clone());
-                self.spawn_run(ctx, loaded_files, visibility, filter);
+                self.spawn_run(ctx, inputs);
             }
         }
     }
@@ -1387,13 +1393,13 @@ impl QueryWindow {
         clippy::expect_used,
         reason = "thread spawn can only fail under extreme system resource exhaustion"
     )]
-    fn spawn_run(
-        &mut self,
-        ctx: &egui::Context,
-        loaded_files: LoadedFilesView<'_>,
-        visibility: &TrackDataVisibility,
-        filter: &GlobalFilter,
-    ) {
+    fn spawn_run(&mut self, ctx: &egui::Context, inputs: RunInputs<'_>) {
+        let RunInputs {
+            loaded_files,
+            filter,
+            snap_errors,
+            ..
+        } = inputs;
         if !self.all_ok() {
             return;
         }
@@ -1402,7 +1408,7 @@ impl QueryWindow {
             .iter()
             .filter_map(|c| c.result.as_ref().ok().cloned())
             .collect();
-        let fingerprint = current_fingerprint(loaded_files, visibility, filter);
+        let fingerprint = current_fingerprint(inputs);
 
         // Owned snapshot for the worker: each evaluated track's full point
         // vector and its channels, plus the sub-range passing the time filter.
@@ -1420,6 +1426,7 @@ impl QueryWindow {
                     points: track.points.clone(),
                     channels: track.channels.clone(),
                     slice,
+                    snap_error: snap_errors.get(&track_ref).cloned(),
                 })
             })
             .collect();
@@ -1460,6 +1467,9 @@ struct TrackSnapshot {
     points: Vec<NavPoint>,
     channels: Vec<Channel>,
     slice: Range<usize>,
+    /// Snap error values captured at spawn time - queries stay synchronous
+    /// over already-computed data and never trigger an upload.
+    snap_error: Option<Arc<Vec<Option<f64>>>>,
 }
 
 /// The worker body: derived series per track, then the sequential pipeline
@@ -1503,6 +1513,7 @@ fn run_worker(
                 uses_util,
                 uses_slip,
                 snapshot.slice.start,
+                snapshot.snap_error.clone(),
             ),
         );
         prepared.fetch_add(1, Ordering::Relaxed);
@@ -2133,16 +2144,19 @@ fn provider_for<'a>(
         channels,
         util: data.and_then(|d| d.util.as_ref()),
         slip: data.and_then(|d| d.slip.as_ref()),
+        snap_error: data.and_then(|d| d.snap_error.as_deref().map(Vec::as_slice)),
     }
 }
 
 /// Snapshot of the state a run depends on, compared each frame against the
 /// stored one to gray out outdated results.
-fn current_fingerprint(
-    loaded_files: LoadedFilesView<'_>,
-    visibility: &TrackDataVisibility,
-    filter: &GlobalFilter,
-) -> RunFingerprint {
+fn current_fingerprint(inputs: RunInputs<'_>) -> RunFingerprint {
+    let RunInputs {
+        loaded_files,
+        visibility,
+        filter,
+        snap_errors,
+    } = inputs;
     let mut file_identities = Vec::with_capacity(loaded_files.entries().len());
     let mut tracks = Vec::new();
     for (fi, entry) in loaded_files.entries().enumerate() {
@@ -2158,11 +2172,31 @@ fn current_fingerprint(
             }
         }
     }
+    let snap_runs = tracks
+        .iter()
+        .map(|track_ref| snap_errors.get(track_ref).map(ArcIdentity::of))
+        .collect();
     RunFingerprint {
         file_identities,
         tracks,
         filter: *filter,
+        snap_runs,
     }
+}
+
+/// Per-track dense snap error values, one entry per track with a completed
+/// snap run - handed in by the app each frame, shared with its per-run cache
+/// (so the `Arc` identities are stable and change exactly when a run does).
+pub type SnapErrorValues = HashMap<TrackRef, Arc<Vec<Option<f64>>>>;
+
+/// The state a query run depends on, handed in by the app each frame - the
+/// inputs [`current_fingerprint`] snapshots to gray out outdated results.
+#[derive(Clone, Copy)]
+pub struct RunInputs<'a> {
+    pub loaded_files: LoadedFilesView<'a>,
+    pub visibility: &'a TrackDataVisibility,
+    pub filter: &'a GlobalFilter,
+    pub snap_errors: &'a SnapErrorValues,
 }
 
 fn compute_track_data(
@@ -2171,6 +2205,7 @@ fn compute_track_data(
     uses_util: bool,
     uses_slip: bool,
     slice_start: usize,
+    snap_error: Option<Arc<Vec<Option<f64>>>>,
 ) -> TrackQueryData {
     // gt_query::check::require_params guarantees these parameters whenever
     // the corresponding metrics are referenced - defaulting below is for the
@@ -2196,6 +2231,7 @@ fn compute_track_data(
     TrackQueryData {
         util,
         slip,
+        snap_error,
         slice_start,
     }
 }
@@ -2405,6 +2441,10 @@ struct TrackProvider<'a> {
     channels: &'a [Channel],
     util: Option<&'a UtilPerPoint>,
     slip: Option<&'a SlipRatePerPoint>,
+    /// Dense per-point snap error values (one slot per track point), from
+    /// the track's latest completed snap run. `None` for tracks without a
+    /// run - the metric then resolves no values and points are skipped.
+    snap_error: Option<&'a [Option<f64>]>,
 }
 
 impl TrackProvider<'_> {
@@ -2543,6 +2583,9 @@ impl MetricProvider for TrackProvider<'_> {
             QueryMetric::SlipBeidou => self.slip_value(index, |s| &s.beidou),
             QueryMetric::SlipNavic => self.slip_value(index, |s| &s.navic),
             QueryMetric::SlipQzss => self.slip_value(index, |s| &s.qzss),
+            QueryMetric::SnapError => self
+                .snap_error
+                .and_then(|values| values.get(index).copied().flatten()),
         }
     }
 
@@ -3400,6 +3443,9 @@ mod tests {
         let data = TrackQueryData {
             util: Some(util),
             slip: Some(slip),
+            // Point 0 snapped with a 3.5 m error; point 1 carries no value
+            // (unsnapped, thinned, or simply beyond the sent range).
+            snap_error: Some(Arc::new(vec![Some(3.5), None])),
             slice_start: 0,
         };
         let provider = provider_for(&points, &[], Some(&data));
@@ -3419,6 +3465,7 @@ mod tests {
             (QueryMetric::BeidouSeen, 0, Some(0.0)),
             (QueryMetric::UtilGps, 0, Some(0.5)), // 50 % as a fraction
             (QueryMetric::SlipAll, 0, Some(2.0)), // already per minute
+            (QueryMetric::SnapError, 0, Some(3.5)), // already metres
             // The reportless point: counts and derived series are missing,
             // never zero.
             (QueryMetric::Velocity, 1, None),
@@ -3426,6 +3473,7 @@ mod tests {
             (QueryMetric::GpsSeen, 1, None),
             (QueryMetric::UtilGps, 1, None),
             (QueryMetric::SlipAll, 1, None),
+            (QueryMetric::SnapError, 1, None),
         ];
         for (metric, index, expected) in cases {
             let value = provider.value(metric, index);
@@ -3441,6 +3489,17 @@ mod tests {
             }
         }
         assert_eq!(provider.len(), 2);
+    }
+
+    /// A track without a snap run resolves no `snap_error` values - the
+    /// metric never invents data (and never triggers an upload; providers
+    /// only read what the app captured).
+    #[test]
+    fn snap_error_is_absent_without_a_run() {
+        let points = test_points();
+        let provider = provider_for(&points, &[], None);
+        assert_eq!(provider.value(QueryMetric::SnapError, 0), None);
+        assert_eq!(provider.value(QueryMetric::SnapError, 1), None);
     }
 
     #[test]
@@ -3461,10 +3520,20 @@ mod tests {
     fn fingerprint_changes_with_files_visibility_and_filter() {
         let loaded_files = gt_loaded_files::LoadedFiles::new();
         let visibility = TrackDataVisibility::from_loaded(loaded_files.files());
-        let base = current_fingerprint(loaded_files.view(), &visibility, &GlobalFilter::default());
+        let base = current_fingerprint(RunInputs {
+            loaded_files: loaded_files.view(),
+            visibility: &visibility,
+            filter: &GlobalFilter::default(),
+            snap_errors: &SnapErrorValues::default(),
+        });
         assert_eq!(
             base,
-            current_fingerprint(loaded_files.view(), &visibility, &GlobalFilter::default())
+            current_fingerprint(RunInputs {
+                loaded_files: loaded_files.view(),
+                visibility: &visibility,
+                filter: &GlobalFilter::default(),
+                snap_errors: &SnapErrorValues::default(),
+            })
         );
         let filtered = GlobalFilter {
             min_distance_km: Some(uom::si::f64::Length::new::<uom::si::length::kilometer>(1.0)),
@@ -3472,7 +3541,55 @@ mod tests {
         };
         assert_ne!(
             base,
-            current_fingerprint(loaded_files.view(), &visibility, &filtered)
+            current_fingerprint(RunInputs {
+                loaded_files: loaded_files.view(),
+                visibility: &visibility,
+                filter: &filtered,
+                snap_errors: &SnapErrorValues::default(),
+            })
+        );
+    }
+
+    /// A new snap run for an evaluated track changes the fingerprint (a
+    /// re-snap changes the values, so results gray out); handing in the
+    /// same run keeps it equal.
+    #[test]
+    fn fingerprint_tracks_snap_run_identity() {
+        let points = gt_test_utils::nav_test_data();
+        let file = gt_track_builder::build_loaded_file(
+            "ride.gtd".to_owned(),
+            &points,
+            &[],
+            vec![],
+            vec![],
+            &[],
+            &gt_track_builder::SegmentationConfig::default(),
+            gt_types::FileSource::GtdPath(std::path::PathBuf::from("ride.gtd")),
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        );
+        let mut loaded_files = gt_loaded_files::LoadedFiles::new();
+        loaded_files.push(file, gt_loaded_files::FileHistory::None);
+        let visibility = TrackDataVisibility::from_loaded(loaded_files.files());
+        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let fingerprint = |snap_errors: &SnapErrorValues| {
+            current_fingerprint(RunInputs {
+                loaded_files: loaded_files.view(),
+                visibility: &visibility,
+                filter: &GlobalFilter::default(),
+                snap_errors,
+            })
+        };
+
+        let no_run = fingerprint(&SnapErrorValues::default());
+        let run = SnapErrorValues::from([(track, Arc::new(vec![Some(1.0)]))]);
+        assert_ne!(no_run, fingerprint(&run), "a first run changes the input");
+        assert_eq!(fingerprint(&run), fingerprint(&run), "same run, stable");
+        let re_run = SnapErrorValues::from([(track, Arc::new(vec![Some(2.0)]))]);
+        assert_ne!(
+            fingerprint(&run),
+            fingerprint(&re_run),
+            "a re-snap must gray results out"
         );
     }
 
@@ -3832,6 +3949,7 @@ mod tests {
 
         let points = test_points();
         let snapshot = TrackSnapshot {
+            snap_error: None,
             track_ref: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
             slice: 0..points.len(),
             points,
