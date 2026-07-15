@@ -28,6 +28,12 @@ pub const DEFAULT_SERVER_URL: &str = "https://valhalla1.openstreetmap.de";
 /// Path of the sole endpoint this crate uses, appended to the server base URL.
 pub const TRACE_ATTRIBUTES_PATH: &str = "/trace_attributes";
 
+/// FOSSGIS's page describing the public routing/matching infrastructure the
+/// default server belongs to - service scope, usage policy, and privacy
+/// terms. Only meaningful for [`DEFAULT_SERVER_URL`]; a self-hosted server
+/// has its own terms, so UI linking here must gate on the default host.
+pub const SERVICE_INFO_URL: &str = "https://routing.openstreetmap.de/about.html";
+
 /// Identifying request header (name, value) required by the FOSSGIS usage
 /// policy for published apps.
 pub const CLIENT_ID_HEADER: (&str, &str) = ("X-Client-Id", "geotrace");

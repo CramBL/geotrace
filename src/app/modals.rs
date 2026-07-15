@@ -579,6 +579,15 @@ pub fn show_snap_consent_dialog(
             ui.add_space(4.0);
             ui.label("The track's recorded positions and timestamps are uploaded to");
             ui.monospace(server_url);
+            // The service description only applies to the public FOSSGIS
+            // infrastructure; a self-hosted server has its own terms.
+            if gt_snap::server_host(server_url) == gt_snap::server_host(gt_snap::DEFAULT_SERVER_URL)
+            {
+                ui.hyperlink_to(
+                    "Read more about the routing service",
+                    gt_snap::SERVICE_INFO_URL,
+                );
+            }
             ui.add_space(4.0);
             ui.label(
                 "Nothing is uploaded until you agree. The acknowledgment is remembered for this \

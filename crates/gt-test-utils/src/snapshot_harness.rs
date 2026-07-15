@@ -130,6 +130,7 @@ pub struct TestHarnessBuilder<'a> {
     size: Option<egui::Vec2>,
     fading_enabled: bool,
     dark_mode: Option<bool>,
+    step_dt: Option<f32>,
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
@@ -139,6 +140,7 @@ impl Default for TestHarnessBuilder<'_> {
             size: None,
             fading_enabled: false,
             dark_mode: None,
+            step_dt: None,
             _marker: std::marker::PhantomData,
         }
     }
@@ -152,6 +154,14 @@ impl<'a> TestHarnessBuilder<'a> {
 
     pub fn fading_enabled(mut self, enabled: bool) -> Self {
         self.fading_enabled = enabled;
+        self
+    }
+
+    /// Simulated time per frame. kittest's default is a coarse 0.25 s (it
+    /// saves CPU on animations) - too coarse for interactions inside egui's
+    /// 0.3 s double-click window, where each queued event runs one frame.
+    pub fn step_dt(mut self, step_dt: f32) -> Self {
+        self.step_dt = Some(step_dt);
         self
     }
 
@@ -187,6 +197,9 @@ impl<'a> TestHarnessBuilder<'a> {
         if let Some(sz) = self.size {
             builder = builder.with_size(sz);
         }
+        if let Some(dt) = self.step_dt {
+            builder = builder.with_step_dt(dt);
+        }
         let mut inner = builder.build_ui(f);
         install_icon_assets(&inner.ctx);
         self.apply_theme(&mut inner);
@@ -205,6 +218,9 @@ impl<'a> TestHarnessBuilder<'a> {
         let mut builder = Harness::builder().with_options(snapshot_options()).wgpu();
         if let Some(sz) = self.size {
             builder = builder.with_size(sz);
+        }
+        if let Some(dt) = self.step_dt {
+            builder = builder.with_step_dt(dt);
         }
         let mut inner = builder.build_ui_state(f, state);
         install_icon_assets(&inner.ctx);

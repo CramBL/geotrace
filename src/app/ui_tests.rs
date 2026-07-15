@@ -2234,6 +2234,35 @@ fn snapshot_snap_consent_dialog() {
     harness.snapshot("snap_consent_dialog");
 }
 
+/// The service link only shows for the default FOSSGIS host - its terms do
+/// not apply to a self-hosted server.
+#[test]
+fn consent_service_link_gates_on_the_default_host() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1024.0, 768.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness.inner.state_mut().snap_consent_prompt = true;
+    harness.run();
+    assert!(
+        harness
+            .inner
+            .query_by_label("Read more about the routing service")
+            .is_some(),
+        "the default host should offer the service description"
+    );
+
+    harness.inner.state_mut().snap_settings.server_url = "https://valhalla.example.com".to_owned();
+    harness.run();
+    assert!(
+        harness
+            .inner
+            .query_by_label("Read more about the routing service")
+            .is_none(),
+        "a self-hosted server must not link to the FOSSGIS terms"
+    );
+}
+
 /// The consent dialog once the mode choice was already made: a single
 /// plain Agree, no mode paragraph.
 #[test]
