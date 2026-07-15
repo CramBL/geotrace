@@ -29,6 +29,7 @@
 
 ### Changed
 
+- The History window's columns are resizable now (drag the header separators), and the identity column gets the spare width by default instead of being squeezed by the others.
 - Each recording's distance and duration in the side panel now carry a road and clock icon.
 
 ### Fixed

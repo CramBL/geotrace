@@ -1,5 +1,6 @@
 use chrono::{DateTime, NaiveDate, Utc};
-use egui::{Button, Checkbox, DragValue, Grid, Label, RichText, ScrollArea, TextEdit, Window};
+use egui::{Button, Checkbox, DragValue, Label, RichText, ScrollArea, TextEdit, Window};
+use egui_extras::{Column, TableBuilder, TableRow};
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::X as ICON_X;
 use gt_history::{DatabaseRef, PruneMode, RecordingEntry, RecordingMeta};
@@ -559,34 +560,7 @@ impl HistoryWindow {
                 let available = ui.available_size();
                 let list_height = (available.y - footer_height - 8.0).max(100.0);
 
-                ScrollArea::vertical()
-                    .max_height(list_height)
-                    .show(ui, |ui| {
-                        Grid::new("history_list")
-                            .num_columns(6)
-                            .striped(true)
-                            .min_col_width(80.0)
-                            .show(ui, |ui| {
-                                crate::terms::term_label(
-                                    ui,
-                                    RichText::new("Identity").strong(),
-                                    crate::terms::IDENTITY,
-                                );
-                                ui.strong("Date");
-                                ui.strong("Duration");
-                                ui.strong("Points");
-                                ui.strong("Size");
-                                ui.label("");
-                                ui.end_row();
-
-                                for entry in &visible {
-                                    let already_loaded = loaded_metas
-                                        .iter()
-                                        .any(|m| m.same_recording(&entry.meta));
-                                    render_row(ui, entry, already_loaded, worker, &mut rename);
-                                }
-                            });
-                    });
+                history_table(ui, list_height, &visible, loaded_metas, worker, &mut rename);
 
                 ui.separator();
                 // Footer stats cover every stored recording. Hidden tracks are
@@ -664,8 +638,78 @@ impl HistoryWindow {
     }
 }
 
-fn render_row(
+/// The scrolling recordings table. Columns are user-resizable (drag the
+/// header separators; widths hold for the session, egui memory is not
+/// saved to disk); identity takes
+/// the remaining width by default - it is where long names live - while the
+/// compact value columns size to their content.
+fn history_table(
     ui: &mut egui::Ui,
+    list_height: f32,
+    visible: &[&RecordingEntry],
+    loaded_metas: &[gt_history::RecordingMeta],
+    worker: &HistoryWorker,
+    rename: &mut Option<RenameEdit>,
+) {
+    let row_height = ui.text_style_height(&egui::TextStyle::Body) + 6.0;
+    TableBuilder::new(ui)
+        .id_salt("history_list")
+        .striped(true)
+        .resizable(true)
+        // Cells lay out in a row (no vertical wrapping): dates stay on one
+        // line and the action buttons sit side by side.
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+        // Fill the window's width instead of shrinking to content, so the
+        // remainder identity column actually receives the spare room.
+        .auto_shrink([false, true])
+        .max_scroll_height(list_height)
+        // Not resizable itself: a resizable remainder column locks at its
+        // sizing-pass width (egui_extras keeps resizable widths), while a
+        // non-resizable one re-absorbs the spare width every frame. Its
+        // width still adjusts through the neighbors' handles and the
+        // window edge.
+        .column(
+            Column::remainder()
+                .at_least(IDENTITY_MIN_WIDTH)
+                .resizable(false)
+                .clip(true),
+        )
+        .columns(Column::auto(), 4)
+        .column(Column::auto().resizable(false))
+        .header(row_height, |mut header| {
+            header.col(|ui| {
+                crate::terms::term_label(
+                    ui,
+                    RichText::new("Identity").strong(),
+                    crate::terms::IDENTITY,
+                );
+            });
+            for title in ["Date", "Duration", "Points", "Size"] {
+                header.col(|ui| {
+                    ui.strong(title);
+                });
+            }
+            header.col(|_| {});
+        })
+        .body(|body| {
+            body.rows(row_height, visible.len(), |mut row| {
+                // In-range by construction: `rows` hands out indices below
+                // `visible.len()`; skip defensively rather than unwrap.
+                let Some(entry) = visible.get(row.index()) else {
+                    return;
+                };
+                let already_loaded = loaded_metas.iter().any(|m| m.same_recording(&entry.meta));
+                render_row(&mut row, entry, already_loaded, worker, rename);
+            });
+        });
+}
+
+/// Identity never collapses below a readable width, however the other
+/// columns are dragged.
+const IDENTITY_MIN_WIDTH: f32 = 160.0;
+
+fn render_row(
+    row: &mut TableRow<'_, '_>,
     entry: &RecordingEntry,
     already_loaded: bool,
     worker: &HistoryWorker,
@@ -673,39 +717,49 @@ fn render_row(
 ) {
     // Identity column: the inline editor when this row is being renamed,
     // otherwise the normal cell.
-    if rename
-        .as_ref()
-        .is_some_and(|r| r.identity == entry.db_ref.identity)
-    {
-        render_rename_editor(ui, rename, worker);
-    } else {
-        identity_cell(ui, entry, worker, rename);
-    }
-
-    let ts = DateTime::<Utc>::from_timestamp_micros(entry.meta.start_us)
-        .unwrap_or_default()
-        .format("%Y-%m-%d %H:%M")
-        .to_string();
-    ui.label(&ts);
-
-    let dur_us = entry.meta.end_us.saturating_sub(entry.meta.start_us).max(0);
-    let dur = chrono::Duration::microseconds(dur_us);
-    ui.label(format_duration(dur));
-
-    let count = gt_history::format_count_suffix(entry.meta.nav_point_count);
-    ui.horizontal(|ui| {
-        ui.label(count);
-        if entry.hidden_tracks > 0 {
-            ui.weak(format!("({}/{} hidden)", entry.hidden_tracks, entry.total_tracks))
-                .on_hover_text(
-                    "Tracks hidden by 'remove filtered data'; use 'Delete hidden data' to drop them permanently",
-                );
+    row.col(|ui| {
+        if rename
+            .as_ref()
+            .is_some_and(|r| r.identity == entry.db_ref.identity)
+        {
+            render_rename_editor(ui, rename, worker);
+        } else {
+            identity_cell(ui, entry, worker, rename);
         }
     });
 
-    ui.label(format_size(entry.meta.gtd_size_bytes));
+    row.col(|ui| {
+        let ts = DateTime::<Utc>::from_timestamp_micros(entry.meta.start_us)
+            .unwrap_or_default()
+            .format("%Y-%m-%d %H:%M")
+            .to_string();
+        ui.label(ts);
+    });
 
-    ui.horizontal(|ui| {
+    row.col(|ui| {
+        let dur_us = entry.meta.end_us.saturating_sub(entry.meta.start_us).max(0);
+        let dur = chrono::Duration::microseconds(dur_us);
+        ui.label(format_duration(dur));
+    });
+
+    row.col(|ui| {
+        ui.label(gt_history::format_count_suffix(entry.meta.nav_point_count));
+        if entry.hidden_tracks > 0 {
+            ui.weak(format!(
+                "({}/{} hidden)",
+                entry.hidden_tracks, entry.total_tracks
+            ))
+            .on_hover_text(
+                "Tracks hidden by 'remove filtered data'; use 'Delete hidden data' to drop them permanently",
+            );
+        }
+    });
+
+    row.col(|ui| {
+        ui.label(format_size(entry.meta.gtd_size_bytes));
+    });
+
+    row.col(|ui| {
         let open = ui.add_enabled(!already_loaded, Button::new("Open").small());
         if already_loaded {
             open.on_hover_text("Already loaded");
@@ -716,8 +770,6 @@ fn render_row(
             worker.delete_recordings(vec![entry.db_ref.clone()], DeleteReason::Manual);
         }
     });
-
-    ui.end_row();
 }
 
 /// Render the inline identity-rename editor in the identity column. Commits on
@@ -901,8 +953,8 @@ mod tests {
     use crate::app::history_db::Response;
 
     use super::{
-        DatabaseRef, Grid, HistoryWindow, HistoryWorker, ICON_NOTE, RecordingEntry, RecordingMeta,
-        ScrollArea, Window, identity_cell, identity_display_parts, travel_mode_display,
+        DatabaseRef, HistoryWindow, HistoryWorker, ICON_NOTE, RecordingEntry, RecordingMeta,
+        identity_display_parts, travel_mode_display,
     };
 
     /// Harness state for driving the History window: the window, a live (empty)
@@ -1065,6 +1117,82 @@ mod tests {
         );
     }
 
+    /// The recordings table: identity takes the remaining width (long names
+    /// get the room), the value columns stay compact, headers carry the
+    /// resize handles.
+    #[test]
+    fn snapshot_history_window_table() {
+        let mut harness = history_harness(vec![
+            entry_with_identity("auto:ride.gtd"),
+            entry_with_identity("a much longer recording identity that needs the room"),
+            entry_with_identity("survey_flight_2026_07_15.gtd"),
+        ]);
+        // The temporary database path differs every run; keep it out of the
+        // image.
+        harness.worker.hide_path();
+        let mut h = TestHarness::builder()
+            .size(egui::vec2(900.0, 500.0))
+            .ui_state(show_history, harness);
+        // Auto columns measure their content over the first frames; settle
+        // before snapshotting.
+        for _ in 0..4 {
+            h.run();
+        }
+        h.snapshot("history_window_table");
+    }
+
+    /// Dragging the separator between two headers resizes the column: the
+    /// neighbor's left edge follows the pointer.
+    #[test]
+    fn dragging_a_header_separator_resizes_the_column() {
+        let harness = history_harness(vec![entry_with_identity("ride.gtd")]);
+        let mut h = TestHarness::builder()
+            .size(egui::vec2(900.0, 500.0))
+            .ui_state(show_history, harness);
+        // Settle the sizing pass so column widths are established.
+        for _ in 0..4 {
+            h.run();
+        }
+
+        // "Date" also names a filter-row label; the header is the last match.
+        let date = h
+            .inner
+            .get_all_by_label("Date")
+            .last()
+            .expect("header present")
+            .rect();
+        let duration_before = h.inner.get_by_label("Duration").rect();
+        // The resize handle sits on the boundary between the two columns.
+        let grip = egui::pos2(
+            (date.right() + duration_before.left()) / 2.0,
+            date.center().y,
+        );
+        let drag = 40.0;
+        h.inner.event(egui::Event::PointerMoved(grip));
+        h.inner.event(egui::Event::PointerButton {
+            pos: grip,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.inner
+            .event(egui::Event::PointerMoved(grip + egui::vec2(drag, 0.0)));
+        h.inner.event(egui::Event::PointerButton {
+            pos: grip + egui::vec2(drag, 0.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run();
+
+        let duration_after = h.inner.get_by_label("Duration").rect();
+        let moved = duration_after.left() - duration_before.left();
+        assert!(
+            (moved - drag).abs() < 2.0,
+            "the Duration column edge should follow the drag: moved {moved}px, dragged {drag}px"
+        );
+    }
+
     #[test]
     fn double_clicking_identity_opens_inline_editor() {
         let harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
@@ -1150,50 +1278,22 @@ mod tests {
         );
     }
 
-    /// Settled width of the History window, mirroring the real container: a
-    /// resizable [`Window`] holding the identity grid in a vertical scroll
-    /// area. A resizable window runs a sizing pass over its content, the path
-    /// where an un-truncated label reports its full text width and stretches the
-    /// window.
+    /// Settled width of the History window, through the real rendering path
+    /// ([`HistoryWindow::show`]). A resizable window runs a sizing pass over
+    /// its content, the path where an un-clipped column would report its
+    /// full text width and stretch the window.
     fn history_window_width(identity: &str) -> f32 {
-        let width = std::rc::Rc::new(std::cell::Cell::new(-1.0_f32));
-        let probe = std::rc::Rc::clone(&width);
-        let entry = entry_with_identity(identity);
-        let mut harness = TestHarness::builder()
+        let harness = history_harness(vec![entry_with_identity(identity)]);
+        let mut h = TestHarness::builder()
             .size(egui::vec2(1600.0, 500.0))
-            .ui(move |ui| {
-                let resp = Window::new("History")
-                    .resizable(true)
-                    .default_width(640.0)
-                    .show(ui.ctx(), |ui| {
-                        ScrollArea::vertical().show(ui, |ui| {
-                            Grid::new("history_list")
-                                .num_columns(6)
-                                .min_col_width(80.0)
-                                .show(ui, |ui| {
-                                    identity_cell(
-                                        ui,
-                                        &entry,
-                                        &HistoryWorker::disabled(),
-                                        &mut None,
-                                    );
-                                    ui.label("2026-01-15 12:00");
-                                    ui.label("1h 02m");
-                                    ui.label("12.3k");
-                                    ui.label("4.5 MB");
-                                    ui.label("");
-                                    ui.end_row();
-                                });
-                        });
-                    });
-                if let Some(resp) = resp {
-                    probe.set(resp.response.rect.width());
-                }
-            });
+            .ui_state(show_history, harness);
         for _ in 0..6 {
-            harness.run();
+            h.run();
         }
-        width.get()
+        let window = h
+            .inner
+            .get_by_role_and_label(egui::accesskit::Role::Window, "History");
+        window.rect().width()
     }
 
     /// A long recording identity truncates in the History window rather than
