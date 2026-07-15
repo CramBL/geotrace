@@ -318,8 +318,9 @@ enum RunProduct {
     /// A composed points pipeline.
     Points(PipelineOutput),
     /// A standalone channel-source run: matched sample ranges per track, and
-    /// the source channel's timeline for the sample tables.
-    Channel(ChannelRun),
+    /// the source channel's timeline for the sample tables. Boxed: several
+    /// times the size of the pipeline variant.
+    Channel(Box<ChannelRun>),
 }
 
 /// A channel-source run's raw output, before the panel projection.
@@ -841,7 +842,7 @@ impl QueryWindow {
             RunProduct::Points(pipeline) => {
                 ResultsBody::Points(points_results(&pipeline, completed.track_data))
             }
-            RunProduct::Channel(run) => ResultsBody::Channel(channel_results(run)),
+            RunProduct::Channel(run) => ResultsBody::Channel(channel_results(*run)),
         };
         self.results = Some(QueryResults {
             body,
@@ -1635,13 +1636,13 @@ fn run_channel_worker(
     let matches = channel_query_matches(query.mode(), &per_track);
 
     RunCompleted {
-        output: Some(RunProduct::Channel(ChannelRun {
+        output: Some(RunProduct::Channel(Box::new(ChannelRun {
             channel: name.to_owned(),
             components,
             summary: output.summary,
             tracks: track_results,
             matches,
-        })),
+        }))),
         track_data: HashMap::new(),
     }
 }
@@ -2413,6 +2414,14 @@ fn summary_line(summary: &RunSummary, mode: DisplayMode) -> String {
     }
     for (metric, count) in &summary.skipped {
         parts.push(format!("{count} skipped (missing {metric})"));
+    }
+    // "without <metric> values", not "never ran <feature>": a track whose
+    // snap run left every point unsnapped also carries no values.
+    for (metric, count) in &summary.tracks_without {
+        parts.push(format!(
+            "{count} {} without {metric} values",
+            gt_fmt::pluralize(*count, "track", "tracks"),
+        ));
     }
     if summary.skipped_non_finite > 0 {
         parts.push(format!(
@@ -3614,7 +3623,7 @@ mod tests {
             line,
             format!(
                 "0 matches on 0 tracks {EM_DASH} 3 skipped (missing util_all) \
-                 {EM_DASH} snr_drop declared but unused"
+                 {EM_DASH} 1 track without util_all values {EM_DASH} snr_drop declared but unused"
             )
         );
     }

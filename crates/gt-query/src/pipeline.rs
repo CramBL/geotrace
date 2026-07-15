@@ -163,6 +163,11 @@ struct QueryContribution {
     visible_points: usize,
     skipped: BTreeMap<QueryMetric, usize>,
     skipped_non_finite: usize,
+    /// Referenced metrics the whole track carried no value for, probed
+    /// against the full provider (not the visibility-narrowed views): a
+    /// track without a snap run lacks `snap_error` regardless of what an
+    /// earlier stage hid.
+    absent: Vec<QueryMetric>,
     shorter_than_window: bool,
 }
 
@@ -214,6 +219,7 @@ fn fold_track<P: MetricProvider>(
             visible_points,
             skipped,
             skipped_non_finite,
+            absent: crate::eval::absent_metrics(query.referenced_metrics(), input.provider),
             shorter_than_window: query.window().is_some() && !run_long_enough,
         });
 
@@ -275,6 +281,9 @@ impl QueryAccum {
         for (metric, count) in contrib.skipped {
             *self.summary.skipped.entry(metric).or_insert(0) += count;
         }
+        for metric in contrib.absent {
+            *self.summary.tracks_without.entry(metric).or_insert(0) += 1;
+        }
         if !contrib.ranges.is_empty() {
             self.summary.tracks_with_matches += 1;
             self.summary.match_count += contrib.ranges.len();
@@ -321,6 +330,33 @@ mod tests {
                 _ => None,
             }
         }
+    }
+
+    /// Each stage's summary counts the track once per metric it references
+    /// and the track lacks - a `snap_error` stage names the run-less track,
+    /// the velocity stage next to it does not.
+    #[test]
+    fn stages_count_tracks_without_their_own_metrics() {
+        let provider = Speeds(vec![5.0, 10.0, 9.0]);
+        let output = compose(
+            &[
+                "points | where snap_error > 1 m",
+                "points | where velocity > 1 km/h",
+            ],
+            &provider,
+        );
+        let summaries: Vec<_> = output
+            .queries
+            .iter()
+            .map(|q| q.summary.tracks_without.clone())
+            .collect();
+        assert_eq!(
+            summaries,
+            vec![
+                BTreeMap::from([(QueryMetric::SnapError, 1)]),
+                BTreeMap::new(),
+            ]
+        );
     }
 
     fn compose<P: MetricProvider>(srcs: &[&str], provider: &P) -> PipelineOutput {
