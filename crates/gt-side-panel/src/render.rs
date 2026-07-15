@@ -4,6 +4,7 @@ use egui::{Button, Label, RichText, ScrollArea, Sides, TextEdit};
 use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CLOCK as ICON_CLOCK;
 use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
+use egui_phosphor::regular::LINE_SEGMENTS as ICON_LINE_SEGMENTS;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PATH as ICON_PATH;
 use egui_phosphor::regular::ROAD_HORIZON as ICON_ROAD_HORIZON;
@@ -54,6 +55,35 @@ pub struct SnapPanelView<'a> {
     /// The costing choices of the re-run submenu, labels pre-rendered by
     /// the app from the wire type's canonical spelling.
     pub costing_choices: &'a [(SnapCosting, String)],
+    /// The global snapping activity, for the progress strip at the panel
+    /// bottom.
+    pub progress: &'a SnapProgressView,
+}
+
+/// The global snapping activity: what runs, what waits. Rendered as the
+/// progress strip pinned to the panel bottom while anything is pending.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SnapProgressView {
+    /// The run currently talking to the server, if any.
+    pub in_flight: Option<SnapInFlightView>,
+    /// Tracks waiting in the queue (including autos parked while hidden).
+    pub queued: usize,
+}
+
+impl SnapProgressView {
+    /// Whether anything is pending - the strip only renders then.
+    pub fn active(&self) -> bool {
+        self.in_flight.is_some() || self.queued > 0
+    }
+}
+
+/// The in-flight run as the progress strip shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapInFlightView {
+    /// The track being snapped, resolved to its display name by the panel.
+    pub track: TrackRef,
+    pub completed_chunks: usize,
+    pub total_chunks: usize,
 }
 
 /// One track's snap state as the panel shows it, mirroring the app's
@@ -294,14 +324,112 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
             .collect()
     };
 
-    ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            for fi in 0..ctx.files().len() {
-                let display_name = display_names.get(fi).map_or("", String::as_str);
-                render_file_row(ui, FileIdx::new(fi), display_name, ctx);
+    // The progress strip pins to the panel bottom as an inner panel; the
+    // file tree scrolls in the remaining central space.
+    if ctx.snap.progress.active() {
+        egui::Panel::bottom("snap_progress_strip").show_inside(ui, |ui| {
+            snap_progress_strip(ui, ctx.snap, &display_names, ctx.files());
+        });
+    }
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE)
+        .show_inside(ui, |ui| {
+            ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for fi in 0..ctx.files().len() {
+                        let display_name = display_names.get(fi).map_or("", String::as_str);
+                        render_file_row(ui, FileIdx::new(fi), display_name, ctx);
+                    }
+                });
+        });
+}
+
+/// The global snap progress strip: the in-flight run with its chunk
+/// progress, the queue length, and the offline pause - visible only while
+/// something is pending, so an idle panel loses no space.
+fn snap_progress_strip(
+    ui: &mut egui::Ui,
+    snap: SnapPanelView<'_>,
+    display_names: &[String],
+    files: &[gt_types::LoadedFile],
+) {
+    let progress = snap.progress;
+    ui.add_space(STRIP_PADDING);
+    // The current action, with the queue length at the right edge; a long
+    // track name truncates rather than pushing the count out. The
+    // horizontal wrapper keeps the right-to-left layout from claiming the
+    // strip's full height (which would push the bar out).
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if progress.queued > 0 {
+                ui.label(RichText::new(format!("{} queued", progress.queued)).weak());
+            }
+            match &progress.in_flight {
+                Some(run) => {
+                    let label = snap_progress_label(run.track, display_names, files);
+                    // Chunk currently being fetched, 1-based; a run only stays
+                    // in flight while at least one chunk remains.
+                    let current = (run.completed_chunks + 1).min(run.total_chunks);
+                    ui.add(
+                        Label::new(format!(
+                            "Snapping {label} - chunk {current}/{}",
+                            run.total_chunks
+                        ))
+                        .truncate(),
+                    );
+                }
+                // Queued work with nothing in flight: paused (offline) or the
+                // moment between dispatches. Say which, never sit silent.
+                None if snap.offline => {
+                    ui.label(
+                        RichText::new("Snapping paused - offline")
+                            .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                    );
+                }
+                None => {
+                    ui.label(RichText::new("Waiting to snap").weak());
+                }
             }
         });
+    });
+    if let Some(run) = &progress.in_flight {
+        let fraction = if run.total_chunks == 0 {
+            0.0
+        } else {
+            run.completed_chunks as f32 / run.total_chunks as f32
+        };
+        ui.add(egui::ProgressBar::new(fraction).desired_height(PROGRESS_BAR_HEIGHT));
+    }
+    ui.add_space(STRIP_PADDING);
+}
+
+/// Height of the strip's progress bar - slim, the text line above carries
+/// the words.
+const PROGRESS_BAR_HEIGHT: f32 = 4.0;
+
+/// Vertical padding above and below the strip contents.
+const STRIP_PADDING: f32 = 2.0;
+
+/// Display label of the in-flight track: the file's display name, plus the
+/// track number when the recording split into several tracks.
+fn snap_progress_label(
+    track: TrackRef,
+    display_names: &[String],
+    files: &[gt_types::LoadedFile],
+) -> String {
+    let name = display_names
+        .get(track.fi.as_usize())
+        .map_or("", String::as_str);
+    let multi_track = track
+        .fi
+        .get(files)
+        .is_some_and(|file| file.tracks.len() > 1);
+    if multi_track {
+        format!("{name} (track {})", track.index.as_usize() + 1)
+    } else {
+        name.to_owned()
+    }
 }
 
 fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, display_name: &str, ctx: &mut PanelContext<'_>) {
@@ -674,13 +802,17 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
     let Some(action) = snap_action(row, ctx.snap) else {
         return;
     };
+    // The trigger wears the raw, unrouted polyline - matched results wear
+    // the routed [`ICON_PATH`] glyph above, so "still to match" and
+    // "matched" never look alike.
     let failed = matches!(row, SnapRowView::Failed { .. });
-    let label = consent_suffixed(ICON_PATH, action.consent_pending);
+    let label = consent_suffixed(ICON_LINE_SEGMENTS, action.consent_pending);
     let mut text = RichText::new(label);
     if failed {
         text = text.color(gt_ui_theme::warning_amber(ui.visuals().dark_mode));
     }
     let button = ui.add_enabled(action.enabled, Button::new(text).frame(false));
+    snap_trigger_overlay(ui, row, button.rect);
     let button = if action.enabled {
         button
             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -690,6 +822,42 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
     };
     if button.clicked() {
         *ctx.snap_request = Some(track_ref);
+    }
+}
+
+/// Corner badge size of the queued-state clock, in points.
+const QUEUED_BADGE_FONT: f32 = 9.0;
+
+/// Spinner diameter over the in-flight trigger, in points.
+const IN_FLIGHT_SPINNER_SIZE: f32 = 10.0;
+
+/// The in-progress overlays on the (disabled, therefore faded) trigger
+/// glyph: a clock badge while queued, a spinner while talking to the
+/// server - waiting and working read differently at a glance.
+fn snap_trigger_overlay(ui: &mut egui::Ui, row: &SnapRowView, rect: egui::Rect) {
+    match row {
+        SnapRowView::Queued => {
+            ui.painter().text(
+                rect.right_bottom(),
+                egui::Align2::RIGHT_BOTTOM,
+                ICON_CLOCK,
+                egui::FontId::proportional(QUEUED_BADGE_FONT),
+                ui.visuals().text_color(),
+            );
+        }
+        SnapRowView::InFlight { .. } => {
+            ui.put(
+                egui::Rect::from_center_size(
+                    rect.center(),
+                    egui::Vec2::splat(IN_FLIGHT_SPINNER_SIZE),
+                ),
+                egui::Spinner::new().size(IN_FLIGHT_SPINNER_SIZE),
+            );
+        }
+        SnapRowView::Idle
+        | SnapRowView::Unsnappable { .. }
+        | SnapRowView::Failed { .. }
+        | SnapRowView::Done { .. } => {}
     }
 }
 
@@ -1690,12 +1858,48 @@ mod snap_action_tests {
         // the borrow 'static for the test helper.
         static EMPTY: std::sync::OnceLock<HashMap<TrackRef, SnapRowView>> =
             std::sync::OnceLock::new();
+        static IDLE: std::sync::OnceLock<SnapProgressView> = std::sync::OnceLock::new();
         SnapPanelView {
             offline,
             consent_pending,
             rows: EMPTY.get_or_init(HashMap::new),
             costing_choices: &[],
+            progress: IDLE.get_or_init(SnapProgressView::default),
         }
+    }
+
+    /// The in-flight label carries the file's display name, with a track
+    /// number only when the recording split into several tracks.
+    #[rstest::rstest]
+    #[case::single_track(1, "morning ride")]
+    #[case::multi_track(2, "morning ride (track 2)")]
+    fn progress_label_numbers_tracks_only_when_split(
+        #[case] track_count: usize,
+        #[case] expected: &str,
+    ) {
+        let points = if track_count > 1 {
+            gt_test_utils::nav_data_with_gap(5, 5)
+        } else {
+            gt_test_utils::nav_test_data()
+        };
+        let file = gt_track_builder::build_loaded_file(
+            "ride.gtd".to_owned(),
+            &points,
+            &[],
+            vec![],
+            vec![],
+            &[],
+            &gt_track_builder::SegmentationConfig::default(),
+            gt_types::FileSource::GtdPath(std::path::PathBuf::from("ride.gtd")),
+            gt_track_builder::FileMeta::default(),
+            vec![],
+        );
+        assert_eq!(file.tracks.len(), track_count, "fixture track count");
+        let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(track_count - 1));
+        assert_eq!(
+            snap_progress_label(track, &["morning ride".to_owned()], &[file]),
+            expected
+        );
     }
 
     fn unsnappable() -> SnapRowView {
