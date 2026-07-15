@@ -36,7 +36,7 @@ use egui::Context;
 use gt_snap::request_plan::{self, RequestPlan, SnapParams};
 use gt_snap::stitch::{self, SnapResult, SnapWarning, SnapWarningReporter};
 use gt_snap::transport::HttpTransport;
-use gt_snap::wire::Costing;
+use gt_snap::wire::{Costing, SpeedLimit};
 use gt_snap::{DEFAULT_SERVER_URL, server_host, transport};
 use gt_types::mercator::{self};
 use gt_types::{Latitude, LoadedTrack, Longitude, TrackRef, TravelMode};
@@ -177,7 +177,7 @@ impl SnapRun {
             .map(|edge| SnappedEdgeInfo {
                 name: (!edge.names.is_empty()).then(|| edge.names.join(", ")),
                 road_class: edge.road_class.map(|c| c.display_name().to_owned()),
-                speed_limit_kmh: edge.speed_limit,
+                speed_limit: edge.speed_limit.map(SpeedLimit::display),
                 surface: edge.surface.map(|s| s.display_name().to_owned()),
             })
             .collect();

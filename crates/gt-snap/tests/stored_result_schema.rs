@@ -11,7 +11,7 @@ use strum::EnumCount;
 use gt_snap::request_plan::SnapParams;
 use gt_snap::snapped_track::{Position, SnappedEdgeSpan, SnappedTrackSegment};
 use gt_snap::stitch::{SnapKindCounts, SnapPoint, SnapResult, SnapWarning};
-use gt_snap::wire::{Costing, Edge, RoadClass, SnapPointKind, Surface};
+use gt_snap::wire::{Costing, Edge, RoadClass, SnapPointKind, SpeedLimit, Surface};
 
 use gt_types::PointIdx;
 
@@ -70,7 +70,7 @@ fn exhaustive_result() -> SnapResult {
                 names: vec!["H.C. Andersens Boulevard".to_owned()],
                 way_id: Some(496_181_694),
                 road_class: Some(RoadClass::Tertiary),
-                speed_limit: Some(50),
+                speed_limit: Some(SpeedLimit::Kmh(50)),
                 surface: Some(Surface::PavedSmooth),
                 begin_shape_index: Some(0),
                 end_shape_index: Some(1),

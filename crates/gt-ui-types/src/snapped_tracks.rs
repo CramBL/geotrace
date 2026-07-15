@@ -96,8 +96,8 @@ pub struct SnappedEdgeInfo {
     pub name: Option<String>,
     /// Display name of the road classification.
     pub road_class: Option<String>,
-    /// Posted speed limit, km/h.
-    pub speed_limit_kmh: Option<u32>,
+    /// Pre-rendered speed limit, e.g. `120 km/h` or `Unlimited`.
+    pub speed_limit: Option<String>,
     /// Display name of the surface classification.
     pub surface: Option<String>,
 }

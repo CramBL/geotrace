@@ -251,8 +251,8 @@ fn edge_tooltip_rows(ui: &mut Ui, edge: &SnappedEdgeInfo) {
             if let Some(road_class) = &edge.road_class {
                 row("Road class", road_class.clone());
             }
-            if let Some(limit) = edge.speed_limit_kmh {
-                row("Speed limit", format!("{limit} km/h"));
+            if let Some(limit) = &edge.speed_limit {
+                row("Speed limit", limit.clone());
             }
             if let Some(surface) = &edge.surface {
                 row("Surface", surface.clone());

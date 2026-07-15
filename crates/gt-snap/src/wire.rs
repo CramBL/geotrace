@@ -347,6 +347,62 @@ impl Surface {
     }
 }
 
+/// A posted speed limit. Valhalla reports most edges as a km/h number, but
+/// a derestricted road (a German autobahn stretch) comes back as the string
+/// `"unlimited"` - a plain `u32` field fails the whole chunk over it.
+///
+/// `Serialize` mirrors the wire shape (number or `"unlimited"`), so cached
+/// results round-trip unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpeedLimit {
+    /// km/h.
+    Kmh(u32),
+    /// Explicitly derestricted - `"unlimited"` on the wire.
+    Unlimited,
+}
+
+/// The one non-numeric value Valhalla documents for `edge.speed_limit`.
+const SPEED_LIMIT_UNLIMITED: &str = "unlimited";
+
+impl SpeedLimit {
+    /// Hover-text rendering: `"120 km/h"` or `"Unlimited"`.
+    pub fn display(self) -> String {
+        match self {
+            SpeedLimit::Kmh(kmh) => format!("{kmh} km/h"),
+            SpeedLimit::Unlimited => "Unlimited".to_owned(),
+        }
+    }
+}
+
+impl Serialize for SpeedLimit {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            SpeedLimit::Kmh(kmh) => serializer.serialize_u32(*kmh),
+            SpeedLimit::Unlimited => serializer.serialize_str(SPEED_LIMIT_UNLIMITED),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SpeedLimit {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        /// The two wire shapes, discriminated by JSON type.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Kmh(u32),
+            Text(String),
+        }
+        match Wire::deserialize(deserializer)? {
+            Wire::Kmh(kmh) => Ok(SpeedLimit::Kmh(kmh)),
+            Wire::Text(text) if text == SPEED_LIMIT_UNLIMITED => Ok(SpeedLimit::Unlimited),
+            Wire::Text(text) => Err(serde::de::Error::invalid_value(
+                serde::de::Unexpected::Str(&text),
+                &"a km/h number or \"unlimited\"",
+            )),
+        }
+    }
+}
+
 /// One matched edge, trimmed to the requested attribute subset.
 ///
 /// `Serialize` exists for persisting cached snap results, not for requests.
@@ -358,9 +414,8 @@ pub struct Edge {
     pub way_id: Option<u64>,
     #[serde(default)]
     pub road_class: Option<RoadClass>,
-    /// km/h.
     #[serde(default)]
-    pub speed_limit: Option<u32>,
+    pub speed_limit: Option<SpeedLimit>,
     #[serde(default)]
     pub surface: Option<Surface>,
     /// Index range this edge covers in the decoded response shape.
