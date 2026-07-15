@@ -64,6 +64,7 @@ pub enum QueryMetric {
     SlipBeidou,
     SlipNavic,
     SlipQzss,
+    SnapError,
 }
 
 /// The dimension of a value, checked statically before a run.
@@ -116,7 +117,7 @@ impl QueryMetric {
             QueryMetric::Velocity => Quantity::Speed,
             QueryMetric::Heading => Quantity::Direction,
             QueryMetric::Accel => Quantity::Acceleration,
-            QueryMetric::Eph => Quantity::Length,
+            QueryMetric::Eph | QueryMetric::SnapError => Quantity::Length,
             QueryMetric::ClockDelta => Quantity::Duration,
             QueryMetric::SatsSeen
             | QueryMetric::SatsFix
@@ -189,6 +190,7 @@ impl QueryMetric {
             QueryMetric::SlipBeidou => Some(MetricKind::SlipBeidou),
             QueryMetric::SlipNavic => Some(MetricKind::SlipNavic),
             QueryMetric::SlipQzss => Some(MetricKind::SlipQzss),
+            QueryMetric::SnapError => Some(MetricKind::SnapError),
         }
     }
 
@@ -290,11 +292,6 @@ mod tests {
     /// Every plot metric is reachable from a query, no plot metric is covered
     /// twice, and the extra query-only metrics are exactly the five per-point
     /// fields. A new `MetricKind` variant fails here until it is wired up.
-    ///
-    /// `SnapError` is the deliberate exception: `snap_error` lands as a query
-    /// metric in the snap feature's phase 3, alongside the ad-hoc metric
-    /// registry (see `docs/snap/design.md`, "Query integration"). Until then
-    /// it is the one plot metric a query cannot reference.
     #[test]
     fn covers_every_metric_kind() {
         let mapped: Vec<MetricKind> = QueryMetric::iter()
@@ -306,12 +303,8 @@ mod tests {
         let unmapped: Vec<MetricKind> = MetricKind::iter()
             .filter(|kind| !mapped.contains(kind))
             .collect();
-        assert_eq!(
-            unmapped,
-            vec![MetricKind::SnapError],
-            "exactly SnapError awaits its phase-3 query wiring"
-        );
-        assert_eq!(QueryMetric::COUNT, MetricKind::COUNT + 5 - unmapped.len());
+        assert_eq!(unmapped, vec![], "every plot metric is query-reachable");
+        assert_eq!(QueryMetric::COUNT, MetricKind::COUNT + 5);
     }
 
     /// The DSL name is the `MetricKind` wire name with the unit suffix
