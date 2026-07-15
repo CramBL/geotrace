@@ -2410,11 +2410,25 @@ impl eframe::App for App {
         // after the panel, mirroring the other panel requests.
         let snap_rows = self.snap_row_views();
         let snap_costing_choices = Self::costing_choices();
+        let snap_progress = {
+            let progress = self.snap.progress();
+            gt_side_panel::SnapProgressView {
+                in_flight: progress
+                    .in_flight
+                    .map(|run| gt_side_panel::SnapInFlightView {
+                        track: run.track,
+                        completed_chunks: run.completed_chunks,
+                        total_chunks: run.total_chunks,
+                    }),
+                queued: progress.queued,
+            }
+        };
         let snap_view = SnapPanelView {
             offline: snap::SnapScheduler::offline(),
             consent_pending: !self.snap_settings.consent_granted(),
             rows: &snap_rows,
             costing_choices: &snap_costing_choices,
+            progress: &snap_progress,
         };
         let mut snap_request: Option<TrackRef> = None;
         let mut snap_visibility_request: Option<TrackRef> = None;

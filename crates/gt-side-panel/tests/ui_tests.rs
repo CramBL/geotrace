@@ -4,6 +4,7 @@
 )]
 
 use egui::CentralPanel;
+use egui_phosphor::regular::LINE_SEGMENTS as ICON_LINE_SEGMENTS;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::PATH as ICON_PATH;
 use std::collections::HashMap;
@@ -35,6 +36,7 @@ struct State {
     recording_name_template: String,
     metadata_request: Option<gt_side_panel::RecordingDetails>,
     snap_rows: HashMap<TrackRef, SnapRowView>,
+    snap_progress: gt_side_panel::SnapProgressView,
     snap_offline: bool,
     snap_consent_pending: bool,
     snap_request: Option<TrackRef>,
@@ -91,6 +93,7 @@ fn make_state_with_warnings_on(
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
         snap_rows: HashMap::new(),
+        snap_progress: gt_side_panel::SnapProgressView::default(),
         snap_offline: false,
         snap_consent_pending: false,
         snap_request: None,
@@ -130,6 +133,7 @@ fn make_harness_sized(state: State, size: egui::Vec2) -> TestHarness<'static, St
                     consent_pending: s.snap_consent_pending,
                     rows: &s.snap_rows,
                     costing_choices: &s.snap_costing_choices,
+                    progress: &s.snap_progress,
                 },
                 snap_request: &mut s.snap_request,
                 snap_visibility_request: &mut s.snap_visibility_request,
@@ -231,9 +235,57 @@ fn snapshot_snap_trigger_states() {
     // glyph dims further.
     state.snap_rows.insert(track(6), done_row(false));
     // Taller than the default harness: seven expanded files must all fit.
+    // Bounded steps: the in-flight spinner repaints forever, so
+    // run-until-idle would never settle.
     let mut harness = make_harness_sized(state, egui::vec2(280.0, 720.0));
-    harness.run();
+    harness.inner.run_steps(3);
     harness.snapshot("side_panel_snap_states");
+}
+
+/// The progress strip while a run is in flight with more queued: bar with
+/// the current action, queue count beside it, pinned to the panel bottom.
+#[test]
+fn snapshot_snap_progress_strip_active() {
+    let mut state = make_state(3);
+    let track = |i: usize| TrackRef::new(FileIdx::new(i), TrackIdx::new(0));
+    state.snap_rows.insert(
+        track(0),
+        SnapRowView::InFlight {
+            completed_chunks: 2,
+            total_chunks: 5,
+        },
+    );
+    state.snap_rows.insert(track(1), SnapRowView::Queued);
+    state.snap_rows.insert(track(2), SnapRowView::Queued);
+    state.snap_progress = gt_side_panel::SnapProgressView {
+        in_flight: Some(gt_side_panel::SnapInFlightView {
+            track: track(0),
+            completed_chunks: 2,
+            total_chunks: 5,
+        }),
+        queued: 2,
+    };
+    // Bounded steps: the in-flight spinner repaints forever.
+    let mut harness = make_harness(state);
+    harness.inner.run_steps(3);
+    harness.snapshot("side_panel_snap_progress_strip");
+}
+
+/// Queued work with the app offline: the strip says the queue is paused
+/// and why, instead of sitting silent.
+#[test]
+fn snapshot_snap_progress_strip_offline_paused() {
+    let mut state = make_state(1);
+    let track = |i: usize| TrackRef::new(FileIdx::new(i), TrackIdx::new(0));
+    state.snap_offline = true;
+    state.snap_rows.insert(track(0), SnapRowView::Queued);
+    state.snap_progress = gt_side_panel::SnapProgressView {
+        in_flight: None,
+        queued: 1,
+    };
+    let mut harness = make_harness(state);
+    harness.run();
+    harness.snapshot("side_panel_snap_progress_strip_offline");
 }
 
 /// A partial run with warnings: the status hover must surface the partial
@@ -316,13 +368,10 @@ fn clicking_stale_trigger_requests_snap() {
     let mut harness = make_harness(state);
     harness.run();
 
-    let triggers: Vec<_> = harness.inner.get_all_by_label(ICON_PATH).collect();
-    assert_eq!(triggers.len(), 2, "status glyph plus re-run trigger");
-    triggers
-        .into_iter()
-        .nth(1)
-        .expect("second glyph is the trigger")
-        .click();
+    // The status glyph (routed path) and the re-run trigger (raw
+    // segments) wear distinct icons now.
+    harness.inner.get_by_label(ICON_PATH).hover();
+    harness.inner.get_by_label(ICON_LINE_SEGMENTS).click();
     harness.run();
 
     assert_eq!(harness.state().snap_request, Some(track));
@@ -369,7 +418,7 @@ fn clicking_snap_trigger_requests_snap() {
     let mut harness = make_harness(state);
     harness.run();
 
-    harness.inner.get_by_label(ICON_PATH).click();
+    harness.inner.get_by_label(ICON_LINE_SEGMENTS).click();
     harness.run();
 
     assert_eq!(
@@ -389,7 +438,7 @@ fn snap_trigger_carries_ellipsis_only_while_consent_pending() {
     let mut harness = make_harness(state);
     harness.run();
 
-    let suffixed = format!("{ICON_PATH}…");
+    let suffixed = format!("{ICON_LINE_SEGMENTS}…");
     harness.inner.get_by_label(&suffixed).click();
     harness.run();
     assert_eq!(
@@ -404,7 +453,7 @@ fn snap_trigger_carries_ellipsis_only_while_consent_pending() {
         harness.inner.query_by_label(&suffixed).is_none(),
         "the suffix must disappear once consent is granted"
     );
-    assert!(harness.inner.query_by_label(ICON_PATH).is_some());
+    assert!(harness.inner.query_by_label(ICON_LINE_SEGMENTS).is_some());
 }
 
 /// A grayed trigger (offline here) must not produce a request.
@@ -416,7 +465,7 @@ fn disabled_snap_trigger_does_not_request() {
     let mut harness = make_harness(state);
     harness.run();
 
-    harness.inner.get_by_label(ICON_PATH).click();
+    harness.inner.get_by_label(ICON_LINE_SEGMENTS).click();
     harness.run();
 
     assert_eq!(harness.state().snap_request, None);
@@ -686,6 +735,7 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
         snap_rows: HashMap::new(),
+        snap_progress: gt_side_panel::SnapProgressView::default(),
         snap_offline: false,
         snap_consent_pending: false,
         snap_request: None,
@@ -811,6 +861,7 @@ fn snapshot_track_channels() {
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
         snap_rows: HashMap::new(),
+        snap_progress: gt_side_panel::SnapProgressView::default(),
         snap_offline: false,
         snap_consent_pending: false,
         snap_request: None,
@@ -864,6 +915,7 @@ fn make_state_with_shared_prefix() -> State {
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
         snap_rows: HashMap::new(),
+        snap_progress: gt_side_panel::SnapProgressView::default(),
         snap_offline: false,
         snap_consent_pending: false,
         snap_request: None,
@@ -914,6 +966,7 @@ fn make_state_with_long_name() -> State {
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
         snap_rows: HashMap::new(),
+        snap_progress: gt_side_panel::SnapProgressView::default(),
         snap_offline: false,
         snap_consent_pending: false,
         snap_request: None,
@@ -983,6 +1036,7 @@ fn make_state_with_metadata() -> State {
         recording_name_template: "{title} — {device}".to_owned(),
         metadata_request: None,
         snap_rows: HashMap::new(),
+        snap_progress: gt_side_panel::SnapProgressView::default(),
         snap_offline: false,
         snap_consent_pending: false,
         snap_request: None,
@@ -1079,6 +1133,7 @@ fn clicking_note_icon_requests_recording_details() {
         recording_name_template: "{filename}".to_owned(),
         metadata_request: None,
         snap_rows: HashMap::new(),
+        snap_progress: gt_side_panel::SnapProgressView::default(),
         snap_offline: false,
         snap_consent_pending: false,
         snap_request: None,
@@ -1139,6 +1194,7 @@ fn settled_docked_panel_width(state: State) -> f32 {
                                     consent_pending: s.snap_consent_pending,
                                     rows: &s.snap_rows,
                                     costing_choices: &s.snap_costing_choices,
+                                    progress: &s.snap_progress,
                                 },
                                 snap_request: &mut s.snap_request,
                                 snap_visibility_request: &mut s.snap_visibility_request,

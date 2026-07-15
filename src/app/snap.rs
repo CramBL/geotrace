@@ -327,6 +327,22 @@ pub enum SnapActivity {
     },
 }
 
+/// The scheduler's global activity summary (see [`SnapScheduler::progress`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapProgress {
+    pub in_flight: Option<SnapInFlight>,
+    /// Tracks waiting in the queue, including autos parked while hidden.
+    pub queued: usize,
+}
+
+/// The run currently talking to the server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapInFlight {
+    pub track: TrackRef,
+    pub completed_chunks: usize,
+    pub total_chunks: usize,
+}
+
 /// A worker-to-app message.
 enum SnapMessage {
     Progress {
@@ -442,6 +458,31 @@ impl SnapScheduler {
     /// The transient activity for a track (queued, in flight, or failed).
     pub fn activity_for(&self, track: TrackRef) -> Option<&SnapActivity> {
         self.activity.get(&track)
+    }
+
+    /// The global activity summary for the side panel's progress strip:
+    /// the in-flight run and how many tracks wait queued. At most one run
+    /// is in flight at a time (the dispatch loop is strictly sequential).
+    pub fn progress(&self) -> SnapProgress {
+        let mut queued = 0;
+        let mut in_flight = None;
+        for (&track, activity) in &self.activity {
+            match activity {
+                SnapActivity::Queued => queued += 1,
+                SnapActivity::InFlight {
+                    completed_chunks,
+                    total_chunks,
+                } => {
+                    in_flight = Some(SnapInFlight {
+                        track,
+                        completed_chunks: *completed_chunks,
+                        total_chunks: *total_chunks,
+                    });
+                }
+                SnapActivity::Failed { .. } => {}
+            }
+        }
+        SnapProgress { in_flight, queued }
     }
 
     /// Whether requesting is disabled entirely (`GEOTRACE_OFFLINE`).
@@ -1033,6 +1074,51 @@ mod tests {
         assert_eq!(
             stale_reasons(&run, effective, current_host.as_deref()),
             expected,
+        );
+    }
+
+    /// The global summary counts queued entries and singles out the
+    /// in-flight run with its chunk progress; failed entries are neither.
+    #[test]
+    fn progress_summarizes_the_activity_map() {
+        let mut scheduler = SnapScheduler::new(Context::default());
+        assert_eq!(
+            scheduler.progress(),
+            SnapProgress {
+                in_flight: None,
+                queued: 0,
+            }
+        );
+
+        scheduler
+            .activity
+            .insert(nth_track_ref(0), SnapActivity::Queued);
+        scheduler
+            .activity
+            .insert(nth_track_ref(1), SnapActivity::Queued);
+        scheduler.activity.insert(
+            nth_track_ref(2),
+            SnapActivity::InFlight {
+                completed_chunks: 2,
+                total_chunks: 5,
+            },
+        );
+        scheduler.activity.insert(
+            nth_track_ref(3),
+            SnapActivity::Failed {
+                error: "boom".to_owned(),
+            },
+        );
+        assert_eq!(
+            scheduler.progress(),
+            SnapProgress {
+                in_flight: Some(SnapInFlight {
+                    track: nth_track_ref(2),
+                    completed_chunks: 2,
+                    total_chunks: 5,
+                }),
+                queued: 2,
+            }
         );
     }
 
