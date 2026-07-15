@@ -1,7 +1,6 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use egui::{Button, Checkbox, DragValue, Grid, Label, RichText, ScrollArea, TextEdit, Window};
 use egui_phosphor::regular::NOTE as ICON_NOTE;
-use egui_phosphor::regular::PENCIL_SIMPLE as ICON_PENCIL_SIMPLE;
 use egui_phosphor::regular::X as ICON_X;
 use gt_history::{DatabaseRef, PruneMode, RecordingEntry, RecordingMeta};
 use gt_side_panel::widgets::{MetadataView, has_metadata_details, metadata_detail_rows};
@@ -680,7 +679,7 @@ fn render_row(
     {
         render_rename_editor(ui, rename, worker);
     } else {
-        identity_cell(ui, entry);
+        identity_cell(ui, entry, worker, rename);
     }
 
     let ts = DateTime::<Utc>::from_timestamp_micros(entry.meta.start_us)
@@ -712,15 +711,6 @@ fn render_row(
             open.on_hover_text("Already loaded");
         } else if open.clicked() {
             worker.open(entry.db_ref.clone());
-        }
-        if ui
-            .small_button(ICON_PENCIL_SIMPLE)
-            .on_hover_text("Rename identity")
-            .clicked()
-        {
-            let identity = entry.db_ref.identity.clone();
-            let buffer = identity_display_parts(&identity).0.to_owned();
-            *rename = Some(RenameEdit { identity, buffer });
         }
         if ui.small_button("Delete").clicked() {
             worker.delete_recordings(vec![entry.db_ref.clone()], DeleteReason::Manual);
@@ -763,11 +753,21 @@ fn render_rename_editor(
     }
 }
 
-/// Render the identity column cell: an optional `auto` badge plus the identity,
-/// truncated so a long name clips itself rather than growing the window. A note
-/// icon marks recordings that carry SDK metadata. The full identity, and any
-/// title/device/notes, stay available on hover.
-fn identity_cell(ui: &mut egui::Ui, entry: &RecordingEntry) {
+/// Open the inline rename editor for a recording's identity.
+fn begin_rename(rename: &mut Option<RenameEdit>, entry: &RecordingEntry) {
+    let identity = entry.db_ref.identity.clone();
+    let buffer = identity_display_parts(&identity).0.to_owned();
+    *rename = Some(RenameEdit { identity, buffer });
+}
+
+/// The identity column of a History row. Double-clicking the cell opens the
+/// inline rename editor; right-clicking offers Rename and Delete.
+fn identity_cell(
+    ui: &mut egui::Ui,
+    entry: &RecordingEntry,
+    worker: &HistoryWorker,
+    rename: &mut Option<RenameEdit>,
+) {
     let identity = entry.db_ref.identity.as_str();
     let (display_name, is_auto) = identity_display_parts(identity);
     // The full identity is the hover's first line, so leave it out of the view:
@@ -782,23 +782,47 @@ fn identity_cell(ui: &mut egui::Ui, entry: &RecordingEntry) {
         notes: entry.notes.as_deref(),
     };
     let has_metadata = has_metadata_details(&meta);
-    ui.horizontal(|ui| {
-        if is_auto {
+    let label = ui
+        .horizontal(|ui| {
+            if is_auto {
+                ui.label(
+                    RichText::new("auto")
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
+            }
+            if has_metadata {
+                ui.label(RichText::new(ICON_NOTE).weak());
+            }
+            // The label itself senses clicks: it is the rename target.
+            ui.add(
+                Label::new(display_name)
+                    .truncate()
+                    .sense(egui::Sense::click()),
+            )
+        })
+        .inner
+        .on_hover_ui(|ui| {
+            ui.label(identity);
+            metadata_detail_rows(ui, &meta);
             ui.label(
-                RichText::new("auto")
+                RichText::new("Double-click to rename")
                     .small()
                     .color(ui.visuals().weak_text_color()),
             );
+        });
+    if label.double_clicked() {
+        begin_rename(rename, entry);
+    }
+    label.context_menu(|ui| {
+        if ui.button("Rename").clicked() {
+            begin_rename(rename, entry);
+            ui.close();
         }
-        if has_metadata {
-            ui.label(RichText::new(ICON_NOTE).weak());
+        if ui.button("Delete").clicked() {
+            worker.delete_recordings(vec![entry.db_ref.clone()], DeleteReason::Manual);
+            ui.close();
         }
-        ui.add(Label::new(display_name).truncate());
-    })
-    .response
-    .on_hover_ui(|ui| {
-        ui.label(identity);
-        metadata_detail_rows(ui, &meta);
     });
 }
 
@@ -877,9 +901,8 @@ mod tests {
     use crate::app::history_db::Response;
 
     use super::{
-        DatabaseRef, Grid, HistoryWindow, HistoryWorker, ICON_NOTE, ICON_PENCIL_SIMPLE,
-        RecordingEntry, RecordingMeta, ScrollArea, Window, identity_cell, identity_display_parts,
-        travel_mode_display,
+        DatabaseRef, Grid, HistoryWindow, HistoryWorker, ICON_NOTE, RecordingEntry, RecordingMeta,
+        ScrollArea, Window, identity_cell, identity_display_parts, travel_mode_display,
     };
 
     /// Harness state for driving the History window: the window, a live (empty)
@@ -1013,11 +1036,19 @@ mod tests {
             "recording should appear in the History list"
         );
 
-        // Open the inline editor. `request_focus` applies the frame after the
-        // editor first renders, so settle a couple of frames before typing.
-        h.inner.get_by_label(ICON_PENCIL_SIMPLE).click();
+        // Open the inline editor through the identity's context menu.
+        // `request_focus` applies the frame after the editor first renders,
+        // so settle a couple of frames before typing.
+        h.inner.get_by_label_contains("ride.gtd").click_secondary();
+        h.step();
+        h.inner.get_by_label("Rename").click_accesskit();
         h.step();
         h.step();
+        assert!(
+            h.inner.query_all_by_value("ride.gtd").next().is_some(),
+            "probe: editor not open after Rename click"
+        );
+
         // Append to the seeded name and commit with Enter.
         h.inner.event(egui::Event::Text(" v2".to_owned()));
         h.step();
@@ -1035,19 +1066,34 @@ mod tests {
     }
 
     #[test]
-    fn clicking_rename_opens_inline_identity_editor() {
+    fn double_clicking_identity_opens_inline_editor() {
         let harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
+        // Frames at 60 fps: kittest's default 0.25 s/frame clock (one frame
+        // per queued event) spaces the two clicks beyond egui's 0.3 s
+        // double-click window.
         let mut h = TestHarness::builder()
             .size(egui::vec2(900.0, 500.0))
+            .step_dt(1.0 / 60.0)
             .ui_state(show_history, harness);
         h.run();
-        // The rename pencil is present; clicking it swaps the identity cell for
-        // the inline text editor (seeded with the `auto:`-stripped name).
-        h.inner.get_by_label(ICON_PENCIL_SIMPLE).click();
+        // Two quick clicks on the identity label register as a double click
+        // and swap the cell for the inline text editor (seeded with the
+        // `auto:`-stripped name).
+        h.inner.get_by_label_contains("ride.gtd").click();
+        h.inner.get_by_label_contains("ride.gtd").click();
         h.run();
         assert!(
             h.inner.query_all_by_value("ride.gtd").next().is_some(),
             "inline editor should show the stripped identity as its value"
+        );
+        // The editor holds keyboard focus: typing extends its buffer.
+        h.step();
+        h.inner.event(egui::Event::Text(" v2".to_owned()));
+        h.step();
+        h.step();
+        assert!(
+            h.inner.query_all_by_value("ride.gtd v2").next().is_some(),
+            "typed text should reach the freshly opened editor"
         );
     }
 
@@ -1125,7 +1171,12 @@ mod tests {
                                 .num_columns(6)
                                 .min_col_width(80.0)
                                 .show(ui, |ui| {
-                                    identity_cell(ui, &entry);
+                                    identity_cell(
+                                        ui,
+                                        &entry,
+                                        &HistoryWorker::disabled(),
+                                        &mut None,
+                                    );
                                     ui.label("2026-01-15 12:00");
                                     ui.label("1h 02m");
                                     ui.label("12.3k");
