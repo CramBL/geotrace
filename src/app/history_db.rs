@@ -170,6 +170,13 @@ impl HistoryWorker {
         self.path.as_deref()
     }
 
+    /// Hide the display path - for snapshot tests, whose temporary database
+    /// path differs every run and would flake the image.
+    #[cfg(test)]
+    pub fn hide_path(&mut self) {
+        self.path = None;
+    }
+
     fn send(&self, req: Request) {
         if let Some(tx) = &self.req_tx {
             // A send error only happens once the worker has gone during teardown.
