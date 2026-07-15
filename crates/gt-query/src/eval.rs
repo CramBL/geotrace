@@ -148,6 +148,13 @@ pub struct RunSummary {
     /// Skips from non-finite arithmetic (e.g. division by zero) - kept
     /// separate so they stay visible without a metric to blame.
     pub skipped_non_finite: usize,
+    /// Tracks that carried no value at all for a referenced metric - a
+    /// track without a snap run (or one whose run left every point
+    /// unsnapped), an eph-less receiver. Point-level skips land in
+    /// [`Self::skipped`]; this names whole tracks the metric could never
+    /// match on. Deliberately about values, not causes: the summary must
+    /// not claim "never snapped" for a run that merely produced nothing.
+    pub tracks_without: BTreeMap<QueryMetric, usize>,
     pub tracks_shorter_than_window: usize,
     /// Declared `with` parameters no referenced metric needs.
     pub unused_params: Vec<ParamName>,
@@ -202,6 +209,9 @@ pub(crate) fn run_with_interval<P: MetricProvider>(
             return None;
         }
         let eval = evaluate_track(query, input.provider, should_cancel, check_interval)?;
+        for metric in absent_metrics(query.referenced_metrics(), input.provider) {
+            *summary.tracks_without.entry(metric).or_insert(0) += 1;
+        }
         // The timeline length is the matched mask's length: nav points for a
         // points source, samples for a channel source.
         summary.total_points += eval.matched.len();
@@ -252,6 +262,33 @@ impl RunSummary {
         self.skipped_non_finite += eval.skipped_non_finite;
         self.tracks_shorter_than_window += usize::from(eval.shorter_than_window);
     }
+}
+
+/// The referenced metrics `provider` carries no value for at any point -
+/// whole-track absences like a missing snap run, a run that left every
+/// point unsnapped, or an eph-less receiver. Absence is about values, not
+/// causes: both no-run and all-unsnapped tracks count, and the summary
+/// wording stays truthful for both.
+/// `accel` derives from velocity, so its presence is probed through
+/// velocity; channel-source queries reference no nav metrics, so they get
+/// an empty list for free. An empty provider reports nothing: there are no
+/// points the metric could have been missing on.
+pub(crate) fn absent_metrics<P: MetricProvider>(
+    metrics: &[QueryMetric],
+    provider: &P,
+) -> Vec<QueryMetric> {
+    metrics
+        .iter()
+        .filter(|&&metric| {
+            let probe = match metric {
+                QueryMetric::Accel => QueryMetric::Velocity,
+                other => other,
+            };
+            provider.len() > 0
+                && (0..provider.len()).all(|index| provider.value(probe, index).is_none())
+        })
+        .copied()
+        .collect()
 }
 
 /// Evaluate `query` over one provider, returning the matched mask and skips.

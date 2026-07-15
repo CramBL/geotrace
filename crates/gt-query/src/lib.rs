@@ -236,6 +236,73 @@ mod tests {
         )
     }
 
+    /// A track that carries no value at all for a referenced metric is
+    /// counted per metric in `tracks_without` - whole-track absences (no
+    /// snap run, an eph-less receiver) get named, not just point skips. A
+    /// track with even one value stays out; `accel` derives from velocity,
+    /// so its absence is probed through velocity.
+    #[test]
+    fn summary_counts_tracks_without_a_referenced_metric() {
+        let with_values =
+            TestProvider::new(3).with(QueryMetric::SnapError, vec![Some(2.0), None, Some(4.0)]);
+        let without = TestProvider::new(3);
+        let output = run(
+            &checked("points | where snap_error > 1 m"),
+            &[
+                TrackInput {
+                    track: track_ref(),
+                    provider: &with_values,
+                },
+                TrackInput {
+                    track: TrackRef::new(FileIdx::new(0), TrackIdx::new(1)),
+                    provider: &without,
+                },
+            ],
+        );
+        assert_eq!(
+            output.summary.tracks_without,
+            BTreeMap::from([(QueryMetric::SnapError, 1)]),
+            "only the run-less track counts"
+        );
+        // The valued track's single missing point stays a point skip; the
+        // absent track contributes its full length.
+        assert_eq!(
+            output.summary.skipped,
+            BTreeMap::from([(QueryMetric::SnapError, 4)])
+        );
+
+        // A run that produced values for no point (every point unsnapped)
+        // counts too: the summary reports missing values, and its wording
+        // deliberately does not claim the track was never snapped.
+        let all_unsnapped =
+            TestProvider::new(3).with(QueryMetric::SnapError, vec![None, None, None]);
+        let output = run(
+            &checked("points | where snap_error > 1 m"),
+            &[TrackInput {
+                track: track_ref(),
+                provider: &all_unsnapped,
+            }],
+        );
+        assert_eq!(
+            output.summary.tracks_without,
+            BTreeMap::from([(QueryMetric::SnapError, 1)])
+        );
+
+        let velocity_only =
+            TestProvider::new(2).with(QueryMetric::Velocity, vec![Some(5.0), Some(6.0)]);
+        let output = run(
+            &checked("points | where accel > 0 m/s2"),
+            &[TrackInput {
+                track: track_ref(),
+                provider: &velocity_only,
+            }],
+        );
+        assert!(
+            output.summary.tracks_without.is_empty(),
+            "accel derives from velocity - a velocity-carrying track is not without it"
+        );
+    }
+
     #[test]
     fn point_predicate_matches_consecutive_runs() {
         // 30 km/h is 8.33 m/s; points 1, 2, and 4 exceed it.
