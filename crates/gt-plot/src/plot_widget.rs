@@ -26,6 +26,7 @@ use gt_ui_types::{
 };
 use rayon::prelude::*;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::num::NonZeroUsize;
 use strum::IntoEnumIterator;
 
 /// Pixel radius within which the pointer is considered to be hovering a
@@ -328,6 +329,27 @@ fn channel_color(index: usize) -> Color32 {
 
 fn channel_line_color(index: usize, file_index: usize) -> Color32 {
     shade_color(channel_color(index), file_shade_factor(file_index))
+}
+
+/// Hue step between a vector channel's components, as a fraction of the
+/// full hue circle. 25 degrees proved too close to tell apart in practice;
+/// at 60 degrees x/y/z read as clearly different colors. The chip's bar
+/// strip ties the rotated hues back to their channel, so staying near the
+/// base hue matters less than being distinct.
+const COMPONENT_HUE_STEP: f32 = 60.0 / 360.0;
+
+/// The `component`-th line color of a channel: the channel color with its
+/// hue rotated in alternating steps (base, +25, -25, +50, ...), so a vector
+/// channel's components separate without leaving its color family.
+fn component_color(base: Color32, component: usize) -> Color32 {
+    if component == 0 {
+        return base;
+    }
+    let steps = component.div_ceil(2) as f32;
+    let sign = if component % 2 == 1 { 1.0 } else { -1.0 };
+    let mut hsva = egui::ecolor::Hsva::from(base);
+    hsva.h = (hsva.h + sign * steps * COMPONENT_HUE_STEP).rem_euclid(1.0);
+    Color32::from(hsva)
 }
 
 /// Full-resolution sample target for a single track filling the plot width:
@@ -679,26 +701,49 @@ struct LoadedChannel {
     name: String,
     unit: Option<String>,
     color_index: usize,
+    /// Component labels (one for a scalar channel), for the chip's color
+    /// bars and its hover legend. Never empty in practice -
+    /// `build_channel_series` always emits at least one component - and the
+    /// chip degrades to a plain one if it ever were.
+    components: Vec<String>,
 }
 
 /// The sorted union of channels across all series, with palette indices.
 fn loaded_channels<'a>(
     all_channels: impl Iterator<Item = &'a crate::series::ChannelSeries>,
 ) -> Vec<LoadedChannel> {
-    let mut by_name: Vec<(&str, Option<&str>)> = Vec::new();
+    let mut by_name: Vec<(&str, Option<&str>, Vec<String>)> = Vec::new();
     for channel in all_channels {
-        if !by_name.iter().any(|(name, _)| *name == channel.name) {
-            by_name.push((&channel.name, channel.unit.as_deref()));
+        let labels = || {
+            channel
+                .components
+                .iter()
+                .map(|c| c.label.clone())
+                .collect::<Vec<String>>()
+        };
+        match by_name
+            .iter_mut()
+            .find(|(name, _, _)| *name == channel.name)
+        {
+            // The widest series wins: files may carry differing component
+            // counts under one name, and the chip should show them all.
+            Some((_, _, widest)) => {
+                if channel.components.len() > widest.len() {
+                    *widest = labels();
+                }
+            }
+            None => by_name.push((&channel.name, channel.unit.as_deref(), labels())),
         }
     }
     by_name.sort();
     by_name
         .into_iter()
         .enumerate()
-        .map(|(color_index, (name, unit))| LoadedChannel {
+        .map(|(color_index, (name, unit, components))| LoadedChannel {
             name: name.to_owned(),
             unit: unit.map(str::to_owned),
             color_index,
+            components,
         })
         .collect()
 }
@@ -1665,12 +1710,12 @@ fn channel_chip_group(
             Some(unit) => format!("{} ({unit})", channel.name),
             None => channel.name.clone(),
         };
-        let (chip_show_only, chip_hovered) = metric_chip(
+        let (chip_show_only, chip_hovered) = channel_chip(
             ui,
             &mut enabled,
             &label,
             channel_color(channel.color_index),
-            Some("Sensor channel recorded alongside the track"),
+            &channel.components,
         );
         channel_vis.set(&channel.name, enabled);
         if chip_show_only {
@@ -1918,6 +1963,24 @@ fn metric_chip(
     color: Color32,
     tooltip: Option<&str>,
 ) -> (bool, bool) {
+    let (show_only, response) = chip_button(ui, enabled, name, color);
+    let hovered = response.hovered();
+    if let Some(tip) = tooltip {
+        response.on_hover_text(tip);
+    }
+    (show_only, hovered)
+}
+
+/// The shared chip widget behind [`metric_chip`] and [`channel_chip`]: the
+/// toggle button and the show-only context menu. Returns the response so
+/// each caller attaches its own hover (plain text, or the component
+/// legend) and [`channel_chip`] can paint its bars over the rect.
+fn chip_button(
+    ui: &mut egui::Ui,
+    enabled: &mut bool,
+    name: &str,
+    color: Color32,
+) -> (bool, egui::Response) {
     let fill = if *enabled {
         color.gamma_multiply(0.75)
     } else {
@@ -1935,9 +1998,6 @@ fn metric_chip(
     if response.clicked() {
         *enabled = !*enabled;
     }
-    if let Some(tip) = tooltip {
-        response.clone().on_hover_text(tip);
-    }
     let mut show_only = false;
     response.context_menu(|ui| {
         if ui.button("Show only this").clicked() {
@@ -1945,7 +2005,88 @@ fn metric_chip(
             ui.close();
         }
     });
-    (show_only, response.hovered())
+    (show_only, response)
+}
+
+/// Height of the component color bars along a channel chip's bottom edge.
+const CHIP_BAR_HEIGHT: f32 = 3.0;
+
+/// Gap between adjacent component color bars, in points.
+const CHIP_BAR_GAP: f32 = 1.0;
+
+/// Corner radius of one component bar - subtler than the chip's 4.0, a bar
+/// is only [`CHIP_BAR_HEIGHT`] tall.
+const CHIP_BAR_CORNER_RADIUS: f32 = 1.0;
+
+/// Alpha of the component bars on a disabled chip. Stronger than the chip
+/// fill's 0.12: the bars are a few pixels tall and vanish entirely at the
+/// fill's dimming, and they are the only place the component colors show.
+const CHIP_BAR_DISABLED_ALPHA: f32 = 0.25;
+
+/// Side of one color square in the chip's hover legend, in points.
+const LEGEND_SQUARE_SIZE: f32 = 10.0;
+
+/// A channel's chip: the metric chip extended with a bar strip along the
+/// bottom edge, one bar per component in that component's line color - the
+/// legend for a vector channel's x/y/z hues.
+fn channel_chip(
+    ui: &mut egui::Ui,
+    enabled: &mut bool,
+    name: &str,
+    color: Color32,
+    component_labels: &[String],
+) -> (bool, bool) {
+    let (show_only, response) = chip_button(ui, enabled, name, color);
+    let hovered = response.hovered();
+    let rect = response.rect;
+    // The hover legend maps each component color to its name.
+    response.on_hover_ui(|ui| {
+        ui.label("Sensor channel recorded alongside the track");
+        for (index, label) in component_labels.iter().enumerate() {
+            ui.horizontal(|ui| {
+                let (square, _) = ui.allocate_exact_size(
+                    egui::Vec2::splat(LEGEND_SQUARE_SIZE),
+                    egui::Sense::hover(),
+                );
+                ui.painter().rect_filled(
+                    square,
+                    CHIP_BAR_CORNER_RADIUS,
+                    component_color(color, index),
+                );
+                ui.label(label);
+            });
+        }
+    });
+    // Never empty in practice; a label-less chip degrades to a plain one.
+    let Some(components) = NonZeroUsize::new(component_labels.len()) else {
+        return (show_only, hovered);
+    };
+    let components = components.get();
+    let strip = egui::Rect::from_min_max(
+        egui::pos2(rect.left(), rect.bottom() - CHIP_BAR_HEIGHT),
+        rect.max,
+    );
+    let bar_width =
+        (strip.width() - CHIP_BAR_GAP * (components.saturating_sub(1)) as f32) / components as f32;
+    // The bars dim with the chip, so a disabled channel stays quiet.
+    let alpha = if *enabled {
+        1.0
+    } else {
+        CHIP_BAR_DISABLED_ALPHA
+    };
+    for index in 0..components {
+        let left = strip.left() + index as f32 * (bar_width + CHIP_BAR_GAP);
+        let bar = egui::Rect::from_min_size(
+            egui::pos2(left, strip.top()),
+            egui::vec2(bar_width, strip.height()),
+        );
+        ui.painter().rect_filled(
+            bar,
+            CHIP_BAR_CORNER_RADIUS,
+            component_color(color, index).gamma_multiply(alpha),
+        );
+    }
+    (show_only, hovered)
 }
 
 /// Compute fresh level selections for all metrics of one track's series.
@@ -2163,13 +2304,16 @@ fn add_series_lines<'a>(
         };
         let is_hovered =
             matches!(hovered_chip, Some(HoveredChip::Channel(name)) if *name == channel.name);
-        let (color, highlighted) =
-            hover_treatment(channel_line_color(color_index, series.fi), is_hovered);
+        let base = channel_line_color(color_index, series.fi);
         let unit_suffix = channel
             .unit
             .as_deref()
             .map_or(String::new(), |u| format!(" ({u})"));
-        for (component, selection) in channel.components.iter().zip(selections) {
+        for (index, (component, selection)) in channel.components.iter().zip(selections).enumerate()
+        {
+            // Rotate before the hover treatment, so dimming applies to the
+            // component's own hue.
+            let (color, highlighted) = hover_treatment(component_color(base, index), is_hovered);
             add_line(
                 plot_ui,
                 component.mipmap.slice_at(*selection),
@@ -2740,6 +2884,26 @@ mod tests {
         assert_eq!(full_detail, expected);
     }
 
+    /// The component hue ladder: the first component keeps the channel
+    /// color, later ones alternate around it in fixed hue steps and wrap
+    /// cleanly around the hue circle - always distinct from the base.
+    #[rstest::rstest]
+    #[case::base(0, 0.0)]
+    #[case::second_steps_up(1, 60.0 / 360.0)]
+    #[case::third_steps_down(2, -60.0 / 360.0)]
+    #[case::fourth_steps_further(3, 120.0 / 360.0)]
+    #[case::fifth_steps_further_down(4, -120.0 / 360.0)]
+    fn component_colors_ladder_around_the_base_hue(#[case] component: usize, #[case] offset: f32) {
+        let base = CHANNEL_PALETTE[0];
+        let base_hue = egui::ecolor::Hsva::from(base).h;
+        let got = egui::ecolor::Hsva::from(component_color(base, component)).h;
+        let want = (base_hue + offset).rem_euclid(1.0);
+        assert!(
+            (got - want).abs() < 0.01 || (got - want).abs() > 0.99,
+            "component {component}: hue {got} != {want}"
+        );
+    }
+
     /// The plot-side snap cache follows the series by `Arc` identity: an
     /// unchanged `Arc` is reused, a replaced one rebuilds its entry, and a
     /// track that left the series is pruned.
@@ -3042,25 +3206,34 @@ mod tests {
         use crate::series::{ChannelComponentSeries, ChannelSeries};
         use gt_egui_mipmap::MipMap;
 
-        let channel = |name: &str, unit: Option<&str>| ChannelSeries {
+        let channel = |name: &str, unit: Option<&str>, components: usize| ChannelSeries {
             name: name.to_owned(),
             unit: unit.map(str::to_owned),
-            components: vec![ChannelComponentSeries {
-                label: name.to_owned(),
-                mipmap: MipMap::build(vec![]),
-            }],
+            components: (0..components)
+                .map(|i| ChannelComponentSeries {
+                    label: format!("{name}.{i}"),
+                    mipmap: MipMap::build(vec![]),
+                })
+                .collect(),
         };
         // Two tracks' channel lists, flattened like the series cache is:
-        // `accel` appears twice and must union to one entry.
+        // `accel` appears twice and must union to one entry - with the
+        // widest component count, so the chip shows every bar even when one
+        // file's recording carries fewer components.
         let lists = [
-            channel("incline", Some("deg")),
-            channel("accel", Some("g")),
-            channel("accel", Some("g")),
+            channel("incline", Some("deg"), 1),
+            channel("accel", Some("g"), 1),
+            channel("accel", Some("g"), 3),
         ];
         let channels = loaded_channels(lists.iter());
         let names: Vec<&str> = channels.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, ["accel", "incline"], "sorted union across series");
         assert_eq!(channels[0].unit.as_deref(), Some("g"));
+        assert_eq!(
+            channels[0].components,
+            ["accel.0", "accel.1", "accel.2"],
+            "the widest series' component labels win"
+        );
         // Palette indices follow the sorted order, so a channel keeps one hue
         // across files.
         assert_eq!(channels[0].color_index, 0);
