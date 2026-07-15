@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use strum::EnumCount;
 
 use gt_snap::wire::{
-    Costing, ErrorCode, ErrorResponse, FilterAction, RoadClass, SnapPointKind, Surface,
+    Costing, ErrorCode, ErrorResponse, FilterAction, RoadClass, SnapPointKind, SpeedLimit, Surface,
     TraceAttributesRequest, TraceAttributesResponse, TraceOptions,
 };
 use gt_snap::{DEFAULT_SERVER_URL, FIXTURE_SCENARIOS, fixtures_dir, server_host};
@@ -79,7 +79,7 @@ struct ResponseDigest {
     edges: usize,
     road_classes: BTreeSet<String>,
     surfaces: BTreeSet<String>,
-    speed_limits: BTreeSet<u32>,
+    speed_limits: BTreeSet<String>,
     shape_chars: usize,
     osm_changeset: Option<u64>,
     confidence_score: Option<f64>,
@@ -122,7 +122,7 @@ impl ResponseDigest {
             speed_limits: response
                 .edges
                 .iter()
-                .filter_map(|e| e.speed_limit)
+                .filter_map(|e| e.speed_limit.map(SpeedLimit::display))
                 .collect(),
             shape_chars: response.shape.as_deref().map_or(0, str::len),
             osm_changeset: response.osm_changeset,
@@ -400,6 +400,47 @@ fn edge_index_sentinel_folds_into_none() {
     .expect("synthetic body");
     assert_eq!(response.snapped_points[0].edge_index, None);
     assert_eq!(response.snapped_points[1].edge_index, Some(3));
+}
+
+/// Valhalla reports derestricted roads (autobahn stretches) as the string
+/// `"unlimited"` where a km/h number normally sits - seen live, and a plain
+/// `u32` field failed the whole chunk over it. Both wire shapes parse and
+/// serialize back unchanged (cached results round-trip), and any other
+/// string stays a loud error rather than a silent guess.
+#[rstest::rstest]
+#[case::kmh("50", SpeedLimit::Kmh(50), "50 km/h")]
+#[case::unlimited(r#""unlimited""#, SpeedLimit::Unlimited, "Unlimited")]
+fn speed_limit_parses_both_wire_shapes(
+    #[case] json: &str,
+    #[case] expected: SpeedLimit,
+    #[case] display: &str,
+) {
+    let parsed: SpeedLimit = serde_json::from_str(json).expect("parses");
+    assert_eq!(parsed, expected);
+    assert_eq!(parsed.display(), display);
+    assert_eq!(
+        serde_json::to_string(&parsed).expect("serializes"),
+        json,
+        "cached results must round-trip the wire shape"
+    );
+}
+
+#[test]
+fn speed_limit_rejects_unknown_strings() {
+    serde_json::from_str::<SpeedLimit>(r#""none""#)
+        .expect_err("an undocumented string must fail loudly, not guess");
+}
+
+/// The failing body shape from the field: a success response whose edge
+/// carries `"speed_limit": "unlimited"` parses instead of failing the chunk.
+#[test]
+fn response_with_unlimited_speed_limit_parses() {
+    let response: TraceAttributesResponse = serde_json::from_str(
+        r#"{"matched_points": [{"lat": 55.0, "lon": 12.0, "type": "matched", "edge_index": 0}],
+            "edges": [{"names": ["A 7"], "speed_limit": "unlimited"}]}"#,
+    )
+    .expect("a derestricted edge must not fail the chunk");
+    assert_eq!(response.edges[0].speed_limit, Some(SpeedLimit::Unlimited));
 }
 
 /// Error codes roundtrip through their raw u32, including unknown ones.

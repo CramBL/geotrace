@@ -2161,7 +2161,7 @@ mod snapshot_tests {
                     edges: vec![gt_ui_types::SnappedEdgeInfo {
                         name: Some("H.C. Andersens Boulevard".to_owned()),
                         road_class: Some("Tertiary".to_owned()),
-                        speed_limit_kmh: Some(50),
+                        speed_limit: Some("50 km/h".to_owned()),
                         surface: Some("Paved smooth".to_owned()),
                     }],
                     whiskers: Vec::new(),
