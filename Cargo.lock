@@ -2005,7 +2005,7 @@ dependencies = [
 
 [[package]]
 name = "geotrace-c"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "geotrace-sdk",
@@ -2013,7 +2013,7 @@ dependencies = [
 
 [[package]]
 name = "geotrace-sdk"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "bon",
  "chrono",
@@ -2031,7 +2031,7 @@ dependencies = [
 
 [[package]]
 name = "geotrace-sdk-macros"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "proc-macro2",
  "quote",

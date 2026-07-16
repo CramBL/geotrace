@@ -5,7 +5,7 @@ description = "SDK for generating geotrace (.gtd) files"
 # `version.workspace`). Keep this in lockstep with the other SDK crates
 # (geotrace-sdk-macros, geotrace-c) and sdk/python/geotrace-py. Bump them
 # together and tag SDK releases as `geotrace-sdk-vX.Y.Z`.
-version = "0.4.0"
+version = "0.5.0"
 edition.workspace = true
 homepage.workspace = true
 repository.workspace = true
@@ -23,7 +23,7 @@ dist = false
 [dependencies]
 bon.workspace = true
 chrono.workspace = true
-geotrace-sdk-macros = { path = "../geotrace-sdk-macros", version = "0.4.0" }
+geotrace-sdk-macros = { path = "../geotrace-sdk-macros", version = "0.5.0" }
 geotrace-units = { path = "../geotrace-units", version = "0.4.0" }
 hdf5-pure.workspace = true
 log.workspace = true
