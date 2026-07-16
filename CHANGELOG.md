@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.0 - 2026-07-16
+
 ### Added
 
 - Snap to road: match a track against the OpenStreetMap road network, from its side-panel action or automatically (opt-in).
