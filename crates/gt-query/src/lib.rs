@@ -87,7 +87,7 @@ impl Diagnostic {
 mod tests {
     use std::collections::BTreeMap;
 
-    use geotrace_units::ChannelUnit;
+    use geotrace_sdk_units::ChannelUnit;
     use gt_types::{DisplayMode, FileIdx, TrackIdx, TrackRef};
     use rstest::rstest;
 

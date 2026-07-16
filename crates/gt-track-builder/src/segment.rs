@@ -880,7 +880,7 @@ mod tests {
     use std::path::PathBuf;
 
     use chrono::TimeZone;
-    use geotrace_units::Unit;
+    use geotrace_sdk_units::Unit;
     use gt_types::coordinates::{Latitude, Longitude};
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::time_types::{GpsTime, SysTime};

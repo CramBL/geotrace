@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use egui::text::{CCursor, CCursorRange, LayoutJob};
-use geotrace_units::ChannelUnit;
+use geotrace_sdk_units::ChannelUnit;
 use gt_analysis::loss_of_lock::{self, SECS_PER_MIN, SlipRatePerPoint};
 use gt_analysis::satellite_utilization::{self, UtilPerPoint};
 use gt_filter::GlobalFilter;

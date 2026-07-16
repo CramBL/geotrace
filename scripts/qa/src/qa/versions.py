@@ -6,8 +6,9 @@ in different places:
 - GUI: the workspace package version in the root ``Cargo.toml`` and the root
   ``Cargo.lock`` pins for packages that inherit it.
 - SDK: kept in lockstep across the Rust crates (``geotrace-sdk``,
-  ``geotrace-sdk-macros``, ``geotrace-c``) and the macro dependency pin, the
-  Python package (``Cargo.toml`` + ``pyproject.toml``), the C and C++ headers
+  ``geotrace-sdk-macros``, ``geotrace-sdk-units``, ``geotrace-c``), the macro
+  and units dependency pins, the Python package (``Cargo.toml`` +
+  ``pyproject.toml``), the C and C++ headers
   (``GEOTRACE_C_VERSION`` / ``GEOTRACE_CPP_VERSION`` and their numeric parts),
   the C and C++ CMake ``project(... VERSION)`` declarations, and the SDK-crate
   pins in both committed ``Cargo.lock`` files (the root workspace and the
@@ -39,6 +40,7 @@ _SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-
 # preserved on rewrite).
 _TOML_VERSION = re.compile(r'^(version = ")([^"]*)', re.MULTILINE)
 _MACRO_PIN = re.compile(r'(geotrace-sdk-macros = \{[^}]*\bversion = ")([^"]*)')
+_UNITS_PIN = re.compile(r'(geotrace-sdk-units = \{[^}]*\bversion = ")([^"]*)')
 
 
 def _define_str(macro: str) -> re.Pattern[str]:
@@ -87,7 +89,9 @@ _PY_LOCK = "sdk/python/geotrace-py/Cargo.lock"
 _SDK_SPOTS: list[Spot] = [
     Spot("sdk/rust/geotrace-sdk/Cargo.toml", _TOML_VERSION),
     Spot("sdk/rust/geotrace-sdk/Cargo.toml", _MACRO_PIN, note="macro pin"),
+    Spot("sdk/rust/geotrace-sdk/Cargo.toml", _UNITS_PIN, note="units pin"),
     Spot("sdk/rust/geotrace-sdk-macros/Cargo.toml", _TOML_VERSION),
+    Spot("sdk/rust/geotrace-sdk-units/Cargo.toml", _TOML_VERSION),
     Spot("sdk/rust/geotrace-c/Cargo.toml", _TOML_VERSION),
     Spot("sdk/python/geotrace-py/Cargo.toml", _TOML_VERSION),
     Spot("sdk/python/geotrace-py/pyproject.toml", _TOML_VERSION),
@@ -102,10 +106,12 @@ _SDK_SPOTS: list[Spot] = [
     # so rewriting the block's `version` line leaves each lock valid.
     Spot(_ROOT_LOCK, _lock_version("geotrace-sdk"), note="geotrace-sdk lock"),
     Spot(_ROOT_LOCK, _lock_version("geotrace-sdk-macros"), note="geotrace-sdk-macros lock"),
+    Spot(_ROOT_LOCK, _lock_version("geotrace-sdk-units"), note="geotrace-sdk-units lock"),
     Spot(_ROOT_LOCK, _lock_version("geotrace-c"), note="geotrace-c lock"),
     Spot(_PY_LOCK, _lock_version("geotrace-py"), note="geotrace-py lock"),
     Spot(_PY_LOCK, _lock_version("geotrace-sdk"), note="geotrace-sdk lock"),
     Spot(_PY_LOCK, _lock_version("geotrace-sdk-macros"), note="geotrace-sdk-macros lock"),
+    Spot(_PY_LOCK, _lock_version("geotrace-sdk-units"), note="geotrace-sdk-units lock"),
 ]
 
 _APP_LOCK_CRATES: list[str] = [
@@ -175,6 +181,51 @@ def _read_int_triple(root: Path, path: str, macro: str) -> Fact:
     return Fact(f"{path} ({macro}_MAJOR/MINOR/PATCH)", ".".join(parts), core=True)
 
 
+_RELEASE_WORKFLOW = ".github/workflows/release-sdk.yml"
+_PUBLISH_LINE = re.compile(r"^\s*publish (geotrace-[a-z-]+)\s*$", re.MULTILINE)
+_PATH_DEP = re.compile(r'^(geotrace-[a-z-]+) = \{[^}]*\bpath = "', re.MULTILINE)
+
+
+def publish_closure_errors(root: Path) -> list[str]:
+    """The crates.io publish list must be dependency-closed and pinned.
+
+    `cargo publish` strips `path` from dependencies and resolves the remaining
+    version requirement against the index - a path dependency of a published
+    crate that is not itself published (in order, before its dependent) fails
+    the upload. This is what happened when `geotrace-units` joined the SDK
+    without joining the release workflow; this check fails the same gap in CI
+    instead of at release time. Each such dependency must also be a version
+    spot, so `bump-sdk` keeps it in lockstep.
+    """
+    workflow = (root / _RELEASE_WORKFLOW).read_text(encoding="utf-8")
+    published = _PUBLISH_LINE.findall(workflow)
+    if not published:
+        return [f"{_RELEASE_WORKFLOW}: no `publish <crate>` lines found"]
+    spot_paths = {spot.path for spot in _SDK_SPOTS}
+    errors: list[str] = []
+    for index, crate in enumerate(published):
+        manifest = f"sdk/rust/{crate}/Cargo.toml"
+        text = (root / manifest).read_text(encoding="utf-8")
+        for dep in _PATH_DEP.findall(text):
+            if dep not in published:
+                errors.append(
+                    f"{manifest}: path dependency {dep} is not published by "
+                    f"{_RELEASE_WORKFLOW} - `cargo publish -p {crate}` will fail "
+                    f"to resolve it from crates.io"
+                )
+            elif published.index(dep) > index:
+                errors.append(
+                    f"{_RELEASE_WORKFLOW}: {dep} is published after {crate}, "
+                    f"which depends on it - reorder so the dependency uploads first"
+                )
+            if f"sdk/rust/{dep}/Cargo.toml" not in spot_paths:
+                errors.append(
+                    f"sdk/rust/{dep}/Cargo.toml: published crate is not a version "
+                    f"spot - add it to _SDK_SPOTS so bump-sdk keeps it in lockstep"
+                )
+    return errors
+
+
 def read_sdk_facts(root: Path) -> list[Fact]:
     facts = [_read(root, spot) for spot in _SDK_SPOTS]
     facts += [_read_int_triple(root, path, macro) for path, macro in _INT_TRIPLES]
@@ -202,6 +253,7 @@ def _cmd_check(root: Path, expect: str | None) -> int:
 
     if expect is not None:
         errors += _changelog_errors(root, _SDK_CHANGELOG, expect, "bump-sdk")
+    errors += publish_closure_errors(root)
 
     if errors:
         print("error: SDK version is inconsistent:")

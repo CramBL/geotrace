@@ -1,7 +1,7 @@
 //! Unit literals shared with the open GeoTrace SDK.
 
-use geotrace_units::PhysicalQuantity;
-pub use geotrace_units::Unit;
+use geotrace_sdk_units::PhysicalQuantity;
+pub use geotrace_sdk_units::Unit;
 
 use crate::dimension::Dimension;
 use crate::metric::Quantity;

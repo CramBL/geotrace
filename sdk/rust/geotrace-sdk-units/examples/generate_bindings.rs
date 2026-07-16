@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use geotrace_units::Unit;
+use geotrace_sdk_units::Unit;
 
 fn generated_files() -> [(PathBuf, String); 3] {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

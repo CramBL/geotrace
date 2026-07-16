@@ -192,7 +192,7 @@ dependencies = [
  "bon",
  "chrono",
  "geotrace-sdk-macros",
- "geotrace-units",
+ "geotrace-sdk-units",
  "hdf5-pure",
  "log",
  "strum",
@@ -210,8 +210,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "geotrace-units"
-version = "0.4.0"
+name = "geotrace-sdk-units"
+version = "0.5.0"
 dependencies = [
  "strum",
  "thiserror",

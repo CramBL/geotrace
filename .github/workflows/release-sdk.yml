@@ -283,6 +283,7 @@ jobs:
             fi
           }
           publish geotrace-sdk-macros
+          publish geotrace-sdk-units
           publish geotrace-sdk
 
   # Build the Python wheels, one job per OS family.

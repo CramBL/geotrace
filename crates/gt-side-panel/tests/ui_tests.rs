@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use egui_kittest::kittest::Queryable as _;
-use geotrace_units::Unit;
+use geotrace_sdk_units::Unit;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_side_panel::{

@@ -41,7 +41,7 @@ pub use builder::{
     NavFileBuilder, NavRecord, NavRecorder, SatelliteWarning, collect_satellite_warnings,
 };
 pub use error::{BuildError, ChannelError, Error, EventMarkerError};
-pub use geotrace_units::{
+pub use geotrace_sdk_units::{
     ChannelUnit, ChannelUnitKind, CustomUnit, PhysicalQuantity, Unit, UnitParseError,
 };
 pub use types::{

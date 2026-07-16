@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use gt_types::DisplayMode;
 
 use crate::Diagnostic;
-use geotrace_units::ChannelUnit;
+use geotrace_sdk_units::ChannelUnit;
 
 use crate::ast::{
     BinaryOp, ChannelRef, Expr, Func, NumberLit, ParamDecl, ParamName, Query, Source, Span,
