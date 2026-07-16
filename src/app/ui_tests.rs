@@ -3385,6 +3385,23 @@ fn snapshot_about_dialog() {
     harness.inner.step();
     harness.inner.state_mut().about_open = true;
     harness.run();
+    // The dialog must render the injected placeholder, never the live crate
+    // version - otherwise every release bump would diff the snapshot. If this
+    // regresses to `env!`, the snapshot below diffs and this asserts too.
+    assert!(
+        harness
+            .inner
+            .query_by_label_contains(super::TEST_APP_VERSION)
+            .is_some(),
+        "the dialog must render the injected placeholder version"
+    );
+    assert!(
+        harness
+            .inner
+            .query_by_label_contains(&format!("GeoTrace {}", env!("CARGO_PKG_VERSION")))
+            .is_none(),
+        "the live crate version must never reach the rendered dialog"
+    );
     harness.snapshot("about_dialog");
 }
 

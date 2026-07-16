@@ -58,11 +58,10 @@ enum InstallStatus {
 pub struct UpdateChecker {
     outcome: Arc<Mutex<Option<CheckOutcome>>>,
     install: Arc<Mutex<InstallStatus>>,
-    /// The running version, shown in the prompt as "(current: …)". Held as a
-    /// field rather than read from `CARGO_PKG_VERSION` at render time so tests
-    /// can pin it to a fixed value; otherwise the prompt snapshot would diff on
-    /// every release as the version bumps.
-    current_version: String,
+    /// The running version, shown in the prompt as "(current: …)". Injected
+    /// from the app's single `app_version` so it is fixed in tests and never
+    /// diffs a snapshot on a release bump.
+    current_version: &'static str,
     /// Whether the background check has been spawned this session.
     started: bool,
     /// Whether the user dismissed the prompt for this session ("Later").
@@ -76,11 +75,11 @@ pub enum UpdateEvent {
 }
 
 impl UpdateChecker {
-    pub fn new() -> Self {
+    pub fn new(app_version: &'static str) -> Self {
         Self {
             outcome: Arc::new(Mutex::new(None)),
             install: Arc::new(Mutex::new(InstallStatus::Idle)),
-            current_version: env!("CARGO_PKG_VERSION").to_owned(),
+            current_version: app_version,
             started: false,
             dismissed: false,
         }
@@ -91,11 +90,10 @@ impl UpdateChecker {
     /// set so the real background check never runs and overwrites the state.
     #[cfg(test)]
     pub fn available_for_test(version: &str, self_update: bool) -> Self {
-        let mut checker = Self::new();
+        // The same fixed placeholder the app injects in tests, so the prompt
+        // snapshot stays stable across releases.
+        let mut checker = Self::new(crate::app::TEST_APP_VERSION);
         checker.started = true;
-        // Pin the displayed current version so the prompt snapshot stays stable
-        // across releases instead of tracking the live `CARGO_PKG_VERSION`.
-        checker.current_version = "0.1.0".to_owned();
         *checker.outcome.lock() = Some(CheckOutcome::Available {
             version: version.to_owned(),
             self_update,
@@ -162,7 +160,7 @@ impl UpdateChecker {
         let mut start_install = false;
         let mut quit = false;
 
-        let current_version = self.current_version.as_str();
+        let current_version = self.current_version;
         let install_status = self.install.lock();
         Window::new("Update available")
             .collapsible(false)
@@ -318,6 +316,9 @@ fn check_for_update() -> CheckOutcome {
                 name: REPO_NAME.to_owned(),
                 app_name: APP_NAME.to_owned(),
             });
+            // The genuine version the updater compares against the latest
+            // release - update logic, never a rendered string, so it must be
+            // the real crate version, not the injectable display placeholder.
             let Ok(current) = semver::Version::parse(env!("CARGO_PKG_VERSION")) else {
                 return CheckOutcome::Failed;
             };

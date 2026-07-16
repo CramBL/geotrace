@@ -483,7 +483,7 @@ pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<Recordi
 /// Map tiles and snap-to-road matching both build on OpenStreetMap data
 /// (ODbL), and the default matching server is run by FOSSGIS e.V. - the
 /// credits live here, always reachable from the menu bar.
-pub fn show_about_dialog(ui: &egui::Ui, open: &mut bool) {
+pub fn show_about_dialog(ui: &egui::Ui, open: &mut bool, version: &str) {
     if !*open {
         return;
     }
@@ -498,7 +498,7 @@ pub fn show_about_dialog(ui: &egui::Ui, open: &mut bool) {
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ui.ctx(), |ui| {
-            ui.label(RichText::new(format!("GeoTrace {}", env!("CARGO_PKG_VERSION"))).strong());
+            ui.label(RichText::new(format!("GeoTrace {version}")).strong());
             ui.label("GPS/GNSS navigation data visualizer");
             ui.separator();
             ui.label("Map tiles and road-network matching build on OpenStreetMap data");

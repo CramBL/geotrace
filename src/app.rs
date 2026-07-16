@@ -230,6 +230,13 @@ fn sparse_component_colors(
         .collect()
 }
 
+/// The fixed version string injected in place of the real crate version in
+/// tests, so every version-bearing UI snapshot stays stable across release
+/// bumps. The one placeholder for the whole app (the About dialog and the
+/// update prompt both flow through it).
+#[cfg(test)]
+pub(crate) const TEST_APP_VERSION: &str = "0.0.0-test";
+
 pub struct App {
     map: NavMap,
     shared: Rc<RefCell<SharedAppState>>,
@@ -290,6 +297,9 @@ pub struct App {
     settings_open: bool,
     /// Whether the About dialog is currently open.
     about_open: bool,
+    /// The running crate version; fixed to a placeholder in tests so
+    /// version-bearing UI snapshots stay stable across release bumps.
+    app_version: &'static str,
     /// Active segmentation config - applied to all new file loads and re-segmentation.
     processing_config: SegmentationConfig,
     /// Active association config - applied to all new log loads.
@@ -454,6 +464,13 @@ impl App {
             Option<PathBuf>,
         ) = (history_db::HistoryWorker::disabled(), None, None);
 
+        // A fixed placeholder in tests so version-bearing UI snapshots stay
+        // stable across release bumps; the real crate version otherwise.
+        #[cfg(test)]
+        let app_version = TEST_APP_VERSION;
+        #[cfg(not(test))]
+        let app_version = env!("CARGO_PKG_VERSION");
+
         let mut app = Self {
             map,
             shared: Rc::new(RefCell::new(SharedAppState {
@@ -497,6 +514,7 @@ impl App {
             config_path,
             settings_open: false,
             about_open: false,
+            app_version,
             processing_config: SegmentationConfig::default(),
             assoc_config: AssociationConfig::default(),
             history,
@@ -513,7 +531,7 @@ impl App {
             query_window: query::QueryWindow::new(),
             toasts: egui_notify::Toasts::default(),
             #[cfg(feature = "self-update")]
-            update_checker: update::UpdateChecker::new(),
+            update_checker: update::UpdateChecker::new(app_version),
             update_check_on_startup: true,
             skipped_version: None,
         };
@@ -2480,7 +2498,7 @@ impl eframe::App for App {
                             .on_hover_text(format!(
                                 "GeoTrace {new_version} is available (current: {}). Update \
                                  through your package manager, or open the releases page.",
-                                env!("CARGO_PKG_VERSION")
+                                self.app_version
                             ))
                             .clicked()
                         {
@@ -2760,7 +2778,7 @@ impl eframe::App for App {
             show_mapbox_token_dialog(ui, &mut self.map, &mut self.mapbox_token_input);
         }
 
-        show_about_dialog(ui, &mut self.about_open);
+        show_about_dialog(ui, &mut self.about_open, self.app_version);
 
         // Auto mode armed without acknowledged uploads (the checkbox was
         // enabled, or the server host changed): consent is asked on the
