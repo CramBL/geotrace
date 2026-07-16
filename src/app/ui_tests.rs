@@ -1824,6 +1824,49 @@ fn snapshot_app_plot_channel_components() {
     harness.snapshot("app_plot_channel_components");
 }
 
+/// A user-picked component color reaches every surface at once: the line,
+/// the chip's bar strip, and the hover legend square all draw `accel.y` in
+/// the override instead of the derived hue.
+#[test]
+fn snapshot_app_plot_channel_color_override() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(accel_channel_gtd_bytes(0.9))),
+            name: "accel.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+    harness.inner.run_steps(5);
+
+    harness.inner.get_by_label_contains("Channels").click();
+    harness.inner.run_steps(3);
+    {
+        let state = harness.inner.state_mut();
+        let mut shared = state.shared.borrow_mut();
+        for kind in <gt_types::MetricKind as strum::IntoEnumIterator>::iter() {
+            *shared.plot_state.metric_vis.field_mut(kind) = false;
+        }
+        shared.plot_state.channel_component_colors.insert(
+            "accel".to_owned(),
+            vec![None, Some(egui::Color32::from_rgb(255, 0, 200)), None],
+        );
+    }
+    harness.inner.run_steps(2);
+    harness.inner.get_by_label_contains("accel (g)").hover();
+    for _ in 0..60 {
+        harness.inner.run();
+    }
+    harness.snapshot("app_plot_channel_color_override");
+}
+
 /// The fixture stretches whose `accel` x-component exceeds 1 g, shared by the
 /// value generation and the expected-match assertion so they cannot drift.
 const ACCEL_HIGH_RANGES: [std::ops::Range<usize>; 2] = [60..120, 180..200];

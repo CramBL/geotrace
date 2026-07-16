@@ -251,6 +251,19 @@ pub struct PlotSettings {
     /// Whether the ad-hoc channel chips are revealed. Off by default, like
     /// the advanced section.
     pub show_channels: bool,
+    /// User-chosen channel component colors, keyed by channel name: a
+    /// sparse list of recolored components (TOML cannot hold `None` array
+    /// slots); anything absent keeps the derived hue. Edited through the
+    /// chip's hover legend.
+    pub channel_colors: HashMap<String, Vec<ComponentColor>>,
+}
+
+/// One recolored channel component (see [`PlotSettings::channel_colors`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ComponentColor {
+    pub component: usize,
+    /// Premultiplied RGBA, as [`egui::Color32`] stores it.
+    pub rgba: [u8; 4],
 }
 
 impl Default for PlotSettings {
@@ -264,6 +277,7 @@ impl Default for PlotSettings {
             channel: HashMap::new(),
             show_advanced_metrics: false,
             show_channels: false,
+            channel_colors: HashMap::new(),
         }
     }
 }
@@ -454,6 +468,27 @@ mod snap_settings_tests {
         assert!(
             !unset.contains("search_radius_m"),
             "unset options stay out of the file"
+        );
+    }
+
+    /// Component color overrides survive the TOML settings file as sparse
+    /// entries (a channel with only its second component recolored).
+    #[test]
+    fn channel_colors_roundtrip_through_toml() {
+        let mut settings = Settings::default();
+        let recolored = ComponentColor {
+            component: 1,
+            rgba: [255, 0, 200, 255],
+        };
+        settings
+            .plot
+            .channel_colors
+            .insert("accel".to_owned(), vec![recolored]);
+        let serialized = toml::to_string(&settings).expect("serialize");
+        let restored: Settings = toml::from_str(&serialized).expect("deserialize");
+        assert_eq!(
+            restored.plot.channel_colors.get("accel"),
+            Some(&vec![recolored])
         );
     }
 

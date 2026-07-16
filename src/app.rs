@@ -1106,6 +1106,24 @@ impl App {
             for (name, &visible) in &s.plot.channel {
                 channel_vis.set(name, visible);
             }
+            shared.plot_state.channel_component_colors = s
+                .plot
+                .channel_colors
+                .iter()
+                .map(|(name, entries)| {
+                    // Dense per-component slots for the plot, from the
+                    // sparse stored entries.
+                    let len = entries.iter().map(|e| e.component + 1).max().unwrap_or(0);
+                    let mut colors: Vec<Option<egui::Color32>> = vec![None; len];
+                    for entry in entries {
+                        if let Some(slot) = colors.get_mut(entry.component) {
+                            let [r, g, b, a] = entry.rgba;
+                            *slot = Some(egui::Color32::from_rgba_premultiplied(r, g, b, a));
+                        }
+                    }
+                    (name.clone(), colors)
+                })
+                .collect();
         }
 
         self.tiles_tree
@@ -1519,6 +1537,24 @@ impl App {
                 channel: s.plot_state.channel_vis.entries().into_iter().collect(),
                 show_advanced_metrics: s.plot_state.show_advanced_metrics,
                 show_channels: s.plot_state.show_channels,
+                channel_colors: s
+                    .plot_state
+                    .channel_component_colors
+                    .iter()
+                    .map(|(name, colors)| {
+                        let entries = colors
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(component, c)| {
+                                c.map(|c| crate::settings::ComponentColor {
+                                    component,
+                                    rgba: c.to_array(),
+                                })
+                            })
+                            .collect();
+                        (name.clone(), entries)
+                    })
+                    .collect(),
             },
             map: crate::settings::MapSettings {
                 layer: map_layer_to_setting(self.map.layer()),
