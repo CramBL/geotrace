@@ -338,6 +338,20 @@ fn channel_line_color(index: usize, file_index: usize) -> Color32 {
 /// base hue matters less than being distinct.
 const COMPONENT_HUE_STEP: f32 = 60.0 / 360.0;
 
+/// The `component`-th color of a channel, honoring a user override from
+/// the chip's right-click menu before falling back to the derived hue ladder.
+fn effective_component_color(
+    overrides: &HashMap<String, Vec<Option<Color32>>>,
+    channel: &str,
+    base: Color32,
+    component: usize,
+) -> Color32 {
+    overrides
+        .get(channel)
+        .and_then(|colors| colors.get(component).copied().flatten())
+        .unwrap_or_else(|| component_color(base, component))
+}
+
 /// The `component`-th line color of a channel: the channel color with its
 /// hue rotated in alternating steps (base, +25, -25, +50, ...), so a vector
 /// channel's components separate without leaving its color family.
@@ -950,6 +964,10 @@ pub struct PlotState {
     /// Per-track snap error mipmaps and marker lists, rebuilt only when a
     /// track's series `Arc` changes (see [`sync_snap_error_cache`]).
     snap_error_cache: HashMap<TrackRef, SnapErrorPlotCache>,
+    /// User-chosen component colors, keyed by channel name: one optional
+    /// override per component, `None` = the derived hue. Edited through the
+    /// chip's right-click menu; persisted with the plot settings.
+    pub channel_component_colors: HashMap<String, Vec<Option<Color32>>>,
     /// Whether the plot cursor was snapped close to a data point on the most
     /// recently rendered frame.
     ///
@@ -983,6 +1001,7 @@ impl Default for PlotState {
             last_computed_bounds: None,
             applied_map_x_range: None,
             snap_error_cache: HashMap::new(),
+            channel_component_colors: HashMap::new(),
             plot_cursor_snapped: false,
         }
     }
@@ -1138,6 +1157,7 @@ pub fn show_track_plot(
         &present,
         &channels,
         &mut state.channel_vis,
+        &mut state.channel_component_colors,
         &mut state.show_grid,
         &mut state.line_width,
         &mut state.sync_to_map,
@@ -1201,6 +1221,7 @@ pub fn show_track_plot(
     // `last_computed_bounds`).
     let series_cache = &state.series_cache;
     let snap_error_cache = &state.snap_error_cache;
+    let channel_component_colors = &state.channel_component_colors;
     let level_cache = &state.level_cache;
     let last_computed_bounds = state.last_computed_bounds;
     let metric_vis = &state.metric_vis;
@@ -1361,6 +1382,7 @@ pub fn show_track_plot(
                 cache,
                 metric_vis,
                 channel_vis,
+                channel_component_colors,
                 &present,
                 &channels,
                 hovered_chip.as_ref(),
@@ -1700,6 +1722,7 @@ fn channel_chip_group(
     ui: &mut egui::Ui,
     channels: &[LoadedChannel],
     channel_vis: &mut ChannelVisibility,
+    component_colors: &mut HashMap<String, Vec<Option<Color32>>>,
     show_only: &mut Option<String>,
     hovered: &mut Option<HoveredChip>,
 ) {
@@ -1715,7 +1738,8 @@ fn channel_chip_group(
             &mut enabled,
             &label,
             channel_color(channel.color_index),
-            &channel.components,
+            channel,
+            component_colors,
         );
         channel_vis.set(&channel.name, enabled);
         if chip_show_only {
@@ -1747,6 +1771,7 @@ fn metric_filter_row(
     present: &HashSet<Constellation>,
     channels: &[LoadedChannel],
     channel_vis: &mut ChannelVisibility,
+    component_colors: &mut HashMap<String, Vec<Option<Color32>>>,
     show_grid: &mut bool,
     line_width: &mut f32,
     sync_to_map: &mut bool,
@@ -1763,6 +1788,11 @@ fn metric_filter_row(
     let mut hovered_chip = None;
 
     ui.horizontal_wrapped(|ui| {
+        // Instant tooltips: egui's default delay-with-grace makes the chip
+        // hovers appear instantly when another tooltip was recently shown
+        // (approaching from the plot below) but lag when coming from the
+        // map above - consistent immediacy beats the inconsistency.
+        ui.style_mut().interaction.tooltip_delay = 0.0;
         // Sync toggle.
         if ui
             .selectable_label(*sync_to_map, ICON_LINK)
@@ -1890,6 +1920,7 @@ fn metric_filter_row(
                 ui,
                 channels,
                 channel_vis,
+                component_colors,
                 &mut show_only_channel,
                 &mut hovered_chip,
             );
@@ -1963,7 +1994,7 @@ fn metric_chip(
     color: Color32,
     tooltip: Option<&str>,
 ) -> (bool, bool) {
-    let (show_only, response) = chip_button(ui, enabled, name, color);
+    let (show_only, response) = chip_button(ui, enabled, name, color, |_| {});
     let hovered = response.hovered();
     if let Some(tip) = tooltip {
         response.on_hover_text(tip);
@@ -1972,14 +2003,16 @@ fn metric_chip(
 }
 
 /// The shared chip widget behind [`metric_chip`] and [`channel_chip`]: the
-/// toggle button and the show-only context menu. Returns the response so
-/// each caller attaches its own hover (plain text, or the component
-/// legend) and [`channel_chip`] can paint its bars over the rect.
+/// toggle button and the show-only context menu, which `extend_menu` may
+/// append to (the channel chip adds its color pickers there). Returns the
+/// response so each caller attaches its own hover and [`channel_chip`] can
+/// paint its bars over the rect.
 fn chip_button(
     ui: &mut egui::Ui,
     enabled: &mut bool,
     name: &str,
     color: Color32,
+    extend_menu: impl FnOnce(&mut egui::Ui),
 ) -> (bool, egui::Response) {
     let fill = if *enabled {
         color.gamma_multiply(0.75)
@@ -2004,6 +2037,7 @@ fn chip_button(
             show_only = true;
             ui.close();
         }
+        extend_menu(ui);
     });
     (show_only, response)
 }
@@ -2034,15 +2068,60 @@ fn channel_chip(
     enabled: &mut bool,
     name: &str,
     color: Color32,
-    component_labels: &[String],
+    channel: &LoadedChannel,
+    component_colors: &mut HashMap<String, Vec<Option<Color32>>>,
 ) -> (bool, bool) {
-    let (show_only, response) = chip_button(ui, enabled, name, color);
+    // The color pickers live in the right-click menu (a menu stays open
+    // while its submenus are used; a hover tooltip closes the moment the
+    // pointer leaves the chip, which made an editable tooltip unusable).
+    let (show_only, response) = chip_button(ui, enabled, name, color, |ui| {
+        for (index, label) in channel.components.iter().enumerate() {
+            // The picker submenu only closes on a click outside (or the
+            // menu items' explicit closes): a menu's default close-on-any-
+            // click would dismiss the picker on a simple click, while a
+            // click-drag survived - inconsistent mid-edit.
+            let picker = egui::containers::menu::SubMenuButton::new(format!("Color of {label}"))
+                .config(
+                    egui::containers::menu::MenuConfig::new()
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                );
+            picker.ui(ui, |ui| {
+                let mut edited =
+                    effective_component_color(component_colors, &channel.name, color, index);
+                if egui::color_picker::color_picker_color32(
+                    ui,
+                    &mut edited,
+                    egui::color_picker::Alpha::Opaque,
+                ) {
+                    let overrides = component_colors
+                        .entry(channel.name.clone())
+                        .or_insert_with(|| vec![None; channel.components.len()]);
+                    // Widen defensively: another file may have grown the
+                    // component count since the overrides were stored.
+                    if overrides.len() < channel.components.len() {
+                        overrides.resize(channel.components.len(), None);
+                    }
+                    if let Some(slot) = overrides.get_mut(index) {
+                        *slot = Some(edited);
+                    }
+                }
+            });
+        }
+        let has_overrides = component_colors
+            .get(&channel.name)
+            .is_some_and(|colors| colors.iter().any(Option::is_some));
+        if has_overrides && ui.button("Reset colors").clicked() {
+            component_colors.remove(&channel.name);
+            ui.close();
+        }
+    });
     let hovered = response.hovered();
     let rect = response.rect;
-    // The hover legend maps each component color to its name.
+    // The hover legend is the read-only reference: each component's color
+    // square and name at a glance, and the pointer to where editing lives.
     response.on_hover_ui(|ui| {
         ui.label("Sensor channel recorded alongside the track");
-        for (index, label) in component_labels.iter().enumerate() {
+        for (index, label) in channel.components.iter().enumerate() {
             ui.horizontal(|ui| {
                 let (square, _) = ui.allocate_exact_size(
                     egui::Vec2::splat(LEGEND_SQUARE_SIZE),
@@ -2051,14 +2130,15 @@ fn channel_chip(
                 ui.painter().rect_filled(
                     square,
                     CHIP_BAR_CORNER_RADIUS,
-                    component_color(color, index),
+                    effective_component_color(component_colors, &channel.name, color, index),
                 );
                 ui.label(label);
             });
         }
+        ui.label(RichText::new("Right-click to pick colors").weak());
     });
     // Never empty in practice; a label-less chip degrades to a plain one.
-    let Some(components) = NonZeroUsize::new(component_labels.len()) else {
+    let Some(components) = NonZeroUsize::new(channel.components.len()) else {
         return (show_only, hovered);
     };
     let components = components.get();
@@ -2083,7 +2163,8 @@ fn channel_chip(
         ui.painter().rect_filled(
             bar,
             CHIP_BAR_CORNER_RADIUS,
-            component_color(color, index).gamma_multiply(alpha),
+            effective_component_color(component_colors, &channel.name, color, index)
+                .gamma_multiply(alpha),
         );
     }
     (show_only, hovered)
@@ -2193,6 +2274,7 @@ fn add_series_lines<'a>(
     cache: &TripLevelCache,
     metric_vis: &MetricVisibility,
     channel_vis: &ChannelVisibility,
+    component_colors: &HashMap<String, Vec<Option<Color32>>>,
     present: &HashSet<Constellation>,
     channels: &[LoadedChannel],
     hovered_chip: Option<&HoveredChip>,
@@ -2313,7 +2395,10 @@ fn add_series_lines<'a>(
         {
             // Rotate before the hover treatment, so dimming applies to the
             // component's own hue.
-            let (color, highlighted) = hover_treatment(component_color(base, index), is_hovered);
+            let (color, highlighted) = hover_treatment(
+                effective_component_color(component_colors, &channel.name, base, index),
+                is_hovered,
+            );
             add_line(
                 plot_ui,
                 component.mipmap.slice_at(*selection),
@@ -2901,6 +2986,36 @@ mod tests {
         assert!(
             (got - want).abs() < 0.01 || (got - want).abs() > 0.99,
             "component {component}: hue {got} != {want}"
+        );
+    }
+
+    /// A user override wins over the derived hue; anything else - no entry,
+    /// a `None` slot, an index past the stored vector - falls back to the
+    /// ladder.
+    #[test]
+    fn effective_component_color_falls_back_without_an_override() {
+        let base = CHANNEL_PALETTE[0];
+        let red = Color32::from_rgb(255, 0, 0);
+        let overrides = HashMap::from([("accel".to_owned(), vec![None, Some(red)])]);
+        assert_eq!(
+            effective_component_color(&overrides, "accel", base, 1),
+            red,
+            "the stored override wins"
+        );
+        assert_eq!(
+            effective_component_color(&overrides, "accel", base, 0),
+            component_color(base, 0),
+            "a None slot falls back"
+        );
+        assert_eq!(
+            effective_component_color(&overrides, "accel", base, 2),
+            component_color(base, 2),
+            "an index past the stored vector falls back"
+        );
+        assert_eq!(
+            effective_component_color(&overrides, "incline", base, 0),
+            component_color(base, 0),
+            "a channel without overrides falls back"
         );
     }
 
