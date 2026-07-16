@@ -7,6 +7,8 @@ the app).
 
 ## [unreleased]
 
+## [0.5.0] - 2026-07-16
+
 ### Added
 
 - An optional `travel_mode` metadata field declaring the recording platform: `car`, `motorcycle`, `bicycle`, `pedestrian`, `boat`, `rail`, or `aircraft`. Unknown values are preserved on read, never dropped.
