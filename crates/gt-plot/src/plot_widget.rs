@@ -2076,7 +2076,16 @@ fn channel_chip(
     // pointer leaves the chip, which made an editable tooltip unusable).
     let (show_only, response) = chip_button(ui, enabled, name, color, |ui| {
         for (index, label) in channel.components.iter().enumerate() {
-            ui.menu_button(format!("Color of {label}"), |ui| {
+            // The picker submenu only closes on a click outside (or the
+            // menu items' explicit closes): a menu's default close-on-any-
+            // click would dismiss the picker on a simple click, while a
+            // click-drag survived - inconsistent mid-edit.
+            let picker = egui::containers::menu::SubMenuButton::new(format!("Color of {label}"))
+                .config(
+                    egui::containers::menu::MenuConfig::new()
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                );
+            picker.ui(ui, |ui| {
                 let mut edited =
                     effective_component_color(component_colors, &channel.name, color, index);
                 if egui::color_picker::color_picker_color32(
