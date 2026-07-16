@@ -9,7 +9,7 @@ use crate::types::{
 };
 use crate::write;
 use crate::{Angle, Velocity};
-use geotrace_units::ChannelUnit;
+use geotrace_sdk_units::ChannelUnit;
 use hdf5_pure::File;
 use strum::IntoEnumIterator;
 

@@ -1969,7 +1969,7 @@ dependencies = [
  "egui_tiles",
  "env_logger",
  "geotrace-sdk",
- "geotrace-units",
+ "geotrace-sdk-units",
  "gt-analysis",
  "gt-filter",
  "gt-fmt",
@@ -2018,7 +2018,7 @@ dependencies = [
  "bon",
  "chrono",
  "geotrace-sdk-macros",
- "geotrace-units",
+ "geotrace-sdk-units",
  "hdf5-pure",
  "insta",
  "log",
@@ -2039,8 +2039,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "geotrace-units"
-version = "0.4.0"
+name = "geotrace-sdk-units"
+version = "0.5.0"
 dependencies = [
  "insta",
  "proptest",
@@ -2424,7 +2424,7 @@ dependencies = [
  "egui",
  "egui-phosphor",
  "egui_plot",
- "geotrace-units",
+ "geotrace-sdk-units",
  "gt-analysis",
  "gt-egui-mipmap",
  "gt-filter",
@@ -2441,7 +2441,7 @@ dependencies = [
 name = "gt-query"
 version = "0.5.1"
 dependencies = [
- "geotrace-units",
+ "geotrace-sdk-units",
  "gt-types",
  "insta",
  "logos",
@@ -2460,7 +2460,7 @@ dependencies = [
  "egui",
  "egui-phosphor",
  "egui_kittest",
- "geotrace-units",
+ "geotrace-sdk-units",
  "gt-filter",
  "gt-fmt",
  "gt-history-types",
@@ -2517,7 +2517,7 @@ version = "0.5.1"
 dependencies = [
  "chrono",
  "geo-types",
- "geotrace-units",
+ "geotrace-sdk-units",
  "gt-analysis",
  "gt-geo-math",
  "gt-types",
@@ -2535,7 +2535,7 @@ dependencies = [
  "bon",
  "chrono",
  "geo-types",
- "geotrace-units",
+ "geotrace-sdk-units",
  "proptest",
  "rstar 0.13.0",
  "serde",

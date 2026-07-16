@@ -378,7 +378,7 @@ fn build_track_series(
 
 #[cfg(test)]
 mod tests {
-    use geotrace_units::Unit;
+    use geotrace_sdk_units::Unit;
 
     use super::*;
 

@@ -1,4 +1,4 @@
-# geotrace-units
+# geotrace-sdk-units
 
 Canonical channel units shared by the GeoTrace file SDK and query engine.
 
@@ -6,7 +6,7 @@ Recognized units carry physical dimensions and conversion factors.
 Custom units are an explicit display-only escape hatch and remain dimensionless in queries.
 
 ```rust
-use geotrace_units::{ChannelUnit, Unit};
+use geotrace_sdk_units::{ChannelUnit, Unit};
 
 let acceleration = ChannelUnit::recognized(Unit::MG);
 assert_eq!(acceleration.to_string(), "mg");

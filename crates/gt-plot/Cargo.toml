@@ -14,7 +14,7 @@ chrono.workspace = true
 egui.workspace = true
 egui-phosphor.workspace = true
 egui_plot.workspace = true
-geotrace-units = { path = "../../sdk/rust/geotrace-units" }
+geotrace-sdk-units = { path = "../../sdk/rust/geotrace-sdk-units" }
 gt-analysis = { path = "../gt-analysis" }
 gt-egui-mipmap = { path = "../gt-egui-mipmap" }
 gt-filter = { path = "../gt-filter" }

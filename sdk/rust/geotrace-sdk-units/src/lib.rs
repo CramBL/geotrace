@@ -6,14 +6,14 @@
 //! dimensionless because GeoTrace cannot safely infer conversions for it.
 //!
 //! ```
-//! use geotrace_units::{ChannelUnit, Unit};
+//! use geotrace_sdk_units::{ChannelUnit, Unit};
 //!
 //! let acceleration = ChannelUnit::recognized(Unit::MG);
 //! assert_eq!(acceleration.to_string(), "mg");
 //!
 //! let score = ChannelUnit::custom("vendor score")?;
 //! assert!(score.as_recognized().is_none());
-//! # Ok::<(), geotrace_units::UnitParseError>(())
+//! # Ok::<(), geotrace_sdk_units::UnitParseError>(())
 //! ```
 
 use std::{fmt, str::FromStr};
@@ -657,7 +657,7 @@ pub enum ChannelUnitKind {
 /// Its private representation cannot be constructed as writable metadata.
 ///
 /// ```compile_fail
-/// use geotrace_units::ChannelUnit;
+/// use geotrace_sdk_units::ChannelUnit;
 /// let _ = ChannelUnit("legacy".to_owned());
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

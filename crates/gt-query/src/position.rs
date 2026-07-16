@@ -11,7 +11,7 @@ use std::ops::Range;
 use std::str::FromStr as _;
 use std::sync::OnceLock;
 
-use geotrace_units::ChannelUnit;
+use geotrace_sdk_units::ChannelUnit;
 
 use crate::ast::{Func, ParamName};
 use crate::check::{ChannelInfo, ChannelSchema};

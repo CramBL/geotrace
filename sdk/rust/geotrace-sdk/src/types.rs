@@ -1,7 +1,7 @@
 use std::{fs::File, io, path::Path};
 
 use chrono::{DateTime, Utc};
-use geotrace_units::{ChannelUnit, PhysicalQuantity};
+use geotrace_sdk_units::{ChannelUnit, PhysicalQuantity};
 
 use crate::error::{ChannelError, Error, EventMarkerError};
 use crate::{Angle, Velocity};

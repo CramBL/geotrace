@@ -7,7 +7,7 @@
 //! when a file is segmented.
 
 use chrono::{DateTime, Utc};
-use geotrace_units::ChannelUnit;
+use geotrace_sdk_units::ChannelUnit;
 use uom::si::f64::Angle;
 
 /// A named scalar or vector sensor channel.
@@ -80,7 +80,7 @@ impl Channel {
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone;
-    use geotrace_units::Unit;
+    use geotrace_sdk_units::Unit;
 
     use super::*;
 

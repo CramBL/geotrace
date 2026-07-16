@@ -1,5 +1,5 @@
 ---
-source: sdk/rust/geotrace-units/src/lib.rs
+source: sdk/rust/geotrace-sdk-units/src/lib.rs
 expression: catalog
 ---
 deg | DEG | Deg | DEG | Angle | 1.000000000000
