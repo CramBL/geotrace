@@ -135,3 +135,60 @@ def test_publish_closure_rejects_a_dependency_published_too_late(tmp_path: Path)
     errors = versions.publish_closure_errors(tmp_path)
     assert any("published after" in e for e in errors), errors
 
+
+def _write_workspace(tmp_path: Path, members: dict[str, bool]) -> None:
+    """A minimal workspace: each member maps to whether it inherits the
+    workspace version."""
+    tmp_path.joinpath("Cargo.toml").write_text(
+        "[workspace]\nmembers = [\n"
+        + "".join(f'    "crates/{name}",\n' for name in members)
+        + "]\n",
+        encoding="utf-8",
+    )
+    for name, inherits in members.items():
+        manifest = tmp_path / "crates" / name / "Cargo.toml"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        version = "version.workspace = true" if inherits else 'version = "1.0.0"'
+        manifest.write_text(
+            f'[package]\nname = "{name}"\n{version}\n',
+            encoding="utf-8",
+        )
+
+
+def test_app_lock_crates_accepts_a_matching_list(tmp_path: Path) -> None:
+    _write_workspace(tmp_path, {"gt-a": True, "geotrace-sdk-units": False})
+    assert versions.app_lock_crate_errors(tmp_path, listed_crates=["gt-a"]) == []
+
+
+def test_app_lock_crates_rejects_a_listed_member_that_stopped_inheriting(tmp_path: Path) -> None:
+    """A listed crate pinned to its own version would get the wrong version."""
+    _write_workspace(tmp_path, {"gt-a": True, "gt-detached": False})
+    errors = versions.app_lock_crate_errors(tmp_path, listed_crates=["gt-a", "gt-detached"])
+    assert any("gt-detached" in e and "no longer inherits" in e for e in errors), errors
+
+
+def test_app_lock_crates_reports_a_nameless_member_manifest(tmp_path: Path) -> None:
+    _write_workspace(tmp_path, {"gt-a": True})
+    nameless = tmp_path / "crates" / "gt-nameless" / "Cargo.toml"
+    nameless.parent.mkdir(parents=True)
+    nameless.write_text('[package]\nversion.workspace = true\n', encoding="utf-8")
+    root = tmp_path / "Cargo.toml"
+    root.write_text(
+        root.read_text(encoding="utf-8").replace(
+            '\n]\n', '\n    "crates/gt-nameless",\n]\n'
+        ),
+        encoding="utf-8",
+    )
+    errors = versions.app_lock_crate_errors(tmp_path, listed_crates=["gt-a"])
+    assert any("no package name found" in e for e in errors), errors
+
+
+def test_app_lock_crates_rejects_an_unlisted_workspace_member(tmp_path: Path) -> None:
+    """The gt-snap incident: a new workspace-versioned crate that never
+    joined the bump list, so bump-app left its lock pin stale and the
+    release's lockfile guard failed."""
+    _write_workspace(tmp_path, {"gt-a": True, "gt-new": True})
+    errors = versions.app_lock_crate_errors(tmp_path, listed_crates=["gt-a"])
+    assert any("gt-new" in e and "missing from" in e for e in errors), errors
+
+

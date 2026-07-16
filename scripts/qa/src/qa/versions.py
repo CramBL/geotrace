@@ -26,6 +26,7 @@ rewrite them and promote the matching changelog (see ``qa.changelog``). Given
 import argparse
 import re
 import sys
+import tomllib
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -132,6 +133,7 @@ _APP_LOCK_CRATES: list[str] = [
     "gt-plot",
     "gt-query",
     "gt-side-panel",
+    "gt-snap",
     "gt-test-utils",
     "gt-track-builder",
     "gt-types",
@@ -142,6 +144,51 @@ _APP_LOCK_CRATES: list[str] = [
 _APP_SPOTS: list[Spot] = [Spot("Cargo.toml", _TOML_VERSION)] + [
     Spot(_ROOT_LOCK, _lock_version(crate), note=f"{crate} lock") for crate in _APP_LOCK_CRATES
 ]
+
+
+def app_lock_crate_errors(root: Path, listed_crates: list[str] | None = None) -> list[str]:
+    """`_APP_LOCK_CRATES` must list exactly the workspace-versioned members.
+
+    Every workspace member inheriting the workspace version gets its
+    Cargo.lock pin rewritten by `bump-app`; a member missing from the list
+    keeps its old pin, and the very next `cargo update --workspace --locked`
+    (the release recipe and CI's lockfile guard) fails. That is how a new
+    crate broke the app release without any earlier signal - this check
+    derives the expected list from the workspace so the gap fails in CI the
+    day the crate lands. The reverse also holds: a listed member that
+    stopped inheriting would silently get the wrong version, so both
+    directions error. (Entries for removed members already fail loudly
+    through their unmatched lock spot.)
+    """
+    manifest = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
+    listed = set(_APP_LOCK_CRATES if listed_crates is None else listed_crates) | {"geotrace"}
+    errors: list[str] = []
+    inheriting: set[str] = {"geotrace"}
+    members: set[str] = {"geotrace"}
+    for member in manifest.get("workspace", {}).get("members", []):
+        package = tomllib.loads(
+            (root / member / "Cargo.toml").read_text(encoding="utf-8")
+        ).get("package", {})
+        name = package.get("name")
+        if name is None:
+            errors.append(f"{member}/Cargo.toml: no package name found")
+            continue
+        members.add(name)
+        if package.get("version") == {"workspace": True}:
+            inheriting.add(name)
+    errors += [
+        f"{crate} inherits the workspace version but is missing from "
+        f"_APP_LOCK_CRATES - bump-app would leave its Cargo.lock pin stale "
+        f"and break `cargo update --workspace --locked`"
+        for crate in sorted(inheriting - listed)
+    ]
+    errors += [
+        f"{crate} is in _APP_LOCK_CRATES but no longer inherits the "
+        f"workspace version - bump-app would rewrite its lock pin wrongly"
+        for crate in sorted((listed & members) - inheriting)
+    ]
+    return errors
+
 
 _APP_CHANGELOG = "CHANGELOG.md"
 _SDK_CHANGELOG = "CHANGELOG_SDK.md"
@@ -280,7 +327,7 @@ def _changelog_errors(root: Path, rel: str, expect: str, bump: str) -> list[str]
 def _cmd_check_app(root: Path, expect: str | None) -> int:
     facts = [_read(root, spot) for spot in _APP_SPOTS]
     full_values = sorted({f.value for f in facts})
-    errors: list[str] = []
+    errors: list[str] = app_lock_crate_errors(root)
     if len(full_values) != 1:
         errors.append("app version spots disagree")
     elif expect is not None and full_values[0] != expect:
