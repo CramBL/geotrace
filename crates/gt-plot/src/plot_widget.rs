@@ -701,27 +701,38 @@ struct LoadedChannel {
     name: String,
     unit: Option<String>,
     color_index: usize,
-    /// Component count (1 for a scalar channel), for the chip's color bars.
-    components: NonZeroUsize,
+    /// Component labels (one for a scalar channel), for the chip's color
+    /// bars and its hover legend. Never empty in practice -
+    /// `build_channel_series` always emits at least one component - and the
+    /// chip degrades to a plain one if it ever were.
+    components: Vec<String>,
 }
 
 /// The sorted union of channels across all series, with palette indices.
 fn loaded_channels<'a>(
     all_channels: impl Iterator<Item = &'a crate::series::ChannelSeries>,
 ) -> Vec<LoadedChannel> {
-    let mut by_name: Vec<(&str, Option<&str>, NonZeroUsize)> = Vec::new();
+    let mut by_name: Vec<(&str, Option<&str>, Vec<String>)> = Vec::new();
     for channel in all_channels {
-        // `build_channel_series` always emits at least one component; the
-        // MIN fallback only satisfies the non-zero type.
-        let components = NonZeroUsize::new(channel.components.len()).unwrap_or(NonZeroUsize::MIN);
+        let labels = || {
+            channel
+                .components
+                .iter()
+                .map(|c| c.label.clone())
+                .collect::<Vec<String>>()
+        };
         match by_name
             .iter_mut()
             .find(|(name, _, _)| *name == channel.name)
         {
             // The widest series wins: files may carry differing component
             // counts under one name, and the chip should show them all.
-            Some((_, _, widest)) => *widest = (*widest).max(components),
-            None => by_name.push((&channel.name, channel.unit.as_deref(), components)),
+            Some((_, _, widest)) => {
+                if channel.components.len() > widest.len() {
+                    *widest = labels();
+                }
+            }
+            None => by_name.push((&channel.name, channel.unit.as_deref(), labels())),
         }
     }
     by_name.sort();
@@ -1704,8 +1715,7 @@ fn channel_chip_group(
             &mut enabled,
             &label,
             channel_color(channel.color_index),
-            channel.components,
-            Some("Sensor channel recorded alongside the track"),
+            &channel.components,
         );
         channel_vis.set(&channel.name, enabled);
         if chip_show_only {
@@ -1953,20 +1963,24 @@ fn metric_chip(
     color: Color32,
     tooltip: Option<&str>,
 ) -> (bool, bool) {
-    let (show_only, hovered, _) = chip_button(ui, enabled, name, color, tooltip);
+    let (show_only, response) = chip_button(ui, enabled, name, color);
+    let hovered = response.hovered();
+    if let Some(tip) = tooltip {
+        response.on_hover_text(tip);
+    }
     (show_only, hovered)
 }
 
 /// The shared chip widget behind [`metric_chip`] and [`channel_chip`]: the
-/// toggle button, its tooltip, and the show-only context menu. Returns the
-/// chip's rect so [`channel_chip`] can paint its component bars over it.
+/// toggle button and the show-only context menu. Returns the response so
+/// each caller attaches its own hover (plain text, or the component
+/// legend) and [`channel_chip`] can paint its bars over the rect.
 fn chip_button(
     ui: &mut egui::Ui,
     enabled: &mut bool,
     name: &str,
     color: Color32,
-    tooltip: Option<&str>,
-) -> (bool, bool, egui::Rect) {
+) -> (bool, egui::Response) {
     let fill = if *enabled {
         color.gamma_multiply(0.75)
     } else {
@@ -1984,9 +1998,6 @@ fn chip_button(
     if response.clicked() {
         *enabled = !*enabled;
     }
-    if let Some(tip) = tooltip {
-        response.clone().on_hover_text(tip);
-    }
     let mut show_only = false;
     response.context_menu(|ui| {
         if ui.button("Show only this").clicked() {
@@ -1994,7 +2005,7 @@ fn chip_button(
             ui.close();
         }
     });
-    (show_only, response.hovered(), response.rect)
+    (show_only, response)
 }
 
 /// Height of the component color bars along a channel chip's bottom edge.
@@ -2012,6 +2023,9 @@ const CHIP_BAR_CORNER_RADIUS: f32 = 1.0;
 /// fill's dimming, and they are the only place the component colors show.
 const CHIP_BAR_DISABLED_ALPHA: f32 = 0.25;
 
+/// Side of one color square in the chip's hover legend, in points.
+const LEGEND_SQUARE_SIZE: f32 = 10.0;
+
 /// A channel's chip: the metric chip extended with a bar strip along the
 /// bottom edge, one bar per component in that component's line color - the
 /// legend for a vector channel's x/y/z hues.
@@ -2020,10 +2034,33 @@ fn channel_chip(
     enabled: &mut bool,
     name: &str,
     color: Color32,
-    components: NonZeroUsize,
-    tooltip: Option<&str>,
+    component_labels: &[String],
 ) -> (bool, bool) {
-    let (show_only, hovered, rect) = chip_button(ui, enabled, name, color, tooltip);
+    let (show_only, response) = chip_button(ui, enabled, name, color);
+    let hovered = response.hovered();
+    let rect = response.rect;
+    // The hover legend maps each component color to its name.
+    response.on_hover_ui(|ui| {
+        ui.label("Sensor channel recorded alongside the track");
+        for (index, label) in component_labels.iter().enumerate() {
+            ui.horizontal(|ui| {
+                let (square, _) = ui.allocate_exact_size(
+                    egui::Vec2::splat(LEGEND_SQUARE_SIZE),
+                    egui::Sense::hover(),
+                );
+                ui.painter().rect_filled(
+                    square,
+                    CHIP_BAR_CORNER_RADIUS,
+                    component_color(color, index),
+                );
+                ui.label(label);
+            });
+        }
+    });
+    // Never empty in practice; a label-less chip degrades to a plain one.
+    let Some(components) = NonZeroUsize::new(component_labels.len()) else {
+        return (show_only, hovered);
+    };
     let components = components.get();
     let strip = egui::Rect::from_min_max(
         egui::pos2(rect.left(), rect.bottom() - CHIP_BAR_HEIGHT),
@@ -3193,9 +3230,9 @@ mod tests {
         assert_eq!(names, ["accel", "incline"], "sorted union across series");
         assert_eq!(channels[0].unit.as_deref(), Some("g"));
         assert_eq!(
-            channels[0].components.get(),
-            3,
-            "the widest series' component count wins"
+            channels[0].components,
+            ["accel.0", "accel.1", "accel.2"],
+            "the widest series' component labels win"
         );
         // Palette indices follow the sorted order, so a channel keeps one hue
         // across files.

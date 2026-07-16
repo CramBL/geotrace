@@ -1118,7 +1118,7 @@ fn snapshot_app_query_channel_source() {
         .input_mut()
         .dropped_files
         .push(egui::DroppedFile {
-            bytes: Some(Arc::from(accel_channel_gtd_bytes())),
+            bytes: Some(Arc::from(accel_channel_gtd_bytes(28.0))),
             name: "accel_demo.gtd".to_owned(),
             ..Default::default()
         });
@@ -1169,7 +1169,7 @@ fn snapshot_app_query_points_with_channel() {
         .input_mut()
         .dropped_files
         .push(egui::DroppedFile {
-            bytes: Some(Arc::from(accel_channel_gtd_bytes())),
+            bytes: Some(Arc::from(accel_channel_gtd_bytes(28.0))),
             name: "accel_demo.gtd".to_owned(),
             ..Default::default()
         });
@@ -1780,6 +1780,50 @@ fn comment_only_chunk_does_not_block_run() {
     );
 }
 
+/// The vector channel's per-component hues and the chip's hover legend, on
+/// a fixture whose y-scale keeps the three accel lines visibly apart (the
+/// demo-trip snapshot squeezes them into one line against velocity's
+/// scale). The tooltip maps each component color square to its name.
+#[test]
+fn snapshot_app_plot_channel_components() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(accel_channel_gtd_bytes(0.9))),
+            name: "accel.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+    harness.inner.run_steps(5);
+
+    harness.inner.get_by_label_contains("Channels").click();
+    harness.inner.run_steps(3);
+    // Metric lines (satellite counts, heading at 20 deg) dwarf the accel
+    // values; hide them all so the y-scale lets the three component lines
+    // separate visibly.
+    {
+        let state = harness.inner.state_mut();
+        let mut shared = state.shared.borrow_mut();
+        for kind in <gt_types::MetricKind as strum::IntoEnumIterator>::iter() {
+            *shared.plot_state.metric_vis.field_mut(kind) = false;
+        }
+    }
+    harness.inner.run_steps(2);
+    harness.inner.get_by_label_contains("accel (g)").hover();
+    // Tooltips appear after egui's hover delay.
+    for _ in 0..60 {
+        harness.inner.run();
+    }
+    harness.snapshot("app_plot_channel_components");
+}
+
 /// The fixture stretches whose `accel` x-component exceeds 1 g, shared by the
 /// value generation and the expected-match assertion so they cannot drift.
 const ACCEL_HIGH_RANGES: [std::ops::Range<usize>; 2] = [60..120, 180..200];
@@ -1788,7 +1832,7 @@ const ACCEL_HIGH_RANGES: [std::ops::Range<usize>; 2] = [60..120, 180..200];
 /// channel in g, one sample per nav fix. The [`ACCEL_HIGH_RANGES`] stretches
 /// exceed 1 g on x, so an `@accel.x` filter has multi-sample matches to table
 /// on the window and halo on the map.
-fn accel_channel_gtd_bytes() -> Vec<u8> {
+fn accel_channel_gtd_bytes(speed_kmh: f64) -> Vec<u8> {
     let spec = SyntheticGtdSpec {
         start: base_time(),
         point_count: 240,
@@ -1798,7 +1842,7 @@ fn accel_channel_gtd_bytes() -> Vec<u8> {
         lat_step_deg: 0.00005,
         lon_step_deg: 0.00008,
         heading_deg: 20.0,
-        speed_kmh: 28.0,
+        speed_kmh,
         eph_m: 1.8,
         sats_seen: 14,
         sats_in_fix: 11,
