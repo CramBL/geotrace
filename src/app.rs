@@ -196,6 +196,40 @@ impl SnapErrorDerived {
     }
 }
 
+/// The dense per-component color slots the plot reads, from the settings
+/// file's sparse recolored-component entries. Entries past the widest index
+/// size the vector; anything absent stays the derived hue.
+fn dense_component_colors(
+    entries: &[crate::settings::ComponentColor],
+) -> Vec<Option<egui::Color32>> {
+    let len = entries.iter().map(|e| e.component + 1).max().unwrap_or(0);
+    let mut colors: Vec<Option<egui::Color32>> = vec![None; len];
+    for entry in entries {
+        if let Some(slot) = colors.get_mut(entry.component) {
+            let [r, g, b, a] = entry.rgba;
+            *slot = Some(egui::Color32::from_rgba_premultiplied(r, g, b, a));
+        }
+    }
+    colors
+}
+
+/// The inverse of [`dense_component_colors`]: only overridden slots are
+/// stored (TOML cannot hold `None` array slots).
+fn sparse_component_colors(
+    colors: &[Option<egui::Color32>],
+) -> Vec<crate::settings::ComponentColor> {
+    colors
+        .iter()
+        .enumerate()
+        .filter_map(|(component, c)| {
+            c.map(|c| crate::settings::ComponentColor {
+                component,
+                rgba: c.to_array(),
+            })
+        })
+        .collect()
+}
+
 pub struct App {
     map: NavMap,
     shared: Rc<RefCell<SharedAppState>>,
@@ -1110,19 +1144,7 @@ impl App {
                 .plot
                 .channel_colors
                 .iter()
-                .map(|(name, entries)| {
-                    // Dense per-component slots for the plot, from the
-                    // sparse stored entries.
-                    let len = entries.iter().map(|e| e.component + 1).max().unwrap_or(0);
-                    let mut colors: Vec<Option<egui::Color32>> = vec![None; len];
-                    for entry in entries {
-                        if let Some(slot) = colors.get_mut(entry.component) {
-                            let [r, g, b, a] = entry.rgba;
-                            *slot = Some(egui::Color32::from_rgba_premultiplied(r, g, b, a));
-                        }
-                    }
-                    (name.clone(), colors)
-                })
+                .map(|(name, entries)| (name.clone(), dense_component_colors(entries)))
                 .collect();
         }
 
@@ -1541,19 +1563,7 @@ impl App {
                     .plot_state
                     .channel_component_colors
                     .iter()
-                    .map(|(name, colors)| {
-                        let entries = colors
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(component, c)| {
-                                c.map(|c| crate::settings::ComponentColor {
-                                    component,
-                                    rgba: c.to_array(),
-                                })
-                            })
-                            .collect();
-                        (name.clone(), entries)
-                    })
+                    .map(|(name, colors)| (name.clone(), sparse_component_colors(colors)))
                     .collect(),
             },
             map: crate::settings::MapSettings {

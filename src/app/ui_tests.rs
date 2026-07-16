@@ -1363,6 +1363,66 @@ fn plot_channel_toggles_persist_across_settings_roundtrip() {
     assert!(shared.plot_state.channel_vis.is_visible("incline"));
 }
 
+/// The sparse<->dense component color conversions: empty stays empty, an
+/// index gap widens with unset slots, and only overridden slots are stored.
+#[test]
+fn component_color_conversions_handle_gaps_and_empty_input() {
+    use crate::app::{dense_component_colors, sparse_component_colors};
+    use crate::settings::ComponentColor;
+
+    assert!(dense_component_colors(&[]).is_empty());
+    assert!(sparse_component_colors(&[None, None]).is_empty());
+
+    let red = egui::Color32::from_rgb(255, 0, 0);
+    let dense = dense_component_colors(&[ComponentColor {
+        component: 2,
+        rgba: red.to_array(),
+    }]);
+    assert_eq!(dense, vec![None, None, Some(red)], "gaps widen with unset");
+    assert_eq!(
+        sparse_component_colors(&dense),
+        vec![ComponentColor {
+            component: 2,
+            rgba: red.to_array(),
+        }]
+    );
+}
+
+/// A picked component color persists through the actual settings wire
+/// format, non-overridden slots included: the dense plot slots convert to
+/// sparse stored entries and back without drift.
+#[test]
+fn channel_component_colors_persist_across_settings_roundtrip() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+
+    let magenta = egui::Color32::from_rgb(255, 0, 200);
+    {
+        let shared = harness.state_mut().shared.clone();
+        let mut shared = shared.borrow_mut();
+        shared
+            .plot_state
+            .channel_component_colors
+            .insert("accel".to_owned(), vec![None, Some(magenta), None]);
+    }
+
+    let flushed = harness.state().collect_settings_for_flush();
+    let toml = toml::to_string(&flushed).expect("settings serialize");
+    let reloaded: crate::settings::Settings = toml::from_str(&toml).expect("settings parse");
+    harness.state_mut().apply_startup_settings(&reloaded);
+
+    let shared = harness.state().shared.borrow();
+    let colors = shared
+        .plot_state
+        .channel_component_colors
+        .get("accel")
+        .expect("override survives the roundtrip");
+    assert_eq!(colors.first(), Some(&None), "unset slots stay unset");
+    assert_eq!(colors.get(1), Some(&Some(magenta)));
+}
+
 /// The display mask persists through the actual settings wire format:
 /// hidden categories survive the round trip, missing keys mean visible.
 #[test]
