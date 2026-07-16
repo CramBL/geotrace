@@ -1,0 +1,366 @@
+//! The metric and channel line pass: one line per enabled metric and
+//! channel component, plus the anomaly markers and the custom nearest-point
+//! tooltips.
+
+use std::collections::{HashMap, HashSet};
+
+use chrono::DateTime;
+use egui::{Color32, Tooltip};
+use egui_plot::{Line, LineStyle, MarkerShape, PlotPoint, PlotPoints, Points};
+use gt_analysis::satellite_utilization::UtilAnomaly;
+use gt_types::satellites::Constellation;
+use gt_types::{FileIdx, MetricKind, TrackIdx, TrackRef};
+use gt_ui_types::HighlightScope;
+use strum::IntoEnumIterator;
+
+use super::chips::{
+    ChannelVisibility, HoveredChip, LoadedChannel, MetricKindUi, MetricVisibility, SectionGates,
+    metric_is_shown,
+};
+use super::levels::TripLevelCache;
+use super::snap_error::{
+    SnapErrorHover, SnapErrorPlotCache, SnapErrorStyle, SnapErrorViewport, add_snap_error_series,
+};
+use super::style::{
+    channel_line_color, effective_component_color, file_line_style, metric_line_color,
+};
+use crate::series::TrackSeries;
+
+/// Pixel radius within which the pointer is considered to be hovering a
+/// masked-satellite anomaly marker.
+pub(super) const ANOMALY_HOVER_RADIUS_PX: f32 = 7.0;
+/// On-plot radius of the anomaly cross marker.
+pub(super) const ANOMALY_MARKER_RADIUS: f32 = 4.0;
+/// Gap between the pointer and the anomaly hover tooltip.
+const ANOMALY_TOOLTIP_GAP: f32 = 12.0;
+/// Add all metric lines for one track to the plot using pre-computed level selections.
+///
+/// When `hovered_chip` is `Some(kind)`, that metric is highlighted (double stroke
+/// width) and every other line is dimmed to 20 % brightness - mirroring the
+/// standard egui-plot legend hover behaviour.
+///
+/// The `'a` lifetime ties both `plot_ui` and `series` together so that
+/// [`egui_plot::PlotPoints::Borrowed`] can reference mipmap slices directly
+/// without any per-frame allocation.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "per-line rendering needs the plot, series, level cache, visibility/hover state, track focus, and the advanced-section gate"
+)]
+pub(super) fn add_series_lines<'a>(
+    plot_ui: &mut egui_plot::PlotUi<'a>,
+    series: &'a TrackSeries,
+    multi_track: bool,
+    cache: &TripLevelCache,
+    metric_vis: &MetricVisibility,
+    channel_vis: &ChannelVisibility,
+    component_colors: &HashMap<String, Vec<Option<Color32>>>,
+    present: &HashSet<Constellation>,
+    channels: &[LoadedChannel],
+    hovered_chip: Option<&HoveredChip>,
+    hover_scope: Option<HighlightScope>,
+    sections: SectionGates,
+    line_width: f32,
+    dark_mode: bool,
+    snap_error: Option<&'a SnapErrorPlotCache>,
+    snap_viewport: SnapErrorViewport,
+    snap_pointer: Option<egui::Pos2>,
+    hovered_snap: &mut Option<(f32, SnapErrorHover)>,
+) {
+    let prefix = if multi_track {
+        format!("{}: ", series.label)
+    } else {
+        String::new()
+    };
+    let focused = series_matches_hover_scope(series, hover_scope);
+    let has_track_focus = hover_scope.is_some();
+
+    // The hover-dim treatment every line shares: full color plus highlight
+    // while its own chip is hovered, dimmed while any other chip is.
+    let hover_treatment = |base: Color32, is_hovered_chip: bool| {
+        let (mut color, highlighted) = match hovered_chip {
+            Some(_) if is_hovered_chip => (base, true),
+            Some(_) => (base.gamma_multiply(0.2), false),
+            None => (base, false),
+        };
+        if has_track_focus && !focused {
+            color = color.gamma_multiply(0.2);
+        }
+        (color, highlighted || (has_track_focus && focused))
+    };
+    let line_style = file_line_style(series.fi);
+
+    for kind in MetricKind::iter() {
+        // Skip metrics with no chip on screen - collapsed advanced section, or a
+        // per-constellation metric whose constellation is absent from the data -
+        // so a hidden chip never leaves a stray line on the plot.
+        if !metric_is_shown(kind, present, sections.show_advanced) {
+            continue;
+        }
+        if !metric_vis.field(kind) {
+            continue;
+        }
+        let is_hovered = hovered_chip == Some(&HoveredChip::Metric(kind));
+        let (color, highlighted) =
+            hover_treatment(metric_line_color(kind, series.fi, dark_mode), is_hovered);
+        // Snap error has no mipmap; it draws from the external per-run
+        // series right after this loop.
+        let (Some(mipmap), Some(level)) = (series.mipmap_for(kind), cache.level_for(kind)) else {
+            continue;
+        };
+        add_line(
+            plot_ui,
+            mipmap.slice_at(level),
+            format!("{prefix}{}", kind.label()),
+            color,
+            line_style,
+            line_width,
+            highlighted,
+        );
+    }
+
+    if metric_vis.field(MetricKind::SnapError)
+        && let Some(snap_cache) = snap_error
+    {
+        let is_hovered = hovered_chip == Some(&HoveredChip::Metric(MetricKind::SnapError));
+        let (color, highlighted) = hover_treatment(
+            metric_line_color(MetricKind::SnapError, series.fi, dark_mode),
+            is_hovered,
+        );
+        add_snap_error_series(
+            plot_ui,
+            &prefix,
+            series,
+            multi_track,
+            snap_cache,
+            snap_viewport,
+            snap_pointer,
+            hovered_snap,
+            SnapErrorStyle {
+                color,
+                style: line_style,
+                width: line_width,
+                highlighted,
+                dark_mode,
+            },
+        );
+    }
+
+    // Channel lines, one per component, gated like the chips: the whole
+    // section while collapsed, then the per-channel toggle.
+    if !sections.show_channels {
+        return;
+    }
+    for (channel, selections) in series.channels.iter().zip(&cache.channels) {
+        if !channel_vis.is_visible(&channel.name) {
+            continue;
+        }
+        // The palette index comes from the cross-file union, so `accel` keeps
+        // one hue no matter which file's track is drawing.
+        let Some(color_index) = channels
+            .iter()
+            .find(|c| c.name == channel.name)
+            .map(|c| c.color_index)
+        else {
+            continue;
+        };
+        let is_hovered =
+            matches!(hovered_chip, Some(HoveredChip::Channel(name)) if *name == channel.name);
+        let base = channel_line_color(color_index, series.fi);
+        let unit_suffix = channel
+            .unit
+            .as_deref()
+            .map_or(String::new(), |u| format!(" ({u})"));
+        for (index, (component, selection)) in channel.components.iter().zip(selections).enumerate()
+        {
+            // Rotate before the hover treatment, so dimming applies to the
+            // component's own hue.
+            let (color, highlighted) = hover_treatment(
+                effective_component_color(component_colors, &channel.name, base, index),
+                is_hovered,
+            );
+            add_line(
+                plot_ui,
+                component.mipmap.slice_at(*selection),
+                format!("{prefix}{}{unit_suffix}", component.label),
+                color,
+                line_style,
+                line_width,
+                highlighted,
+            );
+        }
+    }
+}
+
+/// Surface the custom nearest-point hovers - the masked-out satellites of an
+/// anomaly marker, and the kind and error of a snap point - as tooltips
+/// anchored at the pointer. These items suppress egui_plot's own labels.
+pub(super) fn show_nearest_point_tooltips(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    hovered_anomaly: Option<(f32, AnomalyHover)>,
+    hovered_snap: Option<(f32, SnapErrorHover)>,
+) {
+    if !response.hovered() {
+        return;
+    }
+    if let Some((_, hover)) = hovered_anomaly {
+        pointer_tooltip(ui, response, "util_anomaly_tooltip", |ui| hover.show(ui));
+    }
+    if let Some((_, hover)) = hovered_snap {
+        pointer_tooltip(ui, response, "snap_error_tooltip", |ui| hover.show(ui));
+    }
+}
+
+/// A custom tooltip anchored at the pointer, for the nearest-point hovers
+/// (anomaly markers, snap error points) that suppress egui_plot's own labels.
+fn pointer_tooltip(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    id: &str,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    Tooltip::always_open(
+        ui.ctx().clone(),
+        response.layer_id,
+        egui::Id::new(id),
+        egui::PopupAnchor::Pointer,
+    )
+    .gap(ANOMALY_TOOLTIP_GAP)
+    .show(add_contents);
+}
+
+/// The [`TrackRef`] a series was built from, for keying into per-track
+/// external data like the snap error series.
+pub(super) fn series_track_ref(series: &TrackSeries) -> TrackRef {
+    TrackRef::new(FileIdx::new(series.fi), TrackIdx::new(series.ti))
+}
+
+fn series_matches_hover_scope(series: &TrackSeries, hover_scope: Option<HighlightScope>) -> bool {
+    match hover_scope {
+        Some(HighlightScope::File { file_index }) => file_index.as_usize() == series.fi,
+        Some(HighlightScope::Track(track)) | Some(HighlightScope::TrackCategory { track, .. }) => {
+            track.fi.as_usize() == series.fi && track.index.as_usize() == series.ti
+        }
+        Some(HighlightScope::Point(_)) | None => true,
+    }
+}
+
+/// Submit one metric line to the plot, borrowing the point slice directly via
+/// [`PlotPoints::Borrowed`] - no allocation.
+///
+/// Skips slices with fewer than two points: a single-point line produces no
+/// visible geometry and would clutter the legend.
+///
+/// The shared lifetime `'a` ensures the borrowed slice lives at least as long
+/// as the `PlotUi` that will consume it (required because `PlotUi<'a>` is
+/// invariant over `'a`).
+pub(super) fn add_line<'a>(
+    plot_ui: &mut egui_plot::PlotUi<'a>,
+    data: &'a [egui_plot::PlotPoint],
+    name: String,
+    color: Color32,
+    style: LineStyle,
+    width: f32,
+    highlighted: bool,
+) {
+    if data.len() < 2 {
+        return;
+    }
+    plot_ui.line(
+        Line::new(name, PlotPoints::Borrowed(data))
+            .color(color)
+            .style(style)
+            .width(width)
+            .highlight(highlighted),
+    );
+}
+
+/// Pre-formatted tooltip contents for one masked-satellite anomaly marker.
+pub(super) struct AnomalyHover {
+    /// Track label, shown only when more than one track is visible.
+    track: Option<String>,
+    time: String,
+    /// One line per masked-out satellite, e.g. `GPS 07 - 12.3°`.
+    sats: Vec<String>,
+}
+
+impl AnomalyHover {
+    fn new(series: &TrackSeries, multi_track: bool, anomaly: &UtilAnomaly) -> Self {
+        let time = DateTime::from_timestamp(anomaly.t as i64, 0)
+            .map(|dt| dt.format("%H:%M:%S").to_string())
+            .unwrap_or_default();
+        let sats = anomaly
+            .masked
+            .iter()
+            .map(|m| {
+                format!(
+                    "{} {:02} - {:.1}°",
+                    m.constellation.display_name(),
+                    m.prn,
+                    m.elevation
+                )
+            })
+            .collect();
+        Self {
+            track: multi_track.then(|| series.label.clone()),
+            time,
+            sats,
+        }
+    }
+
+    fn show(&self, ui: &mut egui::Ui) {
+        ui.strong("Used satellites below the elevation mask");
+        if let Some(track) = &self.track {
+            ui.label(track);
+        }
+        ui.label(format!("at {}", self.time));
+        ui.separator();
+        for line in &self.sats {
+            ui.label(line);
+        }
+    }
+}
+
+/// Draw the masked-satellite anomaly markers for one track and, when the pointer
+/// is within [`ANOMALY_HOVER_RADIUS_PX`] of a marker, record the nearest one in
+/// `nearest` so the caller can show its tooltip.
+///
+/// Each marker sits on the all-constellations utilization line at the epoch
+/// where the receiver used a satellite below the elevation mask.
+pub(super) fn add_util_anomalies<'a>(
+    plot_ui: &mut egui_plot::PlotUi<'a>,
+    series: &'a TrackSeries,
+    multi_track: bool,
+    pointer: Option<egui::Pos2>,
+    nearest: &mut Option<(f32, AnomalyHover)>,
+    dark_mode: bool,
+) {
+    if series.util_anomalies.is_empty() {
+        return;
+    }
+
+    let points: Vec<PlotPoint> = series
+        .util_anomalies
+        .iter()
+        .map(|a| PlotPoint::new(a.t, a.value))
+        .collect();
+    plot_ui.points(
+        Points::new("Masked-out used satellites", PlotPoints::Owned(points))
+            .shape(MarkerShape::Cross)
+            .color(gt_ui_theme::error_indicator(dark_mode))
+            .radius(ANOMALY_MARKER_RADIUS)
+            // Hover is handled with a custom tooltip, so suppress egui_plot's own.
+            .allow_hover(false),
+    );
+
+    let Some(ptr) = pointer else {
+        return;
+    };
+    for anomaly in &series.util_anomalies {
+        let screen = plot_ui.screen_from_plot(PlotPoint::new(anomaly.t, anomaly.value));
+        let dist = screen.distance(ptr);
+        if dist <= ANOMALY_HOVER_RADIUS_PX && nearest.as_ref().is_none_or(|(d, _)| dist < *d) {
+            *nearest = Some((dist, AnomalyHover::new(series, multi_track, anomaly)));
+        }
+    }
+}
