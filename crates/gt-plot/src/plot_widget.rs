@@ -332,10 +332,11 @@ fn channel_line_color(index: usize, file_index: usize) -> Color32 {
 }
 
 /// Hue step between a vector channel's components, as a fraction of the
-/// full hue circle (25 degrees). Large enough to tell x/y/z apart at a
-/// glance, small enough that every component stays in the channel's color
-/// family rather than colliding with another channel's base hue.
-const COMPONENT_HUE_STEP: f32 = 25.0 / 360.0;
+/// full hue circle. 25 degrees proved too close to tell apart in practice;
+/// at 60 degrees x/y/z read as clearly different colors. The chip's bar
+/// strip ties the rotated hues back to their channel, so staying near the
+/// base hue matters less than being distinct.
+const COMPONENT_HUE_STEP: f32 = 60.0 / 360.0;
 
 /// The `component`-th line color of a channel: the channel color with its
 /// hue rotated in alternating steps (base, +25, -25, +50, ...), so a vector
@@ -2851,10 +2852,10 @@ mod tests {
     /// cleanly around the hue circle - always distinct from the base.
     #[rstest::rstest]
     #[case::base(0, 0.0)]
-    #[case::second_steps_up(1, 25.0 / 360.0)]
-    #[case::third_steps_down(2, -25.0 / 360.0)]
-    #[case::fourth_steps_further(3, 50.0 / 360.0)]
-    #[case::fifth_steps_further_down(4, -50.0 / 360.0)]
+    #[case::second_steps_up(1, 60.0 / 360.0)]
+    #[case::third_steps_down(2, -60.0 / 360.0)]
+    #[case::fourth_steps_further(3, 120.0 / 360.0)]
+    #[case::fifth_steps_further_down(4, -120.0 / 360.0)]
     fn component_colors_ladder_around_the_base_hue(#[case] component: usize, #[case] offset: f32) {
         let base = CHANNEL_PALETTE[0];
         let base_hue = egui::ecolor::Hsva::from(base).h;
