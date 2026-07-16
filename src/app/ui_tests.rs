@@ -1363,6 +1363,66 @@ fn plot_channel_toggles_persist_across_settings_roundtrip() {
     assert!(shared.plot_state.channel_vis.is_visible("incline"));
 }
 
+/// The sparse<->dense component color conversions: empty stays empty, an
+/// index gap widens with unset slots, and only overridden slots are stored.
+#[test]
+fn component_color_conversions_handle_gaps_and_empty_input() {
+    use crate::app::{dense_component_colors, sparse_component_colors};
+    use crate::settings::ComponentColor;
+
+    assert!(dense_component_colors(&[]).is_empty());
+    assert!(sparse_component_colors(&[None, None]).is_empty());
+
+    let red = egui::Color32::from_rgb(255, 0, 0);
+    let dense = dense_component_colors(&[ComponentColor {
+        component: 2,
+        rgba: red.to_array(),
+    }]);
+    assert_eq!(dense, vec![None, None, Some(red)], "gaps widen with unset");
+    assert_eq!(
+        sparse_component_colors(&dense),
+        vec![ComponentColor {
+            component: 2,
+            rgba: red.to_array(),
+        }]
+    );
+}
+
+/// A picked component color persists through the actual settings wire
+/// format, non-overridden slots included: the dense plot slots convert to
+/// sparse stored entries and back without drift.
+#[test]
+fn channel_component_colors_persist_across_settings_roundtrip() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+
+    let magenta = egui::Color32::from_rgb(255, 0, 200);
+    {
+        let shared = harness.state_mut().shared.clone();
+        let mut shared = shared.borrow_mut();
+        shared
+            .plot_state
+            .channel_component_colors
+            .insert("accel".to_owned(), vec![None, Some(magenta), None]);
+    }
+
+    let flushed = harness.state().collect_settings_for_flush();
+    let toml = toml::to_string(&flushed).expect("settings serialize");
+    let reloaded: crate::settings::Settings = toml::from_str(&toml).expect("settings parse");
+    harness.state_mut().apply_startup_settings(&reloaded);
+
+    let shared = harness.state().shared.borrow();
+    let colors = shared
+        .plot_state
+        .channel_component_colors
+        .get("accel")
+        .expect("override survives the roundtrip");
+    assert_eq!(colors.first(), Some(&None), "unset slots stay unset");
+    assert_eq!(colors.get(1), Some(&Some(magenta)));
+}
+
 /// The display mask persists through the actual settings wire format:
 /// hidden categories survive the round trip, missing keys mean visible.
 #[test]
@@ -1822,6 +1882,123 @@ fn snapshot_app_plot_channel_components() {
         harness.inner.run();
     }
     harness.snapshot("app_plot_channel_components");
+}
+
+/// The channel chip's right-click menu carries one color entry per
+/// component plus the reset - the editing surface that stays open, unlike
+/// a hover tooltip.
+#[test]
+fn channel_chip_menu_offers_component_colors() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(accel_channel_gtd_bytes(0.9))),
+            name: "accel.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+    harness.inner.run_steps(5);
+    harness.inner.get_by_label_contains("Channels").click();
+    harness.inner.run_steps(3);
+
+    harness
+        .inner
+        .get_by_label_contains("accel (g)")
+        .click_secondary();
+    harness.inner.step();
+    for label in ["Color of accel.x", "Color of accel.y", "Color of accel.z"] {
+        assert!(
+            harness.inner.query_by_label_contains(label).is_some(),
+            "the chip menu should offer {label}"
+        );
+    }
+    assert!(
+        harness.inner.query_by_label("Reset colors").is_none(),
+        "no reset without an override"
+    );
+
+    // With an override in place, the reset entry appears.
+    harness.inner.key_press(egui::Key::Escape);
+    harness.inner.run_steps(2);
+    harness
+        .inner
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .plot_state
+        .channel_component_colors
+        .insert(
+            "accel".to_owned(),
+            vec![None, Some(egui::Color32::from_rgb(255, 0, 200)), None],
+        );
+    harness
+        .inner
+        .get_by_label_contains("accel (g)")
+        .click_secondary();
+    harness.inner.step();
+    harness.inner.get_by_label("Reset colors").click_accesskit();
+    harness.inner.run_steps(2);
+    assert!(
+        harness
+            .inner
+            .state()
+            .shared
+            .borrow()
+            .plot_state
+            .channel_component_colors
+            .is_empty(),
+        "reset must drop the channel's overrides"
+    );
+}
+
+/// A user-picked component color reaches every surface at once: the line,
+/// the chip's bar strip, and the hover legend square all draw `accel.y` in
+/// the override instead of the derived hue.
+#[test]
+fn snapshot_app_plot_channel_color_override() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(accel_channel_gtd_bytes(0.9))),
+            name: "accel.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+    harness.inner.run_steps(5);
+
+    harness.inner.get_by_label_contains("Channels").click();
+    harness.inner.run_steps(3);
+    {
+        let state = harness.inner.state_mut();
+        let mut shared = state.shared.borrow_mut();
+        for kind in <gt_types::MetricKind as strum::IntoEnumIterator>::iter() {
+            *shared.plot_state.metric_vis.field_mut(kind) = false;
+        }
+        shared.plot_state.channel_component_colors.insert(
+            "accel".to_owned(),
+            vec![None, Some(egui::Color32::from_rgb(255, 0, 200)), None],
+        );
+    }
+    harness.inner.run_steps(2);
+    harness.inner.get_by_label_contains("accel (g)").hover();
+    for _ in 0..60 {
+        harness.inner.run();
+    }
+    harness.snapshot("app_plot_channel_color_override");
 }
 
 /// The fixture stretches whose `accel` x-component exceeds 1 g, shared by the
