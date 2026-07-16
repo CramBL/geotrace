@@ -1824,6 +1824,80 @@ fn snapshot_app_plot_channel_components() {
     harness.snapshot("app_plot_channel_components");
 }
 
+/// The channel chip's right-click menu carries one color entry per
+/// component plus the reset - the editing surface that stays open, unlike
+/// a hover tooltip.
+#[test]
+fn channel_chip_menu_offers_component_colors() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(1280.0, 800.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness
+        .inner
+        .input_mut()
+        .dropped_files
+        .push(egui::DroppedFile {
+            bytes: Some(Arc::from(accel_channel_gtd_bytes(0.9))),
+            name: "accel.gtd".to_owned(),
+            ..Default::default()
+        });
+    harness.inner.step();
+    step_until_loaded(&mut harness.inner);
+    harness.inner.run_steps(5);
+    harness.inner.get_by_label_contains("Channels").click();
+    harness.inner.run_steps(3);
+
+    harness
+        .inner
+        .get_by_label_contains("accel (g)")
+        .click_secondary();
+    harness.inner.step();
+    for label in ["Color of accel.x", "Color of accel.y", "Color of accel.z"] {
+        assert!(
+            harness.inner.query_by_label_contains(label).is_some(),
+            "the chip menu should offer {label}"
+        );
+    }
+    assert!(
+        harness.inner.query_by_label("Reset colors").is_none(),
+        "no reset without an override"
+    );
+
+    // With an override in place, the reset entry appears.
+    harness.inner.key_press(egui::Key::Escape);
+    harness.inner.run_steps(2);
+    harness
+        .inner
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .plot_state
+        .channel_component_colors
+        .insert(
+            "accel".to_owned(),
+            vec![None, Some(egui::Color32::from_rgb(255, 0, 200)), None],
+        );
+    harness
+        .inner
+        .get_by_label_contains("accel (g)")
+        .click_secondary();
+    harness.inner.step();
+    harness.inner.get_by_label("Reset colors").click_accesskit();
+    harness.inner.run_steps(2);
+    assert!(
+        harness
+            .inner
+            .state()
+            .shared
+            .borrow()
+            .plot_state
+            .channel_component_colors
+            .is_empty(),
+        "reset must drop the channel's overrides"
+    );
+}
+
 /// A user-picked component color reaches every surface at once: the line,
 /// the chip's bar strip, and the hover legend square all draw `accel.y` in
 /// the override instead of the derived hue.

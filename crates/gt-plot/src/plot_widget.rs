@@ -1788,6 +1788,11 @@ fn metric_filter_row(
     let mut hovered_chip = None;
 
     ui.horizontal_wrapped(|ui| {
+        // Instant tooltips: egui's default delay-with-grace makes the chip
+        // hovers appear instantly when another tooltip was recently shown
+        // (approaching from the plot below) but lag when coming from the
+        // map above - consistent immediacy beats the inconsistency.
+        ui.style_mut().interaction.tooltip_delay = 0.0;
         // Sync toggle.
         if ui
             .selectable_label(*sync_to_map, ICON_LINK)
@@ -1989,7 +1994,7 @@ fn metric_chip(
     color: Color32,
     tooltip: Option<&str>,
 ) -> (bool, bool) {
-    let (show_only, response) = chip_button(ui, enabled, name, color);
+    let (show_only, response) = chip_button(ui, enabled, name, color, |_| {});
     let hovered = response.hovered();
     if let Some(tip) = tooltip {
         response.on_hover_text(tip);
@@ -1998,14 +2003,16 @@ fn metric_chip(
 }
 
 /// The shared chip widget behind [`metric_chip`] and [`channel_chip`]: the
-/// toggle button and the show-only context menu. Returns the response so
-/// each caller attaches its own hover (plain text, or the component
-/// legend) and [`channel_chip`] can paint its bars over the rect.
+/// toggle button and the show-only context menu, which `extend_menu` may
+/// append to (the channel chip adds its color pickers there). Returns the
+/// response so each caller attaches its own hover and [`channel_chip`] can
+/// paint its bars over the rect.
 fn chip_button(
     ui: &mut egui::Ui,
     enabled: &mut bool,
     name: &str,
     color: Color32,
+    extend_menu: impl FnOnce(&mut egui::Ui),
 ) -> (bool, egui::Response) {
     let fill = if *enabled {
         color.gamma_multiply(0.75)
@@ -2030,6 +2037,7 @@ fn chip_button(
             show_only = true;
             ui.close();
         }
+        extend_menu(ui);
     });
     (show_only, response)
 }
@@ -2049,6 +2057,9 @@ const CHIP_BAR_CORNER_RADIUS: f32 = 1.0;
 /// fill's dimming, and they are the only place the component colors show.
 const CHIP_BAR_DISABLED_ALPHA: f32 = 0.25;
 
+/// Side of one color square in the chip's hover legend, in points.
+const LEGEND_SQUARE_SIZE: f32 = 10.0;
+
 /// A channel's chip: the metric chip extended with a bar strip along the
 /// bottom edge, one bar per component in that component's line color - the
 /// legend for a vector channel's x/y/z hues.
@@ -2060,20 +2071,19 @@ fn channel_chip(
     channel: &LoadedChannel,
     component_colors: &mut HashMap<String, Vec<Option<Color32>>>,
 ) -> (bool, bool) {
-    let (show_only, response) = chip_button(ui, enabled, name, color);
-    let hovered = response.hovered();
-    let rect = response.rect;
-    // The hover legend maps each component color to its name. The squares
-    // are egui's color-edit buttons: click one to pick a new color for
-    // that component (the tooltip stays open - interactive content pins
-    // it). Edits land in the override map and persist with the settings.
-    response.on_hover_ui(|ui| {
-        ui.label("Sensor channel recorded alongside the track");
+    // The color pickers live in the right-click menu (a menu stays open
+    // while its submenus are used; a hover tooltip closes the moment the
+    // pointer leaves the chip, which made an editable tooltip unusable).
+    let (show_only, response) = chip_button(ui, enabled, name, color, |ui| {
         for (index, label) in channel.components.iter().enumerate() {
-            ui.horizontal(|ui| {
+            ui.menu_button(format!("Color of {label}"), |ui| {
                 let mut edited =
                     effective_component_color(component_colors, &channel.name, color, index);
-                if ui.color_edit_button_srgba(&mut edited).changed() {
+                if egui::color_picker::color_picker_color32(
+                    ui,
+                    &mut edited,
+                    egui::color_picker::Alpha::Opaque,
+                ) {
                     let overrides = component_colors
                         .entry(channel.name.clone())
                         .or_insert_with(|| vec![None; channel.components.len()]);
@@ -2086,15 +2096,37 @@ fn channel_chip(
                         *slot = Some(edited);
                     }
                 }
-                ui.label(label);
             });
         }
         let has_overrides = component_colors
             .get(&channel.name)
             .is_some_and(|colors| colors.iter().any(Option::is_some));
-        if has_overrides && ui.small_button("Reset colors").clicked() {
+        if has_overrides && ui.button("Reset colors").clicked() {
             component_colors.remove(&channel.name);
+            ui.close();
         }
+    });
+    let hovered = response.hovered();
+    let rect = response.rect;
+    // The hover legend is the read-only reference: each component's color
+    // square and name at a glance, and the pointer to where editing lives.
+    response.on_hover_ui(|ui| {
+        ui.label("Sensor channel recorded alongside the track");
+        for (index, label) in channel.components.iter().enumerate() {
+            ui.horizontal(|ui| {
+                let (square, _) = ui.allocate_exact_size(
+                    egui::Vec2::splat(LEGEND_SQUARE_SIZE),
+                    egui::Sense::hover(),
+                );
+                ui.painter().rect_filled(
+                    square,
+                    CHIP_BAR_CORNER_RADIUS,
+                    effective_component_color(component_colors, &channel.name, color, index),
+                );
+                ui.label(label);
+            });
+        }
+        ui.label(RichText::new("Right-click to pick colors").weak());
     });
     // Never empty in practice; a label-less chip degrades to a plain one.
     let Some(components) = NonZeroUsize::new(channel.components.len()) else {
