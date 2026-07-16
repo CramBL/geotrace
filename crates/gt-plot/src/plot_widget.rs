@@ -339,7 +339,7 @@ fn channel_line_color(index: usize, file_index: usize) -> Color32 {
 const COMPONENT_HUE_STEP: f32 = 60.0 / 360.0;
 
 /// The `component`-th color of a channel, honoring a user override from
-/// the chip's hover legend before falling back to the derived hue ladder.
+/// the chip's right-click menu before falling back to the derived hue ladder.
 fn effective_component_color(
     overrides: &HashMap<String, Vec<Option<Color32>>>,
     channel: &str,
@@ -966,7 +966,7 @@ pub struct PlotState {
     snap_error_cache: HashMap<TrackRef, SnapErrorPlotCache>,
     /// User-chosen component colors, keyed by channel name: one optional
     /// override per component, `None` = the derived hue. Edited through the
-    /// chip's hover legend; persisted with the plot settings.
+    /// chip's right-click menu; persisted with the plot settings.
     pub channel_component_colors: HashMap<String, Vec<Option<Color32>>>,
     /// Whether the plot cursor was snapped close to a data point on the most
     /// recently rendered frame.

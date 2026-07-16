@@ -254,7 +254,7 @@ pub struct PlotSettings {
     /// User-chosen channel component colors, keyed by channel name: a
     /// sparse list of recolored components (TOML cannot hold `None` array
     /// slots); anything absent keeps the derived hue. Edited through the
-    /// chip's hover legend.
+    /// chip's right-click menu.
     pub channel_colors: HashMap<String, Vec<ComponentColor>>,
 }
 
