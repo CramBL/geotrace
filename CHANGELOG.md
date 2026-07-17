@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- The History window resizes smoothly and can be shrunk again.
+
 ## 0.6.0 - 2026-07-16
 
 ### Added
