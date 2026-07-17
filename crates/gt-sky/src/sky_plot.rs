@@ -43,8 +43,9 @@ impl SkyPlotSize {
 /// Satellites in the fix render as filled dots, tracked-only satellites as
 /// hollow outlines, both in their constellation's themed color with the dot
 /// radius encoding the signal-quality tier. Satellites without azimuth or
-/// elevation cannot be placed and are surfaced beneath the plot instead
-/// (see [`unplaceable_ui`]).
+/// elevation cannot be placed and are surfaced beneath the plot instead, as
+/// a count line at the compact size and as one row per satellite at the full
+/// size.
 pub struct SkyPlot<'a> {
     satellites: &'a Satellites,
     size: SkyPlotSize,
