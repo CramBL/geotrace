@@ -801,6 +801,14 @@ pub(crate) fn base_arrow_size(zoom: f64) -> f32 {
     MIN_ARROW_SIZE_PX + zoom_size_factor(zoom) * (MAX_ARROW_SIZE_PX - MIN_ARROW_SIZE_PX)
 }
 
+/// Zoom-adaptive size scale for overlay glyphs: 1.0 where the fix icons
+/// reach full size, shrinking to the icons' minimum fraction below that, so
+/// glyphs shrink in step with the heading arrows rather than staying a fixed
+/// pixel size as the track shrinks.
+pub(crate) fn glyph_size_scale(style: &TpvDrawStyle) -> f32 {
+    style.base_arrow_size / MAX_ARROW_SIZE_PX
+}
+
 /// How a track's fix icons fade this frame, decided O(1) from the track's
 /// precomputed segment-length range before any per-point work.
 ///

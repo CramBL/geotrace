@@ -1,6 +1,7 @@
 use egui::{Area, Frame, Grid, Label, RichText, ScrollArea, Window};
 use egui_phosphor::regular::GLOBE_HEMISPHERE_WEST as ICON_GLOBE_HEMISPHERE_WEST;
 use egui_phosphor::regular::MAP_TRIFOLD as ICON_MAP_TRIFOLD;
+mod collision_grid;
 pub mod display_counts;
 mod display_toggle;
 pub mod event_marker_renderer;
@@ -12,6 +13,7 @@ mod polyline;
 mod query_match_renderer;
 mod sat_labels;
 mod scope;
+mod sky_glyph_renderer;
 mod snapped_track_renderer;
 #[cfg(test)]
 mod test_harness;
@@ -1262,10 +1264,13 @@ mod tests {
         assert!(all_on.trackline);
         assert!(all_on.fade.is_some());
 
+        assert!(all_on.sky_glyphs);
+
         let mut mask = DisplayMask::default();
         mask.set_visible(DisplayCategory::Tracks, false);
         mask.set_visible(DisplayCategory::TrackPoints, false);
         mask.set_visible(DisplayCategory::SatelliteLabels, false);
+        mask.set_visible(DisplayCategory::SkyGlyphs, false);
         let all_off = viewport::TrackPlan::compute(&files, &vis, &filter, mask, 15.0)
             .entry(track)
             .expect("track is in the plan");
@@ -1273,7 +1278,8 @@ mod tests {
         assert!(all_off.fade.is_none());
         assert!(all_off.draws_nothing());
 
-        // Track points masked alone: the line and the labels stay.
+        // Track points masked alone: the line, the labels, and the sky
+        // glyphs stay - they have their own categories.
         let mut mask = DisplayMask::default();
         mask.set_visible(DisplayCategory::TrackPoints, false);
         let points_off = viewport::TrackPlan::compute(&files, &vis, &filter, mask, 15.0)
@@ -1282,6 +1288,17 @@ mod tests {
         assert!(points_off.trackline);
         assert!(points_off.fade.is_none());
         assert!(points_off.sat_labels);
+        assert!(points_off.sky_glyphs);
+
+        // Sky glyphs masked alone: everything else stays.
+        let mut mask = DisplayMask::default();
+        mask.set_visible(DisplayCategory::SkyGlyphs, false);
+        let glyphs_off = viewport::TrackPlan::compute(&files, &vis, &filter, mask, 15.0)
+            .entry(track)
+            .expect("track is in the plan");
+        assert!(!glyphs_off.sky_glyphs);
+        assert!(glyphs_off.trackline);
+        assert!(glyphs_off.fade.is_some());
     }
 
     /// With every position-carrying category masked there is no visible
@@ -2457,5 +2474,58 @@ mod snapshot_tests {
             harness.run();
         }
         harness.snapshot_loose("display_mask_hides_markers");
+    }
+
+    /// Snapshot: with every category except sky glyphs hidden, the rings are
+    /// the only ink left - so their own category keeps drawing them even
+    /// when the trackline, points, and labels are all off.
+    #[test]
+    fn snap_sky_glyphs_only() {
+        use gt_ui_types::{DisplayCategory, DisplayMask, TrackDataVisibility};
+
+        let files = vec![make_snapshot_file()];
+        let visibility = TrackDataVisibility::from_loaded(&files);
+        let mut mask = DisplayMask::default();
+        for category in [
+            DisplayCategory::Tracks,
+            DisplayCategory::TrackPoints,
+            DisplayCategory::SatelliteLabels,
+            DisplayCategory::CustomMarkers,
+            DisplayCategory::GeneratedMarkers,
+            DisplayCategory::EventMarkers,
+        ] {
+            mask.set_visible(category, false);
+        }
+
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(800.0, 600.0))
+            .ui_state(
+                move |ui, map: &mut Option<NavMap>| {
+                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let mut highlight = gt_ui_types::MapHighlight::default();
+                    map.draw(
+                        ui,
+                        &files,
+                        &visibility,
+                        &mut highlight,
+                        &gt_filter::GlobalFilter::default(),
+                        &mut mask.clone(),
+                        &mut gt_ui_types::SkyGlyphVariant::default(),
+                        &gt_ui_types::EventMarkerVisibility::default(),
+                        &gt_ui_types::GeneratedMarkerVisibility::default(),
+                        None,
+                        None,
+                        None,
+                        false,
+                        None,
+                    );
+                },
+                None,
+            );
+
+        for _ in 0..5 {
+            harness.run();
+        }
+        harness.snapshot_loose("sky_glyphs_only");
     }
 }

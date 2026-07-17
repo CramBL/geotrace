@@ -251,6 +251,8 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **error whisker** | The thin line from a recorded point to its snapped position, drawn at high zoom to make the snap error spatially legible. | `WhiskerAnchor`, `WHISKER_MIN_PX_PER_METER` |
 | **sky plot** | The polar satellite view for one report: north up, azimuth clockwise, horizon at the rim, zenith at the center. Never bare "plot" - that is the time-series plot pane (`gt-plot`). | `gt-sky`, `SkyPlot`, `SkyPlotSize` |
 | **report age** | Time from a point to the satellite report shown for it, when the report is borrowed from a nearby point. Not "stale" - that is snap staleness. | `NearestSatelliteReport`, `SKY_REPORT_MAX_AGE_SECS` |
+| **sky glyph** | A miniature per-point sky representation drawn on the map, showing the directions of the satellites in the fix. Toggled via `DisplayCategory::SkyGlyphs`. | `sky_glyph_renderer`, `SkyGlyphVariant` |
+| **sky ring** | The minimal sky-glyph variant: a faint annulus with one bead per fix satellite at its azimuth, elevation not encoded. | `sky_glyph_renderer::draw_glyphs`, `RING_MIN_SPACING_PX` |
 
 Terms to avoid and their replacements:
 

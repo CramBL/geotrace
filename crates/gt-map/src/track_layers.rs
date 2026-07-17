@@ -18,6 +18,7 @@ use walkers::{MapMemory, Plugin, Projector};
 use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
 use crate::query_match_renderer;
 use crate::sat_labels::{self, SelectedLabels};
+use crate::sky_glyph_renderer::{self, SelectedGlyphs};
 use crate::tpv_renderer::{
     self, QUALITY_LINE_WIDTH, TpvDrawStyle, TrackIconFade, bucket_alpha, fix_icon_alpha,
     line_alpha_bucket, quality_line_color, split_spans_by,
@@ -140,6 +141,8 @@ impl Plugin for TrackLayers<'_> {
 
         let geometries = self.prepare_track_geometries(max_rect, &style, &transform);
         let sat_labels = self.select_sat_labels(&geometries, max_rect, &style, &transform);
+        let sky_glyphs =
+            self.select_sky_glyphs(&geometries, max_rect, &transform, map_memory.zoom());
 
         let hover_active =
             self.highlight.fading_enabled && track_renderer::hover_is_active(self.highlight);
@@ -168,6 +171,7 @@ impl Plugin for TrackLayers<'_> {
                     ui,
                     &geometries,
                     &sat_labels,
+                    &sky_glyphs,
                     &style,
                     &transform,
                     max_rect,
@@ -184,6 +188,7 @@ impl Plugin for TrackLayers<'_> {
                     ui,
                     &geometries,
                     &sat_labels,
+                    &sky_glyphs,
                     &style,
                     &transform,
                     max_rect,
@@ -198,6 +203,7 @@ impl Plugin for TrackLayers<'_> {
                     ui,
                     &geometries,
                     &sat_labels,
+                    &sky_glyphs,
                     &style,
                     &transform,
                     max_rect,
@@ -212,6 +218,7 @@ impl Plugin for TrackLayers<'_> {
                 ui,
                 &geometries,
                 &sat_labels,
+                &sky_glyphs,
                 &style,
                 &transform,
                 max_rect,
@@ -266,7 +273,12 @@ impl TrackLayers<'_> {
                     entry.fade,
                     Some(TrackIconFade::PerFix | TrackIconFade::AllHidden)
                 );
-                if !paint_trackline && !paint_quality && !paint_icons && !entry.sat_labels {
+                if !paint_trackline
+                    && !paint_quality
+                    && !paint_icons
+                    && !entry.sat_labels
+                    && !entry.sky_glyphs
+                {
                     continue;
                 }
 
@@ -472,9 +484,45 @@ impl TrackLayers<'_> {
         )
     }
 
-    /// Paint the TPV layer per track: the fix-quality line, the fix icons
-    /// on top, then the selected satellite labels, for the entries that
-    /// pass the `filter(index)` predicate.
+    /// Resolve which report-bearing points get a sky ring this frame, for
+    /// every glyph-enabled track, decimated across all tracks at once
+    /// ([`sky_glyph_renderer::select_glyphs`]). Empty below
+    /// [`sky_glyph_renderer::MIN_ZOOM`], where per-point rings would be
+    /// noise. Per-point conditions mirror the icon and label passes.
+    fn select_sky_glyphs(
+        &self,
+        geometries: &[TrackGeometry],
+        max_rect: egui::Rect,
+        transform: &MercTransform,
+        zoom: f64,
+    ) -> SelectedGlyphs {
+        if zoom < sky_glyph_renderer::MIN_ZOOM {
+            return vec![Vec::new(); geometries.len()];
+        }
+        let viewport = transform.viewport_merc_bounds(max_rect);
+        let cell_merc =
+            f64::from(sky_glyph_renderer::RING_MIN_SPACING_PX) / transform.px_per_merc();
+        sky_glyph_renderer::select_glyphs(
+            geometries
+                .iter()
+                .enumerate()
+                .filter(|(_, geo)| geo.entry.sky_glyphs)
+                .map(|(i, geo)| (i, TrackRef::new(geo.fi, geo.ti), geo.track)),
+            geometries.len(),
+            viewport,
+            cell_merc,
+            |track_ref, pi, point| {
+                gt_filter::point_passes_time_filter(point.tpv.time().utc(), self.filter)
+                    && !self
+                        .query_matches
+                        .is_some_and(|m| m.is_hidden(track_ref, pi))
+            },
+        )
+    }
+
+    /// Paint the TPV layer per track: the sky rings underneath, the
+    /// fix-quality line, the fix icons on top, then the selected satellite
+    /// labels, for the entries that pass the `filter(index)` predicate.
     #[expect(
         clippy::too_many_arguments,
         reason = "per-frame paint context; a wrapper struct would not add clarity"
@@ -484,6 +532,7 @@ impl TrackLayers<'_> {
         ui: &Ui,
         geometries: &[TrackGeometry],
         sat_labels: &SelectedLabels,
+        sky_glyphs: &SelectedGlyphs,
         style: &TpvDrawStyle,
         transform: &MercTransform,
         max_rect: egui::Rect,
@@ -495,6 +544,17 @@ impl TrackLayers<'_> {
         for (i, geo) in geometries.iter().enumerate() {
             if !filter(i) {
                 continue;
+            }
+            // Rings first, so the quality line, icons, and labels stay
+            // legible on top of the subtle background context.
+            if let Some(glyph_indices) = sky_glyphs.get(i) {
+                sky_glyph_renderer::draw_glyphs(
+                    ui,
+                    geo.track,
+                    glyph_indices,
+                    transform,
+                    tpv_renderer::glyph_size_scale(style),
+                );
             }
             if geo.paints_quality_line() {
                 paint_quality_path(ui, &geo.path);
