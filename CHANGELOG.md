@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- The History window resizes smoothly and can be shrunk again.
+- The History filter field no longer overlaps the toolbar controls in a narrow window.
+
 ## 0.6.0 - 2026-07-16
 
 ### Added
