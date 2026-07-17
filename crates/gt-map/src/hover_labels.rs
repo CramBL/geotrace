@@ -7,7 +7,10 @@ use egui_phosphor::regular::ARROWS_SPLIT as ICON_ARROWS_SPLIT;
 use egui_phosphor::regular::CROSSHAIR as ICON_CROSSHAIR;
 use egui_phosphor::regular::FLAG as ICON_FLAG;
 use egui_phosphor::regular::MAP_PIN as ICON_MAP_PIN;
-use gt_types::{CustomMarker, DataCategory, EventMarker, GeneratedMarker, LoadedFile, NavPoint};
+use gt_types::{
+    CustomMarker, DataCategory, EventMarker, GeneratedMarker, LoadedFile, LoadedTrack, NavPoint,
+    PointIdx,
+};
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::DataPointRef;
 
@@ -50,7 +53,11 @@ pub(crate) fn draw_multi_hover_label_contents(
 }
 
 enum ResolvedCandidate<'a> {
-    Tpv(&'a NavPoint),
+    Tpv {
+        point: &'a NavPoint,
+        track: &'a LoadedTrack,
+        point_index: PointIdx,
+    },
     GeneratedMarker(&'a GeneratedMarker),
     EventMarker(&'a EventMarker),
     CustomMarker(&'a CustomMarker),
@@ -63,9 +70,11 @@ fn resolve_candidate<'a>(
     let file = candidate.track.fi.get(files)?;
     let track = candidate.track.index.get(&file.tracks)?;
     Some(match candidate.category {
-        DataCategory::Tpv | DataCategory::SatelliteReport => {
-            ResolvedCandidate::Tpv(candidate.point_index.get(&track.points)?)
-        }
+        DataCategory::Tpv | DataCategory::SatelliteReport => ResolvedCandidate::Tpv {
+            point: candidate.point_index.get(&track.points)?,
+            track,
+            point_index: candidate.point_index,
+        },
         DataCategory::GeneratedMarker => {
             ResolvedCandidate::GeneratedMarker(candidate.point_index.get(&track.generated_markers)?)
         }
@@ -97,12 +106,20 @@ fn draw_candidate_section(ui: &mut egui::Ui, candidate: DataPointRef, files: &[L
             };
             ui.strong(format!("{icon}{ICON_GAP}{fallback}"));
         }
-        Some(ResolvedCandidate::Tpv(point)) => {
+        Some(ResolvedCandidate::Tpv {
+            point,
+            track,
+            point_index,
+        }) => {
             ui.strong(format!(
                 "{icon}{ICON_GAP}GNSS fix{ICON_GAP}{}",
                 point.tpv.time().utc().format("%H:%M:%S")
             ));
-            crate::tpv_renderer::show_hover_table(ui, point);
+            crate::tpv_renderer::show_hover_table(
+                ui,
+                point,
+                &crate::tpv_renderer::SkySection::resolve(track, point_index),
+            );
         }
         Some(ResolvedCandidate::GeneratedMarker(marker)) => {
             ui.strong(format!(
@@ -182,10 +199,10 @@ pub(crate) fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> 
             DataCategory::GeneratedMarker => "Generated marker".to_owned(),
             DataCategory::Track => String::new(),
         },
-        Some(ResolvedCandidate::Tpv(p)) => {
+        Some(ResolvedCandidate::Tpv { point, .. }) => {
             format!(
                 "GNSS fix{ICON_GAP}{}",
-                p.tpv.time().utc().format("%H:%M:%S")
+                point.tpv.time().utc().format("%H:%M:%S")
             )
         }
         Some(ResolvedCandidate::EventMarker(m)) => match &m.annotation {

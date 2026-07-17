@@ -2,7 +2,7 @@ use egui::Grid;
 use egui::{Color32, Pos2, Response, Stroke, Ui};
 use egui_phosphor::regular::ARROW_RIGHT as ICON_ARROW_RIGHT;
 use gt_filter::GlobalFilter;
-use gt_types::{DataCategory, LoadedFile, SpatialPoint};
+use gt_types::{DataCategory, LoadedFile, PointIdx, SpatialPoint};
 use gt_ui_types::{
     DataPointRef, GeneratedMarkerVisibility, HighlightScope, MapHighlight, TrackDataVisibility,
 };
@@ -85,13 +85,18 @@ impl<'a> GeneratedMarkerRenderer<'a> {
                 // anomalous sample, so also show that point's data.
                 gt_types::GeneratedMarkerKind::GnssFixLost
                 | gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. } => {
-                    if let Some(point) = track
+                    if let Some(index) = track
                         .points
                         .iter()
-                        .find(|p| p.tpv.time().utc() == marker.time)
+                        .position(|p| p.tpv.time().utc() == marker.time)
+                        && let Some(point) = track.points.get(index)
                     {
                         ui.separator();
-                        crate::tpv_renderer::show_hover_table(ui, point);
+                        crate::tpv_renderer::show_hover_table(
+                            ui,
+                            point,
+                            &crate::tpv_renderer::SkySection::resolve(track, PointIdx::new(index)),
+                        );
                     }
                 }
                 // Fix-regained is a transition with no single underlying point.
