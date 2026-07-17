@@ -235,9 +235,10 @@ pub(crate) fn show_slip_table(ui: &mut Ui, event: &gt_types::satellites::SlipEve
                 ui.strong(heading);
             }
             ui.end_row();
+            let dark_mode = ui.visuals().dark_mode;
             for slip in &slips {
                 ui.colored_label(
-                    gt_ui_theme::constellation_color(slip.constellation),
+                    gt_ui_theme::constellation_color(slip.constellation, dark_mode),
                     format!("{} {:02}", slip.constellation.display_name(), slip.prn),
                 );
                 ui.label(slip_cause_label(slip.cause));
@@ -407,9 +408,8 @@ mod snapshot_tests {
     /// A slip event mixing both causes, constellations out of order, an
     /// unchanged azimuth, and an all-unknown row, to exercise sorting, the
     /// constellation tint, the before/after collapse, and the missing-value dash.
-    #[test]
-    fn slip_table_renders() {
-        let event = SlipEvent {
+    fn mixed_slip_event() -> SlipEvent {
+        SlipEvent {
             slips: vec![
                 Slip {
                     constellation: Constellation::Beidou,
@@ -442,14 +442,32 @@ mod snapshot_tests {
                     to: None,
                 },
             ],
-        };
+        }
+    }
 
+    #[test]
+    fn slip_table_dark() {
+        let event = mixed_slip_event();
         let mut harness = TestHarness::builder()
             .size(egui::vec2(420.0, 200.0))
+            .theme(true)
             .ui(move |ui| {
                 show_slip_table(ui, &event);
             });
         harness.run();
-        harness.snapshot("slip_detail_table");
+        harness.snapshot("slip_detail_table_dark");
+    }
+
+    #[test]
+    fn slip_table_light() {
+        let event = mixed_slip_event();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(420.0, 200.0))
+            .theme(false)
+            .ui(move |ui| {
+                show_slip_table(ui, &event);
+            });
+        harness.run();
+        harness.snapshot("slip_detail_table_light");
     }
 }

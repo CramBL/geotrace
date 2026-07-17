@@ -135,19 +135,32 @@ pub const TRACK_COLORS: [Color32; 12] = [
     Color32::from_rgb(100, 180, 240), // cornflower
 ];
 
-/// Canonical display color for a GNSS constellation, so a constellation reads
-/// the same hue wherever it appears (plot lines, marker tables, …).  Mirrors the
-/// per-constellation "seen" hues used by the time-series plot.
-pub fn constellation_color(constellation: gt_types::satellites::Constellation) -> Color32 {
+/// Canonical themed display color for a GNSS constellation, so a constellation
+/// reads the same hue wherever it appears (plot lines, marker tables, …).
+/// Delegates to [`metric_themed_color`]'s per-constellation "seen" entries, so
+/// the light variants carry that palette's contrast tuning and the two can
+/// never drift apart.
+pub const fn constellation_themed_color(
+    constellation: gt_types::satellites::Constellation,
+) -> ThemedColor {
+    use gt_types::MetricKind;
     use gt_types::satellites::Constellation;
-    match constellation {
-        Constellation::Gps => Color32::from_rgb(0, 220, 80), // lime green
-        Constellation::Glonass => Color32::from_rgb(255, 140, 30), // golden
-        Constellation::Galileo => Color32::from_rgb(255, 50, 110), // hot pink
-        Constellation::Beidou => Color32::from_rgb(0, 230, 230), // cyan
-        Constellation::Navic => Color32::from_rgb(160, 120, 255), // violet
-        Constellation::Qzss => Color32::from_rgb(240, 110, 90), // coral
-    }
+    metric_themed_color(match constellation {
+        Constellation::Gps => MetricKind::GpsSeen,
+        Constellation::Glonass => MetricKind::GlonassSeen,
+        Constellation::Galileo => MetricKind::GalileoSeen,
+        Constellation::Beidou => MetricKind::BeidouSeen,
+        Constellation::Navic => MetricKind::NavicSeen,
+        Constellation::Qzss => MetricKind::QzssSeen,
+    })
+}
+
+/// The constellation colour for the current theme. Pass `ui.visuals().dark_mode`.
+pub const fn constellation_color(
+    constellation: gt_types::satellites::Constellation,
+    dark_mode: bool,
+) -> Color32 {
+    constellation_themed_color(constellation).resolve(dark_mode)
 }
 
 /// Returns the track color for a (file_index, track_index) pair.
@@ -569,6 +582,12 @@ mod tests {
         }
         for quality in gt_types::SignalQuality::iter() {
             all.push((format!("snr::{quality:?}"), snr_themed_color(quality)));
+        }
+        for constellation in gt_types::satellites::Constellation::iter() {
+            all.push((
+                format!("constellation::{constellation:?}"),
+                constellation_themed_color(constellation),
+            ));
         }
         all
     }
