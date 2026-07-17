@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use chrono::{DateTime, NaiveDate, Utc};
 use egui::{Button, Checkbox, DragValue, Label, RichText, ScrollArea, TextEdit, Window};
 use egui_extras::{Column, TableBuilder, TableRow};
@@ -638,11 +640,19 @@ impl HistoryWindow {
     }
 }
 
-/// The scrolling recordings table. Columns are user-resizable (drag the
-/// header separators; widths hold for the session, egui memory is not
-/// saved to disk); identity takes
-/// the remaining width by default - it is where long names live - while the
-/// compact value columns size to their content.
+/// The scrolling recordings table, laid out like a file manager's list: the
+/// metadata columns (date, duration, points, size, actions) size to their
+/// fixed-format content, and the identity column fills whatever width is left,
+/// clipping long names. Its width is a function of the window's width, so the
+/// table is always exactly as wide as the window - resize the window to give
+/// identity more or less room.
+///
+/// Identity is sized as a [`Column::exact`] recomputed each frame rather than a
+/// [`Column::remainder`] on purpose. A remainder that is not the *last* column
+/// ratchets in egui_extras: it feeds its clipped width back into its own minimum
+/// every frame, so it can never shrink again, which stops the window from being
+/// made narrower and lets it creep wider. Computing the width ourselves sidesteps
+/// that: the table always fits the window, so the window stays freely resizable.
 fn history_table(
     ui: &mut egui::Ui,
     list_height: f32,
@@ -652,32 +662,50 @@ fn history_table(
     rename: &mut Option<RenameEdit>,
 ) {
     let row_height = ui.text_style_height(&egui::TextStyle::Body) + 6.0;
+
+    // Identity fills the width the metadata columns leave over. We size it as an
+    // exact column ourselves (window width minus last frame's metadata width)
+    // rather than a `Column::remainder`, whose ratcheting breaks window shrink -
+    // see this function's doc comment for the full rationale.
+    let available_width = ui.available_width();
+    let metadata_width_id = ui.id().with("history_metadata_width");
+    let identity_width = ui
+        .data(|d| d.get_temp::<f32>(metadata_width_id))
+        .map_or(IDENTITY_DEFAULT_WIDTH, |metadata| {
+            (available_width - metadata).max(IDENTITY_MIN_WIDTH)
+        });
+
+    // Right edges of the identity and last (action) columns, captured from the
+    // header this frame to measure the metadata width for the next one. The
+    // measurement is only trusted outside the table's sizing pass: during it the
+    // auto columns have not yet grown to their content, so the reserve reads too
+    // small and identity briefly blows up (window sticks wide).
+    let identity_right = Cell::new(0.0_f32);
+    let last_column_right = Cell::new(0.0_f32);
+    let measured_while_sizing = Cell::new(false);
+
     TableBuilder::new(ui)
         .id_salt("history_list")
         .striped(true)
-        .resizable(true)
         // Cells lay out in a row (no vertical wrapping): dates stay on one
         // line and the action buttons sit side by side.
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        // Fill the window's width instead of shrinking to content, so the
-        // remainder identity column actually receives the spare room.
+        // Don't shrink to content: the table fills the window's width, which the
+        // computed identity column already accounts for.
         .auto_shrink([false, true])
         .max_scroll_height(list_height)
-        // Not resizable itself: a resizable remainder column locks at its
-        // sizing-pass width (egui_extras keeps resizable widths), while a
-        // non-resizable one re-absorbs the spare width every frame. Its
-        // width still adjusts through the neighbors' handles and the
-        // window edge.
-        .column(
-            Column::remainder()
-                .at_least(IDENTITY_MIN_WIDTH)
-                .resizable(false)
-                .clip(true),
-        )
-        .columns(Column::auto(), 4)
+        // Identity fills the leftover width (see above) and clips long names
+        // rather than growing to fit them.
+        .column(Column::exact(identity_width).clip(true))
+        // Metadata columns size to their fixed-format content. They are not
+        // resizable: there is nothing to gain from resizing a date or a byte
+        // count, and it keeps the table's width fully determined by the window.
+        .columns(Column::auto().resizable(false), 4)
         .column(Column::auto().resizable(false))
         .header(row_height, |mut header| {
             header.col(|ui| {
+                identity_right.set(ui.max_rect().right());
+                measured_while_sizing.set(ui.is_sizing_pass());
                 crate::terms::term_label(
                     ui,
                     RichText::new("Identity").strong(),
@@ -689,7 +717,9 @@ fn history_table(
                     ui.strong(title);
                 });
             }
-            header.col(|_| {});
+            header.col(|ui| {
+                last_column_right.set(ui.max_rect().right());
+            });
         })
         .body(|body| {
             body.rows(row_height, visible.len(), |mut row| {
@@ -702,11 +732,24 @@ fn history_table(
                 render_row(&mut row, entry, already_loaded, worker, rename);
             });
         });
+
+    // Record the metadata columns' total width (everything right of identity)
+    // for next frame's fill calculation. The header always renders - unlike the
+    // virtualized body rows - so these edges are always fresh.
+    let metadata_width = last_column_right.get() - identity_right.get();
+    if metadata_width > 0.0 && !measured_while_sizing.get() {
+        ui.data_mut(|d| d.insert_temp(metadata_width_id, metadata_width));
+    }
 }
 
-/// Identity never collapses below a readable width, however the other
-/// columns are dragged.
+/// Identity never collapses below a readable width, even in a narrow window.
 const IDENTITY_MIN_WIDTH: f32 = 160.0;
+
+/// Identity's width on the very first frame, before the metadata columns have
+/// been measured (see [`history_table`]); from then on it fills the leftover
+/// width. Kept above [`IDENTITY_MIN_WIDTH`] so this bootstrap value is already a
+/// readable width without needing the same clamp the measured path applies.
+const IDENTITY_DEFAULT_WIDTH: f32 = 280.0;
 
 fn render_row(
     row: &mut TableRow<'_, '_>,
@@ -1141,58 +1184,6 @@ mod tests {
         h.snapshot("history_window_table");
     }
 
-    /// Dragging the separator between two headers resizes the column: the
-    /// neighbor's left edge follows the pointer.
-    #[test]
-    fn dragging_a_header_separator_resizes_the_column() {
-        let harness = history_harness(vec![entry_with_identity("ride.gtd")]);
-        let mut h = TestHarness::builder()
-            .size(egui::vec2(900.0, 500.0))
-            .ui_state(show_history, harness);
-        // Settle the sizing pass so column widths are established.
-        for _ in 0..4 {
-            h.run();
-        }
-
-        // "Date" also names a filter-row label; the header is the last match.
-        let date = h
-            .inner
-            .get_all_by_label("Date")
-            .last()
-            .expect("header present")
-            .rect();
-        let duration_before = h.inner.get_by_label("Duration").rect();
-        // The resize handle sits on the boundary between the two columns.
-        let grip = egui::pos2(
-            (date.right() + duration_before.left()) / 2.0,
-            date.center().y,
-        );
-        let drag = 40.0;
-        h.inner.event(egui::Event::PointerMoved(grip));
-        h.inner.event(egui::Event::PointerButton {
-            pos: grip,
-            button: egui::PointerButton::Primary,
-            pressed: true,
-            modifiers: egui::Modifiers::NONE,
-        });
-        h.inner
-            .event(egui::Event::PointerMoved(grip + egui::vec2(drag, 0.0)));
-        h.inner.event(egui::Event::PointerButton {
-            pos: grip + egui::vec2(drag, 0.0),
-            button: egui::PointerButton::Primary,
-            pressed: false,
-            modifiers: egui::Modifiers::NONE,
-        });
-        h.run();
-
-        let duration_after = h.inner.get_by_label("Duration").rect();
-        let moved = duration_after.left() - duration_before.left();
-        assert!(
-            (moved - drag).abs() < 2.0,
-            "the Duration column edge should follow the drag: moved {moved}px, dragged {drag}px"
-        );
-    }
-
     #[test]
     fn double_clicking_identity_opens_inline_editor() {
         let harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
@@ -1309,6 +1300,166 @@ mod tests {
             (long - short).abs() < 1.0 && (longer - short).abs() < 1.0,
             "identity length changed the history window width: \
              short={short}px long={long}px longer={longer}px",
+        );
+    }
+
+    /// The metadata-width measurement is ignored during the table's sizing pass:
+    /// on the first frame the auto columns have not grown to their content, so
+    /// the reserve reads far too small and, if cached, would inflate identity and
+    /// stick the window permanently wide. A freshly opened window must therefore
+    /// settle to its content width, not a bloated one.
+    #[test]
+    fn fresh_window_settles_to_content_width_not_a_bloated_one() {
+        // Room to bloat into: the screen is 1600px, the content needs well under
+        // half that. A leaked sizing-pass measurement pushed this past 900px.
+        let width = history_window_width("auto:ride.gtd");
+        assert!(
+            width < 750.0,
+            "the History window settled far wider than its content ({width:.0}px); \
+             the sizing-pass metadata measurement likely leaked into the identity fill",
+        );
+    }
+
+    /// A History window sized to a wide screen, populated with long identities
+    /// (they clip in the identity column), settled so the auto columns have
+    /// measured their content.
+    fn resize_harness() -> TestHarness<'static, HistoryHarness> {
+        let long = "a/very/long/recording/identity/that/needs/lots/of/room/".repeat(2);
+        let harness = history_harness(vec![
+            entry_with_identity(&long),
+            entry_with_identity(&format!("{long}/2")),
+            entry_with_identity(&format!("{long}/3")),
+        ]);
+        let mut h = TestHarness::builder()
+            .size(egui::vec2(1400.0, 600.0))
+            .ui_state(show_history, harness);
+        // Settle the sizing pass and let the window finish auto-positioning.
+        for _ in 0..10 {
+            h.step();
+        }
+        h
+    }
+
+    /// The rightmost content (the Delete button) relative to the window's right
+    /// edge. Identity fills the leftover width, so this "gap" is only the
+    /// window's frame padding - at every window size.
+    fn content_gap_to_window_edge(h: &TestHarness<HistoryHarness>) -> f32 {
+        let win = window_rect(h);
+        let delete = h
+            .inner
+            .get_all_by_label("Delete")
+            .last()
+            .expect("delete button")
+            .rect();
+        win.right() - delete.right()
+    }
+
+    /// Identity fills the window at every size: the metadata columns keep their
+    /// content width and identity takes the rest. Growing or shrinking the
+    /// window leaves no gap on the right and traps no content off-screen - the
+    /// table is always exactly as wide as the window.
+    #[test]
+    fn identity_fills_the_window_at_every_size() {
+        let mut h = resize_harness();
+        let settled_gap = content_gap_to_window_edge(&h);
+
+        // Grow the window from its bottom-right corner.
+        let before = window_rect(&h);
+        drag(
+            &mut h,
+            egui::pos2(before.right() - 1.0, before.bottom() - 1.0),
+            egui::vec2(300.0, 0.0),
+            8,
+        );
+        for _ in 0..3 {
+            h.step();
+        }
+        assert!(
+            window_rect(&h).width() > before.width() + 200.0,
+            "the window did not grow: {:.0}px -> {:.0}px",
+            before.width(),
+            window_rect(&h).width(),
+        );
+        assert!(
+            (content_gap_to_window_edge(&h) - settled_gap).abs() < 4.0,
+            "growing the window left a gap on the right - identity did not fill it",
+        );
+
+        // Shrink it back down.
+        let grown = window_rect(&h);
+        drag(
+            &mut h,
+            egui::pos2(grown.right() - 1.0, grown.bottom() - 1.0),
+            egui::vec2(-400.0, 0.0),
+            8,
+        );
+        for _ in 0..3 {
+            h.step();
+        }
+        assert!(
+            window_rect(&h).width() < grown.width() - 200.0,
+            "the window did not shrink: {:.0}px -> {:.0}px",
+            grown.width(),
+            window_rect(&h).width(),
+        );
+        assert!(
+            (content_gap_to_window_edge(&h) - settled_gap).abs() < 4.0,
+            "shrinking the window left a gap on the right - identity did not fill it",
+        );
+    }
+
+    fn window_rect(h: &TestHarness<HistoryHarness>) -> egui::Rect {
+        h.inner
+            .get_by_role_and_label(egui::accesskit::Role::Window, "History")
+            .rect()
+    }
+
+    /// Press-drag-release the pointer from `from` by `delta` over `steps` frames.
+    fn drag(h: &mut TestHarness<HistoryHarness>, from: egui::Pos2, delta: egui::Vec2, steps: u32) {
+        h.inner.event(egui::Event::PointerMoved(from));
+        h.step();
+        h.inner.event(egui::Event::PointerButton {
+            pos: from,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+        for i in 1..=steps {
+            h.inner.event(egui::Event::PointerMoved(
+                from + delta * (i as f32 / steps as f32),
+            ));
+            h.step();
+        }
+        h.inner.event(egui::Event::PointerButton {
+            pos: from + delta,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+    }
+
+    /// The window can be dragged narrower than its settled width. Identity
+    /// yields as the window shrinks, so the table follows the window down
+    /// instead of pinning it at a content minimum that snaps it back to full
+    /// width (the old "can't shrink the window" bug).
+    #[test]
+    fn the_window_can_be_shrunk_narrower() {
+        let mut h = resize_harness();
+        let before = window_rect(&h);
+        // Drag the bottom-right resize corner inward.
+        let corner = egui::pos2(before.right() - 1.0, before.bottom() - 1.0);
+        drag(&mut h, corner, egui::vec2(-200.0, 0.0), 8);
+        for _ in 0..3 {
+            h.step();
+        }
+        let after = window_rect(&h);
+        assert!(
+            after.width() < before.width() - 50.0,
+            "the window did not shrink: {:.1}px -> {:.1}px",
+            before.width(),
+            after.width(),
         );
     }
 
