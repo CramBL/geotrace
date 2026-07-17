@@ -35,6 +35,10 @@ pub const HOLLOW_MARK_STROKE_WIDTH_PX: f32 = 1.5;
 /// the biggest mark so small marks stay easy to hit.
 pub const MARK_HOVER_RADIUS_PX: f32 = 6.0;
 
+/// Alpha applied to marks outside the active highlight subset, so the
+/// highlighted marks stand out while the rest stay faintly visible.
+pub const DIMMED_MARK_ALPHA: f32 = 0.25;
+
 /// Dash and gap lengths of the elevation-mask ring.
 pub const MASK_RING_DASH_PX: f32 = 4.0;
 /// See [`MASK_RING_DASH_PX`].

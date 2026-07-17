@@ -3,7 +3,7 @@ use egui::{Color32, PopupAnchor, Pos2, Stroke, Ui, Vec2};
 use egui::{Grid, RichText, Tooltip};
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use gt_filter::{self as filter, GlobalFilter};
-use gt_sky::{SkyPlot, SkyPlotSize};
+use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
 use gt_types::coordinates::Latitude;
 use gt_types::satellites::Constellation;
 use gt_types::{
@@ -49,6 +49,11 @@ const ICON_FADE_HI_MIN_SPACING_PX: f32 = 5.0;
 /// Per-point line alphas are quantized to this many levels so that long
 /// stretches share one key and stay mergeable into single polyline spans.
 const QUALITY_LINE_ALPHA_STEPS: u8 = 3;
+
+/// Side length and corner rounding of the constellation colour swatch shown
+/// before a satellite-table header.
+const SWATCH_SIZE_PX: f32 = 10.0;
+const SWATCH_ROUNDING_PX: f32 = 2.0;
 
 /// Stroke width of the continuous fix-quality line that stands in for the
 /// fix icons when they fade out - slightly thicker than the 3 px trackline
@@ -292,7 +297,12 @@ impl<'a> SkySection<'a> {
 /// The sky plot with its report-age line, or the no-report placeholder. The
 /// full size is interactive (per-mark tooltips); the compact size lives
 /// inside the hover badge, which is itself a tooltip.
-fn sky_section_ui(ui: &mut Ui, sky: &SkySection<'_>, size: SkyPlotSize) {
+fn sky_section_ui(
+    ui: &mut Ui,
+    sky: &SkySection<'_>,
+    size: SkyPlotSize,
+    highlight: Option<SkyHighlight>,
+) {
     match sky {
         SkySection::TrackWithoutReports => {}
         SkySection::NoReportNearby => {
@@ -305,7 +315,7 @@ fn sky_section_ui(ui: &mut Ui, sky: &SkySection<'_>, size: SkyPlotSize) {
             );
         }
         SkySection::Report(report) => {
-            let plot = SkyPlot::new(report.satellites, size);
+            let plot = SkyPlot::new(report.satellites, size).with_highlight(highlight);
             let plot = match size {
                 SkyPlotSize::Full => plot.interactive(),
                 SkyPlotSize::Compact => plot,
@@ -388,7 +398,7 @@ pub(crate) fn show_hover_table(ui: &mut Ui, p: &NavPoint, sky: &SkySection<'_>) 
         hover_grid_ui(ui, p);
         if !matches!(sky, SkySection::TrackWithoutReports) {
             ui.add_space(12.0);
-            ui.vertical(|ui| sky_section_ui(ui, sky, SkyPlotSize::Compact));
+            ui.vertical(|ui| sky_section_ui(ui, sky, SkyPlotSize::Compact, None));
         }
     });
 }
@@ -481,8 +491,17 @@ fn hover_grid_ui(ui: &mut Ui, p: &NavPoint) {
 /// in the window title. The satellite section expands into a full per-PRN
 /// breakdown grouped by constellation.
 pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySection<'_>) {
+    // The sky plot is drawn above the tables, so hovering a table row feeds
+    // the plot through egui's per-frame data store: this frame's plot uses
+    // last frame's highlight, and the tables below set next frame's. A
+    // repaint on change keeps the lag imperceptible.
+    let highlight_id = ui.id().with("sky_table_highlight");
+    let prev_highlight: Option<SkyHighlight> =
+        ui.ctx().data(|d| d.get_temp(highlight_id)).flatten();
+    let mut highlight: Option<SkyHighlight> = None;
+
     if !matches!(sky, SkySection::TrackWithoutReports) {
-        sky_section_ui(ui, sky, SkyPlotSize::Full);
+        sky_section_ui(ui, sky, SkyPlotSize::Full, prev_highlight);
         ui.add_space(6.0);
     }
     // Basic metrics (2-column grid).
@@ -522,7 +541,11 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
                 ui.label("Satellites");
                 let dark_mode = ui.visuals().dark_mode;
                 ui.horizontal(|ui| {
-                    ui.colored_label(fix_count_color(fix, dark_mode), fix.to_string());
+                    let fix_resp =
+                        ui.colored_label(fix_count_color(fix, dark_mode), fix.to_string());
+                    if fix_resp.hovered() {
+                        highlight = Some(SkyHighlight::InFix);
+                    }
                     ui.label("/");
                     ui.colored_label(seen_count_color(seen, dark_mode), seen.to_string());
                 });
@@ -563,34 +586,58 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
         // we own the data and can borrow-free inside the layout closures.
         // Grouped in variant-declaration order, matching `Constellation`'s
         // `Ord` and the slip table's grouping.
-        let groups: Vec<(usize, &str, &str, Vec<gt_types::satellites::Satellite>)> =
-            Constellation::iter()
-                .enumerate()
-                .filter_map(|(id, constellation)| {
-                    let mut const_sats: Vec<_> =
-                        sats.by_constellation(constellation).copied().collect();
-                    if const_sats.is_empty() {
-                        return None;
-                    }
-                    const_sats.sort_by_key(|s| s.prn());
-                    Some((
-                        id,
-                        constellation.display_name(),
-                        constellation.prn_prefix(),
-                        const_sats,
-                    ))
-                })
-                .collect();
+        let groups: Vec<(
+            usize,
+            Constellation,
+            &str,
+            Vec<gt_types::satellites::Satellite>,
+        )> = Constellation::iter()
+            .enumerate()
+            .filter_map(|(id, constellation)| {
+                let mut const_sats: Vec<_> =
+                    sats.by_constellation(constellation).copied().collect();
+                if const_sats.is_empty() {
+                    return None;
+                }
+                const_sats.sort_by_key(|s| s.prn());
+                Some((id, constellation, constellation.prn_prefix(), const_sats))
+            })
+            .collect();
 
         // Two constellation panels per row, each panel sizes to its own content.
         for chunk in groups.chunks(2) {
             ui.horizontal_top(|ui| {
-                for (panel_i, (id, name, prefix, const_sats)) in chunk.iter().enumerate() {
+                for (panel_i, (id, constellation, prefix, const_sats)) in chunk.iter().enumerate() {
                     if panel_i > 0 {
                         ui.add_space(12.0);
                     }
+                    let constellation = *constellation;
                     ui.vertical(|ui| {
-                        ui.label(RichText::new(format!("{name} ({})", const_sats.len())).strong());
+                        let dark_mode = ui.visuals().dark_mode;
+                        let const_fix = const_sats.iter().filter(|s| s.in_fix()).count() as u32;
+                        // Header: a colour swatch tying this table to its plot
+                        // marks, the constellation name, and its fix/seen count.
+                        // Hovering the name highlights the whole constellation;
+                        // hovering the fix count highlights its in-fix subset.
+                        ui.horizontal(|ui| {
+                            let name = ui
+                                .horizontal(|ui| {
+                                    constellation_swatch(ui, constellation);
+                                    ui.label(RichText::new(constellation.display_name()).strong());
+                                })
+                                .response;
+                            if name.hovered() {
+                                highlight = Some(SkyHighlight::Constellation(constellation));
+                            }
+                            let fix_resp = ui.colored_label(
+                                fix_count_color(const_fix, dark_mode),
+                                const_fix.to_string(),
+                            );
+                            if fix_resp.hovered() {
+                                highlight = Some(SkyHighlight::ConstellationInFix(constellation));
+                            }
+                            ui.label(RichText::new(format!("/{}", const_sats.len())).weak());
+                        });
                         Grid::new(("sticky_sats", *id))
                             .num_columns(3)
                             .striped(true)
@@ -600,7 +647,6 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
                                 ui.label(RichText::new("Fix").weak().small());
                                 ui.end_row();
 
-                                let dark_mode = ui.visuals().dark_mode;
                                 // A satellite contributing to the fix reads as the
                                 // "good" tier green; an idle one is de-emphasised
                                 // with egui's own weak-text colour, which already
@@ -610,29 +656,30 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
                                 for sat in const_sats {
                                     let in_fix = sat.in_fix();
                                     let prn_color = if in_fix { in_fix_color } else { muted_color };
-                                    ui.label(
+                                    let prn_resp = ui.label(
                                         RichText::new(format!("{}{:02}", prefix, sat.prn()))
                                             .color(prn_color),
                                     );
-                                    match sat.snr() {
-                                        Some(snr) => {
-                                            ui.label(
-                                                RichText::new(format!("{:.1}", snr.value())).color(
-                                                    gt_ui_theme::snr_color(
-                                                        snr.quality(),
-                                                        dark_mode,
-                                                    ),
-                                                ),
-                                            );
-                                        }
-                                        None => {
-                                            ui.label(RichText::new(EM_DASH).color(muted_color));
-                                        }
-                                    }
-                                    if in_fix {
-                                        ui.label(RichText::new(ICON_CHECK).color(in_fix_color));
+                                    let snr_resp = match sat.snr() {
+                                        Some(snr) => ui.label(
+                                            RichText::new(format!("{:.1}", snr.value())).color(
+                                                gt_ui_theme::snr_color(snr.quality(), dark_mode),
+                                            ),
+                                        ),
+                                        None => ui.label(RichText::new(EM_DASH).color(muted_color)),
+                                    };
+                                    let fix_resp = if in_fix {
+                                        ui.label(RichText::new(ICON_CHECK).color(in_fix_color))
                                     } else {
-                                        ui.label("");
+                                        ui.label("")
+                                    };
+                                    // Hovering anywhere on the row highlights
+                                    // just that satellite.
+                                    if prn_resp.union(snr_resp).union(fix_resp).hovered() {
+                                        highlight = Some(SkyHighlight::Satellite {
+                                            constellation,
+                                            prn: sat.prn(),
+                                        });
                                     }
                                     ui.end_row();
                                 }
@@ -643,6 +690,21 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
             ui.add_space(6.0);
         }
     }
+
+    if highlight != prev_highlight {
+        ui.ctx().request_repaint();
+    }
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(highlight_id, highlight));
+}
+
+/// A small colour swatch in the constellation's plot colour, drawn before a
+/// table header so the table reads as the key to the plot's marks.
+fn constellation_swatch(ui: &mut Ui, constellation: Constellation) {
+    let color = gt_ui_theme::constellation_color(constellation, ui.visuals().dark_mode);
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(SWATCH_SIZE_PX), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect.shrink(1.0), SWATCH_ROUNDING_PX, color);
 }
 
 fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
@@ -692,7 +754,10 @@ fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
             .satellites_with_fix()
             .filter(|s| s.constellation() == constellation)
             .count() as u32;
-        ui.label(constellation.display_name());
+        ui.horizontal(|ui| {
+            constellation_swatch(ui, constellation);
+            ui.label(constellation.display_name());
+        });
         ui.horizontal(|ui| {
             ui.colored_label(fix_count_color(const_fix, dark_mode), const_fix.to_string());
             ui.label("/");

@@ -254,6 +254,7 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **sky glyph** | A miniature per-point sky representation drawn on the map, showing the directions of the satellites in the fix. Toggled via `DisplayCategory::SkyGlyphs`. | `sky_glyph_renderer`, `SkyGlyphVariant` |
 | **sky ring** | The minimal sky-glyph variant: a faint annulus with one bead per fix satellite at its azimuth, elevation not encoded. | `sky_glyph_renderer::draw_glyphs`, `RING_MIN_SPACING_PX` |
 | **sky disc** | The detailed sky-glyph variant: a miniature sky plot offset from the fix with a leader, a dot per fix satellite by azimuth and elevation. | `sky_glyph_renderer::draw_disc`, `DISC_MIN_SPACING_PX` |
+| **sky highlight** | A subset of satellites emphasized on the sky plot (the rest dimmed), driven by hovering the satellite tables beside it. | `SkyHighlight`, `SkyPlot::with_highlight` |
 
 Terms to avoid and their replacements:
 

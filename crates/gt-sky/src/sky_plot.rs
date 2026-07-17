@@ -1,6 +1,6 @@
 use egui::{Align2, FontId, Pos2, Sense, Shape, Stroke, Vec2};
 
-use gt_types::satellites::{Satellite, Satellites};
+use gt_types::satellites::{Constellation, Prn, Satellite, Satellites};
 
 use crate::projection;
 use crate::style;
@@ -12,6 +12,45 @@ pub enum SkyPlotSize {
     Compact,
     /// Sticky-popup size: full cardinal and elevation ring labels.
     Full,
+}
+
+/// A subset of satellites to emphasize on the plot, driven by hovering the
+/// satellite tables next to it. Matching marks stay at full strength; the
+/// rest dim, so the highlighted subset stands out without the others
+/// vanishing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    variant_size_differences,
+    reason = "the widest variant is ~8 bytes; the whole enum is Copy and passed by value, so boxing would only add an indirection"
+)]
+pub enum SkyHighlight {
+    /// One satellite - hovering its row in the per-PRN table.
+    Satellite {
+        constellation: Constellation,
+        prn: Prn,
+    },
+    /// Every satellite of a constellation - hovering its table header.
+    Constellation(Constellation),
+    /// Every satellite in the fix - hovering the total fix count.
+    InFix,
+    /// A constellation's in-fix satellites - hovering its fix count.
+    ConstellationInFix(Constellation),
+}
+
+impl SkyHighlight {
+    /// Whether `satellite` belongs to the highlighted subset.
+    pub fn matches(self, satellite: &Satellite) -> bool {
+        match self {
+            Self::Satellite { constellation, prn } => {
+                satellite.constellation() == constellation && satellite.prn() == prn
+            }
+            Self::Constellation(constellation) => satellite.constellation() == constellation,
+            Self::InFix => satellite.in_fix(),
+            Self::ConstellationInFix(constellation) => {
+                satellite.constellation() == constellation && satellite.in_fix()
+            }
+        }
+    }
 }
 
 impl SkyPlotSize {
@@ -51,6 +90,7 @@ pub struct SkyPlot<'a> {
     size: SkyPlotSize,
     elevation_mask_deg: Option<f32>,
     interactive: bool,
+    highlight: Option<SkyHighlight>,
 }
 
 impl<'a> SkyPlot<'a> {
@@ -60,7 +100,14 @@ impl<'a> SkyPlot<'a> {
             size,
             elevation_mask_deg: None,
             interactive: false,
+            highlight: None,
         }
+    }
+
+    /// Emphasize a subset of satellites, dimming the rest. `None` draws every
+    /// mark at full strength.
+    pub fn with_highlight(self, highlight: Option<SkyHighlight>) -> Self {
+        Self { highlight, ..self }
     }
 
     /// Draws the elevation mask as a dashed ring. Satellites below the mask
@@ -88,6 +135,7 @@ impl<'a> SkyPlot<'a> {
             size,
             elevation_mask_deg,
             interactive,
+            highlight,
         } = *self;
 
         ui.vertical(|ui| {
@@ -102,7 +150,7 @@ impl<'a> SkyPlot<'a> {
                 if let Some(mask_deg) = elevation_mask_deg {
                     paint_mask_ring(ui, center, radius, mask_deg);
                 }
-                let marks = paint_marks(ui, center, radius, satellites, size);
+                let marks = paint_marks(ui, center, radius, satellites, size, highlight);
                 if interactive {
                     mark_tooltip(ui, &response, &marks);
                 }
@@ -349,6 +397,7 @@ fn paint_marks(
     radius: f32,
     satellites: &Satellites,
     size: SkyPlotSize,
+    highlight: Option<SkyHighlight>,
 ) -> Vec<(Satellite, Pos2)> {
     let painter = ui.painter();
     let dark_mode = ui.visuals().dark_mode;
@@ -366,10 +415,24 @@ fn paint_marks(
         .partition(|(satellite, _)| satellite.in_fix());
     let marks: Vec<(Satellite, Pos2)> = tracked.into_iter().chain(fix).collect();
     for (satellite, position) in &marks {
-        let color = gt_ui_theme::constellation_color(satellite.constellation(), dark_mode);
+        // With a highlight active, marks outside the subset dim so the
+        // highlighted ones stand out without the rest disappearing.
+        let dimmed = highlight.is_some_and(|h| !h.matches(satellite));
+        let dim = |color: egui::Color32| {
+            if dimmed {
+                color.gamma_multiply(style::DIMMED_MARK_ALPHA)
+            } else {
+                color
+            }
+        };
+        let color = dim(gt_ui_theme::constellation_color(
+            satellite.constellation(),
+            dark_mode,
+        ));
         let mark_radius =
             style::mark_radius(satellite.snr().map(|snr| snr.quality())) * size.mark_scale();
         if satellite.in_fix() {
+            let edge = Stroke::new(edge.width, dim(edge.color));
             painter.circle(*position, mark_radius, color, edge);
         } else {
             painter.circle_stroke(
@@ -389,7 +452,7 @@ mod snapshot_tests {
     use gt_test_utils::TestHarness;
     use gt_types::satellites::{Constellation, Satellite, Satellites};
 
-    use super::{SkyPlot, SkyPlotSize};
+    use super::{SkyHighlight, SkyPlot, SkyPlotSize};
 
     /// Several constellations, tracked-only satellites, the full
     /// signal-quality spread, and two unplaceable satellites.
@@ -483,6 +546,63 @@ mod snapshot_tests {
             &zero_fix_report(),
             true,
         );
+    }
+
+    #[rstest]
+    #[case::constellation(
+        "sky_plot_highlight_constellation",
+        SkyHighlight::Constellation(Constellation::Gps)
+    )]
+    #[case::in_fix("sky_plot_highlight_in_fix", SkyHighlight::InFix)]
+    fn sky_plot_highlight_dims_the_rest(#[case] name: &str, #[case] highlight: SkyHighlight) {
+        let report = mixed_report();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(290.0, 330.0))
+            .theme(true)
+            .ui(move |ui| {
+                SkyPlot::new(&report, SkyPlotSize::Full)
+                    .with_elevation_mask_deg(10.0)
+                    .with_highlight(Some(highlight))
+                    .ui(ui);
+            });
+        harness.run();
+        harness.snapshot(name);
+    }
+
+    #[test]
+    fn highlight_matches_the_right_satellites() {
+        let gps_fix = Satellite::new(Constellation::Gps, 5, Some(45.0), Some(90.0), None, true);
+        let gps_idle = Satellite::new(Constellation::Gps, 9, Some(45.0), Some(90.0), None, false);
+        let gal_fix = Satellite::new(
+            Constellation::Galileo,
+            3,
+            Some(45.0),
+            Some(90.0),
+            None,
+            true,
+        );
+
+        let one = SkyHighlight::Satellite {
+            constellation: Constellation::Gps,
+            prn: gps_fix.prn(),
+        };
+        assert!(one.matches(&gps_fix));
+        assert!(!one.matches(&gps_idle));
+        assert!(!one.matches(&gal_fix));
+
+        let constellation = SkyHighlight::Constellation(Constellation::Gps);
+        assert!(constellation.matches(&gps_fix));
+        assert!(constellation.matches(&gps_idle));
+        assert!(!constellation.matches(&gal_fix));
+
+        assert!(SkyHighlight::InFix.matches(&gps_fix));
+        assert!(!SkyHighlight::InFix.matches(&gps_idle));
+        assert!(SkyHighlight::InFix.matches(&gal_fix));
+
+        let const_fix = SkyHighlight::ConstellationInFix(Constellation::Gps);
+        assert!(const_fix.matches(&gps_fix));
+        assert!(!const_fix.matches(&gps_idle));
+        assert!(!const_fix.matches(&gal_fix));
     }
 
     #[test]

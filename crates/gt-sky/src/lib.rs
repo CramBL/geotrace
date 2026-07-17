@@ -9,4 +9,4 @@ mod sky_plot;
 pub mod style;
 
 pub use projection::{mark_position, unit_disc_position, unit_disc_radius};
-pub use sky_plot::{SkyPlot, SkyPlotSize};
+pub use sky_plot::{SkyHighlight, SkyPlot, SkyPlotSize};
