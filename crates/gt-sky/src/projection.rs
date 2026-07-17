@@ -12,9 +12,16 @@ use gt_types::satellites::Satellite;
 /// Elevations are clamped to `[0°, 90°]`: a satellite reported slightly below
 /// the horizon sits on the rim rather than outside the disc.
 pub fn unit_disc_position(azimuth_deg: f32, elevation_deg: f32) -> Vec2 {
-    let radius = (90.0 - elevation_deg.clamp(0.0, 90.0)) / 90.0;
+    let radius = unit_disc_radius(elevation_deg);
     let azimuth = azimuth_deg.to_radians();
     Vec2::new(radius * azimuth.sin(), -radius * azimuth.cos())
+}
+
+/// The unit-disc radius of an elevation: 1 at the horizon, 0 at the zenith,
+/// clamped outside that range. The single definition of the equidistant
+/// mapping, shared by satellite marks, grid rings, and the mask ring.
+pub fn unit_disc_radius(elevation_deg: f32) -> f32 {
+    (90.0 - elevation_deg.clamp(0.0, 90.0)) / 90.0
 }
 
 /// The unit-disc position of a satellite mark, or `None` when the satellite

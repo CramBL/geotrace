@@ -249,6 +249,7 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **stale** (snap) | A completed snap run whose parameters or server host differ from what a fresh run would use now. Always shown and marked, never silently dropped or auto re-run. | `stale_reasons`, `SnapRowView::Done::stale` |
 | **auto snap** | The mode where loaded tracks snap automatically while shown on the map. Off until explicitly chosen; never active without upload consent. | `SnapSettings::auto_snap`, `SnapPriority::Auto` |
 | **error whisker** | The thin line from a recorded point to its snapped position, drawn at high zoom to make the snap error spatially legible. | `WhiskerAnchor`, `WHISKER_MIN_PX_PER_METER` |
+| **sky plot** | The polar satellite view for one report: north up, azimuth clockwise, horizon at the rim, zenith at the center. Never bare "plot" - that is the time-series plot pane (`gt-plot`). | `gt-sky`, `SkyPlot`, `SkyPlotSize` |
 
 Terms to avoid and their replacements:
 
