@@ -30,7 +30,8 @@ use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
-    HighlightScope, MapHighlight, QueryMatches, SnappedTracks, TrackDataVisibility,
+    HighlightScope, MapHighlight, QueryMatches, SkyGlyphVariant, SnappedTracks,
+    TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
@@ -345,6 +346,7 @@ impl NavMap {
         highlight: &mut MapHighlight,
         filter: &GlobalFilter,
         display_mask: &mut DisplayMask,
+        sky_glyph_variant: &mut SkyGlyphVariant,
         event_marker_visibility: &EventMarkerVisibility,
         generated_marker_visibility: &GeneratedMarkerVisibility,
         query_matches: Option<&QueryMatches>,
@@ -637,6 +639,7 @@ impl NavMap {
             layer_toggle.response.rect,
             &mut self.display_toggle,
             display_mask,
+            sky_glyph_variant,
             || {
                 display_counts::DisplayCounts::compute(
                     files,
@@ -1889,6 +1892,7 @@ mod snapshot_tests {
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
                         &mut gt_ui_types::DisplayMask::default(),
+                        &mut gt_ui_types::SkyGlyphVariant::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         Some(&matches),
@@ -1958,6 +1962,7 @@ mod snapshot_tests {
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
                         &mut mask,
+                        &mut gt_ui_types::SkyGlyphVariant::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
@@ -2302,6 +2307,7 @@ mod snapshot_tests {
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
                         &mut gt_ui_types::DisplayMask::default(),
+                        &mut gt_ui_types::SkyGlyphVariant::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
@@ -2384,6 +2390,7 @@ mod snapshot_tests {
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
                         &mut gt_ui_types::DisplayMask::default(),
+                        &mut gt_ui_types::SkyGlyphVariant::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
@@ -2433,6 +2440,7 @@ mod snapshot_tests {
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
                         &mut mask.clone(),
+                        &mut gt_ui_types::SkyGlyphVariant::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,

@@ -9,7 +9,7 @@ use egui::Button;
 use egui::{Align2, Area, Frame, Id, RichText, Ui};
 use egui_phosphor::regular::EYE as ICON_EYE;
 use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
-use gt_ui_types::{DisplayCategory, DisplayMask};
+use gt_ui_types::{DisplayCategory, DisplayMask, SkyGlyphVariant};
 use strum::IntoEnumIterator;
 
 use crate::display_counts::DisplayCounts;
@@ -39,17 +39,49 @@ fn label(category: DisplayCategory) -> &'static str {
         DisplayCategory::EventMarkers => "Event markers",
         DisplayCategory::QueryHighlights => "Query highlights",
         DisplayCategory::SnappedTracks => "Snapped tracks",
+        DisplayCategory::SkyGlyphs => "Sky glyphs",
     }
 }
 
 /// The hover text of a category row.
 fn row_hover_text(category: DisplayCategory, visible: bool) -> String {
     let verb = if visible { "Hide" } else { "Show" };
+    let description = match category {
+        DisplayCategory::SkyGlyphs => {
+            " Sky glyphs show the directions of the satellites used in each fix."
+        }
+        _ => "",
+    };
     format!(
         "{verb} all {} on the map. Does not affect filters or the track list. \
-         Alt-click to show only this category.",
+         Alt-click to show only this category.{description}",
         label(category).to_lowercase()
     )
+}
+
+/// The Ring | Disc picker on the sky-glyphs row. Grayed while the category
+/// is hidden (never removed, per DESIGN.md).
+fn variant_picker_ui(ui: &mut Ui, visible: bool, variant: &mut SkyGlyphVariant) {
+    for candidate in SkyGlyphVariant::iter() {
+        let response = ui
+            .add_enabled(
+                visible,
+                Button::selectable(*variant == candidate, candidate.label()),
+            )
+            .on_hover_text(variant_hover_text(candidate))
+            .on_disabled_hover_text("Show sky glyphs to choose a variant");
+        if response.clicked() {
+            *variant = candidate;
+        }
+    }
+}
+
+/// The variant's hover text on the picker button.
+fn variant_hover_text(variant: SkyGlyphVariant) -> &'static str {
+    match variant {
+        SkyGlyphVariant::Ring => "Minimal: one bead per fix satellite at its azimuth",
+        SkyGlyphVariant::Disc => "Detailed: a miniature sky plot with azimuth and elevation",
+    }
 }
 
 /// `true` when `mask` shows exactly `category` - the state `only` creates.
@@ -88,6 +120,7 @@ pub(crate) fn show_display_toggle(
     below_rect: egui::Rect,
     state: &mut DisplayToggleState,
     mask: &mut DisplayMask,
+    sky_glyph_variant: &mut SkyGlyphVariant,
     counts: impl FnOnce() -> DisplayCounts,
 ) {
     let gap = ui.style().spacing.item_spacing.y;
@@ -144,7 +177,7 @@ pub(crate) fn show_display_toggle(
         .pivot(Align2::RIGHT_BOTTOM)
         .show(ui.ctx(), |ui| {
             Frame::popup(ui.style()).show(ui, |ui| {
-                popup_contents(ui, state, mask, counts);
+                popup_contents(ui, state, mask, sky_glyph_variant, counts);
             });
         });
 
@@ -164,6 +197,7 @@ pub(crate) fn popup_contents(
     ui: &mut Ui,
     state: &mut DisplayToggleState,
     mask: &mut DisplayMask,
+    sky_glyph_variant: &mut SkyGlyphVariant,
     counts: DisplayCounts,
 ) {
     for category in DisplayCategory::iter() {
@@ -191,6 +225,9 @@ pub(crate) fn popup_contents(
                 } else {
                     mask.toggle(category);
                 }
+            }
+            if category == DisplayCategory::SkyGlyphs {
+                variant_picker_ui(ui, visible && in_scope, sky_glyph_variant);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Fixed-width count column so the eye glyphs align.
@@ -251,6 +288,7 @@ mod tests {
             DisplayCategory::EventMarkers => 96,
             DisplayCategory::QueryHighlights => 0,
             DisplayCategory::SnappedTracks => 3,
+            DisplayCategory::SkyGlyphs => 187,
         })
     }
 
@@ -275,22 +313,26 @@ mod tests {
 
     /// Snapshot: mixed state - generated markers hidden (dimmed row with
     /// the eye-slash and the persistent `only` state elsewhere absent),
-    /// query highlights at zero (disabled row).
-    #[test]
-    fn snap_display_toggle_popup() {
+    /// query highlights at zero (disabled row). The second case hides the
+    /// sky glyphs, graying their variant picker.
+    #[rstest::rstest]
+    #[case::mixed("display_toggle_popup", DisplayCategory::GeneratedMarkers)]
+    #[case::sky_glyphs_hidden("display_toggle_popup_sky_hidden", DisplayCategory::SkyGlyphs)]
+    fn snap_display_toggle_popup(#[case] name: &str, #[case] hidden: DisplayCategory) {
         let mut state = DisplayToggleState::default();
         let mut mask = DisplayMask::default();
-        mask.set_visible(DisplayCategory::GeneratedMarkers, false);
+        mask.set_visible(hidden, false);
+        let mut variant = SkyGlyphVariant::default();
         let counts = mixed_counts();
 
         let mut harness = TestHarness::builder()
             .size(egui::vec2(280.0, 300.0))
             .ui(move |ui| {
                 Frame::popup(ui.style()).show(ui, |ui| {
-                    popup_contents(ui, &mut state, &mut mask, counts);
+                    popup_contents(ui, &mut state, &mut mask, &mut variant, counts);
                 });
             });
         harness.fit_contents();
-        harness.snapshot("display_toggle_popup");
+        harness.snapshot(name);
     }
 }

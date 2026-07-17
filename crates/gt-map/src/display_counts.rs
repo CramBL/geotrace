@@ -36,6 +36,7 @@ pub struct DisplayCounts {
     event_markers: usize,
     query_highlights: usize,
     snapped_tracks: usize,
+    sky_glyphs: usize,
 }
 
 impl DisplayCounts {
@@ -49,6 +50,7 @@ impl DisplayCounts {
             DisplayCategory::EventMarkers => self.event_markers,
             DisplayCategory::QueryHighlights => self.query_highlights,
             DisplayCategory::SnappedTracks => self.snapped_tracks,
+            DisplayCategory::SkyGlyphs => self.sky_glyphs,
         }
     }
 
@@ -65,6 +67,7 @@ impl DisplayCounts {
             event_markers: get(DisplayCategory::EventMarkers),
             query_highlights: get(DisplayCategory::QueryHighlights),
             snapped_tracks: get(DisplayCategory::SnappedTracks),
+            sky_glyphs: get(DisplayCategory::SkyGlyphs),
         }
     }
 
@@ -116,6 +119,15 @@ impl DisplayCounts {
                         .sat_label_anchors
                         .iter()
                         .filter(|a| point_in_scope(a.point.as_usize()))
+                        .count();
+                    // Sky glyphs anchor on report-bearing points; like the
+                    // labels they are per-point track ink, so they share the
+                    // Tpv tree gate.
+                    counts.sky_glyphs += track
+                        .points
+                        .iter()
+                        .enumerate()
+                        .filter(|(pi, p)| p.satellites.is_some() && point_in_scope(*pi))
                         .count();
                 }
                 if trip_vis.category_visible(DataCategory::CustomMarker) {
@@ -183,9 +195,9 @@ mod tests {
         DateTime::<Utc>::UNIX_EPOCH + Duration::seconds(secs)
     }
 
-    /// One track: four points at t0..t3, anchors on points 0 and 3, two
-    /// custom markers (t0, t2), one generated marker (t1), one event
-    /// marker (t3).
+    /// One track: four points at t0..t3 (point 1 report-bearing), anchors
+    /// on points 0 and 3, two custom markers (t0, t2), one generated
+    /// marker (t1), one event marker (t3).
     fn fixture() -> LoadedFile {
         let lat = Latitude::new(55.0);
         let lon = Longitude::new(12.0);
@@ -196,7 +208,11 @@ mod tests {
                     .lat(lat)
                     .lon(lon)
                     .build();
-                NavPoint::new(tpv, None)
+                // Point 1 carries a satellite report, so it anchors a sky
+                // glyph.
+                let satellites =
+                    (i == 1).then(|| gt_types::satellites::Satellites::new(None, None, Vec::new()));
+                NavPoint::new(tpv, satellites)
             })
             .collect();
         let anchor = |pi, tier| SatLabelAnchor {
@@ -286,6 +302,7 @@ mod tests {
             (DisplayCategory::EventMarkers, 1),
             (DisplayCategory::QueryHighlights, 0),
             (DisplayCategory::SnappedTracks, 0),
+            (DisplayCategory::SkyGlyphs, 1),
         ];
         assert_eq!(expected.len(), DisplayCategory::iter().count());
         for (category, n) in expected {

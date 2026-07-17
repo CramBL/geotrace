@@ -38,6 +38,8 @@ pub enum DisplayCategory {
     QueryHighlights,
     /// The snapped-track polylines (the snap-to-road reference geometry).
     SnappedTracks,
+    /// The per-point sky glyphs (directions of the satellites in the fix).
+    SkyGlyphs,
 }
 
 impl DisplayCategory {
@@ -182,6 +184,7 @@ mod tests {
             (DisplayCategory::EventMarkers, "event_markers"),
             (DisplayCategory::QueryHighlights, "query_highlights"),
             (DisplayCategory::SnappedTracks, "snapped_tracks"),
+            (DisplayCategory::SkyGlyphs, "sky_glyphs"),
         ];
         assert_eq!(expected.len(), DisplayCategory::COUNT);
         for (category, wire) in expected {
