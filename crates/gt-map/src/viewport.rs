@@ -102,6 +102,10 @@ pub(crate) struct TrackEntry {
     /// Rides the TPV tree toggle but has its own display category, so
     /// labels survive hiding the track points (and vice versa).
     pub(crate) sat_labels: bool,
+    /// The track's report-bearing points are sky-glyph candidates. Rides the
+    /// track's map visibility and its own display category, independent of
+    /// the track-points toggle.
+    pub(crate) sky_glyphs: bool,
 }
 
 impl TrackEntry {
@@ -112,7 +116,7 @@ impl TrackEntry {
 
     /// No layer draws. The renderer can skip the track outright.
     pub(crate) fn draws_nothing(self) -> bool {
-        !self.trackline && self.fade.is_none() && !self.sat_labels
+        !self.trackline && self.fade.is_none() && !self.sat_labels && !self.sky_glyphs
     }
 }
 
@@ -162,6 +166,7 @@ impl TrackPlan {
                         && display_mask.is_visible(DisplayCategory::Tracks),
                     fade,
                     sat_labels: tpv_on && display_mask.is_visible(DisplayCategory::SatelliteLabels),
+                    sky_glyphs: enabled && display_mask.is_visible(DisplayCategory::SkyGlyphs),
                 });
             }
         }

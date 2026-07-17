@@ -2,16 +2,15 @@
 //!
 //! Which points are worth labeling is decided at load time
 //! (`LoadedTrack::sat_label_anchors`, see [`gt_track_builder::sat_label`]).
-//! This module resolves per-frame which anchors actually get a label: a
-//! collision grid keyed in Mercator space keeps the highest-priority anchor
-//! per cell, across all tracks at once. Keying in Mercator units rather
-//! than screen pixels makes the labeled set independent of panning - only
-//! zooming rebuckets - so labels never shuffle while navigating.
-
-use std::collections::HashMap;
+//! This module resolves per-frame which anchors actually get a label,
+//! decimating them through the shared [`crate::collision_grid`] so the
+//! highest-priority anchor wins each Mercator cell across all tracks at
+//! once.
 
 use gt_types::sat_label::SatLabelTier;
 use gt_types::{LoadedTrack, MercBounds, NavPoint, TrackRef};
+
+use crate::collision_grid;
 
 /// One selected label: the anchor's point index into its track.
 ///
@@ -46,7 +45,7 @@ pub(crate) fn select_sat_labels<'a>(
     cell_merc: f64,
     mut point_passes: impl FnMut(TrackRef, usize, &NavPoint) -> bool,
 ) -> SelectedLabels {
-    let mut cells: HashMap<(i64, i64), Candidate> = HashMap::new();
+    let mut candidates: Vec<((f64, f64), Candidate)> = Vec::new();
     for (geometry_index, track_ref, track) in tracks {
         for anchor in &track.sat_label_anchors {
             let Some(point) = anchor.point.get(&track.points) else {
@@ -60,42 +59,20 @@ pub(crate) fn select_sat_labels<'a>(
             if !point_passes(track_ref, anchor.point.as_usize(), point) {
                 continue;
             }
-            let candidate = Candidate {
-                tier: anchor.tier,
-                track: track_ref,
-                point_index: anchor.point.as_usize(),
-                geometry_index,
-            };
-            cells
-                .entry(cell_key(x, y, cell_merc))
-                .and_modify(|c| *c = (*c).min(candidate))
-                .or_insert(candidate);
+            candidates.push((
+                (x, y),
+                Candidate {
+                    tier: anchor.tier,
+                    track: track_ref,
+                    point_index: anchor.point.as_usize(),
+                    geometry_index,
+                },
+            ));
         }
     }
-
-    let mut selected: SelectedLabels = vec![Vec::new(); geometry_count];
-    for c in cells.into_values() {
-        if let Some(track_labels) = selected.get_mut(c.geometry_index) {
-            track_labels.push(c.point_index);
-        }
-    }
-    // Cell iteration order is arbitrary; renderers get ascending indices.
-    for track_labels in &mut selected {
-        track_labels.sort_unstable();
-    }
-    selected
-}
-
-/// The grid cell containing a Mercator position. Cells are anchored at the
-/// Mercator origin, not the viewport, which is what makes the bucketing
-/// pan-independent.
-fn cell_key(x: f64, y: f64, cell_merc: f64) -> (i64, i64) {
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "Mercator coords are in [0, 1] and cell sizes are bounded below by the max zoom, so the quotient is far inside i64 range"
-    )]
-    let key = |v: f64| (v / cell_merc).floor() as i64;
-    (key(x), key(y))
+    let winners = collision_grid::winners_per_cell(candidates, cell_merc)
+        .map(|c| (c.geometry_index, c.point_index));
+    collision_grid::group_by_geometry(winners, geometry_count)
 }
 
 #[cfg(test)]
@@ -104,41 +81,23 @@ mod tests {
     use gt_types::sat_label::SatLabelAnchor;
     use gt_types::{FileIdx, PointIdx, TrackIdx};
 
-    /// ~1 m of longitude at the equator, in degrees.
-    const DEG_PER_METER: f64 = 360.0 / 40_030_173.0;
-
     fn track_with_anchors(
         positions_m: &[(f64, f64)],
         anchors: &[(usize, SatLabelTier)],
     ) -> LoadedTrack {
-        use gt_types::time_types::GpsTime;
         let points = positions_m
             .iter()
-            .map(|&(x_m, y_m)| {
-                let tpv = gt_types::TimePositionVelocity::builder()
-                    .time(GpsTime::from_utc(chrono::Utc::now()))
-                    .lat(gt_types::Latitude::new(y_m * DEG_PER_METER))
-                    .lon(gt_types::Longitude::new(x_m * DEG_PER_METER))
-                    .build();
-                NavPoint::new(tpv, None)
+            .map(|&(x_m, y_m)| gt_test_utils::nav_point_at_meters(x_m, y_m, None))
+            .collect();
+        let mut track = gt_test_utils::loaded_track_with_points(points);
+        track.sat_label_anchors = anchors
+            .iter()
+            .map(|&(i, tier)| SatLabelAnchor {
+                point: PointIdx::new(i),
+                tier,
             })
             .collect();
-        LoadedTrack {
-            metadata: gt_types::TrackMetadata::default(),
-            points,
-            lod: gt_types::TrackLod::default(),
-            sat_label_anchors: anchors
-                .iter()
-                .map(|&(i, tier)| SatLabelAnchor {
-                    point: PointIdx::new(i),
-                    tier,
-                })
-                .collect(),
-            custom_markers: Vec::new(),
-            generated_markers: Vec::new(),
-            event_markers: Vec::new(),
-            channels: Vec::new(),
-        }
+        track
     }
 
     const WORLD: MercBounds = MercBounds {

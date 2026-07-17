@@ -275,6 +275,48 @@ pub fn loaded_track_from(
     }
 }
 
+/// Latitude/longitude of a point `x_m` metres east and `y_m` metres north of
+/// the origin, for tests that place points at controlled metric spacings.
+pub fn latlon_at_meters(x_m: f64, y_m: f64) -> (Latitude, Longitude) {
+    // ~1 m of longitude at the equator, in degrees.
+    const DEG_PER_METER: f64 = 360.0 / 40_030_173.0;
+    (
+        Latitude::new(y_m * DEG_PER_METER),
+        Longitude::new(x_m * DEG_PER_METER),
+    )
+}
+
+/// A [`NavPoint`] at the given metric offset from the origin, carrying an
+/// optional satellite report. Stamped at the Unix epoch, since the placement
+/// tests that use this are time-independent.
+pub fn nav_point_at_meters(x_m: f64, y_m: f64, satellites: Option<Satellites>) -> NavPoint {
+    let (lat, lon) = latlon_at_meters(x_m, y_m);
+    let tpv = TimePositionVelocity::builder()
+        .time(GpsTime::from_utc(
+            chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
+        ))
+        .lat(lat)
+        .lon(lon)
+        .build();
+    NavPoint::new(tpv, satellites)
+}
+
+/// A [`gt_types::LoadedTrack`] over the given points, every other field
+/// defaulted. The shared builder for tests that supply explicit per-point
+/// content (satellite reports, or anchors set on the returned track).
+pub fn loaded_track_with_points(points: Vec<NavPoint>) -> gt_types::LoadedTrack {
+    gt_types::LoadedTrack {
+        metadata: gt_types::track::TrackMetadata::default(),
+        points,
+        lod: gt_types::track::TrackLod::default(),
+        sat_label_anchors: Vec::new(),
+        custom_markers: Vec::new(),
+        generated_markers: Vec::new(),
+        event_markers: Vec::new(),
+        channels: Vec::new(),
+    }
+}
+
 pub fn nav_points_from(
     start: chrono::DateTime<chrono::Utc>,
     count: usize,
