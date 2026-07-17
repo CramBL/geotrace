@@ -253,6 +253,7 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **report age** | Time from a point to the satellite report shown for it, when the report is borrowed from a nearby point. Not "stale" - that is snap staleness. | `NearestSatelliteReport`, `SKY_REPORT_MAX_AGE_SECS` |
 | **sky glyph** | A miniature per-point sky representation drawn on the map, showing the directions of the satellites in the fix. Toggled via `DisplayCategory::SkyGlyphs`. | `sky_glyph_renderer`, `SkyGlyphVariant` |
 | **sky ring** | The minimal sky-glyph variant: a faint annulus with one bead per fix satellite at its azimuth, elevation not encoded. | `sky_glyph_renderer::draw_glyphs`, `RING_MIN_SPACING_PX` |
+| **sky disc** | The detailed sky-glyph variant: a miniature sky plot offset from the fix with a leader, a dot per fix satellite by azimuth and elevation. | `sky_glyph_renderer::draw_disc`, `DISC_MIN_SPACING_PX` |
 
 Terms to avoid and their replacements:
 

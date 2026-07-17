@@ -505,6 +505,7 @@ impl NavMap {
                 .hover_fade_alpha(hover_fade_progress)
                 .maybe_query_matches(query_matches)
                 .display_query_highlights(display_mask.is_visible(DisplayCategory::QueryHighlights))
+                .sky_glyph_variant(*sky_glyph_variant)
                 .build(),
         );
         if display_mask.is_visible(DisplayCategory::SnappedTracks)
@@ -2476,11 +2477,14 @@ mod snapshot_tests {
         harness.snapshot_loose("display_mask_hides_markers");
     }
 
-    /// Snapshot: with every category except sky glyphs hidden, the rings are
-    /// the only ink left - so their own category keeps drawing them even
-    /// when the trackline, points, and labels are all off.
-    #[test]
-    fn snap_sky_glyphs_only() {
+    /// Snapshot: with every category except sky glyphs hidden, the glyphs are
+    /// the only ink left - so their own category keeps drawing them even when
+    /// the trackline, points, and labels are all off. Run for each variant so
+    /// both the ring and the disc are exercised through the full map path.
+    #[rstest::rstest]
+    #[case::ring("sky_glyphs_only_ring", gt_ui_types::SkyGlyphVariant::Ring)]
+    #[case::disc("sky_glyphs_only_disc", gt_ui_types::SkyGlyphVariant::Disc)]
+    fn snap_sky_glyphs_only(#[case] name: &str, #[case] variant: gt_ui_types::SkyGlyphVariant) {
         use gt_ui_types::{DisplayCategory, DisplayMask, TrackDataVisibility};
 
         let files = vec![make_snapshot_file()];
@@ -2510,7 +2514,7 @@ mod snapshot_tests {
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
                         &mut mask.clone(),
-                        &mut gt_ui_types::SkyGlyphVariant::default(),
+                        &mut variant.clone(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
@@ -2526,6 +2530,6 @@ mod snapshot_tests {
         for _ in 0..5 {
             harness.run();
         }
-        harness.snapshot_loose("sky_glyphs_only");
+        harness.snapshot_loose(name);
     }
 }

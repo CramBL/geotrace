@@ -2,12 +2,14 @@
 //! satellites in the fix came from, so satellite geometry is legible along a
 //! track at a glance without hovering every point.
 //!
-//! This module draws the minimal **sky ring** variant: a faint annulus
-//! centered on the fix with one bead per fix satellite at its azimuth.
-//! Because both the map and the ring are north-up, a gap in the beads points
-//! at the obstruction beside the track. Report-bearing points are decimated
-//! through the shared [`crate::collision_grid`] so the rings stay readable
-//! and viewport-stable.
+//! Two variants share this module. The minimal **sky ring** is a faint
+//! annulus centered on the fix with one bead per fix satellite at its
+//! azimuth; because both the map and the ring are north-up, a gap in the
+//! beads points at the obstruction beside the track. The detailed **sky
+//! disc** is a miniature sky plot, offset from the fix with a short leader,
+//! placing a dot per fix satellite by azimuth and elevation. Report-bearing
+//! points are decimated through the shared [`crate::collision_grid`] so
+//! glyphs stay readable and viewport-stable.
 
 use std::cmp::Reverse;
 
@@ -15,16 +17,29 @@ use egui::{Pos2, Shape, Stroke, Vec2};
 
 use gt_types::satellites::Satellites;
 use gt_types::{LoadedTrack, MercBounds, TrackRef};
+use gt_ui_types::SkyGlyphVariant;
 
 use crate::collision_grid;
 use crate::transform::MercTransform;
 
 /// Minimum on-screen spacing between sky rings. The decimation cell size,
 /// so denser reports thin to at most one ring per this many pixels.
-pub(crate) const RING_MIN_SPACING_PX: f32 = 72.0;
+const RING_MIN_SPACING_PX: f32 = 72.0;
+
+/// Minimum on-screen spacing between sky discs. Wider than the rings, since
+/// an offset disc occupies more room than a centered ring.
+const DISC_MIN_SPACING_PX: f32 = 112.0;
+
+/// The decimation spacing for the given variant.
+pub(crate) fn min_spacing_px(variant: SkyGlyphVariant) -> f32 {
+    match variant {
+        SkyGlyphVariant::Ring => RING_MIN_SPACING_PX,
+        SkyGlyphVariant::Disc => DISC_MIN_SPACING_PX,
+    }
+}
 
 /// Zoom at or above which sky glyphs draw. Below it a track collapses to a
-/// few pixels and per-point rings would be noise, so the overlay stays
+/// few pixels and per-point glyphs would be noise, so the overlay stays
 /// quiet - matching where per-fix icons become legible.
 pub(crate) const MIN_ZOOM: f64 = 13.0;
 
@@ -32,10 +47,10 @@ pub(crate) const MIN_ZOOM: f64 = 13.0;
 /// visible.
 const RING_RADIUS_PX: f32 = 15.0;
 
-/// Stroke width of the baseline annulus.
+/// Stroke width of the ring baseline and the disc rim.
 const BASELINE_STROKE_PX: f32 = 1.0;
 
-/// Alpha of the baseline annulus, kept low so the ring reads as background
+/// Alpha of the ring baseline, kept low so the ring reads as background
 /// context rather than competing with the track ink.
 const BASELINE_ALPHA: f32 = 0.35;
 
@@ -45,11 +60,29 @@ const BEAD_RADIUS_PX: f32 = 3.0;
 /// Stroke width of a hollow (fix-loss) bead.
 const HOLLOW_BEAD_STROKE_PX: f32 = 1.4;
 
-/// Dash and gap lengths of the fix-loss baseline ring.
+/// Dash and gap lengths of the fix-loss baseline ring / disc rim.
 const FIX_LOSS_DASH_PX: f32 = 3.0;
 const FIX_LOSS_GAP_PX: f32 = 3.0;
-/// Polyline segments approximating the dashed fix-loss ring.
+/// Polyline segments approximating a dashed fix-loss circle.
 const FIX_LOSS_SEGMENTS: u32 = 48;
+
+/// Radius of the sky disc.
+const DISC_RADIUS_PX: f32 = 20.0;
+
+/// Offset from the fix to the disc center - up and to the side, like the
+/// satellite-label anchor, so the disc and its leader clear the fix position
+/// and its heading arrow.
+const DISC_OFFSET_PX: Vec2 = Vec2::new(14.0, -36.0);
+
+/// Alpha of the disc's translucent backing fill, for contrast against map
+/// tiles without hiding them.
+const DISC_BACKING_ALPHA: f32 = 0.78;
+
+/// Alpha of the disc rim and leader, low like the ring baseline.
+const DISC_RIM_ALPHA: f32 = 0.6;
+
+/// Radius of a satellite dot inside the disc.
+const DISC_DOT_RADIUS_PX: f32 = 2.2;
 
 /// Per-geometry point indices carrying a sky ring this frame, indexed like
 /// the caller's geometry list. The same shape the satellite labels use.
@@ -110,9 +143,10 @@ pub(crate) fn select_glyphs<'a>(
     collision_grid::group_by_geometry(winners, geometry_count)
 }
 
-/// Draw the sky rings of one track at the given selected point indices.
+/// Draw the sky glyphs of one track at the given selected point indices, in
+/// the chosen variant.
 ///
-/// `size_scale` shrinks the ring in step with the heading arrows at lower
+/// `size_scale` shrinks the glyph in step with the heading arrows at lower
 /// zoom (1.0 where the fix icons are full size), so glyphs never stay a
 /// fixed pixel size while the track shrinks under them.
 pub(crate) fn draw_glyphs(
@@ -120,6 +154,7 @@ pub(crate) fn draw_glyphs(
     track: &LoadedTrack,
     point_indices: &[usize],
     transform: &MercTransform,
+    variant: SkyGlyphVariant,
     size_scale: f32,
 ) {
     let dark_mode = ui.visuals().dark_mode;
@@ -131,14 +166,29 @@ pub(crate) fn draw_glyphs(
         let Some(satellites) = &point.satellites else {
             continue;
         };
-        draw_ring(
-            ui,
-            transform.to_screen(point.merc),
-            satellites,
-            baseline_color,
-            dark_mode,
-            size_scale,
-        );
+        let center = transform.to_screen(point.merc);
+        match variant {
+            SkyGlyphVariant::Ring => {
+                draw_ring(
+                    ui,
+                    center,
+                    satellites,
+                    baseline_color,
+                    dark_mode,
+                    size_scale,
+                );
+            }
+            SkyGlyphVariant::Disc => {
+                draw_disc(
+                    ui,
+                    center,
+                    satellites,
+                    baseline_color,
+                    dark_mode,
+                    size_scale,
+                );
+            }
+        }
     }
 }
 
@@ -202,13 +252,74 @@ fn bead_pos(center: Pos2, azimuth_deg: f32, radius: f32) -> Pos2 {
     center + Vec2::new(azimuth.sin(), -azimuth.cos()) * radius
 }
 
+/// Draw one sky disc: a miniature sky plot offset above the fix with a short
+/// leader, with a dot per fix satellite placed by azimuth and elevation
+/// (via the same projection as the full sky plot). A fix loss draws a dashed
+/// rim and, having no fix satellites, no dots - "sky seen but unused".
+fn draw_disc(
+    ui: &egui::Ui,
+    fix_pos: Pos2,
+    satellites: &Satellites,
+    rim_color: egui::Color32,
+    dark_mode: bool,
+    size_scale: f32,
+) {
+    let painter = ui.painter();
+    let radius = DISC_RADIUS_PX * size_scale;
+    let dot_radius = DISC_DOT_RADIUS_PX * size_scale;
+    let center = fix_pos + DISC_OFFSET_PX * size_scale;
+    let rim = rim_color.gamma_multiply(DISC_RIM_ALPHA);
+
+    // Leader from the fix to the near edge of the disc rim.
+    let to_fix = (fix_pos - center).normalized();
+    painter.line_segment(
+        [fix_pos, center + to_fix * radius],
+        Stroke::new(BASELINE_STROKE_PX, rim),
+    );
+    painter.circle_filled(
+        center,
+        radius,
+        ui.visuals().panel_fill.gamma_multiply(DISC_BACKING_ALPHA),
+    );
+
+    if satellites.fix_count() == 0 {
+        let points: Vec<Pos2> = (0..=FIX_LOSS_SEGMENTS)
+            .map(|i| {
+                let angle = i as f32 / FIX_LOSS_SEGMENTS as f32 * std::f32::consts::TAU;
+                center + Vec2::new(angle.sin(), -angle.cos()) * radius
+            })
+            .collect();
+        painter.add(Shape::dashed_line(
+            &points,
+            Stroke::new(BASELINE_STROKE_PX, rim),
+            FIX_LOSS_DASH_PX * size_scale,
+            FIX_LOSS_GAP_PX * size_scale,
+        ));
+        return;
+    }
+
+    painter.circle_stroke(center, radius, Stroke::new(BASELINE_STROKE_PX, rim));
+    for satellite in satellites.satellites_with_fix() {
+        let (Some(azimuth), Some(elevation)) = (satellite.azimuth(), satellite.elevation()) else {
+            continue;
+        };
+        let color = gt_ui_theme::constellation_color(satellite.constellation(), dark_mode);
+        let offset = gt_sky::unit_disc_position(azimuth, elevation) * radius;
+        painter.circle_filled(center + offset, dot_radius, color);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use gt_test_utils::TestHarness;
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::{FileIdx, TrackIdx, TrackRef};
 
-    use super::{RING_RADIUS_PX, SelectedGlyphs, draw_ring, select_glyphs};
+    use super::{
+        DISC_RADIUS_PX, RING_RADIUS_PX, SelectedGlyphs, draw_disc, draw_ring, min_spacing_px,
+        select_glyphs,
+    };
+    use gt_ui_types::SkyGlyphVariant;
 
     const WORLD: gt_types::MercBounds = gt_types::MercBounds {
         x_min: 0.0,
@@ -399,5 +510,54 @@ mod tests {
             });
         harness.run();
         harness.snapshot("sky_rings");
+    }
+
+    /// Snapshot: the disc variant - a full-sky report offset with its leader,
+    /// a report leaning south (northern sky blocked), and a fix loss (dashed
+    /// rim, no dots).
+    #[test]
+    fn sky_discs() {
+        let sat_el = |constellation, az: f32, el: f32, in_fix| {
+            Satellite::new(constellation, 1, Some(el), Some(az), Some(40.0), in_fix)
+        };
+        let spread = report(
+            [(45.0, 62.0), (110.0, 35.0), (200.0, 71.0), (300.0, 20.0)]
+                .into_iter()
+                .map(|(az, el)| sat_el(Constellation::Gps, az, el, true))
+                .collect(),
+        );
+        let southern = report(
+            [(150.0, 25.0), (200.0, 40.0), (250.0, 18.0)]
+                .into_iter()
+                .map(|(az, el)| sat_el(Constellation::Galileo, az, el, true))
+                .collect(),
+        );
+        let fix_loss = report(
+            [(45.0, 30.0), (200.0, 20.0)]
+                .into_iter()
+                .map(|(az, el)| sat_el(Constellation::Gps, az, el, false))
+                .collect(),
+        );
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(300.0, 140.0))
+            .theme(true)
+            .ui(move |ui| {
+                let rim = ui.visuals().weak_text_color();
+                let dark = ui.visuals().dark_mode;
+                let y = 110.0;
+                let gap = DISC_RADIUS_PX * 3.0;
+                draw_disc(ui, egui::pos2(gap, y), &spread, rim, dark, 1.0);
+                draw_disc(ui, egui::pos2(gap * 2.0, y), &southern, rim, dark, 1.0);
+                draw_disc(ui, egui::pos2(gap * 3.0, y), &fix_loss, rim, dark, 1.0);
+            });
+        harness.run();
+        harness.snapshot("sky_discs");
+    }
+
+    /// Discs are offset and larger than rings, so they decimate more
+    /// sparsely - a swap of the two match arms would flip this ordering.
+    #[test]
+    fn discs_decimate_more_sparsely_than_rings() {
+        assert!(min_spacing_px(SkyGlyphVariant::Disc) > min_spacing_px(SkyGlyphVariant::Ring));
     }
 }
