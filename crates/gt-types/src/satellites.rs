@@ -164,6 +164,16 @@ impl ConstellationSet {
         Self(self.0 | constellation.bit())
     }
 
+    /// Adds `constellation` to the set.
+    pub const fn insert(&mut self, constellation: Constellation) {
+        self.0 |= constellation.bit();
+    }
+
+    /// The union of two sets.
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
     /// Whether `constellation` is in the set.
     pub const fn contains(self, constellation: Constellation) -> bool {
         self.0 & constellation.bit() != 0
@@ -466,6 +476,17 @@ mod constellation_tests {
         assert!(two.contains(Constellation::Gps));
         assert!(two.contains(Constellation::Galileo));
         assert!(!two.contains(Constellation::Beidou));
+
+        let mut built = ConstellationSet::empty();
+        built.insert(Constellation::Gps);
+        built.insert(Constellation::Gps);
+        assert_eq!(built, ConstellationSet::single(Constellation::Gps));
+
+        assert_eq!(
+            ConstellationSet::single(Constellation::Gps)
+                .union(ConstellationSet::single(Constellation::Galileo)),
+            two
+        );
 
         let all = ConstellationSet::all();
         assert!(Constellation::iter().all(|c| all.contains(c)));

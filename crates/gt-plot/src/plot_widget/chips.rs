@@ -1,7 +1,7 @@
 //! The filter row above the plot: metric and channel chips, their
 //! visibility state, hover metadata, and the channel color pickers.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
 
 use egui::{Button, Color32, RichText, Slider};
@@ -13,7 +13,7 @@ use egui_phosphor::regular::GEAR as ICON_GEAR;
 use egui_phosphor::regular::LINK as ICON_LINK;
 use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
 use gt_types::MetricKind;
-use gt_types::satellites::Constellation;
+use gt_types::satellites::{Constellation, ConstellationSet};
 use strum::IntoEnumIterator;
 
 use super::style::{channel_color, effective_component_color};
@@ -387,7 +387,7 @@ impl MetricVisibility {
     /// == false`), and per-constellation metrics whose constellation is absent
     /// from the loaded data are ignored too (their chips are hidden), so the
     /// show/hide-all button neither reflects nor toggles them.
-    fn all_enabled(self, present: &HashSet<Constellation>, show_advanced: bool) -> bool {
+    fn all_enabled(self, present: ConstellationSet, show_advanced: bool) -> bool {
         MetricKind::iter()
             .filter(|&k| metric_is_shown(k, present, show_advanced))
             .all(|k| self.field(k))
@@ -395,7 +395,7 @@ impl MetricVisibility {
 
     /// Set every *currently shown* metric to `enabled`, leaving hidden metrics
     /// (collapsed advanced section, or an absent constellation) untouched.
-    fn set_all(&mut self, enabled: bool, present: &HashSet<Constellation>, show_advanced: bool) {
+    fn set_all(&mut self, enabled: bool, present: ConstellationSet, show_advanced: bool) {
         for k in MetricKind::iter().filter(|&k| metric_is_shown(k, present, show_advanced)) {
             *self.field_mut(k) = enabled;
         }
@@ -411,11 +411,11 @@ impl MetricVisibility {
 /// logic so they never disagree about what is on screen.
 pub(super) fn metric_is_shown(
     kind: MetricKind,
-    present: &HashSet<Constellation>,
+    present: ConstellationSet,
     show_advanced: bool,
 ) -> bool {
     (show_advanced || !kind.is_advanced())
-        && kind.constellation().is_none_or(|c| present.contains(&c))
+        && kind.constellation().is_none_or(|c| present.contains(c))
 }
 
 /// Global per-channel visibility, keyed by channel name.
@@ -526,7 +526,7 @@ pub(super) enum HoveredChip {
 fn chip_group(
     ui: &mut egui::Ui,
     vis: &mut MetricVisibility,
-    present: &HashSet<Constellation>,
+    present: ConstellationSet,
     kinds: &[MetricKind],
     show_advanced: bool,
     snap_error_available: bool,
@@ -663,7 +663,7 @@ fn channel_chip_group(
 pub(super) fn metric_filter_row(
     ui: &mut egui::Ui,
     vis: &mut MetricVisibility,
-    present: &HashSet<Constellation>,
+    present: ConstellationSet,
     channels: &[LoadedChannel],
     channel_vis: &mut ChannelVisibility,
     component_colors: &mut HashMap<String, Vec<Option<Color32>>>,
@@ -1093,21 +1093,21 @@ mod tests {
     /// advanced gate).  This is the rule that hides empty NavIC/QZSS chips.
     #[test]
     fn metric_is_shown_gates_on_presence_and_advanced() {
-        let none: HashSet<Constellation> = HashSet::new();
-        let gps_only: HashSet<Constellation> = std::iter::once(Constellation::Gps).collect();
+        let none = ConstellationSet::empty();
+        let gps_only = ConstellationSet::single(Constellation::Gps);
 
         // Totals always show regardless of which constellations are present.
-        assert!(metric_is_shown(MetricKind::SatsSeen, &none, false));
+        assert!(metric_is_shown(MetricKind::SatsSeen, none, false));
         // GPS chip hidden with no data, shown once GPS is present.
-        assert!(!metric_is_shown(MetricKind::GpsSeen, &none, false));
-        assert!(metric_is_shown(MetricKind::GpsSeen, &gps_only, false));
+        assert!(!metric_is_shown(MetricKind::GpsSeen, none, false));
+        assert!(metric_is_shown(MetricKind::GpsSeen, gps_only, false));
         // NavIC/QZSS stay hidden in a GPS-only recording.
-        assert!(!metric_is_shown(MetricKind::NavicSeen, &gps_only, false));
-        assert!(!metric_is_shown(MetricKind::QzssFix, &gps_only, false));
+        assert!(!metric_is_shown(MetricKind::NavicSeen, gps_only, false));
+        assert!(!metric_is_shown(MetricKind::QzssFix, gps_only, false));
         // Advanced metrics need the advanced section open *and* presence.
-        assert!(!metric_is_shown(MetricKind::UtilGps, &gps_only, false));
-        assert!(metric_is_shown(MetricKind::UtilGps, &gps_only, true));
-        assert!(!metric_is_shown(MetricKind::UtilNavic, &gps_only, true));
+        assert!(!metric_is_shown(MetricKind::UtilGps, gps_only, false));
+        assert!(metric_is_shown(MetricKind::UtilGps, gps_only, true));
+        assert!(!metric_is_shown(MetricKind::UtilNavic, gps_only, true));
     }
 
     #[test]
