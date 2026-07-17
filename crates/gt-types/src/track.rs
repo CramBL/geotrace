@@ -4,6 +4,8 @@ use crate::markers::{CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarke
 use crate::mercator::MercPoint;
 use crate::nav_point::NavPoint;
 use crate::sat_label::SatLabelAnchor;
+use crate::satellites::Satellites;
+use crate::time_types::GpsTime;
 use chrono::{DateTime, Duration, Utc};
 use geo_types::{Coord, Rect};
 use std::collections::HashMap;
@@ -329,6 +331,72 @@ pub struct LoadedTrack {
     pub channels: Vec<Channel>,
 }
 
+/// How far from a point a satellite report may be borrowed for display, in
+/// seconds. Satellites move arc-minutes per second, so a report this close is
+/// geometrically accurate as long as its age is shown.
+pub const SKY_REPORT_MAX_AGE_SECS: i64 = 10;
+
+/// A satellite report resolved for a track point by
+/// [`LoadedTrack::nearest_satellite_report`].
+#[derive(Debug, Clone, Copy)]
+pub struct NearestSatelliteReport<'a> {
+    pub satellites: &'a Satellites,
+    /// Signed offset from the point's time to the report's time: positive
+    /// when the report is earlier, negative when it is later, zero for the
+    /// point's own report.
+    pub age: Duration,
+}
+
+impl LoadedTrack {
+    /// The satellite report to show for `point_index`: the point's own report
+    /// when it has one, otherwise the nearest report within
+    /// [`SKY_REPORT_MAX_AGE_SECS`] of it, preferring the earlier side on a
+    /// tie (the same rule the SDK builder uses when attaching reports).
+    ///
+    /// Ages are measured between the two points' TPV times, relying on points
+    /// being in recording order.
+    pub fn nearest_satellite_report(
+        &self,
+        point_index: PointIdx,
+    ) -> Option<NearestSatelliteReport<'_>> {
+        let point = point_index.get(&self.points)?;
+        let time = point.tpv.time();
+        if let Some(own) = report_with_age(point, time) {
+            return Some(own);
+        }
+
+        let max_age = Duration::seconds(SKY_REPORT_MAX_AGE_SECS);
+        let index = point_index.as_usize();
+        let earlier = self
+            .points
+            .iter()
+            .take(index)
+            .rev()
+            .take_while(|p| time - p.tpv.time() <= max_age)
+            .find_map(|p| report_with_age(p, time));
+        let later = self
+            .points
+            .iter()
+            .skip(index + 1)
+            .take_while(|p| p.tpv.time() - time <= max_age)
+            .find_map(|p| report_with_age(p, time));
+        match (earlier, later) {
+            (Some(earlier), Some(later)) if later.age.abs() < earlier.age.abs() => Some(later),
+            (earlier, later) => earlier.or(later),
+        }
+    }
+}
+
+/// `point`'s report paired with its age relative to `time`, `None` for
+/// report-free points.
+fn report_with_age(point: &NavPoint, time: GpsTime) -> Option<NearestSatelliteReport<'_>> {
+    let age = time - point.tpv.time();
+    point
+        .satellites
+        .as_ref()
+        .map(|satellites| NearestSatelliteReport { satellites, age })
+}
+
 impl TrackRef {
     /// The track this ref addresses, `None` when either index is stale.
     ///
@@ -549,5 +617,80 @@ mod travel_mode_tests {
             TravelMode::Unknown("hovercraft".into()).display_name(),
             "hovercraft"
         );
+    }
+}
+
+#[cfg(test)]
+mod nearest_satellite_report_tests {
+    use chrono::{DateTime, Duration, Utc};
+    use rstest::rstest;
+
+    use crate::coordinates::{Latitude, Longitude};
+    use crate::highlight::PointIdx;
+    use crate::nav_point::NavPoint;
+    use crate::satellites::{Constellation, Satellite, Satellites};
+    use crate::time_types::GpsTime;
+    use crate::tpv::TimePositionVelocity;
+
+    use super::{LoadedTrack, TrackMetadata};
+
+    /// A track from `(seconds, report)` specs, where `Some(n)` attaches a
+    /// report with `n` satellites so assertions can tell reports apart.
+    fn track(spec: &[(i64, Option<u32>)]) -> LoadedTrack {
+        let start = DateTime::<Utc>::from_timestamp(1_748_000_000, 0).expect("valid");
+        let points = spec
+            .iter()
+            .map(|&(secs, report)| {
+                let tpv = TimePositionVelocity::builder()
+                    .time(GpsTime::from_utc(start + Duration::seconds(secs)))
+                    .lat(Latitude::new(55.0))
+                    .lon(Longitude::new(12.0))
+                    .build();
+                let satellites = report.map(|count| {
+                    let sats = (0..count)
+                        .map(|prn| Satellite::new(Constellation::Gps, prn, None, None, None, true))
+                        .collect();
+                    Satellites::new(None, None, sats)
+                });
+                NavPoint::new(tpv, satellites)
+            })
+            .collect();
+        LoadedTrack {
+            metadata: TrackMetadata::default(),
+            points,
+            lod: Default::default(),
+            sat_label_anchors: Vec::new(),
+            custom_markers: Vec::new(),
+            generated_markers: Vec::new(),
+            event_markers: Vec::new(),
+            channels: Vec::new(),
+        }
+    }
+
+    #[rstest]
+    #[case::own_report(&[(0, Some(3))], 0, Some((3, 0)))]
+    #[case::earlier_within_window(&[(0, Some(3)), (4, None)], 1, Some((3, 4)))]
+    #[case::later_within_window(&[(0, None), (6, Some(5))], 0, Some((5, -6)))]
+    #[case::nearer_side_wins(&[(0, Some(3)), (4, None), (5, Some(7))], 1, Some((7, -1)))]
+    #[case::earlier_wins_a_tie(&[(0, Some(3)), (4, None), (8, Some(7))], 1, Some((3, 4)))]
+    #[case::window_edge_included(&[(0, Some(3)), (10, None)], 1, Some((3, 10)))]
+    #[case::beyond_window(&[(0, Some(3)), (11, None)], 1, None)]
+    #[case::skips_reportless_neighbors(&[(0, Some(3)), (1, None), (2, None)], 2, Some((3, 2)))]
+    #[case::no_reports_at_all(&[(0, None), (1, None)], 0, None)]
+    fn resolves_the_nearest_report(
+        #[case] spec: &[(i64, Option<u32>)],
+        #[case] point_index: usize,
+        #[case] expected: Option<(u32, i64)>,
+    ) {
+        let track = track(spec);
+        let report = track.nearest_satellite_report(PointIdx::new(point_index));
+        let actual = report.map(|r| (r.satellites.satellite_count(), r.age.num_seconds()));
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn out_of_bounds_index_is_none() {
+        let track = track(&[(0, Some(3))]);
+        assert!(track.nearest_satellite_report(PointIdx::new(9)).is_none());
     }
 }
