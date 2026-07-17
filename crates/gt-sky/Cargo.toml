@@ -1,0 +1,21 @@
+[package]
+name = "gt-sky"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+egui.workspace = true
+gt-types = { path = "../gt-types" }
+
+[dev-dependencies]
+rstest.workspace = true
+strum.workspace = true
+
+[lints]
+workspace = true

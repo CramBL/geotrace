@@ -45,6 +45,7 @@ members = [
     "crates/gt-plot",
     "crates/gt-query",
     "crates/gt-side-panel",
+    "crates/gt-sky",
     "crates/gt-snap",
     "crates/gt-test-utils",
     "crates/gt-track-builder",
