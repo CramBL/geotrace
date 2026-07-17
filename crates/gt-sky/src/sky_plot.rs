@@ -43,12 +43,13 @@ impl SkyPlotSize {
 /// Satellites in the fix render as filled dots, tracked-only satellites as
 /// hollow outlines, both in their constellation's themed color with the dot
 /// radius encoding the signal-quality tier. Satellites without azimuth or
-/// elevation cannot be placed and are surfaced as a count line under the
-/// plot instead.
+/// elevation cannot be placed and are surfaced beneath the plot instead
+/// (see [`unplaceable_ui`]).
 pub struct SkyPlot<'a> {
     satellites: &'a Satellites,
     size: SkyPlotSize,
     elevation_mask_deg: Option<f32>,
+    interactive: bool,
 }
 
 impl<'a> SkyPlot<'a> {
@@ -57,6 +58,7 @@ impl<'a> SkyPlot<'a> {
             satellites,
             size,
             elevation_mask_deg: None,
+            interactive: false,
         }
     }
 
@@ -69,11 +71,22 @@ impl<'a> SkyPlot<'a> {
         }
     }
 
+    /// Enables the per-mark hover tooltip. Only for hosts that are not
+    /// themselves hover-transient (the sticky popup window) - inside a
+    /// tooltip the pointer can never reach a mark.
+    pub fn interactive(self) -> Self {
+        Self {
+            interactive: true,
+            ..self
+        }
+    }
+
     pub fn ui(&self, ui: &mut egui::Ui) -> egui::Response {
         let Self {
             satellites,
             size,
             elevation_mask_deg,
+            interactive,
         } = *self;
 
         ui.vertical(|ui| {
@@ -88,14 +101,79 @@ impl<'a> SkyPlot<'a> {
                 if let Some(mask_deg) = elevation_mask_deg {
                     paint_mask_ring(ui, center, radius, mask_deg);
                 }
-                paint_marks(ui, center, radius, satellites, size);
+                let marks = paint_marks(ui, center, radius, satellites, size);
+                if interactive {
+                    mark_tooltip(ui, &response, &marks);
+                }
             }
 
-            unplaceable_line_ui(ui, satellites);
+            unplaceable_ui(ui, satellites, size);
             response
         })
         .inner
     }
+}
+
+/// The instant tooltip for the mark nearest the pointer, within
+/// [`style::MARK_HOVER_RADIUS_PX`].
+fn mark_tooltip(ui: &egui::Ui, response: &egui::Response, marks: &[(Satellite, Pos2)]) {
+    let Some(pointer) = response.hover_pos() else {
+        return;
+    };
+    let Some(satellite) = nearest_mark(marks, pointer) else {
+        return;
+    };
+    egui::Tooltip::always_open(
+        ui.ctx().clone(),
+        ui.layer_id(),
+        response
+            .id
+            .with((satellite.constellation(), satellite.prn())),
+        egui::PopupAnchor::Pointer,
+    )
+    .show(|ui| satellite_tooltip_ui(ui, satellite));
+}
+
+/// The mark nearest to `pointer`, within [`style::MARK_HOVER_RADIUS_PX`].
+fn nearest_mark(marks: &[(Satellite, Pos2)], pointer: Pos2) -> Option<&Satellite> {
+    marks
+        .iter()
+        .map(|(satellite, position)| (satellite, position.distance(pointer)))
+        .filter(|(_, distance)| *distance <= style::MARK_HOVER_RADIUS_PX)
+        .min_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(satellite, _)| satellite)
+}
+
+fn satellite_tooltip_ui(ui: &mut egui::Ui, satellite: &Satellite) {
+    ui.label(egui::RichText::new(satellite_label(satellite)).strong());
+    let degree = |value: Option<f32>| {
+        value.map_or_else(
+            || gt_ui_theme::EM_DASH.to_owned(),
+            |v| format!("{v:.0}{}", gt_ui_theme::DEGREE_SIGN),
+        )
+    };
+    ui.label(format!("Elevation {}", degree(satellite.elevation())));
+    ui.label(format!("Azimuth {}", degree(satellite.azimuth())));
+    let snr = satellite.snr().map_or_else(
+        || gt_ui_theme::EM_DASH.to_owned(),
+        |snr| format!("{:.0} dB-Hz", snr.value()),
+    );
+    ui.label(format!("SNR {snr}"));
+    ui.label(if satellite.in_fix() {
+        "In fix"
+    } else {
+        "Tracked, not in fix"
+    });
+}
+
+/// "G05 GPS" - RINEX prefix, zero-padded PRN, constellation name.
+fn satellite_label(satellite: &Satellite) -> String {
+    format!(
+        "{}{:02} {}",
+        satellite.constellation().prn_prefix(),
+        satellite.prn().value(),
+        satellite.constellation().display_name()
+    )
 }
 
 /// "9 of 14 in fix" above the plot.
@@ -111,19 +189,47 @@ fn status_line_ui(ui: &mut egui::Ui, satellites: &Satellites, size: SkyPlotSize)
     };
 }
 
-/// "2 satellites without sky position" under the plot; nothing when all
+/// Satellites without azimuth or elevation, under the plot: the compact size
+/// shows a count line, the full size one row per satellite. Nothing when all
 /// satellites are placeable.
-fn unplaceable_line_ui(ui: &mut egui::Ui, satellites: &Satellites) {
-    let unplaceable = satellites
+fn unplaceable_ui(ui: &mut egui::Ui, satellites: &Satellites, size: SkyPlotSize) {
+    let unplaceable: Vec<&Satellite> = satellites
         .satellites()
         .filter(|satellite| projection::mark_position(satellite).is_none())
-        .count();
-    let text = match unplaceable {
-        0 => return,
-        1 => "1 satellite without sky position".to_owned(),
-        n => format!("{n} satellites without sky position"),
-    };
-    ui.label(egui::RichText::new(text).weak().small());
+        .collect();
+    match (size, unplaceable.as_slice()) {
+        (_, []) => {}
+        (SkyPlotSize::Compact, [_]) => {
+            ui.label(
+                egui::RichText::new("1 satellite without sky position")
+                    .weak()
+                    .small(),
+            );
+        }
+        (SkyPlotSize::Compact, many) => {
+            ui.label(
+                egui::RichText::new(format!("{} satellites without sky position", many.len()))
+                    .weak()
+                    .small(),
+            );
+        }
+        (SkyPlotSize::Full, many) => {
+            let dark_mode = ui.visuals().dark_mode;
+            for satellite in many {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(satellite_label(satellite))
+                            .color(gt_ui_theme::constellation_color(
+                                satellite.constellation(),
+                                dark_mode,
+                            ))
+                            .small(),
+                    );
+                    ui.label(egui::RichText::new("no sky position").weak().small());
+                });
+            }
+        }
+    }
 }
 
 fn paint_grid(ui: &egui::Ui, center: Pos2, radius: f32, size: SkyPlotSize) {
@@ -234,13 +340,15 @@ fn paint_mask_ring(ui: &egui::Ui, center: Pos2, radius: f32, mask_deg: f32) {
     ));
 }
 
+/// Paints the satellite marks and returns them with their screen positions,
+/// in paint order, for hit-testing.
 fn paint_marks(
     ui: &egui::Ui,
     center: Pos2,
     radius: f32,
     satellites: &Satellites,
     size: SkyPlotSize,
-) {
+) -> Vec<(Satellite, Pos2)> {
     let painter = ui.painter();
     let dark_mode = ui.visuals().dark_mode;
     // The panel fill as the mark outline keeps overlapping dots separable.
@@ -255,7 +363,8 @@ fn paint_marks(
         .satellites()
         .filter_map(mark)
         .partition(|(satellite, _)| satellite.in_fix());
-    for (satellite, position) in tracked.iter().chain(fix.iter()) {
+    let marks: Vec<(Satellite, Pos2)> = tracked.into_iter().chain(fix).collect();
+    for (satellite, position) in &marks {
         let color = gt_ui_theme::constellation_color(satellite.constellation(), dark_mode);
         let mark_radius =
             style::mark_radius(satellite.snr().map(|snr| snr.quality())) * size.mark_scale();
@@ -269,6 +378,7 @@ fn paint_marks(
             );
         }
     }
+    marks
 }
 
 #[cfg(test)]
@@ -372,5 +482,52 @@ mod snapshot_tests {
             &zero_fix_report(),
             true,
         );
+    }
+
+    #[test]
+    fn sky_mark_tooltip() {
+        let full = Satellite::new(
+            Constellation::Gps,
+            5,
+            Some(62.0),
+            Some(45.0),
+            Some(44.0),
+            true,
+        );
+        let snr_less = Satellite::new(
+            Constellation::Glonass,
+            22,
+            Some(30.0),
+            Some(20.0),
+            None,
+            false,
+        );
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(220.0, 220.0))
+            .theme(true)
+            .ui(move |ui| {
+                super::satellite_tooltip_ui(ui, &full);
+                ui.separator();
+                super::satellite_tooltip_ui(ui, &snr_less);
+            });
+        harness.run();
+        harness.snapshot("sky_mark_tooltip");
+    }
+
+    #[rstest]
+    #[case::hits_the_nearest(egui::pos2(101.0, 100.0), Some(5))]
+    #[case::prefers_the_closer_of_two(egui::pos2(108.0, 100.0), Some(12))]
+    #[case::beyond_hover_radius(egui::pos2(150.0, 150.0), None)]
+    fn nearest_mark_respects_the_hover_radius(
+        #[case] pointer: egui::Pos2,
+        #[case] expected_prn: Option<u32>,
+    ) {
+        let sat = |prn| Satellite::new(Constellation::Gps, prn, Some(45.0), Some(90.0), None, true);
+        let marks = vec![
+            (sat(5), egui::pos2(100.0, 100.0)),
+            (sat(12), egui::pos2(112.0, 100.0)),
+        ];
+        let nearest = super::nearest_mark(&marks, pointer).map(|s| s.prn().value());
+        assert_eq!(nearest, expected_prn);
     }
 }

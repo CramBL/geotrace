@@ -31,6 +31,10 @@ pub const MARK_EDGE_STROKE_WIDTH_PX: f32 = 1.0;
 /// Stroke width of a hollow (tracked-only) mark.
 pub const HOLLOW_MARK_STROKE_WIDTH_PX: f32 = 1.5;
 
+/// Pointer distance within which a mark shows its hover tooltip. Larger than
+/// the biggest mark so small marks stay easy to hit.
+pub const MARK_HOVER_RADIUS_PX: f32 = 6.0;
+
 /// Dash and gap lengths of the elevation-mask ring.
 pub const MASK_RING_DASH_PX: f32 = 4.0;
 /// See [`MASK_RING_DASH_PX`].

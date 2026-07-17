@@ -885,18 +885,20 @@ fn show_sticky_popup(
         .auto_sized()
         .show(ctx, |ui| match sticky_ref.category {
             DataCategory::Tpv => {
-                if let Some(point) = sticky_ref
+                if let Some(track) = sticky_ref
                     .track
                     .fi
                     .get(files)
                     .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-                    .and_then(|t| sticky_ref.point_index.get(&t.points))
+                    && let Some(point) = sticky_ref.point_index.get(&track.points)
                 {
                     // Cap the window height so satellite tables never overflow the
                     // screen. The ScrollArea only activates past the cap.
                     let max_h = (ui.ctx().viewport_rect().height() * 0.75).min(500.0);
                     ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
-                        crate::tpv_renderer::show_sticky_tpv_content(ui, point);
+                        let sky =
+                            crate::tpv_renderer::SkySection::resolve(track, sticky_ref.point_index);
+                        crate::tpv_renderer::show_sticky_tpv_content(ui, point, &sky);
                     });
                     ui.add_space(4.0);
                     ui.label(RichText::new("Click to deselect").small().weak());
@@ -958,16 +960,18 @@ fn show_sticky_popup(
                 }
             }
             DataCategory::SatelliteReport => {
-                if let Some(point) = sticky_ref
+                if let Some(track) = sticky_ref
                     .track
                     .fi
                     .get(files)
                     .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-                    .and_then(|t| sticky_ref.point_index.get(&t.points))
+                    && let Some(point) = sticky_ref.point_index.get(&track.points)
                 {
                     let max_h = (ui.ctx().viewport_rect().height() * 0.75).min(500.0);
                     ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
-                        crate::tpv_renderer::show_sticky_tpv_content(ui, point);
+                        let sky =
+                            crate::tpv_renderer::SkySection::resolve(track, sticky_ref.point_index);
+                        crate::tpv_renderer::show_sticky_tpv_content(ui, point, &sky);
                     });
                     ui.add_space(4.0);
                     ui.label(RichText::new("Click to deselect").small().weak());
