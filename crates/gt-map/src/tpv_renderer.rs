@@ -12,6 +12,7 @@ use gt_types::{
 };
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH, MINUS_SIGN};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
+use strum::IntoEnumIterator as _;
 use uom::si::angle::{degree, radian};
 use uom::si::f64::Angle;
 use uom::si::length::meter;
@@ -288,9 +289,10 @@ impl<'a> SkySection<'a> {
     }
 }
 
-/// The compact sky plot with its report-age line, or the no-report
-/// placeholder.
-fn sky_section_ui(ui: &mut Ui, sky: &SkySection<'_>) {
+/// The sky plot with its report-age line, or the no-report placeholder. The
+/// full size is interactive (per-mark tooltips); the compact size lives
+/// inside the hover badge, which is itself a tooltip.
+fn sky_section_ui(ui: &mut Ui, sky: &SkySection<'_>, size: SkyPlotSize) {
     match sky {
         SkySection::TrackWithoutReports => {}
         SkySection::NoReportNearby => {
@@ -303,7 +305,12 @@ fn sky_section_ui(ui: &mut Ui, sky: &SkySection<'_>) {
             );
         }
         SkySection::Report(report) => {
-            SkyPlot::new(report.satellites, SkyPlotSize::Compact).ui(ui);
+            let plot = SkyPlot::new(report.satellites, size);
+            let plot = match size {
+                SkyPlotSize::Full => plot.interactive(),
+                SkyPlotSize::Compact => plot,
+            };
+            plot.ui(ui);
             if !report.age.is_zero() {
                 ui.label(RichText::new(report_age_label(report.age)).weak().small());
             }
@@ -381,7 +388,7 @@ pub(crate) fn show_hover_table(ui: &mut Ui, p: &NavPoint, sky: &SkySection<'_>) 
         hover_grid_ui(ui, p);
         if !matches!(sky, SkySection::TrackWithoutReports) {
             ui.add_space(12.0);
-            ui.vertical(|ui| sky_section_ui(ui, sky));
+            ui.vertical(|ui| sky_section_ui(ui, sky, SkyPlotSize::Compact));
         }
     });
 }
@@ -473,7 +480,11 @@ fn hover_grid_ui(ui: &mut Ui, p: &NavPoint) {
 /// Unlike `show_hover_table`, the time is omitted here because it is shown
 /// in the window title. The satellite section expands into a full per-PRN
 /// breakdown grouped by constellation.
-pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
+pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySection<'_>) {
+    if !matches!(sky, SkySection::TrackWithoutReports) {
+        sky_section_ui(ui, sky, SkyPlotSize::Full);
+        ui.add_space(6.0);
+    }
     // Basic metrics (2-column grid).
     Grid::new("sticky_tpv_basic").num_columns(2).show(ui, |ui| {
         ui.label("Speed");
@@ -550,24 +561,26 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint) {
 
         // Collect non-empty constellations up-front. `Satellite` is `Copy` so
         // we own the data and can borrow-free inside the layout closures.
-        let groups: Vec<(usize, &str, &str, Vec<gt_types::satellites::Satellite>)> = [
-            (0usize, "G", Constellation::Gps),
-            (1, "E", Constellation::Galileo),
-            (2, "R", Constellation::Glonass),
-            (3, "C", Constellation::Beidou),
-            (4, "I", Constellation::Navic),
-            (5, "J", Constellation::Qzss),
-        ]
-        .iter()
-        .filter_map(|&(id, prefix, constellation)| {
-            let mut const_sats: Vec<_> = sats.by_constellation(constellation).copied().collect();
-            if const_sats.is_empty() {
-                return None;
-            }
-            const_sats.sort_by_key(|s| s.prn());
-            Some((id, constellation.display_name(), prefix, const_sats))
-        })
-        .collect();
+        // Grouped in variant-declaration order, matching `Constellation`'s
+        // `Ord` and the slip table's grouping.
+        let groups: Vec<(usize, &str, &str, Vec<gt_types::satellites::Satellite>)> =
+            Constellation::iter()
+                .enumerate()
+                .filter_map(|(id, constellation)| {
+                    let mut const_sats: Vec<_> =
+                        sats.by_constellation(constellation).copied().collect();
+                    if const_sats.is_empty() {
+                        return None;
+                    }
+                    const_sats.sort_by_key(|s| s.prn());
+                    Some((
+                        id,
+                        constellation.display_name(),
+                        constellation.prn_prefix(),
+                        const_sats,
+                    ))
+                })
+                .collect();
 
         // Two constellation panels per row, each panel sizes to its own content.
         for chunk in groups.chunks(2) {
@@ -1256,45 +1269,95 @@ mod tests {
         Satellites::new(None, None, satellites)
     }
 
-    /// A report spanning several constellations with a spread of SNR values and
-    /// fix membership, so the satellite badge exercises every count tier, the
-    /// full SNR gradient, and both the in-fix and idle PRN colours.
+    /// A report spanning several constellations with a spread of SNR values,
+    /// fix membership, and sky positions (two satellites without), so the
+    /// satellite badge exercises every count tier, the full SNR gradient,
+    /// both the in-fix and idle PRN colours, and the sky plot's placed and
+    /// unplaceable satellites.
     fn sats_multi_constellation() -> Satellites {
         let satellites = vec![
-            Satellite::new(Constellation::Gps, 1, None, None, Some(48.0), true),
-            Satellite::new(Constellation::Gps, 2, None, None, Some(41.0), true),
-            Satellite::new(Constellation::Gps, 3, None, None, Some(33.0), true),
-            Satellite::new(Constellation::Gps, 4, None, None, Some(22.0), false),
-            Satellite::new(Constellation::Galileo, 5, None, None, Some(37.0), true),
-            Satellite::new(Constellation::Galileo, 6, None, None, Some(14.0), false),
+            Satellite::new(
+                Constellation::Gps,
+                1,
+                Some(62.0),
+                Some(45.0),
+                Some(48.0),
+                true,
+            ),
+            Satellite::new(
+                Constellation::Gps,
+                2,
+                Some(35.0),
+                Some(110.0),
+                Some(41.0),
+                true,
+            ),
+            Satellite::new(
+                Constellation::Gps,
+                3,
+                Some(18.0),
+                Some(305.0),
+                Some(33.0),
+                true,
+            ),
+            Satellite::new(Constellation::Gps, 4, Some(12.0), None, Some(22.0), false),
+            Satellite::new(
+                Constellation::Galileo,
+                5,
+                Some(55.0),
+                Some(80.0),
+                Some(37.0),
+                true,
+            ),
+            Satellite::new(
+                Constellation::Galileo,
+                6,
+                Some(25.0),
+                Some(220.0),
+                Some(14.0),
+                false,
+            ),
             Satellite::new(Constellation::Glonass, 7, None, None, None, false),
-            Satellite::new(Constellation::Beidou, 8, None, None, Some(45.0), true),
+            Satellite::new(
+                Constellation::Beidou,
+                8,
+                Some(65.0),
+                Some(275.0),
+                Some(45.0),
+                true,
+            ),
         ];
         Satellites::new(None, None, satellites)
+    }
+
+    /// The sticky content's sky section for a fixture point: its own report
+    /// when it has one.
+    fn sky_for(point: &NavPoint) -> SkySection<'_> {
+        point
+            .satellites
+            .as_ref()
+            .map_or(SkySection::TrackWithoutReports, |satellites| {
+                SkySection::Report(gt_types::NearestSatelliteReport {
+                    satellites,
+                    age: chrono::Duration::zero(),
+                })
+            })
     }
 
     /// The satellite badge (counts, SNR gradient, PRN colours) must stay
     /// legible on both themes. These render the same content under light and
     /// dark visuals; the light baseline is what catches colours that only read
     /// on a dark surface.
-    #[test]
-    fn satellite_badge_dark() {
+    #[rstest]
+    #[case::dark("satellite_badge_dark", true)]
+    #[case::light("satellite_badge_light", false)]
+    fn satellite_badge(#[case] name: &str, #[case] dark_mode: bool) {
         let point = make_point(Some(sats_multi_constellation()));
         let mut harness = TestHarness::builder()
-            .size(egui::vec2(320.0, 620.0))
-            .theme(true)
-            .ui(move |ui| show_sticky_tpv_content(ui, &point));
-        harness.snapshot("satellite_badge_dark");
-    }
-
-    #[test]
-    fn satellite_badge_light() {
-        let point = make_point(Some(sats_multi_constellation()));
-        let mut harness = TestHarness::builder()
-            .size(egui::vec2(320.0, 620.0))
-            .theme(false)
-            .ui(move |ui| show_sticky_tpv_content(ui, &point));
-        harness.snapshot("satellite_badge_light");
+            .size(egui::vec2(320.0, 920.0))
+            .theme(dark_mode)
+            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point)));
+        harness.snapshot(name);
     }
 
     fn track_with_points(points: Vec<NavPoint>) -> LoadedTrack {

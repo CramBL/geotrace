@@ -111,6 +111,19 @@ impl Constellation {
             Constellation::Qzss => "QZSS",
         }
     }
+
+    /// RINEX single-letter satellite prefix, e.g. `G` for GPS PRN labels
+    /// ("G05"). Single source for every per-PRN table and label.
+    pub fn prn_prefix(self) -> &'static str {
+        match self {
+            Constellation::Gps => "G",
+            Constellation::Glonass => "R",
+            Constellation::Galileo => "E",
+            Constellation::Beidou => "C",
+            Constellation::Navic => "I",
+            Constellation::Qzss => "J",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -364,6 +377,25 @@ mod constellation_tests {
         assert_eq!(expected.len(), Constellation::COUNT);
         for (c, name) in expected {
             assert_eq!(c.display_name(), name);
+        }
+    }
+
+    /// Single source of truth for RINEX PRN prefixes, COUNT-guarded like
+    /// `display_name_is_canonical_spelling`.
+    #[test]
+    fn prn_prefix_is_canonical() {
+        use strum::EnumCount;
+        let expected = [
+            (Constellation::Gps, "G"),
+            (Constellation::Glonass, "R"),
+            (Constellation::Galileo, "E"),
+            (Constellation::Beidou, "C"),
+            (Constellation::Navic, "I"),
+            (Constellation::Qzss, "J"),
+        ];
+        assert_eq!(expected.len(), Constellation::COUNT);
+        for (c, prefix) in expected {
+            assert_eq!(c.prn_prefix(), prefix);
         }
     }
 }
