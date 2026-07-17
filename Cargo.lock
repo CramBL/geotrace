@@ -2479,7 +2479,9 @@ name = "gt-sky"
 version = "0.6.0"
 dependencies = [
  "egui",
+ "gt-test-utils",
  "gt-types",
+ "gt-ui-theme",
  "rstest",
  "strum",
 ]

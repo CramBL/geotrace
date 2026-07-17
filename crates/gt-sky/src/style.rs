@@ -12,6 +12,51 @@ pub const FULL_DIAMETER_PX: f32 = 256.0;
 /// Elevations of the faint grid rings drawn between horizon and zenith.
 pub const GRID_RING_ELEVATIONS_DEG: [f32; 2] = [30.0, 60.0];
 
+/// Space between the horizon rim and the widget edge, reserving room for the
+/// cardinal labels.
+pub const FULL_RIM_MARGIN_PX: f32 = 16.0;
+/// [`FULL_RIM_MARGIN_PX`] for the compact size.
+pub const COMPACT_RIM_MARGIN_PX: f32 = 10.0;
+
+/// Marks in the compact plot shrink by this factor.
+pub const COMPACT_MARK_SCALE: f32 = 0.75;
+
+/// Stroke width of the rim, grid rings, and cardinal spokes.
+pub const GRID_STROKE_WIDTH_PX: f32 = 1.0;
+
+/// Outline width around a filled (in fix) mark, in the panel color, keeping
+/// overlapping marks separable.
+pub const MARK_EDGE_STROKE_WIDTH_PX: f32 = 1.0;
+
+/// Stroke width of a hollow (tracked-only) mark.
+pub const HOLLOW_MARK_STROKE_WIDTH_PX: f32 = 1.5;
+
+/// Dash and gap lengths of the elevation-mask ring.
+pub const MASK_RING_DASH_PX: f32 = 4.0;
+/// See [`MASK_RING_DASH_PX`].
+pub const MASK_RING_GAP_PX: f32 = 4.0;
+/// Polyline segments approximating the dashed mask ring.
+pub const MASK_RING_SEGMENTS: u32 = 90;
+
+/// Font size of the N/E/S/W labels in the full plot.
+pub const FULL_CARDINAL_FONT_SIZE: f32 = 10.5;
+/// Font size of the north label in the compact plot.
+pub const COMPACT_CARDINAL_FONT_SIZE: f32 = 9.0;
+/// Font size of the elevation ring labels in the full plot.
+pub const ELEVATION_LABEL_FONT_SIZE: f32 = 9.5;
+
+/// Offset of an elevation ring label right of the north spoke.
+pub const ELEVATION_LABEL_OFFSET_X_PX: f32 = 4.0;
+/// Offset of an elevation ring label above its ring.
+pub const ELEVATION_LABEL_OFFSET_Y_PX: f32 = 3.0;
+
+/// Distance from the rim to the center of a cardinal label.
+pub const FULL_CARDINAL_LABEL_OFFSET_PX: f32 = 9.0;
+/// See [`FULL_CARDINAL_LABEL_OFFSET_PX`].
+pub const COMPACT_CARDINAL_LABEL_OFFSET_PX: f32 = 6.0;
+/// Length of the rim ticks marking E/S/W in the compact plot.
+pub const COMPACT_CARDINAL_TICK_PX: f32 = 3.5;
+
 /// Mark radius at full size for a satellite's signal quality, so weak
 /// satellites read as small at a glance. `None` (no reported SNR) gets the
 /// smallest radius rather than a made-up middle tier.
