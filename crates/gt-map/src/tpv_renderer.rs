@@ -5,7 +5,7 @@ use egui_phosphor::regular::CHECK as ICON_CHECK;
 use gt_filter::{self as filter, GlobalFilter};
 use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
 use gt_types::coordinates::Latitude;
-use gt_types::satellites::Constellation;
+use gt_types::satellites::{Constellation, Satellite};
 use gt_types::{
     DataCategory, FileIdx, LoadedFile, LoadedTrack, NavPoint, NearestSatelliteReport, PointIdx,
     SKY_REPORT_MAX_AGE_SECS, TrackIdx, TrackRef,
@@ -50,10 +50,11 @@ const ICON_FADE_HI_MIN_SPACING_PX: f32 = 5.0;
 /// stretches share one key and stay mergeable into single polyline spans.
 const QUALITY_LINE_ALPHA_STEPS: u8 = 3;
 
-/// Side length and corner rounding of the constellation colour swatch shown
-/// before a satellite-table header.
+/// Side length, corner rounding, and inset of the constellation colour swatch
+/// shown before a satellite-table header.
 const SWATCH_SIZE_PX: f32 = 10.0;
 const SWATCH_ROUNDING_PX: f32 = 2.0;
+const SWATCH_MARGIN_PX: f32 = 1.0;
 
 /// Stroke width of the continuous fix-quality line that stands in for the
 /// fix icons when they fade out - slightly thicker than the 3 px trackline
@@ -495,7 +496,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
     // the plot through egui's per-frame data store: this frame's plot uses
     // last frame's highlight, and the tables below set next frame's. A
     // repaint on change keeps the lag imperceptible.
-    let highlight_id = ui.id().with("sky_table_highlight");
+    let highlight_id = sky_table_highlight_id(ui);
     let prev_highlight: Option<SkyHighlight> =
         ui.ctx().data(|d| d.get_temp(highlight_id)).flatten();
     let mut highlight: Option<SkyHighlight> = None;
@@ -543,7 +544,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
                 ui.horizontal(|ui| {
                     let fix_resp =
                         ui.colored_label(fix_count_color(fix, dark_mode), fix.to_string());
-                    if fix_resp.hovered() {
+                    if ui.rect_contains_pointer(fix_resp.rect) {
                         highlight = Some(SkyHighlight::InFix);
                     }
                     ui.label("/");
@@ -586,12 +587,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
         // we own the data and can borrow-free inside the layout closures.
         // Grouped in variant-declaration order, matching `Constellation`'s
         // `Ord` and the slip table's grouping.
-        let groups: Vec<(
-            usize,
-            Constellation,
-            &str,
-            Vec<gt_types::satellites::Satellite>,
-        )> = Constellation::iter()
+        let groups: Vec<(usize, Constellation, &str, Vec<Satellite>)> = Constellation::iter()
             .enumerate()
             .filter_map(|(id, constellation)| {
                 let mut const_sats: Vec<_> =
@@ -626,14 +622,14 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
                                     ui.label(RichText::new(constellation.display_name()).strong());
                                 })
                                 .response;
-                            if name.hovered() {
+                            if ui.rect_contains_pointer(name.rect) {
                                 highlight = Some(SkyHighlight::Constellation(constellation));
                             }
                             let fix_resp = ui.colored_label(
                                 fix_count_color(const_fix, dark_mode),
                                 const_fix.to_string(),
                             );
-                            if fix_resp.hovered() {
+                            if ui.rect_contains_pointer(fix_resp.rect) {
                                 highlight = Some(SkyHighlight::ConstellationInFix(constellation));
                             }
                             ui.label(RichText::new(format!("/{}", const_sats.len())).weak());
@@ -673,9 +669,12 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
                                     } else {
                                         ui.label("")
                                     };
-                                    // Hovering anywhere on the row highlights
-                                    // just that satellite.
-                                    if prn_resp.union(snr_resp).union(fix_resp).hovered() {
+                                    // Hovering anywhere across the row (the
+                                    // union spans the cells and the gaps
+                                    // between them) highlights just that
+                                    // satellite.
+                                    let row = prn_resp.union(snr_resp).union(fix_resp);
+                                    if ui.rect_contains_pointer(row.rect) {
                                         highlight = Some(SkyHighlight::Satellite {
                                             constellation,
                                             prn: sat.prn(),
@@ -698,13 +697,21 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
         .data_mut(|d| d.insert_temp(highlight_id, highlight));
 }
 
+/// The egui data-store key under which the sticky content stashes the sky
+/// highlight driven by table hovers. Scoped to the containing window's `ui`,
+/// so concurrent surfaces cannot collide. Shared with the tests that verify
+/// the hover wiring.
+pub(crate) fn sky_table_highlight_id(ui: &Ui) -> egui::Id {
+    ui.id().with("sky_table_highlight")
+}
+
 /// A small colour swatch in the constellation's plot colour, drawn before a
 /// table header so the table reads as the key to the plot's marks.
 fn constellation_swatch(ui: &mut Ui, constellation: Constellation) {
     let color = gt_ui_theme::constellation_color(constellation, ui.visuals().dark_mode);
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(SWATCH_SIZE_PX), egui::Sense::hover());
     ui.painter()
-        .rect_filled(rect.shrink(1.0), SWATCH_ROUNDING_PX, color);
+        .rect_filled(rect.shrink(SWATCH_MARGIN_PX), SWATCH_ROUNDING_PX, color);
 }
 
 fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
@@ -1311,6 +1318,7 @@ fn alpha_u8(alpha: f32) -> u8 {
 
 #[cfg(test)]
 mod tests {
+    use egui_kittest::kittest::Queryable as _;
     use rstest::rstest;
 
     use super::*;
@@ -1431,6 +1439,42 @@ mod tests {
             .theme(dark_mode)
             .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point)));
         harness.snapshot(name);
+    }
+
+    /// Hovering an element of the satellite tables stores the matching sky
+    /// highlight, which the plot reads back the next frame. Drives the real
+    /// hover path end to end: the label lookup, the response hit-test, and
+    /// the `ctx.data` round trip keyed by [`sky_table_highlight_id`].
+    #[rstest]
+    #[case::prn_row(
+        "G01",
+        SkyHighlight::Satellite {
+            constellation: Constellation::Gps,
+            prn: gt_types::satellites::Prn::new(1),
+        }
+    )]
+    #[case::constellation_header("GPS", SkyHighlight::Constellation(Constellation::Gps))]
+    fn hovering_a_table_sets_the_sky_highlight(
+        #[case] label: &str,
+        #[case] expected: SkyHighlight,
+    ) {
+        let point = make_point(Some(sats_multi_constellation()));
+        let id_cell = std::rc::Rc::new(std::cell::Cell::new(None));
+        let cell = id_cell.clone();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(320.0, 920.0))
+            .theme(true)
+            .ui(move |ui| {
+                cell.set(Some(sky_table_highlight_id(ui)));
+                show_sticky_tpv_content(ui, &point, &sky_for(&point));
+            });
+        harness.run();
+        harness.inner.get_by_label(label).hover();
+        harness.inner.run_steps(2);
+
+        let id = id_cell.get().expect("sticky content rendered");
+        let highlight: Option<SkyHighlight> = harness.inner.ctx.data(|d| d.get_temp(id)).flatten();
+        assert_eq!(highlight, Some(expected));
     }
 
     fn track_with_points(points: Vec<NavPoint>) -> LoadedTrack {
