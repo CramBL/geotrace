@@ -43,8 +43,8 @@ pub enum DisplayCategory {
 impl DisplayCategory {
     /// The category's bit in a [`DisplayMask`]. Cannot overflow: the const
     /// assert below pins `COUNT` to the mask's width.
-    fn bit(self) -> u8 {
-        1 << (self as u8)
+    fn bit(self) -> u16 {
+        1 << (self as u16)
     }
 }
 
@@ -66,11 +66,11 @@ impl From<gt_types::DataCategory> for DisplayCategory {
 }
 
 /// Every category's bit set - the `hide_all` state.
-const ALL_HIDDEN: u8 = u8::MAX >> (u8::BITS as usize - DisplayCategory::COUNT);
+const ALL_HIDDEN: u16 = u16::MAX >> (u16::BITS as usize - DisplayCategory::COUNT);
 
 const _: () = assert!(
-    DisplayCategory::COUNT <= u8::BITS as usize,
-    "DisplayMask stores one bit per category in a u8"
+    DisplayCategory::COUNT <= u16::BITS as usize,
+    "DisplayMask stores one bit per category in a u16"
 );
 
 /// Global per-category visibility of the map's ink - the render-side AND
@@ -89,7 +89,7 @@ pub struct DisplayMask {
     /// Bit set (per [`DisplayCategory::bit`]) of the hidden categories.
     /// Hidden rather than visible bits so that `Default` (all zero) means
     /// all visible.
-    hidden: u8,
+    hidden: u16,
 }
 
 impl DisplayMask {
