@@ -1,6 +1,6 @@
 use egui::{Align2, FontId, Pos2, Sense, Shape, Stroke, Vec2};
 
-use gt_types::satellites::{Constellation, Prn, Satellite, Satellites};
+use gt_types::satellites::{Constellation, ConstellationSet, Prn, Satellite, Satellites};
 
 use crate::projection;
 use crate::style;
@@ -18,38 +18,60 @@ pub enum SkyPlotSize {
 /// satellite tables next to it. Matching marks stay at full strength; the
 /// rest dim, so the highlighted subset stands out without the others
 /// vanishing.
+///
+/// A predicate over three independent axes rather than an enum of cases: the
+/// constellations to match (a [`ConstellationSet`], from one up to all), an
+/// optional specific [`Prn`], and whether to require the satellite to be in
+/// the fix. The constructors name the four ways the tables drive it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[expect(
-    variant_size_differences,
-    reason = "the widest variant is ~8 bytes; the whole enum is Copy and passed by value, so boxing would only add an indirection"
-)]
-pub enum SkyHighlight {
-    /// One satellite - hovering its row in the per-PRN table.
-    Satellite {
-        constellation: Constellation,
-        prn: Prn,
-    },
-    /// Every satellite of a constellation - hovering its table header.
-    Constellation(Constellation),
-    /// Every satellite in the fix - hovering the total fix count.
-    InFix,
-    /// A constellation's in-fix satellites - hovering its fix count.
-    ConstellationInFix(Constellation),
+pub struct SkyHighlight {
+    constellations: ConstellationSet,
+    prn: Option<Prn>,
+    in_fix_only: bool,
 }
 
 impl SkyHighlight {
+    /// One satellite - hovering its row in the per-PRN table.
+    pub fn satellite(constellation: Constellation, prn: Prn) -> Self {
+        Self {
+            constellations: ConstellationSet::single(constellation),
+            prn: Some(prn),
+            in_fix_only: false,
+        }
+    }
+
+    /// Every satellite of a constellation - hovering its table header.
+    pub fn constellation(constellation: Constellation) -> Self {
+        Self {
+            constellations: ConstellationSet::single(constellation),
+            prn: None,
+            in_fix_only: false,
+        }
+    }
+
+    /// Every satellite in the fix - hovering the total fix count.
+    pub fn in_fix() -> Self {
+        Self {
+            constellations: ConstellationSet::all(),
+            prn: None,
+            in_fix_only: true,
+        }
+    }
+
+    /// A constellation's in-fix satellites - hovering its fix count.
+    pub fn constellation_in_fix(constellation: Constellation) -> Self {
+        Self {
+            constellations: ConstellationSet::single(constellation),
+            prn: None,
+            in_fix_only: true,
+        }
+    }
+
     /// Whether `satellite` belongs to the highlighted subset.
     pub fn matches(self, satellite: &Satellite) -> bool {
-        match self {
-            Self::Satellite { constellation, prn } => {
-                satellite.constellation() == constellation && satellite.prn() == prn
-            }
-            Self::Constellation(constellation) => satellite.constellation() == constellation,
-            Self::InFix => satellite.in_fix(),
-            Self::ConstellationInFix(constellation) => {
-                satellite.constellation() == constellation && satellite.in_fix()
-            }
-        }
+        self.constellations.contains(satellite.constellation())
+            && self.prn.is_none_or(|prn| prn == satellite.prn())
+            && (!self.in_fix_only || satellite.in_fix())
     }
 }
 
@@ -551,9 +573,9 @@ mod snapshot_tests {
     #[rstest]
     #[case::constellation(
         "sky_plot_highlight_constellation",
-        SkyHighlight::Constellation(Constellation::Gps)
+        SkyHighlight::constellation(Constellation::Gps)
     )]
-    #[case::in_fix("sky_plot_highlight_in_fix", SkyHighlight::InFix)]
+    #[case::in_fix("sky_plot_highlight_in_fix", SkyHighlight::in_fix())]
     fn sky_plot_highlight_dims_the_rest(#[case] name: &str, #[case] highlight: SkyHighlight) {
         let report = mixed_report();
         let mut harness = TestHarness::builder()
@@ -582,24 +604,22 @@ mod snapshot_tests {
             true,
         );
 
-        let one = SkyHighlight::Satellite {
-            constellation: Constellation::Gps,
-            prn: gps_fix.prn(),
-        };
+        let one = SkyHighlight::satellite(Constellation::Gps, gps_fix.prn());
         assert!(one.matches(&gps_fix));
         assert!(!one.matches(&gps_idle));
         assert!(!one.matches(&gal_fix));
 
-        let constellation = SkyHighlight::Constellation(Constellation::Gps);
+        let constellation = SkyHighlight::constellation(Constellation::Gps);
         assert!(constellation.matches(&gps_fix));
         assert!(constellation.matches(&gps_idle));
         assert!(!constellation.matches(&gal_fix));
 
-        assert!(SkyHighlight::InFix.matches(&gps_fix));
-        assert!(!SkyHighlight::InFix.matches(&gps_idle));
-        assert!(SkyHighlight::InFix.matches(&gal_fix));
+        let in_fix = SkyHighlight::in_fix();
+        assert!(in_fix.matches(&gps_fix));
+        assert!(!in_fix.matches(&gps_idle));
+        assert!(in_fix.matches(&gal_fix));
 
-        let const_fix = SkyHighlight::ConstellationInFix(Constellation::Gps);
+        let const_fix = SkyHighlight::constellation_in_fix(Constellation::Gps);
         assert!(const_fix.matches(&gps_fix));
         assert!(!const_fix.matches(&gps_idle));
         assert!(!const_fix.matches(&gal_fix));

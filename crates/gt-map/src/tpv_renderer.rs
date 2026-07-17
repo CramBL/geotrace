@@ -545,7 +545,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
                     let fix_resp =
                         ui.colored_label(fix_count_color(fix, dark_mode), fix.to_string());
                     if ui.rect_contains_pointer(fix_resp.rect) {
-                        highlight = Some(SkyHighlight::InFix);
+                        highlight = Some(SkyHighlight::in_fix());
                     }
                     ui.label("/");
                     ui.colored_label(seen_count_color(seen, dark_mode), seen.to_string());
@@ -623,14 +623,14 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
                                 })
                                 .response;
                             if ui.rect_contains_pointer(name.rect) {
-                                highlight = Some(SkyHighlight::Constellation(constellation));
+                                highlight = Some(SkyHighlight::constellation(constellation));
                             }
                             let fix_resp = ui.colored_label(
                                 fix_count_color(const_fix, dark_mode),
                                 const_fix.to_string(),
                             );
                             if ui.rect_contains_pointer(fix_resp.rect) {
-                                highlight = Some(SkyHighlight::ConstellationInFix(constellation));
+                                highlight = Some(SkyHighlight::constellation_in_fix(constellation));
                             }
                             ui.label(RichText::new(format!("/{}", const_sats.len())).weak());
                         });
@@ -675,10 +675,8 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
                                     // satellite.
                                     let row = prn_resp.union(snr_resp).union(fix_resp);
                                     if ui.rect_contains_pointer(row.rect) {
-                                        highlight = Some(SkyHighlight::Satellite {
-                                            constellation,
-                                            prn: sat.prn(),
-                                        });
+                                        highlight =
+                                            Some(SkyHighlight::satellite(constellation, sat.prn()));
                                     }
                                     ui.end_row();
                                 }
@@ -1448,12 +1446,9 @@ mod tests {
     #[rstest]
     #[case::prn_row(
         "G01",
-        SkyHighlight::Satellite {
-            constellation: Constellation::Gps,
-            prn: gt_types::satellites::Prn::new(1),
-        }
+        SkyHighlight::satellite(Constellation::Gps, gt_types::satellites::Prn::new(1))
     )]
-    #[case::constellation_header("GPS", SkyHighlight::Constellation(Constellation::Gps))]
+    #[case::constellation_header("GPS", SkyHighlight::constellation(Constellation::Gps))]
     fn hovering_a_table_sets_the_sky_highlight(
         #[case] label: &str,
         #[case] expected: SkyHighlight,
