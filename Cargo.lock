@@ -2550,6 +2550,7 @@ dependencies = [
  "geotrace-sdk-units",
  "proptest",
  "rstar 0.13.0",
+ "rstest",
  "serde",
  "strum",
  "uom",
