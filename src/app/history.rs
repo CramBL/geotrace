@@ -386,14 +386,18 @@ impl HistoryWindow {
                 // inside closures where `entries` also holds an immutable borrow.
                 let filter_active = self.any_filter_active();
 
-                // Toolbar row: identity filter + Prune button
+                // Toolbar row: identity filter on the left, actions on the
+                // right. The right-side controls are laid out right-to-left so
+                // they claim their width first; the filter field then fills only
+                // the space between the label and them. Adding the field in the
+                // outer left-to-right layout instead lets it grow into the
+                // right-side controls and overlap them once the window narrows.
                 ui.horizontal(|ui| {
                     crate::terms::term_label(
                         ui,
                         RichText::new("Identity"),
                         crate::terms::IDENTITY,
                     );
-                    ui.text_edit_singleline(&mut self.filter_text);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let delete_hidden_label = if hidden_count > 0 {
                             format!("Delete hidden data ({hidden_count})…")
@@ -415,6 +419,10 @@ impl HistoryWindow {
                             self.prune.reset();
                         }
                         ui.checkbox(storage_enabled, "Auto-store recordings");
+                        ui.add(
+                            TextEdit::singleline(&mut self.filter_text)
+                                .desired_width(ui.available_width()),
+                        );
                     });
                 });
 
@@ -1317,6 +1325,47 @@ mod tests {
             width < 750.0,
             "the History window settled far wider than its content ({width:.0}px); \
              the sizing-pass metadata measurement likely leaked into the identity fill",
+        );
+    }
+
+    /// The identity filter field fills the toolbar space to the left of the
+    /// action controls and must yield as the window narrows, never growing into
+    /// them. Previously the field kept a fixed width and the "Auto-store
+    /// recordings" checkbox slid left underneath it, overlapping.
+    #[test]
+    fn filter_field_does_not_overlap_the_toolbar_controls() {
+        let harness = history_harness(vec![entry_with_identity("auto:ride.gtd")]);
+        let mut h = TestHarness::builder()
+            .size(egui::vec2(1200.0, 500.0))
+            .ui_state(show_history, harness);
+        for _ in 0..8 {
+            h.step();
+        }
+        // Shrink toward the window's minimum, where the overlap used to appear.
+        let w = window_rect(&h);
+        drag(
+            &mut h,
+            egui::pos2(w.right() - 1.0, w.bottom() - 1.0),
+            egui::vec2(-500.0, 0.0),
+            10,
+        );
+        for _ in 0..3 {
+            h.step();
+        }
+
+        let checkbox_left = h.inner.get_by_label("Auto-store recordings").rect().left();
+        // The first text input in the window is the identity filter field.
+        let filter_right = h
+            .inner
+            .get_all_by_role(egui::accesskit::Role::TextInput)
+            .map(|n| n.rect())
+            .next()
+            .expect("identity filter field")
+            .right();
+        assert!(
+            filter_right <= checkbox_left + 1.0,
+            "the identity filter field (right edge {filter_right:.0}px) overlaps the \
+             Auto-store checkbox (left edge {checkbox_left:.0}px)",
         );
     }
 
