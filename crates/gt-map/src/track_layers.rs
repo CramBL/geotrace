@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use egui::{Color32, Response, Stroke, Ui};
 use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
-use gt_ui_types::{DrawLayerMask, HighlightScope, MapHighlight, QueryMatches};
+use gt_ui_types::{DrawLayerMask, HighlightScope, MapHighlight, QueryMatches, SkyGlyphVariant};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
@@ -120,6 +120,8 @@ pub struct TrackLayers<'a> {
     /// halo passes only - the query's keep/hide point removal is a query
     /// semantic, not ink, and is never masked.
     display_query_highlights: bool,
+    /// Which sky-glyph variant to draw for report-bearing points.
+    sky_glyph_variant: SkyGlyphVariant,
 }
 
 impl<'a> TrackLayers<'a> {}
@@ -500,8 +502,8 @@ impl TrackLayers<'_> {
             return vec![Vec::new(); geometries.len()];
         }
         let viewport = transform.viewport_merc_bounds(max_rect);
-        let cell_merc =
-            f64::from(sky_glyph_renderer::RING_MIN_SPACING_PX) / transform.px_per_merc();
+        let min_spacing_px = sky_glyph_renderer::min_spacing_px(self.sky_glyph_variant);
+        let cell_merc = f64::from(min_spacing_px) / transform.px_per_merc();
         sky_glyph_renderer::select_glyphs(
             geometries
                 .iter()
@@ -545,7 +547,7 @@ impl TrackLayers<'_> {
             if !filter(i) {
                 continue;
             }
-            // Rings first, so the quality line, icons, and labels stay
+            // Glyphs first, so the quality line, icons, and labels stay
             // legible on top of the subtle background context.
             if let Some(glyph_indices) = sky_glyphs.get(i) {
                 sky_glyph_renderer::draw_glyphs(
@@ -553,6 +555,7 @@ impl TrackLayers<'_> {
                     geo.track,
                     glyph_indices,
                     transform,
+                    self.sky_glyph_variant,
                     tpv_renderer::glyph_size_scale(style),
                 );
             }
