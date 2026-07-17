@@ -2402,6 +2402,7 @@ dependencies = [
  "egui_kittest",
  "gt-filter",
  "gt-fmt",
+ "gt-sky",
  "gt-test-utils",
  "gt-track-builder",
  "gt-types",

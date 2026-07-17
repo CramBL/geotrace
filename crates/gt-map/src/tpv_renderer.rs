@@ -3,10 +3,12 @@ use egui::{Color32, PopupAnchor, Pos2, Stroke, Ui, Vec2};
 use egui::{Grid, RichText, Tooltip};
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use gt_filter::{self as filter, GlobalFilter};
+use gt_sky::{SkyPlot, SkyPlotSize};
 use gt_types::coordinates::Latitude;
 use gt_types::satellites::Constellation;
 use gt_types::{
-    DataCategory, FileIdx, LoadedFile, LoadedTrack, NavPoint, PointIdx, TrackIdx, TrackRef,
+    DataCategory, FileIdx, LoadedFile, LoadedTrack, NavPoint, NearestSatelliteReport, PointIdx,
+    SKY_REPORT_MAX_AGE_SECS, TrackIdx, TrackRef,
 };
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH, MINUS_SIGN};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
@@ -254,8 +256,70 @@ pub(crate) fn show_tooltip(
         if let Some(header) = match_header {
             header(ui);
         }
-        show_hover_table(ui, point);
+        show_hover_table(
+            ui,
+            point,
+            &SkySection::resolve(track, point_ref.point_index),
+        );
     });
+}
+
+/// The sky column of the hover badge.
+pub(crate) enum SkySection<'a> {
+    /// The point's own satellite report, or one borrowed from a nearby point.
+    Report(NearestSatelliteReport<'a>),
+    /// The track has satellite reports, but none within the age window of
+    /// this point.
+    NoReportNearby,
+    /// The track carries no satellite reports at all, so the badge has no
+    /// sky column.
+    TrackWithoutReports,
+}
+
+impl<'a> SkySection<'a> {
+    pub(crate) fn resolve(track: &'a LoadedTrack, point_index: PointIdx) -> Self {
+        if track.metadata.satellite_report_count == 0 {
+            return Self::TrackWithoutReports;
+        }
+        match track.nearest_satellite_report(point_index) {
+            Some(report) => Self::Report(report),
+            None => Self::NoReportNearby,
+        }
+    }
+}
+
+/// The compact sky plot with its report-age line, or the no-report
+/// placeholder.
+fn sky_section_ui(ui: &mut Ui, sky: &SkySection<'_>) {
+    match sky {
+        SkySection::TrackWithoutReports => {}
+        SkySection::NoReportNearby => {
+            ui.label(
+                RichText::new(format!(
+                    "No satellite report within {SKY_REPORT_MAX_AGE_SECS} s"
+                ))
+                .weak()
+                .small(),
+            );
+        }
+        SkySection::Report(report) => {
+            SkyPlot::new(report.satellites, SkyPlotSize::Compact).ui(ui);
+            if !report.age.is_zero() {
+                ui.label(RichText::new(report_age_label(report.age)).weak().small());
+            }
+        }
+    }
+}
+
+/// "Report 2.1 s earlier" / "Report 2.1 s later" for a borrowed report.
+fn report_age_label(age: chrono::Duration) -> String {
+    let seconds = age.num_milliseconds().abs() as f64 / 1000.0;
+    let side = if age > chrono::Duration::zero() {
+        "earlier"
+    } else {
+        "later"
+    };
+    format!("Report {seconds:.1} s {side}")
 }
 
 /// Zoom-derived visual parameters computed once per frame and shared
@@ -312,7 +376,17 @@ pub(crate) fn draw_plot_hover_ring(
     }
 }
 
-pub(crate) fn show_hover_table(ui: &mut Ui, p: &NavPoint) {
+pub(crate) fn show_hover_table(ui: &mut Ui, p: &NavPoint, sky: &SkySection<'_>) {
+    ui.horizontal_top(|ui| {
+        hover_grid_ui(ui, p);
+        if !matches!(sky, SkySection::TrackWithoutReports) {
+            ui.add_space(12.0);
+            ui.vertical(|ui| sky_section_ui(ui, sky));
+        }
+    });
+}
+
+fn hover_grid_ui(ui: &mut Ui, p: &NavPoint) {
     Grid::new("hover_grid")
         .striped(true)
         .num_columns(2)
@@ -1151,6 +1225,8 @@ fn alpha_u8(alpha: f32) -> u8 {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
     use crate::test_harness::TestHarness;
     use egui::Color32;
@@ -1222,8 +1298,12 @@ mod tests {
     }
 
     fn track_with_points(points: Vec<NavPoint>) -> LoadedTrack {
+        let satellite_report_count = points.iter().filter(|p| p.satellites.is_some()).count();
         LoadedTrack {
-            metadata: gt_types::TrackMetadata::default(),
+            metadata: gt_types::TrackMetadata {
+                satellite_report_count,
+                ..gt_types::TrackMetadata::default()
+            },
             points,
             lod: gt_types::TrackLod::default(),
             sat_label_anchors: Vec::new(),
@@ -1232,6 +1312,121 @@ mod tests {
             event_markers: Vec::new(),
             channels: Vec::new(),
         }
+    }
+
+    /// A nav point at a fixed time plus `secs`, so hover-badge snapshots
+    /// (which render the time row) stay deterministic.
+    fn point_at(secs: i64, satellites: Option<Satellites>) -> NavPoint {
+        let start = chrono::DateTime::from_timestamp(1_748_000_000, 0).expect("valid");
+        let tpv = TimePositionVelocity::builder()
+            .time(GpsTime::from_utc(start + chrono::Duration::seconds(secs)))
+            .lat(Latitude::new(51.5))
+            .lon(Longitude::new(-0.1))
+            .heading(Angle::new::<degree>(90.0))
+            .build();
+        NavPoint::new(tpv, satellites)
+    }
+
+    /// A report whose satellites carry sky positions, so the badge's compact
+    /// sky plot has marks to place, plus one unplaceable satellite.
+    fn sats_with_sky() -> Satellites {
+        let satellites = vec![
+            Satellite::new(
+                Constellation::Gps,
+                5,
+                Some(62.0),
+                Some(45.0),
+                Some(44.0),
+                true,
+            ),
+            Satellite::new(
+                Constellation::Gps,
+                12,
+                Some(35.0),
+                Some(110.0),
+                Some(38.0),
+                true,
+            ),
+            Satellite::new(
+                Constellation::Gps,
+                29,
+                Some(12.0),
+                Some(155.0),
+                Some(24.0),
+                false,
+            ),
+            Satellite::new(
+                Constellation::Galileo,
+                3,
+                Some(55.0),
+                Some(80.0),
+                Some(42.0),
+                true,
+            ),
+            Satellite::new(
+                Constellation::Beidou,
+                14,
+                Some(65.0),
+                Some(275.0),
+                Some(41.0),
+                true,
+            ),
+            Satellite::new(Constellation::Qzss, 1, Some(50.0), None, Some(36.0), false),
+        ];
+        Satellites::new(None, None, satellites)
+    }
+
+    #[rstest]
+    #[case::dark("hover_badge_own_report_dark", true)]
+    #[case::light("hover_badge_own_report_light", false)]
+    fn hover_badge_own_report(#[case] name: &str, #[case] dark_mode: bool) {
+        let track = track_with_points(vec![point_at(0, Some(sats_with_sky()))]);
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(430.0, 260.0))
+            .theme(dark_mode)
+            .ui(move |ui| {
+                let sky = SkySection::resolve(&track, PointIdx::new(0));
+                if let Some(point) = track.points.first() {
+                    show_hover_table(ui, point, &sky);
+                }
+            });
+        harness.snapshot(name);
+    }
+
+    #[rstest]
+    #[case::borrowed_report("hover_badge_borrowed_report", &[(0, true), (3, false)], 1)]
+    #[case::no_report_nearby("hover_badge_no_report_nearby", &[(0, true), (60, false)], 1)]
+    #[case::track_without_reports("hover_badge_track_without_reports", &[(0, false)], 0)]
+    fn hover_badge_report_states(
+        #[case] name: &str,
+        #[case] spec: &[(i64, bool)],
+        #[case] query: usize,
+    ) {
+        let points = spec
+            .iter()
+            .map(|&(secs, has_report)| point_at(secs, has_report.then(sats_with_sky)))
+            .collect();
+        let track = track_with_points(points);
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(430.0, 260.0))
+            .theme(true)
+            .ui(move |ui| {
+                let sky = SkySection::resolve(&track, PointIdx::new(query));
+                if let Some(point) = track.points.get(query) {
+                    show_hover_table(ui, point, &sky);
+                }
+            });
+        harness.snapshot(name);
+    }
+
+    #[rstest]
+    #[case::earlier(2100, "Report 2.1 s earlier")]
+    #[case::later(-2100, "Report 2.1 s later")]
+    fn report_age_label_names_the_side(#[case] ms: i64, #[case] expected: &str) {
+        assert_eq!(
+            report_age_label(chrono::Duration::milliseconds(ms)),
+            expected
+        );
     }
 
     fn make_tpv(lat: f64, lon: f64, heading: Option<f64>) -> TimePositionVelocity {
