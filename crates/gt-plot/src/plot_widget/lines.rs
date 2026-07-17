@@ -2,13 +2,13 @@
 //! channel component, plus the anomaly markers and the custom nearest-point
 //! tooltips.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use chrono::DateTime;
 use egui::{Color32, Tooltip};
 use egui_plot::{Line, LineStyle, MarkerShape, PlotPoint, PlotPoints, Points};
 use gt_analysis::satellite_utilization::UtilAnomaly;
-use gt_types::satellites::Constellation;
+use gt_types::satellites::ConstellationSet;
 use gt_types::{FileIdx, MetricKind, TrackIdx, TrackRef};
 use gt_ui_types::HighlightScope;
 use strum::IntoEnumIterator;
@@ -54,7 +54,7 @@ pub(super) fn add_series_lines<'a>(
     metric_vis: &MetricVisibility,
     channel_vis: &ChannelVisibility,
     component_colors: &HashMap<String, Vec<Option<Color32>>>,
-    present: &HashSet<Constellation>,
+    present: ConstellationSet,
     channels: &[LoadedChannel],
     hovered_chip: Option<&HoveredChip>,
     hover_scope: Option<HighlightScope>,

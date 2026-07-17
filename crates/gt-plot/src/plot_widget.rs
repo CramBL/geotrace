@@ -30,11 +30,11 @@ use egui::Color32;
 use egui::RichText;
 use egui_plot::{Span, VLine};
 use gt_filter::GlobalFilter;
-use gt_types::satellites::Constellation;
+use gt_types::satellites::ConstellationSet;
 use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::{HighlightScope, SnapErrorSeries, TrackDataVisibility};
 use rayon::prelude::*;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 /// Grid base-color intensity, as a multiplier on the theme text color.
 /// egui_plot's grid stroke width is fixed at 1.0, so with the thinner default
@@ -279,11 +279,10 @@ pub fn show_track_plot(
     // Constellations present anywhere in the loaded data.  Per-constellation
     // chips and lines are gated on this so a constellation with no data (e.g.
     // NavIC or QZSS in a GPS-only recording) never clutters the UI.
-    let present: HashSet<Constellation> = state
+    let present = state
         .series_cache
         .iter()
-        .flat_map(|s| s.present.iter().copied())
-        .collect();
+        .fold(ConstellationSet::empty(), |acc, s| acc.union(s.present));
 
     // Channels present anywhere in the loaded data, unioned like the
     // constellations: the Channels toggle and chips render only when a track
@@ -300,7 +299,7 @@ pub fn show_track_plot(
     let hovered_chip = metric_filter_row(
         ui,
         &mut state.metric_vis,
-        &present,
+        present,
         &channels,
         &mut state.channel_vis,
         &mut state.channel_component_colors,
@@ -529,7 +528,7 @@ pub fn show_track_plot(
                 metric_vis,
                 channel_vis,
                 channel_component_colors,
-                &present,
+                present,
                 &channels,
                 hovered_chip.as_ref(),
                 effective_hover_scope,

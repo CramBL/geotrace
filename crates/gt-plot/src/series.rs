@@ -2,8 +2,7 @@ use crate::AnalysisConfig;
 use gt_analysis::satellite_utilization::UtilAnomaly;
 use gt_egui_mipmap::MipMap;
 use gt_types::LoadedFile;
-use gt_types::satellites::Constellation;
-use std::collections::HashSet;
+use gt_types::satellites::{Constellation, ConstellationSet};
 use uom::si::angle::degree;
 
 /// Microseconds per second, for converting a channel sample's timestamp to
@@ -46,7 +45,7 @@ pub(crate) struct TrackSeries {
     /// reports.  The plot uses the union across tracks to decide which
     /// per-constellation chips and lines to show, so a constellation with no
     /// data never clutters the UI.
-    pub present: HashSet<Constellation>,
+    pub present: ConstellationSet,
     pub velocity_kmh: MipMap,
     pub eph_m: MipMap,
     pub heading_deg: MipMap,
@@ -240,7 +239,7 @@ fn build_track_series(
     let mut navic_fix_pts: Vec<[f64; 2]> = Vec::new();
     let mut qzss_seen_pts: Vec<[f64; 2]> = Vec::new();
     let mut qzss_fix_pts: Vec<[f64; 2]> = Vec::new();
-    let mut present: HashSet<Constellation> = HashSet::new();
+    let mut present = ConstellationSet::empty();
     let mut velocity_kmh_pts: Vec<[f64; 2]> = Vec::with_capacity(track.points.len());
     let mut eph_m_pts: Vec<[f64; 2]> = Vec::new();
     let mut heading_deg_pts: Vec<[f64; 2]> = Vec::new();
