@@ -2475,6 +2475,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gt-sky"
+version = "0.6.0"
+dependencies = [
+ "egui",
+ "gt-types",
+ "rstest",
+ "strum",
+]
+
+[[package]]
 name = "gt-snap"
 version = "0.6.0"
 dependencies = [
