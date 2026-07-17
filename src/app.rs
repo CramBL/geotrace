@@ -56,7 +56,9 @@ use gt_types::{
     AssociationConfig, DataCategory, FileIdx, LoadWarning, LoadedFile, LoadedTrack, NavPoint,
     TrackIdx, TrackRef,
 };
-use gt_ui_types::{DisplayMask, HighlightScope, MapHighlight, TrackDataVisibility};
+use gt_ui_types::{
+    DisplayMask, HighlightScope, MapHighlight, SkyGlyphVariant, TrackDataVisibility,
+};
 use loader::{CompletedLoad, FinishedJob, LoadJobs, LoadOutcome};
 use settings_autosave::{AppSnapshot, SettingsAutosaver};
 use strum::IntoEnumIterator;
@@ -82,6 +84,8 @@ struct SharedAppState {
     /// Global per-category visibility of the map ink. UI to edit it lands
     /// with the display toggle popup; until then it stays all-visible.
     display_mask: DisplayMask,
+    /// Which sky-glyph variant the map overlay draws.
+    sky_glyph_variant: SkyGlyphVariant,
     filter_state: FilterPanelState,
     plot_state: PlotState,
     map_center_request: Option<(f64, f64)>,
@@ -482,6 +486,7 @@ impl App {
                 },
                 filter: GlobalFilter::default(),
                 display_mask: DisplayMask::default(),
+                sky_glyph_variant: SkyGlyphVariant::default(),
                 filter_state: FilterPanelState::default(),
                 plot_state: PlotState::default(),
                 map_center_request: None,
@@ -1140,6 +1145,7 @@ impl App {
             let mut shared = self.shared.borrow_mut();
             shared.plot_state.sync_to_map = s.map.sync_to_map;
             shared.display_mask = s.map.display_mask;
+            shared.sky_glyph_variant = s.map.sky_glyph_variant;
             shared.recording_name_template = s.ui.recording_name_template.clone();
             shared.plot_state.show_grid = s.plot.show_grid;
             shared.plot_state.line_width = s.plot.line_width.clamp(
@@ -1515,6 +1521,7 @@ impl App {
             mapbox_token: self.map.mapbox_token().to_owned(),
             sync_to_map: s.plot_state.sync_to_map,
             display_mask: s.display_mask,
+            sky_glyph_variant: s.sky_glyph_variant,
             theme,
             recording_name_template: s.recording_name_template.clone(),
             track_split_gap_seconds: self
@@ -1589,6 +1596,7 @@ impl App {
                 mapbox_token: self.map.mapbox_token().to_owned(),
                 sync_to_map: s.plot_state.sync_to_map,
                 display_mask: s.display_mask,
+                sky_glyph_variant: s.sky_glyph_variant,
             },
             ui: crate::settings::UiSettings {
                 theme,
@@ -2265,6 +2273,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     &mut s.highlight,
                     &s.filter,
                     &mut s.display_mask,
+                    &mut s.sky_glyph_variant,
                     s.tree.event_marker_visibility(),
                     s.tree.generated_marker_visibility(),
                     self.query_matches,

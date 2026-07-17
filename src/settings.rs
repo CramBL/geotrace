@@ -303,6 +303,8 @@ pub struct MapSettings {
     /// everything, and categories added later default to visible on old
     /// config files.
     pub display_mask: gt_ui_types::DisplayMask,
+    /// Which sky-glyph variant the map overlay draws.
+    pub sky_glyph_variant: gt_ui_types::SkyGlyphVariant,
 }
 
 impl Default for MapSettings {
@@ -312,6 +314,7 @@ impl Default for MapSettings {
             mapbox_token: String::new(),
             sync_to_map: true,
             display_mask: gt_ui_types::DisplayMask::default(),
+            sky_glyph_variant: gt_ui_types::SkyGlyphVariant::default(),
         }
     }
 }
