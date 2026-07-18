@@ -143,6 +143,27 @@ pub(crate) fn select_glyphs<'a>(
     collision_grid::group_by_geometry(winners, geometry_count)
 }
 
+/// Draw a single sky disc at `fix_pos` for one point's report, for the
+/// plot-hover cross-highlight: scrubbing the time-series plot walks the disc
+/// along the track. Always the detailed disc, regardless of the overlay's
+/// own variant or whether the overlay is shown at all - it is a focus
+/// indicator for the one point the plot cursor is on.
+pub(crate) fn draw_hover_disc(
+    ui: &egui::Ui,
+    fix_pos: Pos2,
+    satellites: &Satellites,
+    size_scale: f32,
+) {
+    draw_disc(
+        ui,
+        fix_pos,
+        satellites,
+        ui.visuals().weak_text_color(),
+        ui.visuals().dark_mode,
+        size_scale,
+    );
+}
+
 /// Draw the sky glyphs of one track at the given selected point indices, in
 /// the chosen variant.
 ///
