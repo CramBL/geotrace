@@ -69,10 +69,23 @@ const FIX_LOSS_SEGMENTS: u32 = 48;
 /// Radius of the sky disc.
 const DISC_RADIUS_PX: f32 = 20.0;
 
-/// Offset from the fix to the disc center - up and to the side, like the
-/// satellite-label anchor, so the disc and its leader clear the fix position
-/// and its heading arrow.
+/// Fallback offset from the fix to the disc center where the track is
+/// straight or the anchor has no usable neighbor - up and to the side, like
+/// the satellite-label anchor, so the disc and its leader clear the fix and
+/// its heading arrow. On a curve the disc is placed perpendicular to the
+/// track instead (see [`disc_offset`]); this vector's length sets that
+/// perpendicular distance.
 const DISC_OFFSET_PX: Vec2 = Vec2::new(14.0, -36.0);
+
+/// A neighbor sample must lie at least this far from the anchor on screen
+/// before it defines the local track tangent, so nearly-coincident points
+/// don't yield a noisy direction.
+const TANGENT_SAMPLE_MIN_PX: f32 = 8.0;
+
+/// A bend sharper than this (perpendicular offset of the neighbor midpoint
+/// from the fix, in screen px) places the disc on the bend's outer side;
+/// below it the track is treated as straight and the disc goes up.
+const CURVE_MIN_PX: f32 = 1.5;
 
 /// Alpha of the disc's translucent backing fill, for contrast against map
 /// tiles without hiding them.
@@ -157,6 +170,7 @@ pub(crate) fn draw_hover_disc(
     draw_disc(
         ui,
         fix_pos,
+        fix_pos + disc_offset_for_samples(None, None, fix_pos, size_scale),
         satellites,
         ui.visuals().weak_text_color(),
         ui.visuals().dark_mode,
@@ -187,12 +201,12 @@ pub(crate) fn draw_glyphs(
         let Some(satellites) = &point.satellites else {
             continue;
         };
-        let center = transform.to_screen(point.merc);
+        let fix_pos = transform.to_screen(point.merc);
         match variant {
             SkyGlyphVariant::Ring => {
                 draw_ring(
                     ui,
-                    center,
+                    fix_pos,
                     satellites,
                     baseline_color,
                     dark_mode,
@@ -200,8 +214,10 @@ pub(crate) fn draw_glyphs(
                 );
             }
             SkyGlyphVariant::Disc => {
+                let center = fix_pos + disc_offset(track, pi, transform, fix_pos, size_scale);
                 draw_disc(
                     ui,
+                    fix_pos,
                     center,
                     satellites,
                     baseline_color,
@@ -273,13 +289,114 @@ fn bead_pos(center: Pos2, azimuth_deg: f32, radius: f32) -> Pos2 {
     center + Vec2::new(azimuth.sin(), -azimuth.cos()) * radius
 }
 
-/// Draw one sky disc: a miniature sky plot offset above the fix with a short
+/// Screen position of the first track point, scanning `indices` outward from
+/// the anchor, that lies at least [`TANGENT_SAMPLE_MIN_PX`] from `fix_pos` -
+/// the sample that defines the local tangent on that side. `None` when the
+/// track runs out first (a short or heavily-culled track near its end).
+fn tangent_sample(
+    track: &LoadedTrack,
+    transform: &MercTransform,
+    fix_pos: Pos2,
+    indices: impl Iterator<Item = usize>,
+) -> Option<Pos2> {
+    for idx in indices {
+        let point = track.points.get(idx)?;
+        let pos = transform.to_screen(point.merc);
+        if (pos - fix_pos).length() >= TANGENT_SAMPLE_MIN_PX {
+            return Some(pos);
+        }
+    }
+    None
+}
+
+/// The offset from a fix to its sky-disc center.
+///
+/// Placed perpendicular to the local track tangent, on the outer side of a
+/// bend, so the disc and its leader clear the trackline instead of always
+/// sitting straight above it (which crossed the line wherever the track ran
+/// horizontally). Where the track is straight the perpendicular is ambiguous,
+/// so the disc goes up (or, for a vertical track, up-and-right); where the
+/// anchor has no usable neighbor on either side it falls back to
+/// [`DISC_OFFSET_PX`].
+fn disc_offset(
+    track: &LoadedTrack,
+    pi: usize,
+    transform: &MercTransform,
+    fix_pos: Pos2,
+    size_scale: f32,
+) -> Vec2 {
+    let prev = tangent_sample(track, transform, fix_pos, (0..pi).rev());
+    let next = tangent_sample(track, transform, fix_pos, pi + 1..track.points.len());
+    disc_offset_for_samples(prev, next, fix_pos, size_scale)
+}
+
+/// The disc offset given the neighbor samples already resolved on each side.
+/// Split from [`disc_offset`] so the placement geometry is testable without a
+/// [`MercTransform`].
+fn disc_offset_for_samples(
+    prev: Option<Pos2>,
+    next: Option<Pos2>,
+    fix_pos: Pos2,
+    size_scale: f32,
+) -> Vec2 {
+    let tangent = match (prev, next) {
+        (Some(p), Some(n)) => n - p,
+        (Some(p), None) => fix_pos - p,
+        (None, Some(n)) => n - fix_pos,
+        (None, None) => return DISC_OFFSET_PX * size_scale,
+    };
+    // A hairpin can leave the two samples nearly coincident, so guard the
+    // normalization rather than trust the >= 8px per-side sampling alone.
+    if tangent.length() < f32::EPSILON {
+        return DISC_OFFSET_PX * size_scale;
+    }
+    outward_normal(tangent, fix_pos, prev, next) * (DISC_OFFSET_PX.length() * size_scale)
+}
+
+/// A unit normal to `tangent`, on the outer side of the bend defined by the
+/// neighbor samples. On a straight run (no measurable bend) it prefers the
+/// upward normal, breaking a vertical tie toward the right so the disc still
+/// reads as sitting above and beside the track.
+fn outward_normal(tangent: Vec2, fix_pos: Pos2, prev: Option<Pos2>, next: Option<Pos2>) -> Vec2 {
+    let candidate = -tangent.normalized().rot90();
+    // Vector from the fix to the midpoint of the neighbor samples. Its
+    // component along `candidate` (perpendicular to the tangent) is the bend:
+    // the tangential part is projected out, so uneven per-side spacing on a
+    // straight run does not register as curvature.
+    let to_midpoint = match (prev, next) {
+        (Some(p), Some(n)) => (p.to_vec2() + n.to_vec2()) * 0.5 - fix_pos.to_vec2(),
+        _ => Vec2::ZERO,
+    };
+    let bend = candidate.dot(to_midpoint);
+    if bend.abs() >= CURVE_MIN_PX {
+        // Point away from the concave side (the midpoint lies inside the bend).
+        if bend <= 0.0 { candidate } else { -candidate }
+    } else {
+        // Straight: prefer the upward normal (more negative y); for a vertical
+        // track, whose normals are horizontal, break the tie toward the right.
+        let up = if candidate.y <= -candidate.y {
+            candidate
+        } else {
+            -candidate
+        };
+        // `up.y.abs() > EPSILON` is just "the normal isn't horizontal"; only
+        // then does the y test above settle it, otherwise fall to the x tie.
+        if up.y.abs() > f32::EPSILON || up.x >= 0.0 {
+            up
+        } else {
+            -up
+        }
+    }
+}
+
+/// Draw one sky disc: a miniature sky plot offset from the fix with a short
 /// leader, with a dot per fix satellite placed by azimuth and elevation
 /// (via the same projection as the full sky plot). A fix loss draws a dashed
 /// rim and, having no fix satellites, no dots - "sky seen but unused".
 fn draw_disc(
     ui: &egui::Ui,
     fix_pos: Pos2,
+    center: Pos2,
     satellites: &Satellites,
     rim_color: egui::Color32,
     dark_mode: bool,
@@ -288,7 +405,6 @@ fn draw_disc(
     let painter = ui.painter();
     let radius = DISC_RADIUS_PX * size_scale;
     let dot_radius = DISC_DOT_RADIUS_PX * size_scale;
-    let center = fix_pos + DISC_OFFSET_PX * size_scale;
     let rim = rim_color.gamma_multiply(DISC_RIM_ALPHA);
 
     // Leader from the fix to the near edge of the disc rim.
@@ -332,15 +448,16 @@ fn draw_disc(
 
 #[cfg(test)]
 mod tests {
+    use egui::{pos2, vec2};
     use gt_test_utils::TestHarness;
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::{FileIdx, TrackIdx, TrackRef};
+    use gt_ui_types::SkyGlyphVariant;
 
     use super::{
-        DISC_RADIUS_PX, RING_RADIUS_PX, SelectedGlyphs, draw_disc, draw_ring, min_spacing_px,
-        select_glyphs,
+        DISC_OFFSET_PX, DISC_RADIUS_PX, RING_RADIUS_PX, SelectedGlyphs, disc_offset_for_samples,
+        draw_disc, draw_ring, min_spacing_px, outward_normal, select_glyphs,
     };
-    use gt_ui_types::SkyGlyphVariant;
 
     const WORLD: gt_types::MercBounds = gt_types::MercBounds {
         x_min: 0.0,
@@ -567,12 +684,113 @@ mod tests {
                 let dark = ui.visuals().dark_mode;
                 let y = 110.0;
                 let gap = DISC_RADIUS_PX * 3.0;
-                draw_disc(ui, egui::pos2(gap, y), &spread, rim, dark, 1.0);
-                draw_disc(ui, egui::pos2(gap * 2.0, y), &southern, rim, dark, 1.0);
-                draw_disc(ui, egui::pos2(gap * 3.0, y), &fix_loss, rim, dark, 1.0);
+                let disc = |ui: &egui::Ui, fix: egui::Pos2, sats: &Satellites| {
+                    draw_disc(ui, fix, fix + DISC_OFFSET_PX, sats, rim, dark, 1.0);
+                };
+                disc(ui, egui::pos2(gap, y), &spread);
+                disc(ui, egui::pos2(gap * 2.0, y), &southern);
+                disc(ui, egui::pos2(gap * 3.0, y), &fix_loss);
             });
         harness.run();
         harness.snapshot("sky_discs");
+    }
+
+    /// On a straight run the disc sits above the track: a horizontal track
+    /// pushes the disc up, a vertical track up-and-right (there is no "up"
+    /// perpendicular, so the tie breaks rightward).
+    #[test]
+    fn straight_track_places_the_disc_above() {
+        let fix = pos2(50.0, 50.0);
+        let up = outward_normal(vec2(1.0, 0.0), fix, None, None);
+        assert!(
+            up.y < 0.0,
+            "horizontal track should push the disc up: {up:?}"
+        );
+
+        let side = outward_normal(vec2(0.0, 1.0), fix, None, None);
+        assert!(
+            side.x > 0.0 && side.y.abs() < f32::EPSILON,
+            "vertical track should push the disc to the right: {side:?}"
+        );
+    }
+
+    /// On a bend the disc goes to the outer (convex) side, so it and its
+    /// leader clear the trackline. A peak (neighbors below the fix) pushes the
+    /// disc up; a valley (neighbors above) pushes it down.
+    #[test]
+    fn curved_track_places_the_disc_on_the_outer_side() {
+        let fix = pos2(50.0, 50.0);
+        // Peak: both neighbors sit below the fix (larger y), so the outer side
+        // is up.
+        let peak = outward_normal(
+            vec2(1.0, 0.0),
+            fix,
+            Some(pos2(30.0, 60.0)),
+            Some(pos2(70.0, 60.0)),
+        );
+        assert!(peak.y < 0.0, "peak should push the disc up: {peak:?}");
+
+        // Valley: both neighbors sit above the fix, so the outer side is down.
+        let valley = outward_normal(
+            vec2(1.0, 0.0),
+            fix,
+            Some(pos2(30.0, 40.0)),
+            Some(pos2(70.0, 40.0)),
+        );
+        assert!(
+            valley.y > 0.0,
+            "valley should push the disc down: {valley:?}"
+        );
+
+        // The result is always a unit vector.
+        for n in [peak, valley] {
+            assert!((n.length() - 1.0).abs() < 1e-4, "normal not unit: {n:?}");
+        }
+    }
+
+    /// A straight run with unevenly-spaced neighbors (the common case for
+    /// irregularly-timestamped tracks) must still read as straight: the bend
+    /// test projects out the along-track component, so lopsided spacing does
+    /// not masquerade as curvature and flip the disc across the line.
+    #[test]
+    fn asymmetric_spacing_on_a_straight_run_still_reads_as_straight() {
+        let fix = pos2(50.0, 50.0);
+        // Collinear, but the next sample is far more distant than the prev one.
+        let normal = outward_normal(
+            vec2(1.0, 0.0),
+            fix,
+            Some(pos2(40.0, 50.0)),
+            Some(pos2(95.0, 50.0)),
+        );
+        assert!(
+            normal.y < 0.0,
+            "asymmetric-but-straight should still push the disc up: {normal:?}"
+        );
+    }
+
+    /// At a track end only one neighbor exists, so there is no bend to measure:
+    /// the disc uses the straight fallback rather than picking a side from
+    /// noise, and stays offset by the standard distance.
+    #[test]
+    fn track_end_uses_the_straight_fallback() {
+        let fix = pos2(50.0, 50.0);
+        // Only a prev sample (anchor is the last point), horizontal track.
+        let offset = disc_offset_for_samples(Some(pos2(30.0, 50.0)), None, fix, 1.0);
+        assert!(
+            offset.y < 0.0,
+            "one-sided anchor should place up: {offset:?}"
+        );
+        assert!(
+            (offset.length() - DISC_OFFSET_PX.length()).abs() < 1e-3,
+            "offset should keep the standard distance: {offset:?}"
+        );
+
+        // No neighbors at all falls back to the fixed offset verbatim.
+        let none = disc_offset_for_samples(None, None, fix, 1.0);
+        assert!(
+            (none - DISC_OFFSET_PX).length() < 1e-4,
+            "expected fixed fallback: {none:?}"
+        );
     }
 
     /// Discs are offset and larger than rings, so they decimate more
