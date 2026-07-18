@@ -24,16 +24,21 @@ pub fn unit_disc_radius(elevation_deg: f32) -> f32 {
     (90.0 - elevation_deg.clamp(0.0, 90.0)) / 90.0
 }
 
+/// A satellite's sky position as `(azimuth, elevation)` in degrees, or `None`
+/// when it carries no azimuth or no elevation. The single definition of
+/// "placeable" on the sky, shared by the marks and the trails.
+pub fn sky_position(satellite: &Satellite) -> Option<(f32, f32)> {
+    Some((satellite.azimuth()?, satellite.elevation()?))
+}
+
 /// The unit-disc position of a satellite mark, or `None` when the satellite
-/// carries no azimuth or no elevation.
+/// has no sky position.
 ///
 /// Unplaceable satellites are surfaced as a count/row next to the plot, never
 /// dropped silently - the `None` tells the caller to do so.
 pub fn mark_position(satellite: &Satellite) -> Option<Vec2> {
-    Some(unit_disc_position(
-        satellite.azimuth()?,
-        satellite.elevation()?,
-    ))
+    let (azimuth, elevation) = sky_position(satellite)?;
+    Some(unit_disc_position(azimuth, elevation))
 }
 
 #[cfg(test)]

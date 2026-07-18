@@ -7,7 +7,9 @@
 use std::collections::BTreeMap;
 
 use gt_types::satellites::{Constellation, Prn, Snr};
-use gt_types::{GpsTime, LoadedTrack, PointIdx};
+use gt_types::{GpsTime, GpsTimeRange, LoadedTrack, PointIdx};
+
+use crate::projection;
 
 /// One satellite's position at one report epoch, a vertex of a [`SkyTrail`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -51,14 +53,16 @@ pub struct SkyTrails {
     /// Report epochs, ascending by time.
     pub epochs: Vec<TrailEpoch>,
     /// First and last epoch times, or `None` when the track has no reports.
-    pub time_range: Option<(GpsTime, GpsTime)>,
+    pub time_range: Option<GpsTimeRange>,
 }
 
 /// Extract every satellite's sky trail from a track.
 ///
 /// Walks the report-bearing points in recording order, recording an epoch
-/// per report and a sample per satellite that has both an azimuth and an
-/// elevation at that epoch.
+/// per report and a sample per satellite that has a sky position at that
+/// epoch. The ascending-by-time ordering of the trails and epochs relies on
+/// `track.points` being in recording order, the same assumption
+/// [`gt_types::LoadedTrack::nearest_satellite_report`] makes.
 pub fn extract_trails(track: &LoadedTrack) -> SkyTrails {
     let mut by_satellite: BTreeMap<(Constellation, Prn), Vec<TrailSample>> = BTreeMap::new();
     let mut epochs: Vec<TrailEpoch> = Vec::new();
@@ -72,8 +76,7 @@ pub fn extract_trails(track: &LoadedTrack) -> SkyTrails {
         epochs.push(TrailEpoch { time, point_index });
 
         for satellite in satellites.satellites() {
-            let (Some(azimuth), Some(elevation)) = (satellite.azimuth(), satellite.elevation())
-            else {
+            let Some((azimuth, elevation)) = projection::sky_position(satellite) else {
                 continue;
             };
             by_satellite
@@ -93,7 +96,7 @@ pub fn extract_trails(track: &LoadedTrack) -> SkyTrails {
     let time_range = epochs
         .first()
         .zip(epochs.last())
-        .map(|(first, last)| (first.time, last.time));
+        .map(|(first, last)| GpsTimeRange::new(first.time, last.time));
     let trails = by_satellite
         .into_iter()
         .map(|((constellation, prn), samples)| SkyTrail {
@@ -178,21 +181,66 @@ mod tests {
         assert_eq!(trails.epochs[1].point_index, PointIdx::new(2));
         assert_eq!(
             trails.time_range,
-            Some((trails.epochs[0].time, trails.epochs[1].time))
+            Some(gt_types::GpsTimeRange::new(
+                trails.epochs[0].time,
+                trails.epochs[1].time
+            ))
         );
 
         // Sorted by constellation: GPS before Galileo.
         assert_eq!(trails.trails.len(), 2);
         let gps = &trails.trails[0];
         assert_eq!(gps.constellation, Constellation::Gps);
+        assert_eq!(gps.prn.value(), 5);
         assert_eq!(gps.samples.len(), 2);
         assert!(gps.samples[0].time < gps.samples[1].time);
-        assert_eq!(gps.samples[0].point_index, PointIdx::new(0));
         assert_eq!(gps.samples[1].point_index, PointIdx::new(2));
 
         let galileo = &trails.trails[1];
         assert_eq!(galileo.constellation, Constellation::Galileo);
         assert_eq!(galileo.samples.len(), 1);
+    }
+
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "az/el/snr pass through unchanged, so the values are bit-exact"
+    )]
+    fn a_sample_carries_the_satellites_values() {
+        let track = track(vec![point_at(
+            0,
+            Some(vec![sat(
+                Constellation::Gps,
+                5,
+                Some(45.0),
+                Some(60.0),
+                true,
+            )]),
+        )]);
+        let sample = extract_trails(&track).trails[0].samples[0];
+        assert_eq!(sample.point_index, PointIdx::new(0));
+        assert_eq!(sample.azimuth, 45.0);
+        assert_eq!(sample.elevation, 60.0);
+        assert_eq!(sample.snr.map(gt_types::satellites::Snr::value), Some(40.0));
+        assert!(sample.in_fix);
+    }
+
+    #[test]
+    fn same_prn_in_two_constellations_stays_separate() {
+        // GPS and Galileo both have a PRN 5: the compound (constellation, prn)
+        // key must keep them in distinct trails.
+        let track = track(vec![point_at(
+            0,
+            Some(vec![
+                sat(Constellation::Gps, 5, Some(45.0), Some(60.0), true),
+                sat(Constellation::Galileo, 5, Some(80.0), Some(40.0), true),
+            ]),
+        )]);
+        let trails = extract_trails(&track);
+        assert_eq!(trails.trails.len(), 2);
+        assert_eq!(trails.trails[0].constellation, Constellation::Gps);
+        assert_eq!(trails.trails[1].constellation, Constellation::Galileo);
+        assert!(trails.trails.iter().all(|t| t.prn.value() == 5));
     }
 
     #[test]

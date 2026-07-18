@@ -70,6 +70,36 @@ impl GpsTime {
     }
 }
 
+/// A start/end span in the GPS-time domain. Named so `start`/`end` are
+/// self-documenting and a swapped pair is a compile error, the same reason
+/// [`TimeRange`](crate::TimeRange) exists for wall-clock times.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpsTimeRange {
+    pub start: GpsTime,
+    pub end: GpsTime,
+}
+
+impl GpsTimeRange {
+    pub fn new(start: GpsTime, end: GpsTime) -> Self {
+        Self { start, end }
+    }
+
+    /// `time`'s position across the span, in `[0, 1]`: 0 at `start`, 1 at
+    /// `end`. Returns 0 for an empty span (`start == end`), and clamps values
+    /// outside the span.
+    pub fn normalize(self, time: GpsTime) -> f32 {
+        let span_ms = self
+            .end
+            .signed_duration_since(self.start)
+            .num_milliseconds();
+        if span_ms <= 0 {
+            return 0.0;
+        }
+        let offset_ms = time.signed_duration_since(self.start).num_milliseconds();
+        (offset_ms as f32 / span_ms as f32).clamp(0.0, 1.0)
+    }
+}
+
 /// `GpsTime − GpsTime → Duration` (same clock domain, always valid).
 impl Sub<GpsTime> for GpsTime {
     type Output = Duration;
@@ -147,6 +177,25 @@ mod tests {
         let b = gps(1000);
         assert_eq!((a - b).num_milliseconds(), 1000);
         assert_eq!((b - a).num_milliseconds(), -1000);
+    }
+
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "0.0/0.5/1.0 are exactly representable, so the ratios are bit-exact"
+    )]
+    fn gps_time_range_normalize() {
+        let range = GpsTimeRange::new(gps(1000), gps(3000));
+        assert_eq!(range.normalize(gps(1000)), 0.0);
+        assert_eq!(range.normalize(gps(3000)), 1.0);
+        assert_eq!(range.normalize(gps(2000)), 0.5);
+        // Outside the span clamps; an empty span is all zero.
+        assert_eq!(range.normalize(gps(500)), 0.0);
+        assert_eq!(range.normalize(gps(4000)), 1.0);
+        assert_eq!(
+            GpsTimeRange::new(gps(1000), gps(1000)).normalize(gps(1000)),
+            0.0
+        );
     }
 
     #[test]

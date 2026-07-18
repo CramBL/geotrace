@@ -27,7 +27,7 @@ pub use metrics::MetricKind;
 pub use nav_point::{FixQuality, NavPoint};
 pub use query::DisplayMode;
 pub use sat_label::{SatLabelAnchor, SatLabelTier};
-pub use time_types::{GpsTime, SysTime};
+pub use time_types::{GpsTime, GpsTimeRange, SysTime};
 pub use tpv::TimePositionVelocity;
 pub use tpv::TimePositionVelocityBuilder;
 pub use track::{
