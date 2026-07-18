@@ -10,17 +10,22 @@ use gt_ui_types::{HighlightScope, MapHighlight};
 /// [`FOCUS_SCRIM_MAX_ALPHA_DARK`], tuned independently.
 pub(crate) const HOVER_FADE_ALPHA: f32 = 0.15;
 
-/// Peak opacity of the focus scrim painted over the whole viewport when a track
-/// is focused, in light and dark themes respectively.
+/// The focus scrim always dims by darkening, in both themes: a translucent
+/// near-black rect over the whole viewport when a track is focused, so the
+/// non-focused map and tracks recede and the focused track (painted on top)
+/// stands out. A light-mode scrim of the near-white `extreme_bg_color` used to
+/// *brighten* the map instead, washing everything out rather than letting
+/// anything stand out.
+pub(crate) const FOCUS_SCRIM_COLOR: egui::Color32 = egui::Color32::from_rgb(15, 17, 20);
+
+/// Peak opacity of the focus scrim, in light and dark themes respectively.
 ///
-/// The scrim is a flat rect of `extreme_bg_color` (near-white in light mode,
-/// near-black in dark) and unavoidably covers the map tiles as well as the
-/// non-focused tracks it means to dim. A heavy scrim therefore flattens the
-/// whole map to that background color rather than fading it, so these stay
-/// gentle: enough to push non-focused geometry back while keeping the map
-/// legible. Dark mode is lighter still, since a dark scrim reads as heavier at
-/// equal opacity.
-pub(crate) const FOCUS_SCRIM_MAX_ALPHA_LIGHT: f32 = 0.4;
+/// The scrim unavoidably covers the map tiles as well as the non-focused
+/// tracks it means to dim, so both stay gentle: enough to push the non-focused
+/// geometry back while keeping the map legible. Light mode is lower, since a
+/// dark scrim reads as heavier over a light map than over a dark one at equal
+/// opacity.
+pub(crate) const FOCUS_SCRIM_MAX_ALPHA_LIGHT: f32 = 0.22;
 pub(crate) const FOCUS_SCRIM_MAX_ALPHA_DARK: f32 = 0.3;
 
 /// Stroke for a track's plain line: thicker highlight blue when the track

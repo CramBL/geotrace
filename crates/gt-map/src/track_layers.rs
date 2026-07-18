@@ -695,9 +695,8 @@ fn paint_trackline_path(
 /// artifact where N overlapping faded tracks at alpha `1/N` each would sum to
 /// full visibility at busy intersections.
 fn paint_fade_overlay(ui: &Ui, max_rect: egui::Rect, progress: f32) {
-    let visuals = ui.visuals();
-    let alpha = focus_scrim_alpha(visuals.dark_mode, progress);
-    let bg = visuals.extreme_bg_color;
+    let alpha = focus_scrim_alpha(ui.visuals().dark_mode, progress);
+    let bg = track_renderer::FOCUS_SCRIM_COLOR;
     ui.painter().rect_filled(
         max_rect,
         0.0,
@@ -769,10 +768,41 @@ fn paint_quality_path(ui: &Ui, path: &VisiblePath<LinePointKey>) {
 mod tests {
     use egui::{Color32, Rect, pos2};
 
+    use gt_test_utils::TestHarness;
     use gt_ui_types::DrawLayerMask;
 
-    use super::{LinePointKey, focus_scrim_alpha, shown_runs};
+    use super::{LinePointKey, focus_scrim_alpha, paint_fade_overlay, shown_runs};
     use crate::polyline::{VisiblePath, visible_path};
+
+    /// Snapshot: the focus scrim at full progress dims the scene by darkening
+    /// it, in both themes. A regression guard for the light-mode wash-out (the
+    /// scrim used to brighten a light map). Paints a backdrop and a few marks,
+    /// then the scrim over them.
+    #[rstest::rstest]
+    #[case::light("focus_scrim_light", false)]
+    #[case::dark("focus_scrim_dark", true)]
+    fn focus_scrim_darkens_the_scene(#[case] name: &str, #[case] dark_mode: bool) {
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(200.0, 120.0))
+            .theme(dark_mode)
+            .ui(|ui| {
+                let rect = ui.max_rect();
+                let painter = ui.painter();
+                // A light backdrop stands in for the map tiles (light in both
+                // themes), the surface the scrim used to wash out in light mode.
+                painter.rect_filled(rect, 0.0, Color32::from_gray(225));
+                for (i, color) in [Color32::RED, Color32::GREEN, Color32::from_rgb(0, 120, 255)]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let x = rect.left() + 40.0 + i as f32 * 60.0;
+                    painter.circle_filled(egui::pos2(x, rect.center().y), 16.0, color);
+                }
+                paint_fade_overlay(ui, rect, 1.0);
+            });
+        harness.run();
+        harness.snapshot(name);
+    }
 
     /// A span of points with the given `hidden` flags, at increasing x.
     fn span(hidden: &[bool]) -> Vec<(LinePointKey, egui::Pos2)> {
@@ -846,19 +876,18 @@ mod tests {
     }
 
     #[test]
-    fn focus_scrim_is_gentle_and_subtler_in_dark_mode() {
-        // Regression: the scrim used to reach ~217/255, whiting out the whole
-        // map in light mode. Both themes now stay well below opaque, and dark
-        // mode is lighter still.
+    fn focus_scrim_dims_gently_and_is_lighter_in_light_mode() {
+        // The scrim darkens in both themes (a dark rect); it used to brighten
+        // in light mode, washing the map out. Both stay well below opaque, and
+        // light mode is gentler since a dark scrim reads heavier over a light
+        // map at equal opacity.
         let light = focus_scrim_alpha(false, 1.0);
         let dark = focus_scrim_alpha(true, 1.0);
+        assert!(light < 128, "light scrim {light} should stay legible");
+        assert!(dark < 128, "dark scrim {dark} should stay legible");
         assert!(
-            light < 128,
-            "light scrim {light} should not wash out the map"
-        );
-        assert!(
-            dark < light,
-            "dark scrim {dark} should be subtler than light {light}"
+            light < dark,
+            "light scrim {light} should be gentler than dark {dark}"
         );
     }
 
