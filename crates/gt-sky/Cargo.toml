@@ -15,6 +15,7 @@ gt-types = { path = "../gt-types" }
 gt-ui-theme = { path = "../gt-ui-theme" }
 
 [dev-dependencies]
+chrono.workspace = true
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 rstest.workspace = true
 strum.workspace = true
