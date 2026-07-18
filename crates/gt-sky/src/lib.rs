@@ -5,6 +5,7 @@
 //! satellite always projects to the same spot regardless of surface.
 
 mod grid;
+mod plot_common;
 mod projection;
 mod sky_plot;
 pub mod style;
@@ -13,5 +14,5 @@ mod trails_plot;
 
 pub use projection::{mark_position, unit_disc_position, unit_disc_radius};
 pub use sky_plot::{SkyHighlight, SkyPlot, SkyPlotSize};
-pub use trails::{SkyTrail, SkyTrails, TrailEpoch, TrailSample, extract_trails};
+pub use trails::{SkyTrail, SkyTrails, SlipMark, TrailEpoch, TrailSample, extract_trails};
 pub use trails_plot::SkyTrailsPlot;

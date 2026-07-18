@@ -253,12 +253,23 @@ impl Satellite {
 /// The detection algorithm lives in the `gt-analysis` crate; this type is shared
 /// so both the slip-rate plot and the generated-marker pipeline describe a slip
 /// the same way.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumCount, strum::EnumIter)]
 pub enum SlipCause {
     /// Satellite disappeared while above the mask - the receiver lost lock.
     LostLock,
     /// Satellite stayed above the mask but its SNR dropped sharply between epochs.
     SnrDrop,
+}
+
+impl SlipCause {
+    /// Short human-readable cause, e.g. `"lost lock"`. Single source for
+    /// every slip marker and tooltip.
+    pub fn label(self) -> &'static str {
+        match self {
+            SlipCause::LostLock => "lost lock",
+            SlipCause::SnrDrop => "SNR drop",
+        }
+    }
 }
 
 /// A satellite's tracked geometry and signal at one epoch - the before/after
@@ -511,5 +522,24 @@ mod constellation_tests {
 
         let all = ConstellationSet::all();
         assert!(Constellation::iter().all(|c| all.contains(c)));
+    }
+
+    #[test]
+    fn slip_cause_label_is_canonical() {
+        use strum::{EnumCount, IntoEnumIterator};
+        let expected = [
+            (SlipCause::LostLock, "lost lock"),
+            (SlipCause::SnrDrop, "SNR drop"),
+        ];
+        assert_eq!(expected.len(), SlipCause::COUNT);
+        for (cause, label) in expected {
+            assert_eq!(cause.label(), label);
+        }
+        // Distinct labels, so no two causes collide.
+        assert!(
+            SlipCause::iter()
+                .map(SlipCause::label)
+                .all(|l| !l.is_empty())
+        );
     }
 }

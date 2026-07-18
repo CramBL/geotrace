@@ -58,6 +58,16 @@ pub const TRAIL_MARKER_RADIUS_PX: f32 = 4.0;
 /// the trail beneath it.
 pub const TRAIL_MARKER_EDGE_PX: f32 = 1.5;
 
+/// Half-length of a slip mark's arms (an "×" drawn on the trail where a
+/// satellite slipped).
+pub const SLIP_MARK_RADIUS_PX: f32 = 4.5;
+
+/// Stroke width of a slip mark's arms.
+pub const SLIP_MARK_WIDTH_PX: f32 = 1.6;
+
+/// Pointer distance within which a slip mark shows its hover tooltip.
+pub const SLIP_MARK_HOVER_RADIUS_PX: f32 = 6.0;
+
 /// Dash and gap lengths of the elevation-mask ring.
 pub const MASK_RING_DASH_PX: f32 = 4.0;
 /// See [`MASK_RING_DASH_PX`].

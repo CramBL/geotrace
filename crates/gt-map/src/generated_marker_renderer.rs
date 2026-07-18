@@ -202,19 +202,11 @@ pub(crate) fn generated_marker_header(kind: &gt_types::GeneratedMarkerKind) -> S
                 "{kind}: {} {:02} ({})",
                 slip.constellation.display_name(),
                 slip.prn,
-                slip_cause_label(slip.cause),
+                slip.cause.label(),
             ),
             slips => format!("{kind} ({})", slips.len()),
         },
         gt_types::GeneratedMarkerKind::GnssFixLost => kind.to_string(),
-    }
-}
-
-/// Short human-readable label for a slip's cause.
-fn slip_cause_label(cause: gt_types::satellites::SlipCause) -> &'static str {
-    match cause {
-        gt_types::satellites::SlipCause::LostLock => "lost lock",
-        gt_types::satellites::SlipCause::SnrDrop => "SNR drop",
     }
 }
 
@@ -246,7 +238,7 @@ pub(crate) fn show_slip_table(ui: &mut Ui, event: &gt_types::satellites::SlipEve
                     gt_ui_theme::constellation_color(slip.constellation, dark_mode),
                     format!("{} {:02}", slip.constellation.display_name(), slip.prn),
                 );
-                ui.label(slip_cause_label(slip.cause));
+                ui.label(slip.cause.label());
                 // `to` is `None` for a lost-lock slip (the satellite dropped out).
                 let to = slip.to;
                 ui.label(slip_change(
