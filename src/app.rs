@@ -101,6 +101,9 @@ struct SharedAppState {
     /// Set by the side panel's "Reset filters", consumed by the app to also
     /// clear the query filter (the query window is not part of shared state).
     clear_query_request: bool,
+    /// Set by the map context menu's "Show sky trails", consumed by the app to
+    /// open the sky trails window (which is not part of shared state).
+    sky_trails_request: Option<TrackRef>,
     /// User template for the recording name shown in the side panel. See
     /// [`gt_fmt::render_name_template`].
     recording_name_template: String,
@@ -341,6 +344,8 @@ pub struct App {
     /// History window state.
     history_window: history::HistoryWindow,
     query_window: query::QueryWindow,
+    /// The whole-track sky trails window.
+    sky_trails_window: gt_map::SkyTrailsWindow,
 
     /// Toast notification queue - rendered every frame over the top of all content.
     toasts: egui_notify::Toasts,
@@ -492,6 +497,7 @@ impl App {
                 map_center_request: None,
                 popup_pos_request: None,
                 zoom_to_visible_request: false,
+                sky_trails_request: None,
                 warnings_popup: None,
                 metadata_popup: None,
                 clear_query_request: false,
@@ -534,6 +540,7 @@ impl App {
             pending_auto_prune: None,
             history_window: history::HistoryWindow::new(),
             query_window: query::QueryWindow::new(),
+            sky_trails_window: gt_map::SkyTrailsWindow::default(),
             toasts: egui_notify::Toasts::default(),
             #[cfg(feature = "self-update")]
             update_checker: update::UpdateChecker::new(app_version),
@@ -1913,6 +1920,7 @@ impl App {
         self.snap.reset_track_states();
         self.snap_auto_sweep = true;
         self.hidden_snapped.clear();
+        self.sky_trails_window.invalidate();
         let s = self.shared.borrow();
         self.map.rebuild_spatial_index(&s.loaded_files);
     }
@@ -2289,6 +2297,9 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         MapContextAction::ShowOnlyFile(fi) => {
                             s.tree.show_only_file(fi);
                         }
+                        MapContextAction::ShowSkyTrails(track) => {
+                            s.sky_trails_request = Some(track);
+                        }
                     }
                 }
             }
@@ -2562,6 +2573,7 @@ impl eframe::App for App {
         let mut snap_request: Option<TrackRef> = None;
         let mut snap_visibility_request: Option<TrackRef> = None;
         let mut snap_costing_request: Option<(TrackRef, gt_ui_types::SnapCosting)> = None;
+        let mut sky_trails_request: Option<TrackRef> = None;
 
         let detached = self.shared.borrow().tree.detached;
         if !detached {
@@ -2591,6 +2603,7 @@ impl eframe::App for App {
                             snap_request: &mut snap_request,
                             snap_visibility_request: &mut snap_visibility_request,
                             snap_costing_request: &mut snap_costing_request,
+                            sky_trails_request: &mut sky_trails_request,
                         },
                     );
                 });
@@ -2634,6 +2647,7 @@ impl eframe::App for App {
                             snap_request: &mut snap_request,
                             snap_visibility_request: &mut snap_visibility_request,
                             snap_costing_request: &mut snap_costing_request,
+                            sky_trails_request: &mut sky_trails_request,
                         },
                     );
                 });
@@ -2652,6 +2666,13 @@ impl eframe::App for App {
             && !self.hidden_snapped.remove(&track_ref)
         {
             self.hidden_snapped.insert(track_ref);
+        }
+
+        // "Show sky trails" from either the side panel or the map context
+        // menu (the latter routed through shared state) opens the window.
+        let map_trails_request = self.shared.borrow_mut().sky_trails_request.take();
+        if let Some(track_ref) = sky_trails_request.or(map_trails_request) {
+            self.sky_trails_window.open_track(track_ref);
         }
 
         // "Reset filters" also drops the query filter so the map fully clears.
@@ -2757,6 +2778,7 @@ impl eframe::App for App {
                 filter,
                 map_center_request,
                 popup_pos_request,
+                plot_state,
                 ..
             } = &mut *s;
             // The map and plot consumed last frame's hovered match above;
@@ -2775,6 +2797,12 @@ impl eframe::App for App {
                     map_center: map_center_request,
                     popup_pos: popup_pos_request,
                 },
+            );
+            self.sky_trails_window.show(
+                ui.ctx(),
+                loaded_files.files(),
+                plot_state.analysis.elevation_mask_deg,
+                highlight,
             );
         });
 

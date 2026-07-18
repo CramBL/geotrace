@@ -715,8 +715,8 @@ pub(crate) fn sky_table_highlight_id(ui: &Ui) -> egui::Id {
 }
 
 /// A small colour swatch in the constellation's plot colour, drawn before a
-/// table header so the table reads as the key to the plot's marks.
-fn constellation_swatch(ui: &mut Ui, constellation: Constellation) {
+/// table header or legend row so it reads as the key to the plot's marks.
+pub(crate) fn constellation_swatch(ui: &mut Ui, constellation: Constellation) {
     let color = gt_ui_theme::constellation_color(constellation, ui.visuals().dark_mode);
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(SWATCH_SIZE_PX), egui::Sense::hover());
     ui.painter()
