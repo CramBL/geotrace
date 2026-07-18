@@ -38,6 +38,9 @@ pub struct SkyTrailsPlot<'a> {
     /// The scrubbed time: a marker is dropped on each shown trail at this
     /// instant. `None` draws the trails without markers.
     scrub: Option<GpsTime>,
+    /// When false, satellites never in the fix over the track are hidden, so
+    /// only the ones that contributed a fix are drawn.
+    show_not_in_fix: bool,
     elevation_mask_deg: Option<f32>,
 }
 
@@ -49,6 +52,7 @@ impl<'a> SkyTrailsPlot<'a> {
             shown: ConstellationSet::all(),
             focus: None,
             scrub: None,
+            show_not_in_fix: true,
             elevation_mask_deg: None,
         }
     }
@@ -66,6 +70,15 @@ impl<'a> SkyTrailsPlot<'a> {
     /// Drop a marker on each trail at the given time.
     pub fn scrub(self, scrub: Option<GpsTime>) -> Self {
         Self { scrub, ..self }
+    }
+
+    /// Whether to draw satellites never in the fix over the track. Defaults to
+    /// true; false hides them to focus on the ones that contributed a fix.
+    pub fn show_not_in_fix(self, show_not_in_fix: bool) -> Self {
+        Self {
+            show_not_in_fix,
+            ..self
+        }
     }
 
     /// Draw the elevation mask as a dashed ring.
@@ -120,6 +133,10 @@ impl<'a> SkyTrailsPlot<'a> {
             if !self.shown.contains(trail.constellation) {
                 continue;
             }
+            // Hide satellites that were never in the fix, when asked to.
+            if !self.show_not_in_fix && !trail.ever_in_fix() {
+                continue;
+            }
             let base = gt_ui_theme::constellation_color(trail.constellation, dark_mode);
             let focus_factor = self.focus_factor(trail.constellation);
             paint_trail(ui, frame, trail, epochs, base, focus_factor);
@@ -128,12 +145,7 @@ impl<'a> SkyTrailsPlot<'a> {
                 && let Some((azimuth, elevation, exact)) = sample_at(trail, epochs, scrub)
             {
                 let pos = frame.project(azimuth, elevation);
-                ui.painter().circle(
-                    pos,
-                    style::TRAIL_MARKER_RADIUS_PX,
-                    base.gamma_multiply(focus_factor),
-                    Stroke::new(style::TRAIL_MARKER_EDGE_PX, panel),
-                );
+                paint_marker(ui, pos, base.gamma_multiply(focus_factor), panel, exact);
                 // Hover shows the report's SNR and fix state, so the marker is
                 // only a hover target when it sits on an actual report.
                 if let Some(sample) = exact {
@@ -142,9 +154,11 @@ impl<'a> SkyTrailsPlot<'a> {
             }
         }
 
-        // Slip marks on top of the trails they annotate.
+        // Slip marks on top of the trails they annotate. A slip on a hidden
+        // (never-in-fix) satellite is hidden too, so the toggle never leaves an
+        // orphan mark with no trail behind it.
         for slip in &self.trails.slips {
-            if !self.shown.contains(slip.constellation) {
+            if !self.slip_visible(slip) {
                 continue;
             }
             let color = gt_ui_theme::constellation_color(slip.constellation, dark_mode)
@@ -160,8 +174,11 @@ impl<'a> SkyTrailsPlot<'a> {
             let candidates = markers.iter().map(|(satellite, pos)| (satellite, *pos));
             plot_common::nearest_within(candidates, pointer, style::MARK_HOVER_RADIUS_PX)
         });
-        let hovered_slip = pointer
-            .and_then(|pointer| nearest_slip(&self.trails.slips, self.shown, frame, pointer));
+        let hovered_slip = pointer.and_then(|pointer| {
+            nearest_slip(&self.trails.slips, frame, pointer, |slip| {
+                self.slip_visible(slip)
+            })
+        });
         if let Some(satellite) = hovered_marker {
             show_marker_tooltip(ui, &response, satellite);
         } else if let Some(slip) = hovered_slip {
@@ -180,6 +197,23 @@ impl<'a> SkyTrailsPlot<'a> {
             Some(focused) if focused != constellation => style::TRAIL_DIMMED_ALPHA,
             _ => 1.0,
         }
+    }
+
+    /// Whether a slip mark is drawn (and thus hoverable): its constellation is
+    /// shown, and - unless never-in-fix satellites are visible - its satellite
+    /// contributed a fix at some point, so a hidden trail leaves no orphan mark.
+    fn slip_visible(&self, slip: &SlipMark) -> bool {
+        self.shown.contains(slip.constellation)
+            && (self.show_not_in_fix || self.slip_satellite_ever_in_fix(slip))
+    }
+
+    /// Whether the satellite behind `slip` was ever in the fix over the track.
+    fn slip_satellite_ever_in_fix(&self, slip: &SlipMark) -> bool {
+        self.trails
+            .trails
+            .iter()
+            .find(|trail| trail.constellation == slip.constellation && trail.prn == slip.prn)
+            .is_some_and(SkyTrail::ever_in_fix)
     }
 }
 
@@ -214,6 +248,44 @@ fn paint_trail(
                 style::TRAIL_WIDTH_PX,
                 color.gamma_multiply(ramp * focus_factor),
             ),
+        );
+    }
+}
+
+/// Whether a scrub marker draws hollow: the satellite is tracked but not in
+/// the fix at this report. Between reports (`exact` is `None`) the fix state is
+/// unknown, so the marker is filled rather than asserting "not in fix".
+fn marker_is_hollow(exact: Option<&TrailSample>) -> bool {
+    exact.is_some_and(|sample| !sample.in_fix)
+}
+
+/// Paint the scrub marker for one satellite. Filled when it is in the fix at
+/// the scrubbed instant, hollow (an outline ring) when only tracked, so the
+/// live fix state reads at a glance.
+fn paint_marker(
+    ui: &egui::Ui,
+    pos: Pos2,
+    color: Color32,
+    panel: Color32,
+    exact: Option<&TrailSample>,
+) {
+    let painter = ui.painter();
+    let radius = style::TRAIL_MARKER_RADIUS_PX;
+    if marker_is_hollow(exact) {
+        // Tracked but not in the fix: a hollow ring, its centre punched out to
+        // the panel colour so it reads over the trail beneath.
+        painter.circle_filled(pos, radius, panel);
+        painter.circle_stroke(
+            pos,
+            radius,
+            Stroke::new(style::TRAIL_MARKER_HOLLOW_EDGE_PX, color),
+        );
+    } else {
+        painter.circle(
+            pos,
+            radius,
+            color,
+            Stroke::new(style::TRAIL_MARKER_EDGE_PX, panel),
         );
     }
 }
@@ -286,17 +358,18 @@ fn mask_tooltip(ui: &egui::Ui, response: &egui::Response, mask_deg: f32) {
     });
 }
 
-/// The shown slip mark nearest to `pointer`, within
-/// [`style::SLIP_MARK_HOVER_RADIUS_PX`].
+/// The visible slip mark nearest to `pointer`, within
+/// [`style::SLIP_MARK_HOVER_RADIUS_PX`]. `visible` is the same predicate the
+/// draw loop uses, so a hidden slip is never a hover target.
 fn nearest_slip(
     slips: &[SlipMark],
-    shown: ConstellationSet,
     frame: Frame,
     pointer: Pos2,
+    visible: impl Fn(&SlipMark) -> bool,
 ) -> Option<&SlipMark> {
     let candidates = slips
         .iter()
-        .filter(|slip| shown.contains(slip.constellation))
+        .filter(|slip| visible(slip))
         .map(|slip| (slip, frame.project(slip.azimuth, slip.elevation)));
     plot_common::nearest_within(candidates, pointer, style::SLIP_MARK_HOVER_RADIUS_PX)
 }
@@ -715,6 +788,107 @@ mod tests {
         assert!(satellite.in_fix());
     }
 
+    /// Trails exercising fix state: one always in fix, one tracked-but-not-in-
+    /// fix at the scrubbed epoch (still shown, hollow marker), one never in fix
+    /// over the track (hidden when not-in-fix is off).
+    fn fix_state_trails() -> SkyTrails {
+        let times = [at(0), at(1), at(2)];
+        let mk = |c: Constellation, prn: u32, fixes: [bool; 3], az0: f32, az1: f32, el: f32| {
+            let samples = fixes
+                .into_iter()
+                .zip(times)
+                .enumerate()
+                .map(|(i, (in_fix, time))| TrailSample {
+                    time,
+                    point_index: PointIdx::new(i),
+                    azimuth: az0 + (az1 - az0) * i as f32 / 2.0,
+                    elevation: el,
+                    snr: Some(gt_types::satellites::Snr::new(40.0)),
+                    in_fix,
+                })
+                .collect();
+            SkyTrail {
+                constellation: c,
+                prn: gt_types::satellites::Prn::new(prn),
+                samples,
+            }
+        };
+        SkyTrails {
+            trails: vec![
+                mk(Constellation::Gps, 5, [true, true, true], 40.0, 70.0, 62.0),
+                mk(
+                    Constellation::Gps,
+                    12,
+                    [true, false, true],
+                    120.0,
+                    150.0,
+                    40.0,
+                ),
+                mk(
+                    Constellation::Galileo,
+                    3,
+                    [false, false, false],
+                    200.0,
+                    230.0,
+                    30.0,
+                ),
+            ],
+            epochs: vec![epoch(0), epoch(1), epoch(2)],
+            time_range: Some(gt_types::GpsTimeRange::new(at(0), at(2))),
+            // A slip on the never-in-fix Galileo-3: hidden along with its trail
+            // when not-in-fix is off, so no orphan mark is left behind.
+            slips: vec![SlipMark {
+                constellation: Constellation::Galileo,
+                prn: gt_types::satellites::Prn::new(3),
+                azimuth: 215.0,
+                elevation: 30.0,
+                cause: gt_types::satellites::SlipCause::LostLock,
+            }],
+        }
+    }
+
+    #[rstest]
+    // Shown: all three trails, GPS-5 a filled marker, GPS-12 and the never-in-
+    // fix Galileo-3 hollow (both tracked-only at this instant).
+    #[case::shown("sky_trails_not_in_fix_shown", true)]
+    // Hidden: the never-in-fix Galileo-3 trail is gone entirely.
+    #[case::hidden("sky_trails_not_in_fix_hidden", false)]
+    fn not_in_fix_toggle_hides_trails_and_hollows_markers(
+        #[case] name: &str,
+        #[case] show_not_in_fix: bool,
+    ) {
+        let trails = fix_state_trails();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(320.0, 320.0))
+            .theme(true)
+            .ui(move |ui| {
+                SkyTrailsPlot::new(&trails, 300.0)
+                    .scrub(Some(at(1)))
+                    .show_not_in_fix(show_not_in_fix)
+                    .ui(ui);
+            });
+        harness.run();
+        harness.snapshot(name);
+    }
+
+    #[test]
+    fn marker_is_hollow_only_for_a_tracked_not_in_fix_report() {
+        let sample = |in_fix| TrailSample {
+            time: at(0),
+            point_index: PointIdx::new(0),
+            azimuth: 0.0,
+            elevation: 0.0,
+            snr: None,
+            in_fix,
+        };
+        // In the fix now: filled.
+        assert!(!super::marker_is_hollow(Some(&sample(true))));
+        // Tracked but not in the fix now: hollow.
+        assert!(super::marker_is_hollow(Some(&sample(false))));
+        // Interpolating between reports (unknown): filled, not asserting a state.
+        assert!(!super::marker_is_hollow(None));
+    }
+
     #[test]
     fn slip_label_names_the_satellite_and_cause() {
         use gt_types::satellites::{Prn, SlipCause};
@@ -754,7 +928,10 @@ mod tests {
             elevation: 0.0,
             cause: SlipCause::LostLock,
         }];
-        let hit = super::nearest_slip(&slips, shown, frame, pointer).is_some();
+        let hit = super::nearest_slip(&slips, frame, pointer, |slip| {
+            shown.contains(slip.constellation)
+        })
+        .is_some();
         assert_eq!(hit, expected);
     }
 }

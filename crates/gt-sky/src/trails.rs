@@ -42,6 +42,13 @@ impl SkyTrail {
         let idx = self.samples.partition_point(|s| s.time < time);
         self.samples.get(idx).filter(|s| s.time == time)
     }
+
+    /// Whether the satellite was in the fix at any point over the track. False
+    /// means it was only ever tracked, never used - the trails window can hide
+    /// these to focus on the satellites that actually contributed.
+    pub fn ever_in_fix(&self) -> bool {
+        self.samples.iter().any(|s| s.in_fix)
+    }
 }
 
 /// Per-constellation satellite counts at one epoch.
@@ -115,13 +122,18 @@ impl SkyTrails {
     /// stay stable as the scrubber moves. `time` is a report epoch time (from
     /// [`SkyTrails::epochs`]); satellites are matched exactly, not
     /// interpolated.
-    pub fn counts_at(&self, time: GpsTime) -> Vec<EpochCount> {
+    ///
+    /// When `show_not_in_fix` is false, satellites that were never in the fix
+    /// over the track ([`SkyTrail::ever_in_fix`]) are left out entirely, so the
+    /// counts match the trails the window is drawing.
+    pub fn counts_at(&self, time: GpsTime, show_not_in_fix: bool) -> Vec<EpochCount> {
         self.constellations()
             .map(|constellation| {
                 let (seen, fix) = self
                     .trails
                     .iter()
                     .filter(|trail| trail.constellation == constellation)
+                    .filter(|trail| show_not_in_fix || trail.ever_in_fix())
                     .filter_map(|trail| trail.sample_exactly_at(time))
                     .fold((0, 0), |(seen, fix), s| {
                         (seen + 1, fix + usize::from(s.in_fix))
@@ -266,7 +278,7 @@ mod tests {
             ]),
         )]));
 
-        let counts = trails.counts_at(trails.epochs[0].time);
+        let counts = trails.counts_at(trails.epochs[0].time, true);
         let gps = counts
             .iter()
             .find(|c| c.constellation == Constellation::Gps)
@@ -277,6 +289,54 @@ mod tests {
             .find(|c| c.constellation == Constellation::Galileo)
             .expect("galileo present");
         assert_eq!((galileo.seen, galileo.fix), (1, 1));
+
+        // Excluding never-in-fix satellites drops the tracked-only GPS-12, so
+        // GPS now counts one seen (and still one in fix).
+        let in_fix_only = trails.counts_at(trails.epochs[0].time, false);
+        let gps = in_fix_only
+            .iter()
+            .find(|c| c.constellation == Constellation::Gps)
+            .expect("gps present");
+        assert_eq!((gps.seen, gps.fix), (1, 1));
+    }
+
+    #[test]
+    fn ever_in_fix_reflects_any_fix_over_the_track() {
+        let trails = extract_trails(&track(vec![
+            point_at(
+                0,
+                Some(vec![sat(
+                    Constellation::Gps,
+                    5,
+                    Some(40.0),
+                    Some(45.0),
+                    false,
+                )]),
+            ),
+            point_at(
+                1,
+                Some(vec![sat(
+                    Constellation::Gps,
+                    5,
+                    Some(50.0),
+                    Some(40.0),
+                    true,
+                )]),
+            ),
+        ]));
+        assert!(trails.trails[0].ever_in_fix());
+
+        let never = extract_trails(&track(vec![point_at(
+            0,
+            Some(vec![sat(
+                Constellation::Gps,
+                5,
+                Some(40.0),
+                Some(45.0),
+                false,
+            )]),
+        )]));
+        assert!(!never.trails[0].ever_in_fix());
     }
 
     #[test]
@@ -306,7 +366,7 @@ mod tests {
             ),
         ]));
         let between = GpsTime::from_utc(trails.epochs[0].time.utc() + Duration::seconds(1));
-        let counts = trails.counts_at(between);
+        let counts = trails.counts_at(between, true);
         assert!(counts.iter().all(|c| c.seen == 0 && c.fix == 0));
     }
 

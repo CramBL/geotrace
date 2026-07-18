@@ -58,6 +58,10 @@ pub const TRAIL_MARKER_RADIUS_PX: f32 = 4.0;
 /// the trail beneath it.
 pub const TRAIL_MARKER_EDGE_PX: f32 = 1.5;
 
+/// Ring width of a hollow scrub marker - a satellite tracked but not in the
+/// fix at the scrubbed instant, drawn as an outline rather than a filled dot.
+pub const TRAIL_MARKER_HOLLOW_EDGE_PX: f32 = 1.6;
+
 /// Half-length of a slip mark's arms (an "×" drawn on the trail where a
 /// satellite slipped).
 pub const SLIP_MARK_RADIUS_PX: f32 = 4.5;
