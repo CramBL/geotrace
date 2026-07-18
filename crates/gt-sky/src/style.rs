@@ -39,6 +39,25 @@ pub const MARK_HOVER_RADIUS_PX: f32 = 6.0;
 /// highlighted marks stand out while the rest stay faintly visible.
 pub const DIMMED_MARK_ALPHA: f32 = 0.25;
 
+/// Stroke width of a satellite trail in the whole-track plot.
+pub const TRAIL_WIDTH_PX: f32 = 2.0;
+
+/// A trail's alpha ramps from [`TRAIL_MIN_ALPHA`] at the track's start to
+/// [`TRAIL_MAX_ALPHA`] at its end, so the sweep direction is legible.
+pub const TRAIL_MIN_ALPHA: f32 = 0.15;
+pub const TRAIL_MAX_ALPHA: f32 = 0.9;
+
+/// Alpha applied to trails of the constellations not currently focused
+/// (hovered), so the focused constellation stands out.
+pub const TRAIL_DIMMED_ALPHA: f32 = 0.12;
+
+/// Radius of the marker dropped on each trail at the scrubbed time.
+pub const TRAIL_MARKER_RADIUS_PX: f32 = 4.0;
+
+/// Outline width of a scrub marker, in the panel colour, so it reads over
+/// the trail beneath it.
+pub const TRAIL_MARKER_EDGE_PX: f32 = 1.5;
+
 /// Dash and gap lengths of the elevation-mask ring.
 pub const MASK_RING_DASH_PX: f32 = 4.0;
 /// See [`MASK_RING_DASH_PX`].
