@@ -11,6 +11,7 @@
 
 - The History window resizes smoothly and can be shrunk again.
 - The History filter field no longer overlaps the toolbar controls in a narrow window.
+- Focusing a track darkens the map in light mode too, instead of washing it out.
 
 ## 0.6.0 - 2026-07-16
 

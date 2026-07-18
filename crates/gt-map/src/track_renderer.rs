@@ -16,6 +16,9 @@ pub(crate) const HOVER_FADE_ALPHA: f32 = 0.15;
 /// stands out. A light-mode scrim of the near-white `extreme_bg_color` used to
 /// *brighten* the map instead, washing everything out rather than letting
 /// anything stand out.
+// A slightly blue-shifted near-black rather than a pure gray, so the dimmed
+// map keeps the cool cast of the app's dark surfaces; the exact channels are
+// not load-bearing.
 pub(crate) const FOCUS_SCRIM_COLOR: egui::Color32 = egui::Color32::from_rgb(15, 17, 20);
 
 /// Peak opacity of the focus scrim, in light and dark themes respectively.
