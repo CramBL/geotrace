@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Sky plot: see where the satellites used in each fix are - a polar plot when you hover or click a track point, and a toggleable ring or disc overlay showing the directions along the whole track (in the map's visibility filter).
+
 ### Fixed
 
 - The History window resizes smoothly and can be shrunk again.
