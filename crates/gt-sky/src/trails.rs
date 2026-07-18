@@ -38,7 +38,7 @@ pub struct SkyTrail {
 impl SkyTrail {
     /// The sample at exactly `time`, if the satellite reported at that epoch.
     /// A binary search over the ascending-by-time samples.
-    fn sample_exactly_at(&self, time: GpsTime) -> Option<&TrailSample> {
+    pub(crate) fn sample_exactly_at(&self, time: GpsTime) -> Option<&TrailSample> {
         let idx = self.samples.partition_point(|s| s.time < time);
         self.samples.get(idx).filter(|s| s.time == time)
     }
