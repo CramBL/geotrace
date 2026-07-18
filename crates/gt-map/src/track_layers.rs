@@ -26,7 +26,7 @@ use crate::tpv_renderer::{
 use crate::track_renderer::{
     self, blink_stroke, draw_track_with_ghost, skip_trackline, track_stroke,
 };
-use crate::transform::{MercTransform, lod_points};
+use crate::transform::{MapScale, MercTransform, lod_points};
 use crate::viewport::{TrackEntry, TrackPlan};
 
 /// Minimum animated progress at which the overlay and three-phase rendering
@@ -36,6 +36,36 @@ const FADE_VISIBLE_THRESHOLD: f32 = 0.01;
 /// Margin around the viewport inside which per-fix icons are still drawn,
 /// so icons whose shape extends past the edge are not clipped visibly.
 const ICON_VIEW_MARGIN_PX: f32 = 50.0;
+
+/// Zoom-level step the decimation cell size snaps to. Rounding to the nearest
+/// bucket leaves the bucketed zoom at most a quarter-level off the true value
+/// (2^0.25 ≈ 1.19x scale drift at a bucket's edges, none at its centre), while
+/// a smooth zoom still crosses only a few boundaries.
+const ZOOM_DECIMATION_BUCKET: f64 = 0.5;
+
+/// Zoom snapped to a coarse bucket, used only to size the collision-grid cell
+/// that thins satellite labels and sky glyphs.
+///
+/// That grid keys its cells in Mercator space, so a cell size that slides
+/// continuously with zoom re-partitions the world on every frame: during a
+/// smooth zoom the winning point per cell keeps changing, and labels and
+/// glyphs flicker as they are dropped and re-added. Snapping the cell's zoom
+/// to a bucket holds the partition - and thus the selected set - steady until
+/// zoom crosses a boundary. Rendering still uses the real zoom, so positions
+/// and scale stay smooth.
+///
+/// Both inputs to the cell size must use this bucketed zoom: the label spacing
+/// ([`tpv_renderer::label_cell_px`]) also varies with zoom, so pairing it with
+/// the real scale would leave the cell sliding.
+fn decimation_zoom(zoom: f64) -> f64 {
+    (zoom / ZOOM_DECIMATION_BUCKET).round() * ZOOM_DECIMATION_BUCKET
+}
+
+/// Mercator cell size for a decimation pass whose points sit `spacing_px`
+/// apart on screen, computed at the bucketed zoom (see [`decimation_zoom`]).
+fn decimation_cell_merc(spacing_px: f32, zoom: f64) -> f64 {
+    f64::from(spacing_px) / MapScale::from_zoom(decimation_zoom(zoom)).px_per_merc()
+}
 
 /// Per-point styling key for the unified line passes: the trackline dashes
 /// ghost stretches. The quality line colors by fix quality and crossfade
@@ -142,7 +172,8 @@ impl Plugin for TrackLayers<'_> {
         let max_rect = ui.max_rect();
 
         let geometries = self.prepare_track_geometries(max_rect, &style, &transform);
-        let sat_labels = self.select_sat_labels(&geometries, max_rect, &style, &transform);
+        let sat_labels =
+            self.select_sat_labels(&geometries, max_rect, &transform, map_memory.zoom());
         let sky_glyphs =
             self.select_sky_glyphs(&geometries, max_rect, &transform, map_memory.zoom());
 
@@ -463,11 +494,14 @@ impl TrackLayers<'_> {
         &self,
         geometries: &[TrackGeometry],
         max_rect: egui::Rect,
-        style: &TpvDrawStyle,
         transform: &MercTransform,
+        zoom: f64,
     ) -> SelectedLabels {
         let viewport = transform.viewport_merc_bounds(max_rect);
-        let cell_merc = f64::from(style.label_cell_px) / transform.px_per_merc();
+        // The label spacing also varies with zoom, so bucket it too (see
+        // [`decimation_zoom`]).
+        let cell_merc =
+            decimation_cell_merc(tpv_renderer::label_cell_px(decimation_zoom(zoom)), zoom);
         sat_labels::select_sat_labels(
             geometries
                 .iter()
@@ -503,7 +537,7 @@ impl TrackLayers<'_> {
         }
         let viewport = transform.viewport_merc_bounds(max_rect);
         let min_spacing_px = sky_glyph_renderer::min_spacing_px(self.sky_glyph_variant);
-        let cell_merc = f64::from(min_spacing_px) / transform.px_per_merc();
+        let cell_merc = decimation_cell_merc(min_spacing_px, zoom);
         sky_glyph_renderer::select_glyphs(
             geometries
                 .iter()
@@ -771,8 +805,39 @@ mod tests {
     use gt_test_utils::TestHarness;
     use gt_ui_types::DrawLayerMask;
 
-    use super::{LinePointKey, focus_scrim_alpha, paint_fade_overlay, shown_runs};
+    use super::{
+        LinePointKey, ZOOM_DECIMATION_BUCKET, decimation_zoom, focus_scrim_alpha,
+        paint_fade_overlay, shown_runs,
+    };
     use crate::polyline::{VisiblePath, visible_path};
+
+    /// The decimation zoom is a step function: a fine zoom sweep the width of a
+    /// bucket lands on a single value, so the collision-grid cell - and thus
+    /// the selected labels and glyphs - hold steady instead of churning
+    /// frame-to-frame during a smooth zoom.
+    #[test]
+    fn decimation_zoom_holds_steady_within_a_bucket() {
+        let start = 12.0;
+        let sweep: Vec<(f64, f64)> = (0u16..50)
+            .map(|i| start + f64::from(i) / 50.0 * ZOOM_DECIMATION_BUCKET)
+            .map(|real| (real, decimation_zoom(real)))
+            .collect();
+        // Every step across one bucket width maps to at most two distinct
+        // bucketed zooms (the one boundary the sweep may cross), never a fresh
+        // value each frame.
+        let mut distinct: Vec<f64> = sweep.iter().map(|&(_, bucketed)| bucketed).collect();
+        distinct.dedup();
+        assert!(
+            distinct.len() <= 2,
+            "sweep churned across {} buckets: {distinct:?}",
+            distinct.len()
+        );
+        // The bucketed zoom never drifts far from the real zoom, so on-screen
+        // spacing stays close to the target.
+        for &(real, bucketed) in &sweep {
+            assert!((bucketed - real).abs() <= ZOOM_DECIMATION_BUCKET / 2.0);
+        }
+    }
 
     /// Snapshot: the focus scrim at full progress dims the scene by darkening
     /// it, in both themes. A regression guard for the light-mode wash-out (the
