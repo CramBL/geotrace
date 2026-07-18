@@ -345,15 +345,19 @@ fn report_age_label(age: chrono::Duration) -> String {
 /// and the outline alpha fades out below zoom 14 so dense clusters don't
 /// blend into a white mass.
 pub(crate) fn frame_style(zoom: f64) -> TpvDrawStyle {
-    let size_factor = zoom_size_factor(zoom);
     TpvDrawStyle {
         base_arrow_size: base_arrow_size(zoom),
-        // Larger label-collision cells when zoomed out so the label count
-        // doesn't explode at dense clusters.
-        label_cell_px: 60.0 + (1.0 - size_factor) * 120.0, // 180 px at low zoom, 60 at high
         outline_alpha: ((zoom - 10.0) / 4.0).clamp(0.0, 1.0) as f32,
         icon_alpha: 1.0,
     }
+}
+
+/// The satellite-label collision-cell size in pixels: larger when zoomed out
+/// so the label count doesn't explode at dense clusters (180 px at low zoom,
+/// 60 px at high). Shared by [`frame_style`] and the map's zoom-debounced
+/// label decimation.
+pub(crate) fn label_cell_px(zoom: f64) -> f32 {
+    60.0 + (1.0 - zoom_size_factor(zoom)) * 120.0
 }
 
 /// Cross-highlight: when the track plot cursor is active, draw a ring around
@@ -847,9 +851,6 @@ fn seen_count_color(count: u32, dark_mode: bool) -> Color32 {
 pub(crate) struct TpvDrawStyle {
     pub(crate) outline_alpha: f32,
     pub(crate) base_arrow_size: f32,
-    /// On-screen size, in pixels, of a satellite-label collision cell -
-    /// at most one label draws per cell (see [`crate::sat_labels`]).
-    pub(crate) label_cell_px: f32,
     /// Opacity of the fix icon currently being drawn, in (0.0, 1.0].
     /// Decided per fix from its local on-screen spacing (see
     /// [`fix_icon_alpha`]). Below 1.0 the icon is crossfading into the
