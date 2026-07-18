@@ -172,7 +172,7 @@ fn constellation_filter(
                 ui.label(constellation.display_name());
             })
             .response;
-        if ui.rect_contains_pointer(row.rect) {
+        if crate::tpv_renderer::hovering_highlight_target(ui, row.rect) {
             focus = Some(constellation);
         }
     }
