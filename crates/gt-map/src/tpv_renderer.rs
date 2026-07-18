@@ -835,13 +835,13 @@ fn format_signed_delta(delta_ms: i64) -> String {
 
 /// Color for the "fix used" count in the satellite badge, legible on the
 /// current theme. Pass `ui.visuals().dark_mode`.
-fn fix_count_color(count: u32, dark_mode: bool) -> Color32 {
+pub(crate) fn fix_count_color(count: u32, dark_mode: bool) -> Color32 {
     gt_ui_theme::fix_count_tier(count).color(dark_mode)
 }
 
 /// Color for the "total seen" count in the satellite badge, legible on the
 /// current theme. Pass `ui.visuals().dark_mode`.
-fn seen_count_color(count: u32, dark_mode: bool) -> Color32 {
+pub(crate) fn seen_count_color(count: u32, dark_mode: bool) -> Color32 {
     gt_ui_theme::seen_count_tier(count).color(dark_mode)
 }
 
