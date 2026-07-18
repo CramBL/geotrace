@@ -6,8 +6,8 @@
 
 use std::collections::BTreeMap;
 
-use gt_types::satellites::{Constellation, Prn, Snr};
-use gt_types::{GpsTime, GpsTimeRange, LoadedTrack, PointIdx};
+use gt_types::satellites::{Constellation, Prn, SlipCause, Snr};
+use gt_types::{GeneratedMarkerKind, GpsTime, GpsTimeRange, LoadedTrack, PointIdx};
 
 use crate::projection;
 
@@ -42,6 +42,21 @@ pub struct TrailEpoch {
     pub point_index: PointIdx,
 }
 
+/// A cycle slip placed on the sky: where a satellite ran into trouble (lost
+/// lock, or a sharp SNR drop). Positioned at its last-known sky position
+/// before the slip - the `from` side of the detected transition. `from` is
+/// used for both causes for a single consistent anchor: `to` is unavailable
+/// for a lost-lock slip, and the from/to drift for an SNR drop is one report
+/// epoch, negligible at plot scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SlipMark {
+    pub constellation: Constellation,
+    pub prn: Prn,
+    pub azimuth: f32,
+    pub elevation: f32,
+    pub cause: SlipCause,
+}
+
 /// Every satellite's trail over a track, plus the report-epoch timeline and
 /// overall time span the window needs to normalize the time-ramp and drive
 /// the scrubber.
@@ -54,6 +69,9 @@ pub struct SkyTrails {
     pub epochs: Vec<TrailEpoch>,
     /// First and last epoch times, or `None` when the track has no reports.
     pub time_range: Option<GpsTimeRange>,
+    /// Cycle slips detected over the track, placed on the sky. Empty when the
+    /// track has no slip markers.
+    pub slips: Vec<SlipMark>,
 }
 
 impl SkyTrails {
@@ -127,7 +145,32 @@ pub fn extract_trails(track: &LoadedTrack) -> SkyTrails {
         trails,
         epochs,
         time_range,
+        slips: extract_slips(track),
     }
+}
+
+/// Collect the cycle-slip marks from a track's generated markers, each placed
+/// at the slipped satellite's last-known sky position (the `from` side).
+/// Slips whose `from` sample lacks an azimuth or elevation are skipped.
+fn extract_slips(track: &LoadedTrack) -> Vec<SlipMark> {
+    track
+        .generated_markers
+        .iter()
+        .filter_map(|marker| match &marker.kind {
+            GeneratedMarkerKind::Slip(event) => Some(&event.slips),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|slip| {
+            Some(SlipMark {
+                constellation: slip.constellation,
+                prn: slip.prn,
+                azimuth: slip.from.azimuth?,
+                elevation: slip.from.elevation?,
+                cause: slip.cause,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -163,6 +206,58 @@ mod tests {
 
     fn track(points: Vec<NavPoint>) -> gt_types::LoadedTrack {
         gt_test_utils::loaded_track_with_points(points)
+    }
+
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "az/el pass through unchanged, so the values are bit-exact"
+    )]
+    fn slips_are_placed_at_their_from_position() {
+        use gt_types::satellites::{SatSample, Slip, SlipCause, SlipEvent, Snr};
+        use gt_types::{GeneratedMarker, GeneratedMarkerKind, Latitude, Longitude, mercator};
+
+        let placeable = Slip {
+            constellation: Constellation::Gps,
+            prn: gt_types::satellites::Prn::new(5),
+            cause: SlipCause::LostLock,
+            from: SatSample {
+                elevation: Some(30.0),
+                azimuth: Some(120.0),
+                snr: Some(Snr::new(38.0)),
+            },
+            to: None,
+        };
+        // A second slip whose `from` lacks a sky position: skipped.
+        let unplaceable = Slip {
+            cause: SlipCause::SnrDrop,
+            from: SatSample {
+                elevation: None,
+                azimuth: Some(90.0),
+                snr: None,
+            },
+            to: None,
+            ..placeable
+        };
+        let lat = Latitude::new(55.0);
+        let lon = Longitude::new(12.0);
+        let mut track = track(vec![point_at(0, None)]);
+        track.generated_markers = vec![GeneratedMarker {
+            time: DateTime::<Utc>::from_timestamp(1_748_000_000, 0).expect("valid"),
+            kind: GeneratedMarkerKind::Slip(SlipEvent {
+                slips: vec![placeable, unplaceable],
+            }),
+            lat,
+            lon,
+            merc: mercator::normalize(lat, lon),
+        }];
+
+        let slips = extract_trails(&track).slips;
+        assert_eq!(slips.len(), 1);
+        assert_eq!(slips[0].constellation, Constellation::Gps);
+        assert_eq!(slips[0].azimuth, 120.0);
+        assert_eq!(slips[0].elevation, 30.0);
+        assert_eq!(slips[0].cause, SlipCause::LostLock);
     }
 
     #[test]

@@ -8,8 +8,8 @@ use gt_types::satellites::{Constellation, ConstellationSet};
 use gt_types::{GpsTime, GpsTimeRange};
 
 use crate::style;
-use crate::trails::{SkyTrail, SkyTrails, TrailEpoch};
-use crate::{grid, projection};
+use crate::trails::{SkyTrail, SkyTrails, SlipMark, TrailEpoch};
+use crate::{grid, plot_common, projection};
 
 /// The per-frame plot geometry shared by the trail and marker painting.
 #[derive(Clone, Copy)]
@@ -107,10 +107,7 @@ impl<'a> SkyTrailsPlot<'a> {
                 continue;
             }
             let base = gt_ui_theme::constellation_color(trail.constellation, dark_mode);
-            let focus_factor = match self.focus {
-                Some(focused) if focused != trail.constellation => style::TRAIL_DIMMED_ALPHA,
-                _ => 1.0,
-            };
+            let focus_factor = self.focus_factor(trail.constellation);
             paint_trail(ui, frame, trail, epochs, base, focus_factor);
 
             if let Some(scrub) = self.scrub
@@ -124,7 +121,28 @@ impl<'a> SkyTrailsPlot<'a> {
                 );
             }
         }
+
+        // Slip marks on top of the trails they annotate.
+        for slip in &self.trails.slips {
+            if !self.shown.contains(slip.constellation) {
+                continue;
+            }
+            let color = gt_ui_theme::constellation_color(slip.constellation, dark_mode)
+                .gamma_multiply(self.focus_factor(slip.constellation));
+            paint_slip_mark(ui, frame.project(slip.azimuth, slip.elevation), color);
+        }
+        slip_tooltip(ui, &response, frame, &self.trails.slips, self.shown);
+
         response
+    }
+
+    /// The alpha for a constellation given the current focus: full when it is
+    /// focused or nothing is, dimmed otherwise.
+    fn focus_factor(&self, constellation: Constellation) -> f32 {
+        match self.focus {
+            Some(focused) if focused != constellation => style::TRAIL_DIMMED_ALPHA,
+            _ => 1.0,
+        }
     }
 }
 
@@ -161,6 +179,69 @@ fn paint_trail(
             ),
         );
     }
+}
+
+/// Paint a slip mark as an "×" centered on `pos`, distinct from the round
+/// scrub markers and the trail lines.
+fn paint_slip_mark(ui: &egui::Ui, pos: Pos2, color: Color32) {
+    let r = style::SLIP_MARK_RADIUS_PX;
+    let stroke = Stroke::new(style::SLIP_MARK_WIDTH_PX, color);
+    let painter = ui.painter();
+    painter.line_segment([pos + Vec2::new(-r, -r), pos + Vec2::new(r, r)], stroke);
+    painter.line_segment([pos + Vec2::new(-r, r), pos + Vec2::new(r, -r)], stroke);
+}
+
+/// Show a tooltip for the slip mark nearest the pointer, within
+/// [`style::SLIP_MARK_HOVER_RADIUS_PX`].
+fn slip_tooltip(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    frame: Frame,
+    slips: &[SlipMark],
+    shown: ConstellationSet,
+) {
+    let Some(pointer) = response.hover_pos() else {
+        return;
+    };
+    let Some(slip) = nearest_slip(slips, shown, frame, pointer) else {
+        return;
+    };
+    egui::Tooltip::always_open(
+        ui.ctx().clone(),
+        ui.layer_id(),
+        response.id.with(("slip", slip.constellation, slip.prn)),
+        egui::PopupAnchor::Pointer,
+    )
+    .show(|ui| {
+        ui.label(egui::RichText::new(slip_label(slip)).strong());
+        let degree = gt_ui_theme::DEGREE_SIGN;
+        ui.label(format!("Elevation {:.0}{degree}", slip.elevation));
+        ui.label(format!("Azimuth {:.0}{degree}", slip.azimuth));
+    });
+}
+
+/// The shown slip mark nearest to `pointer`, within
+/// [`style::SLIP_MARK_HOVER_RADIUS_PX`].
+fn nearest_slip(
+    slips: &[SlipMark],
+    shown: ConstellationSet,
+    frame: Frame,
+    pointer: Pos2,
+) -> Option<&SlipMark> {
+    let candidates = slips
+        .iter()
+        .filter(|slip| shown.contains(slip.constellation))
+        .map(|slip| (slip, frame.project(slip.azimuth, slip.elevation)));
+    plot_common::nearest_within(candidates, pointer, style::SLIP_MARK_HOVER_RADIUS_PX)
+}
+
+/// "G05 GPS - lost lock" for a slip mark's tooltip header.
+fn slip_label(slip: &SlipMark) -> String {
+    format!(
+        "{} - {}",
+        plot_common::satellite_designator(slip.constellation, slip.prn),
+        slip.cause.label(),
+    )
 }
 
 /// Whether any report epoch falls strictly between `a` and `b` - i.e. the
@@ -212,7 +293,7 @@ mod tests {
     use gt_types::satellites::{Constellation, ConstellationSet, Satellite, Satellites};
     use gt_types::{GpsTime, Latitude, Longitude, NavPoint, PointIdx, TimePositionVelocity};
 
-    use super::{SkyTrail, SkyTrailsPlot, TrailEpoch, epoch_between, sample_at};
+    use super::{SkyTrail, SkyTrailsPlot, SlipMark, TrailEpoch, epoch_between, sample_at};
     use crate::extract_trails;
     use crate::trails::{SkyTrails, TrailSample};
 
@@ -423,5 +504,82 @@ mod tests {
             None,
             Some(at(4)),
         );
+    }
+
+    #[test]
+    fn sky_trails_with_slips() {
+        use gt_types::satellites::{Prn, SlipCause};
+
+        let mut trails = demo_trails();
+        // Two slip marks (an "×" each), on distinct constellations.
+        trails.slips = vec![
+            SlipMark {
+                constellation: Constellation::Gps,
+                prn: Prn::new(5),
+                azimuth: 70.0,
+                elevation: 64.0,
+                cause: SlipCause::LostLock,
+            },
+            SlipMark {
+                constellation: Constellation::Galileo,
+                prn: Prn::new(3),
+                azimuth: 45.0,
+                elevation: 46.0,
+                cause: SlipCause::SnrDrop,
+            },
+        ];
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(320.0, 320.0))
+            .theme(true)
+            .ui(move |ui| {
+                SkyTrailsPlot::new(&trails, 300.0)
+                    .with_elevation_mask_deg(10.0)
+                    .ui(ui);
+            });
+        harness.run();
+        harness.snapshot("sky_trails_with_slips");
+    }
+
+    #[test]
+    fn slip_label_names_the_satellite_and_cause() {
+        use gt_types::satellites::{Prn, SlipCause};
+        let slip = SlipMark {
+            constellation: Constellation::Gps,
+            prn: Prn::new(5),
+            azimuth: 70.0,
+            elevation: 64.0,
+            cause: SlipCause::LostLock,
+        };
+        assert_eq!(super::slip_label(&slip), "G05 GPS - lost lock");
+    }
+
+    #[rstest]
+    // A slip at azimuth 90 / elevation 0 sits on the east rim (radius = the
+    // frame radius from the center). Pointer near it hits; far misses; a
+    // hidden constellation is never selected.
+    #[case::hits(egui::pos2(102.0, 100.0), ConstellationSet::all(), true)]
+    #[case::beyond_radius(egui::pos2(130.0, 100.0), ConstellationSet::all(), false)]
+    #[case::constellation_hidden(egui::pos2(102.0, 100.0), ConstellationSet::empty(), false)]
+    fn nearest_slip_respects_radius_and_filter(
+        #[case] pointer: egui::Pos2,
+        #[case] shown: ConstellationSet,
+        #[case] expected: bool,
+    ) {
+        use gt_types::satellites::{Prn, SlipCause};
+        let frame = super::Frame {
+            center: egui::pos2(100.0, 100.0),
+            radius: 1.0,
+            time_range: gt_types::GpsTimeRange::new(at(0), at(1)),
+        };
+        // Placed on the east rim: unit-disc (1, 0) -> center + (1, 0).
+        let slips = [SlipMark {
+            constellation: Constellation::Gps,
+            prn: Prn::new(5),
+            azimuth: 90.0,
+            elevation: 0.0,
+            cause: SlipCause::LostLock,
+        }];
+        let hit = super::nearest_slip(&slips, shown, frame, pointer).is_some();
+        assert_eq!(hit, expected);
     }
 }

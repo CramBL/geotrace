@@ -207,16 +207,14 @@ fn mark_tooltip(ui: &egui::Ui, response: &egui::Response, marks: &[(Satellite, P
 
 /// The mark nearest to `pointer`, within [`style::MARK_HOVER_RADIUS_PX`].
 fn nearest_mark(marks: &[(Satellite, Pos2)], pointer: Pos2) -> Option<&Satellite> {
-    marks
-        .iter()
-        .map(|(satellite, position)| (satellite, position.distance(pointer)))
-        .filter(|(_, distance)| *distance <= style::MARK_HOVER_RADIUS_PX)
-        .min_by(|(_, a), (_, b)| a.total_cmp(b))
-        .map(|(satellite, _)| satellite)
+    let candidates = marks.iter().map(|(satellite, pos)| (satellite, *pos));
+    crate::plot_common::nearest_within(candidates, pointer, style::MARK_HOVER_RADIUS_PX)
 }
 
 fn satellite_tooltip_ui(ui: &mut egui::Ui, satellite: &Satellite) {
-    ui.label(egui::RichText::new(satellite_label(satellite)).strong());
+    let label =
+        crate::plot_common::satellite_designator(satellite.constellation(), satellite.prn());
+    ui.label(egui::RichText::new(label).strong());
     let degree = |value: Option<f32>| {
         value.map_or_else(
             || gt_ui_theme::EM_DASH.to_owned(),
@@ -235,16 +233,6 @@ fn satellite_tooltip_ui(ui: &mut egui::Ui, satellite: &Satellite) {
     } else {
         "Tracked, not in fix"
     });
-}
-
-/// "G05 GPS" - RINEX prefix, zero-padded PRN, constellation name.
-fn satellite_label(satellite: &Satellite) -> String {
-    format!(
-        "{}{:02} {}",
-        satellite.constellation().prn_prefix(),
-        satellite.prn().value(),
-        satellite.constellation().display_name()
-    )
 }
 
 /// "9 of 14 in fix" above the plot.
@@ -288,8 +276,12 @@ fn unplaceable_ui(ui: &mut egui::Ui, satellites: &Satellites, size: SkyPlotSize)
             let dark_mode = ui.visuals().dark_mode;
             for satellite in many {
                 ui.horizontal(|ui| {
+                    let label = crate::plot_common::satellite_designator(
+                        satellite.constellation(),
+                        satellite.prn(),
+                    );
                     ui.label(
-                        egui::RichText::new(satellite_label(satellite))
+                        egui::RichText::new(label)
                             .color(gt_ui_theme::constellation_color(
                                 satellite.constellation(),
                                 dark_mode,
