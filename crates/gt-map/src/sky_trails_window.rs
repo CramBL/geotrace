@@ -2,17 +2,38 @@
 //! from the map context menu and the side panel, showing every satellite's
 //! path across the sky with a time scrubber that walks the map alongside it.
 
-use egui::Window;
+use egui::{Align, Layout, RichText, Window};
 
-use gt_sky::{SkyTrails, SkyTrailsPlot, TrailEpoch};
+use gt_sky::{EpochCount, SkyTrails, SkyTrailsPlot, TrailEpoch};
 use gt_types::satellites::{Constellation, ConstellationSet};
-use gt_types::{LoadedFile, TrackRef};
+use gt_types::{GpsTime, LoadedFile, TrackRef};
 use gt_ui_types::MapHighlight;
 
-use crate::tpv_renderer::constellation_swatch;
+use crate::tpv_renderer::{constellation_swatch, fix_count_color, seen_count_color};
 
-/// Diameter of the trails plot inside the window.
-const PLOT_DIAMETER_PX: f32 = 300.0;
+/// Width of the left stats/filter column.
+const STATS_COL_WIDTH_PX: f32 = 168.0;
+
+/// Gap between the stats column and the plot.
+const COLUMN_GAP_PX: f32 = 12.0;
+
+/// Smallest the trails plot shrinks to as the window resizes, so it stays
+/// legible even in a small window.
+const MIN_PLOT_DIAMETER_PX: f32 = 240.0;
+
+/// Vertical space kept below the plot for the transport (time labels, slider).
+/// The plot is sized to fit above it, so resizing grows the plot, not a gap.
+const TRANSPORT_RESERVE_PX: f32 = 78.0;
+
+/// Fixed width of each stats count column, so the fix/seen numbers line up
+/// across rows regardless of constellation name length.
+const STATS_COUNT_WIDTH_PX: f32 = 34.0;
+
+/// Default and minimum window size, chosen so the plot opens comfortably
+/// above [`MIN_PLOT_DIAMETER_PX`] with the stats column beside it.
+const DEFAULT_WINDOW_SIZE: [f32; 2] = [560.0, 420.0];
+const MIN_WINDOW_WIDTH_PX: f32 = 460.0;
+const MIN_WINDOW_HEIGHT_PX: f32 = 360.0;
 
 /// The whole-track sky trails window. Owned by the app and drawn each frame;
 /// opened by [`SkyTrailsWindow::open_track`] from the context menus.
@@ -94,7 +115,10 @@ impl SkyTrailsWindow {
         // the floating position persists when the window re-targets a track.
         Window::new("Sky trails")
             .open(&mut open)
-            .resizable(false)
+            .resizable(true)
+            .default_size(DEFAULT_WINDOW_SIZE)
+            .min_width(MIN_WINDOW_WIDTH_PX)
+            .min_height(MIN_WINDOW_HEIGHT_PX)
             .show(ctx, |ui| body.ui(ui));
         self.open = open;
     }
@@ -112,8 +136,8 @@ struct WindowBody<'a> {
 }
 
 impl WindowBody<'_> {
-    /// The window contents: the constellation filter, the trails plot, and
-    /// the scrubber.
+    /// The window contents: the constellation stats/filter column beside the
+    /// trails plot, with the transport (time labels and slider) below.
     fn ui(self, ui: &mut egui::Ui) {
         let Self {
             trails,
@@ -133,55 +157,173 @@ impl WindowBody<'_> {
             return;
         };
 
+        // Size the plot to the space left after the stats column and the
+        // transport, so resizing the window grows the plot rather than a gap.
+        // The transport height is measured from the previous frame and cached:
+        // egui's window only ever grows to fit content, so sizing the plot
+        // against a guessed reserve that undershoots the real transport would
+        // make the window creep taller every frame.
+        let reserve_id = ui.id().with("transport_height");
+        let reserved = ui
+            .data(|d| d.get_temp::<f32>(reserve_id))
+            .unwrap_or(TRANSPORT_RESERVE_PX);
+        let diameter = plot_diameter(ui.available_size(), reserved);
+
         let mut focus = None;
         ui.horizontal_top(|ui| {
-            // Filter on the left, computed before the plot so hover focus
-            // lands on the same frame.
-            ui.vertical(|ui| focus = constellation_filter(ui, trails, shown));
-            ui.add_space(8.0);
-            ui.vertical(|ui| {
-                SkyTrailsPlot::new(trails, PLOT_DIAMETER_PX)
-                    .shown(*shown)
-                    .focus(focus)
-                    .scrub(Some(scrub_time))
-                    .with_elevation_mask_deg(elevation_mask_deg)
-                    .ui(ui);
-                scrubber(ui, trails, scrub_index, track_ref, highlight);
-            });
+            // Stats/filter on the left, computed before the plot so hover
+            // focus lands on the same frame.
+            ui.allocate_ui_with_layout(
+                egui::vec2(STATS_COL_WIDTH_PX, diameter),
+                Layout::top_down(Align::Min),
+                |ui| {
+                    ui.set_width(STATS_COL_WIDTH_PX);
+                    focus = constellation_stats(ui, trails, shown, scrub_time);
+                },
+            );
+            ui.add_space(COLUMN_GAP_PX);
+            SkyTrailsPlot::new(trails, diameter)
+                .shown(*shown)
+                .focus(focus)
+                .scrub(Some(scrub_time))
+                .with_elevation_mask_deg(elevation_mask_deg)
+                .ui(ui);
         });
+        let transport_rect = ui
+            .scope(|ui| transport(ui, trails, scrub_index, track_ref, highlight))
+            .response
+            .rect;
+        ui.data_mut(|d| d.insert_temp(reserve_id, transport_rect.height()));
     }
 }
 
-/// One checkbox per constellation present in the track, toggling its trails.
-/// Returns the constellation whose row is hovered, to focus on the plot.
-fn constellation_filter(
+/// The plot diameter for the given available space, leaving `reserved` pixels
+/// below for the transport and the stats column beside it, clamped so the plot
+/// stays legible in a small window.
+fn plot_diameter(avail: egui::Vec2, reserved: f32) -> f32 {
+    (avail.x - STATS_COL_WIDTH_PX - COLUMN_GAP_PX)
+        .min(avail.y - reserved)
+        .max(MIN_PLOT_DIAMETER_PX)
+}
+
+/// The stats/filter column: one row per constellation showing its live fix and
+/// seen counts at the scrubbed instant, a total row, and doubling as the
+/// show/hide toggle (checkbox) and hover-to-focus target. Returns the
+/// constellation whose row is hovered, to focus on the plot.
+fn constellation_stats(
     ui: &mut egui::Ui,
     trails: &SkyTrails,
     shown: &mut ConstellationSet,
+    scrub_time: GpsTime,
 ) -> Option<Constellation> {
-    ui.label(egui::RichText::new("Constellations").weak().small());
+    stats_header(ui);
+    let dark_mode = ui.visuals().dark_mode;
+    let counts = trails.counts_at(scrub_time);
     let mut focus = None;
-    for constellation in trails.constellations() {
-        let row = ui
-            .horizontal(|ui| {
-                let mut on = shown.contains(constellation);
-                if ui.checkbox(&mut on, "").changed() {
-                    shown.set(constellation, on);
-                }
-                constellation_swatch(ui, constellation);
-                ui.label(constellation.display_name());
-            })
-            .response;
-        if crate::hover_labels::hover_affordance(ui, row.rect) {
-            focus = Some(constellation);
+    for count in &counts {
+        if stats_row(ui, shown, count, dark_mode) {
+            focus = Some(count.constellation);
         }
     }
+    stats_total_row(ui, &counts, dark_mode);
     focus
 }
 
-/// The time slider. Dragging it drops the scrubbed point into the map
-/// highlight so the map and the trails move together.
-fn scrubber(
+/// The stats column header: a label plus the right-aligned Fix / Seen columns.
+fn stats_header(ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Satellites").weak().small());
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            stats_number(ui, RichText::new("Seen").weak().small());
+            stats_number(ui, RichText::new("Fix").weak().small());
+        });
+    });
+}
+
+/// One constellation row: its swatch and name, a checkbox toggle, and the live
+/// fix/seen counts, colored the same way as the sticky point popup. Returns
+/// whether the row is hovered (to focus the plot).
+fn stats_row(
+    ui: &mut egui::Ui,
+    shown: &mut ConstellationSet,
+    count: &EpochCount,
+    dark_mode: bool,
+) -> bool {
+    let on = shown.contains(count.constellation);
+    let row = ui
+        .horizontal(|ui| {
+            let mut checked = on;
+            if ui.checkbox(&mut checked, "").changed() {
+                shown.set(count.constellation, checked);
+            }
+            constellation_swatch(ui, count.constellation);
+            ui.label(dimmed_if_off(count.constellation.display_name().into(), on));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                stats_number(ui, count_text(count.seen, seen_count_color, on, dark_mode));
+                stats_number(ui, count_text(count.fix, fix_count_color, on, dark_mode));
+            });
+        })
+        .response;
+    crate::hover_labels::hover_affordance(ui, row.rect)
+}
+
+/// The total row: summed fix and seen across every constellation, set off by a
+/// separator above it.
+fn stats_total_row(ui: &mut egui::Ui, counts: &[EpochCount], dark_mode: bool) {
+    let (seen, fix) = counts
+        .iter()
+        .fold((0, 0), |(seen, fix), c| (seen + c.seen, fix + c.fix));
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Total").strong());
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            stats_number(
+                ui,
+                count_text(seen, seen_count_color, true, dark_mode).strong(),
+            );
+            stats_number(
+                ui,
+                count_text(fix, fix_count_color, true, dark_mode).strong(),
+            );
+        });
+    });
+}
+
+/// A right-aligned, fixed-width numeric cell, so the columns line up.
+fn stats_number(ui: &mut egui::Ui, text: RichText) {
+    ui.add_sized(
+        egui::vec2(STATS_COUNT_WIDTH_PX, ui.spacing().interact_size.y),
+        egui::Label::new(text.monospace()),
+    );
+}
+
+/// A count cell colored by the given tier function (the same coloring the
+/// sticky point popup uses for fix/seen), or grayed when the row is hidden.
+fn count_text(
+    count: usize,
+    color: fn(u32, bool) -> egui::Color32,
+    on: bool,
+    dark_mode: bool,
+) -> RichText {
+    let text = RichText::new(count.to_string());
+    if on {
+        text.color(color(count as u32, dark_mode))
+    } else {
+        text.weak()
+    }
+}
+
+/// Weakens `text` when the constellation is hidden, so off rows recede.
+fn dimmed_if_off(text: String, on: bool) -> RichText {
+    let text = RichText::new(text);
+    if on { text } else { text.weak() }
+}
+
+/// The transport below the plot: the current time and offset above a
+/// full-width time slider, with the start, total duration, and end beneath it.
+/// Moving the slider drops the scrubbed point into the map highlight so the
+/// map and the trails move together.
+fn transport(
     ui: &mut egui::Ui,
     trails: &SkyTrails,
     scrub_index: &mut usize,
@@ -189,10 +331,64 @@ fn scrubber(
     highlight: &mut MapHighlight,
 ) {
     let last = trails.epochs.len() - 1;
-    if let Some(epoch) = trails.epochs.get(*scrub_index) {
-        ui.label(egui::RichText::new(epoch.time.utc().format("%H:%M:%S").to_string()).monospace());
-    }
+    let (Some(first), Some(end)) = (
+        trails.epochs.first().map(|e| e.time),
+        trails.epochs.last().map(|e| e.time),
+    ) else {
+        return;
+    };
+    let current = trails
+        .epochs
+        .get(*scrub_index)
+        .map_or(first, |epoch| epoch.time);
+    let total = end.signed_duration_since(first);
+    let offset = current.signed_duration_since(first);
+
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(format!("+{}", gt_fmt::format_timeline_offset(offset)))
+                .monospace()
+                .strong(),
+        );
+        ui.label(
+            RichText::new(current.utc().format("%H:%M:%S").to_string())
+                .monospace()
+                .weak(),
+        );
+    });
+
+    ui.spacing_mut().slider_width = ui.available_width();
     let response = ui.add(egui::Slider::new(scrub_index, 0..=last).show_value(false));
+
+    // Start clock, total duration, end clock: the fixed span the slider runs
+    // over, with the running position shown above it.
+    ui.columns(3, |cols| {
+        let [start_col, total_col, end_col] = cols else {
+            return;
+        };
+        start_col.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            ui.label(
+                RichText::new(first.utc().format("%H:%M:%S").to_string())
+                    .monospace()
+                    .weak(),
+            );
+        });
+        total_col.with_layout(Layout::top_down(Align::Center), |ui| {
+            ui.label(
+                RichText::new(gt_fmt::format_human_terse_duration(total))
+                    .weak()
+                    .small(),
+            );
+        });
+        end_col.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.label(
+                RichText::new(end.utc().format("%H:%M:%S").to_string())
+                    .monospace()
+                    .weak(),
+            );
+        });
+    });
+
     if (response.dragged() || response.changed())
         && let Some(epoch) = trails.epochs.get(*scrub_index)
     {
@@ -274,7 +470,7 @@ mod tests {
 
     fn body_snapshot(name: &str, trails: SkyTrails) {
         let mut harness = TestHarness::builder()
-            .size(egui::vec2(470.0, 400.0))
+            .size(egui::vec2(560.0, 440.0))
             .theme(true)
             .ui(move |ui| {
                 WindowBody {
@@ -332,6 +528,25 @@ mod tests {
         assert!(!window.open);
         assert_eq!(window.track, None);
         assert!(window.cache.is_none());
+    }
+
+    #[rstest::rstest]
+    // Ample space: the plot fills the height left above the transport.
+    #[case::height_bound(egui::vec2(800.0, 500.0), 80.0, 420.0)]
+    // Wide but short: the plot is bounded by the leftover height, not width.
+    #[case::width_is_slack(egui::vec2(1200.0, 400.0), 80.0, 320.0)]
+    // Tiny window: the plot holds its legibility floor rather than shrinking.
+    #[case::clamped_to_floor(egui::vec2(300.0, 300.0), 80.0, 240.0)]
+    fn plot_diameter_fills_the_space_above_the_transport(
+        #[case] avail: egui::Vec2,
+        #[case] reserved: f32,
+        #[case] expected: f32,
+    ) {
+        let diameter = super::plot_diameter(avail, reserved);
+        assert!(
+            (diameter - expected).abs() < 0.5,
+            "diameter {diameter} != expected {expected}"
+        );
     }
 
     #[test]

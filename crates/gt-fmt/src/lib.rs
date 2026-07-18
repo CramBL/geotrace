@@ -86,6 +86,20 @@ pub fn format_distance(d: f64::Length) -> String {
     }
 }
 
+/// Formats a duration as a timeline offset: `M:SS`, or `H:MM:SS` once past an
+/// hour. Unlike [`format_human_terse_duration`] the fields are fixed-width and
+/// colon-separated, so a running position reads like a media scrubber's clock.
+/// Negative durations (a position before the start) clamp to zero.
+pub fn format_timeline_offset(d: chrono::Duration) -> String {
+    let secs = d.num_seconds().max(0);
+    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
+}
+
 /// Format a duration as a compact human-readable string.
 ///
 /// Rules:
@@ -213,6 +227,15 @@ mod tests {
             fix_loss_count,
             max_continuous_no_fix: Duration::seconds(max_no_fix_s),
         }
+    }
+
+    #[rstest::rstest]
+    #[case::zero(0, "0:00")]
+    #[case::under_a_minute(64, "1:04")]
+    #[case::past_an_hour(3725, "1:02:05")]
+    #[case::negative_clamps_to_zero(-5, "0:00")]
+    fn format_timeline_offset_reads_like_a_scrubber(#[case] secs: i64, #[case] expected: &str) {
+        assert_eq!(format_timeline_offset(Duration::seconds(secs)), expected);
     }
 
     #[test]

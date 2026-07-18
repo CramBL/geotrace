@@ -35,6 +35,25 @@ pub struct SkyTrail {
     pub samples: Vec<TrailSample>,
 }
 
+impl SkyTrail {
+    /// The sample at exactly `time`, if the satellite reported at that epoch.
+    /// A binary search over the ascending-by-time samples.
+    fn sample_exactly_at(&self, time: GpsTime) -> Option<&TrailSample> {
+        let idx = self.samples.partition_point(|s| s.time < time);
+        self.samples.get(idx).filter(|s| s.time == time)
+    }
+}
+
+/// Per-constellation satellite counts at one epoch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EpochCount {
+    pub constellation: Constellation,
+    /// Satellites of this constellation with a sky position at the epoch.
+    pub seen: usize,
+    /// Of those, the ones in the fix.
+    pub fix: usize,
+}
+
 /// One report epoch on the track's timeline - the scrubber walks these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrailEpoch {
@@ -88,6 +107,32 @@ impl SkyTrails {
             last = Some(constellation);
             Some(constellation)
         })
+    }
+
+    /// Seen and in-fix counts per constellation at `time`, over the
+    /// constellations present in the track. A constellation with no satellite
+    /// up at that epoch still gets a row, at zero, so the window's stats rows
+    /// stay stable as the scrubber moves. `time` is a report epoch time (from
+    /// [`SkyTrails::epochs`]); satellites are matched exactly, not
+    /// interpolated.
+    pub fn counts_at(&self, time: GpsTime) -> Vec<EpochCount> {
+        self.constellations()
+            .map(|constellation| {
+                let (seen, fix) = self
+                    .trails
+                    .iter()
+                    .filter(|trail| trail.constellation == constellation)
+                    .filter_map(|trail| trail.sample_exactly_at(time))
+                    .fold((0, 0), |(seen, fix), s| {
+                        (seen + 1, fix + usize::from(s.in_fix))
+                    });
+                EpochCount {
+                    constellation,
+                    seen,
+                    fix,
+                }
+            })
+            .collect()
     }
 }
 
@@ -206,6 +251,63 @@ mod tests {
 
     fn track(points: Vec<NavPoint>) -> gt_types::LoadedTrack {
         gt_test_utils::loaded_track_with_points(points)
+    }
+
+    #[test]
+    fn counts_at_splits_seen_and_fix_per_constellation() {
+        // One epoch: two GPS satellites up but only one in the fix, one Galileo
+        // in the fix.
+        let trails = extract_trails(&track(vec![point_at(
+            0,
+            Some(vec![
+                sat(Constellation::Gps, 5, Some(40.0), Some(45.0), true),
+                sat(Constellation::Gps, 12, Some(120.0), Some(30.0), false),
+                sat(Constellation::Galileo, 3, Some(60.0), Some(50.0), true),
+            ]),
+        )]));
+
+        let counts = trails.counts_at(trails.epochs[0].time);
+        let gps = counts
+            .iter()
+            .find(|c| c.constellation == Constellation::Gps)
+            .expect("gps present");
+        assert_eq!((gps.seen, gps.fix), (2, 1));
+        let galileo = counts
+            .iter()
+            .find(|c| c.constellation == Constellation::Galileo)
+            .expect("galileo present");
+        assert_eq!((galileo.seen, galileo.fix), (1, 1));
+    }
+
+    #[test]
+    fn counts_at_between_epochs_finds_nobody() {
+        // counts_at matches an epoch exactly (no interpolation), so a time
+        // between reports yields zero everywhere.
+        let trails = extract_trails(&track(vec![
+            point_at(
+                0,
+                Some(vec![sat(
+                    Constellation::Gps,
+                    5,
+                    Some(40.0),
+                    Some(45.0),
+                    true,
+                )]),
+            ),
+            point_at(
+                2,
+                Some(vec![sat(
+                    Constellation::Gps,
+                    5,
+                    Some(50.0),
+                    Some(40.0),
+                    true,
+                )]),
+            ),
+        ]));
+        let between = GpsTime::from_utc(trails.epochs[0].time.utc() + Duration::seconds(1));
+        let counts = trails.counts_at(between);
+        assert!(counts.iter().all(|c| c.seen == 0 && c.fix == 0));
     }
 
     #[test]
