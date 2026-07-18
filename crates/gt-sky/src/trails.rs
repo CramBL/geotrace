@@ -56,6 +56,23 @@ pub struct SkyTrails {
     pub time_range: Option<GpsTimeRange>,
 }
 
+impl SkyTrails {
+    /// The distinct constellations present, in `Constellation` order. Relies
+    /// on `trails` being sorted by constellation (as [`extract_trails`]
+    /// produces), so the invariant and its consumer live together.
+    pub fn constellations(&self) -> impl Iterator<Item = Constellation> + '_ {
+        let mut last = None;
+        self.trails.iter().filter_map(move |trail| {
+            let constellation = trail.constellation;
+            if last == Some(constellation) {
+                return None;
+            }
+            last = Some(constellation);
+            Some(constellation)
+        })
+    }
+}
+
 /// Extract every satellite's sky trail from a track.
 ///
 /// Walks the report-bearing points in recording order, recording an epoch
@@ -223,6 +240,33 @@ mod tests {
         assert_eq!(sample.elevation, 60.0);
         assert_eq!(sample.snr.map(gt_types::satellites::Snr::value), Some(40.0));
         assert!(sample.in_fix);
+    }
+
+    #[test]
+    fn constellations_lists_each_present_one_once_in_order() {
+        // Two GPS satellites and one Galileo, interleaved across epochs;
+        // `constellations()` collapses to one entry each, GPS before Galileo.
+        let track = track(vec![
+            point_at(
+                0,
+                Some(vec![
+                    sat(Constellation::Gps, 5, Some(45.0), Some(60.0), true),
+                    sat(Constellation::Galileo, 3, Some(80.0), Some(40.0), true),
+                ]),
+            ),
+            point_at(
+                1,
+                Some(vec![sat(
+                    Constellation::Gps,
+                    12,
+                    Some(30.0),
+                    Some(50.0),
+                    true,
+                )]),
+            ),
+        ]);
+        let present: Vec<_> = extract_trails(&track).constellations().collect();
+        assert_eq!(present, vec![Constellation::Gps, Constellation::Galileo]);
     }
 
     #[test]

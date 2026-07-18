@@ -162,6 +162,9 @@ pub struct PanelContext<'a> {
     /// explicit costing. Consumed by the app, which stores the session
     /// override and queues the run (through the consent dialog if pending).
     pub snap_costing_request: &'a mut Option<(TrackRef, SnapCosting)>,
+    /// Set by the "Show sky trails" track action. Consumed by the app, which
+    /// opens the sky trails window on that track.
+    pub sky_trails_request: &'a mut Option<TrackRef>,
 }
 
 /// Trailing eye-slash on a category row whose map ink is hidden by the
@@ -1063,6 +1066,10 @@ fn render_track_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Pane
             ui.close();
         }
         snap_menu_entry(ui, track_ref, ctx);
+        if ui.button("Show sky trails…").clicked() {
+            *ctx.sky_trails_request = Some(track_ref);
+            ui.close();
+        }
         ui.separator();
         if ui.button("Unload").clicked() {
             ctx.tree.pending_unload = Some(vec![key]);

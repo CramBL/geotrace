@@ -169,6 +169,20 @@ impl ConstellationSet {
         self.0 |= constellation.bit();
     }
 
+    /// Removes `constellation` from the set.
+    pub const fn remove(&mut self, constellation: Constellation) {
+        self.0 &= !constellation.bit();
+    }
+
+    /// Adds or removes `constellation` per `present`.
+    pub const fn set(&mut self, constellation: Constellation, present: bool) {
+        if present {
+            self.insert(constellation);
+        } else {
+            self.remove(constellation);
+        }
+    }
+
     /// The union of two sets.
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
@@ -481,6 +495,13 @@ mod constellation_tests {
         built.insert(Constellation::Gps);
         built.insert(Constellation::Gps);
         assert_eq!(built, ConstellationSet::single(Constellation::Gps));
+
+        built.set(Constellation::Galileo, true);
+        assert!(built.contains(Constellation::Galileo));
+        built.set(Constellation::Gps, false);
+        assert!(!built.contains(Constellation::Gps));
+        built.remove(Constellation::Galileo);
+        assert!(built.is_empty());
 
         assert_eq!(
             ConstellationSet::single(Constellation::Gps)

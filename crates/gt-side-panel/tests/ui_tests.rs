@@ -43,6 +43,7 @@ struct State {
     snap_visibility_request: Option<TrackRef>,
     snap_costing_choices: Vec<(SnapCosting, String)>,
     snap_costing_request: Option<(TrackRef, SnapCosting)>,
+    sky_trails_request: Option<TrackRef>,
 }
 
 fn make_state(file_count: usize) -> State {
@@ -104,6 +105,7 @@ fn make_state_with_warnings_on(
             (SnapCosting::Pedestrian, "Pedestrian".to_owned()),
         ],
         snap_costing_request: None,
+        sky_trails_request: None,
     }
 }
 
@@ -138,6 +140,7 @@ fn make_harness_sized(state: State, size: egui::Vec2) -> TestHarness<'static, St
                 snap_request: &mut s.snap_request,
                 snap_visibility_request: &mut s.snap_visibility_request,
                 snap_costing_request: &mut s.snap_costing_request,
+                sky_trails_request: &mut s.sky_trails_request,
             };
             show_side_panel(ui, &mut ctx);
         },
@@ -742,6 +745,7 @@ fn track_without_satellite_reports_falls_back_to_no_data_tooltip() {
         snap_visibility_request: None,
         snap_costing_choices: Vec::new(),
         snap_costing_request: None,
+        sky_trails_request: None,
     };
     // Renders the expanded track row, exercising the `fix_stats == None` fallback
     // ("No satellite data") instead of the colored tooltip.
@@ -868,6 +872,7 @@ fn snapshot_track_channels() {
         snap_visibility_request: None,
         snap_costing_choices: Vec::new(),
         snap_costing_request: None,
+        sky_trails_request: None,
     };
     let mut harness = make_harness(state);
     harness.run();
@@ -922,6 +927,7 @@ fn make_state_with_shared_prefix() -> State {
         snap_visibility_request: None,
         snap_costing_choices: Vec::new(),
         snap_costing_request: None,
+        sky_trails_request: None,
     }
 }
 
@@ -973,6 +979,7 @@ fn make_state_with_long_name() -> State {
         snap_visibility_request: None,
         snap_costing_choices: Vec::new(),
         snap_costing_request: None,
+        sky_trails_request: None,
     }
 }
 
@@ -1043,6 +1050,7 @@ fn make_state_with_metadata() -> State {
         snap_visibility_request: None,
         snap_costing_choices: Vec::new(),
         snap_costing_request: None,
+        sky_trails_request: None,
     }
 }
 
@@ -1140,6 +1148,7 @@ fn clicking_note_icon_requests_recording_details() {
         snap_visibility_request: None,
         snap_costing_choices: Vec::new(),
         snap_costing_request: None,
+        sky_trails_request: None,
     };
     let mut harness = make_harness(state);
     harness.run();
@@ -1199,6 +1208,7 @@ fn settled_docked_panel_width(state: State) -> f32 {
                                 snap_request: &mut s.snap_request,
                                 snap_visibility_request: &mut s.snap_visibility_request,
                                 snap_costing_request: &mut s.snap_costing_request,
+                                sky_trails_request: &mut s.sky_trails_request,
                             };
                             show_side_panel(ui, &mut ctx);
                         });

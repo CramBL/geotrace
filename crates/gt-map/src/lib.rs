@@ -14,6 +14,7 @@ mod query_match_renderer;
 mod sat_labels;
 mod scope;
 mod sky_glyph_renderer;
+mod sky_trails_window;
 mod snapped_track_renderer;
 #[cfg(test)]
 mod test_harness;
@@ -24,6 +25,7 @@ mod transform;
 mod viewport;
 
 pub use icons::register_marker_icons;
+pub use sky_trails_window::SkyTrailsWindow;
 pub use viewport::GeoBounds;
 
 use egui::Context;
@@ -70,6 +72,8 @@ pub enum MapContextAction {
     ShowOnlyTrack(TrackRef),
     /// Hide every file except the given one.
     ShowOnlyFile(FileIdx),
+    /// Open the sky trails window on the given track.
+    ShowSkyTrails(TrackRef),
 }
 
 /// Manages the load-highlight pulse animation.
@@ -764,6 +768,11 @@ impl NavMap {
             }
             if ui.button("Only show elements from this file").clicked() {
                 context_action = Some(MapContextAction::ShowOnlyFile(point_ref.track.fi));
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Show sky trails…").clicked() {
+                context_action = Some(MapContextAction::ShowSkyTrails(point_ref.track));
                 ui.close();
             }
         });
