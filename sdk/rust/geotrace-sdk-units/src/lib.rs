@@ -761,7 +761,10 @@ fn normalize_label(label: &str) -> String {
         "mps2" | "m/s/s" => "m/s2".to_owned(),
         "G" => "g".to_owned(),
         "mG" => "mg".to_owned(),
-        value => value.replace("^2", "2").replace('²', "2"),
+        // Collapse the superscript first, so a second pass over an already
+        // normalized label is a no-op (idempotent): `²` -> `^2` -> `2` in one
+        // pass rather than leaving a `^2` for the next call to reduce.
+        value => value.replace('²', "2").replace("^2", "2"),
     }
 }
 
