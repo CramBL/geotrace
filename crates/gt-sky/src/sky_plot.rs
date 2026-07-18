@@ -203,37 +203,13 @@ fn mark_tooltip(ui: &egui::Ui, response: &egui::Response, marks: &[(Satellite, P
             .with((satellite.constellation(), satellite.prn())),
         egui::PopupAnchor::Pointer,
     )
-    .show(|ui| satellite_tooltip_ui(ui, satellite));
+    .show(|ui| crate::plot_common::satellite_tooltip(ui, satellite));
 }
 
 /// The mark nearest to `pointer`, within [`style::MARK_HOVER_RADIUS_PX`].
 fn nearest_mark(marks: &[(Satellite, Pos2)], pointer: Pos2) -> Option<&Satellite> {
     let candidates = marks.iter().map(|(satellite, pos)| (satellite, *pos));
     crate::plot_common::nearest_within(candidates, pointer, style::MARK_HOVER_RADIUS_PX)
-}
-
-fn satellite_tooltip_ui(ui: &mut egui::Ui, satellite: &Satellite) {
-    let label =
-        crate::plot_common::satellite_designator(satellite.constellation(), satellite.prn());
-    ui.label(egui::RichText::new(label).strong());
-    let degree = |value: Option<f32>| {
-        value.map_or_else(
-            || gt_ui_theme::EM_DASH.to_owned(),
-            |v| format!("{v:.0}{}", gt_ui_theme::DEGREE_SIGN),
-        )
-    };
-    ui.label(format!("Elevation {}", degree(satellite.elevation())));
-    ui.label(format!("Azimuth {}", degree(satellite.azimuth())));
-    let snr = satellite.snr().map_or_else(
-        || gt_ui_theme::EM_DASH.to_owned(),
-        |snr| format!("{:.0} dB-Hz", snr.value()),
-    );
-    ui.label(format!("SNR {snr}"));
-    ui.label(if satellite.in_fix() {
-        "In fix"
-    } else {
-        "Tracked, not in fix"
-    });
 }
 
 /// "9 of 14 in fix" above the plot.
@@ -532,9 +508,9 @@ mod snapshot_tests {
             .size(egui::vec2(220.0, 220.0))
             .theme(true)
             .ui(move |ui| {
-                super::satellite_tooltip_ui(ui, &full);
+                crate::plot_common::satellite_tooltip(ui, &full);
                 ui.separator();
-                super::satellite_tooltip_ui(ui, &snr_less);
+                crate::plot_common::satellite_tooltip(ui, &snr_less);
             });
         harness.run();
         harness.snapshot("sky_mark_tooltip");

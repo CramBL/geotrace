@@ -4,11 +4,11 @@
 
 use egui::{Color32, Pos2, Sense, Stroke, Vec2};
 
-use gt_types::satellites::{Constellation, ConstellationSet};
+use gt_types::satellites::{Constellation, ConstellationSet, Satellite};
 use gt_types::{GpsTime, GpsTimeRange};
 
 use crate::style;
-use crate::trails::{SkyTrail, SkyTrails, SlipMark, TrailEpoch};
+use crate::trails::{SkyTrail, SkyTrails, SlipMark, TrailEpoch, TrailSample};
 use crate::{grid, plot_common, projection};
 
 /// The per-frame plot geometry shared by the trail and marker painting.
@@ -113,6 +113,9 @@ impl<'a> SkyTrailsPlot<'a> {
         let panel = ui.visuals().panel_fill;
         let epochs = &self.trails.epochs;
 
+        // The scrub markers drawn this frame, kept for hover: each satellite at
+        // the scrubbed instant, with its position matching the drawn dot.
+        let mut markers: Vec<(Satellite, Pos2)> = Vec::new();
         for trail in &self.trails.trails {
             if !self.shown.contains(trail.constellation) {
                 continue;
@@ -122,14 +125,20 @@ impl<'a> SkyTrailsPlot<'a> {
             paint_trail(ui, frame, trail, epochs, base, focus_factor);
 
             if let Some(scrub) = self.scrub
-                && let Some((azimuth, elevation)) = sample_at(trail, epochs, scrub)
+                && let Some((azimuth, elevation, exact)) = sample_at(trail, epochs, scrub)
             {
+                let pos = frame.project(azimuth, elevation);
                 ui.painter().circle(
-                    frame.project(azimuth, elevation),
+                    pos,
                     style::TRAIL_MARKER_RADIUS_PX,
                     base.gamma_multiply(focus_factor),
                     Stroke::new(style::TRAIL_MARKER_EDGE_PX, panel),
                 );
+                // Hover shows the report's SNR and fix state, so the marker is
+                // only a hover target when it sits on an actual report.
+                if let Some(sample) = exact {
+                    markers.push((satellite_from_sample(trail, sample), pos));
+                }
             }
         }
 
@@ -142,13 +151,20 @@ impl<'a> SkyTrailsPlot<'a> {
                 .gamma_multiply(self.focus_factor(slip.constellation));
             paint_slip_mark(ui, frame.project(slip.azimuth, slip.elevation), color);
         }
-        // A slip mark under the pointer takes precedence over the mask ring:
-        // it is the more specific target, and both tooltips at once would
-        // collide.
-        let hovered_slip = response
-            .hover_pos()
+        // Hover precedence, most to least specific: a satellite's scrub marker
+        // (the moving current-instant dot, the window's primary target), then a
+        // slip mark, then the mask ring. At most one tooltip shows, so they
+        // never collide.
+        let pointer = response.hover_pos();
+        let hovered_marker = pointer.and_then(|pointer| {
+            let candidates = markers.iter().map(|(satellite, pos)| (satellite, *pos));
+            plot_common::nearest_within(candidates, pointer, style::MARK_HOVER_RADIUS_PX)
+        });
+        let hovered_slip = pointer
             .and_then(|pointer| nearest_slip(&self.trails.slips, self.shown, frame, pointer));
-        if let Some(slip) = hovered_slip {
+        if let Some(satellite) = hovered_marker {
+            show_marker_tooltip(ui, &response, satellite);
+        } else if let Some(slip) = hovered_slip {
             show_slip_tooltip(ui, &response, slip);
         } else if let Some(mask_deg) = hovered_mask_deg {
             mask_tooltip(ui, &response, mask_deg);
@@ -210,6 +226,33 @@ fn paint_slip_mark(ui: &egui::Ui, pos: Pos2, color: Color32) {
     let painter = ui.painter();
     painter.line_segment([pos + Vec2::new(-r, -r), pos + Vec2::new(r, r)], stroke);
     painter.line_segment([pos + Vec2::new(-r, r), pos + Vec2::new(r, -r)], stroke);
+}
+
+/// The satellite behind a scrub marker, for its hover tooltip - a report's
+/// sample carries everything the tooltip needs.
+fn satellite_from_sample(trail: &SkyTrail, sample: &TrailSample) -> Satellite {
+    Satellite::new(
+        trail.constellation,
+        trail.prn.value(),
+        Some(sample.elevation),
+        Some(sample.azimuth),
+        sample.snr.map(|snr| snr.value()),
+        sample.in_fix,
+    )
+}
+
+/// Show the hover tooltip for a satellite's scrub marker, identical to the
+/// per-report plot's satellite tooltip.
+fn show_marker_tooltip(ui: &egui::Ui, response: &egui::Response, satellite: &Satellite) {
+    egui::Tooltip::always_open(
+        ui.ctx().clone(),
+        ui.layer_id(),
+        response
+            .id
+            .with(("marker", satellite.constellation(), satellite.prn())),
+        egui::PopupAnchor::Pointer,
+    )
+    .show(|ui| plot_common::satellite_tooltip(ui, satellite));
 }
 
 /// Show the hover tooltip for a slip mark.
@@ -274,16 +317,23 @@ fn epoch_between(epochs: &[TrailEpoch], a: GpsTime, b: GpsTime) -> bool {
     epochs.get(after_a).is_some_and(|e| e.time < b)
 }
 
-/// The satellite's interpolated `(azimuth, elevation)` at `time`, or `None`
-/// when `time` is outside the trail or inside one of its gaps.
-fn sample_at(trail: &SkyTrail, epochs: &[TrailEpoch], time: GpsTime) -> Option<(f32, f32)> {
+/// The satellite's `(azimuth, elevation)` at `time`, plus the underlying
+/// [`TrailSample`] when `time` lands exactly on a report (so the caller gets
+/// its SNR and fix state without a second lookup). Between reports the position
+/// is interpolated and the sample is `None`. `None` overall when `time` is
+/// outside the trail or inside one of its gaps.
+fn sample_at<'a>(
+    trail: &'a SkyTrail,
+    epochs: &[TrailEpoch],
+    time: GpsTime,
+) -> Option<(f32, f32, Option<&'a TrailSample>)> {
     let samples = &trail.samples;
     let idx = samples.partition_point(|s| s.time < time);
     // Exact hit on a sample.
     if let Some(s) = samples.get(idx)
         && s.time == time
     {
-        return Some((s.azimuth, s.elevation));
+        return Some((s.azimuth, s.elevation, Some(s)));
     }
     // Otherwise interpolate between the bracketing samples, unless the pair
     // spans a gap or `time` is outside the trail.
@@ -298,12 +348,13 @@ fn sample_at(trail: &SkyTrail, epochs: &[TrailEpoch], time: GpsTime) -> Option<(
     }
     let span = b.time.signed_duration_since(a.time).num_milliseconds();
     if span <= 0 {
-        return Some((a.azimuth, a.elevation));
+        return Some((a.azimuth, a.elevation, Some(a)));
     }
     let f = time.signed_duration_since(a.time).num_milliseconds() as f32 / span as f32;
     Some((
         a.azimuth + (b.azimuth - a.azimuth) * f,
         a.elevation + (b.elevation - a.elevation) * f,
+        None,
     ))
 }
 
@@ -381,17 +432,21 @@ mod tests {
         #[case] expected: Option<(f32, f32)>,
     ) {
         let epochs = [epoch(0), epoch(1), epoch(2)];
-        assert_eq!(sample_at(&gapped_trail(), &epochs, time), expected);
+        let position = sample_at(&gapped_trail(), &epochs, time).map(|(az, el, _)| (az, el));
+        assert_eq!(position, expected);
     }
 
     #[test]
-    fn sample_at_interpolates_a_contiguous_span() {
-        // Without the skipped t1 epoch, the same span interpolates linearly.
-        let contiguous = [epoch(0), epoch(2)];
-        assert_eq!(
-            sample_at(&gapped_trail(), &contiguous, at(1)),
-            Some((50.0, 50.0))
-        );
+    fn sample_at_carries_the_sample_only_on_an_exact_hit() {
+        let trail = gapped_trail();
+        let epochs = [epoch(0), epoch(2)];
+        // Exactly on a report: the sample comes back for the tooltip.
+        let (_, _, exact) = sample_at(&trail, &epochs, at(0)).expect("hit");
+        assert!(exact.is_some());
+        // Interpolated between reports: position but no single sample.
+        let (az, el, exact) = sample_at(&trail, &epochs, at(1)).expect("interpolated");
+        assert_eq!((az, el), (50.0, 50.0));
+        assert!(exact.is_none());
     }
 
     struct Spec {
@@ -594,6 +649,70 @@ mod tests {
             harness.run();
         }
         harness.snapshot_loose("sky_trails_mask_ring_hover");
+    }
+
+    #[test]
+    fn sky_trails_marker_hover_shows_the_satellite() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let trails = demo_trails();
+        // The GPS-5 satellite's position at the scrubbed epoch, so the hover
+        // point can land on its marker.
+        let scrub = at(4);
+        let gps5 = trails
+            .trails
+            .iter()
+            .find(|t| t.constellation == Constellation::Gps && t.prn.value() == 5)
+            .expect("gps-5 trail");
+        let sample = gps5.sample_exactly_at(scrub).expect("sample at the epoch");
+        let offset = super::projection::unit_disc_position(sample.azimuth, sample.elevation);
+
+        let center = Rc::new(Cell::new(egui::Pos2::ZERO));
+        let sink = Rc::clone(&center);
+        let trails_for_ui = trails.clone();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(320.0, 360.0))
+            .theme(true)
+            .ui(move |ui| {
+                let response = SkyTrailsPlot::new(&trails_for_ui, 300.0)
+                    .scrub(Some(scrub))
+                    .ui(ui);
+                sink.set(response.rect.center());
+            });
+        harness.run();
+
+        let radius = 300.0 / 2.0 - super::style::FULL_RIM_MARGIN_PX;
+        harness.inner.hover_at(center.get() + offset * radius);
+        for _ in 0..60 {
+            harness.run();
+        }
+        harness.snapshot_loose("sky_trails_marker_hover");
+    }
+
+    #[test]
+    fn satellite_from_sample_carries_the_reports_facts() {
+        let trail = SkyTrail {
+            constellation: Constellation::Gps,
+            prn: gt_types::satellites::Prn::new(5),
+            samples: vec![],
+        };
+        let sample = TrailSample {
+            time: at(0),
+            point_index: PointIdx::new(0),
+            azimuth: 40.0,
+            elevation: 60.0,
+            snr: Some(gt_types::satellites::Snr::new(42.0)),
+            in_fix: true,
+        };
+
+        let satellite = super::satellite_from_sample(&trail, &sample);
+        assert_eq!(satellite.constellation(), Constellation::Gps);
+        assert_eq!(satellite.prn().value(), 5);
+        assert_eq!(satellite.azimuth(), Some(40.0));
+        assert_eq!(satellite.elevation(), Some(60.0));
+        assert_eq!(satellite.snr().map(|s| s.value()), Some(42.0));
+        assert!(satellite.in_fix());
     }
 
     #[test]

@@ -1,9 +1,9 @@
 //! Small helpers shared by the per-report sky plot and the whole-track
-//! trails plot: satellite labels and pointer hit-testing.
+//! trails plot: satellite labels, hover tooltips, and pointer hit-testing.
 
 use egui::Pos2;
 
-use gt_types::satellites::{Constellation, Prn};
+use gt_types::satellites::{Constellation, Prn, Satellite};
 
 /// The `"G05 GPS"` designator: RINEX prefix, zero-padded PRN, constellation
 /// name. Single source for both plots' hover labels.
@@ -14,6 +14,32 @@ pub(crate) fn satellite_designator(constellation: Constellation, prn: Prn) -> St
         prn.value(),
         constellation.display_name()
     )
+}
+
+/// The hover tooltip body for one satellite: designator, elevation, azimuth,
+/// SNR, and fix state. Shared so a satellite reads the same whether hovered on
+/// the per-report plot or on a trail's scrub marker.
+pub(crate) fn satellite_tooltip(ui: &mut egui::Ui, satellite: &Satellite) {
+    let label = satellite_designator(satellite.constellation(), satellite.prn());
+    ui.label(egui::RichText::new(label).strong());
+    let degree = |value: Option<f32>| {
+        value.map_or_else(
+            || gt_ui_theme::EM_DASH.to_owned(),
+            |v| format!("{v:.0}{}", gt_ui_theme::DEGREE_SIGN),
+        )
+    };
+    ui.label(format!("Elevation {}", degree(satellite.elevation())));
+    ui.label(format!("Azimuth {}", degree(satellite.azimuth())));
+    let snr = satellite.snr().map_or_else(
+        || gt_ui_theme::EM_DASH.to_owned(),
+        |snr| format!("{:.0} dB-Hz", snr.value()),
+    );
+    ui.label(format!("SNR {snr}"));
+    ui.label(if satellite.in_fix() {
+        "In fix"
+    } else {
+        "Tracked, not in fix"
+    });
 }
 
 /// The candidate nearest to `pointer`, within `radius`. `candidates` yields
