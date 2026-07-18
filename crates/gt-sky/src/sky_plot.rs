@@ -170,7 +170,8 @@ impl<'a> SkyPlot<'a> {
                 let radius = diameter / 2.0 - size.rim_margin();
                 crate::grid::draw_grid(ui, center, radius, size == SkyPlotSize::Full);
                 if let Some(mask_deg) = elevation_mask_deg {
-                    crate::grid::draw_mask_ring(ui, center, radius, mask_deg);
+                    // The point plot has no ring hover yet, so never highlighted.
+                    crate::grid::draw_mask_ring(ui, center, radius, mask_deg, false);
                 }
                 let marks = paint_marks(ui, center, radius, satellites, size, highlight);
                 if interactive {

@@ -75,6 +75,14 @@ pub const MASK_RING_GAP_PX: f32 = 4.0;
 /// Polyline segments approximating the dashed mask ring.
 pub const MASK_RING_SEGMENTS: u32 = 90;
 
+/// Pointer distance from the mask ring, in either radial direction, within
+/// which the ring reads as hovered and shows its tooltip.
+pub const MASK_RING_HOVER_BAND_PX: f32 = 6.0;
+
+/// Stroke width of the mask ring while hovered, thicker than the resting
+/// [`GRID_STROKE_WIDTH_PX`] so it reads as picked out.
+pub const MASK_RING_HOVER_WIDTH_PX: f32 = 2.0;
+
 /// Font size of the N/E/S/W labels in the full plot.
 pub const FULL_CARDINAL_FONT_SIZE: f32 = 10.5;
 /// Font size of the north label in the compact plot.
