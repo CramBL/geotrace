@@ -102,8 +102,16 @@ pub(crate) fn draw_grid(ui: &egui::Ui, center: Pos2, radius: f32, full: bool) {
 }
 
 /// Draw the elevation mask as a dashed ring. Satellites below the mask stay
-/// visible - the ring is context, not a filter.
-pub(crate) fn draw_mask_ring(ui: &egui::Ui, center: Pos2, radius: f32, mask_deg: f32) {
+/// visible - the ring is context, not a filter. When `hovered` (the pointer is
+/// on it, per [`mask_ring_hit`]) it is drawn brighter and thicker, so hovering
+/// it reads as picking out an element rather than dead space.
+pub(crate) fn draw_mask_ring(
+    ui: &egui::Ui,
+    center: Pos2,
+    radius: f32,
+    mask_deg: f32,
+    hovered: bool,
+) {
     let ring_radius = radius * projection::unit_disc_radius(mask_deg);
     let points: Vec<Pos2> = (0..=style::MASK_RING_SEGMENTS)
         .map(|i| {
@@ -111,11 +119,49 @@ pub(crate) fn draw_mask_ring(ui: &egui::Ui, center: Pos2, radius: f32, mask_deg:
             center + Vec2::new(angle.sin(), -angle.cos()) * ring_radius
         })
         .collect();
-    let stroke = Stroke::new(style::GRID_STROKE_WIDTH_PX, ui.visuals().weak_text_color());
+    let (color, width) = if hovered {
+        (
+            ui.visuals().strong_text_color(),
+            style::MASK_RING_HOVER_WIDTH_PX,
+        )
+    } else {
+        (ui.visuals().weak_text_color(), style::GRID_STROKE_WIDTH_PX)
+    };
     ui.painter().add(Shape::dashed_line(
         &points,
-        stroke,
+        Stroke::new(width, color),
         style::MASK_RING_DASH_PX,
         style::MASK_RING_GAP_PX,
     ));
+}
+
+/// Whether `pointer` is close enough to the mask ring (within
+/// [`style::MASK_RING_HOVER_BAND_PX`] of its radius, in either direction) to
+/// count as hovering it.
+pub(crate) fn mask_ring_hit(center: Pos2, radius: f32, mask_deg: f32, pointer: Pos2) -> bool {
+    let ring_radius = radius * projection::unit_disc_radius(mask_deg);
+    let distance = (pointer - center).length();
+    (distance - ring_radius).abs() <= style::MASK_RING_HOVER_BAND_PX
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::pos2;
+    use rstest::rstest;
+
+    use super::mask_ring_hit;
+
+    // A mask at 0 degrees sits on the horizon rim, so the ring radius equals
+    // the plot radius (100 here). Distances are measured from the centre.
+    #[rstest]
+    #[case::on_the_ring(pos2(100.0, 0.0), true)]
+    #[case::just_inside_the_band(pos2(105.0, 0.0), true)]
+    #[case::outside_the_band(pos2(110.0, 0.0), false)]
+    #[case::well_inside_the_ring(pos2(50.0, 0.0), false)]
+    fn mask_ring_hit_matches_a_band_around_the_ring(
+        #[case] pointer: egui::Pos2,
+        #[case] hit: bool,
+    ) {
+        assert_eq!(mask_ring_hit(pos2(0.0, 0.0), 100.0, 0.0, pointer), hit);
+    }
 }

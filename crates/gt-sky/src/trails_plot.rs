@@ -85,12 +85,23 @@ impl<'a> SkyTrailsPlot<'a> {
         let radius = self.diameter / 2.0 - style::FULL_RIM_MARGIN_PX;
         // The trails plot is always full size, so the grid is fully labelled.
         grid::draw_grid(ui, center, radius, true);
+        // The mask angle when the pointer is on its ring, else `None` - one
+        // value that answers both "is it hovered" and "which angle to label".
+        let hovered_mask_deg = self
+            .elevation_mask_deg
+            .zip(response.hover_pos())
+            .filter(|&(mask_deg, pointer)| grid::mask_ring_hit(center, radius, mask_deg, pointer))
+            .map(|(mask_deg, _)| mask_deg);
         if let Some(mask_deg) = self.elevation_mask_deg {
-            grid::draw_mask_ring(ui, center, radius, mask_deg);
+            grid::draw_mask_ring(ui, center, radius, mask_deg, hovered_mask_deg.is_some());
         }
 
-        // Nothing to ramp against without a time span.
+        // Nothing to ramp against without a time span. The mask ring is still
+        // drawn above (context), so honor its hover even with no trails.
         let Some(time_range) = self.trails.time_range else {
+            if let Some(mask_deg) = hovered_mask_deg {
+                mask_tooltip(ui, &response, mask_deg);
+            }
             return response;
         };
         let frame = Frame {
@@ -131,7 +142,17 @@ impl<'a> SkyTrailsPlot<'a> {
                 .gamma_multiply(self.focus_factor(slip.constellation));
             paint_slip_mark(ui, frame.project(slip.azimuth, slip.elevation), color);
         }
-        slip_tooltip(ui, &response, frame, &self.trails.slips, self.shown);
+        // A slip mark under the pointer takes precedence over the mask ring:
+        // it is the more specific target, and both tooltips at once would
+        // collide.
+        let hovered_slip = response
+            .hover_pos()
+            .and_then(|pointer| nearest_slip(&self.trails.slips, self.shown, frame, pointer));
+        if let Some(slip) = hovered_slip {
+            show_slip_tooltip(ui, &response, slip);
+        } else if let Some(mask_deg) = hovered_mask_deg {
+            mask_tooltip(ui, &response, mask_deg);
+        }
 
         response
     }
@@ -191,21 +212,8 @@ fn paint_slip_mark(ui: &egui::Ui, pos: Pos2, color: Color32) {
     painter.line_segment([pos + Vec2::new(-r, r), pos + Vec2::new(r, -r)], stroke);
 }
 
-/// Show a tooltip for the slip mark nearest the pointer, within
-/// [`style::SLIP_MARK_HOVER_RADIUS_PX`].
-fn slip_tooltip(
-    ui: &egui::Ui,
-    response: &egui::Response,
-    frame: Frame,
-    slips: &[SlipMark],
-    shown: ConstellationSet,
-) {
-    let Some(pointer) = response.hover_pos() else {
-        return;
-    };
-    let Some(slip) = nearest_slip(slips, shown, frame, pointer) else {
-        return;
-    };
+/// Show the hover tooltip for a slip mark.
+fn show_slip_tooltip(ui: &egui::Ui, response: &egui::Response, slip: &SlipMark) {
     egui::Tooltip::always_open(
         ui.ctx().clone(),
         ui.layer_id(),
@@ -217,6 +225,21 @@ fn slip_tooltip(
         let degree = gt_ui_theme::DEGREE_SIGN;
         ui.label(format!("Elevation {:.0}{degree}", slip.elevation));
         ui.label(format!("Azimuth {:.0}{degree}", slip.azimuth));
+    });
+}
+
+/// Show the elevation-mask ring's hover tooltip, naming it and its angle so it
+/// reads as a labelled element rather than a mystery circle.
+fn mask_tooltip(ui: &egui::Ui, response: &egui::Response, mask_deg: f32) {
+    egui::Tooltip::always_open(
+        ui.ctx().clone(),
+        ui.layer_id(),
+        response.id.with("mask_ring"),
+        egui::PopupAnchor::Pointer,
+    )
+    .show(|ui| {
+        ui.label(egui::RichText::new("Elevation mask").strong());
+        ui.label(format!("{mask_deg:.0}{}", gt_ui_theme::DEGREE_SIGN));
     });
 }
 
@@ -538,6 +561,39 @@ mod tests {
             });
         harness.run();
         harness.snapshot("sky_trails_with_slips");
+    }
+
+    #[test]
+    fn sky_trails_mask_ring_hover_lights_up_and_labels() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let trails = demo_trails();
+        // The plot's rendered centre, captured so the hover point can be placed
+        // on the ring regardless of the harness's layout margins.
+        let center = Rc::new(Cell::new(egui::Pos2::ZERO));
+        let sink = Rc::clone(&center);
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(320.0, 360.0))
+            .theme(true)
+            .ui(move |ui| {
+                let response = SkyTrailsPlot::new(&trails, 300.0)
+                    .with_elevation_mask_deg(10.0)
+                    .ui(ui);
+                sink.set(response.rect.center());
+            });
+        harness.run();
+
+        // Hover a point on the mask ring (its east side).
+        let radius = 300.0 / 2.0 - super::style::FULL_RIM_MARGIN_PX;
+        let ring_radius = radius * super::projection::unit_disc_radius(10.0);
+        let on_ring = center.get() + egui::vec2(ring_radius, 0.0);
+        harness.inner.hover_at(on_ring);
+        // Tooltips appear after egui's hover delay; step until it elapses.
+        for _ in 0..60 {
+            harness.run();
+        }
+        harness.snapshot_loose("sky_trails_mask_ring_hover");
     }
 
     #[test]
