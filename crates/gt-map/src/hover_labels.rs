@@ -16,6 +16,39 @@ use gt_ui_types::DataPointRef;
 
 use crate::icons::ICON_GAP;
 
+/// Alpha of the hover band drawn over a sky-plot highlight target, low enough
+/// to keep the text underneath legible.
+const HOVER_BAND_ALPHA: f32 = 0.3;
+/// The band's outward pad and corner rounding around the element's rect.
+const HOVER_BAND_PAD_PX: f32 = 2.0;
+const HOVER_BAND_ROUNDING_PX: f32 = 3.0;
+
+/// Whether `rect` is hovered, and, when it is, applies the interactive
+/// affordance: a subtle highlight band over the element plus the pointer
+/// cursor, so a satellite-table target that drives the sky-plot highlight
+/// reads as interactive rather than plain text. Shared by the sticky point
+/// popup and the trails window.
+///
+/// The band is painted on top of the element (at low alpha, so the text stays
+/// legible) rather than behind it. The sticky popup is an [`egui::Window`]
+/// (`Order::Middle`), so a band on a background-order layer - the technique
+/// `gt_side_panel::paint_map_hover_bg` uses for its panel rows, which are not
+/// inside a window - would render behind the window frame and vanish.
+pub(crate) fn hover_affordance(ui: &egui::Ui, rect: egui::Rect) -> bool {
+    if !ui.rect_contains_pointer(rect) {
+        return false;
+    }
+    let band = ui
+        .visuals()
+        .selection
+        .bg_fill
+        .gamma_multiply(HOVER_BAND_ALPHA);
+    ui.painter()
+        .rect_filled(rect.expand(HOVER_BAND_PAD_PX), HOVER_BAND_ROUNDING_PX, band);
+    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    true
+}
+
 /// Returns `true` when the multi-hover compound label should be drawn.
 ///
 /// `current_multi_hover`, more than one candidate hovered this frame.

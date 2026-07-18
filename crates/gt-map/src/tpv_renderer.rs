@@ -56,13 +56,6 @@ const SWATCH_SIZE_PX: f32 = 10.0;
 const SWATCH_ROUNDING_PX: f32 = 2.0;
 const SWATCH_MARGIN_PX: f32 = 1.0;
 
-/// The hover band drawn over a sky-plot highlight target (a fix count,
-/// constellation header, or PRN row), so it reads as interactive rather than
-/// plain text. Translucent enough to keep the text legible.
-const HOVER_BAND_ALPHA: f32 = 0.3;
-const HOVER_BAND_PAD_PX: f32 = 2.0;
-const HOVER_BAND_ROUNDING_PX: f32 = 3.0;
-
 /// Stroke width of the continuous fix-quality line that stands in for the
 /// fix icons when they fade out - slightly thicker than the 3 px trackline
 /// underneath so the quality colors stay readable on top of it.
@@ -562,7 +555,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
                 ui.horizontal(|ui| {
                     let fix_resp =
                         ui.colored_label(fix_count_color(fix, dark_mode), fix.to_string());
-                    if hovering_highlight_target(ui, fix_resp.rect) {
+                    if crate::hover_labels::hover_affordance(ui, fix_resp.rect) {
                         highlight = Some(SkyHighlight::in_fix());
                     }
                     ui.label("/");
@@ -640,14 +633,14 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
                                     ui.label(RichText::new(constellation.display_name()).strong());
                                 })
                                 .response;
-                            if hovering_highlight_target(ui, name.rect) {
+                            if crate::hover_labels::hover_affordance(ui, name.rect) {
                                 highlight = Some(SkyHighlight::constellation(constellation));
                             }
                             let fix_resp = ui.colored_label(
                                 fix_count_color(const_fix, dark_mode),
                                 const_fix.to_string(),
                             );
-                            if hovering_highlight_target(ui, fix_resp.rect) {
+                            if crate::hover_labels::hover_affordance(ui, fix_resp.rect) {
                                 highlight = Some(SkyHighlight::constellation_in_fix(constellation));
                             }
                             ui.label(RichText::new(format!("/{}", const_sats.len())).weak());
@@ -692,7 +685,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
                                     // between them) highlights just that
                                     // satellite.
                                     let row = prn_resp.union(snr_resp).union(fix_resp);
-                                    if hovering_highlight_target(ui, row.rect) {
+                                    if crate::hover_labels::hover_affordance(ui, row.rect) {
                                         highlight =
                                             Some(SkyHighlight::satellite(constellation, sat.prn()));
                                     }
@@ -719,25 +712,6 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
 /// the hover wiring.
 pub(crate) fn sky_table_highlight_id(ui: &Ui) -> egui::Id {
     ui.id().with("sky_table_highlight")
-}
-
-/// Whether `rect` is hovered, applying the interactive affordance when it is:
-/// a subtle highlight band and the pointer cursor, so an element that drives
-/// the sky-plot highlight no longer looks like plain text. Shared by every
-/// such target in the satellite tables.
-pub(crate) fn hovering_highlight_target(ui: &Ui, rect: egui::Rect) -> bool {
-    if !ui.rect_contains_pointer(rect) {
-        return false;
-    }
-    let band = ui
-        .visuals()
-        .selection
-        .bg_fill
-        .gamma_multiply(HOVER_BAND_ALPHA);
-    ui.painter()
-        .rect_filled(rect.expand(HOVER_BAND_PAD_PX), HOVER_BAND_ROUNDING_PX, band);
-    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    true
 }
 
 /// A small colour swatch in the constellation's plot colour, drawn before a
