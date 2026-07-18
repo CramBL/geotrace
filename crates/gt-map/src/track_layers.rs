@@ -635,7 +635,7 @@ impl TrackLayers<'_> {
             tpv_renderer::show_tooltip(ui, self.files, r, match_header);
         }
 
-        tpv_renderer::draw_plot_hover_ring(ui, self.files, self.highlight, style, transform);
+        tpv_renderer::draw_plot_hover_overlay(ui, self.files, self.highlight, style, transform);
     }
 }
 

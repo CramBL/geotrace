@@ -356,11 +356,12 @@ pub(crate) fn frame_style(zoom: f64) -> TpvDrawStyle {
     }
 }
 
-/// Cross-highlight: when the track plot cursor is active, draw a ring
-/// indicator around the pre-computed closest point. The app layer computes
+/// Cross-highlight: when the track plot cursor is active, draw a ring around
+/// the pre-computed closest point, plus a sky disc for its report so
+/// scrubbing the plot walks the sky along the track. The app layer computes
 /// the point via find_closest_tpv and stores it in
 /// `MapHighlight::plot_hover_point` - no O(n) scan needed here.
-pub(crate) fn draw_plot_hover_ring(
+pub(crate) fn draw_plot_hover_overlay(
     ui: &Ui,
     files: &[LoadedFile],
     highlight: &MapHighlight,
@@ -391,6 +392,16 @@ pub(crate) fn draw_plot_hover_ring(
                 egui::Color32::from_rgba_unmultiplied(100, 200, 255, 120),
             ),
         );
+        // The detailed disc at the scrubbed point, independent of the sky
+        // glyphs overlay's own variant or visibility.
+        if let Some(satellites) = &point.satellites {
+            crate::sky_glyph_renderer::draw_hover_disc(
+                ui,
+                pos,
+                satellites,
+                glyph_size_scale(style),
+            );
+        }
     }
 }
 

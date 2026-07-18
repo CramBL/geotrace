@@ -2532,4 +2532,55 @@ mod snapshot_tests {
         }
         harness.snapshot_loose(name);
     }
+
+    /// Snapshot: hovering the time-series plot draws the detailed sky disc at
+    /// the corresponding map point - even with the sky glyphs overlay hidden,
+    /// since the plot-hover disc is a focus indicator, not part of the
+    /// overlay. The ring around the point is the existing cross-highlight.
+    #[test]
+    fn snap_plot_hover_sky_disc() {
+        use gt_ui_types::{DisplayCategory, DisplayMask, TrackDataVisibility};
+
+        let files = vec![make_snapshot_file()];
+        let visibility = TrackDataVisibility::from_loaded(&files);
+        // Overlay off, so the only disc on the map is the plot-hover one.
+        let mut mask = DisplayMask::default();
+        mask.set_visible(DisplayCategory::SkyGlyphs, false);
+        // A mid-track point that carries a satellite report in the fixture.
+        let hovered = (FileIdx::new(0), TrackIdx::new(0), PointIdx::new(50));
+
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(800.0, 600.0))
+            .ui_state(
+                move |ui, map: &mut Option<NavMap>| {
+                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let mut highlight = gt_ui_types::MapHighlight {
+                        plot_hover_point: Some(hovered),
+                        ..gt_ui_types::MapHighlight::default()
+                    };
+                    map.draw(
+                        ui,
+                        &files,
+                        &visibility,
+                        &mut highlight,
+                        &gt_filter::GlobalFilter::default(),
+                        &mut mask.clone(),
+                        &mut gt_ui_types::SkyGlyphVariant::default(),
+                        &gt_ui_types::EventMarkerVisibility::default(),
+                        &gt_ui_types::GeneratedMarkerVisibility::default(),
+                        None,
+                        None,
+                        None,
+                        false,
+                        None,
+                    );
+                },
+                None,
+            );
+
+        for _ in 0..5 {
+            harness.run();
+        }
+        harness.snapshot_loose("plot_hover_sky_disc");
+    }
 }
