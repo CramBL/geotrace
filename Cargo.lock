@@ -2479,6 +2479,7 @@ dependencies = [
 name = "gt-sky"
 version = "0.6.0"
 dependencies = [
+ "chrono",
  "egui",
  "gt-test-utils",
  "gt-types",

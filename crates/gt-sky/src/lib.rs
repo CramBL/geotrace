@@ -7,6 +7,8 @@
 mod projection;
 mod sky_plot;
 pub mod style;
+mod trails;
 
 pub use projection::{mark_position, unit_disc_position, unit_disc_radius};
 pub use sky_plot::{SkyHighlight, SkyPlot, SkyPlotSize};
+pub use trails::{SkyTrail, SkyTrails, TrailEpoch, TrailSample, extract_trails};
