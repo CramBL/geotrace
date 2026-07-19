@@ -56,6 +56,10 @@ const PLAY_ICON_SIZE_PX: f32 = 16.0;
 /// egui's much wider default combo width.
 const SPEED_SELECTOR_WIDTH_PX: f32 = 52.0;
 
+/// Alpha of the underline under an explained term, low enough that it marks
+/// the term without reading as a link.
+const TERM_UNDERLINE_ALPHA: f32 = 0.5;
+
 /// The whole-track sky trails window. Owned by the app and drawn each frame;
 /// opened by [`SkyTrailsWindow::open_track`] from the context menus.
 #[derive(Default)]
@@ -250,7 +254,10 @@ impl WindowBody<'_> {
                     ui.set_width(STATS_COL_WIDTH_PX);
                     focus = constellation_stats(ui, trails, shown, stats_time, *show_not_in_fix);
                     ui.add_space(6.0);
+                    // The help cursor is the real "hover me for an
+                    // explanation" cue; the underlined term is the static hint.
                     ui.checkbox(show_not_in_fix, not_in_fix_label(ui))
+                        .on_hover_cursor(egui::CursorIcon::Help)
                         .on_hover_text("Satellites seen but never used in a fix over this track");
                 },
             );
@@ -281,9 +288,11 @@ impl WindowBody<'_> {
     }
 }
 
-/// The "Show *not in fix*" checkbox label, with the GNSS term itself in
-/// italics so it reads as a term of art rather than plain prose (the hover
-/// text spells it out).
+/// The "Show *not in fix*" checkbox label. The GNSS term is italic and carries
+/// a faint underline - the "there is a definition here" marker - so it reads
+/// as a term of art with an explanation behind it. The underline is kept weak
+/// so it does not read as a link, and the caller pairs it with the help cursor,
+/// which is what actually signals "hover me".
 fn not_in_fix_label(ui: &egui::Ui) -> egui::text::LayoutJob {
     let font = egui::TextStyle::Body.resolve(ui.style());
     let color = ui.visuals().text_color();
@@ -304,6 +313,7 @@ fn not_in_fix_label(ui: &egui::Ui) -> egui::text::LayoutJob {
             font_id: font,
             color,
             italics: true,
+            underline: egui::Stroke::new(1.0, color.gamma_multiply(TERM_UNDERLINE_ALPHA)),
             ..Default::default()
         },
     );
