@@ -11,7 +11,7 @@ use gt_types::{
     SKY_REPORT_MAX_AGE_SECS, TrackIdx, TrackRef,
 };
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH, MINUS_SIGN};
-use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
+use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, PointWindowFolds};
 use strum::IntoEnumIterator as _;
 use uom::si::angle::{degree, radian};
 use uom::si::f64::Angle;
@@ -56,6 +56,13 @@ const SWATCH_SIZE_PX: f32 = 10.0;
 const SWATCH_ROUNDING_PX: f32 = 2.0;
 const SWATCH_MARGIN_PX: f32 = 1.0;
 
+/// Size of the solid fold triangle. Big enough that its constellation tint
+/// reads as the colour key the swatch used to provide.
+const FOLD_ARROW_SIZE_PX: f32 = 9.0;
+
+/// Box the fold triangle is allocated in, leaving a little air around it.
+const FOLD_ARROW_BOX_PX: f32 = 12.0;
+
 /// Gap between the sticky popup's plot column and its satellite column, and
 /// between the two satellite columns.
 const STICKY_COLUMN_GAP_PX: f32 = 12.0;
@@ -80,6 +87,9 @@ const MIN_SIDE_BY_SIDE_WIDTH_PX: f32 =
 /// the PRN/SNR/Fix header row. Counted so a one-satellite constellation is not
 /// treated as free when balancing the columns.
 const PANEL_HEADER_ROWS: usize = 2;
+
+/// Rows a folded constellation panel costs - just its own header.
+const FOLDED_PANEL_ROWS: usize = 1;
 
 /// Stroke width of the continuous fix-quality line that stands in for the
 /// fix icons when they fade out - slightly thicker than the 3 px trackline
@@ -531,7 +541,12 @@ fn hover_grid_ui(ui: &mut Ui, p: &NavPoint) {
 /// Unlike `show_hover_table`, the time is omitted here because it is shown
 /// in the window title. The satellite section expands into a full per-PRN
 /// breakdown grouped by constellation.
-pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySection<'_>) {
+pub(crate) fn show_sticky_tpv_content(
+    ui: &mut Ui,
+    p: &NavPoint,
+    sky: &SkySection<'_>,
+    folds: &mut PointWindowFolds,
+) {
     // The sky plot is drawn beside the tables, so hovering a table row feeds
     // the plot through egui's per-frame data store: this frame's plot uses
     // last frame's highlight, and the tables set next frame's. A repaint on
@@ -545,32 +560,50 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
     // when they do not, since squeezing the tables in beside a 256 px plot
     // leaves them too narrow to read.
     let side_by_side = ui.available_width() >= MIN_SIDE_BY_SIDE_WIDTH_PX;
-    let summary = |ui: &mut Ui, highlight: &mut Option<SkyHighlight>| {
-        if !matches!(sky, SkySection::TrackWithoutReports) {
-            sky_section_ui(ui, sky, SkyPlotSize::Full, prev_highlight);
-            ui.add_space(6.0);
-        }
-        sticky_metrics(ui, p, highlight);
-    };
+    // `folds` is a parameter rather than a capture so both closures can take
+    // it in turn without holding overlapping mutable borrows.
+    let summary =
+        |ui: &mut Ui, folds: &mut PointWindowFolds, highlight: &mut Option<SkyHighlight>| {
+            if !matches!(sky, SkySection::TrackWithoutReports) {
+                let header = ui
+                    .horizontal(|ui| {
+                        let tint = ui.visuals().weak_text_color();
+                        fold_arrow(ui, folds.plot_folded, tint);
+                        ui.label(RichText::new("Sky").strong());
+                    })
+                    .response
+                    .interact(egui::Sense::click());
+                crate::hover_labels::hover_affordance(ui, header.rect);
+                if header.clicked() {
+                    folds.plot_folded = !folds.plot_folded;
+                }
+                if !folds.plot_folded {
+                    sky_section_ui(ui, sky, SkyPlotSize::Full, prev_highlight);
+                }
+                ui.add_space(6.0);
+            }
+            sticky_metrics(ui, p, highlight);
+        };
     // The satellite tables always scroll on their own, so the plot beside or
     // above them never scrolls out of view the way it did when one scroll
     // area held everything.
-    let satellites = |ui: &mut Ui, highlight: &mut Option<SkyHighlight>| {
-        ScrollArea::vertical()
-            .id_salt("sticky_sats_scroll")
-            .show(ui, |ui| sticky_satellites(ui, p, highlight));
-    };
+    let satellites =
+        |ui: &mut Ui, folds: &mut PointWindowFolds, highlight: &mut Option<SkyHighlight>| {
+            ScrollArea::vertical()
+                .id_salt("sticky_sats_scroll")
+                .show(ui, |ui| sticky_satellites(ui, p, folds, highlight));
+        };
 
     if side_by_side {
         ui.horizontal_top(|ui| {
-            ui.vertical(|ui| summary(ui, &mut highlight));
+            ui.vertical(|ui| summary(ui, folds, &mut highlight));
             ui.add_space(STICKY_COLUMN_GAP_PX);
-            ui.vertical(|ui| satellites(ui, &mut highlight));
+            ui.vertical(|ui| satellites(ui, folds, &mut highlight));
         });
     } else {
-        summary(ui, &mut highlight);
+        summary(ui, folds, &mut highlight);
         ui.add_space(6.0);
-        satellites(ui, &mut highlight);
+        satellites(ui, folds, &mut highlight);
     }
 
     if highlight != prev_highlight {
@@ -659,6 +692,38 @@ fn sticky_metrics(ui: &mut Ui, p: &NavPoint, highlight: &mut Option<SkyHighlight
     });
 }
 
+/// A fold arrow, tinted with the colour of whatever it folds. Tinting it is
+/// what lets the constellation panels drop their separate colour swatch: one
+/// element carries both the fold state and the key to the plot's marks.
+fn fold_arrow(ui: &mut Ui, folded: bool, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(FOLD_ARROW_BOX_PX), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    // Painted rather than set as a glyph: only the Regular phosphor weight is
+    // loaded, and its caret is too fine to carry the constellation colour now
+    // that the arrow has taken the swatch's job.
+    let c = rect.center();
+    let half = FOLD_ARROW_SIZE_PX / 2.0;
+    let points = if folded {
+        // Pointing right: folded away.
+        vec![
+            egui::pos2(c.x - half, c.y - half),
+            egui::pos2(c.x - half, c.y + half),
+            egui::pos2(c.x + half, c.y),
+        ]
+    } else {
+        // Pointing down: opened out.
+        vec![
+            egui::pos2(c.x - half, c.y - half),
+            egui::pos2(c.x + half, c.y - half),
+            egui::pos2(c.x, c.y + half),
+        ]
+    };
+    ui.painter()
+        .add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
+}
+
 /// One constellation's satellites in the point window, carrying what both the
 /// panel and the column packing need.
 struct ConstellationGroup<'a> {
@@ -670,16 +735,27 @@ struct ConstellationGroup<'a> {
 }
 
 impl ConstellationGroup<'_> {
-    /// Rows this panel occupies - its satellites plus its two header rows.
-    /// Drives how the columns are balanced.
-    fn weight(&self) -> usize {
-        self.satellites.len() + PANEL_HEADER_ROWS
+    /// Rows this panel occupies: its own header plus, when it is not folded
+    /// away, the table header and a row per satellite. Drives how the columns
+    /// are balanced, so folding a constellation re-balances them rather than
+    /// leaving a column sized for rows that are no longer drawn.
+    fn weight(&self, folds: PointWindowFolds) -> usize {
+        if folds.is_folded(self.constellation) {
+            FOLDED_PANEL_ROWS
+        } else {
+            self.satellites.len() + PANEL_HEADER_ROWS
+        }
     }
 }
 
 /// The per-constellation satellite tables. Hovering a constellation name, its
 /// fix count, or a satellite row highlights the matching marks on the plot.
-fn sticky_satellites(ui: &mut Ui, p: &NavPoint, highlight: &mut Option<SkyHighlight>) {
+fn sticky_satellites(
+    ui: &mut Ui,
+    p: &NavPoint,
+    folds: &mut PointWindowFolds,
+    highlight: &mut Option<SkyHighlight>,
+) {
     // Comprehensive per-PRN satellite table grouped by constellation.
     let Some(sats) = &p.satellites else {
         return;
@@ -713,7 +789,7 @@ fn sticky_satellites(ui: &mut Ui, p: &NavPoint, highlight: &mut Option<SkyHighli
     let two_columns = groups.len() > 1 && ui.available_width() >= MIN_TWO_COLUMN_WIDTH_PX;
     if !two_columns {
         for group in &groups {
-            constellation_panel(ui, group, highlight);
+            constellation_panel(ui, group, folds, highlight);
         }
         return;
     }
@@ -721,7 +797,7 @@ fn sticky_satellites(ui: &mut Ui, p: &NavPoint, highlight: &mut Option<SkyHighli
     // Cut the ordered list where the two columns come out closest in height,
     // so uneven constellations pack tight instead of leaving the dead space
     // that fixed two-per-row chunking left behind.
-    let weights: Vec<usize> = groups.iter().map(ConstellationGroup::weight).collect();
+    let weights: Vec<usize> = groups.iter().map(|group| group.weight(*folds)).collect();
     let (left, right) = groups.split_at(balanced_split(&weights));
     ui.horizontal_top(|ui| {
         for (column_i, column) in [left, right].into_iter().enumerate() {
@@ -730,7 +806,7 @@ fn sticky_satellites(ui: &mut Ui, p: &NavPoint, highlight: &mut Option<SkyHighli
             }
             ui.vertical(|ui| {
                 for group in column {
-                    constellation_panel(ui, group, highlight);
+                    constellation_panel(ui, group, folds, highlight);
                 }
             });
         }
@@ -767,6 +843,7 @@ fn balanced_split(weights: &[usize]) -> usize {
 fn constellation_panel(
     ui: &mut Ui,
     group: &ConstellationGroup<'_>,
+    folds: &mut PointWindowFolds,
     highlight: &mut Option<SkyHighlight>,
 ) {
     let &ConstellationGroup {
@@ -776,22 +853,32 @@ fn constellation_panel(
         ..
     } = group;
     let satellites = group.satellites.as_slice();
+    let folded = folds.is_folded(constellation);
     ui.vertical(|ui| {
         let dark_mode = ui.visuals().dark_mode;
         let const_fix = satellites.iter().filter(|s| s.in_fix()).count() as u32;
-        // Header: a colour swatch tying this table to its plot
-        // marks, the constellation name, and its fix/seen count.
-        // Hovering the name highlights the whole constellation;
-        // hovering the fix count highlights its in-fix subset.
+        // Header: the fold arrow in the constellation's plot colour (it
+        // replaces a separate swatch, so folding costs no extra chrome), the
+        // name, and the fix/seen count. Clicking folds; hovering the name
+        // highlights the whole constellation, and hovering the fix count
+        // highlights its in-fix subset.
         ui.horizontal(|ui| {
             let name = ui
                 .horizontal(|ui| {
-                    constellation_swatch(ui, constellation);
+                    fold_arrow(
+                        ui,
+                        folded,
+                        gt_ui_theme::constellation_color(constellation, dark_mode),
+                    );
                     ui.label(RichText::new(constellation.display_name()).strong());
                 })
-                .response;
+                .response
+                .interact(egui::Sense::click());
             if crate::hover_labels::hover_affordance(ui, name.rect) {
                 *highlight = Some(SkyHighlight::constellation(constellation));
+            }
+            if name.clicked() {
+                folds.toggle(constellation);
             }
             let fix_resp =
                 ui.colored_label(fix_count_color(const_fix, dark_mode), const_fix.to_string());
@@ -800,6 +887,11 @@ fn constellation_panel(
             }
             ui.label(RichText::new(format!("/{}", satellites.len())).weak());
         });
+        if folded {
+            // The header above keeps colour, name and counts on screen, so a
+            // folded constellation still reads at a glance.
+            return;
+        }
         Grid::new(("sticky_sats", grid_id))
             .num_columns(3)
             .striped(true)
@@ -1643,10 +1735,11 @@ mod tests {
     #[test]
     fn dense_multi_constellation_packs_into_two_columns() {
         let point = make_point(Some(sats_dense_multi_constellation()));
+        let mut folds = gt_ui_types::PointWindowFolds::default();
         let mut harness = TestHarness::builder()
             .size(egui::vec2(620.0, 560.0))
             .theme(true)
-            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point)));
+            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds));
         harness.snapshot("sticky_dense_two_columns");
     }
 
@@ -1655,11 +1748,88 @@ mod tests {
     #[test]
     fn dense_multi_constellation_reflows_to_one_column_when_narrow() {
         let point = make_point(Some(sats_dense_multi_constellation()));
+        let mut folds = gt_ui_types::PointWindowFolds::default();
         let mut harness = TestHarness::builder()
             .size(egui::vec2(330.0, 560.0))
             .theme(true)
-            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point)));
+            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds));
         harness.snapshot("sticky_dense_one_column");
+    }
+
+    /// A folded panel costs only its header when the columns are balanced, so
+    /// folding re-packs rather than leaving a column sized for rows that are
+    /// no longer drawn.
+    #[test]
+    fn folded_panels_weigh_only_their_header() {
+        let group = ConstellationGroup {
+            grid_id: 0,
+            constellation: Constellation::Gps,
+            prn_prefix: "G",
+            satellites: vec![
+                Satellite::new(
+                    Constellation::Gps,
+                    1,
+                    Some(45.0),
+                    Some(40.0),
+                    Some(40.0),
+                    true
+                );
+                11
+            ],
+        };
+        let unfolded = gt_ui_types::PointWindowFolds::default();
+        assert_eq!(group.weight(unfolded), 11 + super::PANEL_HEADER_ROWS);
+
+        let mut folded = unfolded;
+        folded.toggle(Constellation::Gps);
+        assert_eq!(group.weight(folded), super::FOLDED_PANEL_ROWS);
+    }
+
+    /// Snapshot: a folded plot and two folded constellations. Each folded
+    /// header keeps its colour, name and fix/seen count, so the overview
+    /// survives folding - only the rows go away.
+    #[test]
+    fn folded_sections_keep_their_headers() {
+        let point = make_point(Some(sats_dense_multi_constellation()));
+        let mut folds = gt_ui_types::PointWindowFolds {
+            plot_folded: true,
+            ..Default::default()
+        };
+        folds.toggle(Constellation::Gps);
+        folds.toggle(Constellation::Beidou);
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(620.0, 380.0))
+            .theme(true)
+            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds));
+        harness.snapshot("sticky_folded_sections");
+    }
+
+    /// Folding a constellation drops its satellite rows while its header
+    /// stays, so the window shrinks without hiding what is there.
+    #[rstest]
+    #[case::unfolded(false, true)]
+    #[case::folded(true, false)]
+    fn folding_a_constellation_hides_only_its_rows(
+        #[case] fold_gps: bool,
+        #[case] expect_rows: bool,
+    ) {
+        let point = make_point(Some(sats_dense_multi_constellation()));
+        let mut folds = gt_ui_types::PointWindowFolds::default();
+        if fold_gps {
+            folds.toggle(Constellation::Gps);
+        }
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(620.0, 560.0))
+            .theme(true)
+            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds));
+        harness.run();
+
+        // The header survives either way; only the PRN rows come and go.
+        assert!(
+            harness.inner.query_by_label("GPS").is_some(),
+            "the constellation header must stay visible when folded"
+        );
+        assert_eq!(harness.inner.query_by_label("G01").is_some(), expect_rows);
     }
 
     /// The satellite badge (counts, SNR gradient, PRN colours) must stay
@@ -1673,10 +1843,11 @@ mod tests {
         let point = make_point(Some(sats_multi_constellation()));
         // Sized like the real point window: the plot sits beside the satellite
         // tables, so this is wide and short rather than narrow and tall.
+        let mut folds = gt_ui_types::PointWindowFolds::default();
         let mut harness = TestHarness::builder()
             .size(egui::vec2(600.0, 440.0))
             .theme(dark_mode)
-            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point)));
+            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds));
         harness.snapshot(name);
     }
 
@@ -1697,12 +1868,13 @@ mod tests {
         let point = make_point(Some(sats_multi_constellation()));
         let id_cell = std::rc::Rc::new(std::cell::Cell::new(None));
         let cell = id_cell.clone();
+        let mut folds = gt_ui_types::PointWindowFolds::default();
         let mut harness = TestHarness::builder()
             .size(egui::vec2(320.0, 920.0))
             .theme(true)
             .ui(move |ui| {
                 cell.set(Some(sky_table_highlight_id(ui)));
-                show_sticky_tpv_content(ui, &point, &sky_for(&point));
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
             });
         harness.run();
         harness.inner.get_by_label(label).hover();
@@ -1718,10 +1890,11 @@ mod tests {
     #[test]
     fn hovering_a_prn_row_shows_the_affordance_band() {
         let point = make_point(Some(sats_multi_constellation()));
+        let mut folds = gt_ui_types::PointWindowFolds::default();
         let mut harness = TestHarness::builder()
             .size(egui::vec2(600.0, 440.0))
             .theme(true)
-            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point)));
+            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds));
         harness.run();
         harness.inner.get_by_label("G01").hover();
         harness.inner.run_steps(2);

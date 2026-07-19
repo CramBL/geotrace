@@ -86,6 +86,9 @@ struct SharedAppState {
     display_mask: DisplayMask,
     /// Which sky-glyph variant the map overlay draws.
     sky_glyph_variant: SkyGlyphVariant,
+    /// Which parts of the clicked-point window are folded away. Session state
+    /// for now; persisting it is the next step.
+    point_window_folds: gt_ui_types::PointWindowFolds,
     filter_state: FilterPanelState,
     plot_state: PlotState,
     map_center_request: Option<(f64, f64)>,
@@ -492,6 +495,7 @@ impl App {
                 filter: GlobalFilter::default(),
                 display_mask: DisplayMask::default(),
                 sky_glyph_variant: SkyGlyphVariant::default(),
+                point_window_folds: gt_ui_types::PointWindowFolds::default(),
                 filter_state: FilterPanelState::default(),
                 plot_state: PlotState::default(),
                 map_center_request: None,
@@ -2282,6 +2286,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     &s.filter,
                     &mut s.display_mask,
                     &mut s.sky_glyph_variant,
+                    &mut s.point_window_folds,
                     s.tree.event_marker_visibility(),
                     s.tree.generated_marker_visibility(),
                     self.query_matches,
