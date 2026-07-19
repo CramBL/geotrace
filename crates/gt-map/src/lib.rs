@@ -1,4 +1,4 @@
-use egui::{Area, Frame, Grid, Label, RichText, ScrollArea, Window};
+use egui::{Area, Frame, Grid, Label, RichText, Window};
 use egui_phosphor::regular::GLOBE_HEMISPHERE_WEST as ICON_GLOBE_HEMISPHERE_WEST;
 use egui_phosphor::regular::MAP_TRIFOLD as ICON_MAP_TRIFOLD;
 mod collision_grid;
@@ -125,6 +125,37 @@ const HOVER_FADE_OUT_SLOW: f32 = 0.1;
 /// Combined with `HOVER_FADE_OUT_SLOW` the overlay stays ≈ 78 % visible
 /// after 1 s and reaches zero in ≈ 2 s, a quadratic ease-in curve.
 const HOVER_FADE_OUT_FAST: f32 = 1.5;
+
+/// Opening size of the clicked-point window, wide enough for the sky plot
+/// beside two columns of satellites and tall enough that a typical fix needs
+/// no scrolling.
+const POINT_WINDOW_DEFAULT_SIZE: [f32; 2] = [600.0, 460.0];
+/// Floor for the point window, below which the plot and satellite columns stop
+/// fitting side by side. Narrower than this the satellite column is squeezed
+/// rather than reflowed - single-column reflow lands with the two-column
+/// packing work.
+const POINT_WINDOW_MIN_WIDTH_PX: f32 = 340.0;
+const POINT_WINDOW_MIN_HEIGHT_PX: f32 = 260.0;
+
+/// Whether this category's sticky window shows the full point layout - the sky
+/// plot beside the per-constellation satellite tables. That content is the
+/// data-heavy one (a 40-satellite fix is far taller than a marker's few rows),
+/// so it gets a resizable frame while the marker popups stay auto-sized.
+///
+/// The window builder and the body both switch on this, so the frame and the
+/// content they choose cannot drift apart.
+/// Matched exhaustively rather than with `matches!`, so a new
+/// [`DataCategory`] cannot quietly default to the wrong frame - it breaks the
+/// build until someone decides which layout it takes.
+fn sticky_uses_point_layout(category: DataCategory) -> bool {
+    match category {
+        DataCategory::Tpv | DataCategory::SatelliteReport => true,
+        DataCategory::Track
+        | DataCategory::CustomMarker
+        | DataCategory::GeneratedMarker
+        | DataCategory::EventMarker => false,
+    }
+}
 
 /// Manages the smooth fade animation for the hover-focus overlay.
 ///
@@ -821,6 +852,27 @@ impl NavMap {
 }
 
 /// Shows a draggable, text-selectable egui window with data for the given sticky element.
+/// The clicked-point window body: the deselect hint pinned to the window floor
+/// as an inner bottom panel, with the plot-and-satellites content filling the
+/// space above it. Same inner-panel idiom the side panel uses to pin its
+/// progress strip above a scrolling tree, so the satellite table scrolls
+/// inside the remaining space rather than the whole body scrolling.
+fn show_point_window_body(
+    ui: &mut egui::Ui,
+    point: &gt_types::NavPoint,
+    sky: &crate::tpv_renderer::SkySection<'_>,
+) {
+    egui::Panel::bottom("sticky_point_hint").show_inside(ui, |ui| {
+        ui.add_space(4.0);
+        ui.label(RichText::new("Click to deselect").small().weak());
+    });
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE)
+        .show_inside(ui, |ui| {
+            crate::tpv_renderer::show_sticky_tpv_content(ui, point, sky);
+        });
+}
+
 fn show_sticky_popup(
     ctx: &egui::Context,
     files: &[LoadedFile],
@@ -893,131 +945,115 @@ fn show_sticky_popup(
             )
     };
 
-    Window::new(title)
+    let window = Window::new(title)
         .id(egui::Id::new(("sticky_popup", sticky_ref)))
         .default_pos(default_pos)
-        .collapsible(false)
-        .auto_sized()
-        .show(ctx, |ui| match sticky_ref.category {
-            DataCategory::Tpv => {
-                if let Some(track) = sticky_ref
-                    .track
-                    .fi
-                    .get(files)
-                    .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-                    && let Some(point) = sticky_ref.point_index.get(&track.points)
-                {
-                    // Cap the window height so satellite tables never overflow the
-                    // screen. The ScrollArea only activates past the cap.
-                    let max_h = (ui.ctx().viewport_rect().height() * 0.75).min(500.0);
-                    ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
-                        let sky =
-                            crate::tpv_renderer::SkySection::resolve(track, sticky_ref.point_index);
-                        crate::tpv_renderer::show_sticky_tpv_content(ui, point, &sky);
+        .collapsible(false);
+    let window = if sticky_uses_point_layout(sticky_ref.category) {
+        window
+            .resizable(true)
+            .default_size(POINT_WINDOW_DEFAULT_SIZE)
+            .min_width(POINT_WINDOW_MIN_WIDTH_PX)
+            .min_height(POINT_WINDOW_MIN_HEIGHT_PX)
+    } else {
+        window.auto_sized()
+    };
+    window.show(ctx, |ui| match sticky_ref.category {
+        // Both carry the same point content, so they share one arm - and with
+        // it the resizable frame that `sticky_uses_point_layout` selects.
+        DataCategory::Tpv | DataCategory::SatelliteReport => {
+            if let Some(track) = sticky_ref
+                .track
+                .fi
+                .get(files)
+                .and_then(|f| sticky_ref.track.index.get(&f.tracks))
+                && let Some(point) = sticky_ref.point_index.get(&track.points)
+            {
+                let sky = crate::tpv_renderer::SkySection::resolve(track, sticky_ref.point_index);
+                show_point_window_body(ui, point, &sky);
+            }
+        }
+        DataCategory::CustomMarker => {
+            if let Some(marker) = sticky_ref
+                .track
+                .fi
+                .get(files)
+                .and_then(|f| sticky_ref.track.index.get(&f.tracks))
+                .and_then(|t| sticky_ref.point_index.get(&t.custom_markers))
+            {
+                Grid::new("sticky_marker_grid")
+                    .num_columns(2)
+                    .show(ui, |ui| {
+                        ui.label("Label");
+                        ui.add(Label::new(marker.label.as_str()).selectable(true));
+                        ui.end_row();
                     });
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("Click to deselect").small().weak());
-                }
+                ui.add_space(4.0);
+                ui.label(RichText::new("Click to deselect").small().weak());
             }
-            DataCategory::CustomMarker => {
-                if let Some(marker) = sticky_ref
-                    .track
-                    .fi
-                    .get(files)
-                    .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-                    .and_then(|t| sticky_ref.point_index.get(&t.custom_markers))
-                {
-                    Grid::new("sticky_marker_grid")
-                        .num_columns(2)
-                        .show(ui, |ui| {
-                            ui.label("Label");
-                            ui.add(Label::new(marker.label.as_str()).selectable(true));
-                            ui.end_row();
-                        });
+        }
+        DataCategory::GeneratedMarker => {
+            if let Some(marker) = sticky_ref
+                .track
+                .fi
+                .get(files)
+                .and_then(|f| sticky_ref.track.index.get(&f.tracks))
+                .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
+            {
+                // The window title already shows the time, so the body adds
+                // what hovering shows plus the position: the event summary,
+                // the position, and (for a slip) the per-satellite table.
+                let header =
+                    crate::generated_marker_renderer::generated_marker_header(&marker.kind);
+                Grid::new("sticky_gen_grid").num_columns(2).show(ui, |ui| {
+                    ui.label("Event");
+                    ui.add(Label::new(header).selectable(true));
+                    ui.end_row();
+                    ui.label("Position");
+                    ui.add(
+                        Label::new(format!(
+                            "{:.6}, {:.6}",
+                            marker.lat.as_degrees(),
+                            marker.lon.as_degrees()
+                        ))
+                        .selectable(true),
+                    );
+                    ui.end_row();
+                });
+                if let gt_types::GeneratedMarkerKind::Slip(event) = &marker.kind {
                     ui.add_space(4.0);
-                    ui.label(RichText::new("Click to deselect").small().weak());
+                    crate::generated_marker_renderer::show_slip_table(ui, event);
                 }
+                ui.add_space(4.0);
+                ui.label(RichText::new("Click to deselect").small().weak());
             }
-            DataCategory::GeneratedMarker => {
-                if let Some(marker) = sticky_ref
-                    .track
-                    .fi
-                    .get(files)
-                    .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-                    .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
-                {
-                    // The window title already shows the time, so the body adds
-                    // what hovering shows plus the position: the event summary,
-                    // the position, and (for a slip) the per-satellite table.
-                    let header =
-                        crate::generated_marker_renderer::generated_marker_header(&marker.kind);
-                    Grid::new("sticky_gen_grid").num_columns(2).show(ui, |ui| {
+        }
+        DataCategory::Track => {}
+        DataCategory::EventMarker => {
+            if let Some(marker) = sticky_ref
+                .track
+                .fi
+                .get(files)
+                .and_then(|f| sticky_ref.track.index.get(&f.tracks))
+                .and_then(|t| sticky_ref.point_index.get(&t.event_markers))
+            {
+                Grid::new("sticky_event_marker_grid")
+                    .num_columns(2)
+                    .show(ui, |ui| {
                         ui.label("Event");
-                        ui.add(Label::new(header).selectable(true));
+                        ui.add(Label::new(marker.variant_path.as_str()).selectable(true));
                         ui.end_row();
-                        ui.label("Position");
-                        ui.add(
-                            Label::new(format!(
-                                "{:.6}, {:.6}",
-                                marker.lat.as_degrees(),
-                                marker.lon.as_degrees()
-                            ))
-                            .selectable(true),
-                        );
-                        ui.end_row();
-                    });
-                    if let gt_types::GeneratedMarkerKind::Slip(event) = &marker.kind {
-                        ui.add_space(4.0);
-                        crate::generated_marker_renderer::show_slip_table(ui, event);
-                    }
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("Click to deselect").small().weak());
-                }
-            }
-            DataCategory::SatelliteReport => {
-                if let Some(track) = sticky_ref
-                    .track
-                    .fi
-                    .get(files)
-                    .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-                    && let Some(point) = sticky_ref.point_index.get(&track.points)
-                {
-                    let max_h = (ui.ctx().viewport_rect().height() * 0.75).min(500.0);
-                    ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
-                        let sky =
-                            crate::tpv_renderer::SkySection::resolve(track, sticky_ref.point_index);
-                        crate::tpv_renderer::show_sticky_tpv_content(ui, point, &sky);
-                    });
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("Click to deselect").small().weak());
-                }
-            }
-            DataCategory::Track => {}
-            DataCategory::EventMarker => {
-                if let Some(marker) = sticky_ref
-                    .track
-                    .fi
-                    .get(files)
-                    .and_then(|f| sticky_ref.track.index.get(&f.tracks))
-                    .and_then(|t| sticky_ref.point_index.get(&t.event_markers))
-                {
-                    Grid::new("sticky_event_marker_grid")
-                        .num_columns(2)
-                        .show(ui, |ui| {
-                            ui.label("Event");
-                            ui.add(Label::new(marker.variant_path.as_str()).selectable(true));
+                        if let Some(ann) = &marker.annotation {
+                            ui.label("Note");
+                            ui.add(Label::new(ann.as_str()).selectable(true));
                             ui.end_row();
-                            if let Some(ann) = &marker.annotation {
-                                ui.label("Note");
-                                ui.add(Label::new(ann.as_str()).selectable(true));
-                                ui.end_row();
-                            }
-                        });
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("Click to deselect").small().weak());
-                }
+                        }
+                    });
+                ui.add_space(4.0);
+                ui.label(RichText::new("Click to deselect").small().weak());
             }
-        });
+        }
+    });
 }
 
 #[cfg(test)]
@@ -1745,6 +1781,10 @@ mod snapshot_tests {
             gt_types::Coord { x: 12.59, y: 55.69 },
         );
         let n = points.len();
+        // Counted from the points rather than hard-coded: `SkySection::resolve`
+        // short-circuits on a zero count, so claiming zero here would hide the
+        // sky plot even though these points carry satellite reports.
+        let satellite_report_count = points.iter().filter(|p| p.satellites.is_some()).count();
         let track = LoadedTrack {
             metadata: TrackMetadata {
                 index: 0,
@@ -1756,7 +1796,7 @@ mod snapshot_tests {
                 point_set_diameter_m: Length::new::<uom::si::length::meter>(500.0),
                 has_custom_markers: true,
                 tpv_count: n,
-                satellite_report_count: 0,
+                satellite_report_count,
                 custom_marker_count: 1,
                 generated_marker_count: 1,
                 event_marker_count: 1,
@@ -2591,5 +2631,74 @@ mod snapshot_tests {
             harness.run();
         }
         harness.snapshot_loose("plot_hover_sky_disc");
+    }
+
+    /// Snapshot: the clicked-point window itself - the resizable frame, the
+    /// sky plot pinned beside the satellite tables, and the deselect hint on
+    /// the window floor. Guards the whole composition, not just the body.
+    #[test]
+    fn snap_sticky_point_window() {
+        use gt_ui_types::TrackDataVisibility;
+
+        let files = vec![make_snapshot_file()];
+        let visibility = TrackDataVisibility::from_loaded(&files);
+        // A mid-track point carrying a multi-constellation satellite report.
+        let clicked = gt_ui_types::DataPointRef {
+            track: gt_types::TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            category: gt_types::DataCategory::Tpv,
+            point_index: PointIdx::new(50),
+        };
+
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(900.0, 700.0))
+            .ui_state(
+                move |ui, map: &mut Option<NavMap>| {
+                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let mut highlight = gt_ui_types::MapHighlight {
+                        sticky: Some(clicked),
+                        ..gt_ui_types::MapHighlight::default()
+                    };
+                    map.draw(
+                        ui,
+                        &files,
+                        &visibility,
+                        &mut highlight,
+                        &gt_filter::GlobalFilter::default(),
+                        &mut gt_ui_types::DisplayMask::default(),
+                        &mut gt_ui_types::SkyGlyphVariant::default(),
+                        &gt_ui_types::EventMarkerVisibility::default(),
+                        &gt_ui_types::GeneratedMarkerVisibility::default(),
+                        None,
+                        None,
+                        None,
+                        false,
+                        None,
+                    );
+                },
+                None,
+            );
+
+        for _ in 0..5 {
+            harness.run();
+        }
+        harness.snapshot_loose("sticky_point_window");
+    }
+
+    /// The point layout - and with it the resizable frame - covers both
+    /// categories that render the sky plot beside the satellite tables. A
+    /// satellite-report popup carries the same 40-satellite content as a fix,
+    /// so it must not fall back to the cramped auto-sized frame.
+    #[rstest::rstest]
+    #[case::tpv(gt_types::DataCategory::Tpv, true)]
+    #[case::satellite_report(gt_types::DataCategory::SatelliteReport, true)]
+    #[case::custom_marker(gt_types::DataCategory::CustomMarker, false)]
+    #[case::generated_marker(gt_types::DataCategory::GeneratedMarker, false)]
+    #[case::event_marker(gt_types::DataCategory::EventMarker, false)]
+    #[case::track(gt_types::DataCategory::Track, false)]
+    fn point_layout_covers_the_satellite_bearing_categories(
+        #[case] category: gt_types::DataCategory,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(super::sticky_uses_point_layout(category), expected);
     }
 }
