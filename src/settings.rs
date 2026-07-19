@@ -305,6 +305,10 @@ pub struct MapSettings {
     pub display_mask: gt_ui_types::DisplayMask,
     /// Which sky-glyph variant the map overlay draws.
     pub sky_glyph_variant: gt_ui_types::SkyGlyphVariant,
+    /// Which parts of the clicked-point window are folded away. Serialized as
+    /// the list of folded sections: an absent or empty list means nothing is
+    /// folded, so older config files open everything unfolded.
+    pub point_window_folds: gt_ui_types::PointWindowFolds,
 }
 
 impl Default for MapSettings {
@@ -315,6 +319,7 @@ impl Default for MapSettings {
             sync_to_map: true,
             display_mask: gt_ui_types::DisplayMask::default(),
             sky_glyph_variant: gt_ui_types::SkyGlyphVariant::default(),
+            point_window_folds: gt_ui_types::PointWindowFolds::default(),
         }
     }
 }
@@ -453,6 +458,48 @@ mod snap_settings_tests {
             SnapSettings::default().params(gt_snap::wire::Costing::Auto),
             gt_snap::request_plan::SnapParams::new(gt_snap::wire::Costing::Auto),
             "defaults leave every option unset"
+        );
+    }
+
+    /// The point window's folds survive the settings TOML, listed by name, and
+    /// a config file written before the key existed opens everything unfolded.
+    #[test]
+    fn point_window_folds_roundtrip_through_toml() {
+        use gt_types::satellites::Constellation;
+
+        let mut settings = Settings::default();
+        settings.map.point_window_folds.plot_folded = true;
+        settings
+            .map
+            .point_window_folds
+            .toggle(Constellation::Beidou);
+
+        let serialized = toml::to_string(&settings).expect("serialize");
+        assert!(
+            serialized.contains("beidou"),
+            "folds are stored by name, not as a bitmask: {serialized}"
+        );
+
+        let restored: Settings = toml::from_str(&serialized).expect("deserialize");
+        assert!(restored.map.point_window_folds.plot_folded);
+        assert!(
+            restored
+                .map
+                .point_window_folds
+                .is_folded(Constellation::Beidou)
+        );
+        assert!(
+            !restored
+                .map
+                .point_window_folds
+                .is_folded(Constellation::Gps)
+        );
+
+        // A file from before the key existed.
+        let older: Settings = toml::from_str("").expect("deserialize");
+        assert_eq!(
+            older.map.point_window_folds,
+            gt_ui_types::PointWindowFolds::default()
         );
     }
 
