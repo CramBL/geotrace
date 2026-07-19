@@ -143,10 +143,10 @@ const POINT_WINDOW_MIN_HEIGHT_PX: f32 = 260.0;
 /// so it gets a resizable frame while the marker popups stay auto-sized.
 ///
 /// The window builder and the body both switch on this, so the frame and the
-/// content they choose cannot drift apart.
-/// Matched exhaustively rather than with `matches!`, so a new
-/// [`DataCategory`] cannot quietly default to the wrong frame - it breaks the
-/// build until someone decides which layout it takes.
+/// content they choose cannot drift apart. Matched exhaustively rather than
+/// with `matches!`, so a new [`DataCategory`] cannot quietly default to the
+/// wrong frame - it breaks the build until someone decides which layout it
+/// takes.
 fn sticky_uses_point_layout(category: DataCategory) -> bool {
     match category {
         DataCategory::Tpv | DataCategory::SatelliteReport => true,

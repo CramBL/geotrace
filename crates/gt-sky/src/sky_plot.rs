@@ -76,7 +76,9 @@ impl SkyHighlight {
 }
 
 impl SkyPlotSize {
-    const fn diameter(self) -> f32 {
+    /// How wide this plot draws. Public so callers can budget layout space
+    /// around it without re-deriving the size from [`style`]'s constants.
+    pub const fn diameter(self) -> f32 {
         match self {
             Self::Compact => style::COMPACT_DIAMETER_PX,
             Self::Full => style::FULL_DIAMETER_PX,
