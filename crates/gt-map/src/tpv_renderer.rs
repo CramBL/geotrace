@@ -1,6 +1,6 @@
 use egui::epaint::{PathShape, PathStroke};
 use egui::{Color32, PopupAnchor, Pos2, Stroke, Ui, Vec2};
-use egui::{Grid, RichText, Tooltip};
+use egui::{Grid, RichText, ScrollArea, Tooltip};
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use gt_filter::{self as filter, GlobalFilter};
 use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
@@ -55,6 +55,9 @@ const QUALITY_LINE_ALPHA_STEPS: u8 = 3;
 const SWATCH_SIZE_PX: f32 = 10.0;
 const SWATCH_ROUNDING_PX: f32 = 2.0;
 const SWATCH_MARGIN_PX: f32 = 1.0;
+
+/// Gap between the sticky popup's plot column and its satellite column.
+const STICKY_COLUMN_GAP_PX: f32 = 12.0;
 
 /// Stroke width of the continuous fix-quality line that stands in for the
 /// fix icons when they fade out - slightly thicker than the 3 px trackline
@@ -507,19 +510,46 @@ fn hover_grid_ui(ui: &mut Ui, p: &NavPoint) {
 /// in the window title. The satellite section expands into a full per-PRN
 /// breakdown grouped by constellation.
 pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySection<'_>) {
-    // The sky plot is drawn above the tables, so hovering a table row feeds
+    // The sky plot is drawn beside the tables, so hovering a table row feeds
     // the plot through egui's per-frame data store: this frame's plot uses
-    // last frame's highlight, and the tables below set next frame's. A
-    // repaint on change keeps the lag imperceptible.
+    // last frame's highlight, and the tables set next frame's. A repaint on
+    // change keeps the lag imperceptible.
     let highlight_id = sky_table_highlight_id(ui);
     let prev_highlight: Option<SkyHighlight> =
         ui.ctx().data(|d| d.get_temp(highlight_id)).flatten();
     let mut highlight: Option<SkyHighlight> = None;
 
-    if !matches!(sky, SkySection::TrackWithoutReports) {
-        sky_section_ui(ui, sky, SkyPlotSize::Full, prev_highlight);
-        ui.add_space(6.0);
+    ui.horizontal_top(|ui| {
+        // Left: the sky plot with the fix metrics beneath it. Pinned - only
+        // the satellite column scrolls, so the plot never scrolls out of
+        // view the way it did when one scroll area held everything.
+        ui.vertical(|ui| {
+            if !matches!(sky, SkySection::TrackWithoutReports) {
+                sky_section_ui(ui, sky, SkyPlotSize::Full, prev_highlight);
+                ui.add_space(6.0);
+            }
+            sticky_metrics(ui, p, &mut highlight);
+        });
+        ui.add_space(STICKY_COLUMN_GAP_PX);
+        // Right: the per-constellation tables, scrolling on their own.
+        ui.vertical(|ui| {
+            ScrollArea::vertical()
+                .id_salt("sticky_sats_scroll")
+                .show(ui, |ui| sticky_satellites(ui, p, &mut highlight));
+        });
+    });
+
+    if highlight != prev_highlight {
+        ui.ctx().request_repaint();
     }
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(highlight_id, highlight));
+}
+
+/// The fix metrics beneath the plot: speed, heading, accuracy, the satellite
+/// fix/seen counts, and the clock deltas. Hovering the fix count highlights
+/// the in-fix satellites on the plot.
+fn sticky_metrics(ui: &mut Ui, p: &NavPoint, highlight: &mut Option<SkyHighlight>) {
     // Basic metrics (2-column grid).
     Grid::new("sticky_tpv_basic").num_columns(2).show(ui, |ui| {
         ui.label("Speed");
@@ -560,7 +590,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
                     let fix_resp =
                         ui.colored_label(fix_count_color(fix, dark_mode), fix.to_string());
                     if crate::hover_labels::hover_affordance(ui, fix_resp.rect) {
-                        highlight = Some(SkyHighlight::in_fix());
+                        *highlight = Some(SkyHighlight::in_fix());
                     }
                     ui.label("/");
                     ui.colored_label(seen_count_color(seen, dark_mode), seen.to_string());
@@ -593,7 +623,11 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
             ui.end_row();
         }
     });
+}
 
+/// The per-constellation satellite tables. Hovering a constellation name, its
+/// fix count, or a satellite row highlights the matching marks on the plot.
+fn sticky_satellites(ui: &mut Ui, p: &NavPoint, highlight: &mut Option<SkyHighlight>) {
     // Comprehensive per-PRN satellite table grouped by constellation.
     if let Some(sats) = &p.satellites {
         ui.add_space(6.0);
@@ -638,14 +672,15 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
                                 })
                                 .response;
                             if crate::hover_labels::hover_affordance(ui, name.rect) {
-                                highlight = Some(SkyHighlight::constellation(constellation));
+                                *highlight = Some(SkyHighlight::constellation(constellation));
                             }
                             let fix_resp = ui.colored_label(
                                 fix_count_color(const_fix, dark_mode),
                                 const_fix.to_string(),
                             );
                             if crate::hover_labels::hover_affordance(ui, fix_resp.rect) {
-                                highlight = Some(SkyHighlight::constellation_in_fix(constellation));
+                                *highlight =
+                                    Some(SkyHighlight::constellation_in_fix(constellation));
                             }
                             ui.label(RichText::new(format!("/{}", const_sats.len())).weak());
                         });
@@ -690,7 +725,7 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
                                     // satellite.
                                     let row = prn_resp.union(snr_resp).union(fix_resp);
                                     if crate::hover_labels::hover_affordance(ui, row.rect) {
-                                        highlight =
+                                        *highlight =
                                             Some(SkyHighlight::satellite(constellation, sat.prn()));
                                     }
                                     ui.end_row();
@@ -702,12 +737,6 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
             ui.add_space(6.0);
         }
     }
-
-    if highlight != prev_highlight {
-        ui.ctx().request_repaint();
-    }
-    ui.ctx()
-        .data_mut(|d| d.insert_temp(highlight_id, highlight));
 }
 
 /// The egui data-store key under which the sticky content stashes the sky
@@ -1444,8 +1473,10 @@ mod tests {
     #[case::light("satellite_badge_light", false)]
     fn satellite_badge(#[case] name: &str, #[case] dark_mode: bool) {
         let point = make_point(Some(sats_multi_constellation()));
+        // Sized like the real point window: the plot sits beside the satellite
+        // tables, so this is wide and short rather than narrow and tall.
         let mut harness = TestHarness::builder()
-            .size(egui::vec2(320.0, 920.0))
+            .size(egui::vec2(600.0, 440.0))
             .theme(dark_mode)
             .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point)));
         harness.snapshot(name);
@@ -1490,7 +1521,7 @@ mod tests {
     fn hovering_a_prn_row_shows_the_affordance_band() {
         let point = make_point(Some(sats_multi_constellation()));
         let mut harness = TestHarness::builder()
-            .size(egui::vec2(320.0, 920.0))
+            .size(egui::vec2(600.0, 440.0))
             .theme(true)
             .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point)));
         harness.run();
