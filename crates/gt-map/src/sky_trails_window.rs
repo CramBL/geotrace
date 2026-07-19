@@ -43,6 +43,10 @@ pub struct SkyTrailsWindow {
     track: Option<TrackRef>,
     scrub_index: usize,
     shown: ConstellationSet,
+    /// Whether trails for satellites never in the fix are drawn. Set on
+    /// [`SkyTrailsWindow::open_track`] (the `Default` bool is the wrong value),
+    /// so it is always initialized before the window shows.
+    show_not_in_fix: bool,
     /// The extracted trails for `track`, kept while the window stays on one
     /// track. Tracks are immutable once loaded, so a per-track cache needs no
     /// invalidation; re-extracted only when the shown track changes.
@@ -68,6 +72,7 @@ impl SkyTrailsWindow {
             self.track = Some(track);
             self.scrub_index = 0;
             self.shown = ConstellationSet::all();
+            self.show_not_in_fix = true;
             self.cache = None;
         }
     }
@@ -106,6 +111,7 @@ impl SkyTrailsWindow {
             trails,
             scrub_index: &mut self.scrub_index,
             shown: &mut self.shown,
+            show_not_in_fix: &mut self.show_not_in_fix,
             track_ref,
             elevation_mask_deg,
             highlight,
@@ -130,6 +136,7 @@ struct WindowBody<'a> {
     trails: &'a SkyTrails,
     scrub_index: &'a mut usize,
     shown: &'a mut ConstellationSet,
+    show_not_in_fix: &'a mut bool,
     track_ref: TrackRef,
     elevation_mask_deg: f32,
     highlight: &'a mut MapHighlight,
@@ -143,6 +150,7 @@ impl WindowBody<'_> {
             trails,
             scrub_index,
             shown,
+            show_not_in_fix,
             track_ref,
             elevation_mask_deg,
             highlight,
@@ -178,7 +186,11 @@ impl WindowBody<'_> {
                 Layout::top_down(Align::Min),
                 |ui| {
                     ui.set_width(STATS_COL_WIDTH_PX);
-                    focus = constellation_stats(ui, trails, shown, scrub_time);
+                    focus = constellation_stats(ui, trails, shown, scrub_time, *show_not_in_fix);
+                    ui.add_space(6.0);
+                    ui.checkbox(show_not_in_fix, "Show not in fix").on_hover_text(
+                        "Show satellites that were tracked but never contributed to a fix over this track",
+                    );
                 },
             );
             ui.add_space(COLUMN_GAP_PX);
@@ -186,6 +198,7 @@ impl WindowBody<'_> {
                 .shown(*shown)
                 .focus(focus)
                 .scrub(Some(scrub_time))
+                .show_not_in_fix(*show_not_in_fix)
                 .with_elevation_mask_deg(elevation_mask_deg)
                 .ui(ui);
         });
@@ -215,10 +228,11 @@ fn constellation_stats(
     trails: &SkyTrails,
     shown: &mut ConstellationSet,
     scrub_time: GpsTime,
+    show_not_in_fix: bool,
 ) -> Option<Constellation> {
     stats_header(ui);
     let dark_mode = ui.visuals().dark_mode;
-    let counts = trails.counts_at(scrub_time);
+    let counts = trails.counts_at(scrub_time, show_not_in_fix);
     let mut focus = None;
     for count in &counts {
         if stats_row(ui, shown, count, dark_mode) {
@@ -477,6 +491,7 @@ mod tests {
                     trails: &trails,
                     scrub_index: &mut 4,
                     shown: &mut ConstellationSet::all(),
+                    show_not_in_fix: &mut true,
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),
