@@ -56,8 +56,30 @@ const SWATCH_SIZE_PX: f32 = 10.0;
 const SWATCH_ROUNDING_PX: f32 = 2.0;
 const SWATCH_MARGIN_PX: f32 = 1.0;
 
-/// Gap between the sticky popup's plot column and its satellite column.
+/// Gap between the sticky popup's plot column and its satellite column, and
+/// between the two satellite columns.
 const STICKY_COLUMN_GAP_PX: f32 = 12.0;
+
+/// Width a satellite column occupies: its PRN, SNR and fix-mark cells laid
+/// out at the default text size. Both width thresholds below are derived from
+/// it, so retuning a column only needs changing here.
+const MIN_SATELLITE_COLUMN_WIDTH_PX: f32 = 140.0;
+
+/// Width the satellite area needs before it splits into two columns - two
+/// readable columns and the gap between them. Below it the constellations
+/// stack in one column instead of being squeezed.
+const MIN_TWO_COLUMN_WIDTH_PX: f32 = 2.0 * MIN_SATELLITE_COLUMN_WIDTH_PX + STICKY_COLUMN_GAP_PX;
+
+/// Width the window needs to put the sky plot beside the satellite tables:
+/// the full plot's own diameter, the column gap, and enough left for a
+/// readable table. Narrower than this the plot stacks above them instead.
+const MIN_SIDE_BY_SIDE_WIDTH_PX: f32 =
+    SkyPlotSize::Full.diameter() + STICKY_COLUMN_GAP_PX + MIN_SATELLITE_COLUMN_WIDTH_PX;
+
+/// Rows a constellation panel costs beyond its satellites: its own header plus
+/// the PRN/SNR/Fix header row. Counted so a one-satellite constellation is not
+/// treated as free when balancing the columns.
+const PANEL_HEADER_ROWS: usize = 2;
 
 /// Stroke width of the continuous fix-quality line that stands in for the
 /// fix icons when they fade out - slightly thicker than the 3 px trackline
@@ -519,25 +541,37 @@ pub(crate) fn show_sticky_tpv_content(ui: &mut Ui, p: &NavPoint, sky: &SkySectio
         ui.ctx().data(|d| d.get_temp(highlight_id)).flatten();
     let mut highlight: Option<SkyHighlight> = None;
 
-    ui.horizontal_top(|ui| {
-        // Left: the sky plot with the fix metrics beneath it. Pinned - only
-        // the satellite column scrolls, so the plot never scrolls out of
-        // view the way it did when one scroll area held everything.
-        ui.vertical(|ui| {
-            if !matches!(sky, SkySection::TrackWithoutReports) {
-                sky_section_ui(ui, sky, SkyPlotSize::Full, prev_highlight);
-                ui.add_space(6.0);
-            }
-            sticky_metrics(ui, p, &mut highlight);
+    // Side by side when the plot and a satellite column both fit; stacked
+    // when they do not, since squeezing the tables in beside a 256 px plot
+    // leaves them too narrow to read.
+    let side_by_side = ui.available_width() >= MIN_SIDE_BY_SIDE_WIDTH_PX;
+    let summary = |ui: &mut Ui, highlight: &mut Option<SkyHighlight>| {
+        if !matches!(sky, SkySection::TrackWithoutReports) {
+            sky_section_ui(ui, sky, SkyPlotSize::Full, prev_highlight);
+            ui.add_space(6.0);
+        }
+        sticky_metrics(ui, p, highlight);
+    };
+    // The satellite tables always scroll on their own, so the plot beside or
+    // above them never scrolls out of view the way it did when one scroll
+    // area held everything.
+    let satellites = |ui: &mut Ui, highlight: &mut Option<SkyHighlight>| {
+        ScrollArea::vertical()
+            .id_salt("sticky_sats_scroll")
+            .show(ui, |ui| sticky_satellites(ui, p, highlight));
+    };
+
+    if side_by_side {
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| summary(ui, &mut highlight));
+            ui.add_space(STICKY_COLUMN_GAP_PX);
+            ui.vertical(|ui| satellites(ui, &mut highlight));
         });
-        ui.add_space(STICKY_COLUMN_GAP_PX);
-        // Right: the per-constellation tables, scrolling on their own.
-        ui.vertical(|ui| {
-            ScrollArea::vertical()
-                .id_salt("sticky_sats_scroll")
-                .show(ui, |ui| sticky_satellites(ui, p, &mut highlight));
-        });
-    });
+    } else {
+        summary(ui, &mut highlight);
+        ui.add_space(6.0);
+        satellites(ui, &mut highlight);
+    }
 
     if highlight != prev_highlight {
         ui.ctx().request_repaint();
@@ -625,118 +659,193 @@ fn sticky_metrics(ui: &mut Ui, p: &NavPoint, highlight: &mut Option<SkyHighlight
     });
 }
 
+/// One constellation's satellites in the point window, carrying what both the
+/// panel and the column packing need.
+struct ConstellationGroup<'a> {
+    /// Salts the panel's `Grid` id, so the two columns' grids stay distinct.
+    grid_id: usize,
+    constellation: Constellation,
+    prn_prefix: &'a str,
+    satellites: Vec<Satellite>,
+}
+
+impl ConstellationGroup<'_> {
+    /// Rows this panel occupies - its satellites plus its two header rows.
+    /// Drives how the columns are balanced.
+    fn weight(&self) -> usize {
+        self.satellites.len() + PANEL_HEADER_ROWS
+    }
+}
+
 /// The per-constellation satellite tables. Hovering a constellation name, its
 /// fix count, or a satellite row highlights the matching marks on the plot.
 fn sticky_satellites(ui: &mut Ui, p: &NavPoint, highlight: &mut Option<SkyHighlight>) {
     // Comprehensive per-PRN satellite table grouped by constellation.
-    if let Some(sats) = &p.satellites {
-        ui.add_space(6.0);
+    let Some(sats) = &p.satellites else {
+        return;
+    };
+    ui.add_space(6.0);
 
-        // Collect non-empty constellations up-front. `Satellite` is `Copy` so
-        // we own the data and can borrow-free inside the layout closures.
-        // Grouped in variant-declaration order, matching `Constellation`'s
-        // `Ord` and the slip table's grouping.
-        let groups: Vec<(usize, Constellation, &str, Vec<Satellite>)> = Constellation::iter()
-            .enumerate()
-            .filter_map(|(id, constellation)| {
-                let mut const_sats: Vec<_> =
-                    sats.by_constellation(constellation).copied().collect();
-                if const_sats.is_empty() {
-                    return None;
-                }
-                const_sats.sort_by_key(|s| s.prn());
-                Some((id, constellation, constellation.prn_prefix(), const_sats))
+    // Collect non-empty constellations up-front. `Satellite` is `Copy` so
+    // we own the data and can borrow-free inside the layout closures.
+    // Grouped in variant-declaration order, matching `Constellation`'s
+    // `Ord` and the slip table's grouping.
+    let groups: Vec<ConstellationGroup<'_>> = Constellation::iter()
+        .enumerate()
+        .filter_map(|(grid_id, constellation)| {
+            let mut satellites: Vec<_> = sats.by_constellation(constellation).copied().collect();
+            if satellites.is_empty() {
+                return None;
+            }
+            satellites.sort_by_key(Satellite::prn);
+            Some(ConstellationGroup {
+                grid_id,
+                constellation,
+                prn_prefix: constellation.prn_prefix(),
+                satellites,
             })
-            .collect();
+        })
+        .collect();
 
-        // Two constellation panels per row, each panel sizes to its own content.
-        for chunk in groups.chunks(2) {
-            ui.horizontal_top(|ui| {
-                for (panel_i, (id, constellation, prefix, const_sats)) in chunk.iter().enumerate() {
-                    if panel_i > 0 {
-                        ui.add_space(12.0);
-                    }
-                    let constellation = *constellation;
-                    ui.vertical(|ui| {
-                        let dark_mode = ui.visuals().dark_mode;
-                        let const_fix = const_sats.iter().filter(|s| s.in_fix()).count() as u32;
-                        // Header: a colour swatch tying this table to its plot
-                        // marks, the constellation name, and its fix/seen count.
-                        // Hovering the name highlights the whole constellation;
-                        // hovering the fix count highlights its in-fix subset.
-                        ui.horizontal(|ui| {
-                            let name = ui
-                                .horizontal(|ui| {
-                                    constellation_swatch(ui, constellation);
-                                    ui.label(RichText::new(constellation.display_name()).strong());
-                                })
-                                .response;
-                            if crate::hover_labels::hover_affordance(ui, name.rect) {
-                                *highlight = Some(SkyHighlight::constellation(constellation));
-                            }
-                            let fix_resp = ui.colored_label(
-                                fix_count_color(const_fix, dark_mode),
-                                const_fix.to_string(),
-                            );
-                            if crate::hover_labels::hover_affordance(ui, fix_resp.rect) {
-                                *highlight =
-                                    Some(SkyHighlight::constellation_in_fix(constellation));
-                            }
-                            ui.label(RichText::new(format!("/{}", const_sats.len())).weak());
-                        });
-                        Grid::new(("sticky_sats", *id))
-                            .num_columns(3)
-                            .striped(true)
-                            .show(ui, |ui| {
-                                ui.label(RichText::new("PRN").weak().small());
-                                ui.label(RichText::new("SNR").weak().small());
-                                ui.label(RichText::new("Fix").weak().small());
-                                ui.end_row();
+    // Two columns when there is room, one when the window is narrow. Never
+    // more than two: a third column would sit far enough from the plot that
+    // correlating a row with its mark gets hard.
+    let two_columns = groups.len() > 1 && ui.available_width() >= MIN_TWO_COLUMN_WIDTH_PX;
+    if !two_columns {
+        for group in &groups {
+            constellation_panel(ui, group, highlight);
+        }
+        return;
+    }
 
-                                // A satellite contributing to the fix reads as the
-                                // "good" tier green; an idle one is de-emphasised
-                                // with egui's own weak-text colour, which already
-                                // tracks the theme.
-                                let in_fix_color = gt_ui_theme::SatCountTier::Good.color(dark_mode);
-                                let muted_color = ui.visuals().weak_text_color();
-                                for sat in const_sats {
-                                    let in_fix = sat.in_fix();
-                                    let prn_color = if in_fix { in_fix_color } else { muted_color };
-                                    let prn_resp = ui.label(
-                                        RichText::new(format!("{}{:02}", prefix, sat.prn()))
-                                            .color(prn_color),
-                                    );
-                                    let snr_resp = match sat.snr() {
-                                        Some(snr) => ui.label(
-                                            RichText::new(format!("{:.1}", snr.value())).color(
-                                                gt_ui_theme::snr_color(snr.quality(), dark_mode),
-                                            ),
-                                        ),
-                                        None => ui.label(RichText::new(EM_DASH).color(muted_color)),
-                                    };
-                                    let fix_resp = if in_fix {
-                                        ui.label(RichText::new(ICON_CHECK).color(in_fix_color))
-                                    } else {
-                                        ui.label("")
-                                    };
-                                    // Hovering anywhere across the row (the
-                                    // union spans the cells and the gaps
-                                    // between them) highlights just that
-                                    // satellite.
-                                    let row = prn_resp.union(snr_resp).union(fix_resp);
-                                    if crate::hover_labels::hover_affordance(ui, row.rect) {
-                                        *highlight =
-                                            Some(SkyHighlight::satellite(constellation, sat.prn()));
-                                    }
-                                    ui.end_row();
-                                }
-                            });
-                    });
+    // Cut the ordered list where the two columns come out closest in height,
+    // so uneven constellations pack tight instead of leaving the dead space
+    // that fixed two-per-row chunking left behind.
+    let weights: Vec<usize> = groups.iter().map(ConstellationGroup::weight).collect();
+    let (left, right) = groups.split_at(balanced_split(&weights));
+    ui.horizontal_top(|ui| {
+        for (column_i, column) in [left, right].into_iter().enumerate() {
+            if column_i > 0 {
+                ui.add_space(STICKY_COLUMN_GAP_PX);
+            }
+            ui.vertical(|ui| {
+                for group in column {
+                    constellation_panel(ui, group, highlight);
                 }
             });
-            ui.add_space(6.0);
+        }
+    });
+}
+
+/// The index at which to cut an ordered list of column weights into two
+/// columns of as-equal height as possible.
+///
+/// A single cut rather than a repack, so constellations keep their familiar
+/// order (GPS first, and so on) while the columns still come out balanced.
+fn balanced_split(weights: &[usize]) -> usize {
+    if weights.len() < 2 {
+        return weights.len();
+    }
+    let total: usize = weights.iter().sum();
+    let mut left = 0;
+    let mut best_index = 1;
+    let mut best_imbalance = usize::MAX;
+    for (i, weight) in weights.iter().enumerate().take(weights.len() - 1) {
+        left += weight;
+        let imbalance = left.abs_diff(total - left);
+        if imbalance < best_imbalance {
+            best_imbalance = imbalance;
+            best_index = i + 1;
         }
     }
+    best_index
+}
+
+/// One constellation's panel: the header (colour swatch, name, fix/seen count)
+/// above its per-PRN table. Hovering the name, the fix count or a row drives
+/// the matching sky-plot highlight.
+fn constellation_panel(
+    ui: &mut Ui,
+    group: &ConstellationGroup<'_>,
+    highlight: &mut Option<SkyHighlight>,
+) {
+    let &ConstellationGroup {
+        grid_id,
+        constellation,
+        prn_prefix,
+        ..
+    } = group;
+    let satellites = group.satellites.as_slice();
+    ui.vertical(|ui| {
+        let dark_mode = ui.visuals().dark_mode;
+        let const_fix = satellites.iter().filter(|s| s.in_fix()).count() as u32;
+        // Header: a colour swatch tying this table to its plot
+        // marks, the constellation name, and its fix/seen count.
+        // Hovering the name highlights the whole constellation;
+        // hovering the fix count highlights its in-fix subset.
+        ui.horizontal(|ui| {
+            let name = ui
+                .horizontal(|ui| {
+                    constellation_swatch(ui, constellation);
+                    ui.label(RichText::new(constellation.display_name()).strong());
+                })
+                .response;
+            if crate::hover_labels::hover_affordance(ui, name.rect) {
+                *highlight = Some(SkyHighlight::constellation(constellation));
+            }
+            let fix_resp =
+                ui.colored_label(fix_count_color(const_fix, dark_mode), const_fix.to_string());
+            if crate::hover_labels::hover_affordance(ui, fix_resp.rect) {
+                *highlight = Some(SkyHighlight::constellation_in_fix(constellation));
+            }
+            ui.label(RichText::new(format!("/{}", satellites.len())).weak());
+        });
+        Grid::new(("sticky_sats", grid_id))
+            .num_columns(3)
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label(RichText::new("PRN").weak().small());
+                ui.label(RichText::new("SNR").weak().small());
+                ui.label(RichText::new("Fix").weak().small());
+                ui.end_row();
+
+                // A satellite contributing to the fix reads as the
+                // "good" tier green; an idle one is de-emphasised
+                // with egui's own weak-text colour, which already
+                // tracks the theme.
+                let in_fix_color = gt_ui_theme::SatCountTier::Good.color(dark_mode);
+                let muted_color = ui.visuals().weak_text_color();
+                for sat in satellites {
+                    let in_fix = sat.in_fix();
+                    let prn_color = if in_fix { in_fix_color } else { muted_color };
+                    let prn_resp = ui.label(
+                        RichText::new(format!("{}{:02}", prn_prefix, sat.prn())).color(prn_color),
+                    );
+                    let snr_resp = match sat.snr() {
+                        Some(snr) => ui.label(
+                            RichText::new(format!("{:.1}", snr.value()))
+                                .color(gt_ui_theme::snr_color(snr.quality(), dark_mode)),
+                        ),
+                        None => ui.label(RichText::new(EM_DASH).color(muted_color)),
+                    };
+                    let fix_resp = if in_fix {
+                        ui.label(RichText::new(ICON_CHECK).color(in_fix_color))
+                    } else {
+                        ui.label("")
+                    };
+                    // Hovering anywhere across the row (the
+                    // union spans the cells and the gaps
+                    // between them) highlights just that
+                    // satellite.
+                    let row = prn_resp.union(snr_resp).union(fix_resp);
+                    if crate::hover_labels::hover_affordance(ui, row.rect) {
+                        *highlight = Some(SkyHighlight::satellite(constellation, sat.prn()));
+                    }
+                    ui.end_row();
+                }
+            });
+    });
+    ui.add_space(6.0);
 }
 
 /// The egui data-store key under which the sticky content stashes the sky
@@ -1389,6 +1498,40 @@ mod tests {
         Satellites::new(None, None, satellites)
     }
 
+    /// A dense, uneven multi-constellation fix - the case the point window was
+    /// rebuilt for: 40 satellites across four constellations with very
+    /// different counts (GPS 11, GLONASS 8, Galileo 6, BeiDou 15), so the
+    /// column packing has something real to balance.
+    fn sats_dense_multi_constellation() -> Satellites {
+        let spec = [
+            (Constellation::Gps, 11u32),
+            (Constellation::Glonass, 8),
+            (Constellation::Galileo, 6),
+            (Constellation::Beidou, 15),
+        ];
+        let mut satellites = Vec::new();
+        for (c, (constellation, count)) in spec.into_iter().enumerate() {
+            // Offset each constellation's arc so the marks spread across the
+            // sky instead of stacking on top of each other, and vary SNR and
+            // fix state so the table shows a realistic mix.
+            let offset = f32::from(u16::try_from(c).unwrap_or(0));
+            for i in 0..count {
+                let n = f32::from(u16::try_from(i).unwrap_or(0));
+                let azimuth = (offset * 83.0 + n * 29.0) % 360.0;
+                let elevation = 8.0 + (offset * 17.0 + n * 11.0) % 76.0;
+                satellites.push(Satellite::new(
+                    constellation,
+                    i + 1,
+                    Some(elevation),
+                    Some(azimuth),
+                    Some(28.0 + (offset * 3.0 + n) % 20.0),
+                    i % 4 != 0,
+                ));
+            }
+        }
+        Satellites::new(None, None, satellites)
+    }
+
     /// A report spanning several constellations with a spread of SNR values,
     /// fix membership, and sky positions (two satellites without), so the
     /// satellite badge exercises every count tier, the full SNR gradient,
@@ -1462,6 +1605,61 @@ mod tests {
                     age: chrono::Duration::zero(),
                 })
             })
+    }
+
+    /// The two satellite columns are cut where they come out closest in
+    /// height, without reordering the constellations. The old fixed
+    /// two-per-row chunking aligned rows instead, so an 11-satellite GPS
+    /// beside a 6-satellite Galileo left the difference as dead space.
+    #[rstest]
+    // A 40-satellite, 4-constellation fix: GPS 11, GLONASS 8, Galileo 6,
+    // BeiDou 15 (plus 2 header rows each). Cutting after GLONASS gives
+    // 13+10=23 against 8+17=25 - the closest of the three possible cuts.
+    #[case::four_constellations(&[13, 10, 8, 17], 2)]
+    // Two constellations always split one and one.
+    #[case::two(&[13, 10], 1)]
+    // A single dominant constellation still keeps at least one on each side.
+    #[case::lopsided(&[30, 3, 3], 1)]
+    // Equal weights cut down the middle.
+    #[case::even(&[10, 10, 10, 10], 2)]
+    fn balanced_split_cuts_where_the_columns_even_out(
+        #[case] weights: &[usize],
+        #[case] expected: usize,
+    ) {
+        assert_eq!(super::balanced_split(weights), expected);
+    }
+
+    /// Fewer than two panels cannot be split, so everything stays in the
+    /// first column.
+    #[test]
+    fn balanced_split_keeps_a_lone_panel_in_one_column() {
+        assert_eq!(super::balanced_split(&[7]), 1);
+        assert_eq!(super::balanced_split(&[]), 0);
+    }
+
+    /// Snapshot: a 40-satellite, 4-constellation fix - the case that drove the
+    /// rebuild. The two columns are cut where they even out, so the uneven
+    /// constellations pack tight, and the plot stays beside them.
+    #[test]
+    fn dense_multi_constellation_packs_into_two_columns() {
+        let point = make_point(Some(sats_dense_multi_constellation()));
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(620.0, 560.0))
+            .theme(true)
+            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point)));
+        harness.snapshot("sticky_dense_two_columns");
+    }
+
+    /// The same fix in a narrow window falls back to a single column rather
+    /// than squeezing two.
+    #[test]
+    fn dense_multi_constellation_reflows_to_one_column_when_narrow() {
+        let point = make_point(Some(sats_dense_multi_constellation()));
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(330.0, 560.0))
+            .theme(true)
+            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point)));
+        harness.snapshot("sticky_dense_one_column");
     }
 
     /// The satellite badge (counts, SNR gradient, PRN colours) must stay
