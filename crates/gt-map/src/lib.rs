@@ -34,7 +34,7 @@ use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
-    HighlightScope, MapHighlight, QueryMatches, SkyGlyphVariant, SnappedTracks,
+    HighlightScope, MapHighlight, PointWindowFolds, QueryMatches, SkyGlyphVariant, SnappedTracks,
     TrackDataVisibility,
 };
 use rstar::PointDistance as _;
@@ -384,6 +384,7 @@ impl NavMap {
         filter: &GlobalFilter,
         display_mask: &mut DisplayMask,
         sky_glyph_variant: &mut SkyGlyphVariant,
+        point_window_folds: &mut PointWindowFolds,
         event_marker_visibility: &EventMarkerVisibility,
         generated_marker_visibility: &GeneratedMarkerVisibility,
         query_matches: Option<&QueryMatches>,
@@ -817,7 +818,13 @@ impl NavMap {
 
         // Show a persistent, text-selectable info window for the sticky element.
         if let Some(sticky_ref) = highlight.sticky {
-            show_sticky_popup(ui.ctx(), files, sticky_ref, self.sticky_pos);
+            show_sticky_popup(
+                ui.ctx(),
+                files,
+                sticky_ref,
+                self.sticky_pos,
+                point_window_folds,
+            );
         }
 
         // When multiple different item types are hovered simultaneously, draw a
@@ -861,6 +868,7 @@ fn show_point_window_body(
     ui: &mut egui::Ui,
     point: &gt_types::NavPoint,
     sky: &crate::tpv_renderer::SkySection<'_>,
+    folds: &mut PointWindowFolds,
 ) {
     egui::Panel::bottom("sticky_point_hint").show_inside(ui, |ui| {
         ui.add_space(4.0);
@@ -869,7 +877,7 @@ fn show_point_window_body(
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show_inside(ui, |ui| {
-            crate::tpv_renderer::show_sticky_tpv_content(ui, point, sky);
+            crate::tpv_renderer::show_sticky_tpv_content(ui, point, sky, folds);
         });
 }
 
@@ -878,6 +886,7 @@ fn show_sticky_popup(
     files: &[LoadedFile],
     sticky_ref: DataPointRef,
     default_pos: egui::Pos2,
+    folds: &mut PointWindowFolds,
 ) {
     // For TPV points, satellite reports, and generated-marker events the window
     // title is the point's datetime. For everything else fall back to a generic label.
@@ -970,7 +979,7 @@ fn show_sticky_popup(
                 && let Some(point) = sticky_ref.point_index.get(&track.points)
             {
                 let sky = crate::tpv_renderer::SkySection::resolve(track, sticky_ref.point_index);
-                show_point_window_body(ui, point, &sky);
+                show_point_window_body(ui, point, &sky, folds);
             }
         }
         DataCategory::CustomMarker => {
@@ -1960,6 +1969,7 @@ mod snapshot_tests {
                         &gt_filter::GlobalFilter::default(),
                         &mut gt_ui_types::DisplayMask::default(),
                         &mut gt_ui_types::SkyGlyphVariant::default(),
+                        &mut gt_ui_types::PointWindowFolds::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         Some(&matches),
@@ -2030,6 +2040,7 @@ mod snapshot_tests {
                         &gt_filter::GlobalFilter::default(),
                         &mut mask,
                         &mut gt_ui_types::SkyGlyphVariant::default(),
+                        &mut gt_ui_types::PointWindowFolds::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
@@ -2375,6 +2386,7 @@ mod snapshot_tests {
                         &gt_filter::GlobalFilter::default(),
                         &mut gt_ui_types::DisplayMask::default(),
                         &mut gt_ui_types::SkyGlyphVariant::default(),
+                        &mut gt_ui_types::PointWindowFolds::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
@@ -2458,6 +2470,7 @@ mod snapshot_tests {
                         &gt_filter::GlobalFilter::default(),
                         &mut gt_ui_types::DisplayMask::default(),
                         &mut gt_ui_types::SkyGlyphVariant::default(),
+                        &mut gt_ui_types::PointWindowFolds::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
@@ -2508,6 +2521,7 @@ mod snapshot_tests {
                         &gt_filter::GlobalFilter::default(),
                         &mut mask.clone(),
                         &mut gt_ui_types::SkyGlyphVariant::default(),
+                        &mut gt_ui_types::PointWindowFolds::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
@@ -2564,6 +2578,7 @@ mod snapshot_tests {
                         &gt_filter::GlobalFilter::default(),
                         &mut mask.clone(),
                         &mut variant.clone(),
+                        &mut gt_ui_types::PointWindowFolds::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
@@ -2615,6 +2630,7 @@ mod snapshot_tests {
                         &gt_filter::GlobalFilter::default(),
                         &mut mask.clone(),
                         &mut gt_ui_types::SkyGlyphVariant::default(),
+                        &mut gt_ui_types::PointWindowFolds::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
@@ -2666,6 +2682,7 @@ mod snapshot_tests {
                         &gt_filter::GlobalFilter::default(),
                         &mut gt_ui_types::DisplayMask::default(),
                         &mut gt_ui_types::SkyGlyphVariant::default(),
+                        &mut gt_ui_types::PointWindowFolds::default(),
                         &gt_ui_types::EventMarkerVisibility::default(),
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
