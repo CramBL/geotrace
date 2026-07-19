@@ -250,9 +250,8 @@ impl WindowBody<'_> {
                     ui.set_width(STATS_COL_WIDTH_PX);
                     focus = constellation_stats(ui, trails, shown, stats_time, *show_not_in_fix);
                     ui.add_space(6.0);
-                    ui.checkbox(show_not_in_fix, "Show not in fix").on_hover_text(
-                        "Show satellites that were tracked but never contributed to a fix over this track",
-                    );
+                    ui.checkbox(show_not_in_fix, not_in_fix_label(ui))
+                        .on_hover_text("Satellites seen but never used in a fix over this track");
                 },
             );
             ui.add_space(COLUMN_GAP_PX);
@@ -280,6 +279,35 @@ impl WindowBody<'_> {
             .rect;
         ui.data_mut(|d| d.insert_temp(reserve_id, transport_rect.height()));
     }
+}
+
+/// The "Show *not in fix*" checkbox label, with the GNSS term itself in
+/// italics so it reads as a term of art rather than plain prose (the hover
+/// text spells it out).
+fn not_in_fix_label(ui: &egui::Ui) -> egui::text::LayoutJob {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let color = ui.visuals().text_color();
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        "Show ",
+        0.0,
+        egui::TextFormat {
+            font_id: font.clone(),
+            color,
+            ..Default::default()
+        },
+    );
+    job.append(
+        "not in fix",
+        0.0,
+        egui::TextFormat {
+            font_id: font,
+            color,
+            italics: true,
+            ..Default::default()
+        },
+    );
+    job
 }
 
 /// The plot diameter for the given available space, leaving `reserved` pixels
