@@ -3,6 +3,8 @@
 //! path across the sky with a time scrubber that walks the map alongside it.
 
 use egui::{Align, Layout, RichText, Window};
+use egui_phosphor::regular::PAUSE as ICON_PAUSE;
+use egui_phosphor::regular::PLAY as ICON_PLAY;
 
 use gt_sky::{EpochCount, SkyTrails, SkyTrailsPlot, TrailEpoch};
 use gt_types::satellites::{Constellation, ConstellationSet};
@@ -35,13 +37,40 @@ const DEFAULT_WINDOW_SIZE: [f32; 2] = [560.0, 420.0];
 const MIN_WINDOW_WIDTH_PX: f32 = 460.0;
 const MIN_WINDOW_HEIGHT_PX: f32 = 360.0;
 
+/// Default playback rate: one track-minute per real second.
+const DEFAULT_PLAYBACK_SPEED: f32 = 60.0;
+
+/// Playback rates offered in the speed selector, in track-seconds per real
+/// second.
+const PLAYBACK_SPEEDS: [f32; 7] = [1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0];
+
+/// The per-frame time step is clamped to this many seconds before advancing
+/// playback, so a stall (the window occluded, a breakpoint) doesn't jump the
+/// scrubber across the whole track on the next frame.
+const MAX_PLAYBACK_FRAME_SECS: f32 = 0.1;
+
+/// Glyph size of the play / pause button.
+const PLAY_ICON_SIZE_PX: f32 = 16.0;
+
+/// Width of the speed selector, sized to its widest label ("300x") rather than
+/// egui's much wider default combo width.
+const SPEED_SELECTOR_WIDTH_PX: f32 = 52.0;
+
 /// The whole-track sky trails window. Owned by the app and drawn each frame;
 /// opened by [`SkyTrailsWindow::open_track`] from the context menus.
 #[derive(Default)]
 pub struct SkyTrailsWindow {
     open: bool,
     track: Option<TrackRef>,
-    scrub_index: usize,
+    /// Scrub position, in track-seconds from the first report epoch. Continuous
+    /// so playback animates smoothly between epochs.
+    scrub_secs: f64,
+    /// Whether playback is advancing the scrubber.
+    playing: bool,
+    /// Playback rate in track-seconds per real second. Set on
+    /// [`SkyTrailsWindow::open_track`] (the `Default` is zero, not a usable
+    /// rate), so it is always initialized before the window shows.
+    speed: f32,
     shown: ConstellationSet,
     /// Whether trails for satellites never in the fix are drawn. Set on
     /// [`SkyTrailsWindow::open_track`] (the `Default` bool is the wrong value),
@@ -70,7 +99,9 @@ impl SkyTrailsWindow {
         self.open = true;
         if self.track != Some(track) {
             self.track = Some(track);
-            self.scrub_index = 0;
+            self.scrub_secs = 0.0;
+            self.playing = false;
+            self.speed = DEFAULT_PLAYBACK_SPEED;
             self.shown = ConstellationSet::all();
             self.show_not_in_fix = true;
             self.cache = None;
@@ -109,7 +140,9 @@ impl SkyTrailsWindow {
 
         let body = WindowBody {
             trails,
-            scrub_index: &mut self.scrub_index,
+            scrub_secs: &mut self.scrub_secs,
+            playing: &mut self.playing,
+            speed: &mut self.speed,
             shown: &mut self.shown,
             show_not_in_fix: &mut self.show_not_in_fix,
             track_ref,
@@ -134,7 +167,9 @@ impl SkyTrailsWindow {
 /// scrubber/filter state, and where the scrubbed point is written.
 struct WindowBody<'a> {
     trails: &'a SkyTrails,
-    scrub_index: &'a mut usize,
+    scrub_secs: &'a mut f64,
+    playing: &'a mut bool,
+    speed: &'a mut f32,
     shown: &'a mut ConstellationSet,
     show_not_in_fix: &'a mut bool,
     track_ref: TrackRef,
@@ -148,22 +183,49 @@ impl WindowBody<'_> {
     fn ui(self, ui: &mut egui::Ui) {
         let Self {
             trails,
-            scrub_index,
+            scrub_secs,
+            playing,
+            speed,
             shown,
             show_not_in_fix,
             track_ref,
             elevation_mask_deg,
             highlight,
         } = self;
-        if trails.epochs.is_empty() {
+        let (Some(first), Some(total_secs)) = (
+            trails.epochs.first().map(|e| e.time),
+            track_total_secs(trails),
+        ) else {
             ui.label("This track has no satellite reports");
             return;
-        }
-        let last = trails.epochs.len() - 1;
-        *scrub_index = (*scrub_index).min(last);
-        let Some(scrub_time) = trails.epochs.get(*scrub_index).map(|e| e.time) else {
-            return;
         };
+
+        // Spacebar toggles play/pause while the pointer is anywhere over the
+        // window (not just the transport), so watching the plot and hitting
+        // space works. Tested against the full content rect - `ui`'s min_rect
+        // is still empty this early in the layout, so `ui_contains_pointer`
+        // would miss.
+        let window_hovered = ui.rect_contains_pointer(ui.max_rect());
+
+        // Advance playback, then clamp - so a paused scrubber and a finished
+        // playback both settle inside the track's span.
+        advance_playback(ui, playing, *speed, scrub_secs, total_secs);
+        *scrub_secs = scrub_secs.clamp(0.0, total_secs);
+        let scrub_time = offset_time(first, *scrub_secs);
+
+        // The map point for the current instant stays highlighted the whole
+        // time the window is open - while playing, dragging, or parked - not
+        // only mid-drag. The app writes the time-series plot's own hover into
+        // this same channel before `show()` runs, so defer to it when the plot
+        // is actively hovering a point: the trails window only fills the
+        // channel when the plot left it empty.
+        if highlight.plot_hover_point.is_none()
+            && let Some(epoch) = floor_epoch(trails, scrub_time)
+        {
+            apply_scrub_highlight(highlight, track_ref, epoch);
+        }
+        // Stats and counts reflect the report in effect at this instant.
+        let stats_time = floor_epoch(trails, scrub_time).map_or(first, |e| e.time);
 
         // Size the plot to the space left after the stats column and the
         // transport, so resizing the window grows the plot rather than a gap.
@@ -186,7 +248,7 @@ impl WindowBody<'_> {
                 Layout::top_down(Align::Min),
                 |ui| {
                     ui.set_width(STATS_COL_WIDTH_PX);
-                    focus = constellation_stats(ui, trails, shown, scrub_time, *show_not_in_fix);
+                    focus = constellation_stats(ui, trails, shown, stats_time, *show_not_in_fix);
                     ui.add_space(6.0);
                     ui.checkbox(show_not_in_fix, "Show not in fix").on_hover_text(
                         "Show satellites that were tracked but never contributed to a fix over this track",
@@ -203,7 +265,17 @@ impl WindowBody<'_> {
                 .ui(ui);
         });
         let transport_rect = ui
-            .scope(|ui| transport(ui, trails, scrub_index, track_ref, highlight))
+            .scope(|ui| {
+                transport(
+                    ui,
+                    first,
+                    total_secs,
+                    scrub_secs,
+                    playing,
+                    speed,
+                    window_hovered,
+                )
+            })
             .response
             .rect;
         ui.data_mut(|d| d.insert_temp(reserve_id, transport_rect.height()));
@@ -333,49 +405,138 @@ fn dimmed_if_off(text: String, on: bool) -> RichText {
     if on { text } else { text.weak() }
 }
 
-/// The transport below the plot: the current time and offset above a
-/// full-width time slider, with the start, total duration, and end beneath it.
-/// Moving the slider drops the scrubbed point into the map highlight so the
-/// map and the trails move together.
+/// The track's span in seconds, or `None` when it has no report epochs. Zero
+/// for a single-report track. Reads the span [`SkyTrails`] already computed,
+/// so the window and the plot's time ramp cannot diverge.
+fn track_total_secs(trails: &SkyTrails) -> Option<f64> {
+    let range = trails.time_range?;
+    Some(secs_between(range.start, range.end))
+}
+
+/// Seconds from `first` to `later` (may be zero).
+fn secs_between(first: GpsTime, later: GpsTime) -> f64 {
+    later.signed_duration_since(first).num_milliseconds() as f64 / 1000.0
+}
+
+/// `secs` track-seconds as a [`chrono::Duration`], rounded to the millisecond.
+fn duration_from_secs(secs: f64) -> chrono::Duration {
+    chrono::Duration::milliseconds((secs * 1000.0).round() as i64)
+}
+
+/// The time `secs` track-seconds after `first`.
+fn offset_time(first: GpsTime, secs: f64) -> GpsTime {
+    GpsTime::from_utc(first.utc() + duration_from_secs(secs))
+}
+
+/// The last report epoch at or before `time` - the report in effect at the
+/// scrubbed instant, driving the stats and the map highlight.
+fn floor_epoch(trails: &SkyTrails, time: GpsTime) -> Option<&TrailEpoch> {
+    let after = trails.epochs.partition_point(|e| e.time <= time);
+    trails.epochs.get(after.saturating_sub(1))
+}
+
+/// The scrub position after one frame of playback, and whether playback keeps
+/// running. It advances by the frame's elapsed time (clamped to
+/// [`MAX_PLAYBACK_FRAME_SECS`]) scaled by `speed`, and stops at the end of the
+/// track.
+fn advanced_scrub(scrub_secs: f64, speed: f32, dt: f32, total_secs: f64) -> (f64, bool) {
+    let dt = dt.min(MAX_PLAYBACK_FRAME_SECS);
+    let next = scrub_secs + f64::from(speed) * f64::from(dt);
+    if next >= total_secs {
+        (total_secs, false)
+    } else {
+        (next, true)
+    }
+}
+
+/// Advance the scrubber while playing, stopping at the end of the track.
+/// Requests a repaint so the animation keeps running.
+///
+/// The step is the wall-clock time since this ran last, not `stable_dt`, so it
+/// stays correct even when a `Window`'s body runs more than once per frame (a
+/// layout pass): a second run in the same frame sees a zero delta and does not
+/// double-advance.
+fn advance_playback(
+    ui: &egui::Ui,
+    playing: &mut bool,
+    speed: f32,
+    scrub_secs: &mut f64,
+    total_secs: f64,
+) {
+    let now = ui.input(|i| i.time);
+    let last_id = ui.id().with("playback_last_time");
+    let last = ui.data(|d| d.get_temp::<f64>(last_id)).unwrap_or(now);
+    ui.data_mut(|d| d.insert_temp(last_id, now));
+    if !*playing {
+        return;
+    }
+    let dt = (now - last) as f32;
+    (*scrub_secs, *playing) = advanced_scrub(*scrub_secs, speed, dt, total_secs);
+    // Keep animating next frame.
+    ui.ctx().request_repaint();
+}
+
+/// The transport below the plot: the current offset and clock above a row of
+/// play button, speed selector, and a full-width time slider, with the start,
+/// total duration, and end beneath it.
 fn transport(
     ui: &mut egui::Ui,
-    trails: &SkyTrails,
-    scrub_index: &mut usize,
-    track_ref: TrackRef,
-    highlight: &mut MapHighlight,
+    first: GpsTime,
+    total_secs: f64,
+    scrub_secs: &mut f64,
+    playing: &mut bool,
+    speed: &mut f32,
+    window_hovered: bool,
 ) {
-    let last = trails.epochs.len() - 1;
-    let (Some(first), Some(end)) = (
-        trails.epochs.first().map(|e| e.time),
-        trails.epochs.last().map(|e| e.time),
-    ) else {
-        return;
-    };
-    let current = trails
-        .epochs
-        .get(*scrub_index)
-        .map_or(first, |epoch| epoch.time);
-    let total = end.signed_duration_since(first);
-    let offset = current.signed_duration_since(first);
+    let current = offset_time(first, *scrub_secs);
 
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(format!("+{}", gt_fmt::format_timeline_offset(offset)))
-                .monospace()
-                .strong(),
+            RichText::new(format!(
+                "+{}",
+                gt_fmt::format_timeline_offset(duration_from_secs(*scrub_secs))
+            ))
+            .monospace()
+            .strong(),
         );
         ui.label(
             RichText::new(current.utc().format("%H:%M:%S").to_string())
                 .monospace()
                 .weak(),
         );
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            speed_selector(ui, speed);
+        });
     });
 
-    ui.spacing_mut().slider_width = ui.available_width();
-    let response = ui.add(egui::Slider::new(scrub_index, 0..=last).show_value(false));
+    ui.horizontal(|ui| {
+        let play = play_button(ui, *playing);
+        // Toggle on click, on Enter/Space while the button is focused (egui
+        // already reports those as a click), or on Space while the window is
+        // hovered and the button is not focused (so it is never toggled twice).
+        let space =
+            window_hovered && !play.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Space));
+        if play.clicked() || space {
+            *playing = !*playing;
+            // Starting from the end replays from the top.
+            if *playing && *scrub_secs >= total_secs {
+                *scrub_secs = 0.0;
+            }
+        }
+
+        ui.spacing_mut().slider_width = ui.available_width();
+        let slider = ui.add(
+            egui::Slider::new(scrub_secs, 0.0..=total_secs.max(f64::EPSILON)).show_value(false),
+        );
+        // Grabbing the slider takes over from playback.
+        if slider.dragged() {
+            *playing = false;
+        }
+    });
 
     // Start clock, total duration, end clock: the fixed span the slider runs
     // over, with the running position shown above it.
+    let end = offset_time(first, total_secs);
     ui.columns(3, |cols| {
         let [start_col, total_col, end_col] = cols else {
             return;
@@ -389,9 +550,11 @@ fn transport(
         });
         total_col.with_layout(Layout::top_down(Align::Center), |ui| {
             ui.label(
-                RichText::new(gt_fmt::format_human_terse_duration(total))
-                    .weak()
-                    .small(),
+                RichText::new(gt_fmt::format_human_terse_duration(duration_from_secs(
+                    total_secs,
+                )))
+                .weak()
+                .small(),
             );
         });
         end_col.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -402,13 +565,31 @@ fn transport(
             );
         });
     });
+}
 
-    if (response.dragged() || response.changed())
-        && let Some(epoch) = trails.epochs.get(*scrub_index)
-    {
-        apply_scrub_highlight(highlight, track_ref, epoch);
-        ui.ctx().request_repaint();
-    }
+/// The play / pause button; returns its response for the click and focus
+/// checks. Shows a pause glyph while playing, a play glyph while stopped.
+fn play_button(ui: &mut egui::Ui, playing: bool) -> egui::Response {
+    let glyph = if playing { ICON_PAUSE } else { ICON_PLAY };
+    ui.add(egui::Button::new(
+        RichText::new(glyph).size(PLAY_ICON_SIZE_PX),
+    ))
+    .on_hover_text(if playing { "Pause" } else { "Play" })
+}
+
+/// The playback-speed selector, cycling the [`PLAYBACK_SPEEDS`] presets. Shown
+/// as e.g. "60x" - the multiple of real time the track plays at.
+fn speed_selector(ui: &mut egui::Ui, speed: &mut f32) {
+    egui::ComboBox::from_id_salt("sky_trails_speed")
+        .width(SPEED_SELECTOR_WIDTH_PX)
+        .selected_text(format!("{speed:.0}x"))
+        .show_ui(ui, |ui| {
+            for preset in PLAYBACK_SPEEDS {
+                ui.selectable_value(speed, preset, format!("{preset:.0}x"));
+            }
+        })
+        .response
+        .on_hover_text("Playback speed - track-time played per real second");
 }
 
 /// Point the map's plot-hover cross-highlight at the scrubbed epoch's point,
@@ -431,7 +612,7 @@ mod tests {
 
     use super::{
         ConstellationSet, MapHighlight, SkyTrails, SkyTrailsWindow, TrackRef, WindowBody,
-        apply_scrub_highlight,
+        advanced_scrub, apply_scrub_highlight, floor_epoch, offset_time, track_total_secs,
     };
 
     /// A synthetic track: a few satellites drifting across the sky over eight
@@ -489,7 +670,9 @@ mod tests {
             .ui(move |ui| {
                 WindowBody {
                     trails: &trails,
-                    scrub_index: &mut 4,
+                    scrub_secs: &mut 4.0,
+                    playing: &mut false,
+                    speed: &mut 60.0,
                     shown: &mut ConstellationSet::all(),
                     show_not_in_fix: &mut true,
                     track_ref: track_ref(),
@@ -500,6 +683,63 @@ mod tests {
             });
         harness.run();
         harness.snapshot(name);
+    }
+
+    /// Run the body once at a mid-track scrub with the given starting
+    /// highlight, and return the highlight afterwards.
+    fn run_body_with_highlight(start: &MapHighlight) -> MapHighlight {
+        let trails = demo_trails();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(560.0, 440.0))
+            .ui_state(
+                move |ui, highlight: &mut MapHighlight| {
+                    WindowBody {
+                        trails: &trails,
+                        scrub_secs: &mut 4.0,
+                        playing: &mut false,
+                        speed: &mut 60.0,
+                        shown: &mut ConstellationSet::all(),
+                        show_not_in_fix: &mut true,
+                        track_ref: track_ref(),
+                        elevation_mask_deg: 10.0,
+                        highlight,
+                    }
+                    .ui(ui);
+                },
+                *start,
+            );
+        harness.run();
+        *harness.state()
+    }
+
+    #[test]
+    fn scrub_highlight_fills_the_channel_when_the_plot_left_it_empty() {
+        // No plot hover this frame: the window points the map at the scrubbed
+        // point (epoch 4 of the demo track).
+        let highlight = run_body_with_highlight(&MapHighlight::default());
+        let expected = demo_trails().epochs[4].point_index;
+        assert_eq!(
+            highlight.plot_hover_point,
+            Some((FileIdx::new(0), TrackIdx::new(0), expected))
+        );
+    }
+
+    #[test]
+    fn scrub_highlight_defers_to_an_active_plot_hover() {
+        // The time-series plot already claimed the channel this frame (the app
+        // writes it before the window runs); the window must not clobber it.
+        let plots_point = (
+            FileIdx::new(1),
+            TrackIdx::new(2),
+            gt_types::PointIdx::new(9),
+        );
+        let start = MapHighlight {
+            plot_hover_point: Some(plots_point),
+            plot_hover_snapped: true,
+            ..Default::default()
+        };
+        let highlight = run_body_with_highlight(&start);
+        assert_eq!(highlight.plot_hover_point, Some(plots_point));
     }
 
     /// Snapshot: the whole window body - the constellation filter, the trails
@@ -519,20 +759,171 @@ mod tests {
     fn open_track_resets_only_when_the_track_changes() {
         let mut window = SkyTrailsWindow::default();
         window.open_track(track_ref());
-        window.scrub_index = 5;
+        window.scrub_secs = 5.0;
+        window.playing = true;
         window.shown.remove(Constellation::Gps);
 
         // Re-opening the same track preserves the scrub position and filter.
         window.open_track(track_ref());
         assert!(window.open);
-        assert_eq!(window.scrub_index, 5);
+        assert!((window.scrub_secs - 5.0).abs() < f64::EPSILON);
+        assert!(window.playing);
         assert!(!window.shown.contains(Constellation::Gps));
 
-        // A different track resets both.
+        // A different track resets them.
         let other = TrackRef::new(FileIdx::new(0), TrackIdx::new(1));
         window.open_track(other);
-        assert_eq!(window.scrub_index, 0);
+        assert!(window.scrub_secs.abs() < f64::EPSILON);
+        assert!(!window.playing);
         assert!(window.shown.contains(Constellation::Gps));
+    }
+
+    #[test]
+    fn track_total_secs_spans_first_to_last_epoch() {
+        // demo_trails has eight epochs one second apart, so the span is 7s.
+        assert!((track_total_secs(&demo_trails()).expect("has epochs") - 7.0).abs() < 1e-9);
+        assert_eq!(track_total_secs(&SkyTrails::default()), None);
+    }
+
+    #[test]
+    fn offset_time_advances_from_the_first_epoch() {
+        let first = demo_trails().epochs[0].time;
+        let at_three = offset_time(first, 3.0);
+        assert_eq!(at_three.utc(), first.utc() + chrono::Duration::seconds(3));
+    }
+
+    /// Spacebar over the window toggles play/pause exactly once per press. A
+    /// single net toggle also proves the press is not double-counted: were both
+    /// the play button's click path and the window's space path to fire in one
+    /// frame, the state would flip twice and land back where it started.
+    #[test]
+    fn spacebar_toggles_play_once_per_press() {
+        let trails = demo_trails();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(560.0, 440.0))
+            .ui_state(
+                move |ui, playing: &mut bool| {
+                    WindowBody {
+                        trails: &trails,
+                        scrub_secs: &mut 2.0,
+                        playing,
+                        // Slow, so playback cannot reach the end of the short
+                        // demo track between presses and pause itself.
+                        speed: &mut 1.0,
+                        shown: &mut ConstellationSet::all(),
+                        show_not_in_fix: &mut true,
+                        track_ref: track_ref(),
+                        elevation_mask_deg: 10.0,
+                        highlight: &mut MapHighlight::default(),
+                    }
+                    .ui(ui);
+                },
+                false,
+            );
+        harness.run();
+
+        // Press space with the pointer over the window, both in the same frame
+        // so the space handler is armed (it is gated on the pointer being over
+        // the window).
+        let press_space = |harness: &mut TestHarness<'_, bool>| {
+            let key_event = |pressed| egui::Event::Key {
+                key: egui::Key::Space,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            };
+            let events = &mut harness.inner.input_mut().events;
+            events.push(egui::Event::PointerMoved(egui::pos2(280.0, 220.0)));
+            // Down then up in the frame, so the next press registers a fresh
+            // edge rather than a still-held key.
+            events.push(key_event(true));
+            events.push(key_event(false));
+            harness.inner.step();
+        };
+
+        press_space(&mut harness);
+        assert!(*harness.state(), "space should start playback");
+        press_space(&mut harness);
+        assert!(!*harness.state(), "space again should pause");
+    }
+
+    /// End-to-end: with playback on, stepping the harness advances the
+    /// scrubber (the whole loop - input dt, `advanced_scrub`, write-back - not
+    /// just the arithmetic), and it stops at the end of the track.
+    #[test]
+    fn playback_runs_the_scrubber_to_the_end() {
+        struct State {
+            secs: f64,
+            playing: bool,
+            speed: f32,
+        }
+        let trails = demo_trails();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(560.0, 440.0))
+            .step_dt(0.1)
+            .ui_state(
+                move |ui, state: &mut State| {
+                    WindowBody {
+                        trails: &trails,
+                        scrub_secs: &mut state.secs,
+                        playing: &mut state.playing,
+                        speed: &mut state.speed,
+                        shown: &mut ConstellationSet::all(),
+                        show_not_in_fix: &mut true,
+                        track_ref: track_ref(),
+                        elevation_mask_deg: 10.0,
+                        highlight: &mut MapHighlight::default(),
+                    }
+                    .ui(ui);
+                },
+                // 20x at 0.1s/frame is 2 track-seconds per frame over a 7s span.
+                State {
+                    secs: 0.0,
+                    playing: true,
+                    speed: 20.0,
+                },
+            );
+
+        // Playback requests a repaint every frame, so `run()` steps frames
+        // until it stops - i.e. runs the whole playback. It should reach the
+        // end of the 7s span and pause there.
+        harness.run();
+        assert!((harness.state().secs - 7.0).abs() < 1e-6);
+        assert!(!harness.state().playing);
+    }
+
+    #[test]
+    fn advanced_scrub_runs_then_stops_at_the_end() {
+        // Mid-track: advances by speed x dt (60 x 0.1 = 6s) and keeps playing.
+        let (secs, playing) = advanced_scrub(10.0, 60.0, 0.1, 100.0);
+        assert!((secs - 16.0).abs() < 1e-4);
+        assert!(playing);
+
+        // A long stall is clamped to MAX_PLAYBACK_FRAME_SECS (0.1s), so the
+        // scrubber does not leap the whole track on the next frame.
+        let (secs, _) = advanced_scrub(10.0, 60.0, 5.0, 100.0);
+        assert!((secs - 16.0).abs() < 1e-4);
+
+        // Reaching the end clamps to the total and stops.
+        let (secs, playing) = advanced_scrub(98.0, 60.0, 0.1, 100.0);
+        assert!((secs - 100.0).abs() < 1e-4);
+        assert!(!playing);
+    }
+
+    #[test]
+    fn floor_epoch_is_the_report_in_effect() {
+        let trails = demo_trails();
+        let first = trails.epochs[0].time;
+        // Between epoch 2 (t=2s) and 3 (t=3s): the report in effect is epoch 2.
+        let mid = floor_epoch(&trails, offset_time(first, 2.5)).expect("floor");
+        assert_eq!(mid.time, trails.epochs[2].time);
+        // Exactly on an epoch returns that epoch.
+        let exact = floor_epoch(&trails, trails.epochs[4].time).expect("floor");
+        assert_eq!(exact.time, trails.epochs[4].time);
+        // Past the end clamps to the last epoch.
+        let past = floor_epoch(&trails, offset_time(first, 99.0)).expect("floor");
+        assert_eq!(past.time, trails.epochs[7].time);
     }
 
     #[test]

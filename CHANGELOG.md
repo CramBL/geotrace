@@ -5,7 +5,7 @@
 ### Added
 
 - Sky plot: see where the satellites used in each fix are - a polar plot when you hover or click a track point, and a toggleable ring or disc overlay showing the directions along the whole track (in the map's visibility filter).
-- Sky trails window: open it from a track to see every satellite's path across the sky over the whole recording, scrub through time, filter by constellation, and spot where cycle slips happened.
+- Sky trails window: open it from a track to see every satellite's path across the sky over the whole recording. Play it back or scrub through time, with the map point following along. Live fix/seen counts update per constellation, hovering a satellite or cycle slip shows its details, and you can filter by constellation or hide satellites never used in a fix.
 
 ### Fixed
 
