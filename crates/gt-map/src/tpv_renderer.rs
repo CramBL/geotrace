@@ -1,8 +1,6 @@
 use egui::epaint::{PathShape, PathStroke};
 use egui::{Color32, PopupAnchor, Pos2, Stroke, Ui, Vec2};
 use egui::{Grid, RichText, ScrollArea, Tooltip};
-use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
-use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use gt_filter::{self as filter, GlobalFilter};
 use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
@@ -57,6 +55,13 @@ const QUALITY_LINE_ALPHA_STEPS: u8 = 3;
 const SWATCH_SIZE_PX: f32 = 10.0;
 const SWATCH_ROUNDING_PX: f32 = 2.0;
 const SWATCH_MARGIN_PX: f32 = 1.0;
+
+/// Size of the solid fold triangle. Big enough that its constellation tint
+/// reads as the colour key the swatch used to provide.
+const FOLD_ARROW_SIZE_PX: f32 = 9.0;
+
+/// Box the fold triangle is allocated in, leaving a little air around it.
+const FOLD_ARROW_BOX_PX: f32 = 12.0;
 
 /// Gap between the sticky popup's plot column and its satellite column, and
 /// between the two satellite columns.
@@ -691,12 +696,32 @@ fn sticky_metrics(ui: &mut Ui, p: &NavPoint, highlight: &mut Option<SkyHighlight
 /// what lets the constellation panels drop their separate colour swatch: one
 /// element carries both the fold state and the key to the plot's marks.
 fn fold_arrow(ui: &mut Ui, folded: bool, color: Color32) {
-    let glyph = if folded {
-        ICON_CARET_RIGHT
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(FOLD_ARROW_BOX_PX), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    // Painted rather than set as a glyph: only the Regular phosphor weight is
+    // loaded, and its caret is too fine to carry the constellation colour now
+    // that the arrow has taken the swatch's job.
+    let c = rect.center();
+    let half = FOLD_ARROW_SIZE_PX / 2.0;
+    let points = if folded {
+        // Pointing right: folded away.
+        vec![
+            egui::pos2(c.x - half, c.y - half),
+            egui::pos2(c.x - half, c.y + half),
+            egui::pos2(c.x + half, c.y),
+        ]
     } else {
-        ICON_CARET_DOWN
+        // Pointing down: opened out.
+        vec![
+            egui::pos2(c.x - half, c.y - half),
+            egui::pos2(c.x + half, c.y - half),
+            egui::pos2(c.x, c.y + half),
+        ]
     };
-    ui.label(RichText::new(glyph).color(color).small());
+    ui.painter()
+        .add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
 }
 
 /// One constellation's satellites in the point window, carrying what both the
