@@ -38,6 +38,36 @@ pub(crate) fn hover_affordance(ui: &egui::Ui, rect: egui::Rect) -> bool {
     if !ui.rect_contains_pointer(rect) {
         return false;
     }
+    paint_hover_band(ui, rect);
+    true
+}
+
+/// [`hover_affordance`] for one row of a stacked list, hit-testing a band that
+/// reaches halfway into the gaps above and below so consecutive rows tile
+/// without a dead strip between them.
+///
+/// Rows are laid out with spacing between them, and a plain rect hit-test
+/// leaves that spacing hovering nothing. Dragging the pointer down a satellite
+/// table would then drop the sky-plot highlight in every gap, so the plot
+/// flashed back to full strength between one satellite and the next. Bridging
+/// the gap hands the highlight straight from one row to the next. The band is
+/// still painted at the row's own rect, so the rows stay visually separate.
+///
+/// A full spacing each side, not half: a grid leaves two spacings between
+/// consecutive rows, so half would still leave the middle uncovered. Reaching
+/// too far is harmless - where two rows overlap the lower one wins, which is
+/// still a clean hand-off - whereas reaching too short brings the flicker back.
+pub(crate) fn row_hover_affordance(ui: &egui::Ui, rect: egui::Rect) -> bool {
+    let bridge = ui.spacing().item_spacing.y;
+    if !ui.rect_contains_pointer(rect.expand2(egui::vec2(0.0, bridge))) {
+        return false;
+    }
+    paint_hover_band(ui, rect);
+    true
+}
+
+/// The shared hover band and pointer cursor.
+fn paint_hover_band(ui: &egui::Ui, rect: egui::Rect) {
     let band = ui
         .visuals()
         .selection
@@ -46,7 +76,6 @@ pub(crate) fn hover_affordance(ui: &egui::Ui, rect: egui::Rect) -> bool {
     ui.painter()
         .rect_filled(rect.expand(HOVER_BAND_PAD_PX), HOVER_BAND_ROUNDING_PX, band);
     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    true
 }
 
 /// Returns `true` when the multi-hover compound label should be drawn.

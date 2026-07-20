@@ -859,34 +859,45 @@ fn constellation_panel(
         let const_fix = satellites.iter().filter(|s| s.in_fix()).count() as u32;
         // Header: the fold arrow in the constellation's plot colour (it
         // replaces a separate swatch, so folding costs no extra chrome), the
-        // name, and the fix/seen count. Clicking folds; hovering the name
-        // highlights the whole constellation, and hovering the fix count
-        // highlights its in-fix subset.
-        ui.horizontal(|ui| {
-            let name = ui
-                .horizontal(|ui| {
-                    fold_arrow(
-                        ui,
-                        folded,
-                        gt_ui_theme::constellation_color(constellation, dark_mode),
-                    );
-                    ui.label(RichText::new(constellation.display_name()).strong());
-                })
-                .response
-                .interact(egui::Sense::click());
-            if crate::hover_labels::hover_affordance(ui, name.rect) {
-                *highlight = Some(SkyHighlight::constellation(constellation));
-            }
-            if name.clicked() {
-                folds.toggle(constellation);
-            }
+        // name, and the fix/seen count.
+        //
+        // The whole row folds on click, not just the arrow - the row is what
+        // lights up on hover, so that is what has to be clickable. Which part
+        // is under the pointer still picks the highlight: the fix count
+        // highlights only the in-fix subset, anywhere else the whole
+        // constellation.
+        let header = ui.horizontal(|ui| {
+            fold_arrow(
+                ui,
+                folded,
+                gt_ui_theme::constellation_color(constellation, dark_mode),
+            );
+            ui.label(RichText::new(constellation.display_name()).strong());
             let fix_resp =
                 ui.colored_label(fix_count_color(const_fix, dark_mode), const_fix.to_string());
-            if crate::hover_labels::hover_affordance(ui, fix_resp.rect) {
-                *highlight = Some(SkyHighlight::constellation_in_fix(constellation));
-            }
             ui.label(RichText::new(format!("/{}", satellites.len())).weak());
+            ui.rect_contains_pointer(fix_resp.rect)
         });
+        let over_fix_count = header.inner;
+        // Interact with an explicit id rather than re-sensing the container's
+        // response: sibling panels lay out identically, so the auto-generated
+        // container ids collide and the click lands on the wrong panel - or
+        // nowhere at all.
+        let header = ui.interact(
+            header.response.rect,
+            ui.id().with(("constellation_fold", constellation)),
+            egui::Sense::click(),
+        );
+        if crate::hover_labels::hover_affordance(ui, header.rect) {
+            *highlight = Some(if over_fix_count {
+                SkyHighlight::constellation_in_fix(constellation)
+            } else {
+                SkyHighlight::constellation(constellation)
+            });
+        }
+        if header.clicked() {
+            folds.toggle(constellation);
+        }
         if folded {
             // The header above keeps colour, name and counts on screen, so a
             // folded constellation still reads at a glance.
@@ -930,7 +941,7 @@ fn constellation_panel(
                     // between them) highlights just that
                     // satellite.
                     let row = prn_resp.union(snr_resp).union(fix_resp);
-                    if crate::hover_labels::hover_affordance(ui, row.rect) {
+                    if crate::hover_labels::row_hover_affordance(ui, row.rect) {
                         *highlight = Some(SkyHighlight::satellite(constellation, sat.prn()));
                     }
                     ui.end_row();
@@ -1830,6 +1841,96 @@ mod tests {
             "the constellation header must stay visible when folded"
         );
         assert_eq!(harness.inner.query_by_label("G01").is_some(), expect_rows);
+    }
+
+    #[test]
+    fn clicking_anywhere_on_the_header_folds() {
+        let point = make_point(Some(sats_multi_constellation()));
+        let folded = std::rc::Rc::new(std::cell::Cell::new(false));
+        let seen = folded.clone();
+        let mut folds = gt_ui_types::PointWindowFolds::default();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(600.0, 440.0))
+            .theme(true)
+            .ui(move |ui| {
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                seen.set(folds.is_folded(Constellation::Gps));
+            });
+        harness.run();
+        assert!(!folded.get(), "starts unfolded");
+        harness.inner.get_by_label("GPS").click();
+        harness.inner.run_steps(2);
+        assert!(folded.get(), "clicking the header should fold GPS");
+    }
+
+    /// Each header folds its own constellation. Sibling panels lay out
+    /// identically, so an auto-generated interaction id collides across them
+    /// and a click lands on the wrong panel; this pins the second panel
+    /// folding itself and leaving the first alone.
+    #[test]
+    fn each_header_folds_its_own_constellation() {
+        let point = make_point(Some(sats_multi_constellation()));
+        let state = std::rc::Rc::new(std::cell::Cell::new((false, false)));
+        let seen = state.clone();
+        let mut folds = gt_ui_types::PointWindowFolds::default();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(600.0, 440.0))
+            .theme(true)
+            .ui(move |ui| {
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                seen.set((
+                    folds.is_folded(Constellation::Gps),
+                    folds.is_folded(Constellation::Glonass),
+                ));
+            });
+        harness.run();
+
+        harness.inner.get_by_label("GLONASS").click();
+        harness.inner.run_steps(2);
+
+        let (gps, glonass) = state.get();
+        assert!(glonass, "clicking GLONASS must fold GLONASS");
+        assert!(!gps, "clicking GLONASS must not fold GPS");
+    }
+
+    /// Sliding down the satellite table must not drop the sky highlight in the
+    /// spacing between rows. It used to: the gap hovered nothing, so the plot
+    /// flashed back to full strength between one satellite and the next.
+    #[test]
+    fn the_gap_between_satellite_rows_keeps_the_highlight() {
+        let point = make_point(Some(sats_multi_constellation()));
+        let id_cell = std::rc::Rc::new(std::cell::Cell::new(None));
+        let cell = id_cell.clone();
+        let mut folds = gt_ui_types::PointWindowFolds::default();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(600.0, 440.0))
+            .theme(true)
+            .ui(move |ui| {
+                cell.set(Some(sky_table_highlight_id(ui)));
+                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+            });
+        harness.run();
+
+        let first = harness.inner.get_by_label("G01").rect();
+        let second = harness.inner.get_by_label("G02").rect();
+        assert!(
+            second.top() > first.bottom(),
+            "rows must actually be spaced apart, or this proves nothing"
+        );
+
+        // Dead centre of the strip between the two rows.
+        harness.inner.hover_at(egui::pos2(
+            first.center().x,
+            (first.bottom() + second.top()) / 2.0,
+        ));
+        harness.inner.run_steps(2);
+
+        let id = id_cell.get().expect("sticky content rendered");
+        let highlight: Option<SkyHighlight> = harness.inner.ctx.data(|d| d.get_temp(id)).flatten();
+        assert!(
+            highlight.is_some(),
+            "the gap between rows must hand the highlight from one row to the next"
+        );
     }
 
     /// The satellite badge (counts, SNR gradient, PRN colours) must stay
