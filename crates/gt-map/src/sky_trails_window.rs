@@ -270,11 +270,12 @@ impl WindowBody<'_> {
             return;
         };
 
-        // Spacebar toggles play/pause while the pointer is anywhere over the
-        // window (not just the transport), so watching the plot and hitting
-        // space works. Tested against the full content rect - `ui`'s min_rect
-        // is still empty this early in the layout, so `ui_contains_pointer`
-        // would miss.
+        // The arrow-key transport (seek, speed) only fires while the pointer is
+        // over the window, so it never hijacks the arrows from the rest of the
+        // app. Spacebar is not gated this way - it toggles play/pause wherever
+        // the pointer is (handled in `transport`). Tested against the full
+        // content rect - `ui`'s min_rect is still empty this early in the
+        // layout, so `ui_contains_pointer` would miss.
         let window_hovered = ui.rect_contains_pointer(ui.max_rect());
 
         // Advance playback, then clamp - so a paused scrubber and a finished
@@ -354,15 +355,7 @@ impl WindowBody<'_> {
         // Measured across the gap as well as the transport, so next frame's
         // plot is sized against the space the content actually occupies.
         let plot_bottom = ui.min_rect().bottom();
-        transport(
-            ui,
-            first,
-            total_secs,
-            scrub_secs,
-            playing,
-            speed,
-            window_hovered,
-        );
+        transport(ui, first, total_secs, scrub_secs, playing, speed);
         let below_plot = ui.min_rect().bottom() - plot_bottom;
         ui.data_mut(|d| d.insert_temp(reserve_id, below_plot));
     }
@@ -806,7 +799,6 @@ fn transport(
     scrub_secs: &mut f64,
     playing: &mut bool,
     speed: &mut f32,
-    window_hovered: bool,
 ) {
     let current = offset_time(first, *scrub_secs);
 
@@ -831,11 +823,13 @@ fn transport(
 
     ui.horizontal(|ui| {
         let play = play_button(ui, *playing);
-        // Toggle on click, on Enter/Space while the button is focused (egui
-        // already reports those as a click), or on Space while the window is
-        // hovered and the button is not focused (so it is never toggled twice).
+        // Space toggles play/pause the whole time the window is open, wherever
+        // the pointer is. Skipped while any widget holds keyboard focus: a
+        // focused play button already turns Space into a click (caught by
+        // `play.clicked()`, so it is never toggled twice), and a text field
+        // elsewhere in the app must keep its own spaces.
         let space =
-            window_hovered && !play.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Space));
+            ui.memory(|m| m.focused()).is_none() && ui.input(|i| i.key_pressed(egui::Key::Space));
         if play.clicked() || space {
             *playing = !*playing;
             // Starting from the end replays from the top.
@@ -1495,12 +1489,14 @@ mod tests {
         assert_eq!(at_three.utc(), first.utc() + chrono::Duration::seconds(3));
     }
 
-    /// Spacebar over the window toggles play/pause exactly once per press. A
-    /// single net toggle also proves the press is not double-counted: were both
-    /// the play button's click path and the window's space path to fire in one
-    /// frame, the state would flip twice and land back where it started.
+    /// Spacebar toggles play/pause whenever the window is open, wherever the
+    /// pointer is - the press below lands with the pointer parked well outside
+    /// the window, and it still toggles. A single net toggle per press also
+    /// proves it is not double-counted: were both the play button's click path
+    /// and the window's space path to fire in one frame, the state would flip
+    /// twice and land back where it started.
     #[test]
-    fn spacebar_toggles_play_once_per_press() {
+    fn spacebar_toggles_play_regardless_of_hover() {
         let trails = demo_trails();
         let mut harness = TestHarness::builder()
             .size(egui::vec2(560.0, 440.0))
@@ -1525,9 +1521,8 @@ mod tests {
             );
         harness.run();
 
-        // Press space with the pointer over the window, both in the same frame
-        // so the space handler is armed (it is gated on the pointer being over
-        // the window).
+        // Press space with the pointer parked outside the window, so the toggle
+        // cannot be attributed to hover.
         let press_space = |harness: &mut TestHarness<'_, bool>| {
             let key_event = |pressed| egui::Event::Key {
                 key: egui::Key::Space,
@@ -1537,7 +1532,7 @@ mod tests {
                 modifiers: egui::Modifiers::NONE,
             };
             let events = &mut harness.inner.input_mut().events;
-            events.push(egui::Event::PointerMoved(egui::pos2(280.0, 220.0)));
+            events.push(egui::Event::PointerMoved(egui::pos2(-100.0, -100.0)));
             // Down then up in the frame, so the next press registers a fresh
             // edge rather than a still-held key.
             events.push(key_event(true));
