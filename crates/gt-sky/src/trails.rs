@@ -82,10 +82,21 @@ impl SkyTrail {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EpochCount {
     pub constellation: Constellation,
-    /// Satellites of this constellation with a sky position at the epoch.
+    /// Satellites of this constellation with a sky position at the epoch,
+    /// counting only the ones currently shown.
     pub seen: usize,
-    /// Of those, the ones in the fix.
+    /// Satellites with a sky position at the epoch regardless of the
+    /// not-in-fix filter, so the window can show what hiding them cost.
+    pub seen_unfiltered: usize,
+    /// Of the shown ones, those in the fix.
     pub fix: usize,
+}
+
+impl EpochCount {
+    /// Whether the not-in-fix filter is hiding satellites from [`Self::seen`].
+    pub const fn is_filtered(self) -> bool {
+        self.seen_unfiltered > self.seen
+    }
 }
 
 /// One report epoch on the track's timeline - the scrubber walks these.
@@ -156,10 +167,13 @@ impl SkyTrails {
     pub fn counts_at(&self, time: GpsTime, show_not_in_fix: bool) -> Vec<EpochCount> {
         self.constellations()
             .map(|constellation| {
-                let (seen, fix) = self
-                    .trails
-                    .iter()
-                    .filter(|trail| trail.constellation == constellation)
+                let present = || {
+                    self.trails
+                        .iter()
+                        .filter(|trail| trail.constellation == constellation)
+                        .filter(|trail| trail.sample_exactly_at(time).is_some())
+                };
+                let (seen, fix) = present()
                     .filter(|trail| show_not_in_fix || trail.ever_in_fix())
                     .filter_map(|trail| trail.sample_exactly_at(time))
                     .fold((0, 0), |(seen, fix), s| {
@@ -168,6 +182,7 @@ impl SkyTrails {
                 EpochCount {
                     constellation,
                     seen,
+                    seen_unfiltered: present().count(),
                     fix,
                 }
             })
@@ -319,14 +334,22 @@ mod tests {
             .expect("galileo present");
         assert_eq!((galileo.seen, galileo.fix), (1, 1));
 
+        // Nothing hidden, so the unfiltered total matches what is shown.
+        assert_eq!(gps.seen_unfiltered, 2);
+        assert!(!gps.is_filtered());
+
         // Excluding never-in-fix satellites drops the tracked-only GPS-12, so
-        // GPS now counts one seen (and still one in fix).
+        // GPS now counts one seen (and still one in fix) - but the unfiltered
+        // total still reports both, so the window can say what was hidden
+        // rather than letting the count silently drop.
         let in_fix_only = trails.counts_at(trails.epochs[0].time, false);
         let gps = in_fix_only
             .iter()
             .find(|c| c.constellation == Constellation::Gps)
             .expect("gps present");
         assert_eq!((gps.seen, gps.fix), (1, 1));
+        assert_eq!(gps.seen_unfiltered, 2);
+        assert!(gps.is_filtered());
     }
 
     #[test]
