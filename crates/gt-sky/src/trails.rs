@@ -11,10 +11,37 @@ use gt_types::{GeneratedMarkerKind, GpsTime, GpsTimeRange, LoadedTrack, PointIdx
 
 use crate::projection;
 
+/// Which report epoch a [`TrailSample`] came from: an index into
+/// [`SkyTrails::epochs`].
+///
+/// Consecutive indices mean consecutive reports, so a break in them is exactly
+/// a gap in the satellite's tracking. Painting a trail asks that question once
+/// per sample, and answering it by index is a comparison rather than a search
+/// through the epochs.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct EpochIdx(usize);
+
+impl EpochIdx {
+    /// Only meaningful against the [`SkyTrails::epochs`] it was built from:
+    /// [`extract_trails`] hands each sample the index of the report it came
+    /// from, and nothing else constructs one.
+    pub fn new(n: usize) -> Self {
+        Self(n)
+    }
+
+    /// Whether `self` is the epoch immediately after `earlier`, i.e. the two
+    /// samples are from back-to-back reports with nothing skipped between.
+    pub fn follows(self, earlier: Self) -> bool {
+        self.0 == earlier.0 + 1
+    }
+}
+
 /// One satellite's position at one report epoch, a vertex of a [`SkyTrail`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrailSample {
     pub time: GpsTime,
+    /// The report this sample came from.
+    pub epoch: EpochIdx,
     /// The track point this sample came from, so the scrubber can
     /// cross-highlight the map through the existing highlight channel.
     pub point_index: PointIdx,
@@ -165,6 +192,7 @@ pub fn extract_trails(track: &LoadedTrack) -> SkyTrails {
         };
         let point_index = PointIdx::new(index);
         let time = point.tpv.time();
+        let epoch = EpochIdx::new(epochs.len());
         epochs.push(TrailEpoch { time, point_index });
 
         for satellite in satellites.satellites() {
@@ -176,6 +204,7 @@ pub fn extract_trails(track: &LoadedTrack) -> SkyTrails {
                 .or_default()
                 .push(TrailSample {
                     time,
+                    epoch,
                     point_index,
                     azimuth,
                     elevation,

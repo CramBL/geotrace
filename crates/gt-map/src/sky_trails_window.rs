@@ -23,8 +23,11 @@ const COLUMN_GAP_PX: f32 = 12.0;
 /// legible even in a small window.
 const MIN_PLOT_DIAMETER_PX: f32 = 240.0;
 
-/// Vertical space kept below the plot for the transport (time labels, slider).
-/// The plot is sized to fit above it, so resizing grows the plot, not a gap.
+/// First-frame estimate of the vertical space below the plot (the transport
+/// and the gap above it). Only ever used before the real height has been
+/// measured; every later frame sizes the plot against the measurement, so an
+/// inexact seed costs one frame of settling rather than a permanently wrong
+/// layout.
 const TRANSPORT_RESERVE_PX: f32 = 78.0;
 
 /// Fixed width of each stats count column, so the fix/seen numbers line up
@@ -265,11 +268,14 @@ impl WindowBody<'_> {
 
         // Size the plot to the space left after the stats column and the
         // transport, so resizing the window grows the plot rather than a gap.
-        // The transport height is measured from the previous frame and cached:
-        // egui's window only ever grows to fit content, so sizing the plot
-        // against a guessed reserve that undershoots the real transport would
-        // make the window creep taller every frame.
-        let reserve_id = ui.id().with("transport_height");
+        // The reserve is measured from the previous frame and cached: egui's
+        // window only ever grows to fit content, so a reserve that undershoots
+        // what is really laid out below the plot makes the window creep taller
+        // every frame, and the taller window then grows the plot on the next
+        // one. The measurement therefore has to span *everything* below the
+        // plot row - the transport and the spacing egui inserts above it - not
+        // just the transport's own height.
+        let reserve_id = ui.id().with("below_plot_height");
         let reserved = ui
             .data(|d| d.get_temp::<f32>(reserve_id))
             .unwrap_or(TRANSPORT_RESERVE_PX);
@@ -302,21 +308,20 @@ impl WindowBody<'_> {
                 .with_elevation_mask_deg(elevation_mask_deg)
                 .ui(ui);
         });
-        let transport_rect = ui
-            .scope(|ui| {
-                transport(
-                    ui,
-                    first,
-                    total_secs,
-                    scrub_secs,
-                    playing,
-                    speed,
-                    window_hovered,
-                )
-            })
-            .response
-            .rect;
-        ui.data_mut(|d| d.insert_temp(reserve_id, transport_rect.height()));
+        // Measured across the gap as well as the transport, so next frame's
+        // plot is sized against the space the content actually occupies.
+        let plot_bottom = ui.min_rect().bottom();
+        transport(
+            ui,
+            first,
+            total_secs,
+            scrub_secs,
+            playing,
+            speed,
+            window_hovered,
+        );
+        let below_plot = ui.min_rect().bottom() - plot_bottom;
+        ui.data_mut(|d| d.insert_temp(reserve_id, below_plot));
     }
 }
 
@@ -689,9 +694,10 @@ mod tests {
     };
 
     use super::{
-        ConstellationSet, MapHighlight, SkyTrails, SkyTrailsRequest, SkyTrailsWindow, TrackRef,
-        WindowBody, advanced_scrub, apply_scrub_highlight, floor_epoch, offset_time,
-        scrub_offset_of, track_total_secs,
+        ConstellationSet, DEFAULT_WINDOW_SIZE, MIN_WINDOW_HEIGHT_PX, MIN_WINDOW_WIDTH_PX,
+        MapHighlight, SkyTrails, SkyTrailsRequest, SkyTrailsWindow, TrackRef, Window, WindowBody,
+        advanced_scrub, apply_scrub_highlight, floor_epoch, offset_time, scrub_offset_of,
+        track_total_secs,
     };
 
     /// A synthetic track: a few satellites drifting across the sky over eight
@@ -736,6 +742,64 @@ mod tests {
             })
             .collect();
         gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(points))
+    }
+
+    /// The window must settle at a size and stay there. It used to grow by one
+    /// `item_spacing` every frame, without end: the plot is sized to the space
+    /// left after the transport, but the reserve measured only the transport's
+    /// own height and not the gap egui inserts above it. Content therefore came
+    /// out one spacing taller than the space it was sized against, egui's
+    /// window grew to fit, and the larger window fed a larger plot on the next
+    /// frame. A long track made it obvious, because the heavy plot keeps the UI
+    /// repainting, but the creep is there for any track.
+    #[test]
+    fn the_window_settles_at_a_size_instead_of_growing_every_frame() {
+        let trails = demo_trails();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(900.0, 700.0))
+            .ui(move |ui| {
+                Window::new("Sky trails")
+                    .resizable(true)
+                    .default_size(DEFAULT_WINDOW_SIZE)
+                    .min_width(MIN_WINDOW_WIDTH_PX)
+                    .min_height(MIN_WINDOW_HEIGHT_PX)
+                    .show(ui.ctx(), |ui| {
+                        WindowBody {
+                            trails: &trails,
+                            scrub_secs: &mut 4.0,
+                            playing: &mut false,
+                            speed: &mut 60.0,
+                            shown: &mut ConstellationSet::all(),
+                            show_not_in_fix: &mut true,
+                            track_ref: track_ref(),
+                            elevation_mask_deg: 10.0,
+                            highlight: &mut MapHighlight::default(),
+                        }
+                        .ui(ui);
+                    });
+            });
+
+        let window_size = |h: &TestHarness<'_>| {
+            h.inner
+                .ctx
+                .memory(|m| m.area_rect(egui::Id::new("Sky trails")))
+                .map(|r| r.size())
+        };
+
+        // A couple of frames to settle: the first sizes against the default,
+        // the second against the measured transport.
+        harness.run();
+        harness.run();
+        let settled = window_size(&harness).expect("the window is shown");
+
+        for frame in 0..10 {
+            harness.run();
+            let now = window_size(&harness).expect("the window is shown");
+            assert!(
+                (now - settled).length() < 0.5,
+                "frame {frame}: window grew from {settled:?} to {now:?}"
+            );
+        }
     }
 
     fn track_ref() -> TrackRef {
