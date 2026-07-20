@@ -43,7 +43,7 @@ struct State {
     snap_visibility_request: Option<TrackRef>,
     snap_costing_choices: Vec<(SnapCosting, String)>,
     snap_costing_request: Option<(TrackRef, SnapCosting)>,
-    sky_trails_request: Option<TrackRef>,
+    sky_trails_request: Option<gt_ui_types::SkyTrailsRequest>,
 }
 
 fn make_state(file_count: usize) -> State {

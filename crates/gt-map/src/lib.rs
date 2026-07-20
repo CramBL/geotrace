@@ -34,8 +34,8 @@ use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
-    HighlightScope, MapHighlight, PointWindowFolds, QueryMatches, SkyGlyphVariant, SnappedTracks,
-    TrackDataVisibility,
+    HighlightScope, MapHighlight, PointWindowFolds, QueryMatches, SkyGlyphVariant,
+    SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
@@ -66,14 +66,14 @@ pub enum MapLayer {
 ///
 /// Returned by [`NavMap::draw`] when the user selects an item. The caller is
 /// responsible for applying it to the visibility state.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapContextAction {
     /// Hide every track except the given one.
     ShowOnlyTrack(TrackRef),
     /// Hide every file except the given one.
     ShowOnlyFile(FileIdx),
-    /// Open the sky trails window on the given track.
-    ShowSkyTrails(TrackRef),
+    /// Open the sky trails window, per the request's track and instant.
+    ShowSkyTrails(SkyTrailsRequest),
 }
 
 /// Manages the load-highlight pulse animation.
@@ -804,7 +804,9 @@ impl NavMap {
             }
             ui.separator();
             if ui.button("Show sky trails…").clicked() {
-                context_action = Some(MapContextAction::ShowSkyTrails(point_ref.track));
+                context_action = Some(MapContextAction::ShowSkyTrails(
+                    SkyTrailsRequest::whole_track(point_ref.track),
+                ));
                 ui.close();
             }
         });
@@ -817,14 +819,16 @@ impl NavMap {
         }
 
         // Show a persistent, text-selectable info window for the sticky element.
-        if let Some(sticky_ref) = highlight.sticky {
-            show_sticky_popup(
+        if let Some(sticky_ref) = highlight.sticky
+            && let Some(request) = show_sticky_popup(
                 ui.ctx(),
                 files,
                 sticky_ref,
                 self.sticky_pos,
                 point_window_folds,
-            );
+            )
+        {
+            context_action = Some(MapContextAction::ShowSkyTrails(request));
         }
 
         // When multiple different item types are hovered simultaneously, draw a
@@ -864,12 +868,15 @@ impl NavMap {
 /// space above it. Same inner-panel idiom the side panel uses to pin its
 /// progress strip above a scrolling tree, so the satellite table scrolls
 /// inside the remaining space rather than the whole body scrolling.
+/// Returns whether the user asked to open the sky trails window at this
+/// point's instant.
+#[must_use]
 fn show_point_window_body(
     ui: &mut egui::Ui,
     point: &gt_types::NavPoint,
     sky: &crate::tpv_renderer::SkySection<'_>,
     folds: &mut PointWindowFolds,
-) {
+) -> bool {
     egui::Panel::bottom("sticky_point_hint").show_inside(ui, |ui| {
         ui.add_space(4.0);
         ui.label(RichText::new("Click to deselect").small().weak());
@@ -877,17 +884,21 @@ fn show_point_window_body(
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show_inside(ui, |ui| {
-            crate::tpv_renderer::show_sticky_tpv_content(ui, point, sky, folds);
-        });
+            crate::tpv_renderer::show_sticky_tpv_content(ui, point, sky, folds)
+        })
+        .inner
 }
 
+/// Returns a request to open the sky trails window when the point window's
+/// header button was pressed, carrying the clicked point's instant.
+#[must_use]
 fn show_sticky_popup(
     ctx: &egui::Context,
     files: &[LoadedFile],
     sticky_ref: DataPointRef,
     default_pos: egui::Pos2,
     folds: &mut PointWindowFolds,
-) {
+) -> Option<SkyTrailsRequest> {
     // For TPV points, satellite reports, and generated-marker events the window
     // title is the point's datetime. For everything else fall back to a generic label.
     let title: String = if sticky_ref.category == DataCategory::Tpv {
@@ -967,6 +978,7 @@ fn show_sticky_popup(
     } else {
         window.auto_sized()
     };
+    let mut trails_request = None;
     window.show(ctx, |ui| match sticky_ref.category {
         // Both carry the same point content, so they share one arm - and with
         // it the resizable frame that `sticky_uses_point_layout` selects.
@@ -979,7 +991,12 @@ fn show_sticky_popup(
                 && let Some(point) = sticky_ref.point_index.get(&track.points)
             {
                 let sky = crate::tpv_renderer::SkySection::resolve(track, sticky_ref.point_index);
-                show_point_window_body(ui, point, &sky, folds);
+                if show_point_window_body(ui, point, &sky, folds) {
+                    trails_request = Some(SkyTrailsRequest::at_instant(
+                        sticky_ref.track,
+                        point.tpv.time(),
+                    ));
+                }
             }
         }
         DataCategory::CustomMarker => {
@@ -1063,6 +1080,7 @@ fn show_sticky_popup(
             }
         }
     });
+    trails_request
 }
 
 #[cfg(test)]
@@ -2699,6 +2717,84 @@ mod snapshot_tests {
             harness.run();
         }
         harness.snapshot_loose("sticky_point_window");
+    }
+
+    /// The point window's open-trails button has to travel the whole way out
+    /// of `draw`: through the window body, into a [`SkyTrailsRequest`] carrying
+    /// the clicked point's instant, and out as a [`MapContextAction`]. The
+    /// widget-level test one layer down cannot see this wiring, so a dropped
+    /// return value here would leave the button a silent no-op.
+    #[test]
+    fn the_point_window_button_returns_a_timed_sky_trails_action() {
+        use egui_kittest::kittest::Queryable as _;
+        use gt_ui_types::TrackDataVisibility;
+
+        let files = vec![make_snapshot_file()];
+        let visibility = TrackDataVisibility::from_loaded(&files);
+        let clicked = gt_ui_types::DataPointRef {
+            track: gt_types::TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            category: gt_types::DataCategory::Tpv,
+            point_index: PointIdx::new(50),
+        };
+        let point_time = files
+            .first()
+            .and_then(|f| f.tracks.first())
+            .and_then(|t| t.points.get(50))
+            .map(|p| p.tpv.time())
+            .expect("the fixture has a point 50");
+        let action = std::rc::Rc::new(std::cell::Cell::new(None));
+        let seen = action.clone();
+
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(900.0, 700.0))
+            .ui_state(
+                move |ui, map: &mut Option<NavMap>| {
+                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let mut highlight = gt_ui_types::MapHighlight {
+                        sticky: Some(clicked),
+                        ..gt_ui_types::MapHighlight::default()
+                    };
+                    let returned = map.draw(
+                        ui,
+                        &files,
+                        &visibility,
+                        &mut highlight,
+                        &gt_filter::GlobalFilter::default(),
+                        &mut gt_ui_types::DisplayMask::default(),
+                        &mut gt_ui_types::SkyGlyphVariant::default(),
+                        &mut gt_ui_types::PointWindowFolds::default(),
+                        &gt_ui_types::EventMarkerVisibility::default(),
+                        &gt_ui_types::GeneratedMarkerVisibility::default(),
+                        None,
+                        None,
+                        None,
+                        false,
+                        None,
+                    );
+                    if returned.is_some() {
+                        seen.set(returned);
+                    }
+                },
+                None,
+            );
+
+        for _ in 0..5 {
+            harness.run();
+        }
+        assert!(action.get().is_none(), "nothing requested before the click");
+
+        harness
+            .inner
+            .get_by_label(egui_phosphor::regular::ARROW_SQUARE_OUT)
+            .click();
+        harness.inner.run_steps(2);
+
+        assert_eq!(
+            action.get(),
+            Some(MapContextAction::ShowSkyTrails(
+                gt_ui_types::SkyTrailsRequest::at_instant(clicked.track, point_time)
+            ))
+        );
     }
 
     /// The point layout - and with it the resizable frame - covers both

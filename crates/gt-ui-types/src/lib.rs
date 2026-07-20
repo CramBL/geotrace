@@ -6,6 +6,7 @@ pub mod highlight;
 pub mod point_window;
 pub mod query_matches;
 pub mod sky_glyphs;
+pub mod sky_trails_request;
 pub mod snap_error_series;
 pub mod snapped_tracks;
 pub mod visibility;
@@ -18,6 +19,7 @@ pub use highlight::{DataPointRef, HighlightScope, MapHighlight, MatchHighlight};
 pub use point_window::PointWindowFolds;
 pub use query_matches::{DrawLayer, DrawLayerMask, QueryMatches};
 pub use sky_glyphs::SkyGlyphVariant;
+pub use sky_trails_request::SkyTrailsRequest;
 pub use snap_error_series::{SnapErrorKind, SnapErrorPoint, SnapErrorSeries};
 pub use snapped_tracks::{
     SnapCosting, SnappedEdgeInfo, SnappedEdgeSpan, SnappedSegment, SnappedTrackGeometry,
