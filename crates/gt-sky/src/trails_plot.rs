@@ -8,7 +8,7 @@ use gt_types::satellites::{Constellation, ConstellationSet, Satellite};
 use gt_types::{GpsTime, GpsTimeRange};
 
 use crate::style;
-use crate::trails::{SkyTrail, SkyTrails, SlipMark, TrailEpoch, TrailSample};
+use crate::trails::{SkyTrail, SkyTrails, SlipMark, TrailSample};
 use crate::{grid, plot_common, projection};
 
 /// The per-frame plot geometry shared by the trail and marker painting.
@@ -124,7 +124,6 @@ impl<'a> SkyTrailsPlot<'a> {
         };
         let dark_mode = ui.visuals().dark_mode;
         let panel = ui.visuals().panel_fill;
-        let epochs = &self.trails.epochs;
 
         // The scrub markers drawn this frame, kept for hover: each satellite at
         // the scrubbed instant, with its position matching the drawn dot.
@@ -139,10 +138,10 @@ impl<'a> SkyTrailsPlot<'a> {
             }
             let base = gt_ui_theme::constellation_color(trail.constellation, dark_mode);
             let focus_factor = self.focus_factor(trail.constellation);
-            paint_trail(ui, frame, trail, epochs, base, focus_factor);
+            paint_trail(ui, frame, trail, base, focus_factor);
 
             if let Some(scrub) = self.scrub
-                && let Some((azimuth, elevation, exact)) = sample_at(trail, epochs, scrub)
+                && let Some((azimuth, elevation, exact)) = sample_at(trail, scrub)
             {
                 let pos = frame.project(azimuth, elevation);
                 paint_marker(ui, pos, base.gamma_multiply(focus_factor), panel, exact);
@@ -220,36 +219,98 @@ impl<'a> SkyTrailsPlot<'a> {
 /// Paint one trail: a polyline through its samples, each segment's alpha
 /// ramping with time so the sweep direction reads, broken wherever an epoch
 /// falls between two samples (the satellite dropped out there).
-fn paint_trail(
-    ui: &egui::Ui,
-    frame: Frame,
-    trail: &SkyTrail,
-    epochs: &[TrailEpoch],
-    color: Color32,
-    focus_factor: f32,
-) {
+fn paint_trail(ui: &egui::Ui, frame: Frame, trail: &SkyTrail, color: Color32, focus_factor: f32) {
     let painter = ui.painter();
-    for pair in trail.samples.windows(2) {
-        let [a, b] = pair else {
-            continue;
-        };
-        if epoch_between(epochs, a.time, b.time) {
-            continue; // the satellite was absent between these samples
-        }
+    for segment in trail_segments(trail, frame) {
         let ramp = style::TRAIL_MIN_ALPHA
             + (style::TRAIL_MAX_ALPHA - style::TRAIL_MIN_ALPHA)
-                * frame.time_range.normalize(b.time);
+                * frame.time_range.normalize(segment.ramp_time);
         painter.line_segment(
-            [
-                frame.project(a.azimuth, a.elevation),
-                frame.project(b.azimuth, b.elevation),
-            ],
+            [segment.from, segment.to],
             Stroke::new(
                 style::TRAIL_WIDTH_PX,
                 color.gamma_multiply(ramp * focus_factor),
             ),
         );
     }
+}
+
+/// How far a sample must project from the last kept one before it earns a
+/// segment of its own. Below a pixel there is nothing left to resolve, so the
+/// samples in between are collapsed into the run.
+const MIN_SEGMENT_PX: f32 = 1.0;
+
+/// One drawn piece of a trail: a straight run between two kept samples, and
+/// the time that places it on the alpha ramp.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TrailSegment {
+    from: Pos2,
+    to: Pos2,
+    ramp_time: GpsTime,
+}
+
+/// The segments to draw for `trail`, collapsing samples that project less than
+/// [`MIN_SEGMENT_PX`] from the run's current anchor.
+///
+/// A trail carries one sample per epoch, so a long recording produces tens of
+/// thousands of them per satellite while the disc it is drawn on is only a few
+/// hundred pixels across. Drawing every sample is work that scales with how
+/// long the receiver ran rather than with what the plot can show, which is what
+/// made the window unusable on a long track. Collapsing bounds the segments by
+/// the trail's length in pixels instead.
+///
+/// Gaps survive the collapse: the pair bracketing an absence always ends the
+/// run, so a satellite that dropped out still shows a break rather than a line
+/// drawn straight across the time it was gone. The final sample always ends the
+/// last run, so a trail never stops short of where it really ended.
+fn trail_segments(trail: &SkyTrail, frame: Frame) -> Vec<TrailSegment> {
+    let mut segments = Vec::new();
+    let mut anchor = match trail.samples.first() {
+        Some(first) => (first, frame.project(first.azimuth, first.elevation)),
+        None => return segments,
+    };
+    let mut pending = false;
+    for pair in trail.samples.windows(2) {
+        let [a, b] = pair else {
+            continue;
+        };
+        let b_pos = frame.project(b.azimuth, b.elevation);
+        if !b.epoch.follows(a.epoch) {
+            // The satellite was absent between these two samples. Close the run
+            // at `a` so the collapse never spans the gap, then restart at `b`.
+            if pending {
+                let a_pos = frame.project(a.azimuth, a.elevation);
+                segments.push(TrailSegment {
+                    from: anchor.1,
+                    to: a_pos,
+                    ramp_time: a.time,
+                });
+            }
+            anchor = (b, b_pos);
+            pending = false;
+            continue;
+        }
+        if anchor.1.distance(b_pos) >= MIN_SEGMENT_PX {
+            segments.push(TrailSegment {
+                from: anchor.1,
+                to: b_pos,
+                ramp_time: b.time,
+            });
+            anchor = (b, b_pos);
+            pending = false;
+        } else {
+            pending = true;
+        }
+    }
+    // Whatever was collapsed at the end still has to reach the last sample.
+    if pending && let Some(last) = trail.samples.last() {
+        segments.push(TrailSegment {
+            from: anchor.1,
+            to: frame.project(last.azimuth, last.elevation),
+            ramp_time: last.time,
+        });
+    }
+    segments
 }
 
 /// Whether a scrub marker draws hollow: the satellite is tracked but not in
@@ -383,23 +444,12 @@ fn slip_label(slip: &SlipMark) -> String {
     )
 }
 
-/// Whether any report epoch falls strictly between `a` and `b` - i.e. the
-/// satellite skipped a report there, so its trail should break.
-fn epoch_between(epochs: &[TrailEpoch], a: GpsTime, b: GpsTime) -> bool {
-    let after_a = epochs.partition_point(|e| e.time <= a);
-    epochs.get(after_a).is_some_and(|e| e.time < b)
-}
-
 /// The satellite's `(azimuth, elevation)` at `time`, plus the underlying
 /// [`TrailSample`] when `time` lands exactly on a report (so the caller gets
 /// its SNR and fix state without a second lookup). Between reports the position
 /// is interpolated and the sample is `None`. `None` overall when `time` is
 /// outside the trail or inside one of its gaps.
-fn sample_at<'a>(
-    trail: &'a SkyTrail,
-    epochs: &[TrailEpoch],
-    time: GpsTime,
-) -> Option<(f32, f32, Option<&'a TrailSample>)> {
+fn sample_at(trail: &SkyTrail, time: GpsTime) -> Option<(f32, f32, Option<&TrailSample>)> {
     let samples = &trail.samples;
     let idx = samples.partition_point(|s| s.time < time);
     // Exact hit on a sample.
@@ -416,7 +466,7 @@ fn sample_at<'a>(
     ) else {
         return None;
     };
-    if epoch_between(epochs, a.time, b.time) {
+    if !b.epoch.follows(a.epoch) {
         return None;
     }
     let span = b.time.signed_duration_since(a.time).num_milliseconds();
@@ -440,9 +490,134 @@ mod tests {
     use gt_types::satellites::{Constellation, ConstellationSet, Satellite, Satellites};
     use gt_types::{GpsTime, Latitude, Longitude, NavPoint, PointIdx, TimePositionVelocity};
 
-    use super::{SkyTrail, SkyTrailsPlot, SlipMark, TrailEpoch, epoch_between, sample_at};
+    use super::{SkyTrail, SkyTrailsPlot, SlipMark, sample_at};
     use crate::extract_trails;
-    use crate::trails::{SkyTrails, TrailSample};
+    use crate::trails::{EpochIdx, SkyTrails, TrailEpoch, TrailSample};
+
+    /// A frame big enough that the test's coordinates are unambiguous.
+    fn test_frame() -> super::Frame {
+        super::Frame {
+            center: egui::pos2(200.0, 200.0),
+            radius: 180.0,
+            time_range: gt_types::GpsTimeRange::new(at(0), at(100)),
+        }
+    }
+
+    /// Samples that project less than a pixel apart collapse into one segment,
+    /// but the run still reaches the last sample rather than stopping at the
+    /// last one that happened to clear the threshold.
+    #[test]
+    fn collapsed_samples_still_reach_the_end_of_the_trail() {
+        let frame = test_frame();
+        // Four samples a hair apart in elevation: sub-pixel on a 180px radius.
+        let trail = trail_of(&[
+            trail_sample(0, 90.0, 45.0),
+            trail_sample(1, 90.0, 45.01),
+            trail_sample(2, 90.0, 45.02),
+            trail_sample(3, 90.0, 45.03),
+        ]);
+
+        let segments = super::trail_segments(&trail, frame);
+        assert_eq!(segments.len(), 1, "sub-pixel samples collapse into one run");
+        let last = trail.samples.last().expect("has samples");
+        assert_eq!(
+            segments[0].to,
+            frame.project(last.azimuth, last.elevation),
+            "the run must reach the trail's final sample"
+        );
+    }
+
+    /// The collapse must never span an absence: a satellite that dropped out
+    /// still shows a break, rather than a line drawn straight across the time
+    /// it was gone.
+    #[test]
+    fn a_gap_ends_the_run_even_when_the_samples_are_sub_pixel_apart() {
+        let frame = test_frame();
+        let trail = trail_of(&[
+            trail_sample(0, 90.0, 45.0),
+            trail_sample(1, 90.0, 45.01),
+            // Epoch 2 has no sample for this satellite: it was absent.
+            trail_sample(3, 90.0, 45.02),
+            trail_sample(4, 90.0, 45.03),
+        ]);
+
+        let segments = super::trail_segments(&trail, frame);
+        // One run each side of the gap, and nothing bridging it.
+        assert_eq!(segments.len(), 2, "the gap splits the trail in two");
+        let before_gap = frame.project(90.0, 45.01);
+        let after_gap = frame.project(90.0, 45.02);
+        assert_eq!(segments[0].to, before_gap);
+        assert_eq!(segments[1].from, after_gap);
+    }
+
+    /// A synthetic track: `epochs` reports one second apart, each carrying
+    /// `sats` satellites sweeping across the sky.
+    fn long_trails(epochs: usize, sats: usize) -> SkyTrails {
+        let points = (0..epochs)
+            .map(|i| {
+                let f = i as f32 / (epochs - 1) as f32;
+                let list = (0..sats)
+                    .map(|s| {
+                        let base = s as f32 * 11.0;
+                        Satellite::new(
+                            Constellation::Gps,
+                            (s as u32 % 32) + 1,
+                            Some(15.0 + 60.0 * (base + f * 180.0).to_radians().sin().abs()),
+                            Some((base + f * 90.0) % 360.0),
+                            Some(40.0),
+                            true,
+                        )
+                    })
+                    .collect();
+                let tpv = TimePositionVelocity::builder()
+                    .time(GpsTime::from_utc(start() + Duration::seconds(i as i64)))
+                    .lat(Latitude::new(55.0))
+                    .lon(Longitude::new(12.0))
+                    .build();
+                NavPoint::new(tpv, Some(Satellites::new(None, None, list)))
+            })
+            .collect();
+        extract_trails(&gt_test_utils::loaded_track_with_points(points))
+    }
+
+    /// Shapes emitted for one frame of the plot at `PLOT_DIAMETER_PX`.
+    fn painted_shapes(trails: SkyTrails) -> usize {
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(PLOT_DIAMETER_PX + 40.0, PLOT_DIAMETER_PX + 40.0))
+            .ui(move |ui| {
+                SkyTrailsPlot::new(&trails, PLOT_DIAMETER_PX)
+                    .shown(ConstellationSet::all())
+                    .show_not_in_fix(true)
+                    .ui(ui);
+            });
+        harness.run();
+        harness.inner.output().shapes.len()
+    }
+
+    const PLOT_DIAMETER_PX: f32 = 400.0;
+
+    /// The plot emits one line segment per sample pair, per satellite, every
+    /// frame - so its cost is linear in the track's length with no ceiling. A
+    /// three-hour track at 1 Hz with 30 satellites is ~324k shapes per frame,
+    /// which is what made the window unusable on a long recording.
+    ///
+    /// Adjacent samples on a long track project sub-pixel apart, so nearly all
+    /// of that work is invisible: the segment count must be bounded by what the
+    /// plot can actually resolve, not by how long the recording ran.
+    #[test]
+    fn the_trail_paint_cost_is_bounded_by_the_plot_not_the_track_length() {
+        let short = painted_shapes(long_trails(600, 12));
+        let long = painted_shapes(long_trails(4800, 12));
+
+        // Eight times the epochs must not cost eight times the shapes: past the
+        // point where samples land on the same pixel there is nothing more to
+        // draw.
+        assert!(
+            long < short * 2,
+            "8x the track length cost {long} shapes against {short} - \
+             the paint cost is tracking the recording, not the plot"
+        );
+    }
 
     fn start() -> DateTime<Utc> {
         DateTime::<Utc>::from_timestamp(1_748_000_000, 0).expect("valid")
@@ -460,23 +635,25 @@ mod tests {
         }
     }
 
-    #[rstest]
-    #[case::adjacent(0, 1, false)]
-    #[case::skips_one(0, 2, true)]
-    #[case::skips_two(1, 3, true)]
-    #[case::last_pair_adjacent(2, 3, false)]
-    fn epoch_between_detects_skipped_reports(
-        #[case] a: i64,
-        #[case] b: i64,
-        #[case] expected: bool,
-    ) {
-        let epochs = [epoch(0), epoch(1), epoch(2), epoch(3)];
-        assert_eq!(epoch_between(&epochs, at(a), at(b)), expected);
+    /// A sample at second `secs`, taken from the epoch of the same number.
+    /// These fixtures report at 1 Hz, so a skipped second is a skipped epoch
+    /// and reads as a gap. Use [`trail_sample_from_epoch`] where the two must
+    /// come apart.
+    fn trail_sample(secs: i64, azimuth: f32, elevation: f32) -> TrailSample {
+        trail_sample_from_epoch(secs, secs.unsigned_abs() as usize, azimuth, elevation)
     }
 
-    fn trail_sample(secs: i64, azimuth: f32, elevation: f32) -> TrailSample {
+    /// A sample at second `secs` taken from epoch `epoch`, for fixtures whose
+    /// reports are not one second apart.
+    fn trail_sample_from_epoch(
+        secs: i64,
+        epoch: usize,
+        azimuth: f32,
+        elevation: f32,
+    ) -> TrailSample {
         TrailSample {
             time: at(secs),
+            epoch: EpochIdx::new(epoch),
             point_index: PointIdx::new(0),
             azimuth,
             elevation,
@@ -485,8 +662,18 @@ mod tests {
         }
     }
 
+    /// A trail carrying exactly `samples`.
+    fn trail_of(samples: &[TrailSample]) -> SkyTrail {
+        SkyTrail {
+            constellation: Constellation::Gps,
+            prn: gt_types::satellites::Prn::new(5),
+            samples: samples.to_vec(),
+        }
+    }
+
     /// A trail with samples at t0 and t2 - the satellite is absent at the t1
-    /// epoch, so `[epoch(0), epoch(1), epoch(2)]` puts a gap between them.
+    /// epoch, so its two samples come from epochs 0 and 2, not back-to-back
+    /// reports, and the trail breaks between them.
     fn gapped_trail() -> SkyTrail {
         SkyTrail {
             constellation: Constellation::Gps,
@@ -504,20 +691,27 @@ mod tests {
         #[case] time: GpsTime,
         #[case] expected: Option<(f32, f32)>,
     ) {
-        let epochs = [epoch(0), epoch(1), epoch(2)];
-        let position = sample_at(&gapped_trail(), &epochs, time).map(|(az, el, _)| (az, el));
+        let position = sample_at(&gapped_trail(), time).map(|(az, el, _)| (az, el));
         assert_eq!(position, expected);
+    }
+
+    /// Two back-to-back reports two seconds apart - no skipped epoch between
+    /// them, so the trail runs straight through and interpolates.
+    fn unbroken_trail() -> SkyTrail {
+        trail_of(&[
+            trail_sample_from_epoch(0, 0, 40.0, 60.0),
+            trail_sample_from_epoch(2, 1, 60.0, 40.0),
+        ])
     }
 
     #[test]
     fn sample_at_carries_the_sample_only_on_an_exact_hit() {
-        let trail = gapped_trail();
-        let epochs = [epoch(0), epoch(2)];
+        let trail = unbroken_trail();
         // Exactly on a report: the sample comes back for the tooltip.
-        let (_, _, exact) = sample_at(&trail, &epochs, at(0)).expect("hit");
+        let (_, _, exact) = sample_at(&trail, at(0)).expect("hit");
         assert!(exact.is_some());
         // Interpolated between reports: position but no single sample.
-        let (az, el, exact) = sample_at(&trail, &epochs, at(1)).expect("interpolated");
+        let (az, el, exact) = sample_at(&trail, at(1)).expect("interpolated");
         assert_eq!((az, el), (50.0, 50.0));
         assert!(exact.is_none());
     }
@@ -772,6 +966,7 @@ mod tests {
         };
         let sample = TrailSample {
             time: at(0),
+            epoch: EpochIdx::new(0),
             point_index: PointIdx::new(0),
             azimuth: 40.0,
             elevation: 60.0,
@@ -800,6 +995,7 @@ mod tests {
                 .enumerate()
                 .map(|(i, (in_fix, time))| TrailSample {
                     time,
+                    epoch: EpochIdx::new(i),
                     point_index: PointIdx::new(i),
                     azimuth: az0 + (az1 - az0) * i as f32 / 2.0,
                     elevation: el,
@@ -875,6 +1071,7 @@ mod tests {
     fn marker_is_hollow_only_for_a_tracked_not_in_fix_report() {
         let sample = |in_fix| TrailSample {
             time: at(0),
+            epoch: EpochIdx::new(0),
             point_index: PointIdx::new(0),
             azimuth: 0.0,
             elevation: 0.0,
