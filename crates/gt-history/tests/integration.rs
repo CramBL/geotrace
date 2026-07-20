@@ -2016,22 +2016,40 @@ fn snap_blob_roundtrips_and_overwrites() {
     );
 }
 
-/// The snap subgroup is DB bookkeeping: storing a blob must not change the
-/// reconstructed GTD bytes, and each recording keeps its own blob.
+/// The snap subgroup is DB bookkeeping: storing a blob must not change what
+/// the reconstructed GTD contains, and each recording keeps its own blob.
+///
+/// Compared by content rather than byte-for-byte: HDF5 stamps every object
+/// header with access/modification/change times, so two reconstructions taken
+/// either side of a second boundary differ in those bytes (and the header
+/// checksums over them) no matter what the blob did. A byte comparison here
+/// failed on slower CI runners for exactly that reason.
 #[test_log::test]
 fn snap_blob_stays_out_of_the_reconstructed_gtd() {
+    const BLOB: &[u8] = b"snap run bytes";
+
     let dir = tempfile::tempdir().expect("temp dir");
     let mut db = Database::open_or_create(&dir.path().join("geotrace.h5")).expect("open");
     let a = insert_two_track(&mut db, "dev", 1_000_000_000, 50);
     let b = insert_two_track(&mut db, "dev", 2_000_000_000, 50);
 
     let baseline = db.load_bytes(&a).expect("load");
-    db.set_snap_blob(&a, b"snap run bytes").expect("store");
+    db.set_snap_blob(&a, BLOB).expect("store");
+    let after = db.load_bytes(&a).expect("load");
 
+    assert!(
+        !after.windows(BLOB.len()).any(|window| window == BLOB),
+        "the blob's bytes must never appear in the reconstructed GTD file"
+    );
     assert_eq!(
-        db.load_bytes(&a).expect("load"),
-        baseline,
-        "the blob must never leak into the reconstructed GTD file"
+        after.len(),
+        baseline.len(),
+        "storing a blob must not add anything to the reconstructed GTD file"
+    );
+    assert_eq!(
+        extract_meta(&after).expect("meta"),
+        extract_meta(&baseline).expect("meta"),
+        "the reconstructed recording must be unchanged"
     );
     assert_eq!(
         db.snap_blob(&b).expect("read"),
