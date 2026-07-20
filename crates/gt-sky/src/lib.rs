@@ -5,6 +5,7 @@
 //! satellite always projects to the same spot regardless of surface.
 
 mod grid;
+mod heatmap;
 mod plot_common;
 mod projection;
 mod sky_plot;

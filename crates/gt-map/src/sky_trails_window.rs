@@ -122,6 +122,9 @@ pub struct SkyTrailsWindow {
     /// Whether only satellites in the fix at the scrubbed instant are shown,
     /// hiding the ones merely tracked right now.
     in_fix_now: bool,
+    /// Whether the current-instant signal heat field is drawn beneath the
+    /// trails.
+    show_heatmap: bool,
     /// An instant the window was asked to open at, applied on the next
     /// `show` once the trails - and so the track's time span - are known.
     /// Requests arrive before the trails are extracted, so the scrub position
@@ -173,6 +176,7 @@ impl SkyTrailsWindow {
             self.show_not_in_fix = true;
             self.show_trails = true;
             self.in_fix_now = false;
+            self.show_heatmap = false;
             self.cache = None;
         }
     }
@@ -226,6 +230,7 @@ impl SkyTrailsWindow {
             show_not_in_fix: &mut self.show_not_in_fix,
             show_trails: &mut self.show_trails,
             in_fix_now: &mut self.in_fix_now,
+            show_heatmap: &mut self.show_heatmap,
             track_ref,
             elevation_mask_deg,
             highlight,
@@ -255,6 +260,7 @@ struct WindowBody<'a> {
     show_not_in_fix: &'a mut bool,
     show_trails: &'a mut bool,
     in_fix_now: &'a mut bool,
+    show_heatmap: &'a mut bool,
     track_ref: TrackRef,
     elevation_mask_deg: f32,
     highlight: &'a mut MapHighlight,
@@ -273,6 +279,7 @@ impl WindowBody<'_> {
             show_not_in_fix,
             show_trails,
             in_fix_now,
+            show_heatmap,
             track_ref,
             elevation_mask_deg,
             highlight,
@@ -351,7 +358,15 @@ impl WindowBody<'_> {
                     ui.set_width(stats_width);
                     focus = constellation_stats(ui, &counts, shown, has_paren);
                     ui.add_space(6.0);
-                    view_toggles(ui, show_trails, in_fix_now, show_not_in_fix);
+                    view_toggles(
+                        ui,
+                        ViewToggles {
+                            show_trails,
+                            show_heatmap,
+                            in_fix_now,
+                            show_not_in_fix,
+                        },
+                    );
                 },
             );
             ui.add_space(COLUMN_GAP_PX);
@@ -362,6 +377,7 @@ impl WindowBody<'_> {
                 .show_not_in_fix(*show_not_in_fix)
                 .show_trails(*show_trails)
                 .in_fix_now(*in_fix_now)
+                .show_heatmap(*show_heatmap)
                 .with_elevation_mask_deg(elevation_mask_deg)
                 .ui(ui);
         });
@@ -374,19 +390,32 @@ impl WindowBody<'_> {
     }
 }
 
-/// The view toggles below the stats: whether the whole-track trails are drawn
-/// (off leaves the current-instant snapshot), whether to keep only the
-/// satellites in the fix right now, and the existing whole-track not-in-fix
-/// filter.
-fn view_toggles(
-    ui: &mut egui::Ui,
-    show_trails: &mut bool,
-    in_fix_now: &mut bool,
-    show_not_in_fix: &mut bool,
-) {
+/// The window's view toggles, borrowed from the [`WindowBody`] state so the
+/// checkboxes write straight back. Grouped into a struct to keep them off the
+/// helper's parameter list, which would otherwise be a row of bare booleans.
+struct ViewToggles<'a> {
+    show_trails: &'a mut bool,
+    show_heatmap: &'a mut bool,
+    in_fix_now: &'a mut bool,
+    show_not_in_fix: &'a mut bool,
+}
+
+/// The view toggles below the stats: what is drawn (the whole-track trails, and
+/// the current-instant signal heat field) above which satellites are kept (only
+/// those in the fix right now, and the whole-track not-in-fix filter).
+fn view_toggles(ui: &mut egui::Ui, toggles: ViewToggles<'_>) {
+    let ViewToggles {
+        show_trails,
+        show_heatmap,
+        in_fix_now,
+        show_not_in_fix,
+    } = toggles;
     ui.checkbox(show_trails, "Trails").on_hover_text(
         "Draw each satellite's whole path across the sky. Off shows only where \
          they are at the current instant.",
+    );
+    ui.checkbox(show_heatmap, "Signal heatmap").on_hover_text(
+        "Glow where the fix satellites are right now, brighter with stronger signal.",
     );
     ui.checkbox(in_fix_now, "In fix only")
         .on_hover_text("Hide satellites tracked but not used in the fix at this instant.");
@@ -1077,6 +1106,7 @@ mod tests {
                             show_not_in_fix: &mut true,
                             show_trails: &mut true,
                             in_fix_now: &mut false,
+                            show_heatmap: &mut false,
                             track_ref: track_ref(),
                             elevation_mask_deg: 10.0,
                             highlight: &mut MapHighlight::default(),
@@ -1130,6 +1160,7 @@ mod tests {
                     show_not_in_fix: &mut show_not_in_fix,
                     show_trails: &mut true,
                     in_fix_now: &mut false,
+                    show_heatmap: &mut false,
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),
@@ -1157,6 +1188,7 @@ mod tests {
                         show_not_in_fix: &mut true,
                         show_trails: &mut true,
                         in_fix_now: &mut false,
+                        show_heatmap: &mut false,
                         track_ref: track_ref(),
                         elevation_mask_deg: 10.0,
                         highlight,
@@ -1356,6 +1388,7 @@ mod tests {
                     show_not_in_fix: &mut true,
                     show_trails: &mut true,
                     in_fix_now: &mut false,
+                    show_heatmap: &mut false,
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),
@@ -1427,6 +1460,7 @@ mod tests {
                     show_not_in_fix: &mut true,
                     show_trails: &mut true,
                     in_fix_now: &mut false,
+                    show_heatmap: &mut false,
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),
@@ -1559,6 +1593,7 @@ mod tests {
                         show_not_in_fix: &mut true,
                         show_trails: &mut true,
                         in_fix_now: &mut false,
+                        show_heatmap: &mut false,
                         track_ref: track_ref(),
                         elevation_mask_deg: 10.0,
                         highlight: &mut MapHighlight::default(),
@@ -1619,6 +1654,7 @@ mod tests {
                         show_not_in_fix: &mut true,
                         show_trails: &mut true,
                         in_fix_now: &mut false,
+                        show_heatmap: &mut false,
                         track_ref: track_ref(),
                         elevation_mask_deg: 10.0,
                         highlight: &mut MapHighlight::default(),
@@ -1676,6 +1712,7 @@ mod tests {
                     show_not_in_fix: &mut true,
                     show_trails: &mut true,
                     in_fix_now: &mut false,
+                    show_heatmap: &mut false,
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),

@@ -9,7 +9,7 @@ use gt_types::{GpsTime, GpsTimeRange};
 
 use crate::style;
 use crate::trails::{SkyTrail, SkyTrails, SlipMark, TrailSample};
-use crate::{grid, plot_common, projection};
+use crate::{grid, heatmap, plot_common, projection};
 
 /// The per-frame plot geometry shared by the trail and marker painting.
 #[derive(Clone, Copy)]
@@ -48,6 +48,10 @@ pub struct SkyTrailsPlot<'a> {
     /// hiding the ones that are merely tracked right now. Inert without a
     /// [`Self::scrub`], since there is no instant to judge against.
     in_fix_now: bool,
+    /// When true, a smooth signal-strength heat field is drawn beneath the
+    /// trails from the current-instant in-fix satellites. Inert without a
+    /// [`Self::scrub`].
+    show_heatmap: bool,
     elevation_mask_deg: Option<f32>,
 }
 
@@ -62,6 +66,7 @@ impl<'a> SkyTrailsPlot<'a> {
             show_not_in_fix: true,
             show_trails: true,
             in_fix_now: false,
+            show_heatmap: false,
             elevation_mask_deg: None,
         }
     }
@@ -107,6 +112,16 @@ impl<'a> SkyTrailsPlot<'a> {
         Self { in_fix_now, ..self }
     }
 
+    /// Whether to draw a signal-strength heat field beneath the trails from the
+    /// current-instant in-fix satellites. Defaults to false. Inert without a
+    /// [`Self::scrub`] to place the satellites at.
+    pub fn show_heatmap(self, show_heatmap: bool) -> Self {
+        Self {
+            show_heatmap,
+            ..self
+        }
+    }
+
     /// Draw the elevation mask as a dashed ring.
     pub fn with_elevation_mask_deg(self, mask_deg: f32) -> Self {
         Self {
@@ -150,6 +165,14 @@ impl<'a> SkyTrailsPlot<'a> {
         };
         let dark_mode = ui.visuals().dark_mode;
         let panel = ui.visuals().panel_fill;
+
+        // The signal-strength field, beneath the trails and markers so they
+        // read over it. From the current-instant in-fix satellites, so it moves
+        // as the scrubber does.
+        if self.show_heatmap {
+            let sources = self.heat_sources(frame);
+            heatmap::paint_signal_field(ui.painter(), center, radius, &sources);
+        }
 
         // The scrub markers drawn this frame, kept for hover: each satellite at
         // the scrubbed instant, with its position matching the drawn dot.
@@ -230,6 +253,29 @@ impl<'a> SkyTrailsPlot<'a> {
         }
 
         response
+    }
+
+    /// The heat sources for the signal field: each shown satellite in the fix
+    /// at the scrubbed instant, at its projected position, weighted by SNR.
+    /// Empty without a scrub, or when nothing is in the fix right now.
+    fn heat_sources(&self, frame: Frame) -> Vec<(Pos2, f32)> {
+        let Some(scrub) = self.scrub else {
+            return Vec::new();
+        };
+        self.trails
+            .trails
+            .iter()
+            .filter(|trail| self.shown.contains(trail.constellation))
+            .filter_map(|trail| {
+                let (azimuth, elevation, report) = marker_at(trail, scrub)?;
+                report.in_fix.then(|| {
+                    (
+                        frame.project(azimuth, elevation),
+                        heatmap::snr_weight(report.snr),
+                    )
+                })
+            })
+            .collect()
     }
 
     /// The alpha for a constellation given the current focus: full when it is
@@ -1238,6 +1284,26 @@ mod tests {
             });
         harness.run();
         harness.snapshot("sky_trails_in_fix_now");
+    }
+
+    /// Snapshot: the signal heat field glows beneath the trails at the
+    /// current-instant in-fix satellites, brighter where the signal is stronger
+    /// and where satellites cluster.
+    #[test]
+    fn sky_trails_heatmap_glows_under_the_fix_satellites() {
+        let trails = demo_trails();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(320.0, 320.0))
+            .theme(true)
+            .ui(move |ui| {
+                SkyTrailsPlot::new(&trails, 300.0)
+                    .scrub(Some(at(4)))
+                    .show_heatmap(true)
+                    .with_elevation_mask_deg(10.0)
+                    .ui(ui);
+            });
+        harness.run();
+        harness.snapshot("sky_trails_heatmap");
     }
 
     #[test]
