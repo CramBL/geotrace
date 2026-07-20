@@ -127,7 +127,7 @@ impl<'a> SkyTrailsPlot<'a> {
 
         // The scrub markers drawn this frame, kept for hover: each satellite at
         // the scrubbed instant, with its position matching the drawn dot.
-        let mut markers: Vec<(Satellite, Pos2)> = Vec::new();
+        let mut markers: Vec<(MarkerHover, Pos2)> = Vec::new();
         for trail in &self.trails.trails {
             if !self.shown.contains(trail.constellation) {
                 continue;
@@ -141,15 +141,21 @@ impl<'a> SkyTrailsPlot<'a> {
             paint_trail(ui, frame, trail, base, focus_factor);
 
             if let Some(scrub) = self.scrub
-                && let Some((azimuth, elevation, exact)) = sample_at(trail, scrub)
+                && let Some((azimuth, elevation, report)) = marker_at(trail, scrub)
             {
                 let pos = frame.project(azimuth, elevation);
-                paint_marker(ui, pos, base.gamma_multiply(focus_factor), panel, exact);
-                // Hover shows the report's SNR and fix state, so the marker is
-                // only a hover target when it sits on an actual report.
-                if let Some(sample) = exact {
-                    markers.push((satellite_from_sample(trail, sample), pos));
-                }
+                paint_marker(ui, pos, base.gamma_multiply(focus_factor), panel, report);
+                // Every drawn marker is a hover target. It used to be one only
+                // while the scrubber sat exactly on a report, so hover died the
+                // moment playback moved the scrubber off one and stayed dead
+                // until something put it back exactly on a report.
+                markers.push((
+                    MarkerHover {
+                        satellite: satellite_from_sample(trail, report),
+                        at: report.time,
+                    },
+                    pos,
+                ));
             }
         }
 
@@ -170,7 +176,7 @@ impl<'a> SkyTrailsPlot<'a> {
         // never collide.
         let pointer = response.hover_pos();
         let hovered_marker = pointer.and_then(|pointer| {
-            let candidates = markers.iter().map(|(satellite, pos)| (satellite, *pos));
+            let candidates = markers.iter().map(|(hover, pos)| (hover, *pos));
             plot_common::nearest_within(candidates, pointer, style::MARK_HOVER_RADIUS_PX)
         });
         let hovered_slip = pointer.and_then(|pointer| {
@@ -313,26 +319,24 @@ fn trail_segments(trail: &SkyTrail, frame: Frame) -> Vec<TrailSegment> {
     segments
 }
 
-/// Whether a scrub marker draws hollow: the satellite is tracked but not in
-/// the fix at this report. Between reports (`exact` is `None`) the fix state is
-/// unknown, so the marker is filled rather than asserting "not in fix".
-fn marker_is_hollow(exact: Option<&TrailSample>) -> bool {
-    exact.is_some_and(|sample| !sample.in_fix)
+/// Whether a scrub marker draws hollow: the report in effect has the satellite
+/// tracked but not contributing to the fix.
+///
+/// Between reports this is the last report received, matching what the stats
+/// column counts at the same instant. Filling the marker there instead would
+/// claim the satellite rejoined the fix on no evidence, and would disagree with
+/// the counts beside it.
+fn marker_is_hollow(report: &TrailSample) -> bool {
+    !report.in_fix
 }
 
 /// Paint the scrub marker for one satellite. Filled when it is in the fix at
 /// the scrubbed instant, hollow (an outline ring) when only tracked, so the
 /// live fix state reads at a glance.
-fn paint_marker(
-    ui: &egui::Ui,
-    pos: Pos2,
-    color: Color32,
-    panel: Color32,
-    exact: Option<&TrailSample>,
-) {
+fn paint_marker(ui: &egui::Ui, pos: Pos2, color: Color32, panel: Color32, report: &TrailSample) {
     let painter = ui.painter();
     let radius = style::TRAIL_MARKER_RADIUS_PX;
-    if marker_is_hollow(exact) {
+    if marker_is_hollow(report) {
         // Tracked but not in the fix: a hollow ring, its centre punched out to
         // the panel colour so it reads over the trail beneath.
         painter.circle_filled(pos, radius, panel);
@@ -374,9 +378,19 @@ fn satellite_from_sample(trail: &SkyTrail, sample: &TrailSample) -> Satellite {
     )
 }
 
-/// Show the hover tooltip for a satellite's scrub marker, identical to the
-/// per-report plot's satellite tooltip.
-fn show_marker_tooltip(ui: &egui::Ui, response: &egui::Response, satellite: &Satellite) {
+/// A scrub marker's hover payload: the satellite as of the report in effect,
+/// and when that report was. The time is carried because the scrubber sits
+/// between reports for most of its travel, so the tooltip names the report the
+/// values actually came from.
+struct MarkerHover {
+    satellite: Satellite,
+    at: GpsTime,
+}
+
+/// Show the hover tooltip for a satellite's scrub marker: the per-report
+/// plot's tooltip, plus the report the values were read from.
+fn show_marker_tooltip(ui: &egui::Ui, response: &egui::Response, hover: &MarkerHover) {
+    let satellite = &hover.satellite;
     egui::Tooltip::always_open(
         ui.ctx().clone(),
         ui.layer_id(),
@@ -385,7 +399,7 @@ fn show_marker_tooltip(ui: &egui::Ui, response: &egui::Response, satellite: &Sat
             .with(("marker", satellite.constellation(), satellite.prn())),
         egui::PopupAnchor::Pointer,
     )
-    .show(|ui| plot_common::satellite_tooltip(ui, satellite));
+    .show(|ui| plot_common::satellite_tooltip(ui, satellite, Some(hover.at)));
 }
 
 /// Show the hover tooltip for a slip mark.
@@ -444,19 +458,23 @@ fn slip_label(slip: &SlipMark) -> String {
     )
 }
 
-/// The satellite's `(azimuth, elevation)` at `time`, plus the underlying
-/// [`TrailSample`] when `time` lands exactly on a report (so the caller gets
-/// its SNR and fix state without a second lookup). Between reports the position
-/// is interpolated and the sample is `None`. `None` overall when `time` is
-/// outside the trail or inside one of its gaps.
-fn sample_at(trail: &SkyTrail, time: GpsTime) -> Option<(f32, f32, Option<&TrailSample>)> {
+/// The satellite's `(azimuth, elevation)` at `time`, plus the report in effect
+/// there - the last one received at or before `time`, which is what the
+/// receiver was acting on at that instant and what the stats column counts.
+///
+/// The position is interpolated between reports so playback animates smoothly,
+/// but the report is always a real one: scrubbing to 12:00:00.4 reads the
+/// 12:00:00 report rather than inventing values for an instant no receiver ever
+/// described. `None` when `time` is outside the trail or inside one of its
+/// gaps, where the satellite is not drawn at all.
+fn marker_at(trail: &SkyTrail, time: GpsTime) -> Option<(f32, f32, &TrailSample)> {
     let samples = &trail.samples;
     let idx = samples.partition_point(|s| s.time < time);
     // Exact hit on a sample.
     if let Some(s) = samples.get(idx)
         && s.time == time
     {
-        return Some((s.azimuth, s.elevation, Some(s)));
+        return Some((s.azimuth, s.elevation, s));
     }
     // Otherwise interpolate between the bracketing samples, unless the pair
     // spans a gap or `time` is outside the trail.
@@ -471,13 +489,13 @@ fn sample_at(trail: &SkyTrail, time: GpsTime) -> Option<(f32, f32, Option<&Trail
     }
     let span = b.time.signed_duration_since(a.time).num_milliseconds();
     if span <= 0 {
-        return Some((a.azimuth, a.elevation, Some(a)));
+        return Some((a.azimuth, a.elevation, a));
     }
     let f = time.signed_duration_since(a.time).num_milliseconds() as f32 / span as f32;
     Some((
         a.azimuth + (b.azimuth - a.azimuth) * f,
         a.elevation + (b.elevation - a.elevation) * f,
-        None,
+        a,
     ))
 }
 
@@ -486,11 +504,11 @@ mod tests {
     use chrono::{DateTime, Duration, Utc};
     use rstest::rstest;
 
-    use gt_test_utils::TestHarness;
+    use gt_test_utils::{Queryable as _, TestHarness};
     use gt_types::satellites::{Constellation, ConstellationSet, Satellite, Satellites};
     use gt_types::{GpsTime, Latitude, Longitude, NavPoint, PointIdx, TimePositionVelocity};
 
-    use super::{SkyTrail, SkyTrailsPlot, SlipMark, sample_at};
+    use super::{SkyTrail, SkyTrailsPlot, SlipMark, marker_at};
     use crate::extract_trails;
     use crate::trails::{EpochIdx, SkyTrails, TrailEpoch, TrailSample};
 
@@ -548,6 +566,59 @@ mod tests {
         let after_gap = frame.project(90.0, 45.02);
         assert_eq!(segments[0].to, before_gap);
         assert_eq!(segments[1].from, after_gap);
+    }
+
+    /// Hovering a scrub marker must work wherever the scrubber is parked, not
+    /// only when it happens to sit exactly on a report. Playback leaves the
+    /// scrubber on a fractional second, so requiring an exact hit meant hover
+    /// died as soon as you pressed play and stayed dead after pausing.
+    #[test]
+    fn a_marker_is_hoverable_between_reports() {
+        // One satellite parked at a fixed sky position, so its marker sits in
+        // the same place whether or not the instant is interpolated.
+        let trail = trail_of(&[
+            trail_sample_from_epoch(0, 0, 90.0, 45.0),
+            trail_sample_from_epoch(2, 1, 90.0, 45.0),
+        ]);
+        let trails = SkyTrails {
+            trails: vec![trail],
+            epochs: vec![epoch(0), epoch(2)],
+            slips: Vec::new(),
+            time_range: Some(gt_types::GpsTimeRange::new(at(0), at(2))),
+        };
+
+        // Half a second past the first report: mid-interpolation, exactly
+        // where playback leaves the scrubber.
+        let between = GpsTime::from_utc(start() + Duration::milliseconds(500));
+        let rect = std::rc::Rc::new(std::cell::Cell::new(egui::Rect::ZERO));
+        let seen = rect.clone();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(PLOT_DIAMETER_PX + 40.0, PLOT_DIAMETER_PX + 40.0))
+            .ui(move |ui| {
+                let response = SkyTrailsPlot::new(&trails, PLOT_DIAMETER_PX)
+                    .shown(ConstellationSet::all())
+                    .show_not_in_fix(true)
+                    .scrub(Some(between))
+                    .ui(ui);
+                seen.set(response.rect);
+            });
+        harness.run();
+
+        // Where the plot puts a satellite at 90 deg azimuth, 45 deg elevation.
+        let plot = rect.get();
+        let radius = plot.width() / 2.0 - crate::style::FULL_RIM_MARGIN_PX;
+        let marker = plot.center() + crate::unit_disc_position(90.0, 45.0) * radius;
+
+        assert!(
+            harness.inner.query_by_label("In fix").is_none(),
+            "the tooltip must not be showing before the marker is hovered"
+        );
+        harness.inner.hover_at(marker);
+        harness.inner.run_steps(2);
+        assert!(
+            harness.inner.query_by_label("In fix").is_some(),
+            "hovering the marker between reports must still show its tooltip"
+        );
     }
 
     /// A synthetic track: `epochs` reports one second apart, each carrying
@@ -687,11 +758,11 @@ mod tests {
     #[case::in_gap(at(1), None)]
     #[case::before_first_sample(at(-1), None)]
     #[case::after_last_sample(at(5), None)]
-    fn sample_at_respects_trail_bounds_and_gaps(
+    fn marker_at_respects_trail_bounds_and_gaps(
         #[case] time: GpsTime,
         #[case] expected: Option<(f32, f32)>,
     ) {
-        let position = sample_at(&gapped_trail(), time).map(|(az, el, _)| (az, el));
+        let position = marker_at(&gapped_trail(), time).map(|(az, el, _)| (az, el));
         assert_eq!(position, expected);
     }
 
@@ -704,16 +775,21 @@ mod tests {
         ])
     }
 
+    /// Between reports the marker interpolates its position but still reports
+    /// the report in effect - the last one received. Hover used to go dead here
+    /// (there was no sample to show), which killed it for the whole of playback
+    /// and everything after it.
     #[test]
-    fn sample_at_carries_the_sample_only_on_an_exact_hit() {
+    fn marker_at_carries_the_report_in_effect_between_reports() {
         let trail = unbroken_trail();
-        // Exactly on a report: the sample comes back for the tooltip.
-        let (_, _, exact) = sample_at(&trail, at(0)).expect("hit");
-        assert!(exact.is_some());
-        // Interpolated between reports: position but no single sample.
-        let (az, el, exact) = sample_at(&trail, at(1)).expect("interpolated");
+        // Exactly on a report: that report.
+        let (_, _, report) = marker_at(&trail, at(0)).expect("hit");
+        assert_eq!(report.time, at(0));
+        // Between reports: interpolated position, earlier report still in
+        // effect.
+        let (az, el, report) = marker_at(&trail, at(1)).expect("interpolated");
         assert_eq!((az, el), (50.0, 50.0));
-        assert!(exact.is_none());
+        assert_eq!(report.time, at(0), "the last report received still stands");
     }
 
     struct Spec {
@@ -1078,12 +1154,10 @@ mod tests {
             snr: None,
             in_fix,
         };
-        // In the fix now: filled.
-        assert!(!super::marker_is_hollow(Some(&sample(true))));
-        // Tracked but not in the fix now: hollow.
-        assert!(super::marker_is_hollow(Some(&sample(false))));
-        // Interpolating between reports (unknown): filled, not asserting a state.
-        assert!(!super::marker_is_hollow(None));
+        // In the fix per the report in effect: filled.
+        assert!(!super::marker_is_hollow(&sample(true)));
+        // Tracked but not in the fix per the report in effect: hollow.
+        assert!(super::marker_is_hollow(&sample(false)));
     }
 
     #[test]

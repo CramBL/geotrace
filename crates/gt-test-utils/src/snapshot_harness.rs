@@ -1,4 +1,8 @@
 use egui_kittest::{Harness, SnapshotOptions};
+
+/// Re-exported so crates using [`TestHarness`] can query widgets without each
+/// taking a direct `egui_kittest` dev-dependency of their own.
+pub use egui_kittest::kittest::Queryable;
 use std::path::{Path, PathBuf};
 
 fn snapshot_options() -> SnapshotOptions {

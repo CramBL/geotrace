@@ -8,7 +8,7 @@ pub use fixtures::{
     stationary_nav_data, synthetic_gtd_bytes, synthetic_gtd_bytes_with_channels,
 };
 #[cfg(feature = "snapshot")]
-pub use snapshot_harness::TestHarness;
+pub use snapshot_harness::{Queryable, TestHarness};
 
 pub const GOLD_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),

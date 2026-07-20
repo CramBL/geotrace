@@ -13,8 +13,11 @@ use gt_ui_types::{MapHighlight, SkyTrailsRequest};
 
 use crate::tpv_renderer::{constellation_swatch, fix_count_color, seen_count_color};
 
-/// Width of the left stats/filter column.
-const STATS_COL_WIDTH_PX: f32 = 168.0;
+/// Width of the left stats/filter column's label area: the checkbox, the
+/// colour swatch and the constellation name. The count columns are added to
+/// this, so a wider seen column widens the whole column rather than crowding
+/// the names.
+const STATS_LABEL_WIDTH_PX: f32 = 100.0;
 
 /// Gap between the stats column and the plot.
 const COLUMN_GAP_PX: f32 = 12.0;
@@ -30,9 +33,20 @@ const MIN_PLOT_DIAMETER_PX: f32 = 240.0;
 /// layout.
 const TRANSPORT_RESERVE_PX: f32 = 78.0;
 
-/// Fixed width of each stats count column, so the fix/seen numbers line up
-/// across rows regardless of constellation name length.
-const STATS_COUNT_WIDTH_PX: f32 = 34.0;
+/// Fixed width of a count column (fix, seen), sized for the column heading and
+/// a couple of digits. Every count is right-aligned in one of these, so the
+/// digits line up down the column and across rows whatever their width.
+const STATS_COUNT_COL_PX: f32 = 38.0;
+
+/// Fixed width of the parenthesised unfiltered-total column, present only while
+/// the not-in-fix filter hides satellites. Reserved on every row of a filtered
+/// column, so the seen numbers stay in a line whether or not their own row
+/// hides anything.
+const STATS_PAREN_COL_PX: f32 = 34.0;
+
+/// Right-hand padding inside a count cell, so a digit does not sit flush
+/// against the next column.
+const STATS_CELL_PAD_PX: f32 = 2.0;
 
 /// Default and minimum window size, chosen so the plot opens comfortably
 /// above [`MIN_PLOT_DIAMETER_PX`] with the stats column beside it.
@@ -47,10 +61,27 @@ const DEFAULT_PLAYBACK_SPEED: f32 = 60.0;
 /// second.
 const PLAYBACK_SPEEDS: [f32; 7] = [1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0];
 
-/// The per-frame time step is clamped to this many seconds before advancing
-/// playback, so a stall (the window occluded, a breakpoint) doesn't jump the
-/// scrubber across the whole track on the next frame.
+/// The per-frame time step is clamped to this many seconds, so a stall (the
+/// window occluded, a breakpoint) doesn't jump the scrubber across the whole
+/// track on the next frame.
 const MAX_PLAYBACK_FRAME_SECS: f32 = 0.1;
+
+/// How far one press of an arrow key seeks. One second is one report on a 1 Hz
+/// recording, so a tap steps report by report.
+const SEEK_TAP_SECS: f64 = 1.0;
+
+/// How long an arrow key must be held before seeking turns from single steps
+/// into a continuous sweep, so a tap stays a tap.
+const HOLD_BEFORE_FAST_SEEK_SECS: f64 = 0.35;
+
+/// Held-down seeking crosses this fraction of the track per real second, so a
+/// sweep takes about the same time whether the recording ran for a minute or
+/// for a day.
+const HELD_SEEK_TRACK_FRACTION_PER_SEC: f64 = 0.25;
+
+/// Floor for the held-down seek rate, so seeking a very short track is still
+/// quicker than playing it.
+const MIN_HELD_SEEK_SECS_PER_SEC: f64 = 10.0;
 
 /// Glyph size of the play / pause button.
 const PLAY_ICON_SIZE_PX: f32 = 16.0;
@@ -248,7 +279,14 @@ impl WindowBody<'_> {
 
         // Advance playback, then clamp - so a paused scrubber and a finished
         // playback both settle inside the track's span.
-        advance_playback(ui, playing, *speed, scrub_secs, total_secs);
+        // Read once and handed to both: `frame_dt` resets the clock it reads,
+        // so calling it twice in a frame would leave the second caller with a
+        // zero delta and no movement at all.
+        let dt = frame_dt(ui);
+        advance_playback(ui, playing, *speed, scrub_secs, total_secs, dt);
+        // Before the plot is laid out, so a seek shows on the same frame it is
+        // pressed rather than the next one.
+        handle_seek_keys(ui, window_hovered, total_secs, scrub_secs, speed, dt);
         *scrub_secs = scrub_secs.clamp(0.0, total_secs);
         let scrub_time = offset_time(first, *scrub_secs);
 
@@ -265,6 +303,11 @@ impl WindowBody<'_> {
         }
         // Stats and counts reflect the report in effect at this instant.
         let stats_time = floor_epoch(trails, scrub_time).map_or(first, |e| e.time);
+        // Computed before layout: the counts decide how wide the seen column
+        // has to be, and that in turn sets the stats column and the plot.
+        let counts = trails.counts_at(stats_time, *show_not_in_fix);
+        let has_paren = any_row_is_filtered(&counts);
+        let stats_width = stats_col_width(has_paren);
 
         // Size the plot to the space left after the stats column and the
         // transport, so resizing the window grows the plot rather than a gap.
@@ -279,18 +322,18 @@ impl WindowBody<'_> {
         let reserved = ui
             .data(|d| d.get_temp::<f32>(reserve_id))
             .unwrap_or(TRANSPORT_RESERVE_PX);
-        let diameter = plot_diameter(ui.available_size(), reserved);
+        let diameter = plot_diameter(ui.available_size(), stats_width, reserved);
 
         let mut focus = None;
         ui.horizontal_top(|ui| {
             // Stats/filter on the left, computed before the plot so hover
             // focus lands on the same frame.
             ui.allocate_ui_with_layout(
-                egui::vec2(STATS_COL_WIDTH_PX, diameter),
+                egui::vec2(stats_width, diameter),
                 Layout::top_down(Align::Min),
                 |ui| {
-                    ui.set_width(STATS_COL_WIDTH_PX);
-                    focus = constellation_stats(ui, trails, shown, stats_time, *show_not_in_fix);
+                    ui.set_width(stats_width);
+                    focus = constellation_stats(ui, &counts, shown, has_paren);
                     ui.add_space(6.0);
                     // The help cursor is the real "hover me for an
                     // explanation" cue; the underlined term is the static hint.
@@ -360,10 +403,25 @@ fn not_in_fix_label(ui: &egui::Ui) -> egui::text::LayoutJob {
 /// The plot diameter for the given available space, leaving `reserved` pixels
 /// below for the transport and the stats column beside it, clamped so the plot
 /// stays legible in a small window.
-fn plot_diameter(avail: egui::Vec2, reserved: f32) -> f32 {
-    (avail.x - STATS_COL_WIDTH_PX - COLUMN_GAP_PX)
+fn plot_diameter(avail: egui::Vec2, stats_width: f32, reserved: f32) -> f32 {
+    (avail.x - stats_width - COLUMN_GAP_PX)
         .min(avail.y - reserved)
         .max(MIN_PLOT_DIAMETER_PX)
+}
+
+/// The stats column's total width: the label area plus the two count columns,
+/// plus the parenthetical column while the not-in-fix filter is hiding
+/// satellites.
+fn stats_col_width(has_paren: bool) -> f32 {
+    STATS_LABEL_WIDTH_PX
+        + STATS_COUNT_COL_PX * 2.0
+        + if has_paren { STATS_PAREN_COL_PX } else { 0.0 }
+}
+
+/// Whether any row's seen count is being cut by the not-in-fix filter, so the
+/// whole column reserves the parenthetical slot.
+fn any_row_is_filtered(counts: &[EpochCount]) -> bool {
+    counts.iter().copied().any(EpochCount::is_filtered)
 }
 
 /// The stats/filter column: one row per constellation showing its live fix and
@@ -372,31 +430,37 @@ fn plot_diameter(avail: egui::Vec2, reserved: f32) -> f32 {
 /// constellation whose row is hovered, to focus on the plot.
 fn constellation_stats(
     ui: &mut egui::Ui,
-    trails: &SkyTrails,
+    counts: &[EpochCount],
     shown: &mut ConstellationSet,
-    scrub_time: GpsTime,
-    show_not_in_fix: bool,
+    has_paren: bool,
 ) -> Option<Constellation> {
-    stats_header(ui);
-    let dark_mode = ui.visuals().dark_mode;
-    let counts = trails.counts_at(scrub_time, show_not_in_fix);
+    stats_header(ui, has_paren);
     let mut focus = None;
-    for count in &counts {
-        if stats_row(ui, shown, count, dark_mode) {
+    for count in counts {
+        if stats_row(ui, shown, count, has_paren) {
             focus = Some(count.constellation);
         }
     }
-    stats_total_row(ui, &counts, dark_mode);
+    stats_total_row(ui, counts, has_paren);
     focus
 }
 
 /// The stats column header: a label plus the right-aligned Fix / Seen columns.
-fn stats_header(ui: &mut egui::Ui) {
+fn stats_header(ui: &mut egui::Ui, has_paren: bool) {
+    let heading = |ui: &mut egui::Ui, width: f32, text: &str| {
+        let font = egui::TextStyle::Small.resolve(ui.style());
+        stats_cell(ui, width, text, font, ui.visuals().weak_text_color());
+    };
     ui.horizontal(|ui| {
         ui.label(RichText::new("Satellites").weak().small());
+        // Right to left, matching the rows: seen (with its empty parenthetical
+        // slot) then fix, so each heading lands over its own column.
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            stats_number(ui, RichText::new("Seen").weak().small());
-            stats_number(ui, RichText::new("Fix").weak().small());
+            if has_paren {
+                ui.add_space(STATS_PAREN_COL_PX);
+            }
+            heading(ui, STATS_COUNT_COL_PX, "Seen");
+            heading(ui, STATS_COUNT_COL_PX, "Fix");
         });
     });
 }
@@ -408,7 +472,7 @@ fn stats_row(
     ui: &mut egui::Ui,
     shown: &mut ConstellationSet,
     count: &EpochCount,
-    dark_mode: bool,
+    has_paren: bool,
 ) -> bool {
     let on = shown.contains(count.constellation);
     let row = ui
@@ -419,59 +483,125 @@ fn stats_row(
             }
             constellation_swatch(ui, count.constellation);
             ui.label(dimmed_if_off(count.constellation.display_name().into(), on));
+            // Right to left, so the columns anchor to the row's right edge and
+            // line up regardless of the constellation name's width.
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                stats_number(ui, count_text(count.seen, seen_count_color, on, dark_mode));
-                stats_number(ui, count_text(count.fix, fix_count_color, on, dark_mode));
+                seen_columns(ui, count, has_paren, on);
+                count_cell(ui, count.fix, fix_count_color, on);
             });
         })
         .response;
     crate::hover_labels::hover_affordance(ui, row.rect)
 }
 
-/// The total row: summed fix and seen across every constellation, set off by a
-/// separator above it.
-fn stats_total_row(ui: &mut egui::Ui, counts: &[EpochCount], dark_mode: bool) {
-    let (seen, fix) = counts
-        .iter()
-        .fold((0, 0), |(seen, fix), c| (seen + c.seen, fix + c.fix));
+/// The seen count and, while the not-in-fix filter is on, the unfiltered total
+/// in parentheses beside it.
+///
+/// Without the total the count silently drops when the filter engages, which
+/// reads as satellites leaving the sky rather than the view. The parenthetical
+/// gets its own fixed column, reserved on every row of a filtered table (empty
+/// on rows that hide nothing), so the seen numbers stay in one line. Added
+/// right to left, so the parenthetical sits to the right of the number.
+fn seen_columns(ui: &mut egui::Ui, count: &EpochCount, has_paren: bool, on: bool) {
+    let hidden = count
+        .seen_unfiltered
+        .checked_sub(count.seen)
+        .filter(|h| *h > 0);
+    if has_paren {
+        let text = hidden.map(|_| format!("({})", count.seen_unfiltered));
+        let font = count_font(ui);
+        let cell = stats_cell(
+            ui,
+            STATS_PAREN_COL_PX,
+            text.as_deref().unwrap_or(""),
+            font,
+            ui.visuals().weak_text_color(),
+        );
+        if let Some(hidden) = hidden {
+            let plural = if hidden == 1 { "" } else { "s" };
+            cell.on_hover_text(format!(
+                "{} of {} seen. {hidden} satellite{plural} hidden: never in the fix over this track",
+                count.seen, count.seen_unfiltered
+            ));
+        }
+    }
+    count_cell(ui, count.seen, seen_count_color, on);
+}
+
+/// The total row: summed fix and seen across every constellation. The bold
+/// "Total" label and the separator above set it off; its counts stay the same
+/// weight and tier colour as the per-constellation rows, so the numbers read
+/// as one column.
+fn stats_total_row(ui: &mut egui::Ui, counts: &[EpochCount], has_paren: bool) {
+    let (seen, seen_unfiltered, fix) = counts.iter().fold((0, 0, 0), |(s, u, f), c| {
+        (s + c.seen, u + c.seen_unfiltered, f + c.fix)
+    });
+    let total = EpochCount {
+        constellation: counts
+            .first()
+            .map_or(Constellation::Gps, |c| c.constellation),
+        seen,
+        seen_unfiltered,
+        fix,
+    };
     ui.separator();
     ui.horizontal(|ui| {
         ui.label(RichText::new("Total").strong());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            stats_number(
-                ui,
-                count_text(seen, seen_count_color, true, dark_mode).strong(),
-            );
-            stats_number(
-                ui,
-                count_text(fix, fix_count_color, true, dark_mode).strong(),
-            );
+            seen_columns(ui, &total, has_paren, true);
+            count_cell(ui, fix, fix_count_color, true);
         });
     });
 }
 
-/// A right-aligned, fixed-width numeric cell, so the columns line up.
-fn stats_number(ui: &mut egui::Ui, text: RichText) {
-    ui.add_sized(
-        egui::vec2(STATS_COUNT_WIDTH_PX, ui.spacing().interact_size.y),
-        egui::Label::new(text.monospace()),
-    );
+/// A count, right-aligned in a fixed-width column and coloured by the given
+/// tier function (the same colouring the sticky point popup uses), or greyed
+/// when the row is off.
+fn count_cell(ui: &mut egui::Ui, count: usize, color: fn(u32, bool) -> egui::Color32, on: bool) {
+    let tint = if on {
+        color(count as u32, ui.visuals().dark_mode)
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let font = count_font(ui);
+    stats_cell(ui, STATS_COUNT_COL_PX, &count.to_string(), font, tint);
 }
 
-/// A count cell colored by the given tier function (the same coloring the
-/// sticky point popup uses for fix/seen), or grayed when the row is hidden.
-fn count_text(
-    count: usize,
-    color: fn(u32, bool) -> egui::Color32,
-    on: bool,
-    dark_mode: bool,
-) -> RichText {
-    let text = RichText::new(count.to_string());
-    if on {
-        text.color(color(count as u32, dark_mode))
-    } else {
-        text.weak()
+/// The count font: the monospace family at the body text size, matching the
+/// surrounding labels. (`TextStyle::Monospace` is a size of its own, usually
+/// smaller, so resolving that instead shrinks the digits.)
+fn count_font(ui: &egui::Ui) -> egui::FontId {
+    egui::FontId::monospace(egui::TextStyle::Body.resolve(ui.style()).size)
+}
+
+/// Reserve a fixed-width cell and paint `text` right-aligned in it.
+///
+/// Reserving the width with [`egui::Ui::allocate_exact_size`] - rather than a
+/// sized label, which centres, or a laid-out sub-`Ui`, which egui collapses to
+/// its content in the layout direction - is what keeps the columns lined up
+/// across rows whatever their digit count. Returns the cell's response so the
+/// caller can attach a hover explanation.
+fn stats_cell(
+    ui: &mut egui::Ui,
+    width: f32,
+    text: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(width, ui.spacing().interact_size.y),
+        egui::Sense::hover(),
+    );
+    if !text.is_empty() {
+        ui.painter().text(
+            rect.right_center() - egui::vec2(STATS_CELL_PAD_PX, 0.0),
+            egui::Align2::RIGHT_CENTER,
+            text,
+            font,
+            color,
+        );
     }
+    response
 }
 
 /// Weakens `text` when the constellation is hidden, so off rows recede.
@@ -523,7 +653,6 @@ fn scrub_offset_of(first: GpsTime, at: GpsTime, total_secs: f64) -> f64 {
 }
 
 fn advanced_scrub(scrub_secs: f64, speed: f32, dt: f32, total_secs: f64) -> (f64, bool) {
-    let dt = dt.min(MAX_PLAYBACK_FRAME_SECS);
     let next = scrub_secs + f64::from(speed) * f64::from(dt);
     if next >= total_secs {
         (total_secs, false)
@@ -543,19 +672,127 @@ fn advance_playback(
     ui: &egui::Ui,
     playing: &mut bool,
     speed: f32,
-    scrub_secs: &mut f64,
-    total_secs: f64,
+    scrub: &mut f64,
+    total: f64,
+    dt: f32,
 ) {
+    if !*playing {
+        return;
+    }
+    (*scrub, *playing) = advanced_scrub(*scrub, speed, dt, total);
+    // Keep animating next frame.
+    ui.ctx().request_repaint();
+}
+
+/// Wall-clock seconds since the last frame, clamped to
+/// [`MAX_PLAYBACK_FRAME_SECS`].
+///
+/// Reading it advances the clock, so it must be called exactly once per frame
+/// and the result shared with everything that moves the scrubber over time. A
+/// second call in the same frame returns zero.
+fn frame_dt(ui: &egui::Ui) -> f32 {
     let now = ui.input(|i| i.time);
     let last_id = ui.id().with("playback_last_time");
     let last = ui.data(|d| d.get_temp::<f64>(last_id)).unwrap_or(now);
     ui.data_mut(|d| d.insert_temp(last_id, now));
-    if !*playing {
+    ((now - last) as f32).min(MAX_PLAYBACK_FRAME_SECS)
+}
+
+/// How fast a held arrow key sweeps the scrubber, in track-seconds per real
+/// second.
+fn held_seek_rate(total_secs: f64) -> f64 {
+    (total_secs * HELD_SEEK_TRACK_FRACTION_PER_SEC).max(MIN_HELD_SEEK_SECS_PER_SEC)
+}
+
+/// The next playback speed up or down the preset ladder, saturating at its
+/// ends. `steps` is positive to speed up.
+fn stepped_speed(speed: f32, steps: i32) -> f32 {
+    // The nearest preset, so a speed set before the ladder changed still finds
+    // its place on it.
+    let current = PLAYBACK_SPEEDS
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| (**a - speed).abs().total_cmp(&(**b - speed).abs()))
+        .map_or(0, |(i, _)| i);
+    let last = PLAYBACK_SPEEDS.len().saturating_sub(1);
+    let next = current.saturating_add_signed(steps as isize).min(last);
+    PLAYBACK_SPEEDS.get(next).copied().unwrap_or(speed)
+}
+
+/// Whether `key` was pressed by the user this frame, ignoring the operating
+/// system's auto-repeat.
+///
+/// `key_pressed` counts repeats, and a held key produces a stream of them.
+/// Counting those as taps made a held arrow stutter along at the OS repeat
+/// rate and kept resetting the hold timer, so the continuous sweep engaged for
+/// a moment and then never again.
+fn tapped(input: &egui::InputState, key: egui::Key) -> bool {
+    input.events.iter().any(|event| {
+        matches!(
+            event,
+            egui::Event::Key {
+                key: pressed_key,
+                pressed: true,
+                repeat: false,
+                ..
+            } if *pressed_key == key
+        )
+    })
+}
+
+/// Arrow-key transport: left/right seek, up/down step the playback speed.
+///
+/// A tap seeks one report; holding sweeps at [`held_seek_rate`] once the key
+/// has been down past [`HOLD_BEFORE_FAST_SEEK_SECS`], so the two do not fight
+/// over a quick press. Keys are ignored while a widget holds keyboard focus,
+/// since egui gives the slider and the speed selector their own arrow-key
+/// handling and both moving at once would double the step.
+fn handle_seek_keys(
+    ui: &egui::Ui,
+    window_hovered: bool,
+    total_secs: f64,
+    scrub_secs: &mut f64,
+    speed: &mut f32,
+    dt: f32,
+) {
+    let press_id = ui.id().with("seek_press_time");
+    if !window_hovered || ui.memory(|m| m.focused()).is_some() {
+        ui.data_mut(|d| d.remove::<f64>(press_id));
         return;
     }
-    let dt = (now - last) as f32;
-    (*scrub_secs, *playing) = advanced_scrub(*scrub_secs, speed, dt, total_secs);
-    // Keep animating next frame.
+    let dt = f64::from(dt);
+    let (now, left, right, tapped_left, tapped_right, faster, slower) = ui.input(|i| {
+        (
+            i.time,
+            i.key_down(egui::Key::ArrowLeft),
+            i.key_down(egui::Key::ArrowRight),
+            tapped(i, egui::Key::ArrowLeft),
+            tapped(i, egui::Key::ArrowRight),
+            tapped(i, egui::Key::ArrowUp),
+            tapped(i, egui::Key::ArrowDown),
+        )
+    });
+
+    if faster != slower {
+        *speed = stepped_speed(*speed, if faster { 1 } else { -1 });
+    }
+
+    // Both arrows down cancel out rather than picking a winner.
+    let direction = f64::from(i8::from(right) - i8::from(left));
+    if direction == 0.0 {
+        ui.data_mut(|d| d.remove::<f64>(press_id));
+        return;
+    }
+    if tapped_left || tapped_right {
+        *scrub_secs += direction * SEEK_TAP_SECS;
+        ui.data_mut(|d| d.insert_temp(press_id, now));
+    } else if let Some(pressed_at) = ui.data(|d| d.get_temp::<f64>(press_id))
+        && now - pressed_at > HOLD_BEFORE_FAST_SEEK_SECS
+    {
+        *scrub_secs += direction * held_seek_rate(total_secs) * dt;
+    }
+    *scrub_secs = scrub_secs.clamp(0.0, total_secs);
+    // A held key keeps sweeping without further input events.
     ui.ctx().request_repaint();
 }
 
@@ -694,15 +931,51 @@ mod tests {
     };
 
     use super::{
-        ConstellationSet, DEFAULT_WINDOW_SIZE, MIN_WINDOW_HEIGHT_PX, MIN_WINDOW_WIDTH_PX,
-        MapHighlight, SkyTrails, SkyTrailsRequest, SkyTrailsWindow, TrackRef, Window, WindowBody,
-        advanced_scrub, apply_scrub_highlight, floor_epoch, offset_time, scrub_offset_of,
-        track_total_secs,
+        ConstellationSet, DEFAULT_WINDOW_SIZE, MAX_PLAYBACK_FRAME_SECS, MIN_WINDOW_HEIGHT_PX,
+        MIN_WINDOW_WIDTH_PX, MapHighlight, SEEK_TAP_SECS, SkyTrails, SkyTrailsRequest,
+        SkyTrailsWindow, TrackRef, Window, WindowBody, advanced_scrub, apply_scrub_highlight,
+        floor_epoch, offset_time, scrub_offset_of, track_total_secs,
     };
 
     /// A synthetic track: a few satellites drifting across the sky over eight
     /// report epochs.
     fn demo_trails() -> SkyTrails {
+        demo_trails_with(&[])
+    }
+
+    /// A demo track spanning several minutes, so a held-key sweep has room to
+    /// run without immediately hitting the end.
+    fn long_demo_trails() -> SkyTrails {
+        let start = DateTime::<Utc>::from_timestamp(1_748_000_000, 0).expect("valid");
+        let points = (0..600)
+            .map(|i| {
+                let f = i as f32 / 599.0;
+                let sats = vec![Satellite::new(
+                    Constellation::Gps,
+                    5,
+                    Some(20.0 + 40.0 * f),
+                    Some(40.0 + 90.0 * f),
+                    Some(40.0),
+                    true,
+                )];
+                let tpv = TimePositionVelocity::builder()
+                    .time(GpsTime::from_utc(start + Duration::seconds(i)))
+                    .lat(Latitude::new(55.0))
+                    .lon(Longitude::new(12.0))
+                    .build();
+                NavPoint::new(tpv, Some(Satellites::new(None, None, sats)))
+            })
+            .collect();
+        gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(points))
+    }
+
+    /// The demo track with the given satellites tracked but never in the fix,
+    /// so the not-in-fix filter has something to hide.
+    fn demo_trails_with_tracked_only() -> SkyTrails {
+        demo_trails_with(&[(Constellation::Gps, 12)])
+    }
+
+    fn demo_trails_with(tracked_only: &[(Constellation, u32)]) -> SkyTrails {
         const EPOCHS: usize = 8;
         let specs = [
             (
@@ -723,13 +996,14 @@ mod tests {
                 let sats = specs
                     .iter()
                     .map(|&(c, prn, az, el)| {
+                        let in_fix = !tracked_only.contains(&(c, prn));
                         Satellite::new(
                             c,
                             prn,
                             Some(lerp(el, f)),
                             Some(lerp(az, f)),
                             Some(40.0),
-                            true,
+                            in_fix,
                         )
                     })
                     .collect();
@@ -807,6 +1081,10 @@ mod tests {
     }
 
     fn body_snapshot(name: &str, trails: SkyTrails) {
+        body_snapshot_with(name, trails, true);
+    }
+
+    fn body_snapshot_with(name: &str, trails: SkyTrails, mut show_not_in_fix: bool) {
         let mut harness = TestHarness::builder()
             .size(egui::vec2(560.0, 440.0))
             .theme(true)
@@ -817,7 +1095,7 @@ mod tests {
                     playing: &mut false,
                     speed: &mut 60.0,
                     shown: &mut ConstellationSet::all(),
-                    show_not_in_fix: &mut true,
+                    show_not_in_fix: &mut show_not_in_fix,
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),
@@ -892,6 +1170,76 @@ mod tests {
         body_snapshot("sky_trails_window_body", demo_trails());
     }
 
+    /// Snapshot: with the not-in-fix filter on, the seen column carries the
+    /// unfiltered total in parentheses, so the count visibly drops *from*
+    /// something rather than silently shrinking.
+    #[test]
+    fn sky_trails_window_body_filtered() {
+        body_snapshot_with(
+            "sky_trails_window_body_filtered",
+            demo_trails_with_tracked_only(),
+            false,
+        );
+    }
+
+    /// Snapshot: counts that mix single and double digits across rows - the
+    /// case that exposed the misalignment. Every fix number must sit under the
+    /// Fix heading and every seen number under Seen, whatever their width; a
+    /// two-digit seen must not shove its row's fix number out of the column.
+    #[test]
+    fn sky_trails_window_body_dense() {
+        body_snapshot("sky_trails_window_body_dense", dense_trails());
+    }
+
+    /// Snapshot: the dense counts with the not-in-fix filter on. The parenthetical
+    /// hangs off the rows that hide satellites (GPS, BeiDou) and not the one
+    /// that hides none (Galileo, all in fix), while every seen number stays in
+    /// its column - the "even worse" case when some rows carry a total and some
+    /// do not.
+    #[test]
+    fn sky_trails_window_body_dense_filtered() {
+        body_snapshot_with(
+            "sky_trails_window_body_dense_filtered",
+            dense_trails(),
+            false,
+        );
+    }
+
+    /// A track whose constellations carry enough satellites to reach two-digit
+    /// seen counts beside single-digit ones: 6/12 GPS, 5/11 BeiDou, 8/8
+    /// Galileo. Half of GPS and BeiDou are out of the fix so fix and seen
+    /// differ.
+    fn dense_trails() -> SkyTrails {
+        let specs = [
+            (Constellation::Gps, 12u32, 6u32),
+            (Constellation::Beidou, 11, 5),
+            (Constellation::Galileo, 8, 8),
+        ];
+        let start = DateTime::<Utc>::from_timestamp(1_748_000_000, 0).expect("valid");
+        let sats = specs
+            .into_iter()
+            .flat_map(|(c, seen, fix)| {
+                (0..seen).map(move |i| {
+                    Satellite::new(
+                        c,
+                        i + 1,
+                        Some(20.0 + f32::from(i as u16) * 4.0),
+                        Some(f32::from(i as u16) * 30.0 % 360.0),
+                        Some(40.0),
+                        i < fix,
+                    )
+                })
+            })
+            .collect();
+        let tpv = TimePositionVelocity::builder()
+            .time(GpsTime::from_utc(start))
+            .lat(Latitude::new(55.0))
+            .lon(Longitude::new(12.0))
+            .build();
+        let point = NavPoint::new(tpv, Some(Satellites::new(None, None, sats)));
+        gt_sky::extract_trails(&gt_test_utils::loaded_track_with_points(vec![point]))
+    }
+
     /// Snapshot: a track with no satellite reports shows the fallback line.
     #[test]
     fn sky_trails_window_empty() {
@@ -951,6 +1299,186 @@ mod tests {
         window.open(SkyTrailsRequest::whole_track(track_ref()));
         assert!(window.open);
         assert_eq!(window.pending_scrub_to, None);
+    }
+
+    /// Drive the body with the pointer over the window and return the scrub
+    /// position and speed after `keys` are tapped.
+    fn body_after_keys(keys: &[egui::Key]) -> (f64, f32) {
+        let trails = demo_trails();
+        let state = std::rc::Rc::new(std::cell::Cell::new((4.0_f64, 60.0_f32)));
+        let seen = state.clone();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(560.0, 440.0))
+            .ui(move |ui| {
+                let (mut scrub, mut speed) = seen.get();
+                WindowBody {
+                    trails: &trails,
+                    scrub_secs: &mut scrub,
+                    playing: &mut false,
+                    speed: &mut speed,
+                    shown: &mut ConstellationSet::all(),
+                    show_not_in_fix: &mut true,
+                    track_ref: track_ref(),
+                    elevation_mask_deg: 10.0,
+                    highlight: &mut MapHighlight::default(),
+                }
+                .ui(ui);
+                seen.set((scrub, speed));
+            });
+        // The keys only apply while the window is hovered, like the spacebar.
+        harness.inner.hover_at(egui::pos2(280.0, 200.0));
+        harness.run();
+        for &key in keys {
+            harness.inner.key_press(key);
+            harness.inner.run_steps(2);
+        }
+        state.get()
+    }
+
+    /// Left and right seek the scrubber a report at a time, and up and down
+    /// walk the speed ladder - the arrow keys used to do nothing at all.
+    #[test]
+    fn the_arrow_keys_drive_the_transport() {
+        let (scrub, speed) = body_after_keys(&[]);
+        assert!(
+            (scrub - 4.0).abs() < f64::EPSILON,
+            "unchanged without input"
+        );
+        assert!((speed - 60.0).abs() < f32::EPSILON);
+
+        let (scrub, _) = body_after_keys(&[egui::Key::ArrowRight]);
+        assert!((scrub - 5.0).abs() < f64::EPSILON, "right seeks forward");
+
+        let (scrub, _) = body_after_keys(&[egui::Key::ArrowLeft, egui::Key::ArrowLeft]);
+        assert!((scrub - 2.0).abs() < f64::EPSILON, "left seeks back");
+
+        let (_, speed) = body_after_keys(&[egui::Key::ArrowUp]);
+        assert!(
+            (speed - 120.0).abs() < f32::EPSILON,
+            "up speeds playback up"
+        );
+
+        let (_, speed) = body_after_keys(&[egui::Key::ArrowDown]);
+        assert!((speed - 30.0).abs() < f32::EPSILON, "down slows playback");
+    }
+
+    /// Holding an arrow sweeps the scrubber continuously, not just the one
+    /// report a tap moves it.
+    ///
+    /// This drives real frames with wall-clock time elapsing between them,
+    /// which a `key_press` (an instant down-up inside one frame) cannot do.
+    /// Held seeking once silently did nothing: playback and seeking each read
+    /// the per-frame clock, and the first read reset it, so the second always
+    /// saw a zero delta.
+    #[test]
+    fn holding_an_arrow_sweeps_the_scrubber() {
+        let trails = long_demo_trails();
+        let total = track_total_secs(&trails).expect("has epochs");
+        let state = std::rc::Rc::new(std::cell::Cell::new(0.0_f64));
+        let seen = state.clone();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(560.0, 440.0))
+            .ui(move |ui| {
+                let mut scrub = seen.get();
+                WindowBody {
+                    trails: &trails,
+                    scrub_secs: &mut scrub,
+                    playing: &mut false,
+                    speed: &mut 60.0,
+                    shown: &mut ConstellationSet::all(),
+                    show_not_in_fix: &mut true,
+                    track_ref: track_ref(),
+                    elevation_mask_deg: 10.0,
+                    highlight: &mut MapHighlight::default(),
+                }
+                .ui(ui);
+                seen.set(scrub);
+            });
+        harness.inner.hover_at(egui::pos2(280.0, 200.0));
+        harness.inner.step();
+
+        // Press and keep it down. The first frame is the tap; the sweep only
+        // starts once the key has been held past the threshold.
+        harness.inner.key_down(egui::Key::ArrowRight);
+        // The harness advances its own clock a frame at a time, so stepping is
+        // all it takes to let real time pass; enough of them to get past the
+        // hold threshold and well into the sweep.
+        for _ in 0..90 {
+            harness.inner.step();
+        }
+        harness.inner.key_up(egui::Key::ArrowRight);
+
+        let swept = state.get();
+        assert!(
+            swept > SEEK_TAP_SECS * 2.0,
+            "holding right only moved {swept}s, no more than a tap would"
+        );
+        assert!(swept <= total, "the sweep must stay inside the track");
+    }
+
+    /// A held key produces a stream of operating-system auto-repeat presses.
+    /// Those must not count as taps: doing so both stuttered the scrubber along
+    /// at the repeat rate and kept resetting the hold timer, so the continuous
+    /// sweep engaged briefly and then dropped back to repeat speed.
+    #[test]
+    fn auto_repeat_presses_are_not_taps() {
+        let real = egui::Event::Key {
+            key: egui::Key::ArrowRight,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let auto = egui::Event::Key {
+            key: egui::Key::ArrowRight,
+            physical_key: None,
+            pressed: true,
+            repeat: true,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let tapped_with = |events: Vec<egui::Event>| {
+            let mut input = egui::InputState::default();
+            input.events = events;
+            super::tapped(&input, egui::Key::ArrowRight)
+        };
+
+        assert!(tapped_with(vec![real.clone()]), "a real press is a tap");
+        assert!(!tapped_with(vec![auto.clone()]), "auto-repeat is not a tap");
+        assert!(!tapped_with(Vec::new()), "no events, no tap");
+        // The initial press still registers when repeats arrive alongside it.
+        assert!(tapped_with(vec![auto, real]));
+    }
+
+    /// The speed ladder steps one preset at a time and stops at its ends
+    /// rather than wrapping, so holding a key does not loop from 300x back to
+    /// 1x.
+    #[rstest::rstest]
+    #[case::up_from_default(60.0, 1, 120.0)]
+    #[case::down_from_default(60.0, -1, 30.0)]
+    #[case::saturates_at_the_top(300.0, 1, 300.0)]
+    #[case::saturates_at_the_bottom(1.0, -1, 1.0)]
+    // A speed that is not itself a preset snaps to the nearest one first.
+    #[case::off_ladder(70.0, 1, 120.0)]
+    fn stepped_speed_walks_the_preset_ladder(
+        #[case] from: f32,
+        #[case] steps: i32,
+        #[case] expected: f32,
+    ) {
+        assert!((super::stepped_speed(from, steps) - expected).abs() < f32::EPSILON);
+    }
+
+    /// Held-down seeking crosses the track in about the same wall-clock time
+    /// whatever its length, with a floor so a very short track is still quicker
+    /// to seek than to play.
+    #[test]
+    fn held_seek_scales_with_the_track_but_has_a_floor() {
+        // An hour-long track: a quarter of it per second, so ~4s end to end.
+        assert!((super::held_seek_rate(3600.0) - 900.0).abs() < f64::EPSILON);
+        // A ten-second track would scale to 2.5x, which is slower than most
+        // playback speeds, so the floor takes over.
+        assert!(
+            (super::held_seek_rate(10.0) - super::MIN_HELD_SEEK_SECS_PER_SEC).abs() < f64::EPSILON
+        );
     }
 
     #[test]
@@ -1075,15 +1603,56 @@ mod tests {
         assert!((secs - 16.0).abs() < 1e-4);
         assert!(playing);
 
-        // A long stall is clamped to MAX_PLAYBACK_FRAME_SECS (0.1s), so the
-        // scrubber does not leap the whole track on the next frame.
-        let (secs, _) = advanced_scrub(10.0, 60.0, 5.0, 100.0);
-        assert!((secs - 16.0).abs() < 1e-4);
-
         // Reaching the end clamps to the total and stops.
         let (secs, playing) = advanced_scrub(98.0, 60.0, 0.1, 100.0);
         assert!((secs - 100.0).abs() < 1e-4);
         assert!(!playing);
+    }
+
+    /// A stall - the window occluded, a breakpoint - must not leap the
+    /// scrubber across the track on the frame that follows it. The clamp lives
+    /// in `frame_dt`, so this drives the real body with a jump in wall-clock
+    /// time rather than calling the arithmetic directly.
+    #[test]
+    fn a_stalled_frame_does_not_leap_the_scrubber() {
+        let trails = demo_trails();
+        let state = std::rc::Rc::new(std::cell::Cell::new(0.0_f64));
+        let seen = state.clone();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(560.0, 440.0))
+            .ui(move |ui| {
+                let mut scrub = seen.get();
+                WindowBody {
+                    trails: &trails,
+                    scrub_secs: &mut scrub,
+                    playing: &mut true,
+                    speed: &mut 60.0,
+                    shown: &mut ConstellationSet::all(),
+                    show_not_in_fix: &mut true,
+                    track_ref: track_ref(),
+                    elevation_mask_deg: 10.0,
+                    highlight: &mut MapHighlight::default(),
+                }
+                .ui(ui);
+                seen.set(scrub);
+            });
+        // Playback requests a repaint every frame, so `run` never settles:
+        // step one frame at a time. One to seed the clock, then a ten-second
+        // stall before the next.
+        harness.inner.step();
+        state.set(0.0);
+        let stalled_at = harness.inner.input().time.unwrap_or(0.0) + 10.0;
+        harness.inner.input_mut().time = Some(stalled_at);
+        harness.inner.step();
+
+        // At 60x, an unclamped ten-second stall would advance 600 track-seconds
+        // and run off the end of this eight-second track.
+        let advanced = state.get();
+        let ceiling = f64::from(60.0 * MAX_PLAYBACK_FRAME_SECS);
+        assert!(
+            advanced <= ceiling + 1e-6,
+            "a stalled frame advanced {advanced}s, past the {ceiling}s clamp"
+        );
     }
 
     #[test]
@@ -1113,17 +1682,21 @@ mod tests {
 
     #[rstest::rstest]
     // Ample space: the plot fills the height left above the transport.
-    #[case::height_bound(egui::vec2(800.0, 500.0), 80.0, 420.0)]
+    #[case::height_bound(egui::vec2(800.0, 500.0), false, 80.0, 420.0)]
     // Wide but short: the plot is bounded by the leftover height, not width.
-    #[case::width_is_slack(egui::vec2(1200.0, 400.0), 80.0, 320.0)]
+    #[case::width_is_slack(egui::vec2(1200.0, 400.0), false, 80.0, 320.0)]
     // Tiny window: the plot holds its legibility floor rather than shrinking.
-    #[case::clamped_to_floor(egui::vec2(300.0, 300.0), 80.0, 240.0)]
+    #[case::clamped_to_floor(egui::vec2(300.0, 300.0), false, 80.0, 240.0)]
+    // The parenthetical column (the not-in-fix filter is on) takes its space
+    // from the plot, not from the constellation names.
+    #[case::filtered_column(egui::vec2(600.0, 900.0), true, 80.0, 378.0)]
     fn plot_diameter_fills_the_space_above_the_transport(
         #[case] avail: egui::Vec2,
+        #[case] has_paren: bool,
         #[case] reserved: f32,
         #[case] expected: f32,
     ) {
-        let diameter = super::plot_diameter(avail, reserved);
+        let diameter = super::plot_diameter(avail, super::stats_col_width(has_paren), reserved);
         assert!(
             (diameter - expected).abs() < 0.5,
             "diameter {diameter} != expected {expected}"
