@@ -164,7 +164,7 @@ pub struct PanelContext<'a> {
     pub snap_costing_request: &'a mut Option<(TrackRef, SnapCosting)>,
     /// Set by the "Show sky trails" track action. Consumed by the app, which
     /// opens the sky trails window on that track.
-    pub sky_trails_request: &'a mut Option<TrackRef>,
+    pub sky_trails_request: &'a mut Option<gt_ui_types::SkyTrailsRequest>,
 }
 
 /// Trailing eye-slash on a category row whose map ink is hidden by the
@@ -1067,7 +1067,7 @@ fn render_track_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Pane
         }
         snap_menu_entry(ui, track_ref, ctx);
         if ui.button("Show sky trails…").clicked() {
-            *ctx.sky_trails_request = Some(track_ref);
+            *ctx.sky_trails_request = Some(gt_ui_types::SkyTrailsRequest::whole_track(track_ref));
             ui.close();
         }
         ui.separator();

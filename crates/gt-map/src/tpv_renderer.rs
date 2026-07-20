@@ -1,6 +1,7 @@
 use egui::epaint::{PathShape, PathStroke};
 use egui::{Color32, PopupAnchor, Pos2, Stroke, Ui, Vec2};
 use egui::{Grid, RichText, ScrollArea, Tooltip};
+use egui_phosphor::regular::ARROW_SQUARE_OUT as ICON_ARROW_SQUARE_OUT;
 use egui_phosphor::regular::CHECK as ICON_CHECK;
 use gt_filter::{self as filter, GlobalFilter};
 use gt_sky::{SkyHighlight, SkyPlot, SkyPlotSize};
@@ -541,12 +542,15 @@ fn hover_grid_ui(ui: &mut Ui, p: &NavPoint) {
 /// Unlike `show_hover_table`, the time is omitted here because it is shown
 /// in the window title. The satellite section expands into a full per-PRN
 /// breakdown grouped by constellation.
+/// Returns whether the user asked to open the sky trails window at this
+/// point's instant.
+#[must_use]
 pub(crate) fn show_sticky_tpv_content(
     ui: &mut Ui,
     p: &NavPoint,
     sky: &SkySection<'_>,
     folds: &mut PointWindowFolds,
-) {
+) -> bool {
     // The sky plot is drawn beside the tables, so hovering a table row feeds
     // the plot through egui's per-frame data store: this frame's plot uses
     // last frame's highlight, and the tables set next frame's. A repaint on
@@ -562,19 +566,44 @@ pub(crate) fn show_sticky_tpv_content(
     let side_by_side = ui.available_width() >= MIN_SIDE_BY_SIDE_WIDTH_PX;
     // `folds` is a parameter rather than a capture so both closures can take
     // it in turn without holding overlapping mutable borrows.
+    // Returns whether the header's "open sky trails" button was pressed.
     let summary =
         |ui: &mut Ui, folds: &mut PointWindowFolds, highlight: &mut Option<SkyHighlight>| {
+            let mut open_trails = false;
             if !matches!(sky, SkySection::TrackWithoutReports) {
-                let header = ui
-                    .horizontal(|ui| {
+                // Title on the left, action on the right: the header doubles as
+                // the plot's title bar, so the button that opens the same sky
+                // over the whole track belongs at its far end.
+                // Sized to the plot it titles: a right-aligned button in an
+                // unbounded row would stretch the whole column to the window's
+                // width and squeeze the satellite tables out.
+                let header = ui.allocate_ui_with_layout(
+                    egui::vec2(SkyPlotSize::Full.diameter(), ui.spacing().interact_size.y),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
                         let tint = ui.visuals().weak_text_color();
                         fold_arrow(ui, folds.plot_folded, tint);
                         ui.label(RichText::new("Sky").strong());
-                    })
-                    .response
-                    .interact(egui::Sense::click());
-                crate::hover_labels::hover_affordance(ui, header.rect);
-                if header.clicked() {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.small_button(ICON_ARROW_SQUARE_OUT)
+                                .on_hover_text("Open sky trails at this moment")
+                        })
+                        .inner
+                    },
+                );
+                let button = header.inner;
+                open_trails = button.clicked();
+                // The fold covers the header up to the button, not through it:
+                // an interaction registered after the button would sit on top
+                // of it and swallow its clicks.
+                let mut fold_rect = header.response.rect;
+                fold_rect.max.x = button.rect.left() - ui.spacing().item_spacing.x;
+                // Explicit id: `.interact` on the container response reuses an
+                // auto-generated id, which collides with identically laid out
+                // siblings.
+                let fold = ui.interact(fold_rect, ui.id().with("sky_fold"), egui::Sense::click());
+                crate::hover_labels::hover_affordance(ui, fold.rect);
+                if fold.clicked() {
                     folds.plot_folded = !folds.plot_folded;
                 }
                 if !folds.plot_folded {
@@ -583,6 +612,7 @@ pub(crate) fn show_sticky_tpv_content(
                 ui.add_space(6.0);
             }
             sticky_metrics(ui, p, highlight);
+            open_trails
         };
     // The satellite tables always scroll on their own, so the plot beside or
     // above them never scrolls out of view the way it did when one scroll
@@ -594,14 +624,15 @@ pub(crate) fn show_sticky_tpv_content(
                 .show(ui, |ui| sticky_satellites(ui, p, folds, highlight));
         };
 
+    let mut open_trails = false;
     if side_by_side {
         ui.horizontal_top(|ui| {
-            ui.vertical(|ui| summary(ui, folds, &mut highlight));
+            ui.vertical(|ui| open_trails = summary(ui, folds, &mut highlight));
             ui.add_space(STICKY_COLUMN_GAP_PX);
             ui.vertical(|ui| satellites(ui, folds, &mut highlight));
         });
     } else {
-        summary(ui, folds, &mut highlight);
+        open_trails = summary(ui, folds, &mut highlight);
         ui.add_space(6.0);
         satellites(ui, folds, &mut highlight);
     }
@@ -611,6 +642,7 @@ pub(crate) fn show_sticky_tpv_content(
     }
     ui.ctx()
         .data_mut(|d| d.insert_temp(highlight_id, highlight));
+    open_trails
 }
 
 /// The fix metrics beneath the plot: speed, heading, accuracy, the satellite
@@ -1750,7 +1782,9 @@ mod tests {
         let mut harness = TestHarness::builder()
             .size(egui::vec2(620.0, 560.0))
             .theme(true)
-            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds));
+            .ui(move |ui| {
+                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+            });
         harness.snapshot("sticky_dense_two_columns");
     }
 
@@ -1763,7 +1797,9 @@ mod tests {
         let mut harness = TestHarness::builder()
             .size(egui::vec2(330.0, 560.0))
             .theme(true)
-            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds));
+            .ui(move |ui| {
+                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+            });
         harness.snapshot("sticky_dense_one_column");
     }
 
@@ -1811,7 +1847,9 @@ mod tests {
         let mut harness = TestHarness::builder()
             .size(egui::vec2(620.0, 380.0))
             .theme(true)
-            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds));
+            .ui(move |ui| {
+                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+            });
         harness.snapshot("sticky_folded_sections");
     }
 
@@ -1832,7 +1870,9 @@ mod tests {
         let mut harness = TestHarness::builder()
             .size(egui::vec2(620.0, 560.0))
             .theme(true)
-            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds));
+            .ui(move |ui| {
+                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+            });
         harness.run();
 
         // The header survives either way; only the PRN rows come and go.
@@ -1853,7 +1893,7 @@ mod tests {
             .size(egui::vec2(600.0, 440.0))
             .theme(true)
             .ui(move |ui| {
-                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
                 seen.set(folds.is_folded(Constellation::Gps));
             });
         harness.run();
@@ -1861,6 +1901,38 @@ mod tests {
         harness.inner.get_by_label("GPS").click();
         harness.inner.run_steps(2);
         assert!(folded.get(), "clicking the header should fold GPS");
+    }
+
+    /// The open-trails button sits inside the sky header's fold click target,
+    /// so pressing it must open the trails window without folding the plot out
+    /// from under the pointer.
+    #[test]
+    fn the_open_trails_button_does_not_fold_the_sky_plot() {
+        let point = make_point(Some(sats_multi_constellation()));
+        let state = std::rc::Rc::new(std::cell::Cell::new((false, false)));
+        let seen = state.clone();
+        let mut folds = gt_ui_types::PointWindowFolds::default();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(600.0, 440.0))
+            .theme(true)
+            .ui(move |ui| {
+                let opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let (ever_opened, _) = seen.get();
+                seen.set((ever_opened || opened, folds.plot_folded));
+            });
+        harness.run();
+        assert_eq!(
+            state.get(),
+            (false, false),
+            "nothing opened before the click"
+        );
+
+        harness.inner.get_by_label(ICON_ARROW_SQUARE_OUT).click();
+        harness.inner.run_steps(2);
+
+        let (opened, folded) = state.get();
+        assert!(opened, "the button must request the sky trails window");
+        assert!(!folded, "the button must not fold the sky plot");
     }
 
     /// Each header folds its own constellation. Sibling panels lay out
@@ -1877,7 +1949,7 @@ mod tests {
             .size(egui::vec2(600.0, 440.0))
             .theme(true)
             .ui(move |ui| {
-                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
                 seen.set((
                     folds.is_folded(Constellation::Gps),
                     folds.is_folded(Constellation::Glonass),
@@ -1907,7 +1979,7 @@ mod tests {
             .theme(true)
             .ui(move |ui| {
                 cell.set(Some(sky_table_highlight_id(ui)));
-                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
             });
         harness.run();
 
@@ -1948,7 +2020,9 @@ mod tests {
         let mut harness = TestHarness::builder()
             .size(egui::vec2(600.0, 440.0))
             .theme(dark_mode)
-            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds));
+            .ui(move |ui| {
+                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+            });
         harness.snapshot(name);
     }
 
@@ -1975,7 +2049,7 @@ mod tests {
             .theme(true)
             .ui(move |ui| {
                 cell.set(Some(sky_table_highlight_id(ui)));
-                show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
             });
         harness.run();
         harness.inner.get_by_label(label).hover();
@@ -1995,7 +2069,9 @@ mod tests {
         let mut harness = TestHarness::builder()
             .size(egui::vec2(600.0, 440.0))
             .theme(true)
-            .ui(move |ui| show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds));
+            .ui(move |ui| {
+                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+            });
         harness.run();
         harness.inner.get_by_label("G01").hover();
         harness.inner.run_steps(2);

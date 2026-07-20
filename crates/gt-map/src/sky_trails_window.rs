@@ -9,7 +9,7 @@ use egui_phosphor::regular::PLAY as ICON_PLAY;
 use gt_sky::{EpochCount, SkyTrails, SkyTrailsPlot, TrailEpoch};
 use gt_types::satellites::{Constellation, ConstellationSet};
 use gt_types::{GpsTime, LoadedFile, TrackRef};
-use gt_ui_types::MapHighlight;
+use gt_ui_types::{MapHighlight, SkyTrailsRequest};
 
 use crate::tpv_renderer::{constellation_swatch, fix_count_color, seen_count_color};
 
@@ -61,7 +61,8 @@ const SPEED_SELECTOR_WIDTH_PX: f32 = 52.0;
 const TERM_UNDERLINE_ALPHA: f32 = 0.5;
 
 /// The whole-track sky trails window. Owned by the app and drawn each frame;
-/// opened by [`SkyTrailsWindow::open_track`] from the context menus.
+/// opened by [`SkyTrailsWindow::open`] from the context menus and the
+/// clicked-point window.
 #[derive(Default)]
 pub struct SkyTrailsWindow {
     open: bool,
@@ -72,14 +73,19 @@ pub struct SkyTrailsWindow {
     /// Whether playback is advancing the scrubber.
     playing: bool,
     /// Playback rate in track-seconds per real second. Set on
-    /// [`SkyTrailsWindow::open_track`] (the `Default` is zero, not a usable
+    /// [`SkyTrailsWindow::open`] (the `Default` is zero, not a usable
     /// rate), so it is always initialized before the window shows.
     speed: f32,
     shown: ConstellationSet,
     /// Whether trails for satellites never in the fix are drawn. Set on
-    /// [`SkyTrailsWindow::open_track`] (the `Default` bool is the wrong value),
+    /// [`SkyTrailsWindow::open`] (the `Default` bool is the wrong value),
     /// so it is always initialized before the window shows.
     show_not_in_fix: bool,
+    /// An instant the window was asked to open at, applied on the next
+    /// `show` once the trails - and so the track's time span - are known.
+    /// Requests arrive before the trails are extracted, so the scrub position
+    /// cannot be resolved at request time.
+    pending_scrub_to: Option<GpsTime>,
     /// The extracted trails for `track`, kept while the window stays on one
     /// track. Tracks are immutable once loaded, so a per-track cache needs no
     /// invalidation; re-extracted only when the shown track changes.
@@ -97,9 +103,25 @@ impl SkyTrailsWindow {
         self.cache = None;
     }
 
+    /// Open the window per `request`: on its track, and scrubbed to its
+    /// instant when it carries one (opened from a clicked track point) rather
+    /// than at the start.
+    ///
+    /// Re-opening the same track keeps the scrubber, filter and playback speed
+    /// where they were, so jumping to a new instant does not reset the rest of
+    /// the window.
+    pub fn open(&mut self, request: SkyTrailsRequest) {
+        self.open_track(request.track);
+        if let Some(at) = request.at {
+            self.pending_scrub_to = Some(at);
+            // Landing on a moment is an inspection, not a playthrough.
+            self.playing = false;
+        }
+    }
+
     /// Open the window on `track`, resetting the scrubber and filter when it
     /// is a different track than before.
-    pub fn open_track(&mut self, track: TrackRef) {
+    fn open_track(&mut self, track: TrackRef) {
         self.open = true;
         if self.track != Some(track) {
             self.track = Some(track);
@@ -141,6 +163,16 @@ impl SkyTrailsWindow {
         let Some((_, trails)) = &self.cache else {
             return;
         };
+
+        // Resolve a requested instant now that the track's span is known.
+        if let Some(at) = self.pending_scrub_to.take()
+            && let (Some(first), Some(total_secs)) = (
+                trails.epochs.first().map(|e| e.time),
+                track_total_secs(trails),
+            )
+        {
+            self.scrub_secs = scrub_offset_of(first, at, total_secs);
+        }
 
         let body = WindowBody {
             trails,
@@ -477,6 +509,14 @@ fn floor_epoch(trails: &SkyTrails, time: GpsTime) -> Option<&TrailEpoch> {
 /// running. It advances by the frame's elapsed time (clamped to
 /// [`MAX_PLAYBACK_FRAME_SECS`]) scaled by `speed`, and stops at the end of the
 /// track.
+/// Where on the scrubber `at` falls, given the track's `first` epoch and span.
+///
+/// Clamped, so a point whose fix sits just outside the reported epochs lands on
+/// the nearest end of the scrubber rather than off it.
+fn scrub_offset_of(first: GpsTime, at: GpsTime, total_secs: f64) -> f64 {
+    secs_between(first, at).clamp(0.0, total_secs)
+}
+
 fn advanced_scrub(scrub_secs: f64, speed: f32, dt: f32, total_secs: f64) -> (f64, bool) {
     let dt = dt.min(MAX_PLAYBACK_FRAME_SECS);
     let next = scrub_secs + f64::from(speed) * f64::from(dt);
@@ -649,8 +689,9 @@ mod tests {
     };
 
     use super::{
-        ConstellationSet, MapHighlight, SkyTrails, SkyTrailsWindow, TrackRef, WindowBody,
-        advanced_scrub, apply_scrub_highlight, floor_epoch, offset_time, track_total_secs,
+        ConstellationSet, MapHighlight, SkyTrails, SkyTrailsRequest, SkyTrailsWindow, TrackRef,
+        WindowBody, advanced_scrub, apply_scrub_highlight, floor_epoch, offset_time,
+        scrub_offset_of, track_total_secs,
     };
 
     /// A synthetic track: a few satellites drifting across the sky over eight
@@ -814,6 +855,38 @@ mod tests {
         assert!(window.scrub_secs.abs() < f64::EPSILON);
         assert!(!window.playing);
         assert!(window.shown.contains(Constellation::Gps));
+    }
+
+    /// Opening at an instant scrubs to it and does not start playing: landing
+    /// on a moment is an inspection. Instants outside the track's epochs clamp
+    /// to its ends.
+    #[test]
+    fn opening_at_an_instant_scrubs_to_it() {
+        let trails = demo_trails();
+        let first = trails.epochs[0].time;
+        let total = track_total_secs(&trails).expect("has epochs");
+
+        assert!((scrub_offset_of(first, offset_time(first, 3.0), total) - 3.0).abs() < 1e-9);
+        // Before the first epoch and after the last both clamp.
+        assert!(scrub_offset_of(first, offset_time(first, -5.0), total).abs() < 1e-9);
+        assert!((scrub_offset_of(first, offset_time(first, 99.0), total) - total).abs() < 1e-9);
+
+        let mut window = SkyTrailsWindow {
+            playing: true,
+            ..SkyTrailsWindow::default()
+        };
+        window.open(SkyTrailsRequest::at_instant(track_ref(), first));
+        assert_eq!(window.pending_scrub_to, Some(first));
+        assert!(!window.playing, "a jump to a moment pauses playback");
+    }
+
+    /// The whole-track entry points leave the scrubber alone.
+    #[test]
+    fn opening_the_whole_track_requests_no_scrub() {
+        let mut window = SkyTrailsWindow::default();
+        window.open(SkyTrailsRequest::whole_track(track_ref()));
+        assert!(window.open);
+        assert_eq!(window.pending_scrub_to, None);
     }
 
     #[test]

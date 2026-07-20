@@ -106,7 +106,7 @@ struct SharedAppState {
     clear_query_request: bool,
     /// Set by the map context menu's "Show sky trails", consumed by the app to
     /// open the sky trails window (which is not part of shared state).
-    sky_trails_request: Option<TrackRef>,
+    sky_trails_request: Option<gt_ui_types::SkyTrailsRequest>,
     /// User template for the recording name shown in the side panel. See
     /// [`gt_fmt::render_name_template`].
     recording_name_template: String,
@@ -2305,8 +2305,8 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                         MapContextAction::ShowOnlyFile(fi) => {
                             s.tree.show_only_file(fi);
                         }
-                        MapContextAction::ShowSkyTrails(track) => {
-                            s.sky_trails_request = Some(track);
+                        MapContextAction::ShowSkyTrails(request) => {
+                            s.sky_trails_request = Some(request);
                         }
                     }
                 }
@@ -2581,7 +2581,7 @@ impl eframe::App for App {
         let mut snap_request: Option<TrackRef> = None;
         let mut snap_visibility_request: Option<TrackRef> = None;
         let mut snap_costing_request: Option<(TrackRef, gt_ui_types::SnapCosting)> = None;
-        let mut sky_trails_request: Option<TrackRef> = None;
+        let mut sky_trails_request: Option<gt_ui_types::SkyTrailsRequest> = None;
 
         let detached = self.shared.borrow().tree.detached;
         if !detached {
@@ -2679,8 +2679,8 @@ impl eframe::App for App {
         // "Show sky trails" from either the side panel or the map context
         // menu (the latter routed through shared state) opens the window.
         let map_trails_request = self.shared.borrow_mut().sky_trails_request.take();
-        if let Some(track_ref) = sky_trails_request.or(map_trails_request) {
-            self.sky_trails_window.open_track(track_ref);
+        if let Some(request) = sky_trails_request.or(map_trails_request) {
+            self.sky_trails_window.open(request);
         }
 
         // "Reset filters" also drops the query filter so the map fully clears.
