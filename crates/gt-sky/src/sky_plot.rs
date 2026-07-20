@@ -205,7 +205,7 @@ fn mark_tooltip(ui: &egui::Ui, response: &egui::Response, marks: &[(Satellite, P
             .with((satellite.constellation(), satellite.prn())),
         egui::PopupAnchor::Pointer,
     )
-    .show(|ui| crate::plot_common::satellite_tooltip(ui, satellite));
+    .show(|ui| crate::plot_common::satellite_tooltip(ui, satellite, None));
 }
 
 /// The mark nearest to `pointer`, within [`style::MARK_HOVER_RADIUS_PX`].
@@ -488,6 +488,13 @@ mod snapshot_tests {
         assert!(!const_fix.matches(&gal_fix));
     }
 
+    /// Snapshot: both fix states of the tooltip, an in-fix satellite with a
+    /// full set of measurements and a tracked one missing its SNR.
+    ///
+    /// Rendering two in one `Ui` also guards the tooltip grid's id. The grid
+    /// keeps its column widths under that id, so a shared one leaves two
+    /// tooltips resizing to each other's measurements and repainting forever -
+    /// this test hangs out its step budget rather than merely looking wrong.
     #[test]
     fn sky_mark_tooltip() {
         let full = Satellite::new(
@@ -510,9 +517,9 @@ mod snapshot_tests {
             .size(egui::vec2(220.0, 220.0))
             .theme(true)
             .ui(move |ui| {
-                crate::plot_common::satellite_tooltip(ui, &full);
+                crate::plot_common::satellite_tooltip(ui, &full, None);
                 ui.separator();
-                crate::plot_common::satellite_tooltip(ui, &snr_less);
+                crate::plot_common::satellite_tooltip(ui, &snr_less, None);
             });
         harness.run();
         harness.snapshot("sky_mark_tooltip");

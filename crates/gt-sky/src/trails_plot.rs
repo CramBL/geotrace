@@ -127,7 +127,7 @@ impl<'a> SkyTrailsPlot<'a> {
 
         // The scrub markers drawn this frame, kept for hover: each satellite at
         // the scrubbed instant, with its position matching the drawn dot.
-        let mut markers: Vec<(Satellite, Pos2)> = Vec::new();
+        let mut markers: Vec<(MarkerHover, Pos2)> = Vec::new();
         for trail in &self.trails.trails {
             if !self.shown.contains(trail.constellation) {
                 continue;
@@ -149,7 +149,13 @@ impl<'a> SkyTrailsPlot<'a> {
                 // while the scrubber sat exactly on a report, so hover died the
                 // moment playback moved the scrubber off one and stayed dead
                 // until something put it back exactly on a report.
-                markers.push((satellite_from_sample(trail, report), pos));
+                markers.push((
+                    MarkerHover {
+                        satellite: satellite_from_sample(trail, report),
+                        at: report.time,
+                    },
+                    pos,
+                ));
             }
         }
 
@@ -170,7 +176,7 @@ impl<'a> SkyTrailsPlot<'a> {
         // never collide.
         let pointer = response.hover_pos();
         let hovered_marker = pointer.and_then(|pointer| {
-            let candidates = markers.iter().map(|(satellite, pos)| (satellite, *pos));
+            let candidates = markers.iter().map(|(hover, pos)| (hover, *pos));
             plot_common::nearest_within(candidates, pointer, style::MARK_HOVER_RADIUS_PX)
         });
         let hovered_slip = pointer.and_then(|pointer| {
@@ -372,9 +378,19 @@ fn satellite_from_sample(trail: &SkyTrail, sample: &TrailSample) -> Satellite {
     )
 }
 
-/// Show the hover tooltip for a satellite's scrub marker, identical to the
-/// per-report plot's satellite tooltip.
-fn show_marker_tooltip(ui: &egui::Ui, response: &egui::Response, satellite: &Satellite) {
+/// A scrub marker's hover payload: the satellite as of the report in effect,
+/// and when that report was. The time is carried because the scrubber sits
+/// between reports for most of its travel, so the tooltip names the report the
+/// values actually came from.
+struct MarkerHover {
+    satellite: Satellite,
+    at: GpsTime,
+}
+
+/// Show the hover tooltip for a satellite's scrub marker: the per-report
+/// plot's tooltip, plus the report the values were read from.
+fn show_marker_tooltip(ui: &egui::Ui, response: &egui::Response, hover: &MarkerHover) {
+    let satellite = &hover.satellite;
     egui::Tooltip::always_open(
         ui.ctx().clone(),
         ui.layer_id(),
@@ -383,7 +399,7 @@ fn show_marker_tooltip(ui: &egui::Ui, response: &egui::Response, satellite: &Sat
             .with(("marker", satellite.constellation(), satellite.prn())),
         egui::PopupAnchor::Pointer,
     )
-    .show(|ui| plot_common::satellite_tooltip(ui, satellite));
+    .show(|ui| plot_common::satellite_tooltip(ui, satellite, Some(hover.at)));
 }
 
 /// Show the hover tooltip for a slip mark.
