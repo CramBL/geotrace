@@ -41,6 +41,13 @@ pub struct SkyTrailsPlot<'a> {
     /// When false, satellites never in the fix over the track are hidden, so
     /// only the ones that contributed a fix are drawn.
     show_not_in_fix: bool,
+    /// When false, the whole-track trail polylines (and slip marks) are hidden,
+    /// leaving just the current-instant markers - the immediate snapshot.
+    show_trails: bool,
+    /// When true, only satellites in the fix at the scrubbed instant are drawn,
+    /// hiding the ones that are merely tracked right now. Inert without a
+    /// [`Self::scrub`], since there is no instant to judge against.
+    in_fix_now: bool,
     elevation_mask_deg: Option<f32>,
 }
 
@@ -53,6 +60,8 @@ impl<'a> SkyTrailsPlot<'a> {
             focus: None,
             scrub: None,
             show_not_in_fix: true,
+            show_trails: true,
+            in_fix_now: false,
             elevation_mask_deg: None,
         }
     }
@@ -79,6 +88,23 @@ impl<'a> SkyTrailsPlot<'a> {
             show_not_in_fix,
             ..self
         }
+    }
+
+    /// Whether to draw the whole-track trail polylines and slip marks. Defaults
+    /// to true; false leaves only the current-instant markers - the immediate
+    /// snapshot of where the satellites are now.
+    pub fn show_trails(self, show_trails: bool) -> Self {
+        Self {
+            show_trails,
+            ..self
+        }
+    }
+
+    /// Whether to show only the satellites in the fix at the scrubbed instant,
+    /// hiding the ones merely tracked right now. Defaults to false. Inert
+    /// without a [`Self::scrub`] to judge against.
+    pub fn in_fix_now(self, in_fix_now: bool) -> Self {
+        Self { in_fix_now, ..self }
     }
 
     /// Draw the elevation mask as a dashed ring.
@@ -136,13 +162,24 @@ impl<'a> SkyTrailsPlot<'a> {
             if !self.show_not_in_fix && !trail.ever_in_fix() {
                 continue;
             }
+            // The report in effect at the scrubbed instant, if any: it drives
+            // both the current-instant filter and the marker.
+            let current = self.scrub.and_then(|scrub| marker_at(trail, scrub));
+            // The current-instant filter keeps only satellites in the fix right
+            // now, dropping the ones merely tracked. Inert without a scrub.
+            if self.in_fix_now
+                && self.scrub.is_some()
+                && !current.is_some_and(|(_, _, report)| report.in_fix)
+            {
+                continue;
+            }
             let base = gt_ui_theme::constellation_color(trail.constellation, dark_mode);
             let focus_factor = self.focus_factor(trail.constellation);
-            paint_trail(ui, frame, trail, base, focus_factor);
+            if self.show_trails {
+                paint_trail(ui, frame, trail, base, focus_factor);
+            }
 
-            if let Some(scrub) = self.scrub
-                && let Some((azimuth, elevation, report)) = marker_at(trail, scrub)
-            {
+            if let Some((azimuth, elevation, report)) = current {
                 let pos = frame.project(azimuth, elevation);
                 paint_marker(ui, pos, base.gamma_multiply(focus_factor), panel, report);
                 // Every drawn marker is a hover target. It used to be one only
@@ -204,21 +241,41 @@ impl<'a> SkyTrailsPlot<'a> {
         }
     }
 
-    /// Whether a slip mark is drawn (and thus hoverable): its constellation is
-    /// shown, and - unless never-in-fix satellites are visible - its satellite
-    /// contributed a fix at some point, so a hidden trail leaves no orphan mark.
+    /// Whether a slip mark is drawn (and thus hoverable). Slips annotate the
+    /// trails, so they follow the same visibility: the trails must be shown at
+    /// all, the constellation must be shown, and - unless never-in-fix
+    /// satellites are visible - the satellite must have contributed a fix, so a
+    /// hidden trail never leaves an orphan mark. The current-instant filter
+    /// hides a slip whose satellite is not in the fix right now, matching the
+    /// satellites it leaves on the plot.
     fn slip_visible(&self, slip: &SlipMark) -> bool {
-        self.shown.contains(slip.constellation)
+        self.show_trails
+            && self.shown.contains(slip.constellation)
             && (self.show_not_in_fix || self.slip_satellite_ever_in_fix(slip))
+            && (!self.in_fix_now || self.scrub.is_none() || self.slip_satellite_in_fix_now(slip))
     }
 
     /// Whether the satellite behind `slip` was ever in the fix over the track.
     fn slip_satellite_ever_in_fix(&self, slip: &SlipMark) -> bool {
+        self.slip_trail(slip).is_some_and(SkyTrail::ever_in_fix)
+    }
+
+    /// Whether the satellite behind `slip` is in the fix at the scrubbed
+    /// instant. False without a scrub, since there is no instant to judge.
+    fn slip_satellite_in_fix_now(&self, slip: &SlipMark) -> bool {
+        self.scrub.is_some_and(|scrub| {
+            self.slip_trail(slip)
+                .and_then(|trail| marker_at(trail, scrub))
+                .is_some_and(|(_, _, report)| report.in_fix)
+        })
+    }
+
+    /// The trail of the satellite a slip belongs to, if it is among the trails.
+    fn slip_trail(&self, slip: &SlipMark) -> Option<&SkyTrail> {
         self.trails
             .trails
             .iter()
             .find(|trail| trail.constellation == slip.constellation && trail.prn == slip.prn)
-            .is_some_and(SkyTrail::ever_in_fix)
     }
 }
 
@@ -1141,6 +1198,46 @@ mod tests {
             });
         harness.run();
         harness.snapshot(name);
+    }
+
+    /// Snapshot: with the trails hidden, only the current-instant markers
+    /// remain - the immediate snapshot of where the satellites are now, with no
+    /// whole-track polylines behind them.
+    #[test]
+    fn sky_trails_trails_hidden_leaves_only_markers() {
+        let trails = demo_trails();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(320.0, 320.0))
+            .theme(true)
+            .ui(move |ui| {
+                SkyTrailsPlot::new(&trails, 300.0)
+                    .scrub(Some(at(4)))
+                    .show_trails(false)
+                    .with_elevation_mask_deg(10.0)
+                    .ui(ui);
+            });
+        harness.run();
+        harness.snapshot("sky_trails_trails_hidden");
+    }
+
+    /// Snapshot: the current-instant filter keeps only the satellites in the
+    /// fix at the scrubbed epoch. At epoch 1 of `fix_state_trails` GPS-5 is in
+    /// the fix (kept), GPS-12 is tracked-only (dropped), and Galileo-3 is never
+    /// in the fix (dropped), so one filled marker and its trail remain.
+    #[test]
+    fn sky_trails_in_fix_now_keeps_only_the_current_fix() {
+        let trails = fix_state_trails();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(320.0, 320.0))
+            .theme(true)
+            .ui(move |ui| {
+                SkyTrailsPlot::new(&trails, 300.0)
+                    .scrub(Some(at(1)))
+                    .in_fix_now(true)
+                    .ui(ui);
+            });
+        harness.run();
+        harness.snapshot("sky_trails_in_fix_now");
     }
 
     #[test]

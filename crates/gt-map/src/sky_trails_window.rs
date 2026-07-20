@@ -115,6 +115,13 @@ pub struct SkyTrailsWindow {
     /// [`SkyTrailsWindow::open`] (the `Default` bool is the wrong value),
     /// so it is always initialized before the window shows.
     show_not_in_fix: bool,
+    /// Whether the whole-track trails are drawn, or only the current-instant
+    /// snapshot markers. Set on [`SkyTrailsWindow::open`] (the `Default` bool is
+    /// the wrong value), so it is always initialized before the window shows.
+    show_trails: bool,
+    /// Whether only satellites in the fix at the scrubbed instant are shown,
+    /// hiding the ones merely tracked right now.
+    in_fix_now: bool,
     /// An instant the window was asked to open at, applied on the next
     /// `show` once the trails - and so the track's time span - are known.
     /// Requests arrive before the trails are extracted, so the scrub position
@@ -164,6 +171,8 @@ impl SkyTrailsWindow {
             self.speed = DEFAULT_PLAYBACK_SPEED;
             self.shown = ConstellationSet::all();
             self.show_not_in_fix = true;
+            self.show_trails = true;
+            self.in_fix_now = false;
             self.cache = None;
         }
     }
@@ -215,6 +224,8 @@ impl SkyTrailsWindow {
             speed: &mut self.speed,
             shown: &mut self.shown,
             show_not_in_fix: &mut self.show_not_in_fix,
+            show_trails: &mut self.show_trails,
+            in_fix_now: &mut self.in_fix_now,
             track_ref,
             elevation_mask_deg,
             highlight,
@@ -242,6 +253,8 @@ struct WindowBody<'a> {
     speed: &'a mut f32,
     shown: &'a mut ConstellationSet,
     show_not_in_fix: &'a mut bool,
+    show_trails: &'a mut bool,
+    in_fix_now: &'a mut bool,
     track_ref: TrackRef,
     elevation_mask_deg: f32,
     highlight: &'a mut MapHighlight,
@@ -258,6 +271,8 @@ impl WindowBody<'_> {
             speed,
             shown,
             show_not_in_fix,
+            show_trails,
+            in_fix_now,
             track_ref,
             elevation_mask_deg,
             highlight,
@@ -336,11 +351,7 @@ impl WindowBody<'_> {
                     ui.set_width(stats_width);
                     focus = constellation_stats(ui, &counts, shown, has_paren);
                     ui.add_space(6.0);
-                    // The help cursor is the real "hover me for an
-                    // explanation" cue; the underlined term is the static hint.
-                    ui.checkbox(show_not_in_fix, not_in_fix_label(ui))
-                        .on_hover_cursor(egui::CursorIcon::Help)
-                        .on_hover_text("Satellites seen but never used in a fix over this track");
+                    view_toggles(ui, show_trails, in_fix_now, show_not_in_fix);
                 },
             );
             ui.add_space(COLUMN_GAP_PX);
@@ -349,6 +360,8 @@ impl WindowBody<'_> {
                 .focus(focus)
                 .scrub(Some(scrub_time))
                 .show_not_in_fix(*show_not_in_fix)
+                .show_trails(*show_trails)
+                .in_fix_now(*in_fix_now)
                 .with_elevation_mask_deg(elevation_mask_deg)
                 .ui(ui);
         });
@@ -359,6 +372,29 @@ impl WindowBody<'_> {
         let below_plot = ui.min_rect().bottom() - plot_bottom;
         ui.data_mut(|d| d.insert_temp(reserve_id, below_plot));
     }
+}
+
+/// The view toggles below the stats: whether the whole-track trails are drawn
+/// (off leaves the current-instant snapshot), whether to keep only the
+/// satellites in the fix right now, and the existing whole-track not-in-fix
+/// filter.
+fn view_toggles(
+    ui: &mut egui::Ui,
+    show_trails: &mut bool,
+    in_fix_now: &mut bool,
+    show_not_in_fix: &mut bool,
+) {
+    ui.checkbox(show_trails, "Trails").on_hover_text(
+        "Draw each satellite's whole path across the sky. Off shows only where \
+         they are at the current instant.",
+    );
+    ui.checkbox(in_fix_now, "In fix only")
+        .on_hover_text("Hide satellites tracked but not used in the fix at this instant.");
+    // The help cursor is the real "hover me for an explanation" cue; the
+    // underlined term is the static hint.
+    ui.checkbox(show_not_in_fix, not_in_fix_label(ui))
+        .on_hover_cursor(egui::CursorIcon::Help)
+        .on_hover_text("Satellites seen but never used in a fix over this track");
 }
 
 /// The "Show *not in fix*" checkbox label. The GNSS term is italic and carries
@@ -1039,6 +1075,8 @@ mod tests {
                             speed: &mut 60.0,
                             shown: &mut ConstellationSet::all(),
                             show_not_in_fix: &mut true,
+                            show_trails: &mut true,
+                            in_fix_now: &mut false,
                             track_ref: track_ref(),
                             elevation_mask_deg: 10.0,
                             highlight: &mut MapHighlight::default(),
@@ -1090,6 +1128,8 @@ mod tests {
                     speed: &mut 60.0,
                     shown: &mut ConstellationSet::all(),
                     show_not_in_fix: &mut show_not_in_fix,
+                    show_trails: &mut true,
+                    in_fix_now: &mut false,
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),
@@ -1115,6 +1155,8 @@ mod tests {
                         speed: &mut 60.0,
                         shown: &mut ConstellationSet::all(),
                         show_not_in_fix: &mut true,
+                        show_trails: &mut true,
+                        in_fix_now: &mut false,
                         track_ref: track_ref(),
                         elevation_mask_deg: 10.0,
                         highlight,
@@ -1312,6 +1354,8 @@ mod tests {
                     speed: &mut speed,
                     shown: &mut ConstellationSet::all(),
                     show_not_in_fix: &mut true,
+                    show_trails: &mut true,
+                    in_fix_now: &mut false,
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),
@@ -1381,6 +1425,8 @@ mod tests {
                     speed: &mut 60.0,
                     shown: &mut ConstellationSet::all(),
                     show_not_in_fix: &mut true,
+                    show_trails: &mut true,
+                    in_fix_now: &mut false,
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),
@@ -1511,6 +1557,8 @@ mod tests {
                         speed: &mut 1.0,
                         shown: &mut ConstellationSet::all(),
                         show_not_in_fix: &mut true,
+                        show_trails: &mut true,
+                        in_fix_now: &mut false,
                         track_ref: track_ref(),
                         elevation_mask_deg: 10.0,
                         highlight: &mut MapHighlight::default(),
@@ -1569,6 +1617,8 @@ mod tests {
                         speed: &mut state.speed,
                         shown: &mut ConstellationSet::all(),
                         show_not_in_fix: &mut true,
+                        show_trails: &mut true,
+                        in_fix_now: &mut false,
                         track_ref: track_ref(),
                         elevation_mask_deg: 10.0,
                         highlight: &mut MapHighlight::default(),
@@ -1624,6 +1674,8 @@ mod tests {
                     speed: &mut 60.0,
                     shown: &mut ConstellationSet::all(),
                     show_not_in_fix: &mut true,
+                    show_trails: &mut true,
+                    in_fix_now: &mut false,
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),
