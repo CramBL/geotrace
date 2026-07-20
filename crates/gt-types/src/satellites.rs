@@ -76,9 +76,25 @@ impl Snr {
 /// Variant declaration order also defines the `Ord` sort order (GPS first,
 /// then GLONASS, Galileo, BeiDou, NavIC, QZSS), used to group satellites by
 /// constellation in tables.
+///
+/// Serialized by name (`"gps"`, `"glonass"`, ...) rather than by index, so a
+/// persisted list stays readable and survives variants being added or
+/// reordered. The wire names are pinned by `constellation_wire_names_are_stable`.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, strum::EnumCount, strum::EnumIter,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    strum::EnumCount,
+    strum::EnumIter,
+    serde::Serialize,
+    serde::Deserialize,
 )]
+#[serde(rename_all = "snake_case")]
 pub enum Constellation {
     /// United States' Global Positioning System
     Gps,
@@ -442,6 +458,35 @@ impl Satellites {
 #[cfg(test)]
 mod constellation_tests {
     use super::*;
+
+    /// The persisted names for each constellation. Pinned so a rename or a
+    /// reorder cannot silently invalidate saved settings that list folded
+    /// constellations by name.
+    #[test]
+    fn constellation_wire_names_are_stable() {
+        use serde::Deserialize as _;
+        use serde::de::IntoDeserializer as _;
+        use serde::de::value::{Error as DeError, StrDeserializer};
+        use strum::EnumCount as _;
+
+        let expected = [
+            (Constellation::Gps, "gps"),
+            (Constellation::Glonass, "glonass"),
+            (Constellation::Galileo, "galileo"),
+            (Constellation::Beidou, "beidou"),
+            (Constellation::Navic, "navic"),
+            (Constellation::Qzss, "qzss"),
+        ];
+        assert_eq!(expected.len(), Constellation::COUNT);
+        for (constellation, wire) in expected {
+            let de: StrDeserializer<'_, DeError> = wire.into_deserializer();
+            assert_eq!(
+                Constellation::deserialize(de),
+                Ok(constellation),
+                "deserializing {wire:?}"
+            );
+        }
+    }
 
     /// Single source of truth for constellation display spelling. Pin it down
     /// so a future edit has to change it here. Keep in sync with

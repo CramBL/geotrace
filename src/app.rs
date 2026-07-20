@@ -86,8 +86,8 @@ struct SharedAppState {
     display_mask: DisplayMask,
     /// Which sky-glyph variant the map overlay draws.
     sky_glyph_variant: SkyGlyphVariant,
-    /// Which parts of the clicked-point window are folded away. Session state
-    /// for now; persisting it is the next step.
+    /// Which parts of the clicked-point window are folded away. Mirrors the
+    /// persisted map setting, like `sky_glyph_variant`.
     point_window_folds: gt_ui_types::PointWindowFolds,
     filter_state: FilterPanelState,
     plot_state: PlotState,
@@ -1157,6 +1157,7 @@ impl App {
             shared.plot_state.sync_to_map = s.map.sync_to_map;
             shared.display_mask = s.map.display_mask;
             shared.sky_glyph_variant = s.map.sky_glyph_variant;
+            shared.point_window_folds = s.map.point_window_folds;
             shared.recording_name_template = s.ui.recording_name_template.clone();
             shared.plot_state.show_grid = s.plot.show_grid;
             shared.plot_state.line_width = s.plot.line_width.clamp(
@@ -1533,6 +1534,7 @@ impl App {
             sync_to_map: s.plot_state.sync_to_map,
             display_mask: s.display_mask,
             sky_glyph_variant: s.sky_glyph_variant,
+            point_window_folds: s.point_window_folds,
             theme,
             recording_name_template: s.recording_name_template.clone(),
             track_split_gap_seconds: self
@@ -1608,6 +1610,7 @@ impl App {
                 sync_to_map: s.plot_state.sync_to_map,
                 display_mask: s.display_mask,
                 sky_glyph_variant: s.sky_glyph_variant,
+                point_window_folds: s.point_window_folds,
             },
             ui: crate::settings::UiSettings {
                 theme,
