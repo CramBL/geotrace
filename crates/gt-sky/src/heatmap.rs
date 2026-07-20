@@ -11,7 +11,7 @@ use egui::epaint::{Mesh, Vertex, WHITE_UV};
 use egui::{Color32, Painter, Pos2, Shape, Vec2};
 
 use gt_types::satellites::Snr;
-use gt_ui_theme::lerp_channel;
+use gt_ui_theme::{lerp_channel, unit_to_u8};
 
 /// SNR band mapped onto the heat weight `[0, 1]`: at or below the floor a
 /// satellite barely registers, at or above the ceiling it glows at full
@@ -80,13 +80,20 @@ pub fn snr_weight(snr: Option<Snr>) -> f32 {
 pub fn heat_color(t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     let [r, g, b] = ramp_rgb(t);
-    let alpha = alpha_u8(MAX_ALPHA * (t / ALPHA_FULL_AT).min(1.0));
+    let alpha = unit_to_u8(MAX_ALPHA * (t / ALPHA_FULL_AT).min(1.0));
     Color32::from_rgba_unmultiplied(r, g, b, alpha)
 }
 
 /// The warm ramp's RGB at intensity `t` in `[0, 1]`, interpolating between the
 /// two [`RAMP`] stops that bracket it.
 fn ramp_rgb(t: f32) -> [u8; 3] {
+    // The only caller pre-clamps, and RAMP's ends are pinned at 0.0/1.0, so the
+    // scan below always finds a bracketing pair; this guards a future caller
+    // that forgets to clamp rather than letting it fall through silently.
+    debug_assert!(
+        (0.0..=1.0).contains(&t),
+        "ramp_rgb needs t in [0, 1], got {t}"
+    );
     let [first, .., last] = RAMP;
     let (mut lo, mut hi) = (first, last);
     for pair in RAMP.windows(2) {
@@ -107,13 +114,6 @@ fn ramp_rgb(t: f32) -> [u8; 3] {
         lerp_channel(lg, hg, num, RAMP_SCALE),
         lerp_channel(lb, hb, num, RAMP_SCALE),
     ]
-}
-
-/// A `[0, 1]` alpha as a `u8` channel, clamped, via the same fixed-point route
-/// [`lerp_channel`] uses so no float is cast straight to an unsigned integer.
-fn alpha_u8(alpha: f32) -> u8 {
-    let value = (alpha.clamp(0.0, 1.0) * 255.0).round() as i32;
-    u8::try_from(value.clamp(0, 255)).unwrap_or(0)
 }
 
 /// Paint the signal-strength heat field for `sources` (each a screen position
@@ -187,7 +187,8 @@ mod tests {
     use gt_types::satellites::Snr;
 
     use super::{
-        ALPHA_FULL_AT, MIN_WEIGHT, NO_SNR_WEIGHT, field_intensity, heat_color, snr_weight,
+        ALPHA_FULL_AT, GLOW_SIGMA_FRACTION, MIN_WEIGHT, NO_SNR_WEIGHT, field_intensity, heat_color,
+        snr_weight,
     };
 
     #[rstest]
@@ -231,7 +232,7 @@ mod tests {
         let radius = 100.0_f32;
         let source = pos2(120.0, 100.0);
         let sources = [(source, 1.0)];
-        let inv_two_sigma_sq = 1.0 / (2.0 * (radius * 0.22).powi(2));
+        let inv_two_sigma_sq = 1.0 / (2.0 * (radius * GLOW_SIGMA_FRACTION).powi(2));
 
         let at_source = field_intensity(source, center, radius, &sources, inv_two_sigma_sq);
         let away = field_intensity(

@@ -360,6 +360,15 @@ pub fn lerp_channel(a: u8, b: u8, num: i32, den: i32) -> u8 {
     u8::try_from(value.clamp(0, 255)).unwrap_or(0)
 }
 
+/// Maps a unit-interval value `[0, 1]` to a `u8` colour or alpha channel,
+/// clamping out of range and rounding to the nearest integer. Routes through
+/// `i32` like [`lerp_channel`] so the float never casts straight to an unsigned
+/// integer.
+pub fn unit_to_u8(value: f32) -> u8 {
+    let scaled = (value.clamp(0.0, 1.0) * 255.0).round() as i32;
+    u8::try_from(scaled.clamp(0, 255)).unwrap_or(0)
+}
+
 /// Halo stroke for query matches, drawn beneath the track line.
 ///
 /// Magenta reads as "annotation" - it is absent from the track palette
@@ -714,5 +723,15 @@ mod tests {
         let g88 = fix_quality_color(88, true).g();
         let g80 = fix_quality_color(80, true).g();
         assert!(g95 > g88 && g88 > g80);
+    }
+
+    #[test]
+    fn unit_to_u8_maps_and_clamps_the_unit_interval() {
+        assert_eq!(unit_to_u8(0.0), 0);
+        assert_eq!(unit_to_u8(1.0), 255);
+        assert_eq!(unit_to_u8(0.5), 128, "rounds to nearest");
+        // Out of range clamps rather than wrapping.
+        assert_eq!(unit_to_u8(-1.0), 0);
+        assert_eq!(unit_to_u8(2.0), 255);
     }
 }
