@@ -115,6 +115,16 @@ pub struct SkyTrailsWindow {
     /// [`SkyTrailsWindow::open`] (the `Default` bool is the wrong value),
     /// so it is always initialized before the window shows.
     show_not_in_fix: bool,
+    /// Whether the whole-track trails are drawn, or only the current-instant
+    /// snapshot markers. Set on [`SkyTrailsWindow::open`] (the `Default` bool is
+    /// the wrong value), so it is always initialized before the window shows.
+    show_trails: bool,
+    /// Whether only satellites in the fix at the scrubbed instant are shown,
+    /// hiding the ones merely tracked right now.
+    in_fix_now: bool,
+    /// Whether the current-instant signal heat field is drawn beneath the
+    /// trails.
+    show_heatmap: bool,
     /// An instant the window was asked to open at, applied on the next
     /// `show` once the trails - and so the track's time span - are known.
     /// Requests arrive before the trails are extracted, so the scrub position
@@ -164,6 +174,9 @@ impl SkyTrailsWindow {
             self.speed = DEFAULT_PLAYBACK_SPEED;
             self.shown = ConstellationSet::all();
             self.show_not_in_fix = true;
+            self.show_trails = true;
+            self.in_fix_now = false;
+            self.show_heatmap = false;
             self.cache = None;
         }
     }
@@ -215,6 +228,9 @@ impl SkyTrailsWindow {
             speed: &mut self.speed,
             shown: &mut self.shown,
             show_not_in_fix: &mut self.show_not_in_fix,
+            show_trails: &mut self.show_trails,
+            in_fix_now: &mut self.in_fix_now,
+            show_heatmap: &mut self.show_heatmap,
             track_ref,
             elevation_mask_deg,
             highlight,
@@ -242,6 +258,9 @@ struct WindowBody<'a> {
     speed: &'a mut f32,
     shown: &'a mut ConstellationSet,
     show_not_in_fix: &'a mut bool,
+    show_trails: &'a mut bool,
+    in_fix_now: &'a mut bool,
+    show_heatmap: &'a mut bool,
     track_ref: TrackRef,
     elevation_mask_deg: f32,
     highlight: &'a mut MapHighlight,
@@ -258,6 +277,9 @@ impl WindowBody<'_> {
             speed,
             shown,
             show_not_in_fix,
+            show_trails,
+            in_fix_now,
+            show_heatmap,
             track_ref,
             elevation_mask_deg,
             highlight,
@@ -270,11 +292,12 @@ impl WindowBody<'_> {
             return;
         };
 
-        // Spacebar toggles play/pause while the pointer is anywhere over the
-        // window (not just the transport), so watching the plot and hitting
-        // space works. Tested against the full content rect - `ui`'s min_rect
-        // is still empty this early in the layout, so `ui_contains_pointer`
-        // would miss.
+        // The arrow-key transport (seek, speed) only fires while the pointer is
+        // over the window, so it never hijacks the arrows from the rest of the
+        // app. Spacebar is not gated this way - it toggles play/pause wherever
+        // the pointer is (handled in `transport`). Tested against the full
+        // content rect - `ui`'s min_rect is still empty this early in the
+        // layout, so `ui_contains_pointer` would miss.
         let window_hovered = ui.rect_contains_pointer(ui.max_rect());
 
         // Advance playback, then clamp - so a paused scrubber and a finished
@@ -335,11 +358,15 @@ impl WindowBody<'_> {
                     ui.set_width(stats_width);
                     focus = constellation_stats(ui, &counts, shown, has_paren);
                     ui.add_space(6.0);
-                    // The help cursor is the real "hover me for an
-                    // explanation" cue; the underlined term is the static hint.
-                    ui.checkbox(show_not_in_fix, not_in_fix_label(ui))
-                        .on_hover_cursor(egui::CursorIcon::Help)
-                        .on_hover_text("Satellites seen but never used in a fix over this track");
+                    view_toggles(
+                        ui,
+                        ViewToggles {
+                            show_trails,
+                            show_heatmap,
+                            in_fix_now,
+                            show_not_in_fix,
+                        },
+                    );
                 },
             );
             ui.add_space(COLUMN_GAP_PX);
@@ -348,24 +375,55 @@ impl WindowBody<'_> {
                 .focus(focus)
                 .scrub(Some(scrub_time))
                 .show_not_in_fix(*show_not_in_fix)
+                .show_trails(*show_trails)
+                .in_fix_now(*in_fix_now)
+                .show_heatmap(*show_heatmap)
                 .with_elevation_mask_deg(elevation_mask_deg)
                 .ui(ui);
         });
         // Measured across the gap as well as the transport, so next frame's
         // plot is sized against the space the content actually occupies.
         let plot_bottom = ui.min_rect().bottom();
-        transport(
-            ui,
-            first,
-            total_secs,
-            scrub_secs,
-            playing,
-            speed,
-            window_hovered,
-        );
+        transport(ui, first, total_secs, scrub_secs, playing, speed);
         let below_plot = ui.min_rect().bottom() - plot_bottom;
         ui.data_mut(|d| d.insert_temp(reserve_id, below_plot));
     }
+}
+
+/// The window's view toggles, borrowed from the [`WindowBody`] state so the
+/// checkboxes write straight back. Grouped into a struct to keep them off the
+/// helper's parameter list, which would otherwise be a row of bare booleans.
+struct ViewToggles<'a> {
+    show_trails: &'a mut bool,
+    show_heatmap: &'a mut bool,
+    in_fix_now: &'a mut bool,
+    show_not_in_fix: &'a mut bool,
+}
+
+/// The view toggles below the stats: what is drawn (the whole-track trails, and
+/// the current-instant signal heat field) above which satellites are kept (only
+/// those in the fix right now, and the whole-track not-in-fix filter).
+fn view_toggles(ui: &mut egui::Ui, toggles: ViewToggles<'_>) {
+    let ViewToggles {
+        show_trails,
+        show_heatmap,
+        in_fix_now,
+        show_not_in_fix,
+    } = toggles;
+    ui.checkbox(show_trails, "Trails").on_hover_text(
+        "Draw each satellite's whole path across the sky. Off shows only where \
+         they are at the current instant.",
+    );
+    ui.checkbox(show_heatmap, "Signal heatmap").on_hover_text(
+        "Glow where the fix satellites are right now, brighter with stronger signal.",
+    );
+    ui.checkbox(in_fix_now, "In fix only")
+        .on_hover_text("Hide satellites tracked but not used in the fix at this instant.");
+    // The help cursor is the real "hover me for an explanation" cue; the
+    // underlined term is the static hint.
+    ui.checkbox(show_not_in_fix, not_in_fix_label(ui))
+        .on_hover_cursor(egui::CursorIcon::Help)
+        .on_hover_text("Satellites seen but never used in a fix over this track");
 }
 
 /// The "Show *not in fix*" checkbox label. The GNSS term is italic and carries
@@ -806,7 +864,6 @@ fn transport(
     scrub_secs: &mut f64,
     playing: &mut bool,
     speed: &mut f32,
-    window_hovered: bool,
 ) {
     let current = offset_time(first, *scrub_secs);
 
@@ -831,11 +888,13 @@ fn transport(
 
     ui.horizontal(|ui| {
         let play = play_button(ui, *playing);
-        // Toggle on click, on Enter/Space while the button is focused (egui
-        // already reports those as a click), or on Space while the window is
-        // hovered and the button is not focused (so it is never toggled twice).
+        // Space toggles play/pause the whole time the window is open, wherever
+        // the pointer is. Skipped while any widget holds keyboard focus: a
+        // focused play button already turns Space into a click (caught by
+        // `play.clicked()`, so it is never toggled twice), and a text field
+        // elsewhere in the app must keep its own spaces.
         let space =
-            window_hovered && !play.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Space));
+            ui.memory(|m| m.focused()).is_none() && ui.input(|i| i.key_pressed(egui::Key::Space));
         if play.clicked() || space {
             *playing = !*playing;
             // Starting from the end replays from the top.
@@ -1045,6 +1104,9 @@ mod tests {
                             speed: &mut 60.0,
                             shown: &mut ConstellationSet::all(),
                             show_not_in_fix: &mut true,
+                            show_trails: &mut true,
+                            in_fix_now: &mut false,
+                            show_heatmap: &mut false,
                             track_ref: track_ref(),
                             elevation_mask_deg: 10.0,
                             highlight: &mut MapHighlight::default(),
@@ -1096,6 +1158,9 @@ mod tests {
                     speed: &mut 60.0,
                     shown: &mut ConstellationSet::all(),
                     show_not_in_fix: &mut show_not_in_fix,
+                    show_trails: &mut true,
+                    in_fix_now: &mut false,
+                    show_heatmap: &mut false,
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),
@@ -1121,6 +1186,9 @@ mod tests {
                         speed: &mut 60.0,
                         shown: &mut ConstellationSet::all(),
                         show_not_in_fix: &mut true,
+                        show_trails: &mut true,
+                        in_fix_now: &mut false,
+                        show_heatmap: &mut false,
                         track_ref: track_ref(),
                         elevation_mask_deg: 10.0,
                         highlight,
@@ -1318,6 +1386,9 @@ mod tests {
                     speed: &mut speed,
                     shown: &mut ConstellationSet::all(),
                     show_not_in_fix: &mut true,
+                    show_trails: &mut true,
+                    in_fix_now: &mut false,
+                    show_heatmap: &mut false,
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),
@@ -1387,6 +1458,9 @@ mod tests {
                     speed: &mut 60.0,
                     shown: &mut ConstellationSet::all(),
                     show_not_in_fix: &mut true,
+                    show_trails: &mut true,
+                    in_fix_now: &mut false,
+                    show_heatmap: &mut false,
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),
@@ -1495,12 +1569,14 @@ mod tests {
         assert_eq!(at_three.utc(), first.utc() + chrono::Duration::seconds(3));
     }
 
-    /// Spacebar over the window toggles play/pause exactly once per press. A
-    /// single net toggle also proves the press is not double-counted: were both
-    /// the play button's click path and the window's space path to fire in one
-    /// frame, the state would flip twice and land back where it started.
+    /// Spacebar toggles play/pause whenever the window is open, wherever the
+    /// pointer is - the press below lands with the pointer parked well outside
+    /// the window, and it still toggles. A single net toggle per press also
+    /// proves it is not double-counted: were both the play button's click path
+    /// and the window's space path to fire in one frame, the state would flip
+    /// twice and land back where it started.
     #[test]
-    fn spacebar_toggles_play_once_per_press() {
+    fn spacebar_toggles_play_regardless_of_hover() {
         let trails = demo_trails();
         let mut harness = TestHarness::builder()
             .size(egui::vec2(560.0, 440.0))
@@ -1515,6 +1591,9 @@ mod tests {
                         speed: &mut 1.0,
                         shown: &mut ConstellationSet::all(),
                         show_not_in_fix: &mut true,
+                        show_trails: &mut true,
+                        in_fix_now: &mut false,
+                        show_heatmap: &mut false,
                         track_ref: track_ref(),
                         elevation_mask_deg: 10.0,
                         highlight: &mut MapHighlight::default(),
@@ -1525,9 +1604,8 @@ mod tests {
             );
         harness.run();
 
-        // Press space with the pointer over the window, both in the same frame
-        // so the space handler is armed (it is gated on the pointer being over
-        // the window).
+        // Press space with the pointer parked outside the window, so the toggle
+        // cannot be attributed to hover.
         let press_space = |harness: &mut TestHarness<'_, bool>| {
             let key_event = |pressed| egui::Event::Key {
                 key: egui::Key::Space,
@@ -1537,7 +1615,7 @@ mod tests {
                 modifiers: egui::Modifiers::NONE,
             };
             let events = &mut harness.inner.input_mut().events;
-            events.push(egui::Event::PointerMoved(egui::pos2(280.0, 220.0)));
+            events.push(egui::Event::PointerMoved(egui::pos2(-100.0, -100.0)));
             // Down then up in the frame, so the next press registers a fresh
             // edge rather than a still-held key.
             events.push(key_event(true));
@@ -1574,6 +1652,9 @@ mod tests {
                         speed: &mut state.speed,
                         shown: &mut ConstellationSet::all(),
                         show_not_in_fix: &mut true,
+                        show_trails: &mut true,
+                        in_fix_now: &mut false,
+                        show_heatmap: &mut false,
                         track_ref: track_ref(),
                         elevation_mask_deg: 10.0,
                         highlight: &mut MapHighlight::default(),
@@ -1629,6 +1710,9 @@ mod tests {
                     speed: &mut 60.0,
                     shown: &mut ConstellationSet::all(),
                     show_not_in_fix: &mut true,
+                    show_trails: &mut true,
+                    in_fix_now: &mut false,
+                    show_heatmap: &mut false,
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),

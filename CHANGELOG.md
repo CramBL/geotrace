@@ -4,18 +4,17 @@
 
 ### Added
 
-- Sky plot: see where the satellites used in each fix are - a polar plot when you hover or click a track point, and a toggleable ring or disc overlay showing the directions along the whole track (in the map's visibility filter).
-- Sky trails window: open it from a track to see every satellite's path across the sky over the whole recording. Play it back or scrub through time, with the map point following along. Live fix/seen counts update per constellation, hovering a satellite or cycle slip shows its details, and you can filter by constellation or hide satellites never used in a fix.
+- Sky plot: see the satellites used in each fix - a polar plot when you hover or click a track point, plus a toggleable ring or disc overlay showing directions along the whole track.
+- Sky trails window: replay every satellite's path across the sky over the whole recording, scrubbing through time with the map following along. Live per-constellation stats and cycle slips, a signal-strength heatmap of the current fix, and toggles to hide the trails for a snapshot view or keep only the satellites in the fix.
 
 ### Changed
 
-- The track point window handles busy multi-constellation fixes: it resizes, the sky plot stays put beside the satellite tables instead of scrolling away, and constellations sit side by side rather than in one long column. Fold the plot or any constellation away and it stays folded next time.
+- The track point window resizes and repacks to handle busy multi-constellation fixes, keeping the sky plot beside the satellite tables. Folds are remembered.
 
 ### Fixed
 
-- The History window resizes smoothly and can be shrunk again.
-- The History filter field no longer overlaps the toolbar controls in a narrow window.
-- Focusing a track darkens the map in light mode too, instead of washing it out.
+- The History window resizes smoothly and can be shrunk again, its filter field no longer overlaps the toolbar in a narrow window.
+- Focusing a track now darkens the map in light mode too.
 
 ## 0.6.0 - 2026-07-16
 
