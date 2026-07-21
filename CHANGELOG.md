@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.0 - 2026-07-21
+
 ### Added
 
 - Sky plot: see the satellites used in each fix - a polar plot when you hover or click a track point, plus a toggleable ring or disc overlay showing directions along the whole track.
