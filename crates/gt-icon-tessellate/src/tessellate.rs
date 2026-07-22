@@ -58,8 +58,14 @@ struct Element {
     path: SkiaPath,
     abs_transform: usvg::Transform,
     color: [u8; 4],
+    tint_slot: u8,
     op: PaintOp,
 }
+
+/// The SVG `id` that assigns an element's vertices to the secondary tint
+/// slot; every other element uses the primary slot. See
+/// [crate::TemplateVertex::tint_slot].
+const SECONDARY_TINT_ID: &str = "tint2";
 
 enum PaintOp {
     Fill { rule: FillRule },
@@ -156,13 +162,14 @@ fn collect_path(path: &usvg::Path, out: &mut Vec<Element>) -> Result<(), IconTes
     if !path.is_visible() {
         return Ok(());
     }
+    let tint_slot = u8::from(path.id() == SECONDARY_TINT_ID);
     let fill = path
         .fill()
-        .map(|fill| fill_element(path, fill))
+        .map(|fill| fill_element(path, fill, tint_slot))
         .transpose()?;
     let stroke = path
         .stroke()
-        .map(|stroke| stroke_element(path, stroke))
+        .map(|stroke| stroke_element(path, stroke, tint_slot))
         .transpose()?;
     let (first, second) = match path.paint_order() {
         usvg::PaintOrder::FillAndStroke => (fill, stroke),
@@ -173,7 +180,11 @@ fn collect_path(path: &usvg::Path, out: &mut Vec<Element>) -> Result<(), IconTes
     Ok(())
 }
 
-fn fill_element(path: &usvg::Path, fill: &usvg::Fill) -> Result<Element, IconTessellateError> {
+fn fill_element(
+    path: &usvg::Path,
+    fill: &usvg::Fill,
+    tint_slot: u8,
+) -> Result<Element, IconTessellateError> {
     let rule = match fill.rule() {
         usvg::FillRule::NonZero => FillRule::NonZero,
         usvg::FillRule::EvenOdd => FillRule::EvenOdd,
@@ -182,6 +193,7 @@ fn fill_element(path: &usvg::Path, fill: &usvg::Fill) -> Result<Element, IconTes
         path: path.data().clone(),
         abs_transform: path.abs_transform(),
         color: paint_color(fill.paint(), fill.opacity())?,
+        tint_slot,
         op: PaintOp::Fill { rule },
     })
 }
@@ -189,6 +201,7 @@ fn fill_element(path: &usvg::Path, fill: &usvg::Fill) -> Result<Element, IconTes
 fn stroke_element(
     path: &usvg::Path,
     stroke: &usvg::Stroke,
+    tint_slot: u8,
 ) -> Result<Element, IconTessellateError> {
     if stroke.dasharray().is_some() {
         return Err(IconTessellateError::DashedStroke);
@@ -208,6 +221,7 @@ fn stroke_element(
         path: path.data().clone(),
         abs_transform: path.abs_transform(),
         color: paint_color(stroke.paint(), stroke.opacity())?,
+        tint_slot,
         op: PaintOp::Stroke(StrokeStyle {
             width: stroke.width().get(),
             cap,
@@ -260,11 +274,16 @@ fn bucket_mesh(
             ramp.inset_px,
             ramp.outset_px,
             solid_base,
+            element.tint_slot,
         )?;
         let solid: Vec<TemplateVertex> = buffers
             .vertices
             .iter()
-            .map(|&pos| TemplateVertex { pos, color })
+            .map(|&pos| TemplateVertex {
+                pos,
+                color,
+                tint_slot: element.tint_slot,
+            })
             .collect();
         append_indexed(&mut mesh, solid, &buffers.indices)?;
         // Fringe indices are already in final mesh space (solid refs plus
@@ -470,7 +489,7 @@ mod tests {
 
     /// Every icon asset, sorted. Kept in sync with `assets/icons/` by
     /// [icon_names_match_assets_dir]; the rstest cases below must mirror it.
-    const ICON_NAMES: [&str; 19] = [
+    const ICON_NAMES: [&str; 18] = [
         "check",
         "circle_marker",
         "connection_lost",
@@ -481,8 +500,7 @@ mod tests {
         "ghost_fix",
         "lightning",
         "log_pin",
-        "nav_arrow_fill",
-        "nav_arrow_outline",
+        "nav_arrow",
         "pin",
         "refresh",
         "satellite",
@@ -563,8 +581,7 @@ mod tests {
     #[case::ghost_fix("ghost_fix")]
     #[case::lightning("lightning")]
     #[case::log_pin("log_pin")]
-    #[case::nav_arrow_fill("nav_arrow_fill")]
-    #[case::nav_arrow_outline("nav_arrow_outline")]
+    #[case::nav_arrow("nav_arrow")]
     #[case::pin("pin")]
     #[case::refresh("refresh")]
     #[case::satellite("satellite")]
@@ -588,8 +605,7 @@ mod tests {
     #[case::ghost_fix("ghost_fix")]
     #[case::lightning("lightning")]
     #[case::log_pin("log_pin")]
-    #[case::nav_arrow_fill("nav_arrow_fill")]
-    #[case::nav_arrow_outline("nav_arrow_outline")]
+    #[case::nav_arrow("nav_arrow")]
     #[case::pin("pin")]
     #[case::refresh("refresh")]
     #[case::satellite("satellite")]

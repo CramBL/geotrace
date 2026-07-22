@@ -1,9 +1,10 @@
 //! Throughput of the CPU icon-mesh backend: how long it takes to transform
 //! and collect N icon instances into the frame's mesh.
 //!
-//! This is the per-frame cost a GPU instancing backend would have replaced;
-//! these numbers are why that backend was not built (see the icon-mesh plan
-//! doc) and guard the CPU path against throughput regressions.
+//! The CPU path serves small flush segments and contexts without the
+//! GPU-instanced pipeline (`icon_mesh/gpu.rs`), which is the default above
+//! `GPU_MIN_INSTANCES`; these numbers guard the CPU path against
+//! throughput regressions.
 
 // Benches, like examples, favour brevity: the core's robustness restriction
 // lints (no unwrap/expect/panic/indexing) are not enforced on
@@ -35,28 +36,21 @@ fn instances(count: usize) -> Vec<IconInstance> {
                     center,
                     half_extents: Vec2::splat(9.0),
                     direction,
-                    tint: Color32::from_rgb(219, 68, 55),
+                    tints: [Color32::from_rgb(219, 68, 55); 2],
                 },
                 1 => IconInstance {
                     icon: IconId::Warning,
                     center,
                     half_extents: Vec2::splat(12.0),
                     direction: None,
-                    tint: Color32::WHITE,
-                },
-                i if i % 2 == 0 => IconInstance {
-                    icon: IconId::NavArrowFill,
-                    center,
-                    half_extents: Vec2::splat(9.0),
-                    direction,
-                    tint: Color32::from_rgb(66, 133, 244),
+                    tints: [Color32::WHITE; 2],
                 },
                 _ => IconInstance {
-                    icon: IconId::NavArrowOutline,
+                    icon: IconId::NavArrow,
                     center,
                     half_extents: Vec2::splat(9.0),
                     direction,
-                    tint: Color32::WHITE,
+                    tints: [Color32::from_rgb(66, 133, 244), Color32::WHITE],
                 },
             }
         })

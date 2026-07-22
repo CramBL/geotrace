@@ -10,6 +10,7 @@ authors.workspace = true
 snapshot = [
     "dep:egui",
     "dep:egui_kittest",
+    "dep:egui-wgpu",
     "dep:egui-phosphor",
     "dep:tempfile",
     "dep:eframe",
@@ -20,6 +21,7 @@ chrono.workspace = true
 eframe = { workspace = true, optional = true }
 egui = { workspace = true, optional = true }
 egui-phosphor = { workspace = true, optional = true }
+egui-wgpu = { workspace = true, optional = true }
 egui_kittest = { workspace = true, optional = true }
 geo.workspace = true
 geo-types.workspace = true

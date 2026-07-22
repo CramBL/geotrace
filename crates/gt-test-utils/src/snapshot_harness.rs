@@ -135,8 +135,14 @@ pub struct TestHarnessBuilder<'a> {
     fading_enabled: bool,
     dark_mode: Option<bool>,
     step_dt: Option<f32>,
+    render_state_hook: Option<RenderStateHook>,
     _marker: std::marker::PhantomData<&'a ()>,
 }
+
+/// Extra renderer setup run after the harness is built, with the context and
+/// the wgpu render state - e.g. installing gt-map's GPU icon pipeline the
+/// way the app does at startup.
+pub type RenderStateHook = fn(&egui::Context, &egui_wgpu::RenderState);
 
 impl Default for TestHarnessBuilder<'_> {
     fn default() -> Self {
@@ -145,6 +151,7 @@ impl Default for TestHarnessBuilder<'_> {
             fading_enabled: false,
             dark_mode: None,
             step_dt: None,
+            render_state_hook: None,
             _marker: std::marker::PhantomData,
         }
     }
@@ -153,6 +160,14 @@ impl Default for TestHarnessBuilder<'_> {
 impl<'a> TestHarnessBuilder<'a> {
     pub fn size(mut self, size: egui::Vec2) -> Self {
         self.size = Some(size);
+        self
+    }
+
+    /// Run `hook` with the harness context and wgpu render state after the
+    /// harness is built (`ui`/`ui_state` harnesses only; `eframe` harnesses
+    /// configure their renderer through `CreationContext` like the app).
+    pub fn render_state_hook(mut self, hook: RenderStateHook) -> Self {
+        self.render_state_hook = Some(hook);
         self
     }
 
@@ -197,7 +212,13 @@ impl<'a> TestHarnessBuilder<'a> {
     where
         F: FnMut(&mut egui::Ui) + 'a,
     {
-        let mut builder = Harness::builder().with_options(snapshot_options()).wgpu();
+        let render_state =
+            egui_kittest::wgpu::create_render_state(egui_kittest::wgpu::default_wgpu_setup());
+        let renderer =
+            egui_kittest::wgpu::WgpuTestRenderer::from_render_state(render_state.clone());
+        let mut builder = Harness::builder()
+            .with_options(snapshot_options())
+            .renderer(renderer);
         if let Some(sz) = self.size {
             builder = builder.with_size(sz);
         }
@@ -206,6 +227,9 @@ impl<'a> TestHarnessBuilder<'a> {
         }
         let mut inner = builder.build_ui(f);
         install_icon_assets(&inner.ctx);
+        if let Some(hook) = self.render_state_hook {
+            hook(&inner.ctx, &render_state);
+        }
         self.apply_theme(&mut inner);
         TestHarness {
             inner,
@@ -219,7 +243,13 @@ impl<'a> TestHarnessBuilder<'a> {
         F: FnMut(&mut egui::Ui, &mut State) + 'a,
         State: 'static,
     {
-        let mut builder = Harness::builder().with_options(snapshot_options()).wgpu();
+        let render_state =
+            egui_kittest::wgpu::create_render_state(egui_kittest::wgpu::default_wgpu_setup());
+        let renderer =
+            egui_kittest::wgpu::WgpuTestRenderer::from_render_state(render_state.clone());
+        let mut builder = Harness::builder()
+            .with_options(snapshot_options())
+            .renderer(renderer);
         if let Some(sz) = self.size {
             builder = builder.with_size(sz);
         }
@@ -228,6 +258,9 @@ impl<'a> TestHarnessBuilder<'a> {
         }
         let mut inner = builder.build_ui_state(f, state);
         install_icon_assets(&inner.ctx);
+        if let Some(hook) = self.render_state_hook {
+            hook(&inner.ctx, &render_state);
+        }
         self.apply_theme(&mut inner);
         TestHarness {
             inner,

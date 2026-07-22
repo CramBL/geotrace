@@ -49,6 +49,7 @@ pub(super) fn fringe_mesh(
     inset_px: f32,
     outset_px: f32,
     solid_base: u32,
+    tint_slot: u8,
 ) -> Result<FringeMesh, IconTessellateError> {
     let solid_len =
         u32::try_from(positions.len()).map_err(|_overflow| IconTessellateError::TooManyVertices)?;
@@ -69,6 +70,7 @@ pub(super) fn fringe_mesh(
             inset_px,
             outset_px,
             solid_base,
+            tint_slot,
             &mut fringe,
         )?;
     }
@@ -225,6 +227,7 @@ fn append_ring_strip(
     inset_px: f32,
     outset_px: f32,
     solid_base: u32,
+    tint_slot: u8,
     fringe: &mut FringeMesh,
 ) -> Result<(), IconTessellateError> {
     let normals = ring_normals(ring, positions)?;
@@ -255,6 +258,7 @@ fn append_ring_strip(
         fringe.outer_vertices.push(TemplateVertex {
             pos: outer,
             color: transparent,
+            tint_slot,
         });
     }
 
@@ -349,7 +353,7 @@ mod tests {
     fn fringe_strip_invariants(#[case] mesh: TestMesh) {
         let (mut positions, indices) = mesh;
         let originals = positions.clone();
-        let fringe = fringe_mesh(&mut positions, &indices, INSET, OUTSET, SOLID_BASE).unwrap();
+        let fringe = fringe_mesh(&mut positions, &indices, INSET, OUTSET, SOLID_BASE, 0).unwrap();
 
         assert_eq!(fringe.outer_base, SOLID_BASE + positions.len() as u32);
         assert!(!fringe.outer_vertices.is_empty());
@@ -405,7 +409,7 @@ mod tests {
         // Both triangles use the directed edge (0, 1).
         let indices = vec![0, 1, 2, 0, 1, 3];
         assert!(matches!(
-            fringe_mesh(&mut positions, &indices, INSET, OUTSET, 0),
+            fringe_mesh(&mut positions, &indices, INSET, OUTSET, 0, 0),
             Err(IconTessellateError::FringeBoundary)
         ));
     }
@@ -414,7 +418,7 @@ mod tests {
     fn degenerate_triangles_yield_empty_fringe() {
         let mut positions = vec![[0.0, 0.0], [10.0, 0.0]];
         let indices = vec![0, 1, 1];
-        let fringe = fringe_mesh(&mut positions, &indices, INSET, OUTSET, 0).unwrap();
+        let fringe = fringe_mesh(&mut positions, &indices, INSET, OUTSET, 0, 0).unwrap();
         assert!(fringe.outer_vertices.is_empty());
         assert!(fringe.indices.is_empty());
     }

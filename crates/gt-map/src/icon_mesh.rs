@@ -7,6 +7,7 @@
 //! [IconTessellation]s, and renderers draw them through [IconMeshBatch].
 
 mod batch;
+pub mod gpu;
 
 use std::collections::BTreeMap;
 
@@ -80,8 +81,7 @@ pub enum IconId {
     GhostFix,
     Lightning,
     LogPin,
-    NavArrowFill,
-    NavArrowOutline,
+    NavArrow,
     Pin,
     Refresh,
     Satellite,
@@ -146,8 +146,7 @@ pub struct IconMeshLibrary {
     ghost_fix: IconTessellation,
     lightning: IconTessellation,
     log_pin: IconTessellation,
-    nav_arrow_fill: IconTessellation,
-    nav_arrow_outline: IconTessellation,
+    nav_arrow: IconTessellation,
     pin: IconTessellation,
     refresh: IconTessellation,
     satellite: IconTessellation,
@@ -194,8 +193,7 @@ impl IconMeshLibrary {
             ghost_fix: take(IconId::GhostFix)?,
             lightning: take(IconId::Lightning)?,
             log_pin: take(IconId::LogPin)?,
-            nav_arrow_fill: take(IconId::NavArrowFill)?,
-            nav_arrow_outline: take(IconId::NavArrowOutline)?,
+            nav_arrow: take(IconId::NavArrow)?,
             pin: take(IconId::Pin)?,
             refresh: take(IconId::Refresh)?,
             satellite: take(IconId::Satellite)?,
@@ -219,8 +217,7 @@ impl IconMeshLibrary {
             IconId::GhostFix => &self.ghost_fix,
             IconId::Lightning => &self.lightning,
             IconId::LogPin => &self.log_pin,
-            IconId::NavArrowFill => &self.nav_arrow_fill,
-            IconId::NavArrowOutline => &self.nav_arrow_outline,
+            IconId::NavArrow => &self.nav_arrow,
             IconId::Pin => &self.pin,
             IconId::Refresh => &self.refresh,
             IconId::Satellite => &self.satellite,
@@ -275,8 +272,7 @@ mod tests {
             (IconId::GhostFix, "ghost_fix"),
             (IconId::Lightning, "lightning"),
             (IconId::LogPin, "log_pin"),
-            (IconId::NavArrowFill, "nav_arrow_fill"),
-            (IconId::NavArrowOutline, "nav_arrow_outline"),
+            (IconId::NavArrow, "nav_arrow"),
             (IconId::Pin, "pin"),
             (IconId::Refresh, "refresh"),
             (IconId::Satellite, "satellite"),
@@ -325,6 +321,7 @@ mod tests {
                 vertices: vec![TemplateVertex {
                     pos: [0.0, 0.0],
                     color: [0, 0, 0, 255],
+                    tint_slot: 0,
                 }],
                 indices: Vec::new(),
             },

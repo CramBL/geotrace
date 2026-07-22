@@ -2546,10 +2546,12 @@ name = "gt-map"
 version = "0.8.0"
 dependencies = [
  "bon",
+ "bytemuck",
  "chrono",
  "criterion",
  "egui",
  "egui-phosphor",
+ "egui-wgpu",
  "egui_kittest",
  "gt-filter",
  "gt-fmt",
@@ -2671,6 +2673,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui-phosphor",
+ "egui-wgpu",
  "egui_kittest",
  "geo",
  "geo-types",

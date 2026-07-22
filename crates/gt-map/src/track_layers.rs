@@ -806,7 +806,6 @@ fn paint_quality_path(ui: &Ui, path: &VisiblePath<LinePointKey>) {
 mod tests {
     use egui::{Color32, Rect, pos2};
 
-    use gt_test_utils::TestHarness;
     use gt_ui_types::DrawLayerMask;
 
     use super::{
@@ -851,7 +850,7 @@ mod tests {
     #[case::light("focus_scrim_light", false)]
     #[case::dark("focus_scrim_dark", true)]
     fn focus_scrim_darkens_the_scene(#[case] name: &str, #[case] dark_mode: bool) {
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(200.0, 120.0))
             .theme(dark_mode)
             .ui(|ui| {

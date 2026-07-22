@@ -145,6 +145,10 @@ pub(crate) fn draw_track_icons(
     filter: &GlobalFilter,
     icon_meshes: Option<&IconMeshLibrary>,
 ) {
+    // One batch for the whole track's icons. Painter primitives inside the
+    // pass (accuracy circles, highlighted arrows) barrier the batch so
+    // stacking matches immediate painting exactly; see [IconMeshBatch].
+    let mut batch = IconMeshBatch::gpu_when_available(ui, icon_meshes);
     // Real fixes: indices come from the global R-tree viewport query.
     if let Some(indices) = real_fix_indices {
         for &pi in indices {
@@ -201,7 +205,7 @@ pub(crate) fn draw_track_icons(
                 pixels_per_meter,
                 is_arrow_highlighted(highlight, point_ref),
                 &point_style,
-                icon_meshes,
+                &mut batch,
             );
         }
     }
@@ -265,9 +269,10 @@ pub(crate) fn draw_track_icons(
             0.0,
             is_arrow_highlighted(highlight, point_ref),
             &point_style,
-            icon_meshes,
+            &mut batch,
         );
     }
+    batch.paint(ui.painter());
 }
 
 /// Show the hover tooltip for the given TPV point. When the point lies
@@ -1358,7 +1363,7 @@ fn draw_tpv_point(
     pixels_per_meter: f64,
     highlighted: bool,
     style: &TpvDrawStyle,
-    icon_meshes: Option<&IconMeshLibrary>,
+    batch: &mut IconMeshBatch<'_>,
 ) {
     // Accuracy circle - rendered beneath the icon. Skipped when too small to
     // see at all, and when small enough to be entirely covered by the icon.
@@ -1367,6 +1372,8 @@ fn draw_tpv_point(
         let min_visible_radius = (style.base_arrow_size * ACCURACY_CIRCLE_MIN_VISIBLE_FACTOR)
             .max(MIN_ACCURACY_CIRCLE_RADIUS_PX);
         if radius >= min_visible_radius {
+            // The circle must sit above earlier icons and below this point's.
+            batch.barrier(ui.painter());
             ui.painter().circle_filled(
                 screen_pos,
                 radius,
@@ -1390,7 +1397,7 @@ fn draw_tpv_point(
         PointKind::Real { color, heading } => {
             draw_navigation_arrow(
                 ui,
-                icon_meshes,
+                batch,
                 screen_pos,
                 *heading,
                 color.gamma_multiply(style.icon_alpha),
@@ -1401,8 +1408,7 @@ fn draw_tpv_point(
         }
         PointKind::Ghost { direction } => {
             draw_ghost_chevron(
-                ui,
-                icon_meshes,
+                batch,
                 screen_pos,
                 *direction,
                 highlighted,
@@ -1491,15 +1497,13 @@ fn ghost_direction(prev: gt_types::MercPoint, next: gt_types::MercPoint) -> Vec2
     }
 }
 
-/// Render a hollow chevron for a ghost fix from its pre-tessellated mesh.
+/// Push a hollow chevron for a ghost fix into the track's icon batch.
 ///
 /// The chevron tip points in `direction` (the inferred travel direction).
-/// Painted immediately (not collected into a pass-level batch) so each
-/// chevron keeps its stacking against the neighbouring accuracy circles;
-/// egui still merges the consecutive untextured meshes into one draw call.
+/// Stacking against interleaved painter primitives is the caller's job via
+/// [IconMeshBatch::barrier]; see [draw_tpv_point].
 fn draw_ghost_chevron(
-    ui: &Ui,
-    icon_meshes: Option<&IconMeshLibrary>,
+    batch: &mut IconMeshBatch<'_>,
     center: Pos2,
     direction: Vec2,
     highlighted: bool,
@@ -1517,36 +1521,34 @@ fn draw_ghost_chevron(
         FIX_LOST_RED
     }
     .gamma_multiply(icon_alpha);
-    let mut batch = IconMeshBatch::new(icon_meshes, ui.pixels_per_point());
     batch.push(IconInstance {
         icon: IconId::GhostFix,
         center,
         half_extents: Vec2::splat(size),
         direction: Some(direction),
-        tint,
+        tints: [tint; 2],
     });
-    batch.paint(ui.painter());
 }
 
 /// Draw the car-GPS style navigation arrow for a real fix.
 ///
-/// The hot path pushes two pre-tessellated mesh instances (fill tinted with
-/// the fix-quality color, outline tinted white with the fade alpha) and
-/// paints them immediately, keeping the stacking against neighbouring
-/// accuracy circles.
+/// The hot path pushes one two-tint-slot mesh instance into the track's
+/// icon batch (fill tinted with the fix-quality color, rim white with the
+/// fade alpha); stacking against interleaved painter primitives is handled
+/// by the caller's [IconMeshBatch::barrier] calls, see [draw_tpv_point].
 /// Highlighted arrows (at most the hovered and the sticky point per frame)
 /// keep the painter implementation: their thicker blue outline has a
 /// different stroke width than the baked 1.5 px rim, and at that count the
-/// per-frame tessellation cost is irrelevant.
-/// The painter path is also the fallback when the embedded meshes failed to
-/// decode, so arrows never disappear.
+/// per-frame tessellation cost is irrelevant. That painter path barriers
+/// the batch itself, and is also what draws when the embedded meshes failed
+/// to decode, so arrows never disappear.
 #[expect(
     clippy::too_many_arguments,
     reason = "render context requires all parameters; a context struct would not add clarity"
 )]
 fn draw_navigation_arrow(
     ui: &Ui,
-    icon_meshes: Option<&IconMeshLibrary>,
+    batch: &mut IconMeshBatch<'_>,
     center: Pos2,
     heading: Angle,
     color: Color32,
@@ -1557,33 +1559,24 @@ fn draw_navigation_arrow(
     let angle_rad = heading.get::<radian>() - std::f64::consts::FRAC_PI_2;
     let dir = egui::vec2(angle_rad.cos() as f32, angle_rad.sin() as f32);
 
-    if let Some(library) = icon_meshes
-        && !highlighted
-    {
-        let mut batch = IconMeshBatch::new(Some(library), ui.pixels_per_point());
+    if !highlighted {
+        // The painter faded the rim by scaling both its alpha and its stroke
+        // width with `outline_alpha`; the baked rim has a fixed width, so
+        // squaring the alpha matches that width x alpha ink.
+        let rim_alpha = outline_alpha * outline_alpha;
         batch.push(IconInstance {
-            icon: IconId::NavArrowFill,
+            icon: IconId::NavArrow,
             center,
             half_extents: Vec2::splat(base_size),
             direction: Some(dir),
-            tint: color,
+            tints: [color, Color32::WHITE.gamma_multiply(rim_alpha)],
         });
-        if outline_alpha > 0.0 {
-            // The painter fades the outline by scaling both its alpha and its
-            // stroke width with `outline_alpha`; the baked rim has a fixed
-            // width, so squaring the alpha matches that width x alpha ink.
-            let rim_alpha = outline_alpha * outline_alpha;
-            batch.push(IconInstance {
-                icon: IconId::NavArrowOutline,
-                center,
-                half_extents: Vec2::splat(base_size),
-                direction: Some(dir),
-                tint: Color32::WHITE.gamma_multiply(rim_alpha),
-            });
-        }
-        batch.paint(ui.painter());
         return;
     }
+
+    // Highlighted arrows keep the painter implementation (thicker blue rim
+    // with its own stroke width); flush so it stacks above earlier icons.
+    batch.barrier(ui.painter());
 
     let perp = egui::vec2(-dir.y, dir.x);
 
@@ -1665,7 +1658,6 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::test_harness::TestHarness;
     use egui::Color32;
     use gt_types::MercPoint;
     use gt_types::NavPoint;
@@ -1839,7 +1831,7 @@ mod tests {
     fn dense_multi_constellation_packs_into_two_columns() {
         let point = make_point(Some(sats_dense_multi_constellation()));
         let mut folds = gt_ui_types::PointWindowFolds::default();
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(620.0, 560.0))
             .theme(true)
             .ui(move |ui| {
@@ -1854,7 +1846,7 @@ mod tests {
     fn dense_multi_constellation_reflows_to_one_column_when_narrow() {
         let point = make_point(Some(sats_dense_multi_constellation()));
         let mut folds = gt_ui_types::PointWindowFolds::default();
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(330.0, 560.0))
             .theme(true)
             .ui(move |ui| {
@@ -1904,7 +1896,7 @@ mod tests {
         };
         folds.toggle(Constellation::Gps);
         folds.toggle(Constellation::Beidou);
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(620.0, 380.0))
             .theme(true)
             .ui(move |ui| {
@@ -1927,7 +1919,7 @@ mod tests {
         if fold_gps {
             folds.toggle(Constellation::Gps);
         }
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(620.0, 560.0))
             .theme(true)
             .ui(move |ui| {
@@ -1949,7 +1941,7 @@ mod tests {
         let folded = std::rc::Rc::new(std::cell::Cell::new(false));
         let seen = folded.clone();
         let mut folds = gt_ui_types::PointWindowFolds::default();
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(600.0, 440.0))
             .theme(true)
             .ui(move |ui| {
@@ -1972,7 +1964,7 @@ mod tests {
         let state = std::rc::Rc::new(std::cell::Cell::new((false, false)));
         let seen = state.clone();
         let mut folds = gt_ui_types::PointWindowFolds::default();
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(600.0, 440.0))
             .theme(true)
             .ui(move |ui| {
@@ -2005,7 +1997,7 @@ mod tests {
         let state = std::rc::Rc::new(std::cell::Cell::new((false, false)));
         let seen = state.clone();
         let mut folds = gt_ui_types::PointWindowFolds::default();
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(600.0, 440.0))
             .theme(true)
             .ui(move |ui| {
@@ -2034,7 +2026,7 @@ mod tests {
         let id_cell = std::rc::Rc::new(std::cell::Cell::new(None));
         let cell = id_cell.clone();
         let mut folds = gt_ui_types::PointWindowFolds::default();
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(600.0, 440.0))
             .theme(true)
             .ui(move |ui| {
@@ -2077,7 +2069,7 @@ mod tests {
         // Sized like the real point window: the plot sits beside the satellite
         // tables, so this is wide and short rather than narrow and tall.
         let mut folds = gt_ui_types::PointWindowFolds::default();
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(600.0, 440.0))
             .theme(dark_mode)
             .ui(move |ui| {
@@ -2104,7 +2096,7 @@ mod tests {
         let id_cell = std::rc::Rc::new(std::cell::Cell::new(None));
         let cell = id_cell.clone();
         let mut folds = gt_ui_types::PointWindowFolds::default();
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(320.0, 920.0))
             .theme(true)
             .ui(move |ui| {
@@ -2126,7 +2118,7 @@ mod tests {
     fn hovering_a_prn_row_shows_the_affordance_band() {
         let point = make_point(Some(sats_multi_constellation()));
         let mut folds = gt_ui_types::PointWindowFolds::default();
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(600.0, 440.0))
             .theme(true)
             .ui(move |ui| {
@@ -2222,7 +2214,7 @@ mod tests {
     #[case::light("hover_badge_own_report_light", false)]
     fn hover_badge_own_report(#[case] name: &str, #[case] dark_mode: bool) {
         let track = track_with_points(vec![point_at(0, Some(sats_with_sky()))]);
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(430.0, 260.0))
             .theme(dark_mode)
             .ui(move |ui| {
@@ -2248,7 +2240,7 @@ mod tests {
             .map(|&(secs, has_report)| point_at(secs, has_report.then(sats_with_sky)))
             .collect();
         let track = track_with_points(points);
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(430.0, 260.0))
             .theme(true)
             .ui(move |ui| {
@@ -2799,7 +2791,6 @@ mod arrow_snapshot_tests {
     use uom::si::angle::degree;
 
     use super::*;
-    use crate::test_harness::TestHarness;
 
     /// Navigation arrows across the zoom size range (3-12 pt), several
     /// headings, an outline fade, and a highlight - the parity grid used to
@@ -2817,11 +2808,12 @@ mod arrow_snapshot_tests {
         let height = margin * 2.0 + sizes.len() as f32 * cell;
 
         let library = crate::icon_mesh::IconMeshLibrary::embedded().ok();
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(width, height))
             .ui(move |ui| {
                 ui.painter()
                     .rect_filled(ui.max_rect(), 0.0, Color32::from_rgb(30, 30, 30));
+                let mut batch = IconMeshBatch::gpu_when_available(ui, library.as_ref());
 
                 let center = |row: usize, col: usize| {
                     egui::pos2(
@@ -2833,7 +2825,7 @@ mod arrow_snapshot_tests {
                     for (col, &heading_deg) in headings.iter().enumerate() {
                         draw_navigation_arrow(
                             ui,
-                            library.as_ref(),
+                            &mut batch,
                             center(row, col),
                             Angle::new::<degree>(heading_deg),
                             FIX_STRONG_BLUE,
@@ -2845,7 +2837,7 @@ mod arrow_snapshot_tests {
                     for (i, fade) in [0.6, 0.25].into_iter().enumerate() {
                         draw_navigation_arrow(
                             ui,
-                            library.as_ref(),
+                            &mut batch,
                             center(row, headings.len() + i),
                             Angle::new::<degree>(315.0),
                             FIX_MARGINAL_YELLOW.gamma_multiply(fade),
@@ -2856,7 +2848,7 @@ mod arrow_snapshot_tests {
                     }
                     draw_navigation_arrow(
                         ui,
-                        library.as_ref(),
+                        &mut batch,
                         center(row, headings.len() + 2),
                         Angle::new::<degree>(90.0),
                         FIX_LOST_RED,
@@ -2865,6 +2857,7 @@ mod arrow_snapshot_tests {
                         size,
                     );
                 }
+                batch.paint(ui.painter());
             });
 
         harness.run();

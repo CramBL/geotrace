@@ -276,7 +276,6 @@ pub(crate) fn popup_contents(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_harness::TestHarness;
 
     fn mixed_counts() -> DisplayCounts {
         DisplayCounts::from_fn(|category| match category {
@@ -325,7 +324,7 @@ mod tests {
         let mut variant = SkyGlyphVariant::default();
         let counts = mixed_counts();
 
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(280.0, 300.0))
             .ui(move |ui| {
                 Frame::popup(ui.style()).show(ui, |ui| {

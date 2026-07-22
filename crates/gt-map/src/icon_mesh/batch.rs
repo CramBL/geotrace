@@ -11,6 +11,7 @@
 use egui::epaint;
 use egui::{Color32, Pos2, Vec2};
 
+use crate::icon_mesh::gpu::{self, GpuIconInstance, IconDrawCallback, InstanceGroup};
 use crate::icon_mesh::{IconId, IconMeshLibrary};
 
 /// One icon to draw this pass.
@@ -27,15 +28,30 @@ pub struct IconInstance {
     pub half_extents: Vec2,
     /// Unit direction the icon's "up" aligns to; `None` draws it upright.
     pub direction: Option<Vec2>,
-    /// Multiplied onto the template's baked colors, like a texture tint:
-    /// [Color32::WHITE] keeps the SVG colors, alpha fades the whole icon.
-    pub tint: Color32,
+    /// Per-slot tints multiplied onto the template's baked colors, like a
+    /// texture tint: [Color32::WHITE] keeps the SVG colors, alpha fades.
+    /// Slot 0 is the default; slot 1 covers template elements marked
+    /// `id="tint2"` in the SVG (the nav arrow's rim). Single-slot icons
+    /// simply repeat the tint.
+    pub tints: [Color32; 2],
 }
 
-/// Collects the icon instances of one renderer pass into a single mesh.
+/// Collects the icon instances of one renderer pass.
 ///
 /// Create it where the pass starts drawing icons and [IconMeshBatch::paint]
 /// it at the same point, so layering against non-icon shapes is unchanged.
+/// Passes whose icons interleave with painter primitives call
+/// [IconMeshBatch::barrier] before painting each primitive, which flushes
+/// the collected icons so stacking is preserved exactly.
+///
+/// Two backends:
+/// - CPU ([IconMeshBatch::new]): instances are transformed into one
+///   untextured [epaint::Mesh] that egui merges into its draw batches.
+/// - GPU ([IconMeshBatch::gpu_when_available]): instances are collected and
+///   flushed as one instanced-draw paint callback per segment (32 bytes per
+///   instance instead of kilobytes of vertices); segments smaller than
+///   [gpu::GPU_MIN_INSTANCES] fall back to the CPU mesh, so barrier-heavy
+///   zoomed-in frames do not spray tiny draw calls.
 ///
 /// A batch without a library (the embedded meshes failed to decode, reported
 /// at startup) accepts pushes and paints nothing, so renderers carry no
@@ -43,64 +59,184 @@ pub struct IconInstance {
 pub struct IconMeshBatch<'a> {
     library: Option<&'a IconMeshLibrary>,
     pixels_per_point: f32,
-    mesh: epaint::Mesh,
+    backend: Backend,
+}
+
+enum Backend {
+    Cpu(epaint::Mesh),
+    Gpu(Vec<IconInstance>),
 }
 
 impl<'a> IconMeshBatch<'a> {
-    /// `pixels_per_point` (`ui.pixels_per_point()`) picks each instance's
-    /// size bucket from its physical on-screen extent.
+    /// A CPU-backed batch. `pixels_per_point` (`ui.pixels_per_point()`)
+    /// picks each instance's size bucket from its physical on-screen extent.
     pub fn new(library: Option<&'a IconMeshLibrary>, pixels_per_point: f32) -> Self {
         Self {
             library,
             pixels_per_point,
-            mesh: epaint::Mesh::default(),
+            backend: Backend::Cpu(epaint::Mesh::default()),
+        }
+    }
+
+    /// A batch that renders through the GPU-instanced pipeline when it is
+    /// installed in this context (see [gpu::install]), falling back to the
+    /// CPU mesh backend otherwise.
+    pub fn gpu_when_available(ui: &egui::Ui, library: Option<&'a IconMeshLibrary>) -> Self {
+        let backend = if gpu::is_installed(ui.ctx()) {
+            Backend::Gpu(Vec::new())
+        } else {
+            Backend::Cpu(epaint::Mesh::default())
+        };
+        Self {
+            library,
+            pixels_per_point: ui.pixels_per_point(),
+            backend,
         }
     }
 
     pub fn push(&mut self, instance: IconInstance) {
+        if self.library.is_none() {
+            return;
+        }
+        match &mut self.backend {
+            Backend::Gpu(pending) => pending.push(instance),
+            Backend::Cpu(_) => self.push_to_mesh(instance),
+        }
+    }
+
+    fn push_to_mesh(&mut self, instance: IconInstance) {
         let Some(library) = self.library else {
+            return;
+        };
+        let Backend::Cpu(mesh) = &mut self.backend else {
             return;
         };
         let target_px = physical_extent_px(instance.half_extents, self.pixels_per_point);
         let template = library.tessellation(instance.icon).mesh_for(target_px);
 
         debug_assert!(
-            u32::try_from(self.mesh.vertices.len() + template.vertices.len()).is_ok(),
+            u32::try_from(mesh.vertices.len() + template.vertices.len()).is_ok(),
             "icon batch exceeds the u32 index range"
         );
-        let base = self.mesh.vertices.len() as u32;
+        let base = mesh.vertices.len() as u32;
         // Hoist the per-instance work out of the vertex loop: the rotation
         // collapses into one 2x2 matrix (identity for unrotated icons), and
         // a white tint is the identity multiply, so the common untinted case
         // skips the color math entirely.
         let [col_x, col_y] = rotation_columns(instance.direction, instance.half_extents);
-        let tint_is_white = instance.tint == Color32::WHITE;
+        let tint_is_white = instance.tints == [Color32::WHITE; 2];
         // extend with exact-size iterators so the Vecs reserve once per
         // template instead of growing inside the loop.
-        self.mesh
-            .vertices
-            .extend(template.vertices.iter().map(|vertex| {
-                let [px, py] = vertex.pos;
-                epaint::Vertex {
-                    pos: instance.center + col_x * px + col_y * py,
-                    uv: epaint::WHITE_UV,
-                    color: if tint_is_white {
-                        premultiplied(vertex.color)
+        mesh.vertices.extend(template.vertices.iter().map(|vertex| {
+            let [px, py] = vertex.pos;
+            epaint::Vertex {
+                pos: instance.center + col_x * px + col_y * py,
+                uv: epaint::WHITE_UV,
+                color: if tint_is_white {
+                    premultiplied(vertex.color)
+                } else {
+                    let [primary, secondary] = instance.tints;
+                    let tint = if vertex.tint_slot == 0 {
+                        primary
                     } else {
-                        tinted_color(vertex.color, instance.tint)
-                    },
-                }
-            }));
-        self.mesh
-            .indices
+                        secondary
+                    };
+                    tinted_color(vertex.color, tint)
+                },
+            }
+        }));
+        mesh.indices
             .extend(template.indices.iter().map(|&index| base + index));
     }
 
-    /// Add the collected mesh to `painter`; a no-op for an empty batch.
-    pub fn paint(self, painter: &egui::Painter) {
-        if !self.mesh.is_empty() {
-            painter.add(egui::Shape::Mesh(self.mesh.into()));
+    /// Flush the collected icons so a painter primitive drawn next stacks
+    /// above them, exactly as with immediate painting. Keeps the backend.
+    pub fn barrier(&mut self, painter: &egui::Painter) {
+        self.flush(painter);
+    }
+
+    /// Add the collected icons to `painter`; a no-op for an empty batch.
+    pub fn paint(mut self, painter: &egui::Painter) {
+        self.flush(painter);
+    }
+
+    fn flush(&mut self, painter: &egui::Painter) {
+        match &mut self.backend {
+            Backend::Cpu(mesh) => {
+                let mesh = std::mem::take(mesh);
+                if !mesh.is_empty() {
+                    painter.add(egui::Shape::Mesh(mesh.into()));
+                }
+            }
+            Backend::Gpu(pending) => {
+                let pending = std::mem::take(pending);
+                if pending.is_empty() {
+                    return;
+                }
+                if pending.len() < gpu::GPU_MIN_INSTANCES {
+                    // Small segment: the CPU mesh is cheaper than a
+                    // dedicated buffer and draw call.
+                    let mut cpu = IconMeshBatch::new(self.library, self.pixels_per_point);
+                    for instance in pending {
+                        cpu.push(instance);
+                    }
+                    cpu.paint(painter);
+                    return;
+                }
+                let Some(library) = self.library else {
+                    return;
+                };
+                let groups = self.group_instances(library, &pending);
+                painter.add(egui_wgpu::Callback::new_paint_callback(
+                    painter.clip_rect(),
+                    IconDrawCallback::new(groups),
+                ));
+            }
         }
+    }
+
+    /// Group instances by (icon, bucket) in first-seen order, preserving
+    /// the relative order of same-template icons; distinct templates only
+    /// reorder where they overlap, which the barriers rule out.
+    fn group_instances(
+        &self,
+        library: &IconMeshLibrary,
+        pending: &[IconInstance],
+    ) -> Vec<InstanceGroup> {
+        let mut groups: Vec<InstanceGroup> = Vec::new();
+        for instance in pending {
+            let target_px = physical_extent_px(instance.half_extents, self.pixels_per_point);
+            let bucket = library
+                .tessellation(instance.icon)
+                .bucket_ordinal_for(target_px);
+            let gpu_instance = GpuIconInstance {
+                center: [instance.center.x, instance.center.y],
+                col_x: {
+                    let [col_x, _] = rotation_columns(instance.direction, instance.half_extents);
+                    [col_x.x, col_x.y]
+                },
+                col_y: {
+                    let [_, col_y] = rotation_columns(instance.direction, instance.half_extents);
+                    [col_y.x, col_y.y]
+                },
+                tints: [
+                    gpu::pack_color32(instance.tints[0]),
+                    gpu::pack_color32(instance.tints[1]),
+                ],
+            };
+            match groups
+                .iter_mut()
+                .find(|group| group.icon == instance.icon && group.bucket == bucket)
+            {
+                Some(group) => group.instances.push(gpu_instance),
+                None => groups.push(InstanceGroup {
+                    icon: instance.icon,
+                    bucket,
+                    instances: vec![gpu_instance],
+                }),
+            }
+        }
+        groups
     }
 }
 
@@ -154,6 +290,17 @@ fn tinted_color(template: [u8; 4], tint: Color32) -> Color32 {
     premultiplied(template) * tint
 }
 
+impl IconMeshBatch<'_> {
+    /// The CPU backend's collected mesh, for tests.
+    #[cfg(test)]
+    fn cpu_mesh(&self) -> &epaint::Mesh {
+        match &self.backend {
+            Backend::Cpu(mesh) => mesh,
+            Backend::Gpu(_) => panic!("test expected the CPU backend"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -204,12 +351,12 @@ mod tests {
             center: Pos2::ZERO,
             half_extents: Vec2::splat(10.0),
             direction: None,
-            tint: Color32::WHITE,
+            tints: [Color32::WHITE; 2],
         });
         // Half extent 10 pt at 2x ppp = 40 physical px.
         let expected = library.tessellation(IconId::Pin).mesh_for(40.0);
-        assert_eq!(batch.mesh.vertices.len(), expected.vertices.len());
-        assert_eq!(batch.mesh.indices.len(), expected.indices.len());
+        assert_eq!(batch.cpu_mesh().vertices.len(), expected.vertices.len());
+        assert_eq!(batch.cpu_mesh().indices.len(), expected.indices.len());
     }
 
     #[test]
@@ -221,16 +368,16 @@ mod tests {
             center: Pos2::ZERO,
             half_extents: Vec2::new(9.0, 12.0),
             direction: None,
-            tint: Color32::WHITE,
+            tints: [Color32::WHITE; 2],
         });
         let max_x = batch
-            .mesh
+            .cpu_mesh()
             .vertices
             .iter()
             .map(|vertex| vertex.pos.x.abs())
             .fold(0.0_f32, f32::max);
         let max_y = batch
-            .mesh
+            .cpu_mesh()
             .vertices
             .iter()
             .map(|vertex| vertex.pos.y.abs())
@@ -251,16 +398,67 @@ mod tests {
             center: Pos2::ZERO,
             half_extents: Vec2::splat(10.0),
             direction: None,
-            tint: Color32::WHITE,
+            tints: [Color32::WHITE; 2],
         });
-        assert!(batch.mesh.is_empty());
+        assert!(batch.cpu_mesh().is_empty());
     }
 
     #[test]
     fn empty_batch_paints_nothing() {
         let library = crate::icon_mesh::IconMeshLibrary::embedded().unwrap();
         let batch = IconMeshBatch::new(Some(&library), 1.0);
-        assert!(batch.mesh.is_empty());
+        assert!(batch.cpu_mesh().is_empty());
+    }
+
+    /// Grouping for the instanced draws: one group per (icon, bucket) in
+    /// first-seen order, instances in push order within each group.
+    #[test]
+    fn group_instances_groups_by_template_in_first_seen_order() {
+        let library = crate::icon_mesh::IconMeshLibrary::embedded().unwrap();
+        let batch = IconMeshBatch::new(Some(&library), 1.0);
+        let instance = |icon: IconId, half_extent: f32, x: f32| IconInstance {
+            icon,
+            center: Pos2::new(x, 0.0),
+            half_extents: Vec2::splat(half_extent),
+            direction: None,
+            tints: [Color32::WHITE; 2],
+        };
+        // Ghost first, then arrows, then a differently sized ghost (its own
+        // bucket, so its own group), then another ghost at the first size.
+        let pending = [
+            instance(IconId::GhostFix, 9.0, 0.0),
+            instance(IconId::NavArrow, 9.0, 1.0),
+            instance(IconId::NavArrow, 9.0, 2.0),
+            instance(IconId::GhostFix, 30.0, 3.0),
+            instance(IconId::GhostFix, 9.0, 4.0),
+        ];
+        let groups = batch.group_instances(&library, &pending);
+
+        let shape: Vec<(IconId, usize)> = groups
+            .iter()
+            .map(|group| (group.icon, group.instances.len()))
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                (IconId::GhostFix, 2),
+                (IconId::NavArrow, 2),
+                (IconId::GhostFix, 1),
+            ],
+            "first-seen group order with per-bucket splits"
+        );
+        assert_ne!(
+            groups[0].bucket, groups[2].bucket,
+            "different physical sizes must land in different buckets"
+        );
+        // Push order within a group: x encodes it (exact copies of the
+        // pushed values, so a plain ordering check suffices).
+        let xs: Vec<i32> = groups[0]
+            .instances
+            .iter()
+            .map(|instance| instance.center[0] as i32)
+            .collect();
+        assert_eq!(xs, vec![0, 4]);
     }
 }
 
@@ -272,7 +470,6 @@ mod snapshot_tests {
 
     use super::*;
     use crate::icon_mesh::IconMeshLibrary;
-    use crate::test_harness::TestHarness;
 
     /// Every icon at several sizes plus a rotated, a tinted, a faded, and a
     /// non-square variant - the mesh-pipeline counterpart of
@@ -300,7 +497,7 @@ mod snapshot_tests {
         let width = margin * 2.0 + variants.len() as f32 * cell;
         let height = margin * 2.0 + icons.len() as f32 * cell;
 
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(width, height))
             .ui(move |ui| {
                 ui.painter()
@@ -315,7 +512,7 @@ mod snapshot_tests {
                             center: egui::pos2(margin + (col as f32 + 0.5) * cell, y),
                             half_extents,
                             direction,
-                            tint,
+                            tints: [tint; 2],
                         });
                     }
                 }

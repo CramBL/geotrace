@@ -36,6 +36,11 @@ pub struct TemplateVertex {
     /// The outer edge of the anti-alias fringe ramps to fully transparent
     /// (all zeros). Renderers multiply this with a per-instance tint.
     pub color: [u8; 4],
+    /// Which per-instance tint applies: 0 for the primary tint, 1 for the
+    /// secondary (SVG elements with `id="tint2"`). Lets one template carry
+    /// independently tinted parts, like the nav arrow's fill and rim, so
+    /// they stay one instance with per-element paint order intact.
+    pub tint_slot: u8,
 }
 
 /// A triangle mesh for one icon at one size bucket.
@@ -91,16 +96,25 @@ impl IconTessellation {
     /// for positive values, so the scan is a handful of multiplies. This
     /// runs per icon instance per frame.
     pub fn mesh_for(&self, target_px: f32) -> &IconMeshTemplate {
+        let ordinal = self.bucket_ordinal_for(target_px);
+        self.buckets
+            .get(ordinal)
+            .map_or(&self.buckets.last().mesh, |bucket| &bucket.mesh)
+    }
+
+    /// The index into [IconTessellation::buckets] of the bucket nearest to
+    /// `target_px` in log space; see [IconTessellation::mesh_for].
+    pub fn bucket_ordinal_for(&self, target_px: f32) -> usize {
         let target = target_px.max(0.0);
         let target_sq = target * target;
-        for pair in self.buckets.windows(2) {
+        for (ordinal, pair) in self.buckets.windows(2).enumerate() {
             if let [current, next] = pair
                 && target_sq < current.bucket_px * next.bucket_px
             {
-                return &current.mesh;
+                return ordinal;
             }
         }
-        &self.buckets.last().mesh
+        self.buckets.len() - 1
     }
 }
 
@@ -120,6 +134,7 @@ mod tests {
                     TemplateVertex {
                         pos: [0.0, 0.0],
                         color: [0, 0, 0, 0],
+                        tint_slot: 0,
                     };
                     ordinal
                 ],

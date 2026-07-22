@@ -72,6 +72,7 @@ readme = "README.md"
 
 [workspace.dependencies]
 bon = "3"
+bytemuck = { version = "1", features = ["derive"] }
 chrono = { version = "0.4.44", default-features = false, features = ["std", "now", "clock", "oldtime"] }
 criterion = "0.8"
 dirs = "6"
@@ -80,6 +81,7 @@ egui = "0.34.3"
 egui-phosphor = "0.12.0"
 egui_extras = "0.34.3"
 egui_kittest = { version = "0.34.3", features = ["eframe", "wgpu", "snapshot"] }
+egui-wgpu = "0.34.3"
 egui_plot = "0.35.0"
 egui_tiles = "0.15"
 env_logger = "0.11.10"
