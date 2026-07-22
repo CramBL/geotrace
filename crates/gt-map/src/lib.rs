@@ -8,7 +8,6 @@ pub mod event_marker_renderer;
 pub mod generated_marker_renderer;
 mod hover_labels;
 pub mod icon_mesh;
-mod icons;
 pub mod marker_renderer;
 mod polyline;
 mod query_match_renderer;
@@ -25,7 +24,6 @@ pub mod track_renderer;
 mod transform;
 mod viewport;
 
-pub use icons::register_marker_icons;
 pub use sky_trails_window::SkyTrailsWindow;
 pub use viewport::GeoBounds;
 
@@ -555,6 +553,7 @@ impl NavMap {
                 .maybe_query_matches(query_matches)
                 .display_query_highlights(display_mask.is_visible(DisplayCategory::QueryHighlights))
                 .sky_glyph_variant(*sky_glyph_variant)
+                .maybe_icon_meshes(self.icon_meshes.as_ref())
                 .build(),
         );
         if display_mask.is_visible(DisplayCategory::SnappedTracks)

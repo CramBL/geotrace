@@ -2562,7 +2562,6 @@ dependencies = [
  "eframe",
  "egui",
  "egui-phosphor",
- "egui_extras",
  "egui_kittest",
  "geo",
  "geo-types",

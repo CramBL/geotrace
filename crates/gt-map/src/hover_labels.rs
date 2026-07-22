@@ -14,7 +14,8 @@ use gt_types::{
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::DataPointRef;
 
-use crate::icons::ICON_GAP;
+/// Spacing between an icon and the text following it in labels.
+const ICON_GAP: &str = "  ";
 
 /// Alpha of the hover band drawn over a sky-plot highlight target, low enough
 /// to keep the text underneath legible.

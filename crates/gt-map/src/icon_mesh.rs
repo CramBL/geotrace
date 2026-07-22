@@ -5,8 +5,6 @@
 //! them as a postcard blob.
 //! [IconMeshLibrary::embedded] decodes that blob once into per-icon
 //! [IconTessellation]s, and renderers draw them through [IconMeshBatch].
-//! The texture-based icon path in the private `icons` module keeps rendering
-//! until the per-renderer migrations land.
 
 mod batch;
 
