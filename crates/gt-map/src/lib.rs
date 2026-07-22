@@ -7,6 +7,7 @@ mod display_toggle;
 pub mod event_marker_renderer;
 pub mod generated_marker_renderer;
 mod hover_labels;
+pub mod icon_mesh;
 mod icons;
 pub mod marker_renderer;
 mod polyline;
