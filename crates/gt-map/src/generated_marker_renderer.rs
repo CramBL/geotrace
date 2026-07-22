@@ -8,6 +8,7 @@ use gt_ui_types::{
 };
 use walkers::{MapMemory, Plugin, Projector};
 
+use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
 use crate::track_renderer;
 
 pub struct GeneratedMarkerRenderer<'a> {
@@ -17,6 +18,7 @@ pub struct GeneratedMarkerRenderer<'a> {
     filter: &'a GlobalFilter,
     generated_vis: &'a GeneratedMarkerVisibility,
     visible_generated: Vec<SpatialPoint>,
+    icon_meshes: Option<&'a IconMeshLibrary>,
 }
 
 impl<'a> GeneratedMarkerRenderer<'a> {
@@ -27,6 +29,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
         filter: &'a GlobalFilter,
         generated_vis: &'a GeneratedMarkerVisibility,
         visible_generated: Vec<SpatialPoint>,
+        icon_meshes: Option<&'a IconMeshLibrary>,
     ) -> Self {
         Self {
             files,
@@ -35,6 +38,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
             filter,
             generated_vis,
             visible_generated,
+            icon_meshes,
         }
     }
 
@@ -149,7 +153,14 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             let highlighted = self.is_point_highlighted(point_ref);
             let fade =
                 track_renderer::track_fade_alpha(self.highlight, sp.file_index, sp.track_index);
-            draw_generated_marker(ui, screen_pos, &marker.kind, highlighted, fade);
+            draw_generated_marker(
+                ui,
+                self.icon_meshes,
+                screen_pos,
+                &marker.kind,
+                highlighted,
+                fade,
+            );
         }
 
         // Show tooltip for the hovered generated marker. Suppressed when the primary
@@ -306,6 +317,7 @@ fn format_fix_duration(total_ms: i64) -> String {
 
 fn draw_generated_marker(
     ui: &Ui,
+    icon_meshes: Option<&IconMeshLibrary>,
     center: Pos2,
     kind: &gt_types::GeneratedMarkerKind,
     highlighted: bool,
@@ -371,19 +383,22 @@ fn draw_generated_marker(
             painter.circle_filled(center + egui::vec2(0.0, s * 0.85), 1.3, faded_stroke);
         }
         gt_types::GeneratedMarkerKind::Slip(_) => {
-            // Broken chain link: a lost connection (loss of lock). Drawn from a
-            // cached SVG texture (one image quad), not per-frame line
-            // tessellation, so a dense cluster of slip markers stays cheap. Sized
-            // to nearly fill the disc - the chain detail needs more room than the
+            // Broken chain link: a lost connection (loss of lock). Sized to
+            // nearly fill the disc - the chain detail needs more room than the
             // simple line glyphs above to read.
+            // Painted immediately (not collected into a pass-level batch) so
+            // that in a dense slip cluster each disc still covers its
+            // neighbors' chain icons, preserving the interleaved stacking.
             let icon_extent = if highlighted { 4.0 * s } else { 3.4 * s };
-            let icon = egui::Rect::from_center_size(center, egui::Vec2::splat(icon_extent));
-            crate::icons::draw_cached_icon(
-                ui,
-                crate::icons::ICON_URI_CONNECTION_LOST,
-                icon,
-                faded_stroke,
-            );
+            let mut batch = IconMeshBatch::new(icon_meshes, ui.pixels_per_point());
+            batch.push(IconInstance {
+                icon: IconId::ConnectionLost,
+                center,
+                half_extents: egui::Vec2::splat(icon_extent / 2.0),
+                direction: None,
+                tint: faded_stroke,
+            });
+            batch.paint(painter);
         }
     }
 }

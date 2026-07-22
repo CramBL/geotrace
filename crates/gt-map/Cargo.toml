@@ -22,6 +22,7 @@ gt-track-builder = { path = "../gt-track-builder" }
 gt-types = { path = "../gt-types" }
 gt-ui-theme = { path = "../gt-ui-theme" }
 gt-ui-types = { path = "../gt-ui-types" }
+log.workspace = true
 postcard.workspace = true
 rstar.workspace = true
 smallvec.workspace = true

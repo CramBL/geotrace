@@ -1,4 +1,4 @@
-use egui::{Color32, Pos2, Response, Stroke, Ui};
+use egui::{Color32, Pos2, Response, Stroke, Ui, Vec2};
 use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, EventMarkerStyle, LoadedFile, MarkerIcon, SpatialPoint};
 use gt_ui_theme::HIGHLIGHT_BLUE;
@@ -8,6 +8,7 @@ use gt_ui_types::{
 use std::collections::HashMap;
 use walkers::{MapMemory, Plugin, Projector};
 
+use crate::icon_mesh::{IconInstance, IconMeshBatch, IconMeshLibrary};
 use crate::track_renderer;
 
 pub struct EventMarkerRenderer<'a> {
@@ -17,6 +18,7 @@ pub struct EventMarkerRenderer<'a> {
     filter: &'a GlobalFilter,
     event_vis: &'a EventMarkerVisibility,
     visible_event: Vec<SpatialPoint>,
+    icon_meshes: Option<&'a IconMeshLibrary>,
 }
 
 impl<'a> EventMarkerRenderer<'a> {
@@ -27,6 +29,7 @@ impl<'a> EventMarkerRenderer<'a> {
         filter: &'a GlobalFilter,
         event_vis: &'a EventMarkerVisibility,
         visible_event: Vec<SpatialPoint>,
+        icon_meshes: Option<&'a IconMeshLibrary>,
     ) -> Self {
         Self {
             files,
@@ -35,6 +38,7 @@ impl<'a> EventMarkerRenderer<'a> {
             filter,
             event_vis,
             visible_event,
+            icon_meshes,
         }
     }
 }
@@ -50,6 +54,7 @@ impl Plugin for EventMarkerRenderer<'_> {
         let transform =
             crate::transform::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
+        let mut batch = IconMeshBatch::new(self.icon_meshes, ui.pixels_per_point());
         for sp in &self.visible_event {
             let Some(track) = crate::scope::category_in_scope(
                 self.files,
@@ -87,8 +92,9 @@ impl Plugin for EventMarkerRenderer<'_> {
             let highlighted = is_highlighted(self.highlight, point_ref);
             let fade =
                 track_renderer::track_fade_alpha(self.highlight, sp.file_index, sp.track_index);
-            draw_event_marker(ui, screen_pos, icon, color, highlighted, fade);
+            draw_event_marker(ui, &mut batch, screen_pos, icon, color, highlighted, fade);
         }
+        batch.paint(ui.painter());
 
         // Show tooltip for the hovered event marker. Uses hover_candidates[1] so
         // the tooltip appears even when a Tpv point is the primary hover.
@@ -189,6 +195,7 @@ fn is_highlighted(highlight: &MapHighlight, point_ref: DataPointRef) -> bool {
 
 fn draw_event_marker(
     ui: &Ui,
+    batch: &mut IconMeshBatch<'_>,
     center: Pos2,
     icon: MarkerIcon,
     color: Color32,
@@ -196,111 +203,22 @@ fn draw_event_marker(
     fade: f32,
 ) {
     match icon {
+        // Event markers render the pin styles as colorable diamonds instead
+        // of the custom-marker pin glyphs.
         MarkerIcon::Pin | MarkerIcon::Log => draw_diamond(ui, center, color, highlighted, fade),
-        MarkerIcon::Cross => draw_event_icon(
-            ui,
-            center,
-            crate::icons::ICON_URI_CROSS,
-            crate::icons::ICON_SIZE_PX,
-            highlighted,
-            fade,
-        ),
-        MarkerIcon::Circle => draw_event_icon(
-            ui,
-            center,
-            crate::icons::ICON_URI_CIRCLE_MARKER,
-            crate::icons::ICON_SIZE_PX,
-            highlighted,
-            fade,
-        ),
-        MarkerIcon::Lightning => draw_event_icon(
-            ui,
-            center,
-            crate::icons::ICON_URI_LIGHTNING,
-            crate::icons::ICON_SIZE_PX,
-            highlighted,
-            fade,
-        ),
-        MarkerIcon::Warning => draw_event_icon(
-            ui,
-            center,
-            crate::icons::ICON_URI_WARNING,
-            crate::icons::ICON_SIZE_LARGE_PX,
-            highlighted,
-            fade,
-        ),
-        MarkerIcon::Error => draw_event_icon(
-            ui,
-            center,
-            crate::icons::ICON_URI_ERROR,
-            crate::icons::ICON_SIZE_PX,
-            highlighted,
-            fade,
-        ),
-        MarkerIcon::Check => draw_event_icon(
-            ui,
-            center,
-            crate::icons::ICON_URI_CHECK,
-            crate::icons::ICON_SIZE_PX,
-            highlighted,
-            fade,
-        ),
-        MarkerIcon::Satellite => draw_event_icon(
-            ui,
-            center,
-            crate::icons::ICON_URI_SATELLITE,
-            crate::icons::ICON_SIZE_LARGE_PX,
-            highlighted,
-            fade,
-        ),
-        MarkerIcon::SatelliteLost => draw_event_icon(
-            ui,
-            center,
-            crate::icons::ICON_URI_SATELLITE_LOST,
-            crate::icons::ICON_SIZE_LARGE_PX,
-            highlighted,
-            fade,
-        ),
-        MarkerIcon::Gear => draw_event_icon(
-            ui,
-            center,
-            crate::icons::ICON_URI_GEAR,
-            crate::icons::ICON_SIZE_PX,
-            highlighted,
-            fade,
-        ),
-        MarkerIcon::Refresh => draw_event_icon(
-            ui,
-            center,
-            crate::icons::ICON_URI_REFRESH,
-            crate::icons::ICON_SIZE_PX,
-            highlighted,
-            fade,
-        ),
-        MarkerIcon::Download => draw_event_icon(
-            ui,
-            center,
-            crate::icons::ICON_URI_DOWNLOAD,
-            crate::icons::ICON_SIZE_PX,
-            highlighted,
-            fade,
-        ),
-        MarkerIcon::Upload => draw_event_icon(
-            ui,
-            center,
-            crate::icons::ICON_URI_UPLOAD,
-            crate::icons::ICON_SIZE_PX,
-            highlighted,
-            fade,
-        ),
-        MarkerIcon::Wrench => draw_event_icon(
-            ui,
-            center,
-            crate::icons::ICON_URI_WRENCH,
-            crate::icons::ICON_SIZE_PX,
-            highlighted,
-            fade,
-        ),
+        MarkerIcon::Cross
+        | MarkerIcon::Circle
+        | MarkerIcon::Lightning
+        | MarkerIcon::Warning
+        | MarkerIcon::Error
+        | MarkerIcon::Check
+        | MarkerIcon::Satellite
+        | MarkerIcon::SatelliteLost
+        | MarkerIcon::Gear
+        | MarkerIcon::Refresh
+        | MarkerIcon::Download
+        | MarkerIcon::Upload
+        | MarkerIcon::Wrench => draw_event_icon(ui, batch, center, icon, highlighted, fade),
     }
 }
 
@@ -335,22 +253,24 @@ fn draw_diamond(ui: &Ui, center: Pos2, color: Color32, highlighted: bool, fade: 
 
 fn draw_event_icon(
     ui: &Ui,
+    batch: &mut IconMeshBatch<'_>,
     center: Pos2,
-    uri: &'static str,
-    size: f32,
+    icon: MarkerIcon,
     highlighted: bool,
     fade: f32,
 ) {
+    let half_extent = crate::icon_mesh::marker_icon_half_extent(icon);
     if highlighted {
         ui.painter()
-            .circle_stroke(center, (size / 2.0) + 4.0, Stroke::new(2.0, HIGHLIGHT_BLUE));
+            .circle_stroke(center, half_extent + 4.0, Stroke::new(2.0, HIGHLIGHT_BLUE));
     }
-    crate::icons::draw_cached_icon(
-        ui,
-        uri,
-        egui::Rect::from_center_size(center, egui::vec2(size, size)),
-        track_renderer::apply_fade_alpha(Color32::WHITE, fade),
-    );
+    batch.push(IconInstance {
+        icon: icon.into(),
+        center,
+        half_extents: Vec2::splat(half_extent),
+        direction: None,
+        tint: track_renderer::apply_fade_alpha(Color32::WHITE, fade),
+    });
 }
 
 #[cfg(test)]
@@ -369,14 +289,14 @@ mod snapshot_tests {
         let width = margin * 2.0 + (cols - 1) as f32 * spacing;
         let height = margin * 2.0 + (rows - 1) as f32 * spacing;
 
+        let library = IconMeshLibrary::embedded().unwrap();
         let mut harness = TestHarness::builder()
             .size(egui::vec2(width, height))
             .ui(move |ui| {
-                crate::register_marker_icons(ui.ctx());
-
                 ui.painter()
                     .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(30, 30, 30));
 
+                let mut batch = IconMeshBatch::new(Some(&library), ui.pixels_per_point());
                 for (i, &icon) in icons.iter().enumerate() {
                     let row = i / cols;
                     let col = if row.is_multiple_of(2) {
@@ -388,6 +308,7 @@ mod snapshot_tests {
                     let y = margin + row as f32 * spacing;
                     draw_event_marker(
                         ui,
+                        &mut batch,
                         egui::pos2(x, y),
                         icon,
                         egui::Color32::from_rgb(230, 150, 50),
@@ -395,6 +316,7 @@ mod snapshot_tests {
                         1.0,
                     );
                 }
+                batch.paint(ui.painter());
             });
 
         harness.run();
@@ -405,10 +327,7 @@ mod snapshot_tests {
 fn show_tooltip(ui: &Ui, point_ref: DataPointRef, marker: &gt_types::EventMarker, pos: Pos2) {
     let hit_rect = egui::Rect::from_center_size(
         pos,
-        egui::vec2(
-            crate::icons::ICON_SIZE_LARGE_PX,
-            crate::icons::ICON_SIZE_LARGE_PX,
-        ),
+        Vec2::splat(2.0 * crate::icon_mesh::ICON_HALF_EXTENT_LARGE_PT),
     );
     let response = ui.interact(
         hit_rect,

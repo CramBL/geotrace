@@ -18,8 +18,13 @@ use crate::icon_mesh::{IconId, IconMeshLibrary};
 pub struct IconInstance {
     pub icon: IconId,
     pub center: Pos2,
-    /// Half extent in points: the icon spans `2 * size` by `2 * size`.
-    pub size: f32,
+    /// Half extents in points: the icon spans `2 * half_extents` around
+    /// `center`.
+    ///
+    /// The template's stretched square viewbox maps to this rect, so extents
+    /// matching the SVG's aspect ratio (the pins are 18x24) draw undistorted,
+    /// while [Vec2::splat] stretches into a square like the old texture quads.
+    pub half_extents: Vec2,
     /// Unit direction the icon's "up" aligns to; `None` draws it upright.
     pub direction: Option<Vec2>,
     /// Multiplied onto the template's baked colors, like a texture tint:
@@ -31,8 +36,12 @@ pub struct IconInstance {
 ///
 /// Create it where the pass starts drawing icons and [IconMeshBatch::paint]
 /// it at the same point, so layering against non-icon shapes is unchanged.
+///
+/// A batch without a library (the embedded meshes failed to decode, reported
+/// at startup) accepts pushes and paints nothing, so renderers carry no
+/// per-call-site `Option` plumbing.
 pub struct IconMeshBatch<'a> {
-    library: &'a IconMeshLibrary,
+    library: Option<&'a IconMeshLibrary>,
     pixels_per_point: f32,
     mesh: epaint::Mesh,
 }
@@ -40,7 +49,7 @@ pub struct IconMeshBatch<'a> {
 impl<'a> IconMeshBatch<'a> {
     /// `pixels_per_point` (`ui.pixels_per_point()`) picks each instance's
     /// size bucket from its physical on-screen extent.
-    pub fn new(library: &'a IconMeshLibrary, pixels_per_point: f32) -> Self {
+    pub fn new(library: Option<&'a IconMeshLibrary>, pixels_per_point: f32) -> Self {
         Self {
             library,
             pixels_per_point,
@@ -49,8 +58,11 @@ impl<'a> IconMeshBatch<'a> {
     }
 
     pub fn push(&mut self, instance: IconInstance) {
-        let target_px = physical_extent_px(instance.size, self.pixels_per_point);
-        let template = self.library.tessellation(instance.icon).mesh_for(target_px);
+        let Some(library) = self.library else {
+            return;
+        };
+        let target_px = physical_extent_px(instance.half_extents, self.pixels_per_point);
+        let template = library.tessellation(instance.icon).mesh_for(target_px);
 
         debug_assert!(
             u32::try_from(self.mesh.vertices.len() + template.vertices.len()).is_ok(),
@@ -58,7 +70,7 @@ impl<'a> IconMeshBatch<'a> {
         );
         let base = self.mesh.vertices.len() as u32;
         for vertex in &template.vertices {
-            let offset = Vec2::new(vertex.pos[0], vertex.pos[1]) * instance.size;
+            let offset = Vec2::new(vertex.pos[0], vertex.pos[1]) * instance.half_extents;
             let rotated = match instance.direction {
                 Some(direction) => rotate_up_to(offset, direction),
                 None => offset,
@@ -92,9 +104,11 @@ fn rotate_up_to(offset: Vec2, direction: Vec2) -> Vec2 {
     )
 }
 
-/// An icon's full physical on-screen extent, which selects its size bucket.
-fn physical_extent_px(half_extent_pt: f32, pixels_per_point: f32) -> f32 {
-    half_extent_pt * 2.0 * pixels_per_point
+/// An icon's full physical on-screen extent (larger axis), which selects its
+/// size bucket - matching the template's larger viewbox axis, so an aspect-true
+/// draw uses the bucket whose curve tolerance and fringe were baked for it.
+fn physical_extent_px(half_extents_pt: Vec2, pixels_per_point: f32) -> f32 {
+    half_extents_pt.max_elem() * 2.0 * pixels_per_point
 }
 
 /// Multiply a template's straight-alpha sRGB color with a premultiplied tint.
@@ -151,11 +165,11 @@ mod tests {
     #[test]
     fn push_uses_the_physical_size_bucket() {
         let library = crate::icon_mesh::IconMeshLibrary::embedded().unwrap();
-        let mut batch = IconMeshBatch::new(&library, 2.0);
+        let mut batch = IconMeshBatch::new(Some(&library), 2.0);
         batch.push(IconInstance {
             icon: IconId::Pin,
             center: Pos2::ZERO,
-            size: 10.0,
+            half_extents: Vec2::splat(10.0),
             direction: None,
             tint: Color32::WHITE,
         });
@@ -166,9 +180,53 @@ mod tests {
     }
 
     #[test]
+    fn non_square_half_extents_scale_axes_independently() {
+        let library = crate::icon_mesh::IconMeshLibrary::embedded().unwrap();
+        let mut batch = IconMeshBatch::new(Some(&library), 1.0);
+        batch.push(IconInstance {
+            icon: IconId::Pin,
+            center: Pos2::ZERO,
+            half_extents: Vec2::new(9.0, 12.0),
+            direction: None,
+            tint: Color32::WHITE,
+        });
+        let max_x = batch
+            .mesh
+            .vertices
+            .iter()
+            .map(|vertex| vertex.pos.x.abs())
+            .fold(0.0_f32, f32::max);
+        let max_y = batch
+            .mesh
+            .vertices
+            .iter()
+            .map(|vertex| vertex.pos.y.abs())
+            .fold(0.0_f32, f32::max);
+        // The pin fills most of its viewbox on both axes, so the mesh must
+        // reach close to each half extent and clearly further in y than in x
+        // (allowing a couple of points of fringe overhang beyond the viewbox).
+        assert!((7.0..=11.5).contains(&max_x), "max_x = {max_x}");
+        assert!((10.5..=14.5).contains(&max_y), "max_y = {max_y}");
+        assert!(max_y > max_x, "y extent must exceed x extent");
+    }
+
+    #[test]
+    fn batch_without_library_stays_empty() {
+        let mut batch = IconMeshBatch::new(None, 1.0);
+        batch.push(IconInstance {
+            icon: IconId::Pin,
+            center: Pos2::ZERO,
+            half_extents: Vec2::splat(10.0),
+            direction: None,
+            tint: Color32::WHITE,
+        });
+        assert!(batch.mesh.is_empty());
+    }
+
+    #[test]
     fn empty_batch_paints_nothing() {
         let library = crate::icon_mesh::IconMeshLibrary::embedded().unwrap();
-        let batch = IconMeshBatch::new(&library, 1.0);
+        let batch = IconMeshBatch::new(Some(&library), 1.0);
         assert!(batch.mesh.is_empty());
     }
 }
@@ -183,25 +241,28 @@ mod snapshot_tests {
     use crate::icon_mesh::IconMeshLibrary;
     use crate::test_harness::TestHarness;
 
-    /// Every icon at several sizes plus a rotated, a tinted, and a faded
-    /// variant - the mesh-pipeline counterpart of `all_marker_icons`.
+    /// Every icon at several sizes plus a rotated, a tinted, a faded, and a
+    /// non-square variant - the mesh-pipeline counterpart of
+    /// `all_marker_icons`.
     #[test]
     fn icon_mesh_grid_renders_correctly() {
         let icons: Vec<IconId> = IconId::iter().collect();
         let library = IconMeshLibrary::embedded().unwrap();
         let cell = 44.0_f32;
         let margin = 30.0_f32;
-        let variants: [(f32, Option<Vec2>, Color32); 6] = [
-            (4.0, None, Color32::WHITE),
-            (10.0, None, Color32::WHITE),
-            (16.0, None, Color32::WHITE),
+        let variants: [(Vec2, Option<Vec2>, Color32); 7] = [
+            (Vec2::splat(4.0), None, Color32::WHITE),
+            (Vec2::splat(10.0), None, Color32::WHITE),
+            (Vec2::splat(16.0), None, Color32::WHITE),
             (
-                10.0,
+                Vec2::splat(10.0),
                 Some(Vec2::new(FRAC_1_SQRT_2, -FRAC_1_SQRT_2)),
                 Color32::WHITE,
             ),
-            (10.0, None, Color32::from_rgb(100, 200, 255)),
-            (10.0, None, Color32::WHITE.gamma_multiply(0.4)),
+            (Vec2::splat(10.0), None, Color32::from_rgb(100, 200, 255)),
+            (Vec2::splat(10.0), None, Color32::WHITE.gamma_multiply(0.4)),
+            // Aspect-true pin proportions: the stretch path the pins use.
+            (Vec2::new(9.0, 12.0), None, Color32::WHITE),
         ];
         let width = margin * 2.0 + variants.len() as f32 * cell;
         let height = margin * 2.0 + icons.len() as f32 * cell;
@@ -212,14 +273,14 @@ mod snapshot_tests {
                 ui.painter()
                     .rect_filled(ui.max_rect(), 0.0, Color32::from_rgb(30, 30, 30));
 
-                let mut batch = IconMeshBatch::new(&library, ui.pixels_per_point());
+                let mut batch = IconMeshBatch::new(Some(&library), ui.pixels_per_point());
                 for (row, &icon) in icons.iter().enumerate() {
                     let y = margin + (row as f32 + 0.5) * cell;
-                    for (col, (size, direction, tint)) in variants.into_iter().enumerate() {
+                    for (col, (half_extents, direction, tint)) in variants.into_iter().enumerate() {
                         batch.push(IconInstance {
                             icon,
                             center: egui::pos2(margin + (col as f32 + 0.5) * cell, y),
-                            size,
+                            half_extents,
                             direction,
                             tint,
                         });
