@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- "In fix only" in the Sky trails window now trims each trail to the parts where the satellite was actually used in the fix, rather than blinking whole trails on and off during playback, so rarely-used satellites no longer clutter the sky.
+
 ## 0.7.0 - 2026-07-21
 
 ### Added

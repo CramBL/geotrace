@@ -119,8 +119,9 @@ pub struct SkyTrailsWindow {
     /// snapshot markers. Set on [`SkyTrailsWindow::open`] (the `Default` bool is
     /// the wrong value), so it is always initialized before the window shows.
     show_trails: bool,
-    /// Whether only satellites in the fix at the scrubbed instant are shown,
-    /// hiding the ones merely tracked right now.
+    /// Whether the trails are trimmed to the stretches where the satellite was
+    /// in the fix, and the current-instant marker of one merely tracked right
+    /// now is hidden. See [`gt_sky::SkyTrailsPlot::in_fix_now`].
     in_fix_now: bool,
     /// Whether the current-instant signal heat field is drawn beneath the
     /// trails.
@@ -417,8 +418,10 @@ fn view_toggles(ui: &mut egui::Ui, toggles: ViewToggles<'_>) {
     ui.checkbox(show_heatmap, "Signal heatmap").on_hover_text(
         "Glow where the fix satellites are right now, brighter with stronger signal.",
     );
-    ui.checkbox(in_fix_now, "In fix only")
-        .on_hover_text("Hide satellites tracked but not used in the fix at this instant.");
+    ui.checkbox(in_fix_now, "In fix only").on_hover_text(
+        "Keep only the parts of each trail where the satellite was used in the \
+         fix, and hide the current marker of one that is not right now.",
+    );
     // The help cursor is the real "hover me for an explanation" cue; the
     // underlined term is the static hint.
     ui.checkbox(show_not_in_fix, not_in_fix_label(ui))
