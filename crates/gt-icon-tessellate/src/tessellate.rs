@@ -3,7 +3,7 @@
 //! [tessellate_icon] parses an SVG with usvg, walks its flattened tree in
 //! paint order, and tessellates every fill and stroke with lyon into one
 //! [IconMeshTemplate] per size bucket, each with a baked anti-alias fringe
-//! (see [fringe]).
+//! (see the private `fringe` submodule).
 //!
 //! Only the subset of SVG used by the icon assets is supported: plain-color
 //! fills and strokes, groups without opacity/clip/mask/filter, no text or

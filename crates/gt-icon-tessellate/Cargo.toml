@@ -20,7 +20,7 @@ tessellate = ["dep:lyon_tessellation", "dep:thiserror", "dep:usvg"]
 lyon_tessellation = { version = "1", optional = true }
 serde.workspace = true
 thiserror = { workspace = true, optional = true }
-usvg = { version = "0.45", default-features = false, optional = true }
+usvg = { version = "0.47", default-features = false, optional = true }
 vec1 = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
