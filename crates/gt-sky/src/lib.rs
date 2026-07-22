@@ -15,6 +15,10 @@ mod trails_plot;
 
 pub use projection::{mark_position, unit_disc_position, unit_disc_radius};
 pub use sky_plot::{SkyHighlight, SkyPlot, SkyPlotSize};
+pub use style::{
+    TRAIL_OPACITY_PERCENT_DEFAULT, TRAIL_OPACITY_PERCENT_MAX, TRAIL_OPACITY_PERCENT_MIN,
+    trail_opacity_multiplier,
+};
 pub use trails::{
     EpochCount, EpochIdx, SkyTrail, SkyTrails, SlipMark, TrailEpoch, TrailSample, extract_trails,
 };

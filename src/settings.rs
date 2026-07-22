@@ -309,6 +309,11 @@ pub struct MapSettings {
     /// the list of folded sections: an absent or empty list means nothing is
     /// folded, so older config files open everything unfolded.
     pub point_window_folds: gt_ui_types::PointWindowFolds,
+    /// Opacity of the sky-trails window's trails, as a percentage. Persisted so
+    /// the chosen strength carries across tracks and restarts; clamped to
+    /// `[gt_sky::TRAIL_OPACITY_PERCENT_MIN, gt_sky::TRAIL_OPACITY_PERCENT_MAX]`
+    /// when applied.
+    pub sky_trail_opacity_percent: f32,
 }
 
 impl Default for MapSettings {
@@ -320,6 +325,7 @@ impl Default for MapSettings {
             display_mask: gt_ui_types::DisplayMask::default(),
             sky_glyph_variant: gt_ui_types::SkyGlyphVariant::default(),
             point_window_folds: gt_ui_types::PointWindowFolds::default(),
+            sky_trail_opacity_percent: gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT,
         }
     }
 }
