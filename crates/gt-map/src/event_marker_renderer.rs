@@ -320,7 +320,9 @@ mod snapshot_tests {
             });
 
         harness.run();
-        harness.snapshot("all_marker_icons");
+        // Loose: mesh edges rasterize a few pixels differently between the
+        // Linux baseline and the macOS CI runner's Metal backend.
+        harness.snapshot_loose("all_marker_icons");
     }
 }
 
