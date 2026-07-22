@@ -67,15 +67,40 @@ enum PaintOp {
 }
 
 struct StrokeStyle {
-    /// Width in SVG user units, scaled per bucket at tessellation time.
+    /// Width as written in the SVG; its meaning is decided per bake by
+    /// [StrokeWidthUnit] (see [stroke_width_px]).
     width: f32,
     cap: LineCap,
     join: LineJoin,
     miter_limit: f32,
 }
 
+/// How an SVG's `stroke-width` values are interpreted when baking.
+///
+/// SVG's own mechanism for screen-constant strokes
+/// (`vector-effect="non-scaling-stroke"`) is parsed but not resolved by usvg,
+/// so the interpretation is chosen per asset at the bake site instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StrokeWidthUnit {
+    /// User units: strokes scale with the icon, like any other geometry.
+    #[default]
+    UserUnits,
+    /// Physical pixels: strokes keep the same on-screen width at every
+    /// bucket, matching painter-drawn outlines whose width is in pixels
+    /// rather than a fraction of the glyph.
+    PhysicalPixels,
+}
+
 /// Tessellate one SVG icon into a mesh per size bucket in [SIZE_BUCKETS_PX].
 pub fn tessellate_icon(svg_bytes: &[u8]) -> Result<IconTessellation, IconTessellateError> {
+    tessellate_icon_with(svg_bytes, StrokeWidthUnit::default())
+}
+
+/// [tessellate_icon] with an explicit stroke-width interpretation.
+pub fn tessellate_icon_with(
+    svg_bytes: &[u8],
+    stroke_width_unit: StrokeWidthUnit,
+) -> Result<IconTessellation, IconTessellateError> {
     let tree = usvg::Tree::from_data(svg_bytes, &usvg::Options::default())?;
     let mut elements = Vec::new();
     collect_elements(tree.root(), &mut elements)?;
@@ -84,12 +109,12 @@ pub fn tessellate_icon(svg_bytes: &[u8]) -> Result<IconTessellation, IconTessell
     let [first_bucket, rest @ ..] = SIZE_BUCKETS_PX;
     let mut buckets = Vec1::new(BucketMesh {
         bucket_px: first_bucket,
-        mesh: bucket_mesh(&elements, svg_w, svg_h, first_bucket)?,
+        mesh: bucket_mesh(&elements, svg_w, svg_h, first_bucket, stroke_width_unit)?,
     });
     for bucket_px in rest {
         buckets.push(BucketMesh {
             bucket_px,
-            mesh: bucket_mesh(&elements, svg_w, svg_h, bucket_px)?,
+            mesh: bucket_mesh(&elements, svg_w, svg_h, bucket_px, stroke_width_unit)?,
         });
     }
     Ok(IconTessellation::new(buckets))
@@ -211,6 +236,7 @@ fn bucket_mesh(
     svg_w: f32,
     svg_h: f32,
     bucket_px: f32,
+    stroke_width_unit: StrokeWidthUnit,
 ) -> Result<IconMeshTemplate, IconTessellateError> {
     let scale = bucket_px / svg_w.max(svg_h);
     let mut mesh = IconMeshTemplate {
@@ -219,8 +245,8 @@ fn bucket_mesh(
     };
     for element in elements {
         let path = to_lyon_path(&element.path, element.abs_transform, scale);
-        let mut buffers = tessellate_element(&path, &element.op, scale)?;
-        let ramp = edge_ramp(&element.op, scale);
+        let mut buffers = tessellate_element(&path, &element.op, scale, stroke_width_unit)?;
+        let ramp = edge_ramp(&element.op, scale, stroke_width_unit);
         let color = scale_alpha(element.color, ramp.alpha_factor);
         // The fringe pass insets the solid boundary vertices, so it runs
         // before the solid vertices are copied out.
@@ -254,7 +280,7 @@ struct EdgeRamp {
     alpha_factor: f32,
 }
 
-fn edge_ramp(op: &PaintOp, scale: f32) -> EdgeRamp {
+fn edge_ramp(op: &PaintOp, scale: f32, stroke_width_unit: StrokeWidthUnit) -> EdgeRamp {
     let half_feather = FEATHER_PX / 2.0;
     let symmetric = EdgeRamp {
         inset_px: half_feather,
@@ -264,7 +290,7 @@ fn edge_ramp(op: &PaintOp, scale: f32) -> EdgeRamp {
     match op {
         PaintOp::Fill { .. } => symmetric,
         PaintOp::Stroke(style) => {
-            let width_px = style.width * scale;
+            let width_px = stroke_width_px(style.width, scale, stroke_width_unit);
             if width_px >= FEATHER_PX {
                 symmetric
             } else {
@@ -288,10 +314,19 @@ fn scale_alpha(color: [u8; 4], factor: f32) -> [u8; 4] {
     [r, g, b, u8::try_from(scaled as i32).unwrap_or(u8::MAX)]
 }
 
+/// An element stroke's on-screen width at one bucket.
+fn stroke_width_px(svg_width: f32, scale: f32, unit: StrokeWidthUnit) -> f32 {
+    match unit {
+        StrokeWidthUnit::UserUnits => svg_width * scale,
+        StrokeWidthUnit::PhysicalPixels => svg_width,
+    }
+}
+
 fn tessellate_element(
     path: &LyonPath,
     op: &PaintOp,
     scale: f32,
+    stroke_width_unit: StrokeWidthUnit,
 ) -> Result<VertexBuffers<[f32; 2], u32>, IconTessellateError> {
     let mut buffers = VertexBuffers::new();
     match op {
@@ -311,7 +346,7 @@ fn tessellate_element(
                 .tessellate_path(
                     path,
                     &StrokeOptions::tolerance(TOLERANCE_PX)
-                        .with_line_width(style.width * scale)
+                        .with_line_width(stroke_width_px(style.width, scale, stroke_width_unit))
                         .with_line_cap(style.cap)
                         .with_line_join(style.join)
                         .with_miter_limit(style.miter_limit),
@@ -414,7 +449,7 @@ mod tests {
 
     /// Every icon asset, sorted. Kept in sync with `assets/icons/` by
     /// [icon_names_match_assets_dir]; the rstest cases below must mirror it.
-    const ICON_NAMES: [&str; 17] = [
+    const ICON_NAMES: [&str; 19] = [
         "check",
         "circle_marker",
         "connection_lost",
@@ -425,6 +460,8 @@ mod tests {
         "ghost_fix",
         "lightning",
         "log_pin",
+        "nav_arrow_fill",
+        "nav_arrow_outline",
         "pin",
         "refresh",
         "satellite",
@@ -505,6 +542,8 @@ mod tests {
     #[case::ghost_fix("ghost_fix")]
     #[case::lightning("lightning")]
     #[case::log_pin("log_pin")]
+    #[case::nav_arrow_fill("nav_arrow_fill")]
+    #[case::nav_arrow_outline("nav_arrow_outline")]
     #[case::pin("pin")]
     #[case::refresh("refresh")]
     #[case::satellite("satellite")]
@@ -528,6 +567,8 @@ mod tests {
     #[case::ghost_fix("ghost_fix")]
     #[case::lightning("lightning")]
     #[case::log_pin("log_pin")]
+    #[case::nav_arrow_fill("nav_arrow_fill")]
+    #[case::nav_arrow_outline("nav_arrow_outline")]
     #[case::pin("pin")]
     #[case::refresh("refresh")]
     #[case::satellite("satellite")]
@@ -599,5 +640,56 @@ mod tests {
         let bytes = postcard::to_allocvec(&tess).unwrap();
         let decoded: IconTessellation = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(tess, decoded);
+    }
+
+    /// A single horizontal stroke through the viewbox center: its normalized
+    /// y extent is the stroke's half thickness, isolating the width behavior.
+    const HORIZONTAL_STROKE_SVG: &[u8] =
+        br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <line x1="4" y1="12" x2="20" y2="12" stroke="white" stroke-width="4"/>
+</svg>"#;
+
+    fn normalized_half_thickness(tess: &IconTessellation, bucket_px: f32) -> f32 {
+        tess.mesh_for(bucket_px)
+            .vertices
+            .iter()
+            .map(|vertex| vertex.pos[1].abs())
+            .fold(0.0_f32, f32::max)
+    }
+
+    #[test]
+    fn stroke_width_units_scale_as_documented() {
+        let user = tessellate_icon_with(HORIZONTAL_STROKE_SVG, StrokeWidthUnit::UserUnits).unwrap();
+        let physical =
+            tessellate_icon_with(HORIZONTAL_STROKE_SVG, StrokeWidthUnit::PhysicalPixels).unwrap();
+
+        // User units: the stroke is a constant fraction of the glyph, so the
+        // normalized thickness is bucket-independent (up to the fringe).
+        let user_small = normalized_half_thickness(&user, 24.0);
+        let user_large = normalized_half_thickness(&user, 64.0);
+        assert!(
+            (user_small - user_large).abs() < 0.05,
+            "user-unit thickness drifted: {user_small} vs {user_large}"
+        );
+
+        // Physical pixels: the on-screen width is constant, so the
+        // normalized thickness shrinks as the bucket grows (24 -> 64 px is
+        // a 8/3 factor; assert well past the halfway point to stay robust
+        // against the fringe).
+        let physical_small = normalized_half_thickness(&physical, 24.0);
+        let physical_large = normalized_half_thickness(&physical, 64.0);
+        assert!(
+            physical_small > physical_large * 1.8,
+            "physical-pixel thickness did not stay constant on screen: \
+             {physical_small} vs {physical_large}"
+        );
+        // At the bucket where one SVG user unit is one pixel the two modes
+        // must agree exactly.
+        let user_at_unity = normalized_half_thickness(&user, 24.0);
+        let physical_at_unity = normalized_half_thickness(&physical, 24.0);
+        assert!(
+            (user_at_unity - physical_at_unity).abs() < 1e-6,
+            "modes must coincide at scale 1: {user_at_unity} vs {physical_at_unity}"
+        );
     }
 }

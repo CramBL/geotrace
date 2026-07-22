@@ -20,4 +20,4 @@ pub use template::{
     BucketMesh, FEATHER_PX, IconMeshTemplate, IconTessellation, SIZE_BUCKETS_PX, TemplateVertex,
 };
 #[cfg(feature = "tessellate")]
-pub use tessellate::IconTessellateError;
+pub use tessellate::{IconTessellateError, StrokeWidthUnit};

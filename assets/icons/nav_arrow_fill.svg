@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- Navigation arrow fill: the car-GPS style concave arrow from
+       tpv_renderer's draw_navigation_arrow, pointing up. The viewbox center
+       (12,12) is the rotation center (the fix position), so an instance with
+       half extent s spans tip +1.0s forward, wings 0.4s back and 0.5s wide,
+       notch 0.1s back. White so the renderer tints it with the per-fix
+       quality color. The outline is a separate asset (nav_arrow_outline.svg)
+       because it is tinted and faded independently of the fill. -->
+  <path d="M 12 0 L 18 16.8 L 12 13.2 L 6 16.8 Z" fill="white"/>
+</svg>

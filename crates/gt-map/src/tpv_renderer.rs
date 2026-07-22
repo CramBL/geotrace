@@ -1390,6 +1390,7 @@ fn draw_tpv_point(
         PointKind::Real { color, heading } => {
             draw_navigation_arrow(
                 ui,
+                icon_meshes,
                 screen_pos,
                 *heading,
                 color.gamma_multiply(style.icon_alpha),
@@ -1527,8 +1528,25 @@ fn draw_ghost_chevron(
     batch.paint(ui.painter());
 }
 
+/// Draw the car-GPS style navigation arrow for a real fix.
+///
+/// The hot path pushes two pre-tessellated mesh instances (fill tinted with
+/// the fix-quality color, outline tinted white with the fade alpha) and
+/// paints them immediately, keeping the stacking against neighbouring
+/// accuracy circles.
+/// Highlighted arrows (at most the hovered and the sticky point per frame)
+/// keep the painter implementation: their thicker blue outline has a
+/// different stroke width than the baked 1.5 px rim, and at that count the
+/// per-frame tessellation cost is irrelevant.
+/// The painter path is also the fallback when the embedded meshes failed to
+/// decode, so arrows never disappear.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "render context requires all parameters; a context struct would not add clarity"
+)]
 fn draw_navigation_arrow(
     ui: &Ui,
+    icon_meshes: Option<&IconMeshLibrary>,
     center: Pos2,
     heading: Angle,
     color: Color32,
@@ -1538,6 +1556,35 @@ fn draw_navigation_arrow(
 ) {
     let angle_rad = heading.get::<radian>() - std::f64::consts::FRAC_PI_2;
     let dir = egui::vec2(angle_rad.cos() as f32, angle_rad.sin() as f32);
+
+    if let Some(library) = icon_meshes
+        && !highlighted
+    {
+        let mut batch = IconMeshBatch::new(Some(library), ui.pixels_per_point());
+        batch.push(IconInstance {
+            icon: IconId::NavArrowFill,
+            center,
+            half_extents: Vec2::splat(base_size),
+            direction: Some(dir),
+            tint: color,
+        });
+        if outline_alpha > 0.0 {
+            // The painter fades the outline by scaling both its alpha and its
+            // stroke width with `outline_alpha`; the baked rim has a fixed
+            // width, so squaring the alpha matches that width x alpha ink.
+            let rim_alpha = outline_alpha * outline_alpha;
+            batch.push(IconInstance {
+                icon: IconId::NavArrowOutline,
+                center,
+                half_extents: Vec2::splat(base_size),
+                direction: Some(dir),
+                tint: Color32::WHITE.gamma_multiply(rim_alpha),
+            });
+        }
+        batch.paint(ui.painter());
+        return;
+    }
+
     let perp = egui::vec2(-dir.y, dir.x);
 
     let size = if highlighted {
@@ -2744,5 +2791,85 @@ mod tests {
         use egui::pos2;
         assert!(split_spans_by::<Color32, Color32>(&[], |k| k).is_empty());
         assert!(split_spans_by(&[(Color32::BLUE, pos2(0.0, 0.0))], |k| k).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod arrow_snapshot_tests {
+    use uom::si::angle::degree;
+
+    use super::*;
+    use crate::test_harness::TestHarness;
+
+    /// Navigation arrows across the zoom size range (3-12 pt), several
+    /// headings, an outline fade, and a highlight - the parity grid used to
+    /// compare the painter and mesh implementations.
+    #[test]
+    fn nav_arrow_grid_renders_correctly() {
+        let sizes = [3.0_f32, 6.0, 9.0, 12.0];
+        let headings = [0.0_f64, 45.0, 120.0, 230.0];
+        let cell = 44.0_f32;
+        let margin = 26.0_f32;
+        // Per row: the headings at full opacity, two faded outlines, one
+        // highlighted.
+        let cols = headings.len() + 3;
+        let width = margin * 2.0 + cols as f32 * cell;
+        let height = margin * 2.0 + sizes.len() as f32 * cell;
+
+        let library = crate::icon_mesh::IconMeshLibrary::embedded().ok();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(width, height))
+            .ui(move |ui| {
+                ui.painter()
+                    .rect_filled(ui.max_rect(), 0.0, Color32::from_rgb(30, 30, 30));
+
+                let center = |row: usize, col: usize| {
+                    egui::pos2(
+                        margin + (col as f32 + 0.5) * cell,
+                        margin + (row as f32 + 0.5) * cell,
+                    )
+                };
+                for (row, &size) in sizes.iter().enumerate() {
+                    for (col, &heading_deg) in headings.iter().enumerate() {
+                        draw_navigation_arrow(
+                            ui,
+                            library.as_ref(),
+                            center(row, col),
+                            Angle::new::<degree>(heading_deg),
+                            FIX_STRONG_BLUE,
+                            false,
+                            1.0,
+                            size,
+                        );
+                    }
+                    for (i, fade) in [0.6, 0.25].into_iter().enumerate() {
+                        draw_navigation_arrow(
+                            ui,
+                            library.as_ref(),
+                            center(row, headings.len() + i),
+                            Angle::new::<degree>(315.0),
+                            FIX_MARGINAL_YELLOW.gamma_multiply(fade),
+                            false,
+                            fade,
+                            size,
+                        );
+                    }
+                    draw_navigation_arrow(
+                        ui,
+                        library.as_ref(),
+                        center(row, headings.len() + 2),
+                        Angle::new::<degree>(90.0),
+                        FIX_LOST_RED,
+                        true,
+                        1.0,
+                        size,
+                    );
+                }
+            });
+
+        harness.run();
+        // Loose: mesh edges rasterize a few pixels differently between the
+        // Linux baseline and the macOS CI runner's Metal backend.
+        harness.snapshot_loose("nav_arrow_grid");
     }
 }
