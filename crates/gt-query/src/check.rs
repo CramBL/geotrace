@@ -959,11 +959,18 @@ impl Checker<'_> {
         } else if in_agg {
             return Ok(());
         }
-        Err(err_hint(
-            span,
-            format!("{label} is per sample"),
-            format!("wrap it in an aggregate like max({label})"),
-        ))
+        // Per sample and not inside an aggregate. On the points source with no
+        // window, wrapping it in an aggregate alone dead-ends on "needs a
+        // window" (the channel is on a finer clock than the points), so point
+        // at the two forms that actually work rather than the misleading
+        // single-step hint. Windowed - on either source - an aggregate is the
+        // whole fix.
+        let help = if self.source_channel.is_none() && !self.windowed {
+            format!("aggregate it over a window like max({label}), or query @{name} as the source")
+        } else {
+            format!("wrap it in an aggregate like max({label})")
+        };
+        Err(err_hint(span, format!("{label} is per sample"), help))
     }
 
     /// Resolve a channel reference against the schema. A `@name.component`
@@ -1098,7 +1105,11 @@ impl Checker<'_> {
         }
 
         if !self.windowed {
-            return Err(err(span, format!("{func} needs a window")));
+            return Err(err_hint(
+                span,
+                format!("{func} needs a window"),
+                "add a window before the where, e.g. window 10",
+            ));
         }
         if in_agg {
             return Err(err(span, "aggregates cannot be nested"));
