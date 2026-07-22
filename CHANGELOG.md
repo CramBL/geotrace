@@ -4,13 +4,13 @@
 
 ### Added
 
-- A trail opacity control in the Sky trails window, to quieten the paths on a busy multi-constellation sky or turn them right up. The setting persists.
+- A trail opacity control in the Sky trails window, to quieten the paths on a busy multi-constellation sky or turn them up.
 - Scrubbing the Sky trails window now marks the current time on the track plot, the same line a track-point hover draws, so playback follows along there too.
 
 ### Changed
 
 - Sky trails now draw as a comet's tail: brightest at each satellite's current position and fading back over the path it has travelled, so the direction of travel reads at a glance.
-- "In fix only" in the Sky trails window now trims each trail to the parts where the satellite was actually used in the fix, rather than blinking whole trails on and off during playback, so rarely-used satellites no longer clutter the sky.
+- "In fix only" in the Sky trails window now trims each trail to the parts where the satellite was actually used in the fix, rather than blinking whole trails on and off during playback.
 
 ### Fixed
 
