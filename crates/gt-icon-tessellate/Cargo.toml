@@ -1,0 +1,32 @@
+[package]
+name = "gt-icon-tessellate"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+
+[features]
+default = ["tessellate"]
+# SVG-to-mesh tessellation (usvg + lyon). On by default so tests and the
+# gt-map build script get it; the gt-map runtime depends on this crate with
+# default-features = false to stay types-only.
+tessellate = ["dep:lyon_tessellation", "dep:thiserror", "dep:usvg"]
+
+[dependencies]
+lyon_tessellation = { version = "1", optional = true }
+serde.workspace = true
+thiserror = { workspace = true, optional = true }
+usvg = { version = "0.45", default-features = false, optional = true }
+vec1 = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+insta.workspace = true
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+rstest.workspace = true
+
+[lints]
+workspace = true
