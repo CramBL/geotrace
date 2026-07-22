@@ -73,6 +73,12 @@ pub struct MapHighlight {
     /// Prevents the map from dimming the moment the cursor crosses the plot
     /// boundary, before it is actually near any data.
     pub plot_hover_snapped: bool,
+    /// The sky-trails scrubber's current instant, cross-highlighted on the
+    /// track plot as a vertical time line so playback reads there the same way
+    /// hovering a track point does. `None` when the sky-trails window is not
+    /// driving a scrub. Set by that window and read one frame behind (it draws
+    /// after the plot), the same way [`Self::hover_match`] is.
+    pub scrub_time: Option<DateTime<Utc>>,
     /// When `true`, renderers must not draw their individual hover labels.
     ///
     /// Set by `NavMap` in two situations: when the disambiguation popup is open
@@ -99,6 +105,7 @@ impl Default for MapHighlight {
             plot_hover_time: None,
             plot_hover_point: None,
             plot_hover_snapped: false,
+            scrub_time: None,
             suppress_hover_labels: false,
             fading_enabled: true,
             hover_match: None,
