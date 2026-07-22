@@ -12,6 +12,10 @@
 - Sky trails now draw as a comet's tail: brightest at each satellite's current position and fading back over the path it has travelled, so the direction of travel reads at a glance.
 - "In fix only" in the Sky trails window now trims each trail to the parts where the satellite was actually used in the fix, rather than blinking whole trails on and off during playback, so rarely-used satellites no longer clutter the sky.
 
+### Fixed
+
+- Filtering on channel data like `@accel.x` without a window no longer sends you in circles - the hint now points to a query that actually works.
+
 ## 0.7.0 - 2026-07-21
 
 ### Added

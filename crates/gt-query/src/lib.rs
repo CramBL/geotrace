@@ -1341,6 +1341,57 @@ mod tests {
     }
 
     #[test]
+    fn a_windowless_points_channel_points_at_the_working_forms() {
+        // On the points source with no window, wrapping the channel in an
+        // aggregate alone dead-ends on "needs a window", so the hint points at
+        // both forms that work: an aggregate over a window, or the channel as
+        // its own source. (Regression: the old hint sent the user to
+        // max(@accel.x), which then failed with "max needs a window".)
+        let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+        let err = check(&parse("points | where @accel.x > 0.2 mg").unwrap(), &schema).unwrap_err();
+        assert_eq!(err.message, "@accel.x is per sample");
+        assert_eq!(
+            err.help.as_deref(),
+            Some("aggregate it over a window like max(@accel.x), or query @accel as the source")
+        );
+    }
+
+    #[test]
+    fn an_aggregate_without_a_window_hints_at_adding_one() {
+        // Following the hint above to an aggregate still needs a window; the
+        // error now says how instead of leaving the user stuck.
+        let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+        let err = check(
+            &parse("points | where max(@accel.x) > 0.2 mg").unwrap(),
+            &schema,
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "max needs a window");
+        assert_eq!(
+            err.help.as_deref(),
+            Some("add a window before the where, e.g. window 10")
+        );
+    }
+
+    #[test]
+    fn a_windowless_points_norm_points_at_the_working_forms() {
+        // norm takes the same unwindowed-points branch, labelled as it reads.
+        let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
+        let err = check(
+            &parse("points | where norm(@accel) > 0.2 mg").unwrap(),
+            &schema,
+        )
+        .unwrap_err();
+        assert_eq!(err.message, "norm(@accel) is per sample");
+        assert_eq!(
+            err.help.as_deref(),
+            Some(
+                "aggregate it over a window like max(norm(@accel)), or query @accel as the source"
+            )
+        );
+    }
+
+    #[test]
     fn components_of_one_channel_combine_per_sample() {
         // Components of one vector share a clock, so per-sample math across them
         // is a single timeline: sqrt(x² + y²) type-checks as an acceleration.
