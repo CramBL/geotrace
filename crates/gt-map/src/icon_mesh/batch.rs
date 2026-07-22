@@ -69,18 +69,22 @@ impl<'a> IconMeshBatch<'a> {
             "icon batch exceeds the u32 index range"
         );
         let base = self.mesh.vertices.len() as u32;
-        for vertex in &template.vertices {
-            let offset = Vec2::new(vertex.pos[0], vertex.pos[1]) * instance.half_extents;
-            let rotated = match instance.direction {
-                Some(direction) => rotate_up_to(offset, direction),
-                None => offset,
-            };
-            self.mesh.vertices.push(epaint::Vertex {
-                pos: instance.center + rotated,
-                uv: epaint::WHITE_UV,
-                color: tinted_color(vertex.color, instance.tint),
-            });
-        }
+        // extend with exact-size iterators so the Vecs reserve once per
+        // template instead of growing inside the loop.
+        self.mesh
+            .vertices
+            .extend(template.vertices.iter().map(|vertex| {
+                let offset = Vec2::new(vertex.pos[0], vertex.pos[1]) * instance.half_extents;
+                let rotated = match instance.direction {
+                    Some(direction) => rotate_up_to(offset, direction),
+                    None => offset,
+                };
+                epaint::Vertex {
+                    pos: instance.center + rotated,
+                    uv: epaint::WHITE_UV,
+                    color: tinted_color(vertex.color, instance.tint),
+                }
+            }));
         self.mesh
             .indices
             .extend(template.indices.iter().map(|&index| base + index));

@@ -35,7 +35,12 @@ walkers.workspace = true
 gt-icon-tessellate = { path = "../gt-icon-tessellate" }
 postcard.workspace = true
 
+[[bench]]
+name = "icon_batch"
+harness = false
+
 [dev-dependencies]
+criterion.workspace = true
 egui_kittest.workspace = true
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 proptest.workspace = true

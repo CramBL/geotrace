@@ -42,6 +42,7 @@ clippy:
     cargo clippy --workspace --no-deps -- -D warnings
     cargo clippy --workspace --no-deps --tests -- -D warnings
     cargo clippy --workspace --no-deps --examples -- -D warnings
+    cargo clippy --workspace --no-deps --benches -- -D warnings
     # The dist-only self-update code is feature-gated, so lint it explicitly too.
     cargo clippy --workspace --no-deps --features geotrace/self-update --tests -- -D warnings
 
