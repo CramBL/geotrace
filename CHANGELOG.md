@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.0 - 2026-07-22
+
 ### Added
 
 - A trail opacity control in the Sky trails window, to quieten the paths on a busy multi-constellation sky or turn them up.
