@@ -267,6 +267,7 @@ gt-map = { path = "crates/gt-map" }
 gt-plot = { path = "crates/gt-plot" }
 gt-query = { path = "crates/gt-query" }
 gt-side-panel = { path = "crates/gt-side-panel" }
+gt-sky = { path = "crates/gt-sky" }
 gt-snap = { path = "crates/gt-snap" }
 gt-track-builder = { path = "crates/gt-track-builder" }
 gt-types = { path = "crates/gt-types" }

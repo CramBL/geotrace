@@ -42,10 +42,54 @@ pub const DIMMED_MARK_ALPHA: f32 = 0.25;
 /// Stroke width of a satellite trail in the whole-track plot.
 pub const TRAIL_WIDTH_PX: f32 = 2.0;
 
-/// A trail's alpha ramps from [`TRAIL_MIN_ALPHA`] at the track's start to
-/// [`TRAIL_MAX_ALPHA`] at its end, so the sweep direction is legible.
-pub const TRAIL_MIN_ALPHA: f32 = 0.15;
-pub const TRAIL_MAX_ALPHA: f32 = 0.9;
+/// A trail draws as a comet's tail: [`TRAIL_MAX_ALPHA`] at the satellite's
+/// current position, fading back over [`TRAIL_TAIL_SECS`] of *past* travel to
+/// [`TRAIL_MIN_ALPHA`], where the rest of the path stays as a faint ghost. The
+/// path ahead of the satellite - where it has not been yet - is held at the
+/// floor, so the bright end always points the way it is moving and the
+/// direction of travel reads at a glance without arrows or other clutter.
+/// The floor is the ghost's strength: high enough that the whole path stays
+/// readable on a long recording, low enough that the head still reads as much
+/// brighter - roughly a sevenfold ratio.
+pub const TRAIL_MIN_ALPHA: f32 = 0.13;
+pub const TRAIL_MAX_ALPHA: f32 = 0.95;
+
+/// Length of the bright tail behind the satellite, in seconds: the trail is at
+/// [`TRAIL_MAX_ALPHA`] at the current instant and has faded to
+/// [`TRAIL_MIN_ALPHA`] this far back along the path it already travelled. Ten
+/// minutes.
+pub const TRAIL_TAIL_SECS: f32 = 600.0;
+
+/// Alpha steps the trail fade is quantized into. Each maximal run of one step
+/// is drawn as a single connected polyline, so translucent segments never stack
+/// opacity where the path is dense or doubles back. Enough steps that the
+/// banding is imperceptible while the count of drawn shapes stays small.
+pub const TRAIL_FADE_STEPS: u32 = 24;
+
+/// The trail opacity control, as a percentage the user types. It scales the
+/// whole trail - tail and ghost alike - so a busy multi-constellation sky can
+/// be quietened and a sparse one turned right up.
+///
+/// [`TRAIL_OPACITY_PERCENT_DEFAULT`] is the calibrated look: the tuned alphas
+/// above are exactly what the plot is designed to show, so it maps to a scale
+/// of `1.0` ([`trail_opacity_multiplier`]). The scale is left deliberately
+/// short of the `0..=100 %` range's top so there is real headroom to push the
+/// trails bolder than the default, per the request to be able to turn them "up
+/// much more" - at 100 % the whole trail is drawn at
+/// `100 / DEFAULT` times its tuned strength.
+pub const TRAIL_OPACITY_PERCENT_MIN: f32 = 0.0;
+pub const TRAIL_OPACITY_PERCENT_MAX: f32 = 100.0;
+pub const TRAIL_OPACITY_PERCENT_DEFAULT: f32 = 40.0;
+
+/// The alpha scale for an opacity percentage: `1.0` at
+/// [`TRAIL_OPACITY_PERCENT_DEFAULT`] (the calibrated look), rising to
+/// `100 / DEFAULT` at full and falling to `0` (invisible) at nothing. The
+/// percentage is clamped first so a stray value can never overdrive or invert
+/// the trails.
+pub fn trail_opacity_multiplier(percent: f32) -> f32 {
+    percent.clamp(TRAIL_OPACITY_PERCENT_MIN, TRAIL_OPACITY_PERCENT_MAX)
+        / TRAIL_OPACITY_PERCENT_DEFAULT
+}
 
 /// Alpha applied to trails of the constellations not currently focused
 /// (hovered), so the focused constellation stands out.
@@ -148,5 +192,28 @@ mod tests {
             .map(|quality| mark_radius(Some(quality)))
             .fold(f32::INFINITY, f32::min);
         assert!(mark_radius(None) <= smallest);
+    }
+
+    /// The opacity percentage maps to an alpha scale of `1.0` at the calibrated
+    /// default, `0` at nothing, and above `1.0` at the top of the range so the
+    /// trails can be turned up past their tuned strength. Out-of-range percents
+    /// clamp rather than inverting or overdriving.
+    #[test]
+    fn trail_opacity_multiplier_is_one_at_the_default_and_scales_the_range() {
+        use super::{
+            TRAIL_OPACITY_PERCENT_DEFAULT, TRAIL_OPACITY_PERCENT_MAX, TRAIL_OPACITY_PERCENT_MIN,
+            trail_opacity_multiplier as mult,
+        };
+        let approx = |a: f32, b: f32| (a - b).abs() < 1e-6;
+
+        assert!(approx(mult(TRAIL_OPACITY_PERCENT_DEFAULT), 1.0));
+        assert!(approx(mult(TRAIL_OPACITY_PERCENT_MIN), 0.0));
+        assert!(
+            mult(TRAIL_OPACITY_PERCENT_MAX) > 1.0,
+            "the top of the range must exceed the default so trails can be bolder"
+        );
+        // Clamped both ways: nothing below the min or above the max.
+        assert!(approx(mult(-50.0), mult(TRAIL_OPACITY_PERCENT_MIN)));
+        assert!(approx(mult(1000.0), mult(TRAIL_OPACITY_PERCENT_MAX)));
     }
 }

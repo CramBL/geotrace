@@ -126,6 +126,12 @@ pub struct SkyTrailsWindow {
     /// Whether the current-instant signal heat field is drawn beneath the
     /// trails.
     show_heatmap: bool,
+    /// How strongly the trails are drawn, as the opacity field's percentage.
+    /// Unlike the other view toggles this is a persisted preference, seeded from
+    /// settings via [`SkyTrailsWindow::set_trail_opacity_percent`] and left alone
+    /// by `open_track`, so it carries across tracks and restarts rather than
+    /// resetting.
+    trail_opacity_percent: f32,
     /// An instant the window was asked to open at, applied on the next
     /// `show` once the trails - and so the track's time span - are known.
     /// Requests arrive before the trails are extracted, so the scrub position
@@ -146,6 +152,21 @@ impl SkyTrailsWindow {
         self.open = false;
         self.track = None;
         self.cache = None;
+    }
+
+    /// The trails' opacity percentage, for the app to persist to settings.
+    pub fn trail_opacity_percent(&self) -> f32 {
+        self.trail_opacity_percent
+    }
+
+    /// Seed the trails' opacity percentage from persisted settings, clamped to
+    /// the valid range. The app calls this at startup so the window opens at the
+    /// last-used strength.
+    pub fn set_trail_opacity_percent(&mut self, percent: f32) {
+        self.trail_opacity_percent = percent.clamp(
+            gt_sky::TRAIL_OPACITY_PERCENT_MIN,
+            gt_sky::TRAIL_OPACITY_PERCENT_MAX,
+        );
     }
 
     /// Open the window per `request`: on its track, and scrubbed to its
@@ -178,6 +199,8 @@ impl SkyTrailsWindow {
             self.show_trails = true;
             self.in_fix_now = false;
             self.show_heatmap = false;
+            // `trail_opacity_percent` is a persisted preference, so it is
+            // deliberately not reset here.
             self.cache = None;
         }
     }
@@ -232,6 +255,7 @@ impl SkyTrailsWindow {
             show_trails: &mut self.show_trails,
             in_fix_now: &mut self.in_fix_now,
             show_heatmap: &mut self.show_heatmap,
+            trail_opacity_percent: &mut self.trail_opacity_percent,
             track_ref,
             elevation_mask_deg,
             highlight,
@@ -262,6 +286,7 @@ struct WindowBody<'a> {
     show_trails: &'a mut bool,
     in_fix_now: &'a mut bool,
     show_heatmap: &'a mut bool,
+    trail_opacity_percent: &'a mut f32,
     track_ref: TrackRef,
     elevation_mask_deg: f32,
     highlight: &'a mut MapHighlight,
@@ -281,6 +306,7 @@ impl WindowBody<'_> {
             show_trails,
             in_fix_now,
             show_heatmap,
+            trail_opacity_percent,
             track_ref,
             elevation_mask_deg,
             highlight,
@@ -363,6 +389,7 @@ impl WindowBody<'_> {
                         ui,
                         ViewToggles {
                             show_trails,
+                            trail_opacity_percent,
                             show_heatmap,
                             in_fix_now,
                             show_not_in_fix,
@@ -379,6 +406,7 @@ impl WindowBody<'_> {
                 .show_trails(*show_trails)
                 .in_fix_now(*in_fix_now)
                 .show_heatmap(*show_heatmap)
+                .trail_opacity(gt_sky::trail_opacity_multiplier(*trail_opacity_percent))
                 .with_elevation_mask_deg(elevation_mask_deg)
                 .ui(ui);
         });
@@ -396,17 +424,20 @@ impl WindowBody<'_> {
 /// helper's parameter list, which would otherwise be a row of bare booleans.
 struct ViewToggles<'a> {
     show_trails: &'a mut bool,
+    trail_opacity_percent: &'a mut f32,
     show_heatmap: &'a mut bool,
     in_fix_now: &'a mut bool,
     show_not_in_fix: &'a mut bool,
 }
 
-/// The view toggles below the stats: what is drawn (the whole-track trails, and
-/// the current-instant signal heat field) above which satellites are kept (only
-/// those in the fix right now, and the whole-track not-in-fix filter).
+/// The view toggles below the stats: what is drawn (the whole-track trails and
+/// how strongly, and the current-instant signal heat field) above which
+/// satellites are kept (only those in the fix, and the whole-track not-in-fix
+/// filter).
 fn view_toggles(ui: &mut egui::Ui, toggles: ViewToggles<'_>) {
     let ViewToggles {
         show_trails,
+        trail_opacity_percent,
         show_heatmap,
         in_fix_now,
         show_not_in_fix,
@@ -415,6 +446,29 @@ fn view_toggles(ui: &mut egui::Ui, toggles: ViewToggles<'_>) {
         "Draw each satellite's whole path across the sky. Off shows only where \
          they are at the current instant.",
     );
+    // A compact percentage field rather than a slider, which would eat a row's
+    // width. Directly under the checkbox it qualifies, and indented so it reads
+    // as belonging to it rather than as a fifth independent control. Grayed out
+    // with the trails off - there is nothing for it to act on - rather than
+    // disappearing and reflowing the column.
+    ui.indent("trail_opacity", |ui| {
+        ui.add_enabled_ui(*show_trails, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Opacity");
+                ui.add(
+                    egui::DragValue::new(trail_opacity_percent)
+                        .range(
+                            gt_sky::TRAIL_OPACITY_PERCENT_MIN..=gt_sky::TRAIL_OPACITY_PERCENT_MAX,
+                        )
+                        .speed(0.5)
+                        .fixed_decimals(0)
+                        .suffix("%"),
+                )
+                .on_hover_text("How strongly the trails are drawn.")
+                .on_disabled_hover_text("Turn the trails on to change their opacity.");
+            });
+        });
+    });
     ui.checkbox(show_heatmap, "Signal heatmap").on_hover_text(
         "Glow where the fix satellites are right now, brighter with stronger signal.",
     );
@@ -1110,6 +1164,7 @@ mod tests {
                             show_trails: &mut true,
                             in_fix_now: &mut false,
                             show_heatmap: &mut false,
+                            trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
                             track_ref: track_ref(),
                             elevation_mask_deg: 10.0,
                             highlight: &mut MapHighlight::default(),
@@ -1164,6 +1219,7 @@ mod tests {
                     show_trails: &mut true,
                     in_fix_now: &mut false,
                     show_heatmap: &mut false,
+                    trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),
@@ -1192,6 +1248,7 @@ mod tests {
                         show_trails: &mut true,
                         in_fix_now: &mut false,
                         show_heatmap: &mut false,
+                        trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
                         track_ref: track_ref(),
                         elevation_mask_deg: 10.0,
                         highlight,
@@ -1392,6 +1449,7 @@ mod tests {
                     show_trails: &mut true,
                     in_fix_now: &mut false,
                     show_heatmap: &mut false,
+                    trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),
@@ -1464,6 +1522,7 @@ mod tests {
                     show_trails: &mut true,
                     in_fix_now: &mut false,
                     show_heatmap: &mut false,
+                    trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),
@@ -1597,6 +1656,7 @@ mod tests {
                         show_trails: &mut true,
                         in_fix_now: &mut false,
                         show_heatmap: &mut false,
+                        trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
                         track_ref: track_ref(),
                         elevation_mask_deg: 10.0,
                         highlight: &mut MapHighlight::default(),
@@ -1658,6 +1718,7 @@ mod tests {
                         show_trails: &mut true,
                         in_fix_now: &mut false,
                         show_heatmap: &mut false,
+                        trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
                         track_ref: track_ref(),
                         elevation_mask_deg: 10.0,
                         highlight: &mut MapHighlight::default(),
@@ -1716,6 +1777,7 @@ mod tests {
                     show_trails: &mut true,
                     in_fix_now: &mut false,
                     show_heatmap: &mut false,
+                    trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
                     track_ref: track_ref(),
                     elevation_mask_deg: 10.0,
                     highlight: &mut MapHighlight::default(),

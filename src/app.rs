@@ -1152,6 +1152,8 @@ impl App {
             slip_window_min: s.analysis.slip_window_min,
         };
         self.loader.analysis_config = analysis;
+        self.sky_trails_window
+            .set_trail_opacity_percent(s.map.sky_trail_opacity_percent);
         {
             let mut shared = self.shared.borrow_mut();
             shared.plot_state.sync_to_map = s.map.sync_to_map;
@@ -1535,6 +1537,7 @@ impl App {
             display_mask: s.display_mask,
             sky_glyph_variant: s.sky_glyph_variant,
             point_window_folds: s.point_window_folds,
+            sky_trail_opacity_percent: self.sky_trails_window.trail_opacity_percent().into(),
             theme,
             recording_name_template: s.recording_name_template.clone(),
             track_split_gap_seconds: self
@@ -1611,6 +1614,7 @@ impl App {
                 display_mask: s.display_mask,
                 sky_glyph_variant: s.sky_glyph_variant,
                 point_window_folds: s.point_window_folds,
+                sky_trail_opacity_percent: self.sky_trails_window.trail_opacity_percent(),
             },
             ui: crate::settings::UiSettings {
                 theme,
