@@ -77,7 +77,7 @@ dirs = "6"
 eframe = { version = "0.34.3", default-features = false, features = ["default_fonts", "wgpu", "wayland"] }
 egui = "0.34.3"
 egui-phosphor = "0.12.0"
-egui_extras = { version = "0.34.3", features = ["svg"] }
+egui_extras = "0.34.3"
 egui_kittest = { version = "0.34.3", features = ["eframe", "wgpu", "snapshot"] }
 egui_plot = "0.35.0"
 egui_tiles = "0.15"

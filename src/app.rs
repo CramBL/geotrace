@@ -389,12 +389,6 @@ impl App {
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
         cc.egui_ctx.set_fonts(fonts);
 
-        // Register the SVG image loaders (must come before register_marker_icons).
-        egui_extras::install_image_loaders(&cc.egui_ctx);
-        // Pre-register the compiled-in SVG marker icons so the texture cache
-        // can serve them without any per-frame heap allocation.
-        gt_map::register_marker_icons(&cc.egui_ctx);
-
         let mut loaded_settings = config_path
             .as_ref()
             .map(|p| crate::settings::load_settings_from(p))

@@ -18,6 +18,7 @@ use uom::si::angle::{degree, radian};
 use uom::si::f64::Angle;
 use uom::si::length::meter;
 
+use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
 use crate::transform::MapScale;
 
 /// Local on-screen fix spacing, in units of the icon size, at which a fix
@@ -142,6 +143,7 @@ pub(crate) fn draw_track_icons(
     transform: &crate::transform::MercTransform,
     highlight: &MapHighlight,
     filter: &GlobalFilter,
+    icon_meshes: Option<&IconMeshLibrary>,
 ) {
     // Real fixes: indices come from the global R-tree viewport query.
     if let Some(indices) = real_fix_indices {
@@ -199,6 +201,7 @@ pub(crate) fn draw_track_icons(
                 pixels_per_meter,
                 is_arrow_highlighted(highlight, point_ref),
                 &point_style,
+                icon_meshes,
             );
         }
     }
@@ -262,6 +265,7 @@ pub(crate) fn draw_track_icons(
             0.0,
             is_arrow_highlighted(highlight, point_ref),
             &point_style,
+            icon_meshes,
         );
     }
 }
@@ -1342,6 +1346,10 @@ pub(crate) fn split_spans_by<K: Copy, P: Copy + PartialEq>(
 /// horizontal-accuracy circle and the directional icon (arrow or ghost).
 /// The satellite-count labels are a separate anchor-based pass, see
 /// [`draw_sat_labels`].
+#[expect(
+    clippy::too_many_arguments,
+    reason = "render context requires all parameters; a context struct would not add clarity"
+)]
 fn draw_tpv_point(
     ui: &Ui,
     screen_pos: Pos2,
@@ -1350,6 +1358,7 @@ fn draw_tpv_point(
     pixels_per_meter: f64,
     highlighted: bool,
     style: &TpvDrawStyle,
+    icon_meshes: Option<&IconMeshLibrary>,
 ) {
     // Accuracy circle - rendered beneath the icon. Skipped when too small to
     // see at all, and when small enough to be entirely covered by the icon.
@@ -1392,6 +1401,7 @@ fn draw_tpv_point(
         PointKind::Ghost { direction } => {
             draw_ghost_chevron(
                 ui,
+                icon_meshes,
                 screen_pos,
                 *direction,
                 highlighted,
@@ -1480,13 +1490,15 @@ fn ghost_direction(prev: gt_types::MercPoint, next: gt_types::MercPoint) -> Vec2
     }
 }
 
-/// Render a hollow chevron for a ghost fix using the pre-loaded SVG texture.
+/// Render a hollow chevron for a ghost fix from its pre-tessellated mesh.
 ///
 /// The chevron tip points in `direction` (the inferred travel direction).
-/// The icon is rendered as a rotated mesh quad so a single SVG asset handles
-/// all orientations without re-rasterising.
+/// Painted immediately (not collected into a pass-level batch) so each
+/// chevron keeps its stacking against the neighbouring accuracy circles;
+/// egui still merges the consecutive untextured meshes into one draw call.
 fn draw_ghost_chevron(
     ui: &Ui,
+    icon_meshes: Option<&IconMeshLibrary>,
     center: Pos2,
     direction: Vec2,
     highlighted: bool,
@@ -1504,14 +1516,15 @@ fn draw_ghost_chevron(
         FIX_LOST_RED
     }
     .gamma_multiply(icon_alpha);
-    crate::icons::draw_rotated_cached_icon(
-        ui,
-        crate::icons::ICON_URI_GHOST_FIX,
+    let mut batch = IconMeshBatch::new(icon_meshes, ui.pixels_per_point());
+    batch.push(IconInstance {
+        icon: IconId::GhostFix,
         center,
-        direction,
-        size,
+        half_extents: Vec2::splat(size),
+        direction: Some(direction),
         tint,
-    );
+    });
+    batch.paint(ui.painter());
 }
 
 fn draw_navigation_arrow(

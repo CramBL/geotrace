@@ -15,6 +15,7 @@ use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRe
 use gt_ui_types::{DrawLayerMask, HighlightScope, MapHighlight, QueryMatches, SkyGlyphVariant};
 use walkers::{MapMemory, Plugin, Projector};
 
+use crate::icon_mesh::IconMeshLibrary;
 use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
 use crate::query_match_renderer;
 use crate::sat_labels::{self, SelectedLabels};
@@ -152,6 +153,8 @@ pub struct TrackLayers<'a> {
     display_query_highlights: bool,
     /// Which sky-glyph variant to draw for report-bearing points.
     sky_glyph_variant: SkyGlyphVariant,
+    /// Pre-tessellated icon meshes for the ghost chevrons.
+    icon_meshes: Option<&'a IconMeshLibrary>,
 }
 
 impl<'a> TrackLayers<'a> {}
@@ -629,6 +632,7 @@ impl TrackLayers<'_> {
                     transform,
                     self.highlight,
                     self.filter,
+                    self.icon_meshes,
                 );
             }
             // Labels last so their backplates sit on top of the icons.

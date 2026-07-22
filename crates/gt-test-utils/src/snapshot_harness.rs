@@ -15,17 +15,14 @@ fn snapshot_options() -> SnapshotOptions {
 /// small allowance keeps those tests stable without masking real regressions.
 const LOOSE_PIXEL_COUNT_TOLERANCE: usize = 32;
 
-/// Installs the Phosphor icon font and image loaders into the test context so
-/// snapshots render real glyphs and SVG marker icons instead of fallback boxes.
-///
-/// Mirrors the production setup in `App::new_with_config`. `register_marker_icons`
-/// is deliberately not called here: it lives in `gt-map` and is invoked by that
-/// crate's own tests (calling it from here would invert the dependency direction).
+/// Installs the Phosphor icon font into the test context so snapshots render
+/// real glyphs instead of fallback boxes, mirroring the production setup in
+/// `App::new_with_config`. (Marker icons need no setup: they draw from
+/// meshes embedded in `gt-map` at build time.)
 fn install_icon_assets(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
     ctx.set_fonts(fonts);
-    egui_extras::install_image_loaders(ctx);
 }
 
 /// Snapshot comparison runs locally, on macOS CI (Metal), and on Linux CI
