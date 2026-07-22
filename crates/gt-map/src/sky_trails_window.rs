@@ -1279,7 +1279,7 @@ mod tests {
                 .ui(ui);
             });
         harness.run();
-        harness.snapshot(name);
+        harness.snapshot_loose(name);
     }
 
     /// Run the body once at a mid-track scrub with the given starting

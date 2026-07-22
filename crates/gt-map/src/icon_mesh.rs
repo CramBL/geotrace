@@ -12,10 +12,45 @@ mod batch;
 
 use std::collections::BTreeMap;
 
+use egui::Vec2;
 use gt_icon_tessellate::IconTessellation;
 use gt_types::MarkerIcon;
 
 pub use batch::{IconInstance, IconMeshBatch};
+
+/// Half extent in points of the standard square marker icons (20 pt across).
+pub(crate) const ICON_HALF_EXTENT_PT: f32 = 10.0;
+
+/// Half extent in points of the larger square marker icons (24 pt across).
+pub(crate) const ICON_HALF_EXTENT_LARGE_PT: f32 = 12.0;
+
+/// Half extents in points of the bottom-anchored pins ([IconId::Pin] and
+/// [IconId::LogPin]): an aspect-true 18x24 pt rect whose tip sits one
+/// y-half-extent below the instance center.
+pub(crate) const PIN_HALF_EXTENTS_PT: Vec2 = Vec2::new(9.0, 12.0);
+
+/// The half extent a [MarkerIcon] is drawn with when rendered as a square
+/// icon: satellites and the warning triangle get the larger size, matching
+/// the old per-call-site texture rects.
+pub(crate) fn marker_icon_half_extent(icon: MarkerIcon) -> f32 {
+    match icon {
+        MarkerIcon::Warning | MarkerIcon::Satellite | MarkerIcon::SatelliteLost => {
+            ICON_HALF_EXTENT_LARGE_PT
+        }
+        MarkerIcon::Pin
+        | MarkerIcon::Cross
+        | MarkerIcon::Circle
+        | MarkerIcon::Lightning
+        | MarkerIcon::Error
+        | MarkerIcon::Check
+        | MarkerIcon::Log
+        | MarkerIcon::Gear
+        | MarkerIcon::Refresh
+        | MarkerIcon::Download
+        | MarkerIcon::Upload
+        | MarkerIcon::Wrench => ICON_HALF_EXTENT_PT,
+    }
+}
 
 /// Identifies one marker icon SVG asset.
 ///

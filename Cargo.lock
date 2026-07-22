@@ -2451,6 +2451,7 @@ dependencies = [
  "gt-types",
  "gt-ui-theme",
  "gt-ui-types",
+ "log",
  "postcard",
  "proptest",
  "rstar 0.13.0",

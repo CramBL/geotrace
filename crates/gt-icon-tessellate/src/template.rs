@@ -7,8 +7,9 @@ use vec1::Vec1;
 /// Anti-alias fringe width baked into every template, in physical pixels at
 /// the bucket's nominal on-screen size.
 ///
-/// Matches egui's feathering width, so mesh icons blend into scenes rendered
-/// by egui's own tessellator.
+/// Matches egui's feathering width, and like egui's feathering the ramp is
+/// centered on the true edge (the solid geometry is inset by half a feather),
+/// so shapes keep their perceived size instead of growing a bright halo.
 pub const FEATHER_PX: f32 = 1.0;
 
 /// Physical-pixel icon sizes (full extent of the larger viewbox axis) the

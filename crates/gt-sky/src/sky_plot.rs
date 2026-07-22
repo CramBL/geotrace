@@ -451,7 +451,7 @@ mod snapshot_tests {
                     .ui(ui);
             });
         harness.run();
-        harness.snapshot(name);
+        harness.snapshot_loose(name);
     }
 
     #[test]

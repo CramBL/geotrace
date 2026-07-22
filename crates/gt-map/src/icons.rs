@@ -1,5 +1,7 @@
-//! Marker icon assets: URI constants, startup registration, and cached
-//! SVG drawing shared by the marker renderers.
+//! Marker icon assets still on the texture path: URI constants, startup
+//! registration, and the rotated ghost-chevron drawing.
+//! The marker renderers draw from pre-tessellated meshes (see
+//! [crate::icon_mesh]); migrating the ghost chevrons retires this module.
 
 // URI constants used by the marker renderer and the startup registration call.
 pub(crate) const ICON_URI_LIGHTNING: &str = "bytes://gt-map/icons/lightning.svg";
@@ -19,11 +21,6 @@ pub(crate) const ICON_URI_DOWNLOAD: &str = "bytes://gt-map/icons/download.svg";
 pub(crate) const ICON_URI_UPLOAD: &str = "bytes://gt-map/icons/upload.svg";
 pub(crate) const ICON_URI_WRENCH: &str = "bytes://gt-map/icons/wrench.svg";
 pub(crate) const ICON_URI_GHOST_FIX: &str = "bytes://gt-map/icons/ghost_fix.svg";
-
-/// Standard icon size in pixels used for most marker SVG icons.
-pub(crate) const ICON_SIZE_PX: f32 = 20.0;
-/// Larger icon size in pixels used for satellite and warning markers.
-pub(crate) const ICON_SIZE_LARGE_PX: f32 = 24.0;
 
 /// Register the embedded SVG marker icons with the egui context.
 ///
@@ -62,42 +59,6 @@ pub fn register_marker_icons(ctx: &egui::Context) {
     ctx.include_bytes(ICON_URI_WRENCH, icon_bytes!("wrench.svg"));
     ctx.include_bytes(ICON_URI_GHOST_FIX, icon_bytes!("ghost_fix.svg"));
 }
-/// Draw an SVG marker icon at `rect`, with optional `tint`.
-///
-/// The resolved `TextureId` is cached in egui's context data store after the
-/// first successful load so that subsequent frames skip the URI hash and image
-/// cache lookup and go directly to `painter.add(Shape::image(...))`.
-pub(crate) fn draw_cached_icon(
-    ui: &egui::Ui,
-    uri: &'static str,
-    rect: egui::Rect,
-    tint: egui::Color32,
-) {
-    let cache_key = egui::Id::new(("gt_icon_tex", uri));
-    if let Some(tex_id) = ui.ctx().data(|d| d.get_temp::<egui::TextureId>(cache_key)) {
-        ui.painter().add(egui::Shape::image(
-            tex_id,
-            rect,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            tint,
-        ));
-        return;
-    }
-    if let Ok(egui::load::TexturePoll::Ready { texture }) = ui.ctx().try_load_texture(
-        uri,
-        egui::TextureOptions::LINEAR,
-        egui::load::SizeHint::default(),
-    ) {
-        ui.ctx().data_mut(|d| d.insert_temp(cache_key, texture.id));
-        ui.painter().add(egui::Shape::image(
-            texture.id,
-            rect,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            tint,
-        ));
-    }
-}
-
 /// Draw a rotated SVG icon centred on `center`, with the icon's "up" direction aligned to
 /// `direction`.
 ///

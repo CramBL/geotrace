@@ -267,10 +267,21 @@ pub struct NavMap {
     disambiguation_pos: egui::Pos2,
     /// Session-only state of the display toggle (popup open, solo restore).
     display_toggle: display_toggle::DisplayToggleState,
+    /// Pre-tessellated marker icon meshes decoded from the embedded blob.
+    /// `None` only if the embedded data is corrupted (reported at startup);
+    /// marker icons are then skipped.
+    icon_meshes: Option<icon_mesh::IconMeshLibrary>,
 }
 
 impl NavMap {
     pub fn new(egui_ctx: Context) -> Self {
+        let icon_meshes = match icon_mesh::IconMeshLibrary::embedded() {
+            Ok(library) => Some(library),
+            Err(err) => {
+                log::error!("icon meshes unavailable, marker icons will not be drawn: {err:#}");
+                None
+            }
+        };
         Self {
             osm_tiles: HttpTiles::new(OpenStreetMap, egui_ctx.clone()),
             mapbox_tiles: None,
@@ -289,6 +300,7 @@ impl NavMap {
             disambiguation_candidates: [None; 4],
             disambiguation_pos: egui::pos2(0.0, 0.0),
             display_toggle: display_toggle::DisplayToggleState::default(),
+            icon_meshes,
         }
     }
 
@@ -563,6 +575,7 @@ impl NavMap {
                 highlight,
                 filter,
                 visible.custom,
+                self.icon_meshes.as_ref(),
             ));
         }
         if display_mask.is_visible(DisplayCategory::GeneratedMarkers) {
@@ -573,6 +586,7 @@ impl NavMap {
                 filter,
                 generated_marker_visibility,
                 visible.generated,
+                self.icon_meshes.as_ref(),
             ));
         }
         if display_mask.is_visible(DisplayCategory::EventMarkers) {
@@ -583,6 +597,7 @@ impl NavMap {
                 filter,
                 event_marker_visibility,
                 visible.event,
+                self.icon_meshes.as_ref(),
             ));
         }
 

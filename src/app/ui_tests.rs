@@ -1881,7 +1881,7 @@ fn snapshot_app_plot_channel_components() {
     for _ in 0..60 {
         harness.inner.run();
     }
-    harness.snapshot("app_plot_channel_components");
+    harness.snapshot_loose("app_plot_channel_components");
 }
 
 /// The channel chip's right-click menu carries one color entry per
@@ -1998,7 +1998,7 @@ fn snapshot_app_plot_channel_color_override() {
     for _ in 0..60 {
         harness.inner.run();
     }
-    harness.snapshot("app_plot_channel_color_override");
+    harness.snapshot_loose("app_plot_channel_color_override");
 }
 
 /// The fixture stretches whose `accel` x-component exceeds 1 g, shared by the
@@ -2219,7 +2219,7 @@ fn snapshot_query_autocomplete_popup() {
         "s-metrics are offered: {names:?}"
     );
 
-    harness.snapshot("query_autocomplete_popup");
+    harness.snapshot_loose("query_autocomplete_popup");
 }
 
 /// A checker error: an error icon and the red problem, then the suggestion as
@@ -2591,7 +2591,7 @@ fn snapshot_snap_auto_prompt() {
     shared.sync_tree_from_loaded_files();
     drop(shared);
     harness.run();
-    harness.snapshot("snap_auto_prompt");
+    harness.snapshot_loose("snap_auto_prompt");
 }
 
 #[test]

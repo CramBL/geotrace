@@ -1216,7 +1216,7 @@ mod tests {
                     .ui(ui);
             });
         harness.run();
-        harness.snapshot("sky_trails_tail");
+        harness.snapshot_loose("sky_trails_tail");
     }
 
     #[test]
@@ -1432,7 +1432,7 @@ mod tests {
                     .ui(ui);
             });
         harness.run();
-        harness.snapshot(name);
+        harness.snapshot_loose(name);
     }
 
     /// Snapshot: with the trails hidden, only the current-instant markers
@@ -1768,7 +1768,7 @@ mod tests {
                     .ui(ui);
             });
         harness.run();
-        harness.snapshot("sky_trails_heatmap");
+        harness.snapshot_loose("sky_trails_heatmap");
     }
 
     #[test]

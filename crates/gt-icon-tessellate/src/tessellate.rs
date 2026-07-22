@@ -23,7 +23,7 @@ use usvg::tiny_skia_path::{Path as SkiaPath, PathSegment};
 use vec1::Vec1;
 
 use crate::template::{
-    BucketMesh, IconMeshTemplate, IconTessellation, SIZE_BUCKETS_PX, TemplateVertex,
+    BucketMesh, FEATHER_PX, IconMeshTemplate, IconTessellation, SIZE_BUCKETS_PX, TemplateVertex,
 };
 
 /// Curve flattening tolerance, in bucket pixels.
@@ -219,21 +219,73 @@ fn bucket_mesh(
     };
     for element in elements {
         let path = to_lyon_path(&element.path, element.abs_transform, scale);
-        let buffers = tessellate_element(&path, &element.op, scale)?;
+        let mut buffers = tessellate_element(&path, &element.op, scale)?;
+        let ramp = edge_ramp(&element.op, scale);
+        let color = scale_alpha(element.color, ramp.alpha_factor);
+        // The fringe pass insets the solid boundary vertices, so it runs
+        // before the solid vertices are copied out.
+        let fringe = fringe::fringe_mesh(
+            &mut buffers.vertices,
+            &buffers.indices,
+            color,
+            ramp.inset_px,
+            ramp.outset_px,
+        )?;
         let solid: Vec<TemplateVertex> = buffers
             .vertices
             .iter()
-            .map(|&pos| TemplateVertex {
-                pos,
-                color: element.color,
-            })
+            .map(|&pos| TemplateVertex { pos, color })
             .collect();
         append_indexed(&mut mesh, solid, &buffers.indices)?;
-        let fringe = fringe::fringe_mesh(&buffers.vertices, &buffers.indices, element.color)?;
         append_indexed(&mut mesh, fringe.vertices, &fringe.indices)?;
     }
     normalize(&mut mesh, svg_w * scale, svg_h * scale);
     Ok(mesh)
+}
+
+/// How an element's edge is anti-aliased: the solid geometry is inset by
+/// `inset_px` and the alpha ramp spans from there to `outset_px` outside the
+/// true edge, centering the perceived edge on the outline.
+struct EdgeRamp {
+    inset_px: f32,
+    outset_px: f32,
+    /// Alpha multiplier for the whole element: strokes thinner than one
+    /// feather dim instead of fattening into blobs, like epaint's thin lines.
+    alpha_factor: f32,
+}
+
+fn edge_ramp(op: &PaintOp, scale: f32) -> EdgeRamp {
+    let half_feather = FEATHER_PX / 2.0;
+    let symmetric = EdgeRamp {
+        inset_px: half_feather,
+        outset_px: half_feather,
+        alpha_factor: 1.0,
+    };
+    match op {
+        PaintOp::Fill { .. } => symmetric,
+        PaintOp::Stroke(style) => {
+            let width_px = style.width * scale;
+            if width_px >= FEATHER_PX {
+                symmetric
+            } else {
+                // A half-feather inset would collapse a sub-feather stroke;
+                // inset only a quarter of its width, keep the ramp one
+                // feather wide, and trade the lost coverage for lower alpha.
+                let inset_px = width_px / 4.0;
+                EdgeRamp {
+                    inset_px,
+                    outset_px: FEATHER_PX - inset_px,
+                    alpha_factor: width_px / FEATHER_PX,
+                }
+            }
+        }
+    }
+}
+
+fn scale_alpha(color: [u8; 4], factor: f32) -> [u8; 4] {
+    let [r, g, b, a] = color;
+    let scaled = (f32::from(a) * factor).round();
+    [r, g, b, u8::try_from(scaled as i32).unwrap_or(u8::MAX)]
 }
 
 fn tessellate_element(
@@ -503,15 +555,15 @@ mod tests {
                 "{label}: non-finite vertex position"
             );
 
-            // Both solid geometry and a fringe must be present.
+            // Both solid geometry and a fringe must be present. Solid alpha
+            // can sit below 255 at small buckets, where sub-feather strokes
+            // are dimmed instead of fattened.
             assert!(
                 mesh.vertices.iter().any(|vertex| vertex.color[3] == 0),
                 "{label}: no fringe vertices"
             );
             assert!(
-                mesh.vertices
-                    .iter()
-                    .any(|vertex| vertex.color[3] == u8::MAX),
+                mesh.vertices.iter().any(|vertex| vertex.color[3] > 0),
                 "{label}: no solid vertices"
             );
 
