@@ -340,6 +340,12 @@ impl WindowBody<'_> {
         *scrub_secs = scrub_secs.clamp(0.0, total_secs);
         let scrub_time = offset_time(first, *scrub_secs);
 
+        // Cross-highlight the current instant on the track plot as a vertical
+        // time line, the same one a track-point hover draws, so playback reads
+        // on the plot too. The app gives a real hover precedence and clears this
+        // each frame, so it shows only while the window is driving a scrub.
+        highlight.scrub_time = Some(scrub_time.utc());
+
         // The map point for the current instant stays highlighted the whole
         // time the window is open - while playing, dragging, or parked - not
         // only mid-drag. The app writes the time-series plot's own hover into
@@ -1194,6 +1200,52 @@ mod tests {
                 "frame {frame}: window grew from {settled:?} to {now:?}"
             );
         }
+    }
+
+    /// Scrubbing publishes the current instant on `MapHighlight::scrub_time`,
+    /// which the app feeds into the plot's time line - so playback highlights
+    /// the plot the same way a track-point hover does. The demo track starts at
+    /// a fixed epoch and reports at 1 Hz, so `scrub_secs = 4.0` lands exactly
+    /// four seconds in.
+    #[test]
+    fn scrubbing_publishes_the_instant_for_the_plot_time_line() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let trails = demo_trails();
+        let start = DateTime::<Utc>::from_timestamp(1_748_000_000, 0).expect("valid");
+        let expected = start + Duration::seconds(4);
+
+        let highlight = Rc::new(RefCell::new(MapHighlight::default()));
+        let sink = Rc::clone(&highlight);
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(560.0, 440.0))
+            .ui(move |ui| {
+                let mut h = sink.borrow_mut();
+                WindowBody {
+                    trails: &trails,
+                    scrub_secs: &mut 4.0,
+                    playing: &mut false,
+                    speed: &mut 60.0,
+                    shown: &mut ConstellationSet::all(),
+                    show_not_in_fix: &mut true,
+                    show_trails: &mut true,
+                    in_fix_now: &mut false,
+                    show_heatmap: &mut false,
+                    trail_opacity_percent: &mut { gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT },
+                    track_ref: track_ref(),
+                    elevation_mask_deg: 10.0,
+                    highlight: &mut h,
+                }
+                .ui(ui);
+            });
+        harness.run();
+
+        assert_eq!(
+            highlight.borrow().scrub_time,
+            Some(expected),
+            "the scrubbed instant must be published for the plot's time line"
+        );
     }
 
     fn track_ref() -> TrackRef {

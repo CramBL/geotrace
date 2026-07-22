@@ -5,6 +5,7 @@
 ### Added
 
 - A trail opacity control in the Sky trails window, to quieten the paths on a busy multi-constellation sky or turn them right up. The setting persists.
+- Scrubbing the Sky trails window now marks the current time on the track plot, the same line a track-point hover draws, so playback follows along there too.
 
 ### Changed
 

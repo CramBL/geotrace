@@ -2707,7 +2707,11 @@ impl eframe::App for App {
                 | Some(HighlightScope::TrackCategory { .. }) => s.highlight.hover,
                 Some(HighlightScope::Point(_)) | None => None,
             };
-            let map_hover_time = extract_map_hover_time(&s.loaded_files, &s.highlight);
+            // Falls back to the sky-trails scrubber's instant (written by that
+            // window last frame) so playback draws the same plot time line a
+            // track-point hover does.
+            let map_hover_time =
+                extract_map_hover_time(&s.loaded_files, &s.highlight).or(s.highlight.scrub_time);
             let match_hover_time_range =
                 extract_match_hover_time_range(&s.loaded_files, &s.highlight);
 
@@ -2796,6 +2800,10 @@ impl eframe::App for App {
             // The map and plot consumed last frame's hovered match above;
             // clearing here keeps it set only while a header is hovered.
             highlight.hover_match = None;
+            // Likewise the scrub line: cleared here (after the plot read last
+            // frame's value) so it stays set only while the sky-trails window
+            // below is driving a scrub, and vanishes as soon as it closes.
+            highlight.scrub_time = None;
             self.query_window.show(
                 ui.ctx(),
                 query::RunInputs {
