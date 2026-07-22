@@ -25,7 +25,7 @@ vec1 = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 insta.workspace = true
-postcard = { version = "1", default-features = false, features = ["alloc"] }
+postcard.workspace = true
 rstest.workspace = true
 
 [lints]
