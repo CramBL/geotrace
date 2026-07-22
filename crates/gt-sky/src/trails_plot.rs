@@ -44,9 +44,12 @@ pub struct SkyTrailsPlot<'a> {
     /// When false, the whole-track trail polylines (and slip marks) are hidden,
     /// leaving just the current-instant markers - the immediate snapshot.
     show_trails: bool,
-    /// When true, only satellites in the fix at the scrubbed instant are drawn,
-    /// hiding the ones that are merely tracked right now. Inert without a
-    /// [`Self::scrub`], since there is no instant to judge against.
+    /// When true, each trail is trimmed to the stretches where the satellite
+    /// was in the fix - so a rarely-used satellite shows only the short arcs it
+    /// contributed - and a slip on a satellite never in the fix goes with it.
+    /// The trimming reads whole-track fix state, so it applies with or without a
+    /// [`Self::scrub`]; the scrub only decides the marker, which is hidden for a
+    /// satellite merely tracked at that instant.
     in_fix_now: bool,
     /// When true, a smooth signal-strength heat field is drawn beneath the
     /// trails from the current-instant in-fix satellites. Inert without a
@@ -105,9 +108,10 @@ impl<'a> SkyTrailsPlot<'a> {
         }
     }
 
-    /// Whether to show only the satellites in the fix at the scrubbed instant,
-    /// hiding the ones merely tracked right now. Defaults to false. Inert
-    /// without a [`Self::scrub`] to judge against.
+    /// Whether to trim each trail to the stretches where the satellite was in
+    /// the fix, and hide the current-instant marker of one merely tracked right
+    /// now. Defaults to false. The trimming applies with or without a
+    /// [`Self::scrub`]; only the marker needs one.
     pub fn in_fix_now(self, in_fix_now: bool) -> Self {
         Self { in_fix_now, ..self }
     }
@@ -181,42 +185,48 @@ impl<'a> SkyTrailsPlot<'a> {
             if !self.shown.contains(trail.constellation) {
                 continue;
             }
-            // Hide satellites that were never in the fix, when asked to.
+            // Hide satellites that were never in the fix over the track, when
+            // asked to. This is a whole-track judgement, so it hides the trail
+            // outright.
             if !self.show_not_in_fix && !trail.ever_in_fix() {
-                continue;
-            }
-            // The report in effect at the scrubbed instant, if any: it drives
-            // both the current-instant filter and the marker.
-            let current = self.scrub.and_then(|scrub| marker_at(trail, scrub));
-            // The current-instant filter keeps only satellites in the fix right
-            // now, dropping the ones merely tracked. Inert without a scrub.
-            if self.in_fix_now
-                && self.scrub.is_some()
-                && !current.is_some_and(|(_, _, report)| report.in_fix)
-            {
                 continue;
             }
             let base = gt_ui_theme::constellation_color(trail.constellation, dark_mode);
             let focus_factor = self.focus_factor(trail.constellation);
+            // The trail is drawn whether or not the satellite is in the fix at
+            // the current instant. "In fix only" instead trims the polyline to
+            // the stretches where it was in the fix, so a rarely-used satellite
+            // shows only the short arcs it contributed rather than a full
+            // distracting sweep - and, being a whole-track judgement, the trail
+            // does not blink as playback crosses the epochs where it drops out.
             if self.show_trails {
-                paint_trail(ui, frame, trail, base, focus_factor);
+                paint_trail(ui, frame, trail, base, focus_factor, self.in_fix_now);
             }
 
-            if let Some((azimuth, elevation, report)) = current {
-                let pos = frame.project(azimuth, elevation);
-                paint_marker(ui, pos, base.gamma_multiply(focus_factor), panel, report);
-                // Every drawn marker is a hover target. It used to be one only
-                // while the scrubber sat exactly on a report, so hover died the
-                // moment playback moved the scrubber off one and stayed dead
-                // until something put it back exactly on a report.
-                markers.push((
-                    MarkerHover {
-                        satellite: satellite_from_sample(trail, report),
-                        at: report.time,
-                    },
-                    pos,
-                ));
+            // The report in effect at the scrubbed instant places the marker.
+            let Some((azimuth, elevation, report)) =
+                self.scrub.and_then(|scrub| marker_at(trail, scrub))
+            else {
+                continue;
+            };
+            // "In fix only" drops the current-instant marker for a satellite
+            // merely tracked right now, leaving its trail in place.
+            if self.in_fix_now && !report.in_fix {
+                continue;
             }
+            let pos = frame.project(azimuth, elevation);
+            paint_marker(ui, pos, base.gamma_multiply(focus_factor), panel, report);
+            // Every drawn marker is a hover target. It used to be one only
+            // while the scrubber sat exactly on a report, so hover died the
+            // moment playback moved the scrubber off one and stayed dead
+            // until something put it back exactly on a report.
+            markers.push((
+                MarkerHover {
+                    satellite: satellite_from_sample(trail, report),
+                    at: report.time,
+                },
+                pos,
+            ));
         }
 
         // Slip marks on top of the trails they annotate. A slip on a hidden
@@ -288,32 +298,24 @@ impl<'a> SkyTrailsPlot<'a> {
     }
 
     /// Whether a slip mark is drawn (and thus hoverable). Slips annotate the
-    /// trails, so they follow the same visibility: the trails must be shown at
-    /// all, the constellation must be shown, and - unless never-in-fix
-    /// satellites are visible - the satellite must have contributed a fix, so a
-    /// hidden trail never leaves an orphan mark. The current-instant filter
-    /// hides a slip whose satellite is not in the fix right now, matching the
-    /// satellites it leaves on the plot.
+    /// whole-track trails, so they follow the trail's visibility: the trails
+    /// must be shown at all, the constellation must be shown, and the satellite
+    /// must have contributed a fix whenever a filter has trimmed the never-in-
+    /// fix trails away - either the whole-track "not in fix" filter is hiding
+    /// them, or "in fix only" has trimmed the trail down to its in-fix stretches
+    /// and a never-in-fix satellite has none - so a slip never floats with no
+    /// trail behind it. The mark is not blinked by the scrubbed instant: a slip
+    /// is a fixed whole-track event, so it stays put as playback moves.
     fn slip_visible(&self, slip: &SlipMark) -> bool {
+        let trails_trimmed_to_in_fix = !self.show_not_in_fix || self.in_fix_now;
         self.show_trails
             && self.shown.contains(slip.constellation)
-            && (self.show_not_in_fix || self.slip_satellite_ever_in_fix(slip))
-            && (!self.in_fix_now || self.scrub.is_none() || self.slip_satellite_in_fix_now(slip))
+            && (!trails_trimmed_to_in_fix || self.slip_satellite_ever_in_fix(slip))
     }
 
     /// Whether the satellite behind `slip` was ever in the fix over the track.
     fn slip_satellite_ever_in_fix(&self, slip: &SlipMark) -> bool {
         self.slip_trail(slip).is_some_and(SkyTrail::ever_in_fix)
-    }
-
-    /// Whether the satellite behind `slip` is in the fix at the scrubbed
-    /// instant. False without a scrub, since there is no instant to judge.
-    fn slip_satellite_in_fix_now(&self, slip: &SlipMark) -> bool {
-        self.scrub.is_some_and(|scrub| {
-            self.slip_trail(slip)
-                .and_then(|trail| marker_at(trail, scrub))
-                .is_some_and(|(_, _, report)| report.in_fix)
-        })
     }
 
     /// The trail of the satellite a slip belongs to, if it is among the trails.
@@ -327,10 +329,19 @@ impl<'a> SkyTrailsPlot<'a> {
 
 /// Paint one trail: a polyline through its samples, each segment's alpha
 /// ramping with time so the sweep direction reads, broken wherever an epoch
-/// falls between two samples (the satellite dropped out there).
-fn paint_trail(ui: &egui::Ui, frame: Frame, trail: &SkyTrail, color: Color32, focus_factor: f32) {
+/// falls between two samples (the satellite dropped out there) and - when
+/// `in_fix_only` is set - wherever the satellite was tracked but not in the
+/// fix, trimming the path to the stretches it actually contributed to.
+fn paint_trail(
+    ui: &egui::Ui,
+    frame: Frame,
+    trail: &SkyTrail,
+    color: Color32,
+    focus_factor: f32,
+    in_fix_only: bool,
+) {
     let painter = ui.painter();
-    for segment in trail_segments(trail, frame) {
+    for segment in trail_segments(trail, frame, in_fix_only) {
         let ramp = style::TRAIL_MIN_ALPHA
             + (style::TRAIL_MAX_ALPHA - style::TRAIL_MIN_ALPHA)
                 * frame.time_range.normalize(segment.ramp_time);
@@ -370,36 +381,41 @@ struct TrailSegment {
 ///
 /// Gaps survive the collapse: the pair bracketing an absence always ends the
 /// run, so a satellite that dropped out still shows a break rather than a line
-/// drawn straight across the time it was gone. The final sample always ends the
-/// last run, so a trail never stops short of where it really ended.
-fn trail_segments(trail: &SkyTrail, frame: Frame) -> Vec<TrailSegment> {
+/// drawn straight across the time it was gone. Dropping the not-in-fix samples
+/// leaves the same kind of break - their epochs are skipped, so the surviving
+/// neighbours are no longer consecutive - so a tracked-but-unused stretch reads
+/// as a gap too. The final drawn sample always ends the last run, so a trail
+/// never stops short of where it really ended.
+fn trail_segments(trail: &SkyTrail, frame: Frame, in_fix_only: bool) -> Vec<TrailSegment> {
     let mut segments = Vec::new();
-    let mut anchor = match trail.samples.first() {
-        Some(first) => (first, frame.project(first.azimuth, first.elevation)),
-        None => return segments,
+    let mut samples = trail
+        .samples
+        .iter()
+        .filter(|sample| !in_fix_only || sample.in_fix);
+    let Some(first) = samples.next() else {
+        return segments;
     };
+    let mut anchor = (first, frame.project(first.azimuth, first.elevation));
+    // The last drawn-through sample, so a gap can close the run at it and the
+    // trailing collapse can reach it, even when it was collapsed sub-pixel.
+    let mut prev = first;
     let mut pending = false;
-    for pair in trail.samples.windows(2) {
-        let [a, b] = pair else {
-            continue;
-        };
+    for b in samples {
         let b_pos = frame.project(b.azimuth, b.elevation);
-        if !b.epoch.follows(a.epoch) {
-            // The satellite was absent between these two samples. Close the run
-            // at `a` so the collapse never spans the gap, then restart at `b`.
+        if !b.epoch.follows(prev.epoch) {
+            // An absence (or a trimmed not-in-fix stretch) sits between these
+            // two samples. Close the run at `prev` so the collapse never spans
+            // it, then restart at `b`.
             if pending {
-                let a_pos = frame.project(a.azimuth, a.elevation);
                 segments.push(TrailSegment {
                     from: anchor.1,
-                    to: a_pos,
-                    ramp_time: a.time,
+                    to: frame.project(prev.azimuth, prev.elevation),
+                    ramp_time: prev.time,
                 });
             }
             anchor = (b, b_pos);
             pending = false;
-            continue;
-        }
-        if anchor.1.distance(b_pos) >= MIN_SEGMENT_PX {
+        } else if anchor.1.distance(b_pos) >= MIN_SEGMENT_PX {
             segments.push(TrailSegment {
                 from: anchor.1,
                 to: b_pos,
@@ -410,13 +426,14 @@ fn trail_segments(trail: &SkyTrail, frame: Frame) -> Vec<TrailSegment> {
         } else {
             pending = true;
         }
+        prev = b;
     }
     // Whatever was collapsed at the end still has to reach the last sample.
-    if pending && let Some(last) = trail.samples.last() {
+    if pending {
         segments.push(TrailSegment {
             from: anchor.1,
-            to: frame.project(last.azimuth, last.elevation),
-            ramp_time: last.time,
+            to: frame.project(prev.azimuth, prev.elevation),
+            ramp_time: prev.time,
         });
     }
     segments
@@ -638,7 +655,7 @@ mod tests {
             trail_sample(3, 90.0, 45.03),
         ]);
 
-        let segments = super::trail_segments(&trail, frame);
+        let segments = super::trail_segments(&trail, frame, false);
         assert_eq!(segments.len(), 1, "sub-pixel samples collapse into one run");
         let last = trail.samples.last().expect("has samples");
         assert_eq!(
@@ -662,7 +679,7 @@ mod tests {
             trail_sample(4, 90.0, 45.03),
         ]);
 
-        let segments = super::trail_segments(&trail, frame);
+        let segments = super::trail_segments(&trail, frame, false);
         // One run each side of the gap, and nothing bridging it.
         assert_eq!(segments.len(), 2, "the gap splits the trail in two");
         let before_gap = frame.project(90.0, 45.01);
@@ -1266,10 +1283,107 @@ mod tests {
         harness.snapshot("sky_trails_trails_hidden");
     }
 
-    /// Snapshot: the current-instant filter keeps only the satellites in the
-    /// fix at the scrubbed epoch. At epoch 1 of `fix_state_trails` GPS-5 is in
-    /// the fix (kept), GPS-12 is tracked-only (dropped), and Galileo-3 is never
-    /// in the fix (dropped), so one filled marker and its trail remain.
+    /// With `in_fix_only`, a trail is drawn only through the samples where the
+    /// satellite was in the fix: a not-in-fix sample breaks the run exactly as a
+    /// tracking gap would, so no line bridges a tracked-but-unused stretch, and
+    /// a satellite never in the fix draws nothing at all.
+    #[test]
+    fn in_fix_only_trims_the_trail_to_its_in_fix_stretches() {
+        let frame = test_frame();
+        let sample = |secs: i64, elevation: f32, in_fix: bool| TrailSample {
+            time: at(secs),
+            epoch: EpochIdx::new(secs.unsigned_abs() as usize),
+            point_index: PointIdx::new(0),
+            azimuth: 90.0,
+            elevation,
+            snr: None,
+            in_fix,
+        };
+        let trail = SkyTrail {
+            constellation: Constellation::Gps,
+            prn: gt_types::satellites::Prn::new(5),
+            samples: vec![
+                sample(0, 20.0, true),
+                sample(1, 40.0, true),
+                sample(2, 60.0, false),
+                sample(3, 30.0, true),
+            ],
+        };
+
+        // Untrimmed: one run through all four samples, three segments.
+        assert_eq!(super::trail_segments(&trail, frame, false).len(), 3);
+
+        // Trimmed: the not-in-fix sample at epoch 2 is dropped, so epoch 3 no
+        // longer follows the run and only the 0->1 in-fix segment survives.
+        let trimmed = super::trail_segments(&trail, frame, true);
+        assert_eq!(
+            trimmed.len(),
+            1,
+            "no line may bridge the not-in-fix stretch"
+        );
+
+        // Never in the fix: nothing to draw once trimmed.
+        let never = SkyTrail {
+            samples: vec![sample(0, 20.0, false), sample(1, 40.0, false)],
+            ..trail
+        };
+        assert!(super::trail_segments(&never, frame, true).is_empty());
+    }
+
+    /// The line-based geometry - the trail segments and slip marks - and the
+    /// round markers, counted for a single frame at `at(1)` of
+    /// `fix_state_trails`, where GPS-12 is tracked-but-not-in-fix.
+    fn line_and_marker_shapes(in_fix_now: bool) -> (usize, usize) {
+        let trails = fix_state_trails();
+        let mut harness = TestHarness::builder()
+            .size(egui::vec2(320.0, 320.0))
+            .ui(move |ui| {
+                SkyTrailsPlot::new(&trails, 300.0)
+                    .scrub(Some(at(1)))
+                    .in_fix_now(in_fix_now)
+                    .ui(ui);
+            });
+        harness.run();
+        let shapes = &harness.inner.output().shapes;
+        let lines = shapes
+            .iter()
+            .filter(|s| matches!(s.shape, egui::Shape::LineSegment { .. }))
+            .count();
+        let circles = shapes
+            .iter()
+            .filter(|s| matches!(s.shape, egui::Shape::Circle(_)))
+            .count();
+        (lines, circles)
+    }
+
+    /// "In fix only" trims each trail to its in-fix stretches and drops the
+    /// markers of satellites not in the fix right now, so both the line geometry
+    /// and the marker count shrink when it is on. At at(1) of `fix_state_trails`
+    /// GPS-12 is tracked-only (its trail breaks) and Galileo-3 is never in the
+    /// fix (its trail and slip vanish).
+    #[test]
+    fn in_fix_only_trims_trails_and_drops_markers() {
+        let (lines_on, markers_on) = line_and_marker_shapes(true);
+        let (lines_off, markers_off) = line_and_marker_shapes(false);
+
+        assert!(
+            lines_on < lines_off,
+            "in fix only must trim the not-in-fix trail and slip geometry \
+             ({lines_on} with the filter vs {lines_off} without)"
+        );
+        assert!(
+            markers_on < markers_off,
+            "in fix only must drop the markers of not-in-fix satellites \
+             ({markers_on} with the filter vs {markers_off} without)"
+        );
+    }
+
+    /// Snapshot: "in fix only" trims each trail to its in-fix stretches and
+    /// drops the markers of satellites not in the fix right now. At epoch 1 of
+    /// `fix_state_trails` GPS-5 is in the fix throughout (full trail, filled
+    /// marker), GPS-12 is tracked-only at this epoch (its trail breaks there, no
+    /// marker), and Galileo-3 is never in the fix (no trail at all, and its slip
+    /// mark goes with it).
     #[test]
     fn sky_trails_in_fix_now_keeps_only_the_current_fix() {
         let trails = fix_state_trails();
