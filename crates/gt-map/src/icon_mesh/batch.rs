@@ -69,20 +69,26 @@ impl<'a> IconMeshBatch<'a> {
             "icon batch exceeds the u32 index range"
         );
         let base = self.mesh.vertices.len() as u32;
+        // Hoist the per-instance work out of the vertex loop: the rotation
+        // collapses into one 2x2 matrix (identity for unrotated icons), and
+        // a white tint is the identity multiply, so the common untinted case
+        // skips the color math entirely.
+        let [col_x, col_y] = rotation_columns(instance.direction, instance.half_extents);
+        let tint_is_white = instance.tint == Color32::WHITE;
         // extend with exact-size iterators so the Vecs reserve once per
         // template instead of growing inside the loop.
         self.mesh
             .vertices
             .extend(template.vertices.iter().map(|vertex| {
-                let offset = Vec2::new(vertex.pos[0], vertex.pos[1]) * instance.half_extents;
-                let rotated = match instance.direction {
-                    Some(direction) => rotate_up_to(offset, direction),
-                    None => offset,
-                };
+                let [px, py] = vertex.pos;
                 epaint::Vertex {
-                    pos: instance.center + rotated,
+                    pos: instance.center + col_x * px + col_y * py,
                     uv: epaint::WHITE_UV,
-                    color: tinted_color(vertex.color, instance.tint),
+                    color: if tint_is_white {
+                        premultiplied(vertex.color)
+                    } else {
+                        tinted_color(vertex.color, instance.tint)
+                    },
                 }
             }));
         self.mesh
@@ -100,12 +106,35 @@ impl<'a> IconMeshBatch<'a> {
 
 /// Rotate `offset` so the template's "up" direction `(0, -1)` aligns with
 /// `direction` (a unit vector). Same convention as the rotated texture quads
-/// this pipeline replaces.
+/// this pipeline replaced.
 fn rotate_up_to(offset: Vec2, direction: Vec2) -> Vec2 {
     Vec2::new(
         -offset.x * direction.y - offset.y * direction.x,
         offset.x * direction.x - offset.y * direction.y,
     )
+}
+
+/// The columns of the combined scale-then-rotate map applied to normalized
+/// template positions: `pos = center + col_x * px + col_y * py`.
+/// Expressed through [rotate_up_to] on the axis vectors so the two stay one
+/// definition.
+fn rotation_columns(direction: Option<Vec2>, half_extents: Vec2) -> [Vec2; 2] {
+    let x_axis = Vec2::new(half_extents.x, 0.0);
+    let y_axis = Vec2::new(0.0, half_extents.y);
+    match direction {
+        Some(direction) => [
+            rotate_up_to(x_axis, direction),
+            rotate_up_to(y_axis, direction),
+        ],
+        None => [x_axis, y_axis],
+    }
+}
+
+/// A template's baked color as [Color32]; both are premultiplied, so this
+/// is a plain reinterpretation.
+fn premultiplied(template: [u8; 4]) -> Color32 {
+    let [r, g, b, a] = template;
+    Color32::from_rgba_premultiplied(r, g, b, a)
 }
 
 /// An icon's full physical on-screen extent (larger axis), which selects its
@@ -115,14 +144,14 @@ fn physical_extent_px(half_extents_pt: Vec2, pixels_per_point: f32) -> f32 {
     half_extents_pt.max_elem() * 2.0 * pixels_per_point
 }
 
-/// Multiply a template's straight-alpha sRGB color with a premultiplied tint.
+/// Multiply a template's baked premultiplied color with a premultiplied
+/// tint.
 ///
 /// [Color32]'s `Mul` is a componentwise gamma-space multiply, exactly what
 /// egui's shader does when tinting a textured quad, so tint semantics match
-/// the texture path.
+/// the old texture path.
 fn tinted_color(template: [u8; 4], tint: Color32) -> Color32 {
-    let [r, g, b, a] = template;
-    Color32::from_rgba_unmultiplied(r, g, b, a) * tint
+    premultiplied(template) * tint
 }
 
 #[cfg(test)]
@@ -150,7 +179,7 @@ mod tests {
     #[rstest]
     #[case::white_preserves([200, 100, 50, 255], Color32::WHITE, Color32::from_rgb(200, 100, 50))]
     #[case::black_zeroes_rgb([200, 100, 50, 255], Color32::BLACK, Color32::from_rgba_premultiplied(0, 0, 0, 255))]
-    #[case::transparent_template_stays_transparent([200, 100, 50, 0], Color32::WHITE, Color32::TRANSPARENT)]
+    #[case::transparent_template_stays_transparent([0, 0, 0, 0], Color32::WHITE, Color32::TRANSPARENT)]
     fn tinted_color_matches_texture_tinting(
         #[case] template: [u8; 4],
         #[case] tint: Color32,

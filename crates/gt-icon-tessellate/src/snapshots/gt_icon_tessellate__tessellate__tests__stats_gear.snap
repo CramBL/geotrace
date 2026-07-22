@@ -2,12 +2,12 @@
 source: crates/gt-icon-tessellate/src/tessellate.rs
 expression: mesh_stats(&tess)
 ---
-bucket    4: vertices   168, triangles   168, fringe vertices    56, bbox [-1.05 -1.05 1.03 1.04]
-bucket    6: vertices   168, triangles   168, fringe vertices    56, bbox [-0.97 -0.97 0.95 0.95]
-bucket    8: vertices   168, triangles   168, fringe vertices    56, bbox [-0.92 -0.92 0.91 0.91]
-bucket   12: vertices   183, triangles   183, fringe vertices    61, bbox [-0.88 -0.88 0.89 0.87]
-bucket   16: vertices   201, triangles   201, fringe vertices    67, bbox [-0.86 -0.86 0.87 0.85]
-bucket   24: vertices   252, triangles   252, fringe vertices    84, bbox [-0.84 -0.84 0.84 0.83]
-bucket   32: vertices   252, triangles   252, fringe vertices    84, bbox [-0.83 -0.83 0.83 0.82]
-bucket   48: vertices   279, triangles   279, fringe vertices    93, bbox [-0.82 -0.82 0.81 0.81]
-bucket   64: vertices   309, triangles   309, fringe vertices   103, bbox [-0.82 -0.82 0.81 0.80]
+bucket    4: vertices   112, triangles   168, fringe vertices    56, bbox [-1.05 -1.05 1.03 1.04]
+bucket    6: vertices   112, triangles   168, fringe vertices    56, bbox [-0.97 -0.97 0.95 0.95]
+bucket    8: vertices   112, triangles   168, fringe vertices    56, bbox [-0.92 -0.92 0.91 0.91]
+bucket   12: vertices   122, triangles   183, fringe vertices    61, bbox [-0.88 -0.88 0.89 0.87]
+bucket   16: vertices   134, triangles   201, fringe vertices    67, bbox [-0.86 -0.86 0.87 0.85]
+bucket   24: vertices   168, triangles   252, fringe vertices    84, bbox [-0.84 -0.84 0.84 0.83]
+bucket   32: vertices   168, triangles   252, fringe vertices    84, bbox [-0.83 -0.83 0.83 0.82]
+bucket   48: vertices   186, triangles   279, fringe vertices    93, bbox [-0.82 -0.82 0.81 0.81]
+bucket   64: vertices   206, triangles   309, fringe vertices   103, bbox [-0.82 -0.82 0.81 0.80]

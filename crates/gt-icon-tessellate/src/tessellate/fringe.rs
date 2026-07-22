@@ -16,17 +16,27 @@ use std::collections::BTreeMap;
 use super::IconTessellateError;
 use crate::template::TemplateVertex;
 
-/// Fringe geometry, with indices local to its own vertex list.
+/// Fringe geometry in final mesh index space.
+///
+/// The ramp's inner ring is the element's inset solid boundary itself,
+/// referenced by index (`solid_base + boundary vertex index`) instead of
+/// duplicated, so the fringe only adds the transparent outer ring.
 pub(super) struct FringeMesh {
-    pub vertices: Vec<TemplateVertex>,
+    pub outer_vertices: Vec<TemplateVertex>,
+    /// Triangle indices in final mesh space: inner refs point into the
+    /// element's solid block, outer refs start at [FringeMesh::outer_base].
     pub indices: Vec<u32>,
+    /// Where the caller must append [FringeMesh::outer_vertices]:
+    /// immediately after the element's solid block.
+    pub outer_base: u32,
 }
 
 /// Build the anti-alias fringe for one tessellated element, insetting the
 /// solid geometry so the alpha ramp straddles the true edge.
 ///
 /// `positions` and `indices` are the element's triangle mesh in bucket-pixel
-/// space and `color` its baked paint color.
+/// space; `solid_base` is where the element's solid vertices will land in
+/// the final mesh.
 /// Boundary vertices in `positions` are moved `inset_px` inward, and the
 /// fringe ramps from full alpha there to zero at `outset_px` outside the
 /// original edge.
@@ -36,18 +46,31 @@ pub(super) struct FringeMesh {
 pub(super) fn fringe_mesh(
     positions: &mut [[f32; 2]],
     indices: &[u32],
-    color: [u8; 4],
     inset_px: f32,
     outset_px: f32,
+    solid_base: u32,
 ) -> Result<FringeMesh, IconTessellateError> {
+    let solid_len =
+        u32::try_from(positions.len()).map_err(|_overflow| IconTessellateError::TooManyVertices)?;
+    let outer_base = solid_base
+        .checked_add(solid_len)
+        .ok_or(IconTessellateError::TooManyVertices)?;
     let mut fringe = FringeMesh {
-        vertices: Vec::new(),
+        outer_vertices: Vec::new(),
         indices: Vec::new(),
+        outer_base,
     };
     // Loops never share vertices (each boundary vertex has exactly one
     // outgoing boundary edge), so per-loop insetting cannot double-move one.
     for ring in boundary_loops(indices)? {
-        append_ring_strip(&ring, positions, color, inset_px, outset_px, &mut fringe)?;
+        append_ring_strip(
+            &ring,
+            positions,
+            inset_px,
+            outset_px,
+            solid_base,
+            &mut fringe,
+        )?;
     }
     Ok(fringe)
 }
@@ -193,21 +216,28 @@ fn miter_normal(a: [f32; 2], b: [f32; 2]) -> [f32; 2] {
 }
 
 /// Emit the fringe strip for one boundary loop and inset the loop's solid
-/// vertices: the inner ring sits `inset_px` inside the original edge at full
-/// alpha (coinciding with the moved solid boundary, keeping the mesh
-/// watertight) and the outer ring `outset_px` outside at alpha zero.
+/// vertices: the inner ring is the moved solid boundary itself (referenced
+/// by index, `inset_px` inside the original edge at full alpha) and the
+/// outer ring `outset_px` outside at alpha zero.
 fn append_ring_strip(
     ring: &[(u32, BoundaryEdge)],
     positions: &mut [[f32; 2]],
-    color: [u8; 4],
     inset_px: f32,
     outset_px: f32,
+    solid_base: u32,
     fringe: &mut FringeMesh,
 ) -> Result<(), IconTessellateError> {
     let normals = ring_normals(ring, positions)?;
-    let base = u32::try_from(fringe.vertices.len())
-        .map_err(|_overflow| IconTessellateError::TooManyVertices)?;
-    let transparent = [color[0], color[1], color[2], 0];
+    let ring_outer_base = fringe
+        .outer_base
+        .checked_add(
+            u32::try_from(fringe.outer_vertices.len())
+                .map_err(|_overflow| IconTessellateError::TooManyVertices)?,
+        )
+        .ok_or(IconTessellateError::TooManyVertices)?;
+    // The ramp interpolates premultiplied colors, so fully transparent is
+    // all zeros regardless of the paint color.
+    let transparent = [0, 0, 0, 0];
 
     for (&(from, _), normal) in ring.iter().zip(&normals) {
         let pos = positions
@@ -222,8 +252,7 @@ fn append_ring_strip(
         if let Some(solid) = positions.get_mut(from as usize) {
             *solid = inner;
         }
-        fringe.vertices.push(TemplateVertex { pos: inner, color });
-        fringe.vertices.push(TemplateVertex {
+        fringe.outer_vertices.push(TemplateVertex {
             pos: outer,
             color: transparent,
         });
@@ -231,12 +260,13 @@ fn append_ring_strip(
 
     let len =
         u32::try_from(ring.len()).map_err(|_overflow| IconTessellateError::TooManyVertices)?;
-    for i in 0..len {
+    for (i, &(from, edge)) in ring.iter().enumerate() {
+        let i = i as u32;
         let j = (i + 1) % len;
-        let inner_i = base + 2 * i;
-        let outer_i = inner_i + 1;
-        let inner_j = base + 2 * j;
-        let outer_j = inner_j + 1;
+        let inner_i = solid_base + from;
+        let inner_j = solid_base + edge.to;
+        let outer_i = ring_outer_base + i;
+        let outer_j = ring_outer_base + j;
         fringe
             .indices
             .extend([inner_i, outer_i, outer_j, inner_i, outer_j, inner_j]);
@@ -308,6 +338,9 @@ mod tests {
 
     const INSET: f32 = 0.5;
     const OUTSET: f32 = 0.5;
+    /// Where the element's solid block nominally starts in these tests, so
+    /// index-space arithmetic is exercised with a non-zero base.
+    const SOLID_BASE: u32 = 100;
 
     #[rstest]
     #[case::single_triangle(single_triangle())]
@@ -316,30 +349,30 @@ mod tests {
     fn fringe_strip_invariants(#[case] mesh: TestMesh) {
         let (mut positions, indices) = mesh;
         let originals = positions.clone();
-        let color = [10, 20, 30, 255];
-        let fringe = fringe_mesh(&mut positions, &indices, color, INSET, OUTSET).unwrap();
+        let fringe = fringe_mesh(&mut positions, &indices, INSET, OUTSET, SOLID_BASE).unwrap();
 
-        assert!(!fringe.vertices.is_empty());
-        assert_eq!(fringe.vertices.len() % 2, 0, "inner/outer pairs");
-        assert_eq!(fringe.indices.len() % 3, 0);
-        let vertex_count = fringe.vertices.len() as u32;
-        assert!(fringe.indices.iter().all(|&index| index < vertex_count));
+        assert_eq!(fringe.outer_base, SOLID_BASE + positions.len() as u32);
+        assert!(!fringe.outer_vertices.is_empty());
+        assert!(
+            fringe
+                .outer_vertices
+                .iter()
+                .all(|vertex| vertex.color == [0, 0, 0, 0]),
+            "outer ring must be premultiplied transparent"
+        );
+        // Each boundary edge emits two triangles: one solid (inner) and one
+        // outer index per corner, referencing the two index spaces.
+        assert_eq!(fringe.indices.len() % 6, 0);
 
         let ramp = INSET + OUTSET;
-        for pair in fringe.vertices.chunks_exact(2) {
-            let (inner, outer) = (pair[0], pair[1]);
-            assert_eq!(inner.color, color);
-            assert_eq!(
-                outer.color,
-                [10, 20, 30, 0],
-                "outer edge must be transparent"
-            );
-            assert!(
-                positions.contains(&inner.pos),
-                "inner ring must coincide with the inset solid boundary"
-            );
+        for chunk in fringe.indices.chunks_exact(6) {
+            let (inner_i, outer_i) = (chunk[0], chunk[1]);
+            assert!(inner_i >= SOLID_BASE && inner_i < fringe.outer_base);
+            assert!(outer_i >= fringe.outer_base);
+            let inner = positions[(inner_i - SOLID_BASE) as usize];
+            let outer = fringe.outer_vertices[(outer_i - fringe.outer_base) as usize].pos;
 
-            let offset = [outer.pos[0] - inner.pos[0], outer.pos[1] - inner.pos[1]];
+            let offset = [outer[0] - inner[0], outer[1] - inner[1]];
             let length = offset[0].hypot(offset[1]);
             assert!(
                 (ramp * 0.99..=ramp * 2.0 + 1e-4).contains(&length),
@@ -352,10 +385,7 @@ mod tests {
             // and the outer end lies outside the original mesh.
             // (The inner end can legitimately exit razor-thin geometry like
             // the spike's tip, so only the outer side is asserted.)
-            let midpoint = [
-                (inner.pos[0] + outer.pos[0]) / 2.0,
-                (inner.pos[1] + outer.pos[1]) / 2.0,
-            ];
+            let midpoint = [(inner[0] + outer[0]) / 2.0, (inner[1] + outer[1]) / 2.0];
             assert!(
                 originals
                     .iter()
@@ -363,9 +393,8 @@ mod tests {
                 "ramp midpoint {midpoint:?} is off the original boundary"
             );
             assert!(
-                !point_in_mesh(outer.pos, &originals, &indices),
-                "fringe outer ring reaches into the original mesh at {:?}",
-                outer.pos
+                !point_in_mesh(outer, &originals, &indices),
+                "fringe outer ring reaches into the original mesh at {outer:?}"
             );
         }
     }
@@ -376,7 +405,7 @@ mod tests {
         // Both triangles use the directed edge (0, 1).
         let indices = vec![0, 1, 2, 0, 1, 3];
         assert!(matches!(
-            fringe_mesh(&mut positions, &indices, [0, 0, 0, 255], INSET, OUTSET),
+            fringe_mesh(&mut positions, &indices, INSET, OUTSET, 0),
             Err(IconTessellateError::FringeBoundary)
         ));
     }
@@ -385,8 +414,8 @@ mod tests {
     fn degenerate_triangles_yield_empty_fringe() {
         let mut positions = vec![[0.0, 0.0], [10.0, 0.0]];
         let indices = vec![0, 1, 1];
-        let fringe = fringe_mesh(&mut positions, &indices, [0, 0, 0, 255], INSET, OUTSET).unwrap();
-        assert!(fringe.vertices.is_empty());
+        let fringe = fringe_mesh(&mut positions, &indices, INSET, OUTSET, 0).unwrap();
+        assert!(fringe.outer_vertices.is_empty());
         assert!(fringe.indices.is_empty());
     }
 }

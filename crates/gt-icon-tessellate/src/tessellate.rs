@@ -247,15 +247,19 @@ fn bucket_mesh(
         let path = to_lyon_path(&element.path, element.abs_transform, scale);
         let mut buffers = tessellate_element(&path, &element.op, scale, stroke_width_unit)?;
         let ramp = edge_ramp(&element.op, scale, stroke_width_unit);
-        let color = scale_alpha(element.color, ramp.alpha_factor);
+        let color = premultiply(scale_alpha(element.color, ramp.alpha_factor));
         // The fringe pass insets the solid boundary vertices, so it runs
-        // before the solid vertices are copied out.
+        // before the solid vertices are copied out. Its inner ring
+        // references the solid vertices by index, so it needs to know where
+        // this element's solid block lands in the mesh.
+        let solid_base = u32::try_from(mesh.vertices.len())
+            .map_err(|_overflow| IconTessellateError::TooManyVertices)?;
         let fringe = fringe::fringe_mesh(
             &mut buffers.vertices,
             &buffers.indices,
-            color,
             ramp.inset_px,
             ramp.outset_px,
+            solid_base,
         )?;
         let solid: Vec<TemplateVertex> = buffers
             .vertices
@@ -263,10 +267,27 @@ fn bucket_mesh(
             .map(|&pos| TemplateVertex { pos, color })
             .collect();
         append_indexed(&mut mesh, solid, &buffers.indices)?;
-        append_indexed(&mut mesh, fringe.vertices, &fringe.indices)?;
+        // Fringe indices are already in final mesh space (solid refs plus
+        // outer-ring refs starting at the current length).
+        debug_assert_eq!(
+            mesh.vertices.len(),
+            fringe.outer_base as usize,
+            "fringe outer ring must start where the solid block ends"
+        );
+        mesh.vertices.extend(fringe.outer_vertices);
+        mesh.indices.extend(fringe.indices);
     }
     normalize(&mut mesh, svg_w * scale, svg_h * scale);
     Ok(mesh)
+}
+
+/// Convert a straight-alpha sRGB color to premultiplied form, the encoding
+/// egui vertex colors use, so renderers can copy template colors without a
+/// per-vertex conversion.
+fn premultiply(color: [u8; 4]) -> [u8; 4] {
+    let [r, g, b, a] = color;
+    let mul = |channel: u8| ((u16::from(channel) * u16::from(a) + 127) / 255) as u8;
+    [mul(r), mul(g), mul(b), a]
 }
 
 /// How an element's edge is anti-aliased: the solid geometry is inset by

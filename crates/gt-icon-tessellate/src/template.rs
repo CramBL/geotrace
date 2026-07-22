@@ -30,10 +30,11 @@ pub struct TemplateVertex {
     /// were stretched into their square draw rects.
     /// Anti-alias fringe vertices stick out slightly beyond `[-1, 1]`.
     pub pos: [f32; 2],
-    /// Straight-alpha sRGB color baked from the SVG paint.
+    /// Premultiplied sRGB color baked from the SVG paint - the encoding egui
+    /// vertex colors use, so renderers copy it without conversion.
     ///
-    /// The outer edge of the anti-alias fringe ramps the alpha down to zero.
-    /// Renderers multiply this with a per-instance tint.
+    /// The outer edge of the anti-alias fringe ramps to fully transparent
+    /// (all zeros). Renderers multiply this with a per-instance tint.
     pub color: [u8; 4],
 }
 
@@ -84,17 +85,22 @@ impl IconTessellation {
     ///
     /// `target_px` is the icon's intended full on-screen extent in physical
     /// pixels (points times `pixels_per_point`).
+    ///
+    /// Log-space nearest without logarithms: the boundary between adjacent
+    /// buckets is their geometric mean, and `t < sqrt(a * b)` is `t*t < a*b`
+    /// for positive values, so the scan is a handful of multiplies. This
+    /// runs per icon instance per frame.
     pub fn mesh_for(&self, target_px: f32) -> &IconMeshTemplate {
-        let target_log = target_px.max(f32::MIN_POSITIVE).ln();
-        let mut best = self.buckets.first();
-        for candidate in self.buckets.iter().skip(1) {
-            let candidate_dist = (candidate.bucket_px.ln() - target_log).abs();
-            let best_dist = (best.bucket_px.ln() - target_log).abs();
-            if candidate_dist < best_dist {
-                best = candidate;
+        let target = target_px.max(0.0);
+        let target_sq = target * target;
+        for pair in self.buckets.windows(2) {
+            if let [current, next] = pair
+                && target_sq < current.bucket_px * next.bucket_px
+            {
+                return &current.mesh;
             }
         }
-        &best.mesh
+        &self.buckets.last().mesh
     }
 }
 
