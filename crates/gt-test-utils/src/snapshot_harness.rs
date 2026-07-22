@@ -28,8 +28,12 @@ fn install_icon_assets(ctx: &egui::Context) {
     egui_extras::install_image_loaders(ctx);
 }
 
-fn on_non_macos_ci() -> bool {
-    std::env::var("CI").is_ok() && !cfg!(target_os = "macos")
+/// Snapshot comparison runs locally, on macOS CI (Metal), and on Linux CI
+/// (Mesa's software rasterizer via `WGPU_BACKEND=gl`, deterministic across
+/// runs). Windows CI is the only skip: its D3D output has no baseline
+/// coverage and would need a third tolerance budget.
+fn on_windows_ci() -> bool {
+    std::env::var("CI").is_ok() && cfg!(target_os = "windows")
 }
 
 fn snap_name(name: &str) -> String {
@@ -42,8 +46,7 @@ fn snap_name(name: &str) -> String {
 
 /// Wrapper around [`egui_kittest::Harness`] for UI snapshot tests.
 ///
-/// Skips image comparison on non-macOS CI runners (Linux/Windows use different
-/// GPU backends that produce slightly different pixel output vs the Metal baseline).
+/// Image comparison runs everywhere except Windows CI (see [`on_windows_ci`]).
 /// Auto-prefixes snapshot names with `snap_` if not already present.
 pub struct TestHarness<'a, State = ()> {
     pub inner: Harness<'a, State>,
@@ -91,7 +94,7 @@ impl<'a, State> TestHarness<'a, State> {
     }
 
     pub fn snapshot(&mut self, name: &str) {
-        if on_non_macos_ci() {
+        if on_windows_ci() {
             return;
         }
         self.inner
@@ -118,7 +121,7 @@ impl<'a, State> TestHarness<'a, State> {
         threshold: f32,
         failed_pixel_count_threshold: usize,
     ) {
-        if on_non_macos_ci() {
+        if on_windows_ci() {
             return;
         }
         self.inner.snapshot_options(
