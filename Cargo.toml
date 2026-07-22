@@ -38,6 +38,7 @@ members = [
     "crates/gt-history-backend-pure",
     "crates/gt-history-backend-sys",
     "crates/gt-history-types",
+    "crates/gt-icon-tessellate",
     "crates/gt-loaded-files",
     "crates/gt-loader",
     "crates/gt-logfile",
