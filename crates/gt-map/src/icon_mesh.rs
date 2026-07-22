@@ -4,14 +4,18 @@
 //! triangle meshes (one per size bucket, see [gt_icon_tessellate]) and embeds
 //! them as a postcard blob.
 //! [IconMeshLibrary::embedded] decodes that blob once into per-icon
-//! [IconTessellation]s; the mesh-based renderers build on top of it in later
-//! steps, while the texture-based icon path in the private `icons` module
-//! keeps rendering until they land.
+//! [IconTessellation]s, and renderers draw them through [IconMeshBatch].
+//! The texture-based icon path in the private `icons` module keeps rendering
+//! until the per-renderer migrations land.
+
+mod batch;
 
 use std::collections::BTreeMap;
 
 use gt_icon_tessellate::IconTessellation;
 use gt_types::MarkerIcon;
+
+pub use batch::{IconInstance, IconMeshBatch};
 
 /// Identifies one marker icon SVG asset.
 ///
