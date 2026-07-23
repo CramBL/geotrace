@@ -12,7 +12,9 @@ use gt_ui_types::{ArcIdentity, SnapErrorKind, SnapErrorPoint, SnapErrorSeries};
 
 use super::chips::MetricKindUi;
 use super::levels::track_target;
-use super::lines::{ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, add_line, series_track_ref};
+use super::lines::{
+    ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, add_line, series_track_ref, visible_by_x,
+};
 use crate::series::TrackSeries;
 
 /// Whether any visible track has an entry in the snap error series.
@@ -247,9 +249,7 @@ pub(super) fn add_snap_error_series<'a>(
     }
 
     if full_detail && !cache.snapped.is_empty() {
-        let start = cache.snapped.partition_point(|p| p.x < viewport.x_min);
-        let end = cache.snapped.partition_point(|p| p.x <= viewport.x_max);
-        let visible = cache.snapped.get(start..end).unwrap_or_default();
+        let visible = visible_by_x(&cache.snapped, |p| p.x, viewport.x_min, viewport.x_max);
         if !visible.is_empty() {
             plot_ui.points(
                 Points::new(
@@ -264,9 +264,13 @@ pub(super) fn add_snap_error_series<'a>(
         }
     }
 
-    if !cache.unsnapped.is_empty() {
+    // Unsnapped crosses are sorted ascending by x like the snapped markers, so
+    // clip to the viewport sub-range instead of drawing and hover-testing the
+    // whole track's rejected points every frame.
+    let visible_unsnapped = visible_by_x(&cache.unsnapped, |p| p.x, viewport.x_min, viewport.x_max);
+    if !visible_unsnapped.is_empty() {
         plot_ui.points(
-            Points::new("Unsnapped points", PlotPoints::Borrowed(&cache.unsnapped))
+            Points::new("Unsnapped points", PlotPoints::Borrowed(visible_unsnapped))
                 .shape(MarkerShape::Cross)
                 .color(gt_ui_theme::error_indicator(style.dark_mode))
                 .radius(ANOMALY_MARKER_RADIUS)
@@ -277,7 +281,7 @@ pub(super) fn add_snap_error_series<'a>(
     let Some(ptr) = pointer else {
         return;
     };
-    for point in &cache.unsnapped {
+    for point in visible_unsnapped {
         let screen = plot_ui.screen_from_plot(*point);
         let dist = screen.distance(ptr);
         if dist <= ANOMALY_HOVER_RADIUS_PX && nearest.as_ref().is_none_or(|(d, _)| dist < *d) {
