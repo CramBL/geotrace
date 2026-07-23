@@ -1154,16 +1154,16 @@ fn render_track_categories(
     let tpv_visible = track_node.tpv_visible;
     let sat_visible = track_node.satellites_visible;
     let cm_visible = track_node.custom_markers_visible;
-    let tpv_expanded = track_node.categories_expanded.contains(&DataCategory::Tpv);
+    let tpv_expanded = track_node.categories_expanded.contains(DataCategory::Tpv);
     let sat_expanded = track_node
         .categories_expanded
-        .contains(&DataCategory::SatelliteReport);
+        .contains(DataCategory::SatelliteReport);
     let cm_expanded = track_node
         .categories_expanded
-        .contains(&DataCategory::CustomMarker);
+        .contains(DataCategory::CustomMarker);
     let em_expanded = track_node
         .categories_expanded
-        .contains(&DataCategory::EventMarker);
+        .contains(DataCategory::EventMarker);
     let channels_expanded = track_node.channels_expanded;
     let em_agg = track_node.event_paths.aggregate();
     let event_filter = track_node.event_filter.clone();
@@ -1568,7 +1568,7 @@ fn render_generated_markers_section(
     let visible = node.generated_markers_visible;
     let expanded = node
         .categories_expanded
-        .contains(&DataCategory::GeneratedMarker);
+        .contains(DataCategory::GeneratedMarker);
 
     let header = ui.horizontal(|ui| {
         let chk = tri_checkbox(

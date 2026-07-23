@@ -1,5 +1,5 @@
-use gt_side_panel::tree::{CategoriesExpanded, CheckState, NodeKey, TreeState};
-use gt_types::{FileIdx, TrackIdx, TrackRef};
+use gt_side_panel::tree::{CheckState, NodeKey, TreeState};
+use gt_types::{DataCategory, DataCategorySet, FileIdx, TrackIdx, TrackRef};
 
 fn make_tree(file_count: usize, trips_per_file: usize) -> TreeState {
     let mut tree = TreeState::new();
@@ -18,7 +18,7 @@ fn make_track_node() -> gt_side_panel::TrackNode {
     gt_side_panel::TrackNode {
         expanded: false,
         check: CheckState::On,
-        categories_expanded: CategoriesExpanded::default(),
+        categories_expanded: DataCategorySet::default(),
         track_visible: true,
         tpv_visible: true,
         satellites_visible: true,
@@ -155,6 +155,34 @@ fn event_path_grandparent_recomputes() {
     assert_eq!(event_path_check(&tree, 0, 0, "a/b/d"), CheckState::On);
     assert_eq!(event_path_check(&tree, 0, 0, "a/b"), CheckState::Mixed);
     assert_eq!(event_path_check(&tree, 0, 0, "a"), CheckState::Mixed);
+}
+
+#[test]
+fn toggle_category_expanded_flips_independently_and_restores() {
+    let mut tree = make_tree(1, 1);
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    let expanded = |tree: &TreeState, cat| {
+        tree.track_node(track)
+            .expect("track node")
+            .categories_expanded
+            .contains(cat)
+    };
+
+    // Sections start collapsed.
+    assert!(!expanded(&tree, DataCategory::Tpv));
+
+    tree.toggle_category_expanded(track, DataCategory::Tpv);
+    assert!(expanded(&tree, DataCategory::Tpv));
+
+    // A second category toggles without disturbing the first.
+    tree.toggle_category_expanded(track, DataCategory::EventMarker);
+    assert!(expanded(&tree, DataCategory::EventMarker));
+    assert!(expanded(&tree, DataCategory::Tpv));
+
+    // Toggling back restores the collapsed state.
+    tree.toggle_category_expanded(track, DataCategory::Tpv);
+    assert!(!expanded(&tree, DataCategory::Tpv));
+    assert!(expanded(&tree, DataCategory::EventMarker));
 }
 
 #[test]

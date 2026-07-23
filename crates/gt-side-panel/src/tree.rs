@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use gt_types::{DataCategory, FileIdx, GeneratedMarkerKindTag, LoadedFile, TrackIdx, TrackRef};
+use gt_types::{
+    DataCategory, DataCategorySet, FileIdx, GeneratedMarkerKindTag, LoadedFile, TrackIdx, TrackRef,
+};
 use gt_ui_types::{
     EventMarkerVisibility, FileVisibility, GeneratedMarkerVisibility, TrackDataVisibility,
     TrackVisibility,
@@ -25,61 +27,6 @@ pub struct DeleteConfirmState {
     /// When set, removal also permanently deletes the affected recordings from
     /// the history database instead of only hiding them.
     pub delete_permanently: bool,
-}
-
-/// Tracks which data categories are currently expanded in the track row.
-///
-/// Replaces `BTreeSet<DataCategory>` to avoid per-interaction heap allocations.
-#[derive(Default, Clone, Copy, Debug)]
-pub struct CategoriesExpanded {
-    tpv: bool,
-    satellite_report: bool,
-    custom_marker: bool,
-    generated_marker: bool,
-    event_marker: bool,
-}
-
-impl CategoriesExpanded {
-    pub fn contains(&self, cat: &DataCategory) -> bool {
-        match cat {
-            DataCategory::Track => false,
-            DataCategory::Tpv => self.tpv,
-            DataCategory::SatelliteReport => self.satellite_report,
-            DataCategory::CustomMarker => self.custom_marker,
-            DataCategory::GeneratedMarker => self.generated_marker,
-            DataCategory::EventMarker => self.event_marker,
-        }
-    }
-
-    pub fn insert(&mut self, cat: DataCategory) {
-        match cat {
-            DataCategory::Track => {}
-            DataCategory::Tpv => self.tpv = true,
-            DataCategory::SatelliteReport => self.satellite_report = true,
-            DataCategory::CustomMarker => self.custom_marker = true,
-            DataCategory::GeneratedMarker => self.generated_marker = true,
-            DataCategory::EventMarker => self.event_marker = true,
-        }
-    }
-
-    pub fn remove(&mut self, cat: &DataCategory) {
-        match cat {
-            DataCategory::Track => {}
-            DataCategory::Tpv => self.tpv = false,
-            DataCategory::SatelliteReport => self.satellite_report = false,
-            DataCategory::CustomMarker => self.custom_marker = false,
-            DataCategory::GeneratedMarker => self.generated_marker = false,
-            DataCategory::EventMarker => self.event_marker = false,
-        }
-    }
-
-    pub fn toggle(&mut self, cat: DataCategory) {
-        if self.contains(&cat) {
-            self.remove(&cat);
-        } else {
-            self.insert(cat);
-        }
-    }
 }
 
 /// Per-track tree of event variant paths with tri-state visibility.
@@ -168,7 +115,9 @@ impl EventPathTree {
 pub struct TrackNode {
     pub expanded: bool,
     pub check: CheckState,
-    pub categories_expanded: CategoriesExpanded,
+    /// Which of the track's element-category sections are expanded in the
+    /// tree. `Track` has no sub-items, so it never appears here.
+    pub categories_expanded: DataCategorySet,
     pub track_visible: bool,
     pub tpv_visible: bool,
     pub satellites_visible: bool,
@@ -193,7 +142,7 @@ impl TrackNode {
         Self {
             expanded: false,
             check: CheckState::On,
-            categories_expanded: CategoriesExpanded::default(),
+            categories_expanded: DataCategorySet::default(),
             track_visible: true,
             tpv_visible: true,
             satellites_visible: true,
@@ -466,7 +415,8 @@ impl TreeState {
 
     pub fn toggle_category_expanded(&mut self, track: TrackRef, cat: DataCategory) {
         if let Some(track_node) = self.track_node_mut(track) {
-            track_node.categories_expanded.toggle(cat);
+            let expanded = track_node.categories_expanded.contains(cat);
+            track_node.categories_expanded.set(cat, !expanded);
         }
     }
 

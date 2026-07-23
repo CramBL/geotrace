@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 
 use gt_types::satellites::{Constellation, Prn, SlipCause, Snr};
 use gt_types::{GeneratedMarkerKind, GpsTime, GpsTimeRange, LoadedTrack, PointIdx};
+use smallvec::SmallVec;
+use strum::EnumCount as _;
 
 use crate::projection;
 
@@ -164,7 +166,11 @@ impl SkyTrails {
     /// When `show_not_in_fix` is false, satellites that were never in the fix
     /// over the track ([`SkyTrail::ever_in_fix`]) are left out entirely, so the
     /// counts match the trails the window is drawing.
-    pub fn counts_at(&self, time: GpsTime, show_not_in_fix: bool) -> Vec<EpochCount> {
+    pub fn counts_at(
+        &self,
+        time: GpsTime,
+        show_not_in_fix: bool,
+    ) -> SmallVec<[EpochCount; Constellation::COUNT]> {
         self.constellations()
             .map(|constellation| {
                 let present = || {
