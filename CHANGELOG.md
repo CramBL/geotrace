@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.0 - 2026-07-23
+
 All optimizations, no features, no fixes.
 
 ### Changed
