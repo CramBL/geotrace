@@ -3,9 +3,14 @@
 //! and the dashed elevation-mask ring.
 
 use egui::{Align2, FontId, Pos2, Shape, Stroke, Vec2};
+use smallvec::SmallVec;
 
 use crate::projection;
 use crate::style;
+
+/// Vertices in the dashed mask ring (segments plus the closing point). Built
+/// per sky-plot frame as a temporary, so it stacks rather than allocates.
+const MASK_RING_POINTS: usize = style::MASK_RING_SEGMENTS as usize + 1;
 
 /// Draw the grid: the horizon rim, the inner elevation rings, and the
 /// cardinal spokes. `full` labels the rings and all four cardinals; the
@@ -113,7 +118,7 @@ pub(crate) fn draw_mask_ring(
     hovered: bool,
 ) {
     let ring_radius = radius * projection::unit_disc_radius(mask_deg);
-    let points: Vec<Pos2> = (0..=style::MASK_RING_SEGMENTS)
+    let points: SmallVec<[Pos2; MASK_RING_POINTS]> = (0..=style::MASK_RING_SEGMENTS)
         .map(|i| {
             let angle = i as f32 / style::MASK_RING_SEGMENTS as f32 * std::f32::consts::TAU;
             center + Vec2::new(angle.sin(), -angle.cos()) * ring_radius

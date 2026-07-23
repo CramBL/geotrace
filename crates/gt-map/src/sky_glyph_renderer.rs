@@ -18,6 +18,7 @@ use egui::{Pos2, Shape, Stroke, Vec2};
 use gt_types::satellites::Satellites;
 use gt_types::{LoadedTrack, MercBounds, TrackRef};
 use gt_ui_types::SkyGlyphVariant;
+use smallvec::SmallVec;
 
 use crate::collision_grid;
 use crate::transform::MercTransform;
@@ -65,6 +66,10 @@ const FIX_LOSS_DASH_PX: f32 = 3.0;
 const FIX_LOSS_GAP_PX: f32 = 3.0;
 /// Polyline segments approximating a dashed fix-loss circle.
 const FIX_LOSS_SEGMENTS: u32 = 48;
+/// Vertices in that polyline (segments plus the closing point). The circle is
+/// a per-glyph, per-frame temporary, so it stacks in a [`SmallVec`] of this
+/// capacity rather than allocating.
+const FIX_LOSS_RING_POINTS: usize = FIX_LOSS_SEGMENTS as usize + 1;
 
 /// Radius of the sky disc.
 const DISC_RADIUS_PX: f32 = 20.0;
@@ -251,12 +256,7 @@ fn draw_ring(
     let fix_loss = satellites.fix_count() == 0;
 
     if fix_loss {
-        let points: Vec<Pos2> = (0..=FIX_LOSS_SEGMENTS)
-            .map(|i| {
-                let angle = i as f32 / FIX_LOSS_SEGMENTS as f32 * std::f32::consts::TAU;
-                center + Vec2::new(angle.sin(), -angle.cos()) * radius
-            })
-            .collect();
+        let points = fix_loss_circle_points(center, radius);
         painter.add(Shape::dashed_line(
             &points,
             Stroke::new(BASELINE_STROKE_PX, baseline),
@@ -282,6 +282,18 @@ fn draw_ring(
             }
         }
     }
+}
+
+/// The vertices of a dashed fix-loss circle of `radius` around `center`,
+/// north up. Stacks in a [`SmallVec`] since it is a per-glyph, per-frame
+/// temporary handed straight to [`Shape::dashed_line`] as a slice.
+fn fix_loss_circle_points(center: Pos2, radius: f32) -> SmallVec<[Pos2; FIX_LOSS_RING_POINTS]> {
+    (0..=FIX_LOSS_SEGMENTS)
+        .map(|i| {
+            let angle = i as f32 / FIX_LOSS_SEGMENTS as f32 * std::f32::consts::TAU;
+            center + Vec2::new(angle.sin(), -angle.cos()) * radius
+        })
+        .collect()
 }
 
 /// The screen position of a bead at `azimuth_deg` on a ring of the given
@@ -422,12 +434,7 @@ fn draw_disc(
     );
 
     if satellites.fix_count() == 0 {
-        let points: Vec<Pos2> = (0..=FIX_LOSS_SEGMENTS)
-            .map(|i| {
-                let angle = i as f32 / FIX_LOSS_SEGMENTS as f32 * std::f32::consts::TAU;
-                center + Vec2::new(angle.sin(), -angle.cos()) * radius
-            })
-            .collect();
+        let points = fix_loss_circle_points(center, radius);
         painter.add(Shape::dashed_line(
             &points,
             Stroke::new(BASELINE_STROKE_PX, rim),

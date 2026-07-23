@@ -13,7 +13,8 @@ use gt_types::{
 };
 use gt_ui_theme::{DEGREE_SIGN, DELTA, EM_DASH, MINUS_SIGN};
 use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, PointWindowFolds};
-use strum::IntoEnumIterator as _;
+use smallvec::SmallVec;
+use strum::{EnumCount as _, IntoEnumIterator as _};
 use uom::si::angle::{degree, radian};
 use uom::si::f64::Angle;
 use uom::si::length::meter;
@@ -807,7 +808,7 @@ fn sticky_satellites(
     // we own the data and can borrow-free inside the layout closures.
     // Grouped in variant-declaration order, matching `Constellation`'s
     // `Ord` and the slip table's grouping.
-    let groups: Vec<ConstellationGroup<'_>> = Constellation::iter()
+    let groups: SmallVec<[ConstellationGroup<'_>; Constellation::COUNT]> = Constellation::iter()
         .enumerate()
         .filter_map(|(grid_id, constellation)| {
             let mut satellites: Vec<_> = sats.by_constellation(constellation).copied().collect();
@@ -838,7 +839,8 @@ fn sticky_satellites(
     // Cut the ordered list where the two columns come out closest in height,
     // so uneven constellations pack tight instead of leaving the dead space
     // that fixed two-per-row chunking left behind.
-    let weights: Vec<usize> = groups.iter().map(|group| group.weight(*folds)).collect();
+    let weights: SmallVec<[usize; Constellation::COUNT]> =
+        groups.iter().map(|group| group.weight(*folds)).collect();
     let (left, right) = groups.split_at(balanced_split(&weights));
     ui.horizontal_top(|ui| {
         for (column_i, column) in [left, right].into_iter().enumerate() {
