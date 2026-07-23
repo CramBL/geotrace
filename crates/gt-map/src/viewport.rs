@@ -170,14 +170,15 @@ impl TrackPlan {
                 let enabled = file_enabled
                     && trip_vis.is_some_and(|tv| tv.enabled)
                     && track_passes_filter(&track.metadata, filter);
-                let tpv_on = enabled && trip_vis.is_some_and(|tv| tv.tpv_visible);
+                let tpv_on =
+                    enabled && trip_vis.is_some_and(|tv| tv.category_visible(DataCategory::Tpv));
                 // The fade classification runs last so it is skipped for
                 // tracks that are hidden or filtered out anyway.
                 let fade = (tpv_on && display_mask.is_visible(DisplayCategory::TrackPoints))
                     .then(|| tpv_renderer::classify_icon_fade(track, scale, icon_size));
                 entries.push(TrackEntry {
                     trackline: enabled
-                        && trip_vis.is_some_and(|tv| tv.track_visible)
+                        && trip_vis.is_some_and(|tv| tv.category_visible(DataCategory::Track))
                         && display_mask.is_visible(DisplayCategory::Tracks),
                     fade,
                     sat_labels: tpv_on && display_mask.is_visible(DisplayCategory::SatelliteLabels),

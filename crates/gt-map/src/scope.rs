@@ -125,7 +125,7 @@ mod tests {
     fn category_toggle_gates_only_its_category() {
         let files = one_track_file();
         let mut vis = vis_all();
-        vis.files[0].tracks[0].custom_markers_visible = false;
+        vis.files[0].tracks[0].set_category_visible(DataCategory::CustomMarker, false);
         let filter = GlobalFilter::default();
         assert!(
             category_in_scope(&files, &vis, &filter, track0(), DataCategory::CustomMarker)
