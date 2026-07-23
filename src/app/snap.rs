@@ -1250,11 +1250,11 @@ mod tests {
                 tracks: vec![TrackVisibility::all_visible()],
             }],
         };
-        vis.files[0].tracks[0].track_visible = false;
+        vis.files[0].tracks[0].set_category_visible(gt_types::DataCategory::Track, false);
         scheduler.set_visibility(&vis);
         assert_eq!(next_eligible(&scheduler.queue, &scheduler.visible), None);
 
-        vis.files[0].tracks[0].track_visible = true;
+        vis.files[0].tracks[0].set_category_visible(gt_types::DataCategory::Track, true);
         scheduler.set_visibility(&vis);
         assert_eq!(next_eligible(&scheduler.queue, &scheduler.visible), Some(0));
     }

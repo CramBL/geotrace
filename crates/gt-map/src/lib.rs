@@ -1319,7 +1319,7 @@ mod tests {
         let sp = tpv_spatial_point(0, 0, 0);
         let files = vec![file_with_tracks(vec![track_at(55.0, 12.0)])];
         let mut vis = vis_all_visible();
-        vis.files[0].tracks[0].tpv_visible = false;
+        vis.files[0].tracks[0].set_category_visible(DataCategory::Tpv, false);
         assert!(!is_spatial_point_visible(
             &sp,
             &files,
@@ -1576,16 +1576,12 @@ mod tests {
             track_at(55.0, 12.0),
             track_at(56.0, 13.0),
         ])];
+        let mut first_disabled = TrackVisibility::all_visible();
+        first_disabled.enabled = false;
         let vis = TrackDataVisibility {
             files: vec![FileVisibility {
                 enabled: true,
-                tracks: vec![
-                    TrackVisibility {
-                        enabled: false,
-                        ..TrackVisibility::all_visible()
-                    },
-                    TrackVisibility::all_visible(),
-                ],
+                tracks: vec![first_disabled, TrackVisibility::all_visible()],
             }],
         };
         let filter = GlobalFilter::default();

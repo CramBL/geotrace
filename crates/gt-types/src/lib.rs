@@ -17,7 +17,7 @@ pub mod track;
 pub use channel::Channel;
 pub use coordinates::{Latitude, Longitude};
 pub use geo_types::{Coord, Rect};
-pub use highlight::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
+pub use highlight::{DataCategory, DataCategorySet, FileIdx, PointIdx, TrackIdx, TrackRef};
 pub use markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
     GeneratedMarkerKindSet, GeneratedMarkerKindTag, MarkerColor, MarkerIcon,

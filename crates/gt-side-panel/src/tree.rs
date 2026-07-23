@@ -669,13 +669,24 @@ impl TreeState {
                     continue;
                 };
                 tv.enabled = matches!(track_node.check, CheckState::On);
-                tv.track_visible = track_node.track_visible;
-                tv.tpv_visible = track_node.tpv_visible;
-                tv.satellites_visible = track_node.satellites_visible;
-                tv.custom_markers_visible = track_node.custom_markers_visible;
-                tv.generated_markers_visible = track_node.generated_markers_visible;
-                tv.event_markers_visible =
-                    !matches!(track_node.event_paths.aggregate(), CheckState::Off);
+                tv.set_category_visible(DataCategory::Track, track_node.track_visible);
+                tv.set_category_visible(DataCategory::Tpv, track_node.tpv_visible);
+                tv.set_category_visible(
+                    DataCategory::SatelliteReport,
+                    track_node.satellites_visible,
+                );
+                tv.set_category_visible(
+                    DataCategory::CustomMarker,
+                    track_node.custom_markers_visible,
+                );
+                tv.set_category_visible(
+                    DataCategory::GeneratedMarker,
+                    track_node.generated_markers_visible,
+                );
+                tv.set_category_visible(
+                    DataCategory::EventMarker,
+                    !matches!(track_node.event_paths.aggregate(), CheckState::Off),
+                );
             }
         }
     }
@@ -696,12 +707,12 @@ impl TreeState {
             && let Some(tv) = track.index.get_mut(&mut file_vis.tracks)
         {
             tv.enabled = enabled;
-            tv.track_visible = track_visible;
-            tv.tpv_visible = tpv_visible;
-            tv.satellites_visible = satellites_visible;
-            tv.custom_markers_visible = custom_markers_visible;
-            tv.generated_markers_visible = generated_markers_visible;
-            tv.event_markers_visible = event_markers_visible;
+            tv.set_category_visible(DataCategory::Track, track_visible);
+            tv.set_category_visible(DataCategory::Tpv, tpv_visible);
+            tv.set_category_visible(DataCategory::SatelliteReport, satellites_visible);
+            tv.set_category_visible(DataCategory::CustomMarker, custom_markers_visible);
+            tv.set_category_visible(DataCategory::GeneratedMarker, generated_markers_visible);
+            tv.set_category_visible(DataCategory::EventMarker, event_markers_visible);
         }
     }
 

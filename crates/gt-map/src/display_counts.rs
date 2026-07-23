@@ -358,8 +358,8 @@ mod tests {
     fn tree_toggles_zero_their_category() {
         let files = vec![fixture()];
         let mut vis = vis_all();
-        vis.files[0].tracks[0].tpv_visible = false;
-        vis.files[0].tracks[0].custom_markers_visible = false;
+        vis.files[0].tracks[0].set_category_visible(DataCategory::Tpv, false);
+        vis.files[0].tracks[0].set_category_visible(DataCategory::CustomMarker, false);
         let counts = compute(&files, &vis, &GlobalFilter::default(), None);
         assert_eq!(counts.get(DisplayCategory::Tracks), 1);
         assert_eq!(counts.get(DisplayCategory::TrackPoints), 0);
