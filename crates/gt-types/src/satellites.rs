@@ -2,7 +2,6 @@ use crate::time_types::{GpsTime, SysTime};
 use chrono::{DateTime, Utc};
 use std::cmp::Ordering;
 use std::fmt;
-use strum::{EnumCount as _, IntoEnumIterator as _};
 
 /// Pseudo-Random Noise code number that uniquely identifies a satellite within its constellation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -141,78 +140,13 @@ impl Constellation {
             Constellation::Qzss => "J",
         }
     }
-
-    /// The constellation's bit in a [`ConstellationSet`].
-    const fn bit(self) -> u8 {
-        1 << (self as u8)
-    }
 }
 
-const _: () = assert!(
-    Constellation::COUNT <= u8::BITS as usize,
-    "ConstellationSet stores one bit per constellation in a u8"
-);
-
-/// A set of GNSS constellations, one bit each - cheap to pass and combine
-/// where a `HashSet` would allocate. Used to describe "which constellations"
-/// a query covers, from a single one up to all of them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct ConstellationSet(u8);
-
-impl ConstellationSet {
-    /// The empty set.
-    pub const fn empty() -> Self {
-        Self(0)
-    }
-
-    /// Every constellation.
-    pub fn all() -> Self {
-        Constellation::iter().fold(Self::empty(), Self::with)
-    }
-
-    /// The set containing exactly `constellation`.
-    pub const fn single(constellation: Constellation) -> Self {
-        Self(constellation.bit())
-    }
-
-    /// `self` plus `constellation`.
-    pub const fn with(self, constellation: Constellation) -> Self {
-        Self(self.0 | constellation.bit())
-    }
-
-    /// Adds `constellation` to the set.
-    pub const fn insert(&mut self, constellation: Constellation) {
-        self.0 |= constellation.bit();
-    }
-
-    /// Removes `constellation` from the set.
-    pub const fn remove(&mut self, constellation: Constellation) {
-        self.0 &= !constellation.bit();
-    }
-
-    /// Adds or removes `constellation` per `present`.
-    pub const fn set(&mut self, constellation: Constellation, present: bool) {
-        if present {
-            self.insert(constellation);
-        } else {
-            self.remove(constellation);
-        }
-    }
-
-    /// The union of two sets.
-    pub const fn union(self, other: Self) -> Self {
-        Self(self.0 | other.0)
-    }
-
-    /// Whether `constellation` is in the set.
-    pub const fn contains(self, constellation: Constellation) -> bool {
-        self.0 & constellation.bit() != 0
-    }
-
-    /// Whether the set is empty.
-    pub const fn is_empty(self) -> bool {
-        self.0 == 0
-    }
+crate::enum_bitset! {
+    /// A set of GNSS constellations, one bit each - cheap to pass and combine
+    /// where a `HashSet` would allocate. Used to describe "which constellations"
+    /// a query covers, from a single one up to all of them.
+    pub struct ConstellationSet(u8) for Constellation;
 }
 
 #[derive(Debug, Clone, Copy)]
