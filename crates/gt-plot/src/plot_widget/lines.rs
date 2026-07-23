@@ -394,20 +394,20 @@ mod tests {
     use super::visible_by_x;
 
     /// The viewport clip keeps exactly the markers whose x lies in the closed
-    /// `[x_min, x_max]` range, and returns an empty slice when the range sits
-    /// entirely outside the data.
-    #[test]
-    fn visible_by_x_clips_to_the_closed_range() {
+    /// `[x_min, x_max]` range, and yields an empty slice when the range sits
+    /// entirely outside the data (never a panic).
+    #[rstest::rstest]
+    #[case::interior_inclusive(1.0, 3.0, vec![1.0, 2.0, 3.0])]
+    #[case::fractional_window(0.5, 2.5, vec![1.0, 2.0])]
+    #[case::whole_range(-10.0, 10.0, vec![0.0, 1.0, 2.0, 3.0, 4.0])]
+    #[case::entirely_right(5.0, 9.0, vec![])]
+    #[case::entirely_left(-9.0, -5.0, vec![])]
+    fn visible_by_x_clips_to_the_closed_range(
+        #[case] x_min: f64,
+        #[case] x_max: f64,
+        #[case] expected: Vec<f64>,
+    ) {
         let xs = [0.0_f64, 1.0, 2.0, 3.0, 4.0];
-        // Interior window, both endpoints inclusive.
-        assert_eq!(visible_by_x(&xs, |&x| x, 1.0, 3.0), &[1.0, 2.0, 3.0]);
-        // Fractional window keeps only the strictly-contained points.
-        assert_eq!(visible_by_x(&xs, |&x| x, 0.5, 2.5), &[1.0, 2.0]);
-        // Whole range.
-        assert_eq!(visible_by_x(&xs, |&x| x, -10.0, 10.0), &xs);
-        // Entirely to the right of the data: empty, no panic.
-        assert!(visible_by_x(&xs, |&x| x, 5.0, 9.0).is_empty());
-        // Entirely to the left.
-        assert!(visible_by_x(&xs, |&x| x, -9.0, -5.0).is_empty());
+        assert_eq!(visible_by_x(&xs, |&x| x, x_min, x_max), expected.as_slice());
     }
 }
