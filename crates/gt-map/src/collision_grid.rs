@@ -5,16 +5,20 @@
 //! This is what keeps decimated overlays (satellite labels, sky glyphs) from
 //! shuffling while the user navigates.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 /// Keep the smallest candidate (by [`Ord`]) in each `cell_merc`-sized cell.
 /// Winners come back in arbitrary order, so callers that need determinism
 /// sort afterwards.
+///
+/// Runs every frame over the full in-viewport candidate set, so the cell map
+/// uses [`FxHashMap`]: the keys are integer pairs and SipHash's DoS resistance
+/// buys nothing here.
 pub(crate) fn winners_per_cell<C: Ord + Copy>(
     candidates: impl IntoIterator<Item = ((f64, f64), C)>,
     cell_merc: f64,
 ) -> impl Iterator<Item = C> {
-    let mut cells: HashMap<(i64, i64), C> = HashMap::new();
+    let mut cells: FxHashMap<(i64, i64), C> = FxHashMap::default();
     for ((x, y), candidate) in candidates {
         cells
             .entry(cell_key(x, y, cell_merc))

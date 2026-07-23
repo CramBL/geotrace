@@ -2567,6 +2567,7 @@ dependencies = [
  "proptest",
  "rstar 0.13.0",
  "rstest",
+ "rustc-hash 2.1.2",
  "smallvec",
  "strum",
  "thiserror 2.0.18",

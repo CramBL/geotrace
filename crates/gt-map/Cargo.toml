@@ -27,6 +27,7 @@ gt-ui-types = { path = "../gt-ui-types" }
 log.workspace = true
 postcard.workspace = true
 rstar.workspace = true
+rustc-hash.workspace = true
 smallvec.workspace = true
 strum.workspace = true
 thiserror.workspace = true

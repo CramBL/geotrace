@@ -7,12 +7,11 @@
 //! and shared by both line layers through [`LinePointKey`], where the two
 //! previous plugins each walked the points themselves.
 
-use std::collections::HashMap;
-
 use egui::{Color32, Response, Stroke, Ui};
 use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
 use gt_ui_types::{DrawLayerMask, HighlightScope, MapHighlight, QueryMatches, SkyGlyphVariant};
+use rustc_hash::FxHashMap;
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::IconMeshLibrary;
@@ -135,7 +134,7 @@ pub struct TrackLayers<'a> {
     filter: &'a GlobalFilter,
     /// Indices of the real fixes inside the viewport, grouped per track by
     /// the collection pass.
-    tpv_by_track: HashMap<TrackRef, Vec<usize>>,
+    tpv_by_track: FxHashMap<TrackRef, Vec<usize>>,
     /// First file index that is considered "newly loaded";
     /// files[new_file_boundary..] receive a blinking overlay while
     /// `blink_alpha > 0`.
