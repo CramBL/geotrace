@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- Navigation arrow: the car-GPS style concave arrow from tpv_renderer's
+       old draw_navigation_arrow, pointing up. The viewbox center (12,12) is
+       the rotation center (the fix position), so an instance with half
+       extent s spans tip +1.0s forward, wings 0.4s back and 0.5s wide,
+       notch 0.1s back.
+       Both elements are white and tinted per instance: the fill by the
+       primary tint (the per-fix quality color), the rim by the secondary
+       tint (id="tint2" selects the secondary slot, see gt-icon-tessellate).
+       The rim's stroke-width is in physical pixels, not user units: the
+       gt-map build script bakes this asset with
+       StrokeWidthUnit::PhysicalPixels so it keeps the painter path's
+       constant 1.5 px width at every zoom size. -->
+  <path d="M 12 0 L 18 16.8 L 12 13.2 L 6 16.8 Z" fill="white"/>
+  <path id="tint2" d="M 12 0 L 18 16.8 L 12 13.2 L 6 16.8 Z" fill="none"
+        stroke="white" stroke-width="1.5" stroke-linejoin="miter"/>
+</svg>

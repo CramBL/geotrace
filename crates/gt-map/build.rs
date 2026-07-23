@@ -15,7 +15,7 @@ use gt_icon_tessellate::{IconTessellation, StrokeWidthUnit};
 /// build.rs cannot see the crate's `IconId` enum, so the stem is a string
 /// here; [main] fails the build if the asset disappears, and the runtime
 /// decode rejects unknown stems, so a rename cannot silently change modes.
-const PHYSICAL_PIXEL_STROKE_STEMS: [&str; 1] = ["nav_arrow_outline"];
+const PHYSICAL_PIXEL_STROKE_STEMS: [&str; 1] = ["nav_arrow"];
 
 fn main() -> Result<(), Box<dyn Error>> {
     let icons_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons");

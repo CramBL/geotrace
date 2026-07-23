@@ -1739,7 +1739,6 @@ mod snapshot_tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::test_harness::TestHarness;
     use gt_types::mercator::MercPoint;
     use gt_types::{DataCategory, DisplayMode, FileIdx, NavPoint, PointIdx, TrackIdx, TrackRef};
     use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask};
@@ -1877,7 +1876,7 @@ mod snapshot_tests {
         let files = vec![make_snapshot_file()];
         let candidates = [Some(tpv_ref()), Some(event_ref()), Some(custom_ref()), None];
 
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(400.0, 800.0))
             .ui(move |ui| {
                 draw_multi_hover_label_contents(ui, &candidates, &files);
@@ -1896,7 +1895,7 @@ mod snapshot_tests {
         let files = vec![make_snapshot_file()];
         let candidates = [Some(tpv_ref()), None, None, Some(gen_ref())];
 
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(400.0, 800.0))
             .ui(move |ui| {
                 draw_multi_hover_label_contents(ui, &candidates, &files);
@@ -1916,7 +1915,7 @@ mod snapshot_tests {
         let candidates = [Some(tpv_ref()), Some(event_ref()), None, None];
         let sticky = Some(tpv_ref());
 
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(300.0, 90.0))
             .ui(move |ui| {
                 Frame::popup(ui.style()).show(ui, |ui| {
@@ -1988,7 +1987,7 @@ mod snapshot_tests {
             },
         };
 
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(800.0, 600.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
@@ -2058,7 +2057,7 @@ mod snapshot_tests {
             )]),
         };
 
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(800.0, 600.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
@@ -2405,7 +2404,7 @@ mod snapshot_tests {
             )]),
         };
 
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(800.0, 600.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
@@ -2486,7 +2485,7 @@ mod snapshot_tests {
         let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
         let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
 
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(800.0, 600.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
@@ -2540,7 +2539,7 @@ mod snapshot_tests {
             mask.set_visible(category, false);
         }
 
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(800.0, 600.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
@@ -2597,7 +2596,7 @@ mod snapshot_tests {
             mask.set_visible(category, false);
         }
 
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(800.0, 600.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
@@ -2646,7 +2645,7 @@ mod snapshot_tests {
         // A mid-track point that carries a satellite report in the fixture.
         let hovered = (FileIdx::new(0), TrackIdx::new(0), PointIdx::new(50));
 
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(800.0, 600.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
@@ -2698,7 +2697,7 @@ mod snapshot_tests {
             point_index: PointIdx::new(50),
         };
 
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(900.0, 700.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
@@ -2760,7 +2759,7 @@ mod snapshot_tests {
         let action = std::rc::Rc::new(std::cell::Cell::new(None));
         let seen = action.clone();
 
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(900.0, 700.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {

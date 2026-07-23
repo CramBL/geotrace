@@ -389,6 +389,15 @@ impl App {
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
         cc.egui_ctx.set_fonts(fonts);
 
+        // GPU-instanced icon rendering; without a wgpu render state (or with
+        // a corrupted embed, which NavMap reports) the map falls back to the
+        // CPU mesh path. Dithering on, matching eframe's renderer default.
+        if let Some(render_state) = &cc.wgpu_render_state
+            && let Ok(library) = gt_map::icon_mesh::IconMeshLibrary::embedded()
+        {
+            gt_map::icon_mesh::gpu::install(&cc.egui_ctx, render_state, &library, true);
+        }
+
         let mut loaded_settings = config_path
             .as_ref()
             .map(|p| crate::settings::load_settings_from(p))

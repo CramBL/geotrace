@@ -269,14 +269,13 @@ fn draw_event_icon(
         center,
         half_extents: Vec2::splat(half_extent),
         direction: None,
-        tint: track_renderer::apply_fade_alpha(Color32::WHITE, fade),
+        tints: [track_renderer::apply_fade_alpha(Color32::WHITE, fade); 2],
     });
 }
 
 #[cfg(test)]
 mod snapshot_tests {
     use super::*;
-    use crate::test_harness::TestHarness;
     use strum::IntoEnumIterator;
 
     #[test]
@@ -290,7 +289,7 @@ mod snapshot_tests {
         let height = margin * 2.0 + (rows - 1) as f32 * spacing;
 
         let library = IconMeshLibrary::embedded().unwrap();
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(width, height))
             .ui(move |ui| {
                 ui.painter()

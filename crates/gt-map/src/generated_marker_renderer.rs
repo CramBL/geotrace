@@ -396,7 +396,7 @@ fn draw_generated_marker(
                 center,
                 half_extents: egui::Vec2::splat(icon_extent / 2.0),
                 direction: None,
-                tint: faded_stroke,
+                tints: [faded_stroke; 2],
             });
             batch.paint(painter);
         }
@@ -406,7 +406,6 @@ fn draw_generated_marker(
 #[cfg(test)]
 mod snapshot_tests {
     use super::show_slip_table;
-    use crate::test_harness::TestHarness;
     use gt_types::satellites::{Constellation, SatSample, Slip, SlipCause, SlipEvent, Snr};
 
     fn sample(elevation: Option<f32>, azimuth: Option<f32>, snr: Option<f32>) -> SatSample {
@@ -460,7 +459,7 @@ mod snapshot_tests {
     #[test]
     fn slip_table_dark() {
         let event = mixed_slip_event();
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(420.0, 200.0))
             .theme(true)
             .ui(move |ui| {
@@ -473,7 +472,7 @@ mod snapshot_tests {
     #[test]
     fn slip_table_light() {
         let event = mixed_slip_event();
-        let mut harness = TestHarness::builder()
+        let mut harness = crate::test_harness::builder()
             .size(egui::vec2(420.0, 200.0))
             .theme(false)
             .ui(move |ui| {

@@ -30,11 +30,17 @@ pub struct TemplateVertex {
     /// were stretched into their square draw rects.
     /// Anti-alias fringe vertices stick out slightly beyond `[-1, 1]`.
     pub pos: [f32; 2],
-    /// Straight-alpha sRGB color baked from the SVG paint.
+    /// Premultiplied sRGB color baked from the SVG paint - the encoding egui
+    /// vertex colors use, so renderers copy it without conversion.
     ///
-    /// The outer edge of the anti-alias fringe ramps the alpha down to zero.
-    /// Renderers multiply this with a per-instance tint.
+    /// The outer edge of the anti-alias fringe ramps to fully transparent
+    /// (all zeros). Renderers multiply this with a per-instance tint.
     pub color: [u8; 4],
+    /// Which per-instance tint applies: 0 for the primary tint, 1 for the
+    /// secondary (SVG elements with `id="tint2"`). Lets one template carry
+    /// independently tinted parts, like the nav arrow's fill and rim, so
+    /// they stay one instance with per-element paint order intact.
+    pub tint_slot: u8,
 }
 
 /// A triangle mesh for one icon at one size bucket.
@@ -84,17 +90,31 @@ impl IconTessellation {
     ///
     /// `target_px` is the icon's intended full on-screen extent in physical
     /// pixels (points times `pixels_per_point`).
+    ///
+    /// Log-space nearest without logarithms: the boundary between adjacent
+    /// buckets is their geometric mean, and `t < sqrt(a * b)` is `t*t < a*b`
+    /// for positive values, so the scan is a handful of multiplies. This
+    /// runs per icon instance per frame.
     pub fn mesh_for(&self, target_px: f32) -> &IconMeshTemplate {
-        let target_log = target_px.max(f32::MIN_POSITIVE).ln();
-        let mut best = self.buckets.first();
-        for candidate in self.buckets.iter().skip(1) {
-            let candidate_dist = (candidate.bucket_px.ln() - target_log).abs();
-            let best_dist = (best.bucket_px.ln() - target_log).abs();
-            if candidate_dist < best_dist {
-                best = candidate;
+        let ordinal = self.bucket_ordinal_for(target_px);
+        self.buckets
+            .get(ordinal)
+            .map_or(&self.buckets.last().mesh, |bucket| &bucket.mesh)
+    }
+
+    /// The index into [IconTessellation::buckets] of the bucket nearest to
+    /// `target_px` in log space; see [IconTessellation::mesh_for].
+    pub fn bucket_ordinal_for(&self, target_px: f32) -> usize {
+        let target = target_px.max(0.0);
+        let target_sq = target * target;
+        for (ordinal, pair) in self.buckets.windows(2).enumerate() {
+            if let [current, next] = pair
+                && target_sq < current.bucket_px * next.bucket_px
+            {
+                return ordinal;
             }
         }
-        &best.mesh
+        self.buckets.len() - 1
     }
 }
 
@@ -114,6 +134,7 @@ mod tests {
                     TemplateVertex {
                         pos: [0.0, 0.0],
                         color: [0, 0, 0, 0],
+                        tint_slot: 0,
                     };
                     ordinal
                 ],

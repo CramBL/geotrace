@@ -11,9 +11,11 @@ doctest = false
 
 [dependencies]
 bon.workspace = true
+bytemuck.workspace = true
 chrono.workspace = true
 egui.workspace = true
 egui-phosphor.workspace = true
+egui-wgpu.workspace = true
 gt-filter = { path = "../gt-filter" }
 gt-fmt = { path = "../gt-fmt" }
 gt-icon-tessellate = { path = "../gt-icon-tessellate", default-features = false }
@@ -36,11 +38,16 @@ gt-icon-tessellate = { path = "../gt-icon-tessellate" }
 postcard.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 egui_kittest.workspace = true
 gt-test-utils = { path = "../gt-test-utils", features = ["snapshot"] }
 proptest.workspace = true
 rstest.workspace = true
 vec1.workspace = true
+
+[[bench]]
+name = "icon_batch"
+harness = false
 
 [lints]
 workspace = true
