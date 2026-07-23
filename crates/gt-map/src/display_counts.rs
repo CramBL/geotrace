@@ -288,14 +288,15 @@ impl DisplayCountsCache {
 mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use chrono::{DateTime, Duration, Utc};
     use gt_types::sat_label::{SatLabelAnchor, SatLabelTier};
     use gt_types::time_types::GpsTime;
     use gt_types::{
         CustomMarker, EventMarker, FileMetadata, FileSource, GeneratedMarker, GeneratedMarkerKind,
-        Latitude, LoadedFile, LoadedTrack, Longitude, MarkerIcon, NavPoint, PointIdx, TimeRange,
-        TrackLod, TrackMetadata, mercator,
+        GeneratedMarkerKindTag, Latitude, LoadedFile, LoadedTrack, Longitude, MarkerIcon, NavPoint,
+        PointIdx, TimeRange, TrackLod, TrackMetadata, mercator,
     };
     use gt_ui_types::{DrawLayer, FileVisibility, TrackVisibility};
     use strum::IntoEnumIterator;
@@ -426,8 +427,6 @@ mod tests {
     /// than re-derived from the files.
     #[test]
     fn snapped_tracks_are_counted_from_the_prescoped_view() {
-        use std::sync::Arc;
-
         let files = vec![fixture()];
         let snapped = SnappedTracks {
             by_track: HashMap::from([(
@@ -535,8 +534,6 @@ mod tests {
     /// mismatch here. Steps repeat a state to exercise the (cheap) hit path.
     #[test]
     fn cache_agrees_with_compute_across_every_input_change() {
-        use std::sync::Arc;
-
         let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
         let files = vec![fixture()];
         // A second file state with an extra custom marker: same track shape
@@ -569,7 +566,7 @@ mod tests {
         let mut gmv_hidden = GeneratedMarkerVisibility::default();
         gmv_hidden.set_hidden(
             track_ref,
-            std::iter::once(gt_types::GeneratedMarkerKindTag::GnssFixRegained),
+            std::iter::once(GeneratedMarkerKindTag::GnssFixRegained),
         );
         let mut emv_hidden = EventMarkerVisibility::default();
         emv_hidden.set_hidden(track_ref, std::iter::once("Lap".to_string()));
