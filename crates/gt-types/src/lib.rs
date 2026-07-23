@@ -1,3 +1,4 @@
+mod bitset;
 pub mod channel;
 pub mod coordinates;
 pub mod env;

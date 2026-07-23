@@ -2,7 +2,6 @@ use crate::coordinates::{Latitude, Longitude};
 use crate::mercator::MercPoint;
 use crate::satellites::SlipEvent;
 use chrono::{DateTime, Duration, Utc};
-use strum::EnumCount as _;
 
 /// RGB fill color for an event marker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,53 +113,13 @@ impl GeneratedMarkerKindTag {
             Self::Slip => "Satellite slip",
         }
     }
-
-    /// The tag's bit in a [`GeneratedMarkerKindSet`].
-    const fn bit(self) -> u8 {
-        1 << (self as u8)
-    }
 }
 
-const _: () = assert!(
-    GeneratedMarkerKindTag::COUNT <= u8::BITS as usize,
-    "GeneratedMarkerKindSet stores one bit per tag in a u8"
-);
-
-/// A set of [`GeneratedMarkerKindTag`]s, one bit each - a cheap `Copy` stand-in
-/// for a `BTreeSet` where the set is small and rebuilt often, e.g. the
-/// per-track hidden tags in the generated-marker visibility state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct GeneratedMarkerKindSet(u8);
-
-impl GeneratedMarkerKindSet {
-    /// The empty set.
-    pub const fn empty() -> Self {
-        Self(0)
-    }
-
-    /// Adds `tag` to the set.
-    pub const fn insert(&mut self, tag: GeneratedMarkerKindTag) {
-        self.0 |= tag.bit();
-    }
-
-    /// Whether `tag` is in the set.
-    pub const fn contains(self, tag: GeneratedMarkerKindTag) -> bool {
-        self.0 & tag.bit() != 0
-    }
-
-    /// Whether the set is empty.
-    pub const fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-}
-
-impl FromIterator<GeneratedMarkerKindTag> for GeneratedMarkerKindSet {
-    fn from_iter<I: IntoIterator<Item = GeneratedMarkerKindTag>>(iter: I) -> Self {
-        iter.into_iter().fold(Self::empty(), |mut set, tag| {
-            set.insert(tag);
-            set
-        })
-    }
+crate::enum_bitset! {
+    /// A set of [`GeneratedMarkerKindTag`]s, one bit each - a cheap `Copy` stand-in
+    /// for a `BTreeSet` where the set is small and rebuilt often, e.g. the
+    /// per-track hidden tags in the generated-marker visibility state.
+    pub struct GeneratedMarkerKindSet(u8) for GeneratedMarkerKindTag;
 }
 
 impl GeneratedMarkerKind {
@@ -286,19 +245,16 @@ mod generated_marker_kind_tests {
 
     #[test]
     fn kind_set_from_iter_collects_each_tag_once() {
-        use strum::{EnumCount as _, IntoEnumIterator as _};
+        use strum::IntoEnumIterator as _;
 
         let all: GeneratedMarkerKindSet = GeneratedMarkerKindTag::iter().collect();
         assert!(GeneratedMarkerKindTag::iter().all(|t| all.contains(t)));
 
-        // Every tag has a distinct bit, so the full set fills exactly COUNT bits.
-        let mut seen = 0u8;
-        for tag in GeneratedMarkerKindTag::iter() {
-            let bit = tag.bit();
-            assert_eq!(bit & seen, 0, "bit collision for {tag:?}");
-            seen |= bit;
+        // Each tag occupies its own bit: a singleton contains only itself.
+        for a in GeneratedMarkerKindTag::iter() {
+            let only_a = GeneratedMarkerKindSet::single(a);
+            assert!(GeneratedMarkerKindTag::iter().all(|b| only_a.contains(b) == (a == b)));
         }
-        assert_eq!(seen.count_ones() as usize, GeneratedMarkerKindTag::COUNT);
     }
 }
 

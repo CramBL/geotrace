@@ -1,7 +1,5 @@
 use std::fmt;
 
-use strum::{EnumCount as _, IntoEnumIterator as _};
-
 /// Typed wrapper for a file index into `loaded_files[fi]`.
 ///
 /// Using a newtype prevents accidentally swapping a file index for a track index.
@@ -135,58 +133,18 @@ impl DataCategory {
             Self::Track => None,
         }
     }
-
-    /// The category's bit in a [`DataCategorySet`].
-    const fn bit(self) -> u8 {
-        1 << (self as u8)
-    }
 }
 
-const _: () = assert!(
-    DataCategory::COUNT <= u8::BITS as usize,
-    "DataCategorySet stores one bit per category in a u8"
-);
-
-/// A set of [`DataCategory`]s, one bit each - a `Copy` stand-in for a set of
-/// per-category booleans, used for per-track element visibility.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct DataCategorySet(u8);
-
-impl DataCategorySet {
-    /// The empty set.
-    pub const fn empty() -> Self {
-        Self(0)
-    }
-
-    /// Every category.
-    pub fn all() -> Self {
-        DataCategory::iter().fold(Self::empty(), |set, c| set.with(c))
-    }
-
-    /// `self` plus `category`.
-    pub const fn with(self, category: DataCategory) -> Self {
-        Self(self.0 | category.bit())
-    }
-
-    /// Adds or removes `category` per `present`.
-    pub const fn set(&mut self, category: DataCategory, present: bool) {
-        if present {
-            self.0 |= category.bit();
-        } else {
-            self.0 &= !category.bit();
-        }
-    }
-
-    /// Whether `category` is in the set.
-    pub const fn contains(self, category: DataCategory) -> bool {
-        self.0 & category.bit() != 0
-    }
+crate::enum_bitset! {
+    /// A set of [`DataCategory`]s, one bit each - a `Copy` stand-in for a set of
+    /// per-category booleans, used for per-track element visibility.
+    pub struct DataCategorySet(u8) for DataCategory;
 }
 
 #[cfg(test)]
 mod tests {
     use super::{DataCategory, DataCategorySet};
-    use strum::{EnumCount as _, IntoEnumIterator as _};
+    use strum::IntoEnumIterator as _;
 
     #[test]
     fn all_contains_every_category_empty_contains_none() {
@@ -211,13 +169,11 @@ mod tests {
     }
 
     #[test]
-    fn every_category_has_a_distinct_bit() {
-        let mut seen = 0u8;
-        for category in DataCategory::iter() {
-            let bit = category.bit();
-            assert_eq!(bit & seen, 0, "bit collision for {category:?}");
-            seen |= bit;
+    fn every_category_occupies_its_own_bit() {
+        // A singleton set contains its own category and no other.
+        for a in DataCategory::iter() {
+            let only_a = DataCategorySet::single(a);
+            assert!(DataCategory::iter().all(|b| only_a.contains(b) == (a == b)));
         }
-        assert_eq!(seen.count_ones() as usize, DataCategory::COUNT);
     }
 }

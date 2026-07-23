@@ -14,7 +14,7 @@ use egui_phosphor::regular::LINK as ICON_LINK;
 use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
 use gt_types::MetricKind;
 use gt_types::satellites::{Constellation, ConstellationSet};
-use strum::{EnumCount, IntoEnumIterator};
+use strum::IntoEnumIterator;
 
 use super::style::{channel_color, effective_component_color};
 use super::{DEFAULT_PLOT_LINE_WIDTH, PLOT_LINE_WIDTH_RANGE};
@@ -216,48 +216,35 @@ impl MetricKindUi for MetricKind {
     }
 }
 
-/// Per-file shade offsets applied to each metric's base colour.
-///
-/// Keeping hue fixed and only shifting value/lightness preserves metric identity
-/// while still making overlapping lines from different files distinguishable.
-///
+gt_types::enum_bitset! {
+    /// One bit per [`MetricKind`], wrapped by [`MetricVisibility`] which adds
+    /// the all-visible default and the shown-metric gating helpers.
+    struct MetricKindSet(u64) for MetricKind;
+}
+
 /// Global per-metric visibility flags.
 ///
 /// Disabling a metric hides it for **all** tracks at once, making it easy to
 /// declutter the plot without touching per-track settings.
 #[derive(Debug, Clone, Copy)]
-pub struct MetricVisibility(u64);
-
-const _: () = assert!(
-    MetricKind::COUNT <= u64::BITS as usize,
-    "MetricVisibility stores one bit per metric in a u64"
-);
+pub struct MetricVisibility(MetricKindSet);
 
 impl Default for MetricVisibility {
     fn default() -> Self {
         // Every metric starts visible.
-        MetricKind::iter().fold(Self(0), |vis, kind| Self(vis.0 | Self::bit(kind)))
+        Self(MetricKindSet::all())
     }
 }
 
 impl MetricVisibility {
-    /// The metric's bit within the mask.
-    const fn bit(kind: MetricKind) -> u64 {
-        1 << (kind as u32)
-    }
-
     /// Returns the current visibility for `kind`.
-    pub const fn field(self, kind: MetricKind) -> bool {
-        self.0 & Self::bit(kind) != 0
+    pub fn field(self, kind: MetricKind) -> bool {
+        self.0.contains(kind)
     }
 
     /// Sets whether `kind` is visible.
-    pub const fn set(&mut self, kind: MetricKind, enabled: bool) {
-        if enabled {
-            self.0 |= Self::bit(kind);
-        } else {
-            self.0 &= !Self::bit(kind);
-        }
+    pub fn set(&mut self, kind: MetricKind, enabled: bool) {
+        self.0.set(kind, enabled);
     }
 
     /// Returns `true` when every *currently shown* metric is enabled.  Advanced
@@ -988,17 +975,21 @@ mod tests {
         assert!(MetricKind::iter().all(|k| vis.field(k)));
     }
 
-    /// Each metric occupies its own bit, so no two share visibility state.
+    /// Each metric has independent visibility state, so toggling one never
+    /// disturbs another (a shared bit would show up as cross-talk here).
     #[test]
-    fn every_metric_has_a_distinct_bit() {
-        use strum::EnumCount;
-        let mut seen = 0u64;
-        for kind in MetricKind::iter() {
-            let bit = MetricVisibility::bit(kind);
-            assert_eq!(bit & seen, 0, "bit collision for {kind:?}");
-            seen |= bit;
+    fn each_metric_toggles_independently() {
+        for target in MetricKind::iter() {
+            let mut vis = MetricVisibility::default();
+            vis.set(target, false);
+            assert!(!vis.field(target));
+            assert!(
+                MetricKind::iter()
+                    .filter(|&k| k != target)
+                    .all(|k| vis.field(k)),
+                "toggling {target:?} disturbed another metric"
+            );
         }
-        assert_eq!(seen.count_ones() as usize, MetricKind::COUNT);
     }
 
     /// A per-constellation chip/line shows only when its constellation appears
