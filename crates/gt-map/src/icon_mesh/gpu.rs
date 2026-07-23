@@ -342,7 +342,7 @@ impl CallbackTrait for IconDrawCallback {
 
     fn paint(
         &self,
-        _info: PaintCallbackInfo,
+        info: PaintCallbackInfo,
         render_pass: &mut wgpu::RenderPass<'static>,
         callback_resources: &CallbackResources,
     ) {
@@ -352,6 +352,20 @@ impl CallbackTrait for IconDrawCallback {
         let Some(instance_buffer) = self.instance_buffer.get() else {
             return;
         };
+
+        // egui-wgpu sets the render-pass viewport to this callback's clip rect
+        // before calling us, so its NDC would span only the map widget. Our
+        // instances carry absolute screen-point positions and the shader maps
+        // them against the full framebuffer (`screen_size_in_points`, written
+        // in `prepare`), exactly like epaint's own mesh path. Reset the
+        // viewport to the whole framebuffer so that mapping is correct; the
+        // scissor rect egui-wgpu set to the clip rect stays in place, so the
+        // icons are still clipped to the map widget. Without this, zoomed-out
+        // frames (>= GPU_MIN_INSTANCES icons, so the instanced path) draw every
+        // icon offset and scaled into a corner.
+        let [width_px, height_px] = info.screen_size_px;
+        render_pass.set_viewport(0.0, 0.0, width_px as f32, height_px as f32, 0.0, 1.0);
+
         render_pass.set_pipeline(&resources.pipeline);
         render_pass.set_bind_group(0, &resources.bind_group, &[]);
         render_pass.set_vertex_buffer(0, resources.template_vertices.slice(..));
