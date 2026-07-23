@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+All optimizations, no features, no fixes.
+
 ### Changed
 
 - Map markers, navigation arrows and fix-loss chevrons are now vector meshes pre-tessellated at build time and drawn with GPU instancing, instead of pre-rasterised bitmaps. They stay sharp at every zoom level and on high-DPI screens, and dense recordings render them in one instanced draw call per icon type rather than one textured quad each.
