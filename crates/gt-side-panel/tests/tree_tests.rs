@@ -1,4 +1,5 @@
-use gt_side_panel::tree::{CategoriesExpanded, CheckState, NodeKey, TreeState};
+use gt_side_panel::tree::{CheckState, NodeKey, TreeState};
+use gt_types::DataCategorySet;
 use gt_types::{FileIdx, TrackIdx, TrackRef};
 
 fn make_tree(file_count: usize, trips_per_file: usize) -> TreeState {
@@ -18,7 +19,7 @@ fn make_track_node() -> gt_side_panel::TrackNode {
     gt_side_panel::TrackNode {
         expanded: false,
         check: CheckState::On,
-        categories_expanded: CategoriesExpanded::default(),
+        categories_expanded: DataCategorySet::default(),
         track_visible: true,
         tpv_visible: true,
         satellites_visible: true,

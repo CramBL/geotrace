@@ -8,6 +8,4 @@ pub use render::{
     PanelContext, RecordingDetails, SnapInFlightView, SnapPanelView, SnapProgressView, SnapRowView,
     show_side_panel,
 };
-pub use tree::{
-    CategoriesExpanded, CheckState, DeleteConfirmState, FileNode, NodeKey, TrackNode, TreeState,
-};
+pub use tree::{CheckState, DeleteConfirmState, FileNode, NodeKey, TrackNode, TreeState};
