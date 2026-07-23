@@ -1,6 +1,6 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
-use gt_types::{GeneratedMarkerKindTag, TrackRef};
+use gt_types::{GeneratedMarkerKindSet, GeneratedMarkerKindTag, TrackRef};
 
 /// Per-track visibility of generated-marker event types.
 ///
@@ -10,7 +10,7 @@ use gt_types::{GeneratedMarkerKindTag, TrackRef};
 /// [`crate::EventMarkerVisibility`] refines event markers by variant path.
 #[derive(Debug, Clone, Default)]
 pub struct GeneratedMarkerVisibility {
-    hidden: HashMap<TrackRef, BTreeSet<GeneratedMarkerKindTag>>,
+    hidden: HashMap<TrackRef, GeneratedMarkerKindSet>,
 }
 
 impl GeneratedMarkerVisibility {
@@ -23,7 +23,7 @@ impl GeneratedMarkerVisibility {
         !self
             .hidden
             .get(&track)
-            .is_some_and(|hidden| hidden.contains(&tag))
+            .is_some_and(|hidden| hidden.contains(tag))
     }
 
     /// Replace the hidden set for one track.
@@ -32,7 +32,7 @@ impl GeneratedMarkerVisibility {
         track: TrackRef,
         hidden: impl Iterator<Item = GeneratedMarkerKindTag>,
     ) {
-        let set: BTreeSet<GeneratedMarkerKindTag> = hidden.collect();
+        let set: GeneratedMarkerKindSet = hidden.collect();
         if set.is_empty() {
             self.hidden.remove(&track);
         } else {
