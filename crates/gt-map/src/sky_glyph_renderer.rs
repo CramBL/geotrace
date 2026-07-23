@@ -97,17 +97,18 @@ const DISC_RIM_ALPHA: f32 = 0.6;
 /// Radius of a satellite dot inside the disc.
 const DISC_DOT_RADIUS_PX: f32 = 2.2;
 
-/// Per-geometry point indices carrying a sky ring this frame, indexed like
-/// the caller's geometry list. The same shape the satellite labels use.
-pub(crate) type SelectedGlyphs = Vec<Vec<usize>>;
+/// Reusable glyph-decimation scratch, held across frames by the map widget.
+/// Its per-geometry output lists are indexed like the caller's geometry list,
+/// the same shape the satellite labels use.
+pub(crate) type GlyphSelection = collision_grid::DecimationScratch<Candidate>;
 
 /// The candidate occupying a grid cell. The most informative report (most
 /// satellites in the fix) wins, tie-broken by the stable track/point key so
 /// the selection cannot flicker between frames.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct Candidate {
+pub(crate) struct Candidate {
     /// Reversed so the highest fix count is the smallest candidate, which
-    /// is the one [`collision_grid::winners_per_cell`] keeps.
+    /// is the one [`collision_grid::DecimationScratch::resolve`] keeps.
     fix_rank: Reverse<u32>,
     track: TrackRef,
     point_index: usize,
@@ -119,14 +120,15 @@ struct Candidate {
 /// its geometry index and ref; `point_passes` applies the caller's per-point
 /// conditions (time filter, query hiding). Points outside `viewport` or
 /// without a satellite report are skipped.
-pub(crate) fn select_glyphs<'a>(
+pub(crate) fn select_glyphs<'s, 'a>(
+    scratch: &'s mut GlyphSelection,
     tracks: impl Iterator<Item = (usize, TrackRef, &'a LoadedTrack)>,
     geometry_count: usize,
     viewport: MercBounds,
     cell_merc: f64,
     mut point_passes: impl FnMut(TrackRef, usize, &gt_types::NavPoint) -> bool,
-) -> SelectedGlyphs {
-    let mut candidates: Vec<((f64, f64), Candidate)> = Vec::new();
+) -> &'s [Vec<usize>] {
+    let candidates = scratch.candidates();
     for (geometry_index, track_ref, track) in tracks {
         for (point_index, point) in track.points.iter().enumerate() {
             let Some(satellites) = &point.satellites else {
@@ -151,9 +153,9 @@ pub(crate) fn select_glyphs<'a>(
             ));
         }
     }
-    let winners = collision_grid::winners_per_cell(candidates, cell_merc)
-        .map(|c| (c.geometry_index, c.point_index));
-    collision_grid::group_by_geometry(winners, geometry_count)
+    scratch.resolve(cell_merc, geometry_count, |c| {
+        (c.geometry_index, c.point_index)
+    })
 }
 
 /// Draw a single sky disc at `fix_pos` for one point's report, for the
@@ -454,7 +456,7 @@ mod tests {
     use gt_ui_types::SkyGlyphVariant;
 
     use super::{
-        DISC_OFFSET_PX, DISC_RADIUS_PX, RING_RADIUS_PX, SelectedGlyphs, disc_offset_for_samples,
+        DISC_OFFSET_PX, DISC_RADIUS_PX, GlyphSelection, RING_RADIUS_PX, disc_offset_for_samples,
         draw_disc, draw_ring, min_spacing_px, outward_normal, select_glyphs,
     };
 
@@ -492,14 +494,17 @@ mod tests {
         gt_test_utils::loaded_track_with_points(points)
     }
 
-    fn select(track: &gt_types::LoadedTrack, cell_merc: f64) -> SelectedGlyphs {
+    fn select(track: &gt_types::LoadedTrack, cell_merc: f64) -> Vec<Vec<usize>> {
+        let mut scratch = GlyphSelection::default();
         select_glyphs(
+            &mut scratch,
             [(0, TrackRef::new(FileIdx::new(0), TrackIdx::new(0)), track)].into_iter(),
             1,
             WORLD,
             cell_merc,
             |_, _, _| true,
         )
+        .to_vec()
     }
 
     #[test]
@@ -596,14 +601,16 @@ mod tests {
             y_min: 0.9,
             y_max: 1.0,
         };
+        let mut scratch = GlyphSelection::default();
         let selected = select_glyphs(
+            &mut scratch,
             [(0, TrackRef::new(FileIdx::new(0), TrackIdx::new(0)), &track)].into_iter(),
             1,
             nothing,
             1e-9,
             |_, _, _| true,
         );
-        assert_eq!(selected, vec![Vec::<usize>::new()]);
+        assert_eq!(selected.to_vec(), vec![Vec::<usize>::new()]);
     }
 
     /// Snapshot: the three ring states side by side - open sky (a full bead

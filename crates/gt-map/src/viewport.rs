@@ -24,6 +24,11 @@ pub struct GeoBounds {
 /// The spatial points inside the viewport, split by category, ready for
 /// the render plugins. TPV fixes arrive pre-grouped per track (point
 /// indices), which is the shape `TrackLayers` consumes.
+///
+/// Held across frames as reusable scratch (see [`crate::NavMap`]): [`Self::clear`]
+/// empties every buffer while keeping its allocation, so a steady stream of
+/// frames at similar zoom reuses the same memory instead of reallocating.
+#[derive(Default)]
 pub(crate) struct VisiblePoints {
     pub(crate) tpv_by_track: FxHashMap<TrackRef, Vec<usize>>,
     pub(crate) custom: Vec<SpatialPoint>,
@@ -31,8 +36,23 @@ pub(crate) struct VisiblePoints {
     pub(crate) event: Vec<SpatialPoint>,
 }
 
+impl VisiblePoints {
+    /// Empty every buffer for reuse, keeping capacity. TPV track keys are
+    /// retained with emptied index lists so their inner allocations survive
+    /// too; an empty list draws nothing, exactly as an absent key would.
+    fn clear(&mut self) {
+        for indices in self.tpv_by_track.values_mut() {
+            indices.clear();
+        }
+        self.custom.clear();
+        self.generated.clear();
+        self.event.clear();
+    }
+}
+
 /// Collect the spatial points inside the current viewport from the global
-/// R-tree, one list per category.
+/// R-tree into `visible`, one list per category. The buffers are cleared
+/// first, so a reused [`VisiblePoints`] keeps its allocations across frames.
 ///
 /// TPV points are gated by the frame's [`TrackPlan`]: fix icons of tracks
 /// that are disabled, filtered out, TPV-layer-hidden, or classified
@@ -40,11 +60,13 @@ pub(crate) struct VisiblePoints {
 /// drawn, so collecting their viewport points - potentially the entire
 /// recording when zoomed out - would be pure allocation waste.
 pub(crate) fn collect_visible_points(
+    visible: &mut VisiblePoints,
     tree: &rstar::RTree<SpatialPoint>,
     plan: &TrackPlan,
     transform: &MercTransform,
     map_rect: egui::Rect,
-) -> VisiblePoints {
+) {
+    visible.clear();
     let lt = map_rect.left_top();
     let rb = map_rect.right_bottom();
     let aabb = rstar::AABB::from_corners(
@@ -57,12 +79,6 @@ pub(crate) fn collect_visible_points(
             transform.merc_y_from_screen(rb.y),
         ],
     );
-    let mut visible = VisiblePoints {
-        tpv_by_track: FxHashMap::default(),
-        custom: Vec::new(),
-        generated: Vec::new(),
-        event: Vec::new(),
-    };
     for sp in tree.locate_in_envelope(aabb) {
         match sp.category {
             DataCategory::Tpv => {
@@ -85,7 +101,6 @@ pub(crate) fn collect_visible_points(
             _ => {}
         }
     }
-    visible
 }
 
 /// What the renderers will do for one track this frame, derived once per

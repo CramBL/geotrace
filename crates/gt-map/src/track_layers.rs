@@ -17,8 +17,8 @@ use walkers::{MapMemory, Plugin, Projector};
 use crate::icon_mesh::IconMeshLibrary;
 use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
 use crate::query_match_renderer;
-use crate::sat_labels::{self, SelectedLabels};
-use crate::sky_glyph_renderer::{self, SelectedGlyphs};
+use crate::sat_labels::{self, LabelSelection};
+use crate::sky_glyph_renderer::{self, GlyphSelection};
 use crate::tpv_renderer::{
     self, QUALITY_LINE_WIDTH, TpvDrawStyle, TrackIconFade, bucket_alpha, fix_icon_alpha,
     line_alpha_bucket, quality_line_color, split_spans_by,
@@ -133,8 +133,9 @@ pub struct TrackLayers<'a> {
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
     /// Indices of the real fixes inside the viewport, grouped per track by
-    /// the collection pass.
-    tpv_by_track: FxHashMap<TrackRef, Vec<usize>>,
+    /// the collection pass. Borrowed from the reused [`crate::viewport::VisiblePoints`]
+    /// scratch, so lookups may return an empty list for a no-longer-visible track.
+    tpv_by_track: &'a FxHashMap<TrackRef, Vec<usize>>,
     /// First file index that is considered "newly loaded";
     /// files[new_file_boundary..] receive a blinking overlay while
     /// `blink_alpha > 0`.
@@ -154,13 +155,18 @@ pub struct TrackLayers<'a> {
     sky_glyph_variant: SkyGlyphVariant,
     /// Pre-tessellated icon meshes for the ghost chevrons.
     icon_meshes: Option<&'a IconMeshLibrary>,
+    /// Reused decimation scratch for the satellite-label selection, filled
+    /// during [`Plugin::run`] and borrowed by the paint passes.
+    sat_label_scratch: &'a mut LabelSelection,
+    /// Reused decimation scratch for the sky-glyph selection.
+    sky_glyph_scratch: &'a mut GlyphSelection,
 }
 
 impl<'a> TrackLayers<'a> {}
 
 impl Plugin for TrackLayers<'_> {
     fn run(
-        self: Box<Self>,
+        mut self: Box<Self>,
         ui: &mut Ui,
         _response: &Response,
         projector: &Projector,
@@ -174,10 +180,13 @@ impl Plugin for TrackLayers<'_> {
         let max_rect = ui.max_rect();
 
         let geometries = self.prepare_track_geometries(max_rect, &style, &transform);
-        let sat_labels =
-            self.select_sat_labels(&geometries, max_rect, &transform, map_memory.zoom());
-        let sky_glyphs =
-            self.select_sky_glyphs(&geometries, max_rect, &transform, map_memory.zoom());
+        // The `select_*` calls fill the scratches through `&mut self`; the
+        // `.selected()` reads then borrow them immutably for the paint passes.
+        // Split so the mutable fill fully ends before the shared reads begin.
+        self.select_sat_labels(&geometries, max_rect, &transform, map_memory.zoom());
+        self.select_sky_glyphs(&geometries, max_rect, &transform, map_memory.zoom());
+        let sat_labels = self.sat_label_scratch.selected();
+        let sky_glyphs = self.sky_glyph_scratch.selected();
 
         let hover_active =
             self.highlight.fading_enabled && track_renderer::hover_is_active(self.highlight);
@@ -205,8 +214,8 @@ impl Plugin for TrackLayers<'_> {
                 self.paint_tpv_layers(
                     ui,
                     &geometries,
-                    &sat_labels,
-                    &sky_glyphs,
+                    sat_labels,
+                    sky_glyphs,
                     &style,
                     &transform,
                     max_rect,
@@ -222,8 +231,8 @@ impl Plugin for TrackLayers<'_> {
                 self.paint_tpv_layers(
                     ui,
                     &geometries,
-                    &sat_labels,
-                    &sky_glyphs,
+                    sat_labels,
+                    sky_glyphs,
                     &style,
                     &transform,
                     max_rect,
@@ -237,8 +246,8 @@ impl Plugin for TrackLayers<'_> {
                 self.paint_tpv_layers(
                     ui,
                     &geometries,
-                    &sat_labels,
-                    &sky_glyphs,
+                    sat_labels,
+                    sky_glyphs,
                     &style,
                     &transform,
                     max_rect,
@@ -252,8 +261,8 @@ impl Plugin for TrackLayers<'_> {
             self.paint_tpv_layers(
                 ui,
                 &geometries,
-                &sat_labels,
-                &sky_glyphs,
+                sat_labels,
+                sky_glyphs,
                 &style,
                 &transform,
                 max_rect,
@@ -265,7 +274,7 @@ impl Plugin for TrackLayers<'_> {
     }
 }
 
-impl TrackLayers<'_> {
+impl<'a> TrackLayers<'a> {
     /// The single geometry walk for every visible track: LOD selection,
     /// time filter, projection, culling, and the per-point styling key,
     /// plus the ghost-fix indices for the chevron pass. The quality color
@@ -276,14 +285,18 @@ impl TrackLayers<'_> {
         max_rect: egui::Rect,
         style: &TpvDrawStyle,
         transform: &MercTransform,
-    ) -> Vec<TrackGeometry<'_>> {
+    ) -> Vec<TrackGeometry<'a>> {
         let cull_rect = max_rect.expand(CULL_MARGIN_PX);
         // Viewport bounds in Mercator space - used to skip tracks that are
         // entirely outside the visible area without iterating any points.
         let vp_bounds = transform.viewport_merc_bounds(max_rect);
 
-        let mut geometries: Vec<TrackGeometry> = Vec::new();
-        for (fi, file) in self.files.iter().enumerate() {
+        // Bind the `'a` file slice out of `&self` so the returned geometry
+        // borrows the underlying tracks, not this `&self` call - the selection
+        // passes then take `&mut self` while the geometry is still alive.
+        let files: &'a [LoadedFile] = self.files;
+        let mut geometries: Vec<TrackGeometry<'a>> = Vec::new();
+        for (fi, file) in files.iter().enumerate() {
             let fi = FileIdx::new(fi);
             for (ti, track) in file.tracks.iter().enumerate() {
                 let ti = TrackIdx::new(ti);
@@ -493,18 +506,23 @@ impl TrackLayers<'_> {
     /// per-point conditions mirror the icon pass (time filter, query
     /// hiding).
     fn select_sat_labels(
-        &self,
+        &mut self,
         geometries: &[TrackGeometry],
         max_rect: egui::Rect,
         transform: &MercTransform,
         zoom: f64,
-    ) -> SelectedLabels {
+    ) {
         let viewport = transform.viewport_merc_bounds(max_rect);
         // The label spacing also varies with zoom, so bucket it too (see
         // [`decimation_zoom`]).
         let cell_merc =
             decimation_cell_merc(tpv_renderer::label_cell_px(decimation_zoom(zoom)), zoom);
+        // Copy the shared borrows out so the closure captures them, not `self`,
+        // leaving `self.sat_label_scratch` free to borrow mutably.
+        let filter = self.filter;
+        let query_matches = self.query_matches;
         sat_labels::select_sat_labels(
+            &mut *self.sat_label_scratch,
             geometries
                 .iter()
                 .enumerate()
@@ -513,13 +531,11 @@ impl TrackLayers<'_> {
             geometries.len(),
             viewport,
             cell_merc,
-            |track_ref, pi, point| {
-                gt_filter::point_passes_time_filter(point.tpv.time().utc(), self.filter)
-                    && !self
-                        .query_matches
-                        .is_some_and(|m| m.is_hidden(track_ref, pi))
+            move |track_ref, pi, point| {
+                gt_filter::point_passes_time_filter(point.tpv.time().utc(), filter)
+                    && !query_matches.is_some_and(|m| m.is_hidden(track_ref, pi))
             },
-        )
+        );
     }
 
     /// Resolve which report-bearing points get a sky ring this frame, for
@@ -528,19 +544,35 @@ impl TrackLayers<'_> {
     /// [`sky_glyph_renderer::MIN_ZOOM`], where per-point rings would be
     /// noise. Per-point conditions mirror the icon and label passes.
     fn select_sky_glyphs(
-        &self,
+        &mut self,
         geometries: &[TrackGeometry],
         max_rect: egui::Rect,
         transform: &MercTransform,
         zoom: f64,
-    ) -> SelectedGlyphs {
-        if zoom < sky_glyph_renderer::MIN_ZOOM {
-            return vec![Vec::new(); geometries.len()];
-        }
+    ) {
         let viewport = transform.viewport_merc_bounds(max_rect);
-        let min_spacing_px = sky_glyph_renderer::min_spacing_px(self.sky_glyph_variant);
+        let filter = self.filter;
+        let query_matches = self.query_matches;
+        let variant = self.sky_glyph_variant;
+        if zoom < sky_glyph_renderer::MIN_ZOOM {
+            // No rings at this zoom; still refresh the scratch to the right
+            // number of empty buckets so the paint pass reads a matching
+            // length, without walking any points.
+            sky_glyph_renderer::select_glyphs(
+                &mut *self.sky_glyph_scratch,
+                std::iter::empty::<(usize, TrackRef, &LoadedTrack)>(),
+                geometries.len(),
+                viewport,
+                // No candidates are pushed, so the cell size is never read.
+                1.0,
+                |_, _, _| false,
+            );
+            return;
+        }
+        let min_spacing_px = sky_glyph_renderer::min_spacing_px(variant);
         let cell_merc = decimation_cell_merc(min_spacing_px, zoom);
         sky_glyph_renderer::select_glyphs(
+            &mut *self.sky_glyph_scratch,
             geometries
                 .iter()
                 .enumerate()
@@ -549,13 +581,11 @@ impl TrackLayers<'_> {
             geometries.len(),
             viewport,
             cell_merc,
-            |track_ref, pi, point| {
-                gt_filter::point_passes_time_filter(point.tpv.time().utc(), self.filter)
-                    && !self
-                        .query_matches
-                        .is_some_and(|m| m.is_hidden(track_ref, pi))
+            move |track_ref, pi, point| {
+                gt_filter::point_passes_time_filter(point.tpv.time().utc(), filter)
+                    && !query_matches.is_some_and(|m| m.is_hidden(track_ref, pi))
             },
-        )
+        );
     }
 
     /// Paint the TPV layer per track: the sky rings underneath, the
@@ -569,8 +599,8 @@ impl TrackLayers<'_> {
         &self,
         ui: &Ui,
         geometries: &[TrackGeometry],
-        sat_labels: &SelectedLabels,
-        sky_glyphs: &SelectedGlyphs,
+        sat_labels: &[Vec<usize>],
+        sky_glyphs: &[Vec<usize>],
         style: &TpvDrawStyle,
         transform: &MercTransform,
         max_rect: egui::Rect,

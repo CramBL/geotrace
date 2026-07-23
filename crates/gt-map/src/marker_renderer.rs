@@ -13,7 +13,7 @@ pub struct MarkerRenderer<'a> {
     visibility: &'a TrackDataVisibility,
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
-    visible_custom: Vec<SpatialPoint>,
+    visible_custom: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
 }
 
@@ -23,7 +23,7 @@ impl<'a> MarkerRenderer<'a> {
         visibility: &'a TrackDataVisibility,
         highlight: &'a MapHighlight,
         filter: &'a GlobalFilter,
-        visible_custom: Vec<SpatialPoint>,
+        visible_custom: &'a [SpatialPoint],
         icon_meshes: Option<&'a IconMeshLibrary>,
     ) -> Self {
         Self {
@@ -63,7 +63,7 @@ impl Plugin for MarkerRenderer<'_> {
             crate::transform::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         let mut batch = IconMeshBatch::new(self.icon_meshes, ui.pixels_per_point());
-        for sp in &self.visible_custom {
+        for sp in self.visible_custom {
             let Some(track) = crate::scope::category_in_scope(
                 self.files,
                 self.visibility,
