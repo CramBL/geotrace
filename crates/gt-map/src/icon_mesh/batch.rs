@@ -463,6 +463,135 @@ mod tests {
 }
 
 #[cfg(test)]
+mod gpu_projection_tests {
+    use super::*;
+    use crate::icon_mesh::IconMeshLibrary;
+
+    #[derive(Clone, Copy)]
+    enum Backend {
+        Cpu,
+        Gpu,
+    }
+
+    /// Draw an 8x8 grid of identical icons - 64 instances, comfortably above
+    /// [gpu::GPU_MIN_INSTANCES] so the GPU backend takes the instanced-draw
+    /// path instead of falling back to the CPU mesh - inside `clip`, using the
+    /// requested backend, and return the rendered frame.
+    ///
+    /// The painter handed to [IconMeshBatch::paint] is clipped to `clip`, so on
+    /// the GPU path the paint callback's rect (hence egui-wgpu's render-pass
+    /// viewport) is exactly `clip`.
+    fn render_icon_grid(size: egui::Vec2, clip: egui::Rect, backend: Backend) -> image::RgbaImage {
+        let library = IconMeshLibrary::embedded().unwrap();
+        let mut harness = crate::test_harness::builder().size(size).ui(move |ui| {
+            ui.painter()
+                .rect_filled(ui.max_rect(), 0.0, Color32::from_rgb(30, 30, 30));
+
+            let (cols, rows) = (8usize, 8usize);
+            let cell_w = clip.width() / cols as f32;
+            let cell_h = clip.height() / rows as f32;
+            let mut batch = match backend {
+                Backend::Cpu => IconMeshBatch::new(Some(&library), ui.pixels_per_point()),
+                Backend::Gpu => IconMeshBatch::gpu_when_available(ui, Some(&library)),
+            };
+            for row in 0..rows {
+                for col in 0..cols {
+                    batch.push(IconInstance {
+                        icon: IconId::Pin,
+                        center: egui::pos2(
+                            clip.min.x + (col as f32 + 0.5) * cell_w,
+                            clip.min.y + (row as f32 + 0.5) * cell_h,
+                        ),
+                        half_extents: Vec2::splat(8.0),
+                        direction: None,
+                        tints: [Color32::WHITE; 2],
+                    });
+                }
+            }
+            let painter = ui.painter().with_clip_rect(clip);
+            batch.paint(&painter);
+        });
+        harness.run();
+        harness.inner.render().expect("failed to render frame")
+    }
+
+    /// Count pixels differing by more than a per-channel tolerance, as a
+    /// fraction of the frame. The two icon backends rasterize the same baked
+    /// template through different pipelines (epaint's mesh vs our instanced
+    /// shader), so a handful of edge pixels per icon legitimately differ; a
+    /// placement divergence differs across whole icons instead.
+    fn diff_fraction(a: &image::RgbaImage, b: &image::RgbaImage) -> f64 {
+        assert_eq!(a.dimensions(), b.dimensions(), "frame sizes must match");
+        let (w, h) = a.dimensions();
+        let mut differing = 0u64;
+        for y in 0..h {
+            for x in 0..w {
+                let pa = a.get_pixel(x, y).0;
+                let pb = b.get_pixel(x, y).0;
+                let max_delta = (0..4)
+                    .map(|i| i32::from(pa[i]).abs_diff(i32::from(pb[i])))
+                    .max()
+                    .unwrap_or(0);
+                if max_delta > 24 {
+                    differing += 1;
+                }
+            }
+        }
+        f64::from(u32::try_from(differing).unwrap_or(u32::MAX)) / f64::from(w * h)
+    }
+
+    /// Baseline: with the icon painter clipped to the whole frame, the paint
+    /// callback's viewport equals the framebuffer, so the GPU instanced path
+    /// and the CPU mesh path must produce the same image. This isolates the
+    /// next test's failure to the *viewport*, not to a pipeline-parity issue.
+    #[test]
+    fn gpu_and_cpu_match_when_clip_fills_the_frame() {
+        let size = egui::vec2(400.0, 320.0);
+        let full = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+        let cpu = render_icon_grid(size, full, Backend::Cpu);
+        let gpu = render_icon_grid(size, full, Backend::Gpu);
+        let frac = diff_fraction(&cpu, &gpu);
+        assert!(
+            frac < 0.01,
+            "full-frame GPU vs CPU icons differ by {:.2}% - the two pipelines \
+             should rasterize the shared template identically",
+            frac * 100.0
+        );
+    }
+
+    /// Regression test for icons "placed incorrectly when zooming out".
+    ///
+    /// The map widget is always inset by the side panels, so the icon
+    /// painter's clip rect is a sub-rect of the framebuffer. egui-wgpu sets a
+    /// paint callback's render-pass viewport to that clip rect, so the
+    /// instanced shader must map screen points into NDC relative to the clip
+    /// rect - not the full framebuffer. Zooming out pushes the visible-icon
+    /// count past [gpu::GPU_MIN_INSTANCES], switching from the (correct) CPU
+    /// mesh path to the GPU instanced draw; if the shader assumes the whole
+    /// framebuffer, every icon is offset and scaled into a corner.
+    ///
+    /// The CPU path is unaffected by the viewport (its vertices are absolute
+    /// screen positions), so it is the correct reference. The two must match.
+    #[test]
+    fn gpu_instanced_icons_match_cpu_placement_in_inset_viewport() {
+        let size = egui::vec2(400.0, 320.0);
+        // A sub-rect standing in for the map widget inset by the side panels.
+        let inset = egui::Rect::from_min_size(egui::pos2(150.0, 90.0), egui::vec2(220.0, 200.0));
+        let cpu = render_icon_grid(size, inset, Backend::Cpu);
+        let gpu = render_icon_grid(size, inset, Backend::Gpu);
+        let frac = diff_fraction(&cpu, &gpu);
+        assert!(
+            frac < 0.01,
+            "GPU instanced icons are misplaced under an inset clip rect: \
+             {:.1}% of pixels differ from the CPU reference. The instanced \
+             shader maps NDC to the full framebuffer, but egui-wgpu set the \
+             render-pass viewport to the callback's clip rect.",
+            frac * 100.0
+        );
+    }
+}
+
+#[cfg(test)]
 mod snapshot_tests {
     use std::f32::consts::FRAC_1_SQRT_2;
 

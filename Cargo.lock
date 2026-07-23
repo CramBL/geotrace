@@ -2562,6 +2562,7 @@ dependencies = [
  "gt-types",
  "gt-ui-theme",
  "gt-ui-types",
+ "image",
  "log",
  "postcard",
  "proptest",
