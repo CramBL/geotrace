@@ -20,7 +20,8 @@ pub use geo_types::{Coord, Rect};
 pub use highlight::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
 pub use markers::{
     CustomMarker, EventMarker, EventMarkerStyle, GeneratedMarker, GeneratedMarkerKind,
-    GeneratedMarkerKindTag, MarkerColor, MarkerIcon, event_marker_fallback_color,
+    GeneratedMarkerKindSet, GeneratedMarkerKindTag, MarkerColor, MarkerIcon,
+    event_marker_fallback_color,
 };
 pub use mercator::MercPoint;
 pub use metrics::MetricKind;
