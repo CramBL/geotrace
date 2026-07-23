@@ -12,14 +12,16 @@
 //! the renderers apply, so the counts cannot drift from what actually
 //! draws.
 
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
 
 use gt_filter::{GlobalFilter, point_passes_time_filter};
-use gt_types::{DataCategory, FileIdx, LoadedFile, TrackIdx, TrackRef};
+use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
 use gt_ui_types::{
     DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, QueryMatches, SnappedTracks,
     TrackDataVisibility,
 };
+use rustc_hash::FxHasher;
 
 /// The in-scope element count of every [`DisplayCategory`].
 ///
@@ -173,18 +175,152 @@ impl DisplayCounts {
     }
 }
 
+/// The inputs [`DisplayCounts::compute`] reads, captured so a cache can tell
+/// when a recompute is actually needed. Compared by value; `compute` reads
+/// nothing else, so equal keys guarantee equal counts.
+///
+/// `files` is fingerprinted structurally rather than cloned: point and marker
+/// data is immutable once loaded, so the per-track array lengths (plus the
+/// file/track counts) change exactly when a load, unload, or reload changes
+/// what could be counted. `snapped_tracks` collapses to its track count -
+/// the only thing `compute` reads from it.
+#[derive(Clone, PartialEq)]
+struct DisplayCountsKey {
+    files_sig: u64,
+    snapped_len: usize,
+    filter: GlobalFilter,
+    visibility: TrackDataVisibility,
+    event_marker_visibility: EventMarkerVisibility,
+    generated_marker_visibility: GeneratedMarkerVisibility,
+    query_matches: Option<QueryMatches>,
+}
+
+/// A structural fingerprint of the loaded data: the file/track shape and each
+/// track's per-array element counts. O(tracks), not O(points), so it is cheap
+/// to compute every frame the popup is open.
+///
+/// [`LoadedFile`] and [`LoadedTrack`] are destructured exhaustively (no `..`):
+/// a new field on either is a compile error here, forcing a decision about
+/// whether it changes what [`DisplayCounts::compute`] counts - so the cache
+/// key can never silently miss a new source of countable data. Fields the
+/// counts do not depend on are bound to `_` deliberately.
+fn files_signature(files: &[LoadedFile]) -> u64 {
+    let mut hasher = FxHasher::default();
+    files.len().hash(&mut hasher);
+    for file in files {
+        let LoadedFile {
+            tracks,
+            metadata: _,
+            event_marker_styles: _,
+            orphaned_event_markers: _,
+            source: _,
+            load_warnings: _,
+        } = file;
+        tracks.len().hash(&mut hasher);
+        for track in tracks {
+            let LoadedTrack {
+                points,
+                sat_label_anchors,
+                custom_markers,
+                generated_markers,
+                event_markers,
+                metadata: _,
+                lod: _,
+                channels: _,
+            } = track;
+            points.len().hash(&mut hasher);
+            custom_markers.len().hash(&mut hasher);
+            generated_markers.len().hash(&mut hasher);
+            event_markers.len().hash(&mut hasher);
+            sat_label_anchors.len().hash(&mut hasher);
+        }
+    }
+    hasher.finish()
+}
+
+/// Memoizes [`DisplayCounts::compute`] across frames. The display-toggle popup
+/// asks for counts every frame it is open, but the O(all points) walk only
+/// needs to rerun when one of its inputs changes.
+#[derive(Default)]
+pub(crate) struct DisplayCountsCache {
+    cached: Option<(DisplayCountsKey, DisplayCounts)>,
+    /// Number of times the full walk actually ran, so a test can prove hits
+    /// skip it.
+    #[cfg(test)]
+    computes: usize,
+}
+
+impl DisplayCountsCache {
+    /// Return the counts for the current inputs, reusing the last result when
+    /// nothing `compute` reads has changed. The hit path (the popup left open
+    /// over a static scene) clones nothing - it compares the stored key
+    /// against the borrowed inputs; only a miss stores a fresh key.
+    #[expect(clippy::too_many_arguments, reason = "mirrors DisplayCounts::compute")]
+    pub(crate) fn get(
+        &mut self,
+        files: &[LoadedFile],
+        visibility: &TrackDataVisibility,
+        filter: &GlobalFilter,
+        event_marker_visibility: &EventMarkerVisibility,
+        generated_marker_visibility: &GeneratedMarkerVisibility,
+        query_matches: Option<&QueryMatches>,
+        snapped_tracks: Option<&SnappedTracks>,
+    ) -> DisplayCounts {
+        let files_sig = files_signature(files);
+        let snapped_len = snapped_tracks.map_or(0, |s| s.by_track.len());
+        if let Some((key, counts)) = &self.cached
+            && key.files_sig == files_sig
+            && key.snapped_len == snapped_len
+            && key.filter == *filter
+            && key.visibility == *visibility
+            && key.event_marker_visibility == *event_marker_visibility
+            && key.generated_marker_visibility == *generated_marker_visibility
+            && key.query_matches.as_ref() == query_matches
+        {
+            return *counts;
+        }
+        #[cfg(test)]
+        {
+            self.computes += 1;
+        }
+        let counts = DisplayCounts::compute(
+            files,
+            visibility,
+            filter,
+            event_marker_visibility,
+            generated_marker_visibility,
+            query_matches,
+            snapped_tracks,
+        );
+        self.cached = Some((
+            DisplayCountsKey {
+                files_sig,
+                snapped_len,
+                filter: *filter,
+                visibility: visibility.clone(),
+                event_marker_visibility: event_marker_visibility.clone(),
+                generated_marker_visibility: generated_marker_visibility.clone(),
+                query_matches: query_matches.cloned(),
+            },
+            counts,
+        ));
+        counts
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use chrono::{DateTime, Duration, Utc};
     use gt_types::sat_label::{SatLabelAnchor, SatLabelTier};
     use gt_types::time_types::GpsTime;
     use gt_types::{
         CustomMarker, EventMarker, FileMetadata, FileSource, GeneratedMarker, GeneratedMarkerKind,
-        Latitude, LoadedFile, LoadedTrack, Longitude, MarkerIcon, NavPoint, PointIdx, TimeRange,
-        TrackLod, TrackMetadata, mercator,
+        GeneratedMarkerKindTag, Latitude, LoadedFile, LoadedTrack, Longitude, MarkerIcon, NavPoint,
+        PointIdx, TimeRange, TrackLod, TrackMetadata, mercator,
     };
     use gt_ui_types::{DrawLayer, FileVisibility, TrackVisibility};
     use strum::IntoEnumIterator;
@@ -315,8 +451,6 @@ mod tests {
     /// than re-derived from the files.
     #[test]
     fn snapped_tracks_are_counted_from_the_prescoped_view() {
-        use std::sync::Arc;
-
         let files = vec![fixture()];
         let snapped = SnappedTracks {
             by_track: HashMap::from([(
@@ -416,5 +550,123 @@ mod tests {
         };
         let counts = compute(&files, &vis_all(), &filter, Some(&matches));
         assert_eq!(counts.get(DisplayCategory::QueryHighlights), 1);
+    }
+
+    /// The cache must never return a stale count: after any input `compute`
+    /// reads changes, `get` must agree with a fresh `compute`. Each step
+    /// varies exactly one input dimension so an incomplete key surfaces as a
+    /// mismatch here. Steps repeat a state to exercise the (cheap) hit path.
+    #[test]
+    fn cache_agrees_with_compute_across_every_input_change() {
+        let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+        let files = vec![fixture()];
+        // A second file state with an extra custom marker: same track shape
+        // otherwise, so only the structural files signature distinguishes it.
+        let files_more = {
+            let mut f = vec![fixture()];
+            let lat = Latitude::new(55.0);
+            let lon = Longitude::new(12.0);
+            f[0].tracks[0].custom_markers.push(CustomMarker::new(
+                t(1),
+                "c".into(),
+                MarkerIcon::Pin,
+                lat,
+                lon,
+                None,
+            ));
+            f
+        };
+
+        let vis_hidden = {
+            let mut v = vis_all();
+            v.files[0].tracks[0].set_category_visible(DataCategory::CustomMarker, false);
+            v
+        };
+        let filter_window = GlobalFilter {
+            time_start: Some(t(1)),
+            time_end: Some(t(2)),
+            ..GlobalFilter::default()
+        };
+        let mut gmv_hidden = GeneratedMarkerVisibility::default();
+        gmv_hidden.set_hidden(
+            track_ref,
+            std::iter::once(GeneratedMarkerKindTag::GnssFixRegained),
+        );
+        let mut emv_hidden = EventMarkerVisibility::default();
+        emv_hidden.set_hidden(track_ref, std::iter::once("Lap".to_string()));
+        let snapped = SnappedTracks {
+            by_track: HashMap::from([(
+                track_ref,
+                Arc::new(gt_ui_types::SnappedTrackGeometry::default()),
+            )]),
+        };
+        let query = QueryMatches {
+            hidden: HashMap::from([(track_ref, std::iter::once(0..1).collect())]),
+            ..QueryMatches::default()
+        };
+
+        let emv0 = EventMarkerVisibility::default();
+        let gmv0 = GeneratedMarkerVisibility::default();
+        let filter0 = GlobalFilter::default();
+
+        let mut cache = DisplayCountsCache::default();
+        // (files, visibility, filter, emv, gmv, query, snapped)
+        type Args<'a> = (
+            &'a [LoadedFile],
+            &'a TrackDataVisibility,
+            &'a GlobalFilter,
+            &'a EventMarkerVisibility,
+            &'a GeneratedMarkerVisibility,
+            Option<&'a QueryMatches>,
+            Option<&'a SnappedTracks>,
+        );
+        let vis0 = vis_all();
+        let steps: &[Args] = &[
+            (&files, &vis0, &filter0, &emv0, &gmv0, None, None),
+            // Repeat: hit path must still return the correct counts.
+            (&files, &vis0, &filter0, &emv0, &gmv0, None, None),
+            (&files, &vis_hidden, &filter0, &emv0, &gmv0, None, None),
+            (&files, &vis0, &filter_window, &emv0, &gmv0, None, None),
+            (&files, &vis0, &filter0, &emv0, &gmv_hidden, None, None),
+            (&files, &vis0, &filter0, &emv_hidden, &gmv0, None, None),
+            (&files, &vis0, &filter0, &emv0, &gmv0, Some(&query), None),
+            (&files, &vis0, &filter0, &emv0, &gmv0, None, Some(&snapped)),
+            (&files_more, &vis0, &filter0, &emv0, &gmv0, None, None),
+            // Back to the baseline: the key must flip back too.
+            (&files, &vis0, &filter0, &emv0, &gmv0, None, None),
+        ];
+        for &(f, v, fi, em, gm, q, s) in steps {
+            let got = cache.get(f, v, fi, em, gm, q, s);
+            let want = DisplayCounts::compute(f, v, fi, em, gm, q, s);
+            assert_eq!(got, want);
+        }
+    }
+
+    /// Repeated calls with unchanged inputs run the O(all points) walk once;
+    /// a changed input runs it again. This is the whole point of the cache.
+    #[test]
+    fn cache_skips_the_walk_when_inputs_are_unchanged() {
+        let files = vec![fixture()];
+        let vis = vis_all();
+        let (emv, gmv) = (
+            EventMarkerVisibility::default(),
+            GeneratedMarkerVisibility::default(),
+        );
+        let mut cache = DisplayCountsCache::default();
+        let get = |cache: &mut DisplayCountsCache, filter: &GlobalFilter| {
+            cache.get(&files, &vis, filter, &emv, &gmv, None, None)
+        };
+
+        get(&mut cache, &GlobalFilter::default());
+        get(&mut cache, &GlobalFilter::default());
+        get(&mut cache, &GlobalFilter::default());
+        assert_eq!(cache.computes, 1, "unchanged inputs must reuse the cache");
+
+        let narrowed = GlobalFilter {
+            time_start: Some(t(2)),
+            ..GlobalFilter::default()
+        };
+        get(&mut cache, &narrowed);
+        assert_eq!(cache.computes, 2, "a changed input must recompute");
     }
 }

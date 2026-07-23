@@ -1,17 +1,17 @@
 use gt_types::{DataCategory, DataCategorySet, FileIdx, LoadedFile, TrackIdx, TrackRef};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TrackDataVisibility {
     pub files: Vec<FileVisibility>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FileVisibility {
     pub enabled: bool,
     pub tracks: Vec<TrackVisibility>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrackVisibility {
     pub enabled: bool,
     /// Per-category tree toggles. `enabled` is separate: it gates the whole

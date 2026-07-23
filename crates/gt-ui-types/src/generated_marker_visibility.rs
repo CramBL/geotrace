@@ -8,7 +8,7 @@ use gt_types::{GeneratedMarkerKindSet, GeneratedMarkerKindTag, TrackRef};
 /// This refines the category-level visibility (the "Generated markers" toggle)
 /// so individual event types can be shown or hidden, mirroring how
 /// [`crate::EventMarkerVisibility`] refines event markers by variant path.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct GeneratedMarkerVisibility {
     hidden: HashMap<TrackRef, GeneratedMarkerKindSet>,
 }
