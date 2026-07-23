@@ -209,16 +209,11 @@ impl<'a> IconMeshBatch<'a> {
             let bucket = library
                 .tessellation(instance.icon)
                 .bucket_ordinal_for(target_px);
+            let [col_x, col_y] = rotation_columns(instance.direction, instance.half_extents);
             let gpu_instance = GpuIconInstance {
                 center: [instance.center.x, instance.center.y],
-                col_x: {
-                    let [col_x, _] = rotation_columns(instance.direction, instance.half_extents);
-                    [col_x.x, col_x.y]
-                },
-                col_y: {
-                    let [_, col_y] = rotation_columns(instance.direction, instance.half_extents);
-                    [col_y.x, col_y.y]
-                },
+                col_x: [col_x.x, col_x.y],
+                col_y: [col_y.x, col_y.y],
                 tints: [
                     gpu::pack_color32(instance.tints[0]),
                     gpu::pack_color32(instance.tints[1]),
