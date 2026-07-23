@@ -1026,7 +1026,7 @@ fn snapshot_app_plot_channels() {
         let vis = &mut shared.plot_state.metric_vis;
         use strum::IntoEnumIterator as _;
         for kind in gt_types::MetricKind::iter() {
-            *vis.field_mut(kind) = kind == gt_types::MetricKind::Velocity;
+            vis.set(kind, kind == gt_types::MetricKind::Velocity);
         }
     }
     harness.inner.run_steps(5);
@@ -1094,7 +1094,7 @@ fn snapshot_app_plot_light() {
         let vis = &mut shared.plot_state.metric_vis;
         use strum::IntoEnumIterator as _;
         for kind in M::iter() {
-            *vis.field_mut(kind) = shown.contains(&kind);
+            vis.set(kind, shown.contains(&kind));
         }
     }
     harness.inner.run_steps(8);
@@ -1872,7 +1872,7 @@ fn snapshot_app_plot_channel_components() {
         let state = harness.inner.state_mut();
         let mut shared = state.shared.borrow_mut();
         for kind in <gt_types::MetricKind as strum::IntoEnumIterator>::iter() {
-            *shared.plot_state.metric_vis.field_mut(kind) = false;
+            shared.plot_state.metric_vis.set(kind, false);
         }
     }
     harness.inner.run_steps(2);
@@ -1986,7 +1986,7 @@ fn snapshot_app_plot_channel_color_override() {
         let state = harness.inner.state_mut();
         let mut shared = state.shared.borrow_mut();
         for kind in <gt_types::MetricKind as strum::IntoEnumIterator>::iter() {
-            *shared.plot_state.metric_vis.field_mut(kind) = false;
+            shared.plot_state.metric_vis.set(kind, false);
         }
         shared.plot_state.channel_component_colors.insert(
             "accel".to_owned(),
@@ -3297,9 +3297,12 @@ fn snapshot_app_plot_snap_error() {
         let vis = &mut shared.plot_state.metric_vis;
         use strum::IntoEnumIterator as _;
         for kind in gt_types::MetricKind::iter() {
-            *vis.field_mut(kind) = matches!(
+            vis.set(
                 kind,
-                gt_types::MetricKind::Eph | gt_types::MetricKind::SnapError
+                matches!(
+                    kind,
+                    gt_types::MetricKind::Eph | gt_types::MetricKind::SnapError
+                ),
             );
         }
     }

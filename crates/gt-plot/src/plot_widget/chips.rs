@@ -14,7 +14,7 @@ use egui_phosphor::regular::LINK as ICON_LINK;
 use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
 use gt_types::MetricKind;
 use gt_types::satellites::{Constellation, ConstellationSet};
-use strum::IntoEnumIterator;
+use strum::{EnumCount, IntoEnumIterator};
 
 use super::style::{channel_color, effective_component_color};
 use super::{DEFAULT_PLOT_LINE_WIDTH, PLOT_LINE_WIDTH_RANGE};
@@ -24,9 +24,8 @@ use super::{DEFAULT_PLOT_LINE_WIDTH, PLOT_LINE_WIDTH_RANGE};
 /// `MetricKind` lives in `gt_types` (shared with the persisted settings, see
 /// `geotrace::settings::PlotSettings::metric`). These are presentation
 /// details specific to this widget, so they live here as an extension trait
-/// rather than on the type itself. Together with the `match` in
-/// [`MetricVisibility::field`] and [`MetricVisibility::field_mut`], adding a
-/// variant forces a compile error here until every arm is filled in.
+/// rather than on the type itself. The `match` in each method forces a
+/// compile error here when a variant is added until every arm is filled in.
 pub(super) trait MetricKindUi {
     fn label(self) -> &'static str;
     fn hover_text(self) -> Option<&'static str>;
@@ -227,158 +226,37 @@ impl MetricKindUi for MetricKind {
 /// Disabling a metric hides it for **all** tracks at once, making it easy to
 /// declutter the plot without touching per-track settings.
 #[derive(Debug, Clone, Copy)]
-pub struct MetricVisibility {
-    pub sats_seen: bool,
-    pub sats_fix: bool,
-    pub gps_seen: bool,
-    pub gps_fix: bool,
-    pub glonass_seen: bool,
-    pub glonass_fix: bool,
-    pub galileo_seen: bool,
-    pub galileo_fix: bool,
-    pub beidou_seen: bool,
-    pub beidou_fix: bool,
-    pub navic_seen: bool,
-    pub navic_fix: bool,
-    pub qzss_seen: bool,
-    pub qzss_fix: bool,
-    pub velocity: bool,
-    pub eph: bool,
-    pub heading_deg: bool,
-    pub clock_delta_ms: bool,
-    pub util_all: bool,
-    pub util_gps: bool,
-    pub util_glonass: bool,
-    pub util_galileo: bool,
-    pub util_beidou: bool,
-    pub util_navic: bool,
-    pub util_qzss: bool,
-    pub slip_all: bool,
-    pub slip_gps: bool,
-    pub slip_glonass: bool,
-    pub slip_galileo: bool,
-    pub slip_beidou: bool,
-    pub slip_navic: bool,
-    pub slip_qzss: bool,
-    pub snap_error: bool,
-}
+pub struct MetricVisibility(u64);
+
+const _: () = assert!(
+    MetricKind::COUNT <= u64::BITS as usize,
+    "MetricVisibility stores one bit per metric in a u64"
+);
 
 impl Default for MetricVisibility {
     fn default() -> Self {
-        Self {
-            sats_seen: true,
-            sats_fix: true,
-            gps_seen: true,
-            gps_fix: true,
-            glonass_seen: true,
-            glonass_fix: true,
-            galileo_seen: true,
-            galileo_fix: true,
-            beidou_seen: true,
-            beidou_fix: true,
-            navic_seen: true,
-            navic_fix: true,
-            qzss_seen: true,
-            qzss_fix: true,
-            velocity: true,
-            eph: true,
-            heading_deg: true,
-            clock_delta_ms: true,
-            util_all: true,
-            util_gps: true,
-            util_glonass: true,
-            util_galileo: true,
-            util_beidou: true,
-            util_navic: true,
-            util_qzss: true,
-            slip_all: true,
-            slip_gps: true,
-            slip_glonass: true,
-            slip_galileo: true,
-            slip_beidou: true,
-            slip_navic: true,
-            slip_qzss: true,
-            snap_error: true,
-        }
+        // Every metric starts visible.
+        MetricKind::iter().fold(Self(0), |vis, kind| Self(vis.0 | Self::bit(kind)))
     }
 }
 
 impl MetricVisibility {
-    /// Returns the current visibility for `kind`.
-    pub fn field(&self, kind: MetricKind) -> bool {
-        match kind {
-            MetricKind::SatsSeen => self.sats_seen,
-            MetricKind::SatsFix => self.sats_fix,
-            MetricKind::GpsSeen => self.gps_seen,
-            MetricKind::GpsFix => self.gps_fix,
-            MetricKind::GlonassSeen => self.glonass_seen,
-            MetricKind::GlonassFix => self.glonass_fix,
-            MetricKind::GalileoSeen => self.galileo_seen,
-            MetricKind::GalileoFix => self.galileo_fix,
-            MetricKind::BeidouSeen => self.beidou_seen,
-            MetricKind::BeidouFix => self.beidou_fix,
-            MetricKind::NavicSeen => self.navic_seen,
-            MetricKind::NavicFix => self.navic_fix,
-            MetricKind::QzssSeen => self.qzss_seen,
-            MetricKind::QzssFix => self.qzss_fix,
-            MetricKind::Velocity => self.velocity,
-            MetricKind::Eph => self.eph,
-            MetricKind::HeadingDeg => self.heading_deg,
-            MetricKind::ClockDeltaMs => self.clock_delta_ms,
-            MetricKind::UtilAll => self.util_all,
-            MetricKind::UtilGps => self.util_gps,
-            MetricKind::UtilGlonass => self.util_glonass,
-            MetricKind::UtilGalileo => self.util_galileo,
-            MetricKind::UtilBeidou => self.util_beidou,
-            MetricKind::UtilNavic => self.util_navic,
-            MetricKind::UtilQzss => self.util_qzss,
-            MetricKind::SlipAll => self.slip_all,
-            MetricKind::SlipGps => self.slip_gps,
-            MetricKind::SlipGlonass => self.slip_glonass,
-            MetricKind::SlipGalileo => self.slip_galileo,
-            MetricKind::SlipBeidou => self.slip_beidou,
-            MetricKind::SlipNavic => self.slip_navic,
-            MetricKind::SlipQzss => self.slip_qzss,
-            MetricKind::SnapError => self.snap_error,
-        }
+    /// The metric's bit within the mask.
+    const fn bit(kind: MetricKind) -> u64 {
+        1 << (kind as u32)
     }
 
-    /// Returns a mutable reference to the visibility flag for `kind`.
-    pub fn field_mut(&mut self, kind: MetricKind) -> &mut bool {
-        match kind {
-            MetricKind::SatsSeen => &mut self.sats_seen,
-            MetricKind::SatsFix => &mut self.sats_fix,
-            MetricKind::GpsSeen => &mut self.gps_seen,
-            MetricKind::GpsFix => &mut self.gps_fix,
-            MetricKind::GlonassSeen => &mut self.glonass_seen,
-            MetricKind::GlonassFix => &mut self.glonass_fix,
-            MetricKind::GalileoSeen => &mut self.galileo_seen,
-            MetricKind::GalileoFix => &mut self.galileo_fix,
-            MetricKind::BeidouSeen => &mut self.beidou_seen,
-            MetricKind::BeidouFix => &mut self.beidou_fix,
-            MetricKind::NavicSeen => &mut self.navic_seen,
-            MetricKind::NavicFix => &mut self.navic_fix,
-            MetricKind::QzssSeen => &mut self.qzss_seen,
-            MetricKind::QzssFix => &mut self.qzss_fix,
-            MetricKind::Velocity => &mut self.velocity,
-            MetricKind::Eph => &mut self.eph,
-            MetricKind::HeadingDeg => &mut self.heading_deg,
-            MetricKind::ClockDeltaMs => &mut self.clock_delta_ms,
-            MetricKind::UtilAll => &mut self.util_all,
-            MetricKind::UtilGps => &mut self.util_gps,
-            MetricKind::UtilGlonass => &mut self.util_glonass,
-            MetricKind::UtilGalileo => &mut self.util_galileo,
-            MetricKind::UtilBeidou => &mut self.util_beidou,
-            MetricKind::UtilNavic => &mut self.util_navic,
-            MetricKind::UtilQzss => &mut self.util_qzss,
-            MetricKind::SlipAll => &mut self.slip_all,
-            MetricKind::SlipGps => &mut self.slip_gps,
-            MetricKind::SlipGlonass => &mut self.slip_glonass,
-            MetricKind::SlipGalileo => &mut self.slip_galileo,
-            MetricKind::SlipBeidou => &mut self.slip_beidou,
-            MetricKind::SlipNavic => &mut self.slip_navic,
-            MetricKind::SlipQzss => &mut self.slip_qzss,
-            MetricKind::SnapError => &mut self.snap_error,
+    /// Returns the current visibility for `kind`.
+    pub const fn field(self, kind: MetricKind) -> bool {
+        self.0 & Self::bit(kind) != 0
+    }
+
+    /// Sets whether `kind` is visible.
+    pub const fn set(&mut self, kind: MetricKind, enabled: bool) {
+        if enabled {
+            self.0 |= Self::bit(kind);
+        } else {
+            self.0 &= !Self::bit(kind);
         }
     }
 
@@ -397,7 +275,7 @@ impl MetricVisibility {
     /// (collapsed advanced section, or an absent constellation) untouched.
     fn set_all(&mut self, enabled: bool, present: ConstellationSet, show_advanced: bool) {
         for k in MetricKind::iter().filter(|&k| metric_is_shown(k, present, show_advanced)) {
-            *self.field_mut(k) = enabled;
+            self.set(k, enabled);
         }
     }
 }
@@ -559,13 +437,15 @@ fn chip_group(
             );
             continue;
         }
+        let mut enabled = vis.field(kind);
         let (s, h) = metric_chip(
             ui,
-            vis.field_mut(kind),
+            &mut enabled,
             kind.label(),
             gt_ui_theme::metric_color(kind, dark_mode),
             kind.hover_text(),
         );
+        vis.set(kind, enabled);
         if s {
             *show_only = Some(kind);
         }
@@ -833,7 +713,7 @@ pub(super) fn metric_filter_row(
         }
     }
     if let Some(kind) = show_only {
-        *vis.field_mut(kind) = true;
+        vis.set(kind, true);
     }
     if let Some(name) = show_only_channel {
         channel_vis.set(&name, true);
@@ -1086,6 +966,39 @@ mod tests {
         assert_eq!(with + without, MetricKind::COUNT);
         // 6 constellations x {seen, fix, util, slip}.
         assert_eq!(with, 24);
+    }
+
+    /// Every metric is visible by default, and toggling one leaves the rest
+    /// untouched - the property the old per-field struct gave for free and the
+    /// bitset must preserve.
+    #[test]
+    fn visibility_defaults_on_and_toggles_independently() {
+        let mut vis = MetricVisibility::default();
+        assert!(MetricKind::iter().all(|k| vis.field(k)));
+
+        vis.set(MetricKind::Velocity, false);
+        assert!(!vis.field(MetricKind::Velocity));
+        assert!(
+            MetricKind::iter()
+                .filter(|&k| k != MetricKind::Velocity)
+                .all(|k| vis.field(k))
+        );
+
+        vis.set(MetricKind::Velocity, true);
+        assert!(MetricKind::iter().all(|k| vis.field(k)));
+    }
+
+    /// Each metric occupies its own bit, so no two share visibility state.
+    #[test]
+    fn every_metric_has_a_distinct_bit() {
+        use strum::EnumCount;
+        let mut seen = 0u64;
+        for kind in MetricKind::iter() {
+            let bit = MetricVisibility::bit(kind);
+            assert_eq!(bit & seen, 0, "bit collision for {kind:?}");
+            seen |= bit;
+        }
+        assert_eq!(seen.count_ones() as usize, MetricKind::COUNT);
     }
 
     /// A per-constellation chip/line shows only when its constellation appears
