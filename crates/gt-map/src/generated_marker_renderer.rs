@@ -17,7 +17,7 @@ pub struct GeneratedMarkerRenderer<'a> {
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
     generated_vis: &'a GeneratedMarkerVisibility,
-    visible_generated: Vec<SpatialPoint>,
+    visible_generated: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
 }
 
@@ -28,7 +28,7 @@ impl<'a> GeneratedMarkerRenderer<'a> {
         highlight: &'a MapHighlight,
         filter: &'a GlobalFilter,
         generated_vis: &'a GeneratedMarkerVisibility,
-        visible_generated: Vec<SpatialPoint>,
+        visible_generated: &'a [SpatialPoint],
         icon_meshes: Option<&'a IconMeshLibrary>,
     ) -> Self {
         Self {
@@ -121,7 +121,7 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
         let transform =
             crate::transform::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
-        for sp in &self.visible_generated {
+        for sp in self.visible_generated {
             let Some(track) = crate::scope::category_in_scope(
                 self.files,
                 self.visibility,

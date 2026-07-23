@@ -12,17 +12,14 @@ use gt_types::{LoadedTrack, MercBounds, NavPoint, TrackRef};
 
 use crate::collision_grid;
 
-/// One selected label: the anchor's point index into its track.
-///
-/// Grouped per geometry index by [`select_sat_labels`] so the renderer can
-/// draw a track's labels in the same phase as its other layers.
-pub(crate) type SelectedLabels = Vec<Vec<usize>>;
+/// Reusable label-decimation scratch, held across frames by the map widget.
+pub(crate) type LabelSelection = collision_grid::DecimationScratch<Candidate>;
 
 /// The candidate occupying a grid cell. Ordered comparison implements the
 /// deterministic winner rule: highest tier first, then the stable
 /// track/point key so ties cannot flicker between frames.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct Candidate {
+pub(crate) struct Candidate {
     tier: SatLabelTier,
     track: TrackRef,
     point_index: usize,
@@ -31,21 +28,23 @@ struct Candidate {
     geometry_index: usize,
 }
 
-/// Resolve which satellite-label anchors get a label this frame.
+/// Resolve which satellite-label anchors get a label this frame into
+/// `scratch`, returning the per-geometry point-index lists it holds.
 ///
 /// `tracks` yields each visible track with its geometry index and ref;
 /// `point_passes` applies the per-point conditions the caller already
 /// knows about (time filter, query hiding). Anchors outside `viewport`
 /// are skipped. Within each `cell_merc`-sized grid cell the
 /// highest-priority candidate wins ([`Candidate`]'s ordering).
-pub(crate) fn select_sat_labels<'a>(
+pub(crate) fn select_sat_labels<'s, 'a>(
+    scratch: &'s mut LabelSelection,
     tracks: impl Iterator<Item = (usize, TrackRef, &'a LoadedTrack)>,
     geometry_count: usize,
     viewport: MercBounds,
     cell_merc: f64,
     mut point_passes: impl FnMut(TrackRef, usize, &NavPoint) -> bool,
-) -> SelectedLabels {
-    let mut candidates: Vec<((f64, f64), Candidate)> = Vec::new();
+) -> &'s [Vec<usize>] {
+    let candidates = scratch.candidates();
     for (geometry_index, track_ref, track) in tracks {
         for anchor in &track.sat_label_anchors {
             let Some(point) = anchor.point.get(&track.points) else {
@@ -70,9 +69,9 @@ pub(crate) fn select_sat_labels<'a>(
             ));
         }
     }
-    let winners = collision_grid::winners_per_cell(candidates, cell_merc)
-        .map(|c| (c.geometry_index, c.point_index));
-    collision_grid::group_by_geometry(winners, geometry_count)
+    scratch.resolve(cell_merc, geometry_count, |c| {
+        (c.geometry_index, c.point_index)
+    })
 }
 
 #[cfg(test)]
@@ -107,8 +106,10 @@ mod tests {
         y_max: 1.0,
     };
 
-    fn select(tracks: &[LoadedTrack], viewport: MercBounds, cell_merc: f64) -> SelectedLabels {
+    fn select(tracks: &[LoadedTrack], viewport: MercBounds, cell_merc: f64) -> Vec<Vec<usize>> {
+        let mut scratch = LabelSelection::default();
         select_sat_labels(
+            &mut scratch,
             tracks
                 .iter()
                 .enumerate()
@@ -118,6 +119,7 @@ mod tests {
             cell_merc,
             |_, _, _| true,
         )
+        .to_vec()
     }
 
     #[test]
@@ -214,13 +216,15 @@ mod tests {
             select(std::slice::from_ref(&track), nothing, 1.0),
             vec![Vec::<usize>::new()]
         );
+        let mut scratch = LabelSelection::default();
         let selected = select_sat_labels(
+            &mut scratch,
             [(0, TrackRef::new(FileIdx::new(0), TrackIdx::new(0)), &track)].into_iter(),
             1,
             WORLD,
             1e-9,
             |_, pi, _| pi != 0,
         );
-        assert_eq!(selected, vec![vec![1]]);
+        assert_eq!(selected.to_vec(), vec![vec![1]]);
     }
 }

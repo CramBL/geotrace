@@ -269,6 +269,14 @@ pub struct NavMap {
     /// `None` only if the embedded data is corrupted (reported at startup);
     /// marker icons are then skipped.
     icon_meshes: Option<icon_mesh::IconMeshLibrary>,
+    /// Per-frame viewport point collection, reused across frames so a steady
+    /// stream of frames avoids reallocating the category buffers each time.
+    visible_points: viewport::VisiblePoints,
+    /// Reused satellite-label decimation scratch, borrowed into the track
+    /// layer each frame so the candidate and output buffers persist.
+    sat_label_scratch: sat_labels::LabelSelection,
+    /// Reused sky-glyph decimation scratch, borrowed into the track layer.
+    sky_glyph_scratch: sky_glyph_renderer::GlyphSelection,
 }
 
 impl NavMap {
@@ -299,6 +307,9 @@ impl NavMap {
             disambiguation_pos: egui::pos2(0.0, 0.0),
             display_toggle: display_toggle::DisplayToggleState::default(),
             icon_meshes,
+            visible_points: viewport::VisiblePoints::default(),
+            sat_label_scratch: sat_labels::LabelSelection::default(),
+            sky_glyph_scratch: sky_glyph_renderer::GlyphSelection::default(),
         }
     }
 
@@ -494,7 +505,8 @@ impl NavMap {
             *display_mask,
             self.map_memory.zoom(),
         );
-        let visible = viewport::collect_visible_points(
+        viewport::collect_visible_points(
+            &mut self.visible_points,
             &self.global_tree,
             &plan,
             &transform_estimate,
@@ -546,7 +558,7 @@ impl NavMap {
                 .plan(&plan)
                 .highlight(highlight)
                 .filter(filter)
-                .tpv_by_track(visible.tpv_by_track)
+                .tpv_by_track(&self.visible_points.tpv_by_track)
                 .new_file_boundary(self.new_file_boundary)
                 .blink_alpha(blink_alpha)
                 .hover_fade_alpha(hover_fade_progress)
@@ -554,6 +566,8 @@ impl NavMap {
                 .display_query_highlights(display_mask.is_visible(DisplayCategory::QueryHighlights))
                 .sky_glyph_variant(*sky_glyph_variant)
                 .maybe_icon_meshes(self.icon_meshes.as_ref())
+                .sat_label_scratch(&mut self.sat_label_scratch)
+                .sky_glyph_scratch(&mut self.sky_glyph_scratch)
                 .build(),
         );
         if display_mask.is_visible(DisplayCategory::SnappedTracks)
@@ -573,7 +587,7 @@ impl NavMap {
                 visibility,
                 highlight,
                 filter,
-                visible.custom,
+                &self.visible_points.custom,
                 self.icon_meshes.as_ref(),
             ));
         }
@@ -584,7 +598,7 @@ impl NavMap {
                 highlight,
                 filter,
                 generated_marker_visibility,
-                visible.generated,
+                &self.visible_points.generated,
                 self.icon_meshes.as_ref(),
             ));
         }
@@ -595,7 +609,7 @@ impl NavMap {
                 highlight,
                 filter,
                 event_marker_visibility,
-                visible.event,
+                &self.visible_points.event,
                 self.icon_meshes.as_ref(),
             ));
         }

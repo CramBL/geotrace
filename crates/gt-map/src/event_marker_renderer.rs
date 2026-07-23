@@ -17,7 +17,7 @@ pub struct EventMarkerRenderer<'a> {
     highlight: &'a MapHighlight,
     filter: &'a GlobalFilter,
     event_vis: &'a EventMarkerVisibility,
-    visible_event: Vec<SpatialPoint>,
+    visible_event: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
 }
 
@@ -28,7 +28,7 @@ impl<'a> EventMarkerRenderer<'a> {
         highlight: &'a MapHighlight,
         filter: &'a GlobalFilter,
         event_vis: &'a EventMarkerVisibility,
-        visible_event: Vec<SpatialPoint>,
+        visible_event: &'a [SpatialPoint],
         icon_meshes: Option<&'a IconMeshLibrary>,
     ) -> Self {
         Self {
@@ -55,7 +55,7 @@ impl Plugin for EventMarkerRenderer<'_> {
             crate::transform::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         let mut batch = IconMeshBatch::new(self.icon_meshes, ui.pixels_per_point());
-        for sp in &self.visible_event {
+        for sp in self.visible_event {
             let Some(track) = crate::scope::category_in_scope(
                 self.files,
                 self.visibility,
