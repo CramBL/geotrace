@@ -16,7 +16,7 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 
 use gt_filter::{GlobalFilter, point_passes_time_filter};
-use gt_types::{DataCategory, FileIdx, LoadedFile, TrackIdx, TrackRef};
+use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
 use gt_ui_types::{
     DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, QueryMatches, SnappedTracks,
     TrackDataVisibility,
@@ -198,17 +198,41 @@ struct DisplayCountsKey {
 /// A structural fingerprint of the loaded data: the file/track shape and each
 /// track's per-array element counts. O(tracks), not O(points), so it is cheap
 /// to compute every frame the popup is open.
+///
+/// [`LoadedFile`] and [`LoadedTrack`] are destructured exhaustively (no `..`):
+/// a new field on either is a compile error here, forcing a decision about
+/// whether it changes what [`DisplayCounts::compute`] counts - so the cache
+/// key can never silently miss a new source of countable data. Fields the
+/// counts do not depend on are bound to `_` deliberately.
 fn files_signature(files: &[LoadedFile]) -> u64 {
     let mut hasher = FxHasher::default();
     files.len().hash(&mut hasher);
     for file in files {
-        file.tracks.len().hash(&mut hasher);
-        for track in &file.tracks {
-            track.points.len().hash(&mut hasher);
-            track.custom_markers.len().hash(&mut hasher);
-            track.generated_markers.len().hash(&mut hasher);
-            track.event_markers.len().hash(&mut hasher);
-            track.sat_label_anchors.len().hash(&mut hasher);
+        let LoadedFile {
+            tracks,
+            metadata: _,
+            event_marker_styles: _,
+            orphaned_event_markers: _,
+            source: _,
+            load_warnings: _,
+        } = file;
+        tracks.len().hash(&mut hasher);
+        for track in tracks {
+            let LoadedTrack {
+                points,
+                sat_label_anchors,
+                custom_markers,
+                generated_markers,
+                event_markers,
+                metadata: _,
+                lod: _,
+                channels: _,
+            } = track;
+            points.len().hash(&mut hasher);
+            custom_markers.len().hash(&mut hasher);
+            generated_markers.len().hash(&mut hasher);
+            event_markers.len().hash(&mut hasher);
+            sat_label_anchors.len().hash(&mut hasher);
         }
     }
     hasher.finish()
