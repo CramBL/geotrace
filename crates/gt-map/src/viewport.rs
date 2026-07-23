@@ -5,8 +5,8 @@
 use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackIdx, TrackRef};
 use gt_ui_types::{DisplayCategory, DisplayMask, QueryMatches, TrackDataVisibility};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use std::collections::HashMap;
 use walkers::MapMemory;
 
 use crate::tpv_renderer::{self, TrackIconFade};
@@ -25,7 +25,7 @@ pub struct GeoBounds {
 /// the render plugins. TPV fixes arrive pre-grouped per track (point
 /// indices), which is the shape `TrackLayers` consumes.
 pub(crate) struct VisiblePoints {
-    pub(crate) tpv_by_track: HashMap<TrackRef, Vec<usize>>,
+    pub(crate) tpv_by_track: FxHashMap<TrackRef, Vec<usize>>,
     pub(crate) custom: Vec<SpatialPoint>,
     pub(crate) generated: Vec<SpatialPoint>,
     pub(crate) event: Vec<SpatialPoint>,
@@ -58,7 +58,7 @@ pub(crate) fn collect_visible_points(
         ],
     );
     let mut visible = VisiblePoints {
-        tpv_by_track: HashMap::new(),
+        tpv_by_track: FxHashMap::default(),
         custom: Vec::new(),
         generated: Vec::new(),
         event: Vec::new(),
