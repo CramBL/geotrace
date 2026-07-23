@@ -553,6 +553,7 @@ pub fn show_track_plot(
                     plot_ui,
                     series,
                     multi_track,
+                    eff_x_min..=eff_x_max,
                     anomaly_pointer,
                     &mut hovered_anomaly,
                     dark_mode,
