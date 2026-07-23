@@ -7,7 +7,7 @@ use gt_types::TrackRef;
 /// A marker at variant path `p` is hidden when any prefix of `p` (including `p`
 /// itself) appears in the hidden set for that track.
 /// This lets a single toggle on a parent node hide all its descendants.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct EventMarkerVisibility {
     hidden: HashMap<TrackRef, BTreeSet<String>>,
 }

@@ -265,6 +265,9 @@ pub struct NavMap {
     disambiguation_pos: egui::Pos2,
     /// Session-only state of the display toggle (popup open, solo restore).
     display_toggle: display_toggle::DisplayToggleState,
+    /// Memoized per-category counts for the display-toggle popup, so an open
+    /// popup does not re-walk every point each frame.
+    display_counts_cache: display_counts::DisplayCountsCache,
     /// Pre-tessellated marker icon meshes decoded from the embedded blob.
     /// `None` only if the embedded data is corrupted (reported at startup);
     /// marker icons are then skipped.
@@ -306,6 +309,7 @@ impl NavMap {
             disambiguation_candidates: [None; 4],
             disambiguation_pos: egui::pos2(0.0, 0.0),
             display_toggle: display_toggle::DisplayToggleState::default(),
+            display_counts_cache: display_counts::DisplayCountsCache::default(),
             icon_meshes,
             visible_points: viewport::VisiblePoints::default(),
             sat_label_scratch: sat_labels::LabelSelection::default(),
@@ -701,7 +705,10 @@ impl NavMap {
                 });
             });
 
-        // Display toggle - the eye button stacked above the layer toggle.
+        // Display toggle - the eye button stacked above the layer toggle. The
+        // counts closure only runs while the popup is open, and the cache skips
+        // the full point walk when its inputs are unchanged frame to frame.
+        let counts_cache = &mut self.display_counts_cache;
         display_toggle::show_display_toggle(
             ui,
             layer_toggle.response.rect,
@@ -709,7 +716,7 @@ impl NavMap {
             display_mask,
             sky_glyph_variant,
             || {
-                display_counts::DisplayCounts::compute(
+                counts_cache.get(
                     files,
                     visibility,
                     filter,
