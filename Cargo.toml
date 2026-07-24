@@ -303,6 +303,12 @@ gt-test-utils = { path = "crates/gt-test-utils", features = ["snapshot"] }
 rstest.workspace = true
 tempfile.workspace = true
 
+# The self-updater end-to-end test only builds with the updater compiled in, so
+# the `--update` flag it drives exists. See tests/self_update.rs.
+[[test]]
+name = "self_update"
+required-features = ["self-update"]
+
 [profile.release]
 opt-level = 3
 debug = false

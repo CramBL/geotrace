@@ -169,3 +169,76 @@ jobs:
         run: |
           "$(brew --prefix)/bin/geotrace" --version | tee output.txt
           grep -qw "$VERSION" output.txt
+
+  # Prove an existing install can pick up this release: install the previous
+  # stable version (writing an install receipt), run its `geotrace --update`,
+  # and confirm it replaced the binary with the version under test. This drives
+  # the same axoupdater path the GUI prompt does, headlessly. Only the shell
+  # installer writes a self-updatable receipt, so this mirrors that path.
+  self-update:
+    name: self-update / ${{ matrix.runner }}
+    # A prerelease isn't what existing stable installs update to, and it has no
+    # meaningful "previous stable to update from" flow.
+    if: inputs.prerelease == 'false'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, macos-14]
+    # Authenticate the release query to dodge unauthenticated rate limits.
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Install Linux runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libxkbcommon0 libwayland-client0 libx11-6 libxcursor1 libxi6 libxrandr2 libxcb1
+
+      - name: Resolve the stable release before this one
+        id: prev
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          versions="$(gh api "repos/${REPO}/releases" --paginate \
+            --jq '.[] | select(.prerelease == false) | select(.tag_name | startswith("app/v")) | .tag_name' \
+            | sed 's#^app/v##' | sort -V -u)"
+          # The version immediately below the one just published.
+          previous="$(printf '%s\n' "$versions" | grep -B1 -x "$VERSION" | head -1 || true)"
+          if [ -z "$previous" ] || [ "$previous" = "$VERSION" ]; then
+            echo "No earlier stable release than ${VERSION} - nothing to update from, skipping." >&2
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Will install app/v${previous} and update to ${VERSION}."
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "previous=${previous}" >> "$GITHUB_OUTPUT"
+
+      - name: Install the previous release
+        if: steps.prev.outputs.skip == 'false'
+        env:
+          PREV_TAG: app/v${{ steps.prev.outputs.previous }}
+          INSTALLER_NO_MODIFY_PATH: "1"
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -LsSf \
+            "https://github.com/${REPO}/releases/download/${PREV_TAG}/geotrace-installer.sh" | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Update in place to the release under test
+        if: steps.prev.outputs.skip == 'false'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: geotrace --update
+
+      - name: Check the installed version is now the release under test
+        if: steps.prev.outputs.skip == 'false'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          geotrace --version | tee output.txt
+          grep -qw "$VERSION" output.txt
