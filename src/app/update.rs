@@ -19,6 +19,11 @@
 //! Either way we drive `axoupdater`, which only matches releases that carry the
 //! GeoTrace installer assets. SDK releases (tagged `geotrace-sdk-v*`) carry no
 //! such assets, so they are ignored here automatically.
+//!
+//! [`run_self_update`] is also reachable headlessly via the `--update` CLI flag
+//! (see `main.rs`): the same in-place update, without a window. It gives users
+//! on a wedged install a manual path and lets CI exercise the updater end to
+//! end.
 
 use egui::{Button, RichText, Window};
 use std::{sync::Arc, thread};
@@ -32,6 +37,11 @@ const APP_NAME: &str = "geotrace";
 const REPO_OWNER: &str = "CramBL";
 const REPO_NAME: &str = "geotrace";
 pub const RELEASES_URL: &str = "https://github.com/CramBL/geotrace/releases/latest";
+
+/// Environment variables consulted for a GitHub token, in precedence order.
+/// The first non-empty one authenticates release queries (see
+/// [`apply_github_token`]).
+const GITHUB_TOKEN_ENV_VARS: [&str; 2] = ["GITHUB_TOKEN", "GH_TOKEN"];
 
 /// Result of the background version check.
 enum CheckOutcome {
@@ -303,6 +313,7 @@ fn check_for_update() -> CheckOutcome {
     };
     rt.block_on(async {
         let mut updater = AxoUpdater::new_for(APP_NAME);
+        apply_github_token(&mut updater);
         let has_receipt = updater.load_receipt().is_ok();
 
         if !has_receipt {
@@ -350,13 +361,65 @@ fn check_for_update() -> CheckOutcome {
     })
 }
 
-/// In-place self-update via the install receipt, run on a background thread.
-fn run_self_update() -> Result<(), String> {
+/// In-place self-update via the install receipt.
+///
+/// Runs on a background thread from the GUI prompt, and synchronously from the
+/// `--update` CLI flag (see `main.rs`), which is how CI exercises the updater
+/// end to end.
+pub fn run_self_update() -> Result<(), String> {
     let rt = runtime()?;
     rt.block_on(async {
         let mut updater = AxoUpdater::new_for(APP_NAME);
+        apply_github_token(&mut updater);
         updater.load_receipt().map_err(|e| e.to_string())?;
         updater.run().await.map_err(|e| e.to_string())?;
         Ok(())
     })
+}
+
+/// Authenticate GitHub release queries when a token is present in the
+/// environment. Unauthenticated requests are the default, but they are heavily
+/// rate-limited - CI passes `GITHUB_TOKEN`, and users behind a proxy can set it
+/// too. No token is ever embedded in the binary.
+fn apply_github_token(updater: &mut AxoUpdater) {
+    if let Some(token) = select_github_token(|var| std::env::var(var).ok()) {
+        updater.set_github_token(&token);
+    }
+}
+
+/// The first non-empty token from [`GITHUB_TOKEN_ENV_VARS`], honoring their
+/// precedence. Split from [`apply_github_token`] so the selection rule is pure
+/// and unit-testable without touching the process environment.
+fn select_github_token(lookup: impl Fn(&str) -> Option<String>) -> Option<String> {
+    GITHUB_TOKEN_ENV_VARS
+        .into_iter()
+        .filter_map(lookup)
+        .find(|token| !token.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::select_github_token;
+
+    #[rstest]
+    // GITHUB_TOKEN wins over GH_TOKEN when both are set.
+    #[case(&[("GITHUB_TOKEN", "primary"), ("GH_TOKEN", "fallback")], Some("primary"))]
+    // Falls back to GH_TOKEN when the primary is absent.
+    #[case(&[("GH_TOKEN", "fallback")], Some("fallback"))]
+    // An empty primary is skipped in favor of the next non-empty var.
+    #[case(&[("GITHUB_TOKEN", ""), ("GH_TOKEN", "fallback")], Some("fallback"))]
+    // No token when nothing is set.
+    #[case(&[], None)]
+    // No token when the only value present is empty.
+    #[case(&[("GITHUB_TOKEN", "")], None)]
+    fn selects_first_non_empty_token(#[case] env: &[(&str, &str)], #[case] expected: Option<&str>) {
+        let selected = select_github_token(|var| {
+            env.iter()
+                .find(|(name, _)| *name == var)
+                .map(|(_, value)| (*value).to_owned())
+        });
+        assert_eq!(selected.as_deref(), expected);
+    }
 }

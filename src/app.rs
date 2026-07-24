@@ -35,7 +35,7 @@ mod settings_autosave;
 mod snap;
 mod snap_persist;
 #[cfg(feature = "self-update")]
-mod update;
+pub mod update;
 
 use std::collections::{HashMap, HashSet};
 use std::{cell::RefCell, env, path::PathBuf, rc::Rc, str, sync::Arc};
