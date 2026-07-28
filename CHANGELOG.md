@@ -8,6 +8,10 @@
 - Sort the History window by any column, clicking a header again to reverse it.
 - Hovering a History row breaks down what the recording holds, down to its ad-hoc sensor channels.
 
+### Changed
+
+- The history database now builds on `hdf5-metno` 0.14, which fixes the big-endian constructor for 64-bit float datatypes and stops a corrupt or locked file being reported as one that already exists. The opt-in pure-Rust backend moves to `hdf5-pure` 0.28 alongside it.
+
 ### Fixed
 
 - History elements show a cursor that matches what they do, rather than a text-editing one on everything.
