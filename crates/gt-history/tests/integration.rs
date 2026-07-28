@@ -4,6 +4,11 @@ use gt_history::{
     Database, DatabaseRef, DbError, HistoryDatabase, RecordingMeta, StoredRecording,
     StoredSegmentation, TrackRange, extract_meta,
 };
+#[cfg(feature = "backend-pure")]
+use gt_history_types::{
+    ATTR_GTD_SIZE_BYTES, ATTR_NAV_POINT_COUNT, ATTR_START_US, TRACK_END_DATASET,
+    TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP,
+};
 
 /// Default segmentation settings for tests (mirrors `SegmentationConfig::default`).
 fn test_settings() -> StoredSegmentation {
@@ -229,9 +234,17 @@ fn make_chunked_gtd_bytes(start_us: i64, n: u64) -> Vec<u8> {
 
 /// The active backend, used to suffix free-space snapshots: the two backends
 /// encode differently and so produce different file sizes.
+///
+/// The pure backend carries the architecture as well. `hdf5-pure` aligns every
+/// chunk's on-disk block to the target's cache line, which it puts at 128 bytes
+/// on aarch64 and 64 everywhere else, so the same database is larger on aarch64
+/// by the extra padding. The C library does no such alignment, which is why the
+/// sys suffix stays architecture-independent.
 fn backend_name() -> &'static str {
     if cfg!(feature = "backend-sys") {
         "sys"
+    } else if cfg!(target_arch = "aarch64") {
+        "pure-aarch64"
     } else {
         "pure"
     }
@@ -1759,6 +1772,79 @@ fn test_hdf5_pure_file_openable_by_metno() {
     // Try to open with hdf5 (metno)
     let res = hdf5::File::open(tmp.path());
     assert!(res.is_ok(), "Failed to open: {:?}", res.err());
+}
+
+/// The mirror of [`sys_backend_structural_parity_repro`]: a database written by
+/// the pure backend must be readable by the reference C library, since the sys
+/// backend (the default) opens the very same file. Reads the whole shape a
+/// recording occupies - the identity tree, the recording attributes, and the
+/// track table datasets - so an `hdf5-pure` upgrade that changes the emitted
+/// bytes is caught here rather than by a user whose history file stops opening.
+#[test_log::test]
+#[cfg(feature = "backend-pure")]
+fn pure_backend_database_is_readable_by_metno() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace_pure.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let bytes = make_gtd_bytes(1_000_000, 9);
+    let meta = extract_meta(&bytes).expect("parse meta");
+    let tracks = [
+        TrackRange {
+            start: 0,
+            end: 4,
+            hidden: false,
+        },
+        TrackRange {
+            start: 4,
+            end: 9,
+            hidden: true,
+        },
+    ];
+    db.insert("device", &meta, &tracks, test_settings(), &bytes)
+        .expect("insert");
+
+    let file = hdf5::File::open(&db_path).expect("open with the reference C library");
+    let by_id = file.group("by_identity").expect("by_identity missing");
+    let id_grp = by_id
+        .group(&gt_history::identity_group_name("device"))
+        .expect("identity group missing");
+
+    let rec_name = id_grp
+        .member_names()
+        .expect("member names")
+        .into_iter()
+        .next()
+        .expect("a recording group");
+    let rec_grp = id_grp.group(&rec_name).expect("recording group missing");
+
+    let read_u64 = |name: &str| {
+        rec_grp
+            .attr(name)
+            .and_then(|a| a.read_scalar::<u64>())
+            .unwrap_or_else(|e| panic!("attribute {name}: {e}"))
+    };
+    let read_i64 = |name: &str| {
+        rec_grp
+            .attr(name)
+            .and_then(|a| a.read_scalar::<i64>())
+            .unwrap_or_else(|e| panic!("attribute {name}: {e}"))
+    };
+    assert_eq!(read_u64(ATTR_NAV_POINT_COUNT), meta.nav_point_count);
+    assert_eq!(read_i64(ATTR_START_US), meta.start_us);
+    assert_eq!(read_u64(ATTR_GTD_SIZE_BYTES), bytes.len() as u64);
+
+    let tracks_grp = rec_grp.group(TRACKS_GROUP).expect("track table missing");
+    let read_column = |name: &str| {
+        tracks_grp
+            .dataset(name)
+            .and_then(|d| d.read_1d::<u64>())
+            .unwrap_or_else(|e| panic!("track column {name}: {e}"))
+            .to_vec()
+    };
+    assert_eq!(read_column(TRACK_START_DATASET), vec![0, 4]);
+    assert_eq!(read_column(TRACK_END_DATASET), vec![4, 9]);
+    assert_eq!(read_column(TRACK_HIDDEN_DATASET), vec![0, 1]);
 }
 
 /// Regression: two distinct recordings that start within the same second and have

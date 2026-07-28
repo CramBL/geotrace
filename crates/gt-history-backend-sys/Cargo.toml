@@ -11,7 +11,7 @@ doctest = false
 
 [dependencies]
 gt-history-types = { path = "../gt-history-types" }
-hdf5 = { package = "hdf5-metno", version = "0.13", features = ["static", "zlib"] }
+hdf5.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 tempfile.workspace = true
