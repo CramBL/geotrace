@@ -1,16 +1,34 @@
 use std::cell::Cell;
+use std::cmp::Ordering;
 
 use chrono::{DateTime, NaiveDate, Utc};
-use egui::{Button, Checkbox, DragValue, Label, RichText, ScrollArea, TextEdit, Window};
+use egui::{Button, Checkbox, DragValue, Grid, Label, RichText, ScrollArea, TextEdit, Window};
 use egui_extras::{Column, TableBuilder, TableRow};
+use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
+use egui_phosphor::regular::CARET_UP as ICON_CARET_UP;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::X as ICON_X;
-use gt_history::{DatabaseRef, PruneMode, RecordingEntry, RecordingMeta};
+use gt_history::{ChannelSummary, DatabaseRef, PruneMode, RecordingEntry, RecordingMeta};
 use gt_side_panel::widgets::{MetadataView, has_metadata_details, metadata_detail_rows};
 use gt_types::TravelMode;
-use gt_ui_theme::warning_amber;
+use gt_ui_theme::{EM_DASH, warning_amber};
+use strum::{EnumCount, EnumIter, IntoEnumIterator as _};
 
 use crate::app::history_db::{DeleteReason, HistoryWorker};
+
+/// Turn off label text-selection for a History window's contents.
+///
+/// egui makes every label selectable by default, which puts a text-editing
+/// I-beam under the pointer over each one. That reads as an invitation to type
+/// where there is nothing to type: these windows are captions, values, and
+/// controls rather than prose, and a column header that sorts on click was
+/// showing the same I-beam as a text field.
+///
+/// Anything genuinely worth copying opts back in with [`Label::selectable`],
+/// and keeps the I-beam as the signal that it can be.
+fn use_plain_labels(ui: &mut egui::Ui) {
+    ui.style_mut().interaction.selectable_labels = false;
+}
 
 /// Which pruning mode is selected in the Prune dialog.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -95,6 +113,7 @@ impl PruneDialog {
             .collapsible(false)
             .default_width(420.0)
             .show(ctx, |ui| {
+                use_plain_labels(ui);
                 ui.horizontal(|ui| {
                     ui.label("Mode");
                     let old = self.mode;
@@ -162,9 +181,14 @@ impl PruneDialog {
                             .max_height(200.0)
                             .show(ui, |ui| {
                                 for r in refs {
+                                    // The recordings about to be deleted -
+                                    // selectable so one can be copied out
+                                    // before confirming.
                                     let label = format!("{}/{}", r.identity, r.group_name);
-                                    ui.add(Label::new(label.as_str()).truncate())
-                                        .on_hover_text(label.as_str());
+                                    ui.add(
+                                        Label::new(label.as_str()).truncate().selectable(true),
+                                    )
+                                    .on_hover_text(label.as_str());
                                 }
                             });
 
@@ -213,6 +237,167 @@ impl PruneDialog {
     }
 }
 
+/// A column of the History table, and the order it can impose on the list.
+///
+/// The variants are in table order: [`history_table`] renders one header per
+/// variant, so adding a column here is what adds it to the table.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, EnumCount, EnumIter)]
+enum SortColumn {
+    Identity,
+    Date,
+    Duration,
+    Points,
+    Size,
+}
+
+impl SortColumn {
+    /// The column's header text.
+    fn title(self) -> &'static str {
+        match self {
+            Self::Identity => "Identity",
+            Self::Date => "Date",
+            Self::Duration => "Duration",
+            Self::Points => "Points",
+            Self::Size => "Size",
+        }
+    }
+
+    /// The direction a first click on this column sorts in: names read best
+    /// from A, while dates and magnitudes are most useful biggest-first.
+    fn initial_direction(self) -> SortDirection {
+        match self {
+            Self::Identity => SortDirection::Ascending,
+            Self::Date | Self::Duration | Self::Points | Self::Size => SortDirection::Descending,
+        }
+    }
+
+    /// How the given order reads for this column, for the header's hover hint -
+    /// "newest first" says more about a date column than "descending" does.
+    fn order_hint(self, direction: SortDirection) -> &'static str {
+        match (self, direction) {
+            (Self::Identity, SortDirection::Ascending) => "A to Z",
+            (Self::Identity, SortDirection::Descending) => "Z to A",
+            (Self::Date, SortDirection::Ascending) => "oldest first",
+            (Self::Date, SortDirection::Descending) => "newest first",
+            (Self::Duration | Self::Points | Self::Size, SortDirection::Ascending) => {
+                "smallest first"
+            }
+            (Self::Duration | Self::Points | Self::Size, SortDirection::Descending) => {
+                "largest first"
+            }
+        }
+    }
+
+    /// Order two entries by this column's value, ascending. Identity compares
+    /// on the displayed name (case-insensitively), so the order matches what
+    /// the column actually shows rather than the stored `auto:`-prefixed form.
+    fn compare(self, a: &RecordingEntry, b: &RecordingEntry) -> Ordering {
+        match self {
+            Self::Identity => compare_identities(&a.db_ref.identity, &b.db_ref.identity),
+            Self::Date => a.meta.start_us.cmp(&b.meta.start_us),
+            Self::Duration => duration_us(&a.meta).cmp(&duration_us(&b.meta)),
+            Self::Points => a.meta.nav_point_count.cmp(&b.meta.nav_point_count),
+            Self::Size => a.meta.gtd_size_bytes.cmp(&b.meta.gtd_size_bytes),
+        }
+    }
+}
+
+/// Which way a [`SortColumn`]'s order runs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SortDirection {
+    Ascending,
+    Descending,
+}
+
+impl SortDirection {
+    fn reversed(self) -> Self {
+        match self {
+            Self::Ascending => Self::Descending,
+            Self::Descending => Self::Ascending,
+        }
+    }
+
+    /// The caret drawn beside the active column's header, pointing the way the
+    /// values grow down the list.
+    fn caret(self) -> &'static str {
+        match self {
+            Self::Ascending => ICON_CARET_UP,
+            Self::Descending => ICON_CARET_DOWN,
+        }
+    }
+}
+
+/// How the History list is ordered.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct HistorySort {
+    column: SortColumn,
+    direction: SortDirection,
+}
+
+impl Default for HistorySort {
+    /// Newest first, matching the order the database itself lists recordings
+    /// in - so opening the window shows what it always did until sorted.
+    fn default() -> Self {
+        Self {
+            column: SortColumn::Date,
+            direction: SortDirection::Descending,
+        }
+    }
+}
+
+impl HistorySort {
+    /// Apply a header click: clicking the active column reverses it, clicking
+    /// another switches to it in the direction that reads most naturally there.
+    fn clicked(&mut self, column: SortColumn) {
+        *self = if self.column == column {
+            Self {
+                column,
+                direction: self.direction.reversed(),
+            }
+        } else {
+            Self {
+                column,
+                direction: column.initial_direction(),
+            }
+        };
+    }
+
+    /// Order `entries` in place.
+    ///
+    /// Ties break on the recording's database reference, which is unique - so
+    /// equal keys (two same-size recordings, say) keep one stable order instead
+    /// of shuffling between frames, and the tie-break stays independent of the
+    /// chosen direction.
+    fn apply(self, entries: &mut [&RecordingEntry]) {
+        entries.sort_by(|a, b| {
+            let by_column = match self.direction {
+                SortDirection::Ascending => self.column.compare(a, b),
+                SortDirection::Descending => self.column.compare(a, b).reverse(),
+            };
+            by_column
+                .then_with(|| a.db_ref.identity.cmp(&b.db_ref.identity))
+                .then_with(|| a.db_ref.group_name.cmp(&b.db_ref.group_name))
+        });
+    }
+}
+
+/// Compare two stored identities the way the Identity column shows them:
+/// by display name, case-insensitively, without allocating a lowercased copy
+/// per comparison.
+fn compare_identities(a: &str, b: &str) -> Ordering {
+    let a = identity_display_parts(a).0;
+    let b = identity_display_parts(b).0;
+    a.chars()
+        .flat_map(char::to_lowercase)
+        .cmp(b.chars().flat_map(char::to_lowercase))
+}
+
+/// A recording's span in microseconds, clamped at zero for a recording whose
+/// stored end precedes its start.
+fn duration_us(meta: &RecordingMeta) -> i64 {
+    meta.end_us.saturating_sub(meta.start_us).max(0)
+}
+
 pub struct HistoryWindow {
     pub open: bool,
     /// Cached recording list - `None` until the window is first shown.
@@ -237,6 +422,8 @@ pub struct HistoryWindow {
     list_pending: bool,
     /// In-progress inline identity rename, if any.
     rename: Option<RenameEdit>,
+    /// Which column the list is ordered by, and which way.
+    sort: HistorySort,
 }
 
 /// State for the inline identity-rename editor on one History row.
@@ -262,6 +449,7 @@ impl HistoryWindow {
             confirm_delete_hidden: false,
             list_pending: false,
             rename: None,
+            sort: HistorySort::default(),
         }
     }
 
@@ -363,6 +551,7 @@ impl HistoryWindow {
             .default_width(640.0)
             .default_height(480.0)
             .show(ctx, |ui| {
+                use_plain_labels(ui);
                 if !worker.available() {
                     ui.label(
                         RichText::new("History database is unavailable.")
@@ -530,7 +719,7 @@ impl HistoryWindow {
                 let filter_from_us = date_to_start_us(&self.filter_date_from);
                 let filter_to_us = date_to_end_us(&self.filter_date_to);
 
-                let visible: Vec<&RecordingEntry> = entries
+                let mut visible: Vec<&RecordingEntry> = entries
                     .iter()
                     .filter(|e| {
                         if !filter_identity.is_empty()
@@ -557,6 +746,7 @@ impl HistoryWindow {
                         true
                     })
                     .collect();
+                self.sort.apply(&mut visible);
 
                 if entries.is_empty() {
                     ui.centered_and_justified(|ui| {
@@ -570,7 +760,15 @@ impl HistoryWindow {
                 let available = ui.available_size();
                 let list_height = (available.y - footer_height - 8.0).max(100.0);
 
-                history_table(ui, list_height, &visible, loaded_metas, worker, &mut rename);
+                history_table(
+                    ui,
+                    list_height,
+                    &visible,
+                    loaded_metas,
+                    worker,
+                    &mut rename,
+                    &mut self.sort,
+                );
 
                 ui.separator();
                 // Footer stats cover every stored recording. Hidden tracks are
@@ -592,7 +790,12 @@ impl HistoryWindow {
                     }
                 });
                 if let Some(path) = worker.path() {
-                    ui.weak(path.display().to_string());
+                    // Worth copying out of the app, so this one keeps text
+                    // selection - and the I-beam that advertises it.
+                    ui.add(
+                        Label::new(RichText::new(path.display().to_string()).weak())
+                            .selectable(true),
+                    );
                 }
             });
 
@@ -612,6 +815,7 @@ impl HistoryWindow {
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                     .show(ctx, |ui| {
+                        use_plain_labels(ui);
                         let track_label = gt_fmt::pluralize(hidden_count, "track", "tracks");
                         ui.label(format!(
                             "{hidden_count} hidden {track_label} will be permanently removed from their recordings."
@@ -668,6 +872,7 @@ fn history_table(
     loaded_metas: &[gt_history::RecordingMeta],
     worker: &HistoryWorker,
     rename: &mut Option<RenameEdit>,
+    sort: &mut HistorySort,
 ) {
     let row_height = ui.text_style_height(&egui::TextStyle::Body) + 6.0;
 
@@ -705,24 +910,25 @@ fn history_table(
         // Identity fills the leftover width (see above) and clips long names
         // rather than growing to fit them.
         .column(Column::exact(identity_width).clip(true))
-        // Metadata columns size to their fixed-format content. They are not
+        // Metadata columns size to their fixed-format content - every sortable
+        // column except identity, which was added above. They are not
         // resizable: there is nothing to gain from resizing a date or a byte
         // count, and it keeps the table's width fully determined by the window.
-        .columns(Column::auto().resizable(false), 4)
+        .columns(Column::auto().resizable(false), SortColumn::COUNT - 1)
         .column(Column::auto().resizable(false))
         .header(row_height, |mut header| {
-            header.col(|ui| {
-                identity_right.set(ui.max_rect().right());
-                measured_while_sizing.set(ui.is_sizing_pass());
-                crate::terms::term_label(
-                    ui,
-                    RichText::new("Identity").strong(),
-                    crate::terms::IDENTITY,
-                );
-            });
-            for title in ["Date", "Duration", "Points", "Size"] {
+            // Driven off the enum rather than a parallel list of titles, so a
+            // new sortable column cannot be added without a header appearing.
+            for column in SortColumn::iter() {
                 header.col(|ui| {
-                    ui.strong(title);
+                    // Identity is the measured, term-explained column; every
+                    // other one is a plain sortable header.
+                    let term = (column == SortColumn::Identity).then(|| {
+                        identity_right.set(ui.max_rect().right());
+                        measured_while_sizing.set(ui.is_sizing_pass());
+                        crate::terms::IDENTITY
+                    });
+                    sort_header(ui, column, sort, term);
                 });
             }
             header.col(|ui| {
@@ -747,6 +953,59 @@ fn history_table(
     let metadata_width = last_column_right.get() - identity_right.get();
     if metadata_width > 0.0 && !measured_while_sizing.get() {
         ui.data_mut(|d| d.insert_temp(metadata_width_id, metadata_width));
+    }
+}
+
+/// A clickable table header that orders the list by `column`.
+///
+/// The active column carries a caret pointing the way its values run; clicking
+/// it reverses that, clicking any other column switches to it. `term`, when
+/// given, is the column's glossary explanation - it underlines the title and
+/// leads the hover, matching [`crate::terms::term_label`].
+fn sort_header(ui: &mut egui::Ui, column: SortColumn, sort: &mut HistorySort, term: Option<&str>) {
+    let active = sort.column == column;
+    let mut title = RichText::new(column.title()).strong();
+    if term.is_some() {
+        title = title.underline();
+    }
+
+    let clicked = ui
+        .horizontal(|ui| {
+            let title = ui.add(
+                Label::new(title)
+                    .selectable(false)
+                    .sense(egui::Sense::click()),
+            );
+            if active {
+                ui.label(RichText::new(sort.direction.caret()).small().weak());
+            }
+            title
+        })
+        .inner
+        // A header sorts on click, so the pointer says "clickable" - not the
+        // text I-beam a selectable label would otherwise put here.
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_ui(|ui| {
+            if let Some(term) = term {
+                ui.label(term);
+            }
+            // Name the order the click produces, not the one already applied,
+            // so the hint reads as the action it is.
+            let next = if active {
+                sort.direction.reversed()
+            } else {
+                column.initial_direction()
+            };
+            ui.label(
+                RichText::new(format!("Click to sort {}", column.order_hint(next)))
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+        })
+        .clicked();
+
+    if clicked {
+        sort.clicked(column);
     }
 }
 
@@ -779,7 +1038,7 @@ fn render_row(
         }
     });
 
-    row.col(|ui| {
+    breakdown_cell(row, entry, SortColumn::Date, |ui| {
         let ts = DateTime::<Utc>::from_timestamp_micros(entry.meta.start_us)
             .unwrap_or_default()
             .format("%Y-%m-%d %H:%M")
@@ -787,26 +1046,22 @@ fn render_row(
         ui.label(ts);
     });
 
-    row.col(|ui| {
-        let dur_us = entry.meta.end_us.saturating_sub(entry.meta.start_us).max(0);
-        let dur = chrono::Duration::microseconds(dur_us);
+    breakdown_cell(row, entry, SortColumn::Duration, |ui| {
+        let dur = chrono::Duration::microseconds(duration_us(&entry.meta));
         ui.label(format_duration(dur));
     });
 
-    row.col(|ui| {
+    breakdown_cell(row, entry, SortColumn::Points, |ui| {
         ui.label(gt_history::format_count_suffix(entry.meta.nav_point_count));
         if entry.hidden_tracks > 0 {
             ui.weak(format!(
                 "({}/{} hidden)",
                 entry.hidden_tracks, entry.total_tracks
-            ))
-            .on_hover_text(
-                "Tracks hidden by 'remove filtered data'; use 'Delete hidden data' to drop them permanently",
-            );
+            ));
         }
     });
 
-    row.col(|ui| {
+    breakdown_cell(row, entry, SortColumn::Size, |ui| {
         ui.label(format_size(entry.meta.gtd_size_bytes));
     });
 
@@ -821,6 +1076,182 @@ fn render_row(
             worker.delete_recordings(vec![entry.db_ref.clone()], DeleteReason::Manual);
         }
     });
+}
+
+/// Render one of a row's value cells and give the whole cell - the text and the
+/// blank space beside it - the recording's data breakdown as hover text.
+///
+/// Nothing inside a value cell senses hover or click of its own, so covering
+/// the cell's whole rect is what makes the breakdown reachable by pointing
+/// anywhere along the row rather than only at the label.
+fn breakdown_cell(
+    row: &mut TableRow<'_, '_>,
+    entry: &RecordingEntry,
+    column: SortColumn,
+    content: impl FnOnce(&mut egui::Ui),
+) {
+    row.col(|ui| {
+        let cell = ui.max_rect();
+        content(ui);
+        ui.interact(cell, breakdown_cell_id(entry, column), egui::Sense::hover())
+            .on_hover_ui(|ui| data_breakdown_ui(ui, entry));
+    });
+}
+
+/// The widget id of a row's breakdown cell.
+///
+/// The recording's database reference identifies the row and `column` separates
+/// the cells within it, so no two breakdown cells in the table share an id and
+/// none collides with a neighbour's interaction state.
+fn breakdown_cell_id(entry: &RecordingEntry, column: SortColumn) -> egui::Id {
+    egui::Id::new((
+        "history_row_breakdown",
+        entry.db_ref.identity.as_str(),
+        entry.db_ref.group_name.as_str(),
+        column,
+    ))
+}
+
+/// What the recording holds, as hover detail for a History row: its exact span,
+/// its shape on disk, and a count per kind of data - including the ad-hoc sensor
+/// channels, which no table column reveals.
+fn data_breakdown_ui(ui: &mut egui::Ui, entry: &RecordingEntry) {
+    let meta = &entry.meta;
+    let start = DateTime::<Utc>::from_timestamp_micros(meta.start_us).unwrap_or_default();
+    let end = DateTime::<Utc>::from_timestamp_micros(meta.end_us).unwrap_or_default();
+    ui.label(gt_fmt::format_time_range(start, end));
+
+    Grid::new("history_breakdown_counts")
+        .num_columns(2)
+        .spacing([12.0, 4.0])
+        .show(ui, |ui| {
+            let mut row = |label: &str, value: String| {
+                ui.label(RichText::new(label).weak());
+                ui.label(value);
+                ui.end_row();
+            };
+            row(
+                "Duration",
+                format_duration(chrono::Duration::microseconds(duration_us(meta))),
+            );
+            row("Size", format_size(meta.gtd_size_bytes));
+            row("Tracks", track_count_text(entry));
+            row("Nav points", format_stored_count(meta.nav_point_count));
+            row(
+                "Satellite reports",
+                format_stored_count(meta.sat_report_count),
+            );
+            row("Markers", format_stored_count(meta.marker_count));
+            row(
+                "Event markers",
+                format_stored_count(meta.event_marker_count),
+            );
+        });
+
+    if entry.hidden_tracks > 0 {
+        ui.label(
+            RichText::new(
+                "Hidden tracks came from 'remove filtered data'. \
+                 Use 'Delete hidden data' to drop them permanently.",
+            )
+            .small()
+            .color(ui.visuals().weak_text_color()),
+        );
+    }
+
+    channels_breakdown_ui(ui, &entry.channels);
+}
+
+/// The recording's ad-hoc sensor channels, one row each: name (with a vector
+/// channel's component labels), unit, and sample count. Long channel lists are
+/// truncated so the hover cannot outgrow the screen.
+///
+/// A recording with no channels says so rather than rendering nothing - the
+/// absence is the answer to "what custom data is in here".
+fn channels_breakdown_ui(ui: &mut egui::Ui, channels: &[ChannelSummary]) {
+    ui.add_space(4.0);
+    if channels.is_empty() {
+        ui.label(RichText::new("No custom channels").color(ui.visuals().weak_text_color()));
+        return;
+    }
+
+    let count = channels.len();
+    ui.label(
+        RichText::new(format!(
+            "{count} custom {}",
+            gt_fmt::pluralize(count, "channel", "channels")
+        ))
+        .strong(),
+    );
+    Grid::new("history_breakdown_channels")
+        .num_columns(3)
+        .spacing([12.0, 4.0])
+        .show(ui, |ui| {
+            for channel in channels.iter().take(MAX_HOVER_CHANNELS) {
+                ui.vertical(|ui| {
+                    // A vertical inside a grid cell has no width of its own to
+                    // wrap against, so let the labels size the column instead.
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    ui.label(channel_title(channel));
+                    // The producer's own words for what the channel measures,
+                    // tucked under the name so the columns stay aligned.
+                    if let Some(description) = &channel.description {
+                        ui.label(
+                            RichText::new(description)
+                                .small()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                    }
+                });
+                ui.label(
+                    RichText::new(channel.unit.as_deref().unwrap_or(EM_DASH))
+                        .color(ui.visuals().weak_text_color()),
+                );
+                ui.label(
+                    RichText::new(format!(
+                        "{} {}",
+                        format_stored_count(channel.sample_count),
+                        gt_fmt::pluralize(
+                            usize::try_from(channel.sample_count).unwrap_or(usize::MAX),
+                            "sample",
+                            "samples",
+                        )
+                    ))
+                    .color(ui.visuals().weak_text_color()),
+                );
+                ui.end_row();
+            }
+        });
+    if let Some(hidden) = count.checked_sub(MAX_HOVER_CHANNELS).filter(|n| *n > 0) {
+        ui.label(RichText::new(format!("and {hidden} more")).color(ui.visuals().weak_text_color()));
+    }
+}
+
+/// How many channels the hover lists before summarizing the rest, so a
+/// recording carrying dozens of them still produces a readable tooltip.
+const MAX_HOVER_CHANNELS: usize = 8;
+
+/// A channel's name, with a vector channel's component labels appended:
+/// `accel (x, y, z)`. A scalar channel is just its name.
+fn channel_title(channel: &ChannelSummary) -> String {
+    if channel.components.is_empty() {
+        return channel.name.clone();
+    }
+    format!("{} ({})", channel.name, channel.components.join(", "))
+}
+
+/// The recording's track count, noting how many of them are hidden.
+fn track_count_text(entry: &RecordingEntry) -> String {
+    if entry.hidden_tracks > 0 {
+        format!("{} ({} hidden)", entry.total_tracks, entry.hidden_tracks)
+    } else {
+        entry.total_tracks.to_string()
+    }
+}
+
+/// Thousands-separated form of one of the database's `u64` counters.
+fn format_stored_count(n: u64) -> String {
+    gt_fmt::format_count(usize::try_from(n).unwrap_or(usize::MAX))
 }
 
 /// Render the inline identity-rename editor in the identity column. Commits on
@@ -897,17 +1328,28 @@ fn identity_cell(
             if has_metadata {
                 ui.label(RichText::new(ICON_NOTE).weak());
             }
-            // The label itself senses clicks: it is the rename target.
+            // The label itself senses clicks: it is the rename target. Text
+            // selection stays off so a double click opens the editor rather
+            // than selecting a word under the pointer.
             ui.add(
                 Label::new(display_name)
                     .truncate()
+                    .selectable(false)
                     .sense(egui::Sense::click()),
             )
         })
         .inner
+        // Double-click renames and right-click offers the menu, so the cell
+        // reads as interactive rather than as editable text.
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_ui(|ui| {
             ui.label(identity);
             metadata_detail_rows(ui, &meta);
+            // The same breakdown the value cells show, so the hover is the
+            // whole row's story wherever the pointer lands.
+            ui.separator();
+            data_breakdown_ui(ui, entry);
+            ui.separator();
             ui.label(
                 RichText::new("Double-click to rename")
                     .small()
@@ -1004,9 +1446,12 @@ mod tests {
     use crate::app::history_db::Response;
 
     use super::{
-        DatabaseRef, HistoryWindow, HistoryWorker, ICON_NOTE, RecordingEntry, RecordingMeta,
-        identity_display_parts, travel_mode_display,
+        ChannelSummary, DatabaseRef, HistorySort, HistoryWindow, HistoryWorker, ICON_CARET_DOWN,
+        ICON_CARET_UP, ICON_NOTE, MAX_HOVER_CHANNELS, RecordingEntry, RecordingMeta, SortColumn,
+        SortDirection, breakdown_cell_id, channel_title, data_breakdown_ui, identity_display_parts,
+        track_count_text, travel_mode_display,
     };
+    use strum::{EnumCount as _, IntoEnumIterator as _};
 
     /// Harness state for driving the History window: the window, a live (empty)
     /// worker so the list branch renders, and the settings toggles `show` needs.
@@ -1247,6 +1692,159 @@ mod tests {
             device: None,
             notes: None,
             travel_mode: None,
+            channels: Vec::new(),
+        }
+    }
+
+    /// A listing entry with the four sortable value columns set, for the
+    /// ordering tests. `duration_us` is added to `start_us` to give the entry
+    /// its span.
+    fn sortable_entry(
+        identity: &str,
+        start_us: i64,
+        duration_us: i64,
+        nav_point_count: u64,
+        gtd_size_bytes: u64,
+    ) -> RecordingEntry {
+        let mut entry = entry_with_identity(identity);
+        entry.meta.start_us = start_us;
+        entry.meta.end_us = start_us + duration_us;
+        entry.meta.nav_point_count = nav_point_count;
+        entry.meta.gtd_size_bytes = gtd_size_bytes;
+        entry
+    }
+
+    /// Three entries whose columns disagree about the order, so sorting by any
+    /// one of them produces a different sequence: `beta` is the oldest but the
+    /// longest and biggest, `alpha` the newest but the shortest.
+    fn sortable_entries() -> Vec<RecordingEntry> {
+        vec![
+            sortable_entry("Alpha", 3_000, 10, 5, 50),
+            sortable_entry("beta", 1_000, 300, 100, 5_000),
+            sortable_entry("Gamma", 2_000, 60, 40, 400),
+        ]
+    }
+
+    /// The identities the sort produces, in list order.
+    fn sorted_identities(sort: HistorySort, entries: &[RecordingEntry]) -> Vec<&str> {
+        let mut visible: Vec<&RecordingEntry> = entries.iter().collect();
+        sort.apply(&mut visible);
+        visible.iter().map(|e| e.db_ref.identity.as_str()).collect()
+    }
+
+    /// Every column orders the list by its own value, in both directions.
+    /// Identity compares case-insensitively on the displayed name, so `beta`
+    /// sorts between `Alpha` and `Gamma` rather than after both.
+    #[rstest::rstest]
+    #[case(SortColumn::Identity, SortDirection::Ascending, ["Alpha", "beta", "Gamma"])]
+    #[case(SortColumn::Identity, SortDirection::Descending, ["Gamma", "beta", "Alpha"])]
+    #[case(SortColumn::Date, SortDirection::Ascending, ["beta", "Gamma", "Alpha"])]
+    #[case(SortColumn::Date, SortDirection::Descending, ["Alpha", "Gamma", "beta"])]
+    #[case(SortColumn::Duration, SortDirection::Ascending, ["Alpha", "Gamma", "beta"])]
+    #[case(SortColumn::Duration, SortDirection::Descending, ["beta", "Gamma", "Alpha"])]
+    #[case(SortColumn::Points, SortDirection::Ascending, ["Alpha", "Gamma", "beta"])]
+    #[case(SortColumn::Points, SortDirection::Descending, ["beta", "Gamma", "Alpha"])]
+    #[case(SortColumn::Size, SortDirection::Ascending, ["Alpha", "Gamma", "beta"])]
+    #[case(SortColumn::Size, SortDirection::Descending, ["beta", "Gamma", "Alpha"])]
+    fn sorting_orders_by_the_chosen_column(
+        #[case] column: SortColumn,
+        #[case] direction: SortDirection,
+        #[case] expected: [&str; 3],
+    ) {
+        let entries = sortable_entries();
+        let sort = HistorySort { column, direction };
+
+        assert_eq!(sorted_identities(sort, &entries), expected.to_vec());
+    }
+
+    /// Entries that tie on the sorted column keep one stable order regardless of
+    /// direction, so equal rows do not shuffle when the sort is reversed.
+    #[test]
+    fn ties_break_stably_and_independently_of_direction() {
+        // Same size, different identities - only the tie-break can separate them.
+        let entries = vec![
+            sortable_entry("charlie", 3_000, 10, 5, 100),
+            sortable_entry("alpha", 1_000, 20, 9, 100),
+            sortable_entry("bravo", 2_000, 30, 7, 100),
+        ];
+        let by_size = |direction| {
+            sorted_identities(
+                HistorySort {
+                    column: SortColumn::Size,
+                    direction,
+                },
+                &entries,
+            )
+        };
+
+        assert_eq!(
+            by_size(SortDirection::Ascending),
+            ["alpha", "bravo", "charlie"]
+        );
+        assert_eq!(
+            by_size(SortDirection::Descending),
+            ["alpha", "bravo", "charlie"],
+            "reversing the direction must not reshuffle rows that tie on the column",
+        );
+    }
+
+    /// Clicking the active column reverses it; clicking another switches to it
+    /// in that column's own natural direction rather than inheriting the
+    /// previous one.
+    #[test]
+    fn header_clicks_reverse_then_switch_columns() {
+        let mut sort = HistorySort::default();
+        assert_eq!(sort.column, SortColumn::Date);
+        assert_eq!(sort.direction, SortDirection::Descending);
+
+        sort.clicked(SortColumn::Date);
+        assert_eq!(
+            sort.direction,
+            SortDirection::Ascending,
+            "re-click reverses"
+        );
+
+        sort.clicked(SortColumn::Identity);
+        assert_eq!(
+            (sort.column, sort.direction),
+            (SortColumn::Identity, SortDirection::Ascending),
+            "identity starts A to Z",
+        );
+
+        sort.clicked(SortColumn::Size);
+        assert_eq!(
+            (sort.column, sort.direction),
+            (SortColumn::Size, SortDirection::Descending),
+            "size starts largest first, not carrying identity's ascending order",
+        );
+    }
+
+    /// Every sortable column carries its own header title and a distinct hint
+    /// per direction, so no variant can be added without describing itself.
+    #[test]
+    fn every_sort_column_describes_itself() {
+        let columns: Vec<SortColumn> = SortColumn::iter().collect();
+        assert_eq!(
+            columns.len(),
+            SortColumn::COUNT,
+            "the iterator must cover every variant",
+        );
+
+        let mut titles: Vec<&str> = columns.iter().map(|c| c.title()).collect();
+        titles.sort_unstable();
+        titles.dedup();
+        assert_eq!(
+            titles.len(),
+            SortColumn::COUNT,
+            "column titles must be unique"
+        );
+
+        for column in columns {
+            assert_ne!(
+                column.order_hint(SortDirection::Ascending),
+                column.order_hint(SortDirection::Descending),
+                "{column:?} must read differently in each direction",
+            );
         }
     }
 
@@ -1510,6 +2108,498 @@ mod tests {
             before.width(),
             after.width(),
         );
+    }
+
+    /// The identities the table currently lists, top to bottom, read off the
+    /// rendered row positions.
+    fn listed_order(h: &TestHarness<HistoryHarness>, identities: &[&str]) -> Vec<String> {
+        let mut rows: Vec<(f32, String)> = identities
+            .iter()
+            .map(|identity| {
+                let top = h.inner.get_by_label_contains(identity).rect().top();
+                (top, (*identity).to_owned())
+            })
+            .collect();
+        rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+        rows.into_iter().map(|(_, identity)| identity).collect()
+    }
+
+    /// Click the table's header for `title`. The toolbar carries an "Identity"
+    /// label of its own, so match on the lowest node on screen - the header row
+    /// sits below the toolbar.
+    fn click_header(h: &TestHarness<HistoryHarness>, title: &str) {
+        header_node(h, title).click();
+    }
+
+    /// The table header labelled exactly `title`.
+    ///
+    /// Takes the lowest matching node: the toolbar and filter row carry labels
+    /// with the same words ("Identity", "Points") and sit above the table.
+    fn header_node<'t>(
+        h: &'t TestHarness<HistoryHarness>,
+        title: &'t str,
+    ) -> egui_kittest::Node<'t> {
+        h.inner
+            .get_all_by_label(title)
+            .max_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+            .expect("column header")
+    }
+
+    /// Clicking a column header reorders the rendered table, and clicking the
+    /// same header again reverses it - the sort reaching the actual list, not
+    /// just the state struct.
+    #[test]
+    fn clicking_a_header_reorders_the_rendered_rows() {
+        let harness = history_harness(sortable_entries());
+        let mut h = TestHarness::builder()
+            .size(egui::vec2(900.0, 500.0))
+            .ui_state(show_history, harness);
+        for _ in 0..4 {
+            h.run();
+        }
+
+        let identities = ["Alpha", "beta", "Gamma"];
+        assert_eq!(
+            listed_order(&h, &identities),
+            ["Alpha", "Gamma", "beta"],
+            "the default order is newest first",
+        );
+
+        // Sort by identity: a first click on a new column sorts it A to Z.
+        click_header(&h, "Identity");
+        h.run();
+        assert_eq!(listed_order(&h, &identities), ["Alpha", "beta", "Gamma"]);
+
+        // Clicking the active column reverses it.
+        click_header(&h, "Identity");
+        h.run();
+        assert_eq!(listed_order(&h, &identities), ["Gamma", "beta", "Alpha"]);
+
+        // Switching to Points sorts largest first.
+        click_header(&h, "Points");
+        h.run();
+        assert_eq!(listed_order(&h, &identities), ["beta", "Gamma", "Alpha"]);
+    }
+
+    /// The active column is the only one showing a caret, and the caret follows
+    /// the direction - so the header always says how the list is ordered.
+    #[test]
+    fn only_the_active_column_shows_a_direction_caret() {
+        let harness = history_harness(sortable_entries());
+        let mut h = TestHarness::builder()
+            .size(egui::vec2(900.0, 500.0))
+            .ui_state(show_history, harness);
+        for _ in 0..4 {
+            h.run();
+        }
+
+        // Default sort is Date descending: exactly one caret, pointing down.
+        assert_eq!(h.inner.query_all_by_label(ICON_CARET_DOWN).count(), 1);
+        assert_eq!(h.inner.query_all_by_label(ICON_CARET_UP).count(), 0);
+
+        // Reversing it flips the caret without adding a second one.
+        click_header(&h, "Date");
+        h.run();
+        assert_eq!(h.inner.query_all_by_label(ICON_CARET_DOWN).count(), 0);
+        assert_eq!(h.inner.query_all_by_label(ICON_CARET_UP).count(), 1);
+    }
+
+    /// A recording carrying ad-hoc sensor channels: two of them, one vector and
+    /// one scalar, plus counts for every data kind the breakdown reports.
+    fn entry_with_channels() -> RecordingEntry {
+        let mut entry = sortable_entry(
+            "auto:sensors.gtd",
+            1_700_000_000_000_000,
+            3_600_000_000,
+            8_940,
+            4_096,
+        );
+        entry.meta.sat_report_count = 1_234;
+        entry.meta.marker_count = 12;
+        entry.meta.event_marker_count = 3;
+        entry.total_tracks = 4;
+        entry.channels = vec![
+            ChannelSummary {
+                name: "accel".to_owned(),
+                unit: Some("g".to_owned()),
+                description: Some("Frame IMU".to_owned()),
+                components: vec!["x".to_owned(), "y".to_owned(), "z".to_owned()],
+                sample_count: 12_000,
+            },
+            ChannelSummary {
+                name: "temperature".to_owned(),
+                unit: None,
+                description: None,
+                components: Vec::new(),
+                sample_count: 512,
+            },
+        ];
+        entry
+    }
+
+    /// Park the pointer on the widget labelled `label` and hold it there until
+    /// the hover turns into a tooltip.
+    ///
+    /// egui only shows a tooltip once the pointer has been *still* on the
+    /// widget for `tooltip_delay`, and every `PointerMoved` restarts that
+    /// timer - so the position is sent once and the following frames are run
+    /// without further events. Re-sending it each frame keeps the pointer
+    /// permanently "moving" and no tooltip ever appears.
+    ///
+    /// Matches the topmost node, which is the table row rather than the footer
+    /// summary when both carry the same text (a size, say).
+    fn hover_widget(h: &mut TestHarness<HistoryHarness>, label: &str) {
+        let target = topmost_labelled(h, label);
+        hover_pos(h, target);
+    }
+
+    /// Hold the pointer at `target` until the hover settles.
+    ///
+    /// One frame registers the move, then the rest run without events so
+    /// egui's "pointer has been still" timer can actually accumulate.
+    fn hover_pos(h: &mut TestHarness<HistoryHarness>, target: egui::Pos2) {
+        h.inner.event(egui::Event::PointerMoved(target));
+        for _ in 0..4 {
+            h.step();
+        }
+    }
+
+    /// Point at the widget labelled `label` and stop before its tooltip opens.
+    ///
+    /// For asking what cursor a widget wants. A tooltip is its own layer and a
+    /// big one lands over the pointer, which takes the hover off the widget
+    /// underneath and resets the cursor - so the cursor has to be read while
+    /// the widget is still the thing being pointed at.
+    fn point_at_widget(h: &mut TestHarness<HistoryHarness>, label: &str) {
+        let target = topmost_labelled(h, label);
+        h.inner.event(egui::Event::PointerMoved(target));
+        h.step();
+    }
+
+    /// Like [`point_at_widget`] for a table header (see [`header_node`]).
+    fn point_at_header(h: &mut TestHarness<HistoryHarness>, title: &str) {
+        let target = header_node(h, title).rect().center();
+        h.inner.event(egui::Event::PointerMoved(target));
+        h.step();
+    }
+
+    /// Centre of the topmost widget whose label contains `label` - the table
+    /// row rather than the footer summary when both carry the same text.
+    fn topmost_labelled(h: &TestHarness<HistoryHarness>, label: &str) -> egui::Pos2 {
+        h.inner
+            .get_all_by_label_contains(label)
+            .min_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+            .expect("hover target")
+            .rect()
+            .center()
+    }
+
+    /// Snapshot the hover breakdown for `entry`, rendered through the same
+    /// function the tooltip calls.
+    ///
+    /// Driven directly rather than through a hover so the image is just the
+    /// breakdown: what it covers is everything the breakdown itself decides -
+    /// which rows appear, how the channels lay out, and where it truncates.
+    /// That the hover actually reaches it is covered separately, by the tests
+    /// that hover a real row.
+    fn snapshot_breakdown(entry: &RecordingEntry, name: &str) {
+        let mut h = TestHarness::builder()
+            .size(egui::vec2(420.0, 560.0))
+            .ui(|ui| data_breakdown_ui(ui, entry));
+        for _ in 0..3 {
+            h.run();
+        }
+        h.snapshot(name);
+    }
+
+    /// The breakdown of a recording carrying ad-hoc sensor channels: its span,
+    /// its shape on disk, a count per kind of data, and the channels - vector
+    /// components, units, and sample counts included.
+    #[test]
+    fn snapshot_history_row_breakdown() {
+        snapshot_breakdown(&entry_with_channels(), "history_row_breakdown");
+    }
+
+    /// A recording with no channels states that in its breakdown rather than
+    /// leaving the question unanswered by rendering nothing. Its hidden tracks
+    /// also earn the note explaining where they came from.
+    #[test]
+    fn snapshot_history_row_breakdown_without_channels() {
+        let mut entry = sortable_entry(
+            "auto:plain.gtd",
+            1_700_000_000_000_000,
+            900_000_000,
+            42,
+            4_096,
+        );
+        entry.total_tracks = 3;
+        entry.hidden_tracks = 1;
+        snapshot_breakdown(&entry, "history_row_breakdown_no_channels");
+    }
+
+    /// A recording with more channels than the hover lists shows the first
+    /// [`MAX_HOVER_CHANNELS`] and counts the rest, so the tooltip cannot grow
+    /// past the screen.
+    #[test]
+    fn snapshot_history_row_breakdown_truncates_long_channel_list() {
+        let mut entry = entry_with_channels();
+        entry.channels = (0..MAX_HOVER_CHANNELS + 3)
+            .map(|i| ChannelSummary {
+                // Zero-padded so the name order matches the numeric order.
+                name: format!("channel_{i:02}"),
+                unit: None,
+                description: None,
+                components: Vec::new(),
+                sample_count: 10,
+            })
+            .collect();
+        snapshot_breakdown(&entry, "history_row_breakdown_many_channels");
+    }
+
+    /// A vector channel shows its component labels; a scalar one is just its
+    /// name.
+    #[rstest::rstest]
+    #[case(&[], "accel")]
+    #[case(&["x", "y", "z"], "accel (x, y, z)")]
+    fn channel_title_appends_vector_components(
+        #[case] components: &[&str],
+        #[case] expected: &str,
+    ) {
+        let channel = ChannelSummary {
+            name: "accel".to_owned(),
+            unit: None,
+            description: None,
+            components: components.iter().map(|s| (*s).to_owned()).collect(),
+            sample_count: 0,
+        };
+
+        assert_eq!(channel_title(&channel), expected);
+    }
+
+    /// The cursor the window is asking for right now.
+    fn cursor_icon(h: &TestHarness<HistoryHarness>) -> egui::CursorIcon {
+        h.inner.output().platform_output.cursor_icon
+    }
+
+    /// Each part of the window asks for the cursor that matches what it does.
+    ///
+    /// egui makes labels selectable by default, which puts a text-editing
+    /// I-beam over every one of them - so a column header that sorts on click
+    /// looked exactly like a text field. Only real text entry should show the
+    /// I-beam here.
+    #[rstest::rstest]
+    // Sortable headers act on click.
+    #[case::points_header(point_at_header, "Points", egui::CursorIcon::PointingHand)]
+    #[case::identity_header(point_at_header, "Identity", egui::CursorIcon::PointingHand)]
+    // The identity cell renames on double-click and has a context menu.
+    #[case::identity_cell(point_at_widget, "sensors.gtd", egui::CursorIcon::PointingHand)]
+    // The toolbar's "Identity" is a term with an explanation, not a control.
+    #[case::term_label(point_at_widget, "Identity", egui::CursorIcon::Help)]
+    // Values and captions do nothing on click.
+    #[case::date_cell(point_at_widget, "2023-11-14 22:13", egui::CursorIcon::Default)]
+    #[case::duration_cell(point_at_widget, "1h 00m", egui::CursorIcon::Default)]
+    #[case::points_cell(point_at_widget, "8.9k", egui::CursorIcon::Default)]
+    #[case::static_caption(point_at_widget, "GB", egui::CursorIcon::Default)]
+    #[case::button(point_at_widget, "Prune…", egui::CursorIcon::Default)]
+    #[case::checkbox(point_at_widget, "Auto-store recordings", egui::CursorIcon::Default)]
+    fn elements_ask_for_a_cursor_that_matches_what_they_do(
+        #[case] hover: fn(&mut TestHarness<HistoryHarness>, &str),
+        #[case] label: &str,
+        #[case] expected: egui::CursorIcon,
+    ) {
+        let mut h = channel_row_harness();
+
+        hover(&mut h, label);
+
+        assert_eq!(
+            cursor_icon(&h),
+            expected,
+            "hovering {label:?} should ask for {expected:?}",
+        );
+    }
+
+    /// The identity filter is real text entry, so it does get the I-beam - the
+    /// contrast that makes the cursor meaningful everywhere else.
+    #[test]
+    fn the_filter_field_still_shows_a_text_cursor() {
+        let mut h = channel_row_harness();
+        let field = h
+            .inner
+            .get_all_by_role(egui::accesskit::Role::TextInput)
+            .map(|n| n.rect())
+            .next()
+            .expect("identity filter field");
+
+        h.inner.event(egui::Event::PointerMoved(field.center()));
+        h.step();
+
+        assert_eq!(cursor_icon(&h), egui::CursorIcon::Text);
+    }
+
+    /// A History window showing one recording that carries channels, settled so
+    /// the auto columns have measured their content.
+    fn channel_row_harness() -> TestHarness<'static, HistoryHarness> {
+        let harness = history_harness(vec![entry_with_channels()]);
+        let mut h = TestHarness::builder()
+            .size(egui::vec2(900.0, 500.0))
+            .ui_state(show_history, harness);
+        for _ in 0..4 {
+            h.run();
+        }
+        h
+    }
+
+    /// Hovering *any* of a row's value cells brings up the breakdown, not just
+    /// the one column whose value is being pointed at - the cells are wired up
+    /// individually, so each one has to be checked.
+    #[rstest::rstest]
+    #[case::date("2023-11-14 22:13")]
+    #[case::duration("1h 00m")]
+    #[case::points("8.9k")]
+    #[case::size("4.0 KB")]
+    fn hovering_any_value_cell_reveals_the_breakdown(#[case] cell_text: &str) {
+        let mut h = channel_row_harness();
+        assert!(
+            h.inner.query_by_label_contains("custom channel").is_none(),
+            "probe: the breakdown must not be visible before the hover",
+        );
+
+        hover_widget(&mut h, cell_text);
+
+        assert!(
+            h.inner
+                .query_by_label_contains("2 custom channels")
+                .is_some(),
+            "hovering the {cell_text:?} cell should reveal the row's breakdown",
+        );
+    }
+
+    /// The breakdown names the recording's ad-hoc sensor channels - their
+    /// component labels, units, and sample counts - which no table column
+    /// shows. This is the whole point of the hover.
+    #[test]
+    fn the_breakdown_names_the_recordings_channels() {
+        let mut h = channel_row_harness();
+
+        hover_widget(&mut h, "8.9k");
+
+        for expected in [
+            "2 custom channels",
+            "accel (x, y, z)",
+            "Frame IMU",
+            "temperature",
+            "12,000 samples",
+            "512 samples",
+            "Satellite reports",
+            "1,234",
+        ] {
+            assert!(
+                h.inner.query_by_label_contains(expected).is_some(),
+                "the breakdown should mention {expected:?}",
+            );
+        }
+    }
+
+    /// The identity cell keeps its own metadata hover and gains the breakdown,
+    /// so the tooltip tells the same story wherever along the row it opens.
+    #[test]
+    fn hovering_the_identity_cell_shows_metadata_and_the_breakdown() {
+        let mut entry = entry_with_channels();
+        entry.title = Some("Morning ride".to_owned());
+        let harness = history_harness(vec![entry]);
+        let mut h = TestHarness::builder()
+            .size(egui::vec2(900.0, 500.0))
+            .ui_state(show_history, harness);
+        for _ in 0..4 {
+            h.run();
+        }
+
+        hover_widget(&mut h, "sensors.gtd");
+
+        for expected in [
+            "Morning ride",
+            "2 custom channels",
+            "Double-click to rename",
+        ] {
+            assert!(
+                h.inner.query_by_label_contains(expected).is_some(),
+                "the identity hover should mention {expected:?}",
+            );
+        }
+    }
+
+    /// A recording with no channels says so on hover rather than leaving the
+    /// question unanswered.
+    #[test]
+    fn hovering_a_channel_free_row_says_it_has_none() {
+        let harness = history_harness(vec![sortable_entry(
+            "auto:plain.gtd",
+            1_700_000_000_000_000,
+            900_000_000,
+            42,
+            4_096,
+        )]);
+        let mut h = TestHarness::builder()
+            .size(egui::vec2(900.0, 500.0))
+            .ui_state(show_history, harness);
+        for _ in 0..4 {
+            h.run();
+        }
+
+        hover_widget(&mut h, "42");
+
+        assert!(
+            h.inner
+                .query_by_label_contains("No custom channels")
+                .is_some(),
+            "the breakdown should state that the recording carries no channels",
+        );
+    }
+
+    /// Every value cell of a row gets its own breakdown widget id: one per
+    /// column, and different between rows. Dropping either part of the salt
+    /// would silently merge neighbouring cells' interaction state.
+    #[test]
+    fn breakdown_cell_ids_are_distinct_per_cell() {
+        let entries = sortable_entries();
+        let first = entries.first().expect("first entry");
+        let second = entries.get(1).expect("second entry");
+
+        let cells: Vec<egui::Id> = SortColumn::iter()
+            .flat_map(|column| {
+                [
+                    breakdown_cell_id(first, column),
+                    breakdown_cell_id(second, column),
+                ]
+            })
+            .collect();
+        let unique: std::collections::HashSet<egui::Id> = cells.iter().copied().collect();
+
+        assert_eq!(
+            unique.len(),
+            cells.len(),
+            "two breakdown cells share a widget id: {} cells produced {} ids",
+            cells.len(),
+            unique.len(),
+        );
+    }
+
+    /// The track row calls out hidden tracks, and stays quiet when there are
+    /// none - it is the only place the breakdown mentions them.
+    #[rstest::rstest]
+    #[case(4, 0, "4")]
+    #[case(4, 1, "4 (1 hidden)")]
+    #[case(0, 0, "0")]
+    fn track_count_text_names_hidden_tracks(
+        #[case] total_tracks: usize,
+        #[case] hidden_tracks: usize,
+        #[case] expected: &str,
+    ) {
+        let mut entry = entry_with_identity("auto:ride.gtd");
+        entry.total_tracks = total_tracks;
+        entry.hidden_tracks = hidden_tracks;
+
+        assert_eq!(track_count_text(&entry), expected);
     }
 
     #[test]

@@ -125,6 +125,66 @@ fn make_gtd_bytes_with_meta(
     std::fs::read(tmp.path()).expect("read temp gtd")
 }
 
+/// Like [`make_gtd_bytes`] but adds the two shapes of ad-hoc sensor channel the
+/// SDK writes, under `channels/{name}/{time,value}`: a scalar `temperature` and
+/// a three-component vector `accel`.
+///
+/// These sit two levels below the recording group once stored, which is deeper
+/// than the rest of the GTD tree - so this fixture is also what proves the
+/// backends preserve nested groups rather than flattening them away.
+#[expect(
+    clippy::expect_used,
+    reason = "test helper; panicking on I/O failure is the right behaviour"
+)]
+fn make_gtd_bytes_with_channels(start_us: i64, n: u64, samples: u64) -> Vec<u8> {
+    use hdf5_pure::AttrValue;
+
+    let tmp = tempfile::NamedTempFile::new().expect("temp file");
+    let timestamps: Vec<i64> = (0..n).map(|i| start_us + i as i64).collect();
+    let sample_times: Vec<i64> = (0..samples).map(|i| start_us + i as i64).collect();
+
+    let mut fb = hdf5_pure::FileBuilder::new();
+    let mut nav_gb = fb.create_group("nav_points");
+    let nav_ds = nav_gb.create_dataset("time");
+    nav_ds.with_shape(&[n]);
+    nav_ds.with_i64_data(&timestamps);
+    fb.add_group(nav_gb.finish());
+
+    let mut channels_gb = fb.create_group("channels");
+
+    let mut accel_gb = channels_gb.create_group("accel");
+    accel_gb.set_attr("unit", AttrValue::String("g".to_owned()));
+    accel_gb.set_attr("description", AttrValue::String("Frame IMU".to_owned()));
+    accel_gb.set_attr(
+        "components",
+        AttrValue::StringArray(vec!["x".to_owned(), "y".to_owned(), "z".to_owned()]),
+    );
+    let accel_time = accel_gb.create_dataset("time");
+    accel_time.with_shape(&[samples]);
+    accel_time.with_i64_data(&sample_times);
+    let accel_values: Vec<f64> = (0..samples * 3).map(|i| i as f64 * 0.5).collect();
+    let accel_value = accel_gb.create_dataset("value");
+    accel_value.with_shape(&[samples, 3]);
+    accel_value.with_f64_data(&accel_values);
+    channels_gb.add_group(accel_gb.finish());
+
+    let mut temp_gb = channels_gb.create_group("temperature");
+    temp_gb.set_attr("unit", AttrValue::String("degC".to_owned()));
+    let temp_time = temp_gb.create_dataset("time");
+    temp_time.with_shape(&[samples]);
+    temp_time.with_i64_data(&sample_times);
+    let temp_values: Vec<f64> = (0..samples).map(|i| 20.0 + i as f64).collect();
+    let temp_value = temp_gb.create_dataset("value");
+    temp_value.with_shape(&[samples]);
+    temp_value.with_f64_data(&temp_values);
+    channels_gb.add_group(temp_gb.finish());
+
+    fb.add_group(channels_gb.finish());
+    fb.write(tmp.path()).expect("write temp gtd");
+
+    std::fs::read(tmp.path()).expect("read temp gtd")
+}
+
 /// Like [`make_gtd_bytes`] but stores **chunked, deflate-compressed** datasets
 /// (time + lat + lon), matching how real recordings are encoded - so the
 /// free-space tests exercise reclaiming chunked/filtered storage, not just
@@ -555,6 +615,123 @@ fn list_recordings_surfaces_sdk_metadata() {
     assert_eq!(plain_entry.device, None);
     assert_eq!(plain_entry.notes, None);
     assert_eq!(plain_entry.travel_mode, None);
+}
+
+/// The listing describes each recording's ad-hoc sensor channels without
+/// loading their samples, so the History window can show what custom data a
+/// recording carries. A recording with no channels summarizes to none.
+#[test]
+fn list_recordings_summarizes_custom_channels() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let with_channels = make_gtd_bytes_with_channels(1_000, 3, 16);
+    let meta = extract_meta(&with_channels).expect("meta");
+    db.insert_simple("auto:sensors", &meta, &with_channels)
+        .expect("insert with channels");
+
+    let plain = make_gtd_bytes(2_000, 3);
+    let plain_meta = extract_meta(&plain).expect("plain meta");
+    db.insert_simple("auto:plain", &plain_meta, &plain)
+        .expect("insert plain");
+
+    let entries = db.list_recordings().expect("list");
+    let sensors = entries
+        .iter()
+        .find(|e| e.db_ref.identity == "auto:sensors")
+        .expect("channel-carrying entry present");
+
+    // Sorted by name, so `accel` precedes `temperature`.
+    let summarized: Vec<(&str, Option<&str>, Vec<&str>, u64)> = sensors
+        .channels
+        .iter()
+        .map(|c| {
+            (
+                c.name.as_str(),
+                c.unit.as_deref(),
+                c.components.iter().map(String::as_str).collect(),
+                c.sample_count,
+            )
+        })
+        .collect();
+    assert_eq!(
+        summarized,
+        vec![
+            ("accel", Some("g"), vec!["x", "y", "z"], 16),
+            ("temperature", Some("degC"), vec![], 16),
+        ],
+    );
+    assert_eq!(
+        sensors
+            .channels
+            .first()
+            .and_then(|c| c.description.as_deref()),
+        Some("Frame IMU"),
+    );
+
+    let plain_entry = entries
+        .iter()
+        .find(|e| e.db_ref.identity == "auto:plain")
+        .expect("plain entry present");
+    assert!(
+        plain_entry.channels.is_empty(),
+        "a recording without channels must summarize to none",
+    );
+}
+
+/// Channel groups sit deeper in the GTD tree than anything else, and a backend
+/// that rewrites the database (the pure one rewrites it on every mutation) must
+/// carry that depth across. Delete a sibling recording to force the rewrite,
+/// then check the survivor still lists and loads its channels intact.
+#[test]
+fn channels_survive_a_database_rewrite() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db_path = dir.path().join("geotrace.h5");
+    let mut db = Database::open_or_create(&db_path).expect("open_or_create");
+
+    let keeper_bytes = make_gtd_bytes_with_channels(1_000, 3, 16);
+    let keeper_meta = extract_meta(&keeper_bytes).expect("keeper meta");
+    let keeper = db
+        .insert_simple("auto:keeper", &keeper_meta, &keeper_bytes)
+        .expect("insert keeper");
+
+    let doomed_bytes = make_gtd_bytes_with_channels(50_000, 3, 4);
+    let doomed_meta = extract_meta(&doomed_bytes).expect("doomed meta");
+    let doomed = db
+        .insert_simple("auto:doomed", &doomed_meta, &doomed_bytes)
+        .expect("insert doomed");
+
+    db.delete_batch(std::slice::from_ref(&doomed))
+        .expect("delete sibling");
+
+    let entries = db.list_recordings().expect("list after delete");
+    let keeper_entry = entries
+        .iter()
+        .find(|e| e.db_ref == keeper)
+        .expect("keeper still listed");
+    let names: Vec<&str> = keeper_entry
+        .channels
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["accel", "temperature"],
+        "the rewrite dropped the recording's channels",
+    );
+
+    // The samples themselves must come back too, not just the group shells.
+    let loaded = db.load_bytes(&keeper).expect("load keeper");
+    let file = hdf5_pure::File::from_bytes(loaded).expect("parse loaded bytes");
+    let values = file
+        .group("channels")
+        .and_then(|g| g.group("accel"))
+        .and_then(|g| g.dataset("value"))
+        .and_then(|ds| ds.read_f64())
+        .expect("read accel values");
+    let expected: Vec<f64> = (0..16 * 3).map(|i| f64::from(i) * 0.5).collect();
+    assert_eq!(values, expected, "channel samples did not round-trip");
 }
 
 #[test]

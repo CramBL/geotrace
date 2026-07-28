@@ -140,6 +140,7 @@ impl HistoryDatabase for PureDb {
                         device: string_attr(&attrs, GTD_META_DEVICE_ATTR),
                         notes: string_attr(&attrs, GTD_META_NOTES_ATTR),
                         travel_mode: string_attr(&attrs, GTD_META_TRAVEL_MODE_ATTR),
+                        channels: copy::read_channel_summaries(&rec_grp),
                     });
                 }
             }
