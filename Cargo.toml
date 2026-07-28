@@ -92,7 +92,7 @@ geo-types = "0.7.19"
 # even when gt-history-backend-sys is compiled out, and without it that build
 # falls back to pkg-config and fails wherever libhdf5 is not installed.
 hdf5 = { package = "hdf5-metno", version = "0.14", features = ["static", "zlib"] }
-hdf5-pure = "0.27"
+hdf5-pure = "0.28"
 insta = "1.48.0"
 log = "0.4"
 logos = "0.16"

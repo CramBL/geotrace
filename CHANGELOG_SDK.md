@@ -9,7 +9,7 @@ the app).
 
 ### Changed
 
-- Updated `hdf5-pure` to 0.27.0.
+- Updated `hdf5-pure` to 0.28.0.
 
 ## [0.5.0] - 2026-07-16
 
