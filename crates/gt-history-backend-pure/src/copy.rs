@@ -15,7 +15,7 @@ use gt_history_types::{
 /// This module reads existing data into an intermediate tree of owned Rust
 /// types, manipulates that tree, then writes the whole thing to a new
 /// `FileBuilder` in one pass.
-use hdf5_pure::{AttrValue, DType, FileBuilder, GroupBuilder};
+use hdf5_pure::{AttrValue, DType, FileBuilder, Group, GroupBuilder};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -126,10 +126,7 @@ fn find_identity_node_mut<'a>(
         .find(|n| n.name == storage_name || (!identity.contains('/') && n.name == identity))
 }
 
-fn find_identity_group<'a>(
-    by_id: &'a hdf5_pure::Group<'_>,
-    identity: &str,
-) -> Result<hdf5_pure::Group<'a>, hdf5_pure::Error> {
+fn find_identity_group(by_id: &Group, identity: &str) -> Result<Group, hdf5_pure::Error> {
     let storage_name = identity_group_name(identity);
     match by_id.group(&storage_name) {
         Ok(group) => Ok(group),
@@ -200,7 +197,7 @@ fn write_group_into(parent: &mut GroupBuilder, node: &GroupNode) {
 
 /// Recursively read an HDF5 group (its attrs, datasets, and subgroups) into an
 /// owned `GroupNode`.
-fn snapshot_group(src: &hdf5_pure::Group<'_>, name: &str) -> Result<GroupNode, InternalError> {
+fn snapshot_group(src: &Group, name: &str) -> Result<GroupNode, InternalError> {
     let mut node = GroupNode {
         name: name.to_owned(),
         attrs: src.attrs()?.into_iter().collect(),
@@ -719,7 +716,7 @@ pub(crate) fn snap_blob(
 }
 
 /// Read the stored track ranges from a recording group (empty if absent).
-pub(crate) fn read_track_table(rec_grp: &hdf5_pure::Group<'_>) -> Vec<TrackRange> {
+pub(crate) fn read_track_table(rec_grp: &Group) -> Vec<TrackRange> {
     let Ok(grp) = rec_grp.group(TRACKS_GROUP) else {
         return Vec::new();
     };
@@ -744,7 +741,7 @@ pub(crate) fn read_track_table(rec_grp: &hdf5_pure::Group<'_>) -> Vec<TrackRange
 /// cheap. Recordings without channels have no [`GTD_CHANNELS_GROUP`] and
 /// summarize to nothing. Sorted by name, matching how the SDK's reader orders
 /// them.
-pub(crate) fn read_channel_summaries(rec_grp: &hdf5_pure::Group<'_>) -> Vec<ChannelSummary> {
+pub(crate) fn read_channel_summaries(rec_grp: &Group) -> Vec<ChannelSummary> {
     let Ok(root) = rec_grp.group(GTD_CHANNELS_GROUP) else {
         return Vec::new();
     };
