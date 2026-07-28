@@ -87,7 +87,11 @@ egui_tiles = "0.15"
 env_logger = "0.11.10"
 geo = "0.33.1"
 geo-types = "0.7.19"
-hdf5 = { package = "hdf5-metno", version = "0.14" }
+# `static` builds the bundled libhdf5 rather than looking for a system one, so
+# it belongs to every consumer: gt-history's dev-dependency reaches hdf5-metno
+# even when gt-history-backend-sys is compiled out, and without it that build
+# falls back to pkg-config and fails wherever libhdf5 is not installed.
+hdf5 = { package = "hdf5-metno", version = "0.14", features = ["static", "zlib"] }
 hdf5-pure = "0.27"
 insta = "1.48.0"
 log = "0.4"

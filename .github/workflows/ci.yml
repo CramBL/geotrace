@@ -150,6 +150,53 @@ jobs:
           name: test-results-${{ matrix.os }}
           path: "**/tests/snapshots"
 
+  test-backends:
+    name: test-backends / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/trunk' }}
+          cache-on-failure: true
+
+      - name: Install tools
+        uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
+        with:
+          tool: nextest
+
+      - name: Tests (pure backend)
+        shell: bash
+        run: cargo nextest run -p gt-history --test integration --no-default-features --features backend-pure --profile ci
+        env:
+          GEOTRACE_OFFLINE: 1
+
+      - name: Tests (sys backend)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: cargo nextest run -p gt-history --test integration --no-default-features --features backend-sys --profile ci
+        env:
+          GEOTRACE_OFFLINE: 1
+
   examples:
     name: examples / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -286,6 +333,7 @@ jobs:
       - check
       - clippy
       - test
+      - test-backends
       - examples
       - quality
       - arch
