@@ -4,10 +4,6 @@ reason = "No fix available; transitive dependency via walkers → http-cache-req
 ignoreUntil = "2026-10-01T00:00:00Z"
 
 [[IgnoredVulns]]
-id = "RUSTSEC-2026-0173"
-reason = "No fix available; transitive dependency via hdf5-metno → hdf5-metno-derive → proc-macro-error2"
-
-[[IgnoredVulns]]
 id = "RUSTSEC-2026-0186"
 reason = "Pending update for memmap2 (v0.5.10, v0.9.10)"
 ignoreUntil = "2026-10-01T00:00:00Z"
