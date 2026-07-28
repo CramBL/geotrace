@@ -9,7 +9,16 @@ pub const IDENTITY: &str = "Groups related recordings together in the database. 
 ///
 /// Pass a [`RichText`] so the caller controls weight, size, and colour.
 /// The underline is always added here to signal that the term is hoverable.
+///
+/// The pointer becomes a question mark over the term: it is not a control and
+/// not text to select, it is something with an explanation attached, and the
+/// cursor should say so before the tooltip has appeared.
 pub fn term_label(ui: &mut egui::Ui, text: RichText, explanation: &str) {
-    ui.add(Label::new(text.underline()).sense(egui::Sense::hover()))
-        .on_hover_text(explanation);
+    ui.add(
+        Label::new(text.underline())
+            .selectable(false)
+            .sense(egui::Sense::hover()),
+    )
+    .on_hover_cursor(egui::CursorIcon::Help)
+    .on_hover_text(explanation);
 }

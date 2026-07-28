@@ -2,19 +2,20 @@ use crate::matches_attrs;
 use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
-    ATTR_SEG_GAP_US, ATTR_START_US, CURRENT_SCHEMA_VERSION, DatabaseRef, DbError, GTD_VERSION_ATTR,
-    GTD_VERSION_FALLBACK, RecordingMeta, SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET, SNAP_GROUP,
-    StoredRecording, StoredSegmentation, TRACK_END_DATASET, TRACK_HIDDEN_DATASET,
-    TRACK_START_DATASET, TRACKS_GROUP, TrackRange, identity_from_group_name, identity_group_name,
-    is_db_internal_group, is_db_recording_attr, make_group_name,
+    ATTR_SEG_GAP_US, ATTR_START_US, CURRENT_SCHEMA_VERSION, ChannelSummary, DatabaseRef, DbError,
+    GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET,
+    GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
+    RecordingMeta, SCHEMA_VERSION_ATTR, SNAP_BLOB_DATASET, SNAP_GROUP, StoredRecording,
+    StoredSegmentation, TRACK_END_DATASET, TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP,
+    TrackRange, identity_from_group_name, identity_group_name, is_db_internal_group,
+    is_db_recording_attr, make_group_name,
 };
 /// Internal read-modify-write machinery for the history database.
 ///
-/// `hdf5_pure::GroupBuilder` is not publicly exported by name. This module
-/// avoids the problem by reading existing data into an intermediate tree of
-/// owned Rust types, manipulating that tree, then writing the whole thing to a
-/// new `FileBuilder` in one pass.
-use hdf5_pure::{AttrValue, DType, FileBuilder};
+/// This module reads existing data into an intermediate tree of owned Rust
+/// types, manipulates that tree, then writes the whole thing to a new
+/// `FileBuilder` in one pass.
+use hdf5_pure::{AttrValue, DType, FileBuilder, GroupBuilder};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -142,41 +143,59 @@ fn find_identity_group<'a>(
     }
 }
 
-/// Write a single `DatasetNode` into a builder identified by `$gb`.
-/// Using a macro avoids naming the private `GroupBuilder`/`DatasetBuilder` types.
-macro_rules! write_dataset_into {
-    ($gb:ident, $ds:expr) => {{
-        let ds = $ds;
-        let chunk = chunk_for_shape(&ds.shape);
-        let db = $gb.create_dataset(&ds.name);
-        db.with_shape(&ds.shape);
-        match &ds.data {
-            DatasetData::F64(v) => {
-                db.with_f64_data(v);
-            }
-            DatasetData::F32(v) => {
-                db.with_f32_data(v);
-            }
-            DatasetData::I64(v) => {
-                db.with_i64_data(v);
-            }
-            DatasetData::U64(v) => {
-                db.with_u64_data(v);
-            }
-            DatasetData::U32(v) => {
-                db.with_u32_data(v);
-            }
-            DatasetData::U8(v) => {
-                db.with_u8_data(v);
-            }
+/// Write a single [`DatasetNode`] into an open group builder.
+fn write_dataset_into(gb: &mut GroupBuilder, ds: &DatasetNode) {
+    let chunk = chunk_for_shape(&ds.shape);
+    let db = gb.create_dataset(&ds.name);
+    db.with_shape(&ds.shape);
+    match &ds.data {
+        DatasetData::F64(v) => {
+            db.with_f64_data(v);
         }
-        for (k, v) in &ds.attrs {
-            db.set_attr(k, v.clone());
+        DatasetData::F32(v) => {
+            db.with_f32_data(v);
         }
-        db.with_chunks(&chunk);
-        db.with_shuffle();
-        db.with_deflate(6);
-    }};
+        DatasetData::I64(v) => {
+            db.with_i64_data(v);
+        }
+        DatasetData::U64(v) => {
+            db.with_u64_data(v);
+        }
+        DatasetData::U32(v) => {
+            db.with_u32_data(v);
+        }
+        DatasetData::U8(v) => {
+            db.with_u8_data(v);
+        }
+    }
+    for (k, v) in &ds.attrs {
+        db.set_attr(k, v.clone());
+    }
+    db.with_chunks(&chunk);
+    db.with_shuffle();
+    db.with_deflate(6);
+}
+
+/// Write a [`GroupNode`] and everything below it into an open group builder.
+///
+/// The recursion matters: GTD nests to arbitrary depth (a recording's ad-hoc
+/// sensor channels live at `channels/{name}/{time,value}`, two levels below the
+/// recording group), and this backend rewrites the whole database on every
+/// insert, delete, and rename. A writer that stopped at a fixed depth would
+/// silently drop the deeper groups on the next rewrite - which is what
+/// `gt_history`'s `channels_survive_a_database_rewrite` test guards against.
+fn write_group_into(parent: &mut GroupBuilder, node: &GroupNode) {
+    let mut gb = parent.create_group(&node.name);
+    for (k, v) in &node.attrs {
+        gb.set_attr(k, v.clone());
+    }
+    for ds in &node.datasets {
+        write_dataset_into(&mut gb, ds);
+    }
+    for child in &node.groups {
+        write_group_into(&mut gb, child);
+    }
+    parent.add_group(gb.finish());
 }
 
 /// Recursively read an HDF5 group (its attrs, datasets, and subgroups) into an
@@ -379,24 +398,7 @@ fn write_db(identity_nodes: &[GroupNode], db_path: &std::path::Path) -> Result<(
             id_gb.set_attr(k, v.clone());
         }
         for rec_node in &id_node.groups {
-            let mut rec_gb = id_gb.create_group(&rec_node.name);
-            for (k, v) in &rec_node.attrs {
-                rec_gb.set_attr(k, v.clone());
-            }
-            for ds in &rec_node.datasets {
-                write_dataset_into!(rec_gb, ds);
-            }
-            for child in &rec_node.groups {
-                let mut child_gb = rec_gb.create_group(&child.name);
-                for (k, v) in &child.attrs {
-                    child_gb.set_attr(k, v.clone());
-                }
-                for ds in &child.datasets {
-                    write_dataset_into!(child_gb, ds);
-                }
-                rec_gb.add_group(child_gb.finish());
-            }
-            id_gb.add_group(rec_gb.finish());
+            write_group_into(&mut id_gb, rec_node);
         }
         by_id_gb.add_group(id_gb.finish());
     }
@@ -735,6 +737,71 @@ pub(crate) fn read_track_table(rec_grp: &hdf5_pure::Group<'_>) -> Vec<TrackRange
     })
 }
 
+/// Summarize the recording's ad-hoc sensor channels for the History listing.
+///
+/// Reads only each channel's metadata attributes and its `time` dataset shape -
+/// never its samples - so listing a database of channel-rich recordings stays
+/// cheap. Recordings without channels have no [`GTD_CHANNELS_GROUP`] and
+/// summarize to nothing. Sorted by name, matching how the SDK's reader orders
+/// them.
+pub(crate) fn read_channel_summaries(rec_grp: &hdf5_pure::Group<'_>) -> Vec<ChannelSummary> {
+    let Ok(root) = rec_grp.group(GTD_CHANNELS_GROUP) else {
+        return Vec::new();
+    };
+    let Ok(names) = root.groups() else {
+        return Vec::new();
+    };
+
+    let mut summaries: Vec<ChannelSummary> = names
+        .into_iter()
+        .filter_map(|name| {
+            let grp = root.group(&name).ok()?;
+            let attrs = grp.attrs().unwrap_or_default();
+            let sample_count = grp
+                .dataset(GTD_CHANNEL_TIME_DATASET)
+                .and_then(|d| d.shape())
+                .ok()
+                .and_then(|shape| shape.first().copied())
+                .unwrap_or(0);
+            Some(ChannelSummary {
+                name,
+                unit: attr_string_value(&attrs, GTD_CHANNEL_UNIT_ATTR),
+                description: attr_string_value(&attrs, GTD_CHANNEL_DESCRIPTION_ATTR),
+                components: attr_string_array_value(&attrs, GTD_CHANNEL_COMPONENTS_ATTR),
+                sample_count,
+            })
+        })
+        .collect();
+    ChannelSummary::sort_by_name(&mut summaries);
+    summaries
+}
+
+/// A string attribute's value, or `None` when it is absent or another type.
+/// Accepts both string encodings hdf5-pure distinguishes.
+fn attr_string_value(
+    attrs: &std::collections::HashMap<String, AttrValue>,
+    name: &str,
+) -> Option<String> {
+    match attrs.get(name)? {
+        AttrValue::String(value) | AttrValue::AsciiString(value) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+/// An array-of-strings attribute's values, or empty when it is absent or
+/// another type.
+fn attr_string_array_value(
+    attrs: &std::collections::HashMap<String, AttrValue>,
+    name: &str,
+) -> Vec<String> {
+    match attrs.get(name) {
+        Some(AttrValue::StringArray(values) | AttrValue::AsciiStringArray(values)) => {
+            values.clone()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Read the stored segmentation settings from a recording's attrs, if present.
 fn read_segmentation(
     attrs: &std::collections::HashMap<String, AttrValue>,
@@ -810,17 +877,10 @@ pub(crate) fn load_recording(
             gb.set_attr(k, v.clone());
         }
         for ds in &node.datasets {
-            write_dataset_into!(gb, ds);
+            write_dataset_into(&mut gb, ds);
         }
         for sg in &node.groups {
-            let mut sgb = gb.create_group(&sg.name);
-            for (k, v) in &sg.attrs {
-                sgb.set_attr(k, v.clone());
-            }
-            for ds in &sg.datasets {
-                write_dataset_into!(sgb, ds);
-            }
-            gb.add_group(sgb.finish());
+            write_group_into(&mut gb, sg);
         }
         fb.add_group(gb.finish());
     }

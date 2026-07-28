@@ -58,6 +58,23 @@ pub const GTD_META_DEVICE_ATTR: &str = "meta_device";
 pub const GTD_META_NOTES_ATTR: &str = "meta_notes";
 pub const GTD_META_TRAVEL_MODE_ATTR: &str = "meta_travel_mode";
 
+/// GTD layout of the ad-hoc sensor channels, written by `geotrace_sdk` as
+/// `channels/{name}/{time,value}` with the channel's metadata on the per-channel
+/// group. The recording's GTD tree is copied verbatim into its database group,
+/// so the History listing reads these back straight from storage - no GTD
+/// re-parse, and recordings stored before the listing surfaced channels are
+/// covered too.
+pub const GTD_CHANNELS_GROUP: &str = "channels";
+/// Sample timestamps of one channel; its row count is the sample count.
+pub const GTD_CHANNEL_TIME_DATASET: &str = "time";
+/// Per-channel unit label (`"g"`, `"deg"`), absent for a unitless channel.
+pub const GTD_CHANNEL_UNIT_ATTR: &str = "unit";
+/// Per-channel free-text description, absent when the producer set none.
+pub const GTD_CHANNEL_DESCRIPTION_ATTR: &str = "description";
+/// Component labels of a vector channel (`["x", "y", "z"]`), absent for a
+/// scalar channel.
+pub const GTD_CHANNEL_COMPONENTS_ATTR: &str = "components";
+
 const IDENTITY_GROUP_PREFIX: &str = "identity-v1-";
 
 /// Return the HDF5 child-group name used to store an identity.
@@ -250,6 +267,39 @@ impl RecordingMeta {
     }
 }
 
+/// What one of a recording's ad-hoc sensor channels holds, without its samples.
+///
+/// Read from the stored `channels/{name}` group (see [`GTD_CHANNELS_GROUP`]) so
+/// the History listing can describe a recording's custom data without loading
+/// it. The full series lives in `gt_types::Channel`; this is the listing's view
+/// of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelSummary {
+    /// Channel name - its storage group name, and its primary key in the file.
+    pub name: String,
+    /// Unit label as the producer wrote it, or `None` for a unitless channel.
+    pub unit: Option<String>,
+    /// Producer-supplied description, or `None`.
+    pub description: Option<String>,
+    /// Component labels of a vector channel, empty for a scalar one.
+    pub components: Vec<String>,
+    /// Number of samples (rows of the channel's `time` dataset).
+    pub sample_count: u64,
+}
+
+impl ChannelSummary {
+    /// Order summaries by name.
+    ///
+    /// Both backends build their summaries in whatever order the file happens
+    /// to list the channel groups, and both owe the listing the by-name order
+    /// [`RecordingEntry::channels`] promises - the same order the SDK's reader
+    /// produces. Keeping the comparison here is what stops the two from
+    /// drifting apart.
+    pub fn sort_by_name(summaries: &mut [ChannelSummary]) {
+        summaries.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+}
+
 /// One entry in the History window list.
 pub struct RecordingEntry {
     pub db_ref: DatabaseRef,
@@ -269,6 +319,9 @@ pub struct RecordingEntry {
     /// (the DB stores attributes verbatim); parse with
     /// `gt_types::TravelMode::from_wire` for display or matching.
     pub travel_mode: Option<String>,
+    /// The recording's ad-hoc sensor channels, sorted by name. Empty for a
+    /// recording that carries none.
+    pub channels: Vec<ChannelSummary>,
 }
 
 /// A recording read back from history: the reconstructed GTD bytes plus the

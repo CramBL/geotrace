@@ -1,12 +1,14 @@
 use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
     ATTR_NAV_POINT_COUNT, ATTR_SAT_REPORT_COUNT, ATTR_SEG_CLOCK_SIGMAS, ATTR_SEG_DETECT_CLOCK,
-    ATTR_SEG_GAP_US, ATTR_START_US, DatabaseRef, DbError, GTD_META_DEVICE_ATTR,
-    GTD_META_NOTES_ATTR, GTD_META_TITLE_ATTR, GTD_META_TRAVEL_MODE_ATTR, GTD_VERSION_ATTR,
-    GTD_VERSION_FALLBACK, RecordingEntry, RecordingMeta, SNAP_BLOB_DATASET, SNAP_GROUP,
-    StoredRecording, StoredSegmentation, TRACK_END_DATASET, TRACK_HIDDEN_DATASET,
-    TRACK_START_DATASET, TRACKS_GROUP, TrackRange, identity_from_group_name, identity_group_name,
-    is_db_internal_group, is_db_recording_attr, make_group_name,
+    ATTR_SEG_GAP_US, ATTR_START_US, ChannelSummary, DatabaseRef, DbError,
+    GTD_CHANNEL_COMPONENTS_ATTR, GTD_CHANNEL_DESCRIPTION_ATTR, GTD_CHANNEL_TIME_DATASET,
+    GTD_CHANNEL_UNIT_ATTR, GTD_CHANNELS_GROUP, GTD_META_DEVICE_ATTR, GTD_META_NOTES_ATTR,
+    GTD_META_TITLE_ATTR, GTD_META_TRAVEL_MODE_ATTR, GTD_VERSION_ATTR, GTD_VERSION_FALLBACK,
+    RecordingEntry, RecordingMeta, SNAP_BLOB_DATASET, SNAP_GROUP, StoredRecording,
+    StoredSegmentation, TRACK_END_DATASET, TRACK_HIDDEN_DATASET, TRACK_START_DATASET, TRACKS_GROUP,
+    TrackRange, identity_from_group_name, identity_group_name, is_db_internal_group,
+    is_db_recording_attr, make_group_name,
 };
 use hdf5::Group;
 use std::path::Path;
@@ -758,6 +760,44 @@ fn read_track_table(rec_grp: &Group) -> Vec<TrackRange> {
     })
 }
 
+/// Summarize the recording's ad-hoc sensor channels for the History listing.
+///
+/// Reads only each channel's metadata attributes and its `time` dataset shape -
+/// never its samples - so listing a database of channel-rich recordings stays
+/// cheap. Recordings without channels have no [`GTD_CHANNELS_GROUP`] and
+/// summarize to nothing. Sorted by name, matching how the SDK's reader orders
+/// them.
+fn read_channel_summaries(rec_grp: &Group) -> Vec<ChannelSummary> {
+    let Ok(root) = rec_grp.group(GTD_CHANNELS_GROUP) else {
+        return Vec::new();
+    };
+    let Ok(names) = root.member_names() else {
+        return Vec::new();
+    };
+
+    let mut summaries: Vec<ChannelSummary> = names
+        .into_iter()
+        .filter_map(|name| {
+            let grp = root.group(&name).ok()?;
+            let sample_count = grp
+                .dataset(GTD_CHANNEL_TIME_DATASET)
+                .ok()
+                .and_then(|d| d.shape().first().copied())
+                .unwrap_or(0) as u64;
+            Some(ChannelSummary {
+                name,
+                unit: read_group_string_attr(&grp, GTD_CHANNEL_UNIT_ATTR).ok(),
+                description: read_group_string_attr(&grp, GTD_CHANNEL_DESCRIPTION_ATTR).ok(),
+                components: read_group_string_array_attr(&grp, GTD_CHANNEL_COMPONENTS_ATTR)
+                    .unwrap_or_default(),
+                sample_count,
+            })
+        })
+        .collect();
+    ChannelSummary::sort_by_name(&mut summaries);
+    summaries
+}
+
 /// Read the stored segmentation settings, if present.
 fn read_segmentation(rec_grp: &Group) -> Option<StoredSegmentation> {
     let gap = rec_grp
@@ -936,57 +976,116 @@ fn write_string_attr(group: &Group, name: &str, val: &str) -> Result<(), Interna
     Ok(())
 }
 
-/// Read a string attribute (fixed- or variable-length, unicode or ASCII) into an
-/// owned `String`.
+/// The fixed-capacity ladder the string-attribute readers share: pick the
+/// smallest compile-time capacity that holds the on-disk size `$len`, then hand
+/// the concrete `$fixed<CAP>` type to the `$read` macro (which does the actual
+/// scalar or 1-D read).
 ///
 /// libhdf5 converts between fixed string sizes but offers no fixed -> variable
 /// conversion path, so a fixed-length attribute (how the SDK writes the GTD root
 /// strings, and how [`write_string_attr`] writes ours) cannot be read straight
-/// into `VarLenUnicode` - it must be read into a fixed buffer at least as large as
-/// the on-disk capacity. The ladder picks the smallest compile-time capacity `>=`
-/// the on-disk size.
+/// into `VarLenUnicode` - it must be read into a fixed buffer at least as large
+/// as the on-disk capacity.
 ///
-/// Note the two ladders key off different quantities: [`write_string_attr`]
-/// chooses its capacity from the string's *byte length*, while this reader chooses
-/// from the *on-disk capacity* `n` reported by the descriptor. The `<=` bounds here
-/// (against the `<` bounds there) make the reader land in the exact bucket the
-/// writer emitted, so our own attributes round-trip through the matching capacity.
+/// Note this ladder keys off a different quantity than [`write_string_attr`]'s:
+/// the writer chooses its capacity from the string's *byte length*, while this
+/// reader chooses from the *on-disk capacity* `n` reported by the descriptor.
+/// The `<=` bounds here (against the `<` bounds there) make the reader land in
+/// the exact bucket the writer emitted, so our own attributes round-trip through
+/// the matching capacity. Having every reader go through this one ladder is what
+/// keeps them from drifting apart on that point.
+///
+/// `read_at_capacity!(scalar, FixedUnicode, *n)` expands to the ladder with
+/// `scalar!(FixedUnicode<64>)`, `scalar!(FixedUnicode<256>)` and so on in its
+/// branches - so the caller's `scalar!`/`rows!` macro decides *how* to read
+/// while this decides *at what capacity*.
+macro_rules! read_at_capacity {
+    ($read:ident, $fixed:ident, $len:expr) => {{
+        let len = $len;
+        if len <= 64 {
+            $read!($fixed<64>)
+        } else if len <= 256 {
+            $read!($fixed<256>)
+        } else if len <= 1024 {
+            $read!($fixed<1024>)
+        } else if len <= 8192 {
+            $read!($fixed<8192>)
+        } else {
+            return Err(InternalError::Hdf5(hdf5::Error::from(format!(
+                "string attribute too long to copy in place ({len} bytes)"
+            ))));
+        }
+    }};
+}
+
+/// Read a string attribute (fixed- or variable-length, unicode or ASCII) into an
+/// owned `String`. See [`read_at_capacity`] for why fixed-length attributes need
+/// the capacity ladder.
 fn read_string_attr(
     attr: &hdf5::Attribute,
     descriptor: &hdf5::types::TypeDescriptor,
 ) -> Result<String, InternalError> {
     use hdf5::types::{FixedAscii, FixedUnicode, TypeDescriptor, VarLenAscii, VarLenUnicode};
 
-    macro_rules! read_fixed {
-        ($fixed:ident, $len:expr) => {{
-            let len = $len;
-            if len <= 64 {
-                attr.read_scalar::<$fixed<64>>()?.as_str().to_owned()
-            } else if len <= 256 {
-                attr.read_scalar::<$fixed<256>>()?.as_str().to_owned()
-            } else if len <= 1024 {
-                attr.read_scalar::<$fixed<1024>>()?.as_str().to_owned()
-            } else if len <= 8192 {
-                attr.read_scalar::<$fixed<8192>>()?.as_str().to_owned()
-            } else {
-                return Err(InternalError::Hdf5(hdf5::Error::from(format!(
-                    "string attribute too long to copy in place ({len} bytes)"
-                ))));
-            }
-        }};
+    macro_rules! scalar {
+        ($t:ty) => {
+            attr.read_scalar::<$t>()?.as_str().to_owned()
+        };
     }
 
     Ok(match descriptor {
-        TypeDescriptor::VarLenUnicode => attr.read_scalar::<VarLenUnicode>()?.as_str().to_owned(),
-        TypeDescriptor::VarLenAscii => attr.read_scalar::<VarLenAscii>()?.as_str().to_owned(),
-        TypeDescriptor::FixedUnicode(n) => read_fixed!(FixedUnicode, *n),
-        TypeDescriptor::FixedAscii(n) => read_fixed!(FixedAscii, *n),
+        TypeDescriptor::VarLenUnicode => scalar!(VarLenUnicode),
+        TypeDescriptor::VarLenAscii => scalar!(VarLenAscii),
+        TypeDescriptor::FixedUnicode(n) => read_at_capacity!(scalar, FixedUnicode, *n),
+        TypeDescriptor::FixedAscii(n) => read_at_capacity!(scalar, FixedAscii, *n),
         other => {
             return Err(InternalError::Hdf5(hdf5::Error::from(format!(
                 "attribute is not a string type: {other:?}"
             ))));
         }
     })
+}
+
+/// Read a 1-D array-of-strings attribute (a channel's component labels) into
+/// owned `String`s, over the same element types and capacity ladder as
+/// [`read_string_attr`].
+fn read_string_array_attr(
+    attr: &hdf5::Attribute,
+    descriptor: &hdf5::types::TypeDescriptor,
+) -> Result<Vec<String>, InternalError> {
+    use hdf5::types::{FixedAscii, FixedUnicode, TypeDescriptor, VarLenAscii, VarLenUnicode};
+
+    macro_rules! rows {
+        ($t:ty) => {
+            attr.read_1d::<$t>()?
+                .iter()
+                .map(|s| s.as_str().to_owned())
+                .collect()
+        };
+    }
+
+    Ok(match descriptor {
+        TypeDescriptor::VarLenUnicode => rows!(VarLenUnicode),
+        TypeDescriptor::VarLenAscii => rows!(VarLenAscii),
+        TypeDescriptor::FixedUnicode(n) => read_at_capacity!(rows, FixedUnicode, *n),
+        TypeDescriptor::FixedAscii(n) => read_at_capacity!(rows, FixedAscii, *n),
+        other => {
+            return Err(InternalError::Hdf5(hdf5::Error::from(format!(
+                "attribute is not a string type: {other:?}"
+            ))));
+        }
+    })
+}
+
+/// Read a group's array-of-strings attribute, or an error when it is absent or
+/// not a string type.
+fn read_group_string_array_attr(group: &Group, name: &str) -> Result<Vec<String>, InternalError> {
+    let attr = group.attr(name)?;
+    let descriptor = attr
+        .dtype()?
+        .to_descriptor()
+        .map_err(|e| InternalError::Hdf5(hdf5::Error::from(e.to_string())))?;
+    read_string_array_attr(&attr, &descriptor)
 }
 
 pub(crate) fn load_recording(
@@ -1168,6 +1267,7 @@ pub(crate) fn list_recordings(
                         notes: read_group_string_attr(&rec_grp, GTD_META_NOTES_ATTR).ok(),
                         travel_mode: read_group_string_attr(&rec_grp, GTD_META_TRAVEL_MODE_ATTR)
                             .ok(),
+                        channels: read_channel_summaries(&rec_grp),
                     });
                 }
             }
