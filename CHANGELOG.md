@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.10.0 - 2026-07-28
+
 ### Added
 
 - `geotrace --update` updates an installed build in place from the terminal, the same update the app offers on startup but without opening a window.
