@@ -8,15 +8,10 @@
 - Sort the History window by any column, clicking a header again to reverse it.
 - Hovering a History row breaks down what the recording holds, down to its ad-hoc sensor channels.
 
-### Changed
-
-- Updated `hdf5-metno` to 0.14 and `hdf5-pure` to 0.28.
-
 ### Fixed
 
 - History elements show a cursor that matches what they do, rather than a text-editing one on everything.
 - Double-clicking a History identity always opens the rename editor now, instead of sometimes selecting a word.
-- Recordings stored with the pure-Rust history backend keep their ad-hoc sensor channels, which were dropped on every database rewrite.
 
 ## 0.9.0 - 2026-07-23
 
