@@ -10,7 +10,7 @@
 
 ### Changed
 
-- The history database now builds on `hdf5-metno` 0.14, which fixes the big-endian constructor for 64-bit float datatypes and stops a corrupt or locked file being reported as one that already exists. The opt-in pure-Rust backend moves to `hdf5-pure` 0.28 alongside it.
+- Updated `hdf5-metno` to 0.14 and `hdf5-pure` to 0.28.
 
 ### Fixed
 
