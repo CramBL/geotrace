@@ -1,5 +1,10 @@
 [files]
-extend-exclude = ["sdk/python/geotrace-py/target", "tests/fixtures/demo_trip/markers.csv"]
+extend-exclude = [
+    "sdk/python/geotrace-py/target",
+    "tests/fixtures/demo_trip/markers.csv",
+    # Captured interference datasets: H3 cell indices are hex strings, not words
+    "crates/gt-jam/tests/fixtures/*.csv",
+]
 
 [default.extend-words]
 # Level of Detail - standard graphics acronym, not a misspelling of "LOAD"
