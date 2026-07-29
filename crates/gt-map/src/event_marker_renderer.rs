@@ -234,7 +234,10 @@ fn draw_diamond(ui: &Ui, center: Pos2, color: Color32, highlighted: bool, fade: 
     painter.add(egui::Shape::convex_polygon(
         points.to_vec(),
         track_renderer::apply_fade_alpha(color, fade),
-        Stroke::new(1.5, track_renderer::apply_fade_alpha(Color32::WHITE, fade)),
+        Stroke::new(
+            1.5_f32,
+            track_renderer::apply_fade_alpha(Color32::WHITE, fade),
+        ),
     ));
     if highlighted {
         painter.add(egui::Shape::convex_polygon(
@@ -246,7 +249,7 @@ fn draw_diamond(ui: &Ui, center: Pos2, color: Color32, highlighted: bool, fade: 
             ]
             .to_vec(),
             Color32::TRANSPARENT,
-            Stroke::new(1.5, HIGHLIGHT_BLUE),
+            Stroke::new(1.5_f32, HIGHLIGHT_BLUE),
         ));
     }
 }
@@ -261,8 +264,11 @@ fn draw_event_icon(
 ) {
     let half_extent = crate::icon_mesh::marker_icon_half_extent(icon);
     if highlighted {
-        ui.painter()
-            .circle_stroke(center, half_extent + 4.0, Stroke::new(2.0, HIGHLIGHT_BLUE));
+        ui.painter().circle_stroke(
+            center,
+            half_extent + 4.0,
+            Stroke::new(2.0_f32, HIGHLIGHT_BLUE),
+        );
     }
     batch.push(IconInstance {
         icon: icon.into(),

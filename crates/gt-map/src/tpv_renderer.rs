@@ -430,7 +430,7 @@ pub(crate) fn draw_plot_hover_overlay(
             pos,
             style.base_arrow_size + 6.0,
             egui::Stroke::new(
-                2.0,
+                2.0_f32,
                 egui::Color32::from_rgba_unmultiplied(100, 200, 255, 230),
             ),
         );
@@ -438,7 +438,7 @@ pub(crate) fn draw_plot_hover_overlay(
             pos,
             style.base_arrow_size + 3.0,
             egui::Stroke::new(
-                1.0,
+                1.0_f32,
                 egui::Color32::from_rgba_unmultiplied(100, 200, 255, 120),
             ),
         );
@@ -1386,7 +1386,7 @@ fn draw_tpv_point(
                 screen_pos,
                 radius,
                 egui::Stroke::new(
-                    1.0,
+                    1.0_f32,
                     egui::Color32::from_rgba_unmultiplied(30, 120, 255, 60)
                         .gamma_multiply(style.icon_alpha),
                 ),

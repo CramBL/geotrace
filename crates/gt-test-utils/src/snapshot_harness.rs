@@ -6,7 +6,7 @@ pub use egui_kittest::kittest::Queryable;
 use std::path::{Path, PathBuf};
 
 fn snapshot_options() -> SnapshotOptions {
-    SnapshotOptions::new().threshold(0.6)
+    SnapshotOptions::new().threshold(0.6_f32)
 }
 
 /// Pixel-count tolerance for [`TestHarness::snapshot_loose`]. Live map/plot
