@@ -2565,6 +2565,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gt-jam"
+version = "0.10.0"
+dependencies = [
+ "chrono",
+ "insta",
+ "rstest",
+ "strum",
+]
+
+[[package]]
 name = "gt-loaded-files"
 version = "0.10.0"
 dependencies = [
