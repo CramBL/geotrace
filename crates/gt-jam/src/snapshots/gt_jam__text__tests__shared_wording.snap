@@ -1,0 +1,12 @@
+---
+source: crates/gt-jam/src/text.rs
+expression: wording
+---
+label: Aircraft interference
+summary: Share of aircraft over this area that reported low navigation accuracy, over one UTC day.
+source caveat: Reported by aircraft in flight, not measured on the ground - a track under an affected cell is not necessarily affected, and a clear cell is not a guarantee.
+resolution caveat: One cell spans roughly 22 km and one value covers a full 24-hour UTC day, so neither the minute nor the kilometer of an event can be read from this.
+low sample caveat: Too few aircraft passed through this cell for the share to carry weight.
+attribution: Interference data from gpsjam.org, derived from aircraft reports collected by adsbexchange.com.
+publisher: https://gpsjam.org
+upstream: https://adsbexchange.com

@@ -1,0 +1,21 @@
+[package]
+name = "gt-jam"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+chrono.workspace = true
+strum.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+rstest.workspace = true
+
+[lints]
+workspace = true
