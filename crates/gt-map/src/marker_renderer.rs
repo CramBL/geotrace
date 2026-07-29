@@ -177,7 +177,7 @@ fn draw_marker_icon(
 ) {
     if highlighted {
         ui.painter()
-            .circle_stroke(center, 14.0, Stroke::new(2.0, HIGHLIGHT_BLUE));
+            .circle_stroke(center, 14.0, Stroke::new(2.0_f32, HIGHLIGHT_BLUE));
     }
     // The SVGs carry their own colors; only the log pin is recolored, cycling
     // through the per-logfile palette.

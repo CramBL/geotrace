@@ -514,7 +514,7 @@ fn not_in_fix_label(ui: &egui::Ui) -> egui::text::LayoutJob {
             font_id: font,
             color,
             italics: true,
-            underline: egui::Stroke::new(1.0, color.gamma_multiply(TERM_UNDERLINE_ALPHA)),
+            underline: egui::Stroke::new(1.0_f32, color.gamma_multiply(TERM_UNDERLINE_ALPHA)),
             ..Default::default()
         },
     );

@@ -48,6 +48,9 @@ pub const DEFAULT_PLOT_LINE_WIDTH: f32 = 0.75;
 /// Allowed plot line width, shared by the display-settings slider and the
 /// clamp applied to persisted settings on load.
 pub const PLOT_LINE_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 0.5..=5.0;
+/// Stroke width of the vertical seek lines (hovered match, map position). Above
+/// the data lines so the marker stays findable across a crowded plot.
+const SEEK_LINE_WIDTH: f32 = 1.5;
 
 /// Persistent state for the track plot panel.
 ///
@@ -506,7 +509,7 @@ pub fn show_track_plot(
                 plot_ui.vline(
                     VLine::new("Hovered match", x0)
                         .color(gt_ui_theme::HIGHLIGHT_BLUE_SEEK)
-                        .width(1.5),
+                        .width(SEEK_LINE_WIDTH),
                 );
             }
         }
@@ -569,7 +572,7 @@ pub fn show_track_plot(
             plot_ui.vline(
                 VLine::new("Map position", x)
                     .color(gt_ui_theme::HIGHLIGHT_BLUE_SEEK)
-                    .width(1.5),
+                    .width(SEEK_LINE_WIDTH),
             );
         }
 

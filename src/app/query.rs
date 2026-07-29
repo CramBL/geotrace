@@ -3114,7 +3114,7 @@ fn highlight_layout(ui: &egui::Ui, text: &str, diagnostics: &[Span]) -> LayoutJo
             font_id: font.clone(),
             color,
             underline: if underlined {
-                egui::Stroke::new(2.0, error_color)
+                egui::Stroke::new(2.0_f32, error_color)
             } else {
                 egui::Stroke::NONE
             },

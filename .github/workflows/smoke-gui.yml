@@ -175,6 +175,10 @@ jobs:
   # and confirm it replaced the binary with the version under test. This drives
   # the same axoupdater path the GUI prompt does, headlessly. Only the shell
   # installer writes a self-updatable receipt, so this mirrors that path.
+  #
+  # The flow is driven by the *previous* release's binary, so it can only run
+  # once that binary understands `--update` - older ones take it for a file path
+  # and try to open a window, which fails on a headless runner.
   self-update:
     name: self-update / ${{ matrix.runner }}
     # A prerelease isn't what existing stable installs update to, and it has no
@@ -188,6 +192,9 @@ jobs:
     # Authenticate the release query to dodge unauthenticated rate limits.
     env:
       GH_TOKEN: ${{ github.token }}
+      # The first release whose binary has the `--update` flag. Updating from
+      # anything older cannot be driven headlessly, so the job skips instead.
+      MIN_UPDATE_FLAG_VERSION: "0.10.0"
     steps:
       - name: Install Linux runtime libraries
         if: runner.os == 'Linux'
@@ -209,6 +216,14 @@ jobs:
           previous="$(printf '%s\n' "$versions" | grep -B1 -x "$VERSION" | head -1 || true)"
           if [ -z "$previous" ] || [ "$previous" = "$VERSION" ]; then
             echo "No earlier stable release than ${VERSION} - nothing to update from, skipping." >&2
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # `sort -V` puts the lower version first, so the minimum staying on top
+          # means the previous release predates the flag.
+          oldest="$(printf '%s\n%s\n' "$previous" "$MIN_UPDATE_FLAG_VERSION" | sort -V | head -1)"
+          if [ "$oldest" = "$previous" ] && [ "$previous" != "$MIN_UPDATE_FLAG_VERSION" ]; then
+            echo "app/v${previous} predates the --update flag (added in ${MIN_UPDATE_FLAG_VERSION}), skipping." >&2
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi

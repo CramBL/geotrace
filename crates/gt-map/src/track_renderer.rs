@@ -38,9 +38,9 @@ pub(crate) const FOCUS_SCRIM_MAX_ALPHA_DARK: f32 = 0.3;
 /// [`crate::track_layers`], not by modifying the stroke color here.
 pub(crate) fn track_stroke(highlight: &MapHighlight, fi: FileIdx, ti: TrackIdx) -> Stroke {
     if is_trip_highlighted(highlight, fi, ti) {
-        Stroke::new(4.0, HIGHLIGHT_BLUE)
+        Stroke::new(4.0_f32, HIGHLIGHT_BLUE)
     } else {
-        Stroke::new(3.0, track_color(fi.as_usize(), ti.as_usize()))
+        Stroke::new(3.0_f32, track_color(fi.as_usize(), ti.as_usize()))
     }
 }
 
@@ -161,7 +161,10 @@ pub(crate) fn blink_stroke(blink_alpha: f32) -> Stroke {
         reason = "blink_alpha is clamped to [0,1] in NavMap::draw so product is non-negative"
     )]
     let blink_a = (blink_alpha * 200.0) as u8;
-    Stroke::new(6.0, Color32::from_rgba_unmultiplied(255, 230, 80, blink_a))
+    Stroke::new(
+        6.0_f32,
+        Color32::from_rgba_unmultiplied(255, 230, 80, blink_a),
+    )
 }
 
 /// Draw a track polyline where ghost-fix edges (either endpoint has `heading == None`)

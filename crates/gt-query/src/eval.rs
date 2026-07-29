@@ -354,7 +354,7 @@ fn evaluate_points<P: MetricProvider>(
             }
         }
         Some(Window::Duration(secs)) => {
-            match duration_windows(
+            shorter_than_window = duration_windows(
                 query,
                 &mut ctx,
                 &mut matched,
@@ -362,10 +362,7 @@ fn evaluate_points<P: MetricProvider>(
                 secs,
                 should_cancel,
                 check_interval,
-            ) {
-                None => return None,
-                Some(too_short) => shorter_than_window = too_short,
-            }
+            )?;
         }
         None => {
             for (index, slot) in matched.iter_mut().enumerate() {
@@ -524,7 +521,7 @@ fn evaluate_channel_source<P: MetricProvider>(
             }
         }
         Some(Window::Duration(secs)) => {
-            match sample_duration_windows(
+            shorter_than_window = sample_duration_windows(
                 query,
                 &mut ctx,
                 &mut matched,
@@ -533,10 +530,7 @@ fn evaluate_channel_source<P: MetricProvider>(
                 secs,
                 should_cancel,
                 check_interval,
-            ) {
-                None => return None,
-                Some(too_short) => shorter_than_window = too_short,
-            }
+            )?;
         }
         None => {
             for start in 0..len {

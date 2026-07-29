@@ -341,23 +341,23 @@ fn draw_generated_marker(
     let faded_stroke = track_renderer::apply_fade_alpha(stroke_color, fade);
     let radius = if highlighted { 11.0 } else { 8.0 };
     painter.circle_filled(center, radius, faded_bg);
-    painter.circle_stroke(center, radius, Stroke::new(1.5, faded_stroke));
+    painter.circle_stroke(center, radius, Stroke::new(1.5_f32, faded_stroke));
     if highlighted {
         painter.circle_stroke(
             center,
             radius + 3.5,
-            Stroke::new(1.5, Color32::from_rgb(100, 200, 255)),
+            Stroke::new(1.5_f32, Color32::from_rgb(100, 200, 255)),
         );
     }
     let s = 4.0;
     match kind {
         gt_types::GeneratedMarkerKind::GnssFixLost => {
-            let st = Stroke::new(2.0, faded_stroke);
+            let st = Stroke::new(2.0_f32, faded_stroke);
             painter.line_segment([center - egui::vec2(s, s), center + egui::vec2(s, s)], st);
             painter.line_segment([center + egui::vec2(-s, s), center + egui::vec2(s, -s)], st);
         }
         gt_types::GeneratedMarkerKind::GnssFixRegained { .. } => {
-            let st = Stroke::new(2.0, faded_stroke);
+            let st = Stroke::new(2.0_f32, faded_stroke);
             painter.line_segment(
                 [
                     center + egui::vec2(-s, 0.0),
@@ -372,7 +372,7 @@ fn draw_generated_marker(
         }
         gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. } => {
             // Exclamation mark: an anomaly to inspect.
-            let st = Stroke::new(2.0, faded_stroke);
+            let st = Stroke::new(2.0_f32, faded_stroke);
             painter.line_segment(
                 [
                     center - egui::vec2(0.0, s),
