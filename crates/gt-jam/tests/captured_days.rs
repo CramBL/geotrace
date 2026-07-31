@@ -1,7 +1,7 @@
 //! Validate the committed dataset captures.
 //!
 //! Guards [`gt_jam::FIXTURE_DAYS`], the capture harness
-//! (`examples/fetch_fixtures.rs`), and the files under `tests/fixtures/`
+//! (`examples/fetch_jam_fixtures.rs`), and the files under `tests/fixtures/`
 //! against each other, and checks the captured day is still the shape the
 //! parser is written for.
 

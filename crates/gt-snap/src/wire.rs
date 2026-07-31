@@ -8,7 +8,7 @@
 //! the responses (`alternate_paths`, `raw_score`, `units`, ...).
 //!
 //! Every type is validated against the live-captured fixtures under
-//! `tests/fixtures/` - captured by `examples/fetch_fixtures.rs`, which builds
+//! `tests/fixtures/` - captured by `examples/fetch_snap_fixtures.rs`, which builds
 //! its requests from these same types so the fixtures always exercise the
 //! production serialization.
 

@@ -9,7 +9,7 @@
 //! code.
 //!
 //! Usage: `just jam-fixtures [DAY...]`, or
-//! `cargo run -p gt-jam --example fetch_fixtures -- [DAY...]`.
+//! `cargo run -p gt-jam --example fetch_jam_fixtures -- [DAY...]`.
 //! Naming days captures only those, keeping the manifest entries of the
 //! rest; no arguments re-captures everything.
 //! Point it at a mirror with `GEOTRACE_JAM_HOST=https://mirror.example`.

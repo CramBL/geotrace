@@ -75,14 +75,14 @@ gen-fixture:
 # Name days to capture only those (additive); no args captures all.
 [group("native")]
 jam-fixtures *DAYS:
-    cargo run -p gt-jam --example fetch_fixtures -- {{ DAYS }}
+    cargo run -p gt-jam --example fetch_jam_fixtures -- {{ DAYS }}
 
 # Refresh the gt-snap live-API fixtures from the Valhalla server (network!).
 # Fixtures are frozen once committed - review the resulting diff like code.
 # Name scenarios to capture only those (additive); no args captures all.
 [group("native")]
 snap-fixtures *SCENARIOS:
-    cargo run -p gt-snap --example fetch_fixtures -- {{ SCENARIOS }}
+    cargo run -p gt-snap --example fetch_snap_fixtures -- {{ SCENARIOS }}
 
 # Run the gt-snap live-API smoke test against the real Valhalla server
 # (network!) - the on-demand drift check for the API boundary.
