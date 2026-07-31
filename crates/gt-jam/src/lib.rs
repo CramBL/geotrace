@@ -28,6 +28,7 @@ use chrono::NaiveDate;
 use h3o::Resolution;
 
 pub mod calendar;
+pub mod dataset;
 pub mod text;
 pub mod wire;
 

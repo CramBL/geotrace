@@ -2625,6 +2625,7 @@ name = "gt-jam"
 version = "0.10.0"
 dependencies = [
  "chrono",
+ "gt-types",
  "h3o",
  "insta",
  "parking_lot",
