@@ -1,0 +1,5 @@
+---
+source: crates/gt-jam/src/wire.rs
+expression: error.to_string()
+---
+unexpected header "hex,good,bad", expected "hex,count_good_aircraft,count_bad_aircraft"

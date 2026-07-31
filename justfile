@@ -70,6 +70,13 @@ examples:
 gen-fixture:
     cargo run -p geotrace-c --bin gen_fixture
 
+# Refresh the gt-jam interference dataset fixtures from gpsjam.org (network!).
+# Fixtures are frozen once committed - review the resulting diff like code.
+# Name days to capture only those (additive); no args captures all.
+[group("native")]
+jam-fixtures *DAYS:
+    cargo run -p gt-jam --example fetch_fixtures -- {{ DAYS }}
+
 # Refresh the gt-snap live-API fixtures from the Valhalla server (network!).
 # Fixtures are frozen once committed - review the resulting diff like code.
 # Name scenarios to capture only those (additive); no args captures all.

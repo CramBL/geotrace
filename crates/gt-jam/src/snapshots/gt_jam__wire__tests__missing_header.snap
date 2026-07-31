@@ -1,0 +1,5 @@
+---
+source: crates/gt-jam/src/wire.rs
+expression: "ParseError::MissingHeader.to_string()"
+---
+dataset is empty: expected a header row "hex,count_good_aircraft,count_bad_aircraft"

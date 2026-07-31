@@ -3,14 +3,11 @@
 //! The dataset counts aircraft that reported good versus low navigation
 //! integrity (ADS-B NIC) inside each H3 cell over one UTC day, aggregated by
 //! adsbexchange.com from volunteer receivers. GeoTrace draws it as a map
-//! overlay and plots it against a track so a recording can be read next to
-//! the interference environment it was made in.
+//! overlay and as a per-track plot line.
 //!
-//! **This is airborne data.** It says nothing directly about a receiver on
-//! the ground, it averages a whole day over cells tens of kilometers across,
-//! and a cell holding two aircraft carries no statistical weight at all.
-//! Every surface that shows a value says so - see [`text`], which holds the
-//! wording all of them share.
+//! **This is airborne data**, averaged over a whole day and cells tens of
+//! kilometers across, and a cell holding two aircraft carries no statistical
+//! weight. [`text`] holds the wording every surface showing a value uses.
 //!
 //! One UTC day is one file, addressed by [`dataset_url`]:
 //!
@@ -18,57 +15,114 @@
 //! https://gpsjam.org/data/2026-07-20-h3_4.csv
 //! ```
 //!
-//! about 170 KiB gzipped, roughly 44 000 rows, covering the whole world -
-//! so a request discloses a date and nothing about the user's recordings.
+//! Roughly 44 000 rows covering the whole world, about 300 KiB gzipped. A
+//! request carries a date and nothing about the user's recordings.
 //!
-//! This crate currently ships the calendar ([`calendar`]), the endpoint
-//! addressing, the shared UI wording, and a live-captured fixture day under
-//! `tests/fixtures/`. Parsing, the dataset index, the transport, and the
-//! disk cache land on top.
+//! Shipped so far: the [`calendar`], the endpoint addressing, the shared UI
+//! wording, and the [`wire`] parser. The dataset index, the transport, and
+//! the disk cache land on top.
 
 use std::path::PathBuf;
 
 use chrono::NaiveDate;
+use h3o::Resolution;
 
 pub mod calendar;
 pub mod text;
+pub mod wire;
 
-/// Base URL of the default dataset host. Configurable in settings so a
-/// self-hosted mirror or an offline copy can be pointed at instead.
+/// Base URL of the default dataset host. Configurable in settings, for a
+/// self-hosted mirror or an offline copy.
 pub const DEFAULT_BASE_URL: &str = "https://gpsjam.org";
 
 /// Path segment preceding a dataset's date, appended to the base URL.
 const DATASET_PATH_PREFIX: &str = "/data/";
 
-/// Path segment following a dataset's date. Encodes the H3 resolution the
-/// host publishes at, so it moves together with [`H3_RESOLUTION`].
-const DATASET_PATH_SUFFIX: &str = "-h3_4.csv";
+/// Separates a dataset's date from its H3 resolution in the file name.
+const RESOLUTION_MARKER: &str = "-h3_";
+
+/// Extension of a published dataset.
+const DATASET_EXTENSION: &str = ".csv";
 
 /// H3 resolution of the published cells: about 22 km edge, about 1770 km2
-/// per cell. Coarse enough that a cell covers a good part of a drive, which
-/// is why [`text::SOURCE_CAVEAT`] exists.
-pub const H3_RESOLUTION: u8 = 4;
+/// per cell.
+///
+/// [`dataset_file_name`] builds the file name from this, so the address and
+/// the cells [`wire::parse_dataset`] accepts cannot drift apart.
+pub const H3_RESOLUTION: Resolution = Resolution::Four;
 
 /// Date format of the dataset filenames (ISO 8601 calendar date).
 const DATE_FORMAT: &str = "%Y-%m-%d";
 
-/// The URL of `day`'s dataset on `base_url`, which must not end in a slash
-/// (pass [`DEFAULT_BASE_URL`] or a configured mirror verbatim).
+/// The URL of `day`'s dataset on `base_url`, which must not end in a slash.
 ///
-/// Addressing a day says nothing about whether it can be fetched; ask
-/// [`calendar::day_outlook`] first.
+/// Whether the day is worth requesting is [`calendar::day_outlook`]'s
+/// answer, not this one's.
 pub fn dataset_url(base_url: &str, day: NaiveDate) -> String {
-    let date = day.format(DATE_FORMAT);
-    format!("{base_url}{DATASET_PATH_PREFIX}{date}{DATASET_PATH_SUFFIX}")
+    format!(
+        "{base_url}{DATASET_PATH_PREFIX}{file_name}",
+        file_name = dataset_file_name(day)
+    )
 }
 
-/// The day captured in [`fixtures_dir`]. The file is named for the day plus
-/// the same suffix the host serves it under.
+/// The name the host serves `day`'s dataset under, and the name it is
+/// captured and cached as.
+pub fn dataset_file_name(day: NaiveDate) -> String {
+    let date = day.format(DATE_FORMAT);
+    let resolution = u8::from(H3_RESOLUTION);
+    format!("{date}{RESOLUTION_MARKER}{resolution}{DATASET_EXTENSION}")
+}
+
+/// Read a day written as [`dataset_file_name`] and [`dataset_url`] write it.
+pub fn parse_day(day: &str) -> Result<NaiveDate, chrono::ParseError> {
+    NaiveDate::parse_from_str(day, DATE_FORMAT)
+}
+
+/// One day captured under [`fixtures_dir`] by `just jam-fixtures`.
 ///
-/// A full world day of real data, kept for the parser, the index, and the
-/// renderers to develop against. It is the format's own artifact, downloaded
-/// unchanged from the host.
-pub const FIXTURE_DAY: &str = "2026-07-20";
+/// Captures are frozen once committed; a re-capture's diff is reviewed like
+/// code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixtureDay {
+    /// The UTC day, as it appears in the dataset's file name.
+    pub day: &'static str,
+    /// The status the host answered when this day was captured. Pinned here
+    /// as well as in the manifest, so a changed answer fails a test.
+    pub http_status: u16,
+    /// What this capture exists to exercise.
+    pub purpose: &'static str,
+}
+
+/// The status the host answers for a day it serves.
+const HTTP_OK: u16 = 200;
+
+impl FixtureDay {
+    /// Whether the host served this day, and so whether it has a dataset
+    /// file. A refused day exists only in the capture manifest.
+    pub const fn is_served(&self) -> bool {
+        self.http_status == HTTP_OK
+    }
+}
+
+/// The captured days, in the order the manifest lists them.
+pub const FIXTURE_DAYS: [FixtureDay; 2] = [
+    FixtureDay {
+        day: "2026-07-20",
+        http_status: 200,
+        purpose: "a full world day, downloaded unchanged, for the parser, the index, and \
+                  the renderers to run against",
+    },
+    FixtureDay {
+        day: "2022-02-13",
+        http_status: 404,
+        purpose: "the day before coverage begins, so its 404 is permanent: a valid answer \
+                  meaning 'never published', not a failed request",
+    },
+];
+
+/// File name of the capture manifest written beside the fixtures, recording
+/// when each day was captured and what the host answered.
+pub const CAPTURE_MANIFEST: &str = "capture.json";
 
 /// Directory holding the captured dataset fixtures.
 ///
@@ -110,31 +164,34 @@ mod tests {
         assert_eq!(dataset_url("https://mirror.example", day), expected);
     }
 
-    /// The captured fixture is the day [`FIXTURE_DAY`] names, and carries the
-    /// header the parser is written against.
-    #[test]
-    fn fixture_day_is_present_and_has_the_published_header() {
-        let path = fixtures_dir().join(format!("{FIXTURE_DAY}{DATASET_PATH_SUFFIX}"));
-        let contents = std::fs::read_to_string(&path).unwrap();
-        let mut lines = contents.lines();
-        assert_eq!(
-            lines.next(),
-            Some("hex,count_good_aircraft,count_bad_aircraft")
-        );
-        // A full world day: enough rows that the renderers' culling and the
-        // index's aggregation are exercised by real data, not a toy.
-        assert!(lines.count() > 40_000);
+    #[rstest]
+    #[case(2026, 7, 20, "2026-07-20-h3_4.csv")]
+    #[case(2022, 2, 14, "2022-02-14-h3_4.csv")]
+    fn dataset_file_name_is_the_tail_of_the_url(
+        #[case] year: i32,
+        #[case] month: u32,
+        #[case] day: u32,
+        #[case] expected: &str,
+    ) {
+        let day = NaiveDate::from_ymd_opt(year, month, day).unwrap();
+        assert_eq!(dataset_file_name(day), expected);
+        assert!(dataset_url(DEFAULT_BASE_URL, day).ends_with(expected));
     }
 
-    /// The fixture's day is inside the coverage window, so the calendar
-    /// agrees it is a day the host would serve.
+    /// A captured day must never be one the host has not reached yet: such a
+    /// day answers 404 now and 200 later, which would rot the fixture into
+    /// meaning the opposite of what it was captured for.
     #[test]
-    fn fixture_day_is_fetchable() {
-        let day = NaiveDate::parse_from_str(FIXTURE_DAY, DATE_FORMAT).unwrap();
-        let today = NaiveDate::from_ymd_opt(2026, 7, 29).unwrap();
-        assert_eq!(
-            calendar::day_outlook(day, today),
-            calendar::DayOutlook::Fetchable
-        );
+    fn no_captured_day_is_still_ahead_of_the_host() {
+        for fixture in FIXTURE_DAYS {
+            let day = parse_day(fixture.day).unwrap();
+            assert_ne!(
+                calendar::day_outlook(day, calendar::today_utc()),
+                calendar::DayOutlook::InFuture,
+                "{}: {}",
+                fixture.day,
+                fixture.purpose
+            );
+        }
     }
 }

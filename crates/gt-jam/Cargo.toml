@@ -11,11 +11,19 @@ doctest = false
 
 [dependencies]
 chrono.workspace = true
+h3o.workspace = true
+parking_lot.workspace = true
 strum.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+proptest.workspace = true
+# The fixture capture harness (examples/fetch_fixtures.rs) is the only thing
+# here that talks to the network; the crate's own transport lands separately.
+reqwest.workspace = true
 rstest.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

@@ -88,6 +88,10 @@ egui_tiles = "0.15"
 env_logger = "0.11.10"
 geo = "0.33.1"
 geo-types = "0.7.19"
+# H3 cell indices, the addressing scheme the interference datasets are
+# published in. Pure Rust, no C bindings; the `geo` feature is not needed
+# because gt-jam only parses indices and asks for their boundaries.
+h3o = "0.10"
 # `static` builds the bundled libhdf5 rather than looking for a system one, so
 # it belongs to every consumer: gt-history's dev-dependency reaches hdf5-metno
 # even when gt-history-backend-sys is compiled out, and without it that build
@@ -105,7 +109,10 @@ proc-macro2 = "1"
 proptest = "1"
 quote = "1"
 rayon = "1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+# `gzip` is not optional for gt-jam: gpsjam.org serves its datasets
+# gzip-encoded whether or not the client advertises support, so without
+# transparent decoding the body arrives as compressed bytes.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "gzip", "json", "rustls"] }
 rstar = "0.13"
 rstest = "0.26"
 rustc-hash = "2"

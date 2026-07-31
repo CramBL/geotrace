@@ -1,0 +1,53 @@
+---
+source: crates/gt-jam/src/wire.rs
+expression: warnings
+---
+[
+    BlankLine {
+        line: 3,
+    },
+    FieldCount {
+        line: 4,
+        fields: 2,
+    },
+    FieldCount {
+        line: 5,
+        fields: 4,
+    },
+    CellIndex {
+        line: 6,
+        hex: "not-a-cell",
+        detail: "invalid cell index (got None): invalid 64-bit hex number",
+    },
+    Resolution {
+        line: 7,
+        cell: 2-777777777777777 (8005fffffffffff),
+    },
+    Count {
+        line: 8,
+        column: Good,
+        value: "seven",
+        detail: "invalid digit found in string",
+    },
+    Count {
+        line: 9,
+        column: Bad,
+        value: "-1",
+        detail: "invalid digit found in string",
+    },
+    Count {
+        line: 10,
+        column: Good,
+        value: "4294967296",
+        detail: "number too large to fit in target type",
+    },
+    EmptyTally {
+        line: 11,
+        cell: 0-445077777777777 (8401251ffffffff),
+    },
+    DuplicateCell {
+        line: 12,
+        cell: 0-134377777777777 (84005c7ffffffff),
+        first_seen_line: 2,
+    },
+]
