@@ -6,7 +6,7 @@
 //! against time. See `docs/snap/design.md` for the full design.
 //!
 //! This crate currently ships the fixture capture harness
-//! (`examples/fetch_fixtures.rs`, wrapped by `just snap-fixtures`) and the
+//! (`examples/fetch_snap_fixtures.rs`, wrapped by `just snap-fixtures`) and the
 //! live-captured API fixtures under `tests/fixtures/` that the wire types are
 //! developed against. The typed client, chunking, and stitching land on top.
 

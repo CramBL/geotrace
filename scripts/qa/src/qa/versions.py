@@ -127,6 +127,7 @@ _APP_LOCK_CRATES: list[str] = [
     "gt-history-backend-sys",
     "gt-history-types",
     "gt-icon-tessellate",
+    "gt-jam",
     "gt-loaded-files",
     "gt-loader",
     "gt-logfile",

@@ -11,7 +11,7 @@
 //! See `docs/snap/design.md` ("Testing") and `docs/snap/implementation-plan.md`.
 //!
 //! Usage: `just snap-fixtures [SCENARIO...]`, or
-//! `cargo run -p gt-snap --example fetch_fixtures -- [SCENARIO...]`.
+//! `cargo run -p gt-snap --example fetch_snap_fixtures -- [SCENARIO...]`.
 //! Naming scenarios captures only those (an additive capture: entries for
 //! untouched scenarios are kept in `capture.json`); no arguments re-captures
 //! everything.
