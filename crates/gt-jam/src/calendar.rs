@@ -1,30 +1,29 @@
-//! Which UTC days the host can be asked for, and which it cannot.
+//! Which UTC days are worth requesting.
 //!
-//! Two things are knowable without a request: the host has nothing before
-//! [`COVERAGE_START`], and it cannot have a day that has not happened yet.
-//! Everything else is [`DayOutlook::Fetchable`] - deliberately including
-//! days too recent to be published.
+//! Only two answers are knowable without asking: nothing exists before
+//! [`COVERAGE_START`], and nothing exists for a day that has not happened.
+//! Everything else is [`DayOutlook::Fetchable`], including days too recent
+//! to be published - the lag runs one to three days and is unannounced, so
+//! gating on it would hide days the host does serve.
 //!
-//! The publication lag is not a gate. It runs two to three days behind and
-//! is not announced, so gating on it would hide days that are in fact
-//! served. The request is made either way and the host's answer decides;
-//! [`awaiting_publication`] only shapes how a 404 is worded, separating
-//! "not published yet" from a gap in the historical record.
+//! [`awaiting_publication`] only shapes how a 404 is worded.
 
 use chrono::{Days, NaiveDate, Utc};
 
-/// The documented first day of coverage, as (year, month, day). Earlier
-/// days were never published: the upstream collection started here.
-const COVERAGE_START_YMD: (i32, u32, u32) = (2022, 2, 1);
+/// The first day of coverage, as (year, month, day).
+///
+/// Probed, not taken from the publisher's prose, which names February 2022
+/// without a day: on 2026-07-31 every day from 2022-01-31 through
+/// 2022-02-13 answered 404, and 2022-02-14 answered 200.
+const COVERAGE_START_YMD: (i32, u32, u32) = (2022, 2, 14);
 
 /// First UTC day the host published a dataset for.
 pub const COVERAGE_START: NaiveDate = {
     let (year, month, day) = COVERAGE_START_YMD;
     match NaiveDate::from_ymd_opt(year, month, day) {
         Some(date) => date,
-        // Dead arm, and the const assert below fails the build if it ever
-        // stops being dead. Any date would do here; the arm exists only
-        // because `const` evaluation has no way to unwrap without panicking.
+        // Dead arm: const evaluation cannot unwrap without panicking, and
+        // the assert below fails the build if it ever stops being dead.
         None => NaiveDate::MIN,
     }
 };
@@ -37,11 +36,9 @@ const _: () = {
     );
 };
 
-/// How far behind the current day the host typically runs. Observed at two
-/// to three days; the larger value is used so a 404 inside the window reads
-/// as "not published yet" rather than as a hole in the record.
-///
-/// Never used to decide whether to request a day - see the module docs.
+/// How far behind the current day the host typically runs. Observed at one
+/// to three days; the largest is used so a 404 inside the window reads as
+/// "not published yet" rather than as a hole in the record.
 pub const TYPICAL_PUBLICATION_LAG: Days = Days::new(3);
 
 /// What the calendar alone says about a day, before any request is made.
@@ -49,17 +46,17 @@ pub const TYPICAL_PUBLICATION_LAG: Days = Days::new(3);
 #[strum(serialize_all = "snake_case")]
 pub enum DayOutlook {
     /// Inside the coverage window and not in the future. Worth requesting,
-    /// even if it may turn out to be unpublished or a gap.
+    /// even if it turns out to be unpublished or a gap.
     Fetchable,
-    /// Earlier than [`COVERAGE_START`]: nothing was ever published.
+    /// Earlier than [`COVERAGE_START`].
     BeforeCoverage,
     /// Later than the current UTC day.
     InFuture,
 }
 
-/// The calendar's verdict on `day`, relative to the current UTC day.
+/// The calendar's verdict on `day`.
 ///
-/// `today_utc` is passed in rather than read from the clock so callers stay
+/// `today_utc` is a parameter rather than a clock read to keep callers
 /// testable; the application supplies [`today_utc`].
 pub fn day_outlook(day: NaiveDate, today_utc: NaiveDate) -> DayOutlook {
     if day < COVERAGE_START {
@@ -74,19 +71,18 @@ pub fn day_outlook(day: NaiveDate, today_utc: NaiveDate) -> DayOutlook {
 /// Whether `day` is recent enough that the host is not expected to have
 /// published it yet.
 ///
-/// Only shapes the wording of a missing dataset: a day inside the lag window
-/// is pending, an older one is a gap in the record.
+/// Distinguishes a pending day from a gap in the record when a dataset is
+/// missing. Never decides whether to request one.
 pub fn awaiting_publication(day: NaiveDate, today_utc: NaiveDate) -> bool {
     match today_utc.checked_sub_days(TYPICAL_PUBLICATION_LAG) {
         Some(newest_expected) => day > newest_expected,
-        // Only reachable within three days of the calendar's lower bound,
-        // where nothing has been published at all.
+        // Only reachable within three days of `NaiveDate::MIN`.
         None => true,
     }
 }
 
-/// The current UTC day. Datasets are UTC-day granular, so the local date is
-/// never the right question.
+/// The current UTC day. Datasets are UTC-day granular, so a local date is
+/// never the right input.
 pub fn today_utc() -> NaiveDate {
     Utc::now().date_naive()
 }
@@ -105,14 +101,14 @@ mod tests {
     }
 
     #[test]
-    fn coverage_start_is_the_documented_first_published_day() {
-        assert_eq!(COVERAGE_START, date(2022, 2, 1));
+    fn coverage_start_is_the_first_published_day() {
+        assert_eq!(COVERAGE_START, date(2022, 2, 14));
     }
 
     #[rstest]
-    #[case::the_day_before_coverage(date(2022, 1, 31), DayOutlook::BeforeCoverage)]
+    #[case::the_day_before_coverage(date(2022, 2, 13), DayOutlook::BeforeCoverage)]
     #[case::long_before_coverage(date(2019, 6, 4), DayOutlook::BeforeCoverage)]
-    #[case::the_first_covered_day(date(2022, 2, 1), DayOutlook::Fetchable)]
+    #[case::the_first_covered_day(date(2022, 2, 14), DayOutlook::Fetchable)]
     #[case::a_settled_past_day(date(2026, 7, 20), DayOutlook::Fetchable)]
     // Inside the publication lag: still requested, the host decides.
     #[case::yesterday(date(2026, 7, 28), DayOutlook::Fetchable)]
@@ -125,8 +121,7 @@ mod tests {
         assert_eq!(day_outlook(day, date(2026, 7, 29)), expected);
     }
 
-    /// Every declared outlook is something [`day_outlook`] can actually
-    /// return, so a variant can never be added without a day that reaches it.
+    /// A variant cannot be added without a day that reaches it.
     #[test]
     fn every_outlook_is_reachable() {
         let today = date(2026, 7, 29);

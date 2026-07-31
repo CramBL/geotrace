@@ -1,0 +1,22 @@
+{
+  "days": [
+    {
+      "body": null,
+      "captured_at": "2026-07-31T19:40:11.780361061+00:00",
+      "content_type": "text/csv",
+      "day": "2026-07-20",
+      "host": "https://gpsjam.org",
+      "http_status": 200,
+      "rows": 44546
+    },
+    {
+      "body": "{\"message\":\"File not found\"}",
+      "captured_at": "2026-07-31T19:40:13.820684459+00:00",
+      "content_type": "application/json",
+      "day": "2022-02-13",
+      "host": "https://gpsjam.org",
+      "http_status": 404,
+      "rows": null
+    }
+  ]
+}

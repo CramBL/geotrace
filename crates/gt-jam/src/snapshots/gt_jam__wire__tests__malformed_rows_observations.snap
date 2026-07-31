@@ -1,0 +1,16 @@
+---
+source: crates/gt-jam/src/wire.rs
+expression: "observations.iter().map(|observation|\n(observation.cell.to_string(), observation.good,\nobservation.bad)).collect::<Vec<_>>()"
+---
+[
+    (
+        "84005c7ffffffff",
+        412,
+        3,
+    ),
+    (
+        "8401255ffffffff",
+        10,
+        2,
+    ),
+]
