@@ -2701,6 +2701,7 @@ dependencies = [
  "gt-filter",
  "gt-fmt",
  "gt-icon-tessellate",
+ "gt-jam",
  "gt-sky",
  "gt-test-utils",
  "gt-track-builder",
@@ -2892,6 +2893,7 @@ dependencies = [
  "gt-types",
  "rstest",
  "serde",
+ "serde_json",
  "strum",
 ]
 

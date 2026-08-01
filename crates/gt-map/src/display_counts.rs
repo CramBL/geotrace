@@ -23,6 +23,16 @@ use gt_ui_types::{
 };
 use rustc_hash::FxHasher;
 
+/// Counts the map is handed rather than deriving: they come from the app,
+/// not from the loaded recordings.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SuppliedCounts<'a> {
+    /// Snapped geometry, already scoped by the app.
+    pub snapped_tracks: Option<&'a SnappedTracks>,
+    /// Interference cells archived for the day the overlay shows.
+    pub jamming_cells: usize,
+}
+
 /// The in-scope element count of every [`DisplayCategory`].
 ///
 /// Computing is a full scan over the loaded points and markers - call it
@@ -39,6 +49,10 @@ pub struct DisplayCounts {
     query_highlights: usize,
     snapped_tracks: usize,
     sky_glyphs: usize,
+    /// Interference cells available for the shown day. Comes from the
+    /// archive, not the loaded recordings, so it is supplied rather than
+    /// walked.
+    jamming_hexes: usize,
 }
 
 impl DisplayCounts {
@@ -53,6 +67,7 @@ impl DisplayCounts {
             DisplayCategory::QueryHighlights => self.query_highlights,
             DisplayCategory::SnappedTracks => self.snapped_tracks,
             DisplayCategory::SkyGlyphs => self.sky_glyphs,
+            DisplayCategory::JammingHexes => self.jamming_hexes,
         }
     }
 
@@ -70,6 +85,7 @@ impl DisplayCounts {
             query_highlights: get(DisplayCategory::QueryHighlights),
             snapped_tracks: get(DisplayCategory::SnappedTracks),
             sky_glyphs: get(DisplayCategory::SkyGlyphs),
+            jamming_hexes: get(DisplayCategory::JammingHexes),
         }
     }
 
@@ -80,14 +96,15 @@ impl DisplayCounts {
         event_marker_visibility: &EventMarkerVisibility,
         generated_marker_visibility: &GeneratedMarkerVisibility,
         query_matches: Option<&QueryMatches>,
-        snapped_tracks: Option<&SnappedTracks>,
+        supplied: SuppliedCounts<'_>,
     ) -> Self {
         // Snapped geometry arrives pre-scoped (the app applies tree
         // visibility and the per-track glyph toggle before the map sees
         // it), so its count is exactly the tracks whose snapped track
         // would draw - re-deriving scope here could only drift from that.
         let mut counts = Self {
-            snapped_tracks: snapped_tracks.map_or(0, |s| s.by_track.len()),
+            jamming_hexes: supplied.jamming_cells,
+            snapped_tracks: supplied.snapped_tracks.map_or(0, |s| s.by_track.len()),
             ..Self::default()
         };
         for (fi, file) in files.iter().enumerate() {
@@ -188,6 +205,7 @@ impl DisplayCounts {
 struct DisplayCountsKey {
     files_sig: u64,
     snapped_len: usize,
+    jamming_cells: usize,
     filter: GlobalFilter,
     visibility: TrackDataVisibility,
     event_marker_visibility: EventMarkerVisibility,
@@ -264,13 +282,14 @@ impl DisplayCountsCache {
         event_marker_visibility: &EventMarkerVisibility,
         generated_marker_visibility: &GeneratedMarkerVisibility,
         query_matches: Option<&QueryMatches>,
-        snapped_tracks: Option<&SnappedTracks>,
+        supplied: SuppliedCounts<'_>,
     ) -> DisplayCounts {
         let files_sig = files_signature(files);
-        let snapped_len = snapped_tracks.map_or(0, |s| s.by_track.len());
+        let snapped_len = supplied.snapped_tracks.map_or(0, |s| s.by_track.len());
         if let Some((key, counts)) = &self.cached
             && key.files_sig == files_sig
             && key.snapped_len == snapped_len
+            && key.jamming_cells == supplied.jamming_cells
             && key.filter == *filter
             && key.visibility == *visibility
             && key.event_marker_visibility == *event_marker_visibility
@@ -290,10 +309,11 @@ impl DisplayCountsCache {
             event_marker_visibility,
             generated_marker_visibility,
             query_matches,
-            snapped_tracks,
+            supplied,
         );
         self.cached = Some((
             DisplayCountsKey {
+                jamming_cells: supplied.jamming_cells,
                 files_sig,
                 snapped_len,
                 filter: *filter,
@@ -399,6 +419,13 @@ mod tests {
         }
     }
 
+    fn supplied(snapped_tracks: Option<&SnappedTracks>) -> SuppliedCounts<'_> {
+        SuppliedCounts {
+            snapped_tracks,
+            jamming_cells: 0,
+        }
+    }
+
     fn vis_all() -> TrackDataVisibility {
         TrackDataVisibility {
             files: vec![FileVisibility {
@@ -421,7 +448,7 @@ mod tests {
             &EventMarkerVisibility::default(),
             &GeneratedMarkerVisibility::default(),
             query_matches,
-            None,
+            SuppliedCounts::default(),
         )
     }
 
@@ -439,6 +466,8 @@ mod tests {
             (DisplayCategory::QueryHighlights, 0),
             (DisplayCategory::SnappedTracks, 0),
             (DisplayCategory::SkyGlyphs, 1),
+            // Archive-supplied, so a recording fixture contributes none.
+            (DisplayCategory::JammingHexes, 0),
         ];
         assert_eq!(expected.len(), DisplayCategory::iter().count());
         for (category, n) in expected {
@@ -465,7 +494,10 @@ mod tests {
             &EventMarkerVisibility::default(),
             &GeneratedMarkerVisibility::default(),
             None,
-            Some(&snapped),
+            SuppliedCounts {
+                snapped_tracks: Some(&snapped),
+                jamming_cells: 0,
+            },
         );
         assert_eq!(counts.get(DisplayCategory::SnappedTracks), 1);
     }
@@ -636,8 +668,8 @@ mod tests {
             (&files, &vis0, &filter0, &emv0, &gmv0, None, None),
         ];
         for &(f, v, fi, em, gm, q, s) in steps {
-            let got = cache.get(f, v, fi, em, gm, q, s);
-            let want = DisplayCounts::compute(f, v, fi, em, gm, q, s);
+            let got = cache.get(f, v, fi, em, gm, q, supplied(s));
+            let want = DisplayCounts::compute(f, v, fi, em, gm, q, supplied(s));
             assert_eq!(got, want);
         }
     }
@@ -654,7 +686,15 @@ mod tests {
         );
         let mut cache = DisplayCountsCache::default();
         let get = |cache: &mut DisplayCountsCache, filter: &GlobalFilter| {
-            cache.get(&files, &vis, filter, &emv, &gmv, None, None)
+            cache.get(
+                &files,
+                &vis,
+                filter,
+                &emv,
+                &gmv,
+                None,
+                SuppliedCounts::default(),
+            )
         };
 
         get(&mut cache, &GlobalFilter::default());
