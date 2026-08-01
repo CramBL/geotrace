@@ -30,6 +30,7 @@ use h3o::Resolution;
 pub mod calendar;
 pub mod dataset;
 pub mod text;
+pub mod transport;
 pub mod wire;
 
 /// Base URL of the default dataset host. Configurable in settings, for a

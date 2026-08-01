@@ -4,17 +4,17 @@
 //! over all 44 546 cells the host actually published, where H3's distortion
 //! near pentagons and the poles is present rather than assumed away.
 
-use std::fs;
+mod support;
+
 use std::sync::OnceLock;
 
-use chrono::NaiveDate;
 use gt_types::coordinates::{Latitude, Longitude};
 use h3o::LatLng;
 use proptest::test_runner::TestCaseError;
 
 use gt_jam::dataset::{self, JamDataset};
 use gt_jam::wire::{self, ParseWarningReporter};
-use gt_jam::{FIXTURE_DAYS, H3_RESOLUTION, dataset_file_name, fixtures_dir, parse_day};
+use gt_jam::{H3_RESOLUTION, parse_day};
 
 /// How far past one cell edge a containing cell's centre is allowed to sit.
 /// H3's pentagons and projection distortion stretch the ideal hexagon.
@@ -25,15 +25,10 @@ fn captured_day() -> Result<&'static JamDataset, String> {
     static DATASET: OnceLock<Result<JamDataset, String>> = OnceLock::new();
     DATASET
         .get_or_init(|| {
-            let fixture = FIXTURE_DAYS
-                .iter()
-                .find(|fixture| fixture.is_served())
-                .ok_or_else(|| "no served day is declared in FIXTURE_DAYS".to_owned())?;
-            let day: NaiveDate = parse_day(fixture.day)
+            let fixture = support::served_day()?;
+            let day = parse_day(fixture.day)
                 .map_err(|err| format!("{} is not a calendar date: {err}", fixture.day))?;
-            let path = fixtures_dir().join(dataset_file_name(day));
-            let csv = fs::read_to_string(&path)
-                .map_err(|err| format!("reading {}: {err}", path.display()))?;
+            let csv = support::captured_csv(fixture.day)?;
             let observations = wire::parse_dataset(&csv, &ParseWarningReporter::default())
                 .map_err(|err| format!("{}: {err}", fixture.day))?;
             Ok(JamDataset::new(day, observations))
