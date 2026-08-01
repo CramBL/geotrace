@@ -40,6 +40,19 @@ fn label(category: DisplayCategory) -> &'static str {
         DisplayCategory::QueryHighlights => "Query highlights",
         DisplayCategory::SnappedTracks => "Snapped tracks",
         DisplayCategory::SkyGlyphs => "Sky glyphs",
+        DisplayCategory::JammingHexes => gt_jam::text::LAYER_LABEL,
+    }
+}
+
+/// Why a category's row is disabled. Interference comes from the archive,
+/// every other category from the loaded recordings.
+fn empty_hover_text(category: DisplayCategory) -> String {
+    match category {
+        DisplayCategory::JammingHexes => "No interference data archived for this day".to_owned(),
+        _ => format!(
+            "No {} in the loaded recordings",
+            label(category).to_lowercase()
+        ),
     }
 }
 
@@ -50,12 +63,24 @@ fn row_hover_text(category: DisplayCategory, visible: bool) -> String {
         DisplayCategory::SkyGlyphs => {
             " Sky glyphs show the directions of the satellites used in each fix."
         }
+        DisplayCategory::JammingHexes => return jamming_hover_text(visible),
         _ => "",
     };
     format!(
         "{verb} all {} on the map. Does not affect filters or the track list. \
          Alt-click to show only this category.{description}",
         label(category).to_lowercase()
+    )
+}
+
+/// The interference row's hover text, built from the wording every
+/// interference surface shares.
+fn jamming_hover_text(visible: bool) -> String {
+    let verb = if visible { "Hide" } else { "Show" };
+    format!(
+        "{verb} the aircraft interference layer. {} {}",
+        gt_jam::text::LAYER_SUMMARY,
+        gt_jam::text::SOURCE_CAVEAT
     )
 }
 
@@ -214,10 +239,7 @@ pub(crate) fn popup_contents(
             let row = ui
                 .add_enabled(in_scope, Button::selectable(false, text))
                 .on_hover_text(row_hover_text(category, visible))
-                .on_disabled_hover_text(format!(
-                    "No {} in the loaded recordings",
-                    label(category).to_lowercase()
-                ));
+                .on_disabled_hover_text(empty_hover_text(category));
             let alt_held = ui.input(|i| i.modifiers.alt);
             if row.clicked() {
                 if alt_held {
@@ -288,6 +310,7 @@ mod tests {
             DisplayCategory::QueryHighlights => 0,
             DisplayCategory::SnappedTracks => 3,
             DisplayCategory::SkyGlyphs => 187,
+            DisplayCategory::JammingHexes => 1043,
         })
     }
 

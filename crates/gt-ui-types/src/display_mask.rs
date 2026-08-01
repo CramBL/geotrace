@@ -40,6 +40,8 @@ pub enum DisplayCategory {
     SnappedTracks,
     /// The per-point sky glyphs (directions of the satellites in the fix).
     SkyGlyphs,
+    /// The aircraft-interference cells drawn beneath the track ink.
+    JammingHexes,
 }
 
 impl DisplayCategory {
@@ -185,6 +187,7 @@ mod tests {
             (DisplayCategory::QueryHighlights, "query_highlights"),
             (DisplayCategory::SnappedTracks, "snapped_tracks"),
             (DisplayCategory::SkyGlyphs, "sky_glyphs"),
+            (DisplayCategory::JammingHexes, "jamming_hexes"),
         ];
         assert_eq!(expected.len(), DisplayCategory::COUNT);
         for (category, wire) in expected {
@@ -217,6 +220,35 @@ mod tests {
         #[case] expected: DisplayCategory,
     ) {
         assert_eq!(DisplayCategory::from(data), expected);
+    }
+
+    /// A settings file written before a category existed does not list it,
+    /// so it loads visible.
+    #[test]
+    fn a_category_absent_from_a_settings_file_is_visible() {
+        let stored = r#"["custom_markers","query_highlights"]"#;
+        let hidden: HiddenCategories = serde_json::from_str(stored).expect("hidden list");
+        let mask = DisplayMask::from(hidden);
+
+        assert!(mask.is_visible(DisplayCategory::JammingHexes));
+        assert!(!mask.is_visible(DisplayCategory::CustomMarkers));
+        assert!(!mask.is_visible(DisplayCategory::QueryHighlights));
+        assert_eq!(mask.hidden_count(), 2);
+    }
+
+    /// The mask round-trips through the wire form with the new category
+    /// hidden, so hiding it survives a restart.
+    #[test]
+    fn hiding_the_new_category_round_trips_through_json() {
+        let mut mask = DisplayMask::default();
+        mask.set_visible(DisplayCategory::JammingHexes, false);
+
+        let json = serde_json::to_string(&mask).expect("serialize");
+        assert_eq!(json, r#"["jamming_hexes"]"#);
+        assert_eq!(
+            serde_json::from_str::<DisplayMask>(&json).expect("deserialize"),
+            mask
+        );
     }
 
     #[test]

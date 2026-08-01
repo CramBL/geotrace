@@ -19,6 +19,7 @@ egui-wgpu.workspace = true
 gt-filter = { path = "../gt-filter" }
 gt-fmt = { path = "../gt-fmt" }
 gt-icon-tessellate = { path = "../gt-icon-tessellate", default-features = false }
+gt-jam = { path = "../gt-jam" }
 gt-sky = { path = "../gt-sky" }
 gt-track-builder = { path = "../gt-track-builder" }
 gt-types = { path = "../gt-types" }

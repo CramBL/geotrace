@@ -8,7 +8,7 @@
 //! archive is never requested, so the queue shrinks to nothing as the
 //! archive fills. One request is in flight at a time.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -65,12 +65,28 @@ pub struct JammingScheduler {
     seen: HashSet<NaiveDate>,
     in_flight: Option<NaiveDate>,
     failures: Vec<DayFailure>,
+    /// Cells archived per day, read once at startup and updated on ingest,
+    /// so the display toggle does not open the archive per frame. Assumes
+    /// this process is the archive's only writer.
+    archived_cells: HashMap<NaiveDate, u32>,
 }
 
 impl JammingScheduler {
     pub fn new(ctx: Context, store: Option<JamStore>, base_url: String) -> Self {
         let (tx, rx) = mpsc::channel();
+        let archived_cells = store
+            .as_ref()
+            .map(|store| store.days())
+            .transpose()
+            .inspect_err(|err| log::error!("Reading the interference archive index: {err}"))
+            .ok()
+            .flatten()
+            .into_iter()
+            .flatten()
+            .map(|stored| (stored.day, stored.cells))
+            .collect();
         Self {
+            archived_cells,
             ctx,
             tx,
             rx,
@@ -135,6 +151,8 @@ impl JammingScheduler {
             match message {
                 JamMessage::Stored { day, cells } => {
                     log::info!("Archived {cells} interference cells for {day}");
+                    self.archived_cells
+                        .insert(day, u32::try_from(cells).unwrap_or(u32::MAX));
                 }
                 JamMessage::Missing { day, pending } => {
                     log::info!(
@@ -149,6 +167,13 @@ impl JammingScheduler {
             }
         }
         self.start_next();
+    }
+
+    /// Cells archived for `day`, or zero if the day is not archived.
+    pub fn archived_cells(&self, day: NaiveDate) -> usize {
+        self.archived_cells
+            .get(&day)
+            .map_or(0, |&cells| cells as usize)
     }
 
     /// Days that could not be archived, oldest first.
