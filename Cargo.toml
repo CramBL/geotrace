@@ -40,6 +40,7 @@ members = [
     "crates/gt-history-types",
     "crates/gt-icon-tessellate",
     "crates/gt-jam",
+    "crates/gt-jam-store",
     "crates/gt-loaded-files",
     "crates/gt-loader",
     "crates/gt-logfile",
