@@ -2638,6 +2638,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gt-jam-store"
+version = "0.10.0"
+dependencies = [
+ "chrono",
+ "gt-jam",
+ "h3o",
+ "hdf5-metno",
+ "log",
+ "parking_lot",
+ "rstest",
+ "tempfile",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "gt-loaded-files"
 version = "0.10.0"
 dependencies = [
