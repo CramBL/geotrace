@@ -2222,7 +2222,6 @@ dependencies = [
  "gt-analysis",
  "gt-filter",
  "gt-fmt",
- "gt-history",
  "gt-loaded-files",
  "gt-loader",
  "gt-logfile",
@@ -2232,6 +2231,7 @@ dependencies = [
  "gt-side-panel",
  "gt-sky",
  "gt-snap",
+ "gt-store",
  "gt-test-utils",
  "gt-track-builder",
  "gt-types",
@@ -2558,7 +2558,6 @@ dependencies = [
 name = "gt-history"
 version = "0.10.0"
 dependencies = [
- "dirs",
  "geotrace-sdk",
  "gt-history-backend-pure",
  "gt-history-backend-sys",
@@ -2810,6 +2809,17 @@ dependencies = [
  "serde",
  "serde_json",
  "strum",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "gt-store"
+version = "0.10.0"
+dependencies = [
+ "dirs",
+ "gt-history",
+ "gt-jam-store",
+ "tempfile",
  "thiserror 2.0.19",
 ]
 

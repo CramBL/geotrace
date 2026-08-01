@@ -2434,13 +2434,13 @@ fn snapshot_history_resegment_dialog() {
         .eframe(build_app);
     harness.inner.step();
     harness.inner.state_mut().pending_resegment = Some(super::ResegmentPrompt {
-        db_ref: gt_history::DatabaseRef {
+        db_ref: gt_store::DatabaseRef {
             identity: "auto:ride.gtd".to_owned(),
             group_name: "2025-05-23T10:00:00Z_a1b2".to_owned(),
         },
         filename: "ride.gtd".to_owned(),
         bytes: std::sync::Arc::from(Vec::<u8>::new()),
-        stored: gt_history::StoredSegmentation {
+        stored: gt_store::StoredSegmentation {
             track_split_gap_us: 60_000_000,
             detect_clock_discontinuities: false,
             clock_discontinuity_sigmas: 4.0,
@@ -3048,7 +3048,7 @@ fn costing_override_reaches_the_dispatched_run() {
 #[test]
 fn snap_runs_persist_and_restore_through_the_app() {
     use geotrace_sdk::{Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix};
-    use gt_history::{Database, HistoryDatabase, StoredSegmentation, TrackRange};
+    use gt_store::{HistoryDatabase, Recordings, StoredSegmentation, TrackRange};
 
     // One real recording so the blob has a valid group to live in.
     let t0 = DateTime::from_timestamp(1_000, 0).expect("valid timestamp");
@@ -3069,8 +3069,8 @@ fn snap_runs_persist_and_restore_through_the_app() {
 
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
-    let mut db = Database::open_or_create(&db_path).expect("open");
-    let meta = gt_history::extract_meta(&bytes).expect("meta");
+    let mut db = Recordings::open_or_create(&db_path).expect("open");
+    let meta = gt_store::extract_meta(&bytes).expect("meta");
     let tracks = [TrackRange {
         start: 0,
         end: meta.nav_point_count,
@@ -3090,7 +3090,7 @@ fn snap_runs_persist_and_restore_through_the_app() {
         .build_eframe(transient_app);
     harness.step();
     harness.state_mut().history = crate::app::history_db::HistoryWorker::spawn(
-        Database::open_or_create(&db_path).expect("reopen"),
+        Recordings::open_or_create(&db_path).expect("reopen"),
         egui::Context::default(),
     );
 
@@ -3115,7 +3115,7 @@ fn snap_runs_persist_and_restore_through_the_app() {
     };
     harness.state().persist_snap_runs(&[content]);
     let blob = wait_for(|| {
-        Database::open_or_create(&db_path)
+        Recordings::open_or_create(&db_path)
             .ok()
             .and_then(|db| db.snap_blob(&db_ref).ok())
             .flatten()

@@ -1,4 +1,4 @@
-use gt_history::{Database, DatabaseRef, DbError, PruneMode};
+use gt_store::{DatabaseRef, DbError, PruneMode, Recordings};
 
 pub enum AutoPruneOutcome {
     /// Total stored size is within the limit, nothing to delete.
@@ -14,8 +14,12 @@ pub enum AutoPruneOutcome {
 ///
 /// When `confirm` is `true` the database is not touched - candidates are
 /// returned so the caller can ask for confirmation first.
-pub fn run(db: &mut Database, max_bytes: u64, confirm: bool) -> Result<AutoPruneOutcome, DbError> {
-    use gt_history::HistoryDatabase;
+pub fn run(
+    db: &mut Recordings,
+    max_bytes: u64,
+    confirm: bool,
+) -> Result<AutoPruneOutcome, DbError> {
+    use gt_store::HistoryDatabase;
     let candidates = db.prune_candidates(&PruneMode::ByTotalSize { max_bytes })?;
     if candidates.is_empty() {
         return Ok(AutoPruneOutcome::NotNeeded);
@@ -32,7 +36,7 @@ pub fn run(db: &mut Database, max_bytes: u64, confirm: bool) -> Result<AutoPrune
 mod tests {
     use super::*;
     use geotrace_sdk::{Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix};
-    use gt_history::{Database, HistoryDatabase};
+    use gt_store::{HistoryDatabase, Recordings};
 
     fn make_gtd(start_secs: i64, n: u32) -> Vec<u8> {
         let t0 = DateTime::from_timestamp(start_secs, 0).expect("valid timestamp");
@@ -53,9 +57,9 @@ mod tests {
         bytes
     }
 
-    fn insert(db: &mut Database, identity: &str, bytes: &[u8]) {
-        use gt_history::{StoredSegmentation, TrackRange};
-        let meta = gt_history::extract_meta(bytes).expect("parse meta");
+    fn insert(db: &mut Recordings, identity: &str, bytes: &[u8]) {
+        use gt_store::{StoredSegmentation, TrackRange};
+        let meta = gt_store::extract_meta(bytes).expect("parse meta");
         // One track spanning the whole recording is enough for prune tests.
         let tracks = [TrackRange {
             start: 0,
@@ -74,7 +78,7 @@ mod tests {
     #[test]
     fn not_needed_when_under_limit() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let mut db = Database::open_or_create(&dir.path().join("h.h5")).expect("db");
+        let mut db = Recordings::open_or_create(&dir.path().join("h.h5")).expect("db");
         let bytes = make_gtd(1_000_000, 2);
         insert(&mut db, "dev", &bytes);
 
@@ -86,7 +90,7 @@ mod tests {
     #[test]
     fn not_needed_on_empty_db() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let mut db = Database::open_or_create(&dir.path().join("h.h5")).expect("db");
+        let mut db = Recordings::open_or_create(&dir.path().join("h.h5")).expect("db");
 
         let outcome = run(&mut db, 1, false).expect("run");
         assert!(matches!(outcome, AutoPruneOutcome::NotNeeded));
@@ -95,7 +99,7 @@ mod tests {
     #[test]
     fn prunes_silently_when_over_limit() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let mut db = Database::open_or_create(&dir.path().join("h.h5")).expect("db");
+        let mut db = Recordings::open_or_create(&dir.path().join("h.h5")).expect("db");
         let bytes_a = make_gtd(1_000_000, 2);
         let bytes_b = make_gtd(2_000_000, 2);
         insert(&mut db, "dev", &bytes_a);
@@ -118,7 +122,7 @@ mod tests {
     #[test]
     fn returns_candidates_when_confirm_true() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let mut db = Database::open_or_create(&dir.path().join("h.h5")).expect("db");
+        let mut db = Recordings::open_or_create(&dir.path().join("h.h5")).expect("db");
         let bytes_a = make_gtd(1_000_000, 2);
         let bytes_b = make_gtd(2_000_000, 2);
         insert(&mut db, "dev", &bytes_a);
@@ -141,7 +145,7 @@ mod tests {
     #[test]
     fn prunes_all_when_limit_is_zero() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let mut db = Database::open_or_create(&dir.path().join("h.h5")).expect("db");
+        let mut db = Recordings::open_or_create(&dir.path().join("h.h5")).expect("db");
         let bytes_a = make_gtd(1_000_000, 2);
         let bytes_b = make_gtd(2_000_000, 2);
         insert(&mut db, "dev", &bytes_a);

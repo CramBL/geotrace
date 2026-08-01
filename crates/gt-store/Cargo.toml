@@ -1,0 +1,30 @@
+[package]
+name = "gt-store"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+
+[features]
+default = ["backend-sys"]
+# Forwarded to gt-history, which is where the two HDF5 backends live. The
+# interference archive is sys-only.
+backend-pure = ["gt-history/backend-pure"]
+backend-sys = ["gt-history/backend-sys"]
+
+[dependencies]
+dirs.workspace = true
+gt-history = { path = "../gt-history", default-features = false }
+gt-jam-store = { path = "../gt-jam-store" }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

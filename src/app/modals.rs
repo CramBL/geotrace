@@ -3,9 +3,9 @@ use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
-use gt_history::DatabaseRef;
 use gt_map::{MapLayer, NavMap};
 use gt_side_panel::{NodeKey, RecordingDetails, TreeState};
+use gt_store::DatabaseRef;
 use gt_types::{LoadWarning, TrackRef};
 use gt_ui_theme::warning_amber;
 
@@ -780,7 +780,7 @@ mod tests {
             let history = if has_db_ref {
                 FileHistory::recording(
                     "id".to_owned(),
-                    gt_history::RecordingMeta {
+                    gt_store::RecordingMeta {
                         start_us: idx as i64,
                         end_us: idx as i64,
                         nav_point_count: 0,
@@ -789,7 +789,7 @@ mod tests {
                         event_marker_count: 0,
                         gtd_size_bytes: 0,
                     },
-                    Some(gt_history::DatabaseRef {
+                    Some(gt_store::DatabaseRef {
                         identity: "id".to_owned(),
                         group_name: format!("rec{idx}"),
                     }),

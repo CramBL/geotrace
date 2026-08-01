@@ -8,8 +8,8 @@ use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_phosphor::regular::CARET_UP as ICON_CARET_UP;
 use egui_phosphor::regular::NOTE as ICON_NOTE;
 use egui_phosphor::regular::X as ICON_X;
-use gt_history::{ChannelSummary, DatabaseRef, PruneMode, RecordingEntry, RecordingMeta};
 use gt_side_panel::widgets::{MetadataView, has_metadata_details, metadata_detail_rows};
+use gt_store::{ChannelSummary, DatabaseRef, PruneMode, RecordingEntry, RecordingMeta};
 use gt_types::TravelMode;
 use gt_ui_theme::{EM_DASH, warning_amber};
 use strum::{EnumCount, EnumIter, IntoEnumIterator as _};
@@ -869,7 +869,7 @@ fn history_table(
     ui: &mut egui::Ui,
     list_height: f32,
     visible: &[&RecordingEntry],
-    loaded_metas: &[gt_history::RecordingMeta],
+    loaded_metas: &[gt_store::RecordingMeta],
     worker: &HistoryWorker,
     rename: &mut Option<RenameEdit>,
     sort: &mut HistorySort,
@@ -1052,7 +1052,7 @@ fn render_row(
     });
 
     breakdown_cell(row, entry, SortColumn::Points, |ui| {
-        ui.label(gt_history::format_count_suffix(entry.meta.nav_point_count));
+        ui.label(gt_store::format_count_suffix(entry.meta.nav_point_count));
         if entry.hidden_tracks > 0 {
             ui.weak(format!(
                 "({}/{} hidden)",
@@ -1440,7 +1440,7 @@ fn date_to_end_us(s: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use egui_kittest::kittest::Queryable as _;
-    use gt_history::HistoryDatabase as _;
+    use gt_store::HistoryDatabase as _;
     use gt_test_utils::TestHarness;
 
     use crate::app::history_db::Response;
@@ -1468,7 +1468,7 @@ mod tests {
     fn history_harness(entries: Vec<RecordingEntry>) -> HistoryHarness {
         let dir = tempfile::tempdir().expect("temp dir");
         let db =
-            gt_history::Database::open_or_create(&dir.path().join("history.h5")).expect("open db");
+            gt_store::Recordings::open_or_create(&dir.path().join("history.h5")).expect("open db");
         let worker = HistoryWorker::spawn(db, egui::Context::default());
         let mut window = HistoryWindow::new();
         window.open = true;
@@ -1500,13 +1500,13 @@ mod tests {
     /// A harness backed by a real database holding one recording, with no
     /// pre-seeded entries - the list arrives from the worker (see [`pump_history`]).
     fn history_harness_with_recording(identity: &str) -> HistoryHarness {
-        use gt_history::{StoredSegmentation, TrackRange};
+        use gt_store::{StoredSegmentation, TrackRange};
 
         let dir = tempfile::tempdir().expect("temp dir");
         let mut db =
-            gt_history::Database::open_or_create(&dir.path().join("history.h5")).expect("open db");
+            gt_store::Recordings::open_or_create(&dir.path().join("history.h5")).expect("open db");
         let bytes = gt_test_utils::GOLD_BYTES;
-        let meta = gt_history::extract_meta(bytes).expect("meta");
+        let meta = gt_store::extract_meta(bytes).expect("meta");
         let tracks = [TrackRange {
             start: 0,
             end: meta.nav_point_count,

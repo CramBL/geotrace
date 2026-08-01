@@ -2,7 +2,7 @@
 //!
 //! Every history operation - listing, loading a recording, hiding tracks,
 //! deleting recordings, prune previews, auto-prune - runs on a dedicated thread
-//! that owns the [`Database`]. The UI thread sends [`Request`]s and drains
+//! that owns the [`Recordings`]. The UI thread sends [`Request`]s and drains
 //! [`Response`]s once per frame (see [`HistoryWorker::poll`]), so a slow disk
 //! or a large recording never stalls a render. Inserts still happen on the load
 //! threads, which open the database by path. The global database lock keeps the
@@ -15,8 +15,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
 use egui::Context;
-use gt_history::{
-    Database, DatabaseRef, DbError, HistoryDatabase, PruneMode, RecordingEntry, StoredRecording,
+use gt_store::{
+    DatabaseRef, DbError, HistoryDatabase, PruneMode, RecordingEntry, Recordings, StoredRecording,
     TrackRange,
 };
 use gt_track_builder::SegmentationConfig;
@@ -144,7 +144,7 @@ impl HistoryWorker {
         clippy::expect_used,
         reason = "thread spawn can only fail under extreme system resource exhaustion"
     )]
-    pub fn spawn(db: Database, ctx: Context) -> Self {
+    pub fn spawn(db: Recordings, ctx: Context) -> Self {
         let path = Some(db.path().to_owned());
         let (req_tx, req_rx) = mpsc::channel::<Request>();
         let (resp_tx, resp_rx) = mpsc::channel::<Response>();
@@ -254,7 +254,7 @@ impl Drop for HistoryWorker {
 }
 
 fn worker_loop(
-    mut db: Database,
+    mut db: Recordings,
     req_rx: &Receiver<Request>,
     resp_tx: &Sender<Response>,
     ctx: &Context,
@@ -269,7 +269,7 @@ fn worker_loop(
     }
 }
 
-fn handle_request(db: &mut Database, req: Request) -> Response {
+fn handle_request(db: &mut Recordings, req: Request) -> Response {
     match req {
         Request::List => Response::Listed(db.list_recordings()),
         Request::Open(db_ref) => {
@@ -337,7 +337,7 @@ fn handle_request(db: &mut Database, req: Request) -> Response {
 
 /// Permanently remove every hidden track across all recordings, re-encoding each
 /// affected recording. Returns the number of tracks removed.
-fn purge_all_hidden(db: &mut Database) -> Result<usize, DbError> {
+fn purge_all_hidden(db: &mut Recordings) -> Result<usize, DbError> {
     let entries = db.list_recordings()?;
     let mut deleted = 0;
     for entry in entries {
@@ -360,7 +360,7 @@ fn purge_all_hidden(db: &mut Database) -> Result<usize, DbError> {
 
 /// Permanently remove the tracks at `drop_indices` from one recording.
 fn purge_tracks(
-    db: &mut Database,
+    db: &mut Recordings,
     db_ref: &DatabaseRef,
     drop_indices: &[usize],
 ) -> Result<(), DbError> {
@@ -378,7 +378,7 @@ fn purge_tracks(
 /// `snap_blob_is_dropped_with_its_recording`): the purge shifts point
 /// indices, so the stored runs could no longer be matched to their points.
 fn purge_tracks_with_stored(
-    db: &mut Database,
+    db: &mut Recordings,
     db_ref: &DatabaseRef,
     stored: &StoredRecording,
     drop_indices: &[usize],
@@ -431,7 +431,7 @@ fn purge_tracks_with_stored(
     let settings = stored
         .segmentation
         .unwrap_or_else(|| stored_segmentation_from_config(&SegmentationConfig::default()));
-    let meta = gt_history::extract_meta(&new_bytes)?;
+    let meta = gt_store::extract_meta(&new_bytes)?;
 
     db.delete_batch(std::slice::from_ref(db_ref))?;
     db.insert(&db_ref.identity, &meta, &new_tracks, settings, &new_bytes)?;
@@ -443,10 +443,10 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use chrono::DateTime;
-    use gt_history::{StoredSegmentation, TrackRange};
+    use gt_store::{StoredSegmentation, TrackRange};
     use gt_test_utils::{SyntheticGtdSpec, synthetic_gtd_bytes};
 
-    // Brings in `HistoryWorker`, `Request`/`Response`, `Database`, `Context`,
+    // Brings in `HistoryWorker`, `Request`/`Response`, `Recordings`, `Context`,
     // `PruneMode`, `AutoPruneOutcome`, etc. without re-importing sibling modules.
     use super::*;
 
@@ -491,8 +491,8 @@ mod tests {
         // Seed one recording (two tracks) through a plain handle.
         let bytes = sample_bytes();
         {
-            let mut db = Database::open_or_create(&path).expect("open");
-            let meta = gt_history::extract_meta(&bytes).expect("meta");
+            let mut db = Recordings::open_or_create(&path).expect("open");
+            let meta = gt_store::extract_meta(&bytes).expect("meta");
             let tracks = [
                 TrackRange {
                     start: 0,
@@ -514,7 +514,7 @@ mod tests {
                 .expect("insert");
         }
 
-        let db = Database::open_or_create(&path).expect("reopen");
+        let db = Recordings::open_or_create(&path).expect("reopen");
         let worker = HistoryWorker::spawn(db, Context::default());
         assert!(worker.available());
         assert_eq!(worker.path(), Some(path.as_path()));
@@ -594,8 +594,8 @@ mod tests {
             clock_discontinuity_sigmas: 5.0,
         };
         {
-            let mut db = Database::open_or_create(&path).expect("open");
-            let meta = gt_history::extract_meta(&bytes).expect("meta");
+            let mut db = Recordings::open_or_create(&path).expect("open");
+            let meta = gt_store::extract_meta(&bytes).expect("meta");
             let tracks = [
                 TrackRange {
                     start: 0,
@@ -612,7 +612,7 @@ mod tests {
                 .expect("insert");
         }
 
-        let db = Database::open_or_create(&path).expect("reopen");
+        let db = Recordings::open_or_create(&path).expect("reopen");
         let worker = HistoryWorker::spawn(db, Context::default());
 
         // Hide the first track, then permanently delete all hidden tracks.

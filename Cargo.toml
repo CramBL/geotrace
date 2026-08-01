@@ -50,6 +50,7 @@ members = [
     "crates/gt-side-panel",
     "crates/gt-sky",
     "crates/gt-snap",
+    "crates/gt-store",
     "crates/gt-test-utils",
     "crates/gt-track-builder",
     "crates/gt-types",
@@ -65,7 +66,7 @@ members = [
 description = "High-performance GNSS data visualizer, with advanced debugging and anomaly detection capabitilies"
 version = "0.10.0"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.94"
 license = "AGPL-3.0-only"
 authors = ["Marc Beck König <mgit@tuta.io>"]
 homepage = "https://github.com/CramBL/geotrace"
@@ -279,7 +280,6 @@ geotrace-sdk-units = { path = "sdk/rust/geotrace-sdk-units" }
 gt-analysis = { path = "crates/gt-analysis" }
 gt-filter = { path = "crates/gt-filter" }
 gt-fmt = { path = "crates/gt-fmt" }
-gt-history = { path = "crates/gt-history" }
 gt-loaded-files = { path = "crates/gt-loaded-files" }
 gt-loader = { path = "crates/gt-loader" }
 gt-logfile = { path = "crates/gt-logfile" }
@@ -289,6 +289,7 @@ gt-query = { path = "crates/gt-query" }
 gt-side-panel = { path = "crates/gt-side-panel" }
 gt-sky = { path = "crates/gt-sky" }
 gt-snap = { path = "crates/gt-snap" }
+gt-store = { path = "crates/gt-store" }
 gt-track-builder = { path = "crates/gt-track-builder" }
 gt-types = { path = "crates/gt-types" }
 gt-ui-theme = { path = "crates/gt-ui-theme" }
