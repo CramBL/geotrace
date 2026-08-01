@@ -8,7 +8,7 @@
 //!
 //! [`awaiting_publication`] only shapes how a 404 is worded.
 
-use chrono::{Days, NaiveDate, Utc};
+use chrono::{DateTime, Days, NaiveDate, Utc};
 
 /// The first day of coverage, as (year, month, day).
 ///
@@ -81,6 +81,33 @@ pub fn awaiting_publication(day: NaiveDate, today_utc: NaiveDate) -> bool {
     }
 }
 
+/// Most UTC days one recording is allowed to pull in.
+///
+/// A track spanning longer than this is left to an explicit backfill: a
+/// recording should not silently turn into hundreds of requests.
+pub const MAX_DAYS_PER_TRACK: usize = 7;
+
+/// The UTC days `start..=end` touches, oldest first.
+///
+/// [`None`] when the span covers more than [`MAX_DAYS_PER_TRACK`], or when
+/// `end` precedes `start`.
+pub fn days_spanned(start: DateTime<Utc>, end: DateTime<Utc>) -> Option<Vec<NaiveDate>> {
+    let (first, last) = (start.date_naive(), end.date_naive());
+    if last < first {
+        return None;
+    }
+    let mut days = Vec::new();
+    let mut day = first;
+    while day <= last {
+        if days.len() == MAX_DAYS_PER_TRACK {
+            return None;
+        }
+        days.push(day);
+        day = day.checked_add_days(Days::new(1))?;
+    }
+    Some(days)
+}
+
 /// The current UTC day. Datasets are UTC-day granular, so a local date is
 /// never the right input.
 pub fn today_utc() -> NaiveDate {
@@ -134,6 +161,43 @@ mod tests {
         .collect();
         let declared: HashSet<DayOutlook> = DayOutlook::iter().collect();
         assert_eq!(reached, declared);
+    }
+
+    fn at(year: i32, month: u32, day: u32, hour: u32) -> DateTime<Utc> {
+        date(year, month, day)
+            .and_hms_opt(hour, 0, 0)
+            .unwrap()
+            .and_utc()
+    }
+
+    #[rstest]
+    #[case::within_one_day(at(2026, 7, 20, 8), at(2026, 7, 20, 17), Some(vec![date(2026, 7, 20)]))]
+    #[case::across_midnight(
+        at(2026, 7, 20, 23),
+        at(2026, 7, 21, 1),
+        Some(vec![date(2026, 7, 20), date(2026, 7, 21)])
+    )]
+    #[case::exactly_the_limit(
+        at(2026, 7, 20, 0),
+        at(2026, 7, 26, 23),
+        Some(vec![
+            date(2026, 7, 20),
+            date(2026, 7, 21),
+            date(2026, 7, 22),
+            date(2026, 7, 23),
+            date(2026, 7, 24),
+            date(2026, 7, 25),
+            date(2026, 7, 26),
+        ])
+    )]
+    #[case::one_past_the_limit(at(2026, 7, 20, 0), at(2026, 7, 27, 0), None)]
+    #[case::end_before_start(at(2026, 7, 21, 0), at(2026, 7, 20, 0), None)]
+    fn days_spanned_covers_the_recording(
+        #[case] start: DateTime<Utc>,
+        #[case] end: DateTime<Utc>,
+        #[case] expected: Option<Vec<NaiveDate>>,
+    ) {
+        assert_eq!(days_spanned(start, end), expected);
     }
 
     #[rstest]

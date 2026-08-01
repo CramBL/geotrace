@@ -28,6 +28,7 @@ use egui_phosphor::regular::X_CIRCLE as ICON_X_CIRCLE;
 mod auto_prune;
 mod history;
 mod history_db;
+mod jamming;
 mod loader;
 mod modals;
 mod query;
@@ -318,6 +319,8 @@ pub struct App {
     /// Background worker that owns the history database. All reads and edits go
     /// through it so the UI thread never blocks on disk I/O.
     history: history_db::HistoryWorker,
+    /// Queues and ingests interference days for loaded tracks.
+    jamming: jamming::JammingScheduler,
     /// Set when the database could not be opened because it is marked as locked
     /// (open for write). Drives a confirmation dialog offering to clear it.
     pending_history_unlock: Option<PathBuf>,
@@ -481,6 +484,34 @@ impl App {
             Option<PathBuf>,
         ) = (history_db::HistoryWorker::disabled(), None, None);
 
+        // Tests never touch the production archive either. A missing or
+        // unusable archive disables interference fetching and nothing else.
+        #[cfg(not(test))]
+        let jamming = {
+            let archive = gt_store::Store::open_default().ok().and_then(|store| {
+                store
+                    .open_interference()
+                    .inspect_err(|err| {
+                        log::error!(
+                            "Interference archive at {} is unusable: {err}",
+                            store.interference_path().display()
+                        );
+                    })
+                    .ok()
+            });
+            jamming::JammingScheduler::new(
+                cc.egui_ctx.clone(),
+                archive,
+                gt_jam::DEFAULT_BASE_URL.to_owned(),
+            )
+        };
+        #[cfg(test)]
+        let jamming = jamming::JammingScheduler::new(
+            cc.egui_ctx.clone(),
+            None,
+            gt_jam::DEFAULT_BASE_URL.to_owned(),
+        );
+
         // A fixed placeholder in tests so version-bearing UI snapshots stay
         // stable across release bumps; the real crate version otherwise.
         #[cfg(test)]
@@ -489,6 +520,7 @@ impl App {
         let app_version = env!("CARGO_PKG_VERSION");
 
         let mut app = Self {
+            jamming,
             map,
             shared: Rc::new(RefCell::new(SharedAppState {
                 loaded_files: LoadedFiles::new(),
@@ -1784,6 +1816,9 @@ impl App {
                 if let Some(db_ref) = history.db_ref() {
                     self.history.load_snap_runs(db_ref.clone());
                 }
+                for track in &file.tracks {
+                    self.jamming.request_days_for(track.metadata.time_range);
+                }
                 let orphans: Vec<(chrono::DateTime<chrono::Utc>, String)> = file
                     .orphaned_event_markers
                     .iter()
@@ -2407,6 +2442,7 @@ impl eframe::App for App {
         for resp in self.history.poll() {
             self.handle_history_response(resp);
         }
+        self.jamming.poll();
 
         // Apply finished snap runs and progress updates, persist completed
         // runs of history-stored files, and let the queue react to
