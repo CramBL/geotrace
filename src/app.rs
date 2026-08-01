@@ -2313,8 +2313,8 @@ struct MainBehavior<'a> {
     query_matches: Option<&'a gt_ui_types::QueryMatches>,
     /// Snapped-track geometry of completed, shown snap runs.
     snapped_tracks: &'a gt_ui_types::SnappedTracks,
-    /// Interference cells archived for the day the overlay shows.
-    jamming_cells: usize,
+    /// The interference cells the overlay draws, for the shown day.
+    jamming_dataset: Option<&'a gt_jam::dataset::JamDataset>,
     /// Snap error per track of completed snap runs, for the plot.
     snap_error: &'a gt_ui_types::SnapErrorSeries,
 }
@@ -2340,7 +2340,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     s.tree.generated_marker_visibility(),
                     self.query_matches,
                     Some(self.snapped_tracks),
-                    self.jamming_cells,
+                    self.jamming_dataset,
                     center_req,
                     zoom_to_visible,
                     popup_pos,
@@ -2767,9 +2767,9 @@ impl eframe::App for App {
                 let map = &mut self.map;
                 let tiles_tree = &mut self.tiles_tree;
                 // The overlay shows the UTC day the first visible track
-                // starts in; the day stepper lands with the renderer.
-                let jamming_cells = shown_interference_day(&s.loaded_files, s.tree.visibility())
-                    .map_or(0, |day| self.jamming.archived_cells(day));
+                // starts in. There is no day stepper yet.
+                let shown_day = shown_interference_day(&s.loaded_files, s.tree.visibility());
+                let jamming_dataset = self.jamming.shown_dataset(shown_day);
                 let mut behavior = MainBehavior {
                     map,
                     state: &mut s,
@@ -2780,7 +2780,7 @@ impl eframe::App for App {
                     query_matches: self.query_window.matches(),
                     snapped_tracks: &snapped_tracks,
                     snap_error: &snap_error,
-                    jamming_cells,
+                    jamming_dataset,
                 };
                 tiles_tree.ui(&mut behavior, ui);
                 toggle_plot_request = behavior.toggle_plot_request;

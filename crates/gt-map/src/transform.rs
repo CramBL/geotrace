@@ -148,6 +148,23 @@ impl MercTransform {
         }
     }
 
+    /// Like [`MercTransform::for_test_centered`], centred on a position and
+    /// framed so that position lands at `clip_center` on screen.
+    #[cfg(test)]
+    pub(crate) fn for_test_view(
+        total_px: f64,
+        lat: Latitude,
+        lon: Longitude,
+        clip_center: egui::Pos2,
+    ) -> Self {
+        Self {
+            clip_center_x: f64::from(clip_center.x),
+            clip_center_y: f64::from(clip_center.y),
+            merc_center: mercator::normalize(lat, lon),
+            scale: MapScale { total_px },
+        }
+    }
+
     /// Project a pre-computed normalised Mercator coordinate to a screen position.
     #[inline]
     pub(crate) fn to_screen(&self, merc: MercPoint) -> egui::Pos2 {

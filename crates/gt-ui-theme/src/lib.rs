@@ -176,6 +176,51 @@ pub fn track_color(fi: usize, ti: usize) -> Color32 {
     TRACK_COLORS[idx % TRACK_COLORS.len()]
 }
 
+/// Share of aircraft below which a cell reads as clear. gpsjam's own site
+/// colours cells green under 2 %.
+pub const INTERFERENCE_LOW_BREAKPOINT: f32 = 0.02;
+
+/// Share at or above which a cell reads as heavily affected. Yellow between
+/// the two breakpoints, red from here.
+pub const INTERFERENCE_HIGH_BREAKPOINT: f32 = 0.10;
+
+/// Fill opacity of an interference cell. Low enough that the track ink drawn
+/// over it stays legible.
+pub const INTERFERENCE_FILL_ALPHA: u8 = 70;
+
+/// The themed fill for a cell where `bad_fraction` of aircraft reported low
+/// navigation integrity.
+///
+/// A continuous green → yellow → red ramp with the breakpoints as its
+/// anchors, so a cell just past a breakpoint does not jump a whole tier.
+pub fn interference_color(bad_fraction: f32) -> ThemedColor {
+    const CLEAR: (Color32, Color32) =
+        (Color32::from_rgb(0, 180, 80), Color32::from_rgb(0, 120, 55));
+    const ELEVATED: (Color32, Color32) = (
+        Color32::from_rgb(230, 200, 0),
+        Color32::from_rgb(160, 130, 0),
+    );
+    const HEAVY: (Color32, Color32) = (
+        Color32::from_rgb(230, 60, 40),
+        Color32::from_rgb(175, 30, 20),
+    );
+
+    let fraction = bad_fraction.clamp(0.0, 1.0);
+    let (from, to, t) = if fraction <= INTERFERENCE_LOW_BREAKPOINT {
+        (CLEAR, ELEVATED, fraction / INTERFERENCE_LOW_BREAKPOINT)
+    } else if fraction < INTERFERENCE_HIGH_BREAKPOINT {
+        let span = INTERFERENCE_HIGH_BREAKPOINT - INTERFERENCE_LOW_BREAKPOINT;
+        (
+            ELEVATED,
+            HEAVY,
+            (fraction - INTERFERENCE_LOW_BREAKPOINT) / span,
+        )
+    } else {
+        (HEAVY, HEAVY, 0.0)
+    };
+    ThemedColor::new(from.0.lerp_to_gamma(to.0, t), from.1.lerp_to_gamma(to.1, t))
+}
+
 /// The themed colour for a [`SignalQuality`](gt_types::SignalQuality) tier on a
 /// green → red scale.
 pub const fn snr_themed_color(quality: gt_types::SignalQuality) -> ThemedColor {

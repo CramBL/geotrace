@@ -8,6 +8,7 @@ pub mod event_marker_renderer;
 pub mod generated_marker_renderer;
 mod hover_labels;
 pub mod icon_mesh;
+mod jamming_renderer;
 pub mod marker_renderer;
 mod polyline;
 mod query_match_renderer;
@@ -30,6 +31,7 @@ pub use viewport::GeoBounds;
 use egui::Context;
 
 use gt_filter::GlobalFilter;
+use gt_jam::dataset::JamDataset;
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
@@ -415,7 +417,7 @@ impl NavMap {
         generated_marker_visibility: &GeneratedMarkerVisibility,
         query_matches: Option<&QueryMatches>,
         snapped_tracks: Option<&SnappedTracks>,
-        jamming_cells: usize,
+        jamming_dataset: Option<&JamDataset>,
         center_request: Option<(f64, f64)>,
         zoom_to_visible: bool,
         sticky_pos_override: Option<egui::Pos2>,
@@ -554,10 +556,18 @@ impl NavMap {
                 )
             }
         };
+        // The interference overlay goes on first so every track renderer
+        // draws over it.
+        let mut map = map;
+        if display_mask.is_visible(DisplayCategory::JammingHexes)
+            && let Some(dataset) = jamming_dataset
+        {
+            map = map.with_plugin(jamming_renderer::JammingRenderer::new(dataset));
+        }
         // A masked display category skips its whole plugin - the mask is
         // the render-side AND on top of the per-track tree visibility the
         // renderers already consume.
-        let mut map = map.with_plugin(
+        map = map.with_plugin(
             TrackLayers::builder()
                 .files(files)
                 .plan(&plan)
@@ -726,7 +736,7 @@ impl NavMap {
                     query_matches,
                     display_counts::SuppliedCounts {
                         snapped_tracks,
-                        jamming_cells,
+                        jamming_cells: jamming_dataset.map_or(0, JamDataset::len),
                     },
                 )
             },
@@ -2027,7 +2037,7 @@ mod snapshot_tests {
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         Some(&matches),
                         None,
-                        0,
+                        None,
                         None,
                         false,
                         None,
@@ -2038,6 +2048,85 @@ mod snapshot_tests {
 
         // First frame zooms to fit the newly seen file; extra frames let the
         // blink/fade animations settle before the snapshot.
+        for _ in 0..5 {
+            harness.run();
+        }
+        harness.snapshot_loose(name);
+    }
+
+    /// Interference cells around the snapshot fixture's track, tallied
+    /// across the ramp so one snapshot shows clear, elevated, heavy, and
+    /// low-sample fills together.
+    fn snapshot_jamming_dataset() -> JamDataset {
+        use gt_jam::wire::HexObservation;
+
+        let center = h3o::LatLng::new(55.686_7, 12.563_8)
+            .expect("fixture position")
+            .to_cell(gt_jam::H3_RESOLUTION);
+        let tallies = [
+            (400, 0),
+            (98, 2),
+            (94, 6),
+            (90, 10),
+            (60, 40),
+            (2, 2),
+            (1, 1),
+        ];
+        let observations = center
+            .grid_disk::<Vec<_>>(1)
+            .into_iter()
+            .zip(tallies)
+            .map(|(cell, (good, bad))| HexObservation { cell, good, bad })
+            .collect();
+        JamDataset::new(
+            chrono::NaiveDate::from_ymd_opt(2026, 7, 20).expect("date"),
+            observations,
+        )
+    }
+
+    /// The interference overlay under the fixture track. At the zoom that
+    /// frames a 1 km track a single 22 km cell covers the viewport, so this
+    /// pins the fill and the draw order - track ink over cells - rather than
+    /// the ramp, which `jamming_renderer`'s own tests cover. Requires
+    /// `GEOTRACE_OFFLINE=1` (set by `just test`) so no map tiles render.
+    #[rstest::rstest]
+    #[case::dark("jamming_overlay_dark", true)]
+    #[case::light("jamming_overlay_light", false)]
+    fn snapshot_jamming_overlay(#[case] name: &str, #[case] dark_mode: bool) {
+        let files = vec![make_snapshot_file()];
+        let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
+        let dataset = snapshot_jamming_dataset();
+
+        let mut harness = crate::test_harness::builder()
+            .size(egui::vec2(800.0, 600.0))
+            .theme(dark_mode)
+            .ui_state(
+                move |ui, map: &mut Option<NavMap>| {
+                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let mut highlight = gt_ui_types::MapHighlight::default();
+                    map.draw(
+                        ui,
+                        &files,
+                        &visibility,
+                        &mut highlight,
+                        &gt_filter::GlobalFilter::default(),
+                        &mut gt_ui_types::DisplayMask::default(),
+                        &mut gt_ui_types::SkyGlyphVariant::default(),
+                        &mut gt_ui_types::PointWindowFolds::default(),
+                        &gt_ui_types::EventMarkerVisibility::default(),
+                        &gt_ui_types::GeneratedMarkerVisibility::default(),
+                        None,
+                        None,
+                        Some(&dataset),
+                        None,
+                        false,
+                        None,
+                    );
+                },
+                None,
+            );
+
+        // The first frame zooms to fit the file; the rest settle animations.
         for _ in 0..5 {
             harness.run();
         }
@@ -2099,7 +2188,7 @@ mod snapshot_tests {
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
                         Some(&snapped),
-                        0,
+                        None,
                         None,
                         false,
                         None,
@@ -2446,7 +2535,7 @@ mod snapshot_tests {
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
                         Some(&snapped),
-                        0,
+                        None,
                         None,
                         false,
                         None,
@@ -2531,7 +2620,7 @@ mod snapshot_tests {
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
                         None,
-                        0,
+                        None,
                         None,
                         false,
                         None,
@@ -2583,7 +2672,7 @@ mod snapshot_tests {
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
                         None,
-                        0,
+                        None,
                         None,
                         false,
                         None,
@@ -2641,7 +2730,7 @@ mod snapshot_tests {
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
                         None,
-                        0,
+                        None,
                         None,
                         false,
                         None,
@@ -2694,7 +2783,7 @@ mod snapshot_tests {
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
                         None,
-                        0,
+                        None,
                         None,
                         false,
                         None,
@@ -2747,7 +2836,7 @@ mod snapshot_tests {
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
                         None,
-                        0,
+                        None,
                         None,
                         false,
                         None,
@@ -2810,7 +2899,7 @@ mod snapshot_tests {
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
                         None,
-                        0,
+                        None,
                         None,
                         false,
                         None,
