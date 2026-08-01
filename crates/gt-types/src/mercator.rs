@@ -36,9 +36,29 @@ pub fn normalize(lat: Latitude, lon: Longitude) -> MercPoint {
     }
 }
 
+/// Wrap a longitude in degrees into `[-180, 180]`.
+///
+/// A viewport can reach past the antimeridian, where the projection's own x
+/// keeps growing.
+pub fn wrap_longitude_degrees(deg: f64) -> f64 {
+    (deg + 180.0).rem_euclid(360.0) - 180.0
+}
+
+/// The inverse of [`normalize`]: a normalized Mercator position back to
+/// degrees, with the longitude wrapped into `[-180, 180]`.
+///
+/// Latitude is not clamped: an x or y outside `[0.0, 1.0]` extrapolates past
+/// the projection's limits, which the viewport does when zoomed out far
+/// enough to show the poles.
+pub fn denormalize(point: MercPoint) -> (f64, f64) {
+    let lon = (point.x * 2.0 - 1.0) * PI;
+    let lat = ((1.0 - point.y * 2.0) * PI).sinh().atan();
+    (lat.to_degrees(), wrap_longitude_degrees(lon.to_degrees()))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Latitude, Longitude, normalize};
+    use super::{Latitude, Longitude, MercPoint, denormalize, normalize, wrap_longitude_degrees};
 
     proptest::proptest! {
         /// `normalize` must never return NaN or Inf for any geographically valid input.
@@ -89,5 +109,38 @@ mod tests {
         let pt_north = normalize(Latitude::new(60.0), Longitude::new(0.0));
         let pt_south = normalize(Latitude::new(-60.0), Longitude::new(0.0));
         assert!(pt_north.y < pt_south.y);
+    }
+
+    proptest::proptest! {
+        /// `denormalize` inverts `normalize` to within floating-point noise.
+        #[test]
+        fn denormalize_inverts_normalize(
+            lat in -85.0_f64..=85.0,
+            lon in -180.0_f64..=180.0,
+        ) {
+            let point = normalize(Latitude::new(lat), Longitude::new(lon));
+            let (back_lat, back_lon) = denormalize(point);
+            proptest::prop_assert!((back_lat - lat).abs() < 1e-9, "lat {lat} -> {back_lat}");
+            proptest::prop_assert!((back_lon - lon).abs() < 1e-9, "lon {lon} -> {back_lon}");
+        }
+    }
+
+    #[test]
+    fn wrap_longitude_degrees_wraps_past_the_antimeridian() {
+        assert!((wrap_longitude_degrees(180.3) - -179.7).abs() < 1e-9);
+        assert!((wrap_longitude_degrees(-180.3) - 179.7).abs() < 1e-9);
+        assert!((wrap_longitude_degrees(12.5) - 12.5).abs() < 1e-9);
+    }
+
+    /// A viewport past the antimeridian denormalizes to a real longitude,
+    /// not one past 180 that no cell centre can match.
+    #[test]
+    fn denormalize_wraps_past_the_antimeridian() {
+        let (_, lon) = denormalize(MercPoint { x: 1.001, y: 0.5 });
+        assert!(
+            lon < 0.0,
+            "past the date line is a western longitude, got {lon}"
+        );
+        assert!((-180.0..=180.0).contains(&lon));
     }
 }

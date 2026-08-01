@@ -17,6 +17,7 @@ use chrono::{NaiveDate, Utc};
 use egui::Context;
 
 use gt_jam::calendar::{self, DayOutlook};
+use gt_jam::dataset::JamDataset;
 use gt_jam::transport::{self, FetchOutcome, HttpTransport, Transport};
 use gt_jam::wire::{self, ParseWarningReporter};
 use gt_store::JamStore;
@@ -69,6 +70,11 @@ pub struct JammingScheduler {
     /// so the display toggle does not open the archive per frame. Assumes
     /// this process is the archive's only writer.
     archived_cells: HashMap<NaiveDate, u32>,
+    /// The day the overlay draws, and its cells, loaded from the archive on
+    /// demand and kept until the shown day changes. A day is never
+    /// re-ingested - `insert_day` refuses one already stored - so a loaded
+    /// day cannot go out of date.
+    shown: Option<(NaiveDate, JamDataset)>,
 }
 
 impl JammingScheduler {
@@ -87,6 +93,7 @@ impl JammingScheduler {
             .collect();
         Self {
             archived_cells,
+            shown: None,
             ctx,
             tx,
             rx,
@@ -169,11 +176,35 @@ impl JammingScheduler {
         self.start_next();
     }
 
-    /// Cells archived for `day`, or zero if the day is not archived.
-    pub fn archived_cells(&self, day: NaiveDate) -> usize {
-        self.archived_cells
+    /// The dataset to draw for `day`, loading it from the archive the first
+    /// time the day is shown.
+    ///
+    /// [`None`] when the day is not archived, or when reading it failed.
+    pub fn shown_dataset(&mut self, day: Option<NaiveDate>) -> Option<&JamDataset> {
+        let day = day?;
+        if self.shown.as_ref().is_none_or(|(shown, _)| *shown != day) {
+            self.shown = self.load_dataset(day).map(|dataset| (day, dataset));
+        }
+        self.shown
+            .as_ref()
+            .filter(|(shown, _)| *shown == day)
+            .map(|(_, dataset)| dataset)
+    }
+
+    fn load_dataset(&self, day: NaiveDate) -> Option<JamDataset> {
+        if self
+            .archived_cells
             .get(&day)
-            .map_or(0, |&cells| cells as usize)
+            .is_none_or(|&cells| cells == 0)
+        {
+            return None;
+        }
+        self.store
+            .as_ref()?
+            .dataset(day)
+            .inspect_err(|err| log::error!("Reading interference cells for {day}: {err}"))
+            .ok()
+            .flatten()
     }
 
     /// Days that could not be archived, oldest first.
