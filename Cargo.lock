@@ -2222,6 +2222,7 @@ dependencies = [
  "gt-analysis",
  "gt-filter",
  "gt-fmt",
+ "gt-jam",
  "gt-loaded-files",
  "gt-loader",
  "gt-logfile",

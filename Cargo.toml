@@ -280,6 +280,7 @@ geotrace-sdk-units = { path = "sdk/rust/geotrace-sdk-units" }
 gt-analysis = { path = "crates/gt-analysis" }
 gt-filter = { path = "crates/gt-filter" }
 gt-fmt = { path = "crates/gt-fmt" }
+gt-jam = { path = "crates/gt-jam" }
 gt-loaded-files = { path = "crates/gt-loaded-files" }
 gt-loader = { path = "crates/gt-loader" }
 gt-logfile = { path = "crates/gt-logfile" }
