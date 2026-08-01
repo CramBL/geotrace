@@ -355,8 +355,6 @@ pub enum DbError {
     Io(#[from] std::io::Error),
     #[error("database schema version {found} is newer than supported {supported}")]
     SchemaTooNew { found: i64, supported: i64 },
-    #[error("no platform data directory available")]
-    NoDataDir,
     /// The database is marked as open for write - typically a stale flag left by
     /// an unclean shutdown. Recoverable via [`HistoryDatabase::clear_write_lock`]
     /// once the user confirms no other process is using it.

@@ -107,7 +107,7 @@ pub(super) enum HistoryOpen {
     /// Remove these track positions (0-based, segmentation order) from the loaded
     /// view - the recording's hidden tracks. The stored table is left unchanged.
     ApplyHidden {
-        db_ref: gt_history::DatabaseRef,
+        db_ref: gt_store::DatabaseRef,
         positions: Vec<usize>,
         applied_current_marker_settings: bool,
     },
@@ -115,7 +115,7 @@ pub(super) enum HistoryOpen {
     /// a fresh segmentation under the load config (recalculation), discarding the
     /// previous hidden marks.
     Recalculate {
-        db_ref: gt_history::DatabaseRef,
+        db_ref: gt_store::DatabaseRef,
         applied_current_marker_settings: bool,
     },
 }
@@ -134,7 +134,7 @@ impl HistoryOpen {
         }
     }
 
-    fn db_ref(&self) -> &gt_history::DatabaseRef {
+    fn db_ref(&self) -> &gt_store::DatabaseRef {
         match self {
             Self::ApplyHidden { db_ref, .. } | Self::Recalculate { db_ref, .. } => db_ref,
         }
@@ -247,7 +247,7 @@ impl LoadJobs {
                                 None
                             }
                         };
-                        let meta = match bytes.as_deref().map(gt_history::extract_meta) {
+                        let meta = match bytes.as_deref().map(gt_store::extract_meta) {
                             Some(Ok(meta)) => Some(meta),
                             Some(Err(e)) => {
                                 log::warn!(
@@ -354,7 +354,7 @@ impl LoadJobs {
                             let applied_current_marker_settings = open
                                 .as_ref()
                                 .is_some_and(HistoryOpen::applied_current_marker_settings);
-                            let meta = match gt_history::extract_meta(&bytes) {
+                            let meta = match gt_store::extract_meta(&bytes) {
                                 Ok(meta) => Some(meta),
                                 Err(e) => {
                                     log::warn!(
@@ -773,8 +773,8 @@ fn finish_log_load(
 /// differ from those the stored tracks were built with.
 pub(crate) fn stored_segmentation_from_config(
     config: &SegmentationConfig,
-) -> gt_history::StoredSegmentation {
-    gt_history::StoredSegmentation {
+) -> gt_store::StoredSegmentation {
+    gt_store::StoredSegmentation {
         track_split_gap_us: track_split_gap_us(config.track_layout),
         detect_clock_discontinuities: config.generated_markers.detect_clock_discontinuities,
         clock_discontinuity_sigmas: config.generated_markers.clock_discontinuity_sigmas,
@@ -788,15 +788,13 @@ fn track_split_gap_us(config: TrackLayoutConfig) -> i64 {
         .unwrap_or(i64::MAX)
 }
 
-fn track_layout_from_stored(settings: &gt_history::StoredSegmentation) -> TrackLayoutConfig {
+fn track_layout_from_stored(settings: &gt_store::StoredSegmentation) -> TrackLayoutConfig {
     TrackLayoutConfig {
         track_split_gap: chrono::Duration::microseconds(settings.track_split_gap_us),
     }
 }
 
-fn generated_markers_from_stored(
-    settings: &gt_history::StoredSegmentation,
-) -> GeneratedMarkerConfig {
+fn generated_markers_from_stored(settings: &gt_store::StoredSegmentation) -> GeneratedMarkerConfig {
     GeneratedMarkerConfig {
         detect_clock_discontinuities: settings.detect_clock_discontinuities,
         clock_discontinuity_sigmas: settings.clock_discontinuity_sigmas,
@@ -808,7 +806,7 @@ fn generated_markers_from_stored(
 /// setting as the current app config. Generated-marker settings are intentionally
 /// ignored here because they do not affect the stored track ranges.
 pub(crate) fn track_split_matches_config(
-    settings: &gt_history::StoredSegmentation,
+    settings: &gt_store::StoredSegmentation,
     config: &SegmentationConfig,
 ) -> bool {
     track_layout_from_stored(settings) == config.track_layout
@@ -820,7 +818,7 @@ pub(crate) fn track_split_matches_config(
 /// the stored track table. Generated-marker settings come from `current`, so a
 /// history load reflects the user's current marker toggles and slip thresholds.
 pub(crate) fn config_from_stored_segmentation(
-    settings: &gt_history::StoredSegmentation,
+    settings: &gt_store::StoredSegmentation,
     current: SegmentationConfig,
 ) -> SegmentationConfig {
     SegmentationConfig {
@@ -834,7 +832,7 @@ pub(crate) fn config_from_stored_segmentation(
 /// so missing fields are treated as the historical defaults for mismatch
 /// detection only; loading still uses [`config_from_stored_segmentation`].
 pub(crate) fn marker_settings_match_config(
-    settings: &gt_history::StoredSegmentation,
+    settings: &gt_store::StoredSegmentation,
     current: &SegmentationConfig,
 ) -> bool {
     generated_markers_from_stored(settings) == current.generated_markers
@@ -845,13 +843,13 @@ pub(crate) fn marker_settings_match_config(
 /// Segmentation produces contiguous ranges and the loader builds nav points 1:1
 /// with the original file, so the cumulative point counts reconstruct the exact
 /// `[start, end)` ranges into the recording's nav points.
-fn track_ranges_from_file(file: &LoadedFile) -> Vec<gt_history::TrackRange> {
+fn track_ranges_from_file(file: &LoadedFile) -> Vec<gt_store::TrackRange> {
     let mut start = 0_u64;
     file.tracks
         .iter()
         .map(|t| {
             let end = start + t.points.len() as u64;
-            let range = gt_history::TrackRange {
+            let range = gt_store::TrackRange {
                 start,
                 end,
                 hidden: false,
@@ -884,14 +882,14 @@ fn drop_tracks(file: &mut LoadedFile, positions: &[usize]) {
 /// continues on failure - the recording is still loaded into the view.
 fn recalculate_stored_tracks(
     db_path: &std::path::Path,
-    db_ref: &gt_history::DatabaseRef,
+    db_ref: &gt_store::DatabaseRef,
     file: &LoadedFile,
     config: &SegmentationConfig,
 ) {
-    use gt_history::HistoryDatabase;
+    use gt_store::HistoryDatabase;
     let tracks = track_ranges_from_file(file);
     let settings = stored_segmentation_from_config(config);
-    match gt_history::Database::open_or_create(db_path) {
+    match gt_store::Recordings::open_or_create(db_path) {
         Ok(mut db) => match db.set_tracks(db_ref, &tracks, settings) {
             Ok(()) => log::info!(
                 "Recalculated stored tracks for {}/{} ({} track(s))",
@@ -916,12 +914,12 @@ fn store_in_history(
     db_path: Option<&std::path::Path>,
     file: &LoadedFile,
     identity: &str,
-    meta: Option<&gt_history::RecordingMeta>,
+    meta: Option<&gt_store::RecordingMeta>,
     config: &SegmentationConfig,
     bytes: Option<&[u8]>,
     filename: &str,
-) -> Option<gt_history::DatabaseRef> {
-    use gt_history::HistoryDatabase;
+) -> Option<gt_store::DatabaseRef> {
+    use gt_store::HistoryDatabase;
 
     let Some(path) = db_path else {
         log::debug!("Storage disabled; not storing '{filename}' in history");
@@ -942,7 +940,7 @@ fn store_in_history(
     );
     let settings = stored_segmentation_from_config(config);
 
-    let mut db = match gt_history::Database::open_or_create(path) {
+    let mut db = match gt_store::Recordings::open_or_create(path) {
         Ok(db) => db,
         Err(e) => {
             log::warn!("Could not open history database at {}: {e}", path.display());
@@ -1000,7 +998,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use chrono::DateTime;
-    use gt_history::{Database, HistoryDatabase};
+    use gt_store::{HistoryDatabase, Recordings};
     use gt_test_utils::{SyntheticGtdSpec, synthetic_gtd_bytes};
 
     use super::*;
@@ -1159,7 +1157,7 @@ mod tests {
             "loading with storage enabled must produce a history db_ref"
         );
 
-        let db = Database::open_or_create(&db_path).expect("open history db");
+        let db = Recordings::open_or_create(&db_path).expect("open history db");
         let entries = db.list_recordings().expect("list recordings");
         assert_eq!(
             entries.len(),
@@ -1212,7 +1210,7 @@ mod tests {
             .cloned()
             .expect("loaded file must be stored in history");
 
-        let mut db = Database::open_or_create(&db_path).expect("open db");
+        let mut db = Recordings::open_or_create(&db_path).expect("open db");
         let stored = db.load(&db_ref).expect("load stored recording");
         assert!(
             !stored.tracks.is_empty(),

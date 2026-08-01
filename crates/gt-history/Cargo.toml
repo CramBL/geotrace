@@ -21,7 +21,6 @@ backend-pure = ["dep:gt-history-backend-pure"]
 backend-sys = ["dep:gt-history-backend-sys"]
 
 [dependencies]
-dirs.workspace = true
 gt-history-backend-pure = { path = "../gt-history-backend-pure", optional = true }
 gt-history-backend-sys = { path = "../gt-history-backend-sys", optional = true }
 gt-history-types = { path = "../gt-history-types" }

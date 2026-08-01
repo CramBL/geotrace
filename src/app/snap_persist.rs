@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn roundtrips_through_a_history_database() {
         use geotrace_sdk::{Angle, DateTime, Duration as SdkDuration, NavFileBuilder, NavFix};
-        use gt_history::{Database, HistoryDatabase, StoredSegmentation, TrackRange};
+        use gt_store::{HistoryDatabase, Recordings, StoredSegmentation, TrackRange};
 
         let t0 = DateTime::from_timestamp(1_000, 0).expect("valid timestamp");
         let mut recorder = NavFileBuilder::new().open();
@@ -203,8 +203,8 @@ mod tests {
         nav_file.write(&mut bytes).expect("write bytes");
 
         let dir = tempfile::tempdir().expect("temp dir");
-        let mut db = Database::open_or_create(&dir.path().join("geotrace.h5")).expect("open");
-        let meta = gt_history::extract_meta(&bytes).expect("meta");
+        let mut db = Recordings::open_or_create(&dir.path().join("geotrace.h5")).expect("open");
+        let meta = gt_store::extract_meta(&bytes).expect("meta");
         let tracks = [TrackRange {
             start: 0,
             end: meta.nav_point_count,

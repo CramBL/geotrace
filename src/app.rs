@@ -122,11 +122,11 @@ impl SharedAppState {
 /// from the app's current ones. The user must choose to recalculate the tracks
 /// (current split setting) or use the stored tracks (previous split setting).
 struct ResegmentPrompt {
-    db_ref: gt_history::DatabaseRef,
+    db_ref: gt_store::DatabaseRef,
     filename: String,
     bytes: std::sync::Arc<[u8]>,
     /// Settings the stored tracks were built with.
-    stored: gt_history::StoredSegmentation,
+    stored: gt_store::StoredSegmentation,
     /// 0-based positions of the recording's hidden tracks, re-applied to the view
     /// when the user keeps the stored tracks.
     hidden_positions: Vec<usize>,
@@ -342,7 +342,7 @@ pub struct App {
     /// When `true`, show a confirmation dialog before auto-pruning.
     auto_prune_confirm: bool,
     /// Recordings selected for auto-pruning, waiting for the user to confirm.
-    pending_auto_prune: Option<Vec<gt_history::DatabaseRef>>,
+    pending_auto_prune: Option<Vec<gt_store::DatabaseRef>>,
 
     /// History window state.
     history_window: history::HistoryWindow,
@@ -446,15 +446,16 @@ impl App {
         // `apply_startup_settings`) only in non-test builds.
         #[cfg(not(test))]
         let (history, pending_history_unlock, pending_db_corruption) = {
-            use gt_history::{DbError, HistoryDatabase};
-            match gt_history::default_path() {
-                Ok(path) => match gt_history::Database::open_or_create(&path) {
+            use gt_store::{DbError, Store};
+            match Store::open_default() {
+                Ok(store) => match store.open_recordings() {
                     Ok(db) => (
                         history_db::HistoryWorker::spawn(db, cc.egui_ctx.clone()),
                         None,
                         None,
                     ),
                     Err(DbError::WriteLocked) => {
+                        let path = store.recordings_path();
                         log::warn!(
                             "History database at {} is locked (marked open for write)",
                             path.display()
@@ -462,12 +463,13 @@ impl App {
                         (history_db::HistoryWorker::disabled(), Some(path), None)
                     }
                     Err(e) => {
+                        let path = store.recordings_path();
                         log::error!("History database at {} is unusable: {e}", path.display());
                         (history_db::HistoryWorker::disabled(), None, Some(path))
                     }
                 },
                 Err(e) => {
-                    log::error!("Failed to locate history database: {e}");
+                    log::error!("Failed to locate the data directory: {e}");
                     (history_db::HistoryWorker::disabled(), None, None)
                 }
             }
@@ -1853,9 +1855,9 @@ impl App {
     /// Clear a stale write lock and bring the history database online, after the
     /// user confirmed no other process is using it.
     fn recover_history_database(&mut self, path: &std::path::Path, ctx: &egui::Context) {
-        use gt_history::HistoryDatabase;
-        let result = gt_history::Database::clear_write_lock(path)
-            .and_then(|()| gt_history::Database::open_or_create(path));
+        use gt_store::HistoryDatabase;
+        let result = gt_store::Recordings::clear_write_lock(path)
+            .and_then(|()| gt_store::Recordings::open_or_create(path));
         match result {
             Ok(db) => {
                 self.history = history_db::HistoryWorker::spawn(db, ctx.clone());
@@ -1879,7 +1881,7 @@ impl App {
         keep_backup: bool,
         ctx: &egui::Context,
     ) {
-        use gt_history::HistoryDatabase;
+        use gt_store::HistoryDatabase;
         if keep_backup {
             let backup = corrupt_backup_path(path);
             if let Err(e) = std::fs::rename(path, &backup) {
@@ -1896,7 +1898,7 @@ impl App {
             return;
         }
 
-        match gt_history::Database::open_or_create(path) {
+        match gt_store::Recordings::open_or_create(path) {
             Ok(db) => {
                 self.history = history_db::HistoryWorker::spawn(db, ctx.clone());
                 self.sync_db_path();
@@ -1960,8 +1962,8 @@ impl App {
     /// raises a prompt instead (recalculate vs. use the stored tracks).
     fn begin_history_open(
         &mut self,
-        db_ref: gt_history::DatabaseRef,
-        stored: gt_history::StoredRecording,
+        db_ref: gt_store::DatabaseRef,
+        stored: gt_store::StoredRecording,
     ) {
         // Reuse the original filename: the identity is the filename (with an
         // "auto:" prefix for auto-derived ones).
@@ -2111,7 +2113,7 @@ impl App {
     /// unrestored. Each run restores once, to its first matching track
     /// among the files loaded from this recording; the content-keyed
     /// stores serve every duplicate of that track from the same entry.
-    fn restore_snap_runs(&mut self, db_ref: &gt_history::DatabaseRef, blob: &[u8]) {
+    fn restore_snap_runs(&mut self, db_ref: &gt_store::DatabaseRef, blob: &[u8]) {
         let Some(stored) = snap_persist::decode(blob) else {
             return;
         };
@@ -3028,7 +3030,7 @@ impl eframe::App for App {
         show_recording_details_dialog(ui, &mut self.shared.borrow_mut().metadata_popup);
 
         let prev_storage = self.storage_enabled;
-        let loaded_metas: Vec<gt_history::RecordingMeta> = {
+        let loaded_metas: Vec<gt_store::RecordingMeta> = {
             let s = self.shared.borrow();
             s.loaded_files.view().recording_metas()
         };
