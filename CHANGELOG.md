@@ -8,6 +8,10 @@
 - An "Aircraft interference (%)" plot metric, valued per fix from that fix's own UTC day, breaking the line where no day is archived. It is queryable too, so `where jamming > 10 %` selects the stretches under reported interference.
 - Download interference history for a date range from settings, so old recordings have data the moment you open them. Days already archived are skipped, progress is shown, and it can be cancelled.
 
+### Changed
+
+- Updated `hdf5-pure` to 0.32.
+
 ## 0.10.0 - 2026-07-28
 
 ### Added

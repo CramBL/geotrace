@@ -250,11 +250,25 @@ fn backend_name() -> &'static str {
     }
 }
 
+/// How far past the baseline a file may end up and still count as reusing its
+/// space. Absolute sizes move with the HDF5 libraries, so the assertion is on
+/// the ratio. The snapshot below pins the exact numbers on top of it.
+const REUSE_SLACK_PERCENT: u64 = 10;
+
 /// Snapshot the exact baseline/after database file sizes (and their delta) with
 /// `insta`, so any change in the space behaviour is caught precisely and shown for
 /// review. The size is deterministic for a given backend toolchain (static
 /// libhdf5 / pure Rust, fixed-length group names), so the snapshot is stable.
+///
+/// The snapshot alone would let a regression through as an accepted new
+/// number, so the bound the tests are named for is asserted first.
 fn assert_size_snapshot(name: &str, baseline: u64, after: u64) {
+    let ceiling = baseline.saturating_add(baseline * REUSE_SLACK_PERCENT / 100);
+    assert!(
+        after <= ceiling,
+        "{name}: {after} bytes is past the {REUSE_SLACK_PERCENT}% reuse bound of {ceiling} \
+         (baseline {baseline})"
+    );
     let mut settings = insta::Settings::clone_current();
     settings.set_snapshot_suffix(backend_name());
     settings.bind(|| {

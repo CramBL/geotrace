@@ -2,6 +2,6 @@
 source: crates/gt-history/tests/integration.rs
 expression: "format!(\"baseline: {baseline}\\nafter:    {after}\\ndelta:    {}\", after as i64\n- baseline as i64)"
 ---
-baseline: 113010
-after:    113010
-delta:    0
+baseline: 104613
+after:    104603
+delta:    -10
