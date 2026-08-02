@@ -360,6 +360,11 @@ pub enum DbError {
     /// once the user confirms no other process is using it.
     #[error("database is marked as open for write (it may not have been closed cleanly)")]
     WriteLocked,
+    /// Another process holds the database open. Unlike [`DbError::WriteLocked`]
+    /// there is nothing to repair: the lock goes away when that process
+    /// releases the file.
+    #[error("the database is open in another process")]
+    Busy,
 }
 
 impl PruneMode {

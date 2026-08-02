@@ -7,10 +7,10 @@
 //! second, so no test reaches the user's recordings or interference
 //! archive.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use egui::Context;
-use gt_store::{DbError, JamStore, Store};
+use gt_store::{DbError, HistoryDatabase as _, JamStore, Recordings, Store};
 
 use super::history_db::HistoryWorker;
 
@@ -24,14 +24,33 @@ pub enum Storage {
     Disabled,
 }
 
+/// Why the recordings database is unavailable, and so which prompt the user
+/// gets. Each carries the database's path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HistoryFailure {
+    /// Another process holds the file. Nothing to repair.
+    Busy(PathBuf),
+    /// Marked open for write by a writer that did not shut down cleanly. The
+    /// user can clear the flag.
+    Locked(PathBuf),
+    /// The file cannot be read. The user can recreate it.
+    Unreadable(PathBuf),
+}
+
+impl HistoryFailure {
+    /// The database this failure concerns.
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::Busy(path) | Self::Locked(path) | Self::Unreadable(path) => path,
+        }
+    }
+}
+
 /// The databases a run holds, and what went wrong opening them.
 pub struct OpenStorage {
     pub history: HistoryWorker,
-    /// The recordings database is marked open for write. The UI offers to
-    /// clear the lock.
-    pub pending_history_unlock: Option<PathBuf>,
-    /// The recordings database could not be read.
-    pub pending_db_corruption: Option<PathBuf>,
+    /// Set when the recordings database could not be opened.
+    pub history_failure: Option<HistoryFailure>,
     /// [`None`] disables interference fetching and nothing else.
     pub archive: Option<JamStore>,
 }
@@ -41,8 +60,7 @@ impl OpenStorage {
     fn disabled() -> Self {
         Self {
             history: HistoryWorker::disabled(),
-            pending_history_unlock: None,
-            pending_db_corruption: None,
+            history_failure: None,
             archive: None,
         }
     }
@@ -63,25 +81,37 @@ impl Storage {
     }
 }
 
-/// Which prompt a failed recordings open turns into: a lock the user can
-/// clear, or a database that cannot be read at all.
+/// Which prompt a failed recordings open turns into.
 ///
-/// [`DbError::WriteLocked`] needs HDF5's post-crash consistency flags to
-/// reach, so the routing is a function of its own to keep it testable.
-fn history_failure(err: &DbError, path: PathBuf) -> (Option<PathBuf>, Option<PathBuf>) {
+/// [`DbError::Busy`] and [`DbError::WriteLocked`] both need conditions that
+/// are awkward to reach from a test, so the routing is a function of its own.
+fn classify_failure(err: &DbError, path: PathBuf) -> HistoryFailure {
     match err {
+        DbError::Busy => {
+            log::warn!(
+                "History database at {} is open in another process",
+                path.display()
+            );
+            HistoryFailure::Busy(path)
+        }
         DbError::WriteLocked => {
             log::warn!(
                 "History database at {} is locked (marked open for write)",
                 path.display()
             );
-            (Some(path), None)
+            HistoryFailure::Locked(path)
         }
         _ => {
             log::error!("History database at {} is unusable: {err}", path.display());
-            (None, Some(path))
+            HistoryFailure::Unreadable(path)
         }
     }
+}
+
+/// Open the recordings database again, classifying a failure the same way
+/// the startup open does.
+pub(crate) fn reopen_recordings(path: &Path) -> Result<Recordings, HistoryFailure> {
+    Recordings::open_or_create(path).map_err(|err| classify_failure(&err, path.to_owned()))
 }
 
 /// Open both databases under `store`.
@@ -89,12 +119,12 @@ fn history_failure(err: &DbError, path: PathBuf) -> (Option<PathBuf>, Option<Pat
 /// The archive is opened whatever the recordings database did: one being
 /// unusable says nothing about the other.
 fn open_in(store: &Store, ctx: &Context) -> OpenStorage {
-    let (history, pending_history_unlock, pending_db_corruption) = match store.open_recordings() {
-        Ok(db) => (HistoryWorker::spawn(db, ctx.clone()), None, None),
-        Err(err) => {
-            let (unlock, corruption) = history_failure(&err, store.recordings_path());
-            (HistoryWorker::disabled(), unlock, corruption)
-        }
+    let (history, history_failure) = match store.open_recordings() {
+        Ok(db) => (HistoryWorker::spawn(db, ctx.clone()), None),
+        Err(err) => (
+            HistoryWorker::disabled(),
+            Some(classify_failure(&err, store.recordings_path())),
+        ),
     };
 
     let archive = store
@@ -109,8 +139,7 @@ fn open_in(store: &Store, ctx: &Context) -> OpenStorage {
 
     OpenStorage {
         history,
-        pending_history_unlock,
-        pending_db_corruption,
+        history_failure,
         archive,
     }
 }
@@ -121,6 +150,10 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    fn db_path() -> PathBuf {
+        PathBuf::from("/tmp/recordings.h5")
+    }
 
     /// A store under a throwaway root, so the user's data directory is never
     /// the one being opened.
@@ -136,8 +169,7 @@ mod tests {
     fn disabled_storage_opens_nothing() {
         let opened = Storage::Disabled.open(&Context::default());
         assert!(opened.history.path().is_none());
-        assert!(opened.pending_history_unlock.is_none());
-        assert!(opened.pending_db_corruption.is_none());
+        assert!(opened.history_failure.is_none());
         assert!(opened.archive.is_none());
     }
 
@@ -148,24 +180,28 @@ mod tests {
 
         assert!(opened.history.path().is_some(), "the worker has a database");
         assert!(opened.archive.is_some());
-        assert!(opened.pending_history_unlock.is_none());
-        assert!(opened.pending_db_corruption.is_none());
+        assert!(opened.history_failure.is_none());
     }
 
     #[rstest]
-    #[case::locked(DbError::WriteLocked, true)]
-    #[case::unreadable(DbError::Backend("cannot open file".to_owned()), false)]
-    #[case::schema_too_new(DbError::SchemaTooNew { found: 9, supported: 2 }, false)]
-    fn a_failed_open_reports_a_lock_or_a_broken_database(
+    #[case::busy(DbError::Busy, HistoryFailure::Busy(db_path()))]
+    #[case::locked(DbError::WriteLocked, HistoryFailure::Locked(db_path()))]
+    #[case::unreadable(
+        DbError::Backend("cannot open file".to_owned()),
+        HistoryFailure::Unreadable(db_path())
+    )]
+    #[case::schema_too_new(
+        DbError::SchemaTooNew { found: 9, supported: 2 },
+        HistoryFailure::Unreadable(db_path())
+    )]
+    fn each_open_failure_reaches_its_own_prompt(
         #[case] err: DbError,
-        #[case] recoverable: bool,
+        #[case] expected: HistoryFailure,
     ) {
-        let path = PathBuf::from("/tmp/recordings.h5");
-        let (unlock, corruption) = history_failure(&err, path.clone());
+        let failure = classify_failure(&err, db_path());
 
-        assert_eq!(unlock.is_some(), recoverable);
-        assert_eq!(corruption.is_some(), !recoverable);
-        assert_eq!(unlock.or(corruption), Some(path), "the path is reported");
+        assert_eq!(failure, expected);
+        assert_eq!(failure.path(), db_path(), "the path is carried through");
     }
 
     /// One database being unusable says nothing about the other, so the
@@ -178,12 +214,11 @@ mod tests {
         let opened = open_in(&store, &Context::default());
 
         assert_eq!(
-            opened.pending_db_corruption,
-            Some(store.recordings_path()),
+            opened.history_failure,
+            Some(HistoryFailure::Unreadable(store.recordings_path())),
             "the unreadable database is reported for the UI"
         );
         assert!(opened.history.path().is_none());
-        assert!(opened.pending_history_unlock.is_none());
         assert!(opened.archive.is_some(), "the archive is unaffected");
     }
 }

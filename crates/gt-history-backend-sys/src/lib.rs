@@ -62,17 +62,27 @@ pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
     })
 }
 
-/// Map libhdf5's "file is already open for write" / consistency-flags open
-/// failure to the recoverable [`DbError::WriteLocked`]. Pass other errors through.
-fn into_write_lock(e: DbError) -> DbError {
-    if let DbError::Backend(msg) = &e
-        && (msg.contains("already open for write")
-            || msg.contains("h5clear")
-            || msg.contains("consistency flags"))
+/// Classify a failure to open an existing database.
+///
+/// [`hdf5::MinorErrorCode::CantLockFile`] is what libhdf5 sets when another
+/// process holds the file. libhdf5 takes an OS lock for the duration of an
+/// open, readers included.
+///
+/// The consistency flags an unclean shutdown leaves carry no code of their
+/// own - every frame reports `CantOpenFile` - so that one is read from the
+/// message.
+fn classify_open_error(err: hdf5::Error) -> DbError {
+    if err.contains_minor(hdf5::MinorErrorCode::CantLockFile) {
+        return DbError::Busy;
+    }
+    let msg = err.to_string();
+    if msg.contains("already open for write")
+        || msg.contains("h5clear")
+        || msg.contains("consistency flags")
     {
         return DbError::WriteLocked;
     }
-    e
+    DbError::Backend(msg)
 }
 
 pub struct SysDb {
@@ -110,7 +120,7 @@ impl SysDb {
     }
 
     fn validate_existing(path: &Path) -> Result<(), DbError> {
-        let file = hdf5::File::open(path).map_err(|e| DbError::Backend(e.to_string()))?;
+        let file = hdf5::File::open(path).map_err(classify_open_error)?;
         let schema_version = file
             .attr(SCHEMA_VERSION_ATTR)
             .and_then(|a| a.read_scalar::<i64>())
@@ -129,9 +139,7 @@ impl HistoryDatabase for SysDb {
     fn open_or_create(path: &Path) -> Result<Self, DbError> {
         let _guard = DB_LOCK.lock();
         if path.exists() {
-            // Surface a stale "open for write" lock as a distinct error so the
-            // app can offer to clear it (see `clear_write_lock`).
-            Self::validate_existing(path).map_err(into_write_lock)?;
+            Self::validate_existing(path)?;
             // A database written by the pure-Rust backend can be read but not
             // extended by libhdf5. Migrate it to a native file once so inserts
             // and deletes work.
@@ -291,5 +299,39 @@ impl HistoryDatabase for SysDb {
 
     fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DbError, classify_open_error};
+
+    /// Each wording libhdf5 uses for the flags an unclean shutdown leaves.
+    /// Carried on [`hdf5::Error::Internal`], which has no code stack, the way
+    /// a message-only failure reaches the classifier.
+    #[test]
+    fn a_stale_flag_is_a_write_lock() {
+        for msg in [
+            "file is already open for write",
+            "file is already open for write/SWMR write",
+            "may use <h5clear file> to clear file consistency flags",
+        ] {
+            assert!(
+                matches!(
+                    classify_open_error(hdf5::Error::Internal(msg.to_owned())),
+                    DbError::WriteLocked
+                ),
+                "{msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn anything_else_keeps_its_message() {
+        let err = hdf5::Error::Internal("bad superblock".to_owned());
+        assert!(matches!(
+            classify_open_error(err),
+            DbError::Backend(msg) if msg.contains("bad superblock")
+        ));
     }
 }

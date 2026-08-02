@@ -71,7 +71,8 @@ impl Store {
     /// Open the recording history, creating it if it does not exist.
     ///
     /// Returns [`DbError`] itself so callers can match
-    /// [`DbError::WriteLocked`], which the user can clear.
+    /// [`DbError::WriteLocked`], which the user can clear, or
+    /// [`DbError::Busy`] while another process holds it.
     pub fn open_recordings(&self) -> Result<Recordings, DbError> {
         Recordings::open_or_create(&self.recordings_path())
     }
@@ -134,11 +135,12 @@ mod tests {
         assert!(!store.interference_path().exists());
     }
 
-    /// The database's own error reaches the caller undisguised, which is
-    /// what lets the app route [`DbError::WriteLocked`] to the unlock prompt
-    /// and everything else to the corruption prompt. A genuine write lock
-    /// needs a valid superblock checksum to reproduce, so this corrupts the
-    /// file instead and checks the error is not wrapped or replaced.
+    /// The database's own error reaches the caller undisguised, which is what
+    /// lets the app route [`DbError::Busy`] and [`DbError::WriteLocked`] to
+    /// their own prompts and everything else to the corruption prompt. A
+    /// genuine write lock needs a valid superblock checksum to reproduce, so
+    /// this corrupts the file instead and checks the error is not wrapped or
+    /// replaced.
     #[cfg(feature = "backend-sys")]
     #[test]
     fn a_broken_history_reports_the_databases_own_error() {
