@@ -629,4 +629,25 @@ mod snap_settings_tests {
         let parsed: Settings = toml::from_str(&text).expect("parse");
         assert_eq!(parsed.interference.base_url, "https://mirror.example");
     }
+
+    /// The settings file a fresh install writes.
+    ///
+    /// Every default a user inherits is here in one place, so a changed
+    /// default is a reviewed diff rather than a surprise. A field that
+    /// serialises here is one every existing config lacks, and so must load
+    /// from an older file.
+    #[test]
+    fn default_settings_file() {
+        let toml = toml::to_string_pretty(&Settings::default()).expect("serialize");
+        insta::assert_snapshot!("default_settings_file", toml);
+    }
+
+    /// The file a fresh install writes loads back to the same file.
+    #[test]
+    fn the_default_settings_file_round_trips() {
+        let toml = toml::to_string_pretty(&Settings::default()).expect("serialize");
+        let parsed: Settings = toml::from_str(&toml).expect("parse");
+        let reserialized = toml::to_string_pretty(&parsed).expect("re-serialize");
+        assert_eq!(reserialized, toml);
+    }
 }

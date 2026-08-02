@@ -316,6 +316,7 @@ winres = "0.1.12"
 egui_kittest.workspace = true
 geotrace-sdk = { path = "sdk/rust/geotrace-sdk" }
 gt-test-utils = { path = "crates/gt-test-utils", features = ["snapshot"] }
+insta.workspace = true
 rstest.workspace = true
 tempfile.workspace = true
 
