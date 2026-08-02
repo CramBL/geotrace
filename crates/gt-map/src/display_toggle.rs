@@ -7,8 +7,12 @@
 
 use egui::Button;
 use egui::{Align2, Area, Frame, Id, RichText, Ui};
+use egui_phosphor::regular::CARET_LEFT as ICON_CARET_LEFT;
+use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
 use egui_phosphor::regular::EYE as ICON_EYE;
 use egui_phosphor::regular::EYE_SLASH as ICON_EYE_SLASH;
+use gt_jam::day_selection::{DaySelection, EmptyReason};
+use gt_ui_theme::EM_DASH;
 use gt_ui_types::{DisplayCategory, DisplayMask, SkyGlyphVariant};
 use strum::IntoEnumIterator;
 
@@ -17,6 +21,20 @@ use crate::display_counts::DisplayCounts;
 /// Width of the right-aligned count column, sized for the widest expected
 /// count (`999,999`) so the eye glyphs stay aligned across rows.
 const COUNT_COLUMN_WIDTH_PX: f32 = 48.0;
+
+/// Indent of the interference row's day stepper, marking it as that row's
+/// detail.
+const STEPPER_INDENT_PX: f32 = 24.0;
+
+/// Disabled hover text while the interference layer is hidden.
+const HIDDEN_LAYER_TEXT: &str = "Show the interference layer to step days";
+
+/// The interference row's own state: which day it shows, and why it has
+/// nothing to draw.
+pub(crate) struct InterferenceRow<'a> {
+    pub(crate) day: &'a mut DaySelection,
+    pub(crate) empty_reason: Option<EmptyReason>,
+}
 
 /// Session-only UI state of the display toggle.
 #[derive(Default)]
@@ -84,6 +102,45 @@ fn jamming_hover_text(visible: bool) -> String {
     )
 }
 
+/// The day stepper on the interference row. Grayed at the ends of the
+/// coverage window, per DESIGN.md.
+fn day_stepper_ui(ui: &mut Ui, enabled: bool, selection: &mut DaySelection) {
+    let back = ui
+        .add_enabled(
+            enabled && selection.previous().is_some(),
+            Button::new(ICON_CARET_LEFT),
+        )
+        .on_hover_text("Previous day")
+        .on_disabled_hover_text(if enabled {
+            DaySelection::earliest_day_text()
+        } else {
+            HIDDEN_LAYER_TEXT.to_owned()
+        });
+    if back.clicked() {
+        selection.step_back();
+    }
+
+    let label = selection
+        .day()
+        .map_or_else(|| EM_DASH.to_owned(), |day| day.to_string());
+    ui.add_enabled(enabled, egui::Label::new(RichText::new(label).monospace()));
+
+    let forward = ui
+        .add_enabled(
+            enabled && selection.next().is_some(),
+            Button::new(ICON_CARET_RIGHT),
+        )
+        .on_hover_text("Next day")
+        .on_disabled_hover_text(if enabled {
+            DaySelection::latest_day_text()
+        } else {
+            HIDDEN_LAYER_TEXT.to_owned()
+        });
+    if forward.clicked() {
+        selection.step_forward();
+    }
+}
+
 /// The Ring | Disc picker on the sky-glyphs row. Grayed while the category
 /// is hidden (never removed, per DESIGN.md).
 fn variant_picker_ui(ui: &mut Ui, visible: bool, variant: &mut SkyGlyphVariant) {
@@ -146,6 +203,7 @@ pub(crate) fn show_display_toggle(
     state: &mut DisplayToggleState,
     mask: &mut DisplayMask,
     sky_glyph_variant: &mut SkyGlyphVariant,
+    mut interference: InterferenceRow<'_>,
     counts: impl FnOnce() -> DisplayCounts,
 ) {
     let gap = ui.style().spacing.item_spacing.y;
@@ -202,7 +260,14 @@ pub(crate) fn show_display_toggle(
         .pivot(Align2::RIGHT_BOTTOM)
         .show(ui.ctx(), |ui| {
             Frame::popup(ui.style()).show(ui, |ui| {
-                popup_contents(ui, state, mask, sky_glyph_variant, counts);
+                popup_contents(
+                    ui,
+                    state,
+                    mask,
+                    sky_glyph_variant,
+                    &mut interference,
+                    counts,
+                );
             });
         });
 
@@ -223,6 +288,7 @@ pub(crate) fn popup_contents(
     state: &mut DisplayToggleState,
     mask: &mut DisplayMask,
     sky_glyph_variant: &mut SkyGlyphVariant,
+    interference: &mut InterferenceRow<'_>,
     counts: DisplayCounts,
 ) {
     for category in DisplayCategory::iter() {
@@ -235,7 +301,7 @@ pub(crate) fn popup_contents(
             } else {
                 RichText::new(format!("{glyph} {}", label(category))).weak()
             };
-            let in_scope = count > 0;
+            let in_scope = count > 0 || category == DisplayCategory::JammingHexes;
             let row = ui
                 .add_enabled(in_scope, Button::selectable(false, text))
                 .on_hover_text(row_hover_text(category, visible))
@@ -250,6 +316,17 @@ pub(crate) fn popup_contents(
             }
             if category == DisplayCategory::SkyGlyphs {
                 variant_picker_ui(ui, visible && in_scope, sky_glyph_variant);
+            }
+            if category == DisplayCategory::JammingHexes
+                && let Some(reason) = interference.empty_reason
+                && visible
+            {
+                ui.label(
+                    RichText::new(reason.badge())
+                        .small()
+                        .color(gt_ui_theme::WARNING.resolve(ui.visuals().dark_mode)),
+                )
+                .on_hover_text(reason.message());
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Fixed-width count column so the eye glyphs align.
@@ -270,6 +347,12 @@ pub(crate) fn popup_contents(
                 }
             });
         });
+        if category == DisplayCategory::JammingHexes {
+            ui.horizontal(|ui| {
+                ui.add_space(STEPPER_INDENT_PX);
+                day_stepper_ui(ui, visible, interference.day);
+            });
+        }
     }
     ui.separator();
     ui.horizontal(|ui| {
@@ -300,6 +383,12 @@ mod tests {
     use super::*;
 
     fn mixed_counts() -> DisplayCounts {
+        counts_with_interference(1043)
+    }
+
+    /// [`mixed_counts`] with the interference count set, so the empty-state
+    /// case can show the zero a non-downloaded day produces.
+    fn counts_with_interference(jamming_hexes: usize) -> DisplayCounts {
         DisplayCounts::from_fn(|category| match category {
             DisplayCategory::Tracks => 12,
             DisplayCategory::TrackPoints => 8940,
@@ -310,7 +399,7 @@ mod tests {
             DisplayCategory::QueryHighlights => 0,
             DisplayCategory::SnappedTracks => 3,
             DisplayCategory::SkyGlyphs => 187,
-            DisplayCategory::JammingHexes => 1043,
+            DisplayCategory::JammingHexes => jamming_hexes,
         })
     }
 
@@ -338,20 +427,61 @@ mod tests {
     /// query highlights at zero (disabled row). The second case hides the
     /// sky glyphs, graying their variant picker.
     #[rstest::rstest]
-    #[case::mixed("display_toggle_popup", DisplayCategory::GeneratedMarkers)]
-    #[case::sky_glyphs_hidden("display_toggle_popup_sky_hidden", DisplayCategory::SkyGlyphs)]
-    fn snap_display_toggle_popup(#[case] name: &str, #[case] hidden: DisplayCategory) {
+    #[case::mixed("display_toggle_popup", DisplayCategory::GeneratedMarkers, None, true)]
+    #[case::sky_glyphs_hidden(
+        "display_toggle_popup_sky_hidden",
+        DisplayCategory::SkyGlyphs,
+        None,
+        true
+    )]
+    #[case::interference_empty(
+        "display_toggle_popup_interference_empty",
+        DisplayCategory::GeneratedMarkers,
+        Some(EmptyReason::NotFetched),
+        true
+    )]
+    #[case::interference_empty_light(
+        "display_toggle_popup_interference_empty_light",
+        DisplayCategory::GeneratedMarkers,
+        Some(EmptyReason::NotFetched),
+        false
+    )]
+    fn snap_display_toggle_popup(
+        #[case] name: &str,
+        #[case] hidden: DisplayCategory,
+        #[case] empty_reason: Option<EmptyReason>,
+        #[case] dark_mode: bool,
+    ) {
         let mut state = DisplayToggleState::default();
         let mut mask = DisplayMask::default();
         mask.set_visible(hidden, false);
         let mut variant = SkyGlyphVariant::default();
-        let counts = mixed_counts();
+        let mut day_selection = DaySelection::new(
+            chrono::NaiveDate::from_ymd_opt(2026, 7, 20),
+            chrono::NaiveDate::from_ymd_opt(2026, 7, 31).unwrap_or_default(),
+        );
+        let counts = if empty_reason.is_some() {
+            counts_with_interference(0)
+        } else {
+            mixed_counts()
+        };
 
         let mut harness = crate::test_harness::builder()
             .size(egui::vec2(280.0, 300.0))
+            .theme(dark_mode)
             .ui(move |ui| {
                 Frame::popup(ui.style()).show(ui, |ui| {
-                    popup_contents(ui, &mut state, &mut mask, &mut variant, counts);
+                    popup_contents(
+                        ui,
+                        &mut state,
+                        &mut mask,
+                        &mut variant,
+                        &mut InterferenceRow {
+                            day: &mut day_selection,
+                            empty_reason,
+                        },
+                        counts,
+                    );
                 });
             });
         harness.fit_contents();

@@ -32,6 +32,7 @@ use egui::Context;
 
 use gt_filter::GlobalFilter;
 use gt_jam::dataset::JamDataset;
+use gt_jam::day_selection::{DaySelection, EmptyReason};
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
@@ -418,6 +419,8 @@ impl NavMap {
         query_matches: Option<&QueryMatches>,
         snapped_tracks: Option<&SnappedTracks>,
         jamming_dataset: Option<&JamDataset>,
+        day_selection: &mut DaySelection,
+        empty_reason: Option<EmptyReason>,
         center_request: Option<(f64, f64)>,
         zoom_to_visible: bool,
         sticky_pos_override: Option<egui::Pos2>,
@@ -731,6 +734,10 @@ impl NavMap {
             &mut self.display_toggle,
             display_mask,
             sky_glyph_variant,
+            display_toggle::InterferenceRow {
+                day: day_selection,
+                empty_reason,
+            },
             || {
                 counts_cache.get(
                     files,
@@ -2043,6 +2050,11 @@ mod snapshot_tests {
                         Some(&matches),
                         None,
                         None,
+                        &mut gt_jam::day_selection::DaySelection::new(
+                            None,
+                            gt_jam::calendar::today_utc(),
+                        ),
+                        None,
                         None,
                         false,
                         None,
@@ -2128,6 +2140,11 @@ mod snapshot_tests {
                         None,
                         None,
                         Some(&dataset),
+                        &mut gt_jam::day_selection::DaySelection::new(
+                            None,
+                            gt_jam::calendar::today_utc(),
+                        ),
+                        None,
                         None,
                         false,
                         None,
@@ -2205,6 +2222,11 @@ mod snapshot_tests {
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
                         Some(&snapped),
+                        None,
+                        &mut gt_jam::day_selection::DaySelection::new(
+                            None,
+                            gt_jam::calendar::today_utc(),
+                        ),
                         None,
                         None,
                         false,
@@ -2553,6 +2575,11 @@ mod snapshot_tests {
                         None,
                         Some(&snapped),
                         None,
+                        &mut gt_jam::day_selection::DaySelection::new(
+                            None,
+                            gt_jam::calendar::today_utc(),
+                        ),
+                        None,
                         None,
                         false,
                         None,
@@ -2638,6 +2665,11 @@ mod snapshot_tests {
                         None,
                         None,
                         None,
+                        &mut gt_jam::day_selection::DaySelection::new(
+                            None,
+                            gt_jam::calendar::today_utc(),
+                        ),
+                        None,
                         None,
                         false,
                         None,
@@ -2689,6 +2721,11 @@ mod snapshot_tests {
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
                         None,
+                        None,
+                        &mut gt_jam::day_selection::DaySelection::new(
+                            None,
+                            gt_jam::calendar::today_utc(),
+                        ),
                         None,
                         None,
                         false,
@@ -2748,6 +2785,11 @@ mod snapshot_tests {
                         None,
                         None,
                         None,
+                        &mut gt_jam::day_selection::DaySelection::new(
+                            None,
+                            gt_jam::calendar::today_utc(),
+                        ),
+                        None,
                         None,
                         false,
                         None,
@@ -2801,6 +2843,11 @@ mod snapshot_tests {
                         None,
                         None,
                         None,
+                        &mut gt_jam::day_selection::DaySelection::new(
+                            None,
+                            gt_jam::calendar::today_utc(),
+                        ),
+                        None,
                         None,
                         false,
                         None,
@@ -2853,6 +2900,11 @@ mod snapshot_tests {
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
                         None,
+                        None,
+                        &mut gt_jam::day_selection::DaySelection::new(
+                            None,
+                            gt_jam::calendar::today_utc(),
+                        ),
                         None,
                         None,
                         false,
@@ -2916,6 +2968,11 @@ mod snapshot_tests {
                         &gt_ui_types::GeneratedMarkerVisibility::default(),
                         None,
                         None,
+                        None,
+                        &mut gt_jam::day_selection::DaySelection::new(
+                            None,
+                            gt_jam::calendar::today_utc(),
+                        ),
                         None,
                         None,
                         false,

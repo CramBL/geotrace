@@ -2315,6 +2315,10 @@ struct MainBehavior<'a> {
     snapped_tracks: &'a gt_ui_types::SnappedTracks,
     /// The interference cells the overlay draws, for the shown day.
     jamming_dataset: Option<&'a gt_jam::dataset::JamDataset>,
+    /// Which day the overlay shows, driven by the stepper in the eye popup.
+    jamming_day: &'a mut gt_jam::day_selection::DaySelection,
+    /// Why the overlay is drawing nothing, for the popup's legend line.
+    jamming_empty: Option<gt_jam::day_selection::EmptyReason>,
     /// Snap error per track of completed snap runs, for the plot.
     snap_error: &'a gt_ui_types::SnapErrorSeries,
 }
@@ -2341,6 +2345,8 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     self.query_matches,
                     Some(self.snapped_tracks),
                     self.jamming_dataset,
+                    self.jamming_day,
+                    self.jamming_empty,
                     center_req,
                     zoom_to_visible,
                     popup_pos,
@@ -2766,10 +2772,8 @@ impl eframe::App for App {
             {
                 let map = &mut self.map;
                 let tiles_tree = &mut self.tiles_tree;
-                // The overlay shows the UTC day the first visible track
-                // starts in. There is no day stepper yet.
-                let shown_day = shown_interference_day(&s.loaded_files, s.tree.visibility());
-                let jamming_dataset = self.jamming.shown_dataset(shown_day);
+                let jamming_empty = self.jamming.empty_reason();
+                let (jamming_dataset, jamming_day) = self.jamming.overlay_state();
                 let mut behavior = MainBehavior {
                     map,
                     state: &mut s,
@@ -2781,6 +2785,8 @@ impl eframe::App for App {
                     snapped_tracks: &snapped_tracks,
                     snap_error: &snap_error,
                     jamming_dataset,
+                    jamming_day,
+                    jamming_empty,
                 };
                 tiles_tree.ui(&mut behavior, ui);
                 toggle_plot_request = behavior.toggle_plot_request;
@@ -3395,29 +3401,6 @@ impl App {
     }
 }
 
-/// The UTC day the interference overlay shows: the day the first visible
-/// track starts in.
-///
-/// [`None`] when no track is visible, which leaves the overlay with nothing
-/// to draw.
-fn shown_interference_day(
-    files: &[LoadedFile],
-    visibility: &TrackDataVisibility,
-) -> Option<chrono::NaiveDate> {
-    files
-        .iter()
-        .enumerate()
-        .flat_map(|(fi, file)| {
-            file.tracks
-                .iter()
-                .enumerate()
-                .map(move |(ti, track)| (TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti)), track))
-        })
-        .filter(|&(track_ref, _)| visibility.track_enabled(track_ref))
-        .map(|(_, track)| track.metadata.time_range.start.date_naive())
-        .min()
-}
-
 /// Find the Unix-second time range of TPV points that lie within the given map
 /// geographic bounds, considering only files/tracks currently enabled in `visibility`.
 ///
@@ -3596,129 +3579,3 @@ fn compound_duration_input(
 #[cfg(test)]
 #[path = "app/ui_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-mod interference_day_tests {
-    use chrono::{DateTime, NaiveDate, TimeDelta, Utc};
-    use gt_types::{FileMetadata, FileSource, LoadedTrack, TimeRange, TrackLod, TrackMetadata};
-    use gt_ui_types::{FileVisibility, TrackVisibility};
-    use std::sync::Arc;
-
-    use super::*;
-
-    fn day(offset: i64) -> DateTime<Utc> {
-        DateTime::<Utc>::default() + TimeDelta::days(offset)
-    }
-
-    /// A file whose tracks start at the given times.
-    fn file(starts: &[DateTime<Utc>]) -> LoadedFile {
-        LoadedFile {
-            metadata: FileMetadata::default(),
-            tracks: starts
-                .iter()
-                .map(|&start| LoadedTrack {
-                    metadata: TrackMetadata {
-                        time_range: TimeRange::new(start, start + TimeDelta::hours(1)),
-                        ..TrackMetadata::default()
-                    },
-                    points: vec![],
-                    lod: TrackLod::default(),
-                    sat_label_anchors: Vec::new(),
-                    custom_markers: vec![],
-                    generated_markers: vec![],
-                    event_markers: vec![],
-                    channels: vec![],
-                })
-                .collect(),
-            event_marker_styles: std::collections::HashMap::new(),
-            orphaned_event_markers: vec![],
-            load_warnings: vec![],
-            source: FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),
-        }
-    }
-
-    /// Visibility matching `files`, with the named files and tracks enabled.
-    fn visibility(files: &[LoadedFile], enabled: &[(usize, &[bool])]) -> TrackDataVisibility {
-        TrackDataVisibility {
-            files: files
-                .iter()
-                .enumerate()
-                .map(|(fi, file)| {
-                    let entry = enabled.iter().find(|(index, _)| *index == fi);
-                    FileVisibility {
-                        enabled: entry.is_some(),
-                        tracks: (0..file.tracks.len())
-                            .map(|ti| {
-                                let mut track = TrackVisibility::all_visible();
-                                track.enabled = entry
-                                    .and_then(|(_, tracks)| tracks.get(ti))
-                                    .copied()
-                                    .unwrap_or(false);
-                                track
-                            })
-                            .collect(),
-                    }
-                })
-                .collect(),
-        }
-    }
-
-    #[test]
-    fn no_files_means_no_day() {
-        assert_eq!(shown_interference_day(&[], &visibility(&[], &[])), None);
-    }
-
-    #[test]
-    fn every_track_disabled_means_no_day() {
-        let files = vec![file(&[day(0)])];
-        let visibility = visibility(&files, &[]);
-        assert_eq!(shown_interference_day(&files, &visibility), None);
-    }
-
-    #[test]
-    fn the_earliest_enabled_track_decides_the_day() {
-        let files = vec![file(&[day(5), day(2)])];
-        let visibility = visibility(&files, &[(0, &[true, true])]);
-        assert_eq!(
-            shown_interference_day(&files, &visibility),
-            Some(day(2).date_naive())
-        );
-    }
-
-    /// A disabled track is not consulted even when it starts earliest.
-    #[test]
-    fn a_disabled_track_does_not_decide_the_day() {
-        let files = vec![file(&[day(1), day(4)])];
-        let visibility = visibility(&files, &[(0, &[false, true])]);
-        assert_eq!(
-            shown_interference_day(&files, &visibility),
-            Some(day(4).date_naive())
-        );
-    }
-
-    /// A disabled file's tracks are not consulted either.
-    #[test]
-    fn a_disabled_file_does_not_decide_the_day() {
-        let files = vec![file(&[day(0)]), file(&[day(3)])];
-        let visibility = visibility(&files, &[(1, &[true])]);
-        assert_eq!(
-            shown_interference_day(&files, &visibility),
-            Some(day(3).date_naive())
-        );
-    }
-
-    /// A day is the UTC calendar day, not the instant.
-    #[test]
-    fn the_day_is_the_utc_calendar_day() {
-        let noon = NaiveDate::from_ymd_opt(2026, 7, 20)
-            .and_then(|date| date.and_hms_opt(12, 30, 0))
-            .map(|naive| naive.and_utc())
-            .unwrap_or_default();
-        let files = vec![file(&[noon])];
-        let visibility = visibility(&files, &[(0, &[true])]);
-        assert_eq!(
-            shown_interference_day(&files, &visibility),
-            NaiveDate::from_ymd_opt(2026, 7, 20)
-        );
-    }
-}
