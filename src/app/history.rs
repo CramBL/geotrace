@@ -666,8 +666,7 @@ impl HistoryWindow {
                         "Enable 'Auto-store recordings' to use auto-pruning"
                     });
 
-                    let mut max_gb =
-                        *auto_prune_max_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+                    let mut max_gb = *auto_prune_max_bytes as f64 / gt_fmt::BYTES_PER_GB as f64;
                     ui.add_enabled(
                         prune_on,
                         DragValue::new(&mut max_gb)
@@ -687,7 +686,7 @@ impl HistoryWindow {
                             clippy::cast_sign_loss,
                             reason = "DragValue range is 0.1..=1000 so value is always positive"
                         )]
-                        let bytes = (max_gb * 1024.0 * 1024.0 * 1024.0).round() as u64;
+                        let bytes = (max_gb * gt_fmt::BYTES_PER_GB as f64).round() as u64;
                         *auto_prune_max_bytes = bytes;
                     }
 
@@ -779,7 +778,7 @@ impl HistoryWindow {
                     let rec_label = gt_fmt::pluralize(stored_count, "recording", "recordings");
                     ui.label(format!(
                         "{stored_count} {rec_label} - {}",
-                        format_size(total_size)
+                        gt_fmt::format_bytes(total_size)
                     ));
                     if filter_active && visible.len() != stored_count {
                         ui.weak(format!("({} shown)", visible.len()));
@@ -1062,7 +1061,7 @@ fn render_row(
     });
 
     breakdown_cell(row, entry, SortColumn::Size, |ui| {
-        ui.label(format_size(entry.meta.gtd_size_bytes));
+        ui.label(gt_fmt::format_bytes(entry.meta.gtd_size_bytes));
     });
 
     row.col(|ui| {
@@ -1134,7 +1133,7 @@ fn data_breakdown_ui(ui: &mut egui::Ui, entry: &RecordingEntry) {
                 "Duration",
                 format_duration(chrono::Duration::microseconds(duration_us(meta))),
             );
-            row("Size", format_size(meta.gtd_size_bytes));
+            row("Size", gt_fmt::format_bytes(meta.gtd_size_bytes));
             row("Tracks", track_count_text(entry));
             row("Nav points", format_stored_count(meta.nav_point_count));
             row(
@@ -1397,21 +1396,6 @@ fn format_duration(dur: chrono::Duration) -> String {
     } else {
         format!("{s}s")
     }
-}
-
-fn format_size(bytes: u64) -> String {
-    if bytes == 0 {
-        return "—".to_owned();
-    }
-    if bytes < 1_024 {
-        return format!("{bytes} B");
-    }
-    if bytes < 1_024 * 1_024 {
-        let kb = bytes as f64 / 1_024.0;
-        return format!("{kb:.1} KB");
-    }
-    let mb = bytes as f64 / (1_024.0 * 1_024.0);
-    format!("{mb:.1} MB")
 }
 
 /// Parse a `YYYY-MM-DD` string into microseconds-since-epoch at the start of that day (UTC).

@@ -108,6 +108,24 @@ pub fn days_spanned(start: DateTime<Utc>, end: DateTime<Utc>) -> Option<Vec<Naiv
     Some(days)
 }
 
+/// Every [`DayOutlook::Fetchable`] day in `from..=to`, oldest first.
+pub fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> Vec<NaiveDate> {
+    let mut days = Vec::new();
+    // Bounds the walk for a caller that asks from the year 1; the verdict on
+    // each day is still [`day_outlook`]'s.
+    let mut day = from.max(COVERAGE_START);
+    while day <= to {
+        if day_outlook(day, today_utc) == DayOutlook::Fetchable {
+            days.push(day);
+        }
+        let Some(next) = day.checked_add_days(Days::new(1)) else {
+            break;
+        };
+        day = next;
+    }
+    days
+}
+
 /// The current UTC day. Datasets are UTC-day granular, so a local date is
 /// never the right input.
 pub fn today_utc() -> NaiveDate {
@@ -198,6 +216,25 @@ mod tests {
         #[case] expected: Option<Vec<NaiveDate>>,
     ) {
         assert_eq!(days_spanned(start, end), expected);
+    }
+
+    #[rstest]
+    #[case::a_week(date(2026, 7, 20), date(2026, 7, 26), 7)]
+    #[case::one_day(date(2026, 7, 20), date(2026, 7, 20), 1)]
+    #[case::reversed(date(2026, 7, 26), date(2026, 7, 20), 0)]
+    #[case::clamped_to_coverage(date(2020, 1, 1), COVERAGE_START, 1)]
+    #[case::clamped_to_today(date(2026, 7, 29), date(2027, 1, 1), 3)]
+    #[case::entirely_before_coverage(date(2019, 1, 1), date(2020, 1, 1), 0)]
+    #[case::entirely_in_the_future(date(2027, 1, 1), date(2027, 2, 1), 0)]
+    fn fetchable_days_covers_the_range_inside_coverage(
+        #[case] from: NaiveDate,
+        #[case] to: NaiveDate,
+        #[case] expected: usize,
+    ) {
+        let days = fetchable_days(from, to, date(2026, 7, 31));
+        assert_eq!(days.len(), expected);
+        assert!(days.iter().all(|day| *day >= COVERAGE_START));
+        assert!(days.windows(2).all(|pair| pair[0] < pair[1]), "ascending");
     }
 
     #[rstest]

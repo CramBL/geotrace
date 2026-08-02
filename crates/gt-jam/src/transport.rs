@@ -22,6 +22,12 @@ const RETRIES: usize = 1;
 /// Timeout per request. A day is about 300 KiB gzipped.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Minimum gap between requests to the same host.
+///
+/// The datasets are static files on someone else's server, and a backfill
+/// walks hundreds of them.
+pub const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
+
 /// Sent so the host can attribute the traffic.
 pub const CLIENT_ID_HEADER: (&str, &str) = ("X-Client-Id", "geotrace");
 
@@ -106,7 +112,11 @@ impl Transport for HttpTransport {
 }
 
 /// Fetch `day` from `base_url`, retrying transient failures once.
-pub fn fetch_day<T: Transport>(transport: &T, base_url: &str, day: NaiveDate) -> FetchOutcome {
+pub fn fetch_day<T: Transport + ?Sized>(
+    transport: &T,
+    base_url: &str,
+    day: NaiveDate,
+) -> FetchOutcome {
     let url = crate::dataset_url(base_url, day);
 
     let mut last_failure = String::new();

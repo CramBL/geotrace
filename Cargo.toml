@@ -83,7 +83,7 @@ eframe = { version = "0.34.3", default-features = false, features = ["default_fo
 egui = "0.34.3"
 egui-phosphor = "0.12.0"
 egui-wgpu = "0.34.3"
-egui_extras = "0.34.3"
+egui_extras = { version = "0.34.3", features = ["datepicker"] }
 egui_kittest = { version = "0.34.3", features = ["eframe", "wgpu", "snapshot"] }
 egui_plot = "0.35.0"
 egui_tiles = "0.15"
@@ -101,6 +101,7 @@ h3o = "0.10"
 hdf5 = { package = "hdf5-metno", version = "0.14", features = ["static", "zlib"] }
 hdf5-pure = "0.28"
 insta = "1.48.0"
+jiff = "0.2.23"
 log = "0.4"
 logos = "0.16"
 nalgebra = "0.35"
@@ -295,6 +296,7 @@ gt-track-builder = { path = "crates/gt-track-builder" }
 gt-types = { path = "crates/gt-types" }
 gt-ui-theme = { path = "crates/gt-ui-theme" }
 gt-ui-types = { path = "crates/gt-ui-types" }
+jiff.workspace = true
 log.workspace = true
 mimalloc = { version = "0.1.48", features = ["v3"] }
 parking_lot.workspace = true

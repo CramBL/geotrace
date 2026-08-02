@@ -26,6 +26,7 @@ use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
 use egui_phosphor::regular::X as ICON_X;
 use egui_phosphor::regular::X_CIRCLE as ICON_X_CIRCLE;
 mod auto_prune;
+mod backfill_ui;
 mod history;
 mod history_db;
 mod jamming;
@@ -321,6 +322,7 @@ pub struct App {
     history: history_db::HistoryWorker,
     /// Queues and ingests interference days for loaded tracks.
     jamming: jamming::JammingScheduler,
+    backfill_ui: backfill_ui::BackfillUi,
     interference_settings: crate::settings::InterferenceSettings,
     /// Set when the database could not be opened because it is marked as locked
     /// (open for write). Drives a confirmation dialog offering to clear it.
@@ -522,6 +524,7 @@ impl App {
 
         let mut app = Self {
             jamming,
+            backfill_ui: backfill_ui::BackfillUi::default(),
             interference_settings: crate::settings::InterferenceSettings::default(),
             map,
             shared: Rc::new(RefCell::new(SharedAppState {
@@ -1066,6 +1069,20 @@ impl App {
                         }
                         ui.end_row();
                     });
+                ui.add_space(8.0);
+                if let Some(action) = self.backfill_ui.ui(
+                    ui,
+                    self.jamming.backfill_progress(),
+                    self.jamming.archive_available(),
+                ) {
+                    match action {
+                        backfill_ui::BackfillAction::Start { from, to } => {
+                            let queued = self.jamming.backfill(from, to);
+                            self.backfill_ui.report_started(queued);
+                        }
+                        backfill_ui::BackfillAction::Cancel => self.jamming.cancel_backfill(),
+                    }
+                }
 
                 // Only meaningful in dist builds. Builds without the self-update
                 // feature carry no update check to toggle.
@@ -3325,7 +3342,7 @@ impl eframe::App for App {
 
         // Auto-prune confirmation dialog.
         if let Some(refs) = &self.pending_auto_prune {
-            let max_gb = self.auto_prune_max_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+            let limit = gt_fmt::format_bytes(self.auto_prune_max_bytes);
             let n = refs.len();
             let mut do_prune = false;
             let mut cancel = ui
@@ -3341,7 +3358,7 @@ impl eframe::App for App {
                     ui.set_max_width(460.0);
                     let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
                     ui.label(format!(
-                        "{n} {rec_label} will be deleted to keep storage under {max_gb:.1} GB"
+                        "{n} {rec_label} will be deleted to keep storage under {limit}"
                     ));
                     ui.add_space(4.0);
                     ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
