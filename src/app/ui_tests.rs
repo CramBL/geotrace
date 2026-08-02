@@ -29,6 +29,8 @@ fn build_app(cc: &eframe::CreationContext<'_>, config_path: &std::path::Path, fa
         super::StartupOptions {
             fading_enabled: fading,
             offline: true,
+            storage: crate::app::Storage::Disabled,
+            app_version: super::TEST_APP_VERSION,
         },
     )
 }
@@ -43,6 +45,8 @@ fn transient_app(cc: &mut eframe::CreationContext<'_>) -> App {
         super::StartupOptions {
             fading_enabled: false,
             offline: true,
+            storage: crate::app::Storage::Disabled,
+            app_version: super::TEST_APP_VERSION,
         },
     )
 }
@@ -2803,6 +2807,30 @@ fn auto_sweep_is_paused_offline() {
     assert!(
         harness.state().snap.activity_for(track).is_none(),
         "offline must pause the auto queue"
+    );
+}
+
+/// The harness reaches `App::new_with_config`, the same constructor `main`
+/// uses. A test run opens neither the user's recordings database nor their
+/// interference archive.
+#[test]
+fn the_test_harness_opens_no_user_databases() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+
+    assert!(
+        harness.state().history.path().is_none(),
+        "no recordings database"
+    );
+    assert!(
+        !harness.state().jamming.archive_available(),
+        "no interference archive"
+    );
+    assert!(
+        harness.state().loader.db_path.is_none(),
+        "nothing for the loader to store into"
     );
 }
 

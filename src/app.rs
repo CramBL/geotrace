@@ -36,6 +36,8 @@ mod query;
 mod settings_autosave;
 mod snap;
 mod snap_persist;
+mod storage;
+pub use storage::Storage;
 #[cfg(feature = "self-update")]
 pub mod update;
 
@@ -166,17 +168,12 @@ pub struct StartupOptions {
     /// `main` reads `GEOTRACE_OFFLINE` to set it, and is the only place that
     /// consults the environment. Everything downstream is handed the answer.
     pub offline: bool,
-}
-
-impl Default for StartupOptions {
-    /// Offline, so a caller that has not stated a preference gets no
-    /// network access.
-    fn default() -> Self {
-        Self {
-            fading_enabled: true,
-            offline: true,
-        }
-    }
+    /// Which databases the run opens.
+    pub storage: storage::Storage,
+    /// The running version, shown in the About dialog and used by the update
+    /// check. Tests pin it to a fixed string so version-bearing snapshots
+    /// survive a release bump.
+    pub app_version: &'static str,
 }
 
 /// Snap error data derived from one run for one track: the plot series and
@@ -485,75 +482,23 @@ impl App {
         )));
         let tiles_tree = Tree::new("main_tiles", root_tile_id, tiles);
 
-        // Tests must not touch the production database.  `loader.db_path` starts
-        // `None` and is populated by `sync_db_path` (called from
-        // `apply_startup_settings`) only in non-test builds.
-        #[cfg(not(test))]
-        let (history, pending_history_unlock, pending_db_corruption) = {
-            use gt_store::{DbError, Store};
-            match Store::open_default() {
-                Ok(store) => match store.open_recordings() {
-                    Ok(db) => (
-                        history_db::HistoryWorker::spawn(db, cc.egui_ctx.clone()),
-                        None,
-                        None,
-                    ),
-                    Err(DbError::WriteLocked) => {
-                        let path = store.recordings_path();
-                        log::warn!(
-                            "History database at {} is locked (marked open for write)",
-                            path.display()
-                        );
-                        (history_db::HistoryWorker::disabled(), Some(path), None)
-                    }
-                    Err(e) => {
-                        let path = store.recordings_path();
-                        log::error!("History database at {} is unusable: {e}", path.display());
-                        (history_db::HistoryWorker::disabled(), None, Some(path))
-                    }
-                },
-                Err(e) => {
-                    log::error!("Failed to locate the data directory: {e}");
-                    (history_db::HistoryWorker::disabled(), None, None)
-                }
-            }
-        };
-        #[cfg(test)]
-        let (history, pending_history_unlock, pending_db_corruption): (
-            history_db::HistoryWorker,
-            Option<PathBuf>,
-            Option<PathBuf>,
-        ) = (history_db::HistoryWorker::disabled(), None, None);
+        // `loader.db_path` starts `None` and is populated by `sync_db_path`
+        // (called from `apply_startup_settings`) once the history worker has
+        // a path.
+        let storage::OpenStorage {
+            history,
+            pending_history_unlock,
+            pending_db_corruption,
+            archive,
+        } = options.storage.open(&cc.egui_ctx);
 
-        // Tests never touch the production archive either. A missing or
-        // unusable archive disables interference fetching and nothing else.
-        #[cfg(not(test))]
-        let archive = gt_store::Store::open_default().ok().and_then(|store| {
-            store
-                .open_interference()
-                .inspect_err(|err| {
-                    log::error!(
-                        "Interference archive at {} is unusable: {err}",
-                        store.interference_path().display()
-                    );
-                })
-                .ok()
-        });
-        #[cfg(test)]
-        let archive = None;
         let jamming = jamming::JammingScheduler::new(
             cc.egui_ctx.clone(),
             archive,
             gt_jam::DEFAULT_BASE_URL.to_owned(),
             jam_transport_source(options.offline),
         );
-
-        // A fixed placeholder in tests so version-bearing UI snapshots stay
-        // stable across release bumps; the real crate version otherwise.
-        #[cfg(test)]
-        let app_version = TEST_APP_VERSION;
-        #[cfg(not(test))]
-        let app_version = env!("CARGO_PKG_VERSION");
+        let app_version = options.app_version;
 
         let mut app = Self {
             jamming,

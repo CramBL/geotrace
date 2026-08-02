@@ -191,6 +191,8 @@ fn main() -> ExitCode {
                 app::StartupOptions {
                     fading_enabled: true,
                     offline: gt_types::env::offline(),
+                    storage: app::Storage::Default,
+                    app_version: env!("CARGO_PKG_VERSION"),
                 },
             )))
         }),
