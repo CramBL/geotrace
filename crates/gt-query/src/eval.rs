@@ -273,9 +273,9 @@ impl RunSummary {
 /// velocity; channel-source queries reference no nav metrics, so they get
 /// an empty list for free. An empty provider reports nothing: there are no
 /// points the metric could have been missing on.
-pub(crate) fn absent_metrics<P: MetricProvider>(
+pub(crate) fn absent_metrics(
     metrics: &[QueryMetric],
-    provider: &P,
+    provider: &impl MetricProvider,
 ) -> Vec<QueryMetric> {
     metrics
         .iter()
@@ -295,9 +295,9 @@ pub(crate) fn absent_metrics<P: MetricProvider>(
 /// `None` only on cancellation. Windows and derived metrics are relative to
 /// this provider, so running it over a [`crate::RunView`] gives gap-aware
 /// evaluation for the pipeline.
-pub(crate) fn evaluate_track<P: MetricProvider>(
+pub(crate) fn evaluate_track(
     query: &CheckedQuery,
-    provider: &P,
+    provider: &impl MetricProvider,
     should_cancel: &impl Fn() -> bool,
     check_interval: usize,
 ) -> Option<TrackEval> {
@@ -313,9 +313,9 @@ pub(crate) fn evaluate_track<P: MetricProvider>(
 }
 
 /// Evaluate a points-source query: the timeline is the provider's nav points.
-fn evaluate_points<P: MetricProvider>(
+fn evaluate_points(
     query: &CheckedQuery,
-    provider: &P,
+    provider: &impl MetricProvider,
     should_cancel: &impl Fn() -> bool,
     check_interval: usize,
 ) -> Option<TrackEval> {
@@ -484,9 +484,9 @@ fn duration_windows<P: MetricProvider>(
 /// match is a range of sample indices. Without a window each sample is judged on
 /// its own row; a count window groups consecutive samples and a duration window
 /// a time span, for the aggregates to reduce over.
-fn evaluate_channel_source<P: MetricProvider>(
+fn evaluate_channel_source(
     query: &CheckedQuery,
-    provider: &P,
+    provider: &impl MetricProvider,
     name: &str,
     should_cancel: &impl Fn() -> bool,
     check_interval: usize,
@@ -747,7 +747,7 @@ impl<P: MetricProvider> Ctx<'_, P> {
 }
 
 /// Provider value with NaN/inf treated as missing.
-fn raw_value<P: MetricProvider>(provider: &P, metric: QueryMetric, index: usize) -> Option<f64> {
+fn raw_value(provider: &impl MetricProvider, metric: QueryMetric, index: usize) -> Option<f64> {
     provider.value(metric, index).filter(|v| v.is_finite())
 }
 
@@ -758,7 +758,7 @@ fn raw_value<P: MetricProvider>(provider: &P, metric: QueryMetric, index: usize)
 ///
 /// Public so the UI can show the same value in match tables that the
 /// evaluator used in predicates - this is the single definition of `accel`.
-pub fn derived_accel<P: MetricProvider>(provider: &P, index: usize) -> Option<f64> {
+pub fn derived_accel(provider: &impl MetricProvider, index: usize) -> Option<f64> {
     let prev = index.checked_sub(1)?;
     let v1 = raw_value(provider, QueryMetric::Velocity, index)?;
     let v0 = raw_value(provider, QueryMetric::Velocity, prev)?;

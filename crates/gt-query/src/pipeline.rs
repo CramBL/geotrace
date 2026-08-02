@@ -359,7 +359,7 @@ mod tests {
         );
     }
 
-    fn compose<P: MetricProvider>(srcs: &[&str], provider: &P) -> PipelineOutput {
+    fn compose(srcs: &[&str], provider: &impl MetricProvider) -> PipelineOutput {
         let queries: Vec<CheckedQuery> = srcs
             .iter()
             .map(|s| check(&parse(s).expect(s), &ChannelSchema::new()).expect(s))
