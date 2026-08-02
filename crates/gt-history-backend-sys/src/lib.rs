@@ -62,13 +62,24 @@ pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
     })
 }
 
-/// Map libhdf5's "file is already open for write" / consistency-flags open
-/// failure to the recoverable [`DbError::WriteLocked`]. Pass other errors through.
-fn into_write_lock(e: DbError) -> DbError {
-    if let DbError::Backend(msg) = &e
-        && (msg.contains("already open for write")
-            || msg.contains("h5clear")
-            || msg.contains("consistency flags"))
+/// Classify a backend open failure as [`DbError::Busy`], another process
+/// holding the file, or [`DbError::WriteLocked`], consistency flags left by
+/// an unclean shutdown. Other errors pass through.
+///
+/// Matched on text because libhdf5 reports both through the same generic
+/// open failure.
+fn classify_open_error(e: DbError) -> DbError {
+    let DbError::Backend(msg) = &e else {
+        return e;
+    };
+    // libhdf5 takes an OS lock for the duration of an open, so a second
+    // process is refused outright, readers included.
+    if msg.contains("unable to lock file") {
+        return DbError::Busy;
+    }
+    if msg.contains("already open for write")
+        || msg.contains("h5clear")
+        || msg.contains("consistency flags")
     {
         return DbError::WriteLocked;
     }
@@ -131,7 +142,7 @@ impl HistoryDatabase for SysDb {
         if path.exists() {
             // Surface a stale "open for write" lock as a distinct error so the
             // app can offer to clear it (see `clear_write_lock`).
-            Self::validate_existing(path).map_err(into_write_lock)?;
+            Self::validate_existing(path).map_err(classify_open_error)?;
             // A database written by the pure-Rust backend can be read but not
             // extended by libhdf5. Migrate it to a native file once so inserts
             // and deletes work.
@@ -291,5 +302,53 @@ impl HistoryDatabase for SysDb {
 
     fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DbError, classify_open_error};
+
+    /// libhdf5's wording for a file another process holds.
+    #[test]
+    fn a_held_file_is_busy() {
+        let msg = "H5Fopen(): unable to synchronously open file: unable to lock file, \
+                   errno = 11, error message = 'Resource temporarily unavailable'";
+        assert!(matches!(
+            classify_open_error(DbError::Backend(msg.to_owned())),
+            DbError::Busy
+        ));
+    }
+
+    /// Each wording libhdf5 uses for the flags an unclean shutdown leaves.
+    #[test]
+    fn a_stale_flag_is_a_write_lock() {
+        for msg in [
+            "file is already open for write",
+            "file is already open for write/SWMR write",
+            "may use <h5clear file> to clear file consistency flags",
+        ] {
+            assert!(
+                matches!(
+                    classify_open_error(DbError::Backend(msg.to_owned())),
+                    DbError::WriteLocked
+                ),
+                "{msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn anything_else_passes_through() {
+        for err in [
+            DbError::Backend("bad superblock".to_owned()),
+            DbError::SchemaTooNew {
+                found: 9,
+                supported: 2,
+            },
+        ] {
+            let before = err.to_string();
+            assert_eq!(classify_open_error(err).to_string(), before);
+        }
     }
 }

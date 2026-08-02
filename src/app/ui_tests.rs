@@ -2471,7 +2471,9 @@ fn snapshot_history_locked_dialog() {
         .size(egui::vec2(640.0, 420.0))
         .eframe(build_app);
     harness.inner.step();
-    harness.inner.state_mut().pending_history_unlock = Some(PathBuf::from("geotrace.h5"));
+    harness.inner.state_mut().history_failure = Some(crate::app::storage::HistoryFailure::Locked(
+        PathBuf::from("geotrace.h5"),
+    ));
     harness.run();
     harness.snapshot("history_locked_dialog");
 }
@@ -2482,9 +2484,53 @@ fn snapshot_history_corrupt_dialog() {
         .size(egui::vec2(640.0, 420.0))
         .eframe(build_app);
     harness.inner.step();
-    harness.inner.state_mut().pending_db_corruption = Some(PathBuf::from("geotrace.h5"));
+    harness.inner.state_mut().history_failure = Some(
+        crate::app::storage::HistoryFailure::Unreadable(PathBuf::from("geotrace.h5")),
+    );
     harness.run();
     harness.snapshot("history_corrupt_dialog");
+}
+
+/// "Try again" on a database that still will not open puts the prompt back
+/// rather than leaving the user with no history and no explanation. Uses an
+/// unreadable file, since holding a real lock needs a second process.
+#[test]
+fn a_failed_retry_restores_the_prompt() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("recordings.h5");
+    std::fs::write(&path, b"not a database").expect("write");
+
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state_mut().history_failure =
+        Some(crate::app::storage::HistoryFailure::Busy(path.clone()));
+
+    let ctx = harness.ctx.clone();
+    harness.state_mut().reopen_history_database(&path, &ctx);
+
+    assert_eq!(
+        harness.state().history_failure,
+        Some(crate::app::storage::HistoryFailure::Unreadable(path)),
+        "the retry reclassifies instead of clearing the prompt"
+    );
+    assert!(harness.state().history.path().is_none());
+}
+
+/// A database held by another instance is a wait, not a repair, so this
+/// prompt offers neither the lock clear nor the recreate.
+#[test]
+fn snapshot_history_busy_dialog() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(640.0, 420.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness.inner.state_mut().history_failure = Some(crate::app::storage::HistoryFailure::Busy(
+        PathBuf::from("geotrace.h5"),
+    ));
+    harness.run();
+    harness.snapshot("history_busy_dialog");
 }
 
 #[test]

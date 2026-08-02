@@ -352,12 +352,9 @@ pub struct App {
     offline: bool,
     backfill_ui: backfill_ui::BackfillUi,
     interference_settings: crate::settings::InterferenceSettings,
-    /// Set when the database could not be opened because it is marked as locked
-    /// (open for write). Drives a confirmation dialog offering to clear it.
-    pending_history_unlock: Option<PathBuf>,
-    /// Set when the database could not be opened because it is corrupted. Drives a
-    /// dialog offering to recreate it (optionally keeping a backup).
-    pending_db_corruption: Option<PathBuf>,
+    /// Set when the recordings database could not be opened. Drives the
+    /// prompt for whichever failure it was.
+    history_failure: Option<storage::HistoryFailure>,
     /// "Keep a backup of the original database" tickbox state for the corruption
     /// recreate dialog.
     keep_db_backup: bool,
@@ -487,8 +484,7 @@ impl App {
         // a path.
         let storage::OpenStorage {
             history,
-            pending_history_unlock,
-            pending_db_corruption,
+            history_failure,
             archive,
         } = options.storage.open(&cc.egui_ctx);
 
@@ -554,8 +550,7 @@ impl App {
             processing_config: SegmentationConfig::default(),
             assoc_config: AssociationConfig::default(),
             history,
-            pending_history_unlock,
-            pending_db_corruption,
+            history_failure,
             keep_db_backup: true,
             pending_resegment: None,
             storage_enabled: true,
@@ -1919,6 +1914,34 @@ impl App {
         };
     }
 
+    /// Put a freshly opened database behind the history worker.
+    fn adopt_history_database(
+        &mut self,
+        db: gt_store::Recordings,
+        ctx: &egui::Context,
+        toast: &str,
+    ) {
+        self.history = history_db::HistoryWorker::spawn(db, ctx.clone());
+        self.sync_db_path();
+        self.history_window.invalidate();
+        self.toasts.info(toast);
+    }
+
+    /// Open the history database again, for a failure that resolves itself
+    /// once whatever held the file lets go.
+    fn reopen_history_database(&mut self, path: &std::path::Path, ctx: &egui::Context) {
+        match storage::reopen_recordings(path) {
+            Ok(db) => self.adopt_history_database(db, ctx, "Opened the history database"),
+            Err(failure) => {
+                log::warn!(
+                    "History database at {} still unavailable",
+                    failure.path().display()
+                );
+                self.history_failure = Some(failure);
+            }
+        }
+    }
+
     /// Clear a stale write lock and bring the history database online, after the
     /// user confirmed no other process is using it.
     fn recover_history_database(&mut self, path: &std::path::Path, ctx: &egui::Context) {
@@ -1927,10 +1950,7 @@ impl App {
             .and_then(|()| gt_store::Recordings::open_or_create(path));
         match result {
             Ok(db) => {
-                self.history = history_db::HistoryWorker::spawn(db, ctx.clone());
-                self.sync_db_path();
-                self.history_window.invalidate();
-                self.toasts.info("Recovered the history database");
+                self.adopt_history_database(db, ctx, "Recovered the history database");
             }
             Err(e) => {
                 log::error!("Failed to recover history database: {e}");
@@ -1967,10 +1987,7 @@ impl App {
 
         match gt_store::Recordings::open_or_create(path) {
             Ok(db) => {
-                self.history = history_db::HistoryWorker::spawn(db, ctx.clone());
-                self.sync_db_path();
-                self.history_window.invalidate();
-                self.toasts.info("Created a fresh history database");
+                self.adopt_history_database(db, ctx, "Created a fresh history database");
             }
             Err(e) => {
                 log::error!("Failed to recreate history database: {e}");
@@ -3139,94 +3156,116 @@ impl eframe::App for App {
             self.sync_db_path();
         }
 
-        // Locked-database recovery prompt: the file is marked open for write
-        // (usually a stale flag from an unclean exit). Clearing it is destructive
-        // if another process really is using it, so it requires confirmation.
-        if let Some(path) = self.pending_history_unlock.clone() {
-            let mut do_clear = false;
-            let mut cancel = ui
+        // Prompts for a recordings database that would not open. Each
+        // failure gets its own, because the remedies differ sharply: waiting,
+        // a destructive lock clear, or a recreate.
+        if let Some(failure) = self.history_failure.clone() {
+            let path = failure.path().to_owned();
+            let mut resolve = None;
+            let dismissed = ui
                 .ctx()
                 .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            Window::new("History database locked")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                .show(ui.ctx(), |ui| {
-                    ui.label("The recording history is marked as open for write.");
-                    ui.label(
-                        "This usually means GeoTrace did not shut down cleanly, but another program may still have the database open.",
-                    );
-                    ui.add_space(4.0);
-                    ui.label(
-                        RichText::new(
-                            "Only continue if no other program is using the database - otherwise it could be corrupted.",
-                        )
-                        .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
-                    );
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button(
-                                RichText::new("Clear lock and open")
-                                    .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
-                            )
-                            .clicked()
-                        {
-                            do_clear = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            cancel = true;
-                        }
-                    });
-                });
-            if do_clear {
-                self.recover_history_database(&path, ui.ctx());
-                self.pending_history_unlock = None;
-            } else if cancel {
-                self.pending_history_unlock = None;
+            match &failure {
+                storage::HistoryFailure::Busy(_) => {
+                    Window::new("History database in use")
+                        .collapsible(false)
+                        .resizable(false)
+                        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                        .show(ui.ctx(), |ui| {
+                            ui.label("Another GeoTrace window has the recording history open.");
+                            ui.label(
+                                "Close it and try again. Recordings load normally in the meantime, they are just not stored.",
+                            );
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                if ui.button("Try again").clicked() {
+                                    resolve = Some(true);
+                                }
+                                if ui.button("Continue without storing").clicked() {
+                                    resolve = Some(false);
+                                }
+                            });
+                        });
+                    if resolve == Some(true) {
+                        self.reopen_history_database(&path, ui.ctx());
+                    }
+                }
+                storage::HistoryFailure::Locked(_) => {
+                    Window::new("History database locked")
+                        .collapsible(false)
+                        .resizable(false)
+                        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                        .show(ui.ctx(), |ui| {
+                            ui.label("The recording history is marked as open for write.");
+                            ui.label(
+                                "This usually means GeoTrace did not shut down cleanly, but another program may still have the database open.",
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(
+                                    "Only continue if no other program is using the database - otherwise it could be corrupted.",
+                                )
+                                .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
+                            );
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .button(
+                                        RichText::new("Clear lock and open").color(
+                                            gt_ui_theme::warning_amber(ui.visuals().dark_mode),
+                                        ),
+                                    )
+                                    .clicked()
+                                {
+                                    resolve = Some(true);
+                                }
+                                if ui.button("Cancel").clicked() {
+                                    resolve = Some(false);
+                                }
+                            });
+                        });
+                    if resolve == Some(true) {
+                        self.recover_history_database(&path, ui.ctx());
+                    }
+                }
+                storage::HistoryFailure::Unreadable(_) => {
+                    let mut keep_backup = self.keep_db_backup;
+                    Window::new("History database is corrupted")
+                        .collapsible(false)
+                        .resizable(false)
+                        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                        .show(ui.ctx(), |ui| {
+                            ui.label("The recording history database could not be opened.");
+                            ui.label(
+                                "You can try to recover it manually, or recreate a fresh one.",
+                            );
+                            ui.add_space(4.0);
+                            ui.checkbox(&mut keep_backup, "Keep a backup of the original database");
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .button(
+                                        RichText::new("Recreate database").color(
+                                            gt_ui_theme::warning_amber(ui.visuals().dark_mode),
+                                        ),
+                                    )
+                                    .clicked()
+                                {
+                                    resolve = Some(true);
+                                }
+                                if ui.button("Cancel").clicked() {
+                                    resolve = Some(false);
+                                }
+                            });
+                        });
+                    self.keep_db_backup = keep_backup;
+                    if resolve == Some(true) {
+                        self.recreate_history_database(&path, keep_backup, ui.ctx());
+                    }
+                }
             }
-        }
-
-        // Corrupted-database prompt: the file exists but could not be opened.
-        // Offer to recreate it, optionally keeping a backup of the original.
-        if let Some(path) = self.pending_db_corruption.clone() {
-            let mut do_recreate = false;
-            let mut cancel = ui
-                .ctx()
-                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            Window::new("History database is corrupted")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                .show(ui.ctx(), |ui| {
-                    ui.label("The recording history database could not be opened.");
-                    ui.label("You can try to recover it manually, or recreate a fresh one.");
-                    ui.add_space(4.0);
-                    ui.checkbox(
-                        &mut self.keep_db_backup,
-                        "Keep a backup of the original database",
-                    );
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .button(
-                                RichText::new("Recreate database")
-                                    .color(gt_ui_theme::warning_amber(ui.visuals().dark_mode)),
-                            )
-                            .clicked()
-                        {
-                            do_recreate = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            cancel = true;
-                        }
-                    });
-                });
-            if do_recreate {
-                self.recreate_history_database(&path, self.keep_db_backup, ui.ctx());
-                self.pending_db_corruption = None;
-            } else if cancel {
-                self.pending_db_corruption = None;
+            if resolve.is_some() || dismissed {
+                self.history_failure = None;
             }
         }
 
