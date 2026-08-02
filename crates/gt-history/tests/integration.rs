@@ -1279,7 +1279,7 @@ fn rename_identity_merges_into_a_legacy_raw_named_target() {
 /// and <https://github.com/CramBL/geotrace/issues/338>.
 #[cfg(feature = "backend-sys")]
 #[test_log::test]
-fn clear_write_lock_recovers_a_locked_database() {
+fn clear_write_lock_repairs_an_unreadable_superblock() {
     use std::io::{Seek, SeekFrom, Write};
 
     let dir = tempfile::tempdir().expect("temp dir");
