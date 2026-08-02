@@ -2625,7 +2625,10 @@ impl MetricProvider for TrackProvider<'_> {
                 .and_then(|values| values.get(index).copied().flatten()),
             QueryMetric::Jamming => self
                 .jamming
-                .and_then(|values| values.get(index).copied().flatten()),
+                .and_then(|values| values.get(index).copied().flatten())
+                // Resolved as a percentage; the evaluator's ratio base is
+                // the 0-1 fraction, like the util metrics.
+                .map(|percent| percent * Unit::PERCENT.to_base()),
         }
     }
 
@@ -3481,7 +3484,9 @@ mod tests {
             ..SlipRatePerPoint::default()
         };
         let data = TrackQueryData {
-            jamming: None,
+            // Point 0 in a cell where 10 % of aircraft reported low
+            // integrity; point 1's day is not archived.
+            jamming: Some(Arc::new(vec![Some(10.0), None])),
             util: Some(util),
             slip: Some(slip),
             // Point 0 snapped with a 3.5 m error; point 1 carries no value
@@ -3507,6 +3512,7 @@ mod tests {
             (QueryMetric::UtilGps, 0, Some(0.5)), // 50 % as a fraction
             (QueryMetric::SlipAll, 0, Some(2.0)), // already per minute
             (QueryMetric::SnapError, 0, Some(3.5)), // already metres
+            (QueryMetric::Jamming, 0, Some(0.1)), // 10 % as a fraction
             // The reportless point: counts and derived series are missing,
             // never zero.
             (QueryMetric::Velocity, 1, None),
@@ -3515,6 +3521,7 @@ mod tests {
             (QueryMetric::UtilGps, 1, None),
             (QueryMetric::SlipAll, 1, None),
             (QueryMetric::SnapError, 1, None),
+            (QueryMetric::Jamming, 1, None),
         ];
         for (metric, index, expected) in cases {
             let value = provider.value(metric, index);

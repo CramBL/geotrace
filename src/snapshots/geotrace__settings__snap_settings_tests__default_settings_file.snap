@@ -1,0 +1,69 @@
+---
+source: src/settings.rs
+expression: toml
+---
+version = 1
+
+[plot]
+show_grid = true
+line_width = 0.75
+panel_visible = true
+split_ratio = 0.6
+show_advanced_metrics = false
+show_channels = false
+
+[plot.metric]
+
+[plot.channel]
+
+[plot.channel_colors]
+
+[map]
+layer = "osm"
+mapbox_token = ""
+sync_to_map = true
+display_mask = []
+sky_glyph_variant = "ring"
+sky_trail_opacity_percent = 40.0
+
+[map.point_window_folds]
+plot = false
+constellations = []
+
+[ui]
+theme = "system"
+recording_name_template = "{filename}"
+
+[processing]
+track_split_gap_seconds = 300
+log_marker_window_s = 60
+detect_gnss_fix_lost = true
+detect_gnss_fix_regained = true
+detect_clock_discontinuities = true
+clock_discontinuity_sigmas = 5.0
+detect_slips = true
+
+[analysis]
+elevation_mask_deg = 15.0
+mark_masked_fix = true
+snr_drop_db = 10.0
+slip_window_min = 10.0
+
+[storage]
+enabled = true
+auto_prune_enabled = false
+auto_prune_max_bytes = 10737418240
+auto_prune_confirm = true
+
+[update]
+check_on_startup = true
+
+[query]
+history = []
+
+[snap]
+server_url = "https://valhalla1.openstreetmap.de"
+costing = "auto"
+
+[interference]
+base_url = "https://gpsjam.org"

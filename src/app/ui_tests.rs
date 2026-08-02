@@ -1463,10 +1463,64 @@ fn display_mask_persists_across_settings_roundtrip() {
     );
     assert!(shared.display_mask.is_visible(DisplayCategory::Tracks));
 
-    // A config from before the display mask existed loads as all-visible.
+    // A config from before the display mask existed loads with every
+    // category at its default: everything visible but the opt-in layer.
     let old_config: crate::settings::Settings =
         toml::from_str("[map]\nsync_to_map = false\n").expect("old config parses");
-    assert!(!old_config.map.display_mask.any_hidden());
+    assert_eq!(
+        old_config.map.display_mask,
+        gt_ui_types::DisplayMask::default()
+    );
+    assert!(
+        !old_config
+            .map
+            .display_mask
+            .is_visible(DisplayCategory::JammingHexes)
+    );
+}
+
+/// The interference layer is off until asked for, and stays on once it is.
+#[test]
+fn showing_the_interference_layer_persists_across_settings_roundtrip() {
+    use gt_ui_types::DisplayCategory;
+
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+
+    assert!(
+        !harness
+            .state()
+            .shared
+            .borrow()
+            .display_mask
+            .is_visible(DisplayCategory::JammingHexes),
+        "off on a fresh install"
+    );
+
+    {
+        let shared = harness.state_mut().shared.clone();
+        let mut shared = shared.borrow_mut();
+        shared
+            .display_mask
+            .set_visible(DisplayCategory::JammingHexes, true);
+    }
+
+    let flushed = harness.state().collect_settings_for_flush();
+    let toml = toml::to_string(&flushed).expect("settings serialize");
+    let reloaded: crate::settings::Settings = toml::from_str(&toml).expect("settings parse");
+    harness.state_mut().apply_startup_settings(&reloaded);
+
+    assert!(
+        harness
+            .state()
+            .shared
+            .borrow()
+            .display_mask
+            .is_visible(DisplayCategory::JammingHexes),
+        "the choice survives a restart"
+    );
 }
 
 /// Build an app with one loaded file and the query window open. Shared setup

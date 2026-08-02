@@ -2238,6 +2238,7 @@ dependencies = [
  "gt-types",
  "gt-ui-theme",
  "gt-ui-types",
+ "insta",
  "log",
  "mimalloc",
  "parking_lot",

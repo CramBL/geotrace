@@ -359,6 +359,22 @@ impl JammingScheduler {
             .flatten()
     }
 
+    /// Point the scheduler at `base_url`.
+    ///
+    /// A changed host drops the queue, `seen`, and `refused`: those requests
+    /// and refusals belong to the old host. `archived_cells` is kept - a day
+    /// already archived does not depend on which host served it.
+    pub fn set_base_url(&mut self, base_url: &str) {
+        if self.base_url == base_url {
+            return;
+        }
+        base_url.clone_into(&mut self.base_url);
+        self.http = None;
+        self.queue.clear();
+        self.seen.clear();
+        self.refused.clear();
+    }
+
     /// Days that could not be archived, oldest first.
     #[cfg(test)]
     fn failures(&self) -> Vec<DayFailure> {
@@ -795,5 +811,41 @@ mod tests {
         }];
 
         assert!(scheduler.plot_series(&files).is_empty());
+    }
+
+    /// A changed host drops what belonged to the old one, and keeps what
+    /// does not depend on it.
+    #[test]
+    fn changing_the_host_drops_only_the_hosts_own_state() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
+        scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
+        scheduler.refused.insert(day);
+        scheduler.archived_cells.insert(day, 44_546);
+
+        scheduler.set_base_url("https://mirror.example");
+
+        assert!(scheduler.seen.is_empty(), "the old host's requests");
+        assert!(scheduler.refused.is_empty(), "the old host's refusals");
+        assert_eq!(scheduler.queued(), 0);
+        assert_eq!(
+            scheduler.archived_cells.get(&day),
+            Some(&44_546),
+            "archived days do not depend on the host"
+        );
+    }
+
+    #[test]
+    fn setting_the_same_host_changes_nothing() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
+        scheduler.refused.insert(day);
+        scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
+        let seen = scheduler.seen.len();
+
+        scheduler.set_base_url(DEFAULT_BASE_URL);
+
+        assert_eq!(scheduler.seen.len(), seen);
+        assert!(scheduler.refused.contains(&day));
     }
 }

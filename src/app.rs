@@ -321,6 +321,7 @@ pub struct App {
     history: history_db::HistoryWorker,
     /// Queues and ingests interference days for loaded tracks.
     jamming: jamming::JammingScheduler,
+    interference_settings: crate::settings::InterferenceSettings,
     /// Set when the database could not be opened because it is marked as locked
     /// (open for write). Drives a confirmation dialog offering to clear it.
     pending_history_unlock: Option<PathBuf>,
@@ -521,6 +522,7 @@ impl App {
 
         let mut app = Self {
             jamming,
+            interference_settings: crate::settings::InterferenceSettings::default(),
             map,
             shared: Rc::new(RefCell::new(SharedAppState {
                 loaded_files: LoadedFiles::new(),
@@ -1034,6 +1036,37 @@ impl App {
                         ui.end_row();
                     });
 
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui_phosphor::regular::AIRPLANE_TILT);
+                    ui.strong("Aircraft interference");
+                });
+                ui.separator();
+                egui::Grid::new("interference_grid")
+                    .num_columns(2)
+                    .spacing([8.0, 6.0])
+                    .show(ui, |ui| {
+                        let url_help = "Base URL of the host serving the daily interference \
+                                        datasets. The default is gpsjam.org; point it at a \
+                                        mirror or an offline copy to fetch from there instead. \
+                                        Requests carry a date and nothing about your recordings.";
+                        ui.label(format!(
+                            "{} Base URL",
+                            egui_phosphor::regular::GLOBE_SIMPLE
+                        ))
+                        .on_hover_text(url_help);
+                        let mut base_url = self.interference_settings.base_url.clone();
+                        if ui
+                            .text_edit_singleline(&mut base_url)
+                            .on_hover_text(url_help)
+                            .changed()
+                        {
+                            self.jamming.set_base_url(&base_url);
+                            self.interference_settings.base_url = base_url;
+                        }
+                        ui.end_row();
+                    });
+
                 // Only meaningful in dist builds. Builds without the self-update
                 // feature carry no update check to toggle.
                 #[cfg(feature = "self-update")]
@@ -1236,6 +1269,8 @@ impl App {
         self.skipped_version = s.update.skipped_version.clone();
         self.query_window.set_history(s.query.history.clone());
         self.snap_settings = s.snap.clone();
+        self.interference_settings = s.interference.clone();
+        self.jamming.set_base_url(&s.interference.base_url);
         self.snap.set_server_url(&s.snap.server_url);
         self.sync_db_path();
     }
@@ -1703,6 +1738,7 @@ impl App {
                 history: self.query_window.history().to_vec(),
             },
             snap: self.snap_settings.clone(),
+            interference: self.interference_settings.clone(),
         }
     }
 

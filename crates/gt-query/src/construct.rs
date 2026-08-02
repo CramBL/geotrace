@@ -461,7 +461,7 @@ fn metric_docs(metric: QueryMetric) -> (&'static str, &'static str, &'static [&'
         QueryMetric::Jamming => (
             "aircraft-reported interference over the fix's cell",
             gt_jam::text::QUERY_DOC.as_str(),
-            &["where jamming > 10"],
+            &["where jamming > 10 %"],
         ),
     }
 }
