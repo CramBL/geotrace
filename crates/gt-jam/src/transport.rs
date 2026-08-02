@@ -147,7 +147,7 @@ impl Transport for HttpTransport {
 }
 
 /// Fetch `day` from `base_url`, retrying transient failures once.
-pub fn fetch_day<T: Transport>(transport: &T, base_url: &str, day: NaiveDate) -> FetchOutcome {
+pub fn fetch_day(transport: &impl Transport, base_url: &str, day: NaiveDate) -> FetchOutcome {
     let url = crate::dataset_url(base_url, day);
 
     let mut last_failure = String::new();

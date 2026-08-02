@@ -621,8 +621,8 @@ fn spawn_fetch(
 }
 
 /// Fetch `day`, parse it, and add it to the archive.
-fn ingest<T: Transport>(
-    transport: &T,
+fn ingest(
+    transport: &impl Transport,
     store: &JamStore,
     base_url: &str,
     day: NaiveDate,

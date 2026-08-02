@@ -165,8 +165,8 @@ impl Transport for HttpTransport {
 ///
 /// Never fails as a whole: per-chunk failures become
 /// [`ChunkOutcome::Failed`] and stitching handles the gaps.
-pub fn send_plan<T: Transport>(
-    transport: &T,
+pub fn send_plan(
+    transport: &impl Transport,
     plan: &RequestPlan,
     params: &SnapParams,
     mut progress: impl FnMut(usize, usize),
@@ -182,7 +182,7 @@ pub fn send_plan<T: Transport>(
 }
 
 /// Send one chunk with retry-on-transient-failure semantics.
-fn send_chunk<T: Transport>(transport: &T, request: &TraceAttributesRequest) -> ChunkOutcome {
+fn send_chunk(transport: &impl Transport, request: &TraceAttributesRequest) -> ChunkOutcome {
     let mut last_failure = String::new();
     for _ in 0..=RETRIES {
         match transport.send(request) {
