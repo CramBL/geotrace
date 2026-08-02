@@ -2363,3 +2363,63 @@ fn file_size_stays_bounded_across_snap_blob_rewrites() {
     }
     assert_size_snapshot("snap_blob_rewrites", baseline, file_size(&db_path));
 }
+
+/// A file that is not a database at all is reported, not silently replaced.
+#[test]
+fn an_unreadable_database_reports_an_error() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("recordings.h5");
+    std::fs::write(&path, b"not a database").expect("write");
+
+    assert!(
+        matches!(Database::open_or_create(&path), Err(DbError::Backend(_))),
+        "an unreadable file is a plain backend error, not a write lock"
+    );
+}
+
+/// Clearing a lock that was never set leaves the database usable, so the
+/// recovery path is safe to run on a healthy file.
+#[test]
+fn clearing_the_write_lock_on_a_healthy_database_is_harmless() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("recordings.h5");
+    drop(Database::open_or_create(&path).expect("create"));
+
+    Database::clear_write_lock(&path).expect("clearing an unset lock succeeds");
+
+    let db = Database::open_or_create(&path).expect("reopen after clearing");
+    assert!(db.list_recordings().expect("list").is_empty());
+}
+
+/// The pure backend opens a write-locked database as if nothing happened.
+///
+/// The system backend refuses the same file with [`DbError::WriteLocked`] and
+/// offers the user a repair, so the two disagree about a database left behind
+/// by a crash. The cause is upstream: `hdf5-pure` does not check the
+/// superblock status-flags byte on open:
+/// <https://github.com/stephenberry/hdf5-pure/issues/245>. Pinned as it
+/// stands so this test fails once that is fixed and the backend can
+/// implement detection and `clear_write_lock`:
+/// <https://github.com/CramBL/geotrace/issues/338>.
+#[cfg(feature = "backend-pure")]
+#[test]
+fn a_write_locked_database_opens_on_the_pure_backend() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("recordings.h5");
+    drop(Database::open_or_create(&path).expect("create"));
+
+    // A crashed writer: the superblock status-flags byte set with a valid
+    // checksum. `close` and `Drop` clear it, so the writer is leaked.
+    let writer = hdf5_pure::File::open_swmr_writer(&path).expect("swmr writer sets the flag");
+    #[expect(
+        clippy::mem_forget,
+        reason = "skipping the flag-clearing Drop is what simulates the crash"
+    )]
+    std::mem::forget(writer);
+
+    assert!(
+        Database::open_or_create(&path).is_ok(),
+        "the flag is not checked"
+    );
+    Database::clear_write_lock(&path).expect("the default no-op succeeds");
+}
