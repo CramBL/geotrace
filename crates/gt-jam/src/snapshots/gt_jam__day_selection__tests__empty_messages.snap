@@ -1,0 +1,12 @@
+---
+source: crates/gt-jam/src/day_selection.rs
+expression: wording
+---
+[
+    "no_track: [no day] Load a recording to choose a day",
+    "before_coverage: [before coverage] No data was published before 2022-02-14",
+    "in_future: [future day] This day has not happened yet",
+    "awaiting_publication: [not published yet] Not published yet - the source runs a few days behind",
+    "not_fetched: [not downloaded] Not downloaded yet",
+    "not_published: [none published] The source published nothing for this day",
+]

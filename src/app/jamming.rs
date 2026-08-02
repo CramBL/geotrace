@@ -18,6 +18,7 @@ use egui::Context;
 
 use gt_jam::calendar::{self, DayOutlook};
 use gt_jam::dataset::JamDataset;
+use gt_jam::day_selection::{DaySelection, EmptyReason};
 use gt_jam::transport::{self, FetchOutcome, HttpTransport, Transport};
 use gt_jam::wire::{self, ParseWarningReporter};
 use gt_store::JamStore;
@@ -75,6 +76,11 @@ pub struct JammingScheduler {
     /// re-ingested - `insert_day` refuses one already stored - so a loaded
     /// day cannot go out of date.
     shown: Option<(NaiveDate, JamDataset)>,
+    /// Which day the overlay shows, and the stepper's bounds.
+    selection: DaySelection,
+    /// Days the host answered it has no dataset for, which the legend
+    /// distinguishes from a day nothing was downloaded for.
+    refused: HashSet<NaiveDate>,
 }
 
 impl JammingScheduler {
@@ -94,6 +100,8 @@ impl JammingScheduler {
         Self {
             archived_cells,
             shown: None,
+            selection: DaySelection::new(None, calendar::today_utc()),
+            refused: HashSet::new(),
             ctx,
             tx,
             rx,
@@ -131,6 +139,9 @@ impl JammingScheduler {
             return;
         };
         let today = calendar::today_utc();
+        if let Some(first) = days.first() {
+            self.selection.adopt_default(*first);
+        }
         for day in days {
             if !self.seen.insert(day) {
                 continue;
@@ -166,6 +177,7 @@ impl JammingScheduler {
                         "No interference data published for {day}{}",
                         if pending { " yet" } else { "" }
                     );
+                    self.refused.insert(day);
                 }
                 JamMessage::Failed { day, detail } => {
                     log::error!("No interference data archived for {day}: {detail}");
@@ -176,19 +188,44 @@ impl JammingScheduler {
         self.start_next();
     }
 
-    /// The dataset to draw for `day`, loading it from the archive the first
-    /// time the day is shown.
-    ///
-    /// [`None`] when the day is not archived, or when reading it failed.
-    pub fn shown_dataset(&mut self, day: Option<NaiveDate>) -> Option<&JamDataset> {
-        let day = day?;
-        if self.shown.as_ref().is_none_or(|(shown, _)| *shown != day) {
-            self.shown = self.load_dataset(day).map(|dataset| (day, dataset));
-        }
-        self.shown
+    /// Why the overlay is drawing nothing, or [`None`] when it has cells.
+    pub fn empty_reason(&self) -> Option<EmptyReason> {
+        let archived = self
+            .selection
+            .day()
+            .map_or(0, |day| self.archived_cells(day));
+        let refused = self
+            .selection
+            .day()
+            .is_some_and(|day| self.refused.contains(&day));
+        self.selection.empty_reason(archived, refused)
+    }
+
+    /// Cells archived for `day`.
+    fn archived_cells(&self, day: NaiveDate) -> usize {
+        self.archived_cells
+            .get(&day)
+            .map_or(0, |&cells| cells as usize)
+    }
+
+    /// The selected day's cells and the day selection, borrowed apart so the
+    /// map can draw one while the stepper mutates the other. Loads the day
+    /// from the archive the first time it is shown.
+    pub fn overlay_state(&mut self) -> (Option<&JamDataset>, &mut DaySelection) {
+        let day = self.selection.day();
+        if self
+            .shown
             .as_ref()
-            .filter(|(shown, _)| *shown == day)
-            .map(|(_, dataset)| dataset)
+            .is_none_or(|(shown, _)| Some(*shown) != day)
+        {
+            self.shown = day.and_then(|day| self.load_dataset(day).map(|dataset| (day, dataset)));
+        }
+        let dataset = self
+            .shown
+            .as_ref()
+            .filter(|(shown, _)| Some(*shown) == day)
+            .map(|(_, dataset)| dataset);
+        (dataset, &mut self.selection)
     }
 
     fn load_dataset(&self, day: NaiveDate) -> Option<JamDataset> {
@@ -511,5 +548,49 @@ mod tests {
         let message = ingest(&transport, &store, DEFAULT_BASE_URL, day);
         assert!(matches!(message, JamMessage::Failed { .. }));
         assert!(store.days().expect("days").is_empty());
+    }
+
+    /// The overlay adopts the earliest day of the loaded tracks, whichever
+    /// order the loads finish in.
+    #[test]
+    fn the_earliest_loaded_day_is_shown() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        scheduler.request_days_for(range(at(2026, 7, 25, 8), at(2026, 7, 25, 9)));
+        scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 9)));
+
+        let (_, selection) = scheduler.overlay_state();
+        assert_eq!(selection.day(), NaiveDate::from_ymd_opt(2026, 7, 20));
+    }
+
+    /// Once stepped, a later load does not move the overlay.
+    #[test]
+    fn a_later_load_does_not_move_a_stepped_day() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        scheduler.request_days_for(range(at(2026, 7, 25, 8), at(2026, 7, 25, 9)));
+        scheduler.overlay_state().1.step_back();
+
+        scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 9)));
+        let (_, selection) = scheduler.overlay_state();
+        assert_eq!(selection.day(), NaiveDate::from_ymd_opt(2026, 7, 24));
+    }
+
+    /// A day the host refused reads differently from one never downloaded.
+    #[test]
+    fn a_refused_day_is_not_reported_as_undownloaded() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
+        scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 9)));
+        assert_eq!(scheduler.empty_reason(), Some(EmptyReason::NotFetched));
+
+        scheduler.refused.insert(day);
+        assert_eq!(scheduler.empty_reason(), Some(EmptyReason::NotPublished));
+    }
+
+    /// With no track loaded the legend says so, rather than showing a day.
+    #[test]
+    fn no_loaded_track_means_no_day() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        assert_eq!(scheduler.empty_reason(), Some(EmptyReason::NoTrack));
+        assert_eq!(scheduler.overlay_state().1.day(), None);
     }
 }

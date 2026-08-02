@@ -29,6 +29,7 @@ use h3o::Resolution;
 
 pub mod calendar;
 pub mod dataset;
+pub mod day_selection;
 pub mod text;
 pub mod transport;
 pub mod wire;
