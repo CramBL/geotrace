@@ -30,12 +30,17 @@ const HATCH_SPACING_PX: f32 = 6.0;
 /// Width of a hatch line.
 const HATCH_STROKE_WIDTH: f32 = 1.0;
 
-/// A cell projected to screen space, ready to paint.
+/// Gap between the pointer and the hover, matching egui's own tooltips.
+const TOOLTIP_POINTER_GAP_PX: f32 = 12.0;
+
+/// A cell projected to screen space, ready to paint and to hit-test.
 pub(crate) struct CellShape {
     pub(crate) outline: Vec<Pos2>,
     pub(crate) fill: Color32,
     /// Whether the cell's aircraft count is too small for a solid fill.
     pub(crate) low_sample: bool,
+    /// The tally behind the fill, for the hover.
+    pub(crate) observation: HexObservation,
 }
 
 /// Whether `observation` has enough aircraft for its share to be drawn as a
@@ -90,6 +95,7 @@ pub(crate) fn visible_cells(
                     .resolve(dark_mode)
                     .gamma_multiply_u8(INTERFERENCE_FILL_ALPHA),
                 low_sample: is_low_sample(observation),
+                observation: *observation,
             })
         })
         .collect()
@@ -130,11 +136,15 @@ fn geographic_window(bounds: gt_types::MercBounds) -> (RangeInclusive<f64>, Rang
 /// sit beneath the track ink.
 pub(crate) struct JammingRenderer<'a> {
     dataset: &'a JamDataset,
+    hover_enabled: bool,
 }
 
 impl<'a> JammingRenderer<'a> {
-    pub(crate) const fn new(dataset: &'a JamDataset) -> Self {
-        Self { dataset }
+    pub(crate) const fn new(dataset: &'a JamDataset, hover_enabled: bool) -> Self {
+        Self {
+            dataset,
+            hover_enabled,
+        }
     }
 }
 
@@ -142,7 +152,7 @@ impl Plugin for JammingRenderer<'_> {
     fn run(
         self: Box<Self>,
         ui: &mut Ui,
-        _response: &egui::Response,
+        response: &egui::Response,
         projector: &Projector,
         map_memory: &MapMemory,
     ) {
@@ -154,6 +164,65 @@ impl Plugin for JammingRenderer<'_> {
             ui.visuals().dark_mode,
         );
         draw_cells(ui, &cells);
+
+        // Yields while any track element owns the pointer: the recorded data
+        // is what the user came for, and a cell covers the whole viewport at
+        // track zoom.
+        if !self.hover_enabled {
+            return;
+        }
+        let Some(pointer) = response.hovered().then(|| response.hover_pos()).flatten() else {
+            return;
+        };
+        if let Some(cell) = cell_at_pointer(&cells, pointer) {
+            // Anchored at the pointer: `response` is the whole map, so a
+            // response-anchored tooltip lands in the map's corner.
+            egui::Tooltip::always_open(
+                ui.ctx().clone(),
+                ui.layer_id(),
+                response.id,
+                egui::PopupAnchor::Pointer,
+            )
+            .gap(TOOLTIP_POINTER_GAP_PX)
+            .show(|ui| cell_tooltip(ui, cell, self.dataset.day()));
+        }
+    }
+}
+
+/// The cell under the pointer, if any. Cells do not overlap, so the first
+/// containing one is the answer.
+fn cell_at_pointer(cells: &[CellShape], pointer: Pos2) -> Option<&CellShape> {
+    cells
+        .iter()
+        .find(|cell| contains_point(&cell.outline, pointer))
+}
+
+/// Whether a convex polygon contains a point.
+fn contains_point(polygon: &[Pos2], point: Pos2) -> bool {
+    if polygon.len() < 3 {
+        return false;
+    }
+    inward_edges(polygon).all(|(vertex, inward)| (point - vertex).dot(inward) >= 0.0)
+}
+
+/// The cell hover: the counts behind the colour, and nothing else. What the
+/// data is and what it cannot say is on the display toggle's own hover, so
+/// it is not repeated over every cell.
+fn cell_tooltip(ui: &mut Ui, cell: &CellShape, day: chrono::NaiveDate) {
+    let observation = &cell.observation;
+    let Some(rate) = observation.rate() else {
+        return;
+    };
+    for line in gt_jam::text::cell_summary(
+        &day.to_string(),
+        observation.good,
+        observation.bad,
+        rate.bad_fraction * 100.0,
+    ) {
+        ui.label(line);
+    }
+    if cell.low_sample {
+        ui.label(egui::RichText::new(gt_jam::text::LOW_SAMPLE_CAVEAT).italics());
     }
 }
 
@@ -209,25 +278,37 @@ fn signed_area_x2(polygon: &[Pos2]) -> f32 {
         .sum()
 }
 
-/// Clip a segment to a convex polygon, or [`None`] when it falls outside.
+/// Each edge as a start vertex and the normal pointing into the polygon.
 ///
-/// H3 cells are convex, so intersecting the segment's parameter range with
-/// each edge's inner half-plane is exact. The winding is measured rather
-/// than assumed: the projection flips y, which reverses it.
-fn clip_to_convex(segment: [Pos2; 2], polygon: &[Pos2]) -> Option<[Pos2; 2]> {
-    let [from, to] = segment;
-    let direction = to - from;
-    let (mut enter, mut leave) = (0.0_f32, 1.0_f32);
+/// The winding is measured rather than assumed: the projection flips y,
+/// which reverses it. A point is inside the polygon when
+/// `(point - vertex).dot(inward) >= 0.0` for every edge.
+fn inward_edges(polygon: &[Pos2]) -> impl Iterator<Item = (Pos2, egui::Vec2)> + '_ {
     let winding = if signed_area_x2(polygon) < 0.0 {
         -1.0
     } else {
         1.0
     };
+    polygon
+        .iter()
+        .enumerate()
+        .filter_map(move |(index, &vertex)| {
+            let next = polygon.get((index + 1) % polygon.len())?;
+            let edge = *next - vertex;
+            Some((vertex, egui::vec2(-edge.y, edge.x) * winding))
+        })
+}
 
-    for (index, &vertex) in polygon.iter().enumerate() {
-        let next = *polygon.get((index + 1) % polygon.len())?;
-        let edge = next - vertex;
-        let inward = egui::vec2(-edge.y, edge.x) * winding;
+/// Clip a segment to a convex polygon, or [`None`] when it falls outside.
+///
+/// H3 cells are convex, so intersecting the segment's parameter range with
+/// each edge's inner half-plane is exact.
+fn clip_to_convex(segment: [Pos2; 2], polygon: &[Pos2]) -> Option<[Pos2; 2]> {
+    let [from, to] = segment;
+    let direction = to - from;
+    let (mut enter, mut leave) = (0.0_f32, 1.0_f32);
+
+    for (vertex, inward) in inward_edges(polygon) {
         let denominator = direction.dot(inward);
         let distance = (vertex - from).dot(inward);
 
@@ -510,5 +591,88 @@ mod tests {
         let outline = cell_outline(cell, &transform).expect("outline");
         let far_away = [egui::pos2(-9000.0, -9000.0), egui::pos2(-8900.0, -8900.0)];
         assert_eq!(clip_to_convex(far_away, &outline), None);
+    }
+
+    /// A cell's own centre is inside it; a point well outside its bounding
+    /// box is not.
+    #[test]
+    fn a_cell_contains_its_own_centre() {
+        let cell = CellIndex::from_str(BALTIC).expect("cell index");
+        let center = LatLng::from(cell);
+        let rect =
+            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(CANVAS_PX, CANVAS_PX));
+        let transform = MercTransform::for_test_view(
+            TEST_VIEW_TOTAL_PX,
+            Latitude::new(center.lat()),
+            Longitude::new(center.lng()),
+            rect.center(),
+        );
+        let outline = cell_outline(cell, &transform).expect("outline");
+
+        assert!(contains_point(&outline, rect.center()));
+        assert!(!contains_point(&outline, egui::pos2(-9000.0, -9000.0)));
+    }
+
+    /// The bounding box corners lie outside the hexagon, which is what
+    /// separates a polygon hit test from a rectangle one.
+    #[test]
+    fn a_cells_bounding_box_corners_are_outside_it() {
+        let cell = CellIndex::from_str(BALTIC).expect("cell index");
+        let center = LatLng::from(cell);
+        let rect =
+            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(CANVAS_PX, CANVAS_PX));
+        let transform = MercTransform::for_test_view(
+            TEST_VIEW_TOTAL_PX,
+            Latitude::new(center.lat()),
+            Longitude::new(center.lng()),
+            rect.center(),
+        );
+        let outline = cell_outline(cell, &transform).expect("outline");
+        let bounds = bounding_rect(&outline).expect("bounds");
+
+        for corner in [
+            bounds.left_top(),
+            bounds.right_top(),
+            bounds.left_bottom(),
+            bounds.right_bottom(),
+        ] {
+            assert!(
+                !contains_point(&outline, corner),
+                "{corner:?} is a bounding-box corner, outside the hexagon"
+            );
+        }
+    }
+
+    /// The pointer picks the cell it is inside, not merely a nearby one.
+    #[test]
+    fn the_pointer_picks_the_cell_it_is_in() {
+        let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
+        let center_cell = CellIndex::from_str(BALTIC).expect("cell index");
+        let observations: Vec<HexObservation> = center_cell
+            .grid_disk::<Vec<_>>(1)
+            .into_iter()
+            .enumerate()
+            .map(|(index, cell)| HexObservation {
+                cell,
+                good: 100,
+                bad: u32::try_from(index).unwrap_or_default(),
+            })
+            .collect();
+        let dataset = JamDataset::new(day, observations);
+
+        let center = LatLng::from(center_cell);
+        let rect =
+            egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(CANVAS_PX, CANVAS_PX));
+        let transform = MercTransform::for_test_view(
+            TEST_VIEW_TOTAL_PX,
+            Latitude::new(center.lat()),
+            Longitude::new(center.lng()),
+            rect.center(),
+        );
+        let cells = visible_cells(&dataset, &transform, rect, true);
+
+        let hit = cell_at_pointer(&cells, rect.center()).expect("a cell under the centre");
+        assert_eq!(hit.observation.cell, center_cell);
+        assert!(cell_at_pointer(&cells, egui::pos2(-9000.0, -9000.0)).is_none());
     }
 }

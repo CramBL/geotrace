@@ -562,7 +562,12 @@ impl NavMap {
         if display_mask.is_visible(DisplayCategory::JammingHexes)
             && let Some(dataset) = jamming_dataset
         {
-            map = map.with_plugin(jamming_renderer::JammingRenderer::new(dataset));
+            // Hover yields while a track element owns the pointer, matching
+            // the snapped-track renderer.
+            map = map.with_plugin(jamming_renderer::JammingRenderer::new(
+                dataset,
+                highlight.hover.is_none(),
+            ));
         }
         // A masked display category skips its whole plugin - the mask is
         // the render-side AND on top of the per-track tree visibility the
@@ -2090,9 +2095,14 @@ mod snapshot_tests {
     /// the ramp, which `jamming_renderer`'s own tests cover. Requires
     /// `GEOTRACE_OFFLINE=1` (set by `just test`) so no map tiles render.
     #[rstest::rstest]
-    #[case::dark("jamming_overlay_dark", true)]
-    #[case::light("jamming_overlay_light", false)]
-    fn snapshot_jamming_overlay(#[case] name: &str, #[case] dark_mode: bool) {
+    #[case::dark("jamming_overlay_dark", true, None)]
+    #[case::light("jamming_overlay_light", false, None)]
+    #[case::hover("jamming_overlay_hover", true, Some(egui::pos2(400.0, 300.0)))]
+    fn snapshot_jamming_overlay(
+        #[case] name: &str,
+        #[case] dark_mode: bool,
+        #[case] hover: Option<egui::Pos2>,
+    ) {
         let files = vec![make_snapshot_file()];
         let visibility = gt_ui_types::TrackDataVisibility::from_loaded(&files);
         let dataset = snapshot_jamming_dataset();
@@ -2129,6 +2139,13 @@ mod snapshot_tests {
         // The first frame zooms to fit the file; the rest settle animations.
         for _ in 0..5 {
             harness.run();
+        }
+        if let Some(pos) = hover {
+            harness.inner.hover_at(pos);
+            // Tooltips appear after egui's hover delay.
+            for _ in 0..60 {
+                harness.run();
+            }
         }
         harness.snapshot_loose(name);
     }

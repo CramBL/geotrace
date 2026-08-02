@@ -34,6 +34,18 @@ pub const RESOLUTION_CAVEAT: &str = "One cell spans roughly 22 km and one value 
 pub const LOW_SAMPLE_CAVEAT: &str =
     "Too few aircraft passed through this cell for the share to carry weight.";
 
+/// The lines describing one cell, leading with the counts that produced the
+/// share. Shared so the map hover and the plot hover agree.
+pub fn cell_summary(day: &str, good: u32, bad: u32, bad_percent: f32) -> Vec<String> {
+    vec![
+        format!(
+            "{bad} of {} aircraft reported low navigation accuracy",
+            good.saturating_add(bad)
+        ),
+        format!("{bad_percent:.1} % over {day} (UTC)"),
+    ]
+}
+
 /// Where the data comes from, shown in the legend and the about dialog.
 pub const ATTRIBUTION: &str = "Interference data from gpsjam.org, derived from aircraft reports \
                                collected by adsbexchange.com.";
@@ -48,6 +60,24 @@ pub const UPSTREAM_URL: &str = "https://adsbexchange.com";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One cell's hover lines: the counts, then the share.
+    #[test]
+    fn cell_summary_leads_with_the_counts() {
+        let lines = cell_summary("2026-07-20", 412, 3, 0.72);
+        insta::assert_debug_snapshot!("cell_summary", lines);
+    }
+
+    /// A cell with no good aircraft still reads as a count, not a bare
+    /// percentage.
+    #[test]
+    fn cell_summary_handles_an_all_bad_cell() {
+        let lines = cell_summary("2026-07-20", 0, 4, 100.0);
+        assert_eq!(
+            lines.first().map(String::as_str),
+            Some("4 of 4 aircraft reported low navigation accuracy")
+        );
+    }
 
     /// The feature's user-visible wording, in one place.
     #[test]

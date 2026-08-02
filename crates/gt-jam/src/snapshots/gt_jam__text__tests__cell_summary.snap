@@ -1,0 +1,8 @@
+---
+source: crates/gt-jam/src/text.rs
+expression: lines
+---
+[
+    "3 of 415 aircraft reported low navigation accuracy",
+    "0.7 % over 2026-07-20 (UTC)",
+]
