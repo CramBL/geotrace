@@ -1324,7 +1324,7 @@ mod tests {
     /// clearing. libhdf5 opens a flagged v2 superblock read-write, which is
     /// what [`create_native_file`] writes; only the v3 superblock refuses.
     /// Whether [`crate::into_write_lock`] is reachable at all for these files
-    /// is open: <!-- V2 FLAGS ISSUE -->.
+    /// is open: <https://github.com/CramBL/geotrace/issues/338>.
     #[test]
     fn clearing_the_write_lock_resets_the_status_flags() {
         use std::io::Read as _;
