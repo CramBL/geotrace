@@ -20,9 +20,9 @@ use egui::Context;
 use gt_jam::calendar::{self, DayOutlook};
 use gt_jam::dataset::JamDataset;
 use gt_jam::day_selection::{DaySelection, EmptyReason};
-#[cfg(not(test))]
-use gt_jam::transport::HttpTransport;
-use gt_jam::transport::{self, FetchOutcome, REQUEST_INTERVAL, Transport};
+use gt_jam::transport::{
+    self, Connection, FetchOutcome, REQUEST_INTERVAL, Transport, TransportSource,
+};
 use gt_jam::wire::{self, ParseWarningReporter};
 use gt_store::JamStore;
 #[cfg(test)]
@@ -62,29 +62,6 @@ pub struct DayFailure {
     pub day: NaiveDate,
     pub detail: String,
 }
-
-/// Builds the real transport.
-#[cfg(not(test))]
-fn default_transport() -> Result<SharedTransport, String> {
-    let http: SharedTransport = Arc::new(HttpTransport::new().map_err(|err| err.to_string())?);
-    Ok(http)
-}
-
-/// Refuses under `cfg(test)`, so a test that forgets
-/// [`JammingScheduler::set_transport`] cannot reach the publisher's server.
-#[cfg(test)]
-fn default_transport() -> Result<SharedTransport, String> {
-    Err("tests must install a transport with set_transport".to_owned())
-}
-
-/// The transport the worker fetches with, shared with its thread.
-type SharedTransport = Arc<dyn Transport + Send + Sync>;
-
-/// Builds the transport on first use.
-///
-/// Injectable so tests drive the fetch path without reaching the network:
-/// the real one is only ever built by [`JammingScheduler::new`].
-type TransportFactory = Box<dyn Fn() -> Result<SharedTransport, String> + Send>;
 
 /// A backfill's progress, for the panel's bar and count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,10 +103,11 @@ pub struct JammingScheduler {
     base_url: String,
     /// `None` disables fetching: no archive to write to.
     store: Option<JamStore>,
-    /// Built on the first request; `None` while offline or after a build
-    /// failure.
-    http: Option<SharedTransport>,
-    make_transport: TransportFactory,
+    /// Connected on the first request, and dropped when the host changes.
+    http: Option<Arc<Connection>>,
+    /// Where that transport comes from. Supplied by the application, so
+    /// nothing here decides whether requests may leave the machine.
+    transport_source: TransportSource,
     queue: VecDeque<NaiveDate>,
     /// Every day queued this session, so a day is requested at most once
     /// even after it fails.
@@ -162,7 +140,12 @@ pub struct JammingScheduler {
 }
 
 impl JammingScheduler {
-    pub fn new(ctx: Context, store: Option<JamStore>, base_url: String) -> Self {
+    pub fn new(
+        ctx: Context,
+        store: Option<JamStore>,
+        base_url: String,
+        transport_source: TransportSource,
+    ) -> Self {
         let (tx, rx) = mpsc::channel();
         let archived_cells = store
             .as_ref()
@@ -187,7 +170,7 @@ impl JammingScheduler {
             base_url,
             store,
             http: None,
-            make_transport: Box::new(default_transport),
+            transport_source,
             queue: VecDeque::new(),
             seen: HashSet::new(),
             in_flight: None,
@@ -200,15 +183,12 @@ impl JammingScheduler {
     /// A scheduler with no archive to write to, so it fetches nothing.
     #[cfg(test)]
     fn disabled(ctx: Context) -> Self {
-        Self::new(ctx, None, gt_jam::DEFAULT_BASE_URL.to_owned())
-    }
-
-    /// Swap in the transport the worker fetches with. Tests call this so no
-    /// request can leave the machine, whatever `GEOTRACE_OFFLINE` says.
-    #[cfg(test)]
-    fn set_transport(&mut self, factory: TransportFactory) {
-        self.http = None;
-        self.make_transport = factory;
+        Self::new(
+            ctx,
+            None,
+            gt_jam::DEFAULT_BASE_URL.to_owned(),
+            TransportSource::Offline,
+        )
     }
 
     /// Queue the days a recording spans.
@@ -560,18 +540,7 @@ impl JammingScheduler {
         let (Some(store), Some(day)) = (self.store.clone(), self.queue.front().copied()) else {
             return;
         };
-        let transport = match self.transport() {
-            Ok(transport) => transport,
-            Err(detail) => {
-                // No transport means no day can be fetched, so the queue is
-                // dropped rather than retried per day. A backfill goes with
-                // it, or its progress would never reach its total.
-                log::info!("Interference fetching is unavailable: {detail}");
-                self.queue.clear();
-                self.backfill = None;
-                return;
-            }
-        };
+        let transport = self.transport();
         let delay = dispatch_delay(self.last_request, Instant::now());
         self.queue.pop_front();
         self.in_flight = Some(day);
@@ -587,13 +556,31 @@ impl JammingScheduler {
         );
     }
 
-    fn transport(&mut self) -> Result<SharedTransport, String> {
+    /// The transport to fetch on, opened once and kept until the host
+    /// changes.
+    ///
+    /// A transport that cannot be opened stands in as the offline one for
+    /// this dispatch only, and the day fails through the worker like any
+    /// other failure. The stand-in is not cached, so the next dispatch tries
+    /// to open a real one again.
+    ///
+    /// [`super::snap::SnapScheduler`] reports its equivalent failure per
+    /// track instead, because a snap run has a place in the UI to show it.
+    fn transport(&mut self) -> Arc<Connection> {
         if let Some(http) = self.http.as_ref() {
-            return Ok(Arc::clone(http));
+            return Arc::clone(http);
         }
-        let http = (self.make_transport)()?;
-        self.http = Some(Arc::clone(&http));
-        Ok(http)
+        match self.transport_source.connect() {
+            Ok(connection) => {
+                let http = Arc::new(connection);
+                self.http = Some(Arc::clone(&http));
+                http
+            }
+            Err(err) => {
+                log::error!("Interference transport unavailable: {err}");
+                Arc::new(Connection::Offline(gt_jam::transport::OfflineTransport))
+            }
+        }
     }
 }
 
@@ -616,7 +603,7 @@ fn dispatch_delay(last_request: Option<Instant>, now: Instant) -> Duration {
 fn spawn_fetch(
     ctx: Context,
     tx: mpsc::Sender<JamMessage>,
-    transport: SharedTransport,
+    transport: Arc<Connection>,
     store: JamStore,
     base_url: String,
     day: NaiveDate,
@@ -634,7 +621,7 @@ fn spawn_fetch(
 }
 
 /// Fetch `day`, parse it, and add it to the archive.
-fn ingest<T: Transport + ?Sized>(
+fn ingest<T: Transport>(
     transport: &T,
     store: &JamStore,
     base_url: &str,
@@ -716,43 +703,15 @@ mod tests {
         (dir, store)
     }
 
-    /// Builds, then fails every request.
-    ///
-    /// Dispatch is still observable through `is_fetching`, and the worker
-    /// stops before it can write, so the archive stays under the test's
-    /// control. A transport that served a day would have the worker
-    /// ingesting into the same archive the test is arranging.
-    struct UnreachableTransport;
-
-    impl Transport for UnreachableTransport {
-        fn get(&self, _url: &str) -> Result<HttpResponse, TransportError> {
-            Err(TransportError {
-                detail: "unreachable in tests".to_owned(),
-            })
-        }
-    }
-
-    fn unreachable_transport() -> TransportFactory {
-        Box::new(|| {
-            let transport: SharedTransport = Arc::new(UnreachableTransport);
-            Ok(transport)
-        })
-    }
-
-    /// A transport that cannot be built, standing in for an offline run.
-    fn no_transport() -> TransportFactory {
-        Box::new(|| Err("no transport in tests".to_owned()))
-    }
-
     /// Archive-backed, and wired so no request leaves the machine.
     fn scheduler_with_archive() -> (TempDir, JamStore, JammingScheduler) {
         let (dir, store) = archive();
-        let mut scheduler = JammingScheduler::new(
+        let scheduler = JammingScheduler::new(
             Context::default(),
             Some(store.clone()),
             DEFAULT_BASE_URL.to_owned(),
+            TransportSource::Offline,
         );
-        scheduler.set_transport(unreachable_transport());
         (dir, store, scheduler)
     }
 
@@ -949,18 +908,6 @@ mod tests {
         assert_eq!(dispatch_delay(Some(scheduled), now), REQUEST_INTERVAL * 2);
     }
 
-    /// Without a transport the queue is dropped, and the backfill with it.
-    #[test]
-    fn a_backfill_that_cannot_reach_the_host_stops_running() {
-        let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        scheduler.set_transport(no_transport());
-        queued_backfill(&mut scheduler, &[day(2026, 7, 20)]);
-        scheduler.start_next();
-
-        assert_eq!(scheduler.backfill_progress(), None);
-        assert_eq!(scheduler.queued(), 0);
-    }
-
     /// With one, the day goes out and the backfill keeps running.
     #[test]
     fn a_backfill_dispatches_its_first_day() {
@@ -984,21 +931,6 @@ mod tests {
         scheduler.set_base_url("https://mirror.example");
         assert_eq!(scheduler.backfill_progress(), None);
         assert_eq!(scheduler.queued(), 0);
-    }
-
-    /// The default transport is unavailable under `cfg(test)`, so a test
-    /// that forgets [`JammingScheduler::set_transport`] cannot put a request
-    /// on the publisher's server.
-    #[test]
-    fn tests_cannot_reach_the_network_by_default() {
-        let (dir, store) = archive();
-        let mut scheduler =
-            JammingScheduler::new(Context::default(), Some(store), DEFAULT_BASE_URL.to_owned());
-        assert!(scheduler.transport().is_err());
-
-        scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
-        assert!(!scheduler.is_fetching());
-        drop(dir);
     }
 
     #[test]
@@ -1034,8 +966,8 @@ mod tests {
         assert_eq!(scheduler.queued(), 0);
     }
 
-    /// A queued day never stays queued: offline no transport can be built
-    /// and the queue is dropped, otherwise the day is dispatched.
+    /// A queued day is always dispatched, offline included: the transport
+    /// declines the request rather than the day staying queued.
     #[test]
     fn a_queued_day_is_dispatched() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
@@ -1043,17 +975,6 @@ mod tests {
 
         assert_eq!(scheduler.queued(), 0);
         assert!(scheduler.is_fetching());
-    }
-
-    /// Without a transport the queue is dropped rather than retried per day.
-    #[test]
-    fn a_queued_day_is_dropped_when_no_transport_can_be_built() {
-        let (_dir, _store, mut scheduler) = scheduler_with_archive();
-        scheduler.set_transport(no_transport());
-        scheduler.request_days_for(range(at(2026, 7, 20, 8), at(2026, 7, 20, 17)));
-
-        assert_eq!(scheduler.queued(), 0);
-        assert!(!scheduler.is_fetching());
     }
 
     /// A recording is requested once; loading it again asks for nothing.

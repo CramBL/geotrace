@@ -88,7 +88,7 @@ snap-fixtures *SCENARIOS:
 # (network!) - the on-demand drift check for the API boundary.
 [group("native")]
 snap-live-test:
-    cargo nextest run --profile live -p gt-snap
+    cargo nextest run --profile live --run-ignored all -p gt-snap
 
 [group("native")]
 sdk-doc:

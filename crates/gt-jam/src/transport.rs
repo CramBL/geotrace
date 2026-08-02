@@ -1,20 +1,17 @@
 //! Fetch one day's dataset and classify what the host answered.
 //!
-//! [`Transport`] is the seam between the fetch pipeline and the network:
-//! production uses [`HttpTransport`], tests use a canned transport.
+//! [`Transport`] is the seam between the fetch pipeline and the network.
+//! Which one is in use is the application's choice, made once at startup and
+//! supplied as a [`TransportSource`]. Nothing here reads the process
+//! environment.
 //!
 //! A 404 is [`FetchOutcome::Missing`], not a failure. Whether that means
 //! "not published yet" or a gap in the record is
 //! [`crate::calendar::awaiting_publication`]'s answer, not the transport's.
-//!
-//! `GEOTRACE_OFFLINE` is enforced in [`HttpTransport::new`], the only place
-//! that can reach the network, so [`fetch_day`] stays independent of the
-//! process environment.
 
 use std::time::Duration;
 
 use chrono::NaiveDate;
-use gt_types::env;
 
 /// Retries per fetch, for transient failures only.
 const RETRIES: usize = 1;
@@ -55,6 +52,51 @@ pub trait Transport {
     fn get(&self, url: &str) -> Result<HttpResponse, TransportError>;
 }
 
+/// Fails every request with [`gt_types::env::OFFLINE_DETAIL`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OfflineTransport;
+
+impl Transport for OfflineTransport {
+    fn get(&self, _url: &str) -> Result<HttpResponse, TransportError> {
+        Err(TransportError {
+            detail: gt_types::env::OFFLINE_DETAIL.to_owned(),
+        })
+    }
+}
+
+/// The transport in use, picked by [`TransportSource`].
+pub enum Connection {
+    Http(HttpTransport),
+    Offline(OfflineTransport),
+}
+
+impl Transport for Connection {
+    fn get(&self, url: &str) -> Result<HttpResponse, TransportError> {
+        match self {
+            Self::Http(transport) => transport.get(url),
+            Self::Offline(transport) => transport.get(url),
+        }
+    }
+}
+
+/// Which transport the application runs with, decided once at startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportSource {
+    Network,
+    Offline,
+}
+
+impl TransportSource {
+    /// Open a transport. A changed host gets its own connection pool, so
+    /// this is called again whenever the host changes.
+    pub fn connect(self) -> Result<Connection, TransportError> {
+        match self {
+            Self::Network => Ok(Connection::Http(HttpTransport::new()?)),
+            Self::Offline => Ok(Connection::Offline(OfflineTransport)),
+        }
+    }
+}
+
 /// What one fetch produced.
 #[derive(Debug, Clone, PartialEq, Eq, strum::EnumCount, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
@@ -74,14 +116,7 @@ pub struct HttpTransport {
 }
 
 impl HttpTransport {
-    /// Fails while `GEOTRACE_OFFLINE` is set, so an offline run has no
-    /// transport to fetch with.
     pub fn new() -> Result<Self, TransportError> {
-        if env::offline() {
-            return Err(TransportError {
-                detail: format!("{} is set", env::OFFLINE_ENV_VAR),
-            });
-        }
         let client = reqwest::blocking::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .build()
@@ -112,11 +147,7 @@ impl Transport for HttpTransport {
 }
 
 /// Fetch `day` from `base_url`, retrying transient failures once.
-pub fn fetch_day<T: Transport + ?Sized>(
-    transport: &T,
-    base_url: &str,
-    day: NaiveDate,
-) -> FetchOutcome {
+pub fn fetch_day<T: Transport>(transport: &T, base_url: &str, day: NaiveDate) -> FetchOutcome {
     let url = crate::dataset_url(base_url, day);
 
     let mut last_failure = String::new();
@@ -302,11 +333,31 @@ mod tests {
         );
     }
 
-    /// Asserted as a relationship, so the test holds whether or not the
-    /// caller set `GEOTRACE_OFFLINE`.
+    /// The offline source connects, and then declines every request, so a
+    /// caller sees a working transport that says no.
     #[test]
-    fn no_transport_exists_while_offline() {
-        assert_eq!(HttpTransport::new().is_err(), env::offline());
+    fn the_offline_source_refuses_every_request() {
+        let transport = TransportSource::Offline
+            .connect()
+            .expect("the offline source connects");
+        let err = transport
+            .get("https://example.invalid/day.csv")
+            .expect_err("offline transport refuses");
+        assert!(err.detail.contains(gt_types::env::OFFLINE_DETAIL));
+    }
+
+    /// An offline fetch is a failure, not a missing day: the host was never
+    /// asked, so nothing is known about whether it has the dataset.
+    #[test]
+    fn an_offline_fetch_is_a_failure_not_a_missing_day() {
+        let transport = TransportSource::Offline
+            .connect()
+            .expect("the offline source connects");
+        let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
+        assert!(matches!(
+            fetch_day(&transport, crate::DEFAULT_BASE_URL, day),
+            FetchOutcome::Failed(_)
+        ));
     }
 
     proptest::proptest! {

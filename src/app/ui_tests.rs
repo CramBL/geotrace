@@ -28,6 +28,7 @@ fn build_app(cc: &eframe::CreationContext<'_>, config_path: &std::path::Path, fa
         Some(config_path.to_path_buf()),
         super::StartupOptions {
             fading_enabled: fading,
+            offline: true,
         },
     )
 }
@@ -41,6 +42,7 @@ fn transient_app(cc: &mut eframe::CreationContext<'_>) -> App {
         None,
         super::StartupOptions {
             fading_enabled: false,
+            offline: true,
         },
     )
 }
@@ -3180,7 +3182,11 @@ fn snap_runs_persist_and_restore_through_the_app() {
     });
 
     // Restore leg: a fresh scheduler seeded through the response handler.
-    harness.state_mut().snap = crate::app::snap::SnapScheduler::new(egui::Context::default());
+    harness.state_mut().snap = crate::app::snap::SnapScheduler::new(
+        egui::Context::default(),
+        gt_snap::transport::TransportSource::Offline,
+        true,
+    );
     harness
         .state_mut()
         .handle_history_response(crate::app::history_db::Response::SnapRunsLoaded {
