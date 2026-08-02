@@ -175,22 +175,34 @@ pub fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a st
     if count == 1 { singular } else { plural }
 }
 
-/// Format a byte count in binary units (`1.5 KB`, `126.6 MB`).
+/// Bytes in one kibibyte. The steps between display units.
+pub const BYTES_PER_KB: u64 = 1_024;
+
+/// Bytes in one gibibyte, the unit storage limits are entered in.
+pub const BYTES_PER_GB: u64 = BYTES_PER_KB * BYTES_PER_KB * BYTES_PER_KB;
+
+/// Format a byte count in binary units (`1.5 KB`, `126.6 MB`, `10.0 GB`).
 ///
 /// Zero renders as an em dash, the table convention for an absent value.
 pub fn format_bytes(bytes: u64) -> String {
-    const KB: u64 = 1_024;
-    const MB: u64 = 1_024 * 1_024;
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
     if bytes == 0 {
         return EM_DASH.to_owned();
     }
-    if bytes < KB {
+    if bytes < BYTES_PER_KB {
         return format!("{bytes} B");
     }
-    if bytes < MB {
-        return format!("{:.1} KB", bytes as f64 / KB as f64);
+    let step = BYTES_PER_KB as f64;
+    let mut scaled = bytes as f64 / step;
+    let mut unit = UNITS[0];
+    for larger in UNITS.iter().skip(1) {
+        if scaled < step {
+            break;
+        }
+        scaled /= step;
+        unit = larger;
     }
-    format!("{:.1} MB", bytes as f64 / MB as f64)
+    format!("{scaled:.1} {unit}")
 }
 
 /// Format a count with comma thousands separators (`8,940`).
@@ -233,6 +245,12 @@ mod tests {
     #[case::exactly_one_mib(1_048_576, "1.0 MB")]
     #[case::a_day_of_interference(82_944, "81.0 KB")]
     #[case::a_full_interference_archive(132_710_400, "126.6 MB")]
+    #[case::just_under_a_gib(1_073_741_823, "1024.0 MB")]
+    #[case::exactly_one_gib(1_073_741_824, "1.0 GB")]
+    #[case::the_default_storage_limit(10_737_418_240, "10.0 GB")]
+    #[case::terabytes(2_199_023_255_552, "2.0 TB")]
+    // Past the largest unit the number keeps growing.
+    #[case::beyond_the_largest_unit(u64::MAX, "16777216.0 TB")]
     fn format_bytes_reads_in_binary_units(#[case] bytes: u64, #[case] expected: &str) {
         assert_eq!(format_bytes(bytes), expected);
     }

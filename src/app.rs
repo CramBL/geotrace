@@ -3342,7 +3342,7 @@ impl eframe::App for App {
 
         // Auto-prune confirmation dialog.
         if let Some(refs) = &self.pending_auto_prune {
-            let max_gb = self.auto_prune_max_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+            let limit = gt_fmt::format_bytes(self.auto_prune_max_bytes);
             let n = refs.len();
             let mut do_prune = false;
             let mut cancel = ui
@@ -3358,7 +3358,7 @@ impl eframe::App for App {
                     ui.set_max_width(460.0);
                     let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
                     ui.label(format!(
-                        "{n} {rec_label} will be deleted to keep storage under {max_gb:.1} GB"
+                        "{n} {rec_label} will be deleted to keep storage under {limit}"
                     ));
                     ui.add_space(4.0);
                     ScrollArea::vertical().max_height(200.0).show(ui, |ui| {

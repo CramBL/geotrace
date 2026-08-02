@@ -666,8 +666,7 @@ impl HistoryWindow {
                         "Enable 'Auto-store recordings' to use auto-pruning"
                     });
 
-                    let mut max_gb =
-                        *auto_prune_max_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+                    let mut max_gb = *auto_prune_max_bytes as f64 / gt_fmt::BYTES_PER_GB as f64;
                     ui.add_enabled(
                         prune_on,
                         DragValue::new(&mut max_gb)
@@ -687,7 +686,7 @@ impl HistoryWindow {
                             clippy::cast_sign_loss,
                             reason = "DragValue range is 0.1..=1000 so value is always positive"
                         )]
-                        let bytes = (max_gb * 1024.0 * 1024.0 * 1024.0).round() as u64;
+                        let bytes = (max_gb * gt_fmt::BYTES_PER_GB as f64).round() as u64;
                         *auto_prune_max_bytes = bytes;
                     }
 
