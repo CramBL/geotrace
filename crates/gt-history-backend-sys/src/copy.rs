@@ -1277,9 +1277,92 @@ pub(crate) fn list_recordings(
     Ok(entries)
 }
 
+/// The status flags an interrupted SWMR writer leaves: open for write, plus
+/// the SWMR marker. Observed on a file `hdf5-pure` flagged and abandoned.
+#[cfg(test)]
+const WRITER_FLAGS: u8 = 5;
+
+/// Set the superblock status flags a crashed writer leaves behind, the
+/// mirror of [`clear_write_lock`].
+///
+/// libhdf5 clears the flags on close and, within one process, knows it
+/// already holds the file, so the state cannot be reached by opening one.
+#[cfg(test)]
+pub(crate) fn mark_write_locked(db_path: &Path) -> Result<(), InternalError> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(db_path)?;
+    let mut sb = [0_u8; SUPERBLOCK_V2_LEN];
+    file.read_exact(&mut sb)?;
+    if let Some(slot) = sb.get_mut(11) {
+        *slot = WRITER_FLAGS;
+    }
+    let checksum = jenkins_lookup3(sb.get(..44).unwrap_or(&[]));
+    if let Some(slot) = sb.get_mut(44..48) {
+        slot.copy_from_slice(&checksum.to_le_bytes());
+    }
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(&sb)?;
+    file.flush()?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{jenkins_lookup3, read_string_attr, write_string_attr};
+    use super::{
+        SUPERBLOCK_V2_LEN, WRITER_FLAGS, clear_write_lock, create_native_file, jenkins_lookup3,
+        mark_write_locked, read_string_attr, write_string_attr,
+    };
+
+    /// The repair round trip: flags set by an interrupted writer are cleared,
+    /// the superblock checksum is left valid, and the file still opens.
+    ///
+    /// Deliberately does not assert that the flagged file is refused before
+    /// clearing. libhdf5 opens a flagged v2 superblock read-write, which is
+    /// what [`create_native_file`] writes; only the v3 superblock refuses.
+    /// Whether [`crate::into_write_lock`] is reachable at all for these files
+    /// is open: <!-- V2 FLAGS ISSUE -->.
+    #[test]
+    fn clearing_the_write_lock_resets_the_status_flags() {
+        use std::io::Read as _;
+
+        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        drop(create_native_file(tmp.path()).expect("create"));
+        mark_write_locked(tmp.path()).expect("set the flags");
+
+        let flags = |tag: &str| {
+            let mut file = std::fs::File::open(tmp.path()).unwrap_or_else(|e| panic!("{tag}: {e}"));
+            let mut sb = [0_u8; SUPERBLOCK_V2_LEN];
+            file.read_exact(&mut sb)
+                .unwrap_or_else(|e| panic!("{tag}: {e}"));
+            sb.get(11).copied().unwrap_or(0)
+        };
+        assert_eq!(flags("after marking"), WRITER_FLAGS);
+
+        assert!(
+            clear_write_lock(tmp.path()).expect("clear"),
+            "a flag was set"
+        );
+        assert_eq!(flags("after clearing"), 0);
+        hdf5::File::open_rw(tmp.path()).expect("opens once cleared");
+    }
+
+    /// Clearing a file that carries no flags reports that nothing was done
+    /// and leaves it readable.
+    #[test]
+    fn clearing_an_unflagged_file_changes_nothing() {
+        let tmp = tempfile::NamedTempFile::new().expect("temp file");
+        drop(create_native_file(tmp.path()).expect("create"));
+
+        assert!(
+            !clear_write_lock(tmp.path()).expect("clear"),
+            "no flag was set"
+        );
+        hdf5::File::open_rw(tmp.path()).expect("still writable");
+    }
 
     /// Strings written fixed-length by `write_string_attr` must read back exactly
     /// via `read_string_attr`, especially at the capacity-ladder boundaries where
