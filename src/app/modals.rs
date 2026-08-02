@@ -3,6 +3,7 @@ use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
+use gt_jam::text::{ATTRIBUTION, PUBLISHER_URL, UPSTREAM_URL};
 use gt_map::{MapLayer, NavMap};
 use gt_side_panel::{NodeKey, RecordingDetails, TreeState};
 use gt_store::DatabaseRef;
@@ -481,8 +482,9 @@ pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<Recordi
 /// Show the About dialog: version and the data/service attributions.
 ///
 /// Map tiles and snap-to-road matching both build on OpenStreetMap data
-/// (ODbL), and the default matching server is run by FOSSGIS e.V. - the
-/// credits live here, always reachable from the menu bar.
+/// (ODbL), the default matching server is run by FOSSGIS e.V., and the
+/// interference overlay is gpsjam.org's data over adsbexchange.com's
+/// reports - the credits live here, always reachable from the menu bar.
 pub fn show_about_dialog(ui: &egui::Ui, open: &mut bool, version: &str) {
     if !*open {
         return;
@@ -510,6 +512,12 @@ pub fn show_about_dialog(ui: &egui::Ui, open: &mut bool, version: &str) {
             ui.horizontal(|ui| {
                 ui.label("The default snap to road server is hosted by");
                 ui.hyperlink_to("FOSSGIS e.V.", "https://www.fossgis.de/");
+            });
+            ui.add_space(4.0);
+            ui.label(ATTRIBUTION);
+            ui.horizontal(|ui| {
+                ui.hyperlink_to("gpsjam.org", PUBLISHER_URL);
+                ui.hyperlink_to("adsbexchange.com", UPSTREAM_URL);
             });
         });
 

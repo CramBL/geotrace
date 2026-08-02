@@ -15,6 +15,7 @@ pub struct Settings {
     pub update: UpdateSettings,
     pub query: QuerySettings,
     pub snap: SnapSettings,
+    pub interference: InterferenceSettings,
 }
 
 impl Default for Settings {
@@ -30,6 +31,24 @@ impl Default for Settings {
             update: UpdateSettings::default(),
             query: QuerySettings::default(),
             snap: SnapSettings::default(),
+            interference: InterferenceSettings::default(),
+        }
+    }
+}
+
+/// Aircraft-interference configuration.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct InterferenceSettings {
+    /// Base URL of the dataset host. Defaults to gpsjam.org. A self-hosted
+    /// mirror or an offline copy goes here.
+    pub base_url: String,
+}
+
+impl Default for InterferenceSettings {
+    fn default() -> Self {
+        Self {
+            base_url: gt_jam::DEFAULT_BASE_URL.to_owned(),
         }
     }
 }
@@ -589,5 +608,25 @@ mod snap_settings_tests {
         assert_eq!(settings.snap.server_url, gt_snap::DEFAULT_SERVER_URL);
         assert_eq!(settings.snap.costing, gt_snap::wire::Costing::Auto);
         assert_eq!(settings.snap.consent_host, None);
+    }
+
+    /// A settings file written before the interference section existed loads
+    /// with the default host.
+    #[test]
+    fn a_settings_file_without_the_interference_section_loads() {
+        let stored = "version = 1\n";
+        let settings: Settings = toml::from_str(stored).expect("parse");
+        assert_eq!(settings.interference.base_url, gt_jam::DEFAULT_BASE_URL);
+    }
+
+    /// A configured mirror round-trips.
+    #[test]
+    fn a_configured_interference_host_round_trips() {
+        let mut settings = Settings::default();
+        settings.interference.base_url = "https://mirror.example".to_owned();
+
+        let text = toml::to_string_pretty(&settings).expect("serialize");
+        let parsed: Settings = toml::from_str(&text).expect("parse");
+        assert_eq!(parsed.interference.base_url, "https://mirror.example");
     }
 }
