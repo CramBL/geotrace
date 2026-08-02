@@ -454,7 +454,7 @@ impl<'a> Column<'a> {
             .map_err(|err| backend(&err))
     }
 
-    fn append<T: hdf5::H5Type>(&self, values: &[T]) -> Result<(), JamStoreError> {
+    fn append(&self, values: &[impl hdf5::H5Type]) -> Result<(), JamStoreError> {
         let dataset = self.dataset()?;
         let start = self.rows()?;
         dataset

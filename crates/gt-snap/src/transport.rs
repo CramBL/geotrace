@@ -1,9 +1,9 @@
 //! Send a request plan to a Valhalla server and classify the outcomes.
 //!
 //! The [`Transport`] trait is the seam between the pure pipeline and the
-//! network: production uses [`HttpTransport`] (blocking reqwest, client-side
-//! rate limiting), tests use a canned transport replaying fixture pairs
-//! (static dispatch throughout, per house style).
+//! network. Which one is in use is the application's choice, made once at
+//! startup and supplied as a [`TransportSource`]. Nothing here reads the
+//! process environment.
 //!
 //! [`send_plan`] drives one chunk at a time, in order:
 //!
@@ -44,6 +44,52 @@ pub struct HttpResponse {
 #[error("request failed: {detail}")]
 pub struct TransportError {
     pub detail: String,
+}
+
+/// Fails every request with [`gt_types::env::OFFLINE_DETAIL`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OfflineTransport;
+
+impl Transport for OfflineTransport {
+    fn send(&self, _request: &TraceAttributesRequest) -> Result<HttpResponse, TransportError> {
+        Err(TransportError {
+            detail: gt_types::env::OFFLINE_DETAIL.to_owned(),
+        })
+    }
+}
+
+/// The transport in use, picked by [`TransportSource`].
+pub enum Connection {
+    Http(HttpTransport),
+    Offline(OfflineTransport),
+}
+
+impl Transport for Connection {
+    fn send(&self, request: &TraceAttributesRequest) -> Result<HttpResponse, TransportError> {
+        match self {
+            Self::Http(transport) => transport.send(request),
+            Self::Offline(transport) => transport.send(request),
+        }
+    }
+}
+
+/// Which transport the application runs with, decided once at startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportSource {
+    Network,
+    Offline,
+}
+
+impl TransportSource {
+    /// Open a transport against `server_url`. A changed server gets its own
+    /// connection pool and rate limiter, so this is called again whenever
+    /// the server changes.
+    pub fn connect(self, server_url: &str) -> Result<Connection, TransportError> {
+        match self {
+            Self::Network => Ok(Connection::Http(HttpTransport::new(server_url)?)),
+            Self::Offline => Ok(Connection::Offline(OfflineTransport)),
+        }
+    }
 }
 
 /// The seam between the snap pipeline and the network.
@@ -119,8 +165,8 @@ impl Transport for HttpTransport {
 ///
 /// Never fails as a whole: per-chunk failures become
 /// [`ChunkOutcome::Failed`] and stitching handles the gaps.
-pub fn send_plan<T: Transport>(
-    transport: &T,
+pub fn send_plan(
+    transport: &impl Transport,
     plan: &RequestPlan,
     params: &SnapParams,
     mut progress: impl FnMut(usize, usize),
@@ -136,7 +182,7 @@ pub fn send_plan<T: Transport>(
 }
 
 /// Send one chunk with retry-on-transient-failure semantics.
-fn send_chunk<T: Transport>(transport: &T, request: &TraceAttributesRequest) -> ChunkOutcome {
+fn send_chunk(transport: &impl Transport, request: &TraceAttributesRequest) -> ChunkOutcome {
     let mut last_failure = String::new();
     for _ in 0..=RETRIES {
         match transport.send(request) {

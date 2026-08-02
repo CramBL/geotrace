@@ -236,10 +236,23 @@ impl Default for HoverFadeState {
     }
 }
 
+/// Whether the map may fetch its base tiles.
+///
+/// The application supplies it at construction. [`TileAccess::Offline`]
+/// builds no tile fetcher at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TileAccess {
+    Network,
+    Offline,
+}
+
 pub struct NavMap {
     egui_ctx: Context,
-    osm_tiles: HttpTiles,
+    /// [`None`] under [`TileAccess::Offline`]: the base layer stays blank
+    /// and nothing is requested.
+    osm_tiles: Option<HttpTiles>,
     mapbox_tiles: Option<HttpTiles>,
+    tile_access: TileAccess,
     mapbox_token: String,
     layer: MapLayer,
     map_memory: MapMemory,
@@ -286,7 +299,7 @@ pub struct NavMap {
 }
 
 impl NavMap {
-    pub fn new(egui_ctx: Context) -> Self {
+    pub fn new(egui_ctx: Context, tile_access: TileAccess) -> Self {
         let icon_meshes = match icon_mesh::IconMeshLibrary::embedded() {
             Ok(library) => Some(library),
             Err(err) => {
@@ -295,8 +308,12 @@ impl NavMap {
             }
         };
         Self {
-            osm_tiles: HttpTiles::new(OpenStreetMap, egui_ctx.clone()),
+            osm_tiles: match tile_access {
+                TileAccess::Network => Some(HttpTiles::new(OpenStreetMap, egui_ctx.clone())),
+                TileAccess::Offline => None,
+            },
             mapbox_tiles: None,
+            tile_access,
             mapbox_token: String::new(),
             layer: MapLayer::default(),
             map_memory: MapMemory::default(),
@@ -330,6 +347,10 @@ impl NavMap {
     /// Set (or clear) the Mapbox API token. Passing an empty string clears the token
     /// and falls back to OpenStreetMap for satellite mode.
     pub fn set_mapbox_token(&mut self, token: String) {
+        if self.tile_access == TileAccess::Offline {
+            self.mapbox_token = token;
+            return;
+        }
         if token.is_empty() {
             self.mapbox_token = String::new();
             self.mapbox_tiles = None;
@@ -523,10 +544,7 @@ impl NavMap {
             map_rect_estimate,
         );
 
-        let is_offline = gt_types::env::offline();
-        let map = if is_offline {
-            Map::new(None, &mut self.map_memory, walkers::lat_lon(55.676, 12.565))
-        } else {
+        let map = {
             // Mapbox serves 512px tiles, and walkers' `tile_id` adjusts the
             // integer zoom level by `log2(tile_size / 256)` - 1 for 512px
             // tiles - by plain `u8` subtraction with no underflow check
@@ -551,9 +569,12 @@ impl NavMap {
                     walkers::lat_lon(55.676, 12.565),
                 )
             } else {
-                let tiles: &mut dyn walkers::Tiles = &mut self.osm_tiles;
+                let tiles = self
+                    .osm_tiles
+                    .as_mut()
+                    .map(|t| -> &mut dyn walkers::Tiles { t });
                 Map::new(
-                    Some(tiles),
+                    tiles,
                     &mut self.map_memory,
                     walkers::lat_lon(55.676, 12.565),
                 )
@@ -1671,7 +1692,7 @@ mod tests {
         );
 
         // After calling rebuild_spatial_index, all entries must be in-bounds.
-        let mut map = NavMap::new(egui::Context::default());
+        let mut map = NavMap::new(egui::Context::default(), TileAccess::Offline);
         map.rebuild_spatial_index(&files_initial);
         map.rebuild_spatial_index(&files_after);
 
@@ -2034,7 +2055,8 @@ mod snapshot_tests {
             .size(egui::vec2(800.0, 600.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
-                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let map = map
+                        .get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
                     let mut highlight = gt_ui_types::MapHighlight::default();
                     map.draw(
                         ui,
@@ -2124,7 +2146,8 @@ mod snapshot_tests {
             .theme(dark_mode)
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
-                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let map = map
+                        .get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
                     let mut highlight = gt_ui_types::MapHighlight::default();
                     map.draw(
                         ui,
@@ -2206,7 +2229,8 @@ mod snapshot_tests {
             .size(egui::vec2(800.0, 600.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
-                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let map = map
+                        .get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
                     let mut highlight = gt_ui_types::MapHighlight::default();
                     let mut mask = mask;
                     map.draw(
@@ -2559,7 +2583,8 @@ mod snapshot_tests {
             .size(egui::vec2(800.0, 600.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
-                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let map = map
+                        .get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
                     let mut highlight = gt_ui_types::MapHighlight::default();
                     map.draw(
                         ui,
@@ -2646,7 +2671,8 @@ mod snapshot_tests {
             .size(egui::vec2(800.0, 600.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
-                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let map = map
+                        .get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
                     let mut highlight = gt_ui_types::MapHighlight {
                         hover_match: Some(gt_ui_types::MatchHighlight::new(track, &(150..300))),
                         ..gt_ui_types::MapHighlight::default()
@@ -2706,7 +2732,8 @@ mod snapshot_tests {
             .size(egui::vec2(800.0, 600.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
-                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let map = map
+                        .get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
                     let mut highlight = gt_ui_types::MapHighlight::default();
                     map.draw(
                         ui,
@@ -2769,7 +2796,8 @@ mod snapshot_tests {
             .size(egui::vec2(800.0, 600.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
-                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let map = map
+                        .get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
                     let mut highlight = gt_ui_types::MapHighlight::default();
                     map.draw(
                         ui,
@@ -2824,7 +2852,8 @@ mod snapshot_tests {
             .size(egui::vec2(800.0, 600.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
-                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let map = map
+                        .get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
                     let mut highlight = gt_ui_types::MapHighlight {
                         plot_hover_point: Some(hovered),
                         ..gt_ui_types::MapHighlight::default()
@@ -2882,7 +2911,8 @@ mod snapshot_tests {
             .size(egui::vec2(900.0, 700.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
-                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let map = map
+                        .get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
                     let mut highlight = gt_ui_types::MapHighlight {
                         sticky: Some(clicked),
                         ..gt_ui_types::MapHighlight::default()
@@ -2950,7 +2980,8 @@ mod snapshot_tests {
             .size(egui::vec2(900.0, 700.0))
             .ui_state(
                 move |ui, map: &mut Option<NavMap>| {
-                    let map = map.get_or_insert_with(|| NavMap::new(ui.ctx().clone()));
+                    let map = map
+                        .get_or_insert_with(|| NavMap::new(ui.ctx().clone(), TileAccess::Offline));
                     let mut highlight = gt_ui_types::MapHighlight {
                         sticky: Some(clicked),
                         ..gt_ui_types::MapHighlight::default()

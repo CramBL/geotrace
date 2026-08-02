@@ -14,7 +14,7 @@ use support::points;
 use gt_snap::fixtures_dir;
 use gt_snap::request_plan::{self, CHUNK_POINTS, SnapParams};
 use gt_snap::stitch::{ChunkOutcome, SnapWarningReporter};
-use gt_snap::transport::{self, HttpResponse, Transport, TransportError};
+use gt_snap::transport::{self, HttpResponse, Transport, TransportError, TransportSource};
 use gt_snap::wire::Costing;
 
 /// The params every scenario in this file runs with: default advanced
@@ -44,7 +44,7 @@ impl CannedTransport {
     }
 
     fn requests_seen(&self) -> usize {
-        *self.requests_seen.borrow()
+        *self.requests_seen.borrow_mut()
     }
 }
 
@@ -240,4 +240,43 @@ proptest::proptest! {
         let outcomes = transport::send_plan(&transport, &plan, &auto_params(), |_, _| {});
         proptest::prop_assert_eq!(outcomes.len(), plan.chunks.len());
     }
+}
+
+/// The offline source connects, and then declines every request, so a caller
+/// sees a working transport that says no.
+#[test]
+fn the_offline_source_refuses_every_request() {
+    let transport = TransportSource::Offline
+        .connect(gt_snap::DEFAULT_SERVER_URL)
+        .expect("the offline source connects");
+    let plan = request_plan::plan(&points(10));
+    let request = plan
+        .chunks
+        .first()
+        .map(|chunk| chunk.request(&auto_params(), None))
+        .expect("a plan chunk");
+
+    let err = transport
+        .send(&request)
+        .expect_err("offline transport refuses");
+    assert!(err.detail.contains(gt_types::env::OFFLINE_DETAIL));
+}
+
+/// Every chunk of an offline run fails. The server was never asked where
+/// the track ran, so nothing is reported as off-network.
+#[test]
+fn an_offline_plan_fails_every_chunk() {
+    let transport = TransportSource::Offline
+        .connect(gt_snap::DEFAULT_SERVER_URL)
+        .expect("the offline source connects");
+    let plan = request_plan::plan(&points(10));
+
+    let outcomes = transport::send_plan(&transport, &plan, &auto_params(), |_, _| {});
+    assert_eq!(outcomes.len(), plan.chunks.len());
+    assert!(
+        outcomes
+            .iter()
+            .all(|outcome| matches!(outcome, ChunkOutcome::Failed { .. })),
+        "every chunk fails offline"
+    );
 }

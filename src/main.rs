@@ -188,7 +188,10 @@ fn main() -> ExitCode {
             Ok(Box::new(app::App::new_with_files(
                 cc,
                 &initial_paths,
-                app::StartupOptions::default(),
+                app::StartupOptions {
+                    fading_enabled: true,
+                    offline: gt_types::env::offline(),
+                },
             )))
         }),
     );

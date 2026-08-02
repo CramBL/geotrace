@@ -6,9 +6,12 @@ use std::env;
 /// checks go through [`offline`].
 pub const OFFLINE_ENV_VAR: &str = "GEOTRACE_OFFLINE";
 
+/// Why a request failed while offline, in logs and in the UI.
+pub const OFFLINE_DETAIL: &str = "GeoTrace is running offline";
+
 /// Whether GeoTrace runs offline (`GEOTRACE_OFFLINE` set, any value): no
-/// map tile fetching, no snap-to-road requests, no update checks. Set by
-/// `just test` so tests never touch the network.
+/// map tile fetching, no snap-to-road requests, no update checks. Read by
+/// `main` at startup and passed down; nothing else consults it.
 pub fn offline() -> bool {
     env::var_os(OFFLINE_ENV_VAR).is_some()
 }

@@ -35,7 +35,7 @@ use egui::Context;
 
 use gt_snap::request_plan::{self, RequestPlan, SnapParams};
 use gt_snap::stitch::{self, SnapResult, SnapWarning, SnapWarningReporter};
-use gt_snap::transport::HttpTransport;
+use gt_snap::transport::{Connection, TransportSource};
 use gt_snap::wire::{Costing, SpeedLimit};
 use gt_snap::{DEFAULT_SERVER_URL, server_host, transport};
 use gt_types::mercator::{self};
@@ -398,7 +398,12 @@ pub struct SnapScheduler {
     /// Shared across runs so request pacing carries over run boundaries.
     /// Lazily built; `None` until the first run (or after a build failure or
     /// a server-URL change).
-    http: Option<Arc<HttpTransport>>,
+    http: Option<Arc<Connection>>,
+    /// Where that transport comes from. Supplied by the application, so
+    /// nothing here decides whether requests may leave the machine.
+    transport_source: TransportSource,
+    /// No requests are queued at all while offline. Cached runs stay usable.
+    offline: bool,
     queue: VecDeque<PendingRun>,
     /// The queued tracks currently shown on the map, per
     /// [`Self::set_visibility`]. Gates which [`SnapPriority::Auto`] entries
@@ -416,7 +421,7 @@ pub struct SnapScheduler {
 }
 
 impl SnapScheduler {
-    pub fn new(ctx: Context) -> Self {
+    pub fn new(ctx: Context, transport_source: TransportSource, offline: bool) -> Self {
         let (tx, rx) = mpsc::channel();
         Self {
             ctx,
@@ -424,6 +429,8 @@ impl SnapScheduler {
             rx,
             server_url: DEFAULT_SERVER_URL.to_owned(),
             http: None,
+            transport_source,
+            offline,
             queue: VecDeque::new(),
             visible: HashSet::new(),
             in_flight: None,
@@ -485,11 +492,6 @@ impl SnapScheduler {
         SnapProgress { in_flight, queued }
     }
 
-    /// Whether requesting is disabled entirely (`GEOTRACE_OFFLINE`).
-    pub fn offline() -> bool {
-        gt_types::env::offline()
-    }
-
     /// Queue a snap run for a track. No-ops when offline or when the track
     /// is already queued or in flight - except that a manual request for a
     /// track queued automatically promotes it to the front of the queue. A
@@ -518,7 +520,7 @@ impl SnapScheduler {
             }
             return;
         }
-        if Self::offline() || self.activity.contains_key(&track_ref) {
+        if self.offline || self.activity.contains_key(&track_ref) {
             return;
         }
         let plan = request_plan::plan(&track.points);
@@ -697,11 +699,13 @@ impl SnapScheduler {
         spawn_run(self.ctx.clone(), self.tx.clone(), transport, pending);
     }
 
-    fn transport(&mut self) -> Result<Arc<HttpTransport>, String> {
+    fn transport(&mut self) -> Result<Arc<Connection>, String> {
         if let Some(http) = &self.http {
             return Ok(Arc::clone(http));
         }
-        let http = HttpTransport::new(&self.server_url)
+        let http = self
+            .transport_source
+            .connect(&self.server_url)
             .map(Arc::new)
             .map_err(|err| format!("{err:#}"))?;
         self.http = Some(Arc::clone(&http));
@@ -736,7 +740,7 @@ fn next_eligible(queue: &VecDeque<PendingRun>, visible: &HashSet<TrackRef>) -> O
 fn spawn_run(
     ctx: Context,
     tx: mpsc::Sender<SnapMessage>,
-    transport: Arc<HttpTransport>,
+    transport: Arc<Connection>,
     pending: PendingRun,
 ) {
     let PendingRun {
@@ -824,7 +828,7 @@ mod tests {
     }
 
     fn scheduler() -> SnapScheduler {
-        SnapScheduler::new(Context::default())
+        SnapScheduler::new(Context::default(), TransportSource::Offline, false)
     }
 
     fn key(track: &LoadedTrack, params: SnapParams) -> SnapCacheKey {
@@ -958,7 +962,10 @@ mod tests {
     #[test]
     fn changing_the_server_url_drops_the_cached_transport() {
         let mut scheduler = scheduler();
-        scheduler.http = HttpTransport::new(DEFAULT_SERVER_URL).map(Arc::new).ok();
+        scheduler.http = TransportSource::Offline
+            .connect(DEFAULT_SERVER_URL)
+            .map(Arc::new)
+            .ok();
         assert!(scheduler.http.is_some());
 
         // Same URL: the shared transport (and its request pacing) is kept.
@@ -1081,7 +1088,7 @@ mod tests {
     /// in-flight run with its chunk progress; failed entries are neither.
     #[test]
     fn progress_summarizes_the_activity_map() {
-        let mut scheduler = SnapScheduler::new(Context::default());
+        let mut scheduler = scheduler();
         assert_eq!(
             scheduler.progress(),
             SnapProgress {

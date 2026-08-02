@@ -46,12 +46,14 @@ use egui_tiles::{
     Container, Linear, LinearDir, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse,
 };
 use gt_filter::GlobalFilter;
+use gt_jam::transport as jam_transport;
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_map::{MapContextAction, MapLayer, NavMap};
 use gt_plot::PlotState;
 use gt_side_panel::{
     FilterPanelState, PanelContext, SnapPanelView, SnapRowView, TreeState, show_side_panel,
 };
+use gt_snap::transport as snap_transport;
 use gt_snap::wire::Costing;
 use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutConfig};
 use gt_types::{
@@ -137,15 +139,42 @@ struct ResegmentPrompt {
     marker_settings_changed: bool,
 }
 
+/// The interference transport for this run.
+fn jam_transport_source(offline: bool) -> jam_transport::TransportSource {
+    if offline {
+        jam_transport::TransportSource::Offline
+    } else {
+        jam_transport::TransportSource::Network
+    }
+}
+
+/// The snap-to-road transport for this run.
+fn snap_transport_source(offline: bool) -> snap_transport::TransportSource {
+    if offline {
+        snap_transport::TransportSource::Offline
+    } else {
+        snap_transport::TransportSource::Network
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct StartupOptions {
     pub fading_enabled: bool,
+    /// Whether the app runs without network access: no interference
+    /// downloads, no snapping, no update check, no map tiles.
+    ///
+    /// `main` reads `GEOTRACE_OFFLINE` to set it, and is the only place that
+    /// consults the environment. Everything downstream is handed the answer.
+    pub offline: bool,
 }
 
 impl Default for StartupOptions {
+    /// Offline, so a caller that has not stated a preference gets no
+    /// network access.
     fn default() -> Self {
         Self {
             fading_enabled: true,
+            offline: true,
         }
     }
 }
@@ -322,6 +351,8 @@ pub struct App {
     history: history_db::HistoryWorker,
     /// Queues and ingests interference days for loaded tracks.
     jamming: jamming::JammingScheduler,
+    /// No network access this run. Set once from [`StartupOptions`].
+    offline: bool,
     backfill_ui: backfill_ui::BackfillUi,
     interference_settings: crate::settings::InterferenceSettings,
     /// Set when the database could not be opened because it is marked as locked
@@ -372,10 +403,6 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        Self::new_with_files(cc, &[], StartupOptions::default())
-    }
-
     pub fn new_with_files(
         cc: &eframe::CreationContext<'_>,
         paths: &[PathBuf],
@@ -433,9 +460,20 @@ impl App {
             loaded_settings.map.mapbox_token = token;
         }
 
-        let map = NavMap::new(cc.egui_ctx.clone());
+        let map = NavMap::new(
+            cc.egui_ctx.clone(),
+            if options.offline {
+                gt_map::TileAccess::Offline
+            } else {
+                gt_map::TileAccess::Network
+            },
+        );
         let loader = LoadJobs::new(cc.egui_ctx.clone());
-        let snap = snap::SnapScheduler::new(cc.egui_ctx.clone());
+        let snap = snap::SnapScheduler::new(
+            cc.egui_ctx.clone(),
+            snap_transport_source(options.offline),
+            options.offline,
+        );
 
         // Build the central-area tiles tree: map on top, plot on bottom.
         // The split ratio and panel visibility are applied from settings below.
@@ -490,29 +528,24 @@ impl App {
         // Tests never touch the production archive either. A missing or
         // unusable archive disables interference fetching and nothing else.
         #[cfg(not(test))]
-        let jamming = {
-            let archive = gt_store::Store::open_default().ok().and_then(|store| {
-                store
-                    .open_interference()
-                    .inspect_err(|err| {
-                        log::error!(
-                            "Interference archive at {} is unusable: {err}",
-                            store.interference_path().display()
-                        );
-                    })
-                    .ok()
-            });
-            jamming::JammingScheduler::new(
-                cc.egui_ctx.clone(),
-                archive,
-                gt_jam::DEFAULT_BASE_URL.to_owned(),
-            )
-        };
+        let archive = gt_store::Store::open_default().ok().and_then(|store| {
+            store
+                .open_interference()
+                .inspect_err(|err| {
+                    log::error!(
+                        "Interference archive at {} is unusable: {err}",
+                        store.interference_path().display()
+                    );
+                })
+                .ok()
+        });
         #[cfg(test)]
+        let archive = None;
         let jamming = jamming::JammingScheduler::new(
             cc.egui_ctx.clone(),
-            None,
+            archive,
             gt_jam::DEFAULT_BASE_URL.to_owned(),
+            jam_transport_source(options.offline),
         );
 
         // A fixed placeholder in tests so version-bearing UI snapshots stay
@@ -524,6 +557,7 @@ impl App {
 
         let mut app = Self {
             jamming,
+            offline: options.offline,
             backfill_ui: backfill_ui::BackfillUi::default(),
             interference_settings: crate::settings::InterferenceSettings::default(),
             map,
@@ -1296,7 +1330,7 @@ impl App {
     /// build (avoids hitting GitHub during development), and not offline.
     #[cfg(feature = "self-update")]
     fn should_check_for_updates(&self) -> bool {
-        self.update_check_on_startup && !cfg!(debug_assertions) && !gt_types::env::offline()
+        self.update_check_on_startup && !cfg!(debug_assertions) && !self.offline
     }
 
     /// The costing a track would snap with now: the session override beats
@@ -1553,7 +1587,7 @@ impl App {
         // Offline pauses auto mode entirely (the scheduler would refuse
         // each request anyway; skipping documents the pause and saves the
         // per-track planning work).
-        if snap::SnapScheduler::offline() || !self.snap_settings.auto_snap_active() {
+        if self.offline || !self.snap_settings.auto_snap_active() {
             return;
         }
         let shared = self.shared.borrow();
@@ -2682,7 +2716,7 @@ impl eframe::App for App {
             }
         };
         let snap_view = SnapPanelView {
-            offline: snap::SnapScheduler::offline(),
+            offline: self.offline,
             consent_pending: !self.snap_settings.consent_granted(),
             rows: &snap_rows,
             costing_choices: &snap_costing_choices,
