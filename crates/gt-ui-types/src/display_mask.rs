@@ -72,6 +72,13 @@ impl From<gt_types::DataCategory> for DisplayCategory {
 /// Every category's bit set - the `hide_all` state.
 const ALL_HIDDEN: u16 = u16::MAX >> (u16::BITS as usize - DisplayCategory::COUNT);
 
+/// The categories hidden on a fresh install.
+///
+/// Interference cells colour the whole map from data the user did not
+/// record, which needs the layer's own explanation to make sense of, so it
+/// is asked for rather than assumed.
+const DEFAULT_HIDDEN: [DisplayCategory; 1] = [DisplayCategory::JammingHexes];
+
 const _: () = assert!(
     DisplayCategory::COUNT <= u16::BITS as usize,
     "DisplayMask stores one bit per category in a u16"
@@ -87,13 +94,21 @@ const _: () = assert!(
 /// Serialized as the list of hidden categories, so an empty or absent
 /// list means everything is visible and categories added later default
 /// to visible on old settings files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-#[serde(from = "HiddenCategories", into = "HiddenCategories")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(from = "ChangedCategories", into = "ChangedCategories")]
 pub struct DisplayMask {
     /// Bit set (per [`DisplayCategory::bit`]) of the hidden categories.
-    /// Hidden rather than visible bits so that `Default` (all zero) means
-    /// all visible.
     hidden: u16,
+}
+
+impl Default for DisplayMask {
+    fn default() -> Self {
+        let mut mask = Self { hidden: 0 };
+        for category in DEFAULT_HIDDEN {
+            mask.set_visible(category, false);
+        }
+        mask
+    }
 }
 
 impl DisplayMask {
@@ -138,26 +153,31 @@ impl DisplayMask {
     }
 }
 
-/// The wire form of [`DisplayMask`]: the hidden categories, in
-/// declaration order.
+/// The wire form of [`DisplayMask`]: the categories whose visibility
+/// differs from the default, in declaration order.
+///
+/// Every category except [`DEFAULT_HIDDEN`] defaults to visible, so for
+/// those this is the hidden list it has always been, and settings files
+/// written before a category existed still load correctly.
 #[derive(serde::Serialize, serde::Deserialize)]
-struct HiddenCategories(Vec<DisplayCategory>);
+struct ChangedCategories(Vec<DisplayCategory>);
 
-impl From<HiddenCategories> for DisplayMask {
-    fn from(hidden: HiddenCategories) -> Self {
+impl From<ChangedCategories> for DisplayMask {
+    fn from(changed: ChangedCategories) -> Self {
         let mut mask = Self::default();
-        for category in hidden.0 {
-            mask.set_visible(category, false);
+        for category in changed.0 {
+            mask.toggle(category);
         }
         mask
     }
 }
 
-impl From<DisplayMask> for HiddenCategories {
+impl From<DisplayMask> for ChangedCategories {
     fn from(mask: DisplayMask) -> Self {
+        let default = DisplayMask::default();
         Self(
             DisplayCategory::iter()
-                .filter(|&c| !mask.is_visible(c))
+                .filter(|&category| mask.is_visible(category) != default.is_visible(category))
                 .collect(),
         )
     }
@@ -222,27 +242,32 @@ mod tests {
         assert_eq!(DisplayCategory::from(data), expected);
     }
 
-    /// A settings file written before a category existed does not list it,
-    /// so it loads visible.
+    /// A settings file written before the interference category existed
+    /// lists only categories the user hid, and loads with each of those
+    /// hidden and the new one at its own default.
     #[test]
-    fn a_category_absent_from_a_settings_file_is_visible() {
+    fn an_older_settings_file_loads_its_hidden_categories() {
         let stored = r#"["custom_markers","query_highlights"]"#;
-        let hidden: HiddenCategories = serde_json::from_str(stored).expect("hidden list");
-        let mask = DisplayMask::from(hidden);
+        let changed: ChangedCategories = serde_json::from_str(stored).expect("changed list");
+        let mask = DisplayMask::from(changed);
 
-        assert!(mask.is_visible(DisplayCategory::JammingHexes));
         assert!(!mask.is_visible(DisplayCategory::CustomMarkers));
         assert!(!mask.is_visible(DisplayCategory::QueryHighlights));
-        assert_eq!(mask.hidden_count(), 2);
+        assert!(
+            !mask.is_visible(DisplayCategory::JammingHexes),
+            "still default"
+        );
+        assert!(mask.is_visible(DisplayCategory::Tracks));
     }
 
-    /// The mask round-trips through the wire form with the new category
-    /// hidden, so hiding it survives a restart.
+    /// Showing a default-hidden category survives a restart, which the
+    /// plain hidden-list form could not express.
     #[test]
-    fn hiding_the_new_category_round_trips_through_json() {
+    fn showing_a_default_hidden_category_round_trips() {
         let mut mask = DisplayMask::default();
-        mask.set_visible(DisplayCategory::JammingHexes, false);
+        assert!(!mask.is_visible(DisplayCategory::JammingHexes));
 
+        mask.set_visible(DisplayCategory::JammingHexes, true);
         let json = serde_json::to_string(&mask).expect("serialize");
         assert_eq!(json, r#"["jamming_hexes"]"#);
         assert_eq!(
@@ -251,26 +276,55 @@ mod tests {
         );
     }
 
+    /// The default writes nothing, so a fresh settings file carries no
+    /// display list at all.
     #[test]
-    fn default_shows_everything() {
+    fn the_default_serializes_to_an_empty_list() {
+        let json = serde_json::to_string(&DisplayMask::default()).expect("serialize");
+        assert_eq!(json, "[]");
+    }
+
+    /// Hiding a default-visible category still writes its name, so old and
+    /// new files mean the same thing for every category but the new one.
+    #[test]
+    fn hiding_a_default_visible_category_lists_it() {
+        let mut mask = DisplayMask::default();
+        mask.set_visible(DisplayCategory::Tracks, false);
+
+        let json = serde_json::to_string(&mask).expect("serialize");
+        assert_eq!(
+            json, r#"["tracks"]"#,
+            "the opt-in category is at its default"
+        );
+        assert_eq!(
+            serde_json::from_str::<DisplayMask>(&json).expect("deserialize"),
+            mask
+        );
+    }
+
+    #[test]
+    fn default_shows_everything_but_the_opt_in_categories() {
         let mask = DisplayMask::default();
-        assert!(!mask.any_hidden());
-        assert_eq!(mask.hidden_count(), 0);
+        assert_eq!(mask.hidden_count(), DEFAULT_HIDDEN.len());
         for category in DisplayCategory::iter() {
-            assert!(mask.is_visible(category));
+            assert_eq!(
+                mask.is_visible(category),
+                !DEFAULT_HIDDEN.contains(&category)
+            );
         }
     }
 
     #[test]
     fn set_toggle_and_show_all_round_trip() {
         let mut mask = DisplayMask::default();
+        let hidden_by_default = mask.hidden_count();
         mask.set_visible(DisplayCategory::GeneratedMarkers, false);
         assert!(!mask.is_visible(DisplayCategory::GeneratedMarkers));
         assert!(mask.is_visible(DisplayCategory::Tracks));
-        assert_eq!(mask.hidden_count(), 1);
+        assert_eq!(mask.hidden_count(), hidden_by_default + 1);
 
         mask.toggle(DisplayCategory::GeneratedMarkers);
-        assert!(!mask.any_hidden());
+        assert_eq!(mask.hidden_count(), hidden_by_default);
 
         mask.hide_all();
         assert_eq!(mask.hidden_count(), DisplayCategory::COUNT);
@@ -296,7 +350,7 @@ mod tests {
         mask.set_visible(DisplayCategory::CustomMarkers, false);
         mask.set_visible(DisplayCategory::QueryHighlights, false);
 
-        let wire = HiddenCategories::from(mask);
+        let wire = ChangedCategories::from(mask);
         assert_eq!(
             wire.0,
             vec![
@@ -308,7 +362,7 @@ mod tests {
 
         // An empty list (the missing-key default) shows everything.
         assert_eq!(
-            DisplayMask::from(HiddenCategories(Vec::new())),
+            DisplayMask::from(ChangedCategories(Vec::new())),
             DisplayMask::default()
         );
     }

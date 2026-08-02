@@ -710,6 +710,43 @@ mod tests {
         assert_eq!(message, expected, "for {src}");
     }
 
+    /// `jamming` is a ratio, so it takes what the util metrics take: a `%`
+    /// literal or another ratio metric. A bare number or a literal of any
+    /// other dimension is rejected.
+    #[rstest]
+    #[case::percent_literal("points | where jamming > 10 %", true)]
+    #[case::a_range("points | where 2 % < jamming and jamming < 10 %", true)]
+    // The unit is required, exactly as it is for the util metrics.
+    #[case::bare_number("points | where jamming > 0.1", false)]
+    #[case::zero("points | where jamming > 0", false)]
+    #[case::against_another_ratio("points | with mask 15 deg | where jamming > util_all", true)]
+    #[case::compared_to_a_length("points | where jamming > 10 m", false)]
+    #[case::compared_to_a_speed("points | where jamming > 10 km/h", false)]
+    #[case::compared_to_a_duration("points | where jamming > 10 s", false)]
+    fn jamming_accepts_ratios_and_rejects_other_dimensions(
+        #[case] src: &str,
+        #[case] accepted: bool,
+    ) {
+        let checked = parse(src).and_then(|query| chk(&query).map(|_| ()));
+        assert_eq!(checked.is_ok(), accepted, "for {src}: {checked:?}");
+    }
+
+    /// The metric needs no `with` parameters, unlike the util and slip
+    /// metrics: its values come from the archive, not from a derivation.
+    /// The rejection names the metric and shows the form that works.
+    #[test]
+    fn a_jamming_comparison_without_a_unit_says_so() {
+        let err = chk(&parse("points | where jamming > 0.1").unwrap()).unwrap_err();
+        assert_eq!(err.message, "jamming needs a unit, e.g. 50 %");
+    }
+
+    #[test]
+    fn jamming_needs_no_parameters() {
+        let checked =
+            parse("points | where jamming > 10 %").and_then(|query| chk(&query).map(|_| ()));
+        assert_eq!(checked, Ok(()), "no `with` stage is required");
+    }
+
     #[test]
     fn util_mask_error_has_the_add_help() {
         let err = chk(&parse("points | where util_gps < 50 %").unwrap()).unwrap_err();
