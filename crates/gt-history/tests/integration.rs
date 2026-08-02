@@ -1268,9 +1268,15 @@ fn rename_identity_merges_into_a_legacy_raw_named_target() {
     );
 }
 
-/// Regression: a stale "open for write" superblock flag (e.g. from a crash)
-/// makes libhdf5 refuse the file. `clear_write_lock` must repair it so the
-/// database opens again with all recordings intact.
+/// Regression: `clear_write_lock` repairs a superblock libhdf5 will not read,
+/// and the recordings survive.
+///
+/// Writing the status-flags byte without recomputing the checksum is what
+/// makes libhdf5 refuse this file, so the failure here is
+/// `DbError::Backend`, not `DbError::WriteLocked`. Setting the flag with a
+/// valid checksum does not stop libhdf5 opening a v2 superblock at all - see
+/// `clearing_the_write_lock_resets_the_status_flags` in the backend crate,
+/// and <https://github.com/CramBL/geotrace/issues/338>.
 #[cfg(feature = "backend-sys")]
 #[test_log::test]
 fn clear_write_lock_recovers_a_locked_database() {

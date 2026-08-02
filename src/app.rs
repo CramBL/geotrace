@@ -3172,9 +3172,11 @@ impl eframe::App for App {
                         .resizable(false)
                         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                         .show(ui.ctx(), |ui| {
-                            ui.label("Another GeoTrace window has the recording history open.");
                             ui.label(
-                                "Close it and try again. Recordings load normally in the meantime, they are just not stored.",
+                                "Another process has the recording history database open, most likely a second GeoTrace instance.",
+                            );
+                            ui.label(
+                                "Close it and try again. Recordings still load in the meantime, they are just not stored.",
                             );
                             ui.add_space(4.0);
                             ui.horizontal(|ui| {
