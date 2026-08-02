@@ -12,7 +12,6 @@ use jiff::civil::Date;
 
 use gt_jam::calendar::{self, COVERAGE_START};
 
-use super::format::format_size;
 use super::jamming::BackfillProgress;
 
 /// How much one archived day costs on disk, measured over the captured
@@ -75,18 +74,18 @@ fn to_chrono(date: Date) -> Option<NaiveDate> {
 
 /// A rough wall-clock and disk estimate for `days`, since a full backfill
 /// runs for the better part of an hour.
-fn estimate(days: usize) -> String {
-    let days = days as u64;
+fn estimate(count: usize) -> String {
+    let days = count as u64;
     let seconds = days * gt_jam::transport::REQUEST_INTERVAL.as_secs();
     let duration = if seconds < MINUTES_CUTOFF_SECS {
         format!("{seconds} s")
     } else {
         format!("{} min", seconds.div_ceil(60))
     };
-    let plural = if days == 1 { "day" } else { "days" };
     format!(
-        "{days} {plural}, about {duration} and {}",
-        format_size(days * BYTES_PER_DAY)
+        "{days} {}, about {duration} and {}",
+        gt_fmt::pluralize(count, "day", "days"),
+        gt_fmt::format_bytes(days * BYTES_PER_DAY)
     )
 }
 
@@ -289,14 +288,13 @@ mod tests {
         assert_eq!(preset_start(today, None), COVERAGE_START);
     }
 
-    #[test]
-    fn estimates_scale_from_seconds_to_minutes() {
-        insta::assert_snapshot!(
-            "backfill_estimates",
-            [1, 30, 365, 1600]
-                .map(|days| format!("{days:>4} -> {}", estimate(days)))
-                .join("\n")
-        );
+    #[rstest]
+    #[case::one_day(1, "1 day, about 2 s and 81.0 KB")]
+    #[case::a_month(30, "30 days, about 60 s and 2.4 MB")]
+    #[case::a_year(365, "365 days, about 13 min and 28.9 MB")]
+    #[case::the_whole_archive(1600, "1600 days, about 54 min and 126.6 MB")]
+    fn estimates_scale_from_seconds_to_minutes(#[case] days: usize, #[case] expected: &str) {
+        assert_eq!(estimate(days), expected);
     }
 
     /// Nothing is requested until the button is pressed.
@@ -391,18 +389,15 @@ mod tests {
     }
 
     #[rstest]
-    #[case::no_archive(None)]
-    #[case::nothing_to_do(Some(0))]
-    #[case::a_month(Some(30))]
-    fn the_outcome_line_reports_what_was_queued(#[case] queued: Option<usize>) {
+    #[case::no_archive(None, "No interference archive to download into")]
+    #[case::nothing_to_do(Some(0), "Every day in that range is already archived")]
+    #[case::a_month(Some(30), "Downloading 30 days, about 60 s and 2.4 MB")]
+    fn the_outcome_line_reports_what_was_queued(
+        #[case] queued: Option<usize>,
+        #[case] expected: &str,
+    ) {
         let mut state = BackfillUi::default();
         state.report_started(queued);
-        insta::assert_snapshot!(
-            format!(
-                "backfill_outcome_{}",
-                queued.map_or_else(|| "none".to_owned(), |days| days.to_string())
-            ),
-            state.outcome.expect("an outcome was recorded")
-        );
+        assert_eq!(state.outcome.as_deref(), Some(expected));
     }
 }

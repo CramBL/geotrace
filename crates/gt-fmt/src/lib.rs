@@ -10,6 +10,9 @@ use uom::si::{
     length::{kilometer, meter},
 };
 
+/// U+2014 EM DASH, standing in for a value that is absent.
+const EM_DASH: &str = "—";
+
 /// Two spaces, U+00B7 MIDDLE DOT, two spaces, joins fields inside tooltip strings.
 const TOOLTIP_JOINER: &str = "  ·  ";
 
@@ -172,6 +175,24 @@ pub fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a st
     if count == 1 { singular } else { plural }
 }
 
+/// Format a byte count in binary units (`1.5 KB`, `126.6 MB`).
+///
+/// Zero renders as an em dash, the table convention for an absent value.
+pub fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1_024;
+    const MB: u64 = 1_024 * 1_024;
+    if bytes == 0 {
+        return EM_DASH.to_owned();
+    }
+    if bytes < KB {
+        return format!("{bytes} B");
+    }
+    if bytes < MB {
+        return format!("{:.1} KB", bytes as f64 / KB as f64);
+    }
+    format!("{:.1} MB", bytes as f64 / MB as f64)
+}
+
 /// Format a count with comma thousands separators (`8,940`).
 pub fn format_count(n: usize) -> String {
     let digits = n.to_string();
@@ -202,6 +223,18 @@ mod tests {
         ] {
             assert_eq!(format_count(n), expected);
         }
+    }
+
+    #[rstest::rstest]
+    #[case::nothing(0, EM_DASH)]
+    #[case::bytes(512, "512 B")]
+    #[case::exactly_one_kib(1_024, "1.0 KB")]
+    #[case::kilobytes(1_536, "1.5 KB")]
+    #[case::exactly_one_mib(1_048_576, "1.0 MB")]
+    #[case::a_day_of_interference(82_944, "81.0 KB")]
+    #[case::a_full_interference_archive(132_710_400, "126.6 MB")]
+    fn format_bytes_reads_in_binary_units(#[case] bytes: u64, #[case] expected: &str) {
+        assert_eq!(format_bytes(bytes), expected);
     }
 
     #[test]

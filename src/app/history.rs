@@ -14,7 +14,6 @@ use gt_types::TravelMode;
 use gt_ui_theme::{EM_DASH, warning_amber};
 use strum::{EnumCount, EnumIter, IntoEnumIterator as _};
 
-use crate::app::format::format_size;
 use crate::app::history_db::{DeleteReason, HistoryWorker};
 
 /// Turn off label text-selection for a History window's contents.
@@ -780,7 +779,7 @@ impl HistoryWindow {
                     let rec_label = gt_fmt::pluralize(stored_count, "recording", "recordings");
                     ui.label(format!(
                         "{stored_count} {rec_label} - {}",
-                        format_size(total_size)
+                        gt_fmt::format_bytes(total_size)
                     ));
                     if filter_active && visible.len() != stored_count {
                         ui.weak(format!("({} shown)", visible.len()));
@@ -1063,7 +1062,7 @@ fn render_row(
     });
 
     breakdown_cell(row, entry, SortColumn::Size, |ui| {
-        ui.label(format_size(entry.meta.gtd_size_bytes));
+        ui.label(gt_fmt::format_bytes(entry.meta.gtd_size_bytes));
     });
 
     row.col(|ui| {
@@ -1135,7 +1134,7 @@ fn data_breakdown_ui(ui: &mut egui::Ui, entry: &RecordingEntry) {
                 "Duration",
                 format_duration(chrono::Duration::microseconds(duration_us(meta))),
             );
-            row("Size", format_size(meta.gtd_size_bytes));
+            row("Size", gt_fmt::format_bytes(meta.gtd_size_bytes));
             row("Tracks", track_count_text(entry));
             row("Nav points", format_stored_count(meta.nav_point_count));
             row(

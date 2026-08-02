@@ -27,7 +27,6 @@ use egui_phosphor::regular::X as ICON_X;
 use egui_phosphor::regular::X_CIRCLE as ICON_X_CIRCLE;
 mod auto_prune;
 mod backfill_ui;
-mod format;
 mod history;
 mod history_db;
 mod jamming;
