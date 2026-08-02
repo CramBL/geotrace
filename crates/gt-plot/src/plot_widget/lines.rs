@@ -17,6 +17,9 @@ use super::chips::{
     ChannelVisibility, HoveredChip, LoadedChannel, MetricKindUi, MetricVisibility, SectionGates,
     metric_is_shown,
 };
+use super::jamming::{
+    JammingHover, JammingPlotCache, JammingStyle, JammingTrack, JammingViewport, add_jamming_series,
+};
 use super::levels::TripLevelCache;
 use super::snap_error::{
     SnapErrorHover, SnapErrorPlotCache, SnapErrorStyle, SnapErrorViewport, add_snap_error_series,
@@ -80,6 +83,9 @@ pub(super) fn add_series_lines<'a>(
     snap_viewport: SnapErrorViewport,
     snap_pointer: Option<egui::Pos2>,
     hovered_snap: &mut Option<(f32, SnapErrorHover)>,
+    jamming: Option<&'a JammingPlotCache>,
+    jamming_viewport: JammingViewport,
+    hovered_jamming: &mut Option<(f32, JammingHover)>,
 ) {
     let prefix = if multi_track {
         format!("{}: ", series.label)
@@ -160,6 +166,34 @@ pub(super) fn add_series_lines<'a>(
         );
     }
 
+    if metric_vis.field(MetricKind::Jamming)
+        && let Some(jamming_cache) = jamming
+    {
+        let is_hovered = hovered_chip == Some(&HoveredChip::Metric(MetricKind::Jamming));
+        let (color, highlighted) = hover_treatment(
+            metric_line_color(MetricKind::Jamming, series.fi, dark_mode),
+            is_hovered,
+        );
+        add_jamming_series(
+            plot_ui,
+            &prefix,
+            JammingTrack {
+                series,
+                multi_track,
+                pointer: snap_pointer,
+            },
+            jamming_cache,
+            jamming_viewport,
+            JammingStyle {
+                color,
+                style: line_style,
+                width: line_width,
+                highlighted,
+            },
+            hovered_jamming,
+        );
+    }
+
     // Channel lines, one per component, gated like the chips: the whole
     // section while collapsed, then the per-channel toggle.
     if !sections.show_channels {
@@ -214,6 +248,7 @@ pub(super) fn show_nearest_point_tooltips(
     response: &egui::Response,
     hovered_anomaly: Option<(f32, AnomalyHover)>,
     hovered_snap: Option<(f32, SnapErrorHover)>,
+    hovered_jamming: Option<(f32, JammingHover)>,
 ) {
     if !response.hovered() {
         return;
@@ -223,6 +258,9 @@ pub(super) fn show_nearest_point_tooltips(
     }
     if let Some((_, hover)) = hovered_snap {
         pointer_tooltip(ui, response, "snap_error_tooltip", |ui| hover.show(ui));
+    }
+    if let Some((_, hover)) = hovered_jamming {
+        pointer_tooltip(ui, response, "jamming_tooltip", |ui| hover.show(ui));
     }
 }
 

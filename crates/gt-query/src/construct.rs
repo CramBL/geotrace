@@ -458,6 +458,11 @@ fn metric_docs(metric: QueryMetric) -> (&'static str, &'static str, &'static [&'
              receiver's claimed accuracy against observed deviation.",
             &["where snap_error > eph"],
         ),
+        QueryMetric::Jamming => (
+            "aircraft-reported interference over the fix's cell",
+            gt_jam::text::QUERY_DOC.as_str(),
+            &["where jamming > 10"],
+        ),
     }
 }
 

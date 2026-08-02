@@ -2736,6 +2736,7 @@ dependencies = [
  "gt-analysis",
  "gt-egui-mipmap",
  "gt-filter",
+ "gt-jam",
  "gt-types",
  "gt-ui-theme",
  "gt-ui-types",
@@ -2750,6 +2751,7 @@ name = "gt-query"
 version = "0.10.0"
 dependencies = [
  "geotrace-sdk-units",
+ "gt-jam",
  "gt-types",
  "insta",
  "logos",

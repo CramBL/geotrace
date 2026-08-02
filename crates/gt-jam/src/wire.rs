@@ -94,6 +94,13 @@ pub struct InterferenceRate {
     pub aircraft: u32,
 }
 
+impl InterferenceRate {
+    /// The share as a percentage.
+    pub fn percent(self) -> f64 {
+        f64::from(self.bad_fraction) * 100.0
+    }
+}
+
 /// A header that is not the published one, which makes every row unreadable.
 /// Row-level problems are [`ParseWarning`]s instead.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

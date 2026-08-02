@@ -217,7 +217,7 @@ fn cell_tooltip(ui: &mut Ui, cell: &CellShape, day: chrono::NaiveDate) {
         &day.to_string(),
         observation.good,
         observation.bad,
-        rate.bad_fraction * 100.0,
+        rate.percent(),
     ) {
         ui.label(line);
     }

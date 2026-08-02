@@ -65,6 +65,7 @@ pub enum QueryMetric {
     SlipNavic,
     SlipQzss,
     SnapError,
+    Jamming,
 }
 
 /// The dimension of a value, checked statically before a run.
@@ -139,7 +140,8 @@ impl QueryMetric {
             | QueryMetric::UtilGalileo
             | QueryMetric::UtilBeidou
             | QueryMetric::UtilNavic
-            | QueryMetric::UtilQzss => Quantity::Ratio,
+            | QueryMetric::UtilQzss
+            | QueryMetric::Jamming => Quantity::Ratio,
             QueryMetric::SlipAll
             | QueryMetric::SlipGps
             | QueryMetric::SlipGlonass
@@ -191,6 +193,7 @@ impl QueryMetric {
             QueryMetric::SlipNavic => Some(MetricKind::SlipNavic),
             QueryMetric::SlipQzss => Some(MetricKind::SlipQzss),
             QueryMetric::SnapError => Some(MetricKind::SnapError),
+            QueryMetric::Jamming => Some(MetricKind::Jamming),
         }
     }
 

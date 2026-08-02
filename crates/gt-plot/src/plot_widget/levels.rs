@@ -147,7 +147,7 @@ impl TripLevelCache {
             MetricKind::SlipBeidou => self.slip_beidou,
             MetricKind::SlipNavic => self.slip_navic,
             MetricKind::SlipQzss => self.slip_qzss,
-            MetricKind::SnapError => return None,
+            MetricKind::SnapError | MetricKind::Jamming => return None,
         })
     }
 }
@@ -189,7 +189,7 @@ impl crate::series::TrackSeries {
             MetricKind::SlipBeidou => &self.slip_beidou,
             MetricKind::SlipNavic => &self.slip_navic,
             MetricKind::SlipQzss => &self.slip_qzss,
-            MetricKind::SnapError => return None,
+            MetricKind::SnapError | MetricKind::Jamming => return None,
         })
     }
 }

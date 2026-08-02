@@ -561,6 +561,7 @@ pub const fn metric_themed_color(kind: gt_types::MetricKind) -> ThemedColor {
         // Mint green: distinct from Eph's magenta, which it is designed to
         // overlay (claimed accuracy vs. observed road deviation).
         M::SnapError => ((60, 255, 180), (0, 143, 94)),
+        M::Jamming => ((255, 105, 60), (188, 62, 20)), // rust orange
     };
     ThemedColor::new(
         Color32::from_rgb(dark.0, dark.1, dark.2),

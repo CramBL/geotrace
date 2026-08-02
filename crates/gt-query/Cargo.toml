@@ -11,6 +11,7 @@ doctest = false
 
 [dependencies]
 geotrace-sdk-units = { path = "../../sdk/rust/geotrace-sdk-units" }
+gt-jam = { path = "../gt-jam" }
 gt-types = { path = "../gt-types" }
 logos.workspace = true
 nalgebra.workspace = true

@@ -68,7 +68,8 @@ impl MetricKindUi for MetricKind {
             | Self::ClockDeltaMs
             | Self::UtilAll
             | Self::SlipAll
-            | Self::SnapError => None,
+            | Self::SnapError
+            | Self::Jamming => None,
         }
     }
 
@@ -127,10 +128,14 @@ impl MetricKindUi for MetricKind {
             Self::SlipNavic => "NavIC slip (/min)",
             Self::SlipQzss => "QZSS slip (/min)",
             Self::SnapError => "Snap error (m)",
+            Self::Jamming => "Aircraft interference (%)",
         }
     }
 
     fn hover_text(self) -> Option<&'static str> {
+        if self == Self::Jamming {
+            return Some(gt_jam::text::PLOT_HOVER.as_str());
+        }
         match self {
             Self::Eph => Some(
                 "Estimated Horizontal Position error - the GPS receiver's own estimate of how \
@@ -367,6 +372,85 @@ pub(super) fn loaded_channels<'a>(
         .collect()
 }
 
+/// The chip groups always shown, in row order.
+const BASIC_GROUPS: [&[MetricKind]; 2] = [
+    // Summary metrics (total satellite counts, velocity, EPH, heading, clock delta).
+    &[
+        MetricKind::SatsSeen,
+        MetricKind::SatsFix,
+        MetricKind::Velocity,
+        MetricKind::Eph,
+        MetricKind::SnapError,
+        MetricKind::Jamming,
+        MetricKind::HeadingDeg,
+        MetricKind::ClockDeltaMs,
+    ],
+    // Per-constellation satellite counts.  Chips for a constellation
+    // absent from the loaded data are skipped by `chip_group`.
+    &[
+        MetricKind::GpsSeen,
+        MetricKind::GpsFix,
+        MetricKind::GlonassSeen,
+        MetricKind::GlonassFix,
+        MetricKind::GalileoSeen,
+        MetricKind::GalileoFix,
+        MetricKind::BeidouSeen,
+        MetricKind::BeidouFix,
+        MetricKind::NavicSeen,
+        MetricKind::NavicFix,
+        MetricKind::QzssSeen,
+        MetricKind::QzssFix,
+    ],
+];
+
+/// The chip groups shown only while the advanced section is open.
+const ADVANCED_GROUPS: [&[MetricKind]; 2] = [
+    // Satellite utilization rate.
+    &[
+        MetricKind::UtilAll,
+        MetricKind::UtilGps,
+        MetricKind::UtilGlonass,
+        MetricKind::UtilGalileo,
+        MetricKind::UtilBeidou,
+        MetricKind::UtilNavic,
+        MetricKind::UtilQzss,
+    ],
+    // Loss-of-lock (slip) rate.
+    &[
+        MetricKind::SlipAll,
+        MetricKind::SlipGps,
+        MetricKind::SlipGlonass,
+        MetricKind::SlipGalileo,
+        MetricKind::SlipBeidou,
+        MetricKind::SlipNavic,
+        MetricKind::SlipQzss,
+    ],
+];
+
+/// Which data-backed metrics have values for the visible tracks. Their
+/// chips stay visible and disabled without them, per DESIGN.md.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct MetricAvailability {
+    pub(super) snap_error: bool,
+    pub(super) jamming: bool,
+}
+
+impl MetricAvailability {
+    /// Why `kind`'s chip is disabled, or [`None`] when it has data.
+    fn unavailable_hover(self, kind: MetricKind) -> Option<&'static str> {
+        match kind {
+            MetricKind::SnapError if !self.snap_error => Some(
+                "No completed snap run for the visible tracks - run snap to road from the \
+                 side panel first",
+            ),
+            MetricKind::Jamming if !self.jamming => {
+                Some("No interference data is archived for these tracks' days")
+            }
+            _ => None,
+        }
+    }
+}
+
 /// Which optional chip sections are revealed, gating their lines exactly as
 /// the chips are gated.
 #[derive(Clone, Copy)]
@@ -394,7 +478,7 @@ fn chip_group(
     present: ConstellationSet,
     kinds: &[MetricKind],
     show_advanced: bool,
-    snap_error_available: bool,
+    available: MetricAvailability,
     show_only: &mut Option<MetricKind>,
     hovered: &mut Option<HoveredChip>,
 ) {
@@ -412,15 +496,14 @@ fn chip_group(
     ui.separator();
     let dark_mode = ui.visuals().dark_mode;
     for kind in shown {
-        // The snap error chip stays visible but disabled until a visible
-        // track has a completed run - never hidden, per DESIGN.md.
-        if kind == MetricKind::SnapError && !snap_error_available {
+        // A data-backed chip stays visible but disabled until its data
+        // exists - never hidden, per DESIGN.md.
+        if let Some(hover) = available.unavailable_hover(kind) {
             disabled_metric_chip(
                 ui,
                 kind.label(),
                 gt_ui_theme::metric_color(kind, dark_mode),
-                "No completed snap run for the visible tracks - run snap to road from the \
-                 side panel first",
+                hover,
             );
             continue;
         }
@@ -539,7 +622,7 @@ pub(super) fn metric_filter_row(
     sync_to_map: &mut bool,
     show_advanced: &mut bool,
     show_channels: &mut bool,
-    snap_error_available: bool,
+    available: MetricAvailability,
 ) -> Option<HoveredChip> {
     // The show/hide-all button and its eye icon track only the currently shown
     // chips, so they ignore advanced metrics while that section is collapsed and
@@ -594,34 +677,7 @@ pub(super) fn metric_filter_row(
 
         // Basic groups, each separated by a divider.  Adding a new metric family
         // is just another `chip_group` call with its `MetricKind` slice.
-        let basic_groups: [&[MetricKind]; 2] = [
-            // Summary metrics (total satellite counts, velocity, EPH, heading, clock delta).
-            &[
-                MetricKind::SatsSeen,
-                MetricKind::SatsFix,
-                MetricKind::Velocity,
-                MetricKind::Eph,
-                MetricKind::SnapError,
-                MetricKind::HeadingDeg,
-                MetricKind::ClockDeltaMs,
-            ],
-            // Per-constellation satellite counts.  Chips for a constellation
-            // absent from the loaded data are skipped by `chip_group`.
-            &[
-                MetricKind::GpsSeen,
-                MetricKind::GpsFix,
-                MetricKind::GlonassSeen,
-                MetricKind::GlonassFix,
-                MetricKind::GalileoSeen,
-                MetricKind::GalileoFix,
-                MetricKind::BeidouSeen,
-                MetricKind::BeidouFix,
-                MetricKind::NavicSeen,
-                MetricKind::NavicFix,
-                MetricKind::QzssSeen,
-                MetricKind::QzssFix,
-            ],
-        ];
+        let basic_groups = BASIC_GROUPS;
         for group in basic_groups {
             chip_group(
                 ui,
@@ -629,7 +685,7 @@ pub(super) fn metric_filter_row(
                 present,
                 group,
                 *show_advanced,
-                snap_error_available,
+                available,
                 &mut show_only,
                 &mut hovered_chip,
             );
@@ -639,28 +695,7 @@ pub(super) fn metric_filter_row(
         // `MetricKindUi::is_advanced() == true` so line drawing and the
         // show/hide-all scope stay consistent with these chips' visibility.
         if *show_advanced {
-            let advanced_groups: [&[MetricKind]; 2] = [
-                // Satellite utilization rate.
-                &[
-                    MetricKind::UtilAll,
-                    MetricKind::UtilGps,
-                    MetricKind::UtilGlonass,
-                    MetricKind::UtilGalileo,
-                    MetricKind::UtilBeidou,
-                    MetricKind::UtilNavic,
-                    MetricKind::UtilQzss,
-                ],
-                // Loss-of-lock (slip) rate.
-                &[
-                    MetricKind::SlipAll,
-                    MetricKind::SlipGps,
-                    MetricKind::SlipGlonass,
-                    MetricKind::SlipGalileo,
-                    MetricKind::SlipBeidou,
-                    MetricKind::SlipNavic,
-                    MetricKind::SlipQzss,
-                ],
-            ];
+            let advanced_groups = ADVANCED_GROUPS;
             for group in advanced_groups {
                 chip_group(
                     ui,
@@ -668,7 +703,7 @@ pub(super) fn metric_filter_row(
                     present,
                     group,
                     *show_advanced,
-                    snap_error_available,
+                    available,
                     &mut show_only,
                     &mut hovered_chip,
                 );
@@ -1069,5 +1104,28 @@ mod tests {
         assert_eq!(channels[0].color_index, 0);
         assert_eq!(channels[1].color_index, 1);
         assert_eq!(channel_color(0), channel_color(CHANNEL_PALETTE.len()));
+    }
+
+    /// Every metric must appear in exactly one chip group. A metric wired
+    /// into `label`, `hover_text` and the line renderer but left out of the
+    /// groups draws with no chip to discover or toggle it.
+    #[test]
+    fn every_metric_has_exactly_one_chip() {
+        let mut seen: Vec<MetricKind> = BASIC_GROUPS
+            .into_iter()
+            .chain(ADVANCED_GROUPS)
+            .flatten()
+            .copied()
+            .collect();
+        let total = seen.len();
+        seen.sort_by_key(|kind| *kind as usize);
+        seen.dedup();
+        assert_eq!(total, seen.len(), "a metric is listed in two groups");
+
+        let missing: Vec<MetricKind> = MetricKind::iter()
+            .filter(|kind| !seen.contains(kind))
+            .collect();
+        assert!(missing.is_empty(), "no chip for {missing:?}");
+        assert_eq!(seen.len(), <MetricKind as strum::EnumCount>::COUNT);
     }
 }
