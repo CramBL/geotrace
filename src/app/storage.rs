@@ -1,10 +1,11 @@
 //! Opening the app's on-disk databases.
 //!
 //! Which databases a run gets is the application's choice, made once at
-//! startup and carried in [`super::StartupOptions`]: [`Storage::Default`]
-//! for the user's data directory, [`Storage::Disabled`] for a run that
-//! stores nothing. Tests pick the second, so no test reaches the user's
-//! recordings or interference archive.
+//! startup and carried in [`super::StartupOptions`]:
+//! [`Storage::DataDirectory`] for the user's own databases,
+//! [`Storage::Disabled`] for a run that stores nothing. Tests pick the
+//! second, so no test reaches the user's recordings or interference
+//! archive.
 
 use std::path::PathBuf;
 
@@ -16,8 +17,9 @@ use super::history_db::HistoryWorker;
 /// Where a run's databases live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Storage {
-    /// The user's data directory, resolved at open time.
-    Default,
+    /// The databases under the user's data directory, resolved at open
+    /// time.
+    DataDirectory,
     /// No databases. Nothing is read or written.
     Disabled,
 }
@@ -50,7 +52,7 @@ impl Storage {
     pub fn open(self, ctx: &Context) -> OpenStorage {
         match self {
             Self::Disabled => OpenStorage::disabled(),
-            Self::Default => match Store::open_default() {
+            Self::DataDirectory => match Store::open_default() {
                 Ok(store) => open_in(&store, ctx),
                 Err(err) => {
                     log::error!("Failed to locate the data directory: {err}");
