@@ -2,6 +2,7 @@
 //! ([`show_track_plot`]), and the submodules it orchestrates.
 
 mod chips;
+mod jamming;
 mod legend;
 mod levels;
 mod lines;
@@ -11,7 +12,10 @@ mod style;
 pub use chips::{ChannelVisibility, MetricVisibility};
 pub use legend::{LEGEND_DOCK_OFFSET, legend_is_docked};
 
-use chips::{SectionGates, loaded_channels, metric_filter_row};
+use chips::{MetricAvailability, SectionGates, loaded_channels, metric_filter_row};
+use jamming::{
+    JammingHover, JammingPlotCache, JammingViewport, jamming_available, sync_jamming_cache,
+};
 use legend::show_file_legend_overlay;
 use levels::{TripLevelCache, budget_cap, compute_level_cache, single_target};
 use lines::{
@@ -32,7 +36,7 @@ use egui_plot::{Span, VLine};
 use gt_filter::GlobalFilter;
 use gt_types::satellites::ConstellationSet;
 use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx, TrackRef};
-use gt_ui_types::{HighlightScope, SnapErrorSeries, TrackDataVisibility};
+use gt_ui_types::{HighlightScope, JammingSeries, SnapErrorSeries, TrackDataVisibility};
 use rayon::prelude::*;
 use std::collections::{BTreeSet, HashMap};
 
@@ -113,6 +117,9 @@ pub struct PlotState {
     /// Per-track snap error mipmaps and marker lists, rebuilt only when a
     /// track's series `Arc` changes (see [`sync_snap_error_cache`]).
     snap_error_cache: HashMap<TrackRef, SnapErrorPlotCache>,
+    /// Per-track interference line caches, rebuilt when a track's series
+    /// `Arc` changes (see [`sync_jamming_cache`]).
+    jamming_cache: HashMap<TrackRef, JammingPlotCache>,
     /// User-chosen component colors, keyed by channel name: one optional
     /// override per component, `None` = the derived hue. Edited through the
     /// chip's right-click menu; persisted with the plot settings.
@@ -150,6 +157,7 @@ impl Default for PlotState {
             last_computed_bounds: None,
             applied_map_x_range: None,
             snap_error_cache: HashMap::new(),
+            jamming_cache: HashMap::new(),
             channel_component_colors: HashMap::new(),
             plot_cursor_snapped: false,
         }
@@ -241,6 +249,9 @@ pub fn show_track_plot(
     // Snap error per track, resolved by the app from completed snap runs
     // (see `gt_ui_types::SnapErrorSeries`).
     snap_error: &SnapErrorSeries,
+    // Interference per fix, resolved by the app from the archive
+    // (see `gt_ui_types::JammingSeries`).
+    jamming: &JammingSeries,
     state: &mut PlotState,
 ) {
     // Compute the per-series visibility mask once so the three downstream
@@ -296,6 +307,7 @@ pub fn show_track_plot(
     // error chip (disabled with hover text until a run completes) and the
     // per-point hover hit-testing.
     let snap_error_available = snap_error_available(&state.series_cache, &visible, snap_error);
+    let jamming_available = jamming_available(&state.series_cache, &visible, jamming);
 
     // Draw the per-metric filter row before the plot so it consumes vertical
     // space first.  `ui.available_height()` below then gives the remainder.
@@ -311,7 +323,10 @@ pub fn show_track_plot(
         &mut state.sync_to_map,
         &mut state.show_advanced_metrics,
         &mut state.show_channels,
-        snap_error_available,
+        MetricAvailability {
+            snap_error: snap_error_available,
+            jamming: jamming_available,
+        },
     );
 
     // Sample budgeting: each track requests ~2 points per pixel of its *visible*
@@ -362,6 +377,7 @@ pub fn show_track_plot(
     let has_full_range = full_x_min.is_finite() && full_x_max.is_finite();
 
     sync_snap_error_cache(&mut state.snap_error_cache, snap_error);
+    sync_jamming_cache(&mut state.jamming_cache, jamming);
 
     // Split borrows: extract immutable refs to the caches and metric visibility
     // before the closure so the borrow checker can see they are disjoint from
@@ -369,6 +385,7 @@ pub fn show_track_plot(
     // `last_computed_bounds`).
     let series_cache = &state.series_cache;
     let snap_error_cache = &state.snap_error_cache;
+    let jamming_cache = &state.jamming_cache;
     let channel_component_colors = &state.channel_component_colors;
     let level_cache = &state.level_cache;
     let last_computed_bounds = state.last_computed_bounds;
@@ -403,6 +420,7 @@ pub fn show_track_plot(
     let mut hovered_anomaly: Option<(f32, AnomalyHover)> = None;
     // Nearest snap error point under the pointer, same mechanism.
     let mut hovered_snap: Option<(f32, SnapErrorHover)> = None;
+    let mut hovered_jamming: Option<(f32, JammingHover)> = None;
     let show_snap_error = snap_error_available && state.metric_vis.field(MetricKind::SnapError);
 
     let mut plot = egui_plot::Plot::new("track_plot")
@@ -550,6 +568,14 @@ pub fn show_track_plot(
                 },
                 snap_pointer,
                 &mut hovered_snap,
+                jamming_cache.get(&series_track_ref(series)),
+                JammingViewport {
+                    x_min: eff_x_min,
+                    x_max: eff_x_max,
+                    width: available_width,
+                    cap: sample_cap,
+                },
+                &mut hovered_jamming,
             );
             if show_anomalies {
                 add_util_anomalies(
@@ -601,7 +627,13 @@ pub fn show_track_plot(
     state.plot_cursor_snapped =
         plot_response.response.hovered() && plot_response.hovered_plot_item.is_some();
 
-    show_nearest_point_tooltips(ui, &plot_response.response, hovered_anomaly, hovered_snap);
+    show_nearest_point_tooltips(
+        ui,
+        &plot_response.response,
+        hovered_anomaly,
+        hovered_snap,
+        hovered_jamming,
+    );
 
     state.legend_hover_file = show_file_legend_overlay(
         ui,

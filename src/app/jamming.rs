@@ -25,6 +25,8 @@ use gt_store::JamStore;
 #[cfg(test)]
 use gt_store::Store;
 use gt_types::TimeRange;
+use gt_types::{LoadedFile, TrackRef};
+use gt_ui_types::{JammingPoint, JammingSeries};
 
 /// What one day's fetch produced.
 enum JamMessage {
@@ -81,6 +83,10 @@ pub struct JammingScheduler {
     /// Days the host answered it has no dataset for, which the legend
     /// distinguishes from a day nothing was downloaded for.
     refused: HashSet<NaiveDate>,
+    /// Per-track plot points, keyed by the days they were resolved from, so
+    /// the `Arc` identity the plot caches on only changes when the archive
+    /// gained a day the track needs.
+    plot_points: HashMap<TrackRef, (Vec<NaiveDate>, Arc<Vec<JammingPoint>>)>,
 }
 
 impl JammingScheduler {
@@ -102,6 +108,7 @@ impl JammingScheduler {
             shown: None,
             selection: DaySelection::new(None, calendar::today_utc()),
             refused: HashSet::new(),
+            plot_points: HashMap::new(),
             ctx,
             tx,
             rx,
@@ -206,6 +213,114 @@ impl JammingScheduler {
         self.archived_cells
             .get(&day)
             .map_or(0, |&cells| cells as usize)
+    }
+
+    /// Interference values for the plot: one point per fix of every loaded
+    /// track, from that fix's own UTC day.
+    ///
+    /// A track's points are rebuilt only when the archive gains one of the
+    /// days it spans, so the `Arc` the plot caches on stays stable.
+    pub fn plot_series(&mut self, files: &[LoadedFile]) -> JammingSeries {
+        let mut series = JammingSeries::default();
+        let mut live: HashSet<TrackRef> = HashSet::new();
+        // Shared across tracks: a batch of recordings from one trip all read
+        // the same day.
+        let mut datasets: HashMap<NaiveDate, Option<JamDataset>> = HashMap::new();
+
+        for (fi, file) in files.iter().enumerate() {
+            for (ti, track) in file.tracks.iter().enumerate() {
+                let track_ref =
+                    TrackRef::new(gt_types::FileIdx::new(fi), gt_types::TrackIdx::new(ti));
+                live.insert(track_ref);
+
+                let days = self.days_available_for(track);
+                let cached = self
+                    .plot_points
+                    .get(&track_ref)
+                    .filter(|(resolved, _)| *resolved == days);
+                let points = match cached {
+                    Some((_, points)) => Arc::clone(points),
+                    None => {
+                        let points = Arc::new(Self::resolve_points(
+                            self.store.as_ref(),
+                            &mut datasets,
+                            track,
+                        ));
+                        self.plot_points
+                            .insert(track_ref, (days, Arc::clone(&points)));
+                        points
+                    }
+                };
+                if points.iter().any(|point| point.percent.is_some()) {
+                    series.points_by_track.insert(track_ref, points);
+                }
+            }
+        }
+        self.plot_points.retain(|track, _| live.contains(track));
+        series
+    }
+
+    /// Dense per-fix interference percentages, for the query providers.
+    /// Shaped like the snap-error values so both reach the provider the same
+    /// way.
+    pub fn query_values(series: &JammingSeries) -> HashMap<TrackRef, Arc<Vec<Option<f64>>>> {
+        series
+            .points_by_track
+            .iter()
+            .map(|(&track, points)| {
+                let values = points.iter().map(|point| point.percent).collect();
+                (track, Arc::new(values))
+            })
+            .collect()
+    }
+
+    /// The archived days the track's fixes fall in, as the cache key: a
+    /// track's points change exactly when this set does.
+    fn days_available_for(&self, track: &gt_types::LoadedTrack) -> Vec<NaiveDate> {
+        let range = track.metadata.time_range;
+        calendar::days_spanned(range.start, range.end)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|day| self.archived_cells(*day) > 0)
+            .collect()
+    }
+
+    /// One point per fix, valued from the dataset of the fix's own day.
+    fn resolve_points(
+        store: Option<&JamStore>,
+        datasets: &mut HashMap<NaiveDate, Option<JamDataset>>,
+        track: &gt_types::LoadedTrack,
+    ) -> Vec<JammingPoint> {
+        track
+            .points
+            .iter()
+            .map(|point| {
+                let time = point.tpv.time().utc();
+                let day = time.date_naive();
+                let dataset = datasets.entry(day).or_insert_with(|| {
+                    store.and_then(|store| {
+                        store
+                            .dataset(day)
+                            .inspect_err(|err| {
+                                log::error!("Reading interference cells for {day}: {err}");
+                            })
+                            .ok()
+                            .flatten()
+                    })
+                });
+                let observation = dataset.as_ref().and_then(|dataset| {
+                    let (lat, lon) = (point.tpv.lat(), point.tpv.lon());
+                    dataset.observation_at(lat, lon)
+                });
+                let rate = observation.and_then(gt_jam::wire::HexObservation::rate);
+                JammingPoint {
+                    x_secs: time.timestamp() as f64,
+                    percent: rate.map(gt_jam::wire::InterferenceRate::percent),
+                    aircraft: rate.map_or(0, |rate| rate.aircraft),
+                    bad: observation.map_or(0, |observation| observation.bad),
+                }
+            })
+            .collect()
     }
 
     /// The selected day's cells and the day selection, borrowed apart so the
@@ -592,5 +707,93 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         assert_eq!(scheduler.empty_reason(), Some(EmptyReason::NoTrack));
         assert_eq!(scheduler.overlay_state().1.day(), None);
+    }
+
+    /// The fixture track, with the time range a real load derives from its
+    /// points. `days_spanned` reads that range, not the points.
+    fn track_with_time_range() -> gt_types::LoadedTrack {
+        use gt_test_utils::fixtures;
+
+        let mut track = fixtures::loaded_track_with_points(fixtures::nav_test_data());
+        let times: Vec<_> = track
+            .points
+            .iter()
+            .map(|point| point.tpv.time().utc())
+            .collect();
+        if let (Some(&start), Some(&end)) = (times.iter().min(), times.iter().max()) {
+            track.metadata.time_range = gt_types::TimeRange::new(start, end);
+        }
+        track
+    }
+
+    /// A track whose fixes fall in an archived cell gets a value per fix;
+    /// one whose day is not archived breaks the line instead.
+    #[test]
+    fn plot_points_come_from_the_fixs_own_day() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let track = track_with_time_range();
+        let day = track.metadata.time_range.start.date_naive();
+        let first = track.points.first().expect("a fix");
+        let cell = gt_jam::dataset::cell_at(first.tpv.lat(), first.tpv.lon()).expect("cell");
+        store
+            .insert_day(
+                day,
+                "host",
+                Utc::now(),
+                &[gt_jam::wire::HexObservation {
+                    cell,
+                    good: 90,
+                    bad: 10,
+                }],
+            )
+            .expect("insert");
+        scheduler.archived_cells.insert(day, 1);
+
+        let files = vec![gt_types::LoadedFile {
+            metadata: gt_types::FileMetadata::default(),
+            tracks: vec![track],
+            event_marker_styles: std::collections::HashMap::new(),
+            orphaned_event_markers: vec![],
+            load_warnings: vec![],
+            source: gt_types::FileSource::GtdBytes(std::sync::Arc::from(Vec::<u8>::new())),
+        }];
+
+        let series = scheduler.plot_series(&files);
+        let points = series
+            .points_by_track
+            .values()
+            .next()
+            .expect("the track has values");
+        let valued: Vec<_> = points.iter().filter(|p| p.percent.is_some()).collect();
+        assert!(
+            !valued.is_empty(),
+            "fixes in the archived cell carry a value"
+        );
+        for point in &valued {
+            // The share is computed in f32 and widened, so 10 % is not exact.
+            let percent = point.percent.unwrap_or_default();
+            assert!((percent - 10.0).abs() < 1e-6, "{percent}");
+            assert_eq!(point.aircraft, 100, "the count behind the share");
+        }
+        // The fixture track is about a kilometre across, well inside one
+        // 22 km cell, so every fix takes that cell's value.
+        assert_eq!(valued.len(), points.len());
+    }
+
+    /// With nothing archived, the track contributes no series at all.
+    #[test]
+    fn a_track_with_no_archived_day_has_no_plot_series() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        let track = track_with_time_range();
+        let files = vec![gt_types::LoadedFile {
+            metadata: gt_types::FileMetadata::default(),
+            tracks: vec![track],
+            event_marker_styles: std::collections::HashMap::new(),
+            orphaned_event_markers: vec![],
+            load_warnings: vec![],
+            source: gt_types::FileSource::GtdBytes(std::sync::Arc::from(Vec::<u8>::new())),
+        }];
+
+        assert!(scheduler.plot_series(&files).is_empty());
     }
 }

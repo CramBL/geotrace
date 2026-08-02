@@ -7,6 +7,8 @@
 //!
 //! A snapshot test pins the exact wording.
 
+use std::sync::LazyLock;
+
 /// Name of the data everywhere it is offered: the display-toggle row, the
 /// plot line, the legend.
 ///
@@ -36,7 +38,7 @@ pub const LOW_SAMPLE_CAVEAT: &str =
 
 /// The lines describing one cell, leading with the counts that produced the
 /// share. Shared so the map hover and the plot hover agree.
-pub fn cell_summary(day: &str, good: u32, bad: u32, bad_percent: f32) -> Vec<String> {
+pub fn cell_summary(day: &str, good: u32, bad: u32, bad_percent: f64) -> Vec<String> {
     vec![
         format!(
             "{bad} of {} aircraft reported low navigation accuracy",
@@ -45,6 +47,25 @@ pub fn cell_summary(day: &str, good: u32, bad: u32, bad_percent: f32) -> Vec<Str
         format!("{bad_percent:.1} % over {day} (UTC)"),
     ]
 }
+
+/// The plot chip's hover text, composed from the shared caveats so it
+/// cannot drift from what the map says.
+/// The query metric's documentation body, composed from the shared caveats.
+pub static QUERY_DOC: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "Share of aircraft over the fix's cell that reported low navigation accuracy, in percent, \
+         for the fix's own UTC day. {SOURCE_CAVEAT} {RESOLUTION_CAVEAT} Fixes whose day is not in \
+         the interference archive carry no value."
+    )
+});
+
+pub static PLOT_HOVER: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "Share of aircraft over each fix's cell that reported low navigation accuracy, for that \
+         fix's own UTC day. {SOURCE_CAVEAT} {RESOLUTION_CAVEAT} The line breaks where no day is \
+         archived."
+    )
+});
 
 /// Where the data comes from, shown in the legend and the about dialog.
 pub const ATTRIBUTION: &str = "Interference data from gpsjam.org, derived from aircraft reports \
@@ -88,9 +109,12 @@ mod tests {
              source caveat: {SOURCE_CAVEAT}\n\
              resolution caveat: {RESOLUTION_CAVEAT}\n\
              low sample caveat: {LOW_SAMPLE_CAVEAT}\n\
+             plot hover: {}\n\
+             query doc: {}\n\
              attribution: {ATTRIBUTION}\n\
              publisher: {PUBLISHER_URL}\n\
-             upstream: {UPSTREAM_URL}"
+             upstream: {UPSTREAM_URL}",
+            *PLOT_HOVER, *QUERY_DOC
         );
         insta::assert_snapshot!("shared_wording", wording);
     }

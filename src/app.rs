@@ -2321,6 +2321,8 @@ struct MainBehavior<'a> {
     jamming_empty: Option<gt_jam::day_selection::EmptyReason>,
     /// Snap error per track of completed snap runs, for the plot.
     snap_error: &'a gt_ui_types::SnapErrorSeries,
+    /// Interference per fix, resolved from the archive.
+    jamming_series: &'a gt_ui_types::JammingSeries,
 }
 
 impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
@@ -2396,6 +2398,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     self.match_hover_time_range,
                     map_sync_x_range,
                     self.snap_error,
+                    self.jamming_series,
                     &mut s.plot_state,
                 );
             }
@@ -2747,6 +2750,11 @@ impl eframe::App for App {
         let snapped_tracks = self.snapped_tracks_view();
         let snap_error = self.snap_error_view();
         let snap_error_values = self.snap_error_values();
+        let jamming_series = {
+            let shared = self.shared.borrow();
+            self.jamming.plot_series(&shared.loaded_files)
+        };
+        let jamming_query_values = jamming::JammingScheduler::query_values(&jamming_series);
 
         CentralPanel::default().show_inside(ui, |ui| {
             let panel_rect = ui.max_rect();
@@ -2784,6 +2792,7 @@ impl eframe::App for App {
                     query_matches: self.query_window.matches(),
                     snapped_tracks: &snapped_tracks,
                     snap_error: &snap_error,
+                    jamming_series: &jamming_series,
                     jamming_dataset,
                     jamming_day,
                     jamming_empty,
@@ -2862,6 +2871,7 @@ impl eframe::App for App {
             self.query_window.show(
                 ui.ctx(),
                 query::RunInputs {
+                    jamming: &jamming_query_values,
                     loaded_files: loaded_files.view(),
                     visibility: tree.visibility(),
                     filter,

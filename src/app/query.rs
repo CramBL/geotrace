@@ -361,6 +361,10 @@ struct RunFingerprint {
     /// (by `Arc` identity, absent without a run) - a re-snap changes the
     /// values, so results referencing them gray out like any other input.
     snap_runs: Vec<Option<ArcIdentity>>,
+    /// The interference values each evaluated track saw (by `Arc` identity,
+    /// absent with no archived day). Archiving a day the track spans
+    /// changes them, so results referencing them gray out.
+    jamming_days: Vec<Option<ArcIdentity>>,
 }
 
 /// Everything one run produced and the UI needs to show it: either a points
@@ -434,6 +438,8 @@ struct TrackQueryData {
     /// snap run at spawn time, shared with the app's per-run cache. `None`
     /// for tracks without a run.
     snap_error: Option<Arc<Vec<Option<f64>>>>,
+    /// Dense per-point interference percentages at spawn time.
+    jamming: Option<Arc<Vec<Option<f64>>>>,
     /// Index of the first point inside the global time filter - the offset
     /// between slice-relative evaluation indices and absolute point indices.
     slice_start: usize,
@@ -1399,6 +1405,7 @@ impl QueryWindow {
             loaded_files,
             filter,
             snap_errors,
+            jamming,
             ..
         } = inputs;
         if !self.all_ok() {
@@ -1428,6 +1435,7 @@ impl QueryWindow {
                     channels: track.channels.clone(),
                     slice,
                     snap_error: snap_errors.get(&track_ref).cloned(),
+                    jamming: jamming.get(&track_ref).cloned(),
                 })
             })
             .collect();
@@ -1471,6 +1479,8 @@ struct TrackSnapshot {
     /// Snap error values captured at spawn time - queries stay synchronous
     /// over already-computed data and never trigger an upload.
     snap_error: Option<Arc<Vec<Option<f64>>>>,
+    /// Interference percentages captured at spawn time, from the archive.
+    jamming: Option<Arc<Vec<Option<f64>>>>,
 }
 
 /// The worker body: derived series per track, then the sequential pipeline
@@ -1515,6 +1525,7 @@ fn run_worker(
                 uses_slip,
                 snapshot.slice.start,
                 snapshot.snap_error.clone(),
+                snapshot.jamming.clone(),
             ),
         );
         prepared.fetch_add(1, Ordering::Relaxed);
@@ -2146,6 +2157,7 @@ fn provider_for<'a>(
         util: data.and_then(|d| d.util.as_ref()),
         slip: data.and_then(|d| d.slip.as_ref()),
         snap_error: data.and_then(|d| d.snap_error.as_deref().map(Vec::as_slice)),
+        jamming: data.and_then(|d| d.jamming.as_deref().map(Vec::as_slice)),
     }
 }
 
@@ -2157,6 +2169,7 @@ fn current_fingerprint(inputs: RunInputs<'_>) -> RunFingerprint {
         visibility,
         filter,
         snap_errors,
+        jamming,
     } = inputs;
     let mut file_identities = Vec::with_capacity(loaded_files.entries().len());
     let mut tracks = Vec::new();
@@ -2177,11 +2190,16 @@ fn current_fingerprint(inputs: RunInputs<'_>) -> RunFingerprint {
         .iter()
         .map(|track_ref| snap_errors.get(track_ref).map(ArcIdentity::of))
         .collect();
+    let jamming_days = tracks
+        .iter()
+        .map(|track_ref| jamming.get(track_ref).map(ArcIdentity::of))
+        .collect();
     RunFingerprint {
         file_identities,
         tracks,
         filter: *filter,
         snap_runs,
+        jamming_days,
     }
 }
 
@@ -2189,6 +2207,10 @@ fn current_fingerprint(inputs: RunInputs<'_>) -> RunFingerprint {
 /// snap run - handed in by the app each frame, shared with its per-run cache
 /// (so the `Arc` identities are stable and change exactly when a run does).
 pub type SnapErrorValues = HashMap<TrackRef, Arc<Vec<Option<f64>>>>;
+
+/// Per-track interference percentages, one entry per fix. Shaped like
+/// [`SnapErrorValues`] so both reach the provider the same way.
+pub type JammingValues = HashMap<TrackRef, Arc<Vec<Option<f64>>>>;
 
 /// The state a query run depends on, handed in by the app each frame - the
 /// inputs [`current_fingerprint`] snapshots to gray out outdated results.
@@ -2198,6 +2220,7 @@ pub struct RunInputs<'a> {
     pub visibility: &'a TrackDataVisibility,
     pub filter: &'a GlobalFilter,
     pub snap_errors: &'a SnapErrorValues,
+    pub jamming: &'a JammingValues,
 }
 
 fn compute_track_data(
@@ -2207,6 +2230,7 @@ fn compute_track_data(
     uses_slip: bool,
     slice_start: usize,
     snap_error: Option<Arc<Vec<Option<f64>>>>,
+    jamming: Option<Arc<Vec<Option<f64>>>>,
 ) -> TrackQueryData {
     // gt_query::check::require_params guarantees these parameters whenever
     // the corresponding metrics are referenced - defaulting below is for the
@@ -2230,6 +2254,7 @@ fn compute_track_data(
         )
     });
     TrackQueryData {
+        jamming,
         util,
         slip,
         snap_error,
@@ -2454,6 +2479,9 @@ struct TrackProvider<'a> {
     /// the track's latest completed snap run. `None` for tracks without a
     /// run - the metric then resolves no values and points are skipped.
     snap_error: Option<&'a [Option<f64>]>,
+    /// Dense per-point interference percentages. `None` for tracks whose
+    /// days are not archived.
+    jamming: Option<&'a [Option<f64>]>,
 }
 
 impl TrackProvider<'_> {
@@ -2594,6 +2622,9 @@ impl MetricProvider for TrackProvider<'_> {
             QueryMetric::SlipQzss => self.slip_value(index, |s| &s.qzss),
             QueryMetric::SnapError => self
                 .snap_error
+                .and_then(|values| values.get(index).copied().flatten()),
+            QueryMetric::Jamming => self
+                .jamming
                 .and_then(|values| values.get(index).copied().flatten()),
         }
     }
@@ -3450,6 +3481,7 @@ mod tests {
             ..SlipRatePerPoint::default()
         };
         let data = TrackQueryData {
+            jamming: None,
             util: Some(util),
             slip: Some(slip),
             // Point 0 snapped with a 3.5 m error; point 1 carries no value
@@ -3534,6 +3566,7 @@ mod tests {
             visibility: &visibility,
             filter: &GlobalFilter::default(),
             snap_errors: &SnapErrorValues::default(),
+            jamming: &JammingValues::default(),
         });
         assert_eq!(
             base,
@@ -3542,6 +3575,7 @@ mod tests {
                 visibility: &visibility,
                 filter: &GlobalFilter::default(),
                 snap_errors: &SnapErrorValues::default(),
+                jamming: &JammingValues::default(),
             })
         );
         let filtered = GlobalFilter {
@@ -3555,6 +3589,7 @@ mod tests {
                 visibility: &visibility,
                 filter: &filtered,
                 snap_errors: &SnapErrorValues::default(),
+                jamming: &JammingValues::default(),
             })
         );
     }
@@ -3587,6 +3622,7 @@ mod tests {
                 visibility: &visibility,
                 filter: &GlobalFilter::default(),
                 snap_errors,
+                jamming: &JammingValues::default(),
             })
         };
 
@@ -3958,6 +3994,7 @@ mod tests {
 
         let points = test_points();
         let snapshot = TrackSnapshot {
+            jamming: None,
             snap_error: None,
             track_ref: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
             slice: 0..points.len(),

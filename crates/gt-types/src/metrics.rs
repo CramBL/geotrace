@@ -62,6 +62,10 @@ pub enum MetricKind {
     /// completed snap run; meters, so it overlays [`MetricKind::Eph`] on the
     /// shared y-axis for the claimed-accuracy vs. observed-deviation read.
     SnapError,
+    /// Share of aircraft over the fix's cell that reported low navigation
+    /// integrity, in percent, for the fix's own UTC day (see `gt-jam`).
+    /// Values exist only for days held in the interference archive.
+    Jamming,
 }
 
 #[cfg(test)]
@@ -115,6 +119,7 @@ mod tests {
             (MetricKind::SlipNavic, "slip_navic"),
             (MetricKind::SlipQzss, "slip_qzss"),
             (MetricKind::SnapError, "snap_error"),
+            (MetricKind::Jamming, "jamming"),
         ];
         assert_eq!(expected.len(), MetricKind::COUNT);
         for (kind, wire) in expected {
