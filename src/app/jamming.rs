@@ -716,17 +716,26 @@ mod tests {
         (dir, store)
     }
 
-    /// One row, enough for the archive to accept a day.
-    const CANNED_DAY: &str = "hex,count_good_aircraft,count_bad_aircraft\n84005c7ffffffff,412,3\n";
+    /// Builds, then fails every request.
+    ///
+    /// Dispatch is still observable through `is_fetching`, and the worker
+    /// stops before it can write, so the archive stays under the test's
+    /// control. A transport that served a day would have the worker
+    /// ingesting into the same archive the test is arranging.
+    struct UnreachableTransport;
 
-    /// A transport that serves [`CANNED_DAY`] for every request.
-    fn canned_transport() -> TransportFactory {
+    impl Transport for UnreachableTransport {
+        fn get(&self, _url: &str) -> Result<HttpResponse, TransportError> {
+            Err(TransportError {
+                detail: "unreachable in tests".to_owned(),
+            })
+        }
+    }
+
+    fn unreachable_transport() -> TransportFactory {
         Box::new(|| {
-            let canned: SharedTransport = Arc::new(CannedTransport {
-                status: 200,
-                body: CANNED_DAY.to_owned(),
-            });
-            Ok(canned)
+            let transport: SharedTransport = Arc::new(UnreachableTransport);
+            Ok(transport)
         })
     }
 
@@ -735,8 +744,7 @@ mod tests {
         Box::new(|| Err("no transport in tests".to_owned()))
     }
 
-    /// Archive-backed and wired to a canned transport, so dispatching a day
-    /// never reaches the network.
+    /// Archive-backed, and wired so no request leaves the machine.
     fn scheduler_with_archive() -> (TempDir, JamStore, JammingScheduler) {
         let (dir, store) = archive();
         let mut scheduler = JammingScheduler::new(
@@ -744,7 +752,7 @@ mod tests {
             Some(store.clone()),
             DEFAULT_BASE_URL.to_owned(),
         );
-        scheduler.set_transport(canned_transport());
+        scheduler.set_transport(unreachable_transport());
         (dir, store, scheduler)
     }
 
@@ -763,33 +771,34 @@ mod tests {
         }
     }
 
-    /// The queued count skips days the archive already holds, so re-running
-    /// a backfill over a range already downloaded costs nothing.
+    /// Days the archive already holds are not queued.
     #[test]
     fn a_backfill_queues_only_the_unarchived_days_in_range() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();
-        let (from, to) = (day(2026, 7, 20), day(2026, 7, 26));
         for archived in [day(2026, 7, 21), day(2026, 7, 22)] {
             store
                 .insert_day(archived, "host", Utc::now(), &[])
                 .expect("insert");
         }
 
-        assert_eq!(scheduler.backfill(from, to), Some(5));
-        scheduler.cancel_backfill();
-        // Every day now archived: the second run has nothing to queue.
-        for remaining in [
-            day(2026, 7, 20),
-            day(2026, 7, 23),
-            day(2026, 7, 24),
-            day(2026, 7, 25),
-            day(2026, 7, 26),
-        ] {
+        let queued = scheduler.backfill(day(2026, 7, 20), day(2026, 7, 26));
+        assert_eq!(queued, Some(5), "seven days in range, two already held");
+    }
+
+    /// Re-running a backfill over a range already downloaded costs nothing.
+    #[test]
+    fn a_fully_archived_range_queues_nothing() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        for offset in 20..=26 {
             store
-                .insert_day(remaining, "host", Utc::now(), &[])
+                .insert_day(day(2026, 7, offset), "host", Utc::now(), &[])
                 .expect("insert");
         }
-        assert_eq!(scheduler.backfill(from, to), Some(0));
+
+        assert_eq!(
+            scheduler.backfill(day(2026, 7, 20), day(2026, 7, 26)),
+            Some(0)
+        );
         assert_eq!(scheduler.backfill_progress(), None);
     }
 
