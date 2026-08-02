@@ -14,6 +14,7 @@ use gt_types::TravelMode;
 use gt_ui_theme::{EM_DASH, warning_amber};
 use strum::{EnumCount, EnumIter, IntoEnumIterator as _};
 
+use crate::app::format::format_size;
 use crate::app::history_db::{DeleteReason, HistoryWorker};
 
 /// Turn off label text-selection for a History window's contents.
@@ -1397,21 +1398,6 @@ fn format_duration(dur: chrono::Duration) -> String {
     } else {
         format!("{s}s")
     }
-}
-
-fn format_size(bytes: u64) -> String {
-    if bytes == 0 {
-        return "—".to_owned();
-    }
-    if bytes < 1_024 {
-        return format!("{bytes} B");
-    }
-    if bytes < 1_024 * 1_024 {
-        let kb = bytes as f64 / 1_024.0;
-        return format!("{kb:.1} KB");
-    }
-    let mb = bytes as f64 / (1_024.0 * 1_024.0);
-    format!("{mb:.1} MB")
 }
 
 /// Parse a `YYYY-MM-DD` string into microseconds-since-epoch at the start of that day (UTC).

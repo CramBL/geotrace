@@ -1,0 +1,5 @@
+---
+source: src/app/backfill_ui.rs
+expression: "state.outcome.expect(\"an outcome was recorded\")"
+---
+Every day in that range is already archived

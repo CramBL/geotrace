@@ -22,6 +22,12 @@ const RETRIES: usize = 1;
 /// Timeout per request. A day is about 300 KiB gzipped.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Minimum gap between requests to the same host.
+///
+/// The datasets are static files on someone else's server, and a backfill
+/// walks hundreds of them.
+pub const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
+
 /// Sent so the host can attribute the traffic.
 pub const CLIENT_ID_HEADER: (&str, &str) = ("X-Client-Id", "geotrace");
 

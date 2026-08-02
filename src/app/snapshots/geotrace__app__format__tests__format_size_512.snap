@@ -1,0 +1,5 @@
+---
+source: src/app/format.rs
+expression: format_size(bytes)
+---
+512 B

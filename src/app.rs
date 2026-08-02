@@ -26,6 +26,8 @@ use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
 use egui_phosphor::regular::X as ICON_X;
 use egui_phosphor::regular::X_CIRCLE as ICON_X_CIRCLE;
 mod auto_prune;
+mod backfill_ui;
+mod format;
 mod history;
 mod history_db;
 mod jamming;
@@ -321,6 +323,7 @@ pub struct App {
     history: history_db::HistoryWorker,
     /// Queues and ingests interference days for loaded tracks.
     jamming: jamming::JammingScheduler,
+    backfill_ui: backfill_ui::BackfillUi,
     interference_settings: crate::settings::InterferenceSettings,
     /// Set when the database could not be opened because it is marked as locked
     /// (open for write). Drives a confirmation dialog offering to clear it.
@@ -522,6 +525,7 @@ impl App {
 
         let mut app = Self {
             jamming,
+            backfill_ui: backfill_ui::BackfillUi::default(),
             interference_settings: crate::settings::InterferenceSettings::default(),
             map,
             shared: Rc::new(RefCell::new(SharedAppState {
@@ -1066,6 +1070,20 @@ impl App {
                         }
                         ui.end_row();
                     });
+                ui.add_space(8.0);
+                if let Some(action) = self.backfill_ui.ui(
+                    ui,
+                    self.jamming.backfill_progress(),
+                    self.jamming.archive_available(),
+                ) {
+                    match action {
+                        backfill_ui::BackfillAction::Start { from, to } => {
+                            let queued = self.jamming.backfill(from, to);
+                            self.backfill_ui.report_started(queued);
+                        }
+                        backfill_ui::BackfillAction::Cancel => self.jamming.cancel_backfill(),
+                    }
+                }
 
                 // Only meaningful in dist builds. Builds without the self-update
                 // feature carry no update check to toggle.

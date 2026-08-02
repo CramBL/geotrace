@@ -1,0 +1,8 @@
+---
+source: src/app/backfill_ui.rs
+expression: "[1, 30, 365,\n1600].map(|days| format!(\"{days:>4} -> {}\", estimate(days))).join(\"\\n\")"
+---
+   1 -> 1 day, about 2 s and 81.0 KB
+  30 -> 30 days, about 60 s and 2.4 MB
+ 365 -> 365 days, about 13 min and 28.9 MB
+1600 -> 1600 days, about 54 min and 126.6 MB

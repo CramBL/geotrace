@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use chrono::{NaiveDate, Utc};
 use egui::Context;
@@ -19,7 +20,7 @@ use egui::Context;
 use gt_jam::calendar::{self, DayOutlook};
 use gt_jam::dataset::JamDataset;
 use gt_jam::day_selection::{DaySelection, EmptyReason};
-use gt_jam::transport::{self, FetchOutcome, HttpTransport, Transport};
+use gt_jam::transport::{self, FetchOutcome, HttpTransport, REQUEST_INTERVAL, Transport};
 use gt_jam::wire::{self, ParseWarningReporter};
 use gt_store::JamStore;
 #[cfg(test)]
@@ -45,11 +46,51 @@ enum JamMessage {
     },
 }
 
+impl JamMessage {
+    fn day(&self) -> NaiveDate {
+        match *self {
+            Self::Stored { day, .. } | Self::Missing { day, .. } | Self::Failed { day, .. } => day,
+        }
+    }
+}
+
 /// A day that could not be added to the archive, for the side panel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DayFailure {
     pub day: NaiveDate,
     pub detail: String,
+}
+
+/// A backfill's progress, for the panel's bar and count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BackfillProgress {
+    /// Days that have reported back, whether archived, missing, or failed.
+    pub done: usize,
+    /// Days the backfill queued. Days already archived or already requested
+    /// this session are not among them.
+    pub total: usize,
+}
+
+impl BackfillProgress {
+    pub fn fraction(self) -> f32 {
+        if self.total == 0 {
+            return 1.0;
+        }
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a backfill spans at most a few thousand days"
+        )]
+        {
+            self.done as f32 / self.total as f32
+        }
+    }
+}
+
+/// A backfill in flight.
+struct Backfill {
+    /// Queued days still to report back.
+    pending: HashSet<NaiveDate>,
+    total: usize,
 }
 
 /// Queues interference days and ingests them into the archive.
@@ -87,6 +128,11 @@ pub struct JammingScheduler {
     /// the `Arc` identity the plot caches on only changes when the archive
     /// gained a day the track needs.
     plot_points: HashMap<TrackRef, (Vec<NaiveDate>, Arc<Vec<JammingPoint>>)>,
+    /// Set while an explicit backfill is running.
+    backfill: Option<Backfill>,
+    /// When the last request was handed to a worker, so [`REQUEST_INTERVAL`]
+    /// is honoured across days.
+    last_request: Option<Instant>,
 }
 
 impl JammingScheduler {
@@ -119,6 +165,8 @@ impl JammingScheduler {
             seen: HashSet::new(),
             in_flight: None,
             failures: Vec::new(),
+            backfill: None,
+            last_request: None,
         }
     }
 
@@ -169,10 +217,86 @@ impl JammingScheduler {
         self.start_next();
     }
 
+    /// Queue every unarchived day in `from..=to`.
+    ///
+    /// Days outside the coverage window, already archived, or already
+    /// requested this session are skipped, so re-running a backfill over the
+    /// same range costs nothing. Replaces a backfill already running.
+    ///
+    /// Returns how many days were queued, or [`None`] when there is no
+    /// archive to write them to.
+    pub fn backfill(&mut self, from: NaiveDate, to: NaiveDate) -> Option<usize> {
+        let store = self.store.clone()?;
+        self.cancel_backfill();
+        let mut pending = HashSet::new();
+        for day in calendar::fetchable_days(from, to, calendar::today_utc()) {
+            if !self.seen.insert(day) {
+                continue;
+            }
+            match store.contains(day) {
+                Ok(true) => {}
+                Ok(false) => {
+                    self.queue.push_back(day);
+                    pending.insert(day);
+                }
+                Err(err) => {
+                    let detail = format!("reading the archive: {err}");
+                    log::error!("Cannot tell whether {day} is archived: {detail}");
+                    self.failures.push(DayFailure { day, detail });
+                }
+            }
+        }
+        let total = pending.len();
+        log::info!("Backfilling interference for {total} days between {from} and {to}");
+        if total > 0 {
+            self.backfill = Some(Backfill { pending, total });
+        }
+        self.start_next();
+        Some(total)
+    }
+
+    /// Whether there is an archive to download into. Grays the backfill
+    /// control when there is not.
+    pub fn archive_available(&self) -> bool {
+        self.store.is_some()
+    }
+
+    /// Drop a running backfill's queued days.
+    ///
+    /// Cancelled days leave `seen`, so a later backfill over the same range
+    /// queues them again. The day in flight is not one of them: it stays in
+    /// `seen` until its own request reports back, or a second request would
+    /// go out for a day already being fetched.
+    pub fn cancel_backfill(&mut self) {
+        let Some(backfill) = self.backfill.take() else {
+            return;
+        };
+        self.queue.retain(|day| !backfill.pending.contains(day));
+        for day in backfill.pending {
+            if Some(day) != self.in_flight {
+                self.seen.remove(&day);
+            }
+        }
+    }
+
+    /// Progress of the running backfill, or [`None`] when none is running.
+    pub fn backfill_progress(&self) -> Option<BackfillProgress> {
+        self.backfill.as_ref().map(|backfill| BackfillProgress {
+            done: backfill.total.saturating_sub(backfill.pending.len()),
+            total: backfill.total,
+        })
+    }
+
     /// Apply finished fetches and start the next queued day.
     pub fn poll(&mut self) {
         while let Ok(message) = self.rx.try_recv() {
             self.in_flight = None;
+            if let Some(backfill) = self.backfill.as_mut() {
+                backfill.pending.remove(&message.day());
+                if backfill.pending.is_empty() {
+                    self.backfill = None;
+                }
+            }
             match message {
                 JamMessage::Stored { day, cells } => {
                     log::info!("Archived {cells} interference cells for {day}");
@@ -373,6 +497,7 @@ impl JammingScheduler {
         self.queue.clear();
         self.seen.clear();
         self.refused.clear();
+        self.backfill = None;
     }
 
     /// Days that could not be archived, oldest first.
@@ -404,14 +529,18 @@ impl JammingScheduler {
             Ok(transport) => transport,
             Err(detail) => {
                 // No transport means no day can be fetched, so the queue is
-                // dropped rather than retried per day.
+                // dropped rather than retried per day. A backfill goes with
+                // it, or its progress would never reach its total.
                 log::info!("Interference fetching is unavailable: {detail}");
                 self.queue.clear();
+                self.backfill = None;
                 return;
             }
         };
+        let delay = dispatch_delay(self.last_request, Instant::now());
         self.queue.pop_front();
         self.in_flight = Some(day);
+        self.last_request = Some(Instant::now() + delay);
         spawn_fetch(
             self.ctx.clone(),
             self.tx.clone(),
@@ -419,6 +548,7 @@ impl JammingScheduler {
             store,
             self.base_url.clone(),
             day,
+            delay,
         );
     }
 
@@ -432,6 +562,18 @@ impl JammingScheduler {
     }
 }
 
+/// How long the next request waits, so requests to the host stay
+/// [`REQUEST_INTERVAL`] apart.
+///
+/// `last_request` is when the previous request was scheduled to go out, which
+/// is already in the future when that one is itself still waiting.
+fn dispatch_delay(last_request: Option<Instant>, now: Instant) -> Duration {
+    let Some(last) = last_request else {
+        return Duration::ZERO;
+    };
+    (last + REQUEST_INTERVAL).saturating_duration_since(now)
+}
+
 #[expect(
     clippy::expect_used,
     reason = "thread spawn can only fail under extreme system resource exhaustion"
@@ -443,10 +585,12 @@ fn spawn_fetch(
     store: JamStore,
     base_url: String,
     day: NaiveDate,
+    delay: Duration,
 ) {
     thread::Builder::new()
         .name(format!("jam-{day}"))
         .spawn(move || {
+            thread::sleep(delay);
             let message = ingest(transport.as_ref(), &store, &base_url, day);
             tx.send(message).ok();
             ctx.request_repaint();
@@ -502,6 +646,7 @@ fn ingest<T: Transport>(
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, TimeDelta};
+    use rstest::rstest;
     use tempfile::TempDir;
 
     use gt_jam::DEFAULT_BASE_URL;
@@ -518,6 +663,10 @@ mod tests {
             .and_then(|date| date.and_hms_opt(hour, 0, 0))
             .map(|naive| naive.and_utc())
             .unwrap_or_default()
+    }
+
+    fn day(year: i32, month: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
     }
 
     fn scheduler() -> JammingScheduler {
@@ -555,6 +704,210 @@ mod tests {
                 body: self.body.clone(),
             })
         }
+    }
+
+    /// The queued count skips days the archive already holds, so re-running
+    /// a backfill over a range already downloaded costs nothing.
+    #[test]
+    fn a_backfill_queues_only_the_unarchived_days_in_range() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let (from, to) = (day(2026, 7, 20), day(2026, 7, 26));
+        for archived in [day(2026, 7, 21), day(2026, 7, 22)] {
+            store
+                .insert_day(archived, "host", Utc::now(), &[])
+                .expect("insert");
+        }
+
+        assert_eq!(scheduler.backfill(from, to), Some(5));
+        scheduler.cancel_backfill();
+        // Every day now archived: the second run has nothing to queue.
+        for remaining in [
+            day(2026, 7, 20),
+            day(2026, 7, 23),
+            day(2026, 7, 24),
+            day(2026, 7, 25),
+            day(2026, 7, 26),
+        ] {
+            store
+                .insert_day(remaining, "host", Utc::now(), &[])
+                .expect("insert");
+        }
+        assert_eq!(scheduler.backfill(from, to), Some(0));
+        assert_eq!(scheduler.backfill_progress(), None);
+    }
+
+    /// A range entirely outside the coverage window asks for nothing.
+    #[test]
+    fn a_backfill_outside_coverage_queues_nothing() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        assert_eq!(
+            scheduler.backfill(day(2019, 1, 1), day(2020, 1, 1)),
+            Some(0)
+        );
+        assert_eq!(scheduler.backfill_progress(), None);
+    }
+
+    /// No archive is distinct from an empty range: the control says so
+    /// instead of claiming the range is already downloaded.
+    #[test]
+    fn a_backfill_without_an_archive_reports_no_archive() {
+        let mut scheduler = scheduler();
+        assert!(!scheduler.archive_available());
+        assert_eq!(scheduler.backfill(day(2026, 7, 20), day(2026, 7, 26)), None);
+        assert_eq!(scheduler.backfill_progress(), None);
+    }
+
+    /// Fill the queue and the backfill without dispatching, so the tests
+    /// below do not depend on whether a transport can be built.
+    fn queued_backfill(scheduler: &mut JammingScheduler, days: &[NaiveDate]) {
+        for day in days {
+            scheduler.seen.insert(*day);
+            scheduler.queue.push_back(*day);
+        }
+        scheduler.backfill = Some(Backfill {
+            pending: days.iter().copied().collect(),
+            total: days.len(),
+        });
+    }
+
+    /// Every outcome retires its day, so a range of missing or failing days
+    /// still reaches its total.
+    #[rstest]
+    #[case::stored(JamMessage::Stored { day: day(2026, 7, 20), cells: 1 })]
+    #[case::missing(JamMessage::Missing { day: day(2026, 7, 20), pending: false })]
+    #[case::failed(JamMessage::Failed { day: day(2026, 7, 20), detail: "boom".to_owned() })]
+    fn progress_advances_on_every_outcome(#[case] message: JamMessage) {
+        let mut scheduler = scheduler();
+        let days = [day(2026, 7, 20), day(2026, 7, 21)];
+        queued_backfill(&mut scheduler, &days);
+        assert_eq!(
+            scheduler.backfill_progress(),
+            Some(BackfillProgress { done: 0, total: 2 })
+        );
+
+        scheduler.tx.send(message).expect("send");
+        scheduler.poll();
+        assert_eq!(
+            scheduler.backfill_progress(),
+            Some(BackfillProgress { done: 1, total: 2 })
+        );
+    }
+
+    /// The last day retires the backfill, so the panel stops showing a bar.
+    #[test]
+    fn the_last_day_ends_the_backfill() {
+        let mut scheduler = scheduler();
+        let days = [day(2026, 7, 20)];
+        queued_backfill(&mut scheduler, &days);
+
+        scheduler
+            .tx
+            .send(JamMessage::Stored {
+                day: day(2026, 7, 20),
+                cells: 1,
+            })
+            .expect("send");
+        scheduler.poll();
+        assert_eq!(scheduler.backfill_progress(), None);
+    }
+
+    /// Cancelling drops the queued days and lets a later backfill ask for
+    /// them again.
+    #[test]
+    fn cancelling_releases_the_queued_days() {
+        let mut scheduler = scheduler();
+        let days = [day(2026, 7, 20), day(2026, 7, 21)];
+        queued_backfill(&mut scheduler, &days);
+
+        scheduler.cancel_backfill();
+        assert_eq!(scheduler.backfill_progress(), None);
+        assert_eq!(scheduler.queued(), 0);
+        assert!(scheduler.seen.is_empty(), "cancelled days can be re-queued");
+    }
+
+    /// Cancelling must not release the day already being fetched: releasing
+    /// it lets a later request go out for a day still in flight.
+    #[test]
+    fn cancelling_keeps_the_in_flight_day() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        let (in_flight, queued) = (day(2026, 7, 20), day(2026, 7, 21));
+        queued_backfill(&mut scheduler, &[in_flight, queued]);
+        scheduler.in_flight = Some(in_flight);
+        scheduler.queue.retain(|day| *day != in_flight);
+
+        scheduler.cancel_backfill();
+        assert!(
+            scheduler.seen.contains(&in_flight),
+            "the day being fetched stays claimed"
+        );
+        assert!(
+            !scheduler.seen.contains(&queued),
+            "a day that never went out can be asked for again"
+        );
+    }
+
+    /// A day queued by a track load is not cancelled with the backfill.
+    #[test]
+    fn cancelling_leaves_track_requested_days_alone() {
+        let mut scheduler = scheduler();
+        let track_day = day(2026, 7, 19);
+        scheduler.seen.insert(track_day);
+        scheduler.queue.push_back(track_day);
+        queued_backfill(&mut scheduler, &[day(2026, 7, 20)]);
+
+        scheduler.cancel_backfill();
+        assert_eq!(scheduler.queued(), 1);
+        assert!(scheduler.seen.contains(&track_day));
+    }
+
+    #[rstest]
+    #[case::the_first_request(None, Duration::ZERO)]
+    #[case::right_after_one(Some(Duration::ZERO), REQUEST_INTERVAL)]
+    #[case::part_way_through(Some(REQUEST_INTERVAL), Duration::ZERO)]
+    #[case::long_after_one(Some(REQUEST_INTERVAL * 4), Duration::ZERO)]
+    fn requests_are_spaced_by_the_host_interval(
+        #[case] since_last: Option<Duration>,
+        #[case] expected: Duration,
+    ) {
+        let now = Instant::now() + REQUEST_INTERVAL * 8;
+        let last = since_last.and_then(|elapsed| now.checked_sub(elapsed));
+        assert_eq!(dispatch_delay(last, now), expected);
+    }
+
+    /// A request still waiting pushes the one behind it out by a further
+    /// interval, so a queue of days does not all fire at once.
+    #[test]
+    fn a_pending_request_delays_the_next_one_further() {
+        let now = Instant::now();
+        let scheduled = now + REQUEST_INTERVAL;
+        assert_eq!(dispatch_delay(Some(scheduled), now), REQUEST_INTERVAL * 2);
+    }
+
+    /// Without a transport the queue is dropped, and the backfill with it.
+    #[test]
+    fn a_backfill_that_cannot_reach_the_host_stops_running() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        queued_backfill(&mut scheduler, &[day(2026, 7, 20)]);
+        scheduler.start_next();
+
+        // Offline no transport can be built. Otherwise the day dispatches
+        // and the backfill is still running.
+        assert_eq!(
+            scheduler.backfill_progress().is_none(),
+            gt_types::env::offline()
+        );
+        assert_eq!(scheduler.queued(), 0);
+    }
+
+    /// Changing the host abandons a backfill: its remaining days belong to
+    /// the old host.
+    #[test]
+    fn changing_the_host_abandons_the_backfill() {
+        let mut scheduler = scheduler();
+        queued_backfill(&mut scheduler, &[day(2026, 7, 20)]);
+        scheduler.set_base_url("https://mirror.example");
+        assert_eq!(scheduler.backfill_progress(), None);
+        assert_eq!(scheduler.queued(), 0);
     }
 
     #[test]

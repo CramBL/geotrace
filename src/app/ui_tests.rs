@@ -2553,6 +2553,10 @@ fn snapshot_settings_window_snap_section() {
     // (grayed, never hidden) - both states of the optional rows visible.
     harness.inner.state_mut().snap_settings.search_radius_m = Some(25.0);
     harness.inner.state_mut().settings_open = true;
+    // Pinned, or the interference range would redate the snapshot daily.
+    harness.inner.state_mut().backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(
+        chrono::NaiveDate::from_ymd_opt(2026, 8, 2).unwrap_or_default(),
+    );
     harness.run();
     harness.snapshot("settings_window_snap_section");
 }
