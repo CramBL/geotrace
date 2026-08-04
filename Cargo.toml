@@ -99,7 +99,7 @@ h3o = "0.10"
 # even when gt-history-backend-sys is compiled out, and without it that build
 # falls back to pkg-config and fails wherever libhdf5 is not installed.
 hdf5 = { package = "hdf5-metno", version = "0.14", features = ["static", "zlib"] }
-hdf5-pure = "0.32"
+hdf5-pure = "0.33"
 insta = "1.48.0"
 jiff = "0.2.23"
 log = "0.4"

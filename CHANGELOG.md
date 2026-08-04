@@ -10,7 +10,7 @@
 
 ### Changed
 
-- Updated `hdf5-pure` to 0.32.
+- Updated `hdf5-pure` to 0.33.
 
 ## 0.10.0 - 2026-07-28
 
