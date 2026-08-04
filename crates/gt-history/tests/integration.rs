@@ -234,17 +234,9 @@ fn make_chunked_gtd_bytes(start_us: i64, n: u64) -> Vec<u8> {
 
 /// The active backend, used to suffix free-space snapshots: the two backends
 /// encode differently and so produce different file sizes.
-///
-/// The pure backend carries the architecture as well. `hdf5-pure` aligns every
-/// chunk's on-disk block to the target's cache line, which it puts at 128 bytes
-/// on aarch64 and 64 everywhere else, so the same database is larger on aarch64
-/// by the extra padding. The C library does no such alignment, which is why the
-/// sys suffix stays architecture-independent.
 fn backend_name() -> &'static str {
     if cfg!(feature = "backend-sys") {
         "sys"
-    } else if cfg!(target_arch = "aarch64") {
-        "pure-aarch64"
     } else {
         "pure"
     }
