@@ -24,6 +24,7 @@ use gt_jam::transport::{
     self, Connection, FetchOutcome, REQUEST_INTERVAL, Transport, TransportSource,
 };
 use gt_jam::wire::{self, ParseWarningReporter};
+use gt_query_run::JammingValues;
 use gt_store::JamStore;
 #[cfg(test)]
 use gt_store::Store;
@@ -402,7 +403,7 @@ impl JammingScheduler {
     /// Dense per-fix interference percentages, for the query providers.
     /// Shaped like the snap-error values so both reach the provider the same
     /// way.
-    pub fn query_values(series: &JammingSeries) -> HashMap<TrackRef, Arc<Vec<Option<f64>>>> {
+    pub fn query_values(series: &JammingSeries) -> JammingValues {
         series
             .points_by_track
             .iter()
