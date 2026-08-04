@@ -32,7 +32,7 @@ pub(crate) enum InternalError {
 impl From<InternalError> for DbError {
     fn from(e: InternalError) -> Self {
         match e {
-            InternalError::Hdf5(e) => DbError::Backend(e.to_string()),
+            InternalError::Hdf5(e) => crate::classify_hdf5_error(e),
             InternalError::Io(e) => DbError::Io(e),
             InternalError::Conflict(msg) => DbError::Backend(msg),
         }

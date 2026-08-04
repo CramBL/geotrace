@@ -418,15 +418,11 @@ pub trait HistoryDatabase {
     /// so the database can be opened again.
     ///
     /// Only safe to call once the user has confirmed no other process has the
-    /// file open. The default implementation is a no-op, for backends that
-    /// cannot get into this state.
+    /// file open. Clearing a lock that was never set must succeed and leave the
+    /// database usable.
     fn clear_write_lock(path: &Path) -> Result<(), DbError>
     where
-        Self: Sized,
-    {
-        let _ = path;
-        Ok(())
-    }
+        Self: Sized;
     /// Store a recording: the original GTD `bytes`, the segmentation `settings`,
     /// and the resulting `tracks` (index ranges, none hidden initially).
     fn insert(

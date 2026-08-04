@@ -1287,10 +1287,9 @@ fn rename_identity_merges_into_a_legacy_raw_named_target() {
 ///
 /// Writing the status-flags byte without recomputing the checksum is what
 /// makes libhdf5 refuse this file, so the failure here is
-/// `DbError::Backend`, not `DbError::WriteLocked`. Setting the flag with a
+/// `DbError::Backend`, not [`DbError::WriteLocked`]. Setting the flag with a
 /// valid checksum does not stop libhdf5 opening a v2 superblock at all - see
-/// `clearing_the_write_lock_resets_the_status_flags` in the backend crate,
-/// and <https://github.com/CramBL/geotrace/issues/338>.
+/// `clearing_the_write_lock_resets_the_status_flags` in the backend crate.
 #[cfg(feature = "backend-sys")]
 #[test_log::test]
 fn clear_write_lock_repairs_an_unreadable_superblock() {
@@ -2411,22 +2410,40 @@ fn clearing_the_write_lock_on_a_healthy_database_is_harmless() {
     assert!(db.list_recordings().expect("list").is_empty());
 }
 
-/// The pure backend opens a write-locked database as if nothing happened.
-///
-/// The system backend refuses the same file with [`DbError::WriteLocked`] and
-/// offers the user a repair, so the two disagree about a database left behind
-/// by a crash. The cause is upstream: `hdf5-pure` does not check the
-/// superblock status-flags byte on open:
-/// <https://github.com/stephenberry/hdf5-pure/issues/245>. Pinned as it
-/// stands so this test fails once that is fixed and the backend can
-/// implement detection and `clear_write_lock`:
-/// <https://github.com/CramBL/geotrace/issues/338>.
+/// A live writer still holding the file is [`DbError::Busy`], not a stale lock
+/// to clear: the repair refuses rather than pulling the file out from under it.
 #[cfg(feature = "backend-pure")]
-#[test]
-fn a_write_locked_database_opens_on_the_pure_backend() {
+#[test_log::test]
+fn clearing_the_write_lock_under_a_live_writer_reports_busy() {
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join("recordings.h5");
     drop(Database::open_or_create(&path).expect("create"));
+
+    let editor = hdf5_pure::File::open_rw(&path).expect("editor takes the OS lock");
+    assert!(
+        matches!(Database::clear_write_lock(&path), Err(DbError::Busy)),
+        "a held file is busy, not repairable"
+    );
+
+    drop(editor);
+    Database::clear_write_lock(&path).expect("clears once the writer is gone");
+}
+
+/// The pure backend reports a database left behind by a crashed writer as
+/// [`DbError::WriteLocked`], and `clear_write_lock` repairs it with the
+/// recordings intact - the same offer the system backend makes for the same
+/// file.
+#[cfg(feature = "backend-pure")]
+#[test_log::test]
+fn a_write_locked_database_is_refused_and_repaired_on_the_pure_backend() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("recordings.h5");
+    {
+        let mut db = Database::open_or_create(&path).expect("create");
+        let bytes = make_gtd_bytes(1_000, 5);
+        db.insert_simple("dev", &extract_meta(&bytes).expect("meta"), &bytes)
+            .expect("insert");
+    }
 
     // A crashed writer: the superblock status-flags byte set with a valid
     // checksum. `close` and `Drop` clear it, so the writer is leaked.
@@ -2438,8 +2455,12 @@ fn a_write_locked_database_opens_on_the_pure_backend() {
     std::mem::forget(writer);
 
     assert!(
-        Database::open_or_create(&path).is_ok(),
-        "the flag is not checked"
+        matches!(Database::open_or_create(&path), Err(DbError::WriteLocked)),
+        "the status-flags byte is checked on open"
     );
-    Database::clear_write_lock(&path).expect("the default no-op succeeds");
+
+    Database::clear_write_lock(&path).expect("clear the stale flag");
+
+    let db = Database::open_or_create(&path).expect("open after clearing the lock");
+    assert_eq!(db.list_recordings().expect("list").len(), 1);
 }
