@@ -135,6 +135,7 @@ _APP_LOCK_CRATES: list[str] = [
     "gt-map",
     "gt-plot",
     "gt-query",
+    "gt-query-run",
     "gt-side-panel",
     "gt-sky",
     "gt-store",

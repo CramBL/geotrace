@@ -11,7 +11,7 @@ use uom::si::{
 };
 
 /// U+2014 EM DASH, standing in for a value that is absent.
-const EM_DASH: &str = "—";
+pub const EM_DASH: &str = "—";
 
 /// Two spaces, U+00B7 MIDDLE DOT, two spaces, joins fields inside tooltip strings.
 const TOOLTIP_JOINER: &str = "  ·  ";

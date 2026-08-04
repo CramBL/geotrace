@@ -1,0 +1,32 @@
+[package]
+name = "gt-query-run"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+chrono.workspace = true
+geotrace-sdk-units = { path = "../../sdk/rust/geotrace-sdk-units" }
+gt-analysis = { path = "../gt-analysis" }
+gt-filter = { path = "../gt-filter" }
+gt-fmt = { path = "../gt-fmt" }
+gt-loaded-files = { path = "../gt-loaded-files" }
+gt-query = { path = "../gt-query" }
+gt-types = { path = "../gt-types" }
+gt-ui-types = { path = "../gt-ui-types" }
+log.workspace = true
+uom.workspace = true
+
+[dev-dependencies]
+gt-test-utils = { path = "../gt-test-utils" }
+gt-track-builder = { path = "../gt-track-builder" }
+rstest.workspace = true
+
+[lints]
+workspace = true

@@ -11,6 +11,7 @@ doctest = false
 
 [dependencies]
 egui.workspace = true
+gt-fmt = { path = "../gt-fmt" }
 gt-types = { path = "../gt-types" }
 strum.workspace = true
 

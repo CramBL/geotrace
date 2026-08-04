@@ -47,6 +47,7 @@ members = [
     "crates/gt-map",
     "crates/gt-plot",
     "crates/gt-query",
+    "crates/gt-query-run",
     "crates/gt-side-panel",
     "crates/gt-sky",
     "crates/gt-snap",
@@ -278,7 +279,6 @@ egui_extras.workspace = true
 egui_tiles.workspace = true
 env_logger.workspace = true
 geotrace-sdk-units = { path = "sdk/rust/geotrace-sdk-units" }
-gt-analysis = { path = "crates/gt-analysis" }
 gt-filter = { path = "crates/gt-filter" }
 gt-fmt = { path = "crates/gt-fmt" }
 gt-jam = { path = "crates/gt-jam" }
@@ -288,6 +288,7 @@ gt-logfile = { path = "crates/gt-logfile" }
 gt-map = { path = "crates/gt-map" }
 gt-plot = { path = "crates/gt-plot" }
 gt-query = { path = "crates/gt-query" }
+gt-query-run = { path = "crates/gt-query-run" }
 gt-side-panel = { path = "crates/gt-side-panel" }
 gt-sky = { path = "crates/gt-sky" }
 gt-snap = { path = "crates/gt-snap" }

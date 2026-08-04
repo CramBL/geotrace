@@ -2220,7 +2220,6 @@ dependencies = [
  "env_logger",
  "geotrace-sdk",
  "geotrace-sdk-units",
- "gt-analysis",
  "gt-filter",
  "gt-fmt",
  "gt-jam",
@@ -2230,6 +2229,7 @@ dependencies = [
  "gt-map",
  "gt-plot",
  "gt-query",
+ "gt-query-run",
  "gt-side-panel",
  "gt-sky",
  "gt-snap",
@@ -2766,6 +2766,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "gt-query-run"
+version = "0.10.0"
+dependencies = [
+ "chrono",
+ "geotrace-sdk-units",
+ "gt-analysis",
+ "gt-filter",
+ "gt-fmt",
+ "gt-loaded-files",
+ "gt-query",
+ "gt-test-utils",
+ "gt-track-builder",
+ "gt-types",
+ "gt-ui-types",
+ "log",
+ "rstest",
+ "uom",
+]
+
+[[package]]
 name = "gt-side-panel"
 version = "0.10.0"
 dependencies = [
@@ -2887,6 +2907,7 @@ name = "gt-ui-theme"
 version = "0.10.0"
 dependencies = [
  "egui",
+ "gt-fmt",
  "gt-types",
  "strum",
 ]

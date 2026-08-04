@@ -52,6 +52,7 @@ use gt_jam::transport as jam_transport;
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_map::{MapContextAction, MapLayer, NavMap};
 use gt_plot::PlotState;
+use gt_query_run::{RunInputs, SnapErrorValues};
 use gt_side_panel::{
     FilterPanelState, PanelContext, SnapPanelView, SnapRowView, TreeState, show_side_panel,
 };
@@ -1444,8 +1445,8 @@ impl App {
 
     /// Per-track dense snap error values for the query providers, one entry
     /// per track with a completed run.
-    fn snap_error_values(&mut self) -> HashMap<TrackRef, Arc<Vec<Option<f64>>>> {
-        let mut values = HashMap::new();
+    fn snap_error_values(&mut self) -> SnapErrorValues {
+        let mut values = SnapErrorValues::new();
         self.with_snap_error_derived(&mut values, |track_ref, derived, values| {
             values.insert(track_ref, Arc::clone(&derived.values));
         });
@@ -2919,7 +2920,7 @@ impl eframe::App for App {
             highlight.scrub_time = None;
             self.query_window.show(
                 ui.ctx(),
-                query::RunInputs {
+                RunInputs {
                     jamming: &jamming_query_values,
                     loaded_files: loaded_files.view(),
                     visibility: tree.visibility(),
