@@ -13,6 +13,20 @@ static DB_LOCK: Mutex<()> = Mutex::new(());
 
 pub mod copy;
 
+/// Map an `hdf5-pure` failure onto the [`DbError`] the app acts on.
+///
+/// Two of them mean the file is held rather than broken. `FileMarkedInUse` is
+/// the durable superblock status-flags byte, which a crashed writer leaves set
+/// and [`PureDb::clear_write_lock`] repairs. `FileLocked` is an OS lock, which
+/// only a live process holds and which no repair can take away.
+pub(crate) fn classify_hdf5_error(err: hdf5_pure::Error) -> DbError {
+    match err {
+        hdf5_pure::Error::FileMarkedInUse(_) => DbError::WriteLocked,
+        hdf5_pure::Error::FileLocked(_) => DbError::Busy,
+        other => DbError::Backend(other.to_string()),
+    }
+}
+
 pub struct PureDb {
     path: PathBuf,
 }
@@ -28,6 +42,16 @@ impl HistoryDatabase for PureDb {
         Ok(Self {
             path: path.to_owned(),
         })
+    }
+
+    fn clear_write_lock(path: &Path) -> Result<(), DbError> {
+        let _guard = DB_LOCK.lock();
+        hdf5_pure::File::clear_swmr_flag(path).map_err(classify_hdf5_error)?;
+        log::debug!(
+            "Cleared the write lock on history database at {}",
+            path.display()
+        );
+        Ok(())
     }
 
     fn insert(
@@ -95,30 +119,21 @@ impl HistoryDatabase for PureDb {
 
     fn list_recordings(&self) -> Result<Vec<RecordingEntry>, DbError> {
         let _guard = DB_LOCK.lock();
-        let file =
-            hdf5_pure::File::open(&self.path).map_err(|e| DbError::Backend(e.to_string()))?;
+        let file = hdf5_pure::File::open(&self.path).map_err(classify_hdf5_error)?;
         let root = file.root();
         let Ok(by_id) = root.group("by_identity") else {
             return Ok(vec![]);
         };
         let mut entries = Vec::new();
-        for identity in by_id
-            .groups()
-            .map_err(|e| DbError::Backend(e.to_string()))?
-        {
+        for identity in by_id.groups().map_err(classify_hdf5_error)? {
             let Ok(id_grp) = by_id.group(&identity) else {
                 continue;
             };
-            let id_attrs = id_grp
-                .attrs()
-                .map_err(|e| DbError::Backend(e.to_string()))?;
+            let id_attrs = id_grp.attrs().map_err(classify_hdf5_error)?;
             let display_identity = string_attr(&id_attrs, ATTR_IDENTITY)
                 .or_else(|| identity_from_group_name(&identity))
                 .unwrap_or_else(|| identity.clone());
-            for rec_name in id_grp
-                .groups()
-                .map_err(|e| DbError::Backend(e.to_string()))?
-            {
+            for rec_name in id_grp.groups().map_err(classify_hdf5_error)? {
                 let Ok(rec_grp) = id_grp.group(&rec_name) else {
                     continue;
                 };
@@ -151,8 +166,7 @@ impl HistoryDatabase for PureDb {
 
     fn is_duplicate(&self, meta: &RecordingMeta) -> Result<bool, DbError> {
         let _guard = DB_LOCK.lock();
-        let file =
-            hdf5_pure::File::open(&self.path).map_err(|e| DbError::Backend(e.to_string()))?;
+        let file = hdf5_pure::File::open(&self.path).map_err(classify_hdf5_error)?;
         let root = file.root();
 
         let Ok(by_id) = root.group("by_identity") else {
@@ -160,18 +174,12 @@ impl HistoryDatabase for PureDb {
         };
 
         // Search through ALL identity groups
-        for identity in by_id
-            .groups()
-            .map_err(|e| DbError::Backend(e.to_string()))?
-        {
+        for identity in by_id.groups().map_err(classify_hdf5_error)? {
             let Ok(id_grp) = by_id.group(&identity) else {
                 continue;
             };
 
-            for rec_name in id_grp
-                .groups()
-                .map_err(|e| DbError::Backend(e.to_string()))?
-            {
+            for rec_name in id_grp.groups().map_err(classify_hdf5_error)? {
                 if let Ok(rec_grp) = id_grp.group(&rec_name)
                     && let Ok(attrs) = rec_grp.attrs()
                     && matches_attrs(meta, &attrs)
@@ -216,17 +224,16 @@ impl PureDb {
         let meta = fb.create_group("meta");
         fb.add_group(meta.finish());
 
-        fb.write(path)
-            .map_err(|e| DbError::Backend(e.to_string()))?;
+        fb.write(path).map_err(classify_hdf5_error)?;
 
         log::info!("Created history database at {}", path.display());
         Ok(())
     }
 
     fn validate_existing(path: &Path) -> Result<(), DbError> {
-        let file = hdf5_pure::File::open(path).map_err(|e| DbError::Backend(e.to_string()))?;
+        let file = hdf5_pure::File::open(path).map_err(classify_hdf5_error)?;
         let root = file.root();
-        let attrs = root.attrs().map_err(|e| DbError::Backend(e.to_string()))?;
+        let attrs = root.attrs().map_err(classify_hdf5_error)?;
 
         let schema_version = match attrs.get(SCHEMA_VERSION_ATTR) {
             Some(AttrValue::I64(v)) => *v,
@@ -344,25 +351,22 @@ fn matches_attrs(
 
 /// Extract recording metadata from raw GTD file bytes.
 pub fn extract_meta(bytes: &[u8]) -> Result<RecordingMeta, DbError> {
-    let file =
-        hdf5_pure::File::from_bytes(bytes.to_vec()).map_err(|e| DbError::Backend(e.to_string()))?;
+    let file = hdf5_pure::File::from_bytes(bytes.to_vec()).map_err(classify_hdf5_error)?;
 
-    let nav_grp = file
-        .group("nav_points")
-        .map_err(|e| DbError::Backend(e.to_string()))?;
+    let nav_grp = file.group("nav_points").map_err(classify_hdf5_error)?;
     let nav_shape = nav_grp
         .dataset("time")
-        .map_err(|e| DbError::Backend(e.to_string()))?
+        .map_err(classify_hdf5_error)?
         .shape()
-        .map_err(|e| DbError::Backend(e.to_string()))?;
+        .map_err(classify_hdf5_error)?;
     let nav_point_count = nav_shape.first().copied().unwrap_or(0);
 
     let (start_us, end_us) = if nav_point_count > 0 {
         let times = nav_grp
             .dataset("time")
-            .map_err(|e| DbError::Backend(e.to_string()))?
+            .map_err(classify_hdf5_error)?
             .read_i64()
-            .map_err(|e| DbError::Backend(e.to_string()))?;
+            .map_err(classify_hdf5_error)?;
         let first = times.first().copied().unwrap_or(0);
         let last = times.last().copied().unwrap_or(0);
         (first, last)

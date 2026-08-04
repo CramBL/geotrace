@@ -1322,9 +1322,10 @@ mod tests {
     ///
     /// Deliberately does not assert that the flagged file is refused before
     /// clearing. libhdf5 opens a flagged v2 superblock read-write, which is
-    /// what [`create_native_file`] writes; only the v3 superblock refuses.
-    /// Whether [`crate::classify_open_error`] is reachable at all for these files
-    /// is open: <https://github.com/CramBL/geotrace/issues/338>.
+    /// what [`create_native_file`] writes; only the v3 superblock refuses. The
+    /// path that reaches [`crate::classify_open_error`] for these files is
+    /// covered by `clear_write_lock_repairs_an_unreadable_superblock` in
+    /// `gt-history`.
     #[test]
     fn clearing_the_write_lock_resets_the_status_flags() {
         use std::io::Read as _;
