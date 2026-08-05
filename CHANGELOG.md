@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.11.0 - 2026-08-05
+
 ### Added
 
 - An aircraft interference map layer: where aircraft reported degraded GNSS navigation, from gpsjam.org's daily data over adsbexchange.com's reports. Toggle it in the eye popup, step the day it shows, and hover a cell for the counts behind its colour. Days are archived on disk as they are fetched, so a day is downloaded once and stays available offline.
