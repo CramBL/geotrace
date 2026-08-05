@@ -25,7 +25,9 @@ strum.workspace = true
 uom.workspace = true
 
 [dev-dependencies]
+gt-query = { path = "../gt-query" }
 insta.workspace = true
+proptest.workspace = true
 rstest.workspace = true
 
 [lints]
