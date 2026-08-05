@@ -4,7 +4,7 @@
 
 use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackIdx, TrackRef};
-use gt_ui_types::{DisplayCategory, DisplayMask, QueryMatches, TrackDataVisibility};
+use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask, QueryMatches, TrackDataVisibility};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use walkers::MapMemory;
@@ -334,14 +334,12 @@ pub(crate) fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Re
     }
 }
 
-/// Returns `true` when a spatial point should participate in hover and click detection.
+/// Returns `true` when a spatial point should participate in hover and click
+/// detection.
 ///
-/// The renderers suppress invisible elements from being drawn; this function
-/// applies the *same* rules so a hidden element cannot be hovered or clicked.
-/// That means matching the renderers on every axis: file/track enablement, the
-/// per-category layer toggle, the track-level filter, the per-point time
-/// window (so points of a partially-overlapping track outside the window are not
-/// hit-testable either), and the points a `keep`/`hide` query removed.
+/// The renderers suppress invisible elements from being drawn; hit-testing
+/// applies the *same* rules through [`crate::scope::point_visibility`], so a
+/// hidden element cannot be hovered or clicked.
 pub(crate) fn is_spatial_point_visible(
     sp: &SpatialPoint,
     files: &[LoadedFile],
@@ -350,41 +348,19 @@ pub(crate) fn is_spatial_point_visible(
     display_mask: DisplayMask,
     query_matches: Option<&QueryMatches>,
 ) -> bool {
-    // Tracklines and raw satellite reports have no hover target of their own.
-    if matches!(
-        sp.category,
-        DataCategory::Track | DataCategory::SatelliteReport
-    ) {
-        return false;
-    }
-    // The gating the renderers apply (enablement, tree toggle, filter),
-    // plus the display category: an element hidden either way is not
-    // drawn, so it must not be hoverable or clickable either.
-    let Some(track) =
-        crate::scope::category_in_scope(files, visibility, filter, sp.track_ref(), sp.category)
-    else {
-        return false;
-    };
-    if !display_mask.is_visible(DisplayCategory::from(sp.category)) {
-        return false;
-    }
-    let pi = sp.point_index.as_usize();
-    // A `keep`/`hide` query removes TPV points from the drawn line and icons;
-    // markers stay drawn (the hidden ranges index TPV points, not the marker
-    // arrays), so only the TPV category consults the mask.
-    if sp.category == DataCategory::Tpv
-        && query_matches.is_some_and(|m| m.is_hidden(sp.track_ref(), pi))
-    {
-        return false;
-    }
-    let time = match sp.category {
-        DataCategory::Tpv => track.points.get(pi).map(|p| p.tpv.time().utc()),
-        DataCategory::CustomMarker => track.custom_markers.get(pi).map(|m| m.time),
-        DataCategory::GeneratedMarker => track.generated_markers.get(pi).map(|m| m.time),
-        DataCategory::EventMarker => track.event_markers.get(pi).map(|m| m.time),
-        DataCategory::Track | DataCategory::SatelliteReport => None,
-    };
-    time.is_some_and(|t| point_passes_time_filter(t, filter))
+    crate::scope::point_visibility(
+        files,
+        visibility,
+        filter,
+        display_mask,
+        query_matches,
+        DataPointRef {
+            track: sp.track_ref(),
+            category: sp.category,
+            point_index: sp.point_index,
+        },
+    )
+    .is_shown()
 }
 
 /// Center the map and set the zoom so the given bounding box fills ~80 % of the

@@ -1,0 +1,32 @@
+[package]
+name = "gt-query-map-harness"
+description = "Headless harness driving query runs and observing the resulting map point state"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+# Test infrastructure: never shipped, never published.
+publish = false
+
+[lib]
+doctest = false
+
+[dependencies]
+chrono.workspace = true
+gt-filter = { path = "../gt-filter" }
+gt-loaded-files = { path = "../gt-loaded-files" }
+gt-map = { path = "../gt-map" }
+gt-query-run = { path = "../gt-query-run" }
+gt-track-builder = { path = "../gt-track-builder" }
+gt-types = { path = "../gt-types" }
+gt-ui-types = { path = "../gt-ui-types" }
+strum.workspace = true
+uom.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+rstest.workspace = true
+
+[lints]
+workspace = true

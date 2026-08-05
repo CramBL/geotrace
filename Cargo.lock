@@ -2766,6 +2766,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "gt-query-map-harness"
+version = "0.10.0"
+dependencies = [
+ "chrono",
+ "gt-filter",
+ "gt-loaded-files",
+ "gt-map",
+ "gt-query-run",
+ "gt-track-builder",
+ "gt-types",
+ "gt-ui-types",
+ "insta",
+ "rstest",
+ "strum",
+ "uom",
+]
+
+[[package]]
 name = "gt-query-run"
 version = "0.10.0"
 dependencies = [
