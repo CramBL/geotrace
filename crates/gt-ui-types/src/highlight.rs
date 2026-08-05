@@ -96,6 +96,21 @@ pub struct MapHighlight {
     pub hover_match: Option<MatchHighlight>,
 }
 
+impl MapHighlight {
+    /// Pin `point_ref`'s popup, or unpin it when it is already the sticky
+    /// point, and report whether it ended up pinned - the caller places the
+    /// popup only for one that opened.
+    ///
+    /// Shared by every way of selecting a point (the map click, the
+    /// disambiguation popup, the side-panel and query-table rows) so they
+    /// cannot disagree on what a second click does.
+    pub fn toggle_sticky(&mut self, point_ref: DataPointRef) -> bool {
+        let pinned = self.sticky != Some(point_ref);
+        self.sticky = pinned.then_some(point_ref);
+        pinned
+    }
+}
+
 impl Default for MapHighlight {
     fn default() -> Self {
         Self {
@@ -116,6 +131,32 @@ impl Default for MapHighlight {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn point(index: usize) -> DataPointRef {
+        DataPointRef {
+            track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            category: DataCategory::Tpv,
+            point_index: PointIdx::new(index),
+        }
+    }
+
+    #[test]
+    fn toggling_the_same_point_unpins_it_and_another_takes_over() {
+        let mut highlight = MapHighlight::default();
+        assert!(highlight.toggle_sticky(point(3)), "a first click pins");
+        assert_eq!(highlight.sticky, Some(point(3)));
+        assert!(
+            !highlight.toggle_sticky(point(3)),
+            "clicking the pinned point unpins it"
+        );
+        assert_eq!(highlight.sticky, None);
+        highlight.toggle_sticky(point(3));
+        assert!(
+            highlight.toggle_sticky(point(7)),
+            "another point takes the pin over"
+        );
+        assert_eq!(highlight.sticky, Some(point(7)));
+    }
 
     #[test]
     fn match_highlight_contains_is_start_inclusive_end_exclusive() {

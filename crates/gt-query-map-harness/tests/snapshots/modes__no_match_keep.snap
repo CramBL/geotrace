@@ -1,0 +1,6 @@
+---
+source: crates/gt-query-map-harness/tests/modes.rs
+expression: scenario.picture()
+---
+track.gtd#0  xxxx
+counts: shown 0, halos 0

@@ -185,13 +185,8 @@ pub fn apply_point_click(
     map_center_request: &mut Option<(f64, f64)>,
     popup_pos_request: &mut Option<egui::Pos2>,
 ) {
-    if response.clicked() {
-        if highlight.sticky == Some(point_ref) {
-            highlight.sticky = None;
-        } else {
-            highlight.sticky = Some(point_ref);
-            *popup_pos_request = Some(egui::pos2(ui.clip_rect().max.x + 8.0, response.rect.min.y));
-        }
+    if response.clicked() && highlight.toggle_sticky(point_ref) {
+        *popup_pos_request = Some(egui::pos2(ui.clip_rect().max.x + 8.0, response.rect.min.y));
     }
     if response.double_clicked() {
         *map_center_request = Some(lat_lon);

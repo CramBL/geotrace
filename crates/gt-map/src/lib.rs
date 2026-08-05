@@ -13,7 +13,7 @@ pub mod marker_renderer;
 mod polyline;
 mod query_match_renderer;
 mod sat_labels;
-mod scope;
+pub mod scope;
 mod sky_glyph_renderer;
 mod sky_trails_window;
 mod snapped_track_renderer;
@@ -794,10 +794,7 @@ impl NavMap {
                 true
             } else if let Some(point_ref) = hover_point_ref {
                 self.disambiguation_candidates = [None; 4];
-                if highlight.sticky == Some(point_ref) {
-                    highlight.sticky = None;
-                } else {
-                    highlight.sticky = Some(point_ref);
+                if highlight.toggle_sticky(point_ref) {
                     self.sticky_pos = ui
                         .ctx()
                         .pointer_latest_pos()
@@ -832,10 +829,7 @@ impl NavMap {
                             )
                             .clicked()
                             {
-                                if highlight.sticky == Some(candidate) {
-                                    highlight.sticky = None;
-                                } else {
-                                    highlight.sticky = Some(candidate);
+                                if highlight.toggle_sticky(candidate) {
                                     self.sticky_pos = disambig_pos;
                                 }
                                 self.disambiguation_candidates = [None; 4];

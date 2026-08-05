@@ -47,6 +47,7 @@ members = [
     "crates/gt-map",
     "crates/gt-plot",
     "crates/gt-query",
+    "crates/gt-query-map-harness",
     "crates/gt-query-run",
     "crates/gt-side-panel",
     "crates/gt-sky",
