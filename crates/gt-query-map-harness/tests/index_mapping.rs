@@ -62,6 +62,36 @@ fn panel_match_ranges_are_absolute() {
     ");
 }
 
+/// Narrowing the time filter can change what a windowed query matches near the
+/// cut.
+///
+/// A window is only ever evaluated over points the run has, so trimming the
+/// slice withdraws the windows that reached past the cut. Here point 1 survives
+/// only because the window over points 1 and 2 averages slowly enough; drop
+/// point 2 and the only window left is the fast one. The counterexample a
+/// property test shrank to, kept as the documented semantics.
+#[test]
+fn narrowing_the_window_can_change_a_windowed_match() {
+    let dataset = || Dataset::single_track(TrackSpec::from_speeds_kmh(&[40.0, 10.0, 10.0]));
+    let query = "points | window 2 | where avg(velocity) < 20 km/h | keep";
+
+    let mut wide = MapScenario::new(dataset());
+    wide.set_time_filter_secs(Some(0), Some(2));
+    wide.run(query);
+    insta::assert_snapshot!(wide.picture(), @"
+    track.gtd#0  x..
+    counts: shown 2, halos 0
+    ");
+
+    let mut narrow = MapScenario::new(dataset());
+    narrow.set_time_filter_secs(Some(0), Some(1));
+    narrow.run(query);
+    insta::assert_snapshot!(narrow.picture(), @"
+    track.gtd#0  xx-
+    counts: shown 0, halos 0
+    ");
+}
+
 /// A window with no points in it: the query sees an empty slice, so it hides
 /// nothing - every point is already off the map by the filter alone.
 #[test]

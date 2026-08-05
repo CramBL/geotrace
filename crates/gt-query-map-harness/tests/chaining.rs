@@ -1,6 +1,6 @@
 //! Several queries composing as one pipeline.
 
-use gt_query_map_harness::{Dataset, MapScenario, TrackSpec};
+use gt_query_map_harness::{Dataset, MapScenario, PointSpec, TrackSpec};
 
 /// Slow at the ends, fast in the middle - the shape that makes composition
 /// visible.
@@ -94,6 +94,46 @@ fn a_stage_after_everything_is_hidden_matches_nothing() {
     run: completed
       1 match on 1 track — 8 of 8 points hidden
       0 matches on 0 tracks
+    ");
+}
+
+/// Two `hide` stages do not commute when one judges a point by its neighbours.
+///
+/// `accel` differences against the previous point *of the current run*, so
+/// hiding first can leave a survivor at a run boundary where `accel` is missing.
+/// A missing value skips the point instead of matching it, so it stays. The
+/// counterexample a property test shrank to, kept as the documented semantics.
+#[test]
+fn swapping_two_hides_can_change_the_map() {
+    let dataset = || {
+        Dataset::single_track(TrackSpec::from_points(vec![
+            PointSpec::at_secs(18).speed_kmh(30.0),
+            PointSpec::at_secs(31).speed_kmh(22.0),
+            PointSpec::at_secs(42).speed_kmh(31.0),
+            PointSpec::at_secs(46).speed_kmh(9.0),
+        ]))
+    };
+    let slow = "points | where velocity < 23 km/h | hide";
+    let slowing_or_fast = "points | where (accel < 0 m/s2) or (velocity >= 31 km/h) | hide";
+
+    // Hiding the slow points first strands point 2 at the start of its own run,
+    // where it has no acceleration to judge, so the second stage skips it.
+    let mut slow_first = MapScenario::new(dataset());
+    slow_first.set_time_filter_secs(Some(25), Some(48));
+    slow_first.run(&format!("{slow}\n\n{slowing_or_fast}"));
+    insta::assert_snapshot!(slow_first.picture(), @"
+    track.gtd#0  -x.x
+    counts: shown 1, halos 0
+    ");
+
+    // The other way round, point 2 still has its predecessor and is hidden for
+    // being fast.
+    let mut fast_first = MapScenario::new(dataset());
+    fast_first.set_time_filter_secs(Some(25), Some(48));
+    fast_first.run(&format!("{slowing_or_fast}\n\n{slow}"));
+    insta::assert_snapshot!(fast_first.picture(), @"
+    track.gtd#0  -xxx
+    counts: shown 0, halos 0
     ");
 }
 
