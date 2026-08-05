@@ -19,7 +19,7 @@ use gt_filter::{GlobalFilter, point_passes_time_filter};
 use gt_types::{DataCategory, FileIdx, LoadedFile, LoadedTrack, TrackIdx, TrackRef};
 use gt_ui_types::{
     DisplayCategory, EventMarkerVisibility, GeneratedMarkerVisibility, QueryMatches, SnappedTracks,
-    TrackDataVisibility,
+    TrackDataVisibility, visibility,
 };
 use rustc_hash::FxHasher;
 
@@ -111,7 +111,7 @@ impl DisplayCounts {
             for ti in 0..file.tracks.len() {
                 let track_ref = TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti));
                 let Some((track, trip_vis)) =
-                    crate::scope::track_in_scope(files, visibility, filter, track_ref)
+                    visibility::track_in_scope(files, visibility, filter, track_ref)
                 else {
                     continue;
                 };

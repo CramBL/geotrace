@@ -29,10 +29,12 @@ use gt_query_run::{
     RunInputs, RunKind, RunOutcome, RunResults, SliceProvider, TrackProvider, TrackQueryData,
     schema_from_files,
 };
-use gt_side_panel::widgets::apply_point_click;
+use gt_side_panel::widgets::{PointClickRequests, apply_point_click};
 use gt_types::{DataCategory, LoadedFile, NavPoint, PointIdx, TrackRef};
 use gt_ui_theme::{DEGREE_SIGN, ELLIPSIS, EM_DASH};
-use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, MatchHighlight, QueryMatches};
+use gt_ui_types::{
+    DataPointRef, DisplayMask, HighlightScope, MapHighlight, MapScope, MatchHighlight, QueryMatches,
+};
 
 use crate::settings::QueryHistoryEntry;
 
@@ -403,8 +405,9 @@ impl QueryWindow {
         &mut self,
         ctx: &egui::Context,
         inputs: RunInputs<'_>,
+        display_mask: DisplayMask,
         highlight: &mut MapHighlight,
-        requests: &mut MatchMapRequests<'_>,
+        requests: &mut PointClickRequests<'_>,
     ) {
         let RunInputs { loaded_files, .. } = inputs;
         // Collect a finished worker even while the window is closed, so its
@@ -437,7 +440,17 @@ impl QueryWindow {
             .show(ctx, |ui| {
                 self.editor_ui(ui, &schema);
                 ui.separator();
-                self.results_ui(ui, files, highlight, requests);
+                // What the map draws right now, so a match row can only pin a
+                // point that is on it - this run's own results decide which
+                // points those are.
+                let scope = MapScope {
+                    files,
+                    visibility: inputs.visibility,
+                    filter: inputs.filter,
+                    display_mask,
+                    query_matches: self.session.matches(),
+                };
+                self.results_ui(ui, files, scope, highlight, requests);
                 ui.separator();
                 self.history_examples_ui(ui);
             });
@@ -1132,8 +1145,9 @@ impl QueryWindow {
         &self,
         ui: &mut egui::Ui,
         files: &[LoadedFile],
+        scope: MapScope<'_>,
         highlight: &mut MapHighlight,
-        requests: &mut MatchMapRequests<'_>,
+        requests: &mut PointClickRequests<'_>,
     ) {
         let Some(results) = self.session.results() else {
             ui.label(RichText::new("No runs yet").weak());
@@ -1141,7 +1155,7 @@ impl QueryWindow {
         };
         match results {
             RunResults::Points(points) => {
-                points_results_ui(ui, points, files, highlight, requests);
+                points_results_ui(ui, points, files, scope, highlight, requests);
             }
             RunResults::Channel(channel) => channel_results_ui(ui, channel, files),
         }
@@ -1198,14 +1212,8 @@ struct MatchCtx<'a> {
     files: &'a [LoadedFile],
     results: &'a PointsResults,
     columns: &'a [QueryMetric],
-}
-
-/// Map requests a match-table interaction can raise, mirroring the side
-/// panel's `PanelContext` fields: clicking a row pins its point popup,
-/// double-clicking centers the map on the point.
-pub struct MatchMapRequests<'a> {
-    pub map_center: &'a mut Option<(f64, f64)>,
-    pub popup_pos: &'a mut Option<egui::Pos2>,
+    /// What the map draws, so a row click pins only a point that is on it.
+    scope: MapScope<'a>,
 }
 
 /// One match: a collapsing header with the point table inside. Header hover
@@ -1219,7 +1227,7 @@ fn match_ui(
     range: &Range<usize>,
     stale: bool,
     highlight: &mut MapHighlight,
-    requests: &mut MatchMapRequests<'_>,
+    requests: &mut PointClickRequests<'_>,
 ) {
     let header = match_header_text(ctx.files, track_ref, range);
     let id = ui.id().with(("query_match", track_ref, range.start));
@@ -1248,7 +1256,7 @@ fn match_table_ui(
     track_ref: TrackRef,
     range: &Range<usize>,
     highlight: &mut MapHighlight,
-    requests: &mut MatchMapRequests<'_>,
+    requests: &mut PointClickRequests<'_>,
 ) {
     let columns = ctx.columns;
     let Some(points) = points_of(ctx.files, track_ref) else {
@@ -1313,9 +1321,9 @@ fn match_table_ui(
                                 point_index: PointIdx::new(pi),
                             },
                             (p.tpv.lat().as_degrees(), p.tpv.lon().as_degrees()),
+                            ctx.scope,
                             highlight,
-                            requests.map_center,
-                            requests.popup_pos,
+                            requests,
                         );
                     }
                 }
@@ -1356,8 +1364,9 @@ fn points_results_ui(
     ui: &mut egui::Ui,
     points: &PointsResults,
     files: &[LoadedFile],
+    scope: MapScope<'_>,
     highlight: &mut MapHighlight,
-    requests: &mut MatchMapRequests<'_>,
+    requests: &mut PointClickRequests<'_>,
 ) {
     let stale = points.matches.stale;
     // One collapsible section per query, in editor order: its summary is the
@@ -1373,6 +1382,7 @@ fn points_results_ui(
             files,
             results: points,
             columns: &query.columns,
+            scope,
         };
         let id = ui.make_persistent_id(("query_result", qi));
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)

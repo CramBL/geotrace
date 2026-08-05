@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use gt_types::{DataCategory, FileIdx, PointIdx, TrackIdx, TrackRef};
 
+use crate::visibility::{MapScope, PointVisibility};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DataPointRef {
     pub track: TrackRef,
@@ -109,6 +111,74 @@ impl MapHighlight {
         self.sticky = pinned.then_some(point_ref);
         pinned
     }
+
+    /// [`Self::toggle_sticky`] for a point the map draws, and nothing at all for
+    /// one it does not, reporting whether the popup ended up pinned.
+    ///
+    /// What every click site does with a point: the map's own click, the
+    /// disambiguation popup, the side-panel rows, the query-table rows. Pinning a
+    /// point the map withholds would open a popup describing something not on
+    /// screen.
+    pub fn toggle_sticky_if_drawn(&mut self, scope: MapScope<'_>, point_ref: DataPointRef) -> bool {
+        scope.draws(point_ref) && self.toggle_sticky(point_ref)
+    }
+
+    /// What the pinned popup does this frame, dropping a pin whose element is
+    /// gone.
+    ///
+    /// The one place that decides it, so the popup cannot outlive what the map
+    /// draws: the map asks it per frame, the headless tests ask it to assert.
+    pub fn pin_this_frame(&mut self, scope: MapScope<'_>) -> Option<PinnedPopup> {
+        let pinned = self.sticky?;
+        let withheld = |reason| Some(PinnedPopup::Withheld { pinned, reason });
+        match scope.point_visibility(pinned) {
+            PointVisibility::Shown => Some(PinnedPopup::Drawn(pinned)),
+            // The element itself is gone - its file unloaded, or the array it
+            // indexed shrank - so the pin is dropped rather than left to rebind
+            // to whatever later occupies that index.
+            PointVisibility::NoSuchElement => {
+                self.sticky = None;
+                None
+            }
+            PointVisibility::TrackNotShown => withheld(PinWithheld::TrackNotShown),
+            PointVisibility::CategoryHidden => withheld(PinWithheld::CategoryHidden),
+            PointVisibility::HiddenByQuery => withheld(PinWithheld::HiddenByQuery),
+            PointVisibility::OutsideTimeFilter => withheld(PinWithheld::OutsideTimeFilter),
+        }
+    }
+}
+
+/// What the pin does while a point is pinned, from
+/// [`MapHighlight::pin_this_frame`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinnedPopup {
+    /// The map draws the element, so its popup opens.
+    Drawn(DataPointRef),
+    /// The pin is remembered but shows nothing, because the map does not draw
+    /// the point. Widening the filter or clearing the query brings the popup
+    /// back rather than costing the user their pin.
+    Withheld {
+        pinned: DataPointRef,
+        reason: PinWithheld,
+    },
+}
+
+/// Why a pinned popup shows nothing: the ways the map can withhold a point that
+/// still exists.
+///
+/// [`PointVisibility`] also covers "drawn" and "no such element", which are not
+/// withholdings - one opens the popup, the other drops the pin - so they have no
+/// variant here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinWithheld {
+    /// The file or track is off in the tree, or the track fails the filter.
+    TrackNotShown,
+    /// The element's category is off in the tree or in the display mask.
+    CategoryHidden,
+    /// A `keep` or `hide` query removed the point.
+    HiddenByQuery,
+    /// Outside the global time filter's window.
+    OutsideTimeFilter,
 }
 
 impl Default for MapHighlight {
@@ -130,13 +200,129 @@ impl Default for MapHighlight {
 
 #[cfg(test)]
 mod tests {
+    use chrono::TimeDelta;
+    use gt_filter::GlobalFilter;
+
     use super::*;
+    use crate::display_mask::DisplayCategory;
+    use crate::scope_fixture::{self, POINT_COUNT, ScopeFixture};
 
     fn point(index: usize) -> DataPointRef {
         DataPointRef {
             track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
             category: DataCategory::Tpv,
             point_index: PointIdx::new(index),
+        }
+    }
+
+    /// Each way the map can stop drawing a pinned point, and what the pin does
+    /// about it: a point that still exists keeps its pin and shows nothing, one
+    /// that does not loses the pin entirely.
+    #[rstest::rstest]
+    #[case::drawn(|_: &mut ScopeFixture| {}, Some(PinnedPopup::Drawn(scope_fixture::point(1))))]
+    #[case::hidden_by_query(
+        |fixture: &mut ScopeFixture| fixture.hide_point(1),
+        Some(PinnedPopup::Withheld {
+            pinned: scope_fixture::point(1),
+            reason: PinWithheld::HiddenByQuery,
+        })
+    )]
+    #[case::outside_the_time_filter(
+        |fixture: &mut ScopeFixture| {
+            fixture.filter.time_start = Some(scope_fixture::start() + TimeDelta::seconds(2));
+        },
+        Some(PinnedPopup::Withheld {
+            pinned: scope_fixture::point(1),
+            reason: PinWithheld::OutsideTimeFilter,
+        })
+    )]
+    #[case::track_switched_off(
+        |fixture: &mut ScopeFixture| fixture.visibility.files[0].tracks[0].enabled = false,
+        Some(PinnedPopup::Withheld {
+            pinned: scope_fixture::point(1),
+            reason: PinWithheld::TrackNotShown,
+        })
+    )]
+    #[case::category_masked(
+        |fixture: &mut ScopeFixture| {
+            fixture
+                .display_mask
+                .set_visible(DisplayCategory::TrackPoints, false);
+        },
+        Some(PinnedPopup::Withheld {
+            pinned: scope_fixture::point(1),
+            reason: PinWithheld::CategoryHidden,
+        })
+    )]
+    fn a_pin_reports_what_the_map_does_with_its_point(
+        #[case] withhold: fn(&mut ScopeFixture),
+        #[case] expected: Option<PinnedPopup>,
+    ) {
+        let mut fixture = ScopeFixture::all_drawn();
+        withhold(&mut fixture);
+        let mut highlight = MapHighlight {
+            sticky: Some(scope_fixture::point(1)),
+            ..MapHighlight::default()
+        };
+        assert_eq!(highlight.pin_this_frame(fixture.scope()), expected);
+        assert_eq!(
+            highlight.sticky,
+            Some(scope_fixture::point(1)),
+            "a point that still exists keeps its pin"
+        );
+    }
+
+    /// A pin whose element is gone is dropped, so a later load cannot rebind it
+    /// to whatever occupies that index next.
+    #[test]
+    fn a_pin_on_a_vanished_element_is_dropped() {
+        let fixture = ScopeFixture::all_drawn();
+        let stale = scope_fixture::point(POINT_COUNT);
+        let mut highlight = MapHighlight {
+            sticky: Some(stale),
+            ..MapHighlight::default()
+        };
+        assert_eq!(highlight.pin_this_frame(fixture.scope()), None);
+        assert_eq!(highlight.sticky, None);
+    }
+
+    /// Nothing pinned, nothing to report.
+    #[test]
+    fn no_pin_reports_nothing() {
+        let fixture = ScopeFixture::all_drawn();
+        let mut highlight = MapHighlight::default();
+        assert_eq!(highlight.pin_this_frame(fixture.scope()), None);
+    }
+
+    /// A click pins only what the map draws - the rule every click site shares.
+    #[test]
+    fn a_click_on_a_withheld_point_pins_nothing() {
+        let mut fixture = ScopeFixture::all_drawn();
+        fixture.hide_point(1);
+        let mut highlight = MapHighlight::default();
+        assert!(
+            !highlight.toggle_sticky_if_drawn(fixture.scope(), scope_fixture::point(1)),
+            "the hidden point does not pin"
+        );
+        assert_eq!(highlight.sticky, None);
+        assert!(
+            highlight.toggle_sticky_if_drawn(fixture.scope(), scope_fixture::point(0)),
+            "the drawn point next to it does"
+        );
+        assert_eq!(highlight.sticky, Some(scope_fixture::point(0)));
+    }
+
+    /// The fixture's own filter default draws everything, so a case that changes
+    /// nothing must not be silently passing for the wrong reason.
+    #[test]
+    fn the_fixture_draws_every_point_by_default() {
+        let fixture = ScopeFixture::all_drawn();
+        assert_eq!(fixture.filter, GlobalFilter::default());
+        for index in 0..POINT_COUNT {
+            assert!(
+                fixture.scope().draws(scope_fixture::point(index)),
+                "point {index} must be drawn before a case withholds it"
+            );
         }
     }
 

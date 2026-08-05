@@ -87,6 +87,7 @@ fn the_selection_survives_clearing_and_the_next_run() {
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  ....
          select   ^
+    popup: drawn
     counts: shown 4, halos 0
     ");
 
@@ -94,6 +95,7 @@ fn the_selection_survives_clearing_and_the_next_run() {
     insta::assert_snapshot!(scenario.picture(), @"
     track.gtd#0  0..0
          select   ^
+    popup: drawn
     counts: shown 4, halos 2
     ");
 }

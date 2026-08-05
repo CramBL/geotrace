@@ -24,9 +24,9 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use chrono::{DateTime, Utc};
-use gt_map::scope::PointVisibility;
 use gt_query::Unit;
 use gt_types::{LoadedFile, NavPoint, TrackRef};
+use gt_ui_types::PointVisibility;
 use uom::si::angle::degree;
 use uom::si::velocity::meter_per_second;
 

@@ -3,12 +3,11 @@ use std::ops::Range;
 use chrono::Duration;
 use gt_filter::GlobalFilter;
 use gt_map::display_counts::{DisplayCounts, SuppliedCounts};
-use gt_map::scope;
 use gt_query_run::{QuerySession, RunInputs, RunResults, schema_from_files};
 use gt_types::{DataCategory, PointIdx, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
-    MapHighlight, MatchHighlight, QueryMatches, TrackDataVisibility,
+    MapHighlight, MapScope, MatchHighlight, PinnedPopup, QueryMatches, TrackDataVisibility,
 };
 
 use crate::classify::PointClass;
@@ -39,6 +38,9 @@ pub struct MapScenario {
     highlight: MapHighlight,
     session: QuerySession,
     last_run: Option<RunAttempt>,
+    /// What the pinned popup does as of the last step, settled once per step the
+    /// way the map settles it once per frame.
+    pin: Option<PinnedPopup>,
 }
 
 impl MapScenario {
@@ -53,6 +55,7 @@ impl MapScenario {
             highlight: MapHighlight::default(),
             session: QuerySession::new(),
             last_run: None,
+            pin: None,
         }
     }
 
@@ -133,9 +136,20 @@ impl MapScenario {
 
     /// Click a point, pinning its popup - or unpinning it when it was already
     /// the selected one, exactly as a click in the map or a results table does.
+    ///
+    /// A click on a point the map does not draw pins nothing, which is the rule
+    /// every click site shares.
     pub fn select_point(&mut self, track: TrackRef, point_index: usize) -> &mut Self {
-        self.highlight.toggle_sticky(point_ref(track, point_index));
-        self
+        let point = point_ref(track, point_index);
+        let scope = map_scope(
+            &self.dataset,
+            &self.visibility,
+            &self.filter,
+            self.display_mask,
+            &self.session,
+        );
+        self.highlight.toggle_sticky_if_drawn(scope, point);
+        self.sync()
     }
 
     /// Hover the `match_index`-th match of the `query_index`-th query in the
@@ -184,18 +198,23 @@ impl MapScenario {
             .unwrap_or_default()
     }
 
+    /// What the map draws this frame, the same bundle [`gt_map::NavMap`] builds
+    /// before it hit-tests or draws the pinned popup.
+    fn scope(&self) -> MapScope<'_> {
+        map_scope(
+            &self.dataset,
+            &self.visibility,
+            &self.filter,
+            self.display_mask,
+            &self.session,
+        )
+    }
+
     /// How the map reads one point right now.
     pub fn classify(&self, track: TrackRef, point_index: usize) -> PointClass {
         let matches = self.session.matches();
         PointClass {
-            visibility: scope::point_visibility(
-                self.dataset.files().files(),
-                &self.visibility,
-                &self.filter,
-                self.display_mask,
-                matches,
-                point_ref(track, point_index),
-            ),
+            visibility: self.scope().point_visibility(point_ref(track, point_index)),
             draw_layers: matches
                 .map(|m| m.draw_mask(track, point_index))
                 .unwrap_or_default(),
@@ -255,6 +274,7 @@ impl MapScenario {
         );
         MapPicture {
             tracks,
+            pin: self.pin,
             stale: self.session.results().is_some_and(RunResults::stale),
             shown_points: counts.get(DisplayCategory::TrackPoints),
             halos: counts.get(DisplayCategory::QueryHighlights),
@@ -288,7 +308,10 @@ impl MapScenario {
             dataset,
             visibility,
             filter,
+            display_mask,
+            highlight,
             session,
+            pin,
             ..
         } = self;
         session.refresh_staleness(RunInputs {
@@ -298,6 +321,13 @@ impl MapScenario {
             snap_errors: dataset.snap_errors(),
             jamming: dataset.jamming(),
         });
+        *pin = highlight.pin_this_frame(map_scope(
+            dataset,
+            visibility,
+            filter,
+            *display_mask,
+            session,
+        ));
         self
     }
 
@@ -331,6 +361,24 @@ impl MapScenario {
                     .count()
             })
             .sum()
+    }
+}
+
+/// The frame's [`MapScope`] from the pieces it is made of, so a caller holding
+/// [`MapScenario::highlight`] mutably can still build it.
+fn map_scope<'a>(
+    dataset: &'a Dataset,
+    visibility: &'a TrackDataVisibility,
+    filter: &'a GlobalFilter,
+    display_mask: DisplayMask,
+    session: &'a QuerySession,
+) -> MapScope<'a> {
+    MapScope {
+        files: dataset.files().files(),
+        visibility,
+        filter,
+        display_mask,
+        query_matches: session.matches(),
     }
 }
 

@@ -2,7 +2,7 @@ use egui::{Color32, Pos2, Response, Stroke, Ui, Vec2};
 use gt_filter::GlobalFilter;
 use gt_types::{CustomMarker, DataCategory, LoadedFile, MarkerIcon, SpatialPoint};
 use gt_ui_theme::{HIGHLIGHT_BLUE, LOG_COLORS};
-use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, TrackDataVisibility};
+use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, TrackDataVisibility, visibility};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconInstance, IconMeshBatch, IconMeshLibrary, PIN_HALF_EXTENTS_PT};
@@ -64,7 +64,7 @@ impl Plugin for MarkerRenderer<'_> {
 
         let mut batch = IconMeshBatch::new(self.icon_meshes, ui.pixels_per_point());
         for sp in self.visible_custom {
-            let Some(track) = crate::scope::category_in_scope(
+            let Some(track) = visibility::category_in_scope(
                 self.files,
                 self.visibility,
                 self.filter,

@@ -5,6 +5,7 @@ use gt_filter::GlobalFilter;
 use gt_types::{DataCategory, LoadedFile, PointIdx, SpatialPoint};
 use gt_ui_types::{
     DataPointRef, GeneratedMarkerVisibility, HighlightScope, MapHighlight, TrackDataVisibility,
+    visibility,
 };
 use walkers::{MapMemory, Plugin, Projector};
 
@@ -122,7 +123,7 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             crate::transform::MercTransform::new(projector, map_memory, ui.max_rect().center());
 
         for sp in self.visible_generated {
-            let Some(track) = crate::scope::category_in_scope(
+            let Some(track) = visibility::category_in_scope(
                 self.files,
                 self.visibility,
                 self.filter,

@@ -11,9 +11,11 @@ mod support;
 use std::collections::HashMap;
 
 use chrono::Duration;
-use gt_map::scope::PointVisibility;
-use gt_query_map_harness::{Dataset, FileSpec, MapScenario, PointSpec, TrackSpec, epoch, track};
+use gt_query_map_harness::{
+    Dataset, FileSpec, MapScenario, PointClass, PointSpec, TrackSpec, epoch, track,
+};
 use gt_types::TrackRef;
+use gt_ui_types::{PinnedPopup, PointVisibility};
 use proptest::prelude::*;
 use support::generate::{
     Agg, CmpOp, GenDataset, Metric, Mode, Newline, Predicate, Program, RenderStyle, Separator,
@@ -354,6 +356,44 @@ proptest! {
 
 proptest! {
     #![proptest_config(config(512))]
+
+    /// A pinned popup only ever draws for a point the map draws. Pin every point
+    /// in turn, run the program, and no withheld point may be showing a popup -
+    /// the invariant behind the popup that outlived its own point.
+    #[test]
+    fn a_pinned_popup_never_outlives_its_point(
+        (dataset, program) in gen_dataset_and_program(),
+    ) {
+        let text = program.render_plain();
+        let baseline = dataset.scenario().picture();
+        for shown in &baseline.tracks {
+            let track_ref = shown.track;
+            for index in 0..shown.points.len() {
+                // Pin before the run, so the pin predates the query that hides
+                // its point - the order the bug needed.
+                let mut scenario = dataset.scenario();
+                scenario.select_point(track_ref, index);
+                scenario.run(&text);
+                let picture = scenario.picture();
+                let drawn = picture
+                    .tracks
+                    .iter()
+                    .find(|shown| shown.track == track_ref)
+                    .and_then(|shown| shown.points.get(index))
+                    .is_some_and(PointClass::is_shown);
+                prop_assert_eq!(
+                    matches!(picture.pin, Some(PinnedPopup::Drawn(_))),
+                    drawn,
+                    "{:?} point {} draws {} but its popup disagrees ({:?}), program {}",
+                    track_ref,
+                    index,
+                    drawn,
+                    picture.pin,
+                    text
+                );
+            }
+        }
+    }
 
     /// The harness agrees with a naive reference fold of the documented
     /// semantics, point by point and halo by halo.

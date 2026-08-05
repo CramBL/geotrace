@@ -16,8 +16,9 @@
 //! ```
 //!
 //! The classification behind that picture asks real code every question it can:
-//! [`gt_map::scope::point_visibility`] for whether a point is on the map and why
-//! not (the same predicate the map's own hit-testing uses),
+//! [`gt_ui_types::MapScope::point_visibility`] for whether a point is on the map
+//! and why not (the same predicate the map's own hit-testing and pinned popup
+//! use),
 //! [`gt_ui_types::QueryMatches::draw_mask`] for its halo layers (the same call
 //! the renderer makes per point), [`gt_ui_types::MatchHighlight::contains`] for
 //! the hovered match, and [`gt_map::display_counts::DisplayCounts`] for the
@@ -27,13 +28,17 @@
 //!
 //! Not routed through real map code, because it is screen geometry rather than
 //! point state: viewport culling, LOD decimation, polyline span splitting, and
-//! the hover/click input gating that turns a pointer position into a candidate.
+//! the hit-testing that turns a pointer position into a candidate. A click's
+//! *rule* is shared - [`MapScenario::select_point`] pins only what the map draws,
+//! as every click site does - but the pointer geometry ahead of it is not.
 //!
 //! What this crate owns is the scenario script and the rendering, and nothing
 //! else: it builds no shared domain type by hand. Files and tracks come from
 //! [`gt_track_builder::build_loaded_file`], points from
 //! [`gt_types::tpv::TimePositionVelocity`]'s builder, the run from
-//! [`gt_query_run::QuerySession`], the per-point verdict from [`gt_map::scope`].
+//! [`gt_query_run::QuerySession`], the per-point verdict from
+//! [`gt_ui_types::MapScope`], and the pinned popup's fate from
+//! [`gt_ui_types::MapHighlight::pin_this_frame`].
 //! A field added to a loaded recording therefore never reaches here.
 
 mod classify;
@@ -44,7 +49,7 @@ mod scenario;
 
 pub use classify::PointClass;
 pub use dataset::{Dataset, EPOCH_SECS, FileSpec, PointSpec, TrackSpec, epoch, track};
-pub use gt_map::scope::PointVisibility;
+pub use gt_ui_types::PointVisibility;
 pub use panel::{PanelView, RunAttempt};
 pub use picture::{MapPicture, TrackPicture};
 pub use scenario::MapScenario;

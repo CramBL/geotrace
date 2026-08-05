@@ -1,6 +1,7 @@
 use std::fmt;
 
 use gt_types::TrackRef;
+use gt_ui_types::{PinWithheld, PinnedPopup};
 
 use crate::classify::PointClass;
 
@@ -45,10 +46,14 @@ impl TrackPicture {
 /// ```text
 /// track.gtd#0  ..0000xx
 ///      select      ^
+/// popup: drawn
 /// counts: shown 6, halos 1
 /// ```
 pub struct MapPicture {
     pub tracks: Vec<TrackPicture>,
+    /// What the pinned popup does, from [`gt_ui_types::MapHighlight::pin_this_frame`].
+    /// `None` when nothing is pinned, which is when the line is left out.
+    pub pin: Option<PinnedPopup>,
     pub stale: bool,
     /// Points the map draws, from [`gt_map::display_counts::DisplayCounts`].
     pub shown_points: usize,
@@ -88,6 +93,11 @@ impl fmt::Display for MapPicture {
                 }
             }
         }
+        // Only when something is pinned, so the scenarios that pin nothing keep
+        // reading as the map alone.
+        if let Some(pin) = self.pin {
+            writeln!(f, "popup: {}", popup_line(pin))?;
+        }
         write!(
             f,
             "counts: shown {}, halos {}",
@@ -103,10 +113,27 @@ impl fmt::Display for MapPicture {
 const HOVER_LABEL: &str = "hover";
 const SELECT_LABEL: &str = "select";
 
+/// The pinned popup as one line: drawn, or withheld with the reason the map
+/// withheld it.
+fn popup_line(pin: PinnedPopup) -> String {
+    match pin {
+        PinnedPopup::Drawn(_) => "drawn".to_owned(),
+        PinnedPopup::Withheld { reason, .. } => format!("withheld ({})", withheld_reason(reason)),
+    }
+}
+
+fn withheld_reason(reason: PinWithheld) -> &'static str {
+    match reason {
+        PinWithheld::HiddenByQuery => "hidden by the query",
+        PinWithheld::OutsideTimeFilter => "outside the time filter",
+        PinWithheld::TrackNotShown => "track not shown",
+        PinWithheld::CategoryHidden => "category hidden",
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use gt_map::scope::PointVisibility;
-    use gt_ui_types::DrawLayerMask;
+    use gt_ui_types::{DrawLayerMask, PointVisibility};
 
     use super::*;
     use crate::dataset::track;
@@ -140,6 +167,7 @@ mod tests {
                 label: "a.gtd#0".to_owned(),
                 points,
             }],
+            pin: None,
             stale: false,
             shown_points: 4,
             halos: 1,
@@ -160,6 +188,7 @@ mod tests {
                 label: "a.gtd#0".to_owned(),
                 points: vec![shown(None), shown(None)],
             }],
+            pin: None,
             stale: true,
             shown_points: 2,
             halos: 0,

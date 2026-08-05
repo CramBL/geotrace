@@ -4,6 +4,7 @@ use gt_types::{DataCategory, EventMarkerStyle, LoadedFile, MarkerIcon, SpatialPo
 use gt_ui_theme::HIGHLIGHT_BLUE;
 use gt_ui_types::{
     DataPointRef, EventMarkerVisibility, HighlightScope, MapHighlight, TrackDataVisibility,
+    visibility,
 };
 use std::collections::HashMap;
 use walkers::{MapMemory, Plugin, Projector};
@@ -56,7 +57,7 @@ impl Plugin for EventMarkerRenderer<'_> {
 
         let mut batch = IconMeshBatch::new(self.icon_meshes, ui.pixels_per_point());
         for sp in self.visible_event {
-            let Some(track) = crate::scope::category_in_scope(
+            let Some(track) = visibility::category_in_scope(
                 self.files,
                 self.visibility,
                 self.filter,
