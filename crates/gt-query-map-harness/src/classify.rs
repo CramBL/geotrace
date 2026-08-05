@@ -1,10 +1,9 @@
-use gt_map::scope::PointVisibility;
-use gt_ui_types::DrawLayerMask;
+use gt_ui_types::{DrawLayerMask, PointVisibility};
 
 /// One point of one track, as the map currently reads it.
 ///
 /// [`PointClass::visibility`] is the map's own answer - the harness asks
-/// [`gt_map::scope::point_visibility`] rather than deciding anything itself.
+/// [`gt_ui_types::MapScope::point_visibility`] rather than deciding anything itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PointClass {
     pub visibility: PointVisibility,

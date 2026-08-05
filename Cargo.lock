@@ -2937,6 +2937,8 @@ name = "gt-ui-types"
 version = "0.10.0"
 dependencies = [
  "chrono",
+ "gt-filter",
+ "gt-track-builder",
  "gt-types",
  "rstest",
  "serde",

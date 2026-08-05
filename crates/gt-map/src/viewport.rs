@@ -4,7 +4,7 @@
 
 use gt_filter::{GlobalFilter, point_passes_time_filter, track_passes_filter};
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackIdx, TrackRef};
-use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask, QueryMatches, TrackDataVisibility};
+use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask, MapScope, TrackDataVisibility};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use walkers::MapMemory;
@@ -337,30 +337,19 @@ pub(crate) fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Re
 /// Returns `true` when a spatial point should participate in hover and click
 /// detection.
 ///
-/// The renderers suppress invisible elements from being drawn; hit-testing
-/// applies the *same* rules through [`crate::scope::point_visibility`], so a
-/// hidden element cannot be hovered or clicked.
-pub(crate) fn is_spatial_point_visible(
-    sp: &SpatialPoint,
-    files: &[LoadedFile],
-    visibility: &TrackDataVisibility,
-    filter: &GlobalFilter,
-    display_mask: DisplayMask,
-    query_matches: Option<&QueryMatches>,
-) -> bool {
-    crate::scope::point_visibility(
-        files,
-        visibility,
-        filter,
-        display_mask,
-        query_matches,
-        DataPointRef {
-            track: sp.track_ref(),
-            category: sp.category,
-            point_index: sp.point_index,
-        },
-    )
-    .is_shown()
+/// A trackline and a raw satellite report have no hover target of their own -
+/// neither is ever inserted into the spatial index, and neither is clickable.
+/// Everything else is hit-testable exactly while the map draws it, asked of
+/// [`MapScope::draws`] so hit-testing cannot drift from what is on screen.
+pub(crate) fn is_spatial_point_visible(sp: &SpatialPoint, scope: MapScope<'_>) -> bool {
+    !matches!(
+        sp.category,
+        DataCategory::Track | DataCategory::SatelliteReport
+    ) && scope.draws(DataPointRef {
+        track: sp.track_ref(),
+        category: sp.category,
+        point_index: sp.point_index,
+    })
 }
 
 /// Center the map and set the zoom so the given bounding box fills ~80 % of the

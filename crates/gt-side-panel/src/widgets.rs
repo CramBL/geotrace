@@ -5,7 +5,7 @@ use egui_phosphor::regular::CHECK_SQUARE as ICON_CHECK_SQUARE;
 use egui_phosphor::regular::MINUS_SQUARE as ICON_MINUS_SQUARE;
 use egui_phosphor::regular::SQUARE as ICON_SQUARE;
 use gt_types::{FileMetadata, FixStats, TravelMode};
-use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight};
+use gt_ui_types::{DataPointRef, HighlightScope, MapHighlight, MapScope};
 
 use crate::tree::CheckState;
 
@@ -152,9 +152,9 @@ pub fn point_item_row(
     point_ref: DataPointRef,
     label: impl Into<WidgetText>,
     lat_lon: (f64, f64),
+    scope: MapScope<'_>,
     highlight: &mut MapHighlight,
-    map_center_request: &mut Option<(f64, f64)>,
-    popup_pos_request: &mut Option<egui::Pos2>,
+    requests: &mut PointClickRequests<'_>,
 ) {
     let is_sticky = highlight.sticky.is_some_and(|r| r == point_ref);
     let response = ui.selectable_label(is_sticky, label);
@@ -162,33 +162,41 @@ pub fn point_item_row(
         highlight.hover = Some(HighlightScope::Point(point_ref));
     }
     apply_point_click(
-        ui,
-        &response,
-        point_ref,
-        lat_lon,
-        highlight,
-        map_center_request,
-        popup_pos_request,
+        ui, &response, point_ref, lat_lon, scope, highlight, requests,
     );
+}
+
+/// What a clicked point row asks the app for, consumed on the same frame.
+pub struct PointClickRequests<'a> {
+    /// Center the map on these coordinates.
+    pub map_center: &'a mut Option<(f64, f64)>,
+    /// Place the pinned popup here.
+    pub popup_pos: &'a mut Option<egui::Pos2>,
 }
 
 /// The click reactions every point row shares (here and in the query window's
 /// match tables): clicking pins the point's map popup right of the containing
 /// panel at the row's height, clicking again unpins, double-clicking centers
 /// the map on the point.
+///
+/// A row can only pin a point the map draws, asked of [`MapScope`] exactly as a
+/// click on the map itself does - a row for a point a query hid, or one the time
+/// filter excludes, would otherwise pin a popup with nothing behind it.
+/// Double-click still centers the map, which is how a row for an undrawn point
+/// stays useful: it shows where the point is without claiming it is on screen.
 pub fn apply_point_click(
     ui: &egui::Ui,
     response: &egui::Response,
     point_ref: DataPointRef,
     lat_lon: (f64, f64),
+    scope: MapScope<'_>,
     highlight: &mut MapHighlight,
-    map_center_request: &mut Option<(f64, f64)>,
-    popup_pos_request: &mut Option<egui::Pos2>,
+    requests: &mut PointClickRequests<'_>,
 ) {
-    if response.clicked() && highlight.toggle_sticky(point_ref) {
-        *popup_pos_request = Some(egui::pos2(ui.clip_rect().max.x + 8.0, response.rect.min.y));
+    if response.clicked() && highlight.toggle_sticky_if_drawn(scope, point_ref) {
+        *requests.popup_pos = Some(egui::pos2(ui.clip_rect().max.x + 8.0, response.rect.min.y));
     }
     if response.double_clicked() {
-        *map_center_request = Some(lat_lon);
+        *requests.map_center = Some(lat_lon);
     }
 }

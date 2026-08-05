@@ -2708,6 +2708,7 @@ impl eframe::App for App {
                             filter_state: &mut s.filter_state,
                             map_center_request: &mut s.map_center_request,
                             popup_pos_request: &mut s.popup_pos_request,
+                            query_matches: self.query_window.matches(),
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
                             clear_query_request: &mut s.clear_query_request,
@@ -2752,6 +2753,7 @@ impl eframe::App for App {
                             filter_state: &mut s.filter_state,
                             map_center_request: &mut s.map_center_request,
                             popup_pos_request: &mut s.popup_pos_request,
+                            query_matches: self.query_window.matches(),
                             zoom_to_visible_request: &mut s.zoom_to_visible_request,
                             warnings_request: &mut s.warnings_popup,
                             clear_query_request: &mut s.clear_query_request,
@@ -2909,6 +2911,7 @@ impl eframe::App for App {
                 map_center_request,
                 popup_pos_request,
                 plot_state,
+                display_mask,
                 ..
             } = &mut *s;
             // The map and plot consumed last frame's hovered match above;
@@ -2927,8 +2930,9 @@ impl eframe::App for App {
                     filter,
                     snap_errors: &snap_error_values,
                 },
+                *display_mask,
                 highlight,
-                &mut query::MatchMapRequests {
+                &mut gt_side_panel::widgets::PointClickRequests {
                     map_center: map_center_request,
                     popup_pos: popup_pos_request,
                 },

@@ -19,14 +19,15 @@ use gt_types::{
 };
 use gt_ui_theme::ELLIPSIS;
 use gt_ui_types::{
-    DataPointRef, DisplayCategory, DisplayMask, HighlightScope, MapHighlight, SnapCosting,
+    DataPointRef, DisplayCategory, DisplayMask, HighlightScope, MapHighlight, MapScope,
+    QueryMatches, SnapCosting,
 };
 
 use crate::filter::{FilterPanelState, render_filter_panel};
 use crate::tree::{CheckState, DeleteConfirmState, NodeKey, TreeState};
 use crate::widgets::{
-    MetadataView, checkbox_width, expand_arrow, fix_stats_tooltip_row, has_metadata_details,
-    paint_map_hover_bg, point_item_row, tri_checkbox,
+    MetadataView, PointClickRequests, checkbox_width, expand_arrow, fix_stats_tooltip_row,
+    has_metadata_details, paint_map_hover_bg, point_item_row, tri_checkbox,
 };
 
 /// A recording's metadata, captured when its note icon is clicked so the app can
@@ -133,6 +134,9 @@ pub struct PanelContext<'a> {
     pub filter_state: &'a mut FilterPanelState,
     pub map_center_request: &'a mut Option<(f64, f64)>,
     pub popup_pos_request: &'a mut Option<egui::Pos2>,
+    /// The last query run's effect, so a point row cannot pin a point the query
+    /// removed from the map. `None` until a query has run.
+    pub query_matches: Option<&'a QueryMatches>,
     pub zoom_to_visible_request: &'a mut bool,
     /// Set by clicking the ⚠ icon on a file row. Consumed by the app to show a centered dialog.
     pub warnings_request: &'a mut Option<(String, Vec<LoadWarning>)>,
@@ -334,6 +338,17 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
             snap_progress_strip(ui, ctx.snap, &display_names, ctx.files());
         });
     }
+    // The tree and filter as the frame started, which is what the map drew
+    // from, so a point row's pin gate agrees with what is on screen. Toggles
+    // made further down this frame land on the next one.
+    let frame_visibility = ctx.tree.visibility().clone();
+    let scope = MapScope {
+        files: ctx.files(),
+        visibility: &frame_visibility,
+        filter: &filter_snapshot,
+        display_mask: ctx.display_mask,
+        query_matches: ctx.query_matches,
+    };
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show_inside(ui, |ui| {
@@ -342,7 +357,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
                 .show(ui, |ui| {
                     for fi in 0..ctx.files().len() {
                         let display_name = display_names.get(fi).map_or("", String::as_str);
-                        render_file_row(ui, FileIdx::new(fi), display_name, ctx);
+                        render_file_row(ui, FileIdx::new(fi), display_name, scope, ctx);
                     }
                 });
         });
@@ -435,7 +450,13 @@ fn snap_progress_label(
     }
 }
 
-fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, display_name: &str, ctx: &mut PanelContext<'_>) {
+fn render_file_row(
+    ui: &mut egui::Ui,
+    fi: FileIdx,
+    display_name: &str,
+    scope: MapScope<'_>,
+    ctx: &mut PanelContext<'_>,
+) {
     let Some(file) = ctx.file(fi) else {
         return;
     };
@@ -573,7 +594,7 @@ fn render_file_row(ui: &mut egui::Ui, fi: FileIdx, display_name: &str, ctx: &mut
         ui.indent(format!("file_{fi}"), |ui| {
             let track_count = ctx.file(fi).map_or(0, |f| f.tracks.len());
             for ti in 0..track_count {
-                render_track_row(ui, fi, TrackIdx::new(ti), ctx);
+                render_track_row(ui, fi, TrackIdx::new(ti), scope, ctx);
             }
         });
     }
@@ -959,7 +980,13 @@ fn snap_menu_entry(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContex
     }
 }
 
-fn render_track_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut PanelContext<'_>) {
+fn render_track_row(
+    ui: &mut egui::Ui,
+    fi: FileIdx,
+    ti: TrackIdx,
+    scope: MapScope<'_>,
+    ctx: &mut PanelContext<'_>,
+) {
     let track_ref = TrackRef::new(fi, ti);
     let (track, passes, is_expanded, panel_hovered, map_hovered, key) = {
         let Some(file) = ctx.file(fi) else {
@@ -1083,7 +1110,7 @@ fn render_track_row(ui: &mut egui::Ui, fi: FileIdx, ti: TrackIdx, ctx: &mut Pane
 
     if is_expanded {
         ui.indent(format!("track_{fi}_{ti}"), |ui| {
-            render_track_categories(ui, track_ref, &track, ctx);
+            render_track_categories(ui, track_ref, &track, scope, ctx);
         });
     }
 }
@@ -1145,6 +1172,7 @@ fn render_track_categories(
     ui: &mut egui::Ui,
     track_ref: TrackRef,
     track: &LoadedTrack,
+    scope: MapScope<'_>,
     ctx: &mut PanelContext<'_>,
 ) {
     let Some(track_node) = ctx.tree.track_node(track_ref) else {
@@ -1208,9 +1236,12 @@ fn render_track_categories(
                 ui,
                 track_ref,
                 track,
+                scope,
                 highlight,
-                ctx.map_center_request,
-                ctx.popup_pos_request,
+                &mut PointClickRequests {
+                    map_center: ctx.map_center_request,
+                    popup_pos: ctx.popup_pos_request,
+                },
             );
         },
     );
@@ -1236,9 +1267,12 @@ fn render_track_categories(
                 ui,
                 track_ref,
                 track,
+                scope,
                 highlight,
-                ctx.map_center_request,
-                ctx.popup_pos_request,
+                &mut PointClickRequests {
+                    map_center: ctx.map_center_request,
+                    popup_pos: ctx.popup_pos_request,
+                },
             );
         },
     );
@@ -1259,14 +1293,17 @@ fn render_track_categories(
                 ui,
                 track_ref,
                 track,
+                scope,
                 highlight,
-                ctx.map_center_request,
-                ctx.popup_pos_request,
+                &mut PointClickRequests {
+                    map_center: ctx.map_center_request,
+                    popup_pos: ctx.popup_pos_request,
+                },
             );
         },
     );
 
-    render_generated_markers_section(ui, track_ref, track, ctx);
+    render_generated_markers_section(ui, track_ref, track, scope, ctx);
 
     if !track.event_markers.is_empty() {
         render_event_markers_section(
@@ -1458,9 +1495,9 @@ fn render_tpv_items(
     ui: &mut egui::Ui,
     track_ref: TrackRef,
     track: &LoadedTrack,
+    scope: MapScope<'_>,
     highlight: &mut MapHighlight,
-    map_center_request: &mut Option<(f64, f64)>,
-    popup_pos_request: &mut Option<egui::Pos2>,
+    requests: &mut PointClickRequests<'_>,
 ) {
     for (pi, point) in track.points.iter().enumerate() {
         let point_ref = DataPointRef {
@@ -1470,15 +1507,7 @@ fn render_tpv_items(
         };
         let label = point.tpv.time().utc().format("%H:%M:%S").to_string();
         let lat_lon = (point.tpv.lat().as_degrees(), point.tpv.lon().as_degrees());
-        point_item_row(
-            ui,
-            point_ref,
-            label,
-            lat_lon,
-            highlight,
-            map_center_request,
-            popup_pos_request,
-        );
+        point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
     }
 }
 
@@ -1486,9 +1515,9 @@ fn render_satellite_report_items(
     ui: &mut egui::Ui,
     track_ref: TrackRef,
     track: &LoadedTrack,
+    scope: MapScope<'_>,
     highlight: &mut MapHighlight,
-    map_center_request: &mut Option<(f64, f64)>,
-    popup_pos_request: &mut Option<egui::Pos2>,
+    requests: &mut PointClickRequests<'_>,
 ) {
     for (pi, point) in track.points.iter().enumerate() {
         let Some(sats) = &point.satellites else {
@@ -1509,15 +1538,7 @@ fn render_satellite_report_items(
             sats.satellite_count()
         );
         let lat_lon = (point.tpv.lat().as_degrees(), point.tpv.lon().as_degrees());
-        point_item_row(
-            ui,
-            point_ref,
-            label,
-            lat_lon,
-            highlight,
-            map_center_request,
-            popup_pos_request,
-        );
+        point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
     }
 }
 
@@ -1525,9 +1546,9 @@ fn render_custom_marker_items(
     ui: &mut egui::Ui,
     track_ref: TrackRef,
     track: &LoadedTrack,
+    scope: MapScope<'_>,
     highlight: &mut MapHighlight,
-    map_center_request: &mut Option<(f64, f64)>,
-    popup_pos_request: &mut Option<egui::Pos2>,
+    requests: &mut PointClickRequests<'_>,
 ) {
     for (pi, marker) in track.custom_markers.iter().enumerate() {
         let point_ref = DataPointRef {
@@ -1537,15 +1558,7 @@ fn render_custom_marker_items(
         };
         let label = format!("{}  {}", marker.time.format("%H:%M:%S"), marker.label);
         let lat_lon = (marker.lat.as_degrees(), marker.lon.as_degrees());
-        point_item_row(
-            ui,
-            point_ref,
-            label,
-            lat_lon,
-            highlight,
-            map_center_request,
-            popup_pos_request,
-        );
+        point_item_row(ui, point_ref, label, lat_lon, scope, highlight, requests);
     }
 }
 
@@ -1556,6 +1569,7 @@ fn render_generated_markers_section(
     ui: &mut egui::Ui,
     track_ref: TrackRef,
     track: &LoadedTrack,
+    scope: MapScope<'_>,
     ctx: &mut PanelContext<'_>,
 ) {
     let count = track.generated_markers.len();
@@ -1664,9 +1678,12 @@ fn render_generated_markers_section(
                         point_ref,
                         label,
                         lat_lon,
+                        scope,
                         ctx.highlight,
-                        ctx.map_center_request,
-                        ctx.popup_pos_request,
+                        &mut PointClickRequests {
+                            map_center: ctx.map_center_request,
+                            popup_pos: ctx.popup_pos_request,
+                        },
                     );
                 }
             });

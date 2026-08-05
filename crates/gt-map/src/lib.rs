@@ -13,7 +13,6 @@ pub mod marker_renderer;
 mod polyline;
 mod query_match_renderer;
 mod sat_labels;
-pub mod scope;
 mod sky_glyph_renderer;
 mod sky_trails_window;
 mod snapped_track_renderer;
@@ -36,8 +35,8 @@ use gt_jam::day_selection::{DaySelection, EmptyReason};
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
-    HighlightScope, MapHighlight, PointWindowFolds, QueryMatches, SkyGlyphVariant,
-    SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
+    HighlightScope, MapHighlight, MapScope, PinnedPopup, PointWindowFolds, QueryMatches,
+    SkyGlyphVariant, SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
@@ -676,6 +675,16 @@ impl NavMap {
         // Recompute the transform from the actual map rect for accurate hover detection.
         let projector_actual = walkers::Projector::new(map_rect, &self.map_memory, map_center);
         let transform = MercTransform::new(&projector_actual, &self.map_memory, map_rect.center());
+        // What the map draws this frame, for hit-testing and for the pinned
+        // popup. The mask is copied, so the display toggle below may change it
+        // for the next frame without this frame disagreeing with itself.
+        let scope = MapScope {
+            files,
+            visibility,
+            filter,
+            display_mask: *display_mask,
+            query_matches,
+        };
         // Collect the nearest visible candidate per category group within the
         // hover threshold. Slot 0 = Tpv/SatelliteReport, 1 = EventMarker,
         // 2 = CustomMarker, 3 = GeneratedMarker (matches DataCategory::hover_slot).
@@ -692,14 +701,7 @@ impl NavMap {
                     .nearest_neighbor_iter([merc_x, merc_y])
                     .take_while(|sp| sp.distance_2(&[merc_x, merc_y]) <= threshold_merc_sq)
                 {
-                    if !is_spatial_point_visible(
-                        sp,
-                        files,
-                        visibility,
-                        filter,
-                        *display_mask,
-                        query_matches,
-                    ) {
+                    if !is_spatial_point_visible(sp, scope) {
                         continue;
                     }
                     if let Some(slot) = sp.category.hover_slot() {
@@ -794,7 +796,7 @@ impl NavMap {
                 true
             } else if let Some(point_ref) = hover_point_ref {
                 self.disambiguation_candidates = [None; 4];
-                if highlight.toggle_sticky(point_ref) {
+                if highlight.toggle_sticky_if_drawn(scope, point_ref) {
                     self.sticky_pos = ui
                         .ctx()
                         .pointer_latest_pos()
@@ -829,7 +831,7 @@ impl NavMap {
                             )
                             .clicked()
                             {
-                                if highlight.toggle_sticky(candidate) {
+                                if highlight.toggle_sticky_if_drawn(scope, candidate) {
                                     self.sticky_pos = disambig_pos;
                                 }
                                 self.disambiguation_candidates = [None; 4];
@@ -895,8 +897,9 @@ impl NavMap {
             highlight.sticky = None;
         }
 
-        // Show a persistent, text-selectable info window for the sticky element.
-        if let Some(sticky_ref) = highlight.sticky
+        // Show a persistent, text-selectable info window for the pinned element,
+        // but only while the map draws that element.
+        if let Some(PinnedPopup::Drawn(sticky_ref)) = highlight.pin_this_frame(scope)
             && let Some(request) = show_sticky_popup(
                 ui.ctx(),
                 files,
@@ -1248,6 +1251,23 @@ mod tests {
         }
     }
 
+    /// Everything visible: no display category masked, no query run. Cases that
+    /// need either override the field they are about - `MapScope { query_matches:
+    /// Some(&matches), ..scope(&files, &vis, &filter) }`.
+    fn scope<'a>(
+        files: &'a [LoadedFile],
+        visibility: &'a TrackDataVisibility,
+        filter: &'a GlobalFilter,
+    ) -> MapScope<'a> {
+        MapScope {
+            files,
+            visibility,
+            filter,
+            display_mask: DisplayMask::default(),
+            query_matches: None,
+        }
+    }
+
     /// Regression test: a point in a visible track must be hoverable.
     #[test]
     fn visible_tpv_point_is_hoverable() {
@@ -1256,11 +1276,7 @@ mod tests {
         let vis = vis_all_visible();
         assert!(is_spatial_point_visible(
             &sp,
-            &files,
-            &vis,
-            &GlobalFilter::default(),
-            DisplayMask::default(),
-            None
+            scope(&files, &vis, &GlobalFilter::default())
         ));
     }
 
@@ -1273,11 +1289,7 @@ mod tests {
         vis.files[0].enabled = false;
         assert!(!is_spatial_point_visible(
             &sp,
-            &files,
-            &vis,
-            &GlobalFilter::default(),
-            DisplayMask::default(),
-            None
+            scope(&files, &vis, &GlobalFilter::default())
         ));
     }
 
@@ -1290,11 +1302,7 @@ mod tests {
         vis.files[0].tracks[0].enabled = false;
         assert!(!is_spatial_point_visible(
             &sp,
-            &files,
-            &vis,
-            &GlobalFilter::default(),
-            DisplayMask::default(),
-            None
+            scope(&files, &vis, &GlobalFilter::default())
         ));
     }
 
@@ -1370,11 +1378,7 @@ mod tests {
         vis.files[0].tracks[0].set_category_visible(DataCategory::Tpv, false);
         assert!(!is_spatial_point_visible(
             &sp,
-            &files,
-            &vis,
-            &GlobalFilter::default(),
-            DisplayMask::default(),
-            None
+            scope(&files, &vis, &GlobalFilter::default())
         ));
     }
 
@@ -1389,11 +1393,10 @@ mod tests {
         mask.set_visible(DisplayCategory::TrackPoints, false);
         assert!(!is_spatial_point_visible(
             &sp,
-            &files,
-            &vis,
-            &GlobalFilter::default(),
-            mask,
-            None
+            MapScope {
+                display_mask: mask,
+                ..scope(&files, &vis, &GlobalFilter::default())
+            }
         ));
     }
 
@@ -1514,25 +1517,11 @@ mod tests {
             ..GlobalFilter::default()
         };
         assert!(
-            !is_spatial_point_visible(
-                &tpv_spatial_point(0, 0, 0),
-                &files,
-                &vis,
-                &filter,
-                DisplayMask::default(),
-                None
-            ),
+            !is_spatial_point_visible(&tpv_spatial_point(0, 0, 0), scope(&files, &vis, &filter)),
             "the pre-window point must not be hoverable"
         );
         assert!(
-            is_spatial_point_visible(
-                &tpv_spatial_point(0, 0, 1),
-                &files,
-                &vis,
-                &filter,
-                DisplayMask::default(),
-                None
-            ),
+            is_spatial_point_visible(&tpv_spatial_point(0, 0, 1), scope(&files, &vis, &filter)),
             "the in-window point must stay hoverable"
         );
     }
@@ -1568,34 +1557,25 @@ mod tests {
         assert!(
             !is_spatial_point_visible(
                 &tpv_spatial_point(0, 0, 0),
-                &files,
-                &vis,
-                &filter,
-                DisplayMask::default(),
-                Some(&matches)
+                MapScope {
+                    query_matches: Some(&matches),
+                    ..scope(&files, &vis, &filter)
+                }
             ),
             "the query-hidden point must not be hoverable"
         );
         assert!(
             is_spatial_point_visible(
                 &tpv_spatial_point(0, 0, 1),
-                &files,
-                &vis,
-                &filter,
-                DisplayMask::default(),
-                Some(&matches)
+                MapScope {
+                    query_matches: Some(&matches),
+                    ..scope(&files, &vis, &filter)
+                }
             ),
             "the point the query kept must stay hoverable"
         );
         assert!(
-            is_spatial_point_visible(
-                &tpv_spatial_point(0, 0, 0),
-                &files,
-                &vis,
-                &filter,
-                DisplayMask::default(),
-                None
-            ),
+            is_spatial_point_visible(&tpv_spatial_point(0, 0, 0), scope(&files, &vis, &filter)),
             "without a query run the point is hoverable"
         );
     }
@@ -1636,9 +1616,7 @@ mod tests {
         let found = tree
             .nearest_neighbor_iter([0.5_f64, 0.5_f64])
             .take_while(|sp| sp.distance_2(&[0.5, 0.5]) <= f64::MAX)
-            .find(|sp| {
-                is_spatial_point_visible(sp, &files, &vis, &filter, DisplayMask::default(), None)
-            });
+            .find(|sp| is_spatial_point_visible(sp, scope(&files, &vis, &filter)));
         assert!(found.is_some(), "should find the visible track");
         assert_eq!(
             found.unwrap().track_index,

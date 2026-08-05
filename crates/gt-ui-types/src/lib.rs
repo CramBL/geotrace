@@ -6,6 +6,8 @@ pub mod highlight;
 pub mod jamming_series;
 pub mod point_window;
 pub mod query_matches;
+#[cfg(test)]
+mod scope_fixture;
 pub mod sky_glyphs;
 pub mod sky_trails_request;
 pub mod snap_error_series;
@@ -16,7 +18,9 @@ pub use arc_identity::ArcIdentity;
 pub use display_mask::{DisplayCategory, DisplayMask};
 pub use event_marker_visibility::EventMarkerVisibility;
 pub use generated_marker_visibility::GeneratedMarkerVisibility;
-pub use highlight::{DataPointRef, HighlightScope, MapHighlight, MatchHighlight};
+pub use highlight::{
+    DataPointRef, HighlightScope, MapHighlight, MatchHighlight, PinWithheld, PinnedPopup,
+};
 pub use jamming_series::{JammingPoint, JammingSeries};
 pub use point_window::PointWindowFolds;
 pub use query_matches::{DrawLayer, DrawLayerMask, QueryMatches};
@@ -27,4 +31,6 @@ pub use snapped_tracks::{
     SnapCosting, SnappedEdgeInfo, SnappedEdgeSpan, SnappedSegment, SnappedTrackGeometry,
     SnappedTracks, WhiskerAnchor,
 };
-pub use visibility::{FileVisibility, TrackDataVisibility, TrackVisibility};
+pub use visibility::{
+    FileVisibility, MapScope, PointVisibility, TrackDataVisibility, TrackVisibility,
+};
