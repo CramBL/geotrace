@@ -18,6 +18,7 @@ geotrace-sdk-units = { path = "../../sdk/rust/geotrace-sdk-units" }
 gt-analysis = { path = "../gt-analysis" }
 gt-egui-mipmap = { path = "../gt-egui-mipmap" }
 gt-filter = { path = "../gt-filter" }
+gt-fmt = { path = "../gt-fmt" }
 gt-jam = { path = "../gt-jam" }
 gt-loaded-files = { path = "../gt-loaded-files" }
 gt-types = { path = "../gt-types" }
@@ -29,6 +30,7 @@ uom.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
+vec1.workspace = true
 
 [lints]
 workspace = true

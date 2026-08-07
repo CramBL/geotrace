@@ -3454,6 +3454,66 @@ fn snapped_tracks_view_respects_toggle_and_tree_visibility() {
     assert!(harness.state().snapped_tracks_view().is_empty());
 }
 
+/// A recording whose clock offset holds near −234 ms, with one sample carrying
+/// a 1 h 09 m recording gap - the `gnss.h5.gtd` case, where the receiver
+/// reported its pre-gap GPS epoch for the first fix after resuming.
+fn clock_excursion_gtd_bytes() -> Vec<u8> {
+    use geotrace_sdk::{Angle, Duration as SdkDuration, NavFileBuilder, NavFix};
+
+    let start = base_time();
+    let mut recorder = NavFileBuilder::new().open();
+    for i in 0..61i64 {
+        let gps = start + SdkDuration::seconds(i);
+        let ahead_ms = if i == 10 { 4_127_054 } else { 234 };
+        recorder.add_nav_fix(
+            NavFix::builder()
+                .gps_time(gps)
+                .sys_time(gps + SdkDuration::milliseconds(ahead_ms))
+                .lat(Angle::degrees(51.5 + i as f64 * 0.0002))
+                .lon(Angle::degrees(-0.1 - i as f64 * 0.00015))
+                .heading(Angle::degrees(270.0))
+                .eph_m(2.4)
+                .build(),
+        );
+    }
+    let nav_file = recorder.finish().expect("valid nav file");
+    let mut bytes = Vec::new();
+    nav_file.write(&mut bytes).expect("write bytes");
+    bytes
+}
+
+/// The clock offset excursion overlay: the offset line keeps the track's own
+/// sub-second scale, and the sample carrying the recording gap is marked with a
+/// down-pointing indicator at the bottom edge, on a stub from the baseline.
+#[test]
+fn snapshot_app_plot_clock_excursion() {
+    let gtd_bytes = clock_excursion_gtd_bytes();
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.input_mut().dropped_files.push(egui::DroppedFile {
+        bytes: Some(Arc::from(gtd_bytes.as_slice())),
+        name: "ride.gtd".to_owned(),
+        ..Default::default()
+    });
+    harness.step();
+    step_until_loaded(&mut harness);
+
+    {
+        let state = harness.state_mut();
+        let mut shared = state.shared.borrow_mut();
+        let vis = &mut shared.plot_state.metric_vis;
+        use strum::IntoEnumIterator as _;
+        for kind in gt_types::MetricKind::iter() {
+            vis.set(kind, kind == gt_types::MetricKind::ClockDeltaMs);
+        }
+    }
+    harness.run_steps(5);
+
+    let mut harness = gt_test_utils::TestHarness::from_harness(harness);
+    harness.snapshot_loose("app_plot_clock_excursion");
+}
+
 /// The plot's snap error series from an injected completed run: the mint
 /// line breaks over the unsnapped stretch and cross markers sit on the
 /// baseline there. Only Eph stays enabled alongside so the snapshot shows

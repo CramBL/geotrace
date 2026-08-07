@@ -1,5 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use geo_types::{Coord, Rect};
+use gt_analysis::clock_offset::{self, ClockOffsetExcursion};
+use gt_analysis::robust::median_i64;
 use gt_geo_math::{path_distance_km, point_set_diameter_m, segment_length_range_m};
 use gt_types::channel::Channel;
 use gt_types::coordinates::{Latitude, Longitude};
@@ -52,6 +54,13 @@ pub struct GeneratedMarkerConfig {
     /// this many robust standard deviations from the track's median step to be
     /// flagged.  Lower is more sensitive.  See `detect_clock_discontinuities`.
     pub clock_discontinuity_sigmas: f64,
+    /// Whether to flag isolated departures of the GPS↔system clock offset as
+    /// [`GeneratedMarkerKind::ClockOffsetExcursion`] markers.
+    pub detect_clock_offset_excursions: bool,
+    /// Deviation from a track's baseline clock offset, in seconds, above which a
+    /// sample counts as an excursion.  Shared with the plot, which keeps those
+    /// samples off its shared y-axis; see `gt_analysis::clock_offset`.
+    pub clock_excursion_threshold_s: f32,
     /// Whether to flag loss-of-lock (cycle slip) events as
     /// [`GeneratedMarkerKind::Slip`] markers.
     pub detect_slips: bool,
@@ -70,6 +79,8 @@ impl Default for GeneratedMarkerConfig {
             detect_gnss_fix_regained: true,
             detect_clock_discontinuities: true,
             clock_discontinuity_sigmas: DEFAULT_CLOCK_OUTLIER_SIGMAS,
+            detect_clock_offset_excursions: true,
+            clock_excursion_threshold_s: DEFAULT_CLOCK_EXCURSION_THRESHOLD_S,
             detect_slips: true,
             slip_elevation_mask_deg: DEFAULT_SLIP_ELEVATION_MASK_DEG,
             slip_snr_drop_db: DEFAULT_SLIP_SNR_DROP_DB,
@@ -90,6 +101,11 @@ pub const DEFAULT_SLIP_ELEVATION_MASK_DEG: f32 = 15.0;
 
 /// Default SNR drop (dB-Hz) that counts as a slip.
 pub const DEFAULT_SLIP_SNR_DROP_DB: f32 = 10.0;
+
+/// Default deviation from a track's baseline clock offset, in seconds, above
+/// which a sample counts as a clock offset excursion.  Re-exported from the
+/// detector so the marker default and the plot default are one value.
+pub const DEFAULT_CLOCK_EXCURSION_THRESHOLD_S: f32 = clock_offset::DEFAULT_EXCURSION_THRESHOLD_S;
 
 /// Partitions `points` into contiguous track ranges. A new track begins when the
 /// timestamp gap between consecutive points reaches `config.track_split_gap`.
@@ -230,10 +246,18 @@ fn detect_generated_markers(
             markers.push(marker);
         }
     }
+    // Excursions are classified whatever the marker toggle says: the
+    // discontinuity pass needs them out of its step series either way, or one
+    // excursion reads as a pair of jumps - out and straight back.
+    let excursions = clock_offset::detect_excursions(points, config.clock_excursion_threshold_s);
+    if config.detect_clock_offset_excursions {
+        markers.extend(excursion_markers(points, &excursions));
+    }
     if config.detect_clock_discontinuities {
         markers.extend(detect_clock_discontinuities(
             points,
             config.clock_discontinuity_sigmas,
+            &clock_offset::excursion_indices(&excursions),
         ));
     }
     if config.detect_slips {
@@ -250,7 +274,9 @@ fn fix_marker_enabled(kind: &GeneratedMarkerKind, config: &GeneratedMarkerConfig
     match kind {
         GeneratedMarkerKind::GnssFixLost => config.detect_gnss_fix_lost,
         GeneratedMarkerKind::GnssFixRegained { .. } => config.detect_gnss_fix_regained,
-        GeneratedMarkerKind::ClockDiscontinuity { .. } | GeneratedMarkerKind::Slip(_) => true,
+        GeneratedMarkerKind::ClockDiscontinuity { .. }
+        | GeneratedMarkerKind::ClockOffsetExcursion { .. }
+        | GeneratedMarkerKind::Slip(_) => true,
     }
 }
 
@@ -330,13 +356,21 @@ pub fn clock_discontinuity_floor_seconds(sigmas: f64) -> f64 {
 /// is what keeps it device-agnostic.  Detection only. No data is altered.
 ///
 /// `sigmas` is the outlier sensitivity (see
-/// [`SegmentationConfig::clock_discontinuity_sigmas`]).
-fn detect_clock_discontinuities(points: &[NavPoint], sigmas: f64) -> Vec<GeneratedMarker> {
+/// [`SegmentationConfig::clock_discontinuity_sigmas`]).  `excursion_indices`
+/// (ascending) names the samples already explained by a
+/// [`GeneratedMarkerKind::ClockOffsetExcursion`]; they are left out of the step
+/// series so an excursion is one marker rather than a jump out and a jump back.
+fn detect_clock_discontinuities(
+    points: &[NavPoint],
+    sigmas: f64,
+    excursion_indices: &[usize],
+) -> Vec<GeneratedMarker> {
     // Pass 1: offset (ms) and source index for each with-system-timestamp
     // sample, then the step (first difference) between consecutive samples.
     let samples: Vec<(usize, i64)> = points
         .iter()
         .enumerate()
+        .filter(|(i, _)| excursion_indices.binary_search(i).is_err())
         .filter_map(|(i, p)| {
             let sys = p.tpv.sys_time()?;
             Some((i, p.tpv.time().offset_from_sys(sys).num_milliseconds()))
@@ -394,28 +428,31 @@ fn detect_clock_discontinuities(points: &[NavPoint], sigmas: f64) -> Vec<Generat
     markers
 }
 
-/// Median of `values` (averaging the two central elements for an even count).
-/// Returns 0 for an empty input. Callers guard against that.
-fn median_i64(values: &[i64]) -> i64 {
-    if values.is_empty() {
-        return 0;
-    }
-    let mut sorted = values.to_vec();
-    sorted.sort_unstable();
-    let mid = sorted.len() / 2;
-    let hi = sorted.get(mid).copied().unwrap_or(0);
-    if sorted.len() % 2 == 1 {
-        hi
-    } else {
-        let lo = sorted.get(mid - 1).copied().unwrap_or(0);
-        // Overflow-safe midpoint: `lo + hi` can exceed i64 for extreme inputs.
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "the midpoint of two i64 values is itself within i64 range"
-        )]
-        let mid_avg = ((i128::from(lo) + i128::from(hi)) / 2) as i64;
-        mid_avg
-    }
+/// Build one [`GeneratedMarkerKind::ClockOffsetExcursion`] per excursion,
+/// placed at the sample that departed furthest from the track's baseline
+/// offset.  Detection lives in `gt_analysis::clock_offset` so the plot and these
+/// markers agree on what an excursion is.
+fn excursion_markers(
+    points: &[NavPoint],
+    excursions: &[ClockOffsetExcursion],
+) -> Vec<GeneratedMarker> {
+    excursions
+        .iter()
+        .filter_map(|excursion| {
+            let peak = excursion.peak();
+            let point = points.get(peak.index)?;
+            Some(GeneratedMarker::new(
+                point.tpv.time().utc(),
+                GeneratedMarkerKind::ClockOffsetExcursion {
+                    deviation: Duration::milliseconds(excursion.deviation_ms()),
+                    offset: Duration::milliseconds(peak.offset_ms),
+                    samples: u32::try_from(excursion.samples.len()).unwrap_or(u32::MAX),
+                },
+                point.tpv.lat(),
+                point.tpv.lon(),
+            ))
+        })
+        .collect()
 }
 
 /// Computes GNSS fix-quality statistics from a slice of nav points.
@@ -920,7 +957,7 @@ mod tests {
             point_with_sys(1003, 300),
             point_with_sys(1004, 300 + two_hours_ms),
         ];
-        let markers = detect_clock_discontinuities(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS);
+        let markers = detect_clock_discontinuities(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS, &[]);
         assert_eq!(
             markers.len(),
             1,
@@ -941,6 +978,75 @@ mod tests {
         );
     }
 
+    /// Steady 234 ms offset with one sample carrying a 1 h 09 m recording gap -
+    /// the `gnss.h5.gtd` case, where the receiver reported its pre-gap GPS epoch
+    /// for the first fix after resuming.
+    fn resume_from_gap_points() -> Vec<NavPoint> {
+        vec![
+            point_with_sys(1000, 210),
+            point_with_sys(1001, 227),
+            point_with_sys(1002, 240),
+            point_with_sys(1003, 234),
+            point_with_sys(1004, 4_127_054),
+            point_with_sys(1005, 240),
+            point_with_sys(1006, 215),
+            point_with_sys(1007, 235),
+        ]
+    }
+
+    #[test]
+    fn an_excursion_is_one_marker_not_a_pair_of_discontinuities() {
+        let markers =
+            detect_generated_markers(&resume_from_gap_points(), &GeneratedMarkerConfig::default());
+        let [marker] = markers.as_slice() else {
+            panic!("expected exactly one marker, got {}", markers.len());
+        };
+        let GeneratedMarkerKind::ClockOffsetExcursion {
+            deviation,
+            offset,
+            samples,
+        } = marker.kind
+        else {
+            panic!("expected a clock offset excursion, got {:?}", marker.kind);
+        };
+        assert_eq!(offset.num_milliseconds(), -4_127_054);
+        assert_eq!(deviation.num_milliseconds(), -4_126_820);
+        assert_eq!(samples, 1);
+        assert_eq!(
+            marker.time,
+            Utc.timestamp_opt(1004, 0).single().expect("valid"),
+            "placed at the sample that departed furthest"
+        );
+    }
+
+    #[test]
+    fn excursion_detection_off_leaves_the_discontinuity_markers() {
+        let config = GeneratedMarkerConfig {
+            detect_clock_offset_excursions: false,
+            ..GeneratedMarkerConfig::default()
+        };
+        let markers = detect_generated_markers(&resume_from_gap_points(), &config);
+        assert!(
+            markers.is_empty(),
+            "the excursion sample stays out of the step series either way, so the \
+             departure is never re-reported as a pair of jumps: {markers:?}"
+        );
+    }
+
+    #[test]
+    fn a_permanent_offset_step_stays_a_discontinuity() {
+        let mut points: Vec<NavPoint> = (0..6).map(|i| point_with_sys(1000 + i, 200)).collect();
+        points.extend((6..12).map(|i| point_with_sys(1000 + i, 3_600_000)));
+        let markers = detect_generated_markers(&points, &GeneratedMarkerConfig::default());
+        let [marker] = markers.as_slice() else {
+            panic!("expected exactly one marker, got {}", markers.len());
+        };
+        assert!(matches!(
+            marker.kind,
+            GeneratedMarkerKind::ClockDiscontinuity { .. }
+        ));
+    }
+
     #[test]
     fn clock_discontinuity_ignores_normal_jitter() {
         let points = vec![
@@ -949,7 +1055,9 @@ mod tests {
             point_with_sys(1002, 298),
             point_with_sys(1003, 302),
         ];
-        assert!(detect_clock_discontinuities(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS).is_empty());
+        assert!(
+            detect_clock_discontinuities(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS, &[]).is_empty()
+        );
     }
 
     #[test]
@@ -965,17 +1073,9 @@ mod tests {
             point_with_sys(1003, big + 2),
             point_with_sys(1004, big - 5),
         ];
-        assert!(detect_clock_discontinuities(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS).is_empty());
-    }
-
-    #[test]
-    fn median_i64_handles_odd_and_even() {
-        assert_eq!(median_i64(&[3, 1, 2]), 2);
-        assert_eq!(median_i64(&[1, 2, 3, 4]), 2); // (2 + 3) / 2, truncated
-        assert_eq!(median_i64(&[]), 0);
-        assert_eq!(median_i64(&[7]), 7);
-        // Extreme inputs must not overflow the midpoint.
-        assert_eq!(median_i64(&[i64::MIN, i64::MAX]), 0);
+        assert!(
+            detect_clock_discontinuities(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS, &[]).is_empty()
+        );
     }
 
     #[test]
@@ -995,7 +1095,7 @@ mod tests {
                 })
                 .collect();
             assert!(
-                detect_clock_discontinuities(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS).is_empty(),
+                detect_clock_discontinuities(&points, DEFAULT_CLOCK_OUTLIER_SIGMAS, &[]).is_empty(),
                 "detection must be skipped with {count} samples (< {MIN_CLOCK_SAMPLES})"
             );
         }

@@ -747,6 +747,8 @@ impl App {
                             defaults.detect_clock_discontinuities;
                         self.processing_config.generated_markers.clock_discontinuity_sigmas =
                             defaults.clock_discontinuity_sigmas;
+                        self.processing_config.generated_markers.detect_clock_offset_excursions =
+                            defaults.detect_clock_offset_excursions;
                         self.processing_config.generated_markers.detect_slips = defaults.detect_slips;
                     }
                 });
@@ -823,6 +825,27 @@ impl App {
                         .on_hover_text(window_help);
                         ui.end_row();
 
+                        let excursion_help =
+                            "A sample whose GPS/system clock offset sits more than this far from \
+                             the track's own baseline offset is treated as a clock offset \
+                             excursion: it is kept off the clock offset line, so one sample \
+                             carrying a whole recording gap cannot flatten the shared y-axis, and \
+                             marked at the edge of the view instead. Hover a marker for its real \
+                             offset. A large but steady offset sits at the baseline and is never \
+                             an excursion, and an offset that steps and stays is a clock \
+                             discontinuity, not an excursion.";
+                        ui.label(format!("{ICON_WARNING} Clock offset excursion"))
+                            .on_hover_text(excursion_help);
+                        ui.add(
+                            DragValue::new(&mut analysis.clock_excursion_threshold_s)
+                                .range(gt_plot::CLOCK_EXCURSION_THRESHOLD_RANGE_S)
+                                .speed(1.0)
+                                .fixed_decimals(0)
+                                .suffix(" s"),
+                        )
+                        .on_hover_text(excursion_help);
+                        ui.end_row();
+
                         // Live-apply: re-derives only the analysis-dependent
                         // series, and keeps the loader in step for files loaded
                         // later. `set_analysis` is a no-op when unchanged.
@@ -832,6 +855,7 @@ impl App {
                         // change on the next load or "Apply to loaded data".
                         self.processing_config.generated_markers.slip_elevation_mask_deg = analysis.elevation_mask_deg;
                         self.processing_config.generated_markers.slip_snr_drop_db = analysis.snr_drop_db;
+                        self.processing_config.generated_markers.clock_excursion_threshold_s = analysis.clock_excursion_threshold_s;
                         {
                             let mut shared = self.shared.borrow_mut();
                             let s = &mut *shared;
@@ -1165,6 +1189,18 @@ impl App {
                 });
                 ui.end_row();
 
+                let excursion_help =
+                    "Mark each clock offset excursion: a sample or two whose GPS/system clock \
+                     offset left the track's baseline and returned - typically a receiver \
+                     reporting its pre-gap GPS epoch for the first fix after a recording gap. \
+                     The threshold comes from the Analysis section, so the markers and the \
+                     plot's off-scale indicators agree.";
+                ui.label(format!("{ICON_WARNING} Clock offset excursion"))
+                    .on_hover_text(excursion_help);
+                ui.checkbox(&mut self.processing_config.generated_markers.detect_clock_offset_excursions, "")
+                    .on_hover_text(excursion_help);
+                ui.end_row();
+
                 let slip_help =
                     "Mark each loss-of-lock (cycle slip): an above-mask satellite that vanished, \
                      or whose SNR dropped sharply between epochs. Hover a marker for which \
@@ -1185,6 +1221,13 @@ impl App {
             self.map.set_mapbox_token(s.map.mapbox_token.clone());
         }
         self.map.set_layer(map_layer_from_setting(s.map.layer));
+        // One value behind both the plot's off-scale indicators and the
+        // excursion markers, clamped here so a hand-edited config cannot put
+        // the threshold outside what the settings control can reach back.
+        let excursion_threshold = s.analysis.clock_excursion_threshold_s.clamp(
+            *gt_plot::CLOCK_EXCURSION_THRESHOLD_RANGE_S.start(),
+            *gt_plot::CLOCK_EXCURSION_THRESHOLD_RANGE_S.end(),
+        );
         self.processing_config = SegmentationConfig {
             track_layout: TrackLayoutConfig {
                 track_split_gap: chrono::Duration::seconds(
@@ -1196,9 +1239,11 @@ impl App {
                 detect_gnss_fix_regained: s.processing.detect_gnss_fix_regained,
                 detect_clock_discontinuities: s.processing.detect_clock_discontinuities,
                 clock_discontinuity_sigmas: s.processing.clock_discontinuity_sigmas,
+                detect_clock_offset_excursions: s.processing.detect_clock_offset_excursions,
                 detect_slips: s.processing.detect_slips,
-                // Slip markers share the slip-rate plot's detection params so
-                // the two always agree.
+                // Slip and excursion markers share the plot's detection params
+                // so the markers and the plot always agree.
+                clock_excursion_threshold_s: excursion_threshold,
                 slip_elevation_mask_deg: s.analysis.elevation_mask_deg,
                 slip_snr_drop_db: s.analysis.snr_drop_db,
             },
@@ -1212,6 +1257,7 @@ impl App {
             elevation_mask_deg: s.analysis.elevation_mask_deg,
             snr_drop_db: s.analysis.snr_drop_db,
             slip_window_min: s.analysis.slip_window_min,
+            clock_excursion_threshold_s: excursion_threshold,
         };
         self.loader.analysis_config = analysis;
         self.sky_trails_window
@@ -1628,11 +1674,16 @@ impl App {
                 .generated_markers
                 .clock_discontinuity_sigmas
                 .into(),
+            detect_clock_offset_excursions: self
+                .processing_config
+                .generated_markers
+                .detect_clock_offset_excursions,
             detect_slips: self.processing_config.generated_markers.detect_slips,
             elevation_mask_deg: s.plot_state.analysis.elevation_mask_deg.into(),
             mark_masked_fix: s.plot_state.mark_masked_fix,
             snr_drop_db: s.plot_state.analysis.snr_drop_db.into(),
             slip_window_min: s.plot_state.analysis.slip_window_min.into(),
+            clock_excursion_threshold_s: s.plot_state.analysis.clock_excursion_threshold_s.into(),
             storage_enabled: self.storage_enabled,
             auto_prune_enabled: self.auto_prune_enabled,
             auto_prune_max_bytes: self.auto_prune_max_bytes,
@@ -1708,6 +1759,10 @@ impl App {
                     .processing_config
                     .generated_markers
                     .clock_discontinuity_sigmas,
+                detect_clock_offset_excursions: self
+                    .processing_config
+                    .generated_markers
+                    .detect_clock_offset_excursions,
                 detect_slips: self.processing_config.generated_markers.detect_slips,
             },
             analysis: crate::settings::AnalysisSettings {
@@ -1715,6 +1770,7 @@ impl App {
                 mark_masked_fix: s.plot_state.mark_masked_fix,
                 snr_drop_db: s.plot_state.analysis.snr_drop_db,
                 slip_window_min: s.plot_state.analysis.slip_window_min,
+                clock_excursion_threshold_s: s.plot_state.analysis.clock_excursion_threshold_s,
             },
             storage: crate::settings::StorageSettings {
                 enabled: self.storage_enabled,

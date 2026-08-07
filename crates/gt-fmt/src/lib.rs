@@ -13,6 +13,10 @@ use uom::si::{
 /// U+2014 EM DASH, standing in for a value that is absent.
 pub const EM_DASH: &str = "—";
 
+/// U+2212 MINUS SIGN, visually distinct from a hyphen in front of a number.
+/// Re-exported by `gt-ui-theme` alongside the other UI glyphs.
+pub const MINUS_SIGN: &str = "−";
+
 /// Two spaces, U+00B7 MIDDLE DOT, two spaces, joins fields inside tooltip strings.
 const TOOLTIP_JOINER: &str = "  ·  ";
 
@@ -155,6 +159,77 @@ pub fn format_human_terse_duration(d: chrono::Duration) -> String {
     }
 
     out
+}
+
+/// Format a signed time delta, in milliseconds, for display beside a value.
+///
+/// - Sub-2-second deltas are shown as `+250ms` / `−1500ms`.
+/// - 2s–59s: fractional seconds up to 2 decimal places with trailing zeros
+///   dropped (`+2.1s`, `+9.23s`).
+/// - ≥1 minute: compact terse format (`+1m9s`, `+1h2m`).
+///
+/// The negative sign uses [`MINUS_SIGN`] so it is visually distinct from a hyphen.
+pub fn format_signed_delta(delta_ms: i64) -> String {
+    let sign = if delta_ms < 0 { MINUS_SIGN } else { "+" };
+    let abs_ms = delta_ms.unsigned_abs();
+    if abs_ms < 2_000 {
+        format!("{sign}{abs_ms}ms")
+    } else if abs_ms < 60_000 {
+        let secs = abs_ms / 1_000;
+        let frac = (abs_ms % 1_000) / 10;
+        if frac == 0 {
+            format!("{sign}{secs}s")
+        } else if frac.is_multiple_of(10) {
+            format!("{sign}{secs}.{}s", frac / 10)
+        } else {
+            format!("{sign}{secs}.{frac:02}s")
+        }
+    } else {
+        let total_s = abs_ms / 1_000;
+        let h = total_s / 3_600;
+        let m = (total_s % 3_600) / 60;
+        let s = total_s % 60;
+        let mut out = sign.to_owned();
+        if h > 0 {
+            write!(out, "{h}h").ok();
+        }
+        if m > 0 {
+            write!(out, "{m}m").ok();
+        }
+        if s > 0 || (h == 0 && m == 0) {
+            write!(out, "{s}s").ok();
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod signed_delta_tests {
+    use super::format_signed_delta;
+
+    #[test]
+    fn signed_delta_sub_2s_shows_ms() {
+        assert_eq!(format_signed_delta(250), "+250ms");
+        assert_eq!(format_signed_delta(-50), "\u{2212}50ms");
+        assert_eq!(format_signed_delta(1999), "+1999ms");
+    }
+
+    #[test]
+    fn signed_delta_fractional_seconds() {
+        assert_eq!(format_signed_delta(2000), "+2s");
+        assert_eq!(format_signed_delta(2100), "+2.1s");
+        assert_eq!(format_signed_delta(2140), "+2.14s");
+        assert_eq!(format_signed_delta(9230), "+9.23s");
+        assert_eq!(format_signed_delta(-2140), "\u{2212}2.14s");
+        assert_eq!(format_signed_delta(59990), "+59.99s");
+    }
+
+    #[test]
+    fn signed_delta_terse_minutes() {
+        assert_eq!(format_signed_delta(60_000), "+1m");
+        assert_eq!(format_signed_delta(69_000), "+1m9s");
+        assert_eq!(format_signed_delta(3_661_000), "+1h1m1s");
+    }
 }
 
 /// Formats a time span for a tooltip header: the start date and time, then the

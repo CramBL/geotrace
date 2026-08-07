@@ -41,6 +41,7 @@ detect_gnss_fix_lost = true
 detect_gnss_fix_regained = true
 detect_clock_discontinuities = true
 clock_discontinuity_sigmas = 5.0
+detect_clock_offset_excursions = true
 detect_slips = true
 
 [analysis]
@@ -48,6 +49,7 @@ elevation_mask_deg = 15.0
 mark_masked_fix = true
 snr_drop_db = 10.0
 slip_window_min = 10.0
+clock_excursion_threshold_s = 10.0
 
 [storage]
 enabled = true

@@ -1046,6 +1046,8 @@ mod tests {
                 detect_gnss_fix_regained: false,
                 detect_clock_discontinuities: false,
                 clock_discontinuity_sigmas: 3.5,
+                detect_clock_offset_excursions: false,
+                clock_excursion_threshold_s: 30.0,
                 detect_slips: false,
                 slip_elevation_mask_deg: 30.0,
                 slip_snr_drop_db: 20.0,

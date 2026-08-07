@@ -89,7 +89,8 @@ impl<'a> GeneratedMarkerRenderer<'a> {
                 // Fix-lost and clock-discontinuity markers sit on a specific
                 // anomalous sample, so also show that point's data.
                 gt_types::GeneratedMarkerKind::GnssFixLost
-                | gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. } => {
+                | gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. }
+                | gt_types::GeneratedMarkerKind::ClockOffsetExcursion { .. } => {
                     if let Some(index) = track
                         .points
                         .iter()
@@ -198,14 +199,17 @@ pub(crate) fn generated_marker_header(kind: &gt_types::GeneratedMarkerKind) -> S
             format_fix_duration(fix_lost_duration.num_milliseconds())
         ),
         gt_types::GeneratedMarkerKind::ClockDiscontinuity { step } => {
-            let ms = step.num_milliseconds();
-            let sign = if ms < 0 { "-" } else { "+" };
-            // saturating_abs, not abs: avoids the i64::MIN panic surface, matching
-            // the structural .abs() avoidance in the detector.
-            format!(
-                "{kind} ({sign}{})",
-                format_fix_duration(ms.saturating_abs())
-            )
+            format!("{kind} ({})", signed_offset(step.num_milliseconds()))
+        }
+        gt_types::GeneratedMarkerKind::ClockOffsetExcursion {
+            deviation, samples, ..
+        } => {
+            let magnitude = signed_offset(deviation.num_milliseconds());
+            if *samples > 1 {
+                format!("{kind} ({magnitude} over {samples} samples)")
+            } else {
+                format!("{kind} ({magnitude})")
+            }
         }
         // One satellite: name it inline. Several: the per-satellite detail is in
         // the table below, so the header just gives the count.
@@ -220,6 +224,14 @@ pub(crate) fn generated_marker_header(kind: &gt_types::GeneratedMarkerKind) -> S
         },
         gt_types::GeneratedMarkerKind::GnssFixLost => kind.to_string(),
     }
+}
+
+/// A signed clock quantity, e.g. `-1m8s`.  `saturating_abs`, not `abs`: avoids
+/// the `i64::MIN` panic surface, matching the structural `.abs()` avoidance in
+/// the detectors.
+fn signed_offset(ms: i64) -> String {
+    let sign = if ms < 0 { "-" } else { "+" };
+    format!("{sign}{}", format_fix_duration(ms.saturating_abs()))
 }
 
 /// Render a table of the satellites that slipped at one epoch, one row each,
@@ -335,6 +347,12 @@ fn draw_generated_marker(
         gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. } => {
             (Color32::from_rgb(255, 149, 0), Color32::WHITE)
         }
+        // Yellow with a dark glyph: a clock anomaly like the discontinuity, but
+        // not to be confused with it at disc size.
+        gt_types::GeneratedMarkerKind::ClockOffsetExcursion { .. } => (
+            Color32::from_rgb(255, 202, 40),
+            Color32::from_rgb(40, 32, 0),
+        ),
         // Orchid: distinct from the fix-lost red and clock-discontinuity orange.
         gt_types::GeneratedMarkerKind::Slip(_) => (Color32::from_rgb(186, 85, 211), Color32::WHITE),
     };
@@ -382,6 +400,24 @@ fn draw_generated_marker(
                 st,
             );
             painter.circle_filled(center + egui::vec2(0.0, s * 0.85), 1.3, faded_stroke);
+        }
+        gt_types::GeneratedMarkerKind::ClockOffsetExcursion { .. } => {
+            // A spike off a flat baseline: the offset left its level and came
+            // straight back.
+            let st = Stroke::new(2.0_f32, faded_stroke);
+            let base_y = s * 0.55;
+            let path = [
+                center + egui::vec2(-s, base_y),
+                center + egui::vec2(-s * 0.4, base_y),
+                center + egui::vec2(0.0, -s),
+                center + egui::vec2(s * 0.4, base_y),
+                center + egui::vec2(s, base_y),
+            ];
+            for pair in path.windows(2) {
+                if let [from, to] = pair {
+                    painter.line_segment([*from, *to], st);
+                }
+            }
         }
         gt_types::GeneratedMarkerKind::Slip(_) => {
             // Broken chain link: a lost connection (loss of lock). Sized to
