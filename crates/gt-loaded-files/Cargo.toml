@@ -11,6 +11,7 @@ authors.workspace = true
 doctest = false
 
 [dependencies]
+gt-fmt = { path = "../gt-fmt" }
 gt-history-types = { path = "../gt-history-types" }
 gt-types = { path = "../gt-types" }
 

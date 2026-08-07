@@ -11,11 +11,10 @@ use egui_phosphor::regular::ROAD_HORIZON as ICON_ROAD_HORIZON;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use gt_filter::GlobalFilter;
-use gt_fmt::{NameFields, render_name_template};
-use gt_loaded_files::LoadedFilesView;
+use gt_loaded_files::{LoadedFilesView, RecordingNames};
 use gt_types::{
-    DataCategory, FileIdx, FileMetadata, GeneratedMarkerKind, LoadWarning, LoadedFile, LoadedTrack,
-    PointIdx, TrackIdx, TrackRef,
+    DataCategory, FileIdx, GeneratedMarkerKind, LoadWarning, LoadedFile, LoadedTrack, PointIdx,
+    TrackIdx, TrackRef,
 };
 use gt_ui_theme::ELLIPSIS;
 use gt_ui_types::{
@@ -146,9 +145,9 @@ pub struct PanelContext<'a> {
     /// The map's display mask, read to hint on category rows whose ink the
     /// display toggles currently hide.
     pub display_mask: DisplayMask,
-    /// User template for the recording name shown on each file row. See
-    /// [`gt_fmt::render_name_template`].
-    pub recording_name_template: &'a str,
+    /// Display name of each loaded file, resolved by the app from the user's
+    /// recording-name template.
+    pub recording_names: &'a RecordingNames,
     /// Set by clicking a file row's note icon. Consumed by the app to open the
     /// recording-details dialog.
     pub metadata_request: &'a mut Option<RecordingDetails>,
@@ -302,40 +301,11 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
         }
     });
 
-    // Compute per-file display names: strip the longest shared directory prefix
-    // so files like `/home/user/recordings/a.gtd` and `/home/user/recordings/b.gtd`
-    // display as `a.gtd` and `b.gtd` instead of their full paths.
-    let display_names: Vec<String> = {
-        let files = ctx.files();
-        let all_names: Vec<&str> = files.iter().map(|f| f.metadata.filename.as_str()).collect();
-        let prefix_len = strip_common_path_prefix(&all_names);
-        files
-            .iter()
-            .enumerate()
-            .map(|(i, f)| {
-                let name = f.metadata.filename.as_str();
-                // `prefix_len` is always a valid char boundary (guaranteed by
-                // `strip_common_path_prefix`), but use `get` to satisfy the
-                // `clippy::string_slice` lint and handle degenerate inputs safely.
-                let stripped = name
-                    .get(prefix_len..)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or(name);
-                recording_display_name(
-                    ctx.recording_name_template,
-                    &f.metadata,
-                    ctx.identity(FileIdx::new(i)),
-                    stripped,
-                )
-            })
-            .collect()
-    };
-
     // The progress strip pins to the panel bottom as an inner panel; the
     // file tree scrolls in the remaining central space.
     if ctx.snap.progress.active() {
         egui::Panel::bottom("snap_progress_strip").show_inside(ui, |ui| {
-            snap_progress_strip(ui, ctx.snap, &display_names, ctx.files());
+            snap_progress_strip(ui, ctx.snap, ctx.recording_names, ctx.files());
         });
     }
     // The tree and filter as the frame started, which is what the map drew
@@ -355,9 +325,11 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
             ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    let names = ctx.recording_names;
                     for fi in 0..ctx.files().len() {
-                        let display_name = display_names.get(fi).map_or("", String::as_str);
-                        render_file_row(ui, FileIdx::new(fi), display_name, scope, ctx);
+                        let fi = FileIdx::new(fi);
+                        let display_name = names.get(fi).unwrap_or_default();
+                        render_file_row(ui, fi, display_name, scope, ctx);
                     }
                 });
         });
@@ -369,7 +341,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
 fn snap_progress_strip(
     ui: &mut egui::Ui,
     snap: SnapPanelView<'_>,
-    display_names: &[String],
+    display_names: &RecordingNames,
     files: &[gt_types::LoadedFile],
 ) {
     let progress = snap.progress;
@@ -433,12 +405,10 @@ const STRIP_PADDING: f32 = 2.0;
 /// track number when the recording split into several tracks.
 fn snap_progress_label(
     track: TrackRef,
-    display_names: &[String],
+    display_names: &RecordingNames,
     files: &[gt_types::LoadedFile],
 ) -> String {
-    let name = display_names
-        .get(track.fi.as_usize())
-        .map_or("", String::as_str);
+    let name = display_names.get(track.fi).unwrap_or_default();
     let multi_track = track
         .fi
         .get(files)
@@ -1715,160 +1685,6 @@ fn file_bounding_center(file: Option<&LoadedFile>) -> Option<(f64, f64)> {
     Some(((min_lat + max_lat) / 2.0, (min_lon + max_lon) / 2.0))
 }
 
-/// Build a file's side-panel display name from the user template.
-///
-/// `identity` is the file's raw recording identity (or `None`); its internal
-/// `auto:` marker is stripped for the `{identity}` token so it never leaks into
-/// the label. `filename` is the already-common-prefix-stripped name used for the
-/// `{filename}` token and as the ultimate fallback.
-fn recording_display_name(
-    template: &str,
-    metadata: &FileMetadata,
-    identity: Option<&str>,
-    filename: &str,
-) -> String {
-    let fields = NameFields {
-        title: metadata.title.as_deref(),
-        device: metadata.device.as_deref(),
-        identity: identity.map(|id| gt_loaded_files::display_identity(id).0),
-        filename,
-    };
-    render_name_template(template, &fields)
-}
-
-/// Returns the byte offset at which each name's *display* form begins — i.e.
-/// the length of the longest common directory prefix shared by all names.
-///
-/// Returns `0` when there is nothing meaningful to strip: fewer than two names,
-/// no name contains a path separator (so there is no directory structure to
-/// collapse), or the common bytes do not reach a separator boundary.
-fn strip_common_path_prefix(names: &[&str]) -> usize {
-    if names.len() < 2 {
-        return 0;
-    }
-    if !names.iter().any(|n| n.contains(['/', '\\'])) {
-        return 0;
-    }
-    let Some(&first) = names.first() else {
-        return 0;
-    };
-    // Count matching bytes between `first` and every other name.
-    let common_bytes = names.iter().skip(1).fold(first.len(), |acc, name| {
-        let len = first
-            .bytes()
-            .zip(name.bytes())
-            .take_while(|(a, b)| a == b)
-            .count();
-        acc.min(len)
-    });
-    // `common_bytes` may land in the middle of a multi-byte character; snap to a
-    // valid char boundary before searching for the last separator. Because the
-    // leading `common_bytes` bytes are identical in all names, the resulting
-    // index is a valid char boundary in every name.
-    let common_bytes = first.floor_char_boundary(common_bytes);
-    match first.get(..common_bytes).and_then(|s| s.rfind(['/', '\\'])) {
-        // +1 to start the display name after the separator itself.
-        Some(pos) => pos + 1,
-        None => 0,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{FileMetadata, recording_display_name, strip_common_path_prefix};
-
-    #[test]
-    fn display_name_strips_auto_prefix_from_identity_token() {
-        let meta = FileMetadata::default();
-        assert_eq!(
-            recording_display_name("{identity}", &meta, Some("auto:Morning ride"), "ride.gtd"),
-            "Morning ride"
-        );
-    }
-
-    #[test]
-    fn display_name_uses_metadata_and_falls_back_to_filename() {
-        let meta = FileMetadata {
-            title: Some("Morning ride".to_owned()),
-            device: Some("uBlox F9P".to_owned()),
-            ..FileMetadata::default()
-        };
-        assert_eq!(
-            recording_display_name("{title} — {device}", &meta, None, "ride.gtd"),
-            "Morning ride — uBlox F9P"
-        );
-        // No title/device and no identity: the filename carries the label.
-        let empty = FileMetadata::default();
-        assert_eq!(
-            recording_display_name("{title}", &empty, None, "ride.gtd"),
-            "ride.gtd"
-        );
-    }
-
-    #[test]
-    fn empty_slice_returns_zero() {
-        assert_eq!(strip_common_path_prefix(&[]), 0);
-    }
-
-    #[test]
-    fn single_name_returns_zero() {
-        assert_eq!(
-            strip_common_path_prefix(&["/home/user/recordings/ride.gtd"]),
-            0
-        );
-    }
-
-    #[test]
-    fn no_path_separators_returns_zero() {
-        assert_eq!(strip_common_path_prefix(&["ride_0.gtd", "ride_1.gtd"]), 0);
-    }
-
-    #[test]
-    fn shared_directory_prefix_is_stripped() {
-        let names = [
-            "/home/user/recordings/2024-01-15.gtd",
-            "/home/user/recordings/2024-01-16.gtd",
-        ];
-        assert_eq!(
-            strip_common_path_prefix(&names),
-            "/home/user/recordings/".len()
-        );
-    }
-
-    #[test]
-    fn common_bytes_mid_component_trims_to_last_separator() {
-        // "/home/user/recordings/…" vs "/home/user/recent/…" share "/home/user/"
-        // even though more bytes match inside the next component.
-        let names = ["/home/user/recordings/a.gtd", "/home/user/recent/b.gtd"];
-        assert_eq!(strip_common_path_prefix(&names), "/home/user/".len());
-    }
-
-    #[test]
-    fn no_common_directory_prefix_strips_only_root_slash() {
-        // The only shared byte is the leading '/', so we strip that.
-        let names = ["/alpha/a.gtd", "/beta/b.gtd"];
-        assert_eq!(strip_common_path_prefix(&names), 1);
-    }
-
-    #[test]
-    fn truly_no_common_prefix_returns_zero() {
-        let names = ["alpha/a.gtd", "beta/b.gtd"];
-        assert_eq!(strip_common_path_prefix(&names), 0);
-    }
-
-    #[test]
-    fn windows_backslash_separator() {
-        let names = [
-            r"C:\Users\alice\recordings\ride_a.gtd",
-            r"C:\Users\alice\recordings\ride_b.gtd",
-        ];
-        assert_eq!(
-            strip_common_path_prefix(&names),
-            r"C:\Users\alice\recordings\".len()
-        );
-    }
-}
-
 #[cfg(test)]
 mod snap_action_tests {
     use std::collections::HashMap;
@@ -1906,7 +1722,7 @@ mod snap_action_tests {
         } else {
             gt_test_utils::nav_test_data()
         };
-        let file = gt_track_builder::build_loaded_file(
+        let mut file = gt_track_builder::build_loaded_file(
             "ride.gtd".to_owned(),
             &points,
             &[],
@@ -1919,11 +1735,15 @@ mod snap_action_tests {
             vec![],
         );
         assert_eq!(file.tracks.len(), track_count, "fixture track count");
+        // The strip names the recording the way every other surface does, so
+        // the label follows the user's template rather than the filename.
+        file.metadata.title = Some("morning ride".to_owned());
+        let mut loaded = gt_loaded_files::LoadedFiles::new();
+        loaded.push(file.clone(), gt_loaded_files::FileHistory::None);
+        let names = RecordingNames::resolve(loaded.view(), "{title}");
+
         let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(track_count - 1));
-        assert_eq!(
-            snap_progress_label(track, &["morning ride".to_owned()], &[file]),
-            expected
-        );
+        assert_eq!(snap_progress_label(track, &names, &[file]), expected);
     }
 
     fn unsnappable() -> SnapRowView {

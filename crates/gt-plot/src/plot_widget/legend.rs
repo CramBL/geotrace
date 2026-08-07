@@ -6,9 +6,10 @@ use egui_phosphor::regular::CARET_DOWN as ICON_CARET_DOWN;
 use egui_phosphor::regular::CARET_RIGHT as ICON_CARET_RIGHT;
 use egui_phosphor::regular::DOTS_SIX as ICON_DOTS_SIX;
 use egui_plot::LineStyle;
-use gt_types::LoadedFile;
+use gt_loaded_files::RecordingNames;
 
 use super::PlotState;
+use super::recording_name;
 use super::style::file_line_style;
 
 /// Default legend overlay position, anchored just inside the plot's top-left
@@ -65,7 +66,7 @@ fn paint_line_style_swatch(ui: &mut egui::Ui, style: LineStyle, color: Color32) 
 
 pub(super) fn show_file_legend_overlay(
     ui: &egui::Ui,
-    files: &[LoadedFile],
+    names: &RecordingNames,
     visible_files: &[usize],
     plot_rect: egui::Rect,
     state: &mut PlotState,
@@ -142,9 +143,7 @@ pub(super) fn show_file_legend_overlay(
                             for &fi in visible_files {
                                 let row = ui.horizontal(|ui| {
                                     let style = file_line_style(fi);
-                                    let file_name = files
-                                        .get(fi)
-                                        .map_or("Unknown file", |f| f.metadata.filename.as_str());
+                                    let file_name = recording_name(names, fi);
                                     let swatch = paint_line_style_swatch(
                                         ui,
                                         style,

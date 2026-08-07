@@ -10,7 +10,7 @@ use gt_store::DatabaseRef;
 use gt_types::{LoadWarning, TrackRef};
 use gt_ui_theme::warning_amber;
 
-use gt_loaded_files::{LoadedFiles, LoadedFilesView};
+use gt_loaded_files::{LoadedFiles, LoadedFilesView, RecordingNames};
 
 /// The tracks of one stored recording that a remove acts on.
 pub struct RecordingTrackRemoval {
@@ -54,6 +54,7 @@ pub fn show_delete_confirmation(
     ui: &egui::Ui,
     tree: &mut TreeState,
     loaded_files: &mut LoadedFiles,
+    recording_names: &RecordingNames,
 ) -> Option<RemoveOutcome> {
     let Some(confirm) = &tree.delete_confirm else {
         return None;
@@ -95,7 +96,9 @@ pub fn show_delete_confirmation(
                         match key {
                             NodeKey::File(fi) => {
                                 if let Some(file) = fi.get(loaded_files) {
-                                    let name = file.metadata.filename.as_str();
+                                    let name = recording_names
+                                        .get(*fi)
+                                        .unwrap_or(file.metadata.filename.as_str());
                                     ui.add(Label::new(name).truncate());
                                 }
                             }
@@ -103,13 +106,16 @@ pub fn show_delete_confirmation(
                                 if let Some(file) = fi.get(loaded_files)
                                     && let Some(track) = ti.get(&file.tracks)
                                 {
+                                    let name = recording_names
+                                        .get(*fi)
+                                        .unwrap_or(file.metadata.filename.as_str());
                                     let dist = gt_fmt::format_distance(track.metadata.distance_km);
                                     let dur = gt_fmt::format_human_terse_duration(
                                         track.metadata.duration,
                                     );
                                     let label = format!(
-                                        "  {} / #{}  {dist}  {dur}",
-                                        file.metadata.filename, track.metadata.index
+                                        "  {name} / #{}  {dist}  {dur}",
+                                        track.metadata.index
                                     );
                                     ui.add(Label::new(label.as_str()).truncate());
                                 }

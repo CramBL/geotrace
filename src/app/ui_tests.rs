@@ -550,6 +550,52 @@ fn detach_legend(harness: &mut Harness<App>, offset: egui::Vec2) {
     harness.step();
 }
 
+/// The plot's file legend names recordings through the user's template, the
+/// same source the side panel rows read - never the raw filename.
+#[test]
+fn plot_legend_follows_the_recording_name_template() {
+    let mut harness = harness_with_three_files_loaded();
+    harness
+        .state_mut()
+        .shared
+        .borrow_mut()
+        .recording_name_template = "Rec: {filename}".to_owned();
+    harness.run_steps(3);
+
+    for name in [
+        "Rec: overlap_a.gtd",
+        "Rec: overlap_b.gtd",
+        "Rec: overlap_c.gtd",
+    ] {
+        harness.get_by_label(name);
+    }
+    assert!(
+        harness.query_by_label("overlap_a.gtd").is_none(),
+        "the legend must not fall back to the raw filename"
+    );
+}
+
+/// The remove-confirmation dialog names what it is about to remove the same
+/// way every other surface does.
+#[test]
+fn remove_confirmation_follows_the_recording_name_template() {
+    let mut harness = harness_with_three_files_loaded();
+    {
+        let mut shared = harness.state_mut().shared.borrow_mut();
+        shared.recording_name_template = "Rec: {filename}".to_owned();
+        shared.tree.delete_confirm = Some(gt_side_panel::DeleteConfirmState {
+            items: vec![gt_side_panel::NodeKey::Track(TrackRef::new(
+                FileIdx::new(0),
+                TrackIdx::new(0),
+            ))],
+            delete_permanently: false,
+        });
+    }
+    harness.run_steps(3);
+
+    harness.get_by_label_contains("Rec: overlap_a.gtd / #1");
+}
+
 #[test]
 fn legend_redock_icon_resets_offset_to_default() {
     let mut harness = harness_with_three_files_loaded();

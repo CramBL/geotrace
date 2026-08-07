@@ -49,7 +49,7 @@ use egui_tiles::{
 };
 use gt_filter::GlobalFilter;
 use gt_jam::transport as jam_transport;
-use gt_loaded_files::{FileHistory, LoadedFiles};
+use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_map::{MapContextAction, MapLayer, NavMap};
 use gt_plot::PlotState;
 use gt_query_run::{RunInputs, SnapErrorValues};
@@ -2383,9 +2383,12 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 let center_req = s.map_center_request.take();
                 let popup_pos = s.popup_pos_request.take();
                 let zoom_to_visible = std::mem::replace(&mut s.zoom_to_visible_request, false);
+                let recording_names =
+                    RecordingNames::resolve(s.loaded_files.view(), &s.recording_name_template);
                 if let Some(action) = self.map.draw(
                     ui,
                     &s.loaded_files,
+                    &recording_names,
                     s.tree.visibility(),
                     &mut s.highlight,
                     &s.filter,
@@ -2438,9 +2441,12 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 } else {
                     None
                 };
+                let names =
+                    RecordingNames::resolve(s.loaded_files.view(), &s.recording_name_template);
                 gt_plot::show_track_plot(
                     ui,
                     &s.loaded_files,
+                    &names,
                     s.tree.visibility(),
                     &s.filter,
                     self.plot_hover_scope,
@@ -2698,6 +2704,8 @@ impl eframe::App for App {
                     let mut refmut = self.shared.borrow_mut();
                     let s = &mut *refmut;
                     let loaded_files = s.loaded_files.view();
+                    let recording_names =
+                        RecordingNames::resolve(loaded_files, &s.recording_name_template);
                     show_side_panel(
                         ui,
                         &mut PanelContext {
@@ -2713,7 +2721,7 @@ impl eframe::App for App {
                             warnings_request: &mut s.warnings_popup,
                             clear_query_request: &mut s.clear_query_request,
                             display_mask: s.display_mask,
-                            recording_name_template: &s.recording_name_template,
+                            recording_names: &recording_names,
                             metadata_request: &mut s.metadata_popup,
                             snap: snap_view,
                             snap_request: &mut snap_request,
@@ -2743,6 +2751,8 @@ impl eframe::App for App {
                     let mut refmut = self.shared.borrow_mut();
                     let s = &mut *refmut;
                     let loaded_files = s.loaded_files.view();
+                    let recording_names =
+                        RecordingNames::resolve(loaded_files, &s.recording_name_template);
                     show_side_panel(
                         ui,
                         &mut PanelContext {
@@ -2758,7 +2768,7 @@ impl eframe::App for App {
                             warnings_request: &mut s.warnings_popup,
                             clear_query_request: &mut s.clear_query_request,
                             display_mask: s.display_mask,
-                            recording_name_template: &s.recording_name_template,
+                            recording_names: &recording_names,
                             metadata_request: &mut s.metadata_popup,
                             snap: snap_view,
                             snap_request: &mut snap_request,
@@ -3125,7 +3135,14 @@ impl eframe::App for App {
         let remove_outcome = {
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
-            let outcome = show_delete_confirmation(ui, &mut s.tree, &mut s.loaded_files);
+            // Resolved only while the dialog is up: the map and the plot pay for
+            // their own names every frame, this one would be thrown away.
+            let outcome = s.tree.delete_confirm.is_some().then(|| {
+                let recording_names =
+                    RecordingNames::resolve(s.loaded_files.view(), &s.recording_name_template);
+                show_delete_confirmation(ui, &mut s.tree, &mut s.loaded_files, &recording_names)
+            });
+            let outcome = outcome.flatten();
             if outcome.is_some() {
                 s.plot_state.rebuild_all(&s.loaded_files);
             }

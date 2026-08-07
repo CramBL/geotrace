@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use egui_kittest::kittest::Queryable as _;
 use geotrace_sdk_units::Unit;
 use gt_filter::GlobalFilter;
-use gt_loaded_files::{FileHistory, LoadedFiles};
+use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_side_panel::{
     FilterPanelState, PanelContext, SnapPanelView, SnapRowView, TreeState, show_side_panel,
 };
@@ -129,7 +129,10 @@ fn make_harness_sized(state: State, size: egui::Vec2) -> TestHarness<'static, St
                 warnings_request: &mut s.warnings_request,
                 clear_query_request: &mut s.clear_query_request,
                 display_mask: s.display_mask,
-                recording_name_template: &s.recording_name_template,
+                recording_names: &RecordingNames::resolve(
+                    s.files.view(),
+                    &s.recording_name_template,
+                ),
                 metadata_request: &mut s.metadata_request,
                 snap: SnapPanelView {
                     offline: s.snap_offline,
@@ -1198,7 +1201,10 @@ fn settled_docked_panel_width(state: State) -> f32 {
                                 warnings_request: &mut s.warnings_request,
                                 clear_query_request: &mut s.clear_query_request,
                                 display_mask: s.display_mask,
-                                recording_name_template: &s.recording_name_template,
+                                recording_names: &RecordingNames::resolve(
+                                    s.files.view(),
+                                    &s.recording_name_template,
+                                ),
                                 metadata_request: &mut s.metadata_request,
                                 snap: SnapPanelView {
                                     offline: s.snap_offline,

@@ -34,6 +34,7 @@ use egui::Color32;
 use egui::RichText;
 use egui_plot::{Span, VLine};
 use gt_filter::GlobalFilter;
+use gt_loaded_files::RecordingNames;
 use gt_types::satellites::ConstellationSet;
 use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::{HighlightScope, JammingSeries, SnapErrorSeries, TrackDataVisibility};
@@ -55,6 +56,41 @@ pub const PLOT_LINE_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 0.5..=5.0;
 /// Stroke width of the vertical seek lines (hovered match, map position). Above
 /// the data lines so the marker stays findable across a crowded plot.
 const SEEK_LINE_WIDTH: f32 = 1.5;
+
+/// Fallback label for a file index with no loaded recording behind it, so a
+/// stale index still shows something readable.
+const UNKNOWN_RECORDING: &str = "Unknown file";
+
+/// The recording's display name, as the side panel shows it.
+fn recording_name(names: &RecordingNames, fi: usize) -> &str {
+    names.get(FileIdx::new(fi)).unwrap_or(UNKNOWN_RECORDING)
+}
+
+/// The plot's hover tooltip: the hovered line's name, the time, and the value.
+///
+/// egui_plot passes an empty name when the cursor is over the canvas without
+/// snapping to a line; the name line is then left out rather than drawn blank.
+fn hover_label(name: &str, point: &egui_plot::PlotPoint) -> String {
+    let time = DateTime::from_timestamp(point.x as i64, 0)
+        .map(|dt| dt.format("%H:%M:%S").to_string())
+        .unwrap_or_default();
+    let reading = format!("{time}\n{:.2}", point.y);
+    if name.is_empty() {
+        reading
+    } else {
+        format!("{name}\n{reading}")
+    }
+}
+
+/// One track's plot label: the recording's display `name`, with the track
+/// number appended when the recording split into several tracks.
+fn track_label(name: &str, ti: usize, track_count: usize) -> String {
+    if track_count > 1 {
+        format!("{name} T{}", ti + 1)
+    } else {
+        name.to_owned()
+    }
+}
 
 /// Persistent state for the track plot panel.
 ///
@@ -235,6 +271,10 @@ impl PlotState {
 pub fn show_track_plot(
     ui: &mut egui::Ui,
     files: &[LoadedFile],
+    // Per-file display names, resolved from the user's recording-name template
+    // (see [`RecordingNames`]) so the legend, line names and hover labels all
+    // read the same name the side panel shows.
+    names: &RecordingNames,
     visibility: &TrackDataVisibility,
     filter: &GlobalFilter,
     hover_scope: Option<HighlightScope>,
@@ -280,6 +320,19 @@ pub fn show_track_plot(
     // Per-series count, for the line-name prefix.  Distinct from the
     // per-file count below, which gates the file legend overlay.
     let multi_track = visible_count > 1;
+    // Per-series labels, `None` while a single track is visible and nothing
+    // needs naming. Resolved every frame so a template change lands right
+    // away, unlike the mipmaps these sit beside.
+    let series_labels: Vec<Option<String>> = state
+        .series_cache
+        .iter()
+        .map(|s| {
+            multi_track.then(|| {
+                let track_count = files.get(s.fi).map_or(1, |file| file.tracks.len());
+                track_label(recording_name(names, s.fi), s.ti, track_count)
+            })
+        })
+        .collect();
     let visible_files: Vec<usize> = {
         let mut file_indices = BTreeSet::new();
         for (series, &is_vis) in state.series_cache.iter().zip(visible.iter()) {
@@ -348,15 +401,6 @@ pub fn show_track_plot(
         DateTime::from_timestamp(ts, 0)
             .map(|dt| dt.format("%H:%M:%S").to_string())
             .unwrap_or_default()
-    };
-
-    // Format the hover tooltip: show time + value.
-    let label_fmt = |name: &str, val: &egui_plot::PlotPoint| {
-        let ts = val.x as i64;
-        let time_str = DateTime::from_timestamp(ts, 0)
-            .map(|dt| dt.format("%H:%M:%S").to_string())
-            .unwrap_or_default();
-        format!("{name}\n{time_str}\n{:.2}", val.y)
     };
 
     // Compute the full x range across all visible series so that double-click
@@ -432,7 +476,7 @@ pub fn show_track_plot(
                 .gamma_multiply(GRID_COLOR_STRENGTH),
         )
         .x_axis_formatter(x_fmt)
-        .label_formatter(label_fmt);
+        .label_formatter(hover_label);
 
     // Tell egui_plot the full data extent so double-click reset zooms to fit.
     if has_full_range {
@@ -541,10 +585,11 @@ pub fn show_track_plot(
             let Some(cache) = resolved.get(si) else {
                 continue;
             };
+            let track_label = series_labels.get(si).and_then(Option::as_deref);
             add_series_lines(
                 plot_ui,
                 series,
-                multi_track,
+                track_label,
                 cache,
                 metric_vis,
                 channel_vis,
@@ -581,7 +626,7 @@ pub fn show_track_plot(
                 add_util_anomalies(
                     plot_ui,
                     series,
-                    multi_track,
+                    track_label,
                     eff_x_min..=eff_x_max,
                     anomaly_pointer,
                     &mut hovered_anomaly,
@@ -637,7 +682,7 @@ pub fn show_track_plot(
 
     state.legend_hover_file = show_file_legend_overlay(
         ui,
-        files,
+        names,
         &visible_files,
         plot_response.response.rect,
         state,
@@ -732,4 +777,40 @@ pub fn find_closest_tpv(
     }
 
     best.map(|(fi, ti, pi, _)| (fi, ti, pi))
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::{hover_label, track_label};
+    use egui_plot::PlotPoint;
+
+    #[test]
+    fn a_single_track_recording_is_labelled_by_name_alone() {
+        assert_eq!(track_label("Morning ride", 0, 1), "Morning ride");
+    }
+
+    #[test]
+    fn a_split_recording_numbers_its_tracks() {
+        assert_eq!(track_label("Morning ride", 1, 3), "Morning ride T2");
+    }
+
+    /// 2024-01-15 12:00:00 UTC.
+    const T: f64 = 1_705_320_000.0;
+
+    #[test]
+    fn a_snapped_point_is_captioned_by_its_line() {
+        assert_eq!(
+            hover_label("Morning ride: Satellites seen", &PlotPoint::new(T, 12.0)),
+            "Morning ride: Satellites seen\n12:00:00\n12.00"
+        );
+    }
+
+    #[test]
+    fn an_unsnapped_cursor_leaves_out_the_name_line() {
+        assert_eq!(
+            hover_label("", &PlotPoint::new(T, 12.0)),
+            "12:00:00\n12.00",
+            "an empty name must not leave a blank first line"
+        );
+    }
 }

@@ -67,7 +67,9 @@ const ANOMALY_TOOLTIP_GAP: f32 = 12.0;
 pub(super) fn add_series_lines<'a>(
     plot_ui: &mut egui_plot::PlotUi<'a>,
     series: &'a TrackSeries,
-    multi_track: bool,
+    // The recording's plot label, `None` while a single track is visible and
+    // nothing needs naming.
+    track_label: Option<&str>,
     cache: &TripLevelCache,
     metric_vis: &MetricVisibility,
     channel_vis: &ChannelVisibility,
@@ -87,11 +89,7 @@ pub(super) fn add_series_lines<'a>(
     jamming_viewport: JammingViewport,
     hovered_jamming: &mut Option<(f32, JammingHover)>,
 ) {
-    let prefix = if multi_track {
-        format!("{}: ", series.label)
-    } else {
-        String::new()
-    };
+    let prefix = track_label.map_or_else(String::new, |label| format!("{label}: "));
     let focused = series_matches_hover_scope(series, hover_scope);
     let has_track_focus = hover_scope.is_some();
 
@@ -150,8 +148,7 @@ pub(super) fn add_series_lines<'a>(
         add_snap_error_series(
             plot_ui,
             &prefix,
-            series,
-            multi_track,
+            track_label,
             snap_cache,
             snap_viewport,
             snap_pointer,
@@ -178,8 +175,7 @@ pub(super) fn add_series_lines<'a>(
             plot_ui,
             &prefix,
             JammingTrack {
-                series,
-                multi_track,
+                track_label,
                 pointer: snap_pointer,
             },
             jamming_cache,
@@ -338,7 +334,7 @@ pub(super) struct AnomalyHover {
 }
 
 impl AnomalyHover {
-    fn new(series: &TrackSeries, multi_track: bool, anomaly: &UtilAnomaly) -> Self {
+    fn new(track_label: Option<&str>, anomaly: &UtilAnomaly) -> Self {
         let time = DateTime::from_timestamp(anomaly.t as i64, 0)
             .map(|dt| dt.format("%H:%M:%S").to_string())
             .unwrap_or_default();
@@ -355,7 +351,7 @@ impl AnomalyHover {
             })
             .collect();
         Self {
-            track: multi_track.then(|| series.label.clone()),
+            track: track_label.map(ToOwned::to_owned),
             time,
             sats,
         }
@@ -383,7 +379,7 @@ impl AnomalyHover {
 pub(super) fn add_util_anomalies<'a>(
     plot_ui: &mut egui_plot::PlotUi<'a>,
     series: &'a TrackSeries,
-    multi_track: bool,
+    track_label: Option<&str>,
     x_range: std::ops::RangeInclusive<f64>,
     pointer: Option<egui::Pos2>,
     nearest: &mut Option<(f32, AnomalyHover)>,
@@ -422,7 +418,7 @@ pub(super) fn add_util_anomalies<'a>(
         let screen = plot_ui.screen_from_plot(PlotPoint::new(anomaly.t, anomaly.value));
         let dist = screen.distance(ptr);
         if dist <= ANOMALY_HOVER_RADIUS_PX && nearest.as_ref().is_none_or(|(d, _)| dist < *d) {
-            *nearest = Some((dist, AnomalyHover::new(series, multi_track, anomaly)));
+            *nearest = Some((dist, AnomalyHover::new(track_label, anomaly)));
         }
     }
 }

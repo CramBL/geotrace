@@ -44,12 +44,12 @@ pub(super) struct JammingHover {
 }
 
 impl JammingHover {
-    fn new(series: &TrackSeries, multi_track: bool, point: PlotPoint, counts: Counts) -> Self {
+    fn new(track_label: Option<&str>, point: PlotPoint, counts: Counts) -> Self {
         let day = chrono::DateTime::from_timestamp(point.x as i64, 0)
             .map(|time| time.date_naive().to_string())
             .unwrap_or_default();
         Self {
-            track: multi_track.then(|| series.label.clone()),
+            track: track_label.map(ToOwned::to_owned),
             lines: gt_jam::text::cell_summary(
                 &day,
                 counts.aircraft.saturating_sub(counts.bad),
@@ -191,8 +191,8 @@ fn select_run_levels(runs: &[MipMap], viewport: JammingViewport) -> Vec<LevelSel
 /// Which track is being drawn, and where the pointer is.
 #[derive(Clone, Copy)]
 pub(super) struct JammingTrack<'a> {
-    pub(super) series: &'a TrackSeries,
-    pub(super) multi_track: bool,
+    /// The recording's plot label, `None` while a single track is visible.
+    pub(super) track_label: Option<&'a str>,
     pub(super) pointer: Option<egui::Pos2>,
 }
 
@@ -212,8 +212,7 @@ pub(super) fn add_jamming_series<'a>(
     nearest: &mut Option<(f32, JammingHover)>,
 ) {
     let JammingTrack {
-        series,
-        multi_track,
+        track_label,
         pointer,
     } = track;
     for (run, selection) in cache
@@ -244,10 +243,7 @@ pub(super) fn add_jamming_series<'a>(
     for (point, counts) in visible {
         let distance = plot_ui.screen_from_plot(*point).distance(pointer);
         if distance <= HOVER_RADIUS_PX && nearest.as_ref().is_none_or(|(d, _)| distance < *d) {
-            *nearest = Some((
-                distance,
-                JammingHover::new(series, multi_track, *point, *counts),
-            ));
+            *nearest = Some((distance, JammingHover::new(track_label, *point, *counts)));
         }
     }
 }

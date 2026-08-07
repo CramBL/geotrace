@@ -2659,6 +2659,7 @@ dependencies = [
 name = "gt-loaded-files"
 version = "0.11.0"
 dependencies = [
+ "gt-fmt",
  "gt-history-types",
  "gt-types",
 ]
@@ -2705,6 +2706,7 @@ dependencies = [
  "gt-fmt",
  "gt-icon-tessellate",
  "gt-jam",
+ "gt-loaded-files",
  "gt-sky",
  "gt-test-utils",
  "gt-track-builder",
@@ -2740,6 +2742,7 @@ dependencies = [
  "gt-egui-mipmap",
  "gt-filter",
  "gt-jam",
+ "gt-loaded-files",
  "gt-types",
  "gt-ui-theme",
  "gt-ui-types",

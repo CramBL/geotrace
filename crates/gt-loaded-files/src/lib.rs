@@ -4,6 +4,10 @@ use std::ops::{Deref, Index, IndexMut};
 use gt_history_types::{DatabaseRef, RecordingMeta};
 use gt_types::{FileIdx, LoadedFile};
 
+mod recording_names;
+
+pub use recording_names::RecordingNames;
+
 /// Prefix marking an identity that GeoTrace derived automatically (from the
 /// recording's title/device/filename) rather than one supplied explicitly via
 /// the SDK. Produced by `gt_loader::derive_identity`.

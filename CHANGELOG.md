@@ -5,6 +5,8 @@
 ### Fixed
 
 - Hovering a shortened name shows one tooltip instead of two stacked ones.
+- Use the recording name template in the rest of the app: the plot's file legend, line names and hover labels, the map's right-click menu and the remove-confirmation dialog all show the same name as the side panel.
+- The plot hover label no longer starts with a blank line when the cursor is not on a line.
 
 ## 0.11.0 - 2026-08-05
 
