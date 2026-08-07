@@ -1,4 +1,5 @@
 use crate::AnalysisConfig;
+use gt_analysis::clock_offset::ClockOffsetExcursion;
 use gt_analysis::satellite_utilization::UtilAnomaly;
 use gt_egui_mipmap::MipMap;
 use gt_types::LoadedFile;
@@ -51,7 +52,16 @@ pub(crate) struct TrackSeries {
     /// GPS-clock lead over the host system clock, in milliseconds.
     /// Positive = GPS clock ahead, negative = system clock ahead.
     /// Only present when the TPV record carries a system timestamp.
+    ///
+    /// Excludes the samples in [`Self::clock_excursions`]: a single sample
+    /// carrying a whole recording gap would otherwise set the auto-bounds of
+    /// the y-axis every other metric shares, flattening the plot.  Those samples
+    /// are drawn by the off-scale indicator instead, never dropped.
     pub clock_delta_ms: MipMap,
+    /// Isolated departures of the clock offset from this track's baseline, kept
+    /// off [`Self::clock_delta_ms`] and marked on their own.  Threshold-
+    /// dependent: recomputed by [`TrackSeries::apply_analysis`].
+    pub clock_excursions: Vec<ClockOffsetExcursion>,
     /// Satellite utilization rate (percent), all constellations combined, and
     /// broken down per constellation.  Mask-dependent: recomputed by
     /// [`TrackSeries::apply_analysis`] when the elevation mask changes.
@@ -177,7 +187,36 @@ impl TrackSeries {
         self.slip_beidou = MipMap::build(s.beidou);
         self.slip_navic = MipMap::build(s.navic);
         self.slip_qzss = MipMap::build(s.qzss);
+
+        let (clock_delta_pts, excursions) =
+            clock_delta_series(track, analysis.clock_excursion_threshold_s);
+        self.clock_delta_ms = MipMap::build(clock_delta_pts);
+        self.clock_excursions = excursions;
     }
+}
+
+/// The clock-offset line points and the excursions held back from it.
+///
+/// The plot marks each held-back sample at the edge of the view, with its true
+/// offset on hover.
+fn clock_delta_series(
+    track: &gt_types::LoadedTrack,
+    threshold_s: f32,
+) -> (Vec<[f64; 2]>, Vec<ClockOffsetExcursion>) {
+    let excursions = gt_analysis::clock_offset::detect_excursions(&track.points, threshold_s);
+    let excluded = gt_analysis::clock_offset::excursion_indices(&excursions);
+    let points = track
+        .points
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| excluded.binary_search(i).is_err())
+        .filter_map(|(_, point)| {
+            let sys = point.tpv.sys_time()?;
+            let delta_ms = point.tpv.time().offset_from_sys(sys).num_milliseconds();
+            Some([point.tpv.time().as_secs_f64(), delta_ms as f64])
+        })
+        .collect();
+    (points, excursions)
 }
 
 /// Build mipmap series for every track in a single file, using `fi` as the file
@@ -235,7 +274,6 @@ fn build_track_series(
     let mut velocity_kmh_pts: Vec<[f64; 2]> = Vec::with_capacity(track.points.len());
     let mut eph_m_pts: Vec<[f64; 2]> = Vec::new();
     let mut heading_deg_pts: Vec<[f64; 2]> = Vec::new();
-    let mut clock_delta_ms_pts: Vec<[f64; 2]> = Vec::new();
 
     for point in &track.points {
         let t = point.tpv.time().as_secs_f64();
@@ -295,12 +333,10 @@ fn build_track_series(
         if let Some(h) = point.tpv.heading() {
             heading_deg_pts.push([t, h.get::<degree>()]);
         }
-
-        if let Some(sys) = point.tpv.sys_time() {
-            let delta_ms = point.tpv.time().offset_from_sys(sys).num_milliseconds();
-            clock_delta_ms_pts.push([t, delta_ms as f64]);
-        }
     }
+
+    let (clock_delta_ms_pts, clock_excursions) =
+        clock_delta_series(track, analysis.clock_excursion_threshold_s);
 
     let x_range = track
         .points
@@ -347,6 +383,7 @@ fn build_track_series(
         eph_m: MipMap::build(eph_m_pts),
         heading_deg: MipMap::build(heading_deg_pts),
         clock_delta_ms: MipMap::build(clock_delta_ms_pts),
+        clock_excursions,
         util_all: MipMap::build(util.all),
         util_gps: MipMap::build(util.gps),
         util_glonass: MipMap::build(util.glonass),
@@ -407,6 +444,113 @@ mod tests {
         assert_eq!(pts[0].x, 1_700_000_000.0);
         assert_eq!(pts[0].y, 0.2, "y column, row 0");
         assert_eq!(pts[1].y, 0.5, "y column, row 1");
+    }
+
+    /// A track at 1 Hz whose clock offset holds near −234 ms, with the sample
+    /// at `spike_at` carrying a 1 h 09 m recording gap - the `gnss.h5.gtd`
+    /// case, where the receiver reported its pre-gap GPS epoch after resuming.
+    fn track_with_a_clock_spike(count: i64, spike_at: i64) -> gt_types::LoadedTrack {
+        let points = (0..count)
+            .map(|i| {
+                let gps = chrono::DateTime::from_timestamp(1_700_000_000 + i, 0).expect("valid");
+                let ahead_ms = if i == spike_at { 4_127_054 } else { 234 };
+                let tpv = gt_types::tpv::TimePositionVelocity::builder()
+                    .time(gt_types::time_types::GpsTime::from_utc(gps))
+                    .lat(gt_types::coordinates::Latitude::new(55.0))
+                    .lon(gt_types::coordinates::Longitude::new(12.0))
+                    .sys_time(gt_types::time_types::SysTime::from_utc(
+                        gps + chrono::Duration::milliseconds(ahead_ms),
+                    ))
+                    .build();
+                gt_types::nav_point::NavPoint::new(tpv, None)
+            })
+            .collect();
+        gt_types::LoadedTrack {
+            metadata: gt_types::track::TrackMetadata::default(),
+            points,
+            lod: gt_types::track::TrackLod::default(),
+            sat_label_anchors: Vec::new(),
+            custom_markers: Vec::new(),
+            generated_markers: Vec::new(),
+            event_markers: Vec::new(),
+            channels: Vec::new(),
+        }
+    }
+
+    /// The y-extent of the clock offset line, over every point it carries.
+    fn clock_delta_extent(series: &TrackSeries) -> (f64, f64) {
+        let full =
+            series
+                .clock_delta_ms
+                .select_indices(f64::NEG_INFINITY, f64::INFINITY, usize::MAX);
+        series
+            .clock_delta_ms
+            .slice_at(full)
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+                (lo.min(p.y), hi.max(p.y))
+            })
+    }
+
+    /// The whole point of the excursion split: one sample carrying a recording
+    /// gap must not set the auto-bounds of the y-axis every metric shares.
+    #[test]
+    fn a_clock_spike_stays_off_the_line_and_out_of_its_extent() {
+        let track = track_with_a_clock_spike(8, 4);
+        let series = build_track_series(0, 0, &track, AnalysisConfig::default());
+
+        let (lo, hi) = clock_delta_extent(&series);
+        assert!(
+            lo >= -1000.0 && hi <= 0.0,
+            "the line keeps the track's own scale, got {lo}..{hi}"
+        );
+        let [excursion] = series.clock_excursions.as_slice() else {
+            panic!("expected one excursion, got {:?}", series.clock_excursions);
+        };
+        assert_eq!(excursion.peak().offset_ms, -4_127_054, "value is not lost");
+    }
+
+    /// Raising the threshold past the departure puts the sample back on the
+    /// line: the split is the user's call, not a fixed rule.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the offset passes through untransformed, so equality is exact"
+    )]
+    fn the_threshold_decides_what_leaves_the_line() {
+        let track = track_with_a_clock_spike(8, 4);
+        let analysis = AnalysisConfig {
+            clock_excursion_threshold_s: 4200.0,
+            ..AnalysisConfig::default()
+        };
+        let series = build_track_series(0, 0, &track, analysis);
+
+        assert!(series.clock_excursions.is_empty());
+        let (lo, _) = clock_delta_extent(&series);
+        assert_eq!(lo, -4_127_054.0, "the sample is back on the line");
+    }
+
+    /// `apply_analysis` re-derives the split, so changing the threshold in
+    /// Settings lands without a reload.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the offset passes through untransformed, so equality is exact"
+    )]
+    fn apply_analysis_re_derives_the_excursion_split() {
+        let track = track_with_a_clock_spike(8, 4);
+        let mut series = build_track_series(0, 0, &track, AnalysisConfig::default());
+        assert_eq!(series.clock_excursions.len(), 1);
+
+        series.apply_analysis(
+            &track,
+            AnalysisConfig {
+                clock_excursion_threshold_s: 4200.0,
+                ..AnalysisConfig::default()
+            },
+        );
+        assert!(series.clock_excursions.is_empty());
+        assert_eq!(clock_delta_extent(&series).0, -4_127_054.0);
     }
 
     /// A scalar channel is a single component labelled by the name alone.

@@ -17,6 +17,7 @@ use super::chips::{
     ChannelVisibility, HoveredChip, LoadedChannel, MetricKindUi, MetricVisibility, SectionGates,
     metric_is_shown,
 };
+use super::clock_excursion::ClockExcursionHover;
 use super::jamming::{
     JammingHover, JammingPlotCache, JammingStyle, JammingTrack, JammingViewport, add_jamming_series,
 };
@@ -245,9 +246,13 @@ pub(super) fn show_nearest_point_tooltips(
     hovered_anomaly: Option<(f32, AnomalyHover)>,
     hovered_snap: Option<(f32, SnapErrorHover)>,
     hovered_jamming: Option<(f32, JammingHover)>,
+    hovered_excursion: Option<(f32, ClockExcursionHover)>,
 ) {
     if !response.hovered() {
         return;
+    }
+    if let Some((_, hover)) = hovered_excursion {
+        pointer_tooltip(ui, response, "clock_excursion_tooltip", |ui| hover.show(ui));
     }
     if let Some((_, hover)) = hovered_anomaly {
         pointer_tooltip(ui, response, "util_anomaly_tooltip", |ui| hover.show(ui));

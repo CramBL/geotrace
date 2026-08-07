@@ -67,6 +67,20 @@ pub enum GeneratedMarkerKind {
         /// size of the jump).
         step: Duration,
     },
+    /// The GPS−system clock offset left the track's baseline for a sample or
+    /// two and returned - typically a receiver reporting a pre-gap GPS epoch
+    /// for its first fix after a recording gap, so the whole gap lands in one
+    /// sample's offset.  [`Self::ClockDiscontinuity`] covers the other shape,
+    /// an offset that steps and stays.
+    ClockOffsetExcursion {
+        /// Signed departure from the track's baseline offset at the furthest
+        /// sample of the excursion.
+        deviation: Duration,
+        /// GPS−system offset at that same sample.
+        offset: Duration,
+        /// How many consecutive samples were out of band.
+        samples: u32,
+    },
     /// The receiver lost lock on one or more satellites that should still have
     /// been trackable - each vanished while above the elevation mask, or its SNR
     /// fell sharply between epochs.  Detected by `gt_analysis::loss_of_lock`; the
@@ -83,6 +97,7 @@ impl std::fmt::Display for GeneratedMarkerKind {
             Self::GnssFixLost => "GNSS fix lost",
             Self::GnssFixRegained { .. } => "GNSS fix regained",
             Self::ClockDiscontinuity { .. } => "Clock discontinuity",
+            Self::ClockOffsetExcursion { .. } => "Clock offset excursion",
             Self::Slip(_) => "Satellite slip",
         })
     }
@@ -99,6 +114,7 @@ pub enum GeneratedMarkerKindTag {
     GnssFixLost,
     GnssFixRegained,
     ClockDiscontinuity,
+    ClockOffsetExcursion,
     Slip,
 }
 
@@ -110,6 +126,7 @@ impl GeneratedMarkerKindTag {
             Self::GnssFixLost => "GNSS fix lost",
             Self::GnssFixRegained => "GNSS fix regained",
             Self::ClockDiscontinuity => "Clock discontinuity",
+            Self::ClockOffsetExcursion => "Clock offset excursion",
             Self::Slip => "Satellite slip",
         }
     }
@@ -129,6 +146,7 @@ impl GeneratedMarkerKind {
             Self::GnssFixLost => GeneratedMarkerKindTag::GnssFixLost,
             Self::GnssFixRegained { .. } => GeneratedMarkerKindTag::GnssFixRegained,
             Self::ClockDiscontinuity { .. } => GeneratedMarkerKindTag::ClockDiscontinuity,
+            Self::ClockOffsetExcursion { .. } => GeneratedMarkerKindTag::ClockOffsetExcursion,
             Self::Slip(_) => GeneratedMarkerKindTag::Slip,
         }
     }
@@ -173,6 +191,15 @@ mod generated_marker_kind_tests {
             "Clock discontinuity"
         );
         assert_eq!(
+            GeneratedMarkerKind::ClockOffsetExcursion {
+                deviation: Duration::zero(),
+                offset: Duration::zero(),
+                samples: 1,
+            }
+            .to_string(),
+            "Clock offset excursion"
+        );
+        assert_eq!(
             GeneratedMarkerKind::Slip(crate::satellites::SlipEvent {
                 slips: vec![crate::satellites::Slip {
                     constellation: crate::satellites::Constellation::Gps,
@@ -206,6 +233,13 @@ mod generated_marker_kind_tests {
                 GeneratedMarkerKindTag::ClockDiscontinuity => {
                     GeneratedMarkerKind::ClockDiscontinuity {
                         step: Duration::zero(),
+                    }
+                }
+                GeneratedMarkerKindTag::ClockOffsetExcursion => {
+                    GeneratedMarkerKind::ClockOffsetExcursion {
+                        deviation: Duration::zero(),
+                        offset: Duration::zero(),
+                        samples: 1,
                     }
                 }
                 GeneratedMarkerKindTag::Slip => {

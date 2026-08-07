@@ -2509,6 +2509,8 @@ version = "0.11.0"
 dependencies = [
  "chrono",
  "gt-types",
+ "rstest",
+ "vec1",
 ]
 
 [[package]]
@@ -2742,6 +2744,7 @@ dependencies = [
  "gt-analysis",
  "gt-egui-mipmap",
  "gt-filter",
+ "gt-fmt",
  "gt-jam",
  "gt-loaded-files",
  "gt-types",
@@ -2751,6 +2754,7 @@ dependencies = [
  "rstest",
  "strum",
  "uom",
+ "vec1",
 ]
 
 [[package]]

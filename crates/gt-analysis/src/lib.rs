@@ -8,6 +8,9 @@
 //!
 //! - [`satellite_utilization`] - in-fix share of in-view satellites.
 //! - [`loss_of_lock`] - cycle-slip detection and slip-rate-per-minute.
+//! - [`clock_offset`] - isolated departures of the GPS−system clock offset.
 
+pub mod clock_offset;
 pub mod loss_of_lock;
+pub mod robust;
 pub mod satellite_utilization;

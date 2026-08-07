@@ -2,6 +2,7 @@
 //! ([`show_track_plot`]), and the submodules it orchestrates.
 
 mod chips;
+mod clock_excursion;
 mod jamming;
 mod legend;
 mod levels;
@@ -13,6 +14,7 @@ pub use chips::{ChannelVisibility, MetricVisibility};
 pub use legend::{LEGEND_DOCK_OFFSET, legend_is_docked};
 
 use chips::{MetricAvailability, SectionGates, loaded_channels, metric_filter_row};
+use clock_excursion::{ClockExcursionHover, ExcursionViewport, add_clock_excursions};
 use jamming::{
     JammingHover, JammingPlotCache, JammingViewport, jamming_available, sync_jamming_cache,
 };
@@ -465,6 +467,8 @@ pub fn show_track_plot(
     // Nearest snap error point under the pointer, same mechanism.
     let mut hovered_snap: Option<(f32, SnapErrorHover)> = None;
     let mut hovered_jamming: Option<(f32, JammingHover)> = None;
+    // Nearest clock offset excursion indicator under the pointer, same mechanism.
+    let mut hovered_excursion: Option<(f32, ClockExcursionHover)> = None;
     let show_snap_error = snap_error_available && state.metric_vis.field(MetricKind::SnapError);
 
     let mut plot = egui_plot::Plot::new("track_plot")
@@ -553,6 +557,9 @@ pub fn show_track_plot(
         } else {
             None
         };
+        // Unconditional: the excursion overlay gates itself on its metric's
+        // chip, and reading the hover position is a field access.
+        let excursion_pointer = plot_ui.response().hover_pos();
 
         // The hovered match's time band, before the series so the lines stay
         // on top. A `Span` rather than a polygon: it fills the plot's full
@@ -622,6 +629,19 @@ pub fn show_track_plot(
                 },
                 &mut hovered_jamming,
             );
+            add_clock_excursions(
+                plot_ui,
+                series,
+                track_label,
+                ExcursionViewport {
+                    x_min: eff_x_min,
+                    x_max: eff_x_max,
+                    metric_vis,
+                    dark_mode,
+                },
+                excursion_pointer,
+                &mut hovered_excursion,
+            );
             if show_anomalies {
                 add_util_anomalies(
                     plot_ui,
@@ -678,6 +698,7 @@ pub fn show_track_plot(
         hovered_anomaly,
         hovered_snap,
         hovered_jamming,
+        hovered_excursion,
     );
 
     state.legend_hover_file = show_file_legend_overlay(

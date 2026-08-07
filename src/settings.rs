@@ -186,6 +186,9 @@ pub struct AnalysisSettings {
     pub snr_drop_db: f32,
     /// Trailing window, in minutes, over which the slip rate is averaged.
     pub slip_window_min: f32,
+    /// Deviation from a track's baseline GPS/system clock offset, in seconds,
+    /// above which a sample counts as a clock offset excursion.
+    pub clock_excursion_threshold_s: f32,
 }
 
 impl Default for AnalysisSettings {
@@ -195,6 +198,7 @@ impl Default for AnalysisSettings {
             mark_masked_fix: true,
             snr_drop_db: gt_plot::DEFAULT_SNR_DROP_DB,
             slip_window_min: gt_plot::DEFAULT_SLIP_WINDOW_MIN,
+            clock_excursion_threshold_s: gt_plot::DEFAULT_CLOCK_EXCURSION_THRESHOLD_S,
         }
     }
 }
@@ -405,6 +409,10 @@ pub struct ProcessingSettings {
     /// Sensitivity of the clock-discontinuity test, in robust standard deviations
     /// from the track's median step.  Lower is more sensitive.
     pub clock_discontinuity_sigmas: f64,
+    /// Whether to flag isolated departures of the GPS/system clock offset as
+    /// clock-offset-excursion markers.  The threshold they use lives in
+    /// [`AnalysisSettings`], shared with the plot's off-scale indicators.
+    pub detect_clock_offset_excursions: bool,
     /// Whether to flag loss-of-lock (cycle slip) events as markers.  Slip
     /// detection reuses the elevation mask and SNR-drop threshold from
     /// [`AnalysisSettings`], so markers and the slip-rate plot stay consistent.
@@ -420,6 +428,7 @@ impl Default for ProcessingSettings {
             detect_gnss_fix_regained: true,
             detect_clock_discontinuities: true,
             clock_discontinuity_sigmas: gt_track_builder::DEFAULT_CLOCK_OUTLIER_SIGMAS,
+            detect_clock_offset_excursions: true,
             detect_slips: true,
         }
     }

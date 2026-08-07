@@ -22,6 +22,16 @@ pub const DEFAULT_SNR_DROP_DB: f32 = 10.0;
 /// Default averaging window, in minutes, over which the slip rate is computed.
 pub const DEFAULT_SLIP_WINDOW_MIN: f32 = 10.0;
 
+/// Default deviation from a track's baseline clock offset, in seconds, above
+/// which a sample is treated as a clock offset excursion.  Re-exported from the
+/// detector so the plot and the generated markers share one default.
+pub const DEFAULT_CLOCK_EXCURSION_THRESHOLD_S: f32 =
+    gt_analysis::clock_offset::DEFAULT_EXCURSION_THRESHOLD_S;
+
+/// Range the clock-excursion threshold may be set to, in seconds.  Shared by
+/// the settings control and the clamp applied to persisted settings on load.
+pub const CLOCK_EXCURSION_THRESHOLD_RANGE_S: std::ops::RangeInclusive<f32> = 1.0..=3600.0;
+
 /// Tunable parameters for the derived satellite-analysis series (utilization
 /// rate and slip rate).  Threaded into series building so a change re-derives
 /// the affected mipmaps.
@@ -38,6 +48,10 @@ pub struct AnalysisConfig {
     pub snr_drop_db: f32,
     /// Trailing window, in minutes, over which the slip rate is averaged.
     pub slip_window_min: f32,
+    /// Deviation from a track's baseline clock offset, in seconds, above which a
+    /// sample counts as a clock offset excursion: kept off the shared y-axis and
+    /// marked at the edge of the view instead.
+    pub clock_excursion_threshold_s: f32,
 }
 
 impl Default for AnalysisConfig {
@@ -46,6 +60,7 @@ impl Default for AnalysisConfig {
             elevation_mask_deg: DEFAULT_ELEVATION_MASK_DEG,
             snr_drop_db: DEFAULT_SNR_DROP_DB,
             slip_window_min: DEFAULT_SLIP_WINDOW_MIN,
+            clock_excursion_threshold_s: DEFAULT_CLOCK_EXCURSION_THRESHOLD_S,
         }
     }
 }

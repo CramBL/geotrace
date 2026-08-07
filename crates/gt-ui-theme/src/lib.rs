@@ -6,8 +6,9 @@ pub use gt_fmt::EM_DASH;
 /// U+2026 HORIZONTAL ELLIPSIS - truncation marker, and the button-label
 /// suffix for actions that need further input after the click (DESIGN.md).
 pub const ELLIPSIS: &str = "…";
-/// U+2212 MINUS SIGN - visually distinct from the ASCII hyphen-minus.
-pub const MINUS_SIGN: &str = "−";
+/// U+2212 MINUS SIGN - visually distinct from the ASCII hyphen-minus. Defined
+/// by [`gt_fmt`], which formats values for both the UI and non-UI callers.
+pub use gt_fmt::MINUS_SIGN;
 /// U+0394 GREEK CAPITAL LETTER DELTA - used as a mathematical difference symbol.
 pub const DELTA: &str = "Δ";
 /// U+00B0 DEGREE SIGN.
