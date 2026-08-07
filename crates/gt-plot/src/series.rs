@@ -21,7 +21,6 @@ pub(crate) struct TrackSeries {
     pub fi: usize,
     /// Track index within that file.
     pub ti: usize,
-    pub label: String,
     /// Precomputed `(x_min, x_max)` in Unix seconds, or `None` when the track
     /// has no points.  Computed once at build time from the first and last
     /// point timestamps - O(1) field access vs the previous `find_map` over
@@ -194,7 +193,7 @@ pub(crate) fn build_file_series(
     file.tracks
         .iter()
         .enumerate()
-        .map(|(ti, track)| build_track_series(fi, ti, file, track, analysis))
+        .map(|(ti, track)| build_track_series(fi, ti, track, analysis))
         .collect()
 }
 
@@ -207,7 +206,7 @@ pub(crate) fn build_all_series(files: &[LoadedFile], analysis: AnalysisConfig) -
             file.tracks
                 .iter()
                 .enumerate()
-                .map(move |(ti, track)| build_track_series(fi, ti, file, track, analysis))
+                .map(move |(ti, track)| build_track_series(fi, ti, track, analysis))
         })
         .collect()
 }
@@ -215,16 +214,9 @@ pub(crate) fn build_all_series(files: &[LoadedFile], analysis: AnalysisConfig) -
 fn build_track_series(
     fi: usize,
     ti: usize,
-    file: &LoadedFile,
     track: &gt_types::LoadedTrack,
     analysis: AnalysisConfig,
 ) -> TrackSeries {
-    let label = if file.tracks.len() == 1 {
-        file.metadata.filename.clone()
-    } else {
-        format!("{} T{}", file.metadata.filename, ti + 1)
-    };
-
     let mut total_seen_pts: Vec<[f64; 2]> = Vec::with_capacity(track.points.len());
     let mut total_fix_pts: Vec<[f64; 2]> = Vec::with_capacity(track.points.len());
     let mut gps_seen_pts: Vec<[f64; 2]> = Vec::new();
@@ -335,7 +327,6 @@ fn build_track_series(
     TrackSeries {
         fi,
         ti,
-        label,
         x_range,
         total_seen: MipMap::build(total_seen_pts),
         total_fix: MipMap::build(total_fix_pts),

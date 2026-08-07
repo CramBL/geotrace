@@ -32,6 +32,7 @@ use egui::Context;
 use gt_filter::GlobalFilter;
 use gt_jam::dataset::JamDataset;
 use gt_jam::day_selection::{DaySelection, EmptyReason};
+use gt_loaded_files::RecordingNames;
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
@@ -428,6 +429,10 @@ impl NavMap {
         &mut self,
         ui: &mut egui::Ui,
         files: &[LoadedFile],
+        // Per-file display names, resolved from the user's recording-name
+        // template, so the context menu names a recording the way the side
+        // panel and the plot do.
+        recording_names: &RecordingNames,
         visibility: &TrackDataVisibility,
         highlight: &mut MapHighlight,
         filter: &GlobalFilter,
@@ -864,9 +869,10 @@ impl NavMap {
                 ui.close();
                 return;
             };
-            ui.add(Label::new(
-                RichText::new(file.metadata.filename.as_str()).weak(),
-            ));
+            let name = recording_names
+                .get(point_ref.track.fi)
+                .unwrap_or(file.metadata.filename.as_str());
+            ui.add(Label::new(RichText::new(name).weak()));
             if file.tracks.len() > 1 {
                 ui.add(Label::new(
                     RichText::new(format!("#{}", point_ref.track.index.as_usize() + 1)).weak(),
@@ -2033,6 +2039,7 @@ mod snapshot_tests {
                     map.draw(
                         ui,
                         &files,
+                        &RecordingNames::default(),
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
@@ -2124,6 +2131,7 @@ mod snapshot_tests {
                     map.draw(
                         ui,
                         &files,
+                        &RecordingNames::default(),
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
@@ -2208,6 +2216,7 @@ mod snapshot_tests {
                     map.draw(
                         ui,
                         &files,
+                        &RecordingNames::default(),
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
@@ -2561,6 +2570,7 @@ mod snapshot_tests {
                     map.draw(
                         ui,
                         &files,
+                        &RecordingNames::default(),
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
@@ -2652,6 +2662,7 @@ mod snapshot_tests {
                     map.draw(
                         ui,
                         &files,
+                        &RecordingNames::default(),
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
@@ -2710,6 +2721,7 @@ mod snapshot_tests {
                     map.draw(
                         ui,
                         &files,
+                        &RecordingNames::default(),
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
@@ -2774,6 +2786,7 @@ mod snapshot_tests {
                     map.draw(
                         ui,
                         &files,
+                        &RecordingNames::default(),
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
@@ -2833,6 +2846,7 @@ mod snapshot_tests {
                     map.draw(
                         ui,
                         &files,
+                        &RecordingNames::default(),
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
@@ -2892,6 +2906,7 @@ mod snapshot_tests {
                     map.draw(
                         ui,
                         &files,
+                        &RecordingNames::default(),
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),
@@ -2961,6 +2976,7 @@ mod snapshot_tests {
                     let returned = map.draw(
                         ui,
                         &files,
+                        &RecordingNames::default(),
                         &visibility,
                         &mut highlight,
                         &gt_filter::GlobalFilter::default(),

@@ -131,12 +131,12 @@ pub(super) struct SnapErrorHover {
 }
 
 impl SnapErrorHover {
-    fn new(series: &TrackSeries, multi_track: bool, x_secs: f64) -> Self {
+    fn new(track_label: Option<&str>, x_secs: f64) -> Self {
         let time = DateTime::from_timestamp(x_secs as i64, 0)
             .map(|dt| dt.format("%H:%M:%S").to_string())
             .unwrap_or_default();
         Self {
-            track: multi_track.then(|| series.label.clone()),
+            track: track_label.map(ToOwned::to_owned),
             time,
         }
     }
@@ -227,8 +227,7 @@ fn select_run_levels(runs: &[MipMap], viewport: SnapErrorViewport) -> (Vec<Level
 pub(super) fn add_snap_error_series<'a>(
     plot_ui: &mut egui_plot::PlotUi<'a>,
     prefix: &str,
-    series: &TrackSeries,
-    multi_track: bool,
+    track_label: Option<&str>,
     cache: &'a SnapErrorPlotCache,
     viewport: SnapErrorViewport,
     pointer: Option<egui::Pos2>,
@@ -285,7 +284,7 @@ pub(super) fn add_snap_error_series<'a>(
         let screen = plot_ui.screen_from_plot(*point);
         let dist = screen.distance(ptr);
         if dist <= ANOMALY_HOVER_RADIUS_PX && nearest.as_ref().is_none_or(|(d, _)| dist < *d) {
-            *nearest = Some((dist, SnapErrorHover::new(series, multi_track, point.x)));
+            *nearest = Some((dist, SnapErrorHover::new(track_label, point.x)));
         }
     }
 }
