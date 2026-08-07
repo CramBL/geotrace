@@ -22,6 +22,10 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# Cargo caches, in every CI workflow: only trunk writes, and only one job per
+# `shared-key` group. A cache written on a PR ref is readable only by that PR yet
+# still evicts trunk's from the repo-wide 10 GB budget, and one writer per group
+# means one cache per OS rather than one per job.
 jobs:
   check:
     name: check / ${{ matrix.os }}
@@ -49,8 +53,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/trunk' }}
-          cache-on-failure: true
+          shared-key: app
+          save-if: false
 
       - name: check
         run: cargo check --workspace --features geotrace/self-update
@@ -82,8 +86,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/trunk' }}
-          cache-on-failure: true
+          shared-key: app
+          save-if: false
 
       - name: Clippy
         run: |
@@ -115,9 +119,11 @@ jobs:
         with:
           toolchain: stable
 
+      # Writer for the `app` group: the widest dependency set here.
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          shared-key: app
           save-if: ${{ github.ref == 'refs/heads/trunk' }}
           cache-on-failure: true
 
@@ -177,8 +183,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/trunk' }}
-          cache-on-failure: true
+          shared-key: app
+          save-if: false
 
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
@@ -224,8 +230,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/trunk' }}
-          cache-on-failure: true
+          shared-key: app
+          save-if: false
 
       - name: Examples
         run: bash scripts/examples.sh
@@ -249,8 +255,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/trunk' }}
-          cache-on-failure: true
+          shared-key: app
+          save-if: false
 
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
