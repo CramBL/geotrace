@@ -3034,8 +3034,7 @@ impl eframe::App for App {
                                 ui.spinner();
                                 ui.add(
                                     Label::new(RichText::new(&job.filename).strong()).truncate(),
-                                )
-                                .on_hover_text(&job.filename);
+                                );
                             },
                             |ui| {
                                 ui.label(RichText::new(format!("{elapsed:.1}s")).small().weak());
@@ -3073,8 +3072,7 @@ impl eframe::App for App {
                                 ui.add(
                                     Label::new(RichText::new(&job.filename).color(color).strong())
                                         .truncate(),
-                                )
-                                .on_hover_text(&job.filename);
+                                );
                             },
                             |ui| {
                                 ui.label(
@@ -3389,8 +3387,7 @@ impl eframe::App for App {
                     ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
                         for r in refs {
                             let label = format!("{}/{}", r.identity, r.group_name);
-                            ui.add(Label::new(label.as_str()).truncate())
-                                .on_hover_text(label.as_str());
+                            ui.add(Label::new(label.as_str()).truncate());
                         }
                     });
                     ui.add_space(4.0);
