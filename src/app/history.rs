@@ -183,12 +183,12 @@ impl PruneDialog {
                                 for r in refs {
                                     // The recordings about to be deleted -
                                     // selectable so one can be copied out
-                                    // before confirming.
+                                    // before confirming. A truncated label
+                                    // shows its full text on hover by itself.
                                     let label = format!("{}/{}", r.identity, r.group_name);
                                     ui.add(
                                         Label::new(label.as_str()).truncate().selectable(true),
-                                    )
-                                    .on_hover_text(label.as_str());
+                                    );
                                 }
                             });
 
@@ -1329,11 +1329,14 @@ fn identity_cell(
             }
             // The label itself senses clicks: it is the rename target. Text
             // selection stays off so a double click opens the editor rather
-            // than selecting a word under the pointer.
+            // than selecting a word under the pointer. The cell's hover leads
+            // with the full identity, so egui's elided-text tooltip would open
+            // a second tooltip saying the same thing.
             ui.add(
                 Label::new(display_name)
                     .truncate()
                     .selectable(false)
+                    .show_tooltip_when_elided(false)
                     .sense(egui::Sense::click()),
             )
         })
@@ -2510,6 +2513,47 @@ mod tests {
                 "the identity hover should mention {expected:?}",
             );
         }
+    }
+
+    /// An identity too long for its column opens one tooltip, not two: egui
+    /// offers the elided text its own tooltip, and the cell's hover already
+    /// leads with the full identity.
+    #[test]
+    fn hovering_a_truncated_identity_opens_a_single_tooltip() {
+        let long = "auto:a-recording-identity-far-too-long-for-the-identity-column.gtd";
+        let harness = history_harness(vec![entry_with_identity(long)]);
+        let mut h = TestHarness::builder()
+            .size(egui::vec2(520.0, 300.0))
+            .ui_state(show_history, harness);
+        for _ in 0..4 {
+            h.run();
+        }
+
+        hover_widget(&mut h, "a-recording-identity");
+
+        assert!(
+            h.inner
+                .query_by_label_contains("Double-click to rename")
+                .is_some(),
+            "probe: the identity hover should be open",
+        );
+        assert_eq!(
+            visible_tooltips(&h),
+            1,
+            "a truncated identity should not stack egui's elided-text tooltip \
+             on top of the cell's own hover",
+        );
+    }
+
+    /// How many tooltip layers are on screen.
+    fn visible_tooltips(h: &TestHarness<HistoryHarness>) -> usize {
+        h.inner.ctx.memory(|m| {
+            m.areas()
+                .visible_layer_ids()
+                .iter()
+                .filter(|layer| layer.order == egui::Order::Tooltip)
+                .count()
+        })
     }
 
     /// A recording with no channels says so on hover rather than leaving the

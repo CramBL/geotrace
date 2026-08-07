@@ -96,8 +96,7 @@ pub fn show_delete_confirmation(
                             NodeKey::File(fi) => {
                                 if let Some(file) = fi.get(loaded_files) {
                                     let name = file.metadata.filename.as_str();
-                                    ui.add(Label::new(name).truncate())
-                                        .on_hover_text(name);
+                                    ui.add(Label::new(name).truncate());
                                 }
                             }
                             NodeKey::Track(TrackRef { fi, index: ti }) => {
@@ -112,8 +111,7 @@ pub fn show_delete_confirmation(
                                         "  {} / #{}  {dist}  {dur}",
                                         file.metadata.filename, track.metadata.index
                                     );
-                                    ui.add(Label::new(label.as_str()).truncate())
-                                        .on_hover_text(label.as_str());
+                                    ui.add(Label::new(label.as_str()).truncate());
                                 }
                             }
                         }
@@ -374,8 +372,7 @@ pub fn show_orphaned_event_markers_popup(
                         ui.separator();
                     }
                     let line = format!("{}  {}", ts.format("%Y-%m-%d %H:%M:%S"), path);
-                    ui.add(Label::new(RichText::new(&line).monospace()).truncate())
-                        .on_hover_text(&line);
+                    ui.add(Label::new(RichText::new(&line).monospace()).truncate());
                     prev_ts = Some(*ts);
                 }
             });
@@ -405,8 +402,7 @@ pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<
         .resizable(true)
         .min_width(540.0)
         .show(ui.ctx(), |ui| {
-            ui.add(Label::new(RichText::new(filename.as_str()).strong()).truncate())
-                .on_hover_text(filename.as_str());
+            ui.add(Label::new(RichText::new(filename.as_str()).strong()).truncate());
             ui.separator();
             ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
                 Grid::new("load_warnings_grid")
@@ -460,8 +456,7 @@ pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<Recordi
         .show(ui.ctx(), |ui| {
             ui.add(
                 Label::new(RichText::new(details.metadata.filename.as_str()).strong()).truncate(),
-            )
-            .on_hover_text(details.metadata.filename.as_str());
+            );
             ui.separator();
             ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
                 gt_side_panel::widgets::metadata_detail_rows(

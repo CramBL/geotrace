@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Hovering a shortened name shows one tooltip instead of two stacked ones.
+
 ## 0.11.0 - 2026-08-05
 
 ### Added
