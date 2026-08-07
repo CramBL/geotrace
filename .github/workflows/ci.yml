@@ -22,6 +22,20 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# Cargo cache policy, shared by every CI workflow.
+#
+# GitHub caches are branch-scoped and compete for one 10 GB repo-wide LRU budget.
+# A cache written on a pull-request ref is readable only by that same PR, yet it
+# still evicts the trunk entries every PR restores from, so only trunk writes.
+#
+# Within a `shared-key` group exactly one job writes: the one compiling the widest
+# set of dependencies. Everyone else restores it. A group therefore costs one
+# cache per OS rather than one per job, and the restore-only jobs get a fuller
+# cache than they could fill themselves.
+#
+# Groups: `app` here (writer: test) and in ci_extras.yml, `arch-ubuntu` (writer:
+# arch), `sdk-c` / `sdk-py` / `sdk-msrv` in ci_sdk.yml, plus the single-job
+# `self-update` and `cross-32bit`.
 jobs:
   check:
     name: check / ${{ matrix.os }}
@@ -49,8 +63,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/trunk' }}
-          cache-on-failure: true
+          shared-key: app
+          save-if: false
 
       - name: check
         run: cargo check --workspace --features geotrace/self-update
@@ -82,8 +96,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/trunk' }}
-          cache-on-failure: true
+          shared-key: app
+          save-if: false
 
       - name: Clippy
         run: |
@@ -115,9 +129,12 @@ jobs:
         with:
           toolchain: stable
 
+      # The writer for the `app` group: the widest dependency set in the workflow
+      # (dev-dependencies plus the self-update feature).
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          shared-key: app
           save-if: ${{ github.ref == 'refs/heads/trunk' }}
           cache-on-failure: true
 
@@ -177,8 +194,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/trunk' }}
-          cache-on-failure: true
+          shared-key: app
+          save-if: false
 
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
@@ -224,8 +241,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/trunk' }}
-          cache-on-failure: true
+          shared-key: app
+          save-if: false
 
       - name: Examples
         run: bash scripts/examples.sh
@@ -249,8 +266,8 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/trunk' }}
-          cache-on-failure: true
+          shared-key: app
+          save-if: false
 
       - name: Install tools
         uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8

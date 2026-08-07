@@ -97,8 +97,13 @@ jobs:
         with:
           toolchain: stable
 
+      # Restore-only: ci_sdk.yml's build-c-lib writes the `sdk-c` group. Cache
+      # keys are repo-wide, not per workflow, so this hits what it saved.
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: sdk-c
+          save-if: false
 
       - name: Build geotrace-c (shared)
         run: cargo build -p geotrace-c --release
@@ -184,8 +189,13 @@ jobs:
         with:
           toolchain: stable
 
+      # Restore-only: ci_sdk.yml's build-c-lib writes the `sdk-c` group. Cache
+      # keys are repo-wide, not per workflow, so this hits what it saved.
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: sdk-c
+          save-if: false
 
       - name: Build geotrace-c (static)
         run: cargo build -p geotrace-c --release
