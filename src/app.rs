@@ -50,7 +50,7 @@ use egui_tiles::{
 use gt_filter::GlobalFilter;
 use gt_jam::transport as jam_transport;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
-use gt_map::{MapContextAction, MapLayer, NavMap};
+use gt_map::{MapContextAction, MapDrawContext, MapLayer, NavMap};
 use gt_plot::PlotState;
 use gt_query_run::{RunInputs, SnapErrorValues};
 use gt_side_panel::{
@@ -2387,24 +2387,26 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     RecordingNames::resolve(s.loaded_files.view(), &s.recording_name_template);
                 if let Some(action) = self.map.draw(
                     ui,
-                    &s.loaded_files,
-                    &recording_names,
-                    s.tree.visibility(),
-                    &mut s.highlight,
-                    &s.filter,
-                    &mut s.display_mask,
-                    &mut s.sky_glyph_variant,
-                    &mut s.point_window_folds,
-                    s.tree.event_marker_visibility(),
-                    s.tree.generated_marker_visibility(),
-                    self.query_matches,
-                    Some(self.snapped_tracks),
-                    self.jamming_dataset,
-                    self.jamming_day,
-                    self.jamming_empty,
-                    center_req,
-                    zoom_to_visible,
-                    popup_pos,
+                    MapDrawContext {
+                        files: &s.loaded_files,
+                        recording_names: &recording_names,
+                        snapped_tracks: Some(self.snapped_tracks),
+                        jamming_dataset: self.jamming_dataset,
+                        query_matches: self.query_matches,
+                        empty_reason: self.jamming_empty,
+                        filter: &s.filter,
+                        visibility: s.tree.visibility(),
+                        event_marker_visibility: s.tree.event_marker_visibility(),
+                        generated_marker_visibility: s.tree.generated_marker_visibility(),
+                        display_mask: &mut s.display_mask,
+                        day_selection: &mut *self.jamming_day,
+                        highlight: &mut s.highlight,
+                        sky_glyph_variant: &mut s.sky_glyph_variant,
+                        point_window_folds: &mut s.point_window_folds,
+                        center_request: center_req,
+                        zoom_to_visible,
+                        sticky_pos_override: popup_pos,
+                    },
                 ) {
                     match action {
                         MapContextAction::ShowOnlyTrack(track) => {
