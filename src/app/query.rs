@@ -306,7 +306,7 @@ impl QueryWindow {
     fn caret_byte(&self, ctx: &egui::Context, editor_id: egui::Id) -> usize {
         let caret_char = TextEdit::load_state(ctx, editor_id)
             .and_then(|state| state.cursor.char_range())
-            .map_or(0, |range| range.primary.index);
+            .map_or(egui::text::CharIndex::ZERO, |range| range.primary.index);
         char_to_byte(self.session.text(), caret_char)
     }
 
@@ -1571,9 +1571,9 @@ fn points_of(files: &[LoadedFile], track_ref: TrackRef) -> Option<&[NavPoint]> {
 /// Byte offset of the `char_index`-th character, or the text length when the
 /// index is at or past the end. The egui caret is a char index; the query
 /// position model works in bytes.
-fn char_to_byte(text: &str, char_index: usize) -> usize {
+fn char_to_byte(text: &str, char_index: egui::text::CharIndex) -> usize {
     text.char_indices()
-        .nth(char_index)
+        .nth(char_index.0)
         .map_or(text.len(), |(byte, _)| byte)
 }
 

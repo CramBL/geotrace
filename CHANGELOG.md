@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Updated egui to 0.36 (along with egui_plot, egui_kittest and wgpu 30).
+
 ### Added
 
 - A clock offset excursion - one sample whose GPS/system offset jumps away and straight back, as when a receiver resumes after a recording gap - no longer flattens the plot's y-axis. It is marked at the edge of the view with its real offset on hover, and on the map. Threshold and on/off are in Settings.

@@ -2478,7 +2478,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                 }
             }
             MainPane::Plot => {
-                egui::Panel::top("plot_header").show_inside(ui, |ui| {
+                egui::Panel::top("plot_header").show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
@@ -2590,10 +2590,17 @@ impl eframe::App for App {
 
         let dropped = ui.ctx().input(|i| i.raw.dropped_files.clone());
         for file in dropped {
-            if let Some(path) = &file.path {
-                self.spawn_load_path(path.clone());
-            } else if let Some(bytes) = file.bytes.clone() {
-                self.handle_dropped_bytes(bytes, &file.name);
+            let path = file.path();
+            // Native drops carry an absolute path, web drops only a relative
+            // file name plus bytes read through the handle.
+            if path.is_absolute() {
+                self.spawn_load_path(path.to_path_buf());
+            } else if let Ok(bytes) = file.bytes() {
+                let name = path.file_name().map_or_else(
+                    || "dropped file".to_owned(),
+                    |n| n.to_string_lossy().into_owned(),
+                );
+                self.handle_dropped_bytes(bytes.into(), &name);
             }
         }
 
@@ -2609,7 +2616,7 @@ impl eframe::App for App {
             }
         }
 
-        egui::Panel::top("top_panel").show_inside(ui, |ui| {
+        egui::Panel::top("top_panel").show(ui, |ui| {
             MenuBar::new().ui(ui, |ui| {
                 // Left zone - the File menu
                 ui.menu_button("File", |ui| {
@@ -2758,7 +2765,7 @@ impl eframe::App for App {
         if !detached {
             egui::Panel::left("track_data_panel")
                 .min_size(240.0)
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     let mut refmut = self.shared.borrow_mut();
                     let s = &mut *refmut;
                     let loaded_files = s.loaded_files.view();
@@ -2876,7 +2883,7 @@ impl eframe::App for App {
         };
         let jamming_query_values = jamming::JammingScheduler::query_values(&jamming_series);
 
-        CentralPanel::default().show_inside(ui, |ui| {
+        CentralPanel::default().show(ui, |ui| {
             let panel_rect = ui.max_rect();
             let mut s = self.shared.borrow_mut();
             let plot_hover_scope = match s.highlight.hover {

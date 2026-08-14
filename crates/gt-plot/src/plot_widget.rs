@@ -70,17 +70,24 @@ fn recording_name(names: &RecordingNames, fi: usize) -> &str {
 
 /// The plot's hover tooltip: the hovered line's name, the time, and the value.
 ///
-/// egui_plot passes an empty name when the cursor is over the canvas without
-/// snapping to a line; the name line is then left out rather than drawn blank.
-fn hover_label(name: &str, point: &egui_plot::PlotPoint) -> String {
+/// Away from any line the name line is left out rather than drawn blank.
+fn hover_label(pos: &egui_plot::HoverPosition<'_>) -> Option<String> {
+    let (name, point) = match pos {
+        egui_plot::HoverPosition::NearDataPoint {
+            plot_name,
+            position,
+            ..
+        } => (*plot_name, position),
+        egui_plot::HoverPosition::Elsewhere { position } => ("", position),
+    };
     let time = DateTime::from_timestamp(point.x as i64, 0)
         .map(|dt| dt.format("%H:%M:%S").to_string())
         .unwrap_or_default();
     let reading = format!("{time}\n{:.2}", point.y);
     if name.is_empty() {
-        reading
+        Some(reading)
     } else {
-        format!("{name}\n{reading}")
+        Some(format!("{name}\n{reading}"))
     }
 }
 
@@ -820,17 +827,25 @@ mod label_tests {
 
     #[test]
     fn a_snapped_point_is_captioned_by_its_line() {
+        let pos = egui_plot::HoverPosition::NearDataPoint {
+            plot_name: "Morning ride: Satellites seen",
+            position: PlotPoint::new(T, 12.0),
+            index: 0,
+        };
         assert_eq!(
-            hover_label("Morning ride: Satellites seen", &PlotPoint::new(T, 12.0)),
-            "Morning ride: Satellites seen\n12:00:00\n12.00"
+            hover_label(&pos).as_deref(),
+            Some("Morning ride: Satellites seen\n12:00:00\n12.00")
         );
     }
 
     #[test]
     fn an_unsnapped_cursor_leaves_out_the_name_line() {
+        let pos = egui_plot::HoverPosition::Elsewhere {
+            position: PlotPoint::new(T, 12.0),
+        };
         assert_eq!(
-            hover_label("", &PlotPoint::new(T, 12.0)),
-            "12:00:00\n12.00",
+            hover_label(&pos).as_deref(),
+            Some("12:00:00\n12.00"),
             "an empty name must not leave a blank first line"
         );
     }

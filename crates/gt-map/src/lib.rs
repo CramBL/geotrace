@@ -1133,13 +1133,13 @@ fn show_point_window_body(
     sky: &crate::tpv_renderer::SkySection<'_>,
     folds: &mut PointWindowFolds,
 ) -> bool {
-    egui::Panel::bottom("sticky_point_hint").show_inside(ui, |ui| {
+    egui::Panel::bottom("sticky_point_hint").show(ui, |ui| {
         ui.add_space(4.0);
         ui.label(RichText::new("Click to deselect").small().weak());
     });
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             crate::tpv_renderer::show_sticky_tpv_content(ui, point, sky, folds)
         })
         .inner
