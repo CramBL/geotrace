@@ -3,7 +3,6 @@ name = "geotrace"
 version.workspace = true
 description.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 # The GUI app ships as prebuilt binaries via dist, never to crates.io (it also
 # has path dependencies, which can't be published). exclude keeps
@@ -14,6 +13,7 @@ homepage.workspace = true
 authors.workspace = true
 repository.workspace = true
 readme.workspace = true
+rust-version.workspace = true
 
 # publish = false (above) hides this package from dist by default. Opt the binary
 # back in so dist still builds and releases the GUI app.
@@ -68,7 +68,7 @@ members = [
 description = "High-performance GNSS data visualizer, with advanced debugging and anomaly detection capabitilies"
 version = "0.11.0"
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.95.0"
 license = "AGPL-3.0-only"
 authors = ["Marc Beck König <mgit@tuta.io>"]
 homepage = "https://github.com/CramBL/geotrace"
@@ -81,14 +81,14 @@ bytemuck = { version = "1", features = ["derive"] }
 chrono = { version = "0.4.44", default-features = false, features = ["std", "now", "clock", "oldtime"] }
 criterion = "0.8"
 dirs = "6"
-eframe = { version = "0.34.3", default-features = false, features = ["default_fonts", "wgpu", "wayland"] }
-egui = "0.34.3"
-egui-phosphor = "0.12.0"
-egui-wgpu = "0.34.3"
-egui_extras = { version = "0.34.3", features = ["datepicker"] }
-egui_kittest = { version = "0.34.3", features = ["eframe", "wgpu", "snapshot"] }
-egui_plot = "0.35.0"
-egui_tiles = "0.15"
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "wayland"] }
+egui = "0.36"
+egui-phosphor = "0.13.0"
+egui-wgpu = "0.36"
+egui_extras = { version = "0.36", features = ["datepicker"] }
+egui_kittest = { version = "0.36", features = ["eframe", "wgpu", "snapshot"] }
+egui_plot = "0.37.0"
+egui_tiles = "0.17"
 env_logger = "0.11.10"
 geo = "0.33.1"
 geo-types = "0.7.19"
@@ -132,7 +132,7 @@ thiserror = "2"
 uom = "0.38.0"
 uuid = { version = "1", features = ["v4"] }
 vec1 = "1"
-walkers = "0.53.0"
+walkers = "0.58.0"
 
 [workspace.lints.rust]
 missing_copy_implementations = "warn"
@@ -323,6 +323,10 @@ gt-test-utils = { path = "crates/gt-test-utils", features = ["snapshot"] }
 insta.workspace = true
 rstest.workspace = true
 tempfile.workspace = true
+
+[patch.crates-io]
+egui-phosphor = { git = "https://github.com/CramBL/egui-phosphor.git" }
+egui-notify = { git = "https://github.com/CramBL/egui-notify.git" }
 
 # The self-updater end-to-end test only builds with the updater compiled in, so
 # the `--update` flag it drives exists. See tests/self_update.rs.

@@ -1184,42 +1184,43 @@ fn settled_docked_panel_width(state: State) -> f32 {
         .size(egui::vec2(1200.0, 600.0))
         .ui_state(
             move |ui, s: &mut State| {
-                CentralPanel::default().show_inside(ui, |ui| {
-                    let resp = egui::Panel::left("track_data_panel")
-                        .min_size(240.0)
-                        .show_inside(ui, |ui| {
-                            let mut ctx = PanelContext {
-                                loaded_files: s.files.view(),
-                                tree: &mut s.tree,
-                                highlight: &mut s.highlight,
-                                filter: &mut s.filter,
-                                filter_state: &mut s.filter_state,
-                                map_center_request: &mut s.map_center,
-                                popup_pos_request: &mut s.popup_pos,
-                                query_matches: None,
-                                zoom_to_visible_request: &mut s.zoom_to_visible,
-                                warnings_request: &mut s.warnings_request,
-                                clear_query_request: &mut s.clear_query_request,
-                                display_mask: s.display_mask,
-                                recording_names: &RecordingNames::resolve(
-                                    s.files.view(),
-                                    &s.recording_name_template,
-                                ),
-                                metadata_request: &mut s.metadata_request,
-                                snap: SnapPanelView {
-                                    offline: s.snap_offline,
-                                    consent_pending: s.snap_consent_pending,
-                                    rows: &s.snap_rows,
-                                    costing_choices: &s.snap_costing_choices,
-                                    progress: &s.snap_progress,
-                                },
-                                snap_request: &mut s.snap_request,
-                                snap_visibility_request: &mut s.snap_visibility_request,
-                                snap_costing_request: &mut s.snap_costing_request,
-                                sky_trails_request: &mut s.sky_trails_request,
-                            };
-                            show_side_panel(ui, &mut ctx);
-                        });
+                CentralPanel::default().show(ui, |ui| {
+                    let resp =
+                        egui::Panel::left("track_data_panel")
+                            .min_size(240.0)
+                            .show(ui, |ui| {
+                                let mut ctx = PanelContext {
+                                    loaded_files: s.files.view(),
+                                    tree: &mut s.tree,
+                                    highlight: &mut s.highlight,
+                                    filter: &mut s.filter,
+                                    filter_state: &mut s.filter_state,
+                                    map_center_request: &mut s.map_center,
+                                    popup_pos_request: &mut s.popup_pos,
+                                    query_matches: None,
+                                    zoom_to_visible_request: &mut s.zoom_to_visible,
+                                    warnings_request: &mut s.warnings_request,
+                                    clear_query_request: &mut s.clear_query_request,
+                                    display_mask: s.display_mask,
+                                    recording_names: &RecordingNames::resolve(
+                                        s.files.view(),
+                                        &s.recording_name_template,
+                                    ),
+                                    metadata_request: &mut s.metadata_request,
+                                    snap: SnapPanelView {
+                                        offline: s.snap_offline,
+                                        consent_pending: s.snap_consent_pending,
+                                        rows: &s.snap_rows,
+                                        costing_choices: &s.snap_costing_choices,
+                                        progress: &s.snap_progress,
+                                    },
+                                    snap_request: &mut s.snap_request,
+                                    snap_visibility_request: &mut s.snap_visibility_request,
+                                    snap_costing_request: &mut s.snap_costing_request,
+                                    sky_trails_request: &mut s.sky_trails_request,
+                                };
+                                show_side_panel(ui, &mut ctx);
+                            });
                     width_probe.set(resp.response.rect.width());
                 });
             },

@@ -304,7 +304,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     // The progress strip pins to the panel bottom as an inner panel; the
     // file tree scrolls in the remaining central space.
     if ctx.snap.progress.active() {
-        egui::Panel::bottom("snap_progress_strip").show_inside(ui, |ui| {
+        egui::Panel::bottom("snap_progress_strip").show(ui, |ui| {
             snap_progress_strip(ui, ctx.snap, ctx.recording_names, ctx.files());
         });
     }
@@ -321,7 +321,7 @@ pub fn show_side_panel(ui: &mut egui::Ui, ctx: &mut PanelContext<'_>) {
     };
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {

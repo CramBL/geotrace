@@ -116,7 +116,7 @@ impl<'a, State> TestHarness<'a, State> {
         &mut self,
         name: &str,
         threshold: f32,
-        failed_pixel_count_threshold: usize,
+        max_failed_pixels: usize,
     ) {
         if on_windows_ci() {
             return;
@@ -125,7 +125,7 @@ impl<'a, State> TestHarness<'a, State> {
             snap_name(name),
             &SnapshotOptions::new()
                 .threshold(threshold)
-                .failed_pixel_count_threshold(failed_pixel_count_threshold),
+                .max_failed_pixels(max_failed_pixels),
         );
     }
 }
@@ -212,8 +212,10 @@ impl<'a> TestHarnessBuilder<'a> {
     where
         F: FnMut(&mut egui::Ui) + 'a,
     {
-        let render_state =
-            egui_kittest::wgpu::create_render_state(egui_kittest::wgpu::default_wgpu_setup());
+        let render_state = egui_kittest::wgpu::create_render_state(
+            egui_kittest::wgpu::default_wgpu_setup(),
+            egui_wgpu::RendererOptions::PREDICTABLE,
+        );
         let renderer =
             egui_kittest::wgpu::WgpuTestRenderer::from_render_state(render_state.clone());
         let mut builder = Harness::builder()
@@ -243,8 +245,10 @@ impl<'a> TestHarnessBuilder<'a> {
         F: FnMut(&mut egui::Ui, &mut State) + 'a,
         State: 'static,
     {
-        let render_state =
-            egui_kittest::wgpu::create_render_state(egui_kittest::wgpu::default_wgpu_setup());
+        let render_state = egui_kittest::wgpu::create_render_state(
+            egui_kittest::wgpu::default_wgpu_setup(),
+            egui_wgpu::RendererOptions::PREDICTABLE,
+        );
         let renderer =
             egui_kittest::wgpu::WgpuTestRenderer::from_render_state(render_state.clone());
         let mut builder = Harness::builder()

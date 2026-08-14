@@ -2019,19 +2019,21 @@ mod tests {
             "growing the window left a gap on the right - identity did not fill it",
         );
 
-        // Shrink it back down.
+        // Shrink it back down. egui clamps the drag at the content's minimum
+        // width (measured by a sizing pass when the drag starts), so stay well
+        // above that floor: the identity-fill invariant is what matters here.
         let grown = window_rect(&h);
         drag(
             &mut h,
             egui::pos2(grown.right() - 1.0, grown.bottom() - 1.0),
-            egui::vec2(-400.0, 0.0),
+            egui::vec2(-80.0, 0.0),
             8,
         );
         for _ in 0..3 {
             h.step();
         }
         assert!(
-            window_rect(&h).width() < grown.width() - 200.0,
+            window_rect(&h).width() < grown.width() - 40.0,
             "the window did not shrink: {:.0}px -> {:.0}px",
             grown.width(),
             window_rect(&h).width(),

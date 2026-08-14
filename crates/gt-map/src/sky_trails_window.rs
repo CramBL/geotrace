@@ -1182,7 +1182,7 @@ mod tests {
         let window_size = |h: &TestHarness<'_>| {
             h.inner
                 .ctx
-                .memory(|m| m.area_rect(egui::Id::new("Sky trails")))
+                .memory(|m| m.area_rect(egui::Id::new(Some("Sky trails"))))
                 .map(|r| r.size())
         };
 

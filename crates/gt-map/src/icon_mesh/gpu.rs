@@ -204,7 +204,7 @@ pub fn install(
             module: &shader,
             entry_point: Some("vs_main"),
             buffers: &[
-                wgpu::VertexBufferLayout {
+                Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<GpuTemplateVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &wgpu::vertex_attr_array![
@@ -212,8 +212,8 @@ pub fn install(
                         1 => Unorm8x4,
                         2 => Uint32,
                     ],
-                },
-                wgpu::VertexBufferLayout {
+                }),
+                Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<GpuIconInstance>() as u64,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &wgpu::vertex_attr_array![
@@ -223,7 +223,7 @@ pub fn install(
                         6 => Unorm8x4,
                         7 => Unorm8x4,
                     ],
-                },
+                }),
             ],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
         },
