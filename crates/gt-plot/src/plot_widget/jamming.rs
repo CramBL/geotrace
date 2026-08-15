@@ -17,7 +17,7 @@ use crate::series::TrackSeries;
 use super::chips::MetricKindUi;
 
 use super::levels::track_target;
-use super::lines::{add_line, series_track_ref, visible_by_x};
+use super::lines::{NearestHoverLabel, PlotHoverLabel, add_line, series_track_ref, visible_by_x};
 
 /// One track's interference line, rebuilt only when its source changes.
 #[derive(Debug, Clone)]
@@ -209,7 +209,7 @@ pub(super) fn add_jamming_series<'a>(
     cache: &'a JammingPlotCache,
     viewport: JammingViewport,
     style: JammingStyle,
-    nearest: &mut Option<(f32, JammingHover)>,
+    nearest: &mut NearestHoverLabel,
 ) {
     let JammingTrack {
         track_label,
@@ -242,8 +242,10 @@ pub(super) fn add_jamming_series<'a>(
     );
     for (point, counts) in visible {
         let distance = plot_ui.screen_from_plot(*point).distance(pointer);
-        if distance <= HOVER_RADIUS_PX && nearest.as_ref().is_none_or(|(d, _)| distance < *d) {
-            *nearest = Some((distance, JammingHover::new(track_label, *point, *counts)));
+        if distance <= HOVER_RADIUS_PX {
+            nearest.offer(distance, || {
+                PlotHoverLabel::Jamming(JammingHover::new(track_label, *point, *counts))
+            });
         }
     }
 }

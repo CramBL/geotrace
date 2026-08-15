@@ -1,6 +1,5 @@
 //! The metric and channel line pass: one line per enabled metric and
-//! channel component, plus the anomaly markers and the custom nearest-point
-//! tooltips.
+//! channel component, plus the anomaly markers and the custom hover labels.
 
 use std::collections::HashMap;
 
@@ -50,8 +49,8 @@ pub(super) fn visible_by_x<T>(
 pub(super) const ANOMALY_HOVER_RADIUS_PX: f32 = 7.0;
 /// On-plot radius of the anomaly cross marker.
 pub(super) const ANOMALY_MARKER_RADIUS: f32 = 4.0;
-/// Gap between the pointer and the anomaly hover tooltip.
-const ANOMALY_TOOLTIP_GAP: f32 = 12.0;
+/// Gap between the pointer and the custom hover label.
+const HOVER_LABEL_TOOLTIP_GAP: f32 = 12.0;
 /// Add all metric lines for one track to the plot using pre-computed level selections.
 ///
 /// When `hovered_chip` is `Some(kind)`, that metric is highlighted (double stroke
@@ -85,10 +84,9 @@ pub(super) fn add_series_lines<'a>(
     snap_error: Option<&'a SnapErrorPlotCache>,
     snap_viewport: SnapErrorViewport,
     snap_pointer: Option<egui::Pos2>,
-    hovered_snap: &mut Option<(f32, SnapErrorHover)>,
     jamming: Option<&'a JammingPlotCache>,
     jamming_viewport: JammingViewport,
-    hovered_jamming: &mut Option<(f32, JammingHover)>,
+    nearest: &mut NearestHoverLabel,
 ) {
     let prefix = track_label.map_or_else(String::new, |label| format!("{label}: "));
     let focused = series_matches_hover_scope(series, hover_scope);
@@ -153,7 +151,7 @@ pub(super) fn add_series_lines<'a>(
             snap_cache,
             snap_viewport,
             snap_pointer,
-            hovered_snap,
+            nearest,
             SnapErrorStyle {
                 color,
                 style: line_style,
@@ -187,7 +185,7 @@ pub(super) fn add_series_lines<'a>(
                 width: line_width,
                 highlighted,
             },
-            hovered_jamming,
+            nearest,
         );
     }
 
@@ -237,50 +235,89 @@ pub(super) fn add_series_lines<'a>(
     }
 }
 
-/// Surface the custom nearest-point hovers - the masked-out satellites of an
-/// anomaly marker, and the kind and error of a snap point - as tooltips
-/// anchored at the pointer. These items suppress egui_plot's own labels.
-pub(super) fn show_nearest_point_tooltips(
+/// One custom hover label, for the plot items whose message egui_plot's own
+/// label cannot carry.
+pub(super) enum PlotHoverLabel {
+    Anomaly(AnomalyHover),
+    SnapError(SnapErrorHover),
+    Jamming(JammingHover),
+    ClockExcursion(ClockExcursionHover),
+}
+
+impl PlotHoverLabel {
+    fn show(&self, ui: &mut egui::Ui) {
+        match self {
+            Self::Anomaly(hover) => hover.show(ui),
+            Self::SnapError(hover) => hover.show(ui),
+            Self::Jamming(hover) => hover.show(ui),
+            Self::ClockExcursion(hover) => hover.show(ui),
+        }
+    }
+}
+
+/// Keeps the closest of the candidates offered to it, by pixel distance from
+/// the pointer.
+pub(super) struct NearestCandidate<T> {
+    closest: Option<(f32, T)>,
+}
+
+impl<T> Default for NearestCandidate<T> {
+    fn default() -> Self {
+        Self { closest: None }
+    }
+}
+
+impl<T> NearestCandidate<T> {
+    /// The losers never pay for their text formatting: `candidate` is built
+    /// only when it beats what is already held.
+    pub(super) fn offer(&mut self, distance_px: f32, candidate: impl FnOnce() -> T) {
+        if self
+            .closest
+            .as_ref()
+            .is_none_or(|(closest, _)| distance_px < *closest)
+        {
+            self.closest = Some((distance_px, candidate()));
+        }
+    }
+
+    pub(super) fn has_candidate(&self) -> bool {
+        self.closest.is_some()
+    }
+
+    pub(super) fn take(self) -> Option<T> {
+        self.closest.map(|(_, candidate)| candidate)
+    }
+}
+
+/// One slot the custom hover labels of every series and every recording
+/// compete for: they all anchor at the pointer, where a second one would draw
+/// on top of the first.
+pub(super) type NearestHoverLabel = NearestCandidate<PlotHoverLabel>;
+
+/// Surface the closest custom hover label - the masked-out satellites of an
+/// anomaly marker, an unsnapped point's rejection, an interference fix's
+/// counts, or a clock excursion's real offset - as a tooltip anchored at the
+/// pointer. This is the only label at the cursor: egui_plot's cursor label
+/// stands down for the frame a candidate is offered.
+pub(super) fn show_nearest_hover_label(
     ui: &egui::Ui,
     response: &egui::Response,
-    hovered_anomaly: Option<(f32, AnomalyHover)>,
-    hovered_snap: Option<(f32, SnapErrorHover)>,
-    hovered_jamming: Option<(f32, JammingHover)>,
-    hovered_excursion: Option<(f32, ClockExcursionHover)>,
+    nearest: NearestHoverLabel,
 ) {
     if !response.hovered() {
         return;
     }
-    if let Some((_, hover)) = hovered_excursion {
-        pointer_tooltip(ui, response, "clock_excursion_tooltip", |ui| hover.show(ui));
-    }
-    if let Some((_, hover)) = hovered_anomaly {
-        pointer_tooltip(ui, response, "util_anomaly_tooltip", |ui| hover.show(ui));
-    }
-    if let Some((_, hover)) = hovered_snap {
-        pointer_tooltip(ui, response, "snap_error_tooltip", |ui| hover.show(ui));
-    }
-    if let Some((_, hover)) = hovered_jamming {
-        pointer_tooltip(ui, response, "jamming_tooltip", |ui| hover.show(ui));
-    }
-}
-
-/// A custom tooltip anchored at the pointer, for the nearest-point hovers
-/// (anomaly markers, snap error points) that suppress egui_plot's own labels.
-fn pointer_tooltip(
-    ui: &egui::Ui,
-    response: &egui::Response,
-    id: &str,
-    add_contents: impl FnOnce(&mut egui::Ui),
-) {
+    let Some(label) = nearest.take() else {
+        return;
+    };
     Tooltip::always_open(
         ui.ctx().clone(),
         response.layer_id,
-        egui::Id::new(id),
+        egui::Id::new("plot_hover_label"),
         egui::PopupAnchor::Pointer,
     )
-    .gap(ANOMALY_TOOLTIP_GAP)
-    .show(add_contents);
+    .gap(HOVER_LABEL_TOOLTIP_GAP)
+    .show(|ui| label.show(ui));
 }
 
 /// The [`TrackRef`] a series was built from, for keying into per-track
@@ -387,7 +424,7 @@ pub(super) fn add_util_anomalies<'a>(
     track_label: Option<&str>,
     x_range: std::ops::RangeInclusive<f64>,
     pointer: Option<egui::Pos2>,
-    nearest: &mut Option<(f32, AnomalyHover)>,
+    nearest: &mut NearestHoverLabel,
     dark_mode: bool,
 ) {
     // Anomalies are stored in ascending epoch order, so clip to the visible
@@ -422,15 +459,52 @@ pub(super) fn add_util_anomalies<'a>(
     for anomaly in visible {
         let screen = plot_ui.screen_from_plot(PlotPoint::new(anomaly.t, anomaly.value));
         let dist = screen.distance(ptr);
-        if dist <= ANOMALY_HOVER_RADIUS_PX && nearest.as_ref().is_none_or(|(d, _)| dist < *d) {
-            *nearest = Some((dist, AnomalyHover::new(track_label, anomaly)));
+        if dist <= ANOMALY_HOVER_RADIUS_PX {
+            nearest.offer(dist, || {
+                PlotHoverLabel::Anomaly(AnomalyHover::new(track_label, anomaly))
+            });
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::visible_by_x;
+    use super::{NearestCandidate, visible_by_x};
+
+    /// Every series of every recording offers into one slot, so the closest
+    /// candidate is the only one left to draw - the label anchors at the
+    /// pointer, where a second one would land on top of it.
+    #[test]
+    fn only_the_closest_candidate_survives() {
+        let mut nearest = NearestCandidate::default();
+        nearest.offer(9.0, || "first recording's interference fix");
+        nearest.offer(3.0, || "second recording's interference fix");
+        nearest.offer(7.0, || "unsnapped point");
+        assert_eq!(nearest.take(), Some("second recording's interference fix"));
+    }
+
+    #[test]
+    fn nothing_offered_leaves_no_label() {
+        assert_eq!(NearestCandidate::<&str>::default().take(), None);
+    }
+
+    /// A candidate that cannot win never builds its payload, so a label's
+    /// text formatting costs nothing until it is the one that draws.
+    #[test]
+    fn a_losing_candidate_is_never_built() {
+        let builds = std::cell::Cell::new(0_u32);
+        let mut nearest = NearestCandidate::default();
+        nearest.offer(3.0, || {
+            builds.set(builds.get() + 1);
+            "closest"
+        });
+        nearest.offer(8.0, || {
+            builds.set(builds.get() + 1);
+            "further away"
+        });
+        assert_eq!(builds.get(), 1);
+        assert_eq!(nearest.take(), Some("closest"));
+    }
 
     /// The viewport clip keeps exactly the markers whose x lies in the closed
     /// `[x_min, x_max]` range, and yields an empty slice when the range sits

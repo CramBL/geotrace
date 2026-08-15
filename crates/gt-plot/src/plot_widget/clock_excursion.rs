@@ -16,7 +16,9 @@ use gt_analysis::clock_offset::{ClockOffsetExcursion, ExcursionSample};
 use gt_types::MetricKind;
 
 use super::chips::MetricVisibility;
-use super::lines::{ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, visible_by_x};
+use super::lines::{
+    ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, NearestHoverLabel, PlotHoverLabel, visible_by_x,
+};
 use crate::series::TrackSeries;
 
 /// How far inside the plot's edge an off-scale marker sits, as a fraction of
@@ -183,7 +185,7 @@ pub(super) fn add_clock_excursions(
     track_label: Option<&str>,
     viewport: ExcursionViewport<'_>,
     pointer: Option<egui::Pos2>,
-    nearest: &mut Option<(f32, ClockExcursionHover)>,
+    nearest: &mut NearestHoverLabel,
 ) {
     if series.clock_excursions.is_empty() || !viewport.metric_vis.field(MetricKind::ClockDeltaMs) {
         return;
@@ -231,8 +233,8 @@ pub(super) fn add_clock_excursions(
     };
     for (at, hover) in hovers {
         let dist = plot_ui.screen_from_plot(at).distance(ptr);
-        if dist <= ANOMALY_HOVER_RADIUS_PX && nearest.as_ref().is_none_or(|(d, _)| dist < *d) {
-            *nearest = Some((dist, hover));
+        if dist <= ANOMALY_HOVER_RADIUS_PX {
+            nearest.offer(dist, || PlotHoverLabel::ClockExcursion(hover));
         }
     }
 }
