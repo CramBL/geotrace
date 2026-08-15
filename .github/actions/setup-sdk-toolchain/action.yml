@@ -68,6 +68,13 @@ runs:
           Windows)
             pip install meson
             git clone --depth=1 --branch v2.4.3 https://github.com/Snaipe/Criterion criterion-src
+            # Meson forwards the detected ninja path into CMake's
+            # CMAKE_MAKE_PROGRAM, where nanomsg's add_custom_target re-parses
+            # it. A backslash path (C:\Users\...) becomes an invalid "\U"
+            # escape there, so give meson the same ninja via a forward-slash
+            # path (Windows accepts both) to keep the emitted CMake valid.
+            export NINJA
+            NINJA="$(command -v ninja | sed 's#\\#/#g')"
             meson setup criterion-src/build criterion-src --prefix=C:/criterion --buildtype=release \
               -Ddiffs=disabled \
               "-Dc_args=-Wno-incompatible-pointer-types"
