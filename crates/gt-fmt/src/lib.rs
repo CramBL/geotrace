@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use gt_types::track::FixStats;
 
 pub mod name_template;
-pub use name_template::{NameFields, render_name_template};
+pub use name_template::{NameFields, Token, render_name_template};
 use uom::si::{
     f64,
     length::{kilometer, meter},
