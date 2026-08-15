@@ -28,6 +28,7 @@ const LEGEND_EDGE_MARGIN: f32 = 6.0;
 /// snaps back to docking, so dropping it near the corner re-docks it without
 /// requiring a click on the re-dock button.
 const LEGEND_DOCK_SNAP_RADIUS: f32 = 32.0;
+const LEGEND_AREA_ID_SALT: &str = "plot_file_legend_overlay";
 /// Dimensions of the line-style swatch painted next to each legend entry.
 const SWATCH_SIZE: egui::Vec2 = egui::vec2(26.0, 10.0);
 const SWATCH_STROKE_WIDTH: f32 = 2.0;
@@ -77,10 +78,12 @@ pub(super) fn show_file_legend_overlay(
 
     let mut redock_requested = false;
     let show_redock_icon = !legend_is_docked(state.file_legend_offset);
-    let legend_id = ui.id().with("plot_file_legend_overlay");
+    let legend_id = ui.id().with(LEGEND_AREA_ID_SALT);
     let drag_bg_size = state.file_legend_size;
     let area = Area::new(legend_id)
-        .order(egui::Order::Foreground)
+        // Windows draw at this order too, so a focused window stacks above the
+        // legend, which still draws above the panel-hosted plot.
+        .order(egui::Order::Middle)
         .movable(false)
         .current_pos(plot_rect.min + state.file_legend_offset)
         .show(ui.ctx(), |ui| {
@@ -220,6 +223,47 @@ mod tests {
 
     fn test_plot_rect() -> egui::Rect {
         egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))
+    }
+
+    #[test]
+    fn file_legend_overlay_draws_below_floating_windows() {
+        let ctx = egui::Context::default();
+        let names = RecordingNames::default();
+        let mut state = PlotState::default();
+        let mut legend_id = None;
+        let window_id = egui::Id::new("test window");
+
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            show_file_legend_overlay(ui, &names, &[0, 1], test_plot_rect(), &mut state);
+            legend_id = Some(ui.id().with(LEGEND_AREA_ID_SALT));
+            egui::Window::new("Settings")
+                .id(window_id)
+                .show(ui.ctx(), |ui| {
+                    ui.label("window body");
+                });
+        });
+        // Dropping a `TexturesDelta` with unapplied deltas panics.
+        output.textures_delta.clear();
+
+        // Back-to-front, so a higher index draws on top.
+        let layers: Vec<egui::LayerId> = ctx.memory(|memory| memory.layer_ids().collect());
+        let legend_id = legend_id.expect("the legend renders with two visible files");
+        let position = |wanted: egui::Id| {
+            layers
+                .iter()
+                .position(|layer| layer.id == wanted)
+                .expect("layer is registered")
+        };
+        let legend_position = position(legend_id);
+        assert_eq!(
+            layers.get(legend_position).map(|layer| layer.order),
+            Some(egui::Order::Middle),
+            "the legend draws above the panel-hosted plot"
+        );
+        assert!(
+            legend_position < position(window_id),
+            "the legend draws below the window, got {layers:?}"
+        );
     }
 
     #[test]
