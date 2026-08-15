@@ -2967,6 +2967,30 @@ fn push_file_with_travel_mode(
     )
 }
 
+/// Push a two-track recording (the tracks split at a 10 minute gap),
+/// returning its file index.
+fn push_two_track_file(harness: &mut Harness<'_, App>, name: &str) -> gt_types::FileIdx {
+    let points = gt_test_utils::fixtures::nav_data_with_gap(30, 30);
+    let fi = push_points_as(
+        harness,
+        name,
+        &points,
+        None,
+        gt_loaded_files::FileHistory::None,
+    );
+    let track_count = {
+        let state = harness.state();
+        let shared = state.shared.borrow();
+        fi.get(shared.loaded_files.files()).map(|f| f.tracks.len())
+    };
+    assert_eq!(
+        track_count,
+        Some(2),
+        "the gap must split the recording in two"
+    );
+    fi
+}
+
 fn push_file_with(
     harness: &mut Harness<'_, App>,
     name: &str,
@@ -2974,9 +2998,22 @@ fn push_file_with(
     history: gt_loaded_files::FileHistory,
 ) -> gt_types::TrackRef {
     let points = gt_test_utils::nav_test_data();
+    let fi = push_points_as(harness, name, &points, travel_mode, history);
+    gt_types::TrackRef::new(fi, gt_types::TrackIdx::new(0))
+}
+
+/// Build a recording from `points` and push it into the app's loaded
+/// files, returning its file index.
+fn push_points_as(
+    harness: &mut Harness<'_, App>,
+    name: &str,
+    points: &[gt_types::NavPoint],
+    travel_mode: Option<gt_types::TravelMode>,
+    history: gt_loaded_files::FileHistory,
+) -> gt_types::FileIdx {
     let file = gt_track_builder::build_loaded_file(
         name.to_owned(),
-        &points,
+        points,
         &[],
         vec![],
         vec![],
@@ -2995,7 +3032,7 @@ fn push_file_with(
     let fi = gt_types::FileIdx::new(shared.loaded_files.files().len() - 1);
     let files = shared.loaded_files.files().to_vec();
     shared.tree.sync_from_loaded_files(&files);
-    gt_types::TrackRef::new(fi, gt_types::TrackIdx::new(0))
+    fi
 }
 
 /// A boat-declared file's track resolves to the unsnappable row (hover names
@@ -3033,9 +3070,9 @@ fn snap_request_parks_on_consent_and_agree_takes_it() {
     harness.step();
     let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
 
-    harness.state_mut().handle_snap_request(track);
+    harness.state_mut().handle_snap_request(vec![track]);
     assert!(harness.state().snap_consent_prompt);
-    assert_eq!(harness.state().pending_snap, Some(track));
+    assert_eq!(harness.state().pending_snap.track_refs, vec![track]);
     harness.step();
 
     // First synthetic click settles the startup map-layer popup (see
@@ -3050,9 +3087,8 @@ fn snap_request_parks_on_consent_and_agree_takes_it() {
     harness.run_steps(3);
 
     assert!(!harness.state().snap_consent_prompt);
-    assert_eq!(
-        harness.state().pending_snap,
-        None,
+    assert!(
+        harness.state().pending_snap.track_refs.is_empty(),
         "agreeing must take the parked request and queue it"
     );
     assert!(harness.state().snap_settings.consent_granted());
@@ -3067,7 +3103,7 @@ fn snap_request_parked_on_consent_is_dropped_on_decline() {
     harness.step();
     let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
 
-    harness.state_mut().handle_snap_request(track);
+    harness.state_mut().handle_snap_request(vec![track]);
     harness.step();
 
     harness.input_mut().events.push(egui::Event::Key {
@@ -3080,9 +3116,8 @@ fn snap_request_parked_on_consent_is_dropped_on_decline() {
     harness.step();
 
     assert!(!harness.state().snap_consent_prompt);
-    assert_eq!(
-        harness.state().pending_snap,
-        None,
+    assert!(
+        harness.state().pending_snap.track_refs.is_empty(),
         "declining must drop the parked request"
     );
     assert!(!harness.state().snap_settings.consent_granted());
@@ -3153,26 +3188,38 @@ fn costing_override_beats_the_declared_mode() {
         );
     }
 
-    // The override request stores the override; consent is pending in a
-    // fresh app, so the run parks on the consent dialog rather than
-    // sending anything.
-    harness
-        .state_mut()
-        .handle_snap_costing_request(track, gt_ui_types::SnapCosting::Pedestrian);
-    {
+    // Consent is pending in a fresh app, so the choice parks on the
+    // consent dialog and changes nothing yet.
+    let request_pedestrian = |harness: &mut Harness<'_, App>| {
+        harness.state_mut().handle_snap_costing_request(
+            gt_side_panel::SnapCostingTarget::Track(track),
+            gt_ui_types::SnapCosting::Pedestrian,
+        );
+    };
+    let resolved_costing = |harness: &Harness<'_, App>| {
         let state = harness.state();
-        assert!(state.snap_consent_prompt);
-        assert_eq!(state.pending_snap, Some(track));
         let shared = state.shared.borrow();
         let files = shared.loaded_files.files();
-        let file = track.fi.get(files).expect("file");
-        let loaded = track.resolve(files).expect("track");
-        assert_eq!(
-            state.effective_costing(file, loaded),
-            Some(gt_snap::wire::Costing::Pedestrian),
-            "the override beats the road-less declaration"
-        );
-    }
+        let file = track.fi.get(files)?;
+        let loaded = track.resolve(files)?;
+        state.effective_costing(file, loaded)
+    };
+    request_pedestrian(&mut harness);
+    assert!(harness.state().snap_consent_prompt);
+    assert_eq!(harness.state().pending_snap.track_refs, vec![track]);
+    assert_eq!(
+        resolved_costing(&harness),
+        None,
+        "parked: still unsnappable"
+    );
+
+    harness.state_mut().snap_settings.acknowledge_consent();
+    request_pedestrian(&mut harness);
+    assert_eq!(
+        resolved_costing(&harness),
+        Some(gt_snap::wire::Costing::Pedestrian),
+        "the override beats the road-less declaration"
+    );
 }
 
 /// With consent already granted, a "Snap again as" choice must dispatch
@@ -3226,9 +3273,10 @@ fn costing_override_reaches_the_dispatched_run() {
     let (key, run) = seeded(&harness, Costing::Auto);
     harness.state_mut().snap.insert_run(key, run);
 
-    harness
-        .state_mut()
-        .handle_snap_costing_request(track, gt_ui_types::SnapCosting::Bicycle);
+    harness.state_mut().handle_snap_costing_request(
+        gt_side_panel::SnapCostingTarget::Track(track),
+        gt_ui_types::SnapCosting::Bicycle,
+    );
     harness.run_steps(3);
     harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Snap again")
@@ -3276,9 +3324,10 @@ fn harness_asking_to_replace_the_auto_run<'a>() -> (Harness<'a, App>, gt_types::
     let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
     harness.step();
     inject_completed_run(&mut harness, track);
-    harness
-        .state_mut()
-        .handle_snap_costing_request(track, gt_ui_types::SnapCosting::Auto);
+    harness.state_mut().handle_snap_costing_request(
+        gt_side_panel::SnapCostingTarget::Track(track),
+        gt_ui_types::SnapCosting::Auto,
+    );
     harness.run_steps(3);
     (harness, track)
 }
@@ -3331,6 +3380,168 @@ fn confirming_the_replace_prompt_discards_the_cached_run() {
         !has_cached_auto_run(&harness, track),
         "the confirmed choice must reach the server, not the cache"
     );
+}
+
+/// Add `track` to the panel's selection, as clicking its row would.
+fn select_track(harness: &mut Harness<'_, App>, track: gt_types::TrackRef) {
+    let state = harness.state_mut();
+    let mut shared = state.shared.borrow_mut();
+    shared
+        .tree
+        .selection
+        .insert(gt_side_panel::NodeKey::Track(track));
+}
+
+/// The session costing override stored for `track`, if any.
+fn costing_override(
+    harness: &Harness<'_, App>,
+    track: gt_types::TrackRef,
+) -> Option<gt_snap::wire::Costing> {
+    let state = harness.state();
+    let shared = state.shared.borrow();
+    let loaded = track.resolve(shared.loaded_files.files())?;
+    state
+        .snap_costing_overrides
+        .get(&crate::app::snap::TrackContentKey::new(loaded))
+        .copied()
+}
+
+/// The scope dialog's counts separate the recording's selected tracks from
+/// all of them, and report how many already have data for the costing.
+#[test]
+fn recording_scope_counts_separate_selected_from_all() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    let fi = push_two_track_file(&mut harness, "tour.gtd");
+    harness.step();
+    let second = gt_types::TrackRef::new(fi, gt_types::TrackIdx::new(1));
+    inject_completed_run(
+        &mut harness,
+        gt_types::TrackRef::new(fi, gt_types::TrackIdx::new(0)),
+    );
+    let prompt = crate::app::SnapScopePrompt {
+        fi,
+        choice: gt_ui_types::SnapCosting::Auto,
+    };
+
+    let unselected = harness.state().snap_scope_counts(prompt);
+    assert_eq!(
+        unselected.selected,
+        crate::app::modals::SnapScopeCount::default()
+    );
+
+    select_track(&mut harness, second);
+    let counts = harness.state().snap_scope_counts(prompt);
+    assert_eq!(
+        counts.selected,
+        crate::app::modals::SnapScopeCount {
+            tracks: 1,
+            already_snapped: 0
+        }
+    );
+    assert_eq!(
+        counts.all,
+        crate::app::modals::SnapScopeCount {
+            tracks: 2,
+            already_snapped: 1
+        }
+    );
+}
+
+/// Each scope button runs exactly its own tracks: their cached runs for
+/// the chosen costing are replaced and they take the override, while the
+/// tracks outside the scope keep theirs.
+#[rstest::rstest]
+#[case::selected_scope("Snap selected tracks", &[1])]
+#[case::all_scope("Snap all tracks", &[0, 1])]
+#[case::cancel("Cancel", &[])]
+fn recording_scope_dialog_snaps_the_chosen_scope(#[case] button: &str, #[case] expected: &[usize]) {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state_mut().snap_settings.acknowledge_consent();
+    let fi = push_two_track_file(&mut harness, "tour.gtd");
+    harness.step();
+    let track = |ti| gt_types::TrackRef::new(fi, gt_types::TrackIdx::new(ti));
+    inject_completed_run(&mut harness, track(0));
+    inject_completed_run(&mut harness, track(1));
+    select_track(&mut harness, track(1));
+
+    harness.state_mut().handle_snap_costing_request(
+        gt_side_panel::SnapCostingTarget::Recording(fi),
+        gt_ui_types::SnapCosting::Auto,
+    );
+    harness.run_steps(3);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, button)
+        .click();
+    harness.run_steps(3);
+
+    assert!(harness.state().snap_scope_prompt.is_none());
+    for ti in 0..2 {
+        let in_scope = expected.contains(&ti);
+        assert_eq!(
+            costing_override(&harness, track(ti)),
+            in_scope.then_some(gt_snap::wire::Costing::Auto),
+            "track {ti} override"
+        );
+        assert_eq!(
+            has_cached_auto_run(&harness, track(ti)),
+            !in_scope,
+            "track {ti} cached run"
+        );
+    }
+}
+
+/// A bulk choice on an app without consent parks the whole batch on one
+/// dialog and touches nothing until it is accepted: the tracks keep their
+/// runs while the question is open, and agreeing releases the batch.
+#[test]
+fn recording_scope_parks_the_whole_batch_on_one_consent_dialog() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    let fi = push_two_track_file(&mut harness, "tour.gtd");
+    harness.step();
+    let track = |ti| gt_types::TrackRef::new(fi, gt_types::TrackIdx::new(ti));
+    inject_completed_run(&mut harness, track(0));
+    inject_completed_run(&mut harness, track(1));
+
+    harness.state_mut().handle_snap_costing_request(
+        gt_side_panel::SnapCostingTarget::Recording(fi),
+        gt_ui_types::SnapCosting::Auto,
+    );
+    harness.run_steps(3);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Snap all tracks")
+        .click();
+    harness.run_steps(3);
+
+    assert!(harness.state().snap_consent_prompt);
+    assert_eq!(harness.state().pending_snap.track_refs.len(), 2);
+    for ti in 0..2 {
+        assert!(
+            has_cached_auto_run(&harness, track(ti)),
+            "track {ti} keeps its run until consent"
+        );
+    }
+
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Agree - snap automatically")
+        .click();
+    harness.run_steps(3);
+
+    assert!(harness.state().pending_snap.track_refs.is_empty());
+    for ti in 0..2 {
+        assert!(
+            !has_cached_auto_run(&harness, track(ti)),
+            "track {ti} runs once the batch is released"
+        );
+    }
 }
 
 /// The persistence glue end to end, against a real temporary database:

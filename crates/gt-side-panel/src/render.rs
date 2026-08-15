@@ -127,6 +127,15 @@ pub enum SnapRowView {
     },
 }
 
+/// What a "Snap again as" choice applies to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapCostingTarget {
+    Track(TrackRef),
+    /// The recording's tracks, narrowed to a scope by the dialog the app
+    /// raises next.
+    Recording(FileIdx),
+}
+
 pub struct PanelContext<'a> {
     pub loaded_files: LoadedFilesView<'a>,
     pub tree: &'a mut TreeState,
@@ -166,7 +175,7 @@ pub struct PanelContext<'a> {
     /// Set by the "Snap again as" submenu: re-run the track under an
     /// explicit costing. Consumed by the app, which stores the session
     /// override and queues the run (through the consent dialog if pending).
-    pub snap_costing_request: &'a mut Option<(TrackRef, SnapCosting)>,
+    pub snap_costing_request: &'a mut Option<(SnapCostingTarget, SnapCosting)>,
     /// Set by the "Show sky trails" track action. Consumed by the app, which
     /// opens the sky trails window on that track.
     pub sky_trails_request: &'a mut Option<gt_ui_types::SkyTrailsRequest>,
@@ -545,6 +554,14 @@ fn render_file_row(
             ctx.tree.show_only_file(fi);
             ui.close();
         }
+        if ctx.file(fi).is_some_and(|file| !file.tracks.is_empty()) {
+            snap_costing_submenu(
+                ui,
+                SnapCostingTarget::Recording(fi),
+                SNAP_AGAIN_AS_LABEL,
+                ctx,
+            );
+        }
         ui.separator();
         let stored_in_history = ctx.file_stored_in_history(fi);
         let unload = ui.button("Unload").on_hover_text(if stored_in_history {
@@ -657,7 +674,7 @@ fn snap_action(row: &SnapRowView, snap: SnapPanelView<'_>) -> Option<SnapAction>
 /// action.
 fn costing_submenu_label(row: &SnapRowView) -> Option<&'static str> {
     match row {
-        SnapRowView::Done { .. } | SnapRowView::Failed { .. } => Some("Snap again as"),
+        SnapRowView::Done { .. } | SnapRowView::Failed { .. } => Some(SNAP_AGAIN_AS_LABEL),
         SnapRowView::Unsnappable { .. } => Some("Snap as"),
         SnapRowView::Idle
         | SnapRowView::Queued
@@ -669,6 +686,10 @@ fn costing_submenu_label(row: &SnapRowView) -> Option<&'static str> {
 /// Extra dimming applied to the status glyph while the snapped track is
 /// hidden, so the toggle state is readable at a glance.
 const HIDDEN_GLYPH_ALPHA: f32 = 0.5;
+
+/// Label of the costing submenu wherever it re-runs existing results: one
+/// track's, or a scope of a recording's.
+const SNAP_AGAIN_AS_LABEL: &str = "Snap again as";
 
 /// Hover text of every snap control grayed out by `GEOTRACE_OFFLINE`.
 const OFFLINE_HOVER: &str = "Snapping is disabled while GEOTRACE_OFFLINE is set";
@@ -806,7 +827,7 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
         if glyph.clicked() {
             *ctx.snap_visibility_request = Some(track_ref);
         }
-        glyph.context_menu(|ui| snap_costing_submenu(ui, track_ref, row, ctx));
+        glyph.context_menu(|ui| snap_track_costing_submenu(ui, track_ref, row, ctx));
         masked_display_hint(ui, ctx.display_mask, DisplayCategory::SnappedTracks);
     }
 
@@ -874,19 +895,16 @@ fn snap_trigger_overlay(ui: &mut egui::Ui, row: &SnapRowView, rect: egui::Rect) 
 }
 
 /// The explicit-costing re-run submenu, shared by the track row's context
-/// menu and the status glyph's: completed and failed runs can re-run under
-/// any costing (costing comparisons), and a declared road-less mode can be
-/// overridden (wrong declarations happen). Tracks queued or in flight
-/// finish first; idle tracks keep the plain action.
+/// menu, the status glyph's, and the recording row's: completed and failed
+/// runs can re-run under any costing (costing comparisons), and a declared
+/// road-less mode can be overridden (wrong declarations happen). Grayed
+/// offline, since every choice reaches the server.
 fn snap_costing_submenu(
     ui: &mut egui::Ui,
-    track_ref: TrackRef,
-    row: &SnapRowView,
+    target: SnapCostingTarget,
+    label: &str,
     ctx: &mut PanelContext<'_>,
 ) {
-    let Some(label) = costing_submenu_label(row) else {
-        return;
-    };
     let label = consent_suffixed(label, ctx.snap.consent_pending);
     if ctx.snap.offline {
         ui.add_enabled(false, Button::new(label))
@@ -896,11 +914,25 @@ fn snap_costing_submenu(
     ui.menu_button(label, |ui| {
         for (costing, name) in ctx.snap.costing_choices {
             if ui.button(name).clicked() {
-                *ctx.snap_costing_request = Some((track_ref, *costing));
+                *ctx.snap_costing_request = Some((target, *costing));
                 ui.close();
             }
         }
     });
+}
+
+/// The submenu for one track, labeled by what its row state allows. Idle,
+/// queued and in-flight rows get no submenu: they keep the plain action
+/// until a run of theirs completes.
+fn snap_track_costing_submenu(
+    ui: &mut egui::Ui,
+    track_ref: TrackRef,
+    row: &SnapRowView,
+    ctx: &mut PanelContext<'_>,
+) {
+    if let Some(label) = costing_submenu_label(row) {
+        snap_costing_submenu(ui, SnapCostingTarget::Track(track_ref), label, ctx);
+    }
 }
 
 /// The context-menu counterpart of [`snap_control`]: same action state, text
@@ -963,7 +995,7 @@ fn snap_menu_entry(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContex
                 });
         }
     }
-    snap_costing_submenu(ui, track_ref, row, ctx);
+    snap_track_costing_submenu(ui, track_ref, row, ctx);
 
     // The visibility toggle applies to any completed run, stale or not.
     if let SnapRowView::Done { shown, .. } = row {

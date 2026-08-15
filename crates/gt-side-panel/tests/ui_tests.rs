@@ -15,7 +15,8 @@ use geotrace_sdk_units::Unit;
 use gt_filter::GlobalFilter;
 use gt_loaded_files::{FileHistory, LoadedFiles, RecordingNames};
 use gt_side_panel::{
-    FilterPanelState, PanelContext, SnapPanelView, SnapRowView, TreeState, show_side_panel,
+    FilterPanelState, PanelContext, SnapCostingTarget, SnapPanelView, SnapRowView, TreeState,
+    show_side_panel,
 };
 use gt_test_utils::TestHarness;
 use gt_types::{FileIdx, FixStats, LoadWarning, TrackIdx, TrackRef};
@@ -42,7 +43,7 @@ struct State {
     snap_request: Option<TrackRef>,
     snap_visibility_request: Option<TrackRef>,
     snap_costing_choices: Vec<(SnapCosting, String)>,
-    snap_costing_request: Option<(TrackRef, SnapCosting)>,
+    snap_costing_request: Option<(SnapCostingTarget, SnapCosting)>,
     sky_trails_request: Option<gt_ui_types::SkyTrailsRequest>,
 }
 
@@ -570,10 +571,37 @@ fn costing_submenu_requests_the_chosen_costing() {
 
     assert_eq!(
         harness.state().snap_costing_request,
-        Some((track, SnapCosting::Bicycle)),
+        Some((SnapCostingTarget::Track(track), SnapCosting::Bicycle)),
     );
     assert_eq!(harness.state().snap_request, None);
     assert_eq!(harness.state().snap_visibility_request, None);
+}
+
+/// The recording row's context menu carries the same submenu, targeting
+/// the whole recording so the app can ask for a scope.
+#[test]
+fn recording_context_menu_requests_the_costing_for_the_recording() {
+    let state = make_state(1);
+    let mut harness = make_harness(state);
+    harness.run();
+
+    harness
+        .inner
+        .get_by_label_contains("ride_0")
+        .click_secondary();
+    harness.run();
+    harness.inner.get_by_label_contains("Snap again as").hover();
+    harness.inner.run_steps(3);
+    harness.inner.get_by_label("Pedestrian").click();
+    harness.run();
+
+    assert_eq!(
+        harness.state().snap_costing_request,
+        Some((
+            SnapCostingTarget::Recording(FileIdx::new(0)),
+            SnapCosting::Pedestrian
+        )),
+    );
 }
 
 /// The status glyph's own context menu offers the same re-run submenu as
@@ -596,7 +624,7 @@ fn status_glyph_context_menu_requests_the_chosen_costing() {
 
     assert_eq!(
         harness.state().snap_costing_request,
-        Some((track, SnapCosting::Bicycle)),
+        Some((SnapCostingTarget::Track(track), SnapCosting::Bicycle)),
     );
     assert_eq!(harness.state().snap_visibility_request, None);
 }
@@ -629,7 +657,7 @@ fn unsnappable_rows_offer_the_costing_override() {
 
     assert_eq!(
         harness.state().snap_costing_request,
-        Some((track, SnapCosting::Pedestrian)),
+        Some((SnapCostingTarget::Track(track), SnapCosting::Pedestrian)),
     );
 }
 

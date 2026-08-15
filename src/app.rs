@@ -54,7 +54,8 @@ use gt_map::{MapContextAction, MapDrawContext, MapLayer, NavMap};
 use gt_plot::PlotState;
 use gt_query_run::{RunInputs, SnapErrorValues};
 use gt_side_panel::{
-    FilterPanelState, PanelContext, SnapPanelView, SnapRowView, TreeState, show_side_panel,
+    FilterPanelState, PanelContext, SnapCostingTarget, SnapPanelView, SnapRowView, TreeState,
+    show_side_panel,
 };
 use gt_snap::transport as snap_transport;
 use gt_snap::wire::Costing;
@@ -71,10 +72,11 @@ use settings_autosave::{AppSnapshot, SettingsAutosaver};
 use strum::IntoEnumIterator;
 
 use modals::{
-    SnapAutoChoice, SnapConsentChoice, SnapReplaceChoice, show_about_dialog,
-    show_delete_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
-    show_orphaned_event_markers_popup, show_recording_details_dialog, show_snap_auto_prompt,
-    show_snap_consent_dialog, show_snap_replace_dialog, show_unassociated_popup,
+    SnapAutoChoice, SnapConsentChoice, SnapReplaceChoice, SnapScope, SnapScopeChoice,
+    SnapScopeCount, SnapScopeCounts, show_about_dialog, show_delete_confirmation,
+    show_load_warnings_dialog, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
+    show_recording_details_dialog, show_snap_auto_prompt, show_snap_consent_dialog,
+    show_snap_replace_dialog, show_snap_scope_dialog, show_unassociated_popup,
 };
 
 /// A "Snap again as" choice the track already has a run for, waiting on
@@ -82,6 +84,25 @@ use modals::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SnapReplacePrompt {
     track_ref: TrackRef,
+    choice: gt_ui_types::SnapCosting,
+}
+
+/// A snap trigger waiting on the upload-consent dialog. Nothing it asks
+/// for is applied before consent: the costing overrides and the cached
+/// runs it replaces stay untouched until the runs actually go out.
+#[derive(Debug, Default)]
+struct PendingSnapRequest {
+    track_refs: Vec<TrackRef>,
+    /// Set when the trigger was a "Snap again as" choice, whose runs take
+    /// the costing override and replace what the tracks already have.
+    costing_choice: Option<gt_ui_types::SnapCosting>,
+}
+
+/// A recording-level "Snap again as" choice waiting for the scope dialog
+/// to say which of the recording's tracks it covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SnapScopePrompt {
+    fi: FileIdx,
     choice: gt_ui_types::SnapCosting,
 }
 
@@ -321,11 +342,13 @@ pub struct App {
     /// persisted: after a restart the stored run goes stale against the
     /// resolved default again - consistent, never misleading.
     snap_costing_overrides: HashMap<snap::TrackContentKey, Costing>,
-    /// The track whose snap trigger raised the consent dialog. Queued when
-    /// the dialog is accepted, dropped when it is declined.
-    pending_snap: Option<TrackRef>,
+    /// The snap trigger that raised the consent dialog. Run when the
+    /// dialog is accepted, dropped when it is declined.
+    pending_snap: PendingSnapRequest,
     /// The costing choice waiting on the replace-cached-run dialog.
     snap_replace_prompt: Option<SnapReplacePrompt>,
+    /// The recording-level costing choice waiting on the scope dialog.
+    snap_scope_prompt: Option<SnapScopePrompt>,
     /// Tracks whose completed snapped track is toggled off the map. Session
     /// state, like the snap cache; cleared with the other per-track snap
     /// state when indices shift.
@@ -549,8 +572,9 @@ impl App {
             snap_auto_sweep: false,
             snap_error_cache: HashMap::new(),
             snap_costing_overrides: HashMap::new(),
-            pending_snap: None,
+            pending_snap: PendingSnapRequest::default(),
             snap_replace_prompt: None,
+            snap_scope_prompt: None,
             hidden_snapped: std::collections::HashSet::new(),
             tiles_tree,
             map_tile_id,
@@ -1375,59 +1399,85 @@ impl App {
             .collect()
     }
 
-    /// Act on a "Snap again as" choice. A costing the track already has a
-    /// run for raises the replace dialog first. Anything else stores the
-    /// session override and runs the track right away.
+    /// Act on a "Snap again as" choice. A track choice runs right away
+    /// unless that track already has a run for the costing, which raises
+    /// the replace dialog; a recording choice raises the scope dialog.
     fn handle_snap_costing_request(
         &mut self,
-        track_ref: TrackRef,
+        target: SnapCostingTarget,
         choice: gt_ui_types::SnapCosting,
     ) {
-        let params = self.snap_settings.params(Self::costing_from_choice(choice));
-        let cached = {
-            let shared = self.shared.borrow();
-            track_ref
-                .resolve(shared.loaded_files.files())
-                .is_some_and(|track| self.snap.has_cached_run(track, params))
+        match target {
+            SnapCostingTarget::Track(track_ref) => {
+                let params = self.snap_settings.params(Self::costing_from_choice(choice));
+                let cached = {
+                    let shared = self.shared.borrow();
+                    track_ref
+                        .resolve(shared.loaded_files.files())
+                        .is_some_and(|track| self.snap.has_cached_run(track, params))
+                };
+                if cached {
+                    self.snap_replace_prompt = Some(SnapReplacePrompt { track_ref, choice });
+                } else {
+                    self.snap_tracks_as(vec![track_ref], choice);
+                }
+            }
+            SnapCostingTarget::Recording(fi) => {
+                self.snap_scope_prompt = Some(SnapScopePrompt { fi, choice });
+            }
+        }
+    }
+
+    /// Snap these tracks under an explicitly chosen costing.
+    fn snap_tracks_as(&mut self, track_refs: Vec<TrackRef>, choice: gt_ui_types::SnapCosting) {
+        self.run_snap_request(PendingSnapRequest {
+            track_refs,
+            costing_choice: Some(choice),
+        });
+    }
+
+    /// The recording's tracks covered by one scope of the scope dialog.
+    fn scoped_track_refs(&self, fi: FileIdx, scope: SnapScope) -> Vec<TrackRef> {
+        let shared = self.shared.borrow();
+        let Some(file) = fi.get(shared.loaded_files.files()) else {
+            return Vec::new();
         };
-        if cached {
-            self.snap_replace_prompt = Some(SnapReplacePrompt { track_ref, choice });
-            return;
-        }
-        self.apply_snap_costing_choice(track_ref, choice);
+        (0..file.tracks.len())
+            .map(|ti| TrackRef::new(fi, TrackIdx::new(ti)))
+            .filter(|track_ref| match scope {
+                SnapScope::AllTracks => true,
+                SnapScope::SelectedTracks => shared
+                    .tree
+                    .selection
+                    .contains(&gt_side_panel::NodeKey::Track(*track_ref)),
+            })
+            .collect()
     }
 
-    /// Store the session costing override and run the track under it,
-    /// through the consent dialog while consent is pending. The fresh run
-    /// is not stale: the override feeds the effective parameters.
-    fn apply_snap_costing_choice(&mut self, track_ref: TrackRef, choice: gt_ui_types::SnapCosting) {
-        {
-            let shared = self.shared.borrow();
-            let Some(track) = track_ref.resolve(shared.loaded_files.files()) else {
-                return;
-            };
-            self.snap_costing_overrides.insert(
-                snap::TrackContentKey::new(track),
-                Self::costing_from_choice(choice),
-            );
-        }
-        self.handle_snap_request(track_ref);
-    }
-
-    /// Run a confirmed "Snap again as" choice: the cached run for that
-    /// costing is forgotten, so the request reaches the server and its
-    /// result replaces the stored one.
-    fn replace_snapped_run(&mut self, prompt: SnapReplacePrompt) {
+    /// What the scope dialog reports for a recording: the size of each
+    /// scope and how many of its tracks already have a run for the chosen
+    /// costing.
+    fn snap_scope_counts(&self, prompt: SnapScopePrompt) -> SnapScopeCounts {
         let params = self
             .snap_settings
             .params(Self::costing_from_choice(prompt.choice));
-        {
+        let count = |scope| {
+            let track_refs = self.scoped_track_refs(prompt.fi, scope);
             let shared = self.shared.borrow();
-            if let Some(track) = prompt.track_ref.resolve(shared.loaded_files.files()) {
-                self.snap.discard_cached_run(track, params);
+            let already_snapped = track_refs
+                .iter()
+                .filter_map(|track_ref| track_ref.resolve(shared.loaded_files.files()))
+                .filter(|track| self.snap.has_cached_run(track, params))
+                .count();
+            SnapScopeCount {
+                tracks: track_refs.len(),
+                already_snapped,
             }
+        };
+        SnapScopeCounts {
+            selected: count(SnapScope::SelectedTracks),
+            all: count(SnapScope::AllTracks),
         }
-        self.apply_snap_costing_choice(prompt.track_ref, prompt.choice);
     }
 
     /// The side panel's per-track snap view: scheduler activity and cached
@@ -1585,14 +1635,49 @@ impl App {
             .retain(|content, _| seen.contains(content));
     }
 
-    /// Act on a snap trigger from the side panel: route through the consent
-    /// dialog while consent is pending, queue the run otherwise.
-    fn handle_snap_request(&mut self, track_ref: TrackRef) {
-        if self.snap_settings.consent_granted() {
-            self.queue_snap(track_ref);
-        } else {
-            self.pending_snap = Some(track_ref);
+    /// Act on a snap trigger from the side panel.
+    fn handle_snap_request(&mut self, track_refs: Vec<TrackRef>) {
+        self.run_snap_request(PendingSnapRequest {
+            track_refs,
+            costing_choice: None,
+        });
+    }
+
+    /// Run a snap trigger: park it on the consent dialog while consent is
+    /// pending, otherwise apply its costing choice and queue the runs. The
+    /// scheduler sends them one at a time, whatever the batch size.
+    fn run_snap_request(&mut self, request: PendingSnapRequest) {
+        if request.track_refs.is_empty() {
+            return;
+        }
+        if !self.snap_settings.consent_granted() {
+            self.pending_snap = request;
             self.snap_consent_prompt = true;
+            return;
+        }
+        if let Some(choice) = request.costing_choice {
+            self.apply_costing_choice(&request.track_refs, choice);
+        }
+        for track_ref in request.track_refs {
+            self.queue_snap(track_ref);
+        }
+    }
+
+    /// Give each track the session costing override and forget its cached
+    /// run for that costing, so the request reaches the server and its
+    /// result replaces what the track had. The fresh runs are not stale:
+    /// the override feeds the effective parameters.
+    fn apply_costing_choice(&mut self, track_refs: &[TrackRef], choice: gt_ui_types::SnapCosting) {
+        let costing = Self::costing_from_choice(choice);
+        let params = self.snap_settings.params(costing);
+        let shared = self.shared.borrow();
+        for track in track_refs
+            .iter()
+            .filter_map(|track_ref| track_ref.resolve(shared.loaded_files.files()))
+        {
+            self.snap_costing_overrides
+                .insert(snap::TrackContentKey::new(track), costing);
+            self.snap.discard_cached_run(track, params);
         }
     }
 
@@ -2803,7 +2888,7 @@ impl eframe::App for App {
         };
         let mut snap_request: Option<TrackRef> = None;
         let mut snap_visibility_request: Option<TrackRef> = None;
-        let mut snap_costing_request: Option<(TrackRef, gt_ui_types::SnapCosting)> = None;
+        let mut snap_costing_request: Option<(SnapCostingTarget, gt_ui_types::SnapCosting)> = None;
         let mut sky_trails_request: Option<gt_ui_types::SkyTrailsRequest> = None;
 
         let detached = self.shared.borrow().tree.detached;
@@ -2894,10 +2979,10 @@ impl eframe::App for App {
         }
 
         if let Some(track_ref) = snap_request {
-            self.handle_snap_request(track_ref);
+            self.handle_snap_request(vec![track_ref]);
         }
-        if let Some((track_ref, choice)) = snap_costing_request {
-            self.handle_snap_costing_request(track_ref, choice);
+        if let Some((target, choice)) = snap_costing_request {
+            self.handle_snap_costing_request(target, choice);
         }
         if let Some(track_ref) = snap_visibility_request
             && !self.hidden_snapped.remove(&track_ref)
@@ -3092,9 +3177,23 @@ impl eframe::App for App {
             match show_snap_replace_dialog(ui, costing_name) {
                 Some(SnapReplaceChoice::SnapAgain) => {
                     self.snap_replace_prompt = None;
-                    self.replace_snapped_run(prompt);
+                    self.snap_tracks_as(vec![prompt.track_ref], prompt.choice);
                 }
                 Some(SnapReplaceChoice::Cancel) => self.snap_replace_prompt = None,
+                None => {}
+            }
+        }
+
+        if let Some(prompt) = self.snap_scope_prompt {
+            let costing_name = Self::costing_from_choice(prompt.choice).display_name();
+            let counts = self.snap_scope_counts(prompt);
+            match show_snap_scope_dialog(ui, costing_name, counts) {
+                Some(SnapScopeChoice::Snap(scope)) => {
+                    self.snap_scope_prompt = None;
+                    let track_refs = self.scoped_track_refs(prompt.fi, scope);
+                    self.snap_tracks_as(track_refs, prompt.choice);
+                }
+                Some(SnapScopeChoice::Cancel) => self.snap_scope_prompt = None,
                 None => {}
             }
         }
@@ -3110,9 +3209,8 @@ impl eframe::App for App {
                     self.snap_consent_prompt = false;
                     // The click that raised the dialog proceeds now that
                     // uploads are acknowledged.
-                    if let Some(track_ref) = self.pending_snap.take() {
-                        self.queue_snap(track_ref);
-                    }
+                    let parked = std::mem::take(&mut self.pending_snap);
+                    self.run_snap_request(parked);
                     self.snap_auto_sweep = true;
                 }
                 Some(SnapConsentChoice::Declined) => {
@@ -3121,7 +3219,7 @@ impl eframe::App for App {
                     // off: declined consent never leaves auto uploads armed.
                     self.snap_settings.auto_snap = Some(false);
                     self.snap_consent_prompt = false;
-                    self.pending_snap = None;
+                    self.pending_snap = PendingSnapRequest::default();
                 }
                 None => {}
             }
