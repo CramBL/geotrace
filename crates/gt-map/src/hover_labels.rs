@@ -16,6 +16,29 @@ use gt_ui_types::DataPointRef;
 
 use crate::recording_labels::RecordingLabels;
 
+/// Which map layer owns the pointer, deciding whose hover label draws.
+///
+/// Recorded elements come first, then the snapped track, then the
+/// interference cells beneath both: an overlay yields to everything above it
+/// so only one hover label draws at a time. Both flags describe the previous
+/// frame, since a layer's own hit test runs after the layers beneath it have
+/// already drawn.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct PointerOwnership {
+    pub(crate) recorded_element_hovered: bool,
+    pub(crate) snapped_edge_tooltip_shown: bool,
+}
+
+impl PointerOwnership {
+    pub(crate) fn snapped_track_hover_enabled(self) -> bool {
+        !self.recorded_element_hovered
+    }
+
+    pub(crate) fn jamming_cell_hover_enabled(self) -> bool {
+        !self.recorded_element_hovered && !self.snapped_edge_tooltip_shown
+    }
+}
+
 /// Spacing between an icon and the text following it in labels.
 const ICON_GAP: &str = "  ";
 
@@ -287,5 +310,72 @@ pub(crate) fn candidate_label(candidate: DataPointRef, files: &[LoadedFile]) -> 
         Some(ResolvedCandidate::GeneratedMarker(m)) => {
             crate::generated_marker_renderer::generated_marker_header(&m.kind)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::PointerOwnership;
+
+    struct Expected {
+        snapped_hover: bool,
+        jamming_hover: bool,
+    }
+
+    #[rstest]
+    #[case::nothing_hovered(
+        PointerOwnership {
+            recorded_element_hovered: false,
+            snapped_edge_tooltip_shown: false,
+        },
+        Expected {
+            snapped_hover: true,
+            jamming_hover: true,
+        }
+    )]
+    #[case::snapped_edge_hovered(
+        PointerOwnership {
+            recorded_element_hovered: false,
+            snapped_edge_tooltip_shown: true,
+        },
+        Expected {
+            snapped_hover: true,
+            jamming_hover: false,
+        }
+    )]
+    #[case::recorded_element_hovered(
+        PointerOwnership {
+            recorded_element_hovered: true,
+            snapped_edge_tooltip_shown: false,
+        },
+        Expected {
+            snapped_hover: false,
+            jamming_hover: false,
+        }
+    )]
+    #[case::recorded_element_over_a_snapped_edge(
+        PointerOwnership {
+            recorded_element_hovered: true,
+            snapped_edge_tooltip_shown: true,
+        },
+        Expected {
+            snapped_hover: false,
+            jamming_hover: false,
+        }
+    )]
+    fn overlay_hovers_yield_to_the_layers_above_them(
+        #[case] ownership: PointerOwnership,
+        #[case] expected: Expected,
+    ) {
+        assert_eq!(
+            ownership.snapped_track_hover_enabled(),
+            expected.snapped_hover
+        );
+        assert_eq!(
+            ownership.jamming_cell_hover_enabled(),
+            expected.jamming_hover
+        );
     }
 }

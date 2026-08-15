@@ -28,6 +28,8 @@ mod viewport;
 pub use sky_trails_window::SkyTrailsWindow;
 pub use viewport::GeoBounds;
 
+use std::cell::Cell;
+
 use egui::Context;
 
 use gt_filter::GlobalFilter;
@@ -47,7 +49,8 @@ use walkers::{HttpTiles, Map, MapMemory};
 use crate::event_marker_renderer::EventMarkerRenderer;
 use crate::generated_marker_renderer::GeneratedMarkerRenderer;
 use crate::hover_labels::{
-    draw_disambig_row, draw_multi_hover_label_contents, should_show_compound_label,
+    PointerOwnership, draw_disambig_row, draw_multi_hover_label_contents,
+    should_show_compound_label,
 };
 use crate::marker_renderer::MarkerRenderer;
 use crate::recording_labels::RecordingLabels;
@@ -387,6 +390,9 @@ pub struct NavMap {
     sat_label_scratch: sat_labels::LabelSelection,
     /// Reused sky-glyph decimation scratch, borrowed into the track layer.
     sky_glyph_scratch: sky_glyph_renderer::GlyphSelection,
+    /// Whether the snapped-track renderer drew its edge tooltip, raised
+    /// during the frame and read at the start of the next one.
+    snapped_edge_tooltip_shown: Cell<bool>,
 }
 
 impl NavMap {
@@ -425,6 +431,7 @@ impl NavMap {
             visible_points: viewport::VisiblePoints::default(),
             sat_label_scratch: sat_labels::LabelSelection::default(),
             sky_glyph_scratch: sky_glyph_renderer::GlyphSelection::default(),
+            snapped_edge_tooltip_shown: Cell::new(false),
         }
     }
 
@@ -720,16 +727,18 @@ impl NavMap {
                 .map(|t| -> &mut dyn walkers::Tiles { t });
             Map::new(tiles, &mut self.map_memory, default_map_center())
         };
+        let pointer_ownership = PointerOwnership {
+            recorded_element_hovered: ctx.highlight.hover.is_some(),
+            snapped_edge_tooltip_shown: self.snapped_edge_tooltip_shown.replace(false),
+        };
         // The interference overlay goes on first so every track renderer
         // draws over it.
         if ctx.display_mask.is_visible(DisplayCategory::JammingHexes)
             && let Some(dataset) = ctx.jamming_dataset
         {
-            // Hover yields while a track element owns the pointer, matching
-            // the snapped-track renderer.
             map = map.with_plugin(jamming_renderer::JammingRenderer::new(
                 dataset,
-                ctx.highlight.hover.is_none(),
+                pointer_ownership.jamming_cell_hover_enabled(),
             ));
         }
         map = map.with_plugin(
@@ -762,7 +771,8 @@ impl NavMap {
             map = map.with_plugin(SnappedTrackRenderer::new(
                 snapped,
                 ctx.files,
-                ctx.highlight.hover.is_none(),
+                pointer_ownership.snapped_track_hover_enabled(),
+                &self.snapped_edge_tooltip_shown,
             ));
         }
         if ctx.display_mask.is_visible(DisplayCategory::CustomMarkers) {
@@ -3186,7 +3196,7 @@ mod snapshot_tests {
             .and_then(|t| t.points.get(50))
             .map(|p| p.tpv.time())
             .expect("the fixture has a point 50");
-        let action = std::rc::Rc::new(std::cell::Cell::new(None));
+        let action = std::rc::Rc::new(Cell::new(None));
         let seen = action.clone();
 
         let mut harness = crate::test_harness::builder()
