@@ -71,11 +71,19 @@ use settings_autosave::{AppSnapshot, SettingsAutosaver};
 use strum::IntoEnumIterator;
 
 use modals::{
-    SnapAutoChoice, SnapConsentChoice, show_about_dialog, show_delete_confirmation,
-    show_load_warnings_dialog, show_mapbox_token_dialog, show_orphaned_event_markers_popup,
-    show_recording_details_dialog, show_snap_auto_prompt, show_snap_consent_dialog,
-    show_unassociated_popup,
+    SnapAutoChoice, SnapConsentChoice, SnapReplaceChoice, show_about_dialog,
+    show_delete_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
+    show_orphaned_event_markers_popup, show_recording_details_dialog, show_snap_auto_prompt,
+    show_snap_consent_dialog, show_snap_replace_dialog, show_unassociated_popup,
 };
+
+/// A "Snap again as" choice the track already has a run for, waiting on
+/// the confirmation dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SnapReplacePrompt {
+    track_ref: TrackRef,
+    choice: gt_ui_types::SnapCosting,
+}
 
 /// Pane variants for the central area tiles tree.
 enum MainPane {
@@ -316,6 +324,8 @@ pub struct App {
     /// The track whose snap trigger raised the consent dialog. Queued when
     /// the dialog is accepted, dropped when it is declined.
     pending_snap: Option<TrackRef>,
+    /// The costing choice waiting on the replace-cached-run dialog.
+    snap_replace_prompt: Option<SnapReplacePrompt>,
     /// Tracks whose completed snapped track is toggled off the map. Session
     /// state, like the snap cache; cleared with the other per-track snap
     /// state when indices shift.
@@ -540,6 +550,7 @@ impl App {
             snap_error_cache: HashMap::new(),
             snap_costing_overrides: HashMap::new(),
             pending_snap: None,
+            snap_replace_prompt: None,
             hidden_snapped: std::collections::HashSet::new(),
             tiles_tree,
             map_tile_id,
@@ -1364,16 +1375,32 @@ impl App {
             .collect()
     }
 
-    /// Act on a "Snap again as" choice: store the session override and run
-    /// the track under it, through the consent dialog while consent is
-    /// pending. The fresh run is not stale (the override feeds the
-    /// effective parameters); a cached run under the chosen costing
-    /// redisplays without a request.
+    /// Act on a "Snap again as" choice. A costing the track already has a
+    /// run for raises the replace dialog first. Anything else stores the
+    /// session override and runs the track right away.
     fn handle_snap_costing_request(
         &mut self,
         track_ref: TrackRef,
         choice: gt_ui_types::SnapCosting,
     ) {
+        let params = self.snap_settings.params(Self::costing_from_choice(choice));
+        let cached = {
+            let shared = self.shared.borrow();
+            track_ref
+                .resolve(shared.loaded_files.files())
+                .is_some_and(|track| self.snap.has_cached_run(track, params))
+        };
+        if cached {
+            self.snap_replace_prompt = Some(SnapReplacePrompt { track_ref, choice });
+            return;
+        }
+        self.apply_snap_costing_choice(track_ref, choice);
+    }
+
+    /// Store the session costing override and run the track under it,
+    /// through the consent dialog while consent is pending. The fresh run
+    /// is not stale: the override feeds the effective parameters.
+    fn apply_snap_costing_choice(&mut self, track_ref: TrackRef, choice: gt_ui_types::SnapCosting) {
         {
             let shared = self.shared.borrow();
             let Some(track) = track_ref.resolve(shared.loaded_files.files()) else {
@@ -1385,6 +1412,22 @@ impl App {
             );
         }
         self.handle_snap_request(track_ref);
+    }
+
+    /// Run a confirmed "Snap again as" choice: the cached run for that
+    /// costing is forgotten, so the request reaches the server and its
+    /// result replaces the stored one.
+    fn replace_snapped_run(&mut self, prompt: SnapReplacePrompt) {
+        let params = self
+            .snap_settings
+            .params(Self::costing_from_choice(prompt.choice));
+        {
+            let shared = self.shared.borrow();
+            if let Some(track) = prompt.track_ref.resolve(shared.loaded_files.files()) {
+                self.snap.discard_cached_run(track, params);
+            }
+        }
+        self.apply_snap_costing_choice(prompt.track_ref, prompt.choice);
     }
 
     /// The side panel's per-track snap view: scheduler activity and cached
@@ -3042,6 +3085,18 @@ impl eframe::App for App {
             && self.any_snappable_track()
         {
             self.snap_consent_prompt = true;
+        }
+
+        if let Some(prompt) = self.snap_replace_prompt {
+            let costing_name = Self::costing_from_choice(prompt.choice).display_name();
+            match show_snap_replace_dialog(ui, costing_name) {
+                Some(SnapReplaceChoice::SnapAgain) => {
+                    self.snap_replace_prompt = None;
+                    self.replace_snapped_run(prompt);
+                }
+                Some(SnapReplaceChoice::Cancel) => self.snap_replace_prompt = None,
+                None => {}
+            }
         }
 
         if self.snap_consent_prompt {

@@ -465,6 +465,21 @@ impl SnapScheduler {
         server_host(&self.server_url)
     }
 
+    /// Whether a completed run for this track under these parameters and
+    /// the current host is cached, i.e. whether [`Self::request_snap`]
+    /// would redisplay it instead of asking the server.
+    pub fn has_cached_run(&self, track: &LoadedTrack, params: SnapParams) -> bool {
+        self.cache
+            .contains_key(&SnapCacheKey::new(track, params, self.current_host()))
+    }
+
+    /// Forget the cached run for these parameters so the next request goes
+    /// to the server. The displayed run stays until the fresh one lands.
+    pub fn discard_cached_run(&mut self, track: &LoadedTrack, params: SnapParams) {
+        self.cache
+            .remove(&SnapCacheKey::new(track, params, self.current_host()));
+    }
+
     /// The transient activity for a track (queued, in flight, failed, or
     /// with nothing to send).
     pub fn activity_for(&self, track: TrackRef) -> Option<&SnapActivity> {

@@ -576,6 +576,31 @@ fn costing_submenu_requests_the_chosen_costing() {
     assert_eq!(harness.state().snap_visibility_request, None);
 }
 
+/// The status glyph's own context menu offers the same re-run submenu as
+/// the row's, so the icon showing the result is also where it is replaced.
+#[test]
+fn status_glyph_context_menu_requests_the_chosen_costing() {
+    let mut state = make_state(1);
+    state.tree.toggle_expand_file(FileIdx::new(0));
+    let track = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
+    state.snap_rows.insert(track, done_row(true));
+    let mut harness = make_harness(state);
+    harness.run();
+
+    harness.inner.get_by_label(ICON_PATH).click_secondary();
+    harness.run();
+    harness.inner.get_by_label_contains("Snap again as").hover();
+    harness.inner.run_steps(3);
+    harness.inner.get_by_label("Bicycle").click();
+    harness.run();
+
+    assert_eq!(
+        harness.state().snap_costing_request,
+        Some((track, SnapCosting::Bicycle)),
+    );
+    assert_eq!(harness.state().snap_visibility_request, None);
+}
+
 /// A declared road-less mode gets the "Snap as" override submenu - wrong
 /// declarations happen, and the submenu is the escape hatch.
 #[test]

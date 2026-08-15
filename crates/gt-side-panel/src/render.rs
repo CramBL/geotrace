@@ -806,6 +806,7 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
         if glyph.clicked() {
             *ctx.snap_visibility_request = Some(track_ref);
         }
+        glyph.context_menu(|ui| snap_costing_submenu(ui, track_ref, row, ctx));
         masked_display_hint(ui, ctx.display_mask, DisplayCategory::SnappedTracks);
     }
 
@@ -872,6 +873,36 @@ fn snap_trigger_overlay(ui: &mut egui::Ui, row: &SnapRowView, rect: egui::Rect) 
     }
 }
 
+/// The explicit-costing re-run submenu, shared by the track row's context
+/// menu and the status glyph's: completed and failed runs can re-run under
+/// any costing (costing comparisons), and a declared road-less mode can be
+/// overridden (wrong declarations happen). Tracks queued or in flight
+/// finish first; idle tracks keep the plain action.
+fn snap_costing_submenu(
+    ui: &mut egui::Ui,
+    track_ref: TrackRef,
+    row: &SnapRowView,
+    ctx: &mut PanelContext<'_>,
+) {
+    let Some(label) = costing_submenu_label(row) else {
+        return;
+    };
+    let label = consent_suffixed(label, ctx.snap.consent_pending);
+    if ctx.snap.offline {
+        ui.add_enabled(false, Button::new(label))
+            .on_disabled_hover_text(OFFLINE_HOVER);
+        return;
+    }
+    ui.menu_button(label, |ui| {
+        for (costing, name) in ctx.snap.costing_choices {
+            if ui.button(name).clicked() {
+                *ctx.snap_costing_request = Some((track_ref, *costing));
+                ui.close();
+            }
+        }
+    });
+}
+
 /// The context-menu counterpart of [`snap_control`]: same action state, text
 /// label instead of the icon. A completed run shows the entry disabled with
 /// the status hover, per the never-hide rule.
@@ -932,26 +963,7 @@ fn snap_menu_entry(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContex
                 });
         }
     }
-    // The explicit-costing re-run submenu: completed and failed runs can
-    // re-run under any costing (costing comparisons), and a declared
-    // road-less mode can be overridden (wrong declarations happen). Tracks
-    // queued or in flight finish first; idle tracks keep the plain action.
-    if let Some(label) = costing_submenu_label(row) {
-        let label = consent_suffixed(label, ctx.snap.consent_pending);
-        if ctx.snap.offline {
-            ui.add_enabled(false, Button::new(label))
-                .on_disabled_hover_text(OFFLINE_HOVER);
-        } else {
-            ui.menu_button(label, |ui| {
-                for (costing, name) in ctx.snap.costing_choices {
-                    if ui.button(name).clicked() {
-                        *ctx.snap_costing_request = Some((track_ref, *costing));
-                        ui.close();
-                    }
-                }
-            });
-        }
-    }
+    snap_costing_submenu(ui, track_ref, row, ctx);
 
     // The visibility toggle applies to any completed run, stale or not.
     if let SnapRowView::Done { shown, .. } = row {

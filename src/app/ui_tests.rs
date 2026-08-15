@@ -3177,10 +3177,11 @@ fn costing_override_beats_the_declared_mode() {
 
 /// With consent already granted, a "Snap again as" choice must dispatch
 /// under the chosen costing - not the plainly resolved one. Discriminated
-/// via cache promotion: with runs cached under both costings (auto being
-/// the displayed one), the override request redisplays the bicycle run
-/// only when the dispatch actually resolves the override (regression test
-/// for the dispatch ignoring it and hitting the auto entry instead).
+/// via the cache: with runs cached under both costings (auto being the
+/// displayed one), confirming the bicycle choice replaces the bicycle
+/// entry and leaves auto's alone only when the dispatch actually resolves
+/// the override (regression test for the dispatch ignoring it and hitting
+/// the auto entry instead).
 #[test]
 fn costing_override_reaches_the_dispatched_run() {
     use crate::app::snap::{SnapCacheKey, SnapRun};
@@ -3228,6 +3229,11 @@ fn costing_override_reaches_the_dispatched_run() {
     harness
         .state_mut()
         .handle_snap_costing_request(track, gt_ui_types::SnapCosting::Bicycle);
+    harness.run_steps(3);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Snap again")
+        .click();
+    harness.run_steps(3);
 
     let state = harness.state();
     assert!(
@@ -3236,14 +3242,94 @@ fn costing_override_reaches_the_dispatched_run() {
     );
     let shared = state.shared.borrow();
     let loaded = track.resolve(shared.loaded_files.files()).expect("track");
-    let displayed = state
-        .snap
-        .latest_run_for(loaded)
-        .expect("a run is displayed");
+    let cached = |costing| {
+        state
+            .snap
+            .has_cached_run(loaded, state.snap_settings.params(costing))
+    };
+    assert!(
+        !cached(Costing::Bicycle),
+        "the dispatch resolved the override, replacing the bicycle entry"
+    );
+    assert!(cached(Costing::Auto), "the other costing's run is kept");
+}
+
+/// Whether the scheduler still holds a cached auto-costing run for `track`.
+fn has_cached_auto_run(harness: &Harness<'_, App>, track: gt_types::TrackRef) -> bool {
+    let state = harness.state();
+    let shared = state.shared.borrow();
+    let loaded = track.resolve(shared.loaded_files.files()).expect("track");
+    state.snap.has_cached_run(
+        loaded,
+        state.snap_settings.params(gt_snap::wire::Costing::Auto),
+    )
+}
+
+/// A harness whose single track already has a cached auto-costing run,
+/// with the auto choice requested and its dialog on screen.
+fn harness_asking_to_replace_the_auto_run<'a>() -> (Harness<'a, App>, gt_types::TrackRef) {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state_mut().snap_settings.acknowledge_consent();
+    let track = push_file_with_travel_mode(&mut harness, "ride.gtd", None);
+    harness.step();
+    inject_completed_run(&mut harness, track);
+    harness
+        .state_mut()
+        .handle_snap_costing_request(track, gt_ui_types::SnapCosting::Auto);
+    harness.run_steps(3);
+    (harness, track)
+}
+
+/// A "Snap again as" choice for a costing the track already has a run for
+/// asks before replacing it, and cancelling keeps that run.
+#[test]
+fn costing_choice_with_a_cached_run_asks_before_replacing_it() {
+    let (mut harness, track) = harness_asking_to_replace_the_auto_run();
+
     assert_eq!(
-        displayed.result.params.costing,
-        Costing::Bicycle,
-        "the dispatch resolved the override, promoting the bicycle entry"
+        harness.state().snap_replace_prompt.map(|p| p.choice),
+        Some(gt_ui_types::SnapCosting::Auto)
+    );
+    assert_eq!(
+        harness.state().snap.activity_for(track),
+        None,
+        "nothing runs while the dialog asks"
+    );
+
+    harness.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.step();
+
+    assert!(harness.state().snap_replace_prompt.is_none());
+    assert!(
+        has_cached_auto_run(&harness, track),
+        "cancelling keeps the stored run"
+    );
+}
+
+/// Confirming the dialog forgets the cached run, so the choice reaches the
+/// server instead of redisplaying what the track already had.
+#[test]
+fn confirming_the_replace_prompt_discards_the_cached_run() {
+    let (mut harness, track) = harness_asking_to_replace_the_auto_run();
+
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Snap again")
+        .click();
+    harness.run_steps(3);
+
+    assert!(harness.state().snap_replace_prompt.is_none());
+    assert!(
+        !has_cached_auto_run(&harness, track),
+        "the confirmed choice must reach the server, not the cache"
     );
 }
 
