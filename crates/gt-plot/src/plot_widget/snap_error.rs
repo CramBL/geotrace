@@ -13,7 +13,8 @@ use gt_ui_types::{ArcIdentity, SnapErrorKind, SnapErrorPoint, SnapErrorSeries};
 use super::chips::MetricKindUi;
 use super::levels::track_target;
 use super::lines::{
-    ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, add_line, series_track_ref, visible_by_x,
+    ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, NearestHoverLabel, PlotHoverLabel, add_line,
+    series_track_ref, visible_by_x,
 };
 use crate::series::TrackSeries;
 
@@ -236,7 +237,7 @@ pub(super) fn add_snap_error_series<'a>(
     cache: &'a SnapErrorPlotCache,
     viewport: SnapErrorViewport,
     pointer: Option<egui::Pos2>,
-    nearest: &mut Option<(f32, SnapErrorHover)>,
+    nearest: &mut NearestHoverLabel,
     style: SnapErrorStyle,
 ) {
     let (selections, full_detail) = select_run_levels(&cache.runs, viewport);
@@ -288,8 +289,10 @@ pub(super) fn add_snap_error_series<'a>(
     for point in visible_unsnapped {
         let screen = plot_ui.screen_from_plot(*point);
         let dist = screen.distance(ptr);
-        if dist <= ANOMALY_HOVER_RADIUS_PX && nearest.as_ref().is_none_or(|(d, _)| dist < *d) {
-            *nearest = Some((dist, SnapErrorHover::new(track_label, point.x)));
+        if dist <= ANOMALY_HOVER_RADIUS_PX {
+            nearest.offer(dist, || {
+                PlotHoverLabel::SnapError(SnapErrorHover::new(track_label, point.x))
+            });
         }
     }
 }

@@ -14,19 +14,16 @@ pub use chips::{ChannelVisibility, MetricVisibility};
 pub use legend::{LEGEND_DOCK_OFFSET, legend_is_docked};
 
 use chips::{MetricAvailability, SectionGates, loaded_channels, metric_filter_row};
-use clock_excursion::{ClockExcursionHover, ExcursionViewport, add_clock_excursions};
-use jamming::{
-    JammingHover, JammingPlotCache, JammingViewport, jamming_available, sync_jamming_cache,
-};
+use clock_excursion::{ExcursionViewport, add_clock_excursions};
+use jamming::{JammingPlotCache, JammingViewport, jamming_available, sync_jamming_cache};
 use legend::show_file_legend_overlay;
 use levels::{TripLevelCache, budget_cap, compute_level_cache, single_target};
 use lines::{
-    AnomalyHover, add_series_lines, add_util_anomalies, series_track_ref,
-    show_nearest_point_tooltips,
+    NearestHoverLabel, add_series_lines, add_util_anomalies, series_track_ref,
+    show_nearest_hover_label,
 };
 use snap_error::{
-    SnapErrorHover, SnapErrorPlotCache, SnapErrorViewport, snap_error_available,
-    sync_snap_error_cache,
+    SnapErrorPlotCache, SnapErrorViewport, snap_error_available, sync_snap_error_cache,
 };
 
 use crate::AnalysisConfig;
@@ -41,6 +38,7 @@ use gt_types::satellites::ConstellationSet;
 use gt_types::{FileIdx, LoadedFile, MetricKind, PointIdx, TrackIdx, TrackRef};
 use gt_ui_types::{HighlightScope, JammingSeries, SnapErrorSeries, TrackDataVisibility};
 use rayon::prelude::*;
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
 
 /// Grid base-color intensity, as a multiplier on the theme text color.
@@ -68,10 +66,19 @@ fn recording_name(names: &RecordingNames, fi: usize) -> &str {
     names.get(FileIdx::new(fi)).unwrap_or(UNKNOWN_RECORDING)
 }
 
-/// The plot's hover tooltip: the hovered line's name, the time, and the value.
+/// The plot's cursor label: the hovered line's name, the time, and the value.
 ///
-/// Away from any line the name line is left out rather than drawn blank.
-fn hover_label(pos: &egui_plot::HoverPosition<'_>) -> Option<String> {
+/// Away from any line the name line is left out rather than drawn blank. The
+/// label stays away entirely while a custom hover label draws
+/// (see [`lines::show_nearest_hover_label`]): both sit at the cursor, and the
+/// custom one already carries the time and the value.
+fn cursor_label(
+    custom_hover_label_shown: &Cell<bool>,
+    pos: &egui_plot::HoverPosition<'_>,
+) -> Option<String> {
+    if custom_hover_label_shown.get() {
+        return None;
+    }
     let (name, point) = match pos {
         egui_plot::HoverPosition::NearDataPoint {
             plot_name,
@@ -467,15 +474,14 @@ pub fn show_track_plot(
     let mut new_computed_bounds: Option<(f64, f64, u32, usize)> = None;
     let mut new_level_cache: Option<Vec<TripLevelCache>> = None;
     let mut new_applied_map_x_range: Option<Option<(u64, u64)>> = None;
-    // Nearest masked-satellite anomaly marker under the pointer, with its
-    // screen-space distance, resolved across all visible series inside the plot
-    // closure and turned into a tooltip after it returns.
-    let mut hovered_anomaly: Option<(f32, AnomalyHover)> = None;
-    // Nearest snap error point under the pointer, same mechanism.
-    let mut hovered_snap: Option<(f32, SnapErrorHover)> = None;
-    let mut hovered_jamming: Option<(f32, JammingHover)> = None;
-    // Nearest clock offset excursion indicator under the pointer, same mechanism.
-    let mut hovered_excursion: Option<(f32, ClockExcursionHover)> = None;
+    // The custom hover label to draw: the closest candidate offered by any
+    // series of any recording inside the plot closure, turned into a tooltip
+    // after it returns.
+    let mut hovered_label = NearestHoverLabel::default();
+    // The custom label and the cursor label never draw in the same frame:
+    // egui_plot runs the plot closure before it formats the cursor label, and
+    // this flag is raised at the end of that closure.
+    let custom_hover_label_shown = Cell::new(false);
     let show_snap_error = snap_error_available && state.metric_vis.field(MetricKind::SnapError);
 
     let mut plot = egui_plot::Plot::new("track_plot")
@@ -487,7 +493,7 @@ pub fn show_track_plot(
                 .gamma_multiply(GRID_COLOR_STRENGTH),
         )
         .x_axis_formatter(x_fmt)
-        .label_formatter(hover_label);
+        .label_formatter(|pos| cursor_label(&custom_hover_label_shown, pos));
 
     // Tell egui_plot the full data extent so double-click reset zooms to fit.
     if has_full_range {
@@ -626,7 +632,6 @@ pub fn show_track_plot(
                     cap: sample_cap,
                 },
                 snap_pointer,
-                &mut hovered_snap,
                 jamming_cache.get(&series_track_ref(series)),
                 JammingViewport {
                     x_min: eff_x_min,
@@ -634,7 +639,7 @@ pub fn show_track_plot(
                     width: available_width,
                     cap: sample_cap,
                 },
-                &mut hovered_jamming,
+                &mut hovered_label,
             );
             add_clock_excursions(
                 plot_ui,
@@ -647,7 +652,7 @@ pub fn show_track_plot(
                     dark_mode,
                 },
                 excursion_pointer,
-                &mut hovered_excursion,
+                &mut hovered_label,
             );
             if show_anomalies {
                 add_util_anomalies(
@@ -656,7 +661,7 @@ pub fn show_track_plot(
                     track_label,
                     eff_x_min..=eff_x_max,
                     anomaly_pointer,
-                    &mut hovered_anomaly,
+                    &mut hovered_label,
                     dark_mode,
                 );
             }
@@ -674,6 +679,7 @@ pub fn show_track_plot(
             );
         }
 
+        custom_hover_label_shown.set(hovered_label.has_candidate());
         new_hovered_time = plot_ui
             .pointer_coordinate()
             .and_then(|c| DateTime::from_timestamp(c.x as i64, 0));
@@ -699,14 +705,7 @@ pub fn show_track_plot(
     state.plot_cursor_snapped =
         plot_response.response.hovered() && plot_response.hovered_plot_item.is_some();
 
-    show_nearest_point_tooltips(
-        ui,
-        &plot_response.response,
-        hovered_anomaly,
-        hovered_snap,
-        hovered_jamming,
-        hovered_excursion,
-    );
+    show_nearest_hover_label(ui, &plot_response.response, hovered_label);
 
     state.legend_hover_file = show_file_legend_overlay(
         ui,
@@ -809,8 +808,16 @@ pub fn find_closest_tpv(
 
 #[cfg(test)]
 mod label_tests {
-    use super::{hover_label, track_label};
+    use std::cell::Cell;
+
+    use super::{cursor_label, track_label};
     use egui_plot::PlotPoint;
+
+    /// For the tests that are not about suppression, so they need no `Cell`
+    /// of their own.
+    fn cursor_label_alone(pos: &egui_plot::HoverPosition<'_>) -> Option<String> {
+        cursor_label(&Cell::new(false), pos)
+    }
 
     #[test]
     fn a_single_track_recording_is_labelled_by_name_alone() {
@@ -833,7 +840,7 @@ mod label_tests {
             index: 0,
         };
         assert_eq!(
-            hover_label(&pos).as_deref(),
+            cursor_label_alone(&pos).as_deref(),
             Some("Morning ride: Satellites seen\n12:00:00\n12.00")
         );
     }
@@ -844,9 +851,19 @@ mod label_tests {
             position: PlotPoint::new(T, 12.0),
         };
         assert_eq!(
-            hover_label(&pos).as_deref(),
+            cursor_label_alone(&pos).as_deref(),
             Some("12:00:00\n12.00"),
             "an empty name must not leave a blank first line"
         );
+    }
+
+    /// A custom hover label and the cursor label would both sit at the
+    /// cursor, so the cursor label stays away while a custom one draws.
+    #[test]
+    fn the_cursor_label_yields_to_a_custom_hover_label() {
+        let pos = egui_plot::HoverPosition::Elsewhere {
+            position: PlotPoint::new(T, 12.0),
+        };
+        assert_eq!(cursor_label(&Cell::new(true), &pos), None);
     }
 }
