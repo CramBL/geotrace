@@ -637,6 +637,69 @@ pub fn show_snap_consent_dialog(
     choice
 }
 
+/// The user's decision in the replace-cached-run confirmation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapReplaceChoice {
+    /// Run against the server again, replacing the stored result.
+    SnapAgain,
+    /// Keeps the stored result: nothing is uploaded.
+    Cancel,
+}
+
+/// Ask before a "Snap again as" choice replaces the result this track
+/// already has for `costing_name`. Returns `None` while the dialog stays
+/// open.
+///
+/// Escape, Cancel, and the close button all keep the stored result: a
+/// dismissed dialog never uploads anything.
+pub fn show_snap_replace_dialog(ui: &egui::Ui, costing_name: &str) -> Option<SnapReplaceChoice> {
+    let enter_pressed = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+    let escape_pressed = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+
+    let mut choice = None;
+    if enter_pressed {
+        choice = Some(SnapReplaceChoice::SnapAgain);
+    }
+    if escape_pressed {
+        choice = Some(SnapReplaceChoice::Cancel);
+    }
+
+    let mut open = true;
+    egui::Window::new("Snap to road again?")
+        .collapsible(false)
+        .resizable(false)
+        .min_width(380.0)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ui.ctx(), |ui| {
+            ui.label(format!(
+                "This track already has snap to road data for {costing_name}."
+            ));
+            ui.add_space(4.0);
+            ui.label(
+                "Snapping again uploads the track once more and replaces that result with the \
+                 new one.",
+            );
+            ui.add_space(8.0);
+            dialog_button_row(ui, |ui| {
+                if ui.button("Snap again").clicked() {
+                    choice = Some(SnapReplaceChoice::SnapAgain);
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(SnapReplaceChoice::Cancel);
+                }
+            });
+        });
+    if !open {
+        choice = Some(SnapReplaceChoice::Cancel);
+    }
+    choice
+}
+
 /// The user's decision in the one-time auto-snap prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapAutoChoice {

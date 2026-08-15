@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- Picking a mode under "Snap again as" that the track already has snap to road data for now asks whether to replace it.
+  The snap status icon offers the same menu on right-click.
+
 ### Fixed
 
 - The snapped track no longer fans out across nearby roads where the receiver was dead reckoning, as in a parking garage.
