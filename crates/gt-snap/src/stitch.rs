@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use gt_types::PointIdx;
 
-use crate::request_plan::{Chunk, RequestPlan, SnapParams};
+use crate::request_plan::{Chunk, ChunkContinuity, RequestPlan, SnapParams};
 use crate::snapped_track::{self, Position, SnappedTrackError, SnappedTrackSegment};
 use crate::wire::{Edge, SnapPointKind, TraceAttributesResponse};
 
@@ -131,6 +131,11 @@ pub struct SnapPoint {
     /// Index into [`SnapResult::edges`] for hover attributes.
     #[serde(default)]
     pub edge: Option<usize>,
+    /// True when no snap data precedes this point: the plan dropped a ghost
+    /// run before it, a chunk failed there, or it opens the result. Series
+    /// drawn over these points break here instead of spanning the gap.
+    #[serde(default)]
+    pub follows_gap: bool,
 }
 
 /// The stitched result of one snap run over one track.
@@ -208,14 +213,23 @@ pub fn stitch(
     // reset) at the top of every iteration; only a fully successful chunk
     // with geometry re-arms it, so no early-exit branch can forget a reset.
     let mut join_pending = false;
+    // Whether the previous chunk left snap data for the points right before
+    // this one. Taken and re-armed like `join_pending`.
+    let mut data_pending = false;
 
     for (chunk_index, (chunk, outcome)) in plan.chunks.iter().zip(outcomes).enumerate() {
-        let join_previous = std::mem::take(&mut join_pending);
+        // A chunk opening a stretch is separated from the previous one by
+        // dropped ghost fixes: joining their geometry would draw a road
+        // across the stretch the receiver never measured.
+        let join_previous = std::mem::take(&mut join_pending)
+            && chunk.continuity == ChunkContinuity::ContinuesPrevious;
+        let follows_gap =
+            !std::mem::take(&mut data_pending) || chunk.continuity == ChunkContinuity::OpensStretch;
 
         let response = match outcome {
             ChunkOutcome::Success(response) => response,
             ChunkOutcome::OffNetwork => {
-                for sent in chunk.owned_sent() {
+                for (local, sent) in chunk.owned_sent().iter().enumerate() {
                     result.kind_counts.count(SnapPointKind::Unsnapped);
                     result.points.push(SnapPoint {
                         point: sent.point,
@@ -223,8 +237,10 @@ pub fn stitch(
                         error_m: None,
                         snapped: None,
                         edge: None,
+                        follows_gap: follows_gap && local == 0,
                     });
                 }
+                data_pending = !chunk.owned_sent().is_empty();
                 continue;
             }
             ChunkOutcome::Failed(detail) => {
@@ -275,8 +291,10 @@ pub fn stitch(
                     .edge_index
                     .and_then(|e| usize::try_from(e).ok())
                     .map(|e| e + edge_base),
+                follows_gap: follows_gap && local == 0,
             });
         }
+        data_pending = !chunk.owned_sent().is_empty();
 
         let (starts_snappable, ends_snappable) = owned_boundary_snappable(chunk, response);
         let contributed_geometry =

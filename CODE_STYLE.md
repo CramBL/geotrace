@@ -243,6 +243,8 @@ Using consistent names keeps grep, autocomplete, and mental models aligned.
 | **query history** | The remembered list of previously run queries. Always written in full - bare "history" means the recording-history database (`gt-history`). | `QueryHistoryEntry`, `QuerySettings::history` |
 | **snap** / **snap to road** | Matching a track against the OpenStreetMap road network (Valhalla map matching), and the act of requesting it for one track. Not "match" (query matches) or "trace" (TPV traces). | `gt-snap`, `SnapScheduler`, `SnapResult` |
 | **snapped track** | The matched road geometry drawn on the map alongside the recorded track. Not "ghost track" - a ghost is a heading-less nav point. | `SnappedTracks`, `SnappedTrackSegment` |
+| **ghost fix** | A nav point the receiver dead-reckoned rather than measured: no heading, or a satellite report with nothing in fix. Drawn hollow on the map and never sent to the map-matching server. | `NavPoint::is_ghost_fix`, `FixQuality::Lost` |
+| **sendable stretch** | A maximal run of a track's points with no ghost fix between them. A snap request never spans two of them, so the snapped track breaks where the receiver was dead reckoning. | `SendableStretch`, `ChunkContinuity` |
 | **snap error** | Distance in meters from a recorded point to its snapped position. | `MetricKind::SnapError`, `SnapErrorSeries` |
 | **snapped / interpolated / unsnapped** | Per-point match kind, mirroring Valhalla's `matched` / `interpolated` / `unmatched` wire names. | `SnapPointKind`, `SnapErrorKind`, `SnapKindCounts` |
 | **discontinuity** | A stretch Valhalla could not connect through the road network; rendered as a gap in the snapped track. | `begin_route_discontinuity`, `snapped_track::point_groups` |

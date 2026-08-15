@@ -6,10 +6,8 @@
 
 use chrono::{DateTime, Utc};
 
+use gt_test_utils::fixtures::{self, FixKind, NavPointSpec};
 use gt_types::nav_point::NavPoint;
-use gt_types::time_types::GpsTime;
-use gt_types::tpv::TimePositionVelocity;
-use gt_types::{Latitude, Longitude};
 
 /// 2026-01-01T12:00:00Z, matching the capture harness's fixed base time.
 /// (The epoch fallback is unreachable for this valid constant and would
@@ -18,28 +16,42 @@ pub fn base_time() -> DateTime<Utc> {
     DateTime::from_timestamp(1_767_268_800, 0).unwrap_or_default()
 }
 
-/// `count` points spaced `step_ms` apart starting at [`base_time`], walking
-/// north from 55°N 12°E, each with the eph produced by `eph(i)`.
+/// `count` points from [`base_time`] spaced `step_ms` apart, each built from
+/// the spec produced by `spec(i)`.
+pub fn points_with_spec(
+    count: usize,
+    step_ms: i64,
+    spec: impl Fn(usize) -> NavPointSpec,
+) -> Vec<NavPoint> {
+    fixtures::nav_points_from_specs(base_time(), count, step_ms, spec)
+}
+
+/// `count` real fixes spaced `step_ms` apart, each with the eph produced by
+/// `eph(i)`.
 pub fn points_with(
     count: usize,
     step_ms: i64,
     eph: impl Fn(usize) -> Option<f32>,
 ) -> Vec<NavPoint> {
-    (0..count)
-        .map(|i| {
-            let time = base_time() + chrono::Duration::milliseconds(i as i64 * step_ms);
-            let tpv = TimePositionVelocity::builder()
-                .time(GpsTime::from_utc(time))
-                .lat(Latitude::new(55.0 + i as f64 * 1e-5))
-                .lon(Longitude::new(12.0))
-                .maybe_eph_m(eph(i))
-                .build();
-            NavPoint::new(tpv, None)
-        })
-        .collect()
+    points_with_spec(count, step_ms, |i| NavPointSpec {
+        fix: FixKind::Real,
+        eph_m: eph(i),
+    })
 }
 
-/// `count` 1 Hz points without eph - the common case.
+/// `count` 1 Hz real fixes without eph - the common case.
 pub fn points(count: usize) -> Vec<NavPoint> {
     points_with(count, 1000, |_| None)
+}
+
+/// `count` 1 Hz points where the indices in `ghosts` are heading-less ghost
+/// fixes and the rest are real.
+pub fn points_with_ghosts_at(count: usize, ghosts: &[usize]) -> Vec<NavPoint> {
+    points_with_spec(count, 1000, |i| {
+        if ghosts.contains(&i) {
+            NavPointSpec::ghost(FixKind::GhostWithoutHeading)
+        } else {
+            NavPointSpec::default()
+        }
+    })
 }

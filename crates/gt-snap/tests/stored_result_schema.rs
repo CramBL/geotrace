@@ -29,6 +29,7 @@ fn exhaustive_result() -> SnapResult {
                     lon: 12.5645,
                 }),
                 edge: Some(0),
+                follows_gap: true,
             },
             SnapPoint {
                 point: PointIdx::new(4),
@@ -39,6 +40,7 @@ fn exhaustive_result() -> SnapResult {
                     lon: 12.5654,
                 }),
                 edge: Some(1),
+                follows_gap: false,
             },
             SnapPoint {
                 point: PointIdx::new(9),
@@ -46,6 +48,7 @@ fn exhaustive_result() -> SnapResult {
                 error_m: None,
                 snapped: None,
                 edge: None,
+                follows_gap: false,
             },
         ],
         segments: vec![SnappedTrackSegment {

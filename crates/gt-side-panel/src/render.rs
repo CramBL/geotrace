@@ -105,6 +105,8 @@ pub enum SnapRowView {
     Failed {
         error: String,
     },
+    /// The track has no real fix a snap run could send.
+    NothingToSend,
     Done {
         snapped: usize,
         interpolated: usize,
@@ -596,6 +598,13 @@ fn snap_action(row: &SnapRowView, snap: SnapPanelView<'_>) -> Option<SnapAction>
             ),
             consent_pending: false,
         },
+        // Like `Unsnappable` this is a property of the data, not of the
+        // connection, so it outranks the offline state too.
+        SnapRowView::NothingToSend => SnapAction {
+            enabled: false,
+            hover: NOTHING_TO_SEND_HOVER.to_owned(),
+            consent_pending: false,
+        },
         _ if snap.offline => SnapAction {
             enabled: false,
             hover: OFFLINE_HOVER.to_owned(),
@@ -650,7 +659,10 @@ fn costing_submenu_label(row: &SnapRowView) -> Option<&'static str> {
     match row {
         SnapRowView::Done { .. } | SnapRowView::Failed { .. } => Some("Snap again as"),
         SnapRowView::Unsnappable { .. } => Some("Snap as"),
-        SnapRowView::Idle | SnapRowView::Queued | SnapRowView::InFlight { .. } => None,
+        SnapRowView::Idle
+        | SnapRowView::Queued
+        | SnapRowView::InFlight { .. }
+        | SnapRowView::NothingToSend => None,
     }
 }
 
@@ -660,6 +672,10 @@ const HIDDEN_GLYPH_ALPHA: f32 = 0.5;
 
 /// Hover text of every snap control grayed out by `GEOTRACE_OFFLINE`.
 const OFFLINE_HOVER: &str = "Snapping is disabled while GEOTRACE_OFFLINE is set";
+
+/// Hover text of the snap control of a track with no fix worth sending.
+const NOTHING_TO_SEND_HOVER: &str =
+    "Nothing to snap - this track has no run of real fixes, only receiver dead-reckoning estimates";
 
 /// The label with the `…` suffix while a click still needs the consent
 /// dialog (the suffix marks exactly that, per the design).
@@ -851,6 +867,7 @@ fn snap_trigger_overlay(ui: &mut egui::Ui, row: &SnapRowView, rect: egui::Rect) 
         SnapRowView::Idle
         | SnapRowView::Unsnappable { .. }
         | SnapRowView::Failed { .. }
+        | SnapRowView::NothingToSend
         | SnapRowView::Done { .. } => {}
     }
 }
@@ -1788,8 +1805,8 @@ mod snap_action_tests {
 
     /// Pins the trigger's priority order: a current Done never has an action
     /// (its status glyph stays usable offline), a stale Done offers the
-    /// re-run (grayed offline - it needs the network), Unsnappable beats
-    /// offline (the permanent condition names the mode), offline grays
+    /// re-run (grayed offline - it needs the network), Unsnappable and
+    /// NothingToSend beat offline (the permanent conditions), offline grays
     /// everything else, only Idle, Failed, and stale Done are clickable, and
     /// only clickable states carry the consent-pending `…` suffix.
     #[rstest]
@@ -1807,6 +1824,8 @@ mod snap_action_tests {
     #[case(done(), true, None)]
     #[case(stale_done(), false, Some(true))]
     #[case(stale_done(), true, Some(false))]
+    #[case(SnapRowView::NothingToSend, false, Some(false))]
+    #[case(SnapRowView::NothingToSend, true, Some(false))]
     fn action_enablement_per_state_and_offline(
         #[case] row: SnapRowView,
         #[case] offline: bool,
@@ -1817,10 +1836,12 @@ mod snap_action_tests {
     }
 
     /// The disabled hover must name the reason: the declared travel mode for
-    /// unsnappable tracks (even offline - the permanent condition wins), and
-    /// the offline switch for everything else.
+    /// unsnappable tracks and the missing fixes for a track with nothing to
+    /// send (both even offline - the permanent condition wins), and the
+    /// offline switch for everything else.
     #[rstest]
     #[case(unsnappable(), "Boat")]
+    #[case(SnapRowView::NothingToSend, "no run of real fixes")]
     #[case(SnapRowView::Idle, "GEOTRACE_OFFLINE")]
     #[case(failed(), "GEOTRACE_OFFLINE")]
     fn offline_hover_names_the_blocking_condition(

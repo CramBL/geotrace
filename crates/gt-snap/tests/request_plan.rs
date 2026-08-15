@@ -2,12 +2,14 @@
 
 mod support;
 
+use gt_test_utils::fixtures::{FixKind, NavPointSpec};
 use rstest::rstest;
 use support::points_with as points;
 
 use gt_snap::request_plan::{
-    self, CHUNK_OVERLAP_POINTS, CHUNK_POINTS, GPS_ACCURACY_OVERRIDE_RANGE_M, GPS_ACCURACY_RANGE_M,
-    RequestPlan, SEARCH_RADIUS_RANGE_M, SnapParams, TURN_PENALTY_FACTOR_RANGE,
+    self, CHUNK_OVERLAP_POINTS, CHUNK_POINTS, ChunkContinuity, GPS_ACCURACY_OVERRIDE_RANGE_M,
+    GPS_ACCURACY_RANGE_M, RequestPlan, SEARCH_RADIUS_RANGE_M, SnapParams,
+    TURN_PENALTY_FACTOR_RANGE,
 };
 use gt_snap::wire::{Costing, TraceOptions};
 
@@ -17,6 +19,20 @@ fn distinct_sent_indices(plan: &RequestPlan) -> Vec<usize> {
     plan.chunks
         .iter()
         .flat_map(|chunk| chunk.owned_sent().iter().map(|sent| sent.point.as_usize()))
+        .collect()
+}
+
+/// The track indices each chunk owns, one entry per chunk.
+fn owned_indices_per_chunk(plan: &RequestPlan) -> Vec<Vec<usize>> {
+    plan.chunks
+        .iter()
+        .map(|chunk| {
+            chunk
+                .owned_sent()
+                .iter()
+                .map(|sent| sent.point.as_usize())
+                .collect()
+        })
         .collect()
 }
 
@@ -127,6 +143,120 @@ fn gps_accuracy_derives_from_sent_points_only() {
     // Every 10th point (the kept ones) has eph 10; the rest carry 900.
     let pts = points(50, 100, |i| Some(if i % 10 == 0 { 10.0 } else { 900.0 }));
     let plan = request_plan::plan(&pts);
+    assert_eq!(plan.gps_accuracy_m, Some(10.0));
+}
+
+/// Ghost fixes are dropped and end the stretch they interrupt: each
+/// remaining run of real fixes becomes its own request.
+#[rstest]
+#[case::run_in_the_middle(&[3, 4, 5], vec![vec![0, 1, 2], vec![6, 7, 8, 9]])]
+#[case::run_at_the_start(&[0, 1, 2], vec![vec![3, 4, 5, 6, 7, 8, 9]])]
+#[case::run_at_the_end(&[7, 8, 9], vec![vec![0, 1, 2, 3, 4, 5, 6]])]
+#[case::isolated_blip(&[5], vec![vec![0, 1, 2, 3, 4], vec![6, 7, 8, 9]])]
+#[case::lone_fix_between_two_ghosts(&[1, 3], vec![vec![0], vec![2], vec![4, 5, 6, 7, 8, 9]])]
+#[case::every_fix_a_ghost(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], Vec::new())]
+fn ghost_runs_split_the_plan_into_stretches(
+    #[case] ghosts: &[usize],
+    #[case] expected_owned: Vec<Vec<usize>>,
+) {
+    let plan = request_plan::plan(&support::points_with_ghosts_at(10, ghosts));
+    assert_eq!(owned_indices_per_chunk(&plan), expected_owned);
+    // Each stretch here fits in one chunk, so no chunk continues another.
+    let continuity: Vec<ChunkContinuity> = plan.chunks.iter().map(|c| c.continuity).collect();
+    assert_eq!(
+        continuity,
+        vec![ChunkContinuity::OpensStretch; expected_owned.len()]
+    );
+}
+
+/// A zero-satellite fix is a dead-reckoning guess just like a heading-less
+/// one, so it breaks the stretch the same way.
+#[test]
+fn a_fix_without_satellites_in_fix_also_breaks_the_stretch() {
+    let points = support::points_with_spec(6, 1000, |i| {
+        if i == 3 {
+            NavPointSpec::ghost(FixKind::GhostWithoutSatellitesInFix)
+        } else {
+            NavPointSpec::default()
+        }
+    });
+    let plan = request_plan::plan(&points);
+    assert_eq!(
+        owned_indices_per_chunk(&plan),
+        vec![vec![0, 1, 2], vec![4, 5]]
+    );
+}
+
+/// The downsample interval restarts at a gap, so the fix where the receiver
+/// recovers is sent even though it falls inside the interval: at 10 Hz with
+/// a ghost at index 15, index 16 goes out 0.6 s after index 10.
+#[test]
+fn the_fix_after_a_gap_is_sent_within_the_downsample_interval() {
+    let points = support::points_with_spec(30, 100, |i| {
+        if i == 15 {
+            NavPointSpec::ghost(FixKind::GhostWithoutHeading)
+        } else {
+            NavPointSpec::default()
+        }
+    });
+    let plan = request_plan::plan(&points);
+    assert_eq!(
+        owned_indices_per_chunk(&plan),
+        vec![vec![0, 10], vec![16, 26]]
+    );
+}
+
+/// Chunks continue their own stretch (sharing overlap) and open a new one
+/// across a gap, so stitching never bridges the dropped run.
+#[test]
+fn chunks_continue_within_a_stretch_and_open_after_a_gap() {
+    let gap = CHUNK_POINTS + 1..CHUNK_POINTS + 4;
+    let ghosts: Vec<usize> = gap.clone().collect();
+    let count = 2 * (CHUNK_POINTS + 1) + ghosts.len();
+    let plan = request_plan::plan(&support::points_with_ghosts_at(count, &ghosts));
+
+    let continuity: Vec<ChunkContinuity> = plan.chunks.iter().map(|c| c.continuity).collect();
+    assert_eq!(
+        continuity,
+        vec![
+            ChunkContinuity::OpensStretch,
+            ChunkContinuity::ContinuesPrevious,
+            ChunkContinuity::OpensStretch,
+            ChunkContinuity::ContinuesPrevious,
+        ]
+    );
+    // No chunk holds points from both sides of the gap.
+    for chunk in &plan.chunks {
+        let spans_gap = chunk
+            .sent
+            .iter()
+            .any(|sent| sent.point.as_usize() < gap.start)
+            && chunk
+                .sent
+                .iter()
+                .any(|sent| sent.point.as_usize() >= gap.end);
+        assert!(!spans_gap, "a chunk spans the dropped run");
+    }
+    assert_eq!(plan.sent_point_count(), count - ghosts.len());
+}
+
+/// Ghost fixes never reach the server, so their eph never reaches the
+/// derived accuracy either.
+#[test]
+fn gps_accuracy_ignores_ghost_fixes() {
+    let plan = request_plan::plan(&support::points_with_spec(20, 1000, |i| {
+        if (5..15).contains(&i) {
+            NavPointSpec {
+                fix: FixKind::GhostWithoutHeading,
+                eph_m: Some(900.0),
+            }
+        } else {
+            NavPointSpec {
+                fix: FixKind::Real,
+                eph_m: Some(10.0),
+            }
+        }
+    }));
     assert_eq!(plan.gps_accuracy_m, Some(10.0));
 }
 

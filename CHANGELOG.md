@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- The snapped track no longer fans out across nearby roads where the receiver was dead reckoning, as in a parking garage.
+  Ghost fixes are never sent to the map-matching server, and the snapped track breaks at the gap instead of being routed through it.
+
 ## 0.12.0 - 2026-08-15
 
 ### Changed
