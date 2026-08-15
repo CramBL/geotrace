@@ -325,6 +325,9 @@ pub enum SnapActivity {
     Failed {
         error: String,
     },
+    /// The track has no fix to send: it is empty, or the receiver
+    /// dead-reckoned all of it (ghost fixes are never sent).
+    NothingToSend,
 }
 
 /// The scheduler's global activity summary (see [`SnapScheduler::progress`]).
@@ -462,7 +465,8 @@ impl SnapScheduler {
         server_host(&self.server_url)
     }
 
-    /// The transient activity for a track (queued, in flight, or failed).
+    /// The transient activity for a track (queued, in flight, failed, or
+    /// with nothing to send).
     pub fn activity_for(&self, track: TrackRef) -> Option<&SnapActivity> {
         self.activity.get(&track)
     }
@@ -486,7 +490,7 @@ impl SnapScheduler {
                         total_chunks: *total_chunks,
                     });
                 }
-                SnapActivity::Failed { .. } => {}
+                SnapActivity::Failed { .. } | SnapActivity::NothingToSend => {}
             }
         }
         SnapProgress { in_flight, queued }
@@ -525,6 +529,7 @@ impl SnapScheduler {
         }
         let plan = request_plan::plan(&track.points);
         if plan.chunks.is_empty() {
+            self.activity.insert(track_ref, SnapActivity::NothingToSend);
             return;
         }
         let server_host = key.host.clone();
@@ -810,7 +815,7 @@ fn run_failure_summary(reporter: &SnapWarningReporter) -> String {
 
 #[cfg(test)]
 mod tests {
-    use gt_test_utils::fixtures;
+    use gt_test_utils::fixtures::{self, FixKind, NavPointSpec};
     use gt_types::{FileIdx, TrackIdx};
 
     use super::*;
@@ -873,6 +878,34 @@ mod tests {
         assert!(scheduler.latest_run_for(&track).is_some());
         assert_eq!(scheduler.activity_for(track_ref()), None);
         assert_eq!(scheduler.in_flight, None);
+    }
+
+    /// A track the receiver dead-reckoned end to end has no fix to send, so
+    /// nothing is queued and the row says so instead of silently doing
+    /// nothing.
+    #[test]
+    fn a_track_of_only_ghost_fixes_has_nothing_to_send() {
+        let mut scheduler = scheduler();
+        let points = fixtures::nav_points_from_specs(
+            chrono::DateTime::from_timestamp(1_767_268_800, 0).unwrap_or_default(),
+            10,
+            1000,
+            |_| NavPointSpec::ghost(FixKind::GhostWithoutHeading),
+        );
+        let track = fixtures::loaded_track_with_points(points);
+
+        scheduler.request_snap(
+            track_ref(),
+            &track,
+            SnapParams::new(Costing::Auto),
+            SnapPriority::Manual,
+        );
+
+        assert_eq!(
+            scheduler.activity_for(track_ref()),
+            Some(&SnapActivity::NothingToSend)
+        );
+        assert!(scheduler.queue.is_empty());
     }
 
     #[test]
@@ -1292,6 +1325,7 @@ mod tests {
                     lon: 12.56,
                 }),
                 edge: None,
+                follows_gap: false,
             },
             SnapPoint {
                 point: PointIdx::new(4),
@@ -1299,6 +1333,7 @@ mod tests {
                 error_m: None,
                 snapped: None,
                 edge: None,
+                follows_gap: false,
             },
         ];
 

@@ -337,6 +337,84 @@ pub fn nav_points_from(
         .collect()
 }
 
+/// Whether a fixture point is a measured fix or one of the two ways a
+/// receiver produces a ghost fix ([`NavPoint::is_ghost_fix`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FixKind {
+    /// Heading present, satellites in fix.
+    #[default]
+    Real,
+    /// Dead reckoning reported as position only, without a heading.
+    GhostWithoutHeading,
+    /// Dead reckoning with a heading, identified by a satellite report with
+    /// nothing in fix.
+    GhostWithoutSatellitesInFix,
+}
+
+/// What one fixture point holds beyond its time and position.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NavPointSpec {
+    pub fix: FixKind,
+    pub eph_m: Option<f32>,
+}
+
+impl NavPointSpec {
+    pub fn ghost(fix: FixKind) -> Self {
+        Self { fix, eph_m: None }
+    }
+}
+
+/// `count` points spaced `step_ms` apart from `start`, walking north from
+/// 55°N 12°E in 1e-5° steps, each built from the spec produced by `spec(i)`.
+///
+/// The millisecond spacing and the fine steps suit tests over fix quality
+/// and sampling rate. [`nav_points_from`] is the coarser per-second walk.
+pub fn nav_points_from_specs(
+    start: chrono::DateTime<chrono::Utc>,
+    count: usize,
+    step_ms: i64,
+    spec: impl Fn(usize) -> NavPointSpec,
+) -> Vec<NavPoint> {
+    (0..count)
+        .map(|i| {
+            let spec = spec(i);
+            let time = start + Duration::milliseconds(i as i64 * step_ms);
+            let tpv = TimePositionVelocity::builder()
+                .time(GpsTime::from_utc(time))
+                .lat(Latitude::new(55.0 + i as f64 * 1e-5))
+                .lon(Longitude::new(12.0))
+                .maybe_heading(
+                    (spec.fix != FixKind::GhostWithoutHeading).then(|| Angle::new::<degree>(90.0)),
+                )
+                .maybe_eph_m(spec.eph_m)
+                .build();
+            let satellites = match spec.fix {
+                FixKind::GhostWithoutSatellitesInFix => {
+                    Some(satellite_report_with_nothing_in_fix())
+                }
+                FixKind::Real | FixKind::GhostWithoutHeading => None,
+            };
+            NavPoint::new(tpv, satellites)
+        })
+        .collect()
+}
+
+/// A satellite report seeing one GPS satellite and using none of them.
+fn satellite_report_with_nothing_in_fix() -> Satellites {
+    Satellites::new(
+        None,
+        None,
+        vec![Satellite::new(
+            Constellation::Gps,
+            1,
+            None,
+            None,
+            None,
+            false,
+        )],
+    )
+}
+
 pub fn marker_test_data() -> Vec<CustomMarker> {
     let nav_points = nav_test_data();
     let mut markers = Vec::new();

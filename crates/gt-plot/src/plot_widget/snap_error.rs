@@ -153,9 +153,11 @@ impl SnapErrorHover {
 
 /// The drawable line runs of a snap error series: maximal stretches of
 /// consecutive valued points, split wherever a point carries no error (the
-/// road network rejected it, so the line honestly breaks there). Runs of a
-/// single point produce no visible line geometry and are dropped - the
-/// point's value stays reachable through the custom hover.
+/// road network rejected it) and wherever a point follows a gap in the run
+/// (the receiver was dead reckoning there, or a chunk failed), so the line
+/// never spans data the run does not have. Runs of a single point produce
+/// no visible line geometry and are dropped - the point's value stays
+/// reachable through the custom hover.
 fn snap_error_runs(points: &[SnapErrorPoint]) -> Vec<Vec<PlotPoint>> {
     let mut runs = Vec::new();
     let mut run: Vec<PlotPoint> = Vec::new();
@@ -167,6 +169,9 @@ fn snap_error_runs(points: &[SnapErrorPoint]) -> Vec<Vec<PlotPoint>> {
         }
     };
     for point in points {
+        if point.follows_gap {
+            flush(&mut run);
+        }
         match point.error_m {
             Some(error) => run.push(PlotPoint::new(point.x_secs, error)),
             None => flush(&mut run),
@@ -404,7 +409,26 @@ mod tests {
             } else {
                 SnapErrorKind::Unsnapped
             },
+            follows_gap: false,
         }
+    }
+
+    /// A point that follows a gap in the run - the plan dropped a ghost
+    /// stretch there, or a chunk failed - starts a new line run, so the
+    /// plot never draws an error trend across a stretch with no data.
+    #[test]
+    fn snap_error_runs_split_at_a_gap() {
+        let mut points = vec![
+            sep(0.0, Some(1.0)),
+            sep(1.0, Some(2.0)),
+            sep(2.0, Some(3.0)),
+            sep(3.0, Some(4.0)),
+        ];
+        if let Some(after_gap) = points.get_mut(2) {
+            after_gap.follows_gap = true;
+        }
+        let lengths: Vec<usize> = snap_error_runs(&points).iter().map(Vec::len).collect();
+        assert_eq!(lengths, vec![2, 2]);
     }
 
     /// The line runs split exactly at valueless points, and runs of a single

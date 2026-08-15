@@ -25,6 +25,7 @@ thiserror.workspace = true
 [dev-dependencies]
 chrono.workspace = true
 geo-types.workspace = true
+gt-test-utils = { path = "../gt-test-utils" }
 insta.workspace = true
 proptest.workspace = true
 rstest.workspace = true

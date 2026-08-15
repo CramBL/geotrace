@@ -45,6 +45,7 @@ expression: pretty
       {
         "edge": 0,
         "error_m": 3.25,
+        "follows_gap": true,
         "kind": "matched",
         "point": 0,
         "snapped": {
@@ -55,6 +56,7 @@ expression: pretty
       {
         "edge": 1,
         "error_m": 1.5,
+        "follows_gap": false,
         "kind": "interpolated",
         "point": 4,
         "snapped": {
@@ -65,6 +67,7 @@ expression: pretty
       {
         "edge": null,
         "error_m": null,
+        "follows_gap": false,
         "kind": "unmatched",
         "point": 9,
         "snapped": null

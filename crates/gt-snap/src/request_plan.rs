@@ -2,8 +2,9 @@
 //!
 //! Three concerns, all pure functions over the input points:
 //!
-//! - **Downsampling**: thin to at most one point per [`MIN_POINT_INTERVAL`].
-//!   Snap error is only defined for sent points.
+//! - **Downsampling**: drop ghost fixes, then thin what remains to at most
+//!   one point per [`MIN_POINT_INTERVAL`]. Snap error is only defined for
+//!   sent points.
 //! - **Chunking**: split into [`CHUNK_POINTS`]-sized requests sharing
 //!   [`CHUNK_OVERLAP_POINTS`] of context; the constants carry the rationale.
 //! - **`gps_accuracy` derivation**: median eph of the sent points, clamped
@@ -142,6 +143,18 @@ pub struct SentPoint {
     pub eph_m: Option<f32>,
 }
 
+/// How a chunk follows the one before it in the plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChunkContinuity {
+    /// Same stretch as the previous chunk, sharing [`CHUNK_OVERLAP_POINTS`]
+    /// of context with it: the two match one continuous drive.
+    ContinuesPrevious,
+    /// First chunk of a stretch. What precedes its first point is the start
+    /// of the track or a run of ghost fixes the plan dropped, so nothing
+    /// connects this chunk to the previous one.
+    OpensStretch,
+}
+
 /// One request's worth of points, with provenance and ownership.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chunk {
@@ -152,6 +165,7 @@ pub struct Chunk {
     /// takes their match results from the neighboring chunk instead, where
     /// they are more interior.
     pub owned: Range<usize>,
+    pub continuity: ChunkContinuity,
 }
 
 impl Chunk {
@@ -197,22 +211,53 @@ impl RequestPlan {
     }
 }
 
+/// A maximal run of sent points the matcher may treat as one continuous
+/// drive: no ghost fix was dropped between any two of them.
+struct SendableStretch {
+    sent: Vec<SentPoint>,
+}
+
 /// Build the request plan for a track's points.
 pub fn plan(points: &[NavPoint]) -> RequestPlan {
-    let sent = downsample(points);
-    let gps_accuracy_m = derive_gps_accuracy(&sent);
+    let stretches = downsample(points);
+    let gps_accuracy_m = derive_gps_accuracy(stretches.iter().flat_map(|s| s.sent.iter()));
+    let chunks = stretches
+        .iter()
+        .flat_map(|stretch| chunk_stretch(&stretch.sent))
+        .collect();
     RequestPlan {
-        chunks: chunk(&sent),
+        chunks,
         gps_accuracy_m,
     }
 }
 
-/// Select the points to send: the first point, then every point at least
-/// [`MIN_POINT_INTERVAL`] after the previously selected one.
-fn downsample(points: &[NavPoint]) -> Vec<SentPoint> {
+/// Select the points to send, split into stretches at the ghost fixes.
+///
+/// A ghost fix is a receiver dead-reckoning guess rather than a measured
+/// position, so it is never sent - and the stretch ends there, because two
+/// points sent either side of a dropped run arrive as neighbors and the
+/// matcher routes a road through the gap between them.
+fn downsample(points: &[NavPoint]) -> Vec<SendableStretch> {
+    let mut stretches = Vec::new();
+    let mut start = 0;
+    for run in points.split(NavPoint::is_ghost_fix) {
+        let sent = downsample_run(run, start);
+        if !sent.is_empty() {
+            stretches.push(SendableStretch { sent });
+        }
+        // Past this run and past the ghost fix that ended it.
+        start += run.len() + 1;
+    }
+    stretches
+}
+
+/// Thin one run of real fixes: its first point, then every point at least
+/// [`MIN_POINT_INTERVAL`] after the previously selected one. `base` is the
+/// run's start index within the track, which the sent points carry back.
+fn downsample_run(run: &[NavPoint], base: usize) -> Vec<SentPoint> {
     let mut sent = Vec::new();
     let mut last_kept = None;
-    for (index, point) in points.iter().enumerate() {
+    for (offset, point) in run.iter().enumerate() {
         let time = point.tpv.time().utc();
         let keep = match last_kept {
             None => true,
@@ -226,7 +271,7 @@ fn downsample(points: &[NavPoint]) -> Vec<SentPoint> {
         if keep {
             last_kept = Some(time);
             sent.push(SentPoint {
-                point: PointIdx::new(index),
+                point: PointIdx::new(base + offset),
                 shape_point: ShapePoint {
                     lat: point.tpv.lat().as_degrees(),
                     lon: point.tpv.lon().as_degrees(),
@@ -239,8 +284,10 @@ fn downsample(points: &[NavPoint]) -> Vec<SentPoint> {
     sent
 }
 
-/// Split the sent points into overlapping chunks with ownership ranges.
-fn chunk(sent: &[SentPoint]) -> Vec<Chunk> {
+/// Split one stretch's sent points into overlapping chunks with ownership
+/// ranges. Chunks never span two stretches, so the first one opens a
+/// stretch and the rest continue it.
+fn chunk_stretch(sent: &[SentPoint]) -> Vec<Chunk> {
     if sent.is_empty() {
         return Vec::new();
     }
@@ -271,6 +318,11 @@ fn chunk(sent: &[SentPoint]) -> Vec<Chunk> {
         chunks.push(Chunk {
             sent: sent.get(start..end).unwrap_or_default().to_vec(),
             owned: own_from..own_to,
+            continuity: if is_first {
+                ChunkContinuity::OpensStretch
+            } else {
+                ChunkContinuity::ContinuesPrevious
+            },
         });
         if is_last {
             return chunks;
@@ -280,8 +332,8 @@ fn chunk(sent: &[SentPoint]) -> Vec<Chunk> {
 }
 
 /// Median eph of the sent points, clamped to [`GPS_ACCURACY_RANGE_M`].
-fn derive_gps_accuracy(sent: &[SentPoint]) -> Option<f64> {
-    let mut ephs: Vec<f64> = sent.iter().filter_map(|s| s.eph_m).map(f64::from).collect();
+fn derive_gps_accuracy<'a>(sent: impl Iterator<Item = &'a SentPoint>) -> Option<f64> {
+    let mut ephs: Vec<f64> = sent.filter_map(|s| s.eph_m).map(f64::from).collect();
     if ephs.is_empty() {
         return None;
     }

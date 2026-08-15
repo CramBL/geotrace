@@ -112,6 +112,11 @@ fn owned_ranges_select_results_across_chunks() {
     let result = stitch::stitch(&plan, auto_params(), &outcomes, &reporter);
 
     assert_eq!(result.points.len(), plan.sent_point_count());
+    assert_eq!(
+        result.points.iter().filter(|p| p.follows_gap).count(),
+        1,
+        "only the first point of an uninterrupted run follows a gap"
+    );
     // Every point appears exactly once, ascending by track index.
     let indices: Vec<usize> = result.points.iter().map(|p| p.point.as_usize()).collect();
     let mut sorted = indices.clone();
@@ -147,6 +152,11 @@ fn off_network_chunk_becomes_unsnapped_points() {
     assert!(reporter.is_empty(), "off-network is not a failure");
     assert!(!result.partial);
     assert_eq!(result.points.len(), plan.sent_point_count());
+    assert_eq!(
+        result.points.iter().filter(|p| p.follows_gap).count(),
+        1,
+        "an off-network chunk leaves data, so it opens no gap for the next"
+    );
     assert_eq!(result.kind_counts.unsnapped, plan.chunks[1].owned.len());
     let unsnapped = result
         .points
@@ -189,6 +199,10 @@ fn failed_chunk_leaves_gap_and_marks_partial() {
         .point;
     let first_present = result.points.first().expect("some points");
     assert_eq!(first_present.point, expected_first);
+    assert!(
+        first_present.follows_gap,
+        "the failed chunk left no data before it"
+    );
 }
 
 #[test]
@@ -413,6 +427,61 @@ fn geometry_error_reports_warning_and_never_welds_across() {
     ));
     assert_eq!(result.segments.len(), 2, "no weld across the failed chunk");
     assert!(!result.partial, "geometry failure is not a data gap");
+}
+
+/// The chunks either side of a dropped ghost run match two disconnected
+/// drives, so their geometry stays split even though both boundaries are
+/// snappable - the snapped track shows the break instead of a road through
+/// the stretch the receiver never measured.
+#[test]
+fn chunks_across_a_ghost_gap_keep_their_geometry_split() {
+    let plan = request_plan::plan(&support::points_with_ghosts_at(20, &[10, 11, 12]));
+    assert_eq!(plan.chunks.len(), 2, "precondition");
+    let sizes = chunk_sizes(&plan);
+    let outcomes = [
+        shaped_response(sizes[0]).expect("outcome"),
+        shaped_response(sizes[1]).expect("outcome"),
+    ];
+    let reporter = SnapWarningReporter::default();
+    let result = stitch::stitch(&plan, auto_params(), &outcomes, &reporter);
+
+    assert!(reporter.is_empty());
+    assert_eq!(result.segments.len(), 2);
+    for segment in &result.segments {
+        assert_eq!(segment.positions.len(), 4);
+    }
+    // The per-point series breaks at the same place: only the first point
+    // of each stretch follows a gap.
+    let gap_starts: Vec<usize> = result
+        .points
+        .iter()
+        .filter(|point| point.follows_gap)
+        .map(|point| point.point.as_usize())
+        .collect();
+    assert_eq!(gap_starts, vec![0, 13]);
+}
+
+/// An off-network chunk opening a stretch marks its first point as
+/// following the gap too: the break is a property of the plan, not of how
+/// the server answered.
+#[test]
+fn an_off_network_chunk_after_a_ghost_gap_follows_the_gap() {
+    let plan = request_plan::plan(&support::points_with_ghosts_at(20, &[10, 11, 12]));
+    let sizes = chunk_sizes(&plan);
+    let outcomes = [
+        uniform_response(sizes[0], SnapPointKind::Snapped, 1.0).expect("outcome"),
+        ChunkOutcome::OffNetwork,
+    ];
+    let reporter = SnapWarningReporter::default();
+    let result = stitch::stitch(&plan, auto_params(), &outcomes, &reporter);
+
+    let gap_starts: Vec<usize> = result
+        .points
+        .iter()
+        .filter(|point| point.follows_gap)
+        .map(|point| point.point.as_usize())
+        .collect();
+    assert_eq!(gap_starts, vec![0, 13]);
 }
 
 #[test]

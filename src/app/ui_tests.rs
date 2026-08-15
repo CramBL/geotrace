@@ -3390,6 +3390,7 @@ fn inject_completed_run(harness: &mut Harness<'_, App>, track: gt_types::TrackRe
                     .then(|| 2.0 + f64::from(u8::try_from(i % 7).unwrap_or(0))),
                 snapped: None,
                 edge: None,
+                follows_gap: i == 0,
             }
         })
         .collect();

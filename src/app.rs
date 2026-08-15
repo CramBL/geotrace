@@ -213,6 +213,7 @@ impl SnapErrorDerived {
                     x_secs: nav.tpv.time().as_secs_f64(),
                     error_m: p.error_m,
                     kind: Self::kind(p.kind),
+                    follows_gap: p.follows_gap,
                 })
             })
             .collect();
@@ -1419,6 +1420,7 @@ impl App {
                         Some(snap::SnapActivity::Failed { error }) => SnapRowView::Failed {
                             error: error.clone(),
                         },
+                        Some(snap::SnapActivity::NothingToSend) => SnapRowView::NothingToSend,
                         None => match self.snap.latest_run_for(track) {
                             Some(run) => {
                                 let reasons = snap::stale_reasons(
