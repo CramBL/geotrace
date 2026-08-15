@@ -20,6 +20,7 @@ use uom::si::f64::Angle;
 use uom::si::length::meter;
 
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
+use crate::recording_labels::RecordingLabels;
 use crate::transform::MapScale;
 
 /// Local on-screen fix spacing, in units of the icon size, at which a fix
@@ -282,6 +283,7 @@ pub(crate) fn draw_track_icons(
 pub(crate) fn show_tooltip(
     ui: &Ui,
     files: &[LoadedFile],
+    recording_labels: RecordingLabels<'_>,
     point_ref: DataPointRef,
     match_header: Option<impl FnOnce(&mut Ui)>,
 ) {
@@ -313,6 +315,7 @@ pub(crate) fn show_tooltip(
             ui,
             point,
             &SkySection::resolve(track, point_ref.point_index),
+            recording_labels.name_when_several_files_loaded(point_ref.track.fi),
         );
     });
 }
@@ -455,9 +458,16 @@ pub(crate) fn draw_plot_hover_overlay(
     }
 }
 
-pub(crate) fn show_hover_table(ui: &mut Ui, p: &NavPoint, sky: &SkySection<'_>) {
+/// `recording_name` fills the table's recording row. It is `None` while a
+/// single file is loaded.
+pub(crate) fn show_hover_table(
+    ui: &mut Ui,
+    p: &NavPoint,
+    sky: &SkySection<'_>,
+    recording_name: Option<&str>,
+) {
     ui.horizontal_top(|ui| {
-        hover_grid_ui(ui, p);
+        hover_grid_ui(ui, p, recording_name);
         if !matches!(sky, SkySection::TrackWithoutReports) {
             ui.add_space(12.0);
             ui.vertical(|ui| sky_section_ui(ui, sky, SkyPlotSize::Compact, None));
@@ -465,11 +475,23 @@ pub(crate) fn show_hover_table(ui: &mut Ui, p: &NavPoint, sky: &SkySection<'_>) 
     });
 }
 
-fn hover_grid_ui(ui: &mut Ui, p: &NavPoint) {
+/// The row naming the recording a fix came from, in the grid the caller has
+/// open. Draws nothing while a single file is loaded.
+fn recording_row_ui(ui: &mut Ui, recording_name: Option<&str>) {
+    if let Some(name) = recording_name {
+        ui.label("Recording");
+        ui.label(name);
+        ui.end_row();
+    }
+}
+
+fn hover_grid_ui(ui: &mut Ui, p: &NavPoint, recording_name: Option<&str>) {
     Grid::new("hover_grid")
         .striped(true)
         .num_columns(2)
         .show(ui, |ui| {
+            recording_row_ui(ui, recording_name);
+
             ui.label("Time");
             ui.label(p.tpv.time().utc().format("%Y-%m-%d %H:%M:%S").to_string());
             ui.end_row();
@@ -560,6 +582,7 @@ pub(crate) fn show_sticky_tpv_content(
     p: &NavPoint,
     sky: &SkySection<'_>,
     folds: &mut PointWindowFolds,
+    recording_name: Option<&str>,
 ) -> bool {
     // The sky plot is drawn beside the tables, so hovering a table row feeds
     // the plot through egui's per-frame data store: this frame's plot uses
@@ -621,7 +644,7 @@ pub(crate) fn show_sticky_tpv_content(
                 }
                 ui.add_space(6.0);
             }
-            sticky_metrics(ui, p, highlight);
+            sticky_metrics(ui, p, highlight, recording_name);
             open_trails
         };
     // The satellite tables always scroll on their own, so the plot beside or
@@ -658,9 +681,16 @@ pub(crate) fn show_sticky_tpv_content(
 /// The fix metrics beneath the plot: speed, heading, accuracy, the satellite
 /// fix/seen counts, and the clock deltas. Hovering the fix count highlights
 /// the in-fix satellites on the plot.
-fn sticky_metrics(ui: &mut Ui, p: &NavPoint, highlight: &mut Option<SkyHighlight>) {
+fn sticky_metrics(
+    ui: &mut Ui,
+    p: &NavPoint,
+    highlight: &mut Option<SkyHighlight>,
+    recording_name: Option<&str>,
+) {
     // Basic metrics (2-column grid).
     Grid::new("sticky_tpv_basic").num_columns(2).show(ui, |ui| {
+        recording_row_ui(ui, recording_name);
+
         ui.label("Speed");
         match p.tpv.velocity_kmh() {
             Some(v) => {
@@ -1794,7 +1824,8 @@ mod tests {
             .size(egui::vec2(620.0, 560.0))
             .theme(true)
             .ui(move |ui| {
-                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let _opened =
+                    show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
             });
         harness.snapshot("sticky_dense_two_columns");
     }
@@ -1809,7 +1840,8 @@ mod tests {
             .size(egui::vec2(330.0, 560.0))
             .theme(true)
             .ui(move |ui| {
-                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let _opened =
+                    show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
             });
         harness.snapshot_loose("sticky_dense_one_column");
     }
@@ -1859,7 +1891,8 @@ mod tests {
             .size(egui::vec2(620.0, 380.0))
             .theme(true)
             .ui(move |ui| {
-                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let _opened =
+                    show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
             });
         harness.snapshot("sticky_folded_sections");
     }
@@ -1882,7 +1915,8 @@ mod tests {
             .size(egui::vec2(620.0, 560.0))
             .theme(true)
             .ui(move |ui| {
-                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let _opened =
+                    show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
             });
         harness.run();
 
@@ -1904,7 +1938,8 @@ mod tests {
             .size(egui::vec2(600.0, 440.0))
             .theme(true)
             .ui(move |ui| {
-                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let _opened =
+                    show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
                 seen.set(folds.is_folded(Constellation::Gps));
             });
         harness.run();
@@ -1927,7 +1962,8 @@ mod tests {
             .size(egui::vec2(600.0, 440.0))
             .theme(true)
             .ui(move |ui| {
-                let opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let opened =
+                    show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
                 let (ever_opened, _) = seen.get();
                 seen.set((ever_opened || opened, folds.plot_folded));
             });
@@ -1960,7 +1996,8 @@ mod tests {
             .size(egui::vec2(600.0, 440.0))
             .theme(true)
             .ui(move |ui| {
-                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let _opened =
+                    show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
                 seen.set((
                     folds.is_folded(Constellation::Gps),
                     folds.is_folded(Constellation::Glonass),
@@ -1990,7 +2027,8 @@ mod tests {
             .theme(true)
             .ui(move |ui| {
                 cell.set(Some(sky_table_highlight_id(ui)));
-                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let _opened =
+                    show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
             });
         harness.run();
 
@@ -2032,7 +2070,8 @@ mod tests {
             .size(egui::vec2(600.0, 440.0))
             .theme(dark_mode)
             .ui(move |ui| {
-                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let _opened =
+                    show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
             });
         harness.snapshot(name);
     }
@@ -2060,7 +2099,8 @@ mod tests {
             .theme(true)
             .ui(move |ui| {
                 cell.set(Some(sky_table_highlight_id(ui)));
-                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let _opened =
+                    show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
             });
         harness.run();
         harness.inner.get_by_label(label).hover();
@@ -2081,7 +2121,8 @@ mod tests {
             .size(egui::vec2(600.0, 440.0))
             .theme(true)
             .ui(move |ui| {
-                let _opened = show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds);
+                let _opened =
+                    show_sticky_tpv_content(ui, &point, &sky_for(&point), &mut folds, None);
             });
         harness.run();
         harness.inner.get_by_label("G01").hover();
@@ -2179,7 +2220,7 @@ mod tests {
             .ui(move |ui| {
                 let sky = SkySection::resolve(&track, PointIdx::new(0));
                 if let Some(point) = track.points.first() {
-                    show_hover_table(ui, point, &sky);
+                    show_hover_table(ui, point, &sky, None);
                 }
             });
         harness.snapshot(name);
@@ -2205,10 +2246,41 @@ mod tests {
             .ui(move |ui| {
                 let sky = SkySection::resolve(&track, PointIdx::new(query));
                 if let Some(point) = track.points.get(query) {
-                    show_hover_table(ui, point, &sky);
+                    show_hover_table(ui, point, &sky, None);
                 }
             });
         harness.snapshot(name);
+    }
+
+    /// The recording row names the file a fix came from, and is absent while
+    /// a single file is loaded.
+    #[rstest]
+    #[case::several_files(Some("Morning ride"), true)]
+    #[case::single_file(None, false)]
+    fn hover_badge_recording_row(
+        #[case] recording_name: Option<&'static str>,
+        #[case] expect_row: bool,
+    ) {
+        let track = track_with_points(vec![point_at(0, Some(sats_with_sky()))]);
+        let mut harness = crate::test_harness::builder()
+            .size(egui::vec2(430.0, 260.0))
+            .theme(true)
+            .ui(move |ui| {
+                let sky = SkySection::resolve(&track, PointIdx::new(0));
+                if let Some(point) = track.points.first() {
+                    show_hover_table(ui, point, &sky, recording_name);
+                }
+            });
+        harness.run();
+
+        assert_eq!(
+            harness.inner.query_by_label("Recording").is_some(),
+            expect_row
+        );
+        assert_eq!(
+            harness.inner.query_by_label("Morning ride").is_some(),
+            expect_row
+        );
     }
 
     #[rstest]
