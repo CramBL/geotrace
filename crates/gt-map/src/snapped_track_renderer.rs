@@ -21,6 +21,8 @@
 //! rejection against a small rect around the cursor, so its cost stays
 //! proportional to the geometry near the pointer.
 
+use std::cell::Cell;
+
 use egui::{Pos2, Rect, Response, RichText, Stroke, Ui};
 use gt_types::LoadedFile;
 use gt_ui_types::{SnappedEdgeInfo, SnappedTracks};
@@ -75,14 +77,24 @@ pub struct SnappedTrackRenderer<'a> {
     /// Hover is disabled while the recorded data owns the pointer (an
     /// active hover on recorded elements) - the primary data wins.
     hover_enabled: bool,
+    /// Set when the edge tooltip draws, and read on the next frame by the
+    /// interference overlay, which paints before this plugin and so cannot
+    /// see the current frame's tooltip.
+    edge_tooltip_shown: &'a Cell<bool>,
 }
 
 impl<'a> SnappedTrackRenderer<'a> {
-    pub fn new(snapped: &'a SnappedTracks, files: &'a [LoadedFile], hover_enabled: bool) -> Self {
+    pub fn new(
+        snapped: &'a SnappedTracks,
+        files: &'a [LoadedFile],
+        hover_enabled: bool,
+        edge_tooltip_shown: &'a Cell<bool>,
+    ) -> Self {
         Self {
             snapped,
             files,
             hover_enabled,
+            edge_tooltip_shown,
         }
     }
 }
@@ -183,6 +195,7 @@ impl Plugin for SnappedTrackRenderer<'_> {
             });
             if let Some(edge) = edge {
                 response.show_tooltip_ui(|ui| edge_tooltip_rows(ui, edge));
+                self.edge_tooltip_shown.set(true);
             }
         }
     }
