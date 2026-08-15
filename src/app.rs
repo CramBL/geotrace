@@ -17,7 +17,6 @@ use egui_phosphor::regular::LINK_BREAK as ICON_LINK_BREAK;
 use egui_phosphor::regular::MAP_PIN as ICON_MAP_PIN;
 use egui_phosphor::regular::SCISSORS as ICON_SCISSORS;
 use egui_phosphor::regular::SLIDERS_HORIZONTAL as ICON_SLIDERS_HORIZONTAL;
-use egui_phosphor::regular::TAG as ICON_TAG;
 use egui_phosphor::regular::TERMINAL_WINDOW as ICON_TERMINAL_WINDOW;
 use egui_phosphor::regular::TEXT_AA as ICON_TEXT_AA;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
@@ -33,6 +32,7 @@ mod jamming;
 mod loader;
 mod modals;
 mod query;
+mod recording_name_template;
 mod settings_autosave;
 mod snap;
 mod snap_persist;
@@ -68,6 +68,7 @@ use gt_ui_types::{
     DisplayMask, HighlightScope, MapHighlight, SkyGlyphVariant, TrackDataVisibility,
 };
 use loader::{CompletedLoad, FinishedJob, LoadJobs, LoadOutcome};
+use recording_name_template::TemplatePreviewRecording;
 use settings_autosave::{AppSnapshot, SettingsAutosaver};
 use strum::IntoEnumIterator;
 
@@ -692,6 +693,23 @@ impl App {
         linear.shares.set_share(self.plot_tile_id, 1.0 - ratio);
     }
 
+    /// The recording the name-template preview renders against: the first loaded
+    /// one, else the most recent one in history.
+    fn name_template_preview_recording(&self) -> Option<TemplatePreviewRecording> {
+        let loaded = self
+            .shared
+            .borrow()
+            .loaded_files
+            .view()
+            .get(0)
+            .map(TemplatePreviewRecording::from_loaded_file);
+        loaded.or_else(|| {
+            self.history_window
+                .latest_listed_recording()
+                .map(TemplatePreviewRecording::from_history_entry)
+        })
+    }
+
     /// Render the Settings window.
     ///
     /// Returns `true` in the frame when the user clicks "Apply to loaded data",
@@ -700,6 +718,10 @@ impl App {
         if !self.settings_open {
             return false;
         }
+        // The name-template preview reads a stored recording from the History
+        // window's cached list when nothing is loaded.
+        self.history_window
+            .request_recording_list_if_missing(&self.history);
         let mut open = self.settings_open;
         let mut apply = false;
         Window::new("Settings")
@@ -926,18 +948,13 @@ impl App {
                     .num_columns(2)
                     .spacing([8.0, 6.0])
                     .show(ui, |ui| {
-                        ui.label(format!("{ICON_TAG} Recording name"))
-                            .on_hover_text(
-                                "Template for the name shown for each recording in the side \
-                                 panel. Tokens: {title} {device} {identity} {filename}. Empty \
-                                 tokens and their separators are dropped; unknown text is kept.",
-                            );
+                        let preview = self.name_template_preview_recording();
                         let mut template = self.shared.borrow().recording_name_template.clone();
-                        if ui
-                            .text_edit_singleline(&mut template)
-                            .on_hover_text("Tokens: {title} {device} {identity} {filename}")
-                            .changed()
-                        {
+                        if recording_name_template::recording_name_template_ui(
+                            ui,
+                            &mut template,
+                            preview.as_ref(),
+                        ) {
                             self.shared.borrow_mut().recording_name_template = template;
                         }
                         ui.end_row();

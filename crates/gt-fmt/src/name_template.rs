@@ -22,9 +22,19 @@ pub struct NameFields<'a> {
 /// One recognised placeholder token. The `snake_case` wire names are the tokens
 /// users type inside `{...}`; deriving them keeps the set in lockstep with the
 /// enum (see the exhaustiveness test) rather than a hand-written match.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString, strum::EnumCount)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumCount,
+    strum::EnumIter,
+    strum::EnumString,
+)]
 #[strum(serialize_all = "snake_case")]
-enum Token {
+pub enum Token {
     Title,
     Device,
     Identity,

@@ -2510,6 +2510,196 @@ fn snapshot_settings_window() {
     harness.snapshot("settings_window");
 }
 
+/// Load one recording and give it the metadata the name template draws on.
+fn load_recording_with_metadata(harness: &mut Harness<App>) {
+    harness
+        .input_mut()
+        .dropped_files
+        .push(Arc::new(TestDroppedFile::bytes(
+            minimal_gtd_bytes(),
+            "ride.gtd",
+        )));
+    harness.step();
+    step_until_loaded(harness);
+    let mut shared = harness.state().shared.borrow_mut();
+    if let Some(file) = shared.loaded_files.get_mut(0) {
+        file.metadata.title = Some("Morning ride".to_owned());
+        file.metadata.device = Some("u-blox F9P".to_owned());
+    }
+    shared.recording_name_template = "{title} - {device}".to_owned();
+}
+
+/// A stored recording for the guide's preview line to fall back on.
+fn stored_recording_entry(identity: &str, title: &str) -> gt_store::RecordingEntry {
+    gt_store::RecordingEntry {
+        db_ref: gt_store::DatabaseRef {
+            identity: identity.to_owned(),
+            group_name: "2026-01-01T00:00:00Z_0".to_owned(),
+        },
+        meta: gt_store::RecordingMeta {
+            start_us: 0,
+            end_us: 0,
+            nav_point_count: 0,
+            sat_report_count: 0,
+            marker_count: 0,
+            event_marker_count: 0,
+            gtd_size_bytes: 0,
+        },
+        total_tracks: 1,
+        hidden_tracks: 0,
+        title: Some(title.to_owned()),
+        device: Some("u-blox F9P".to_owned()),
+        notes: None,
+        travel_mode: None,
+        channels: Vec::new(),
+    }
+}
+
+/// The template guide opens while the field has focus and previews the template
+/// twice: with every token filled by its own name, and on a real recording. A
+/// loaded recording is the preview's source even when history holds one too.
+#[test]
+fn name_template_guide_previews_the_loaded_recording() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .with_size(egui::vec2(760.0, 1100.0))
+        .build_eframe(transient_app);
+    harness.step();
+    load_recording_with_metadata(&mut harness);
+    harness
+        .state_mut()
+        .history_window
+        .set_entries(vec![stored_recording_entry(
+            "auto:stored.gtd",
+            "Stored ride",
+        )]);
+    harness.state_mut().settings_open = true;
+    harness.run_steps(3);
+    assert!(
+        harness.query_by_label("title - device").is_none(),
+        "the guide must stay closed until the field takes focus"
+    );
+
+    harness.get_by_label_contains("Recording name").focus();
+    harness.run_steps(3);
+
+    harness.get_by_label("title - device");
+    harness.get_by_label("Morning ride - u-blox F9P");
+}
+
+/// With nothing loaded, the preview falls back to the most recent recording in
+/// history, which names its file after its identity.
+#[test]
+fn name_template_guide_previews_a_history_recording() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .with_size(egui::vec2(760.0, 1100.0))
+        .build_eframe(transient_app);
+    harness.step();
+    {
+        let mut older = stored_recording_entry("auto:older.gtd", "Older ride");
+        older.meta.start_us = 1_000;
+        let mut newest = stored_recording_entry("auto:newest.gtd", "Newest ride");
+        newest.meta.start_us = 2_000;
+        harness
+            .state_mut()
+            .history_window
+            .set_entries(vec![older, newest]);
+        harness.state().shared.borrow_mut().recording_name_template =
+            "{title} - {identity} - {filename}".to_owned();
+    }
+    harness.state_mut().settings_open = true;
+    harness.run_steps(3);
+
+    harness.get_by_label_contains("Recording name").focus();
+    harness.run_steps(3);
+
+    harness.get_by_label("Newest ride - newest.gtd - newest.gtd");
+}
+
+/// Both previews follow the field as it is typed in.
+#[test]
+fn name_template_guide_previews_follow_the_typed_template() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .with_size(egui::vec2(760.0, 1100.0))
+        .build_eframe(transient_app);
+    harness.step();
+    load_recording_with_metadata(&mut harness);
+    harness.state_mut().settings_open = true;
+    harness.run_steps(3);
+
+    let field = harness.get_by_label_contains("Recording name");
+    field.focus();
+    field.type_text(" ({identity})");
+    harness.run_steps(3);
+
+    assert_eq!(
+        harness.state().shared.borrow().recording_name_template,
+        "{title} - {device} ({identity})"
+    );
+    harness.get_by_label("title - device (identity)");
+    harness.get_by_label("Morning ride - u-blox F9P (ride.gtd)");
+}
+
+/// With no recording loaded and none in history, the preview line explains why
+/// it is empty.
+#[test]
+fn name_template_guide_explains_a_missing_recording() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .with_size(egui::vec2(760.0, 1100.0))
+        .build_eframe(transient_app);
+    harness.step();
+    harness.state_mut().settings_open = true;
+    harness.run_steps(3);
+
+    harness.get_by_label_contains("Recording name").focus();
+    harness.run_steps(3);
+
+    harness.get_by_label("No recording loaded or in history");
+}
+
+/// The guide as it shows while the user edits the template: the token list, an
+/// example, and both preview lines. The preview recording comes from history, so
+/// no track ink renders behind the window. Feature-gated like
+/// `snapshot_settings_window` - it captures the settings window the guide hangs
+/// off.
+#[cfg(feature = "self-update")]
+#[test]
+fn snapshot_recording_name_template_guide() {
+    let (mut harness, _config_path) = TestHarness::builder()
+        .size(egui::vec2(760.0, 1100.0))
+        .eframe(build_app);
+    harness.inner.step();
+    harness
+        .inner
+        .state_mut()
+        .history_window
+        .set_entries(vec![stored_recording_entry(
+            "auto:ride.gtd",
+            "Morning ride",
+        )]);
+    harness
+        .inner
+        .state()
+        .shared
+        .borrow_mut()
+        .recording_name_template = "{title} - {device}".to_owned();
+    harness.inner.state_mut().settings_open = true;
+    // Pinned, or the interference range would redate the snapshot daily.
+    harness.inner.state_mut().backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(
+        chrono::NaiveDate::from_ymd_opt(2026, 8, 2).unwrap_or_default(),
+    );
+    harness.inner.run_steps(3);
+    harness
+        .inner
+        .get_by_label_contains("Recording name")
+        .focus();
+    harness.inner.run_steps(3);
+    harness.snapshot("recording_name_template_guide");
+}
+
 /// The update prompt as a user installed via the shell/PowerShell installer
 /// sees it: a prominent "Update and restart" plus lower-key Later / Skip.
 #[cfg(feature = "self-update")]

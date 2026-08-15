@@ -461,6 +461,29 @@ impl HistoryWindow {
             || !self.filter_date_to.is_empty()
     }
 
+    /// Ask `worker` for the recording list unless it is already cached or a
+    /// request is in flight. The reply arrives via [`HistoryWindow::set_entries`].
+    pub fn request_recording_list_if_missing(&mut self, worker: &HistoryWorker) {
+        if self.entries.is_none() && !self.list_pending && worker.available() {
+            worker.list();
+            self.list_pending = true;
+        }
+    }
+
+    /// The most recently started recording of the cached list, `None` until the
+    /// list has arrived. Equal start times break on the database reference, so
+    /// the answer does not depend on the order the backend enumerated the
+    /// groups in.
+    pub fn latest_listed_recording(&self) -> Option<&RecordingEntry> {
+        self.entries.as_ref()?.iter().max_by(|a, b| {
+            a.meta
+                .start_us
+                .cmp(&b.meta.start_us)
+                .then_with(|| a.db_ref.identity.cmp(&b.db_ref.identity))
+                .then_with(|| a.db_ref.group_name.cmp(&b.db_ref.group_name))
+        })
+    }
+
     /// Call after a mutation to force a list refresh next time the window shows.
     pub fn invalidate(&mut self) {
         self.entries = None;
@@ -509,12 +532,8 @@ impl HistoryWindow {
             return;
         }
 
-        // Request the recording list once when it is missing. The worker replies
-        // via `set_entries`. A spinner shows until then.
-        if self.entries.is_none() && !self.list_pending && worker.available() {
-            worker.list();
-            self.list_pending = true;
-        }
+        // A spinner shows until the list arrives.
+        self.request_recording_list_if_missing(worker);
 
         // Show Prune dialog (a separate window).
         self.prune.show(ctx, worker);
