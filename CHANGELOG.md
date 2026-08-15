@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.12.0 - 2026-08-15
+
 ### Changed
 
 - Updated egui to 0.36 (along with egui_plot, egui_kittest and wgpu 30).
