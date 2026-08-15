@@ -45,19 +45,8 @@ jobs:
         with:
           tool: just,nextest,cargo-msrv
 
-      # The dev image no longer ships cargo-pup or cargo-msrv, so the `pup`,
-      # `msrv`, and `sdk-msrv` recipes run natively on this host (as does the
-      # `test` recipe, whose gt-arch test shells out to `cargo pup`). cargo-pup
-      # must be built with the pinned nightly expected by the gt-arch checks.
-      - name: Install Rust nightly (for cargo-pup)
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
-        with:
-          toolchain: nightly-2026-01-22
-          components: rust-src,rustc-dev,llvm-tools-preview
-
-      - name: Install cargo-pup
-        run: cargo +nightly-2026-01-22 install cargo_pup
-
+      # The dev image no longer ships cargo-msrv, so the `msrv` and `sdk-msrv`
+      # recipes run natively on this host.
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 

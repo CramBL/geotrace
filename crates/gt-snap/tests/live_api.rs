@@ -1,8 +1,8 @@
 //! Live smoke test against the real Valhalla server: the on-demand drift
 //! check for the API boundary.
 //!
-//! Excluded from the default nextest profile (see `.config/nextest.toml`,
-//! same mechanism as gt-arch) and run via `just snap-live-test` - never in
+//! Excluded from the default nextest profile (see `.config/nextest.toml`)
+//! and run via `just snap-live-test` - never in
 //! CI. Asserts structural invariants, not values: matching output drifts
 //! with OSM data, but the shape of the exchange must hold.
 //!

@@ -2369,7 +2369,9 @@ fn snapshot_query_error() {
     }
     // Editor left unfocused so no completion popup covers the error.
     harness.inner.run_steps(3);
-    harness.snapshot("query_error");
+    // Loose: the error text rasterizes a pixel or two differently between the
+    // local baseline and CI's software renderer.
+    harness.snapshot_loose("query_error");
 }
 
 /// Hovering a construct in the editor shows a Rust-doc-style tooltip: name and
