@@ -6,6 +6,7 @@
 
 - Picking a mode under "Snap again as" that the track already has snap to road data for now asks whether to replace it.
   The snap status icon offers the same menu on right-click.
+- Right-clicking a recording offers "Snap again as" for its tracks at once, asking whether to snap the selected tracks or all of them.
 
 ### Fixed
 

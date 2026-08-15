@@ -1,4 +1,4 @@
-use egui::{Grid, Label, RichText, ScrollArea, Window};
+use egui::{Button, Grid, Label, RichText, ScrollArea, Window};
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -698,6 +698,120 @@ pub fn show_snap_replace_dialog(ui: &egui::Ui, costing_name: &str) -> Option<Sna
         choice = Some(SnapReplaceChoice::Cancel);
     }
     choice
+}
+
+/// How many tracks one scope of a recording covers, and how many of them
+/// already have a run for the chosen costing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SnapScopeCount {
+    pub tracks: usize,
+    pub already_snapped: usize,
+}
+
+/// The two scopes a recording-level "Snap again as" choice can run over.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SnapScopeCounts {
+    pub selected: SnapScopeCount,
+    pub all: SnapScopeCount,
+}
+
+/// Which of a recording's tracks a "Snap again as" choice covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapScope {
+    /// Only the recording's tracks selected in the panel.
+    SelectedTracks,
+    /// Every track of the recording.
+    AllTracks,
+}
+
+/// The user's decision in the scope dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapScopeChoice {
+    Snap(SnapScope),
+    /// Nothing is uploaded.
+    Cancel,
+}
+
+/// Ask which of a recording's tracks a "Snap again as" choice covers, and
+/// how many of them already have data for `costing_name`. Returns `None`
+/// while the dialog stays open.
+///
+/// Escape, Cancel, and the close button all drop the choice: nothing is
+/// uploaded.
+pub fn show_snap_scope_dialog(
+    ui: &egui::Ui,
+    costing_name: &str,
+    counts: SnapScopeCounts,
+) -> Option<SnapScopeChoice> {
+    let escape_pressed = ui
+        .ctx()
+        .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+
+    let mut choice = escape_pressed.then_some(SnapScopeChoice::Cancel);
+
+    let mut open = true;
+    Window::new(format!("Snap to road as {costing_name}"))
+        .collapsible(false)
+        .resizable(false)
+        .min_width(380.0)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ui.ctx(), |ui| {
+            Grid::new("snap_scope_grid")
+                .num_columns(2)
+                .spacing([12.0, 4.0])
+                .show(ui, |ui| {
+                    let mut row = |label: &str, count: SnapScopeCount| {
+                        ui.label(RichText::new(label).weak());
+                        ui.label(scope_summary(count, costing_name));
+                        ui.end_row();
+                    };
+                    row("Selected", counts.selected);
+                    row("All", counts.all);
+                });
+            if counts.all.already_snapped > 0 {
+                ui.add_space(4.0);
+                ui.label("Snapping again uploads those tracks once more and replaces their data.");
+            }
+            ui.add_space(8.0);
+            dialog_button_row(ui, |ui| {
+                if ui.button("Snap all tracks").clicked() {
+                    choice = Some(SnapScopeChoice::Snap(SnapScope::AllTracks));
+                }
+                let selected = ui.add_enabled(
+                    counts.selected.tracks > 0,
+                    Button::new("Snap selected tracks"),
+                );
+                if selected.clicked() {
+                    choice = Some(SnapScopeChoice::Snap(SnapScope::SelectedTracks));
+                }
+                selected.on_disabled_hover_text("Select tracks of this recording first");
+                if ui.button("Cancel").clicked() {
+                    choice = Some(SnapScopeChoice::Cancel);
+                }
+            });
+        });
+    if !open {
+        choice = Some(SnapScopeChoice::Cancel);
+    }
+    choice
+}
+
+/// One scope row of [`show_snap_scope_dialog`]: how many tracks it covers
+/// and how many of those already carry data for the chosen costing.
+fn scope_summary(count: SnapScopeCount, costing_name: &str) -> String {
+    let tracks = format!(
+        "{} {}",
+        count.tracks,
+        gt_fmt::pluralize(count.tracks, "track", "tracks")
+    );
+    if count.already_snapped == 0 {
+        return tracks;
+    }
+    format!(
+        "{tracks}, {} already snapped as {costing_name}",
+        count.already_snapped
+    )
 }
 
 /// The user's decision in the one-time auto-snap prompt.
