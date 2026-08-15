@@ -7,6 +7,7 @@
 - Picking a mode under "Snap again as" that the track already has snap to road data for now asks whether to replace it.
   The snap status icon offers the same menu on right-click.
 - Right-clicking a recording offers "Snap again as" for its tracks at once, asking whether to snap the selected tracks or all of them.
+- With more than one file loaded, a fix point's hover tooltip, the stacked label shown when map points overlap and the clicked-point window each name the recording the point belongs to.
 
 ### Fixed
 

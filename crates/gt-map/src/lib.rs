@@ -5,13 +5,14 @@ mod collision_grid;
 pub mod display_counts;
 mod display_toggle;
 pub mod event_marker_renderer;
-pub mod generated_marker_renderer;
+pub(crate) mod generated_marker_renderer;
 mod hover_labels;
 pub mod icon_mesh;
 mod jamming_renderer;
 pub mod marker_renderer;
 mod polyline;
 mod query_match_renderer;
+mod recording_labels;
 mod sat_labels;
 mod sky_glyph_renderer;
 mod sky_trails_window;
@@ -49,6 +50,7 @@ use crate::hover_labels::{
     draw_disambig_row, draw_multi_hover_label_contents, should_show_compound_label,
 };
 use crate::marker_renderer::MarkerRenderer;
+use crate::recording_labels::RecordingLabels;
 use crate::snapped_track_renderer::SnappedTrackRenderer;
 use crate::track_layers::TrackLayers;
 use crate::transform::{MapScale, MercTransform};
@@ -250,7 +252,7 @@ pub enum TileAccess {
 pub struct MapDrawContext<'a> {
     pub files: &'a [LoadedFile],
     /// Per-file display names, resolved from the user's recording-name
-    /// template, so the context menu names a recording the way the side panel
+    /// template, so the map's labels name a recording the way the side panel
     /// and the plot do.
     pub recording_names: &'a RecordingNames,
     pub snapped_tracks: Option<&'a SnappedTracks>,
@@ -272,6 +274,10 @@ pub struct MapDrawContext<'a> {
 }
 
 impl<'a> MapDrawContext<'a> {
+    fn recording_labels(&self) -> RecordingLabels<'a> {
+        RecordingLabels::new(self.files, self.recording_names)
+    }
+
     /// What the map draws this frame. Hit-testing, the pinned popup, and the
     /// headless tests all read it.
     fn scope(&self) -> MapScope<'a> {
@@ -743,6 +749,7 @@ impl NavMap {
                 )
                 .sky_glyph_variant(*ctx.sky_glyph_variant)
                 .maybe_icon_meshes(self.icon_meshes.as_ref())
+                .recording_labels(ctx.recording_labels())
                 .sat_label_scratch(&mut self.sat_label_scratch)
                 .sky_glyph_scratch(&mut self.sky_glyph_scratch)
                 .build(),
@@ -772,15 +779,18 @@ impl NavMap {
             .display_mask
             .is_visible(DisplayCategory::GeneratedMarkers)
         {
-            map = map.with_plugin(GeneratedMarkerRenderer::new(
-                ctx.files,
-                ctx.visibility,
-                ctx.highlight,
-                ctx.filter,
-                ctx.generated_marker_visibility,
-                &self.visible_points.generated,
-                self.icon_meshes.as_ref(),
-            ));
+            map = map.with_plugin(
+                GeneratedMarkerRenderer::builder()
+                    .files(ctx.files)
+                    .visibility(ctx.visibility)
+                    .highlight(ctx.highlight)
+                    .filter(ctx.filter)
+                    .generated_vis(ctx.generated_marker_visibility)
+                    .visible_generated(&self.visible_points.generated)
+                    .maybe_icon_meshes(self.icon_meshes.as_ref())
+                    .recording_labels(ctx.recording_labels())
+                    .build(),
+            );
         }
         if ctx.display_mask.is_visible(DisplayCategory::EventMarkers) {
             map = map.with_plugin(EventMarkerRenderer::new(
@@ -1017,11 +1027,9 @@ impl NavMap {
                 ui.close();
                 return;
             };
-            let name = ctx
-                .recording_names
-                .get(point_ref.track.fi)
-                .unwrap_or(file.metadata.filename.as_str());
-            ui.add(Label::new(RichText::new(name).weak()));
+            if let Some(name) = ctx.recording_labels().display_name(point_ref.track.fi) {
+                ui.add(Label::new(RichText::new(name).weak()));
+            }
             if file.tracks.len() > 1 {
                 ui.add(Label::new(
                     RichText::new(format!("#{}", point_ref.track.index.as_usize() + 1)).weak(),
@@ -1069,6 +1077,7 @@ impl NavMap {
         show_sticky_popup(
             ui.ctx(),
             ctx.files,
+            ctx.recording_labels(),
             sticky_ref,
             self.sticky_pos,
             ctx.point_window_folds,
@@ -1114,7 +1123,7 @@ fn show_compound_hover_label(
         .fixed_pos(cursor_pos + egui::vec2(15.0, 10.0))
         .order(egui::Order::Tooltip)
         .show(ui.ctx(), |ui| {
-            draw_multi_hover_label_contents(ui, &hover.slots, ctx.files);
+            draw_multi_hover_label_contents(ui, &hover.slots, ctx.files, ctx.recording_labels());
         });
 }
 
@@ -1132,6 +1141,7 @@ fn show_point_window_body(
     point: &gt_types::NavPoint,
     sky: &crate::tpv_renderer::SkySection<'_>,
     folds: &mut PointWindowFolds,
+    recording_name: Option<&str>,
 ) -> bool {
     egui::Panel::bottom("sticky_point_hint").show(ui, |ui| {
         ui.add_space(4.0);
@@ -1140,7 +1150,7 @@ fn show_point_window_body(
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
-            crate::tpv_renderer::show_sticky_tpv_content(ui, point, sky, folds)
+            crate::tpv_renderer::show_sticky_tpv_content(ui, point, sky, folds, recording_name)
         })
         .inner
 }
@@ -1151,6 +1161,7 @@ fn show_point_window_body(
 fn show_sticky_popup(
     ctx: &egui::Context,
     files: &[LoadedFile],
+    recording_labels: RecordingLabels<'_>,
     sticky_ref: DataPointRef,
     default_pos: egui::Pos2,
     folds: &mut PointWindowFolds,
@@ -1247,7 +1258,13 @@ fn show_sticky_popup(
                 && let Some(point) = sticky_ref.point_index.get(&track.points)
             {
                 let sky = crate::tpv_renderer::SkySection::resolve(track, sticky_ref.point_index);
-                if show_point_window_body(ui, point, &sky, folds) {
+                if show_point_window_body(
+                    ui,
+                    point,
+                    &sky,
+                    folds,
+                    recording_labels.name_when_several_files_loaded(sticky_ref.track.fi),
+                ) {
                     trails_request = Some(SkyTrailsRequest::at_instant(
                         sticky_ref.track,
                         point.tpv.time(),
@@ -2071,14 +2088,16 @@ mod tests {
 mod snapshot_tests {
     use std::path::PathBuf;
 
+    use egui_kittest::kittest::Queryable as _;
+
     use super::*;
     use gt_types::mercator::MercPoint;
     use gt_types::{DataCategory, DisplayMode, FileIdx, NavPoint, PointIdx, TrackIdx, TrackRef};
     use gt_ui_types::{DataPointRef, DisplayCategory, DisplayMask};
 
-    fn tpv_ref() -> DataPointRef {
+    fn tpv_ref_in(file: FileIdx) -> DataPointRef {
         DataPointRef {
-            track: TrackRef::new(FileIdx::new(0), TrackIdx::new(0)),
+            track: TrackRef::new(file, TrackIdx::new(0)),
             category: DataCategory::Tpv,
             point_index: PointIdx::new(0),
         }
@@ -2207,12 +2226,19 @@ mod snapshot_tests {
     #[test]
     fn snap_multi_hover_stacked_label() {
         let files = vec![make_snapshot_file()];
-        let candidates = [Some(tpv_ref()), Some(event_ref()), Some(custom_ref()), None];
+        let candidates = [
+            Some(tpv_ref_in(FileIdx::new(0))),
+            Some(event_ref()),
+            Some(custom_ref()),
+            None,
+        ];
 
         let mut harness = crate::test_harness::builder()
             .size(egui::vec2(400.0, 800.0))
             .ui(move |ui| {
-                draw_multi_hover_label_contents(ui, &candidates, &files);
+                let names = RecordingNames::default();
+                let labels = RecordingLabels::new(&files, &names);
+                draw_multi_hover_label_contents(ui, &candidates, &files, labels);
             });
 
         harness.fit_contents();
@@ -2226,16 +2252,84 @@ mod snapshot_tests {
     #[test]
     fn snap_multi_hover_tpv_and_generated_marker() {
         let files = vec![make_snapshot_file()];
-        let candidates = [Some(tpv_ref()), None, None, Some(gen_ref())];
+        let candidates = [
+            Some(tpv_ref_in(FileIdx::new(0))),
+            None,
+            None,
+            Some(gen_ref()),
+        ];
 
         let mut harness = crate::test_harness::builder()
             .size(egui::vec2(400.0, 800.0))
             .ui(move |ui| {
-                draw_multi_hover_label_contents(ui, &candidates, &files);
+                let names = RecordingNames::default();
+                let labels = RecordingLabels::new(&files, &names);
+                draw_multi_hover_label_contents(ui, &candidates, &files, labels);
             });
 
         harness.fit_contents();
         harness.snapshot("multi_hover_tpv_and_generated_marker");
+    }
+
+    /// Two loaded files with distinct filenames, so the labels that name a
+    /// recording have something to tell apart.
+    fn two_recordings_loaded() -> gt_loaded_files::LoadedFiles {
+        let mut loaded = gt_loaded_files::LoadedFiles::new();
+        for filename in ["morning.gtd", "evening.gtd"] {
+            let mut file = make_snapshot_file();
+            file.metadata.filename = filename.to_owned();
+            loaded.push(file, gt_loaded_files::FileHistory::None);
+        }
+        loaded
+    }
+
+    /// Snapshot: the same stacked label with two files loaded, where the fix
+    /// section carries the recording row.
+    #[test]
+    fn snap_multi_hover_stacked_label_two_files() {
+        let loaded = two_recordings_loaded();
+        let candidates = [
+            Some(tpv_ref_in(FileIdx::new(1))),
+            Some(event_ref()),
+            Some(custom_ref()),
+            None,
+        ];
+
+        let mut harness = crate::test_harness::builder()
+            .size(egui::vec2(400.0, 800.0))
+            .ui(move |ui| {
+                let names = RecordingNames::resolve(loaded.view(), "{filename}");
+                let labels = RecordingLabels::new(loaded.files(), &names);
+                draw_multi_hover_label_contents(ui, &candidates, loaded.files(), labels);
+            });
+
+        harness.fit_contents();
+        harness.snapshot("multi_hover_stacked_label_two_files");
+    }
+
+    /// The compound label names the recording of the fix it shows, which need
+    /// not be the file the markers stacked with it came from.
+    #[test]
+    fn multi_hover_names_the_hovered_fixs_recording() {
+        let loaded = two_recordings_loaded();
+        let candidates = [
+            Some(tpv_ref_in(FileIdx::new(1))),
+            Some(event_ref()),
+            None,
+            None,
+        ];
+
+        let mut harness = crate::test_harness::builder()
+            .size(egui::vec2(400.0, 800.0))
+            .ui(move |ui| {
+                let names = RecordingNames::resolve(loaded.view(), "{filename}");
+                let labels = RecordingLabels::new(loaded.files(), &names);
+                draw_multi_hover_label_contents(ui, &candidates, loaded.files(), labels);
+            });
+        harness.run();
+
+        assert!(harness.inner.query_by_label("evening.gtd").is_some());
+        assert!(harness.inner.query_by_label("morning.gtd").is_none());
     }
 
     /// Snapshot: the disambiguation popup (item 16) with large icons via
@@ -2245,8 +2339,13 @@ mod snapshot_tests {
     #[test]
     fn snap_disambig_popup_big_icons() {
         let files = vec![make_snapshot_file()];
-        let candidates = [Some(tpv_ref()), Some(event_ref()), None, None];
-        let sticky = Some(tpv_ref());
+        let candidates = [
+            Some(tpv_ref_in(FileIdx::new(0))),
+            Some(event_ref()),
+            None,
+            None,
+        ];
+        let sticky = Some(tpv_ref_in(FileIdx::new(0)));
 
         let mut harness = crate::test_harness::builder()
             .size(egui::vec2(300.0, 90.0))

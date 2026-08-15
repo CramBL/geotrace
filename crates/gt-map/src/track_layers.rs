@@ -17,6 +17,7 @@ use walkers::{MapMemory, Plugin, Projector};
 use crate::icon_mesh::IconMeshLibrary;
 use crate::polyline::{CULL_MARGIN_PX, VisiblePath, visible_path};
 use crate::query_match_renderer;
+use crate::recording_labels::RecordingLabels;
 use crate::sat_labels::{self, LabelSelection};
 use crate::sky_glyph_renderer::{self, GlyphSelection};
 use crate::tpv_renderer::{
@@ -160,6 +161,7 @@ pub struct TrackLayers<'a> {
     sat_label_scratch: &'a mut LabelSelection,
     /// Reused decimation scratch for the sky-glyph selection.
     sky_glyph_scratch: &'a mut GlyphSelection,
+    recording_labels: RecordingLabels<'a>,
 }
 
 impl<'a> TrackLayers<'a> {}
@@ -699,7 +701,7 @@ impl<'a> TrackLayers<'a> {
                     );
                 })
             });
-            tpv_renderer::show_tooltip(ui, self.files, r, match_header);
+            tpv_renderer::show_tooltip(ui, self.files, self.recording_labels, r, match_header);
         }
 
         tpv_renderer::draw_plot_hover_overlay(ui, self.files, self.highlight, style, transform);

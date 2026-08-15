@@ -10,8 +10,10 @@ use gt_ui_types::{
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::icon_mesh::{IconId, IconInstance, IconMeshBatch, IconMeshLibrary};
+use crate::recording_labels::RecordingLabels;
 use crate::track_renderer;
 
+#[derive(bon::Builder)]
 pub struct GeneratedMarkerRenderer<'a> {
     files: &'a [LoadedFile],
     visibility: &'a TrackDataVisibility,
@@ -20,29 +22,10 @@ pub struct GeneratedMarkerRenderer<'a> {
     generated_vis: &'a GeneratedMarkerVisibility,
     visible_generated: &'a [SpatialPoint],
     icon_meshes: Option<&'a IconMeshLibrary>,
+    recording_labels: RecordingLabels<'a>,
 }
 
 impl<'a> GeneratedMarkerRenderer<'a> {
-    pub fn new(
-        files: &'a [LoadedFile],
-        visibility: &'a TrackDataVisibility,
-        highlight: &'a MapHighlight,
-        filter: &'a GlobalFilter,
-        generated_vis: &'a GeneratedMarkerVisibility,
-        visible_generated: &'a [SpatialPoint],
-        icon_meshes: Option<&'a IconMeshLibrary>,
-    ) -> Self {
-        Self {
-            files,
-            visibility,
-            highlight,
-            filter,
-            generated_vis,
-            visible_generated,
-            icon_meshes,
-        }
-    }
-
     fn is_point_highlighted(&self, point_ref: DataPointRef) -> bool {
         if self.highlight.sticky.is_some_and(|r| r == point_ref) {
             return true;
@@ -102,6 +85,8 @@ impl<'a> GeneratedMarkerRenderer<'a> {
                             ui,
                             point,
                             &crate::tpv_renderer::SkySection::resolve(track, PointIdx::new(index)),
+                            self.recording_labels
+                                .name_when_several_files_loaded(point_ref.track.fi),
                         );
                     }
                 }

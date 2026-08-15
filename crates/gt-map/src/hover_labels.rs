@@ -14,6 +14,8 @@ use gt_types::{
 use gt_ui_theme::EM_DASH;
 use gt_ui_types::DataPointRef;
 
+use crate::recording_labels::RecordingLabels;
+
 /// Spacing between an icon and the text following it in labels.
 const ICON_GAP: &str = "  ";
 
@@ -107,10 +109,11 @@ pub(crate) fn draw_multi_hover_label_contents(
     ui: &mut egui::Ui,
     candidates: &[Option<DataPointRef>; 4],
     files: &[LoadedFile],
+    recording_labels: RecordingLabels<'_>,
 ) {
     for candidate in candidates.iter().flatten().copied() {
         Frame::popup(ui.style()).show(ui, |ui| {
-            draw_candidate_section(ui, candidate, files);
+            draw_candidate_section(ui, candidate, files, recording_labels);
         });
     }
 }
@@ -156,7 +159,12 @@ fn resolve_candidate<'a>(
 /// Shows a header line (icon + summary) for every type, plus type-specific body
 /// content: the full hover table for TPV points, and the duration for GNSS-fix-
 /// regained markers.
-fn draw_candidate_section(ui: &mut egui::Ui, candidate: DataPointRef, files: &[LoadedFile]) {
+fn draw_candidate_section(
+    ui: &mut egui::Ui,
+    candidate: DataPointRef,
+    files: &[LoadedFile],
+    recording_labels: RecordingLabels<'_>,
+) {
     let icon = category_icon(candidate.category);
     match resolve_candidate(candidate, files) {
         None => {
@@ -182,6 +190,7 @@ fn draw_candidate_section(ui: &mut egui::Ui, candidate: DataPointRef, files: &[L
                 ui,
                 point,
                 &crate::tpv_renderer::SkySection::resolve(track, point_index),
+                recording_labels.name_when_several_files_loaded(candidate.track.fi),
             );
         }
         Some(ResolvedCandidate::GeneratedMarker(marker)) => {
