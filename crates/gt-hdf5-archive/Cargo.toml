@@ -9,6 +9,8 @@ authors.workspace = true
 
 [lib]
 doctest = false
+# All tests are integration tests against real archive files.
+test = false
 
 [dependencies]
 chrono.workspace = true
