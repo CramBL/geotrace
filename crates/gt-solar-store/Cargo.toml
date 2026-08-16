@@ -1,0 +1,29 @@
+[package]
+name = "gt-solar-store"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+# All tests are integration tests against real archive files.
+test = false
+
+[dependencies]
+chrono.workspace = true
+gt-hdf5-archive = { path = "../gt-hdf5-archive" }
+gt-solar = { path = "../gt-solar" }
+hdf5.workspace = true
+parking_lot.workspace = true
+strum.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

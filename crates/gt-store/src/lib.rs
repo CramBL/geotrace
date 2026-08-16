@@ -1,9 +1,10 @@
 //! The interface to everything GeoTrace keeps on disk.
 //!
-//! Two databases live under one directory: the recording history
-//! ([`gt_history`]) and the interference archive ([`gt_jam_store`]).
-//! [`Store`] owns where they are and what they are called. The types for
-//! working with them are re-exported here so call sites have one import.
+//! Three databases live under one directory: the recording history
+//! ([`gt_history`]), the interference archive ([`gt_jam_store`]) and the
+//! geomagnetic index archive ([`gt_solar_store`]). [`Store`] owns where they
+//! are and what they are called. The types for working with them are
+//! re-exported here so call sites have one import.
 //!
 //! Settings are not part of this - they are a config file, not a database.
 //!
@@ -18,12 +19,13 @@ pub use gt_history::{
     format_count_suffix, identity_from_group_name, identity_group_name, make_group_name,
 };
 pub use gt_jam_store::{JamStore, JamStoreError, StoredDay};
+pub use gt_solar_store::{ArchivedIndexDay, SolarStore, SolarStoreError};
 
 /// The recording history database. Named for what it holds, since the store
 /// fronts more than one.
 pub type Recordings = gt_history::Database;
 
-/// Directory holding both databases, under the platform data directory.
+/// Directory holding every database, under the platform data directory.
 const DIRECTORY: &str = "geotrace";
 
 /// Everything [`Store`] itself can fail at. Opening a database yields that
@@ -68,6 +70,11 @@ impl Store {
         self.root.join(gt_jam_store::FILE_NAME)
     }
 
+    /// Path of the geomagnetic index archive.
+    pub fn geomagnetic_indices_path(&self) -> PathBuf {
+        self.root.join(gt_solar_store::FILE_NAME)
+    }
+
     /// Open the recording history, creating it if it does not exist.
     ///
     /// Returns [`DbError`] itself so callers can match
@@ -81,10 +88,17 @@ impl Store {
     pub fn open_interference(&self) -> Result<JamStore, JamStoreError> {
         JamStore::open_or_create(&self.interference_path())
     }
+
+    /// Open the geomagnetic index archive, creating it if it does not exist.
+    pub fn open_geomagnetic_indices(&self) -> Result<SolarStore, SolarStoreError> {
+        SolarStore::open_or_create(&self.geomagnetic_indices_path())
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     fn store() -> (tempfile::TempDir, Store) {
@@ -94,12 +108,19 @@ mod tests {
     }
 
     #[test]
-    fn both_databases_sit_under_one_root() {
+    fn every_database_sits_under_one_root_with_its_own_name() {
         let (dir, store) = store();
         assert_eq!(store.root(), dir.path());
-        assert_eq!(store.recordings_path().parent(), Some(dir.path()));
-        assert_eq!(store.interference_path().parent(), Some(dir.path()));
-        assert_ne!(store.recordings_path(), store.interference_path());
+        let paths = [
+            store.recordings_path(),
+            store.interference_path(),
+            store.geomagnetic_indices_path(),
+        ];
+        for path in &paths {
+            assert_eq!(path.parent(), Some(dir.path()));
+        }
+        let named: BTreeSet<&PathBuf> = paths.iter().collect();
+        assert_eq!(named.len(), paths.len());
     }
 
     #[test]
@@ -115,24 +136,41 @@ mod tests {
         let (_dir, store) = store();
         store.open_recordings().expect("recordings");
         store.open_interference().expect("interference");
+        store
+            .open_geomagnetic_indices()
+            .expect("geomagnetic indices");
         assert!(store.recordings_path().exists());
         assert!(store.interference_path().exists());
+        assert!(store.geomagnetic_indices_path().exists());
     }
 
     #[test]
-    fn the_archive_opens_without_the_recording_history() {
+    fn the_interference_archive_opens_without_the_recording_history() {
         let (_dir, store) = store();
         store.open_interference().expect("interference");
         assert!(store.interference_path().exists());
         assert!(!store.recordings_path().exists());
+        assert!(!store.geomagnetic_indices_path().exists());
     }
 
     #[test]
-    fn the_recording_history_opens_without_the_archive() {
+    fn the_geomagnetic_index_archive_opens_without_the_recording_history() {
+        let (_dir, store) = store();
+        store
+            .open_geomagnetic_indices()
+            .expect("geomagnetic indices");
+        assert!(store.geomagnetic_indices_path().exists());
+        assert!(!store.recordings_path().exists());
+        assert!(!store.interference_path().exists());
+    }
+
+    #[test]
+    fn the_recording_history_opens_without_the_archives() {
         let (_dir, store) = store();
         store.open_recordings().expect("recordings");
         assert!(store.recordings_path().exists());
         assert!(!store.interference_path().exists());
+        assert!(!store.geomagnetic_indices_path().exists());
     }
 
     /// The database's own error reaches the caller undisguised, which is what
