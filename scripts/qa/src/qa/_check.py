@@ -1,6 +1,7 @@
 """Shared infrastructure for QA checks: file iteration, reporting, and exit logic."""
 
 import itertools
+import re
 import subprocess
 from collections.abc import Callable, Iterator
 from functools import cache
@@ -61,6 +62,41 @@ def rs_files(root: Path) -> Iterator[Path]:
     for path in sorted(root.rglob("*.rs")):
         if not _is_excluded(root, path):
             yield path
+
+
+# A `#[cfg(test)] mod …;` declaration, allowing attributes (such as `#[path]`)
+# between the gate and the `mod` line.
+_TEST_MOD_DECL = re.compile(
+    r"#\[cfg\(test\)\]\s*\n(?:\s*#\[[^\n]*\]\s*\n)*\s*mod\s+(\w+)\s*;"
+)
+_MOD_PATH_ATTR = re.compile(r'#\[path\s*=\s*"([^"]+)"\]')
+
+
+def is_test_only_module(path: Path) -> bool:
+    """Whether `path` holds a module its parent declares `#[cfg(test)] mod …;`.
+
+    Such a file is compiled only for tests, so checks that exempt inline
+    `#[cfg(test)]` blocks must exempt it too.
+    """
+    parents = (
+        path.parent.with_suffix(".rs"),
+        path.parent / "mod.rs",
+        path.parent / "lib.rs",
+        path.parent / "main.rs",
+    )
+    for parent in parents:
+        if parent == path or not parent.is_file():
+            continue
+        text = parent.read_text(errors="replace")
+        for decl in _TEST_MOD_DECL.finditer(text):
+            declared = decl.group(1)
+            attr = _MOD_PATH_ATTR.search(decl.group(0))
+            if attr is not None:
+                if (parent.parent / attr.group(1)).resolve() == path.resolve():
+                    return True
+            elif declared == path.stem:
+                return True
+    return False
 
 
 def hash_comment_files(root: Path) -> Iterator[Path]:

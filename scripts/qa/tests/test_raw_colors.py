@@ -94,3 +94,17 @@ def test_light_variant_constant_is_allowed(tmp_path: Path) -> None:
     _write(tmp_path, "src/a.rs", "fn f() { x(gt_ui_theme::WARNING_AMBER_LIGHT); }\n")
     _init_repo(tmp_path)
     assert check_raw_colors._collect(tmp_path) == []
+
+
+def test_skips_test_only_module_file(tmp_path: Path) -> None:
+    _write(tmp_path, "src/a.rs", "fn f() {}\n\n#[cfg(test)]\nmod tests;\n")
+    _write(tmp_path, "src/a/tests.rs", "fn t() {\n    let c = Color32::BLUE;\n}\n")
+    _init_repo(tmp_path)
+    assert check_raw_colors._collect(tmp_path) == []
+
+
+def test_flags_a_module_file_that_is_not_test_only(tmp_path: Path) -> None:
+    _write(tmp_path, "src/a.rs", "mod tests;\n")
+    _write(tmp_path, "src/a/tests.rs", "fn t() {\n    let c = Color32::BLUE;\n}\n")
+    _init_repo(tmp_path)
+    assert [v[1] for v in check_raw_colors._collect(tmp_path)] == [2]
