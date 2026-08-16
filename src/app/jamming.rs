@@ -31,6 +31,8 @@ use gt_types::TimeRange;
 use gt_types::{LoadedFile, TrackRef};
 use gt_ui_types::{JammingPoint, JammingSeries};
 
+use super::backfill::{BackfillProgress, PendingBackfill};
+
 /// What one day's fetch produced.
 enum JamMessage {
     Stored {
@@ -61,38 +63,6 @@ impl JamMessage {
 pub struct DayFailure {
     pub day: NaiveDate,
     pub detail: String,
-}
-
-/// A backfill's progress, for the panel's bar and count.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BackfillProgress {
-    /// Days that have reported back, whether archived, missing, or failed.
-    pub done: usize,
-    /// Days the backfill queued. Days already archived or already requested
-    /// this session are not among them.
-    pub total: usize,
-}
-
-impl BackfillProgress {
-    pub fn fraction(self) -> f32 {
-        if self.total == 0 {
-            return 1.0;
-        }
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "a backfill spans at most a few thousand days"
-        )]
-        {
-            self.done as f32 / self.total as f32
-        }
-    }
-}
-
-/// A backfill in flight.
-struct Backfill {
-    /// Queued days still to report back.
-    pending: HashSet<NaiveDate>,
-    total: usize,
 }
 
 /// Queues interference days and ingests them into the archive.
@@ -133,7 +103,7 @@ pub struct JammingScheduler {
     /// gained a day the track needs.
     plot_points: HashMap<TrackRef, (Vec<NaiveDate>, Arc<Vec<JammingPoint>>)>,
     /// Set while an explicit backfill is running.
-    backfill: Option<Backfill>,
+    backfill: Option<PendingBackfill>,
     /// When the last request was handed to a worker, so [`REQUEST_INTERVAL`]
     /// is honoured across days.
     last_request: Option<Instant>,
@@ -264,7 +234,7 @@ impl JammingScheduler {
         let total = pending.len();
         log::info!("Backfilling interference for {total} days between {from} and {to}");
         if total > 0 {
-            self.backfill = Some(Backfill { pending, total });
+            self.backfill = Some(PendingBackfill::new(pending));
         }
         self.start_next();
         Some(total)
@@ -286,8 +256,8 @@ impl JammingScheduler {
         let Some(backfill) = self.backfill.take() else {
             return;
         };
-        self.queue.retain(|day| !backfill.pending.contains(day));
-        for day in backfill.pending {
+        self.queue.retain(|day| !backfill.queued(*day));
+        for day in backfill.into_pending_days() {
             if Some(day) != self.in_flight {
                 self.seen.remove(&day);
             }
@@ -296,10 +266,7 @@ impl JammingScheduler {
 
     /// Progress of the running backfill, or [`None`] when none is running.
     pub fn backfill_progress(&self) -> Option<BackfillProgress> {
-        self.backfill.as_ref().map(|backfill| BackfillProgress {
-            done: backfill.total.saturating_sub(backfill.pending.len()),
-            total: backfill.total,
-        })
+        self.backfill.as_ref().map(PendingBackfill::progress)
     }
 
     /// Apply finished fetches and start the next queued day.
@@ -307,8 +274,8 @@ impl JammingScheduler {
         while let Ok(message) = self.rx.try_recv() {
             self.in_flight = None;
             if let Some(backfill) = self.backfill.as_mut() {
-                backfill.pending.remove(&message.day());
-                if backfill.pending.is_empty() {
+                backfill.retire(message.day());
+                if backfill.is_finished() {
                     self.backfill = None;
                 }
             }
@@ -792,10 +759,7 @@ mod tests {
             scheduler.seen.insert(*day);
             scheduler.queue.push_back(*day);
         }
-        scheduler.backfill = Some(Backfill {
-            pending: days.iter().copied().collect(),
-            total: days.len(),
-        });
+        scheduler.backfill = Some(PendingBackfill::new(days.iter().copied().collect()));
     }
 
     /// Every outcome retires its day, so a range of missing or failing days

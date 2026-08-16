@@ -9,7 +9,8 @@
 //! flight at a time, and the transport spaces requests
 //! [`transport::REQUEST_INTERVAL`] apart.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::fmt;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -22,6 +23,9 @@ use gt_solar::series::{Hp30Series, KpSeries};
 use gt_solar::{GeomagneticIndex, TimeWindow, calendar, transport, wire};
 use gt_store::{SolarStore, SolarStoreError};
 use gt_types::TimeRange;
+
+use super::backfill::{BackfillProgress, PendingBackfill};
+use super::geomagnetic_index_ui::GeomagneticIndexFetchStatus;
 
 /// What one day's fetch produced.
 enum IndexDayMessage {
@@ -38,11 +42,34 @@ enum IndexDayMessage {
     },
 }
 
-/// A day that could not be added to the archive, for the side panel.
+impl IndexDayMessage {
+    fn day(&self) -> NaiveDate {
+        match *self {
+            Self::Stored { day, .. } | Self::Failed { day, .. } => day,
+        }
+    }
+}
+
+/// A day that could not be added to the archive, for the settings section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DayFailure {
     pub day: NaiveDate,
     pub detail: String,
+}
+
+impl fmt::Display for DayFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} - {}", self.day, self.detail)
+    }
+}
+
+/// What the archive holds for one UTC day a loaded recording spans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordingDayCoverage {
+    /// Every index published for the day is archived.
+    Archived,
+    /// At least one index is still to be fetched.
+    Awaited,
 }
 
 /// Queues geomagnetic index days and ingests them into the archive.
@@ -64,6 +91,12 @@ pub struct GeomagneticIndexScheduler {
     seen: HashSet<NaiveDate>,
     in_flight: Option<NaiveDate>,
     failures: Vec<DayFailure>,
+    /// The UTC days the recordings loaded this session span, and what the
+    /// archive holds for each. Read by the settings section, which reports
+    /// how far the archive covers what is loaded.
+    recording_days: BTreeMap<NaiveDate, RecordingDayCoverage>,
+    /// Set while an explicit backfill is running.
+    backfill: Option<PendingBackfill>,
 }
 
 impl GeomagneticIndexScheduler {
@@ -86,6 +119,8 @@ impl GeomagneticIndexScheduler {
             seen: HashSet::new(),
             in_flight: None,
             failures: Vec::new(),
+            recording_days: BTreeMap::new(),
+            backfill: None,
         }
     }
 
@@ -108,14 +143,54 @@ impl GeomagneticIndexScheduler {
         };
         let today = Utc::now().date_naive();
         for day in days {
-            if !self.seen.insert(day) {
-                continue;
-            }
             if calendar::fetchable_indices(day, today).next().is_none() {
                 continue;
             }
+            let coverage = match self.day_needs_fetch(day, today) {
+                Ok(false) => RecordingDayCoverage::Archived,
+                Ok(true) => {
+                    if self.seen.insert(day) {
+                        self.queue.push_back(day);
+                    }
+                    RecordingDayCoverage::Awaited
+                }
+                Err(err) => {
+                    if self.seen.insert(day) {
+                        let detail = format!("reading the archive: {err}");
+                        log::error!("Cannot tell whether {day} is archived: {detail}");
+                        self.failures.push(DayFailure { day, detail });
+                    }
+                    RecordingDayCoverage::Awaited
+                }
+            };
+            self.recording_days.insert(day, coverage);
+        }
+        self.start_next();
+    }
+
+    /// Queue every day in `from..=to` the archive does not already hold in a
+    /// form GFZ will not revise.
+    ///
+    /// Re-running a backfill over the same range costs nothing: days already
+    /// requested this session are skipped. Replaces a backfill already
+    /// running.
+    ///
+    /// Returns how many days were queued, or [`None`] when there is no
+    /// archive to write them to.
+    pub fn backfill(&mut self, from: NaiveDate, to: NaiveDate) -> Option<usize> {
+        self.store.as_ref()?;
+        self.cancel_backfill();
+        let today = Utc::now().date_naive();
+        let mut pending = HashSet::new();
+        for day in calendar::fetchable_days(from, to, today) {
+            if !self.seen.insert(day) {
+                continue;
+            }
             match self.day_needs_fetch(day, today) {
-                Ok(true) => self.queue.push_back(day),
+                Ok(true) => {
+                    self.queue.push_back(day);
+                    pending.insert(day);
+                }
                 Ok(false) => {}
                 Err(err) => {
                     let detail = format!("reading the archive: {err}");
@@ -124,7 +199,62 @@ impl GeomagneticIndexScheduler {
                 }
             }
         }
+        let total = pending.len();
+        log::info!("Backfilling geomagnetic indices for {total} days between {from} and {to}");
+        if total > 0 {
+            self.backfill = Some(PendingBackfill::new(pending));
+        }
         self.start_next();
+        Some(total)
+    }
+
+    /// Drop a running backfill's queued days.
+    ///
+    /// A later backfill over the same range queues the cancelled days again:
+    /// they leave `seen`. The day in flight is not one of them, and stays in
+    /// `seen` until a response for it arrives: releasing it would let a second
+    /// request go out for a day already being fetched.
+    pub fn cancel_backfill(&mut self) {
+        let Some(backfill) = self.backfill.take() else {
+            return;
+        };
+        self.queue.retain(|day| !backfill.queued(*day));
+        for day in backfill.into_pending_days() {
+            if Some(day) != self.in_flight {
+                self.seen.remove(&day);
+            }
+        }
+    }
+
+    /// Progress of the running backfill, or [`None`] when none is running.
+    pub fn backfill_progress(&self) -> Option<BackfillProgress> {
+        self.backfill.as_ref().map(PendingBackfill::progress)
+    }
+
+    /// Whether there is an archive to download into. Grays the backfill
+    /// control when there is not.
+    pub fn archive_available(&self) -> bool {
+        self.store.is_some()
+    }
+
+    /// What the settings section reports about the queue and the archive's
+    /// coverage of the loaded recordings.
+    pub fn fetch_status(&self) -> GeomagneticIndexFetchStatus {
+        GeomagneticIndexFetchStatus {
+            fetching: self.in_flight,
+            queued: self.queue.len(),
+            recording_days: self.recording_days.len(),
+            archived_recording_days: self
+                .recording_days
+                .values()
+                .filter(|coverage| **coverage == RecordingDayCoverage::Archived)
+                .count(),
+        }
+    }
+
+    /// Days that could not be archived, in the order they were reported.
+    pub fn failures(&self) -> &[DayFailure] {
+        &self.failures
     }
 
     /// Whether `day` must be requested.
@@ -160,12 +290,21 @@ impl GeomagneticIndexScheduler {
     pub fn poll(&mut self) {
         while let Ok(message) = self.rx.try_recv() {
             self.in_flight = None;
+            if let Some(backfill) = self.backfill.as_mut() {
+                backfill.retire(message.day());
+                if backfill.is_finished() {
+                    self.backfill = None;
+                }
+            }
             match message {
                 IndexDayMessage::Stored {
                     day,
                     kp_samples,
                     hp30_samples,
                 } => {
+                    if let Some(coverage) = self.recording_days.get_mut(&day) {
+                        *coverage = RecordingDayCoverage::Archived;
+                    }
                     if kp_samples + hp30_samples == 0 {
                         log::info!("The service published no geomagnetic indices for {day}");
                     } else {
@@ -185,9 +324,9 @@ impl GeomagneticIndexScheduler {
 
     /// Point the scheduler at `base_url`.
     ///
-    /// A changed host drops the queue and `seen`: those requests belong to the
-    /// old host. Archived days are kept - a day already archived does not
-    /// depend on which host served it.
+    /// A changed host drops the queue, `seen`, the running backfill, and the
+    /// failures: they belong to the old host. Archived days are kept - a day
+    /// already archived does not depend on which host served it.
     pub fn set_base_url(&mut self, base_url: &str) {
         if self.base_url == base_url {
             return;
@@ -196,14 +335,8 @@ impl GeomagneticIndexScheduler {
         self.http = None;
         self.queue.clear();
         self.seen.clear();
-    }
-
-    /// Days that could not be archived, oldest first.
-    #[cfg(test)]
-    fn failures(&self) -> Vec<DayFailure> {
-        let mut failures = self.failures.clone();
-        failures.sort_by_key(|failure| failure.day);
-        failures
+        self.failures.clear();
+        self.backfill = None;
     }
 
     #[cfg(test)]
@@ -297,9 +430,8 @@ struct FetchedDay {
 
 /// Fetch every index covering `day`, parse them, and add them to the archive.
 ///
-/// A day is archived whole: one index failing to arrive or to parse fails the
-/// day, so a later session asks for it again instead of reading the archive as
-/// complete.
+/// A day is archived whole. One index failing to arrive or to parse fails the
+/// whole day, and a later session requests it again.
 fn ingest(
     transport: &impl Transport,
     store: &SolarStore,
@@ -663,7 +795,7 @@ mod tests {
         assert_eq!(scheduler.seen.len(), seen);
     }
 
-    /// A failure reaches the panel's list instead of being dropped.
+    /// A failure reaches the settings section's list.
     #[test]
     fn a_failed_day_is_reported() {
         let mut scheduler = scheduler_without_archive();
@@ -678,11 +810,215 @@ mod tests {
 
         assert_eq!(
             scheduler.failures(),
-            vec![DayFailure {
+            [DayFailure {
                 day: day(2026, 7, 20),
                 detail: "HTTP 500 Internal Server Error".to_owned(),
             }]
         );
+    }
+
+    /// Days the archive already holds in final form are not queued.
+    #[test]
+    fn a_backfill_queues_only_the_days_the_archive_lacks() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        for archived in [day(2026, 7, 21), day(2026, 7, 22)] {
+            archive_definitive_day(&store, archived);
+        }
+
+        let queued = scheduler.backfill(day(2026, 7, 20), day(2026, 7, 26));
+        assert_eq!(queued, Some(5), "seven days in range, two already held");
+    }
+
+    /// Re-running a backfill over a range already downloaded costs nothing.
+    #[test]
+    fn a_fully_archived_range_queues_nothing() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        for offset in 20..=26 {
+            archive_definitive_day(&store, day(2026, 7, offset));
+        }
+
+        assert_eq!(
+            scheduler.backfill(day(2026, 7, 20), day(2026, 7, 26)),
+            Some(0)
+        );
+        assert_eq!(scheduler.backfill_progress(), None);
+    }
+
+    /// Nothing is requested for a range before Kp begins.
+    #[test]
+    fn a_backfill_before_coverage_queues_nothing() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        assert_eq!(
+            scheduler.backfill(day(1900, 1, 1), day(1931, 12, 31)),
+            Some(0)
+        );
+        assert_eq!(scheduler.backfill_progress(), None);
+    }
+
+    /// A missing archive reports [`None`], which the control words differently
+    /// from the `Some(0)` of a range that is already downloaded.
+    #[test]
+    fn a_backfill_without_an_archive_reports_no_archive() {
+        let mut scheduler = scheduler_without_archive();
+        assert!(!scheduler.archive_available());
+        assert_eq!(scheduler.backfill(day(2026, 7, 20), day(2026, 7, 26)), None);
+        assert_eq!(scheduler.backfill_progress(), None);
+    }
+
+    /// Fill the queue and the backfill without dispatching, so the tests
+    /// below do not depend on whether a transport can be built.
+    fn queued_backfill(scheduler: &mut GeomagneticIndexScheduler, days: &[NaiveDate]) {
+        for day in days {
+            scheduler.seen.insert(*day);
+            scheduler.queue.push_back(*day);
+        }
+        scheduler.backfill = Some(PendingBackfill::new(days.iter().copied().collect()));
+    }
+
+    /// A range of failing days still reaches its total: every outcome retires
+    /// its day.
+    #[rstest]
+    #[case::stored(IndexDayMessage::Stored { day: day(2026, 7, 20), kp_samples: 8, hp30_samples: 48 })]
+    #[case::failed(IndexDayMessage::Failed { day: day(2026, 7, 20), detail: "boom".to_owned() })]
+    fn progress_advances_on_every_outcome(#[case] message: IndexDayMessage) {
+        let mut scheduler = scheduler_without_archive();
+        queued_backfill(&mut scheduler, &[day(2026, 7, 20), day(2026, 7, 21)]);
+        assert_eq!(
+            scheduler.backfill_progress(),
+            Some(BackfillProgress { done: 0, total: 2 })
+        );
+
+        scheduler.tx.send(message).expect("send");
+        scheduler.poll();
+        assert_eq!(
+            scheduler.backfill_progress(),
+            Some(BackfillProgress { done: 1, total: 2 })
+        );
+    }
+
+    /// The section stops showing a bar once the last day retires the
+    /// backfill.
+    #[test]
+    fn the_last_day_ends_the_backfill() {
+        let mut scheduler = scheduler_without_archive();
+        queued_backfill(&mut scheduler, &[day(2026, 7, 20)]);
+
+        scheduler
+            .tx
+            .send(IndexDayMessage::Failed {
+                day: day(2026, 7, 20),
+                detail: "boom".to_owned(),
+            })
+            .expect("send");
+        scheduler.poll();
+        assert_eq!(scheduler.backfill_progress(), None);
+    }
+
+    /// Cancelling drops the queued days and lets a later backfill request
+    /// them again.
+    #[test]
+    fn cancelling_releases_the_queued_days() {
+        let mut scheduler = scheduler_without_archive();
+        queued_backfill(&mut scheduler, &[day(2026, 7, 20), day(2026, 7, 21)]);
+
+        scheduler.cancel_backfill();
+        assert_eq!(scheduler.backfill_progress(), None);
+        assert_eq!(scheduler.queued(), 0);
+        assert!(scheduler.seen.is_empty(), "cancelled days can be re-queued");
+    }
+
+    /// Cancelling must not release the day already being fetched: releasing
+    /// it lets a later request go out for a day still in flight.
+    #[test]
+    fn cancelling_keeps_the_in_flight_day() {
+        let mut scheduler = scheduler_without_archive();
+        let (in_flight, queued) = (day(2026, 7, 20), day(2026, 7, 21));
+        queued_backfill(&mut scheduler, &[in_flight, queued]);
+        scheduler.in_flight = Some(in_flight);
+        scheduler.queue.retain(|day| *day != in_flight);
+
+        scheduler.cancel_backfill();
+        assert!(
+            scheduler.seen.contains(&in_flight),
+            "the day being fetched stays claimed"
+        );
+        assert!(
+            !scheduler.seen.contains(&queued),
+            "a day that never went out can be asked for again"
+        );
+    }
+
+    /// A day queued by a track load is not cancelled with the backfill.
+    #[test]
+    fn cancelling_leaves_track_requested_days_alone() {
+        let mut scheduler = scheduler_without_archive();
+        let track_day = day(2026, 7, 19);
+        scheduler.seen.insert(track_day);
+        scheduler.queue.push_back(track_day);
+        queued_backfill(&mut scheduler, &[day(2026, 7, 20)]);
+
+        scheduler.cancel_backfill();
+        assert_eq!(scheduler.queued(), 1);
+        assert!(scheduler.seen.contains(&track_day));
+    }
+
+    /// Changing the host abandons a backfill and the failures the old host
+    /// produced.
+    #[test]
+    fn changing_the_host_abandons_the_backfill_and_its_failures() {
+        let mut scheduler = scheduler_without_archive();
+        queued_backfill(&mut scheduler, &[day(2026, 7, 20)]);
+        scheduler.failures.push(DayFailure {
+            day: day(2026, 7, 20),
+            detail: "HTTP 500 Internal Server Error".to_owned(),
+        });
+
+        scheduler.set_base_url("https://mirror.example");
+
+        assert_eq!(scheduler.backfill_progress(), None);
+        assert_eq!(scheduler.queued(), 0);
+        assert!(scheduler.failures().is_empty());
+    }
+
+    /// The status reports the day in flight, the queue behind it, and how much
+    /// of what is loaded the archive holds.
+    #[test]
+    fn the_status_reports_the_queue_and_the_archived_recording_days() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        archive_definitive_day(&store, day(2026, 7, 20));
+
+        scheduler.request_days_for(TimeRange::new(at(2026, 7, 20, 8), at(2026, 7, 21, 17)));
+
+        assert_eq!(
+            scheduler.fetch_status(),
+            GeomagneticIndexFetchStatus {
+                fetching: Some(day(2026, 7, 21)),
+                queued: 0,
+                recording_days: 2,
+                archived_recording_days: 1,
+            }
+        );
+    }
+
+    /// An archived day moves the loaded recording's coverage up.
+    #[test]
+    fn archiving_a_day_covers_the_recording_day_it_belongs_to() {
+        let mut scheduler = scheduler_without_archive();
+        scheduler
+            .recording_days
+            .insert(day(2026, 7, 20), RecordingDayCoverage::Awaited);
+
+        scheduler
+            .tx
+            .send(IndexDayMessage::Stored {
+                day: day(2026, 7, 20),
+                kp_samples: 8,
+                hp30_samples: 48,
+            })
+            .expect("send");
+        scheduler.poll();
+
+        assert_eq!(scheduler.fetch_status().archived_recording_days, 1);
     }
 
     /// Both indices are requested for one day, and the archive records the

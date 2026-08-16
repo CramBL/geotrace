@@ -70,6 +70,15 @@ fn build_app(cc: &eframe::CreationContext<'_>, config_path: &std::path::Path, fa
     )
 }
 
+/// Fixes both download controls' date ranges, or a snapshot of the settings
+/// window would redate every day.
+#[cfg(feature = "self-update")]
+fn pin_backfill_ranges(app: &mut App) {
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 8, 2).unwrap_or_default();
+    app.interference_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
+    app.geomagnetic_index_backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(today);
+}
+
 /// App constructor for the functional (non-snapshot) tests that don't touch a
 /// config file. Fading stays off so frame counts are deterministic.
 fn transient_app(cc: &mut eframe::CreationContext<'_>) -> App {
@@ -2684,10 +2693,7 @@ fn snapshot_recording_name_template_guide() {
         .borrow_mut()
         .recording_name_template = "{title} - {device}".to_owned();
     harness.inner.state_mut().settings_open = true;
-    // Pinned, or the interference range would redate the snapshot daily.
-    harness.inner.state_mut().backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(
-        chrono::NaiveDate::from_ymd_opt(2026, 8, 2).unwrap_or_default(),
-    );
+    pin_backfill_ranges(harness.inner.state_mut());
     harness.inner.run_steps(3);
     harness
         .inner
@@ -2864,10 +2870,7 @@ fn snapshot_settings_window_snap_section() {
     // (grayed, never hidden) - both states of the optional rows visible.
     harness.inner.state_mut().snap_settings.search_radius_m = Some(25.0);
     harness.inner.state_mut().settings_open = true;
-    // Pinned, or the interference range would redate the snapshot daily.
-    harness.inner.state_mut().backfill_ui = crate::app::backfill_ui::BackfillUi::with_today(
-        chrono::NaiveDate::from_ymd_opt(2026, 8, 2).unwrap_or_default(),
-    );
+    pin_backfill_ranges(harness.inner.state_mut());
     harness.run();
     harness.snapshot("settings_window_snap_section");
 }

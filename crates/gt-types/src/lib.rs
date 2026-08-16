@@ -14,6 +14,7 @@ pub use satellites::{Prn, SignalQuality, Snr};
 pub mod time_types;
 pub mod tpv;
 pub mod track;
+pub mod utc_days;
 
 pub use channel::Channel;
 pub use coordinates::{Latitude, Longitude};

@@ -2832,6 +2832,7 @@ version = "0.12.0"
 dependencies = [
  "chrono",
  "gt-fetch",
+ "gt-types",
  "insta",
  "proptest",
  "reqwest 0.13.4",

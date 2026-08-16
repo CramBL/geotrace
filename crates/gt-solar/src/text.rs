@@ -55,6 +55,13 @@ pub fn period_summary(
     lines
 }
 
+/// The indices GeoTrace downloads, as every control offering them names
+/// them.
+pub const INDEX_NAMES: &str = "Kp and Hp30 indices";
+
+/// The local archive of downloaded days, as the download controls name it.
+pub const ARCHIVE_NAME: &str = "geomagnetic index archive";
+
 /// Name of the service the values come from, as it names itself in every
 /// response.
 pub const SOURCE_NAME: &str = "GFZ Potsdam";
@@ -117,6 +124,8 @@ mod tests {
     fn shared_wording() {
         let wording = format!(
             "label: {LAYER_LABEL}\n\
+             indices: {INDEX_NAMES}\n\
+             archive: {ARCHIVE_NAME}\n\
              summary: {LAYER_SUMMARY}\n\
              source caveat: {SOURCE_CAVEAT}\n\
              scale caveat: {SCALE_CAVEAT}\n\

@@ -11,6 +11,8 @@
 - Editing the recording name template in Settings opens a guide below the field, listing the tokens and previewing the template as you type.
 - A recording name template token can cap its length, as `{title:12}` for at most the first 12 characters of the title.
 - Loading a recording downloads the Kp and Hp30 geomagnetic indices for the days it spans into a local archive, so it can be read against what the geomagnetic field was doing while it was made. The host serving them is in Settings under "Geomagnetic indices", and nothing is downloaded in offline mode.
+- Settings' "Geomagnetic indices" section shows what the index download is doing, how many days of the loaded recordings are archived, and the days that failed with their cause. It downloads index history for a date range too, skipping days already archived, with progress and a cancel button.
+- Both history downloads, interference and geomagnetic indices, are grayed out in offline mode with hover text saying so.
 
 ### Fixed
 

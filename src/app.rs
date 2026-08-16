@@ -1,6 +1,8 @@
 mod auto_prune;
+mod backfill;
 mod backfill_ui;
 mod frame;
+mod geomagnetic_index_ui;
 mod history;
 mod history_db;
 mod history_open;
@@ -248,7 +250,8 @@ pub struct App {
     geomagnetic_index_settings: crate::settings::GeomagneticIndexSettings,
     /// No network access this run. Set once from [`StartupOptions`].
     offline: bool,
-    backfill_ui: backfill_ui::BackfillUi,
+    interference_backfill_ui: backfill_ui::BackfillUi<backfill_ui::InterferenceBackfill>,
+    geomagnetic_index_backfill_ui: backfill_ui::BackfillUi<backfill_ui::GeomagneticIndexBackfill>,
     interference_settings: crate::settings::InterferenceSettings,
     /// Set when the recordings database could not be opened. Drives the
     /// prompt for whichever failure it was.
@@ -406,7 +409,8 @@ impl App {
             geomagnetic_indices,
             geomagnetic_index_settings: crate::settings::GeomagneticIndexSettings::default(),
             offline: options.offline,
-            backfill_ui: backfill_ui::BackfillUi::default(),
+            interference_backfill_ui: backfill_ui::BackfillUi::default(),
+            geomagnetic_index_backfill_ui: backfill_ui::BackfillUi::default(),
             interference_settings: crate::settings::InterferenceSettings::default(),
             map,
             shared: Rc::new(RefCell::new(SharedAppState {
