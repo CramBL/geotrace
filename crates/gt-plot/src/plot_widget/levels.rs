@@ -66,7 +66,7 @@ pub(super) fn track_target(
 /// Cached level selections for every metric of one track's series, plus one
 /// per channel component (dynamic, hence no `Copy`).
 #[derive(Debug, Clone, Default)]
-pub(super) struct TripLevelCache {
+pub(super) struct TrackLevelCache {
     total_seen: LevelSelection,
     total_fix: LevelSelection,
     gps_seen: LevelSelection,
@@ -103,7 +103,7 @@ pub(super) struct TripLevelCache {
     pub(super) channels: Vec<Vec<LevelSelection>>,
 }
 
-impl TripLevelCache {
+impl TrackLevelCache {
     /// `None` for metrics with no mipmap: snap error draws from the external
     /// per-run series, not from `TrackSeries`.
     pub(super) fn level_for(&self, kind: MetricKind) -> Option<LevelSelection> {
@@ -147,7 +147,7 @@ impl TripLevelCache {
 
 impl crate::series::TrackSeries {
     /// `None` for metrics with no mipmap, matching
-    /// [`TripLevelCache::level_for`].
+    /// [`TrackLevelCache::level_for`].
     pub(super) fn mipmap_for(&self, kind: MetricKind) -> Option<&gt_egui_mipmap::MipMap> {
         Some(match kind {
             MetricKind::SatsSeen => &self.total_seen,
@@ -197,10 +197,10 @@ pub(super) fn compute_level_cache(
     x_max: f64,
     available_width: f32,
     sample_cap: usize,
-) -> TripLevelCache {
+) -> TrackLevelCache {
     let target = track_target(series.x_range, x_min, x_max, available_width, sample_cap);
     let sel = |mm: &MipMap| mm.select_indices(x_min, x_max, target);
-    TripLevelCache {
+    TrackLevelCache {
         total_seen: sel(&series.total_seen),
         total_fix: sel(&series.total_fix),
         gps_seen: sel(&series.gps_seen),

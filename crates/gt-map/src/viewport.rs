@@ -166,19 +166,19 @@ impl TrackPlan {
             let file_vis = FileIdx::new(fi).get(&visibility.files);
             let file_enabled = file_vis.is_some_and(|fv| fv.enabled);
             for (ti, track) in file.tracks.iter().enumerate() {
-                let trip_vis = file_vis.and_then(|fv| TrackIdx::new(ti).get(&fv.tracks));
+                let track_vis = file_vis.and_then(|fv| TrackIdx::new(ti).get(&fv.tracks));
                 let enabled = file_enabled
-                    && trip_vis.is_some_and(|tv| tv.enabled)
+                    && track_vis.is_some_and(|tv| tv.enabled)
                     && track_passes_filter(&track.metadata, filter);
                 let tpv_on =
-                    enabled && trip_vis.is_some_and(|tv| tv.category_visible(DataCategory::Tpv));
+                    enabled && track_vis.is_some_and(|tv| tv.category_visible(DataCategory::Tpv));
                 // The fade classification runs last so it is skipped for
                 // tracks that are hidden or filtered out anyway.
                 let fade = (tpv_on && display_mask.is_visible(DisplayCategory::TrackPoints))
                     .then(|| tpv_renderer::classify_icon_fade(track, scale, icon_size));
                 entries.push(TrackEntry {
                     trackline: enabled
-                        && trip_vis.is_some_and(|tv| tv.category_visible(DataCategory::Track))
+                        && track_vis.is_some_and(|tv| tv.category_visible(DataCategory::Track))
                         && display_mask.is_visible(DisplayCategory::Tracks),
                     fade,
                     sat_labels: tpv_on && display_mask.is_visible(DisplayCategory::SatelliteLabels),
@@ -244,10 +244,10 @@ pub(crate) fn compute_visible_bounding_box(
             continue;
         }
         for (ti, track) in file.tracks.iter().enumerate() {
-            let Some(trip_vis) = file_vis.tracks.get(ti) else {
+            let Some(track_vis) = file_vis.tracks.get(ti) else {
                 continue;
             };
-            if !trip_vis.enabled {
+            if !track_vis.enabled {
                 continue;
             }
             if !track_passes_filter(&track.metadata, filter) {

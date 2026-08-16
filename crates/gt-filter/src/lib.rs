@@ -209,7 +209,7 @@ mod tests {
     }
 
     #[test]
-    fn time_start_trip_ends_before() {
+    fn time_start_track_ends_before() {
         let meta = make_meta(1.0, 60, 100.0, false, 0, 60);
         let filter = GlobalFilter {
             time_start: Some(Utc.timestamp_opt(120, 0).single().expect("valid")),
@@ -219,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn time_start_trip_overlaps() {
+    fn time_start_track_overlaps() {
         let meta = make_meta(1.0, 60, 100.0, false, 0, 200);
         let filter = GlobalFilter {
             time_start: Some(Utc.timestamp_opt(100, 0).single().expect("valid")),
@@ -229,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn time_end_trip_starts_after() {
+    fn time_end_track_starts_after() {
         let meta = make_meta(1.0, 60, 100.0, false, 200, 260);
         let filter = GlobalFilter {
             time_end: Some(Utc.timestamp_opt(100, 0).single().expect("valid")),
@@ -239,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn time_end_trip_overlaps() {
+    fn time_end_track_overlaps() {
         let meta = make_meta(1.0, 60, 100.0, false, 50, 150);
         let filter = GlobalFilter {
             time_end: Some(Utc.timestamp_opt(100, 0).single().expect("valid")),

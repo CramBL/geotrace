@@ -1739,9 +1739,12 @@ fn sys_backend_structural_parity_repro() {
     );
 }
 
+/// Bytes read back out of the sys backend rebuild the recording's own file:
+/// the reference C library opens them and finds the groups the recording was
+/// written with.
 #[test_log::test]
 #[cfg(feature = "backend-sys")]
-fn debug_sys_backend_structure() {
+fn sys_backend_load_bytes_rebuilds_the_recording_file() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
@@ -1749,17 +1752,19 @@ fn debug_sys_backend_structure() {
     let bytes = make_gtd_bytes(1_000_000, 5);
     let meta = extract_meta(&bytes).expect("parse meta");
 
-    let _db_ref = db.insert_simple("device", &meta, &bytes).expect("insert");
-    let loaded_bytes = db.load_bytes(&_db_ref).expect("load_bytes");
+    let db_ref = db.insert_simple("device", &meta, &bytes).expect("insert");
+    let loaded_bytes = db.load_bytes(&db_ref).expect("load_bytes");
 
     let tmp_path = dir.path().join("reconstructed.h5");
     std::fs::write(&tmp_path, loaded_bytes).expect("write");
 
     let file = hdf5::File::open(&tmp_path).expect("parse loaded bytes");
-    println!("--- Root members ---");
-    for name in file.group("/").expect("root").member_names().unwrap() {
-        println!("Member: {}", name);
-    }
+    let members = file
+        .group("/")
+        .expect("root")
+        .member_names()
+        .expect("root members");
+    assert_eq!(members, ["nav_points"]);
 }
 
 #[test]

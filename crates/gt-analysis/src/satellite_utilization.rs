@@ -4,7 +4,7 @@
 //! anomalies).
 
 use gt_types::nav_point::NavPoint;
-use gt_types::satellites::{Constellation, Prn, Satellite, Satellites};
+use gt_types::satellites::{Constellation, Prn, Satellites};
 
 /// Y-position for an anomaly marker when the masked baseline is empty (no
 /// in-view satellite above the mask), where the rate is undefined.  The marker
@@ -51,9 +51,15 @@ pub fn in_fix_above_mask(
 /// Surfaced as plot anomaly markers so this exclusion stays visible.  Satellites
 /// without a reported elevation are not included (their elevation can be neither
 /// shown nor compared against the mask).
-pub fn masked_out_in_fix(sats: &Satellites, mask_deg: f32) -> impl Iterator<Item = &Satellite> {
-    sats.satellites()
-        .filter(move |s| s.in_fix() && s.elevation().is_some_and(|e| e < mask_deg))
+pub fn masked_out_in_fix(sats: &Satellites, mask_deg: f32) -> impl Iterator<Item = MaskedSat> {
+    sats.satellites().filter_map(move |s| {
+        let elevation = s.elevation().filter(|&e| e < mask_deg)?;
+        s.in_fix().then(|| MaskedSat {
+            constellation: s.constellation(),
+            prn: s.prn(),
+            elevation,
+        })
+    })
 }
 
 /// A satellite that was used in the fix while sitting below the elevation mask.
@@ -196,16 +202,7 @@ pub fn compute_util(points: &[NavPoint], mask_deg: f32) -> UtilPoints {
             }
         }
 
-        let mut masked: Vec<MaskedSat> = masked_out_in_fix(sats, mask_deg)
-            // `elevation` is guaranteed `Some` by `masked_out_in_fix`'s predicate.
-            .filter_map(|s| {
-                s.elevation().map(|e| MaskedSat {
-                    constellation: s.constellation(),
-                    prn: s.prn(),
-                    elevation: e,
-                })
-            })
-            .collect();
+        let mut masked: Vec<MaskedSat> = masked_out_in_fix(sats, mask_deg).collect();
         if !masked.is_empty() {
             masked.sort_by(|a, b| a.elevation.total_cmp(&b.elevation));
             out.anomalies.push(UtilAnomaly {
@@ -221,6 +218,8 @@ pub fn compute_util(points: &[NavPoint], mask_deg: f32) -> UtilPoints {
 
 #[cfg(test)]
 mod tests {
+    use gt_types::satellites::Satellite;
+
     use super::*;
 
     /// `(constellation, elevation, in_fix)` -> `Satellite`, with a throwaway PRN.
@@ -273,7 +272,7 @@ mod tests {
             sat(Constellation::Gps, None, true),      // used, unknown elevation -> not flagged
         ]);
         let flagged: Vec<f32> = masked_out_in_fix(&r, 15.0)
-            .filter_map(Satellite::elevation)
+            .map(|s| s.elevation)
             .collect();
         assert_eq!(flagged, vec![5.0]);
     }

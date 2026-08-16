@@ -82,9 +82,9 @@ pub enum MarkerRequirement {
     /// No marker constraint - all tracks pass.
     #[default]
     None,
-    /// Trip must have at least one custom *or* generated marker.
+    /// Track must have at least one custom *or* generated marker.
     AnyMarker,
-    /// Trip must have at least one *custom* marker.
+    /// Track must have at least one *custom* marker.
     CustomMarker,
 }
 

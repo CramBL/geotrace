@@ -551,24 +551,13 @@ fn close_run(run: &mut Vec<TrailVertex>, runs: &mut Vec<Vec<TrailVertex>>) {
     }
 }
 
-/// Whether a scrub marker draws hollow: the report in effect has the satellite
-/// tracked but not contributing to the fix.
-///
-/// Between reports this is the last report received, matching what the stats
-/// column counts at the same instant. Filling the marker there instead would
-/// claim the satellite rejoined the fix on no evidence, and would disagree with
-/// the counts beside it.
-fn marker_is_hollow(report: &TrailSample) -> bool {
-    !report.in_fix
-}
-
 /// Paint the scrub marker for one satellite. Filled when it is in the fix at
 /// the scrubbed instant, hollow (an outline ring) when only tracked, so the
 /// live fix state reads at a glance.
 fn paint_marker(ui: &egui::Ui, pos: Pos2, color: Color32, panel: Color32, report: &TrailSample) {
     let painter = ui.painter();
     let radius = style::TRAIL_MARKER_RADIUS_PX;
-    if marker_is_hollow(report) {
+    if !report.in_fix {
         // Tracked but not in the fix: a hollow ring, its centre punched out to
         // the panel colour so it reads over the trail beneath.
         painter.circle_filled(pos, radius, panel);
@@ -1714,23 +1703,6 @@ mod tests {
             });
         harness.run();
         harness.snapshot_loose("sky_trails_heatmap");
-    }
-
-    #[test]
-    fn marker_is_hollow_only_for_a_tracked_not_in_fix_report() {
-        let sample = |in_fix| TrailSample {
-            time: at(0),
-            epoch: EpochIdx::new(0),
-            point_index: PointIdx::new(0),
-            azimuth: 0.0,
-            elevation: 0.0,
-            snr: None,
-            in_fix,
-        };
-        // In the fix per the report in effect: filled.
-        assert!(!super::marker_is_hollow(&sample(true)));
-        // Tracked but not in the fix per the report in effect: hollow.
-        assert!(super::marker_is_hollow(&sample(false)));
     }
 
     #[test]

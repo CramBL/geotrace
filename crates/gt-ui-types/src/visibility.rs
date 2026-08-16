@@ -96,7 +96,7 @@ impl TrackDataVisibility {
         })
     }
 
-    /// Show only the given file. Hide all others. Trip visibility within files
+    /// Show only the given file. Hide all others. Track visibility within files
     /// is preserved so that re-enabling a file restores its previous state.
     pub fn show_only_file(&mut self, fi: FileIdx) {
         for (i, file) in self.files.iter_mut().enumerate() {
@@ -131,12 +131,12 @@ pub fn track_in_scope<'a>(
     if !file_vis.enabled {
         return None;
     }
-    let trip_vis = *track_ref.index.get(&file_vis.tracks)?;
-    if !trip_vis.enabled {
+    let track_vis = *track_ref.index.get(&file_vis.tracks)?;
+    if !track_vis.enabled {
         return None;
     }
     let track = track_ref.resolve(files)?;
-    track_passes_filter(&track.metadata, filter).then_some((track, trip_vis))
+    track_passes_filter(&track.metadata, filter).then_some((track, track_vis))
 }
 
 /// [`track_in_scope`] refined by one category's tree toggle - the gate the
@@ -148,8 +148,8 @@ pub fn category_in_scope<'a>(
     track_ref: TrackRef,
     category: DataCategory,
 ) -> Option<&'a LoadedTrack> {
-    let (track, trip_vis) = track_in_scope(files, visibility, filter, track_ref)?;
-    trip_vis.category_visible(category).then_some(track)
+    let (track, track_vis) = track_in_scope(files, visibility, filter, track_ref)?;
+    track_vis.category_visible(category).then_some(track)
 }
 
 /// Why the element a [`DataPointRef`] addresses is, or is not, on the map.
@@ -227,12 +227,12 @@ impl MapScope<'_> {
         else {
             return PointVisibility::NoSuchElement;
         };
-        let Some((_, trip_vis)) =
+        let Some((_, track_vis)) =
             track_in_scope(self.files, self.visibility, self.filter, point.track)
         else {
             return PointVisibility::TrackNotShown;
         };
-        if !trip_vis.category_visible(category)
+        if !track_vis.category_visible(category)
             || !self
                 .display_mask
                 .is_visible(DisplayCategory::from(category))

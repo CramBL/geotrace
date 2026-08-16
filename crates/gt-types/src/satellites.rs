@@ -365,11 +365,6 @@ impl Satellites {
             .max_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal))
     }
 
-    /// The total number of valid fixes resolved by the receiver.
-    pub fn total_fix(&self) -> usize {
-        self.fix_count as usize
-    }
-
     pub fn is_in_fix(&self, constellation: Constellation, prn: Prn) -> bool {
         self.satellites
             .iter()

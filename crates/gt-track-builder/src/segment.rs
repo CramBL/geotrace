@@ -377,12 +377,16 @@ fn detect_clock_discontinuities(
         })
         .collect();
 
-    let median = median_i64(&steps);
+    let Some(median) = median_i64(&steps) else {
+        return Vec::new();
+    };
     let deviations: Vec<i64> = steps
         .iter()
         .map(|&s| s.saturating_sub(median).saturating_abs())
         .collect();
-    let mad = median_i64(&deviations);
+    let Some(mad) = median_i64(&deviations) else {
+        return Vec::new();
+    };
     #[expect(
         clippy::cast_precision_loss,
         reason = "comparison only; realistic offsets are exact in f64, and precision \
