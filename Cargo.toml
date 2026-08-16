@@ -296,6 +296,7 @@ gt-query-run = { path = "crates/gt-query-run" }
 gt-side-panel = { path = "crates/gt-side-panel" }
 gt-sky = { path = "crates/gt-sky" }
 gt-snap = { path = "crates/gt-snap" }
+gt-solar = { path = "crates/gt-solar" }
 gt-store = { path = "crates/gt-store" }
 gt-track-builder = { path = "crates/gt-track-builder" }
 gt-types = { path = "crates/gt-types" }

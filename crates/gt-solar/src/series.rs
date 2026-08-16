@@ -84,6 +84,17 @@ pub struct IndexSeries<S> {
 /// A Kp series, whose samples carry [`KpStatus`].
 pub type KpSeries = IndexSeries<KpSample>;
 
+impl KpSeries {
+    /// Whether any sample is a [`KpStatus::Nowcast`] value, which GFZ replaces
+    /// with a definitive one once every station has reported. A caller holding
+    /// such a series is holding one the service can still revise.
+    pub fn contains_nowcast_samples(&self) -> bool {
+        self.samples
+            .iter()
+            .any(|sample| sample.status == KpStatus::Nowcast)
+    }
+}
+
 /// An Hp30 series.
 pub type Hp30Series = IndexSeries<Hp30Sample>;
 
@@ -109,6 +120,8 @@ impl<S: IndexSample> IndexSeries<S> {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use crate::GeomagneticIndex;
     use crate::activity::GeomagneticStormClass;
     use crate::parse_timestamp;
@@ -158,5 +171,27 @@ mod tests {
         let series = KpSeries { samples: vec![] };
         assert_eq!(series.peak_activity(), None);
         assert!(series.is_empty());
+    }
+
+    fn kp_sample(status: KpStatus) -> KpSample {
+        KpSample {
+            period_start: parse_timestamp("2024-05-10T00:00:00Z").unwrap(),
+            activity: GeomagneticActivity::from_published_value(GeomagneticIndex::Kp, 3.0),
+            status,
+        }
+    }
+
+    #[rstest]
+    #[case::all_definitive(vec![KpStatus::Definitive, KpStatus::Definitive], false)]
+    #[case::one_nowcast(vec![KpStatus::Definitive, KpStatus::Nowcast], true)]
+    #[case::no_samples(vec![], false)]
+    fn a_nowcast_sample_marks_the_series_revisable(
+        #[case] statuses: Vec<KpStatus>,
+        #[case] expected: bool,
+    ) {
+        let series = KpSeries {
+            samples: statuses.into_iter().map(kp_sample).collect(),
+        };
+        assert_eq!(series.contains_nowcast_samples(), expected);
     }
 }

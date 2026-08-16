@@ -9,6 +9,7 @@
 //! [`awaiting_publication`] only shapes how a 404 is worded.
 
 use chrono::{DateTime, Days, NaiveDate, Utc};
+use gt_types::TimeRange;
 
 /// The first day of coverage, as (year, month, day).
 ///
@@ -89,20 +90,7 @@ pub const MAX_DAYS_PER_TRACK: usize = 7;
 /// [`None`] when the span covers more than [`MAX_DAYS_PER_TRACK`], or when
 /// `end` precedes `start`.
 pub fn days_spanned(start: DateTime<Utc>, end: DateTime<Utc>) -> Option<Vec<NaiveDate>> {
-    let (first, last) = (start.date_naive(), end.date_naive());
-    if last < first {
-        return None;
-    }
-    let mut days = Vec::new();
-    let mut day = first;
-    while day <= last {
-        if days.len() == MAX_DAYS_PER_TRACK {
-            return None;
-        }
-        days.push(day);
-        day = day.checked_add_days(Days::new(1))?;
-    }
-    Some(days)
+    TimeRange::new(start, end).utc_days(MAX_DAYS_PER_TRACK)
 }
 
 /// Every [`DayOutlook::Fetchable`] day in `from..=to`, oldest first.

@@ -449,6 +449,38 @@ impl App {
                     }
                 }
 
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui_phosphor::regular::MAGNET);
+                    ui.strong("Geomagnetic indices");
+                });
+                ui.separator();
+                egui::Grid::new("geomagnetic_index_grid")
+                    .num_columns(2)
+                    .spacing([8.0, 6.0])
+                    .show(ui, |ui| {
+                        let url_help = "Base URL of the host serving the Kp and Hp30 \
+                                        geomagnetic indices. The default is GFZ Potsdam, which \
+                                        publishes them. Point it at a mirror or an offline copy \
+                                        to fetch from there instead. Requests carry a date range \
+                                        and nothing about your recordings.";
+                        ui.label(format!(
+                            "{} Base URL",
+                            egui_phosphor::regular::GLOBE_SIMPLE
+                        ))
+                        .on_hover_text(url_help);
+                        let mut base_url = self.geomagnetic_index_settings.base_url.clone();
+                        if ui
+                            .text_edit_singleline(&mut base_url)
+                            .on_hover_text(url_help)
+                            .changed()
+                        {
+                            self.geomagnetic_indices.set_base_url(&base_url);
+                            self.geomagnetic_index_settings.base_url = base_url;
+                        }
+                        ui.end_row();
+                    });
+
                 // Only meaningful in dist builds. Builds without the self-update
                 // feature carry no update check to toggle.
                 #[cfg(feature = "self-update")]
@@ -675,6 +707,9 @@ impl App {
         self.snap_settings = s.snap.clone();
         self.interference_settings = s.interference.clone();
         self.jamming.set_base_url(&s.interference.base_url);
+        self.geomagnetic_index_settings = s.geomagnetic_indices.clone();
+        self.geomagnetic_indices
+            .set_base_url(&s.geomagnetic_indices.base_url);
         self.snap.set_server_url(&s.snap.server_url);
         self.sync_db_path();
     }
@@ -778,6 +813,7 @@ impl App {
             },
             snap: self.snap_settings.clone(),
             interference: self.interference_settings.clone(),
+            geomagnetic_indices: self.geomagnetic_index_settings.clone(),
         }
     }
 

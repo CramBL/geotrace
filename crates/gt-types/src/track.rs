@@ -6,7 +6,7 @@ use crate::nav_point::NavPoint;
 use crate::sat_label::SatLabelAnchor;
 use crate::satellites::Satellites;
 use crate::time_types::GpsTime;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Days, Duration, NaiveDate, Utc};
 use geo_types::Rect;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -71,6 +71,27 @@ impl TimeRange {
             return false;
         }
         true
+    }
+
+    /// The UTC days this range touches, oldest first.
+    ///
+    /// [`None`] when the range touches more than `max_days` of them, or when
+    /// [`Self::end`] precedes [`Self::start`].
+    pub fn utc_days(self, max_days: usize) -> Option<Vec<NaiveDate>> {
+        let (first, last) = (self.start.date_naive(), self.end.date_naive());
+        if last < first {
+            return None;
+        }
+        let mut days = Vec::new();
+        let mut day = first;
+        while day <= last {
+            if days.len() == max_days {
+                return None;
+            }
+            days.push(day);
+            day = day.checked_add_days(Days::new(1))?;
+        }
+        Some(days)
     }
 }
 
@@ -554,6 +575,46 @@ mod travel_mode_tests {
             TravelMode::Unknown("hovercraft".into()).display_name(),
             "hovercraft"
         );
+    }
+}
+
+#[cfg(test)]
+mod time_range_tests {
+    use chrono::{NaiveDate, TimeZone as _, Utc};
+    use rstest::rstest;
+
+    use super::TimeRange;
+
+    fn at(year: i32, month: u32, day: u32, hour: u32) -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(year, month, day, hour, 0, 0)
+            .single()
+            .unwrap_or_default()
+    }
+
+    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(year, month, day).unwrap_or_default()
+    }
+
+    #[rstest]
+    #[case::within_one_day(at(2026, 7, 20, 8), at(2026, 7, 20, 17), Some(vec![date(2026, 7, 20)]))]
+    #[case::across_midnight(
+        at(2026, 7, 20, 23),
+        at(2026, 7, 21, 1),
+        Some(vec![date(2026, 7, 20), date(2026, 7, 21)])
+    )]
+    #[case::exactly_the_limit(
+        at(2026, 7, 20, 0),
+        at(2026, 7, 22, 23),
+        Some(vec![date(2026, 7, 20), date(2026, 7, 21), date(2026, 7, 22)])
+    )]
+    #[case::one_past_the_limit(at(2026, 7, 20, 0), at(2026, 7, 23, 0), None)]
+    #[case::end_before_start(at(2026, 7, 21, 0), at(2026, 7, 20, 0), None)]
+    fn utc_days_walks_the_range_up_to_the_cap(
+        #[case] start: chrono::DateTime<Utc>,
+        #[case] end: chrono::DateTime<Utc>,
+        #[case] expected: Option<Vec<NaiveDate>>,
+    ) {
+        assert_eq!(TimeRange::new(start, end).utc_days(3), expected);
     }
 }
 

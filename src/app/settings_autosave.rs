@@ -87,6 +87,8 @@ pub(super) struct AppSnapshot {
     /// Snap settings are compared as the whole persisted struct - it is
     /// small, `PartialEq`, and already the on-disk shape.
     pub snap: crate::settings::SnapSettings,
+    /// Compared as the whole persisted struct, like [`Self::snap`].
+    pub geomagnetic_indices: crate::settings::GeomagneticIndexSettings,
 }
 
 impl Default for AppSnapshot {
@@ -135,6 +137,7 @@ impl Default for AppSnapshot {
             skipped_version: None,
             query_history_revision: 0,
             snap: crate::settings::SnapSettings::default(),
+            geomagnetic_indices: crate::settings::GeomagneticIndexSettings::default(),
         }
     }
 }
