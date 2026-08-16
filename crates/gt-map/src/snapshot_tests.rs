@@ -105,7 +105,7 @@ fn make_snapshot_file() -> gt_types::LoadedFile {
             custom_marker_count: 1,
             generated_marker_count: 1,
             event_marker_count: 1,
-            ..TrackMetadata::default()
+            ..gt_test_utils::empty_track_metadata()
         },
         sat_label_anchors: gt_track_builder::build_sat_label_anchors(&points),
         points,
@@ -122,7 +122,7 @@ fn make_snapshot_file() -> gt_types::LoadedFile {
             total_distance_km: Length::new::<kilometer>(5.0),
             total_duration: chrono::Duration::seconds(n as i64),
             time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
-            ..FileMetadata::default()
+            ..gt_test_utils::empty_file_metadata()
         },
         tracks: vec![track],
         event_marker_styles: std::collections::HashMap::new(),
@@ -138,19 +138,19 @@ fn make_snapshot_file() -> gt_types::LoadedFile {
 #[test]
 fn snap_multi_hover_stacked_label() {
     let files = vec![make_snapshot_file()];
-    let candidates = [
-        Some(tpv_ref_in(FileIdx::new(0))),
-        Some(event_ref()),
-        Some(custom_ref()),
-        None,
-    ];
+    let candidates = HoverCandidates {
+        tpv_or_satellite_report: Some(tpv_ref_in(FileIdx::new(0))),
+        event_marker: Some(event_ref()),
+        custom_marker: Some(custom_ref()),
+        generated_marker: None,
+    };
 
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(400.0, 800.0))
         .ui(move |ui| {
             let names = RecordingNames::default();
             let labels = RecordingLabels::new(&files, &names);
-            draw_multi_hover_label_contents(ui, &candidates, &files, labels);
+            draw_multi_hover_label_contents(ui, candidates, &files, labels);
         });
 
     harness.fit_contents();
@@ -164,19 +164,18 @@ fn snap_multi_hover_stacked_label() {
 #[test]
 fn snap_multi_hover_tpv_and_generated_marker() {
     let files = vec![make_snapshot_file()];
-    let candidates = [
-        Some(tpv_ref_in(FileIdx::new(0))),
-        None,
-        None,
-        Some(gen_ref()),
-    ];
+    let candidates = HoverCandidates {
+        tpv_or_satellite_report: Some(tpv_ref_in(FileIdx::new(0))),
+        generated_marker: Some(gen_ref()),
+        ..HoverCandidates::default()
+    };
 
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(400.0, 800.0))
         .ui(move |ui| {
             let names = RecordingNames::default();
             let labels = RecordingLabels::new(&files, &names);
-            draw_multi_hover_label_contents(ui, &candidates, &files, labels);
+            draw_multi_hover_label_contents(ui, candidates, &files, labels);
         });
 
     harness.fit_contents();
@@ -200,19 +199,19 @@ fn two_recordings_loaded() -> gt_loaded_files::LoadedFiles {
 #[test]
 fn snap_multi_hover_stacked_label_two_files() {
     let loaded = two_recordings_loaded();
-    let candidates = [
-        Some(tpv_ref_in(FileIdx::new(1))),
-        Some(event_ref()),
-        Some(custom_ref()),
-        None,
-    ];
+    let candidates = HoverCandidates {
+        tpv_or_satellite_report: Some(tpv_ref_in(FileIdx::new(1))),
+        event_marker: Some(event_ref()),
+        custom_marker: Some(custom_ref()),
+        generated_marker: None,
+    };
 
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(400.0, 800.0))
         .ui(move |ui| {
             let names = RecordingNames::resolve(loaded.view(), "{filename}");
             let labels = RecordingLabels::new(loaded.files(), &names);
-            draw_multi_hover_label_contents(ui, &candidates, loaded.files(), labels);
+            draw_multi_hover_label_contents(ui, candidates, loaded.files(), labels);
         });
 
     harness.fit_contents();
@@ -224,19 +223,18 @@ fn snap_multi_hover_stacked_label_two_files() {
 #[test]
 fn multi_hover_names_the_hovered_fixs_recording() {
     let loaded = two_recordings_loaded();
-    let candidates = [
-        Some(tpv_ref_in(FileIdx::new(1))),
-        Some(event_ref()),
-        None,
-        None,
-    ];
+    let candidates = HoverCandidates {
+        tpv_or_satellite_report: Some(tpv_ref_in(FileIdx::new(1))),
+        event_marker: Some(event_ref()),
+        ..HoverCandidates::default()
+    };
 
     let mut harness = crate::test_harness::builder()
         .size(egui::vec2(400.0, 800.0))
         .ui(move |ui| {
             let names = RecordingNames::resolve(loaded.view(), "{filename}");
             let labels = RecordingLabels::new(loaded.files(), &names);
-            draw_multi_hover_label_contents(ui, &candidates, loaded.files(), labels);
+            draw_multi_hover_label_contents(ui, candidates, loaded.files(), labels);
         });
     harness.run();
 
@@ -762,7 +760,7 @@ fn make_short_walk_file() -> gt_types::LoadedFile {
             bounding_box: bb,
             merc_bounds: merc_bounds_for_rect(bb),
             tpv_count: n,
-            ..TrackMetadata::default()
+            ..gt_test_utils::empty_track_metadata()
         },
         sat_label_anchors: Vec::new(),
         points,
@@ -776,7 +774,7 @@ fn make_short_walk_file() -> gt_types::LoadedFile {
         metadata: FileMetadata {
             filename: "short_walk.gtd".to_string(),
             time_range: TimeRange::new(t0, t0 + chrono::Duration::seconds(n as i64)),
-            ..FileMetadata::default()
+            ..gt_test_utils::empty_file_metadata()
         },
         tracks: vec![track],
         event_marker_styles: std::collections::HashMap::new(),

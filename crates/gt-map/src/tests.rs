@@ -39,7 +39,7 @@ fn make_file_from_points(points: Vec<gt_types::NavPoint>) -> LoadedFile {
             custom_marker_count: 0,
             generated_marker_count: 0,
             event_marker_count: 0,
-            ..TrackMetadata::default()
+            ..gt_test_utils::empty_track_metadata()
         },
         points,
         lod: gt_types::TrackLod::default(),
@@ -55,7 +55,7 @@ fn make_file_from_points(points: Vec<gt_types::NavPoint>) -> LoadedFile {
             total_distance_km: Length::new::<kilometer>(1.0),
             total_duration: chrono::Duration::seconds(n as i64),
             time_range: TimeRange::new(now, now + chrono::Duration::seconds(n as i64)),
-            ..FileMetadata::default()
+            ..gt_test_utils::empty_file_metadata()
         },
         tracks: vec![track],
         event_marker_styles: std::collections::HashMap::new(),
@@ -146,7 +146,7 @@ fn track_at(lat: f64, lon: f64) -> LoadedTrack {
         .lon(gt_types::Longitude::new(lon))
         .build();
     LoadedTrack {
-        metadata: TrackMetadata::default(),
+        metadata: gt_test_utils::empty_track_metadata(),
         points: vec![gt_types::NavPoint::new(tpv, None)],
         lod: gt_types::TrackLod::default(),
         sat_label_anchors: Vec::new(),
@@ -159,7 +159,7 @@ fn track_at(lat: f64, lon: f64) -> LoadedTrack {
 
 fn file_with_tracks(tracks: Vec<LoadedTrack>) -> LoadedFile {
     LoadedFile {
-        metadata: FileMetadata::default(),
+        metadata: gt_test_utils::empty_file_metadata(),
         tracks,
         event_marker_styles: std::collections::HashMap::new(),
         orphaned_event_markers: vec![],
@@ -328,7 +328,7 @@ fn time_filtered_point_is_not_hoverable() {
     let track = LoadedTrack {
         metadata: TrackMetadata {
             time_range: TimeRange::new(early, late),
-            ..TrackMetadata::default()
+            ..gt_test_utils::empty_track_metadata()
         },
         points: vec![nav_at(early, 55.0, 12.0), nav_at(late, 55.0, 12.0)],
         lod: gt_types::TrackLod::default(),
@@ -362,7 +362,7 @@ fn time_filtered_point_is_not_hoverable() {
 fn query_hidden_point_is_not_hoverable() {
     let now = chrono::DateTime::from_timestamp(0, 0).expect("valid");
     let track = LoadedTrack {
-        metadata: TrackMetadata::default(),
+        metadata: gt_test_utils::empty_track_metadata(),
         points: vec![nav_at(now, 55.0, 12.0), nav_at(now, 55.0001, 12.0001)],
         lod: gt_types::TrackLod::default(),
         sat_label_anchors: Vec::new(),
@@ -528,24 +528,48 @@ fn hover_ref(category: DataCategory) -> DataPointRef {
     }
 }
 
-/// The slots keep [`DataCategory::hover_slot`] order, so the element a
-/// hover or a click acts on is the fix whenever one is among them.
+/// The element a hover or a click acts on is the fix whenever one is among the
+/// candidates.
 #[test]
-fn the_primary_candidate_is_the_first_filled_slot() {
+fn the_primary_candidate_is_the_fix_when_one_is_present() {
     let tpv = hover_ref(DataCategory::Tpv);
     let marker = hover_ref(DataCategory::EventMarker);
 
     let marker_only = HoverCandidates {
-        slots: [None, Some(marker), None, None],
+        event_marker: Some(marker),
+        ..HoverCandidates::default()
     };
     assert_eq!(marker_only.primary(), Some(marker));
     assert!(!marker_only.is_ambiguous());
 
     let both = HoverCandidates {
-        slots: [Some(tpv), Some(marker), None, None],
+        tpv_or_satellite_report: Some(tpv),
+        event_marker: Some(marker),
+        ..HoverCandidates::default()
     };
     assert_eq!(both.primary(), Some(tpv));
     assert!(both.is_ambiguous());
+}
+
+/// The click that opens the disambiguation popup also fires `clicked_elsewhere`
+/// on the popup area, so only a later frame's click or Escape closes it.
+#[rstest::rstest]
+#[case::opening_click(true, true, false, false)]
+#[case::later_click_outside(false, true, false, true)]
+#[case::escape(false, false, true, true)]
+#[case::still_hovering_it(false, false, false, false)]
+fn the_disambiguation_popup_survives_the_frame_it_opened_on(
+    #[case] just_opened: bool,
+    #[case] clicked_elsewhere: bool,
+    #[case] escape_pressed: bool,
+    #[case] expected: bool,
+) {
+    let dismissal = DisambiguationDismissal {
+        just_opened,
+        clicked_elsewhere,
+        escape_pressed,
+    };
+    assert_eq!(dismissal.closes_popup(), expected);
 }
 
 /// What the compound hover label leans on: a renderer keeps its own label
@@ -562,13 +586,14 @@ fn hover_labels_yield_to_the_popup_or_a_previous_multi_hover(
 ) {
     let visibility = TrackDataVisibility::from_loaded(&[]);
     let mut state = DrawState::default();
-    for candidate in state
-        .highlight
-        .hover_candidates
-        .iter_mut()
+    for category in [DataCategory::Tpv, DataCategory::EventMarker]
+        .into_iter()
         .take(previous_candidates)
     {
-        *candidate = Some(hover_ref(DataCategory::Tpv));
+        state
+            .highlight
+            .hover_candidates
+            .keep_nearest(hover_ref(category));
     }
 
     let mut ctx = state.context(&[], &visibility);
@@ -606,7 +631,7 @@ fn candidate_label_generated_marker_matches_header() {
             custom_marker_count: 0,
             generated_marker_count: 1,
             event_marker_count: 0,
-            ..TrackMetadata::default()
+            ..gt_test_utils::empty_track_metadata()
         },
         points: vec![],
         lod: gt_types::TrackLod::default(),
@@ -630,7 +655,7 @@ fn candidate_label_generated_marker_matches_header() {
             total_distance_km: uom::si::f64::Length::new::<uom::si::length::kilometer>(1.0),
             total_duration: chrono::Duration::seconds(1),
             time_range: TimeRange::new(now, now + chrono::Duration::seconds(1)),
-            ..FileMetadata::default()
+            ..gt_test_utils::empty_file_metadata()
         },
         tracks: vec![track],
         event_marker_styles: std::collections::HashMap::new(),

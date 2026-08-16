@@ -471,7 +471,7 @@ fn track_with_points(points: Vec<NavPoint>) -> LoadedTrack {
     LoadedTrack {
         metadata: gt_types::TrackMetadata {
             satellite_report_count,
-            ..gt_types::TrackMetadata::default()
+            ..gt_test_utils::empty_track_metadata()
         },
         points,
         lod: gt_types::TrackLod::default(),
@@ -860,7 +860,7 @@ fn track_with_segment_range(min_m: f64, max_m: f64) -> LoadedTrack {
                 min: Length::new::<meter>(min_m),
                 max: Length::new::<meter>(max_m),
             }),
-            ..gt_types::TrackMetadata::default()
+            ..gt_test_utils::empty_track_metadata()
         },
         points: Vec::new(),
         lod: gt_types::TrackLod::default(),

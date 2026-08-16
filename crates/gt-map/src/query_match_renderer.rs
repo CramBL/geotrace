@@ -173,7 +173,7 @@ mod tests {
     fn match_duration_covers_first_to_last_point() {
         // Fixture points are spaced exactly one second apart.
         let track = LoadedTrack {
-            metadata: gt_types::TrackMetadata::default(),
+            metadata: gt_test_utils::empty_track_metadata(),
             points: gt_test_utils::nav_test_data(),
             lod: gt_types::TrackLod::default(),
             sat_label_anchors: Vec::new(),

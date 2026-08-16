@@ -12,7 +12,7 @@ use gt_types::{
     PointIdx,
 };
 use gt_ui_theme::EM_DASH;
-use gt_ui_types::DataPointRef;
+use gt_ui_types::{DataPointRef, HoverCandidates};
 
 use crate::recording_labels::RecordingLabels;
 
@@ -115,11 +115,11 @@ pub(crate) fn should_show_compound_label(
 /// the popup frames provide all the visual containment needed.
 pub(crate) fn draw_multi_hover_label_contents(
     ui: &mut egui::Ui,
-    candidates: &[Option<DataPointRef>; 4],
+    candidates: HoverCandidates,
     files: &[LoadedFile],
     recording_labels: RecordingLabels<'_>,
 ) {
-    for candidate in candidates.iter().flatten().copied() {
+    for candidate in candidates.iter() {
         Frame::popup(ui.style()).show(ui, |ui| {
             draw_candidate_section(ui, candidate, files, recording_labels);
         });

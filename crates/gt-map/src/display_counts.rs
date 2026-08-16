@@ -333,7 +333,7 @@ mod tests {
     use gt_types::sat_label::{SatLabelAnchor, SatLabelTier};
     use gt_types::time_types::GpsTime;
     use gt_types::{
-        CustomMarker, EventMarker, FileMetadata, FileSource, GeneratedMarker, GeneratedMarkerKind,
+        CustomMarker, EventMarker, FileSource, GeneratedMarker, GeneratedMarkerKind,
         GeneratedMarkerKindTag, Latitude, LoadedFile, LoadedTrack, Longitude, MarkerIcon, NavPoint,
         PointIdx, TimeRange, TrackLod, TrackMetadata, mercator,
     };
@@ -373,7 +373,7 @@ mod tests {
             metadata: TrackMetadata {
                 time_range: TimeRange::new(t(0), t(3)),
                 tpv_count: points.len(),
-                ..TrackMetadata::default()
+                ..gt_test_utils::empty_track_metadata()
             },
             points,
             lod: TrackLod::default(),
@@ -404,7 +404,7 @@ mod tests {
             channels: Vec::new(),
         };
         LoadedFile {
-            metadata: FileMetadata::default(),
+            metadata: gt_test_utils::empty_file_metadata(),
             tracks: vec![track],
             event_marker_styles: HashMap::new(),
             orphaned_event_markers: Vec::new(),

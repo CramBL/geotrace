@@ -3,9 +3,10 @@ pub mod fixtures;
 pub mod snapshot_harness;
 
 pub use fixtures::{
-    SyntheticGtdSpec, latlon_at_meters, loaded_track_with_points, marker_test_data,
-    nav_data_with_gap, nav_point_at_meters, nav_points_from, nav_test_data, single_nav_point,
-    stationary_nav_data, synthetic_gtd_bytes, synthetic_gtd_bytes_with_channels,
+    SyntheticGtdSpec, empty_file_metadata, empty_track_metadata, latlon_at_meters,
+    loaded_track_with_points, marker_test_data, nav_data_with_gap, nav_point_at_meters,
+    nav_points_from, nav_test_data, single_nav_point, stationary_nav_data, synthetic_gtd_bytes,
+    synthetic_gtd_bytes_with_channels,
 };
 #[cfg(feature = "snapshot")]
 pub use snapshot_harness::{Queryable, TestHarness, TestHarnessBuilder};

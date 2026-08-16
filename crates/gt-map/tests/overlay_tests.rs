@@ -20,241 +20,47 @@ fn tpv_point(pi: usize) -> DataPointRef {
     }
 }
 
-/// Mirrors the guard used in every renderer's hover-tooltip block:
-/// ```ignore
-/// if highlight.sticky != Some(r) && !ui.ctx().any_popup_open() { … }
-/// ```
-/// Extracted here so pure-logic tests can assert on the decision without egui.
-fn tooltip_guard_passes(highlight: &MapHighlight, r: DataPointRef, any_popup_open: bool) -> bool {
-    highlight.sticky != Some(r) && !any_popup_open
-}
-
-#[test]
-fn tooltip_suppressed_when_sticky_eq_hover() {
-    let p = tpv_point(0);
-    let h = MapHighlight {
-        sticky: Some(p),
-        hover: Some(HighlightScope::Point(p)),
+/// Every way a renderer loses its own hover label, and the plain hover that
+/// keeps it.
+#[rstest::rstest]
+#[case::plain_hover(None, false, false, true)]
+#[case::another_point_pinned(Some(tpv_point(1)), false, false, true)]
+#[case::hovered_point_pinned(Some(tpv_point(0)), false, false, false)]
+#[case::popup_open(None, true, false, false)]
+#[case::compound_label_took_over(None, false, true, false)]
+fn a_renderer_draws_its_hover_label_unless_something_else_shows_the_point(
+    #[case] sticky: Option<DataPointRef>,
+    #[case] any_popup_open: bool,
+    #[case] suppress_hover_labels: bool,
+    #[case] expected: bool,
+) {
+    let hovered = tpv_point(0);
+    let highlight = MapHighlight {
+        hover: Some(HighlightScope::Point(hovered)),
+        sticky,
+        suppress_hover_labels,
         ..Default::default()
     };
-    let Some(HighlightScope::Point(r)) = h.hover else {
-        panic!("hover not set");
-    };
-    assert!(
-        !tooltip_guard_passes(&h, r, false),
-        "tooltip should be suppressed when sticky == hover"
+    assert_eq!(
+        highlight.shows_hover_label(hovered, any_popup_open),
+        expected
     );
 }
 
-#[test]
-fn tooltip_shown_when_sticky_differs_from_hover() {
-    let p0 = tpv_point(0);
-    let p1 = tpv_point(1);
-    let h = MapHighlight {
-        sticky: Some(p1),
-        hover: Some(HighlightScope::Point(p0)),
+/// A generated marker's tooltip yields to a TPV tooltip at the same position.
+#[rstest::rstest]
+#[case::tpv_hovered(Some(HighlightScope::Point(tpv_point(0))), true)]
+#[case::marker_hovered(Some(HighlightScope::Point(gen_marker_point(0))), false)]
+#[case::nothing_hovered(None, false)]
+fn only_a_hovered_fix_is_the_primary_tpv_hover(
+    #[case] hover: Option<HighlightScope>,
+    #[case] expected: bool,
+) {
+    let highlight = MapHighlight {
+        hover,
         ..Default::default()
     };
-    let Some(HighlightScope::Point(r)) = h.hover else {
-        panic!("hover not set");
-    };
-    assert!(
-        tooltip_guard_passes(&h, r, false),
-        "tooltip should show when sticky != hover"
-    );
-}
-
-#[test]
-fn tooltip_shown_when_no_sticky() {
-    let p = tpv_point(0);
-    let h = MapHighlight {
-        sticky: None,
-        hover: Some(HighlightScope::Point(p)),
-        ..Default::default()
-    };
-    let Some(HighlightScope::Point(r)) = h.hover else {
-        panic!("hover not set");
-    };
-    assert!(
-        tooltip_guard_passes(&h, r, false),
-        "tooltip should show when there is no sticky element"
-    );
-}
-
-#[test]
-fn tooltip_suppressed_when_popup_open() {
-    let p = tpv_point(5);
-    let h = MapHighlight {
-        sticky: None,
-        hover: Some(HighlightScope::Point(p)),
-        ..Default::default()
-    };
-    let Some(HighlightScope::Point(r)) = h.hover else {
-        panic!("hover not set");
-    };
-    assert!(
-        !tooltip_guard_passes(&h, r, true),
-        "tooltip should be suppressed when a popup is open"
-    );
-}
-
-/// Mirrors the disambiguation-close guard:
-/// ```ignore
-/// if !just_opened_disambig && (area_resp.response.clicked_elsewhere() || esc) {
-///     self.disambiguation_candidates = [None; 4];
-/// }
-/// ```
-/// `clicked_elsewhere()` fires on the same frame as the click that opened the
-/// popup, so `just_opened_disambig` keeps that frame from closing it.
-#[expect(
-    clippy::fn_params_excessive_bools,
-    reason = "mirrors the three independent boolean inputs to the guard"
-)]
-fn disambig_should_close(just_opened: bool, clicked_elsewhere: bool, esc: bool) -> bool {
-    !just_opened && (clicked_elsewhere || esc)
-}
-
-/// Regression: the click that opens the disambiguation popup also fires
-/// `clicked_elsewhere()` on the popup area (the click was on the map, not inside
-/// the popup), which used to close it immediately in the same frame.
-#[test]
-fn disambig_stays_open_on_same_frame_as_click() {
-    assert!(
-        !disambig_should_close(true, true, false),
-        "popup must not close on the frame it was opened, even if clicked_elsewhere fires"
-    );
-}
-
-#[test]
-fn disambig_closes_on_subsequent_clicked_elsewhere() {
-    assert!(
-        disambig_should_close(false, true, false),
-        "popup must close when user clicks outside it on a later frame"
-    );
-}
-
-#[test]
-fn disambig_closes_on_esc() {
-    assert!(
-        disambig_should_close(false, false, true),
-        "popup must close when ESC is pressed"
-    );
-}
-
-/// Mirrors the hover-suppression guard in `GeneratedMarkerRenderer` that prevents a
-/// redundant tooltip from appearing during the one-frame transition into multi-hover
-/// mode (when `suppress_hover_labels` hasn't yet caught up):
-/// ```ignore
-/// let primary_is_tpv = matches!(
-///     highlight.hover,
-///     Some(HighlightScope::Point(r)) if r.category == DataCategory::Tpv
-/// );
-/// if !primary_is_tpv && ... { show_tooltip(…) }
-/// ```
-/// From the second frame onward `suppress_hover_labels` is true and individual
-/// tooltips are already suppressed. The compound label takes over.
-fn generated_marker_tooltip_allowed(highlight: &MapHighlight) -> bool {
-    !matches!(
-        highlight.hover,
-        Some(HighlightScope::Point(r)) if r.category == DataCategory::Tpv
-    )
-}
-
-/// Regression: hovering a TPV point that coincides with a generated marker used to
-/// show two overlapping tooltips at the same screen position.
-#[test]
-fn generated_marker_tooltip_suppressed_when_primary_hover_is_tpv() {
-    let tpv = tpv_point(0);
-    let h = MapHighlight {
-        hover: Some(HighlightScope::Point(tpv)),
-        ..Default::default()
-    };
-    assert!(
-        !generated_marker_tooltip_allowed(&h),
-        "generated marker tooltip must be suppressed when primary hover is a TPV point"
-    );
-}
-
-#[test]
-fn generated_marker_tooltip_shown_when_no_tpv_hovered() {
-    let h = MapHighlight {
-        hover: None,
-        ..Default::default()
-    };
-    assert!(
-        generated_marker_tooltip_allowed(&h),
-        "generated marker tooltip must show when no TPV point is the primary hover"
-    );
-}
-
-#[test]
-fn generated_marker_tooltip_shown_when_primary_hover_is_non_tpv() {
-    let gm = gen_marker_point(0);
-    let h = MapHighlight {
-        hover: Some(HighlightScope::Point(gm)),
-        ..Default::default()
-    };
-    assert!(
-        generated_marker_tooltip_allowed(&h),
-        "generated marker tooltip must show when primary hover is not a TPV point"
-    );
-}
-
-/// Mirrors the full renderer tooltip guard, which also checks
-/// `suppress_hover_labels` so that individual tooltips are suppressed both when
-/// the disambiguation popup is open and when multiple candidates are hovered.
-fn tooltip_guard_passes_full(
-    highlight: &MapHighlight,
-    r: DataPointRef,
-    any_popup_open: bool,
-) -> bool {
-    highlight.sticky != Some(r) && !any_popup_open && !highlight.suppress_hover_labels
-}
-
-/// With no popup open and a single hover, the tooltip should show.
-#[test]
-fn tooltip_shows_when_single_hover_no_popup() {
-    let p = tpv_point(0);
-    let h = MapHighlight {
-        hover: Some(HighlightScope::Point(p)),
-        suppress_hover_labels: false,
-        ..Default::default()
-    };
-    assert!(tooltip_guard_passes_full(&h, p, false));
-}
-
-/// When `suppress_hover_labels` is set (multiple candidates hovered simultaneously),
-/// individual renderer tooltips must not appear so they don't pile on top of each other.
-#[test]
-fn tooltip_suppressed_when_suppress_hover_labels_set() {
-    let p = tpv_point(0);
-    let other = gen_marker_point(0);
-    let h = MapHighlight {
-        hover: Some(HighlightScope::Point(p)),
-        hover_candidates: [Some(p), None, None, Some(other)],
-        suppress_hover_labels: true,
-        ..Default::default()
-    };
-    assert!(
-        !tooltip_guard_passes_full(&h, p, false),
-        "tooltip must be suppressed when suppress_hover_labels is true"
-    );
-}
-
-/// When the disambiguation popup is open, individual renderer tooltips must not
-/// appear so they don't overlap the popup.
-#[test]
-fn tooltip_suppressed_when_disambig_popup_open() {
-    let p = tpv_point(0);
-    let h = MapHighlight {
-        hover: Some(HighlightScope::Point(p)),
-        suppress_hover_labels: true,
-        ..Default::default()
-    };
-    assert!(
-        !tooltip_guard_passes_full(&h, p, false),
-        "tooltip must be suppressed when disambiguation popup is open"
-    );
+    assert_eq!(highlight.primary_hover_is_tpv(), expected);
 }
 
 /// `suppress_hover_labels` defaults to false. Renderers show tooltips normally

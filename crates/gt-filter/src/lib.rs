@@ -198,7 +198,7 @@ mod tests {
             custom_marker_count: 0,
             generated_marker_count: 0,
             event_marker_count: 0,
-            ..TrackMetadata::default()
+            ..gt_test_utils::empty_track_metadata()
         }
     }
 

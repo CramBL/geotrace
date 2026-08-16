@@ -97,7 +97,6 @@ const TERM_UNDERLINE_ALPHA: f32 = 0.5;
 /// The whole-track sky trails window. Owned by the app and drawn each frame;
 /// opened by [`SkyTrailsWindow::open`] from the context menus and the
 /// clicked-point window.
-#[derive(Default)]
 pub struct SkyTrailsWindow {
     open: bool,
     track: Option<TrackRef>,
@@ -106,18 +105,13 @@ pub struct SkyTrailsWindow {
     scrub_secs: f64,
     /// Whether playback is advancing the scrubber.
     playing: bool,
-    /// Playback rate in track-seconds per real second. Set on
-    /// [`SkyTrailsWindow::open`] (the `Default` is zero, not a usable
-    /// rate), so it is always initialized before the window shows.
+    /// Playback rate in track-seconds per real second.
     speed: f32,
     shown: ConstellationSet,
-    /// Whether trails for satellites never in the fix are drawn. Set on
-    /// [`SkyTrailsWindow::open`] (the `Default` bool is the wrong value),
-    /// so it is always initialized before the window shows.
+    /// Whether trails for satellites never in the fix are drawn.
     show_not_in_fix: bool,
     /// Whether the whole-track trails are drawn, or only the current-instant
-    /// snapshot markers. Set on [`SkyTrailsWindow::open`] (the `Default` bool is
-    /// the wrong value), so it is always initialized before the window shows.
+    /// snapshot markers.
     show_trails: bool,
     /// Whether the trails are trimmed to the stretches where the satellite was
     /// in the fix, and the current-instant marker of one merely tracked right
@@ -140,6 +134,26 @@ pub struct SkyTrailsWindow {
     /// track. Tracks are immutable once loaded, so a per-track cache needs no
     /// invalidation. Re-extracted only when the shown track changes.
     cache: Option<(TrackRef, SkyTrails)>,
+}
+
+impl Default for SkyTrailsWindow {
+    fn default() -> Self {
+        Self {
+            open: false,
+            track: None,
+            scrub_secs: 0.0,
+            playing: false,
+            speed: DEFAULT_PLAYBACK_SPEED,
+            shown: ConstellationSet::all(),
+            show_not_in_fix: true,
+            show_trails: true,
+            in_fix_now: false,
+            show_heatmap: false,
+            trail_opacity_percent: gt_sky::TRAIL_OPACITY_PERCENT_DEFAULT,
+            pending_scrub_to: None,
+            cache: None,
+        }
+    }
 }
 
 impl SkyTrailsWindow {

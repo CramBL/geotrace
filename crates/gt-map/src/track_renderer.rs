@@ -3,6 +3,12 @@ use gt_types::{DataCategory, FileIdx, TrackIdx, TrackRef};
 use gt_ui_theme::{HIGHLIGHT_BLUE, track_color};
 use gt_ui_types::{HighlightScope, MapHighlight};
 
+/// Dashing of the stretches drawn through ghost fixes.
+pub(crate) const GHOST_FIX_DASH: DashPattern = DashPattern {
+    dash_px: 8.0,
+    gap_px: 5.0,
+};
+
 /// Alpha multiplier for elements on non-focused tracks while hover is active.
 ///
 /// Used by marker renderers, which draw at this alpha on top of the fade
@@ -202,7 +208,7 @@ pub(crate) fn draw_track_with_ghost<K: Copy>(
             ghost_span.push(pos_b);
         } else {
             if ghost_span.len() >= 2 {
-                draw_dashed_line(painter, &ghost_span, stroke, 8.0, 5.0);
+                draw_dashed_line(painter, &ghost_span, stroke, GHOST_FIX_DASH);
             }
             ghost_span.clear();
             if solid_span.is_empty() {
@@ -216,22 +222,27 @@ pub(crate) fn draw_track_with_ghost<K: Copy>(
         painter.add(egui::Shape::line(solid_span, stroke));
     }
     if ghost_span.len() >= 2 {
-        draw_dashed_line(painter, &ghost_span, stroke, 8.0, 5.0);
+        draw_dashed_line(painter, &ghost_span, stroke, GHOST_FIX_DASH);
     }
 }
 
-/// Draw a polyline as a dashed line with the given dash and gap lengths in screen pixels.
+/// Dash and gap lengths of a dashed line, in screen pixels.
+#[derive(Clone, Copy)]
+pub(crate) struct DashPattern {
+    pub(crate) dash_px: f32,
+    pub(crate) gap_px: f32,
+}
+
 pub(crate) fn draw_dashed_line(
     painter: &egui::Painter,
     points: &[egui::Pos2],
     stroke: Stroke,
-    dash: f32,
-    gap: f32,
+    DashPattern { dash_px, gap_px }: DashPattern,
 ) {
     if points.len() < 2 {
         return;
     }
-    let period = dash + gap;
+    let period = dash_px + gap_px;
     let mut phase: f32 = 0.0;
     let mut dash_start: Option<egui::Pos2> = None;
 
@@ -247,8 +258,8 @@ pub(crate) fn draw_dashed_line(
         let mut remaining = seg_len;
 
         while remaining > f32::EPSILON {
-            let in_dash = phase < dash;
-            let phase_end = if in_dash { dash } else { period };
+            let in_dash = phase < dash_px;
+            let phase_end = if in_dash { dash_px } else { period };
             let step = (phase_end - phase).min(remaining);
             let next_pos = pos + dir * step;
 
@@ -270,7 +281,7 @@ pub(crate) fn draw_dashed_line(
                     if let Some(start) = dash_start.take() {
                         painter.line_segment([start, pos], stroke);
                     }
-                    phase = dash;
+                    phase = dash_px;
                 } else {
                     phase = 0.0;
                 }

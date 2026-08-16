@@ -51,15 +51,77 @@ pub enum HighlightScope {
     Point(DataPointRef),
 }
 
+/// The nearest visible element per category group under the cursor.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HoverCandidates {
+    pub tpv_or_satellite_report: Option<DataPointRef>,
+    pub event_marker: Option<DataPointRef>,
+    pub custom_marker: Option<DataPointRef>,
+    pub generated_marker: Option<DataPointRef>,
+}
+
+impl HoverCandidates {
+    /// Keeps `candidate` when its category has no closer one yet: callers feed
+    /// candidates in nearest-first order.
+    pub fn keep_nearest(&mut self, candidate: DataPointRef) {
+        let Some(slot) = self.slot_for(candidate.category) else {
+            return;
+        };
+        slot.get_or_insert(candidate);
+    }
+
+    fn slot_for(&mut self, category: DataCategory) -> Option<&mut Option<DataPointRef>> {
+        match category {
+            DataCategory::Tpv | DataCategory::SatelliteReport => {
+                Some(&mut self.tpv_or_satellite_report)
+            }
+            DataCategory::EventMarker => Some(&mut self.event_marker),
+            DataCategory::CustomMarker => Some(&mut self.custom_marker),
+            DataCategory::GeneratedMarker => Some(&mut self.generated_marker),
+            DataCategory::Track => None,
+        }
+    }
+
+    /// The candidates present, in the order tooltips and popup rows list them.
+    pub fn iter(&self) -> impl Iterator<Item = DataPointRef> {
+        [
+            self.tpv_or_satellite_report,
+            self.event_marker,
+            self.custom_marker,
+            self.generated_marker,
+        ]
+        .into_iter()
+        .flatten()
+    }
+
+    /// The element a hover or a click acts on: the TPV point when it is among
+    /// them, otherwise the first candidate present.
+    pub fn primary(&self) -> Option<DataPointRef> {
+        self.iter().next()
+    }
+
+    /// Whether several element types sit under the cursor at once, so a click
+    /// cannot tell which one the user meant.
+    pub fn is_ambiguous(&self) -> bool {
+        self.iter().count() > 1
+    }
+
+    pub fn every_category_filled(&self) -> bool {
+        self.tpv_or_satellite_report.is_some()
+            && self.event_marker.is_some()
+            && self.custom_marker.is_some()
+            && self.generated_marker.is_some()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct MapHighlight {
     pub hover: Option<HighlightScope>,
     pub sticky: Option<DataPointRef>,
-    /// All hovered candidates within the cursor radius, one per category group.
-    /// Indices: 0 = Tpv/SatelliteReport, 1 = EventMarker, 2 = CustomMarker,
-    /// 3 = GeneratedMarker. Used so renderers can show tooltips for secondary
-    /// candidates even when a Tpv point is the primary hover.
-    pub hover_candidates: [Option<DataPointRef>; 4],
+    /// Every element within the cursor radius, one per category group, so
+    /// renderers can show tooltips for secondary candidates even when a TPV
+    /// point is the primary hover.
+    pub hover_candidates: HoverCandidates,
     /// Time currently hovered on the track plot. Used to cross-highlight the
     /// closest TPV point on the map. `None` when the plot cursor is inactive.
     pub plot_hover_time: Option<DateTime<Utc>>,
@@ -111,6 +173,17 @@ impl MapHighlight {
     /// one it does not, reporting whether the popup ended up pinned.
     pub fn toggle_sticky_if_drawn(&mut self, scope: MapScope<'_>, point_ref: DataPointRef) -> bool {
         scope.draws(point_ref) && self.toggle_sticky(point_ref)
+    }
+
+    /// Whether a renderer draws its own hover label for `candidate`. The pinned
+    /// popup, any open popup, and the compound multi-hover label each take that
+    /// label's place.
+    pub fn shows_hover_label(&self, candidate: DataPointRef, any_popup_open: bool) -> bool {
+        self.sticky != Some(candidate) && !any_popup_open && !self.suppress_hover_labels
+    }
+
+    pub fn primary_hover_is_tpv(&self) -> bool {
+        matches!(self.hover, Some(HighlightScope::Point(r)) if r.category == DataCategory::Tpv)
     }
 
     /// What the pinned popup does this frame, dropping a pin whose element is
@@ -172,7 +245,7 @@ impl Default for MapHighlight {
         Self {
             hover: None,
             sticky: None,
-            hover_candidates: [None; 4],
+            hover_candidates: HoverCandidates::default(),
             plot_hover_time: None,
             plot_hover_point: None,
             plot_hover_snapped: false,

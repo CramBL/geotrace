@@ -927,7 +927,7 @@ mod tests {
     use std::path::PathBuf;
 
     use gt_types::{
-        FileIdx, FileMetadata, FileSource, LoadedFile, LoadedTrack, TrackIdx, TrackLod,
+        FileIdx, FileSource, LoadedFile, LoadedTrack, TrackIdx, TrackLod,
         TrackMetadata,
     };
 
@@ -936,13 +936,13 @@ mod tests {
 
     fn make_file(track_count: usize) -> LoadedFile {
         LoadedFile {
-            metadata: FileMetadata::default(),
+            metadata: gt_test_utils::empty_file_metadata(),
             tracks: (0..track_count)
                 .map(|ti| LoadedTrack {
                     metadata: TrackMetadata {
                         // 1-based display index, as `build_loaded_file` assigns.
                         index: ti + 1,
-                        ..TrackMetadata::default()
+                        ..gt_test_utils::empty_track_metadata()
                     },
                     points: Vec::new(),
                     lod: TrackLod::default(),
