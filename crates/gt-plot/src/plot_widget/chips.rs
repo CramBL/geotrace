@@ -69,7 +69,9 @@ impl MetricKindUi for MetricKind {
             | Self::UtilAll
             | Self::SlipAll
             | Self::SnapError
-            | Self::Jamming => None,
+            | Self::Jamming
+            | Self::Hp30
+            | Self::Kp => None,
         }
     }
 
@@ -129,6 +131,8 @@ impl MetricKindUi for MetricKind {
             Self::SlipQzss => "QZSS slip (/min)",
             Self::SnapError => "Snap error (m)",
             Self::Jamming => "Aircraft interference (%)",
+            Self::Hp30 => "Hp30 index",
+            Self::Kp => "Kp index",
         }
     }
 
@@ -378,6 +382,8 @@ const BASIC_GROUPS: [&[MetricKind]; 2] = [
         MetricKind::Eph,
         MetricKind::SnapError,
         MetricKind::Jamming,
+        MetricKind::Hp30,
+        MetricKind::Kp,
         MetricKind::HeadingDeg,
         MetricKind::ClockDeltaMs,
     ],
@@ -429,6 +435,8 @@ const ADVANCED_GROUPS: [&[MetricKind]; 2] = [
 pub(super) struct MetricAvailability {
     pub(super) snap_error: bool,
     pub(super) jamming: bool,
+    pub(super) hp30: bool,
+    pub(super) kp: bool,
 }
 
 impl MetricAvailability {
@@ -442,6 +450,10 @@ impl MetricAvailability {
             MetricKind::Jamming if !self.jamming => {
                 Some("No interference data is archived for these tracks' days")
             }
+            MetricKind::Hp30 if !self.hp30 => {
+                Some("No Hp30 values are archived for these tracks' days")
+            }
+            MetricKind::Kp if !self.kp => Some("No Kp values are archived for these tracks' days"),
             _ => None,
         }
     }

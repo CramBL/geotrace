@@ -4,17 +4,16 @@
 use std::collections::HashMap;
 
 use chrono::DateTime;
-use egui::Color32;
-use egui_plot::{LineStyle, MarkerShape, PlotPoint, PlotPoints, Points};
+use egui_plot::{MarkerShape, PlotPoint, PlotPoints, Points};
 use gt_egui_mipmap::{LevelSelection, MipMap};
 use gt_types::{MetricKind, TrackRef};
 use gt_ui_types::{ArcIdentity, SnapErrorKind, SnapErrorPoint, SnapErrorSeries};
 
 use super::chips::MetricKindUi;
-use super::levels::track_target;
+use super::levels::LineViewport;
 use super::lines::{
-    ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, NearestHoverLabel, PlotHoverLabel, add_line,
-    visible_by_x,
+    ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, LineStroke, NearestHoverLabel, PlotHoverLabel,
+    add_line, visible_by_x,
 };
 use crate::series::PlacedTrackSeries;
 
@@ -95,24 +94,11 @@ pub(super) fn sync_snap_error_cache(
     }
 }
 
-/// The viewport parameters the snap error series selects its mipmap levels
-/// with - the same inputs every other metric's level selection uses.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct SnapErrorViewport {
-    pub(super) x_min: f64,
-    pub(super) x_max: f64,
-    pub(super) width: f32,
-    pub(super) cap: usize,
-}
-
-/// Stroke/hover treatment for one track's snap error series, bundled so
-/// [`add_snap_error_series`] stays under the argument-count lint.
+/// The line's stroke, plus the theme the unsnapped crosses take their own
+/// color from.
 #[derive(Clone, Copy)]
 pub(super) struct SnapErrorStyle {
-    pub(super) color: Color32,
-    pub(super) style: LineStyle,
-    pub(super) width: f32,
-    pub(super) highlighted: bool,
+    pub(super) stroke: LineStroke,
     pub(super) dark_mode: bool,
 }
 
@@ -176,38 +162,19 @@ fn snap_error_runs(points: &[SnapErrorPoint]) -> Vec<Vec<PlotPoint>> {
     runs
 }
 
-/// Level selection per run, exactly like the other metrics, plus whether
-/// every viewport-visible run reads its finest level. The anchor markers
-/// only draw at full detail - coarser levels merge points, so a marker
-/// would no longer name a real point. Runs outside the viewport neither
-/// draw nor veto the markers.
-fn select_run_levels(runs: &[MipMap], viewport: SnapErrorViewport) -> (Vec<LevelSelection>, bool) {
-    let mut full_detail = true;
-    let selections = runs
-        .iter()
-        .map(|run| {
-            let target = track_target(
-                run.x_range(),
-                viewport.x_min,
-                viewport.x_max,
-                viewport.width,
-                viewport.cap,
-            );
-            let selection = run.select_indices(viewport.x_min, viewport.x_max, target);
-            // Only runs whose data intersects the viewport constrain
-            // `full_detail`. A selection always keeps one boundary point, so
-            // slice emptiness cannot identify an off-viewport run, and its
-            // zero visible width forces a coarse level.
-            let visible = run
-                .x_range()
-                .is_some_and(|(lo, hi)| lo <= viewport.x_max && hi >= viewport.x_min);
-            if visible {
-                full_detail &= selection.is_full_detail();
-            }
-            selection
-        })
-        .collect();
-    (selections, full_detail)
+/// Whether every run the viewport shows reads its finest level. The anchor
+/// markers only draw then - coarser levels merge points, so a marker would no
+/// longer name a real point. A run outside the viewport has zero visible
+/// width, which forces a coarse level, and does not veto the markers.
+fn every_shown_run_is_at_full_detail(
+    runs: &[MipMap],
+    selections: &[LevelSelection],
+    viewport: LineViewport,
+) -> bool {
+    runs.iter()
+        .zip(selections)
+        .filter(|(run, _)| viewport.shows(run))
+        .all(|(_, selection)| selection.is_full_detail())
 }
 
 /// Draw one track's snap error series from its plot cache: mipmapped line runs
@@ -225,21 +192,19 @@ pub(super) fn add_snap_error_series<'a>(
     prefix: &str,
     track_label: Option<&str>,
     cache: &'a SnapErrorPlotCache,
-    viewport: SnapErrorViewport,
+    viewport: LineViewport,
     pointer: Option<egui::Pos2>,
     nearest: &mut NearestHoverLabel,
     style: SnapErrorStyle,
 ) {
-    let (selections, full_detail) = select_run_levels(&cache.runs, viewport);
+    let selections = viewport.select_run_levels(&cache.runs);
+    let full_detail = every_shown_run_is_at_full_detail(&cache.runs, &selections, viewport);
     for (run, selection) in cache.runs.iter().zip(selections) {
         add_line(
             plot_ui,
             run.slice_at(selection),
             format!("{prefix}{}", MetricKind::SnapError.label()),
-            style.color,
-            style.style,
-            style.width,
-            style.highlighted,
+            style.stroke,
         );
     }
 
@@ -252,9 +217,9 @@ pub(super) fn add_snap_error_series<'a>(
                     PlotPoints::Borrowed(visible),
                 )
                 .shape(MarkerShape::Circle)
-                .color(style.color)
+                .color(style.stroke.color)
                 .radius(SNAPPED_MARKER_RADIUS)
-                .highlight(style.highlighted),
+                .highlight(style.stroke.highlighted),
             );
         }
     }
@@ -294,8 +259,8 @@ mod tests {
 
     /// A viewport over `0..=x_max` seconds, `width` px wide, with the
     /// given per-track sample cap.
-    fn viewport(x_max: f64, width: f32, cap: usize) -> SnapErrorViewport {
-        SnapErrorViewport {
+    fn viewport(x_max: f64, width: f32, cap: usize) -> LineViewport {
+        LineViewport {
             x_min: 0.0,
             x_max,
             width,
@@ -335,12 +300,15 @@ mod tests {
     )]
     fn marker_gate_requires_full_detail_on_every_visible_run(
         #[case] runs: Vec<MipMap>,
-        #[case] viewport: SnapErrorViewport,
+        #[case] viewport: LineViewport,
         #[case] expected: bool,
     ) {
-        let (selections, full_detail) = select_run_levels(&runs, viewport);
+        let selections = viewport.select_run_levels(&runs);
         assert_eq!(selections.len(), runs.len(), "one selection per run");
-        assert_eq!(full_detail, expected);
+        assert_eq!(
+            every_shown_run_is_at_full_detail(&runs, &selections, viewport),
+            expected
+        );
     }
 
     /// The plot-side snap cache follows the series by `Arc` identity: an

@@ -563,6 +563,10 @@ pub const fn metric_themed_color(kind: gt_types::MetricKind) -> ThemedColor {
         // overlay (claimed accuracy vs. observed road deviation).
         M::SnapError => ((60, 255, 180), (0, 143, 94)),
         M::Jamming => ((255, 105, 60), (188, 62, 20)), // rust orange
+        // One hue for the geomagnetic pair, split by depth the way a
+        // constellation's seen/fix lines are: Hp30 is the brighter of the two.
+        M::Hp30 => ((205, 245, 95), (92, 118, 20)), // chartreuse
+        M::Kp => ((150, 190, 45), (60, 80, 8)),     // olive
     };
     ThemedColor::new(
         Color32::from_rgb(dark.0, dark.1, dark.2),

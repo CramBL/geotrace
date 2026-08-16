@@ -266,16 +266,12 @@ impl SolarStore {
 
 /// One index's sample type, and the columns the archive writes it to.
 trait ArchivedSample: IndexSample + Sized {
-    const INDEX: GeomagneticIndex;
-
     fn append_samples(group: &Group, samples: &[Self]) -> Result<(), SolarStoreError>;
 
     fn read_samples(group: &Group, rows: Range<usize>) -> Result<Vec<Self>, SolarStoreError>;
 }
 
 impl ArchivedSample for KpSample {
-    const INDEX: GeomagneticIndex = GeomagneticIndex::Kp;
-
     fn append_samples(group: &Group, samples: &[Self]) -> Result<(), SolarStoreError> {
         append_period_columns(group, samples)?;
         let statuses: Vec<u8> = samples
@@ -311,8 +307,6 @@ impl ArchivedSample for KpSample {
 }
 
 impl ArchivedSample for Hp30Sample {
-    const INDEX: GeomagneticIndex = GeomagneticIndex::Hp30;
-
     fn append_samples(group: &Group, samples: &[Self]) -> Result<(), SolarStoreError> {
         append_period_columns(group, samples)
     }

@@ -2,10 +2,14 @@
 
 use chrono::{DateTime, Utc};
 
+use crate::GeomagneticIndex;
 use crate::activity::GeomagneticActivity;
 
 /// One period of an index series.
 pub trait IndexSample {
+    /// The index this sample is published under.
+    const INDEX: GeomagneticIndex;
+
     /// Start of the period this sample covers. It runs for
     /// [`GeomagneticIndex::period_length`](crate::GeomagneticIndex::period_length).
     fn period_start(&self) -> DateTime<Utc>;
@@ -48,6 +52,8 @@ pub struct KpSample {
 }
 
 impl IndexSample for KpSample {
+    const INDEX: GeomagneticIndex = GeomagneticIndex::Kp;
+
     fn period_start(&self) -> DateTime<Utc> {
         self.period_start
     }
@@ -65,6 +71,8 @@ pub struct Hp30Sample {
 }
 
 impl IndexSample for Hp30Sample {
+    const INDEX: GeomagneticIndex = GeomagneticIndex::Hp30;
+
     fn period_start(&self) -> DateTime<Utc> {
         self.period_start
     }
@@ -116,6 +124,26 @@ impl<S: IndexSample> IndexSeries<S> {
     pub fn is_empty(&self) -> bool {
         self.samples.is_empty()
     }
+
+    /// The value of the period covering `time`, or [`None`] where no period
+    /// covers it or the one that does has no published value.
+    ///
+    /// A period runs from its start for
+    /// [`GeomagneticIndex::period_length`], and the value holds for its whole
+    /// length: the series is a step function, not a curve to interpolate
+    /// along. Found by binary search over the period starts, which the series
+    /// holds in published order.
+    pub fn activity_at(&self, time: DateTime<Utc>) -> Option<GeomagneticActivity> {
+        let position = self
+            .samples
+            .partition_point(|sample| sample.period_start() <= time)
+            .checked_sub(1)?;
+        let sample = self.samples.get(position)?;
+        let period_end = sample
+            .period_start()
+            .checked_add_signed(S::INDEX.period_length())?;
+        (time < period_end).then(|| sample.activity()).flatten()
+    }
 }
 
 #[cfg(test)]
@@ -164,6 +192,64 @@ mod tests {
         };
         assert_eq!(series.peak_activity(), None);
         assert!(!series.is_empty());
+    }
+
+    /// One quiet Hp30 day's worth of periods, half an hour apart, with a gap
+    /// where the service published no value.
+    fn hp30_day() -> Hp30Series {
+        Hp30Series {
+            samples: vec![
+                hp30_sample("2024-05-10T00:00:00Z", 3.0),
+                hp30_sample("2024-05-10T00:30:00Z", 11.333),
+                Hp30Sample {
+                    period_start: parse_timestamp("2024-05-10T01:00:00Z").unwrap(),
+                    activity: None,
+                },
+                hp30_sample("2024-05-10T01:30:00Z", 4.667),
+            ],
+        }
+    }
+
+    #[rstest]
+    #[case::before_the_first_period("2024-05-09T23:59:59Z", None)]
+    #[case::the_first_period_starts("2024-05-10T00:00:00Z", Some(3.0))]
+    #[case::inside_the_first_period("2024-05-10T00:29:59Z", Some(3.0))]
+    #[case::the_next_period_starts("2024-05-10T00:30:00Z", Some(11.333))]
+    #[case::a_period_without_a_value("2024-05-10T01:15:00Z", None)]
+    #[case::the_last_period("2024-05-10T01:59:59Z", Some(4.667))]
+    #[case::past_the_last_period("2024-05-10T02:00:00Z", None)]
+    fn a_value_holds_for_its_whole_period(#[case] time: &str, #[case] expected: Option<f64>) {
+        assert_eq!(
+            hp30_day()
+                .activity_at(parse_timestamp(time).unwrap())
+                .map(GeomagneticActivity::value),
+            expected
+        );
+    }
+
+    /// Kp periods are six times as long, so the same value covers a fix three
+    /// hours after the period started.
+    #[test]
+    fn a_kp_value_holds_for_three_hours() {
+        let series = KpSeries {
+            samples: vec![kp_sample(KpStatus::Definitive)],
+        };
+        let at = |time: &str| {
+            series
+                .activity_at(parse_timestamp(time).unwrap())
+                .map(GeomagneticActivity::value)
+        };
+        assert_eq!(at("2024-05-10T02:59:59Z"), Some(3.0));
+        assert_eq!(at("2024-05-10T03:00:00Z"), None);
+    }
+
+    #[test]
+    fn an_empty_series_has_no_value_at_any_time() {
+        assert_eq!(
+            Hp30Series { samples: vec![] }
+                .activity_at(parse_timestamp("2024-05-10T00:00:00Z").unwrap()),
+            None
+        );
     }
 
     #[test]
