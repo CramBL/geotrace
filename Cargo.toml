@@ -52,6 +52,7 @@ members = [
     "crates/gt-side-panel",
     "crates/gt-sky",
     "crates/gt-snap",
+    "crates/gt-solar",
     "crates/gt-store",
     "crates/gt-test-utils",
     "crates/gt-track-builder",

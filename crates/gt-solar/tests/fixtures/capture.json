@@ -1,0 +1,56 @@
+{
+  "windows": [
+    {
+      "captured_at": "2026-08-16T14:47:18.115465776+00:00",
+      "content_type": "application/json",
+      "end": "2024-04-02T00:00:00Z",
+      "host": "https://kp.gfz.de",
+      "http_status": 200,
+      "index": "Kp",
+      "license": "CC BY 4.0",
+      "name": "kp-quiet",
+      "samples": 9,
+      "source": "GFZ Potsdam",
+      "start": "2024-04-01T00:00:00Z"
+    },
+    {
+      "captured_at": "2026-08-16T14:47:20.156744191+00:00",
+      "content_type": "application/json",
+      "end": "2024-05-12T00:00:00Z",
+      "host": "https://kp.gfz.de",
+      "http_status": 200,
+      "index": "Kp",
+      "license": "CC BY 4.0",
+      "name": "kp-storm",
+      "samples": 17,
+      "source": "GFZ Potsdam",
+      "start": "2024-05-10T00:00:00Z"
+    },
+    {
+      "captured_at": "2026-08-16T14:47:22.200582517+00:00",
+      "content_type": "application/json",
+      "end": "2024-05-12T00:00:00Z",
+      "host": "https://kp.gfz.de",
+      "http_status": 200,
+      "index": "Hp30",
+      "license": "CC BY 4.0",
+      "name": "hp30-storm",
+      "samples": 97,
+      "source": "GFZ Potsdam",
+      "start": "2024-05-10T00:00:00Z"
+    },
+    {
+      "captured_at": "2026-08-16T14:47:24.246243439+00:00",
+      "content_type": "application/json",
+      "end": "1980-01-02T00:00:00Z",
+      "host": "https://kp.gfz.de",
+      "http_status": 200,
+      "index": "Hp30",
+      "license": "CC BY 4.0",
+      "name": "hp30-before-coverage",
+      "samples": 0,
+      "source": "GFZ Potsdam",
+      "start": "1980-01-01T00:00:00Z"
+    }
+  ]
+}

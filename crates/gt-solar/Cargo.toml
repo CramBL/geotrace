@@ -1,0 +1,28 @@
+[package]
+name = "gt-solar"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+strum.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+proptest.workspace = true
+# The fixture-capture example talks to the service directly, not through
+# gt_fetch::Transport.
+reqwest.workspace = true
+rstest.workspace = true
+
+[lints]
+workspace = true

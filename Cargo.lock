@@ -2814,6 +2814,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gt-solar"
+version = "0.12.0"
+dependencies = [
+ "chrono",
+ "insta",
+ "proptest",
+ "reqwest 0.13.4",
+ "rstest",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "gt-store"
 version = "0.12.0"
 dependencies = [
