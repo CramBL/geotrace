@@ -8,6 +8,23 @@ use uom::si::angle::degree;
 
 const MICROS_PER_SEC: f64 = 1_000_000.0;
 
+/// A track's mipmap series together with the index of the file it belongs to,
+/// which the plot learns only once that file joins the loaded-files list.
+#[derive(Debug, Clone)]
+pub(crate) struct PlacedTrackSeries {
+    pub fi: usize,
+    pub series: TrackSeries,
+}
+
+impl PlacedTrackSeries {
+    pub(crate) fn track_ref(&self) -> gt_types::TrackRef {
+        gt_types::TrackRef::new(
+            gt_types::FileIdx::new(self.fi),
+            gt_types::TrackIdx::new(self.series.ti),
+        )
+    }
+}
+
 /// Mipmap series for a single track.
 ///
 /// Built from all points in the track regardless of current visibility or filter.
@@ -15,9 +32,7 @@ const MICROS_PER_SEC: f64 = 1_000_000.0;
 /// [`super::plot_widget`] so the cache stays valid across filter changes.
 #[derive(Debug, Clone)]
 pub(crate) struct TrackSeries {
-    /// File index within the loaded files list.
-    pub fi: usize,
-    /// Track index within that file.
+    /// Track index within its file.
     pub ti: usize,
     /// `(x_min, x_max)` in Unix seconds, or `None` when the track has no
     /// points.
@@ -214,34 +229,31 @@ fn clock_delta_series(
 ///
 /// No visibility check or time filter is applied - that is done at render time
 /// so the cache stays valid across filter changes without a rebuild.
-pub(crate) fn build_file_series(
-    fi: usize,
-    file: &LoadedFile,
-    analysis: AnalysisConfig,
-) -> Vec<TrackSeries> {
+pub(crate) fn build_file_series(file: &LoadedFile, analysis: AnalysisConfig) -> Vec<TrackSeries> {
     file.tracks
         .iter()
         .enumerate()
-        .map(|(ti, track)| build_track_series(fi, ti, track, analysis))
+        .map(|(ti, track)| build_track_series(ti, track, analysis))
         .collect()
 }
 
 /// Build mipmap series for every track in every file.
-pub(crate) fn build_all_series(files: &[LoadedFile], analysis: AnalysisConfig) -> Vec<TrackSeries> {
+pub(crate) fn build_all_series(
+    files: &[LoadedFile],
+    analysis: AnalysisConfig,
+) -> Vec<PlacedTrackSeries> {
     files
         .iter()
         .enumerate()
         .flat_map(|(fi, file)| {
-            file.tracks
-                .iter()
-                .enumerate()
-                .map(move |(ti, track)| build_track_series(fi, ti, track, analysis))
+            build_file_series(file, analysis)
+                .into_iter()
+                .map(move |series| PlacedTrackSeries { fi, series })
         })
         .collect()
 }
 
 fn build_track_series(
-    fi: usize,
     ti: usize,
     track: &gt_types::LoadedTrack,
     analysis: AnalysisConfig,
@@ -351,7 +363,6 @@ fn build_track_series(
     );
 
     TrackSeries {
-        fi,
         ti,
         x_range,
         total_seen: MipMap::build(total_seen_pts),
@@ -487,7 +498,7 @@ mod tests {
     #[test]
     fn a_clock_spike_stays_off_the_line_and_out_of_its_extent() {
         let track = track_with_a_clock_spike(8, 4);
-        let series = build_track_series(0, 0, &track, AnalysisConfig::default());
+        let series = build_track_series(0, &track, AnalysisConfig::default());
 
         let (lo, hi) = clock_delta_extent(&series);
         assert!(
@@ -513,7 +524,7 @@ mod tests {
             clock_excursion_threshold_s: 4200.0,
             ..AnalysisConfig::default()
         };
-        let series = build_track_series(0, 0, &track, analysis);
+        let series = build_track_series(0, &track, analysis);
 
         assert!(series.clock_excursions.is_empty());
         let (lo, _) = clock_delta_extent(&series);
@@ -529,7 +540,7 @@ mod tests {
     )]
     fn apply_analysis_re_derives_the_excursion_split() {
         let track = track_with_a_clock_spike(8, 4);
-        let mut series = build_track_series(0, 0, &track, AnalysisConfig::default());
+        let mut series = build_track_series(0, &track, AnalysisConfig::default());
         assert_eq!(series.clock_excursions.len(), 1);
 
         series.apply_analysis(

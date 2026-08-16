@@ -7,8 +7,8 @@ use chrono::DateTime;
 use egui::{Color32, Tooltip};
 use egui_plot::{Line, LineStyle, MarkerShape, PlotPoint, PlotPoints, Points};
 use gt_analysis::satellite_utilization::UtilAnomaly;
+use gt_types::MetricKind;
 use gt_types::satellites::ConstellationSet;
-use gt_types::{FileIdx, MetricKind, TrackIdx, TrackRef};
 use gt_ui_types::HighlightScope;
 use strum::IntoEnumIterator;
 
@@ -27,7 +27,7 @@ use super::snap_error::{
 use super::style::{
     channel_line_color, effective_component_color, file_line_style, metric_line_color,
 };
-use crate::series::TrackSeries;
+use crate::series::{PlacedTrackSeries, TrackSeries};
 
 /// The sub-slice of `items` - sorted ascending by `key` - whose key lies in
 /// the visible `[x_min, x_max]` range. Marker overlays clip to this so they
@@ -66,7 +66,7 @@ const HOVER_LABEL_TOOLTIP_GAP: f32 = 12.0;
 )]
 pub(super) fn add_series_lines<'a>(
     plot_ui: &mut egui_plot::PlotUi<'a>,
-    series: &'a TrackSeries,
+    placed: &'a PlacedTrackSeries,
     // The recording's plot label, `None` while a single track is visible and
     // nothing needs naming.
     track_label: Option<&str>,
@@ -89,7 +89,7 @@ pub(super) fn add_series_lines<'a>(
     nearest: &mut NearestHoverLabel,
 ) {
     let prefix = track_label.map_or_else(String::new, |label| format!("{label}: "));
-    let focused = series_matches_hover_scope(series, hover_scope);
+    let focused = placed.matches_hover_scope(hover_scope);
     let has_track_focus = hover_scope.is_some();
 
     // The hover-dim treatment every line shares: full color plus highlight
@@ -105,7 +105,7 @@ pub(super) fn add_series_lines<'a>(
         }
         (color, highlighted || (has_track_focus && focused))
     };
-    let line_style = file_line_style(series.fi);
+    let line_style = file_line_style(placed.fi);
 
     for kind in MetricKind::iter() {
         // Skip metrics with no chip on screen - collapsed advanced section, or a
@@ -119,10 +119,11 @@ pub(super) fn add_series_lines<'a>(
         }
         let is_hovered = hovered_chip == Some(&HoveredChip::Metric(kind));
         let (color, highlighted) =
-            hover_treatment(metric_line_color(kind, series.fi, dark_mode), is_hovered);
+            hover_treatment(metric_line_color(kind, placed.fi, dark_mode), is_hovered);
         // Snap error has no mipmap. It draws from the external per-run series
         // right after this loop.
-        let (Some(mipmap), Some(level)) = (series.mipmap_for(kind), cache.level_for(kind)) else {
+        let (Some(mipmap), Some(level)) = (placed.series.mipmap_for(kind), cache.level_for(kind))
+        else {
             continue;
         };
         add_line(
@@ -141,7 +142,7 @@ pub(super) fn add_series_lines<'a>(
     {
         let is_hovered = hovered_chip == Some(&HoveredChip::Metric(MetricKind::SnapError));
         let (color, highlighted) = hover_treatment(
-            metric_line_color(MetricKind::SnapError, series.fi, dark_mode),
+            metric_line_color(MetricKind::SnapError, placed.fi, dark_mode),
             is_hovered,
         );
         add_snap_error_series(
@@ -167,7 +168,7 @@ pub(super) fn add_series_lines<'a>(
     {
         let is_hovered = hovered_chip == Some(&HoveredChip::Metric(MetricKind::Jamming));
         let (color, highlighted) = hover_treatment(
-            metric_line_color(MetricKind::Jamming, series.fi, dark_mode),
+            metric_line_color(MetricKind::Jamming, placed.fi, dark_mode),
             is_hovered,
         );
         add_jamming_series(
@@ -194,7 +195,7 @@ pub(super) fn add_series_lines<'a>(
     if !sections.show_channels {
         return;
     }
-    for (channel, selections) in series.channels.iter().zip(&cache.channels) {
+    for (channel, selections) in placed.series.channels.iter().zip(&cache.channels) {
         if !channel_vis.is_visible(&channel.name) {
             continue;
         }
@@ -209,7 +210,7 @@ pub(super) fn add_series_lines<'a>(
         };
         let is_hovered =
             matches!(hovered_chip, Some(HoveredChip::Channel(name)) if *name == channel.name);
-        let base = channel_line_color(color_index, series.fi);
+        let base = channel_line_color(color_index, placed.fi);
         let unit_suffix = channel
             .unit
             .as_deref()
@@ -317,19 +318,16 @@ pub(super) fn show_nearest_hover_label(
     .show(|ui| label.show(ui));
 }
 
-/// The [`TrackRef`] a series was built from, for keying into per-track
-/// external data like the snap error series.
-pub(super) fn series_track_ref(series: &TrackSeries) -> TrackRef {
-    TrackRef::new(FileIdx::new(series.fi), TrackIdx::new(series.ti))
-}
-
-fn series_matches_hover_scope(series: &TrackSeries, hover_scope: Option<HighlightScope>) -> bool {
-    match hover_scope {
-        Some(HighlightScope::File { file_index }) => file_index.as_usize() == series.fi,
-        Some(HighlightScope::Track(track)) | Some(HighlightScope::TrackCategory { track, .. }) => {
-            track.fi.as_usize() == series.fi && track.index.as_usize() == series.ti
+impl PlacedTrackSeries {
+    fn matches_hover_scope(&self, hover_scope: Option<HighlightScope>) -> bool {
+        match hover_scope {
+            Some(HighlightScope::File { file_index }) => file_index.as_usize() == self.fi,
+            Some(HighlightScope::Track(track))
+            | Some(HighlightScope::TrackCategory { track, .. }) => {
+                track.fi.as_usize() == self.fi && track.index.as_usize() == self.series.ti
+            }
+            Some(HighlightScope::Point(_)) | None => true,
         }
-        Some(HighlightScope::Point(_)) | None => true,
     }
 }
 

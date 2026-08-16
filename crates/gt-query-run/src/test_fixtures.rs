@@ -13,9 +13,7 @@ use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
-use gt_types::{
-    Channel, FileSource, LoadedFile, LoadedTrack, NavPoint, TrackLod,
-};
+use gt_types::{Channel, FileSource, LoadedFile, LoadedTrack, NavPoint, TrackLod};
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Velocity};
 use uom::si::velocity::kilometer_per_hour;

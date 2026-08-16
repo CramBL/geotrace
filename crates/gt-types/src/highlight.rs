@@ -116,7 +116,6 @@ pub enum DataCategory {
     EventMarker,
 }
 
-
 crate::enum_bitset! {
     /// Per-track element-visibility set.
     pub struct DataCategorySet(u8) for DataCategory;

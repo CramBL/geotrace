@@ -2180,9 +2180,7 @@ fn accel_channel_gtd_bytes(speed_kmh: f64) -> Vec<u8> {
 /// completion path through the app: `schema_from_files` builds the schema the
 /// popup offers from.
 fn push_file_with_channel(harness: &mut Harness<App>, name: &str, unit: &str) {
-    use gt_types::{
-        Channel, FileSource, LoadedFile, LoadedTrack, TrackLod,
-    };
+    use gt_types::{Channel, FileSource, LoadedFile, LoadedTrack, TrackLod};
     let channel = Channel {
         name: name.to_owned(),
         unit: Some(ChannelUnit::from_file_label(unit)),

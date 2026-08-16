@@ -271,9 +271,7 @@ mod tests {
             sat(Constellation::Gps, Some(3.0), false), // below mask but not used
             sat(Constellation::Gps, None, true),      // used, unknown elevation -> not flagged
         ]);
-        let flagged: Vec<f32> = masked_out_in_fix(&r, 15.0)
-            .map(|s| s.elevation)
-            .collect();
+        let flagged: Vec<f32> = masked_out_in_fix(&r, 15.0).map(|s| s.elevation).collect();
         assert_eq!(flagged, vec![5.0]);
     }
 

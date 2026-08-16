@@ -40,8 +40,7 @@ use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
     HighlightScope, HoverCandidates, MapHighlight, MapScope, PinnedPopup, PointWindowFolds,
-    QueryMatches,
-    SkyGlyphVariant, SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
+    QueryMatches, SkyGlyphVariant, SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
 use walkers::sources::{Mapbox, MapboxStyle, OpenStreetMap};
@@ -108,7 +107,10 @@ impl BlinkState {
             0.0
         } else {
             let fade = 1.0 - (elapsed / BLINK_DURATION_SEC);
-            (std::f32::consts::TAU * elapsed * BLINK_PULSE_HZ).sin().abs() * fade
+            (std::f32::consts::TAU * elapsed * BLINK_PULSE_HZ)
+                .sin()
+                .abs()
+                * fade
         }
     }
 
