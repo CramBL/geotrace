@@ -11,6 +11,7 @@ use egui_phosphor::regular::PUSH_PIN as ICON_PUSH_PIN;
 use egui_phosphor::regular::TRASH as ICON_TRASH;
 use egui_phosphor::regular::WARNING_OCTAGON as ICON_WARNING_OCTAGON;
 use egui_phosphor::regular::X as ICON_X;
+use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::sync::mpsc;
 use std::thread;
@@ -31,7 +32,7 @@ use gt_query_run::{
 };
 use gt_side_panel::widgets::{PointClickRequests, apply_point_click};
 use gt_types::{DataCategory, LoadedFile, NavPoint, PointIdx, TrackRef};
-use gt_ui_theme::{DEGREE_SIGN, ELLIPSIS, EM_DASH};
+use gt_ui_theme::{DEGREE_SIGN, EM_DASH};
 use gt_ui_types::{
     DataPointRef, DisplayMask, HighlightScope, MapHighlight, MapScope, MatchHighlight, QueryMatches,
 };
@@ -46,7 +47,10 @@ const MATCH_TABLE_ROW_CAP: usize = 100;
 const MAX_UNPINNED_HISTORY: usize = 50;
 
 /// Characters of a history entry's first line shown before eliding.
-const HISTORY_LINE_MAX_CHARS: usize = 48;
+const HISTORY_LINE_MAX_CHARS: NonZeroUsize = match NonZeroUsize::new(48) {
+    Some(chars) => chars,
+    None => NonZeroUsize::MIN,
+};
 
 /// Max width of an editor hover tooltip, shared by the construct and channel
 /// tooltips so they stay the same size.
@@ -1557,11 +1561,7 @@ fn query_one_line(text: &str) -> String {
     kept.push_str(text.get(cursor..).unwrap_or(""));
 
     let flat = kept.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() <= HISTORY_LINE_MAX_CHARS {
-        return flat;
-    }
-    let truncated: String = flat.chars().take(HISTORY_LINE_MAX_CHARS).collect();
-    format!("{truncated}{ELLIPSIS}")
+    gt_fmt::truncate_with_ellipsis(&flat, HISTORY_LINE_MAX_CHARS).into_owned()
 }
 
 fn points_of(files: &[LoadedFile], track_ref: TrackRef) -> Option<&[NavPoint]> {
@@ -1934,6 +1934,7 @@ fn segments(range: Range<usize>, underlines: &[(usize, usize)]) -> Vec<Range<usi
 mod tests {
     use gt_query::TrackInput;
     use gt_types::{FileIdx, TrackIdx};
+    use gt_ui_theme::ELLIPSIS;
     use rstest::rstest;
 
     use super::*;
@@ -2104,7 +2105,7 @@ mod tests {
             shown.ends_with(ELLIPSIS),
             "over-long lines are elided with dots"
         );
-        assert_eq!(shown.chars().count(), HISTORY_LINE_MAX_CHARS + 1);
+        assert_eq!(shown.chars().count(), HISTORY_LINE_MAX_CHARS.get() + 1);
     }
 
     #[test]

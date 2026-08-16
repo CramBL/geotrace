@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use std::{borrow::Cow, fmt::Write, num::NonZeroUsize};
 
 use chrono::{DateTime, Utc};
 use gt_types::track::FixStats;
@@ -16,6 +16,10 @@ pub const EM_DASH: &str = "—";
 /// U+2212 MINUS SIGN, visually distinct from a hyphen in front of a number.
 /// Re-exported by `gt-ui-theme` alongside the other UI glyphs.
 pub const MINUS_SIGN: &str = "−";
+
+/// U+2026 HORIZONTAL ELLIPSIS, marking a value cut short.
+/// Re-exported by `gt-ui-theme` alongside the other UI glyphs.
+pub const ELLIPSIS: &str = "…";
 
 /// Two spaces, U+00B7 MIDDLE DOT, two spaces, joins fields inside tooltip strings.
 const TOOLTIP_JOINER: &str = "  ·  ";
@@ -280,6 +284,18 @@ pub fn format_bytes(bytes: u64) -> String {
     format!("{scaled:.1} {unit}")
 }
 
+/// `value` cut to its first `max_chars` characters, with [`ELLIPSIS`] appended
+/// when characters were dropped. The ellipsis is extra, not part of the limit.
+pub fn truncate_with_ellipsis(value: &str, max_chars: NonZeroUsize) -> Cow<'_, str> {
+    match value.char_indices().nth(max_chars.get()) {
+        Some((cut, _)) => {
+            let head = value.get(..cut).unwrap_or(value);
+            Cow::Owned(format!("{head}{ELLIPSIS}"))
+        }
+        None => Cow::Borrowed(value),
+    }
+}
+
 /// Format a count with comma thousands separators (`8,940`).
 pub fn format_count(n: usize) -> String {
     let digits = n.to_string();
@@ -297,6 +313,27 @@ pub fn format_count(n: usize) -> String {
 mod tests {
     use super::*;
     use chrono::Duration;
+
+    #[rstest::rstest]
+    // Shorter than the limit: unchanged.
+    #[case("Alpha", 9, "Alpha")]
+    // Exactly the limit: unchanged, no ellipsis.
+    #[case("Alpha", 5, "Alpha")]
+    // One character over: cut with an ellipsis.
+    #[case("Alphas", 5, "Alpha…")]
+    // Multi-byte characters count as one each, and the cut lands on a
+    // character boundary.
+    #[case("ærøskøbing", 4, "ærøs…")]
+    // Nothing to cut.
+    #[case("", 3, "")]
+    fn truncate_with_ellipsis_counts_characters(
+        #[case] value: &str,
+        #[case] max_chars: usize,
+        #[case] expected: &str,
+    ) {
+        let max_chars = NonZeroUsize::new(max_chars).unwrap_or(NonZeroUsize::MIN);
+        assert_eq!(truncate_with_ellipsis(value, max_chars), expected);
+    }
 
     #[test]
     fn format_count_adds_thousands_separators() {
