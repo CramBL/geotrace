@@ -2863,6 +2863,7 @@ dependencies = [
  "gt-history",
  "gt-jam-store",
  "gt-solar-store",
+ "parking_lot",
  "tempfile",
  "thiserror 2.0.20",
 ]

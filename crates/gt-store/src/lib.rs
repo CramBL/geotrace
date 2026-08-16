@@ -8,10 +8,13 @@
 //!
 //! Settings are not part of this - they are a config file, not a database.
 //!
-//! Each database is opened on its own and returned owned, so one failing to
-//! open says nothing about the other.
+//! Each database is opened on its own, so one failing to open says nothing
+//! about the other.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 pub use gt_history::{
     ChannelSummary, DatabaseRef, DbError, HistoryDatabase, PruneMode, RecordingEntry,
@@ -37,9 +40,15 @@ pub enum StoreError {
 }
 
 /// Where GeoTrace's databases live.
-#[derive(Debug, Clone)]
+///
+/// Every caller going through one store works through the same lock over each
+/// archive file: each archive is opened once and shared from there. Not
+/// [`Clone`], which would open a second archive per copy.
+#[derive(Debug)]
 pub struct Store {
     root: PathBuf,
+    interference: SharedArchive<JamStore>,
+    geomagnetic_indices: SharedArchive<SolarStore>,
 }
 
 impl Store {
@@ -53,7 +62,11 @@ impl Store {
 
     /// The store under `root`, for tests and for a user-chosen location.
     pub fn open_in(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            interference: SharedArchive::empty(),
+            geomagnetic_indices: SharedArchive::empty(),
+        }
     }
 
     pub fn root(&self) -> &Path {
@@ -84,14 +97,41 @@ impl Store {
         Recordings::open_or_create(&self.recordings_path())
     }
 
-    /// Open the interference archive, creating it if it does not exist.
-    pub fn open_interference(&self) -> Result<JamStore, JamStoreError> {
-        JamStore::open_or_create(&self.interference_path())
+    /// The interference archive, creating it if it does not exist.
+    ///
+    /// Opened on the first call that succeeds and shared from then on.
+    pub fn open_interference(&self) -> Result<Arc<JamStore>, JamStoreError> {
+        self.interference
+            .get_or_open(|| JamStore::open_or_create(&self.interference_path()))
     }
 
-    /// Open the geomagnetic index archive, creating it if it does not exist.
-    pub fn open_geomagnetic_indices(&self) -> Result<SolarStore, SolarStoreError> {
-        SolarStore::open_or_create(&self.geomagnetic_indices_path())
+    /// The geomagnetic index archive, creating it if it does not exist.
+    ///
+    /// Shared the same way as [`Self::open_interference`].
+    pub fn open_geomagnetic_indices(&self) -> Result<Arc<SolarStore>, SolarStoreError> {
+        self.geomagnetic_indices
+            .get_or_open(|| SolarStore::open_or_create(&self.geomagnetic_indices_path()))
+    }
+}
+
+/// An archive opened on first use and shared from then on.
+///
+/// Only a successful open is kept: a failed one leaves the slot empty, so the
+/// next caller opens again.
+#[derive(Debug)]
+struct SharedArchive<T>(Mutex<Option<Arc<T>>>);
+
+impl<T> SharedArchive<T> {
+    fn empty() -> Self {
+        Self(Mutex::new(None))
+    }
+
+    fn get_or_open<E>(&self, open: impl FnOnce() -> Result<T, E>) -> Result<Arc<T>, E> {
+        let mut shared = self.0.lock();
+        if let Some(archive) = shared.as_ref() {
+            return Ok(Arc::clone(archive));
+        }
+        Ok(Arc::clone(shared.insert(Arc::new(open()?))))
     }
 }
 
@@ -142,6 +182,43 @@ mod tests {
         assert!(store.recordings_path().exists());
         assert!(store.interference_path().exists());
         assert!(store.geomagnetic_indices_path().exists());
+    }
+
+    /// One instance per store: two callers share the archive, and so share
+    /// the lock that serializes writes to its file.
+    #[test]
+    fn each_archive_is_opened_once_and_shared() {
+        let (_dir, store) = store();
+
+        let interference = store.open_interference().expect("interference");
+        let indices = store
+            .open_geomagnetic_indices()
+            .expect("geomagnetic indices");
+
+        assert!(Arc::ptr_eq(
+            &interference,
+            &store.open_interference().expect("interference again")
+        ));
+        assert!(Arc::ptr_eq(
+            &indices,
+            &store
+                .open_geomagnetic_indices()
+                .expect("geomagnetic indices again")
+        ));
+    }
+
+    /// A failure that has since been repaired must not keep the archive shut
+    /// for the rest of the process: opening is idempotent.
+    #[test]
+    fn a_failed_open_is_retried_on_the_next_call() {
+        let (_dir, store) = store();
+        std::fs::write(store.interference_path(), b"not an archive").expect("write");
+
+        store.open_interference().expect_err("garbage");
+        std::fs::remove_file(store.interference_path()).expect("remove");
+
+        store.open_interference().expect("retried after the repair");
+        assert!(store.interference_path().exists());
     }
 
     #[test]

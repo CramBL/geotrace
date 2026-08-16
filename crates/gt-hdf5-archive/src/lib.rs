@@ -1,9 +1,10 @@
 //! Column storage for the day-keyed HDF5 archives.
 //!
 //! An archive holds one extensible dataset per field, and a day index whose
-//! entries name a contiguous run of rows. [`Column`] is the dataset access all
-//! of them share, [`day_index`] the row bookkeeping. Which columns exist, and
-//! what they mean, belongs to each archive.
+//! entries name a contiguous run of rows. [`ArchiveFile`] is the file itself,
+//! [`Column`] the dataset access all archives share, [`day_index`] the row
+//! bookkeeping. Which columns exist, and what they mean, belongs to each
+//! archive.
 
 use std::ops::Range;
 
@@ -11,16 +12,25 @@ use hdf5::filters::Filter;
 use hdf5::types::VarLenUnicode;
 use hdf5::{Dataset, Extents, Group, SimpleExtents};
 
+mod archive_file;
 pub mod attributes;
 pub mod dates;
 pub mod day_index;
 
-/// Why a column access failed. Each archive converts this into its own error
-/// type.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub use archive_file::{ArchiveFile, OpenArchive};
+
+/// Why an archive access failed. Each archive converts this into its own
+/// error type.
+#[derive(Debug, thiserror::Error)]
 pub enum ArchiveError {
     #[error("archive error: {0}")]
     Backend(String),
+
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("archive schema version {found} is newer than supported {supported}")]
+    SchemaTooNew { found: i64, supported: i64 },
 
     #[error("archive is inconsistent: {0}")]
     Corrupt(String),

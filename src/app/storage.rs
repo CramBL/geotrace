@@ -8,6 +8,7 @@
 //! archive.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use egui::Context;
 use gt_store::{DbError, HistoryDatabase as _, JamStore, Recordings, Store};
@@ -52,7 +53,7 @@ pub struct OpenStorage {
     /// Set when the recordings database could not be opened.
     pub history_failure: Option<HistoryFailure>,
     /// [`None`] disables interference fetching and nothing else.
-    pub archive: Option<JamStore>,
+    pub archive: Option<Arc<JamStore>>,
 }
 
 impl OpenStorage {

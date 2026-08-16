@@ -248,6 +248,35 @@ fn a_day_with_no_samples_is_still_archived() {
     assert_eq!(store.hp30_series(day(0)).expect("hp30"), Some(empty));
 }
 
+/// Both threads write through the one archive: the lock serializes each
+/// store's read-append-index sequence.
+#[test]
+fn days_stored_from_two_threads_both_reach_the_archive() {
+    let (_dir, store) = store().unwrap();
+    let store = &store;
+    std::thread::scope(|scope| {
+        for offset in [0, 1] {
+            scope.spawn(move || {
+                store
+                    .insert_or_replace_kp_day(day(offset), HOST, fetched_at(), &kp_day(day(offset)))
+                    .expect("store");
+            });
+        }
+    });
+
+    let days: Vec<NaiveDate> = store
+        .archived_days(GeomagneticIndex::Kp)
+        .expect("archived days")
+        .into_iter()
+        .map(|entry| entry.day)
+        .collect();
+    assert_eq!(days, [day(0), day(1)]);
+    assert_eq!(
+        store.kp_series(day(1)).expect("second day"),
+        Some(kp_day(day(1)))
+    );
+}
+
 #[test]
 fn an_archive_reopens_with_its_days() {
     let dir = tempfile::tempdir().expect("temp dir");

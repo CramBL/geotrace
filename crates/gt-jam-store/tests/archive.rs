@@ -179,6 +179,35 @@ fn a_day_with_no_cells_is_still_stored() {
     );
 }
 
+/// Both threads write through the one archive: the lock serializes each
+/// insert's read-append-index sequence.
+#[test]
+fn days_inserted_from_two_threads_both_reach_the_archive() {
+    let (_dir, store) = store().unwrap();
+    let store = &store;
+    std::thread::scope(|scope| {
+        for offset in [0, 1] {
+            scope.spawn(move || {
+                store
+                    .insert_day(day(offset), HOST, fetched_at(), &observations(2))
+                    .expect("insert");
+            });
+        }
+    });
+
+    let days: Vec<NaiveDate> = store
+        .days()
+        .expect("days")
+        .into_iter()
+        .map(|stored| stored.day)
+        .collect();
+    assert_eq!(days, [day(0), day(1)]);
+    assert_eq!(
+        store.observations(day(1)).expect("second day"),
+        Some(observations(2))
+    );
+}
+
 #[test]
 fn an_archive_reopens_with_its_days() {
     let dir = tempfile::tempdir().expect("temp dir");

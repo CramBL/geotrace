@@ -22,6 +22,7 @@ dirs.workspace = true
 gt-history = { path = "../gt-history", default-features = false }
 gt-jam-store = { path = "../gt-jam-store" }
 gt-solar-store = { path = "../gt-solar-store" }
+parking_lot.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
