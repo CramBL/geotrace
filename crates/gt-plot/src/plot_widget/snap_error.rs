@@ -14,13 +14,13 @@ use super::chips::MetricKindUi;
 use super::levels::track_target;
 use super::lines::{
     ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, NearestHoverLabel, PlotHoverLabel, add_line,
-    series_track_ref, visible_by_x,
+    visible_by_x,
 };
-use crate::series::TrackSeries;
+use crate::series::PlacedTrackSeries;
 
 /// Whether any visible track has an entry in the snap error series.
 pub(super) fn snap_error_available(
-    series_cache: &[TrackSeries],
+    series_cache: &[PlacedTrackSeries],
     visible: &[bool],
     snap_error: &SnapErrorSeries,
 ) -> bool {
@@ -28,10 +28,7 @@ pub(super) fn snap_error_available(
         .iter()
         .zip(visible.iter())
         .any(|(series, &is_vis)| {
-            is_vis
-                && snap_error
-                    .points_by_track
-                    .contains_key(&series_track_ref(series))
+            is_vis && snap_error.points_by_track.contains_key(&series.track_ref())
         })
 }
 

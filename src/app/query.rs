@@ -149,10 +149,11 @@ pub struct QueryWindow {
     /// `ui.input(..).time` of the last text edit, for the diagnostic grace
     /// period on the chunk being typed in.
     last_edit_time: Option<f64>,
-    /// Whether the editor had keyboard focus last frame. Read (not the live
-    /// value) by the window's Escape handling: egui surrenders focus on Escape
-    /// before the editor renders, so the live value is already false on the
-    /// very frame the Escape should only unfocus, not close.
+    /// Whether the editor had keyboard focus last frame.
+    ///
+    /// egui surrenders a widget's focus on Escape before that widget renders,
+    /// so every Escape handler in this window reads last frame's state: live
+    /// focus is already false on the frame the key arrives.
     editor_had_focus: bool,
     /// Editor-global byte span of the token whose hover doc is on display,
     /// `None` while no doc shows. Keeps the doc up while the pointer moves
@@ -269,10 +270,8 @@ struct Autocomplete {
     /// Memo key of the last candidate computation: the window's assist
     /// revision and the caret byte. Unchanged key, unchanged candidates.
     computed_for: Option<(u64, usize)>,
-    /// Whether the popup was drawn last frame. Key handling keys off this
-    /// rather than live focus: egui surrenders a widget's focus on Escape (and
-    /// on a click into the popup) *before* the editor renders, so live focus
-    /// reads false on the very frame the popup must still act.
+    /// Whether the popup was drawn last frame. Key handling reads this rather
+    /// than live focus, for the reason on [`QueryWindow::editor_had_focus`].
     shown: bool,
 }
 
@@ -430,9 +429,7 @@ impl QueryWindow {
         // The channels the editor checks `@name` against, gathered across every
         // loaded track.
         let schema = schema_from_files(files);
-        // Whether the editor held focus at the start of this frame (egui drops
-        // focus on Escape before any widget runs, so the field - updated
-        // inside `editor_ui` - must be read before the window renders).
+        // Read before the window renders: `editor_ui` updates the field.
         let editor_was_focused = self.editor_had_focus;
         let mut open = self.open;
         Window::new("Query")
@@ -793,10 +790,8 @@ impl QueryWindow {
             self.autocomplete.dismissed_at = None;
         }
 
-        // Keyed off `shown` (last frame), not live focus, because egui
-        // surrenders the editor's focus on Escape before this runs. Key state
-        // is read inside `input_mut`, but the follow-up (focus, text edits)
-        // happens after - re-entering the context lock inside would deadlock.
+        // Key state is read inside `input_mut`, and the follow-up (focus, text
+        // edits) after it: re-entering the context lock inside would deadlock.
         let mut accept = None;
         let mut dismissed = false;
         if self.autocomplete.shown && !self.autocomplete.items.is_empty() {
@@ -836,8 +831,8 @@ impl QueryWindow {
             self.autocomplete.items.clear();
             self.autocomplete.notice = None;
             self.autocomplete.shown = false;
-            // egui already dropped the editor's focus for this Escape. Put it
-            // back so dismissing the popup keeps the caret in the editor.
+            // Restore the focus Escape dropped, so dismissing the popup keeps
+            // the caret in the editor.
             ui.ctx().memory_mut(|m| m.request_focus(editor_id));
             return;
         }

@@ -207,147 +207,183 @@ pub fn stitch(
         partial: false,
     };
 
-    // Whether the previous chunk contributed geometry whose trailing
-    // segment continues seamlessly into the current chunk. Taken (and so
-    // reset) at the top of every iteration; only a fully successful chunk
-    // with geometry re-arms it, so no early-exit branch can forget a reset.
-    let mut join_pending = false;
-    // Whether the previous chunk left snap data for the points right before
-    // this one. Taken and re-armed like `join_pending`.
-    let mut data_pending = false;
-
+    let mut previous = PreviousChunk::default();
     for (chunk_index, (chunk, outcome)) in plan.chunks.iter().zip(outcomes).enumerate() {
-        // A chunk opening a stretch is separated from the previous one by
-        // dropped ghost fixes: joining their geometry would draw a road
-        // across the stretch the receiver never measured.
-        let join_previous = std::mem::take(&mut join_pending)
-            && chunk.continuity == ChunkContinuity::ContinuesPrevious;
-        let follows_gap =
-            !std::mem::take(&mut data_pending) || chunk.continuity == ChunkContinuity::OpensStretch;
-
-        let response = match outcome {
-            ChunkOutcome::Success(response) => response,
-            ChunkOutcome::OffNetwork => {
-                for (local, sent) in chunk.owned_sent().iter().enumerate() {
-                    result.kind_counts.count(SnapPointKind::Unsnapped);
-                    result.points.push(SnapPoint {
-                        point: sent.point,
-                        kind: SnapPointKind::Unsnapped,
-                        error_m: None,
-                        snapped: None,
-                        edge: None,
-                        follows_gap: follows_gap && local == 0,
-                    });
-                }
-                data_pending = !chunk.owned_sent().is_empty();
-                continue;
-            }
-            ChunkOutcome::Failed(detail) => {
-                reporter.report(SnapWarning::ChunkFailed {
-                    chunk_index,
-                    detail: detail.clone(),
-                });
-                result.partial = true;
-                continue;
-            }
-        };
-
-        if response.snapped_points.len() != chunk.sent.len() {
-            reporter.report(SnapWarning::PointCountMismatch {
+        previous = stitch_chunk(
+            &mut result,
+            ChunkStitch {
+                chunk,
                 chunk_index,
-                sent: chunk.sent.len(),
-                received: response.snapped_points.len(),
-            });
-            result.partial = true;
-            continue;
-        }
-
-        if !response.warnings.is_empty() {
-            reporter.report(SnapWarning::Server {
-                chunk_index,
-                warnings: response.warnings.clone(),
-            });
-        }
-
-        stitch_metadata(&mut result, response, reporter);
-        let edge_base = result.edges.len();
-        result.edges.extend(response.edges.iter().cloned());
-
-        for (local, sent) in chunk.owned_sent().iter().enumerate() {
-            let Some(matched) = response.snapped_points.get(chunk.owned.start + local) else {
-                continue; // count validated above, defensive only
-            };
-            result.kind_counts.count(matched.kind);
-            result.points.push(SnapPoint {
-                point: sent.point,
-                kind: matched.kind,
-                error_m: matched.distance_from_trace_point,
-                snapped: (matched.kind != SnapPointKind::Unsnapped).then_some(Position {
-                    lat: matched.lat,
-                    lon: matched.lon,
-                }),
-                edge: matched
-                    .edge_index
-                    .and_then(|e| usize::try_from(e).ok())
-                    .map(|e| e + edge_base),
-                follows_gap: follows_gap && local == 0,
-            });
-        }
-        data_pending = !chunk.owned_sent().is_empty();
-
-        let (starts_snappable, ends_snappable) = owned_boundary_snappable(chunk, response);
-        let contributed_geometry =
-            match snapped_track::snapped_track_segments_in(response, chunk.owned.clone()) {
-                Ok(mut segments) => {
-                    // Chunk-local edge references become result-global, like
-                    // the per-point edge indices below.
-                    for segment in &mut segments {
-                        for span in &mut segment.edge_spans {
-                            span.edge += edge_base;
-                        }
-                    }
-                    let contributed = !segments.is_empty();
-                    let mut segments = segments.into_iter();
-                    // The cut between two chunks falls mid-road: the
-                    // previous chunk's trailing segment and this chunk's
-                    // leading one are the same street. Join them so the
-                    // snapped track shows no artificial gap at chunk cuts.
-                    // The let-chain only consumes `next` once `prev` exists,
-                    // so no segment is ever silently dropped.
-                    if join_previous
-                        && starts_snappable
-                        && let Some(prev) = result.segments.last_mut()
-                        && let Some(next) = segments.next()
-                    {
-                        let offset = prev.positions.len();
-                        prev.positions.extend(next.positions);
-                        prev.edge_spans
-                            .extend(next.edge_spans.into_iter().map(|span| {
-                                snapped_track::SnappedEdgeSpan {
-                                    start: span.start + offset,
-                                    end: span.end + offset,
-                                    edge: span.edge,
-                                }
-                            }));
-                    }
-                    result.segments.extend(segments);
-                    contributed
-                }
-                Err(err) => {
-                    reporter.report(SnapWarning::Geometry {
-                        chunk_index,
-                        detail: geometry_detail(&err),
-                    });
-                    false
-                }
-            };
-
-        // Only a chunk that placed geometry arms joining. Otherwise the next
-        // chunk would join a non-adjacent segment.
-        join_pending = contributed_geometry && ends_snappable;
+                outcome,
+                previous,
+            },
+            reporter,
+        );
     }
 
     result
+}
+
+/// What a chunk leaves for the one after it.
+#[derive(Clone, Copy, Default)]
+struct PreviousChunk {
+    /// Its trailing geometry segment runs into the next chunk's leading one,
+    /// so the two can be joined into a single road.
+    geometry_continues: bool,
+    /// It produced snap points for the fixes right before the next chunk, so
+    /// no gap separates the two.
+    produced_points: bool,
+}
+
+struct ChunkStitch<'a> {
+    chunk: &'a Chunk,
+    chunk_index: usize,
+    outcome: &'a ChunkOutcome,
+    previous: PreviousChunk,
+}
+
+/// Append one chunk's points and geometry to `result`, returning what it
+/// leaves for the next chunk.
+fn stitch_chunk(
+    result: &mut SnapResult,
+    ChunkStitch {
+        chunk,
+        chunk_index,
+        outcome,
+        previous,
+    }: ChunkStitch<'_>,
+    reporter: &SnapWarningReporter,
+) -> PreviousChunk {
+    // A chunk opening a stretch is separated from the previous one by
+    // dropped ghost fixes: joining their geometry would draw a road
+    // across the stretch the receiver never measured.
+    let join_previous =
+        previous.geometry_continues && chunk.continuity == ChunkContinuity::ContinuesPrevious;
+    let follows_gap =
+        !previous.produced_points || chunk.continuity == ChunkContinuity::OpensStretch;
+
+    let response = match outcome {
+        ChunkOutcome::Success(response) => response,
+        ChunkOutcome::OffNetwork => {
+            for (local, sent) in chunk.owned_sent().iter().enumerate() {
+                result.kind_counts.count(SnapPointKind::Unsnapped);
+                result.points.push(SnapPoint {
+                    point: sent.point,
+                    kind: SnapPointKind::Unsnapped,
+                    error_m: None,
+                    snapped: None,
+                    edge: None,
+                    follows_gap: follows_gap && local == 0,
+                });
+            }
+            return PreviousChunk {
+                geometry_continues: false,
+                produced_points: !chunk.owned_sent().is_empty(),
+            };
+        }
+        ChunkOutcome::Failed(detail) => {
+            reporter.report(SnapWarning::ChunkFailed {
+                chunk_index,
+                detail: detail.clone(),
+            });
+            result.partial = true;
+            return PreviousChunk::default();
+        }
+    };
+
+    if response.snapped_points.len() != chunk.sent.len() {
+        reporter.report(SnapWarning::PointCountMismatch {
+            chunk_index,
+            sent: chunk.sent.len(),
+            received: response.snapped_points.len(),
+        });
+        result.partial = true;
+        return PreviousChunk::default();
+    }
+
+    if !response.warnings.is_empty() {
+        reporter.report(SnapWarning::Server {
+            chunk_index,
+            warnings: response.warnings.clone(),
+        });
+    }
+
+    stitch_metadata(result, response, reporter);
+    let edge_base = result.edges.len();
+    result.edges.extend(response.edges.iter().cloned());
+
+    for (local, sent) in chunk.owned_sent().iter().enumerate() {
+        let Some(matched) = response.snapped_points.get(chunk.owned.start + local) else {
+            continue; // count validated above, defensive only
+        };
+        result.kind_counts.count(matched.kind);
+        result.points.push(SnapPoint {
+            point: sent.point,
+            kind: matched.kind,
+            error_m: matched.distance_from_trace_point,
+            snapped: (matched.kind != SnapPointKind::Unsnapped).then_some(Position {
+                lat: matched.lat,
+                lon: matched.lon,
+            }),
+            edge: matched
+                .edge_index
+                .and_then(|e| usize::try_from(e).ok())
+                .map(|e| e + edge_base),
+            follows_gap: follows_gap && local == 0,
+        });
+    }
+
+    let (starts_snappable, ends_snappable) = owned_boundary_snappable(chunk, response);
+    let contributed_geometry =
+        match snapped_track::snapped_track_segments_in(response, chunk.owned.clone()) {
+            Ok(mut segments) => {
+                // Chunk-local edge references become result-global, like
+                // the per-point edge indices below.
+                for segment in &mut segments {
+                    for span in &mut segment.edge_spans {
+                        span.edge += edge_base;
+                    }
+                }
+                let contributed = !segments.is_empty();
+                let mut segments = segments.into_iter();
+                // The cut between two chunks falls mid-road: the
+                // previous chunk's trailing segment and this chunk's
+                // leading one are the same street. Join them so the
+                // snapped track shows no artificial gap at chunk cuts.
+                // The let-chain only consumes `next` once `prev` exists,
+                // so no segment is ever silently dropped.
+                if join_previous
+                    && starts_snappable
+                    && let Some(prev) = result.segments.last_mut()
+                    && let Some(next) = segments.next()
+                {
+                    let offset = prev.positions.len();
+                    prev.positions.extend(next.positions);
+                    prev.edge_spans
+                        .extend(next.edge_spans.into_iter().map(|span| {
+                            snapped_track::SnappedEdgeSpan {
+                                start: span.start + offset,
+                                end: span.end + offset,
+                                edge: span.edge,
+                            }
+                        }));
+                }
+                result.segments.extend(segments);
+                contributed
+            }
+            Err(err) => {
+                reporter.report(SnapWarning::Geometry {
+                    chunk_index,
+                    detail: geometry_detail(&err),
+                });
+                false
+            }
+        };
+
+    PreviousChunk {
+        geometry_continues: contributed_geometry && ends_snappable,
+        produced_points: !chunk.owned_sent().is_empty(),
+    }
 }
 
 /// Whether the chunk's first and last owned points were snappable in this

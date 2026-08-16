@@ -927,8 +927,7 @@ mod tests {
     use std::path::PathBuf;
 
     use gt_types::{
-        FileIdx, FileSource, LoadedFile, LoadedTrack, TrackIdx, TrackLod,
-        TrackMetadata,
+        FileIdx, FileSource, LoadedFile, LoadedTrack, TrackIdx, TrackLod, TrackMetadata,
     };
 
     use super::{NodeKey, TrackRef, files_fully_removed, track_removals};

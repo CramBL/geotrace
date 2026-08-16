@@ -18,16 +18,13 @@ use clock_excursion::{ExcursionViewport, add_clock_excursions};
 use jamming::{JammingPlotCache, JammingViewport, jamming_available, sync_jamming_cache};
 use legend::show_file_legend_overlay;
 use levels::{TrackLevelCache, budget_cap, compute_level_cache, single_target};
-use lines::{
-    NearestHoverLabel, add_series_lines, add_util_anomalies, series_track_ref,
-    show_nearest_hover_label,
-};
+use lines::{NearestHoverLabel, add_series_lines, add_util_anomalies, show_nearest_hover_label};
 use snap_error::{
     SnapErrorPlotCache, SnapErrorViewport, snap_error_available, sync_snap_error_cache,
 };
 
 use crate::AnalysisConfig;
-use crate::series::{TrackSeries, build_all_series};
+use crate::series::{PlacedTrackSeries, build_all_series};
 use chrono::{DateTime, Utc};
 use egui::Color32;
 use egui::RichText;
@@ -149,7 +146,7 @@ pub struct PlotState {
     /// File index currently hovered in the legend overlay.
     pub legend_hover_file: Option<usize>,
     /// Mipmap cascade for every track in every loaded file.
-    pub(crate) series_cache: Vec<TrackSeries>,
+    pub(crate) series_cache: Vec<PlacedTrackSeries>,
     /// Cached level selections, one entry per series.
     /// Invalidated when the effective plot bounds or target sample count changes.
     level_cache: Vec<TrackLevelCache>,
@@ -227,9 +224,9 @@ impl PlotState {
             .iter()
             .position(|s| s.fi > fi)
             .unwrap_or(self.series_cache.len());
-        for (offset, mut series) in prepared.0.into_iter().enumerate() {
-            series.fi = fi;
-            self.series_cache.insert(insert_pos + offset, series);
+        for (offset, series) in prepared.0.into_iter().enumerate() {
+            self.series_cache
+                .insert(insert_pos + offset, PlacedTrackSeries { fi, series });
         }
         self.invalidate_level_cache();
     }
@@ -254,9 +251,9 @@ impl PlotState {
         for series in &mut self.series_cache {
             if let Some(track) = files
                 .get(series.fi)
-                .and_then(|file| file.tracks.get(series.ti))
+                .and_then(|file| file.tracks.get(series.series.ti))
             {
-                series.apply_analysis(track, analysis);
+                series.series.apply_analysis(track, analysis);
             }
         }
         self.invalidate_level_cache();
@@ -312,7 +309,7 @@ pub fn show_track_plot(
     let visible: Vec<bool> = state
         .series_cache
         .iter()
-        .map(|s| track_is_visible(visibility, filter, files, s.fi, s.ti))
+        .map(|s| track_is_visible(visibility, filter, files, s.fi, s.series.ti))
         .collect();
     let visible_count = visible.iter().filter(|&&v| v).count();
 
@@ -337,7 +334,7 @@ pub fn show_track_plot(
         .map(|s| {
             multi_track.then(|| {
                 let track_count = files.get(s.fi).map_or(1, |file| file.tracks.len());
-                track_label(recording_name(names, s.fi), s.ti, track_count)
+                track_label(recording_name(names, s.fi), s.series.ti, track_count)
             })
         })
         .collect();
@@ -357,12 +354,19 @@ pub fn show_track_plot(
     let present = state
         .series_cache
         .iter()
-        .fold(ConstellationSet::empty(), |acc, s| acc.union(s.present));
+        .fold(ConstellationSet::empty(), |acc, s| {
+            acc.union(s.series.present)
+        });
 
     // Channels present anywhere in the loaded data, unioned like the
     // constellations: the Channels toggle and chips render only when a track
     // actually carries channels.
-    let channels = loaded_channels(state.series_cache.iter().flat_map(|s| s.channels.iter()));
+    let channels = loaded_channels(
+        state
+            .series_cache
+            .iter()
+            .flat_map(|s| s.series.channels.iter()),
+    );
 
     // Whether any visible track has a completed snap run: gates the snap
     // error chip (disabled with hover text until a run completes) and the
@@ -415,7 +419,7 @@ pub fn show_track_plot(
             continue;
         }
 
-        if let Some((lo, hi)) = series.x_range {
+        if let Some((lo, hi)) = series.series.x_range {
             full_x_min = full_x_min.min(lo);
             full_x_max = full_x_max.max(hi);
         }
@@ -528,7 +532,15 @@ pub fn show_track_plot(
         } else {
             let fresh: Vec<TrackLevelCache> = series_cache
                 .par_iter()
-                .map(|s| compute_level_cache(s, eff_x_min, eff_x_max, available_width, sample_cap))
+                .map(|s| {
+                    compute_level_cache(
+                        &s.series,
+                        eff_x_min,
+                        eff_x_max,
+                        available_width,
+                        sample_cap,
+                    )
+                })
                 .collect();
             new_computed_bounds =
                 Some((eff_x_min, eff_x_max, available_width.to_bits(), sample_cap));
@@ -608,7 +620,7 @@ pub fn show_track_plot(
                 },
                 line_width,
                 dark_mode,
-                snap_error_cache.get(&series_track_ref(series)),
+                snap_error_cache.get(&series.track_ref()),
                 SnapErrorViewport {
                     x_min: eff_x_min,
                     x_max: eff_x_max,
@@ -616,7 +628,7 @@ pub fn show_track_plot(
                     cap: sample_cap,
                 },
                 snap_pointer,
-                jamming_cache.get(&series_track_ref(series)),
+                jamming_cache.get(&series.track_ref()),
                 JammingViewport {
                     x_min: eff_x_min,
                     x_max: eff_x_max,
@@ -627,7 +639,7 @@ pub fn show_track_plot(
             );
             add_clock_excursions(
                 plot_ui,
-                series,
+                &series.series,
                 track_label,
                 ExcursionViewport {
                     x_min: eff_x_min,
@@ -641,7 +653,7 @@ pub fn show_track_plot(
             if show_anomalies {
                 add_util_anomalies(
                     plot_ui,
-                    series,
+                    &series.series,
                     track_label,
                     eff_x_min..=eff_x_max,
                     anomaly_pointer,

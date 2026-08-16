@@ -19,6 +19,13 @@ use uom::si::length::{kilometer, meter};
 
 use gt_loaded_files::FileHistory;
 
+/// A finished load stays fully opaque in the status list this long before its
+/// entry starts fading.
+pub(super) const FINISHED_JOB_FADE_START_SECS: f32 = 2.0;
+/// A finished load's entry reaches full transparency and is dropped from the
+/// status list this long after it completed.
+pub(super) const FINISHED_JOB_EXPIRE_SECS: f32 = 3.0;
+
 pub(super) const STAGE_STARTING: &str = "Starting…";
 pub(super) const STAGE_READING: &str = "Reading…";
 pub(super) const STAGE_PARSING: &str = "Parsing…";
@@ -56,9 +63,9 @@ pub enum LoadOutcome {
     /// A successfully parsed `.gtd` / HDF5 file with pre-built plot series.
     GtdFile {
         file: LoadedFile,
-        /// Pre-built mipmap series. `fi` is a placeholder (0) because the real
-        /// file index is only known on the UI thread when the file is appended
-        /// to `loaded_files`.  `PlotState::integrate_file` re-stamps the index.
+        /// Pre-built mipmap series, bound to a file index by
+        /// [`gt_plot::PlotState::integrate_file`] once the UI thread appends
+        /// the file.
         series: PreparedSeries,
         /// App-owned history attachment metadata for this file.
         history: FileHistory,
@@ -232,7 +239,7 @@ impl LoadJobs {
                         })
                         .ok();
                         ctx.request_repaint();
-                        let series = gt_plot::prepare_file_series(0, &file, analysis);
+                        let series = gt_plot::prepare_file_series(&file, analysis);
                         // Read the bytes once for both the content fingerprint
                         // and the optional history insert.
                         let bytes = match std::fs::read(&path) {
@@ -396,7 +403,7 @@ impl LoadJobs {
                             })
                             .ok();
                             ctx.request_repaint();
-                            let series = gt_plot::prepare_file_series(0, &file, analysis);
+                            let series = gt_plot::prepare_file_series(&file, analysis);
                             let history = meta.map_or(FileHistory::None, |meta| {
                                 FileHistory::recording(loaded.identity, meta, history_db_ref)
                             });
@@ -610,10 +617,11 @@ impl LoadJobs {
         completed
     }
 
-    /// Remove entries from `finishing_jobs` that have fully faded (> 3 s since
-    /// completion). `now` is the current egui frame time (`Context::input().time`).
+    /// Remove the entries from `finishing_jobs` that have fully faded. `now` is
+    /// the current egui frame time (`Context::input().time`).
     pub fn expire_finished(&mut self, now: f64) {
-        self.finishing_jobs.retain(|j| now - j.completed_at < 3.0);
+        self.finishing_jobs
+            .retain(|j| now - j.completed_at < f64::from(FINISHED_JOB_EXPIRE_SECS));
     }
 }
 
@@ -751,7 +759,7 @@ fn finish_log_load(
     // regardless of the elevation mask - the default analysis config suffices.
     let series = loaded
         .as_ref()
-        .map(|f| gt_plot::prepare_file_series(0, f, AnalysisConfig::default()));
+        .map(|f| gt_plot::prepare_file_series(f, AnalysisConfig::default()));
 
     tx.send(LoadMessage::Completed {
         id,

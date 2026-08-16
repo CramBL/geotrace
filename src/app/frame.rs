@@ -18,7 +18,9 @@ use gt_track_builder::SegmentationConfig;
 use gt_types::{AssociationConfig, DataCategory, FileIdx, LoadedFile, NavPoint, TrackRef};
 use gt_ui_types::{HighlightScope, MapHighlight};
 
-use super::loader::{CompletedLoad, LoadJobs};
+use super::loader::{
+    CompletedLoad, FINISHED_JOB_EXPIRE_SECS, FINISHED_JOB_FADE_START_SECS, LoadJobs,
+};
 use super::modals::{
     SnapAutoChoice, SnapConsentChoice, SnapReplaceChoice, SnapScopeChoice, show_about_dialog,
     show_delete_confirmation, show_load_warnings_dialog, show_mapbox_token_dialog,
@@ -698,15 +700,16 @@ impl App {
 
                     for job in &self.loader.finishing_jobs {
                         let since = (now - job.completed_at) as f32;
-                        // Fully opaque for the first 2 s, then fade to transparent by 3 s.
                         #[expect(
                             clippy::cast_sign_loss,
                             reason = "fade_frac is clamped to [0, 1] before multiplying by 255"
                         )]
-                        let alpha = if since < 2.0 {
+                        let alpha = if since < FINISHED_JOB_FADE_START_SECS {
                             255_u8
                         } else {
-                            let fade = 1.0 - ((since - 2.0) / 1.0).min(1.0);
+                            let fade_secs = FINISHED_JOB_EXPIRE_SECS - FINISHED_JOB_FADE_START_SECS;
+                            let fade =
+                                1.0 - ((since - FINISHED_JOB_FADE_START_SECS) / fade_secs).min(1.0);
                             (fade * 255.0) as u8
                         };
                         let color = egui::Color32::from_rgba_unmultiplied(140, 210, 140, alpha);

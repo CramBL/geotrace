@@ -12,12 +12,12 @@ use gt_egui_mipmap::{LevelSelection, MipMap};
 use gt_types::{MetricKind, TrackRef};
 use gt_ui_types::{ArcIdentity, JammingPoint, JammingSeries};
 
-use crate::series::TrackSeries;
+use crate::series::PlacedTrackSeries;
 
 use super::chips::MetricKindUi;
 
 use super::levels::track_target;
-use super::lines::{NearestHoverLabel, PlotHoverLabel, add_line, series_track_ref, visible_by_x};
+use super::lines::{NearestHoverLabel, PlotHoverLabel, add_line, visible_by_x};
 
 /// One track's interference line, rebuilt only when its source changes.
 #[derive(Debug, Clone)]
@@ -74,7 +74,7 @@ impl JammingHover {
 /// Whether any visible track has interference values, which gates the
 /// metric's chip.
 pub(super) fn jamming_available(
-    series_cache: &[TrackSeries],
+    series_cache: &[PlacedTrackSeries],
     visible: &[bool],
     series: &JammingSeries,
 ) -> bool {
@@ -85,7 +85,7 @@ pub(super) fn jamming_available(
         .any(|(series_entry, _)| {
             series
                 .points_by_track
-                .get(&series_track_ref(series_entry))
+                .get(&series_entry.track_ref())
                 .is_some_and(|points| points.iter().any(|point| point.percent.is_some()))
         })
 }
