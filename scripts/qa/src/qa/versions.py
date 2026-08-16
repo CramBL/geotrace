@@ -144,6 +144,7 @@ _APP_LOCK_CRATES: list[str] = [
     "gt-store",
     "gt-snap",
     "gt-solar",
+    "gt-solar-store",
     "gt-test-utils",
     "gt-track-builder",
     "gt-types",
