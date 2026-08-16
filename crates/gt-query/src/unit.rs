@@ -40,7 +40,7 @@ pub fn example_literal(quantity: Quantity) -> Option<&'static str> {
         Quantity::Duration => Some("15 s"),
         Quantity::Ratio => Some("50 %"),
         Quantity::Rate => Some("2 per min"),
-        Quantity::Timestamp | Quantity::Count | Quantity::Condition => None,
+        Quantity::Timestamp | Quantity::Count | Quantity::Index | Quantity::Condition => None,
     }
 }
 
@@ -55,7 +55,7 @@ pub fn unit_list(quantity: Quantity) -> Option<&'static str> {
         Quantity::Duration => Some("ms, s, min, h"),
         Quantity::Ratio => Some("%"),
         Quantity::Rate => Some("per s, per min, per h"),
-        Quantity::Timestamp | Quantity::Count | Quantity::Condition => None,
+        Quantity::Timestamp | Quantity::Count | Quantity::Index | Quantity::Condition => None,
     }
 }
 
@@ -70,7 +70,7 @@ mod tests {
         for quantity in Quantity::iter() {
             let unitless = matches!(
                 quantity,
-                Quantity::Timestamp | Quantity::Count | Quantity::Condition
+                Quantity::Timestamp | Quantity::Count | Quantity::Index | Quantity::Condition
             );
             assert_eq!(unit_list(quantity).is_none(), unitless, "{quantity}");
             assert_eq!(example_literal(quantity).is_none(), unitless, "{quantity}");

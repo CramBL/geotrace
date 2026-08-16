@@ -13,7 +13,7 @@ use super::chips::MetricKindUi;
 use super::levels::LineViewport;
 use super::lines::{
     ANOMALY_HOVER_RADIUS_PX, ANOMALY_MARKER_RADIUS, LineStroke, NearestHoverLabel, PlotHoverLabel,
-    add_line, visible_by_x,
+    add_line, nearest_fix_under_pointer, visible_by_x,
 };
 use crate::series::PlacedTrackSeries;
 
@@ -235,17 +235,19 @@ pub(super) fn add_snap_error_series<'a>(
         );
     }
 
-    let Some(ptr) = pointer else {
+    let Some(pointer) = pointer else {
         return;
     };
-    for point in visible_unsnapped {
-        let screen = plot_ui.screen_from_plot(*point);
-        let dist = screen.distance(ptr);
-        if dist <= ANOMALY_HOVER_RADIUS_PX {
-            nearest.offer(dist, || {
-                PlotHoverLabel::SnapError(SnapErrorHover::new(track_label, point.x))
-            });
-        }
+    if let Some((distance, point)) = nearest_fix_under_pointer(
+        plot_ui,
+        visible_unsnapped,
+        |point| *point,
+        pointer,
+        ANOMALY_HOVER_RADIUS_PX,
+    ) {
+        nearest.offer(distance, || {
+            PlotHoverLabel::SnapError(SnapErrorHover::new(track_label, point.x))
+        });
     }
 }
 

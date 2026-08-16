@@ -17,7 +17,9 @@ use super::chips::{
     metric_is_shown,
 };
 use super::clock_excursion::ClockExcursionHover;
-use super::geomagnetic::{GeomagneticPlotCache, add_geomagnetic_series};
+use super::geomagnetic::{
+    GeomagneticHover, GeomagneticPlotCache, GeomagneticTrack, add_geomagnetic_series,
+};
 use super::jamming::{JammingHover, JammingPlotCache, JammingTrack, add_jamming_series};
 use super::levels::{LineViewport, TrackLevelCache};
 use super::snap_error::{
@@ -46,6 +48,25 @@ pub(super) fn visible_by_x<T>(
 /// Pixel radius within which the pointer is considered to be hovering a
 /// masked-satellite anomaly marker.
 pub(super) const ANOMALY_HOVER_RADIUS_PX: f32 = 7.0;
+/// Pixel radius within which a fix of a per-fix line is a hover target.
+pub(super) const HOVER_RADIUS_PX: f32 = 12.0;
+
+/// The item of `fixes` closest to `pointer` within `radius_px`, and its pixel
+/// distance for [`NearestCandidate::offer`]. `at` places one item in plot
+/// space.
+pub(super) fn nearest_fix_under_pointer<'a, T>(
+    plot_ui: &egui_plot::PlotUi<'_>,
+    fixes: &'a [T],
+    at: impl Fn(&T) -> PlotPoint,
+    pointer: egui::Pos2,
+    radius_px: f32,
+) -> Option<(f32, &'a T)> {
+    fixes
+        .iter()
+        .map(|fix| (plot_ui.screen_from_plot(at(fix)).distance(pointer), fix))
+        .filter(|&(distance, _)| distance <= radius_px)
+        .min_by(|(left, _), (right, _)| left.total_cmp(right))
+}
 /// On-plot radius of the anomaly cross marker.
 pub(super) const ANOMALY_MARKER_RADIUS: f32 = 4.0;
 /// Gap between the pointer and the custom hover label.
@@ -81,7 +102,9 @@ pub(super) fn add_series_lines<'a>(
     line_width: f32,
     dark_mode: bool,
     snap_error: Option<&'a SnapErrorPlotCache>,
-    snap_pointer: Option<egui::Pos2>,
+    // Where the pointer is, for the per-fix lines that hit-test their own
+    // fixes: snap error, interference, and the geomagnetic indices.
+    pointer: Option<egui::Pos2>,
     jamming: Option<&'a JammingPlotCache>,
     geomagnetic: Option<&'a GeomagneticPlotCache>,
     viewport: LineViewport,
@@ -152,7 +175,7 @@ pub(super) fn add_series_lines<'a>(
             track_label,
             snap_cache,
             viewport,
-            snap_pointer,
+            pointer,
             nearest,
             SnapErrorStyle { stroke, dark_mode },
         );
@@ -171,7 +194,7 @@ pub(super) fn add_series_lines<'a>(
             &prefix,
             JammingTrack {
                 track_label,
-                pointer: snap_pointer,
+                pointer,
             },
             jamming_cache,
             viewport,
@@ -181,7 +204,8 @@ pub(super) fn add_series_lines<'a>(
     }
 
     if let Some(geomagnetic_cache) = geomagnetic {
-        for (kind, runs) in geomagnetic_cache.lines() {
+        for line in geomagnetic_cache.lines() {
+            let kind = line.metric_kind();
             if !metric_vis.field(kind) {
                 continue;
             }
@@ -190,7 +214,18 @@ pub(super) fn add_series_lines<'a>(
                 metric_line_color(kind, placed.fi, dark_mode),
                 is_hovered,
             );
-            add_geomagnetic_series(plot_ui, &prefix, kind, runs, viewport, stroke);
+            add_geomagnetic_series(
+                plot_ui,
+                &prefix,
+                GeomagneticTrack {
+                    track_label,
+                    pointer,
+                },
+                line,
+                viewport,
+                stroke,
+                nearest,
+            );
         }
     }
 
@@ -243,6 +278,7 @@ pub(super) enum PlotHoverLabel {
     Anomaly(AnomalyHover),
     SnapError(SnapErrorHover),
     Jamming(JammingHover),
+    Geomagnetic(GeomagneticHover),
     ClockExcursion(ClockExcursionHover),
 }
 
@@ -252,6 +288,7 @@ impl PlotHoverLabel {
             Self::Anomaly(hover) => hover.show(ui),
             Self::SnapError(hover) => hover.show(ui),
             Self::Jamming(hover) => hover.show(ui),
+            Self::Geomagnetic(hover) => hover.show(ui),
             Self::ClockExcursion(hover) => hover.show(ui),
         }
     }
@@ -475,17 +512,19 @@ pub(super) fn add_util_anomalies<'a>(
             .allow_hover(false),
     );
 
-    let Some(ptr) = pointer else {
+    let Some(pointer) = pointer else {
         return;
     };
-    for anomaly in visible {
-        let screen = plot_ui.screen_from_plot(PlotPoint::new(anomaly.t, anomaly.value));
-        let dist = screen.distance(ptr);
-        if dist <= ANOMALY_HOVER_RADIUS_PX {
-            nearest.offer(dist, || {
-                PlotHoverLabel::Anomaly(AnomalyHover::new(track_label, anomaly))
-            });
-        }
+    if let Some((distance, anomaly)) = nearest_fix_under_pointer(
+        plot_ui,
+        visible,
+        |anomaly| PlotPoint::new(anomaly.t, anomaly.value),
+        pointer,
+        ANOMALY_HOVER_RADIUS_PX,
+    ) {
+        nearest.offer(distance, || {
+            PlotHoverLabel::Anomaly(AnomalyHover::new(track_label, anomaly))
+        });
     }
 }
 

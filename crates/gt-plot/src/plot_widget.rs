@@ -493,7 +493,6 @@ pub fn show_track_plot(
     // egui_plot runs the plot closure before it formats the cursor label, and
     // this flag is raised at the end of that closure.
     let custom_hover_label_shown = Cell::new(false);
-    let show_snap_error = snap_error_available && state.metric_vis.field(MetricKind::SnapError);
 
     let mut plot = egui_plot::Plot::new("track_plot")
         .height(ui.available_height())
@@ -583,14 +582,9 @@ pub fn show_track_plot(
         } else {
             None
         };
-        let snap_pointer = if show_snap_error {
-            plot_ui.response().hover_pos()
-        } else {
-            None
-        };
-        // Unconditional: the excursion overlay gates itself on its metric's
+        // Unconditional: every per-fix line gates itself on its own metric's
         // chip, and reading the hover position is a field access.
-        let excursion_pointer = plot_ui.response().hover_pos();
+        let series_pointer = plot_ui.response().hover_pos();
 
         // The hovered match's time band, before the series so the lines stay
         // on top. A `Span` rather than a polygon: it fills the plot's full
@@ -643,7 +637,7 @@ pub fn show_track_plot(
                 line_width,
                 dark_mode,
                 snap_error_cache.get(&series.track_ref()),
-                snap_pointer,
+                series_pointer,
                 jamming_cache.get(&series.track_ref()),
                 geomagnetic_cache.get(&series.track_ref()),
                 LineViewport {
@@ -664,7 +658,7 @@ pub fn show_track_plot(
                     metric_vis,
                     dark_mode,
                 },
-                excursion_pointer,
+                series_pointer,
                 &mut hovered_label,
             );
             if show_anomalies {

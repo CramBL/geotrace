@@ -66,6 +66,8 @@ pub enum QueryMetric {
     SlipQzss,
     SnapError,
     Jamming,
+    Hp30,
+    Kp,
 }
 
 /// The dimension of a value, checked statically before a run.
@@ -85,6 +87,10 @@ pub enum Quantity {
     Count,
     Ratio,
     Rate,
+    /// Compares only against a bare number, never a count or a ratio: a
+    /// number on a published scale (the geomagnetic Kp scale), dimensionless
+    /// like a count but neither discrete nor a share.
+    Index,
     Condition,
 }
 
@@ -103,7 +109,7 @@ impl Quantity {
             Quantity::Acceleration => Dimension::ACCELERATION,
             Quantity::Duration => Dimension::TIME,
             Quantity::Rate => Dimension::RATE,
-            Quantity::Count | Quantity::Ratio => Dimension::DIMENSIONLESS,
+            Quantity::Count | Quantity::Ratio | Quantity::Index => Dimension::DIMENSIONLESS,
             Quantity::Timestamp | Quantity::Condition => return None,
         })
     }
@@ -148,6 +154,7 @@ impl QueryMetric {
             | QueryMetric::SlipBeidou
             | QueryMetric::SlipNavic
             | QueryMetric::SlipQzss => Quantity::Rate,
+            QueryMetric::Hp30 | QueryMetric::Kp => Quantity::Index,
         }
     }
 
@@ -193,6 +200,8 @@ impl QueryMetric {
             QueryMetric::SlipQzss => Some(MetricKind::SlipQzss),
             QueryMetric::SnapError => Some(MetricKind::SnapError),
             QueryMetric::Jamming => Some(MetricKind::Jamming),
+            QueryMetric::Hp30 => Some(MetricKind::Hp30),
+            QueryMetric::Kp => Some(MetricKind::Kp),
         }
     }
 
@@ -247,6 +256,7 @@ mod tests {
             (Quantity::Rate, Dimension::RATE),
             (Quantity::Count, Dimension::DIMENSIONLESS),
             (Quantity::Ratio, Dimension::DIMENSIONLESS),
+            (Quantity::Index, Dimension::DIMENSIONLESS),
         ];
         for (quantity, dimension) in dimensioned {
             assert_eq!(
@@ -286,14 +296,9 @@ mod tests {
         );
     }
 
-    /// Plot metrics not yet reachable from a query: the geomagnetic index
-    /// lines, until their values reach the run providers.
-    const PLOT_ONLY_METRICS: [MetricKind; 2] = [MetricKind::Hp30, MetricKind::Kp];
-
-    /// Every other plot metric is reachable from a query, no plot metric is
-    /// covered twice, and the extra query-only metrics are exactly the five
-    /// per-point fields. A new `MetricKind` variant fails here until it is
-    /// wired up or listed in [`PLOT_ONLY_METRICS`].
+    /// Every plot metric is reachable from a query, none is covered twice,
+    /// and the extra query-only metrics are exactly the five per-point
+    /// fields. A new `MetricKind` variant fails here until it is wired up.
     #[test]
     fn covers_every_metric_kind() {
         let mapped: Vec<MetricKind> = QueryMetric::iter()
@@ -305,11 +310,8 @@ mod tests {
         let unmapped: Vec<MetricKind> = MetricKind::iter()
             .filter(|kind| !mapped.contains(kind))
             .collect();
-        assert_eq!(unmapped, PLOT_ONLY_METRICS);
-        assert_eq!(
-            QueryMetric::COUNT,
-            MetricKind::COUNT + 5 - PLOT_ONLY_METRICS.len()
-        );
+        assert!(unmapped.is_empty(), "no query metric for {unmapped:?}");
+        assert_eq!(QueryMetric::COUNT, MetricKind::COUNT + 5);
     }
 
     /// The DSL name is the `MetricKind` wire name with the unit suffix

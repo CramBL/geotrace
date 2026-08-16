@@ -8,7 +8,7 @@ use gt_types::{Channel, LoadedFile, NavPoint, TrackRef};
 use gt_ui_types::QueryMatches;
 
 use crate::fingerprint::RunInputs;
-use crate::provider::{SliceProvider, TrackProvider, TrackQueryData};
+use crate::provider::{CapturedTrackValues, SliceProvider, TrackProvider, TrackQueryData};
 use crate::results::{ChannelTrackResult, channel_query_matches, matched_point_ranges};
 
 /// Per-track derived series of one run, keyed by the track they came from.
@@ -66,12 +66,9 @@ struct TrackSnapshot {
     points: Vec<NavPoint>,
     channels: Vec<Channel>,
     slice: Range<usize>,
-    /// Snap error values captured when the run was prepared - queries stay
+    /// The series captured when the run was prepared - queries stay
     /// synchronous over already-computed data and never trigger an upload.
-    snap_error: Option<Arc<Vec<Option<f64>>>>,
-    /// Interference percentages captured when the run was prepared, from the
-    /// archive.
-    jamming: Option<Arc<Vec<Option<f64>>>>,
+    captured: CapturedTrackValues,
 }
 
 impl TrackSnapshot {
@@ -85,6 +82,7 @@ impl TrackSnapshot {
             filter,
             snap_errors,
             jamming,
+            geomagnetic,
             ..
         } = inputs;
         let files: &[LoadedFile] = loaded_files.files();
@@ -98,8 +96,11 @@ impl TrackSnapshot {
                     points: track.points.clone(),
                     channels: track.channels.clone(),
                     slice,
-                    snap_error: snap_errors.get(&track_ref).cloned(),
-                    jamming: jamming.get(&track_ref).cloned(),
+                    captured: CapturedTrackValues {
+                        snap_error: snap_errors.get(&track_ref).cloned(),
+                        jamming: jamming.get(&track_ref).cloned(),
+                        geomagnetic: geomagnetic.points_by_track.get(&track_ref).cloned(),
+                    },
                 })
             })
             .collect()
@@ -182,8 +183,7 @@ impl PreparedRun {
                     uses_util,
                     uses_slip,
                     snapshot.slice.start,
-                    snapshot.snap_error.clone(),
-                    snapshot.jamming.clone(),
+                    snapshot.captured.clone(),
                 ),
             );
             self.handle.note_track_prepared();

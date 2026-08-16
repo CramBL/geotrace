@@ -18,7 +18,8 @@ use super::chips::MetricKindUi;
 
 use super::levels::LineViewport;
 use super::lines::{
-    LineStroke, NearestHoverLabel, PlotHoverLabel, add_line, line_runs, visible_by_x,
+    HOVER_RADIUS_PX, LineStroke, NearestHoverLabel, PlotHoverLabel, add_line, line_runs,
+    nearest_fix_under_pointer, visible_by_x,
 };
 
 /// One track's interference line, rebuilt only when its source changes.
@@ -153,9 +154,6 @@ pub(super) struct JammingTrack<'a> {
     pub(super) pointer: Option<egui::Pos2>,
 }
 
-/// Radius in pixels within which a fix is a hover target.
-const HOVER_RADIUS_PX: f32 = 12.0;
-
 /// Draw one track's interference line from its cache, and hit-test the
 /// pointer against its fixes so the hover can report the counts the map's
 /// cell hover reports.
@@ -194,13 +192,16 @@ pub(super) fn add_jamming_series<'a>(
         viewport.x_min,
         viewport.x_max,
     );
-    for (point, counts) in visible {
-        let distance = plot_ui.screen_from_plot(*point).distance(pointer);
-        if distance <= HOVER_RADIUS_PX {
-            nearest.offer(distance, || {
-                PlotHoverLabel::Jamming(JammingHover::new(track_label, *point, *counts))
-            });
-        }
+    if let Some((distance, &(point, counts))) = nearest_fix_under_pointer(
+        plot_ui,
+        visible,
+        |&(point, _)| point,
+        pointer,
+        HOVER_RADIUS_PX,
+    ) {
+        nearest.offer(distance, || {
+            PlotHoverLabel::Jamming(JammingHover::new(track_label, point, counts))
+        });
     }
 }
 

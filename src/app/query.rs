@@ -1838,6 +1838,7 @@ fn format_value(metric: QueryMetric, value: Option<f64>) -> String {
         Quantity::Length => format!("{v:.1} m"),
         Quantity::Duration => format!("{v:.3} s"),
         Quantity::Count => format!("{v:.0}"),
+        Quantity::Index => format!("{v}"),
         Quantity::Ratio => format!("{:.0} %", v / Unit::PERCENT.to_base()),
         Quantity::Rate => format!("{v:.2}/min"),
         Quantity::Condition => EM_DASH.to_owned(),
@@ -2123,6 +2124,7 @@ mod tests {
         assert_eq!(format_value(QueryMetric::SatsFix, Some(7.0)), "7");
         assert_eq!(format_value(QueryMetric::UtilGps, Some(0.5)), "50 %");
         assert_eq!(format_value(QueryMetric::SlipAll, Some(2.0)), "2.00/min");
+        assert_eq!(format_value(QueryMetric::Hp30, Some(11.333)), "11.333");
         assert_eq!(format_value(QueryMetric::Eph, None), EM_DASH);
     }
 

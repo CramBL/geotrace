@@ -326,7 +326,7 @@ fn unit_construct(unit: Unit, name: &'static str) -> Construct {
             "events per unit time",
             "Rates such as `slip_all` are written with `per`, e.g. `2 per min`.",
         ),
-        Quantity::Count | Quantity::Timestamp | Quantity::Condition => ("", ""),
+        Quantity::Count | Quantity::Index | Quantity::Timestamp | Quantity::Condition => ("", ""),
     };
     Construct {
         name,
@@ -461,6 +461,18 @@ fn metric_docs(metric: QueryMetric) -> (&'static str, &'static str, &'static [&'
             "aircraft-reported interference over the fix's cell",
             gt_jam::text::QUERY_DOC.as_str(),
             &["where jamming > 10 %"],
+        ),
+        QueryMetric::Hp30 => (
+            "geomagnetic activity over the fix's half-hour period",
+            gt_solar::GeomagneticIndex::Hp30.query_doc(),
+            &[
+                "with mask 15 deg, snr_drop 10, slip_window 5 min | where hp30 > 5 and slip_all > 2 per min",
+            ],
+        ),
+        QueryMetric::Kp => (
+            "geomagnetic activity over the fix's three-hour period",
+            gt_solar::GeomagneticIndex::Kp.query_doc(),
+            &["where kp >= 5"],
         ),
     }
 }

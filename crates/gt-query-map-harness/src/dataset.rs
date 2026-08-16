@@ -9,6 +9,7 @@ use gt_types::coordinates::{Latitude, Longitude};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
 use gt_types::{FileIdx, FileSource, LoadedFile, NavPoint, TrackIdx, TrackRef};
+use gt_ui_types::{GeomagneticPoint, GeomagneticSeries};
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Velocity};
 use uom::si::velocity::kilometer_per_hour;
@@ -110,12 +111,14 @@ impl PointSpec {
 }
 
 /// One synthetic track: its points, plus the per-track series a query can read
-/// that do not live in the recording (snap error, interference).
+/// that do not live in the recording (snap error, interference, geomagnetic
+/// indices).
 #[derive(Debug, Clone, Default)]
 pub struct TrackSpec {
     points: Vec<PointSpec>,
     snap_error: Option<Vec<Option<f64>>>,
     jamming: Option<Vec<Option<f64>>>,
+    geomagnetic: Option<Vec<GeomagneticPoint>>,
 }
 
 impl TrackSpec {
@@ -152,6 +155,12 @@ impl TrackSpec {
     /// Dense per-point interference percentages, as the app hands them to a run.
     pub fn jamming(mut self, values: Vec<Option<f64>>) -> Self {
         self.jamming = Some(values);
+        self
+    }
+
+    /// One geomagnetic index point per fix, as the app hands them to a run.
+    pub fn geomagnetic(mut self, points: Vec<GeomagneticPoint>) -> Self {
+        self.geomagnetic = Some(points);
         self
     }
 }
@@ -220,6 +229,7 @@ pub struct Dataset {
     files: LoadedFiles,
     snap_errors: SnapErrorValues,
     jamming: JammingValues,
+    geomagnetic: GeomagneticSeries,
 }
 
 impl Dataset {
@@ -228,6 +238,7 @@ impl Dataset {
         let mut files = LoadedFiles::new();
         let mut snap_errors = SnapErrorValues::new();
         let mut jamming = JammingValues::new();
+        let mut geomagnetic = GeomagneticSeries::default();
         for (fi, spec) in specs.iter().enumerate() {
             files.push(spec.build(), FileHistory::None);
             for (ti, track_spec) in spec.tracks.iter().enumerate() {
@@ -238,12 +249,18 @@ impl Dataset {
                 if let Some(values) = &track_spec.jamming {
                     jamming.insert(track_ref, Arc::new(values.clone()));
                 }
+                if let Some(points) = &track_spec.geomagnetic {
+                    geomagnetic
+                        .points_by_track
+                        .insert(track_ref, Arc::new(points.clone()));
+                }
             }
         }
         Self {
             files,
             snap_errors,
             jamming,
+            geomagnetic,
         }
     }
 
@@ -268,6 +285,10 @@ impl Dataset {
 
     pub fn jamming(&self) -> &JammingValues {
         &self.jamming
+    }
+
+    pub fn geomagnetic(&self) -> &GeomagneticSeries {
+        &self.geomagnetic
     }
 
     /// Every track of every file, in tree order.
@@ -344,11 +365,30 @@ mod tests {
     fn per_track_series_land_under_their_track() {
         let dataset = Dataset::one_file(vec![
             TrackSpec::steady(2, 10.0).snap_error(vec![Some(1.0), None]),
-            TrackSpec::steady(2, 10.0).jamming(vec![Some(50.0), Some(60.0)]),
+            TrackSpec::steady(2, 10.0)
+                .jamming(vec![Some(50.0), Some(60.0)])
+                .geomagnetic(vec![
+                    GeomagneticPoint {
+                        x_secs: EPOCH_SECS as f64,
+                        hp30: Some(6.333),
+                        kp: Some(5.0),
+                    },
+                    GeomagneticPoint {
+                        x_secs: EPOCH_SECS as f64 + 1.0,
+                        hp30: Some(6.333),
+                        kp: Some(5.0),
+                    },
+                ]),
         ]);
         assert!(dataset.snap_errors().contains_key(&track(0, 0)));
         assert!(!dataset.snap_errors().contains_key(&track(0, 1)));
         assert!(dataset.jamming().contains_key(&track(0, 1)));
+        assert!(
+            dataset
+                .geomagnetic()
+                .points_by_track
+                .contains_key(&track(0, 1))
+        );
         assert_eq!(dataset.track_refs(), [track(0, 0), track(0, 1)]);
     }
 }

@@ -275,7 +275,8 @@ pub struct PlotSettings {
     pub panel_visible: bool,
     /// Fraction of the window width given to the map panel (0.0–1.0).
     pub split_ratio: f32,
-    /// Per-metric visibility. A missing key means the metric is visible (default `true`).
+    /// Per-metric visibility. A missing key falls back to the metric's own
+    /// [`MetricKind::visible_by_default`].
     pub metric: HashMap<MetricKind, bool>,
     /// Per-channel visibility, keyed by channel name. Missing means visible,
     /// like `metric`. Names are global across files: an `accel` hidden once

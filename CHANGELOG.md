@@ -13,7 +13,8 @@
 - Loading a recording downloads the Kp and Hp30 geomagnetic indices for the days it spans into a local archive, so it can be read against what the geomagnetic field was doing while it was made. The host serving them is in Settings under "Geomagnetic indices", and nothing is downloaded in offline mode.
 - Settings' "Geomagnetic indices" section shows what the index download is doing, how many days of the loaded recordings are archived, and the days that failed with their cause. It downloads index history for a date range too, skipping days already archived, with progress and a cancel button.
 - Both history downloads, interference and geomagnetic indices, are grayed out in offline mode with hover text saying so.
-- The plot draws two geomagnetic index lines, "Hp30 index" and "Kp index", one value per fix from the archived period the fix falls in. Their chips stay grayed out until the days a recording spans are archived.
+- The plot draws the "Hp30 index" line, one value per fix from the archived period the fix falls in, with the three-hourly "Kp index" one chip away. Both chips stay grayed out until the days a recording spans are archived.
+- Hovering an index line names the value, its storm class on the G scale, and the period it covers. The indices are queryable as `hp30` and `kp` too, so `where hp30 > 5 and slip_all > 2 per min` selects the fixes that lost lock during a geomagnetic storm.
 
 ### Fixed
 

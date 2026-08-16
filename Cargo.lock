@@ -2702,6 +2702,7 @@ dependencies = [
  "gt-fmt",
  "gt-jam",
  "gt-loaded-files",
+ "gt-solar",
  "gt-test-utils",
  "gt-types",
  "gt-ui-theme",
@@ -2719,6 +2720,7 @@ version = "0.12.0"
 dependencies = [
  "geotrace-sdk-units",
  "gt-jam",
+ "gt-solar",
  "gt-types",
  "insta",
  "logos",
