@@ -4,10 +4,8 @@ use gt_types::{GpsTime, TrackRef};
 
 /// A request to open the sky trails window on a track.
 ///
-/// Carries the instant to open at, so opening from a clicked track point lands
-/// on that fix rather than at the start of the track: you keep looking at the
-/// moment you were already looking at, and can play on from there. Whole-track
-/// entry points (the side panel and map context menus) leave it unset.
+/// Opening from a clicked track point lands on that fix. Whole-track entry
+/// points (the side panel and map context menus) leave the instant unset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SkyTrailsRequest {
     pub track: TrackRef,

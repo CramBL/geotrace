@@ -1,3 +1,9 @@
+//! Internal read-modify-write machinery for the history database.
+//!
+//! This module reads existing data into an intermediate tree of owned Rust
+//! types, manipulates that tree, then writes the whole thing to a new
+//! `FileBuilder` in one pass.
+
 use crate::matches_attrs;
 use gt_history_types::{
     ATTR_END_US, ATTR_EVENT_MARKER_COUNT, ATTR_GTD_SIZE_BYTES, ATTR_IDENTITY, ATTR_MARKER_COUNT,
@@ -10,11 +16,6 @@ use gt_history_types::{
     TrackRange, identity_from_group_name, identity_group_name, is_db_internal_group,
     is_db_recording_attr, make_group_name,
 };
-/// Internal read-modify-write machinery for the history database.
-///
-/// This module reads existing data into an intermediate tree of owned Rust
-/// types, manipulates that tree, then writes the whole thing to a new
-/// `FileBuilder` in one pass.
 use hdf5_pure::{AttrValue, DType, FileBuilder, Group, GroupBuilder};
 use thiserror::Error;
 
@@ -374,7 +375,6 @@ fn build_new_recording(
         rec.attrs.push((k, v));
     }
 
-    // Store the track ranges in the DB-internal subgroup.
     rec.groups.push(track_table_node(tracks));
 
     Ok(rec)
@@ -463,19 +463,14 @@ pub(crate) fn insert_recording(
         return Ok(db_ref);
     }
 
-    // Read all existing identity data into memory.
     let mut identity_nodes = snapshot_by_identity(&existing_db)?;
 
-    // Determine the new recording name. A UUID makes the name collision-free even
-    // for recordings that start within the same second.
     let rec_name = make_group_name(meta.start_us, &uuid::Uuid::new_v4().to_string());
 
-    // Build the new recording node from the GTD file.
     let gtd_file = hdf5_pure::File::from_bytes(gtd_bytes.to_vec())?;
     let new_recording =
         build_new_recording(&gtd_file, &rec_name, meta, identity, tracks, settings)?;
 
-    // Insert or create the identity group.
     ensure_identity_node(&mut identity_nodes, identity)
         .groups
         .push(new_recording);
@@ -564,10 +559,10 @@ pub(crate) fn rename_identity(
     {
         Some(target) => {
             // Merge into the existing target identity group. A recording-group
-            // name collision would overwrite one recording with another, so
-            // refuse rather than lose data. (Group names are UUID-suffixed, so
-            // this is unreachable in practice; the whole file is untouched
-            // because `write_db` has not run yet.)
+            // name collision would overwrite one recording with another, so it
+            // is refused. Group names are UUID-suffixed, so this is unreachable
+            // in practice, and the whole file is untouched because `write_db`
+            // has not run yet.
             if let Some(dup) = old_node
                 .groups
                 .iter()
@@ -581,7 +576,6 @@ pub(crate) fn rename_identity(
             target.groups.append(&mut old_node.groups);
         }
         None => {
-            // Simple rename: re-home the node under the new (encoded) name.
             old_node.name = new_storage;
             set_identity_attr(&mut old_node, new);
             identity_nodes.push(old_node);
@@ -840,10 +834,10 @@ pub(crate) fn load_recording(
     let mut fb = FileBuilder::new();
 
     // Restore GTD root attributes.  Every attr on the recording group that is
-    // not a DB-internal field is an GTD root attr and belongs on the file root.
-    // Using a denylist (rather than an allowlist) means new GTD attrs are
-    // restored automatically.  Fall back to geotrace_version="1" for recordings
-    // stored by older code that predates attr preservation.
+    // not a DB-internal field is a GTD root attr and belongs on the file root.
+    // The denylist restores newly added GTD attrs automatically.  Fall back to
+    // geotrace_version="1" for recordings stored by older code that predates
+    // attr preservation.
     let rec_attrs = rec_grp.attrs()?;
     let segmentation = read_segmentation(&rec_attrs);
     let mut has_version = false;
@@ -863,7 +857,7 @@ pub(crate) fn load_recording(
     }
 
     for child_name in rec_grp.groups()? {
-        // Skip the DB-internal track table. It is not part of the GTD file.
+        // Skip the DB-internal groups. They are not part of the GTD file.
         if is_db_internal_group(&child_name) {
             continue;
         }

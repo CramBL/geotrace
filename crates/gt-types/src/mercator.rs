@@ -20,10 +20,6 @@ pub struct MercPoint {
 
 /// Convert a geographic position to a normalized Web Mercator [`MercPoint`].
 ///
-/// Both outputs are in `[0.0, 1.0]`:
-/// - `x` increases west → east (0 = 180° W, 0.5 = 0°, 1 = 180° E)
-/// - `y` increases north → south (0 = top, 0.5 = equator, 1 = bottom)
-///
 /// The anchor point (lon = 0°, lat = 0°) maps to exactly `(0.5, 0.5)`, which
 /// is used by the renderers to turn a single `projector.project(lat_lon(0,0))`
 /// call into the per-frame screen → Mercator offset.
@@ -132,8 +128,7 @@ mod tests {
         assert!((wrap_longitude_degrees(12.5) - 12.5).abs() < 1e-9);
     }
 
-    /// A viewport past the antimeridian denormalizes to a real longitude,
-    /// not one past 180 that no cell centre can match.
+    /// A viewport past the antimeridian denormalizes to a real longitude.
     #[test]
     fn denormalize_wraps_past_the_antimeridian() {
         let (_, lon) = denormalize(MercPoint { x: 1.001, y: 0.5 });

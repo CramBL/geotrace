@@ -186,8 +186,7 @@ impl<'a> TestHarnessBuilder<'a> {
 
     /// Force the context into light or dark visuals before rendering, so a
     /// widget can be snapshotted under both themes. Without this the harness
-    /// uses egui's default (dark) visuals, which is why light-mode regressions
-    /// went uncaught. `true` selects dark, `false` light.
+    /// uses egui's default (dark) visuals. `true` selects dark, `false` light.
     pub fn theme(mut self, dark_mode: bool) -> Self {
         self.dark_mode = Some(dark_mode);
         self

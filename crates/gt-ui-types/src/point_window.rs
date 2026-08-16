@@ -36,8 +36,7 @@ impl PointWindowFolds {
 
 /// The wire form of [`PointWindowFolds`]: the folded sections listed by name.
 ///
-/// Named rather than a bitmask so the settings file stays readable, an absent
-/// or empty list means nothing is folded, and a constellation added later
+/// An absent or empty list means nothing is folded. A constellation added later
 /// defaults to unfolded on an existing settings file.
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]

@@ -236,18 +236,15 @@ pub struct MetricVisibility(MetricKindSet);
 
 impl Default for MetricVisibility {
     fn default() -> Self {
-        // Every metric starts visible.
         Self(MetricKindSet::all())
     }
 }
 
 impl MetricVisibility {
-    /// Returns the current visibility for `kind`.
     pub fn field(self, kind: MetricKind) -> bool {
         self.0.contains(kind)
     }
 
-    /// Sets whether `kind` is visible.
     pub fn set(&mut self, kind: MetricKind, enabled: bool) {
         self.0.set(kind, enabled);
     }
@@ -290,9 +287,8 @@ pub(super) fn metric_is_shown(
 
 /// Global per-channel visibility, keyed by channel name.
 ///
-/// Channels are dynamic per-file names, so this is a map rather than the flat
-/// bool fields of [`MetricVisibility`]. A name that was never toggled is
-/// visible, matching the persisted-settings convention (missing key = shown).
+/// A name that was never toggled is visible, matching the persisted-settings
+/// convention (missing key = shown).
 /// Names persist across loads: an `accel` hidden once stays hidden in the next
 /// recording that carries an `accel`.
 #[derive(Debug, Clone, Default)]
@@ -525,9 +521,8 @@ fn chip_group(
     }
 }
 
-/// The two section-reveal toggles: Advanced (always) and Channels (only when
-/// a loaded track actually carries channels - with none there is nothing the
-/// toggle could reveal). Both sections are hidden by default.
+/// The two section-reveal toggles: Advanced (always) and Channels (only when a
+/// loaded track has channels). Both sections are hidden by default.
 fn section_toggles(
     ui: &mut egui::Ui,
     show_advanced: &mut bool,
@@ -599,12 +594,11 @@ fn channel_chip_group(
 /// Draw the per-metric filter controls above the track plot.
 ///
 /// All controls and metric chips share a single `horizontal_wrapped` row so they
-/// fill available horizontal space before wrapping - no fixed-height satellite
-/// group that forces other chips below it.
+/// fill available horizontal space before wrapping.
 ///
 /// Returns the chip currently being hovered (a metric's or a channel's), or
 /// `None`. The caller passes this to `add_series_lines` to highlight the
-/// hovered line and dim the rest, mirroring the standard egui-plot legend
+/// hovered line and dim the rest, matching the standard egui-plot legend
 /// hover behaviour.
 #[expect(
     clippy::too_many_arguments,
@@ -624,9 +618,6 @@ pub(super) fn metric_filter_row(
     show_channels: &mut bool,
     available: MetricAvailability,
 ) -> Option<HoveredChip> {
-    // The show/hide-all button and its eye icon track only the currently shown
-    // chips, so they ignore advanced metrics while that section is collapsed and
-    // per-constellation metrics whose constellation is absent from the data.
     let all_on = vis.all_enabled(present, *show_advanced);
     let mut show_only = None;
     let mut show_only_channel: Option<String> = None;
@@ -914,8 +905,6 @@ fn channel_chip(
     });
     let hovered = response.hovered();
     let rect = response.rect;
-    // The hover legend is the read-only reference: each component's color
-    // square and name at a glance, and the pointer to where editing lives.
     response.on_hover_ui(|ui| {
         ui.label("Sensor channel recorded alongside the track");
         for (index, label) in channel.components.iter().enumerate() {
@@ -934,7 +923,6 @@ fn channel_chip(
         }
         ui.label(RichText::new("Right-click to pick colors").weak());
     });
-    // Never empty in practice; a label-less chip degrades to a plain one.
     let Some(components) = NonZeroUsize::new(channel.components.len()) else {
         return (show_only, hovered);
     };
@@ -945,7 +933,6 @@ fn channel_chip(
     );
     let bar_width =
         (strip.width() - CHIP_BAR_GAP * (components.saturating_sub(1)) as f32) / components as f32;
-    // The bars dim with the chip, so a disabled channel stays quiet.
     let alpha = if *enabled {
         1.0
     } else {
@@ -974,8 +961,7 @@ mod tests {
 
     /// Every per-constellation metric maps to a constellation and every
     /// all-constellation metric maps to `None`, with the two groups together
-    /// covering all `MetricKind::COUNT` variants - so a new metric must declare
-    /// which bucket it falls in rather than silently defaulting.
+    /// covering all `MetricKind::COUNT` variants.
     #[test]
     fn metric_constellation_mapping_is_total() {
         use strum::EnumCount;
@@ -991,8 +977,7 @@ mod tests {
     }
 
     /// Every metric is visible by default, and toggling one leaves the rest
-    /// untouched - the property the old per-field struct gave for free and the
-    /// bitset must preserve.
+    /// untouched.
     #[test]
     fn visibility_defaults_on_and_toggles_independently() {
         let mut vis = MetricVisibility::default();

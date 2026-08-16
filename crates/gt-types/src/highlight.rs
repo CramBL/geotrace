@@ -1,8 +1,6 @@
 use std::fmt;
 
 /// Typed wrapper for a file index into `loaded_files[fi]`.
-///
-/// Using a newtype prevents accidentally swapping a file index for a track index.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct FileIdx(usize);
 
@@ -93,9 +91,6 @@ impl fmt::Display for PointIdx {
 }
 
 /// Canonical address of a single track: which file and which track within it.
-///
-/// Replaces the loose `(fi: FileIdx, ti: TrackIdx)` pair that appeared in
-/// every function signature that needed to identify a track.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct TrackRef {
     pub fi: FileIdx,
@@ -136,8 +131,7 @@ impl DataCategory {
 }
 
 crate::enum_bitset! {
-    /// A set of [`DataCategory`]s, one bit each - a `Copy` stand-in for a set of
-    /// per-category booleans, used for per-track element visibility.
+    /// Per-track element-visibility set.
     pub struct DataCategorySet(u8) for DataCategory;
 }
 

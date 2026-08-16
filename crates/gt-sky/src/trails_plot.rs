@@ -43,11 +43,11 @@ pub struct SkyTrailsPlot<'a> {
     /// When false, the whole-track trail polylines (and slip marks) are hidden,
     /// leaving just the current-instant markers - the immediate snapshot.
     show_trails: bool,
-    /// When true, each trail is trimmed to the stretches where the satellite
-    /// was in the fix - so a rarely-used satellite shows only the short arcs it
-    /// contributed - and a slip on a satellite never in the fix goes with it.
-    /// The trimming reads whole-track fix state, so it applies with or without a
-    /// [`Self::scrub`]; the scrub only decides the marker, which is hidden for a
+    /// When true, each trail is trimmed to the stretches where the satellite was
+    /// in the fix, so a rarely-used satellite shows only the short arcs it
+    /// contributed. A slip on a satellite never in the fix goes with it. The
+    /// trimming reads whole-track fix state, so it applies with or without a
+    /// [`Self::scrub`]. The scrub only decides the marker, which is hidden for a
     /// satellite merely tracked at that instant.
     in_fix_now: bool,
     /// When true, a smooth signal-strength heat field is drawn beneath the
@@ -208,12 +208,8 @@ impl<'a> SkyTrailsPlot<'a> {
             }
             let base = gt_ui_theme::constellation_color(trail.constellation, dark_mode);
             let focus_factor = self.focus_factor(trail.constellation);
-            // The trail is drawn independently of whether the satellite is in
-            // the fix at the current instant. "In fix only" instead trims the
-            // polyline to the stretches where the satellite was in the fix
-            // (paint_trail's `in_fix_only`), so a rarely-used satellite shows
-            // only the short arcs it contributed rather than a full distracting
-            // sweep, without the whole trail blinking as playback crosses it.
+            // The trail is drawn independently of the satellite's fix state at
+            // the current instant: `in_fix_now` trims the polyline instead.
             if self.show_trails {
                 paint_trail(
                     ui,
@@ -242,10 +238,7 @@ impl<'a> SkyTrailsPlot<'a> {
             }
             let pos = frame.project(azimuth, elevation);
             paint_marker(ui, pos, base.gamma_multiply(focus_factor), panel, report);
-            // Every drawn marker is a hover target. It used to be one only
-            // while the scrubber sat exactly on a report, so hover died the
-            // moment playback moved the scrubber off one and stayed dead
-            // until something put it back exactly on a report.
+            // Every drawn marker is a hover target.
             markers.push((
                 MarkerHover {
                     satellite: satellite_from_sample(trail, report),
@@ -323,16 +316,11 @@ impl<'a> SkyTrailsPlot<'a> {
         }
     }
 
-    /// Whether a slip mark is drawn (and thus hoverable). Slips annotate the
-    /// whole-track trails, so they follow the trail's visibility: the trails
-    /// must be shown at all, the constellation must be shown, and the satellite
-    /// must have contributed a fix whenever a filter has trimmed the never-in-
-    /// fix trails away - either the whole-track "not in fix" filter is hiding
-    /// them, or "in fix only" has trimmed the trail down to its in-fix stretches
-    /// and a never-in-fix satellite has none - so a slip never floats with no
-    /// trail behind it. The mark is not faded or blinked by the scrubbed
-    /// instant: a slip is a fixed whole-track event, so it stays put as playback
-    /// moves.
+    /// Whether a slip mark is drawn (and thus hoverable). Slips follow their
+    /// trail's visibility: the trails must be shown, the constellation must be
+    /// shown, and the satellite must have contributed a fix whenever a filter has
+    /// trimmed the never-in-fix trails away. The scrubbed instant neither fades
+    /// nor hides it.
     fn slip_visible(&self, slip: &SlipMark) -> bool {
         let trails_trimmed_to_in_fix = !self.show_not_in_fix || self.in_fix_now;
         self.show_trails
@@ -354,11 +342,9 @@ impl<'a> SkyTrailsPlot<'a> {
     }
 }
 
-/// How one trail is painted: its colour and the three factors that scale it -
-/// the constellation focus, the user's opacity setting, and the tail fade from
-/// the scrubbed instant - plus whether to trim it to its in-fix stretches.
-/// Grouped so the painting helpers keep a readable signature instead of a row
-/// of bare floats and bools.
+/// How one trail is painted: its colour, the three factors that scale it (the
+/// constellation focus, the user's opacity setting, and the tail fade from the
+/// scrubbed instant), and whether to trim it to its in-fix stretches.
 #[derive(Clone, Copy)]
 struct TrailPaint {
     color: Color32,
@@ -383,10 +369,9 @@ fn paint_trail(ui: &egui::Ui, frame: Frame, trail: &SkyTrail, paint: TrailPaint)
 
 /// Paint one gap-free run of a trail. The run is split into maximal stretches
 /// of one quantized fade step, each drawn as a single connected polyline: a
-/// polyline tessellates as one stroke with proper joins, so - unlike a string
-/// of separate translucent segments - overlapping parts never stack opacity
-/// where the path is dense or doubles back, and a faint stretch stays uniformly
-/// faint. Adjacent steps share their boundary vertex so the line is unbroken.
+/// polyline tessellates as one stroke with proper joins, so overlapping parts
+/// never stack opacity where the path is dense or doubles back. Adjacent steps
+/// share their boundary vertex so the line is unbroken.
 fn paint_run(painter: &egui::Painter, run: &[TrailVertex], paint: TrailPaint) {
     for (points, step) in fade_stretches(run, paint.scrub) {
         let alpha = trail_stroke_alpha(step, paint.focus_factor, paint.opacity);
@@ -413,22 +398,14 @@ fn trail_stroke_alpha(step: i32, focus_factor: f32, opacity: f32) -> f32 {
 /// polyline to draw at that step's alpha.
 ///
 /// A segment spans two vertices that may fall on different steps, and a polyline
-/// takes one stroke, so a segment has to be shaded by one of them. It takes its
-/// *later* end - the one nearer the head as the tail is walked forwards.
+/// takes one stroke, so a segment is shaded by its *later* end, the one nearer
+/// the head as the tail is walked forwards. That leaves the segment straddling
+/// the head at the floor, a gap of about [`MIN_SEGMENT_PX`] that the marker dot
+/// covers.
 ///
-/// Neither other choice works. Shading by the earlier end drags the tail one
-/// segment into the future: the segment leaving the head takes the head's full
-/// brightness while the ones arriving at it stay dim, which reads as the
-/// emphasis sitting ahead of the satellite - the visual opposite of a tail.
-/// Taking the brighter end has the same flaw, since the head is also the
-/// brighter end of the segment just after it. Taking the later end leaves the
-/// segment straddling the head at the floor, a gap of about
-/// [`MIN_SEGMENT_PX`] that the marker dot covers.
-///
-/// Adjacent stretches share their boundary vertex - it ends one and begins the
-/// next - so the drawn line is unbroken across a step change. A stretch left
-/// with a single vertex draws no line and is dropped, so the last vertex of a
-/// run never emits a zero-length polyline of its own.
+/// Adjacent stretches share their boundary vertex, so the drawn line is unbroken
+/// across a step change. A stretch left with a single vertex draws no line and
+/// is dropped.
 fn fade_stretches(run: &[TrailVertex], scrub: Option<GpsTime>) -> Vec<(Vec<Pos2>, i32)> {
     let mut stretches = Vec::new();
     let mut points: Vec<Pos2> = Vec::new();
@@ -456,10 +433,8 @@ fn fade_stretches(run: &[TrailVertex], scrub: Option<GpsTime>) -> Vec<(Vec<Pos2>
 }
 
 /// The quantized fade step for a point in time, `0` at the faint floor up to
-/// [`style::TRAIL_FADE_STEPS`] at the scrubber. Grouping the trail by step and
-/// drawing each as one polyline is what keeps the fade from stacking opacity;
-/// [`fade_step_alpha`] turns a step back into its alpha. Signed to match the
-/// float-to-int idiom used elsewhere; the value is always in `0..=STEPS`.
+/// [`style::TRAIL_FADE_STEPS`] at the scrubber. The value is always in
+/// `0..=STEPS`.
 fn fade_step(time: GpsTime, scrub: Option<GpsTime>) -> i32 {
     (trail_fade(time, scrub) * style::TRAIL_FADE_STEPS as f32).round() as i32
 }
@@ -472,19 +447,13 @@ fn fade_step_alpha(step: i32) -> f32 {
     style::TRAIL_MIN_ALPHA + (style::TRAIL_MAX_ALPHA - style::TRAIL_MIN_ALPHA) * fraction
 }
 
-/// How brightly a point in time draws, in `0..=1`, shaping the trail into a
-/// comet's tail: `1` at the scrubbed instant, easing back to `0` over
-/// [`style::TRAIL_TAIL_SECS`] of past travel, and flat `0` anywhere ahead of the
-/// scrubber - the path the satellite has not reached yet.
-///
-/// Brightening only behind the satellite is what makes the tail read as a tail:
-/// the bright end is the head, so the direction of travel is obvious at a glance
-/// without arrows. Fading both ways would look like a tail pointing the wrong
-/// way half the time.
+/// How brightly a point in time draws, in `0..=1`: `1` at the scrubbed instant,
+/// easing back to `0` over [`style::TRAIL_TAIL_SECS`] of past travel, and flat
+/// `0` anywhere ahead of the scrubber.
 ///
 /// The ease is quadratic, so the fade is gentle just behind the head and
-/// steepens toward the end of the tail. Without a scrub there is no instant to
-/// measure against, so the whole trail draws at full strength.
+/// steepens toward the end of the tail. Without a scrub the whole trail draws at
+/// full strength.
 fn trail_fade(time: GpsTime, scrub: Option<GpsTime>) -> f32 {
     let Some(scrub) = scrub else {
         return 1.0;
@@ -497,9 +466,8 @@ fn trail_fade(time: GpsTime, scrub: Option<GpsTime>) -> f32 {
     1.0 - (secs_behind / style::TRAIL_TAIL_SECS).min(1.0).powi(2)
 }
 
-/// How far a sample must project from the last kept one before it earns a
-/// vertex of its own. Below a pixel there is nothing left to resolve, so the
-/// samples in between are collapsed into the run.
+/// Minimum distance a sample must project from the last kept one to become its
+/// own vertex. Closer samples are collapsed into the run.
 const MIN_SEGMENT_PX: f32 = 1.0;
 
 /// One kept vertex of a trail run: where it projects and when, so the fade can
@@ -513,24 +481,16 @@ struct TrailVertex {
 /// The gap-free runs to draw for `trail`, each a polyline of kept vertices,
 /// collapsing samples that project less than [`MIN_SEGMENT_PX`] from the run's
 /// current anchor. When `in_fix_only` is set, only the samples where the
-/// satellite was in the fix are drawn through, so the trail is trimmed to the
-/// stretches it contributed to. Runs of a single vertex are dropped - a lone
-/// point draws no line.
+/// satellite was in the fix are drawn through. Runs of a single vertex are
+/// dropped.
 ///
-/// A trail carries one sample per epoch, so a long recording produces tens of
-/// thousands of them per satellite while the disc it is drawn on is only a few
-/// hundred pixels across. Drawing every sample is work that scales with how
-/// long the receiver ran rather than with what the plot can show, which is what
-/// made the window unusable on a long track. Collapsing bounds the vertices by
-/// the trail's length in pixels instead.
+/// Collapsing bounds the vertex count by the trail's length in pixels.
 ///
 /// Gaps survive the collapse: the pair bracketing an absence always ends the
-/// run, so a satellite that dropped out still shows a break rather than a line
-/// drawn straight across the time it was gone. Dropping the not-in-fix samples
-/// leaves the same kind of break - their epochs are skipped, so the surviving
-/// neighbours are no longer consecutive - so a tracked-but-unused stretch reads
-/// as a gap too. The final drawn sample always ends the last run, so a trail
-/// never stops short of where it really ended.
+/// run, so a satellite that dropped out still shows a break. Dropping the
+/// not-in-fix samples leaves the same kind of break, since the surviving
+/// neighbours are no longer consecutive. The final drawn sample always ends the
+/// last run.
 fn trail_runs(trail: &SkyTrail, frame: Frame, in_fix_only: bool) -> Vec<Vec<TrailVertex>> {
     let vertex = |sample: &TrailSample| TrailVertex {
         pos: frame.project(sample.azimuth, sample.elevation),
@@ -690,8 +650,7 @@ fn show_slip_tooltip(ui: &egui::Ui, response: &egui::Response, slip: &SlipMark) 
     });
 }
 
-/// Show the elevation-mask ring's hover tooltip, naming it and its angle so it
-/// reads as a labelled element rather than a mystery circle.
+/// Show the elevation-mask ring's hover tooltip, naming it and its angle.
 fn mask_tooltip(ui: &egui::Ui, response: &egui::Response, mask_deg: f32) {
     egui::Tooltip::always_open(
         ui.ctx().clone(),
@@ -731,14 +690,12 @@ fn slip_label(slip: &SlipMark) -> String {
 }
 
 /// The satellite's `(azimuth, elevation)` at `time`, plus the report in effect
-/// there - the last one received at or before `time`, which is what the
-/// receiver was acting on at that instant and what the stats column counts.
+/// there: the last one received at or before `time`, which is what the stats
+/// column counts.
 ///
-/// The position is interpolated between reports so playback animates smoothly,
-/// but the report is always a real one: scrubbing to 12:00:00.4 reads the
-/// 12:00:00 report rather than inventing values for an instant no receiver ever
-/// described. `None` when `time` is outside the trail or inside one of its
-/// gaps, where the satellite is not drawn at all.
+/// The position is interpolated between reports, but the report is always a real
+/// one: scrubbing to 12:00:00.4 reads the 12:00:00 report. `None` when `time` is
+/// outside the trail or inside one of its gaps.
 fn marker_at(trail: &SkyTrail, time: GpsTime) -> Option<(f32, f32, &TrailSample)> {
     let samples = &trail.samples;
     let idx = samples.partition_point(|s| s.time < time);
@@ -840,9 +797,7 @@ mod tests {
     }
 
     /// Hovering a scrub marker must work wherever the scrubber is parked, not
-    /// only when it happens to sit exactly on a report. Playback leaves the
-    /// scrubber on a fractional second, so requiring an exact hit meant hover
-    /// died as soon as you pressed play and stayed dead after pausing.
+    /// only when it sits exactly on a report.
     #[test]
     fn a_marker_is_hoverable_between_reports() {
         // One satellite parked at a fixed sky position, so its marker sits in
@@ -938,14 +893,9 @@ mod tests {
 
     const PLOT_DIAMETER_PX: f32 = 400.0;
 
-    /// The plot emits one line segment per sample pair, per satellite, every
-    /// frame - so its cost is linear in the track's length with no ceiling. A
-    /// three-hour track at 1 Hz with 30 satellites is ~324k shapes per frame,
-    /// which is what made the window unusable on a long recording.
-    ///
-    /// Adjacent samples on a long track project sub-pixel apart, so nearly all
-    /// of that work is invisible: the segment count must be bounded by what the
-    /// plot can actually resolve, not by how long the recording ran.
+    /// The drawn shape count must be bounded by what the plot can resolve, not
+    /// by how long the recording ran. Adjacent samples on a long track project
+    /// sub-pixel apart.
     #[test]
     fn the_trail_paint_cost_is_bounded_by_the_plot_not_the_track_length() {
         let short = painted_shapes(long_trails(600, 12));
@@ -1047,9 +997,7 @@ mod tests {
     }
 
     /// Between reports the marker interpolates its position but still reports
-    /// the report in effect - the last one received. Hover used to go dead here
-    /// (there was no sample to show), which killed it for the whole of playback
-    /// and everything after it.
+    /// the report in effect, the last one received.
     #[test]
     fn marker_at_carries_the_report_in_effect_between_reports() {
         let trail = unbroken_trail();
@@ -1714,11 +1662,8 @@ mod tests {
         );
     }
 
-    /// A segment takes its *later* end's step. Shading by the earlier end
-    /// dragged the whole tail one segment toward the future: the segment leaving
-    /// the head took the head's brightness while the ones arriving at it stayed
-    /// dim, so the emphasis appeared to sit ahead of the satellite - the visual
-    /// opposite of a tail.
+    /// A segment takes its *later* end's step, so the brightest segments are the
+    /// ones arriving at the head.
     #[test]
     fn a_segment_takes_its_later_end_so_the_tail_sits_behind_the_head() {
         // Vertices a minute apart, with the satellite's current position - the

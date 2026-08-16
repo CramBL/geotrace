@@ -279,8 +279,8 @@ fn snapshot_snap_progress_strip_active() {
     harness.snapshot("side_panel_snap_progress_strip");
 }
 
-/// Queued work with the app offline: the strip says the queue is paused
-/// and why, instead of sitting silent.
+/// Queued work with the app offline: the strip states that the queue is paused
+/// and why.
 #[test]
 fn snapshot_snap_progress_strip_offline_paused() {
     let mut state = make_state(1);
@@ -376,8 +376,7 @@ fn clicking_stale_trigger_requests_snap() {
     let mut harness = make_harness(state);
     harness.run();
 
-    // The status glyph (routed path) and the re-run trigger (raw
-    // segments) wear distinct icons now.
+    // The status glyph and the re-run trigger use distinct icons.
     harness.inner.get_by_label(ICON_PATH).hover();
     harness.inner.get_by_label(ICON_LINE_SEGMENTS).click();
     harness.run();
@@ -1146,9 +1145,8 @@ fn snapshot_metadata_detail_rows_content() {
 
 #[test]
 fn clicking_note_icon_requests_recording_details() {
-    // The note icon's click is the whole point of the feature: it must populate
-    // `metadata_request` with the file's metadata and identity for the app to
-    // open the details dialog. One file, so the NOTE glyph is unambiguous.
+    // Clicking the note icon must populate `metadata_request` with the file's
+    // metadata and identity. One file, so the NOTE glyph is unambiguous.
     let points = gt_test_utils::nav_test_data();
     let mut files = LoadedFiles::new();
     let file = gt_track_builder::build_loaded_file(
@@ -1224,12 +1222,10 @@ fn clicking_note_icon_requests_recording_details() {
     );
 }
 
-/// Render `show_side_panel` inside a resizable [`egui::Panel::left`] - the same
-/// container the real app uses (`src/app.rs`) - in a window wide enough that the
+/// Render `show_side_panel` inside a resizable [`egui::Panel::left`], the same
+/// container the real app uses (`src/app.rs`), in a window wide enough that the
 /// panel *could* grow, then return the panel's settled width. A resizable panel
-/// grows to fit any child that reports a width wider than the panel, so a file
-/// label that requests its full natural text width (the pre-fix behaviour) drags
-/// the whole panel wider.
+/// grows to fit any child that reports a width wider than the panel.
 fn settled_docked_panel_width(state: State) -> f32 {
     let width = std::rc::Rc::new(std::cell::Cell::new(-1.0_f32));
     let width_probe = std::rc::Rc::clone(&width);
@@ -1287,9 +1283,7 @@ fn settled_docked_panel_width(state: State) -> f32 {
 }
 
 /// A long recording name must not widen the side panel: the file label truncates
-/// at the available width instead of forcing the panel to grow (CHANGELOG 0.5.1).
-/// Before the `Button::selectable(..).truncate()` fix the label requested its full
-/// natural text width, so this same panel settled ~500px wider for the long name.
+/// at the available width (CHANGELOG 0.5.1).
 #[test]
 fn long_filename_does_not_widen_panel() {
     let short = settled_docked_panel_width(make_state(1));

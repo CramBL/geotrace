@@ -19,7 +19,7 @@ fn test_settings() -> StoredSegmentation {
     }
 }
 
-/// Test conveniences mapping the old single-recording API onto the per-track one.
+/// Single-track convenience wrappers over the per-track API.
 trait TestDbExt {
     /// Insert a recording with a single track spanning all nav points.
     fn insert_simple(
@@ -276,7 +276,7 @@ fn assert_size_snapshot(name: &str, baseline: u64, after: u64) {
 
 #[test_log::test]
 #[cfg(feature = "backend-sys")]
-fn repro_missing_version_error() {
+fn a_gtd_without_a_version_attribute_loads_with_the_default_version() {
     let dir = tempfile::tempdir().expect("temp dir");
     let db_path = dir.path().join("geotrace.h5");
     let mut db = Database::open_or_create(&db_path).expect("open_or_create");
@@ -316,7 +316,7 @@ fn repro_missing_version_error() {
 
     let loaded_bytes = db.load_bytes(&db_ref).expect("load_bytes");
 
-    // Inspect the file to see if it has the version attribute
+    // The stored file has no version attribute.
     let file = hdf5_pure::File::from_bytes(loaded_bytes.clone()).expect("parse loaded bytes");
     let version = file
         .root()
@@ -325,7 +325,7 @@ fn repro_missing_version_error() {
         .and_then(|a| a.get("geotrace_version").cloned());
     log::debug!("Version attribute after load_bytes: {:?}", version);
 
-    // Now try to parse with the SDK, which SHOULD trigger the error
+    // The SDK parses it anyway, defaulting the version to 1.
     let result = NavFile::read(&loaded_bytes[..]);
 
     assert!(
@@ -1923,9 +1923,9 @@ fn insert_two_track(db: &mut Database, identity: &str, start_us: i64, n: u64) ->
 }
 
 /// Exercises the whole API at scale: hundreds of recordings inserted, then
-/// listed, read back, partially hidden, batch-deleted, and re-opened. We do not
-/// trust that HDF5 keeps a large number of sibling groups consistent - we verify
-/// it end to end on whichever backend is active.
+/// listed, read back, partially hidden, batch-deleted, and re-opened. Verifies
+/// end to end that HDF5 keeps a large number of sibling groups consistent on
+/// whichever backend is active.
 #[test_log::test]
 fn many_recordings_support_list_read_hide_and_delete() {
     let dir = tempfile::tempdir().expect("temp dir");

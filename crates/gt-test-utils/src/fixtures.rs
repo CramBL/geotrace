@@ -236,10 +236,6 @@ pub fn nav_data_with_gap(first_count: usize, second_count: usize) -> Vec<NavPoin
     points
 }
 
-/// `count` GPS fixes starting at `start`, separated by `step_secs` each.
-///
-/// Points move slightly north-east (0.001°/step) to avoid zero-distance degenerate tracks.
-/// No satellite reports. Useful when tests need full control over timestamps.
 /// A [`gt_types::LoadedTrack`] over [`nav_points_from`]'s points: metadata
 /// time range and tpv count derived from the points, everything else
 /// default. The shared builder for tests that need a track with a stable
@@ -317,6 +313,10 @@ pub fn loaded_track_with_points(points: Vec<NavPoint>) -> gt_types::LoadedTrack 
     }
 }
 
+/// `count` GPS fixes starting at `start`, separated by `step_secs` each.
+///
+/// Points move slightly north-east (0.001°/step) to avoid zero-distance
+/// degenerate tracks. No satellite reports.
 pub fn nav_points_from(
     start: chrono::DateTime<chrono::Utc>,
     count: usize,

@@ -15,14 +15,13 @@ pub enum SkyPlotSize {
 }
 
 /// A subset of satellites to emphasize on the plot, driven by hovering the
-/// satellite tables next to it. Matching marks stay at full strength; the
-/// rest dim, so the highlighted subset stands out without the others
-/// vanishing.
+/// satellite tables next to it. Matching marks stay at full strength, the rest
+/// dim.
 ///
-/// A predicate over three independent axes rather than an enum of cases: the
-/// constellations to match (a [`ConstellationSet`], from one up to all), an
-/// optional specific [`Prn`], and whether to require the satellite to be in
-/// the fix. The constructors name the four ways the tables drive it.
+/// A predicate over three independent axes: the constellations to match (a
+/// [`ConstellationSet`]), an optional specific [`Prn`], and whether to require
+/// the satellite to be in the fix. The constructors name the four ways the
+/// tables drive it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SkyHighlight {
     constellations: ConstellationSet,
@@ -300,8 +299,6 @@ fn paint_marks(
         .partition(|(satellite, _)| satellite.in_fix());
     let marks: Vec<(Satellite, Pos2)> = tracked.into_iter().chain(fix).collect();
     for (satellite, position) in &marks {
-        // With a highlight active, marks outside the subset dim so the
-        // highlighted ones stand out without the rest disappearing.
         let dimmed = highlight.is_some_and(|h| !h.matches(satellite));
         let dim = |color: egui::Color32| {
             if dimmed {
@@ -493,8 +490,8 @@ mod snapshot_tests {
     ///
     /// Rendering two in one `Ui` also guards the tooltip grid's id. The grid
     /// keeps its column widths under that id, so a shared one leaves two
-    /// tooltips resizing to each other's measurements and repainting forever -
-    /// this test hangs out its step budget rather than merely looking wrong.
+    /// tooltips resizing to each other's measurements and repainting forever:
+    /// the test would exceed its step budget.
     #[test]
     fn sky_mark_tooltip() {
         let full = Satellite::new(

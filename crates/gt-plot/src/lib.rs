@@ -14,9 +14,7 @@ pub use plot_widget::{
 pub const DEFAULT_ELEVATION_MASK_DEG: f32 = 15.0;
 
 /// Default SNR drop, in dB-Hz between consecutive epochs, that counts as a
-/// loss-of-lock slip.  10 dB-Hz is the value in the slip-rate heuristic: a fall
-/// that steep over a single epoch signals a momentary loss of lock rather than
-/// ordinary signal variation.
+/// loss-of-lock slip.
 pub const DEFAULT_SNR_DROP_DB: f32 = 10.0;
 
 /// Default averaging window, in minutes, over which the slip rate is computed.
@@ -35,9 +33,6 @@ pub const CLOCK_EXCURSION_THRESHOLD_RANGE_S: std::ops::RangeInclusive<f32> = 1.0
 /// Tunable parameters for the derived satellite-analysis series (utilization
 /// rate and slip rate).  Threaded into series building so a change re-derives
 /// the affected mipmaps.
-///
-/// New parameterized analyses add their fields here rather than widening every
-/// build signature.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AnalysisConfig {
     /// Elevation mask applied to the "in view" baseline of the utilization rate

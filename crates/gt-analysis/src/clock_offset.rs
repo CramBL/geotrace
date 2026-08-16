@@ -5,7 +5,7 @@
 //! its first fix while the host stamps that fix on resume, which puts the whole
 //! gap into a single sample's offset.  That offset is real and stays in the
 //! data.  It is separated here so a plot can keep it off the shared y-axis and
-//! mark it explicitly instead of squashing every other metric flat.
+//! mark it explicitly.
 //!
 //! An offset that steps and stays is a clock discontinuity, not an excursion,
 //! and is deliberately not matched here.  The run-length cap keeps those level
@@ -130,9 +130,8 @@ pub fn detect_excursions(points: &[NavPoint], threshold_s: f32) -> Vec<ClockOffs
     push_run(&mut excursions, run, baseline_ms, max_run);
 
     // A median only stands for a baseline while most of the track agrees with
-    // it.  On a track split evenly between two levels it lands between them, and
-    // every run passes the per-run cap on its own - so check the total too,
-    // rather than calling the whole track an excursion and emptying the line.
+    // it.  On a track split evenly between two levels it lands between them and
+    // every run passes the per-run cap on its own, so check the total too.
     let flagged: usize = excursions.iter().map(|e| e.samples.len()).sum();
     if flagged * 2 > sample_count {
         return Vec::new();

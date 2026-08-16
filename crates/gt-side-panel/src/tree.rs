@@ -44,8 +44,8 @@ pub struct EventPathTree {
 impl EventPathTree {
     /// Sync the tree from the current set of marker variant paths.
     ///
-    /// New nodes are added as `On`; existing nodes preserve their state;
-    /// nodes that no longer appear are removed.
+    /// New nodes are added as `On`. Existing nodes keep their state. Nodes that
+    /// no longer appear are removed.
     pub fn sync_from_paths<'a>(&mut self, paths: impl Iterator<Item = &'a str>) {
         let mut all_prefixes: BTreeSet<String> = BTreeSet::new();
         for path in paths {
@@ -218,7 +218,7 @@ impl TreeState {
 
     /// Integrate newly loaded files while preserving state for existing nodes.
     ///
-    /// Appends `FileNode`/`TripNode` entries for any new data and rebuilds
+    /// Appends [`FileNode`]/[`TrackNode`] entries for any new data and rebuilds
     /// the event path trees.  Does not reset any check or expand state.
     pub fn sync_from_loaded_files(&mut self, files: &[LoadedFile]) {
         while self.files.len() < files.len() {
@@ -458,11 +458,9 @@ impl TreeState {
         self.rebuild_visibility();
     }
 
-    /// Show only the given tracks. Hide everything else. All listed tracks must
-    /// belong to the same file as each other (any file structure is fine, but
-    /// each `TrackRef` identifies a file+track pair). Tracks from files not
-    /// mentioned in `tracks` are hidden. Within a mentioned file, only the
-    /// listed tracks are shown.
+    /// Show only the given tracks, hiding everything else. Tracks from files not
+    /// mentioned in `tracks` are hidden. Within a mentioned file, only the listed
+    /// tracks are shown.
     pub fn show_only_tracks(&mut self, tracks: &[TrackRef]) {
         for (i, file_node) in self.files.iter_mut().enumerate() {
             let fi = FileIdx::new(i);

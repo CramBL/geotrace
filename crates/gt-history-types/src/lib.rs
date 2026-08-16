@@ -174,7 +174,7 @@ pub struct DatabaseRef {
 /// `gt-track-builder` runtime configuration types. `track_split_gap_us` is the
 /// track-layout setting that determines whether stored track ranges can be
 /// reused safely. The clock marker fields are the generated-marker settings
-/// that this history schema persisted when the tracks were written; newer
+/// that this history schema persisted when the tracks were written. Newer
 /// generated-marker settings are supplied by the app's current processing config
 /// when the recording is opened.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -194,9 +194,9 @@ pub fn track_columns(tracks: &[TrackRange]) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
 
 /// Reconstruct track ranges from the on-disk columns, validating consistency.
 ///
-/// Returns `None` when the columns are inconsistent - mismatched lengths or a
-/// `start > end` range - so the caller can treat the table as absent (and
-/// recompute tracks from the original) rather than using corrupt geometry.
+/// Returns `None` when the columns are inconsistent (mismatched lengths or a
+/// `start > end` range), so the caller can treat the table as absent and
+/// recompute tracks from the original.
 pub fn track_ranges_from_columns(
     starts: &[u64],
     ends: &[u64],
@@ -288,13 +288,8 @@ pub struct ChannelSummary {
 }
 
 impl ChannelSummary {
-    /// Order summaries by name.
-    ///
-    /// Both backends build their summaries in whatever order the file happens
-    /// to list the channel groups, and both owe the listing the by-name order
-    /// [`RecordingEntry::channels`] promises - the same order the SDK's reader
-    /// produces. Keeping the comparison here is what stops the two from
-    /// drifting apart.
+    /// Both backends must return channels in the by-name order
+    /// [`RecordingEntry::channels`] promises.
     pub fn sort_by_name(summaries: &mut [ChannelSummary]) {
         summaries.sort_by(|a, b| a.name.cmp(&b.name));
     }

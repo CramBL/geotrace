@@ -165,9 +165,8 @@ pub(crate) fn rename_identity(
         log::warn!("rename_identity: identity {old:?} not found");
         return Ok(());
     };
-    // Merge into an existing target - including a legacy raw-named group - rather
-    // than creating a second group for the same identity; only create when none
-    // exists.
+    // Merge into an existing target, including a legacy raw-named group. A new
+    // group is created only when none exists.
     let dst = match open_identity_group(&by_id, new) {
         Ok(existing) => existing,
         Err(_) => ensure_identity_group(&by_id, new)?,
@@ -626,8 +625,7 @@ pub(crate) fn insert_recording(
     let file = hdf5::File::open_rw(db_path)?;
 
     // Duplicate check: re-storing a recording already present returns its
-    // existing group unchanged (keeping its current track table), rather than
-    // writing a second copy.
+    // existing group unchanged, keeping its current track table.
     if let Ok(by_id) = file.group("by_identity") {
         for id_name in by_id.member_names()? {
             if let Ok(id_grp) = by_id.group(&id_name) {
@@ -649,14 +647,11 @@ pub(crate) fn insert_recording(
         }
     }
 
-    // Determine name, create group. A UUID makes the name collision-free even
-    // for recordings that start within the same second.
     let by_id = file.group("by_identity")?;
     let id_grp = ensure_identity_group(&by_id, identity)?;
     let group_name = make_group_name(meta.start_us, &uuid::Uuid::new_v4().to_string());
     let rec_grp = id_grp.create_group(&group_name)?;
 
-    // Record the database metadata and segmentation settings as attributes.
     write_meta_attrs(&rec_grp, identity, meta)?;
     write_segmentation_attrs(&rec_grp, settings)?;
 
@@ -672,7 +667,6 @@ pub(crate) fn insert_recording(
     copy_attrs(&gtd_file, &rec_grp, |_| true)?;
     copy_members(&gtd_file, &rec_grp)?;
 
-    // Store the computed track ranges in a DB-internal subgroup.
     write_track_table(&rec_grp, tracks)?;
 
     Ok(DatabaseRef {
@@ -862,10 +856,10 @@ fn write_meta_attrs(
 /// Faithfully copy every member object of `src` into `dst` using the HDF5
 /// object-copy primitive (`H5Ocopy`).
 ///
-/// Unlike a hand-rolled dataset copy, this preserves every member's datatype,
-/// shape, attributes, chunking, and compression for the whole subtree - and it
-/// copies across open files, so it works for both storing a GTD file into the
-/// database and extracting a recording back out.
+/// Preserves every member's datatype, shape, attributes, chunking and
+/// compression for the whole subtree. It copies across open files, so it works
+/// for both storing a GTD file into the database and extracting a recording back
+/// out.
 fn copy_members(src: &Group, dst: &Group) -> Result<(), InternalError> {
     for name in src.member_names()? {
         // Never copy DB-internal bookkeeping (the track table) as GTD data.
@@ -978,27 +972,17 @@ fn write_string_attr(group: &Group, name: &str, val: &str) -> Result<(), Interna
 
 /// The fixed-capacity ladder the string-attribute readers share: pick the
 /// smallest compile-time capacity that holds the on-disk size `$len`, then hand
-/// the concrete `$fixed<CAP>` type to the `$read` macro (which does the actual
-/// scalar or 1-D read).
+/// the concrete `$fixed<CAP>` type to the `$read` macro.
 ///
 /// libhdf5 converts between fixed string sizes but offers no fixed -> variable
-/// conversion path, so a fixed-length attribute (how the SDK writes the GTD root
-/// strings, and how [`write_string_attr`] writes ours) cannot be read straight
-/// into `VarLenUnicode` - it must be read into a fixed buffer at least as large
-/// as the on-disk capacity.
+/// conversion path, so a fixed-length attribute cannot be read straight into
+/// `VarLenUnicode`. It must be read into a fixed buffer at least as large as the
+/// on-disk capacity.
 ///
-/// Note this ladder keys off a different quantity than [`write_string_attr`]'s:
-/// the writer chooses its capacity from the string's *byte length*, while this
-/// reader chooses from the *on-disk capacity* `n` reported by the descriptor.
-/// The `<=` bounds here (against the `<` bounds there) make the reader land in
-/// the exact bucket the writer emitted, so our own attributes round-trip through
-/// the matching capacity. Having every reader go through this one ladder is what
-/// keeps them from drifting apart on that point.
-///
-/// `read_at_capacity!(scalar, FixedUnicode, *n)` expands to the ladder with
-/// `scalar!(FixedUnicode<64>)`, `scalar!(FixedUnicode<256>)` and so on in its
-/// branches - so the caller's `scalar!`/`rows!` macro decides *how* to read
-/// while this decides *at what capacity*.
+/// This ladder keys off the *on-disk capacity* `n` reported by the descriptor,
+/// while [`write_string_attr`] chooses its capacity from the string's *byte
+/// length*. The `<=` bounds here (against the `<` bounds there) make the reader
+/// land in the exact bucket the writer emitted.
 macro_rules! read_at_capacity {
     ($read:ident, $fixed:ident, $len:expr) => {{
         let len = $len;

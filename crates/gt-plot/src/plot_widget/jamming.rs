@@ -36,7 +36,8 @@ struct Counts {
     bad: u32,
 }
 
-/// The hovered fix's counts, phrased as the map's cell hover phrases them.
+/// The hovered fix's counts, formatted with the same `gt_jam::text::cell_summary`
+/// as the map's cell hover.
 pub(super) struct JammingHover {
     /// Track label, shown only when more than one track is visible.
     track: Option<String>,
@@ -133,8 +134,7 @@ pub(super) fn sync_jamming_cache(
 }
 
 /// Maximal stretches of consecutive valued points. A fix whose day is not
-/// archived has no value, and the line breaks rather than interpolating
-/// across it. Runs of one point draw nothing.
+/// archived has no value and breaks the line. Runs of one point draw nothing.
 fn jamming_runs(points: &[JammingPoint]) -> Vec<Vec<PlotPoint>> {
     let mut runs = Vec::new();
     let mut run: Vec<PlotPoint> = Vec::new();
@@ -196,7 +196,7 @@ pub(super) struct JammingTrack<'a> {
     pub(super) pointer: Option<egui::Pos2>,
 }
 
-/// Radius in pixels within which a fix claims the hover.
+/// Radius in pixels within which a fix is a hover target.
 const HOVER_RADIUS_PX: f32 = 12.0;
 
 /// Draw one track's interference line from its cache, and hit-test the

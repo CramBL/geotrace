@@ -76,10 +76,9 @@ pub struct MapHighlight {
     /// boundary, before it is actually near any data.
     pub plot_hover_snapped: bool,
     /// The sky-trails scrubber's current instant, cross-highlighted on the
-    /// track plot as a vertical time line so playback reads there the same way
-    /// hovering a track point does. `None` when the sky-trails window is not
-    /// driving a scrub. Set by that window and read one frame behind (it draws
-    /// after the plot), the same way [`Self::hover_match`] is.
+    /// track plot as a vertical time line. `None` when the sky-trails window is
+    /// not driving a scrub. Set by that window and read one frame behind (it
+    /// draws after the plot), the same way [`Self::hover_match`] is.
     pub scrub_time: Option<DateTime<Utc>>,
     /// When `true`, renderers must not draw their individual hover labels.
     ///
@@ -99,13 +98,9 @@ pub struct MapHighlight {
 }
 
 impl MapHighlight {
-    /// Pin `point_ref`'s popup, or unpin it when it is already the sticky
-    /// point, and report whether it ended up pinned - the caller places the
-    /// popup only for one that opened.
-    ///
-    /// Shared by every way of selecting a point (the map click, the
-    /// disambiguation popup, the side-panel and query-table rows) so they
-    /// cannot disagree on what a second click does.
+    /// Pin `point_ref`'s popup, or unpin it when it is already the sticky point.
+    /// Returns whether it ended up pinned: the caller places the popup only for
+    /// one that opened.
     pub fn toggle_sticky(&mut self, point_ref: DataPointRef) -> bool {
         let pinned = self.sticky != Some(point_ref);
         self.sticky = pinned.then_some(point_ref);
@@ -114,28 +109,20 @@ impl MapHighlight {
 
     /// [`Self::toggle_sticky`] for a point the map draws, and nothing at all for
     /// one it does not, reporting whether the popup ended up pinned.
-    ///
-    /// What every click site does with a point: the map's own click, the
-    /// disambiguation popup, the side-panel rows, the query-table rows. Pinning a
-    /// point the map withholds would open a popup describing something not on
-    /// screen.
     pub fn toggle_sticky_if_drawn(&mut self, scope: MapScope<'_>, point_ref: DataPointRef) -> bool {
         scope.draws(point_ref) && self.toggle_sticky(point_ref)
     }
 
     /// What the pinned popup does this frame, dropping a pin whose element is
-    /// gone.
-    ///
-    /// The one place that decides it, so the popup cannot outlive what the map
-    /// draws: the map asks it per frame, the headless tests ask it to assert.
+    /// gone. Called once per frame by the map, and by the headless tests.
     pub fn pin_this_frame(&mut self, scope: MapScope<'_>) -> Option<PinnedPopup> {
         let pinned = self.sticky?;
         let withheld = |reason| Some(PinnedPopup::Withheld { pinned, reason });
         match scope.point_visibility(pinned) {
             PointVisibility::Shown => Some(PinnedPopup::Drawn(pinned)),
-            // The element itself is gone - its file unloaded, or the array it
-            // indexed shrank - so the pin is dropped rather than left to rebind
-            // to whatever later occupies that index.
+            // The element itself is gone (its file unloaded, or the array it
+            // indexed shrank), so the pin is dropped before whatever later
+            // occupies that index can rebind it.
             PointVisibility::NoSuchElement => {
                 self.sticky = None;
                 None
@@ -156,7 +143,7 @@ pub enum PinnedPopup {
     Drawn(DataPointRef),
     /// The pin is remembered but shows nothing, because the map does not draw
     /// the point. Widening the filter or clearing the query brings the popup
-    /// back rather than costing the user their pin.
+    /// back.
     Withheld {
         pinned: DataPointRef,
         reason: PinWithheld,
@@ -167,8 +154,7 @@ pub enum PinnedPopup {
 /// still exists.
 ///
 /// [`PointVisibility`] also covers "drawn" and "no such element", which are not
-/// withholdings - one opens the popup, the other drops the pin - so they have no
-/// variant here.
+/// withholdings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PinWithheld {
     /// The file or track is off in the tree, or the track fails the filter.
@@ -215,9 +201,8 @@ mod tests {
         }
     }
 
-    /// Each way the map can stop drawing a pinned point, and what the pin does
-    /// about it: a point that still exists keeps its pin and shows nothing, one
-    /// that does not loses the pin entirely.
+    /// Each way the map can stop drawing a pinned point: a point that still
+    /// exists keeps its pin and shows nothing, one that does not loses the pin.
     #[rstest::rstest]
     #[case::drawn(|_: &mut ScopeFixture| {}, Some(PinnedPopup::Drawn(scope_fixture::point(1))))]
     #[case::hidden_by_query(
@@ -286,7 +271,6 @@ mod tests {
         assert_eq!(highlight.sticky, None);
     }
 
-    /// Nothing pinned, nothing to report.
     #[test]
     fn no_pin_reports_nothing() {
         let fixture = ScopeFixture::all_drawn();

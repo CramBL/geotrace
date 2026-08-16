@@ -40,12 +40,6 @@ pub(super) fn budget_cap(available_width: f32, visible_count: usize) -> usize {
 /// Sample target for one track: ~2 points per pixel of the track's *visible*
 /// width within the current view, capped by `cap` and floored at 2 (a single
 /// segment).
-///
-/// A track that occupies only a few pixels when zoomed out therefore hands only
-/// a few points to the plot.  Paired with the mipmap cascading down to 2 points
-/// (so a coarse-enough level actually exists), this is what keeps many short
-/// tracks cheap - the fixed per-track target it replaces always pulled hundreds
-/// of points per track regardless of on-screen size.
 pub(super) fn track_target(
     x_range: Option<(f64, f64)>,
     x_min: f64,
@@ -105,8 +99,7 @@ pub(super) struct TripLevelCache {
     slip_beidou: LevelSelection,
     slip_navic: LevelSelection,
     slip_qzss: LevelSelection,
-    /// One selection per channel component, mirroring the series' channel
-    /// structure (outer: channel, inner: component).
+    /// One selection per channel component (outer: channel, inner: component).
     pub(super) channels: Vec<Vec<LevelSelection>>,
 }
 
@@ -153,7 +146,7 @@ impl TripLevelCache {
 }
 
 impl crate::series::TrackSeries {
-    /// `None` for metrics with no mipmap, mirroring
+    /// `None` for metrics with no mipmap, matching
     /// [`TripLevelCache::level_for`].
     pub(super) fn mipmap_for(&self, kind: MetricKind) -> Option<&gt_egui_mipmap::MipMap> {
         Some(match kind {
@@ -264,7 +257,7 @@ mod tests {
         assert!(full <= cap);
 
         // A track occupying ~1% of the view (~10 px) hands over only a handful
-        // of points - the old fixed target pulled hundreds regardless.
+        // of points.
         let tiny = track_target(Some((0.0, 1.0)), 0.0, 100.0, width, cap);
         assert!(tiny >= 2);
         assert!(

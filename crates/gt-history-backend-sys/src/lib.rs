@@ -96,7 +96,7 @@ impl SysDb {
         }
         // Create with a persistent free-space manager so the space vacated by
         // deleting recordings is tracked across sessions and reused by later
-        // inserts, rather than left as permanent dead space in the file.
+        // inserts.
         let file = hdf5::File::with_options()
             .with_fcpl(|fcpl| {
                 fcpl.file_space_strategy(hdf5::file::FileSpaceStrategy::FreeSpaceManager {

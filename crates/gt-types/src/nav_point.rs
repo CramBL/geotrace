@@ -46,7 +46,6 @@ impl NavPoint {
         self.satellites.as_ref().map_or(0, |s| s.satellite_count())
     }
 
-    /// The point's [`FixQuality`] tier.
     pub fn fix_quality(&self) -> FixQuality {
         match &self.satellites {
             None => FixQuality::Unknown,
@@ -59,7 +58,7 @@ impl NavPoint {
     }
 
     /// Returns `true` when the point should be rendered as a ghost (hollow
-    /// chevron, dashed track edge) rather than a real fix.
+    /// chevron, dashed track edge).
     ///
     /// Two cases qualify:
     /// - No heading from the GPS receiver (position only, direction

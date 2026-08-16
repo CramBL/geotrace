@@ -2,9 +2,9 @@
 
 /// How a query's matches change what the map shows.
 ///
-/// The query language's `draw`/`keep`/`hide` stages select this; it is the
-/// one place the parsed language (`gt-query`) and the renderer (`gt-map`,
-/// via `gt-ui-types::QueryMatches`) agree on the vocabulary.
+/// The query language's `draw`/`keep`/`hide` stages select this. It is the one
+/// place the parsed language (`gt-query`) and the renderer (`gt-map`, via
+/// `gt-ui-types::QueryMatches`) agree on the vocabulary.
 #[derive(
     Debug,
     Clone,
@@ -24,17 +24,14 @@ pub enum DisplayMode {
     /// stage is written.
     #[default]
     Draw,
-    /// Show only matching points; non-matching points are hidden.
+    /// Show only matching points.
     Keep,
-    /// Hide matching points; the rest of the track stays.
+    /// Hide matching points, keeping the rest of the track.
     Hide,
 }
 
 impl DisplayMode {
-    /// Whether a point is shown, given whether it matched the query:
-    /// everything in `Draw`, only matches in `Keep`, everything but matches
-    /// in `Hide`. The shared definition of what `keep`/`hide` mean, so every
-    /// consumer (renderer, future exporters) agrees.
+    /// Whether a point is shown, given whether it matched the query.
     pub fn shows(self, matched: bool) -> bool {
         match self {
             DisplayMode::Draw => true,
@@ -58,7 +55,6 @@ mod tests {
 
     #[test]
     fn shows_maps_each_mode() {
-        // draw shows everything; keep shows matches; hide shows the rest.
         assert!(DisplayMode::Draw.shows(true) && DisplayMode::Draw.shows(false));
         assert!(DisplayMode::Keep.shows(true) && !DisplayMode::Keep.shows(false));
         assert!(!DisplayMode::Hide.shows(true) && DisplayMode::Hide.shows(false));

@@ -27,13 +27,10 @@ pub struct TimePositionVelocity {
     /// Host system-clock timestamp at the time of the fix.
     /// `None` when the host did not record a system timestamp.
     pub(crate) sys_time: Option<SysTime>,
-    /// Estimated horizontal position accuracy in metres, as reported by the GPS receiver.
-    /// `None` when the receiver did not report an accuracy estimate.
     pub(crate) eph_m: Option<f32>,
 }
 
 impl TimePositionVelocity {
-    /// GPS receiver clock timestamp for this fix.
     pub fn time(&self) -> GpsTime {
         self.time
     }
@@ -47,7 +44,6 @@ impl TimePositionVelocity {
         self.velocity
     }
 
-    /// Speed in km/h, or `None` if the fix has no velocity data.
     pub fn velocity_kmh(&self) -> Option<f64> {
         self.velocity.map(|v| v.get::<kilometer_per_hour>())
     }
@@ -72,8 +68,8 @@ impl TimePositionVelocity {
 impl From<&TimePositionVelocity> for Coord<f64> {
     fn from(tpv: &TimePositionVelocity) -> Self {
         Coord {
-            x: tpv.lon().as_degrees(), // X is Longitude
-            y: tpv.lat().as_degrees(), // Y is Latitude
+            x: tpv.lon().as_degrees(),
+            y: tpv.lat().as_degrees(),
         }
     }
 }

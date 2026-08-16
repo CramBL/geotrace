@@ -29,9 +29,8 @@ pub struct TrackVisibility {
 }
 
 impl TrackVisibility {
-    /// This track's tree toggle for the given element category - the
-    /// single mapping every renderer and count consults, so the flag a
-    /// category answers to cannot drift between consumers.
+    /// This track's tree toggle for the given element category, the single
+    /// mapping renderers and counts consult.
     pub fn category_visible(self, category: DataCategory) -> bool {
         self.categories.contains(category)
     }
@@ -187,10 +186,9 @@ impl PointVisibility {
 /// loaded recordings, the tree, the global filter, the display mask, and the last
 /// query's effect.
 ///
-/// The one derivation point for "is this element on the map". Hover and click
-/// hit-testing, the pinned popup, the point rows that create a pin, and the
-/// headless tests all ask it, so what draws cannot drift from what can be
-/// clicked or asserted.
+/// The one derivation point for "is this element on the map", consulted by hover
+/// and click hit-testing, the pinned popup, the point rows that create a pin,
+/// and the headless tests.
 #[derive(Clone, Copy)]
 pub struct MapScope<'a> {
     pub files: &'a [LoadedFile],

@@ -1,7 +1,7 @@
 //! Satellite utilization rate: the share of in-view satellites (above an
 //! elevation mask) that the receiver actually used in the fix, combined and per
 //! constellation, plus the satellites it used *below* the mask (surfaced as
-//! anomalies rather than silently lowering the rate).
+//! anomalies).
 
 use gt_types::nav_point::NavPoint;
 use gt_types::satellites::{Constellation, Prn, Satellite, Satellites};
@@ -48,9 +48,9 @@ pub fn in_fix_above_mask(
 /// Satellites in the fix yet below the elevation mask - used by the receiver but
 /// excluded from the utilization rate by the mask.
 ///
-/// Surfaced as plot anomaly markers so this exclusion stays visible rather than
-/// silently lowering the rate.  Satellites without a reported elevation are not
-/// included (their elevation can be neither shown nor compared against the mask).
+/// Surfaced as plot anomaly markers so this exclusion stays visible.  Satellites
+/// without a reported elevation are not included (their elevation can be neither
+/// shown nor compared against the mask).
 pub fn masked_out_in_fix(sats: &Satellites, mask_deg: f32) -> impl Iterator<Item = &Satellite> {
     sats.satellites()
         .filter(move |s| s.in_fix() && s.elevation().is_some_and(|e| e < mask_deg))

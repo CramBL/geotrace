@@ -36,12 +36,10 @@ impl ThemedColor {
         if dark_mode { self.dark } else { self.light }
     }
 
-    /// The dark-surface variant.
     pub const fn dark(self) -> Color32 {
         self.dark
     }
 
-    /// The light-surface variant.
     pub const fn light(self) -> Color32 {
         self.light
     }
@@ -306,10 +304,9 @@ pub const FIX_QUALITY_RED: ThemedColor =
 /// Confidence tier for a satellite count shown in the point badge: more
 /// satellites contributing reads as higher confidence, on a green → red scale.
 ///
-/// The tier is a semantic step, decoupled from both the count thresholds
-/// (see [`fix_count_tier`] / [`seen_count_tier`]) and the concrete hues (see
-/// [`SatCountTier::themed_color`]), so neither can drift into hard-coded
-/// colours at the call site.
+/// The tier is a semantic step, decoupled from both the count thresholds (see
+/// [`fix_count_tier`] / [`seen_count_tier`]) and the concrete hues (see
+/// [`SatCountTier::themed_color`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter, strum::EnumCount)]
 pub enum SatCountTier {
     /// Plenty of satellites: a healthy fix.
@@ -525,7 +522,7 @@ pub const fn query_syntax_comment(dark_mode: bool) -> Color32 {
 /// iteration.
 pub const fn metric_themed_color(kind: gt_types::MetricKind) -> ThemedColor {
     use gt_types::MetricKind as M;
-    // Hue names describe the dark variant; the light variant is the same hue
+    // Hue names describe the dark variant. The light variant is the same hue
     // deepened for the light canvas. (dark, light):
     let (dark, light) = match kind {
         M::SatsSeen => ((80, 200, 255), (52, 131, 168)), // powder blue
@@ -579,9 +576,9 @@ pub const fn metric_color(kind: gt_types::MetricKind, dark_mode: bool) -> Color3
     metric_themed_color(kind).resolve(dark_mode)
 }
 
-/// The plot canvas fill on a light theme: a faint grey rather than pure white,
-/// so the deepened light-variant series lines (see [`metric_themed_color`])
-/// keep a little separation from the background.
+/// The plot canvas fill on a light theme: a faint grey that keeps the deepened
+/// light-variant series lines (see [`metric_themed_color`]) separated from the
+/// background.
 pub const PLOT_CANVAS_LIGHT: Color32 = Color32::from_gray(232);
 
 /// Colors used for log-entry markers, cycling over the marker's log index.

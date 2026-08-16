@@ -76,9 +76,8 @@ impl Snr {
 /// then GLONASS, Galileo, BeiDou, NavIC, QZSS), used to group satellites by
 /// constellation in tables.
 ///
-/// Serialized by name (`"gps"`, `"glonass"`, ...) rather than by index, so a
-/// persisted list stays readable and survives variants being added or
-/// reordered. The wire names are pinned by `constellation_wire_names_are_stable`.
+/// Serialized by name (`"gps"`, `"glonass"`, ...), pinned by
+/// `constellation_wire_names_are_stable`.
 #[derive(
     Debug,
     Clone,
@@ -112,11 +111,8 @@ pub enum Constellation {
 impl Constellation {
     /// Canonical human-readable name, e.g. `Constellation::Beidou.display_name() == "BeiDou"`.
     ///
-    /// Single source of truth for this type's display spelling - call sites
-    /// (e.g. `gt-map`'s satellite panel) should format through this rather than
-    /// re-typing the name. Mirrors `geotrace_sdk::Constellation::display_name`,
-    /// which answers the same spelling question for the structurally-identical
-    /// SDK/wire-format type. Keep the two in sync.
+    /// Matches `geotrace_sdk::Constellation::display_name` for the
+    /// structurally-identical SDK/wire-format type. Keep the two in sync.
     pub fn display_name(self) -> &'static str {
         match self {
             Constellation::Gps => "GPS",
@@ -143,9 +139,8 @@ impl Constellation {
 }
 
 crate::enum_bitset! {
-    /// A set of GNSS constellations, one bit each - cheap to pass and combine
-    /// where a `HashSet` would allocate. Used to describe "which constellations"
-    /// a query covers, from a single one up to all of them.
+    /// A set of GNSS constellations, one bit each, e.g. which constellations a
+    /// query covers.
     pub struct ConstellationSet(u8) for Constellation;
 }
 
@@ -261,9 +256,8 @@ pub struct Slip {
 
 /// All satellites that slipped at one epoch (one satellite report).
 ///
-/// Slips detected at the same epoch are grouped into a single event so the map
-/// shows one marker per epoch listing every affected satellite, rather than a
-/// stack of overlapping markers.
+/// Slips detected at the same epoch are grouped into one event, so the map shows
+/// one marker per epoch listing every affected satellite.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SlipEvent {
     pub slips: Vec<Slip>,
@@ -320,9 +314,7 @@ impl Satellites {
             .or_else(|| self.sys_time.map(SysTime::utc))
     }
 
-    /// `true` when this report carries a GPS receiver clock timestamp.
-    ///
-    /// When `false` the report was timestamped by the host system clock only.
+    /// `true` when this report has a GPS receiver clock timestamp.
     pub fn time_from_gps(&self) -> bool {
         self.gps_time.is_some()
     }
@@ -337,17 +329,14 @@ impl Satellites {
         self.satellite_count
     }
 
-    /// All currently tracked satellites.
     pub fn satellites(&self) -> impl Iterator<Item = &Satellite> {
         self.satellites.iter()
     }
 
-    /// Satellites that are actively contributing to the current positional fix.
     pub fn satellites_with_fix(&self) -> impl Iterator<Item = &Satellite> {
         self.satellites.iter().filter(|s| s.in_fix)
     }
 
-    /// Tracked satellites belonging to a specific GNSS constellation.
     pub fn by_constellation(
         &self,
         constellation: Constellation,
@@ -381,7 +370,6 @@ impl Satellites {
         self.fix_count as usize
     }
 
-    /// Checks if a specific satellite is currently contributing to the positional fix.
     pub fn is_in_fix(&self, constellation: Constellation, prn: Prn) -> bool {
         self.satellites
             .iter()
@@ -422,8 +410,7 @@ mod constellation_tests {
         }
     }
 
-    /// Single source of truth for constellation display spelling. Pin it down
-    /// so a future edit has to change it here. Keep in sync with
+    /// Pins the canonical constellation display spelling. Keep in sync with
     /// `geotrace_sdk::Constellation::display_name`'s identical assertions.
     #[test]
     fn display_name_is_canonical_spelling() {
@@ -514,7 +501,7 @@ mod constellation_tests {
         for (cause, label) in expected {
             assert_eq!(cause.label(), label);
         }
-        // Distinct labels, so no two causes collide.
+        // Every cause has a non-empty label.
         assert!(
             SlipCause::iter()
                 .map(SlipCause::label)

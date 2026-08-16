@@ -54,7 +54,7 @@ const HOVER_LABEL_TOOLTIP_GAP: f32 = 12.0;
 /// Add all metric lines for one track to the plot using pre-computed level selections.
 ///
 /// When `hovered_chip` is `Some(kind)`, that metric is highlighted (double stroke
-/// width) and every other line is dimmed to 20 % brightness - mirroring the
+/// width) and every other line is dimmed to 20 % brightness, matching the
 /// standard egui-plot legend hover behaviour.
 ///
 /// The `'a` lifetime ties both `plot_ui` and `series` together so that
@@ -120,8 +120,8 @@ pub(super) fn add_series_lines<'a>(
         let is_hovered = hovered_chip == Some(&HoveredChip::Metric(kind));
         let (color, highlighted) =
             hover_treatment(metric_line_color(kind, series.fi, dark_mode), is_hovered);
-        // Snap error has no mipmap; it draws from the external per-run
-        // series right after this loop.
+        // Snap error has no mipmap. It draws from the external per-run series
+        // right after this loop.
         let (Some(mipmap), Some(level)) = (series.mipmap_for(kind), cache.level_for(kind)) else {
             continue;
         };
@@ -268,8 +268,8 @@ impl<T> Default for NearestCandidate<T> {
 }
 
 impl<T> NearestCandidate<T> {
-    /// The losers never pay for their text formatting: `candidate` is built
-    /// only when it beats what is already held.
+    /// `candidate` is built only when `distance_px` is closer than the held
+    /// candidate.
     pub(super) fn offer(&mut self, distance_px: f32, candidate: impl FnOnce() -> T) {
         if self
             .closest
@@ -289,16 +289,13 @@ impl<T> NearestCandidate<T> {
     }
 }
 
-/// One slot the custom hover labels of every series and every recording
-/// compete for: they all anchor at the pointer, where a second one would draw
-/// on top of the first.
+/// One shared slot for the custom hover labels of every series and every
+/// recording: they all anchor at the pointer, so only the closest one draws.
 pub(super) type NearestHoverLabel = NearestCandidate<PlotHoverLabel>;
 
-/// Surface the closest custom hover label - the masked-out satellites of an
-/// anomaly marker, an unsnapped point's rejection, an interference fix's
-/// counts, or a clock excursion's real offset - as a tooltip anchored at the
-/// pointer. This is the only label at the cursor: egui_plot's cursor label
-/// stands down for the frame a candidate is offered.
+/// Surface the closest custom hover label as a tooltip anchored at the pointer.
+/// This is the only label at the cursor: egui_plot's cursor label is suppressed
+/// for the frame a candidate is offered.
 pub(super) fn show_nearest_hover_label(
     ui: &egui::Ui,
     response: &egui::Response,
@@ -427,9 +424,6 @@ pub(super) fn add_util_anomalies<'a>(
     nearest: &mut NearestHoverLabel,
     dark_mode: bool,
 ) {
-    // Anomalies are stored in ascending epoch order, so clip to the visible
-    // sub-range: draw and hover-test only what is on screen rather than the
-    // whole track's anomaly list every frame.
     let visible = visible_by_x(
         &series.util_anomalies,
         |a| a.t,
@@ -488,8 +482,6 @@ mod tests {
         assert_eq!(NearestCandidate::<&str>::default().take(), None);
     }
 
-    /// A candidate that cannot win never builds its payload, so a label's
-    /// text formatting costs nothing until it is the one that draws.
     #[test]
     fn a_losing_candidate_is_never_built() {
         let builds = std::cell::Cell::new(0_u32);

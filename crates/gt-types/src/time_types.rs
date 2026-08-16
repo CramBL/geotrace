@@ -39,10 +39,6 @@ impl GpsTime {
         Self(dt)
     }
 
-    /// Return the inner `DateTime<Utc>`.
-    ///
-    /// Use this when you need a plain UTC value for display, serialisation, or
-    /// comparison with non-domain-typed values (e.g. filter bounds).
     #[inline]
     pub fn utc(self) -> DateTime<Utc> {
         self.0
@@ -70,9 +66,8 @@ impl GpsTime {
     }
 }
 
-/// A start/end span in the GPS-time domain. Named so `start`/`end` are
-/// self-documenting and a swapped pair is a compile error, the same reason
-/// [`TimeRange`](crate::TimeRange) exists for wall-clock times.
+/// A start/end span in the GPS-time domain, the GPS-clock counterpart of
+/// [`TimeRange`](crate::TimeRange).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GpsTimeRange {
     pub start: GpsTime,
@@ -85,7 +80,6 @@ impl GpsTimeRange {
     }
 }
 
-/// `GpsTime − GpsTime → Duration` (same clock domain, always valid).
 impl Sub<GpsTime> for GpsTime {
     type Output = Duration;
 
@@ -115,7 +109,6 @@ impl SysTime {
         Self(dt)
     }
 
-    /// Return the inner `DateTime<Utc>`.
     #[inline]
     pub fn utc(self) -> DateTime<Utc> {
         self.0
@@ -128,7 +121,6 @@ impl SysTime {
     }
 }
 
-/// `SysTime − SysTime → Duration` (same clock domain, always valid).
 impl Sub<SysTime> for SysTime {
     type Output = Duration;
 

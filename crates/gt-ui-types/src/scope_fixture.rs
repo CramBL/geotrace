@@ -70,8 +70,8 @@ pub fn point(index: usize) -> DataPointRef {
     }
 }
 
-/// The owned pieces a [`MapScope`] borrows, so a test can withhold a point in
-/// each of the ways the map can and then ask the real rule what it does.
+/// The owned pieces a [`MapScope`] borrows, letting a test withhold a point in
+/// each of the ways the map can and evaluate the real visibility rule.
 pub struct ScopeFixture {
     pub files: Vec<LoadedFile>,
     pub visibility: TrackDataVisibility,

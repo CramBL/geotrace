@@ -32,10 +32,9 @@ use egui_plot::PlotPoint;
 
 /// Smallest mipmap level the cascade builds down to: two points, i.e. a single
 /// line segment.  Driving the cascade all the way down lets a track that only
-/// occupies a few screen pixels be drawn with a handful of points instead of
-/// its full resolution - the key to keeping many short tracks cheap when zoomed
-/// out.  (A 2-point level downsamples to itself, so [`MipMap::build`] also stops
-/// when a level stops shrinking.)
+/// occupies a few screen pixels be drawn with a handful of points.  (A 2-point
+/// level downsamples to itself, so [`MipMap::build`] also stops when a level
+/// stops shrinking.)
 const MIN_LEVEL_POINTS: usize = 2;
 
 /// Number of input points grouped into one output pair (min + max) at each
@@ -299,13 +298,12 @@ mod tests {
 
     #[test]
     fn moderate_data_downsamples_to_coarse_levels() {
-        // 50 points used to stay a single level under the old 200-point floor.
-        // The cascade now continues down so a short track that occupies only a
-        // few pixels when zoomed out can be drawn with a handful of points.
+        // The cascade continues down so a short track that occupies only a few
+        // pixels when zoomed out can be drawn with a handful of points.
         let m = MipMap::build(seq(50));
         assert!(
             m.level_count() > 1,
-            "moderate input should now produce coarse levels"
+            "moderate input should produce coarse levels"
         );
         let coarsest = m.levels.last().expect("at least one level");
         assert!(

@@ -25,9 +25,8 @@ impl SnappedTracks {
 /// it was matched to.
 #[derive(Debug, Clone, Default)]
 pub struct SnappedTrackGeometry {
-    /// Polyline segments in normalized Mercator. Breaks between segments
-    /// render as gaps - route discontinuities and unsnapped runs; the
-    /// recorded track underneath is never painted over or hidden.
+    /// Polyline segments in normalized Mercator. Breaks between segments render
+    /// as gaps: route discontinuities and unsnapped runs.
     pub segments: Vec<SnappedSegment>,
     /// Hover rows referenced by the segments' edge spans.
     pub edges: Vec<SnappedEdgeInfo>,
