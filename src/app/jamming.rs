@@ -17,12 +17,11 @@ use std::time::{Duration, Instant};
 use chrono::{NaiveDate, Utc};
 use egui::Context;
 
+use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
 use gt_jam::calendar::{self, DayOutlook};
 use gt_jam::dataset::JamDataset;
 use gt_jam::day_selection::{DaySelection, EmptyReason};
-use gt_jam::transport::{
-    self, Connection, FetchOutcome, REQUEST_INTERVAL, Transport, TransportSource,
-};
+use gt_jam::transport::{self, FetchOutcome, REQUEST_INTERVAL};
 use gt_jam::wire::{self, ParseWarningReporter};
 use gt_query_run::JammingValues;
 use gt_store::JamStore;
@@ -571,7 +570,7 @@ impl JammingScheduler {
         if let Some(http) = self.http.as_ref() {
             return Arc::clone(http);
         }
-        match self.transport_source.connect() {
+        match self.transport_source.connect(None) {
             Ok(connection) => {
                 let http = Arc::new(connection);
                 self.http = Some(Arc::clone(&http));
@@ -579,7 +578,7 @@ impl JammingScheduler {
             }
             Err(err) => {
                 log::error!("Interference transport unavailable: {err}");
-                Arc::new(Connection::Offline(gt_jam::transport::OfflineTransport))
+                Arc::new(Connection::Offline(OfflineTransport))
             }
         }
     }
@@ -672,8 +671,8 @@ mod tests {
     use rstest::rstest;
     use tempfile::TempDir;
 
+    use gt_fetch::{HttpRequest, HttpResponse, TransportError};
     use gt_jam::DEFAULT_BASE_URL;
-    use gt_jam::transport::{HttpResponse, TransportError};
 
     use super::*;
 
@@ -723,7 +722,7 @@ mod tests {
     }
 
     impl Transport for CannedTransport {
-        fn get(&self, _url: &str) -> Result<HttpResponse, TransportError> {
+        fn send(&self, _request: &HttpRequest) -> Result<HttpResponse, TransportError> {
             Ok(HttpResponse {
                 status: self.status,
                 body: self.body.clone(),

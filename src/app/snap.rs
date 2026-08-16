@@ -33,11 +33,11 @@ use std::thread;
 
 use egui::Context;
 
+use gt_fetch::{Connection, TransportSource};
 use gt_snap::request_plan::{self, RequestPlan, SnapParams};
 use gt_snap::stitch::{self, SnapResult, SnapWarning, SnapWarningReporter};
-use gt_snap::transport::{Connection, TransportSource};
 use gt_snap::wire::{Costing, SpeedLimit};
-use gt_snap::{DEFAULT_SERVER_URL, server_host, transport};
+use gt_snap::{DEFAULT_SERVER_URL, REQUEST_INTERVAL, server_host, transport};
 use gt_types::mercator::{self};
 use gt_types::{Latitude, LoadedTrack, Longitude, TrackRef, TravelMode};
 use gt_ui_types::{
@@ -714,7 +714,13 @@ impl SnapScheduler {
                 total_chunks: pending.plan.chunks.len(),
             },
         );
-        spawn_run(self.ctx.clone(), self.tx.clone(), transport, pending);
+        spawn_run(
+            self.ctx.clone(),
+            self.tx.clone(),
+            transport,
+            self.server_url.clone(),
+            pending,
+        );
     }
 
     fn transport(&mut self) -> Result<Arc<Connection>, String> {
@@ -723,7 +729,7 @@ impl SnapScheduler {
         }
         let http = self
             .transport_source
-            .connect(&self.server_url)
+            .connect(Some(REQUEST_INTERVAL))
             .map(Arc::new)
             .map_err(|err| format!("{err:#}"))?;
         self.http = Some(Arc::clone(&http));
@@ -759,6 +765,7 @@ fn spawn_run(
     ctx: Context,
     tx: mpsc::Sender<SnapMessage>,
     transport: Arc<Connection>,
+    server_url: String,
     pending: PendingRun,
 ) {
     let PendingRun {
@@ -780,6 +787,7 @@ fn spawn_run(
             let progress_ctx = ctx.clone();
             let outcomes = transport::send_plan(
                 transport.as_ref(),
+                &server_url,
                 &plan,
                 &params,
                 move |completed_chunks, total_chunks| {
@@ -1008,10 +1016,7 @@ mod tests {
     #[test]
     fn changing_the_server_url_drops_the_cached_transport() {
         let mut scheduler = scheduler();
-        scheduler.http = TransportSource::Offline
-            .connect(DEFAULT_SERVER_URL)
-            .map(Arc::new)
-            .ok();
+        scheduler.http = TransportSource::Offline.connect(None).map(Arc::new).ok();
         assert!(scheduler.http.is_some());
 
         // Same URL: the shared transport (and its request pacing) is kept.

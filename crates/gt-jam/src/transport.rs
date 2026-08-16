@@ -1,9 +1,8 @@
 //! Fetch one day's dataset and classify what the host answered.
 //!
-//! [`Transport`] is the seam between the fetch pipeline and the network.
-//! Which one is in use is the application's choice, made once at startup and
-//! supplied as a [`TransportSource`]. Nothing here reads the process
-//! environment.
+//! [`gt_fetch::Transport`] sends requests over the network. `classify` below
+//! maps an [`gt_fetch::HttpResponse`] to a [`FetchOutcome`] for one
+//! interference day.
 //!
 //! A 404 is [`FetchOutcome::Missing`], not a failure. Whether that means
 //! "not published yet" or a gap in the record is
@@ -13,88 +12,17 @@ use std::time::Duration;
 
 use chrono::NaiveDate;
 
-/// Retries per fetch, for transient failures only.
-const RETRIES: usize = 1;
+use gt_fetch::{Classified, HttpRequest, HttpResponse, Transport};
 
-/// Timeout per request. A day is about 300 KiB gzipped.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Minimum gap between requests to the same host.
+/// Minimum gap between requests to the same host, left to the fetch worker
+/// to enforce between days.
 ///
-/// The datasets are static files on someone else's server, and a backfill
+/// The datasets are static files on a third-party server, and a backfill
 /// walks hundreds of them.
 pub const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
 
-/// Sent so the host can attribute the traffic.
-pub const CLIENT_ID_HEADER: (&str, &str) = ("X-Client-Id", "geotrace");
-
+/// HTTP status for a day the host has no file for.
 const HTTP_NOT_FOUND: u16 = 404;
-
-/// One HTTP response: what classification needs from it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HttpResponse {
-    pub status: u16,
-    /// Decoded body. The host gzip-encodes regardless of `Accept-Encoding`,
-    /// so a transport that does not decode returns compressed bytes here.
-    pub body: String,
-}
-
-/// A failure below the HTTP layer (connection, timeout, TLS, ...).
-#[derive(Debug, thiserror::Error)]
-#[error("request failed: {detail}")]
-pub struct TransportError {
-    pub detail: String,
-}
-
-/// The seam between the fetch pipeline and the network.
-pub trait Transport {
-    fn get(&self, url: &str) -> Result<HttpResponse, TransportError>;
-}
-
-/// Fails every request with [`gt_types::env::OFFLINE_DETAIL`].
-#[derive(Debug, Clone, Copy, Default)]
-pub struct OfflineTransport;
-
-impl Transport for OfflineTransport {
-    fn get(&self, _url: &str) -> Result<HttpResponse, TransportError> {
-        Err(TransportError {
-            detail: gt_types::env::OFFLINE_DETAIL.to_owned(),
-        })
-    }
-}
-
-/// The transport in use, picked by [`TransportSource`].
-pub enum Connection {
-    Http(HttpTransport),
-    Offline(OfflineTransport),
-}
-
-impl Transport for Connection {
-    fn get(&self, url: &str) -> Result<HttpResponse, TransportError> {
-        match self {
-            Self::Http(transport) => transport.get(url),
-            Self::Offline(transport) => transport.get(url),
-        }
-    }
-}
-
-/// Which transport the application runs with, decided once at startup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransportSource {
-    Network,
-    Offline,
-}
-
-impl TransportSource {
-    /// Open a transport. A changed host gets its own connection pool, so
-    /// this is called again whenever the host changes.
-    pub fn connect(self) -> Result<Connection, TransportError> {
-        match self {
-            Self::Network => Ok(Connection::Http(HttpTransport::new()?)),
-            Self::Offline => Ok(Connection::Offline(OfflineTransport)),
-        }
-    }
-}
 
 /// What one fetch produced.
 #[derive(Debug, Clone, PartialEq, Eq, strum::EnumCount, strum::IntoStaticStr)]
@@ -109,84 +37,33 @@ pub enum FetchOutcome {
     Failed(String),
 }
 
-/// Blocking transport over reqwest, with transparent gzip decoding.
-pub struct HttpTransport {
-    client: reqwest::blocking::Client,
-}
-
-impl HttpTransport {
-    pub fn new() -> Result<Self, TransportError> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .build()
-            .map_err(|err| TransportError {
-                detail: format!("{err:#}"),
-            })?;
-        Ok(Self { client })
-    }
-}
-
-impl Transport for HttpTransport {
-    fn get(&self, url: &str) -> Result<HttpResponse, TransportError> {
-        let (header_name, header_value) = CLIENT_ID_HEADER;
-        let response = self
-            .client
-            .get(url)
-            .header(header_name, header_value)
-            .send()
-            .map_err(|err| TransportError {
-                detail: format!("{err:#}"),
-            })?;
-        let status = response.status().as_u16();
-        let body = response.text().map_err(|err| TransportError {
-            detail: format!("{err:#}"),
-        })?;
-        Ok(HttpResponse { status, body })
-    }
-}
-
 /// Fetch `day` from `base_url`, retrying transient failures once.
 pub fn fetch_day(transport: &impl Transport, base_url: &str, day: NaiveDate) -> FetchOutcome {
-    let url = crate::dataset_url(base_url, day);
-
-    let mut last_failure = String::new();
-    for _ in 0..=RETRIES {
-        match transport.get(&url) {
-            Ok(response) => match classify(response) {
-                Classified::Outcome(outcome) => return outcome,
-                Classified::Transient(detail) => last_failure = detail,
-            },
-            Err(err) => last_failure = format!("{err:#}"),
-        }
-    }
-    FetchOutcome::Failed(last_failure)
-}
-
-/// A classified response: a final outcome, or a transient failure worth one
-/// retry.
-enum Classified {
-    Outcome(FetchOutcome),
-    Transient(String),
+    let request = HttpRequest::get(crate::dataset_url(base_url, day));
+    gt_fetch::send_classified(transport, &request, classify, FetchOutcome::Failed)
 }
 
 /// A 5xx is retried once. A 4xx is deterministic and is not.
-fn classify(response: HttpResponse) -> Classified {
-    let HttpResponse { status, body } = response;
-    let Ok(code) = reqwest::StatusCode::from_u16(status) else {
+fn classify(response: HttpResponse) -> Classified<FetchOutcome> {
+    if !response.status_is_valid() {
         return Classified::Outcome(FetchOutcome::Failed(format!(
-            "invalid HTTP status {status}"
+            "invalid HTTP status {}",
+            response.status
         )));
-    };
-    if code.is_success() {
-        return Classified::Outcome(FetchOutcome::Served(body));
     }
-    if status == HTTP_NOT_FOUND {
+    if response.is_success() {
+        return Classified::Outcome(FetchOutcome::Served(response.body));
+    }
+    if response.status == HTTP_NOT_FOUND {
         return Classified::Outcome(FetchOutcome::Missing);
     }
-    if code.is_server_error() {
-        return Classified::Transient(format!("HTTP {code}"));
+    if response.is_server_error() {
+        return Classified::Transient(format!("HTTP {}", response.status_line()));
     }
-    Classified::Outcome(FetchOutcome::Failed(format!("HTTP {code}")))
+    Classified::Outcome(FetchOutcome::Failed(format!(
+        "HTTP {}",
+        response.status_line()
+    )))
 }
 
 #[cfg(test)]
@@ -196,6 +73,8 @@ mod tests {
 
     use rstest::rstest;
     use strum::EnumCount as _;
+
+    use gt_fetch::{TransportError, TransportSource};
 
     use super::*;
     use crate::DEFAULT_BASE_URL;
@@ -238,8 +117,8 @@ mod tests {
     }
 
     impl Transport for CannedTransport {
-        fn get(&self, url: &str) -> Result<HttpResponse, TransportError> {
-            self.urls.borrow_mut().push(url.to_owned());
+        fn send(&self, request: &HttpRequest) -> Result<HttpResponse, TransportError> {
+            self.urls.borrow_mut().push(request.url().to_owned());
             let mut script = self.script.borrow_mut();
             if script.is_empty() {
                 return transport_error("the test under-declared its requests");
@@ -330,28 +209,15 @@ mod tests {
         );
     }
 
-    /// The offline source connects. Every send fails.
-    #[test]
-    fn the_offline_source_refuses_every_request() {
-        let transport = TransportSource::Offline
-            .connect()
-            .expect("the offline source connects");
-        let err = transport
-            .get("https://example.invalid/day.csv")
-            .expect_err("offline transport refuses");
-        assert!(err.detail.contains(gt_types::env::OFFLINE_DETAIL));
-    }
-
     /// An offline fetch is a failure, not a missing day: the host was never
     /// asked, so nothing is known about whether it has the dataset.
     #[test]
     fn an_offline_fetch_is_a_failure_not_a_missing_day() {
         let transport = TransportSource::Offline
-            .connect()
+            .connect(None)
             .expect("the offline source connects");
-        let day = NaiveDate::from_ymd_opt(2026, 7, 20).expect("date");
         assert!(matches!(
-            fetch_day(&transport, crate::DEFAULT_BASE_URL, day),
+            fetch_day(&transport, DEFAULT_BASE_URL, day()),
             FetchOutcome::Failed(_)
         ));
     }

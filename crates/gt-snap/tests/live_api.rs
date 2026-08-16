@@ -14,11 +14,11 @@ mod support;
 
 use support::base_time;
 
-use gt_snap::DEFAULT_SERVER_URL;
+use gt_fetch::HttpTransport;
 use gt_snap::request_plan::{self, SnapParams};
 use gt_snap::stitch::{self, ChunkOutcome, SnapWarningReporter};
-use gt_snap::transport::{self, HttpTransport};
 use gt_snap::wire::Costing;
+use gt_snap::{DEFAULT_SERVER_URL, REQUEST_INTERVAL, transport};
 use gt_types::nav_point::NavPoint;
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
@@ -57,9 +57,10 @@ fn full_pipeline_against_live_server() {
     let plan = request_plan::plan(&points);
     assert_eq!(plan.chunks.len(), 1);
 
-    let transport = HttpTransport::new(DEFAULT_SERVER_URL).expect("transport builds");
+    let transport = HttpTransport::new(Some(REQUEST_INTERVAL)).expect("transport builds");
     let outcomes = transport::send_plan(
         &transport,
+        DEFAULT_SERVER_URL,
         &plan,
         &SnapParams::new(Costing::Auto),
         |_, _| {},

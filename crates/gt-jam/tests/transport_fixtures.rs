@@ -10,7 +10,8 @@ use std::cell::RefCell;
 
 use serde_json::Value;
 
-use gt_jam::transport::{self, FetchOutcome, HttpResponse, Transport, TransportError};
+use gt_fetch::{HttpRequest, HttpResponse, Transport, TransportError};
+use gt_jam::transport::{self, FetchOutcome};
 use gt_jam::wire::{self, ParseWarningReporter};
 use gt_jam::{DEFAULT_BASE_URL, dataset_url, parse_day};
 
@@ -34,8 +35,8 @@ impl FixtureTransport {
 }
 
 impl Transport for FixtureTransport {
-    fn get(&self, url: &str) -> Result<HttpResponse, TransportError> {
-        self.urls.borrow_mut().push(url.to_owned());
+    fn send(&self, request: &HttpRequest) -> Result<HttpResponse, TransportError> {
+        self.urls.borrow_mut().push(request.url().to_owned());
         Ok(self.response.clone())
     }
 }

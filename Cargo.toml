@@ -30,6 +30,7 @@ eula = false
 members = [
     "crates/gt-analysis",
     "crates/gt-egui-mipmap",
+    "crates/gt-fetch",
     "crates/gt-filter",
     "crates/gt-fmt",
     "crates/gt-geo-math",
@@ -113,9 +114,8 @@ proc-macro2 = "1"
 proptest = "1"
 quote = "1"
 rayon = "1"
-# `gzip` is not optional for gt-jam: gpsjam.org serves its datasets
-# gzip-encoded whether or not the client advertises support, so without
-# transparent decoding the body arrives as compressed bytes.
+# Without transparent decoding, the body arrives as compressed bytes: gpsjam.org
+# serves datasets gzip-encoded regardless of the client's Accept-Encoding.
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "gzip", "json", "rustls"] }
 rstar = "0.13"
 rstest = "0.26"
@@ -279,6 +279,7 @@ egui_extras.workspace = true
 egui_tiles.workspace = true
 env_logger.workspace = true
 geotrace-sdk-units = { path = "sdk/rust/geotrace-sdk-units" }
+gt-fetch = { path = "crates/gt-fetch" }
 gt-filter = { path = "crates/gt-filter" }
 gt-fmt = { path = "crates/gt-fmt" }
 gt-jam = { path = "crates/gt-jam" }

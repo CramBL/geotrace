@@ -29,8 +29,9 @@ pub const TRACE_ATTRIBUTES_PATH: &str = "/trace_attributes";
 pub const SERVICE_INFO_URL: &str = "https://routing.openstreetmap.de/about.html";
 
 /// Identifying request header (name, value) required by the FOSSGIS usage
-/// policy for published apps.
-pub const CLIENT_ID_HEADER: (&str, &str) = ("X-Client-Id", "geotrace");
+/// policy for published apps. The shared transport sends it on every
+/// request.
+pub use gt_fetch::CLIENT_ID_HEADER;
 
 /// Minimum spacing between requests to the public server, enforced
 /// client-side. Its rate limit is 1 request per user per second.
