@@ -1,0 +1,9 @@
+---
+source: crates/gt-solar/src/text.rs
+expression: lines
+---
+[
+    "Kp 8.667",
+    "G4 severe storm",
+    "3 hours from 2024-05-10T18:00:00 (UTC)",
+]

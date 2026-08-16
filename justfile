@@ -77,6 +77,13 @@ gen-fixture:
 jam-fixtures *DAYS:
     cargo run -p gt-jam --example fetch_jam_fixtures -- {{ DAYS }}
 
+# Refresh the gt-solar index fixtures from the GFZ Potsdam service (network!).
+# Fixtures are frozen once committed - review the resulting diff like code.
+# Name windows to capture only those (additive); no args captures all.
+[group("native")]
+solar-fixtures *WINDOWS:
+    cargo run -p gt-solar --example fetch_solar_fixtures -- {{ WINDOWS }}
+
 # Refresh the gt-snap live-API fixtures from the Valhalla server (network!).
 # Fixtures are frozen once committed - review the resulting diff like code.
 # Name scenarios to capture only those (additive); no args captures all.
