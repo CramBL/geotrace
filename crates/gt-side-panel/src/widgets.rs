@@ -12,9 +12,9 @@ use crate::tree::CheckState;
 /// A borrowed view of the metadata fields shown in the recording-details UI.
 ///
 /// Lets the side panel (from a [`FileMetadata`]) and the History window (from a
-/// `RecordingEntry`) share one presence check and one renderer without either
-/// manufacturing the other's struct. A caller sets `identity` to `None` when the
-/// identity is shown elsewhere (e.g. the History row already displays it).
+/// `RecordingEntry`) share one presence check and one renderer. A caller sets
+/// `identity` to `None` when the identity is shown elsewhere (e.g. the History
+/// row already displays it).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MetadataView<'a> {
     pub title: Option<&'a str>,
@@ -39,8 +39,6 @@ impl<'a> MetadataView<'a> {
     }
 }
 
-/// Whether the view carries any field worth a details reveal.
-///
 /// Kept in step with the fields rendered by [`metadata_detail_rows`].
 pub fn has_metadata_details(view: &MetadataView<'_>) -> bool {
     view.title.is_some()
@@ -60,8 +58,8 @@ pub fn metadata_detail_rows(ui: &mut egui::Ui, view: &MetadataView<'_>) {
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
             let mut row = |label: &str, value: &str| {
-                // No colon after the label, per DESIGN.md; the weak label vs.
-                // normal value weighting carries the distinction.
+                // No colon after the label, per DESIGN.md. The weak label and
+                // normal value weighting separate the two.
                 ui.label(RichText::new(label).weak());
                 ui.add(Label::new(value).wrap());
                 ui.end_row();
@@ -76,7 +74,7 @@ pub fn metadata_detail_rows(ui: &mut egui::Ui, view: &MetadataView<'_>) {
                 row("Travel mode", travel_mode);
             }
             if let Some(identity) = view.identity {
-                // Strip the internal `auto:` marker; never show it verbatim.
+                // Strip the internal `auto:` marker.
                 row("Identity", gt_loaded_files::display_identity(identity).0);
             }
             if let Some(notes) = view.notes {
@@ -94,15 +92,16 @@ pub fn expand_arrow(expanded: bool) -> &'static str {
     }
 }
 
-/// Frameless button showing On/Off/Mixed state with Phosphor icons.
-///
-/// Sized to match egui's standard checkbox: icon at `icon_width`, total hit area `interact_size.y²`.
 /// Width of the tri-state checkbox column, for padding a checkbox-less row so it
 /// aligns with the checkboxed sections. Single source of truth for [`tri_checkbox`].
 pub fn checkbox_width(ui: &egui::Ui) -> f32 {
     ui.spacing().interact_size.y + 4.0
 }
 
+/// Frameless button showing On/Off/Mixed state with Phosphor icons.
+///
+/// Sized to match egui's standard checkbox: icon at `icon_width`, total hit area
+/// `interact_size.y²`.
 pub fn tri_checkbox(ui: &mut egui::Ui, state: CheckState) -> egui::Response {
     let icon = match state {
         CheckState::On => ICON_CHECK_SQUARE,
@@ -168,9 +167,7 @@ pub fn point_item_row(
 
 /// What a clicked point row asks the app for, consumed on the same frame.
 pub struct PointClickRequests<'a> {
-    /// Center the map on these coordinates.
     pub map_center: &'a mut Option<(f64, f64)>,
-    /// Place the pinned popup here.
     pub popup_pos: &'a mut Option<egui::Pos2>,
 }
 
@@ -179,11 +176,8 @@ pub struct PointClickRequests<'a> {
 /// panel at the row's height, clicking again unpins, double-clicking centers
 /// the map on the point.
 ///
-/// A row can only pin a point the map draws, asked of [`MapScope`] exactly as a
-/// click on the map itself does - a row for a point a query hid, or one the time
-/// filter excludes, would otherwise pin a popup with nothing behind it.
-/// Double-click still centers the map, which is how a row for an undrawn point
-/// stays useful: it shows where the point is without claiming it is on screen.
+/// Pinning is gated by [`MapHighlight::toggle_sticky_if_drawn`], so only a point
+/// the map draws can be pinned. Double-click centers the map either way.
 pub fn apply_point_click(
     ui: &egui::Ui,
     response: &egui::Response,

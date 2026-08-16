@@ -14,9 +14,7 @@ pub fn point_passes_time_filter(time: DateTime<Utc>, filter: &GlobalFilter) -> b
 /// (pinned by a test below).
 ///
 /// Because points are time-ordered within a track, the window selects one
-/// contiguous slice - consumers evaluating over it keep true point
-/// adjacency, with the slice edges being real data boundaries rather than
-/// holes.
+/// contiguous slice, so consumers evaluating over it keep true point adjacency.
 pub fn time_filtered_range(points: &[NavPoint], filter: &GlobalFilter) -> Range<usize> {
     let start = match filter.time_start {
         Some(t0) => points.partition_point(|p| p.tpv.time().utc() < t0),

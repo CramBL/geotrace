@@ -14,8 +14,7 @@ pub enum SnapErrorKind {
     /// error value and gets no special styling, only its kind in hover text.
     Interpolated,
     /// The road network rejected this point: no error value, the series line
-    /// breaks, and the plot marks the point so the stretch reads as rejected
-    /// rather than missing.
+    /// breaks, and the plot marks the point.
     Unsnapped,
 }
 
@@ -28,15 +27,15 @@ pub struct SnapErrorPoint {
     pub error_m: Option<f64>,
     pub kind: SnapErrorKind,
     /// True when the run holds no snap data for the points right before
-    /// this one - the receiver was dead reckoning there, or a chunk failed.
-    /// The series line breaks here rather than spanning the gap.
+    /// this one (the receiver was dead reckoning there, or a chunk failed). The
+    /// series line breaks here.
     pub follows_gap: bool,
 }
 
 /// Snap error series for the plot: one entry per track with a completed snap
 /// run. Points are the run's sent points in track order, pre-resolved from
-/// `PointIdx` to plot time by the app; runs are immutable, so the per-run
-/// `Arc` is shared, not rebuilt per frame.
+/// `PointIdx` to plot time by the app. Runs are immutable, so the per-run `Arc`
+/// is shared, not rebuilt per frame.
 #[derive(Debug, Clone, Default)]
 pub struct SnapErrorSeries {
     pub points_by_track: HashMap<TrackRef, Arc<Vec<SnapErrorPoint>>>,

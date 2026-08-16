@@ -84,8 +84,7 @@ pub fn render_filter_panel(
         }
     }
 
-    // Three-column grid: label | text edit | unit.  All filter inputs in one
-    // aligned block so they line up neatly regardless of label length.
+    // Three-column grid: label | text edit | unit.
     let (dist_changed, dur_changed, spread_changed) = Grid::new("filter_inputs")
         .num_columns(3)
         .spacing([6.0, 4.0])

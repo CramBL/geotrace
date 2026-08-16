@@ -3,9 +3,7 @@
 /// Shared between the persisted UI settings (which key per-metric visibility
 /// flags by this type, see `geotrace::settings::PlotSettings::metric`) and
 /// the plot widget (which drives chip labels, colors, and series lookups off
-/// the same variant set). The two previously carried independent copies of
-/// this enum kept in sync by hand. A single definition here removes that
-/// drift risk entirely.
+/// the same variant set).
 #[derive(
     Debug,
     Clone,
@@ -81,8 +79,7 @@ mod tests {
     /// every user's saved metric-visibility preferences on their next launch.
     ///
     /// Asserts the table is exhaustive (`expected.len() == MetricKind::COUNT`)
-    /// so adding a variant without adding its wire-name entry fails here
-    /// rather than silently leaving it unchecked.
+    /// so adding a variant without adding its wire-name entry fails here.
     #[test]
     fn wire_names_are_stable() {
         let expected = [

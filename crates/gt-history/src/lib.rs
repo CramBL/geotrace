@@ -26,7 +26,6 @@ compile_error!("Features 'backend-sys' and 'backend-pure' are mutually exclusive
 #[cfg(not(any(feature = "backend-sys", feature = "backend-pure")))]
 compile_error!("Either 'backend-sys' or 'backend-pure' must be enabled.");
 
-/// Re-export ActiveDb as Database to minimize changes to the app.
 pub type Database = ActiveDb;
 
 /// Name of the database file. Where it sits is `gt-store`'s decision.

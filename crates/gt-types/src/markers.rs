@@ -30,8 +30,7 @@ const EVENT_FALLBACK_COLORS: [MarkerColor; 8] = [
 
 /// Deterministic fallback color for an unstyled event marker variant.
 ///
-/// Hashes `variant_path` into the `LOG_COLORS`-compatible palette so unstyled
-/// variants still get visually distinct, consistent colors without configuration.
+/// Hashes `variant_path` into the `LOG_COLORS`-compatible palette.
 pub fn event_marker_fallback_color(variant_path: &str) -> MarkerColor {
     let mut hash: u64 = 5381;
     for b in variant_path.bytes() {
@@ -45,8 +44,7 @@ pub fn event_marker_fallback_color(variant_path: &str) -> MarkerColor {
 }
 
 /// An automatically-detected GNSS event, with the per-event payload carried in
-/// the variant that needs it (so a `match` stays exhaustive and there are no
-/// "valid only for kind X" optional fields hanging off the marker).
+/// the variant that needs it.
 ///
 /// Not `Copy`/`Eq`: the [`Self::Slip`] payload owns a `Vec` of slipped
 /// satellites (with `f32` SNR/elevation/azimuth).
@@ -58,10 +56,8 @@ pub enum GeneratedMarkerKind {
         fix_lost_duration: Duration,
     },
     /// The GPS−system clock offset jumped abruptly at this sample relative to
-    /// the previous one - e.g. a device resuming from suspend, where a stale
-    /// pre-suspend GPS timestamp meets a post-wake system timestamp. Surfaced
-    /// (never hidden) because such clock discontinuities are exactly the kind of
-    /// anomaly engineers use GeoTrace to find.
+    /// the previous one, e.g. a device resuming from suspend, where a stale
+    /// pre-suspend GPS timestamp meets a post-wake system timestamp.
     ClockDiscontinuity {
         /// Signed change in the GPS−system offset from the previous sample (the
         /// size of the jump).
@@ -90,8 +86,7 @@ pub enum GeneratedMarkerKind {
 }
 
 impl std::fmt::Display for GeneratedMarkerKind {
-    /// Canonical human-readable label. Format through this rather than
-    /// re-typing the wording at each call site.
+    /// Canonical human-readable label.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::GnssFixLost => "GNSS fix lost",
@@ -133,9 +128,8 @@ impl GeneratedMarkerKindTag {
 }
 
 crate::enum_bitset! {
-    /// A set of [`GeneratedMarkerKindTag`]s, one bit each - a cheap `Copy` stand-in
-    /// for a `BTreeSet` where the set is small and rebuilt often, e.g. the
-    /// per-track hidden tags in the generated-marker visibility state.
+    /// A set of [`GeneratedMarkerKindTag`]s, one bit each, e.g. the per-track
+    /// hidden tags in the generated-marker visibility state.
     pub struct GeneratedMarkerKindSet(u8) for GeneratedMarkerKindTag;
 }
 
@@ -167,9 +161,7 @@ pub struct GeneratedMarker {
 mod generated_marker_kind_tests {
     use super::*;
 
-    /// Single source of truth for the "GPS"/"GNSS"/"Fix" wording. Pin it down
-    /// so a future edit has to change it here, where every downstream label,
-    /// tooltip, and test fixture will pick it up.
+    /// Pins the canonical marker wording.
     #[test]
     fn label_is_canonical_wording() {
         assert_eq!(

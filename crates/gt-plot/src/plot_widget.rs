@@ -42,9 +42,8 @@ use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
 
 /// Grid base-color intensity, as a multiplier on the theme text color.
-/// egui_plot's grid stroke width is fixed at 1.0, so with the thinner default
-/// data lines the grid at full text-color brightness would dominate; dimming
-/// it restores the lines as the visually strongest element.
+/// egui_plot fixes the grid stroke width at 1.0, so brightness is the only way
+/// to keep the grid from dominating the thinner data lines.
 const GRID_COLOR_STRENGTH: f32 = 0.5;
 /// Default stroke width of the metric and channel plot lines.  Slightly below
 /// egui_plot's 1.0 default: many lines are enabled by default, and a thinner
@@ -68,10 +67,8 @@ fn recording_name(names: &RecordingNames, fi: usize) -> &str {
 
 /// The plot's cursor label: the hovered line's name, the time, and the value.
 ///
-/// Away from any line the name line is left out rather than drawn blank. The
-/// label stays away entirely while a custom hover label draws
-/// (see [`lines::show_nearest_hover_label`]): both sit at the cursor, and the
-/// custom one already carries the time and the value.
+/// Suppressed entirely while a custom hover label draws
+/// (see [`lines::show_nearest_hover_label`]): both sit at the cursor.
 fn cursor_label(
     custom_hover_label_shown: &Cell<bool>,
     pos: &egui_plot::HoverPosition<'_>,
@@ -310,10 +307,8 @@ pub fn show_track_plot(
     jamming: &JammingSeries,
     state: &mut PlotState,
 ) {
-    // Compute the per-series visibility mask once so the three downstream
-    // consumers - visible_count, the full-x-range loop, and the render loop -
-    // all share a single pass instead of calling trip_is_visible three times
-    // per series per frame.
+    // Computed once, shared by visible_count, the full-x-range loop and the
+    // render loop.
     let visible: Vec<bool> = state
         .series_cache
         .iter()
@@ -336,9 +331,6 @@ pub fn show_track_plot(
     // Per-series count, for the line-name prefix.  Distinct from the
     // per-file count below, which gates the file legend overlay.
     let multi_track = visible_count > 1;
-    // Per-series labels, `None` while a single track is visible and nothing
-    // needs naming. Resolved every frame so a template change lands right
-    // away, unlike the mipmaps these sit beside.
     let series_labels: Vec<Option<String>> = state
         .series_cache
         .iter()
@@ -398,12 +390,6 @@ pub fn show_track_plot(
         },
     );
 
-    // Sample budgeting: each track requests ~2 points per pixel of its *visible*
-    // width (`track_target`, computed per series below), so a track that only
-    // occupies a few pixels when zoomed out hands over only a few points.  The
-    // cap bounds the worst case where many tracks overlap in the same time range
-    // and each spans the full width.  Together with the mipmap now cascading
-    // down to 2 points, this is what keeps a screen full of short tracks cheap.
     let available_width = ui.available_width();
     let sample_cap = budget_cap(available_width, visible_count);
 
@@ -453,8 +439,7 @@ pub fn show_track_plot(
     let channel_vis = &state.channel_vis;
     let show_channels = state.show_channels;
     let line_width = state.line_width;
-    // Anomaly markers ride on the "Util all" line, so they show only when that
-    // metric is visible and the settings toggle is on.
+    // Anomaly markers are drawn on the "Util all" line.
     let show_advanced = state.show_advanced_metrics;
     let show_anomalies =
         show_advanced && state.mark_masked_fix && state.metric_vis.field(MetricKind::UtilAll);
@@ -501,9 +486,8 @@ pub fn show_track_plot(
     }
 
     let dark_mode = ui.visuals().dark_mode;
-    // On a light theme, give the plot a faint-grey canvas rather than egui's
-    // pure white so the deepened light-variant series lines keep a little
-    // separation from the background. Scoped to this plot: restored right after.
+    // On a light theme, a faint-grey canvas keeps the deepened light-variant
+    // series lines separated from the background. Restored after this plot.
     let saved_extreme_bg = ui.visuals().extreme_bg_color;
     if !dark_mode {
         ui.visuals_mut().extreme_bg_color = gt_ui_theme::PLOT_CANVAS_LIGHT;

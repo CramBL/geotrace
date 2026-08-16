@@ -8,8 +8,8 @@ use smallvec::SmallVec;
 use crate::projection;
 use crate::style;
 
-/// Vertices in the dashed mask ring (segments plus the closing point). Built
-/// per sky-plot frame as a temporary, so it stacks rather than allocates.
+/// Vertices in the dashed mask ring (segments plus the closing point), sized so
+/// the per-frame SmallVec stays on the stack.
 const MASK_RING_POINTS: usize = style::MASK_RING_SEGMENTS as usize + 1;
 
 /// Draw the grid: the horizon rim, the inner elevation rings, and the
@@ -57,8 +57,7 @@ pub(crate) fn draw_grid(ui: &egui::Ui, center: Pos2, radius: f32, full: bool) {
         grid_stroke,
     );
 
-    // North up. The compact size labels north only and marks the other
-    // cardinals with rim ticks.
+    // North up.
     let cardinals: &[(&str, Vec2)] = if full {
         &[
             ("N", Vec2::new(0.0, -1.0)),
@@ -107,9 +106,8 @@ pub(crate) fn draw_grid(ui: &egui::Ui, center: Pos2, radius: f32, full: bool) {
 }
 
 /// Draw the elevation mask as a dashed ring. Satellites below the mask stay
-/// visible - the ring is context, not a filter. When `hovered` (the pointer is
-/// on it, per [`mask_ring_hit`]) it is drawn brighter and thicker, so hovering
-/// it reads as picking out an element rather than dead space.
+/// visible: the ring is context, not a filter. When `hovered` (the pointer is on
+/// it, per [`mask_ring_hit`]) it is drawn brighter and thicker.
 pub(crate) fn draw_mask_ring(
     ui: &egui::Ui,
     center: Pos2,

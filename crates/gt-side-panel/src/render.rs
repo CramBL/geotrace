@@ -181,9 +181,8 @@ pub struct PanelContext<'a> {
     pub sky_trails_request: &'a mut Option<gt_ui_types::SkyTrailsRequest>,
 }
 
-/// Trailing eye-slash on a category row whose map ink is hidden by the
-/// display toggles - the tree and the mask explain each other instead of
-/// silently compounding.
+/// Trailing eye-slash on a category row whose map ink is hidden by the display
+/// toggles.
 fn masked_hint(ui: &mut egui::Ui, mask: DisplayMask, category: DataCategory) {
     masked_display_hint(ui, mask, DisplayCategory::from(category));
 }
@@ -357,8 +356,7 @@ fn snap_progress_strip(
 ) {
     let progress = snap.progress;
     ui.add_space(STRIP_PADDING);
-    // The current action, with the queue length at the right edge; a long
-    // track name truncates rather than pushing the count out. The
+    // The current action, with the queue length at the right edge. The
     // horizontal wrapper keeps the right-to-left layout from claiming the
     // strip's full height (which would push the bar out).
     ui.horizontal(|ui| {
@@ -381,7 +379,7 @@ fn snap_progress_strip(
                     );
                 }
                 // Queued work with nothing in flight: paused (offline) or the
-                // moment between dispatches. Say which, never sit silent.
+                // moment between dispatches. The label always states which.
                 None if snap.offline => {
                     ui.label(
                         RichText::new("Snapping paused - offline")
@@ -405,8 +403,6 @@ fn snap_progress_strip(
     ui.add_space(STRIP_PADDING);
 }
 
-/// Height of the strip's progress bar - slim, the text line above carries
-/// the words.
 const PROGRESS_BAR_HEIGHT: f32 = 4.0;
 
 /// Vertical padding above and below the strip contents.
@@ -459,8 +455,7 @@ fn render_file_row(
     let map_hover_bg = gt_ui_theme::map_hover_color(ui.visuals().dark_mode);
 
     let row_response = ui.horizontal(|ui| {
-        // Keep the checkbox, note icon and expand arrow visually grouped rather
-        // than spread out by the default item spacing.
+        // Keep the checkbox, note icon and expand arrow visually grouped.
         ui.spacing_mut().item_spacing.x = 2.0;
         let chk_resp = tri_checkbox(ui, check);
         if chk_resp.clicked() {
@@ -471,8 +466,8 @@ fn render_file_row(
         // row. Only shown when there is something to reveal.
         let identity = ctx.identity(fi);
         if has_metadata_details(&MetadataView::from_file_metadata(&file.metadata, identity)) {
-            // A frameless button (not a Label) so the pointer reads as clickable
-            // and the icon highlights on hover, instead of showing a text cursor.
+            // A frameless button so the pointer reads as clickable and the icon
+            // highlights on hover.
             let icon = ui
                 .add(Button::new(ICON_NOTE).frame(false))
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -603,8 +598,8 @@ struct SnapAction {
 /// menu entry so the two can never disagree.
 fn snap_action(row: &SnapRowView, snap: SnapPanelView<'_>) -> Option<SnapAction> {
     let action = match row {
-        // A current completed run leaves nothing to trigger; its status
-        // glyph stays fully usable offline (cached results are local).
+        // A current completed run leaves nothing to trigger. Its status glyph
+        // stays usable offline: cached results are local.
         SnapRowView::Done { stale: None, .. } => return None,
         // Unsnappable beats offline: it is the permanent condition, and its
         // hover names the declared mode.
@@ -787,9 +782,8 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
         );
         // The status glyph doubles as the per-track visibility toggle: weak
         // while the snapped track draws, extra-faint while hidden. Stale and
-        // partial runs turn the glyph warning-colored so an outdated or
-        // gappy result is visible at a glance, never silently fine-looking;
-        // the hover names which condition applies.
+        // partial runs color it warning-amber, and the hover names which
+        // condition applies.
         let text = if stale.is_some() || partial {
             RichText::new(ICON_PATH).color(gt_ui_theme::warning_amber(ui.visuals().dark_mode))
         } else if shown {
@@ -834,9 +828,7 @@ fn snap_control(ui: &mut egui::Ui, track_ref: TrackRef, ctx: &mut PanelContext<'
     let Some(action) = snap_action(row, ctx.snap) else {
         return;
     };
-    // The trigger wears the raw, unrouted polyline - matched results wear
-    // the routed [`ICON_PATH`] glyph above, so "still to match" and
-    // "matched" never look alike.
+    // The trigger uses `ICON_LINE_SEGMENTS`, completed runs use `ICON_PATH`.
     let failed = matches!(row, SnapRowView::Failed { .. });
     let label = consent_suffixed(ICON_LINE_SEGMENTS, action.consent_pending);
     let mut text = RichText::new(label);
@@ -1694,8 +1686,8 @@ fn render_generated_markers_section(
                         category: DataCategory::GeneratedMarker,
                         point_index: PointIdx::new(pi),
                     };
-                    // A multi-satellite slip shows its satellite count; the
-                    // others need no per-marker detail beyond the time.
+                    // A multi-satellite slip shows its satellite count. The
+                    // others show only the time.
                     let detail = match &marker.kind {
                         GeneratedMarkerKind::Slip(event) if event.slips.len() > 1 => {
                             format!("  ({})", event.slips.len())
@@ -1755,7 +1747,7 @@ mod snap_action_tests {
     use super::*;
 
     fn view(offline: bool, consent_pending: bool) -> SnapPanelView<'static> {
-        // The rows map is irrelevant to snap_action; a leaked empty map keeps
+        // The rows map is irrelevant to snap_action. A `static` empty map keeps
         // the borrow 'static for the test helper.
         static EMPTY: std::sync::OnceLock<HashMap<TrackRef, SnapRowView>> =
             std::sync::OnceLock::new();

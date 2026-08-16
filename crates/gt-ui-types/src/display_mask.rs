@@ -74,9 +74,8 @@ const ALL_HIDDEN: u16 = u16::MAX >> (u16::BITS as usize - DisplayCategory::COUNT
 
 /// The categories hidden on a fresh install.
 ///
-/// Interference cells colour the whole map from data the user did not
-/// record, which needs the layer's own explanation to make sense of, so it
-/// is asked for rather than assumed.
+/// [`DisplayCategory::JammingHexes`] is opt-in: it colours the whole map from
+/// data the user did not record.
 const DEFAULT_HIDDEN: [DisplayCategory; 1] = [DisplayCategory::JammingHexes];
 
 const _: () = assert!(
@@ -88,8 +87,8 @@ const _: () = assert!(
 /// on top of the per-track tree visibility.
 ///
 /// An element draws only when its track is visible *and* its category is
-/// visible here. The mask never feeds filtering, deletion, stats, or
-/// exports; showing a hidden category restores everything instantly.
+/// visible here. The mask never feeds filtering, deletion, stats or exports:
+/// showing a hidden category restores everything instantly.
 ///
 /// Serialized as the list of hidden categories, so an empty or absent
 /// list means everything is visible and categories added later default
@@ -156,9 +155,8 @@ impl DisplayMask {
 /// The wire form of [`DisplayMask`]: the categories whose visibility
 /// differs from the default, in declaration order.
 ///
-/// Every category except [`DEFAULT_HIDDEN`] defaults to visible, so for
-/// those this is the hidden list it has always been, and settings files
-/// written before a category existed still load correctly.
+/// Every category except [`DEFAULT_HIDDEN`] defaults to visible, so settings
+/// files written before a category existed still load correctly.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ChangedCategories(Vec<DisplayCategory>);
 
@@ -260,8 +258,7 @@ mod tests {
         assert!(mask.is_visible(DisplayCategory::Tracks));
     }
 
-    /// Showing a default-hidden category survives a restart, which the
-    /// plain hidden-list form could not express.
+    /// Showing a default-hidden category survives a restart.
     #[test]
     fn showing_a_default_hidden_category_round_trips() {
         let mut mask = DisplayMask::default();

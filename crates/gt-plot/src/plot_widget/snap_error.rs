@@ -35,9 +35,7 @@ pub(super) fn snap_error_available(
         })
 }
 
-/// Plot y where an unsnapped point's marker sits: rejected points carry no
-/// error value, so the marker rests on the axis baseline and the hover text
-/// explains the rejection.
+/// Plot y of an unsnapped point's marker: rejected points have no error value.
 const UNSNAPPED_MARKER_Y: f64 = 0.0;
 
 /// Radius of the snapped-point markers on the snap error line. Small - the
@@ -121,10 +119,9 @@ pub(super) struct SnapErrorStyle {
     pub(super) dark_mode: bool,
 }
 
-/// Pre-formatted tooltip contents for one hovered unsnapped marker - the
-/// only snap point with a custom hover: the kind is the whole message, and
-/// the marker sits at the baseline rather than on the line. Snapped and
-/// interpolated points hover natively through egui_plot's labels.
+/// Pre-formatted tooltip contents for one hovered unsnapped marker, the only
+/// snap point with a custom hover. Snapped and interpolated points hover
+/// natively through egui_plot's labels.
 pub(super) struct SnapErrorHover {
     /// Track label, shown only when more than one track is visible.
     track: Option<String>,
@@ -182,15 +179,6 @@ fn snap_error_runs(points: &[SnapErrorPoint]) -> Vec<Vec<PlotPoint>> {
     runs
 }
 
-/// Draw one track's snap error series from its plot cache: mipmapped line
-/// runs split at unsnapped points (the road network rejected those, so the
-/// line honestly breaks), snapped-point anchor markers while zoomed to full
-/// detail, and a baseline cross per unsnapped point.
-///
-/// The line and the anchor markers hover natively - egui_plot places the
-/// standard name/time/value label on the line, interpolated between points,
-/// so nothing clips at the plot edge. Only the unsnapped crosses keep a
-/// custom tooltip: there the kind is the whole message.
 /// Level selection per run, exactly like the other metrics, plus whether
 /// every viewport-visible run reads its finest level. The anchor markers
 /// only draw at full detail - coarser levels merge points, so a marker
@@ -209,11 +197,10 @@ fn select_run_levels(runs: &[MipMap], viewport: SnapErrorViewport) -> (Vec<Level
                 viewport.cap,
             );
             let selection = run.select_indices(viewport.x_min, viewport.x_max, target);
-            // Only runs whose data actually intersects the viewport get a
-            // vote: a selection always keeps one boundary point (so lines
-            // stay connected off-screen), so slice emptiness cannot tell
-            // an off-viewport run apart - and its zero visible width
-            // forces a coarse level that would wrongly veto the markers.
+            // Only runs whose data intersects the viewport constrain
+            // `full_detail`. A selection always keeps one boundary point, so
+            // slice emptiness cannot identify an off-viewport run, and its
+            // zero visible width forces a coarse level.
             let visible = run
                 .x_range()
                 .is_some_and(|(lo, hi)| lo <= viewport.x_max && hi >= viewport.x_min);
@@ -226,9 +213,15 @@ fn select_run_levels(runs: &[MipMap], viewport: SnapErrorViewport) -> (Vec<Level
     (selections, full_detail)
 }
 
+/// Draw one track's snap error series from its plot cache: mipmapped line runs
+/// split at unsnapped points, snapped-point anchor markers while zoomed to full
+/// detail, and a baseline cross per unsnapped point.
+///
+/// Only the unsnapped crosses keep a custom tooltip. The line and the anchor
+/// markers hover natively through egui_plot's name/time/value label.
 #[expect(
     clippy::too_many_arguments,
-    reason = "mirrors add_series_lines' argument list; a struct would only relabel it"
+    reason = "matches add_series_lines' argument list. A struct would only relabel it"
 )]
 pub(super) fn add_snap_error_series<'a>(
     plot_ui: &mut egui_plot::PlotUi<'a>,
@@ -269,9 +262,6 @@ pub(super) fn add_snap_error_series<'a>(
         }
     }
 
-    // Unsnapped crosses are sorted ascending by x like the snapped markers, so
-    // clip to the viewport sub-range instead of drawing and hover-testing the
-    // whole track's rejected points every frame.
     let visible_unsnapped = visible_by_x(&cache.unsnapped, |p| p.x, viewport.x_min, viewport.x_max);
     if !visible_unsnapped.is_empty() {
         plot_ui.points(

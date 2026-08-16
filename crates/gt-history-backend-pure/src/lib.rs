@@ -140,7 +140,7 @@ impl HistoryDatabase for PureDb {
                 let Ok(attrs) = rec_grp.attrs() else {
                     continue;
                 };
-                if let Some(meta) = from_attrs(&attrs) {
+                if let Some(meta) = recording_meta_from_attrs(&attrs) {
                     let tracks = copy::read_track_table(&rec_grp);
                     let hidden_tracks = tracks.iter().filter(|t| t.hidden).count();
                     entries.push(RecordingEntry {
@@ -173,7 +173,6 @@ impl HistoryDatabase for PureDb {
             return Ok(false);
         };
 
-        // Search through ALL identity groups
         for identity in by_id.groups().map_err(classify_hdf5_error)? {
             let Ok(id_grp) = by_id.group(&identity) else {
                 continue;
@@ -275,8 +274,9 @@ fn string_attr(attrs: &std::collections::HashMap<String, AttrValue>, name: &str)
     }
 }
 
-/// Helper for hdf5-pure attribute extraction.
-fn from_attrs(attrs: &std::collections::HashMap<String, AttrValue>) -> Option<RecordingMeta> {
+fn recording_meta_from_attrs(
+    attrs: &std::collections::HashMap<String, AttrValue>,
+) -> Option<RecordingMeta> {
     let start_us = match attrs.get(ATTR_START_US)? {
         AttrValue::I64(v) => *v,
         _ => return None,

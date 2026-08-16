@@ -195,8 +195,8 @@ pub(super) fn add_clock_excursions(
     let [_, y_max] = bounds.max();
     let color = gt_ui_theme::warning_amber(viewport.dark_mode);
 
-    // Hover positions are kept beside the markers rather than recomputed: both
-    // must land on the same pixel for the tooltip to track the glyph.
+    // Marker and hover must land on the same pixel for the tooltip to track
+    // the glyph.
     let mut markers: Vec<(Placement, PlotPoint)> = Vec::new();
     let mut hovers: Vec<(PlotPoint, ClockExcursionHover)> = Vec::new();
 

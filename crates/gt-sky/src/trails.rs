@@ -17,9 +17,7 @@ use crate::projection;
 /// [`SkyTrails::epochs`].
 ///
 /// Consecutive indices mean consecutive reports, so a break in them is exactly
-/// a gap in the satellite's tracking. Painting a trail asks that question once
-/// per sample, and answering it by index is a comparison rather than a search
-/// through the epochs.
+/// a gap in the satellite's tracking.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct EpochIdx(usize);
 
@@ -108,12 +106,11 @@ pub struct TrailEpoch {
     pub point_index: PointIdx,
 }
 
-/// A cycle slip placed on the sky: where a satellite ran into trouble (lost
-/// lock, or a sharp SNR drop). Positioned at its last-known sky position
-/// before the slip - the `from` side of the detected transition. `from` is
-/// used for both causes for a single consistent anchor: `to` is unavailable
-/// for a lost-lock slip, and the from/to drift for an SNR drop is one report
-/// epoch, negligible at plot scale.
+/// A cycle slip placed on the sky (lost lock, or a sharp SNR drop). Positioned
+/// at its last-known sky position before the slip, the `from` side of the
+/// detected transition. `from` is used for both causes: `to` is unavailable for
+/// a lost-lock slip, and the from/to drift for an SNR drop is one report epoch,
+/// negligible at plot scale.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SlipMark {
     pub constellation: Constellation,
@@ -143,7 +140,7 @@ pub struct SkyTrails {
 impl SkyTrails {
     /// The distinct constellations present, in `Constellation` order. Relies
     /// on `trails` being sorted by constellation (as [`extract_trails`]
-    /// produces), so the invariant and its consumer live together.
+    /// produces).
     pub fn constellations(&self) -> impl Iterator<Item = Constellation> + '_ {
         let mut last = None;
         self.trails.iter().filter_map(move |trail| {
@@ -345,9 +342,8 @@ mod tests {
         assert!(!gps.is_filtered());
 
         // Excluding never-in-fix satellites drops the tracked-only GPS-12, so
-        // GPS now counts one seen (and still one in fix) - but the unfiltered
-        // total still reports both, so the window can say what was hidden
-        // rather than letting the count silently drop.
+        // GPS counts one seen (and still one in fix). The unfiltered total
+        // still reports both, so the window can say what was hidden.
         let in_fix_only = trails.counts_at(trails.epochs[0].time, false);
         let gps = in_fix_only
             .iter()

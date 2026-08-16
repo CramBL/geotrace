@@ -27,9 +27,8 @@ pub struct QueryMatches {
 /// `draws[i]`).
 ///
 /// The map renderer stores one of these in every point key and asks it which
-/// layer to paint, so the bit twiddling lives here rather than being scattered
-/// across the renderer. Layer indices past [`DrawLayerMask::MAX_LAYERS`] cannot
-/// be represented; the app clamps the pipeline to that many draw queries.
+/// layer to paint. Layer indices past [`DrawLayerMask::MAX_LAYERS`] cannot be
+/// represented: the app clamps the pipeline to that many draw queries.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DrawLayerMask(u16);
 
@@ -80,9 +79,8 @@ impl QueryMatches {
 
     /// The hidden ranges for one track, empty when none.
     ///
-    /// Checks the sorted-and-disjoint invariant in debug builds: this is a
-    /// per-track entry point, so the check runs once per track per frame
-    /// rather than once per point.
+    /// Checks the sorted-and-disjoint invariant in debug builds. The check runs
+    /// once per track per frame.
     pub fn hidden_ranges(&self, track: TrackRef) -> &[Range<usize>] {
         track_ranges(&self.hidden, track)
     }
@@ -119,9 +117,9 @@ impl QueryMatches {
 
     /// The range containing the point within sorted, disjoint ranges.
     ///
-    /// Binary search; associated so the renderer can reuse it on a slice it
-    /// already holds. Deliberately without the invariant assert - this sits on
-    /// the per-point hot path.
+    /// Binary search, associated so the renderer can reuse it on a slice it
+    /// already holds. Without the invariant assert: this sits on the per-point
+    /// hot path.
     pub fn range_at(ranges: &[Range<usize>], point_index: usize) -> Option<&Range<usize>> {
         let candidate = ranges.partition_point(|r| r.end <= point_index);
         ranges.get(candidate).filter(|r| r.contains(&point_index))

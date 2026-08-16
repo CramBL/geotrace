@@ -6,9 +6,6 @@ use gt_types::LoadedFile;
 use gt_types::satellites::{Constellation, ConstellationSet};
 use uom::si::angle::degree;
 
-/// Microseconds per second, for converting a channel sample's timestamp to
-/// the plot's Unix-seconds x axis. Micros rather than whole seconds so
-/// sub-second sample clocks (a 25 Hz IMU) keep their spacing.
 const MICROS_PER_SEC: f64 = 1_000_000.0;
 
 /// Mipmap series for a single track.
@@ -22,10 +19,8 @@ pub(crate) struct TrackSeries {
     pub fi: usize,
     /// Track index within that file.
     pub ti: usize,
-    /// Precomputed `(x_min, x_max)` in Unix seconds, or `None` when the track
-    /// has no points.  Computed once at build time from the first and last
-    /// point timestamps - O(1) field access vs the previous `find_map` over
-    /// eight mipmaps.
+    /// `(x_min, x_max)` in Unix seconds, or `None` when the track has no
+    /// points.
     pub x_range: Option<(f64, f64)>,
     pub total_seen: MipMap,
     pub total_fix: MipMap,
@@ -151,11 +146,6 @@ impl TrackSeries {
     /// Recompute only the analysis-dependent series (utilization rate +
     /// anomalies and slip rate) for `track` under `analysis`, leaving the
     /// analysis-independent mipmaps intact.
-    ///
-    /// This is the targeted rebuild used when the user changes the elevation
-    /// mask, SNR-drop threshold, or slip window, avoiding a full re-derivation
-    /// of every metric.  The detection itself lives in `gt_analysis`; this only
-    /// wraps the resulting point series in mipmaps.
     pub(crate) fn apply_analysis(
         &mut self,
         track: &gt_types::LoadedTrack,

@@ -12,16 +12,9 @@ use gt_types::MetricKind;
 ///
 /// Keeping hue fixed and only shifting value/lightness preserves metric identity
 /// while still making overlapping lines from different files distinguishable.
-///
-/// Unlike [`gt_ui_theme::track_color`], which cycles a full colour palette per
-/// (file, track) for the map (where hue *is* the identity signal), the plot
-/// needs hue to stay tied to the metric - so files are distinguished by
-/// lightness shift and line style ([`FILE_LINE_STYLES`]) instead.
 const FILE_SHADE_FACTORS: [i16; 7] = [0, 22, -22, 12, -12, 32, -32];
 
 /// File-level line styles to keep perfectly overlapping lines distinguishable.
-///
-/// Color still carries metric identity. Style only disambiguates file source.
 pub(super) const FILE_LINE_STYLES: [LineStyle; 5] = [
     LineStyle::Solid,
     LineStyle::Dashed { length: 6.0 },
@@ -29,9 +22,6 @@ pub(super) const FILE_LINE_STYLES: [LineStyle; 5] = [
     LineStyle::Dashed { length: 10.0 },
     LineStyle::Dotted { spacing: 8.0 },
 ];
-/// The plot line color for `kind`, shaded by `file_index` so overlapping
-/// lines from different files stay distinguishable (see
-/// [`file_shade_factor`]).
 pub(super) fn metric_line_color(kind: MetricKind, file_index: usize, dark_mode: bool) -> Color32 {
     shade_color(
         gt_ui_theme::metric_color(kind, dark_mode),
@@ -40,9 +30,8 @@ pub(super) fn metric_line_color(kind: MetricKind, file_index: usize, dark_mode: 
 }
 
 /// The channel chip/line palette, cycled by a channel's index in the sorted
-/// union of loaded channel names. Channels are dynamic, so unlike the metrics
-/// they cannot carry a hardcoded per-variant color; hues are picked to avoid
-/// the strong metric colors (velocity yellow, EPH magenta, heading orange).
+/// union of loaded channel names. The hues avoid the strong metric colors
+/// (velocity yellow, EPH magenta, heading orange).
 pub(super) const CHANNEL_PALETTE: [Color32; 6] = [
     Color32::from_rgb(102, 204, 153), // spring green
     Color32::from_rgb(153, 128, 250), // lavender
@@ -67,10 +56,8 @@ pub(super) fn channel_line_color(index: usize, file_index: usize) -> Color32 {
 }
 
 /// Hue step between a vector channel's components, as a fraction of the
-/// full hue circle. 25 degrees proved too close to tell apart in practice;
-/// at 60 degrees x/y/z read as clearly different colors. The chip's bar
-/// strip ties the rotated hues back to their channel, so staying near the
-/// base hue matters less than being distinct.
+/// full hue circle. 25 degrees proved too close to tell apart in practice.
+/// At 60 degrees x/y/z read as clearly different colors.
 const COMPONENT_HUE_STEP: f32 = 60.0 / 360.0;
 
 /// The `component`-th color of a channel, honoring a user override from
@@ -87,9 +74,8 @@ pub(super) fn effective_component_color(
         .unwrap_or_else(|| component_color(base, component))
 }
 
-/// The `component`-th line color of a channel: the channel color with its
-/// hue rotated in alternating steps (base, +25, -25, +50, ...), so a vector
-/// channel's components separate without leaving its color family.
+/// The `component`-th line color of a channel: the channel color with its hue
+/// rotated in alternating [`COMPONENT_HUE_STEP`] steps.
 pub(super) fn component_color(base: Color32, component: usize) -> Color32 {
     if component == 0 {
         return base;
@@ -154,9 +140,8 @@ mod tests {
         );
     }
 
-    /// A user override wins over the derived hue; anything else - no entry,
-    /// a `None` slot, an index past the stored vector - falls back to the
-    /// ladder.
+    /// A user override wins over the derived hue. No entry, a `None` slot and
+    /// an index past the stored vector all fall back to the ladder.
     #[test]
     fn effective_component_color_falls_back_without_an_override() {
         let base = CHANNEL_PALETTE[0];

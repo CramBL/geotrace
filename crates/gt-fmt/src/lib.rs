@@ -45,7 +45,7 @@ pub fn format_fix_percentage(stats: FixStats) -> String {
 /// Formats a `0..=1` fraction as a whole percentage, e.g. `0.87` -> `"87%"`.
 ///
 /// Rounds half-up like [`fix_percentage`] and clamps to `[0, 100]`, so an
-/// out-of-range or non-finite input degrades to a bound instead of nonsense.
+/// out-of-range or non-finite input degrades to a bound.
 pub fn format_fraction_percent(fraction: f64) -> String {
     // `clamp` propagates NaN, so map non-finite inputs to the lower bound
     // explicitly.
@@ -149,7 +149,6 @@ pub fn format_human_terse_duration(d: chrono::Duration) -> String {
     let show_s = total_secs < 120;
     let show_m = h < 3;
 
-    // Pre-allocate enough capacity to avoid reallocations.
     let mut out = String::with_capacity(16);
 
     if h > 0 {
@@ -248,8 +247,6 @@ pub fn format_time_range(start: DateTime<Utc>, end: DateTime<Utc>) -> String {
     }
 }
 
-/// Picks the singular or plural word for a count: `singular` when `count == 1`,
-/// otherwise `plural`. Keeps count-dependent labels consistent across the UI.
 pub fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
     if count == 1 { singular } else { plural }
 }

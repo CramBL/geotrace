@@ -4,8 +4,7 @@
 //! brighter with stronger signal, and sums them where satellites cluster. It is
 //! rendered as one coloured triangle mesh: the field is sampled on a fixed grid
 //! and egui interpolates the vertex colours between, so the result reads as a
-//! continuous blur without a shader, at a cost fixed by the grid rather than by
-//! the track's length.
+//! continuous blur without a shader, at a cost fixed by the grid size.
 
 use egui::epaint::{Mesh, Vertex, WHITE_UV};
 use egui::{Color32, Painter, Pos2, Shape, Vec2};
@@ -19,19 +18,14 @@ use gt_ui_theme::{lerp_channel, unit_to_u8};
 const SNR_FLOOR_DBHZ: f32 = 20.0;
 const SNR_CEIL_DBHZ: f32 = 48.0;
 
-/// The faintest an in-fix satellite glows: even the weakest one used in the fix
-/// still marks its place, so the field shows *where* the fix satellites are and
-/// not only where the strong ones are.
+/// The faintest an in-fix satellite glows.
 const MIN_WEIGHT: f32 = 0.15;
 
-/// Weight of an in-fix satellite whose report carries no SNR: it is used in the
-/// fix, so it marks presence, but with no signal strength to justify a hotter
-/// glow it sits low on the ramp.
+/// Weight of an in-fix satellite whose report has no SNR.
 const NO_SNR_WEIGHT: f32 = 0.3;
 
 /// Standard deviation of a single satellite's glow, as a fraction of the disc
-/// radius. Wide enough that a handful of satellites read as a smooth field
-/// rather than isolated dots.
+/// radius. Wide enough that a handful of satellites read as a smooth field.
 const GLOW_SIGMA_FRACTION: f32 = 0.22;
 
 /// Cells per side of the square mesh laid over the disc's bounding box. The
@@ -44,9 +38,8 @@ const GRID_STEPS: usize = 48;
 /// the trails, markers, and grid read through it.
 const MAX_ALPHA: f32 = 0.55;
 
-/// Intensity at which the alpha reaches [`MAX_ALPHA`]; below it the field fades
-/// toward transparent so faint tails melt into the background rather than
-/// tinting the whole disc.
+/// Intensity at which the alpha reaches [`MAX_ALPHA`]. Below it the field fades
+/// toward transparent.
 const ALPHA_FULL_AT: f32 = 0.5;
 
 /// Fixed-point denominator for the ramp interpolation handed to [`lerp_channel`].
@@ -75,8 +68,7 @@ pub fn snr_weight(snr: Option<Snr>) -> f32 {
 }
 
 /// The field colour for a normalized intensity `t`. Alpha rises from fully
-/// transparent at zero to [`MAX_ALPHA`] at [`ALPHA_FULL_AT`] and holds, so the
-/// faint tails of the field fade out instead of tinting the whole disc.
+/// transparent at zero to [`MAX_ALPHA`] at [`ALPHA_FULL_AT`] and holds.
 pub fn heat_color(t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     let [r, g, b] = ramp_rgb(t);
@@ -88,8 +80,8 @@ pub fn heat_color(t: f32) -> Color32 {
 /// two [`RAMP`] stops that bracket it.
 fn ramp_rgb(t: f32) -> [u8; 3] {
     // The only caller pre-clamps, and RAMP's ends are pinned at 0.0/1.0, so the
-    // scan below always finds a bracketing pair; this guards a future caller
-    // that forgets to clamp rather than letting it fall through silently.
+    // scan below always finds a bracketing pair. The assert guards a future
+    // caller that forgets to clamp.
     debug_assert!(
         (0.0..=1.0).contains(&t),
         "ramp_rgb needs t in [0, 1], got {t}"
@@ -119,10 +111,8 @@ fn ramp_rgb(t: f32) -> [u8; 3] {
 /// Paint the signal-strength heat field for `sources` (each a screen position
 /// and a `[0, 1]` weight) onto the disc at `center`/`radius`.
 ///
-/// Builds one coloured mesh: the field is sampled at a fixed grid and egui
-/// interpolates the vertex colours between, so overlapping glows sum in
-/// intensity and the result reads as a smooth blur. Clipped to the disc so it
-/// never bleeds past the horizon rim. A no-op with no sources.
+/// Clipped to the disc so it never bleeds past the horizon rim. A no-op with no
+/// sources.
 pub fn paint_signal_field(painter: &Painter, center: Pos2, radius: f32, sources: &[(Pos2, f32)]) {
     if sources.is_empty() || radius <= 0.0 {
         return;
@@ -207,8 +197,7 @@ mod tests {
         let weak = snr_weight(Some(Snr::new(25.0)));
         let strong = snr_weight(Some(Snr::new(42.0)));
         assert!(strong > weak);
-        // Every real reading stays at or above the floor, and a missing SNR
-        // still marks presence rather than vanishing.
+        // Every real reading and a missing SNR stay at or above the floor.
         assert!(weak >= MIN_WEIGHT);
         const { assert!(NO_SNR_WEIGHT >= MIN_WEIGHT) };
         assert!((snr_weight(None) - NO_SNR_WEIGHT).abs() < 1e-6);

@@ -9,8 +9,8 @@ use gt_types::satellites::Satellite;
 /// angle is the azimuth, clockwise from north, with north pointing up
 /// (negative y, matching egui's screen coordinates).
 ///
-/// Elevations are clamped to `[0°, 90°]`: a satellite reported slightly below
-/// the horizon sits on the rim rather than outside the disc.
+/// Elevations are clamped to `[0°, 90°]`, so a below-horizon satellite sits on
+/// the rim.
 pub fn unit_disc_position(azimuth_deg: f32, elevation_deg: f32) -> Vec2 {
     let radius = unit_disc_radius(elevation_deg);
     let azimuth = azimuth_deg.to_radians();
@@ -34,8 +34,8 @@ pub fn sky_position(satellite: &Satellite) -> Option<(f32, f32)> {
 /// The unit-disc position of a satellite mark, or `None` when the satellite
 /// has no sky position.
 ///
-/// Unplaceable satellites are surfaced as a count/row next to the plot, never
-/// dropped silently - the `None` tells the caller to do so.
+/// Callers surface unplaceable satellites as a count/row next to the plot,
+/// never dropping them silently.
 pub fn mark_position(satellite: &Satellite) -> Option<Vec2> {
     let (azimuth, elevation) = sky_position(satellite)?;
     Some(unit_disc_position(azimuth, elevation))
@@ -71,7 +71,7 @@ mod tests {
     #[case::mid_elevation(0.0, 45.0, egui::vec2(0.0, -0.5))]
     // A full turn wraps around to the same position.
     #[case::wraparound(360.0, 0.0, egui::vec2(0.0, -1.0))]
-    // Below-horizon elevations clamp to the rim instead of leaving the disc.
+    // Below-horizon elevations clamp to the rim.
     #[case::below_horizon(90.0, -5.0, egui::vec2(1.0, 0.0))]
     // Above-zenith elevations clamp to the center.
     #[case::above_zenith(90.0, 95.0, egui::vec2(0.0, 0.0))]

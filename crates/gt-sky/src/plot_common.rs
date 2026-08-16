@@ -6,16 +6,13 @@ use egui::{Align, Layout, Pos2, RichText, Sense, Stroke, Vec2};
 use gt_types::GpsTime;
 use gt_types::satellites::{Constellation, Prn, Satellite};
 
-/// Width of the tooltip's value column. Values are right-aligned in it, so
-/// hovering two satellites in turn reads as a comparison rather than a
-/// re-read.
+/// Width of the tooltip's value column. Values are right-aligned in it.
 const TOOLTIP_VALUE_WIDTH_PX: f32 = 74.0;
 
 /// Gap between the tooltip's designator and its fix-state chip.
 const TOOLTIP_HEADER_GAP_PX: f32 = 12.0;
 
-/// Diameter of the fix-state chip's glyph, matching the plot's scrub marker
-/// closely enough to read as the same thing.
+/// Diameter of the fix-state chip's glyph, matching the plot's scrub marker.
 const CHIP_GLYPH_PX: f32 = 9.0;
 
 /// Stroke width of the hollow (tracked, not in fix) chip glyph.
@@ -37,11 +34,9 @@ pub(crate) fn satellite_designator(constellation: Constellation, prn: Prn) -> St
 /// satellite reads the same whether hovered on the per-report plot or on a
 /// trail's scrub marker.
 ///
-/// `at` names the report the values came from. The trails plot passes it
-/// because its scrubber sits between reports for most of its travel, so the
-/// numbers can be up to one report interval old and saying so is cheaper than
-/// letting someone chase a stale reading. The per-report plot leaves it unset:
-/// there the report *is* the thing being viewed.
+/// `at` names the report the values came from. The trails plot passes it: its
+/// scrubber sits between reports for most of its travel, so the values can be up
+/// to one report interval old. The per-report plot leaves it unset.
 pub(crate) fn satellite_tooltip(ui: &mut egui::Ui, satellite: &Satellite, at: Option<GpsTime>) {
     ui.horizontal(|ui| {
         let label = satellite_designator(satellite.constellation(), satellite.prn());
@@ -81,8 +76,6 @@ pub(crate) fn satellite_tooltip(ui: &mut egui::Ui, satellite: &Satellite, at: Op
     }
 }
 
-/// One label/value row of the tooltip table, the value right-aligned in a
-/// fixed column so the digits line up down the table and across satellites.
 fn tooltip_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.label(RichText::new(label).weak());
     ui.allocate_ui_with_layout(
@@ -98,16 +91,9 @@ fn tooltip_row(ui: &mut egui::Ui, label: &str, value: &str) {
 /// The fix-state chip: a filled-dot / hollow-ring glyph beside a one-word
 /// state.
 ///
-/// The fill matches the plot's marker - filled in the fix, hollow when only
-/// tracked - so the tooltip confirms the marker's shape. The colour is a
-/// deliberate status cue (green for in the fix, weak grey for tracked), not
-/// the marker's own colour: on the plot colour means constellation, so reusing
-/// it here would say nothing about the fix. The stats column's counts colour
-/// themselves the same status way rather than by constellation.
-///
-/// "Tracked" says what the satellite is rather than negating the other state,
-/// which both readings of "tracked, not in fix" forced you to hold in your
-/// head first.
+/// The fill matches the plot's marker: filled in the fix, hollow when only
+/// tracked. The colour is a status cue (green for in the fix, weak grey for
+/// tracked), not the constellation colour.
 fn fix_chip(ui: &mut egui::Ui, in_fix: bool) {
     let color = if in_fix {
         gt_ui_theme::SUCCESS_GREEN
@@ -126,9 +112,8 @@ fn fix_chip(ui: &mut egui::Ui, in_fix: bool) {
     ui.label(RichText::new(state).color(color));
 }
 
-/// The candidate nearest to `pointer`, within `radius`. `candidates` yields
-/// each item with its screen position; the closest one inside the radius
-/// wins. Shared by the mark tooltip and the slip tooltip.
+/// The candidate nearest to `pointer` within `radius`, where `candidates` yields
+/// each item with its screen position.
 pub(crate) fn nearest_within<'a, T>(
     candidates: impl Iterator<Item = (&'a T, Pos2)>,
     pointer: Pos2,

@@ -23,8 +23,8 @@ pub struct NameFields<'a> {
 }
 
 /// One recognised placeholder token. The `snake_case` wire names are the tokens
-/// users type inside `{...}`; deriving them keeps the set in lockstep with the
-/// enum (see the exhaustiveness test) rather than a hand-written match.
+/// users type inside `{...}`. Deriving them keeps the set in lockstep with the
+/// enum (see the exhaustiveness test).
 #[derive(
     Debug,
     Clone,
@@ -105,9 +105,9 @@ enum Part<'a> {
 
 /// Split `template` into literal and token parts.
 ///
-/// A `{...}` group whose contents are not a recognised token - or an unmatched
-/// `{` - is emitted as literal text (braces included), so a malformed template
-/// degrades to showing itself rather than erroring.
+/// A `{...}` group whose contents are not a recognised token, or an unmatched
+/// `{`, is emitted as literal text (braces included), so a malformed template
+/// degrades to showing itself.
 fn parse(template: &str) -> Vec<Part<'_>> {
     let mut parts = Vec::new();
     let mut rest = template;

@@ -37,9 +37,6 @@ impl MercBounds {
 }
 
 /// A closed time interval `[start, end]` with named fields.
-///
-/// Replaces raw `(DateTime<Utc>, DateTime<Utc>)` tuples so that `start`/`end`
-/// are self-documenting and a swapped pair becomes a compile error.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct TimeRange {
     pub start: DateTime<Utc>,
@@ -80,8 +77,7 @@ impl TimeRange {
 
 /// Which marker types a track must have to pass the marker filter.
 ///
-/// The three variants are mutually exclusive. `CustomMarker` is a strict
-/// subset of `AnyMarker`.
+/// `CustomMarker` is a strict subset of `AnyMarker`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MarkerRequirement {
     /// No marker constraint - all tracks pass.
@@ -279,8 +275,7 @@ pub fn merc_bounds_for_rect(bb: Rect<f64>) -> MercBounds {
 
 /// A point in the global spatial index, covering TPV fixes and all marker categories.
 ///
-/// Ghost TPV fixes (heading == `None`) are excluded - their position is interpolated
-/// at render time rather than pre-computed.
+/// Ghost TPV fixes (heading == `None`) are excluded.
 #[derive(Debug, Clone, Copy)]
 pub struct SpatialPoint {
     pub merc: MercPoint,
@@ -399,9 +394,6 @@ fn report_with_age(point: &NavPoint, time: GpsTime) -> Option<NearestSatelliteRe
 
 impl TrackRef {
     /// The track this ref addresses, `None` when either index is stale.
-    ///
-    /// The canonical form of the `fi.get(files)` + `index.get(&f.tracks)`
-    /// chain that otherwise gets re-spelled at every lookup site.
     pub fn resolve(self, files: &[LoadedFile]) -> Option<&LoadedTrack> {
         self.fi.get(files).and_then(|f| self.index.get(&f.tracks))
     }
@@ -410,10 +402,10 @@ impl TrackRef {
 /// Platform a recording was made on, declared by the recorder via the SDK's
 /// `travel_mode` metadata field.
 ///
-/// Mirrors `geotrace_sdk::TravelMode` (the structurally-identical wire-format
-/// type); `gt-loader` converts between the two. Keep the variant sets in sync.
+/// Matches `geotrace_sdk::TravelMode` (the structurally-identical wire-format
+/// type). `gt-loader` converts between the two. Keep the variant sets in sync.
 /// Wire values outside the known set are preserved in [`TravelMode::Unknown`],
-/// never dropped - unexpected declarations are signal, not noise.
+/// never dropped.
 ///
 /// `Display`/`FromStr` (via `strum`) give the lower snake_case wire form used
 /// by [`TravelMode::from_wire`].
@@ -451,17 +443,15 @@ impl TravelMode {
         let s = s.as_ref();
         match s.parse() {
             Ok(mode) => mode,
-            // `#[strum(default)]` makes parsing infallible; keep the explicit
-            // fallback so removing the default cannot introduce a panic here.
+            // `#[strum(default)]` makes parsing infallible. The explicit
+            // fallback survives removing that default.
             Err(_) => TravelMode::Unknown(s.to_owned()),
         }
     }
 
     /// Canonical human-readable name, e.g. `TravelMode::Car.display_name() == "Car"`.
     ///
-    /// Single source of truth for this type's display spelling - call sites
-    /// should format through this rather than re-typing the name. Unknown
-    /// values display their preserved wire form verbatim.
+    /// Unknown values display their preserved wire form verbatim.
     pub fn display_name(&self) -> &str {
         match self {
             TravelMode::Car => "Car",
@@ -582,7 +572,7 @@ mod travel_mode_tests {
 
     /// The wire form is the `meta_travel_mode` attribute value produced by the
     /// SDK. Every variant must round-trip through it, and unknown values must
-    /// be preserved verbatim rather than dropped.
+    /// be preserved verbatim.
     #[test]
     fn from_wire_round_trips_every_variant() {
         for mode in TravelMode::iter() {

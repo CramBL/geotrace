@@ -15,8 +15,8 @@ pub struct JammingPoint {
     /// Aircraft the share was computed over. Zero where `percent` is
     /// [`None`].
     pub aircraft: u32,
-    /// Aircraft of those that reported low navigation integrity, so the
-    /// hover states the counts without recovering them from the share.
+    /// Aircraft of those that reported low navigation integrity, for the
+    /// hover's counts.
     pub bad: u32,
 }
 
