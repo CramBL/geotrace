@@ -1,0 +1,40 @@
+{
+  "files": [
+    {
+      "captured_at": "2026-08-16T21:50:11.102942006+00:00",
+      "file_name": "JPLG1310.24I",
+      "first_epoch": "2024-05-10T00:00:00+00:00",
+      "gaps": 0,
+      "http_status": 200,
+      "interval_seconds": 7200,
+      "last_epoch": "2024-05-11T00:00:00+00:00",
+      "latitude_nodes": 71,
+      "latitude_step_degrees": -2.5,
+      "longitude_nodes": 73,
+      "longitude_step_degrees": 5.0,
+      "maps": 13,
+      "name": "jpl-final-storm",
+      "peak_tecu": 175.2,
+      "shell_height_km": 450.0,
+      "url": "https://sideshow.jpl.nasa.gov/pub/iono_daily/IONEX_final/y2024/JPLG1310.24I.gz"
+    },
+    {
+      "captured_at": "2026-08-16T21:50:13.863992112+00:00",
+      "file_name": "JPLG0920.24I",
+      "first_epoch": "2024-04-01T00:00:00+00:00",
+      "gaps": 0,
+      "http_status": 200,
+      "interval_seconds": 7200,
+      "last_epoch": "2024-04-02T00:00:00+00:00",
+      "latitude_nodes": 71,
+      "latitude_step_degrees": -2.5,
+      "longitude_nodes": 73,
+      "longitude_step_degrees": 5.0,
+      "maps": 13,
+      "name": "jpl-final-quiet",
+      "peak_tecu": 135.8,
+      "shell_height_km": 450.0,
+      "url": "https://sideshow.jpl.nasa.gov/pub/iono_daily/IONEX_final/y2024/JPLG0920.24I.gz"
+    }
+  ]
+}
