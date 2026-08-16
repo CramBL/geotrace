@@ -15,8 +15,9 @@ the exact regression this fix removed.
 
 Only the chromatic constants and those accessor-backed foregrounds are banned.
 Theme-neutral colours (`WHITE`, `BLACK`, `GRAY`, `TRANSPARENT`), deliberate
-tuned `from_rgb(...)` values, and anything inside a `#[cfg(test)]` block (where
-primaries are opaque sentinels, not rendered colours) are left alone.
+tuned `from_rgb(...)` values, and anything inside a `#[cfg(test)]` block or a
+test-only module file (where primaries are opaque sentinels, not rendered
+colours) are left alone.
 
 Exemption syntax (same line):
     let c = Color32::RED; // [qa-allow-check-raw-colors, reason = "why"]
@@ -28,7 +29,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from qa._allow import is_exempt
-from qa._check import Check, Violation, repo_root, rs_files, run_check
+from qa._check import Check, Violation, is_test_only_module, repo_root, rs_files, run_check
 
 CHECK = "check-raw-colors"
 
@@ -95,7 +96,7 @@ def _non_test_lines(lines: list[str]) -> Iterator[tuple[int, str]]:
 def _collect(root: Path) -> list[Violation]:
     violations: list[Violation] = []
     for path in rs_files(root):
-        if _PALETTE_CRATE in path.as_posix():
+        if _PALETTE_CRATE in path.as_posix() or is_test_only_module(path):
             continue
         lines = path.read_text(errors="replace").splitlines()
         for i, raw in _non_test_lines(lines):
