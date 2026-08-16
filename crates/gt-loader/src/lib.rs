@@ -219,7 +219,7 @@ pub fn load_gtd_bytes_with_progress(
 /// their styles are all preserved. Marker and event-marker positions are
 /// re-interpolated from the surviving fixes by the SDK builder, in lenient mode
 /// so a marker that ends up outside the surviving time range is clamped with a
-/// warning rather than failing the whole re-encode.
+/// warning.
 ///
 /// This is the persisted half of a permanent per-track delete: once the new
 /// bytes replace the old recording, the dropped points cannot be recovered.
@@ -463,8 +463,7 @@ fn convert_marker(m: &SdkMarker) -> CustomMarker {
 ///
 /// The internal type has one variant the SDK doesn't (`Log`, never produced
 /// here). This is the only place that maps between the two, so a rename on
-/// either side fails to compile here rather than silently desyncing a second,
-/// copy-pasted match elsewhere.
+/// either side fails to compile here.
 fn convert_icon(icon: SdkMarkerIcon) -> MarkerIcon {
     match icon {
         SdkMarkerIcon::Pin => MarkerIcon::Pin,
@@ -664,7 +663,7 @@ mod tests {
         assert_eq!(file.metadata.travel_mode, travel_mode);
     }
 
-    /// The SDK and app travel-mode enums are structurally identical; every SDK
+    /// The SDK and app travel-mode enums are structurally identical. Every SDK
     /// variant must map onto the app variant of the same name. Iterating the
     /// app enum and converting its wire form back through the SDK type pins
     /// the two variant sets together, so adding a variant to one without the
@@ -974,14 +973,8 @@ mod tests {
 
     #[test]
     fn marker_icon_some() {
-        // Every `SdkMarkerIcon` variant, paired with the internal `MarkerIcon`
-        // it must convert to - `convert_icon` is the only place this
-        // correspondence is defined (see its doc comment), so this is a full
-        // exhaustiveness check rather than a sample: a wrong mapping for any
-        // variant fails here even though the match still compiles.
-        //
-        // (Internal `MarkerIcon` has one extra variant, `Log`, with no SDK
-        // counterpart, so the table is checked against `SdkIcon::COUNT` only.)
+        // The full mapping table, checked against `SdkIcon::COUNT`. Internal
+        // `MarkerIcon::Log` has no SDK counterpart.
         let pairs = [
             (SdkIcon::Pin, MarkerIcon::Pin),
             (SdkIcon::Cross, MarkerIcon::Cross),

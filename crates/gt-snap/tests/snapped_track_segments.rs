@@ -93,7 +93,7 @@ fn edge_spans_cover_segments_coherently(#[case] scenario: &str) {
     }
 }
 
-/// Every success fixture assembles without error; the digests pin segment
+/// Every success fixture assembles without error. The digests pin segment
 /// counts and endpoints. `teleport_gap` must split into two segments (the
 /// break shows only as an unmatched run - no discontinuity flags), and
 /// `partially_snappable` splits on its flagged discontinuity.
@@ -119,8 +119,8 @@ fn teleport_gap_splits_into_two_segments() {
     );
 }
 
-/// The unfiltered fixture carries every edge attribute; segment assembly
-/// must work there too (it is the same clean drive).
+/// The unfiltered fixture has every edge attribute. Segment assembly must
+/// work there too (it is the same clean drive).
 #[test]
 fn unfiltered_fixture_assembles_like_filtered() {
     let filtered = parse_response("clean_drive").expect("fixture");
@@ -315,8 +315,8 @@ fn garbage_shape_is_an_error() {
 proptest! {
     /// The decoder consumes untrusted network bytes: any string - random
     /// garbage or a mutilated real polyline - must produce `Ok` or `Err`,
-    /// never a panic. (The real captured shapes are exercised by the fixture
-    /// tests above; this covers everything else.)
+    /// never a panic. The real captured shapes are exercised by the fixture
+    /// tests above, this covers everything else.
     #[test]
     fn arbitrary_shape_strings_never_panic(shape in ".{0,256}") {
         let response: TraceAttributesResponse = serde_json::from_value(json!({

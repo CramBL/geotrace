@@ -67,13 +67,13 @@ const AUTOCOMPLETE_VISIBLE_ROWS: usize = 5;
 
 /// Seconds the pointer must rest before the editor hover doc appears, so the
 /// tooltip does not flicker over every token the pointer crosses. Only entering
-/// a token arms the delay; the doc already on display survives pointer motion
+/// a token arms the delay. The doc already on display survives pointer motion
 /// within its token.
 const HOVER_DOC_DELAY_SECS: f32 = 0.15;
 
 /// Seconds after the last keystroke before the caret chunk's diagnostic shows.
 /// A query is structurally broken for most of the time it is being typed
-/// (`points |` until the keyword lands); flashing red on every keystroke reads
+/// (`points |` until the keyword lands). Flashing red on every keystroke reads
 /// as noise, so the chunk under the caret gets this grace period. Errors in
 /// other chunks (and the disabled Run button) are immediate.
 const DIAGNOSTIC_IDLE_SECS: f64 = 0.6;
@@ -86,7 +86,7 @@ struct QueryExample {
 }
 
 /// Starter queries, mirroring the documented use cases. Embedded, not
-/// persisted; every one is asserted to parse, check, and run by a test.
+/// persisted. Every one is asserted to parse, check, and run by a test.
 const EXAMPLES: &[QueryExample] = &[
     QueryExample {
         name: "Steady acceleration",
@@ -143,7 +143,7 @@ pub struct QueryWindow {
     /// The editor's autocomplete popup, recomputed from the caret when the
     /// text, schema, or caret changed.
     autocomplete: Autocomplete,
-    /// Bumped whenever the checked text or schema changes; keys the
+    /// Bumped whenever the checked text or schema changes. Keys the
     /// autocomplete memo so candidates are not recomputed every repaint.
     assist_revision: u64,
     /// `ui.input(..).time` of the last text edit, for the diagnostic grace
@@ -156,7 +156,7 @@ pub struct QueryWindow {
     editor_had_focus: bool,
     /// Editor-global byte span of the token whose hover doc is on display,
     /// `None` while no doc shows. Keeps the doc up while the pointer moves
-    /// within the token instead of re-arming the hover delay on every twitch.
+    /// within the token.
     hover_doc_span: Option<Range<usize>>,
 }
 
@@ -187,7 +187,7 @@ impl Candidate {
     fn from_construct(construct: &Construct) -> Self {
         let (suffix, caret_back) = match construct.kind {
             ConstructKind::Function => ("()", 1),
-            // Something always follows these; land the caret past a space.
+            // Something always follows these, so land the caret past a space.
             ConstructKind::Source
             | ConstructKind::Stage
             | ConstructKind::Param
@@ -260,7 +260,7 @@ struct Autocomplete {
     /// stays closed while completing the same word and re-arms when the caret
     /// moves on to another one.
     dismissed_at: Option<usize>,
-    /// Set by Ctrl+Space; the next recompute runs with the manual trigger,
+    /// Set by Ctrl+Space. The next recompute runs with the manual trigger,
     /// which offers candidates even on an empty prefix.
     manual_request: bool,
     /// A non-interactive explanation row shown instead of candidates (typing
@@ -318,7 +318,7 @@ impl QueryWindow {
     /// run still in flight. Called by the toolbar's clear action and by the
     /// side panel's "Reset filters".
     pub fn clear_filter(&mut self) {
-        // Dropping the receiver detaches the worker; its outcome is discarded.
+        // Dropping the receiver detaches the worker and discards its outcome.
         self.worker = None;
         self.session.clear_results();
     }
@@ -444,9 +444,8 @@ impl QueryWindow {
             .show(ctx, |ui| {
                 self.editor_ui(ui, &schema);
                 ui.separator();
-                // What the map draws right now, so a match row can only pin a
-                // point that is on it - this run's own results decide which
-                // points those are.
+                // What the map draws right now: a match row can only pin a
+                // point that is on it.
                 let scope = MapScope {
                     files,
                     visibility: inputs.visibility,
@@ -459,9 +458,9 @@ impl QueryWindow {
                 self.history_examples_ui(ui);
             });
 
-        // Esc closes the window - but not out from under someone typing: with
-        // the editor focused, the first Esc only unfocuses it (the completion
-        // popup, when open, consumes its own Esc before this).
+        // Esc closes the window. With the editor focused, the first Esc only
+        // unfocuses it (the completion popup, when open, consumes its own Esc
+        // before this).
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
             && !editor_was_focused
         {
@@ -487,8 +486,8 @@ impl QueryWindow {
             self.cancel_requested = false;
             self.session.cancel_run();
         }
-        // The run button lives inside `editor_ui`; it sets this flag. One
-        // run at a time - the button is disabled while one is in flight.
+        // The run button lives inside `editor_ui` and sets this flag. One
+        // run at a time: the button is disabled while one is in flight.
         if self.run_requested {
             self.run_requested = false;
             if !self.session.run_in_flight() {
@@ -541,9 +540,10 @@ impl QueryWindow {
                             {
                                 toggle_pin = Some(index);
                             }
-                            // The button flattens the query and drops comments;
-                            // its hover shows the full verbatim text (comments
-                            // included). Loading restores that text unchanged.
+                            // The button flattens the query and drops
+                            // comments. Its hover shows the full verbatim text
+                            // (comments included). Loading restores that text
+                            // unchanged.
                             if ui
                                 .button(query_one_line(&entry.text))
                                 .on_hover_text(&entry.text)
@@ -617,7 +617,7 @@ impl QueryWindow {
                 self.session.finish_run(outcome);
             }
             Err(mpsc::TryRecvError::Empty) => {}
-            // The worker is gone without a message; nothing to keep.
+            // The worker is gone without a message, so nothing to keep.
             Err(mpsc::TryRecvError::Disconnected) => {
                 log::error!("query worker disappeared without completing");
                 self.worker = None;
@@ -674,9 +674,8 @@ impl QueryWindow {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
         }
         // A channel source mixed with other queries cannot run even though
-        // every chunk checks green; surface it like a check error (underline
-        // the channel sources, message below) instead of leaving a dead Run
-        // button as the only clue.
+        // every chunk checks green. Surface it like a check error: underline
+        // the channel sources, message below.
         let mixed = self.session.all_ok() && self.session.run_kind() == RunKind::MixedChannel;
         if mixed {
             underlines.extend(self.session.channel_source_spans());
@@ -702,7 +701,7 @@ impl QueryWindow {
 
         for diagnostic in &errors {
             // The message shows in red with an error icon (the quoted token
-            // lifts into the code font); the fix, carried in the structured
+            // lifts into the code font). The fix, held in the structured
             // `help`, is a plain "Hint:" line below.
             ui.label(error_message_layout(ui, &diagnostic.message));
             if let Some(hint) = &diagnostic.help {
@@ -816,9 +815,9 @@ impl QueryWindow {
                     dismissed = true;
                     return;
                 }
-                // Tab always accepts; Enter only on an active popup. Ctrl+Enter
-                // carries the COMMAND modifier, so it is left for the window's
-                // run shortcut.
+                // Tab always accepts, Enter only on an active popup.
+                // Ctrl+Enter has the COMMAND modifier, so it is left for the
+                // window's run shortcut.
                 if input.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
                     || (active && input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
                 {
@@ -826,7 +825,7 @@ impl QueryWindow {
                 }
             });
         } else if self.autocomplete.shown && self.autocomplete.notice.is_some() {
-            // A notice-only popup has nothing to accept; Esc just closes it.
+            // A notice-only popup has nothing to accept, Esc just closes it.
             if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
                 dismissed = true;
             }
@@ -837,7 +836,7 @@ impl QueryWindow {
             self.autocomplete.items.clear();
             self.autocomplete.notice = None;
             self.autocomplete.shown = false;
-            // egui already dropped the editor's focus for this Escape; put it
+            // egui already dropped the editor's focus for this Escape. Put it
             // back so dismissing the popup keeps the caret in the editor.
             ui.ctx().memory_mut(|m| m.request_focus(editor_id));
             return;
@@ -855,9 +854,9 @@ impl QueryWindow {
     /// close the popup for that word.
     fn accept_completion(&mut self, ui: &egui::Ui, editor_id: egui::Id, candidate: &Candidate) {
         let range = self.autocomplete.range.clone();
-        // The candidates were computed for the word recorded alongside them; a
-        // same-frame edit (key repeat, paste) may have moved or replaced it,
-        // in which case accepting would splice the wrong span - do nothing.
+        // The candidates were computed for the word recorded alongside them.
+        // A same-frame edit (key repeat, paste) may have moved or replaced it,
+        // in which case accepting would splice the wrong span, so do nothing.
         if self.session.text().get(range.clone()) != Some(self.autocomplete.word.as_str()) {
             return;
         }
@@ -895,7 +894,7 @@ impl QueryWindow {
 
     /// Refresh the candidates for the current caret, draw the popup under it,
     /// and accept a clicked row. Candidates are recomputed only when the text,
-    /// schema, or caret changed (or completion was requested manually); on the
+    /// schema, or caret changed (or completion was requested manually). On the
     /// frame a click into the popup steals the editor's focus, the popup is
     /// redrawn from the cached candidates so the click still lands.
     fn update_autocomplete(
@@ -917,7 +916,7 @@ impl QueryWindow {
                 self.recompute_candidates(caret_byte, schema, manual);
                 self.autocomplete.computed_for = Some(memo_key);
             }
-            // Esc keeps the popup closed while completing the same word; the
+            // Esc keeps the popup closed while completing the same word. The
             // caret moving to another word re-arms it.
             if self.autocomplete.dismissed_at == Some(self.autocomplete.range.start) {
                 self.autocomplete.items.clear();
@@ -977,7 +976,7 @@ impl QueryWindow {
         } else {
             CompletionTrigger::Automatic
         };
-        // A `@name` being typed offers channels; anywhere else, the language
+        // A `@name` being typed offers channels, anywhere else the language
         // constructs. The `@` sigil makes the two positions disjoint.
         let mut notice = None;
         let (range, items) =
@@ -1004,7 +1003,7 @@ impl QueryWindow {
             };
         let range = range.start + offset..range.end + offset;
 
-        // Keep the highlighted row while the candidate set is unchanged;
+        // Keep the highlighted row while the candidate set is unchanged,
         // otherwise start at the top.
         let unchanged = items.iter().map(|c| &c.insert).eq(self
             .autocomplete
@@ -1034,7 +1033,7 @@ impl QueryWindow {
 
     /// Show a documentation tooltip for the token under the pointer, in the
     /// editor. Suppressed while the completion popup is up, so the two don't
-    /// stack; shown only after the pointer has rested a moment on the token
+    /// stack. Shown only after the pointer has rested a moment on the token
     /// (though the doc already on display stays up while the pointer moves
     /// within its token), and only when it actually sits on the token's own
     /// rectangle (the galley clamps a position in the blank space right of a
@@ -1188,8 +1187,8 @@ impl QueryWindow {
             .name("query-run".to_owned())
             .spawn(move || {
                 let outcome = prepared.execute();
-                // A send failure means the window dropped the receiver;
-                // nothing left to notify.
+                // A send failure means the window dropped the receiver, so
+                // there is nothing left to notify.
                 tx.send(outcome).ok();
                 worker_ctx.request_repaint();
             })
@@ -1222,7 +1221,7 @@ struct MatchCtx<'a> {
 
 /// One match: a collapsing header with the point table inside. Header hover
 /// echoes the whole match on the map (a halo band plus track focus) and on
-/// the plot (a shaded time band, via the app layer); row hover echoes the
+/// the plot (a shaded time band, via the app layer). Row hover echoes the
 /// single point through the plot cross-highlight ring.
 fn match_ui(
     ui: &mut egui::Ui,
@@ -1546,7 +1545,7 @@ fn format_history_age(age: chrono::Duration) -> String {
 /// not. The untruncated text is available on hover.
 ///
 /// Comment removal goes through the shared lexer (dropping its `Comment`
-/// spans) rather than re-deriving comment syntax, so the two cannot drift.
+/// spans), so the two cannot drift.
 /// Only comment spans are removed - the original spacing of the remaining
 /// code is preserved, then whitespace is collapsed.
 fn query_one_line(text: &str) -> String {
@@ -1569,7 +1568,7 @@ fn points_of(files: &[LoadedFile], track_ref: TrackRef) -> Option<&[NavPoint]> {
 }
 
 /// Byte offset of the `char_index`-th character, or the text length when the
-/// index is at or past the end. The egui caret is a char index; the query
+/// index is at or past the end. The egui caret is a char index, the query
 /// position model works in bytes.
 fn char_to_byte(text: &str, char_index: egui::text::CharIndex) -> usize {
     text.char_indices()
@@ -1608,7 +1607,7 @@ fn draw_autocomplete_popup(
 
     // Flip above the caret when there is no room below, so the popup never
     // covers the line being typed. The height estimate mirrors the layout
-    // above; `constrain` still clamps any residual overshoot.
+    // above. `constrain` still clamps any residual overshoot.
     let visible_rows = autocomplete.items.len().clamp(1, AUTOCOMPLETE_VISIBLE_ROWS);
     let footer = if overflow > 0 { row_height } else { 0.0 };
     let frame_padding = Frame::popup(ui.style()).total_margin().sum().y;
@@ -1700,7 +1699,7 @@ fn construct_tooltip_ui(ui: &mut egui::Ui, construct: &Construct) {
     }
     if !construct.doc.is_empty() {
         let mut doc = LayoutJob::default();
-        // The doc is prose with `backticked` code spans; color the code.
+        // The doc is prose with `backticked` code spans, so color the code.
         let mut in_code = false;
         for part in construct.doc.split('`') {
             if !part.is_empty() {
@@ -1755,8 +1754,8 @@ fn text_format(font: &egui::FontId, color: egui::Color32) -> egui::TextFormat {
     }
 }
 
-/// The syntax-highlight color for a token class in the current theme; `default`
-/// colors whitespace and punctuation. Shared by the editor's layouter and the
+/// The syntax-highlight color for a token class in the current theme.
+/// `default` colors whitespace and punctuation. Shared by the editor's layouter and the
 /// hover doc so they can't diverge.
 fn syntax_color(class: TokenClass, default: egui::Color32, dark_mode: bool) -> egui::Color32 {
     match class {
@@ -1964,7 +1963,7 @@ mod tests {
                 gt_query::check(&parsed, &gt_query::ChannelSchema::new()).unwrap_or_else(|e| {
                     panic!("example {:?} failed to check: {}", example.name, e.message)
                 });
-            // Runs without panicking; util/slip series are absent here, which
+            // Runs without panicking. Util/slip series are absent here, which
             // the poison rules handle, so we only assert it completes.
             let _ = gt_query::run(&checked, &inputs);
         }
@@ -2157,9 +2156,9 @@ mod tests {
 
     #[test]
     fn candidate_from_construct_maps_name_and_insertion() {
-        // A stage keyword gets a trailing space so the next token can follow;
-        // a metric does not (an operator, not a space, comes next); a function
-        // brings its parentheses with the caret stepping inside them; a unit
+        // A stage keyword gets a trailing space so the next token can follow.
+        // A metric does not: an operator, not a space, comes next. A function
+        // brings its parentheses with the caret stepping inside them. A unit
         // pads itself off a glued digit.
         let find = |name| gt_query::catalog().iter().find(|c| c.name == name);
         let stage = Candidate::from_construct(find("where").expect("where is catalogued"));

@@ -2,7 +2,7 @@
 //!
 //! Two databases live under one directory: the recording history
 //! ([`gt_history`]) and the interference archive ([`gt_jam_store`]).
-//! [`Store`] owns where they are and what they are called; the types for
+//! [`Store`] owns where they are and what they are called. The types for
 //! working with them are re-exported here so call sites have one import.
 //!
 //! Settings are not part of this - they are a config file, not a database.

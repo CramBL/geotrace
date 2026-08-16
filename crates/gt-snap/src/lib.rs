@@ -4,11 +4,6 @@
 //! the matched geometry as the reference the receiver "should" have produced:
 //! the snapped track drawn on the map, and the per-point snap error plotted
 //! against time. See `docs/snap/design.md` for the full design.
-//!
-//! This crate currently ships the fixture capture harness
-//! (`examples/fetch_snap_fixtures.rs`, wrapped by `just snap-fixtures`) and the
-//! live-captured API fixtures under `tests/fixtures/` that the wire types are
-//! developed against. The typed client, chunking, and stitching land on top.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -25,12 +20,11 @@ pub mod wire;
 /// [`REQUEST_INTERVAL`].
 pub const DEFAULT_SERVER_URL: &str = "https://valhalla1.openstreetmap.de";
 
-/// Path of the sole endpoint this crate uses, appended to the server base URL.
 pub const TRACE_ATTRIBUTES_PATH: &str = "/trace_attributes";
 
 /// FOSSGIS's page describing the public routing/matching infrastructure the
 /// default server belongs to - service scope, usage policy, and privacy
-/// terms. Only meaningful for [`DEFAULT_SERVER_URL`]; a self-hosted server
+/// terms. Only meaningful for [`DEFAULT_SERVER_URL`]. A self-hosted server
 /// has its own terms, so UI linking here must gate on the default host.
 pub const SERVICE_INFO_URL: &str = "https://routing.openstreetmap.de/about.html";
 
@@ -38,9 +32,8 @@ pub const SERVICE_INFO_URL: &str = "https://routing.openstreetmap.de/about.html"
 /// policy for published apps.
 pub const CLIENT_ID_HEADER: (&str, &str) = ("X-Client-Id", "geotrace");
 
-/// Minimum spacing between requests to the public server: its rate limit is
-/// 1 request per user per second, enforced client-side so we never rely on
-/// the server to throttle us.
+/// Minimum spacing between requests to the public server, enforced
+/// client-side. Its rate limit is 1 request per user per second.
 pub const REQUEST_INTERVAL: Duration = Duration::from_secs(1);
 
 /// The host component of a server base URL, or `None` when the URL does not
@@ -58,7 +51,7 @@ pub fn server_host(url: &str) -> Option<String> {
 ///
 /// Each entry names a `NAME.request.json` / `NAME.response.json` pair under
 /// [`fixtures_dir`]. The set is deliberately one scenario per server behavior
-/// the client must handle; the capture harness builds the matching requests.
+/// the client must handle. The capture harness builds the matching requests.
 pub const FIXTURE_SCENARIOS: &[&str] = &[
     "clean_drive",
     "clean_drive_tuned",

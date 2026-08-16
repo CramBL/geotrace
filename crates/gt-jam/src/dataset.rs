@@ -97,8 +97,8 @@ impl JamDataset {
 
     /// The observation for `cell`.
     ///
-    /// An absent cell saw no aircraft at all, which is not the same as
-    /// having seen only good ones.
+    /// An absent cell had no aircraft reported, which is not the same as
+    /// having only good ones.
     pub fn observation(&self, cell: CellIndex) -> Option<&HexObservation> {
         let position = self
             .cells

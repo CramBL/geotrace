@@ -3,10 +3,10 @@
 //! [`gt_jam::wire::parse_dataset`] is the crate's only consumer of untrusted
 //! network bytes, which the unit tests' hand-built rows cannot cover.
 //!
-//! All three properties assert the same thing: the parser answers rather
-//! than panicking, and what survives is at [`H3_RESOLUTION`], counted at
-//! least one aircraft, and is the only row for its cell. Mirrors how
-//! `gt-snap` fuzzes its shape decoder and response classifier.
+//! All three properties assert the same thing: the parser never panics, and
+//! what survives is at [`H3_RESOLUTION`], counted at least one aircraft, and
+//! is the only row for its cell. Mirrors how `gt-snap` fuzzes its shape
+//! decoder and response classifier.
 
 use std::collections::HashSet;
 use std::fs;
@@ -85,8 +85,8 @@ proptest::proptest! {
     #[test]
     fn a_truncated_real_dataset_yields_only_usable_observations(cut in 0..MAX_TRUNCATION_BYTES) {
         let csv = captured_world_day().map_err(TestCaseError::fail)?;
-        // The dataset is ASCII, so every byte is a character boundary;
-        // `get` checks rather than assumes it.
+        // The dataset is ASCII, so every byte is a character boundary.
+        // `get` checks it.
         if let Some(truncated) = csv.get(..cut) {
             let reporter = ParseWarningReporter::default();
             if let Ok(observations) = wire::parse_dataset(truncated, &reporter) {

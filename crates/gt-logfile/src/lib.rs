@@ -278,7 +278,6 @@ pub fn load_log(
         }
     }
 
-    // Sort by timestamp
     entries.sort_by_key(|(ts, _)| *ts);
 
     // Assign color groups and associate with nav track
@@ -314,7 +313,6 @@ fn associate(ts: &DateTime<Utc>, nav_points: &[NavPoint], window_s: i64) -> Opti
         return None;
     }
 
-    // Binary search for the insertion point
     let idx = nav_points.partition_point(|p| p.tpv.time().utc() <= *ts);
 
     let before = idx.checked_sub(1).and_then(|i| nav_points.get(i));

@@ -926,7 +926,7 @@ fn snapshot_app_query_window() {
         .inner
         .get_by_role_and_label(egui::accesskit::Role::Button, "Run")
         .click();
-    // The run executes on a worker thread; step until its results land.
+    // The run executes on a worker thread, so step until its results land.
     step_until_query_result(&mut harness.inner);
     harness.inner.run_steps(60);
 
@@ -1035,7 +1035,7 @@ fn snapshot_app_query_match_hover() {
     step_until_query_result(&mut harness.inner);
     harness.inner.run_steps(60);
 
-    // Hover the larger match's header; the cross-highlight lands on the map
+    // Hover the larger match's header. The cross-highlight lands on the map
     // and plot a frame later.
     let header_pos = harness
         .inner
@@ -1127,9 +1127,8 @@ fn snapshot_app_plot_channels() {
 
 /// Light-theme plot render with a spread of series enabled. The plot canvas is
 /// pure-ish white on a light theme, where the dark-mode series palette was
-/// invisible; this is the baseline that guards the theme-aware `metric_color`
-/// light variants so a regression there fails CI instead of only being caught
-/// by eye in dark mode.
+/// invisible. This is the baseline that guards the theme-aware `metric_color`
+/// light variants so a regression there fails CI.
 #[test]
 fn snapshot_app_plot_light() {
     let (mut harness, _config_path) = TestHarness::builder()
@@ -1765,7 +1764,7 @@ fn editor_with_popup(text: &str) -> Harness<'static, App> {
     harness
 }
 
-/// Enter accepts the highlighted candidate, replacing the partial word; a
+/// Enter accepts the highlighted candidate, replacing the partial word. A
 /// stage keyword gets a trailing space so the next token can be typed straight
 /// away.
 #[test]
@@ -1927,7 +1926,7 @@ fn ctrl_space_opens_the_popup_manually() {
     );
 }
 
-/// With the editor focused, Esc first unfocuses it; only a second Esc closes
+/// With the editor focused, Esc first unfocuses it. Only a second Esc closes
 /// the query window.
 #[test]
 fn esc_unfocuses_the_editor_before_closing_the_window() {
@@ -1998,7 +1997,7 @@ fn snapshot_app_plot_channel_components() {
     harness.inner.get_by_label_contains("Channels").click();
     harness.inner.run_steps(3);
     // Metric lines (satellite counts, heading at 20 deg) dwarf the accel
-    // values; hide them all so the y-scale lets the three component lines
+    // values. Hide them all so the y-scale lets the three component lines
     // separate visibly.
     {
         let state = harness.inner.state_mut();
@@ -2248,8 +2247,8 @@ fn channel_popup_offers_and_inserts_a_loaded_channel() {
     assert_eq!(harness.state().query_window.text(), "@accel");
 }
 
-/// A channel-source query mixed with a points query cannot run; the editor
-/// says why instead of leaving a silently dead Run button.
+/// A channel-source query mixed with a points query cannot run. The editor
+/// says why.
 #[test]
 fn mixed_channel_queries_explain_why_run_is_disabled() {
     let mut harness = Harness::builder()
@@ -2391,8 +2390,8 @@ fn snapshot_query_hover_docs() {
     }
     harness.inner.run_steps(3);
 
-    // Hover the `window` token. It starts after "points | " on the first line;
-    // the editor's text begins near the top-left of the window content.
+    // Hover the `window` token. It starts after "points | " on the first
+    // line. The editor's text begins near the top-left of the window content.
     let editor = harness
         .inner
         .get_by_role(egui::accesskit::Role::MultilineTextInput);
@@ -2400,8 +2399,8 @@ fn snapshot_query_hover_docs() {
     let hover = egui::pos2(rect.left() + 96.0, rect.top() + 10.0);
     harness.inner.run_steps(2);
     harness.inner.hover_at(hover);
-    // The hover doc appears only after the pointer has rested; step past the
-    // delay (steps advance the mock clock a frame at a time).
+    // The hover doc appears only after the pointer has rested, so step past
+    // the delay (steps advance the mock clock a frame at a time).
     harness.inner.run_steps(40);
 
     harness.snapshot("query_hover_docs");
@@ -2715,8 +2714,8 @@ fn snapshot_update_prompt_self_update() {
     harness.snapshot("update_prompt_self_update");
 }
 
-/// A non-self-updatable build (Homebrew / MSI / manual download) shows no dialog;
-/// it exposes the available version for the subtle menu-bar badge instead.
+/// A non-self-updatable build (Homebrew / MSI / manual download) shows no
+/// dialog. It exposes the available version for the subtle menu-bar badge.
 #[cfg(feature = "self-update")]
 #[test]
 fn non_self_update_uses_badge_not_dialog() {
@@ -2852,7 +2851,7 @@ fn snapshot_load_warnings_dialog() {
 }
 
 /// The standard settings-window snapshot is 400 px tall and clips after the
-/// Analysis section; this taller one captures the Display and Snap to road
+/// Analysis section. This taller one captures the Display and Snap to road
 /// sections below it. Feature-gated like `snapshot_settings_window`: the
 /// update checkbox renders within this window height, so the baseline must be
 /// generated under the same feature set CI tests with.
@@ -3053,8 +3052,8 @@ fn auto_prompt_asks_once_after_earlier_consent() {
     harness.run_steps(2);
 
     // First synthetic click settles the startup map-layer popup (see
-    // snap_consent_agree_persists_the_server_host); the second only fires
-    // while the prompt is still open - unlike the sibling consent dialogs,
+    // snap_consent_agree_persists_the_server_host). The second only fires
+    // while the prompt is still open: unlike the sibling consent dialogs,
     // this prompt sometimes receives the first click already, and a second
     // Enter-equivalent click after it closed would go to the map.
     harness
@@ -4110,7 +4109,7 @@ fn snap_error_chip_is_disabled_until_a_run_completes() {
 }
 
 /// `snap_error_view` resolves each sent point's `PointIdx` to its plot time
-/// and mirrors the kind; unsnapped points keep `error_m: None`.
+/// and mirrors the kind. Unsnapped points keep `error_m: None`.
 #[test]
 fn snap_error_view_resolves_point_times_and_kinds() {
     let mut harness = Harness::builder()

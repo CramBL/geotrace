@@ -403,10 +403,9 @@ fn edge_index_sentinel_folds_into_none() {
 }
 
 /// Valhalla reports derestricted roads (autobahn stretches) as the string
-/// `"unlimited"` where a km/h number normally sits - seen live, and a plain
-/// `u32` field failed the whole chunk over it. Both wire shapes parse and
-/// serialize back unchanged (cached results round-trip), and any other
-/// string stays a loud error rather than a silent guess.
+/// `"unlimited"` where a km/h number normally sits. Both wire shapes parse
+/// and serialize back unchanged so cached results round-trip. Any other
+/// string is an error.
 #[rstest::rstest]
 #[case::kmh("50", SpeedLimit::Kmh(50), "50 km/h")]
 #[case::unlimited(r#""unlimited""#, SpeedLimit::Unlimited, "Unlimited")]

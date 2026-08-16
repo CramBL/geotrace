@@ -1,6 +1,6 @@
 //! Classification against what the host really answered.
 //!
-//! The unit tests script synthetic statuses; these replay the captured
+//! The unit tests script synthetic statuses. These replay the captured
 //! bodies and statuses from `capture.json`, so the served day and the
 //! refused day are classified from real responses.
 

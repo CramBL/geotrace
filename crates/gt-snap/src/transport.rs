@@ -7,14 +7,14 @@
 //!
 //! [`send_plan`] drives one chunk at a time, in order:
 //!
-//! - Transport-level failures and server errors (HTTP 5xx) get one retry -
-//!   they may be transient. Any 4xx is deterministic and is never retried;
-//!   retrying would spend fair-use budget for the same answer.
+//! - Transport-level failures and server errors (HTTP 5xx) get one retry:
+//!   they may be transient. Any 4xx is deterministic and is never retried.
+//!   Retrying would spend fair-use budget for the same answer.
 //! - The server's error 444 (off-network) is a valid result, not a failure:
 //!   it becomes [`ChunkOutcome::OffNetwork`].
 //! - Error bodies are not always JSON (the reverse proxy answers oversized
-//!   requests with an HTML 413 page); anything unparsable is a failure
-//!   carrying the raw status.
+//!   requests with an HTML 413 page). Anything unparsable is a failure
+//!   holding the raw status.
 
 use std::time::Instant;
 
@@ -28,8 +28,8 @@ use crate::{CLIENT_ID_HEADER, REQUEST_INTERVAL, TRACE_ATTRIBUTES_PATH};
 /// Retries per failed chunk send (transient failures only).
 const RETRIES: usize = 1;
 
-/// Timeout per request; matching a 1000-point chunk is server-side work,
-/// so this is generous.
+/// Timeout per request. Matching a 1000-point chunk is server-side work, so
+/// this is generous.
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// An HTTP response as the classifier needs it: status and raw body.
@@ -81,9 +81,8 @@ pub enum TransportSource {
 }
 
 impl TransportSource {
-    /// Open a transport against `server_url`. A changed server gets its own
-    /// connection pool and rate limiter, so this is called again whenever
-    /// the server changes.
+    /// Called again whenever the server changes: each server gets its own
+    /// connection pool and rate limiter.
     pub fn connect(self, server_url: &str) -> Result<Connection, TransportError> {
         match self {
             Self::Network => Ok(Connection::Http(HttpTransport::new(server_url)?)),
@@ -107,7 +106,7 @@ pub trait Transport {
 pub struct HttpTransport {
     client: reqwest::blocking::Client,
     url: String,
-    /// Completion time of the most recent send; pacing sleeps until one
+    /// Completion time of the most recent send. Pacing sleeps until one
     /// [`REQUEST_INTERVAL`] past it.
     last_send: Mutex<Option<Instant>>,
 }
@@ -203,7 +202,6 @@ enum Classified {
     Transient(String),
 }
 
-/// Classify a raw HTTP response.
 fn classify(response: &HttpResponse) -> Classified {
     let Ok(status) = reqwest::StatusCode::from_u16(response.status) else {
         return Classified::Outcome(ChunkOutcome::Failed(format!(
@@ -220,11 +218,8 @@ fn classify(response: &HttpResponse) -> Classified {
         };
     }
     if status.is_server_error() {
-        // Server-side trouble may pass; the one retry covers it.
         return Classified::Transient(format!("HTTP {status}"));
     }
-    // 4xx: deterministic. Never retried - the same request yields the same
-    // answer, and retries spend the shared fair-use budget.
     match serde_json::from_str::<ErrorResponse>(&response.body) {
         Ok(error) if error.error_code == ErrorCode::OffNetwork => {
             Classified::Outcome(ChunkOutcome::OffNetwork)

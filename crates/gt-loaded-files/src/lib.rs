@@ -16,7 +16,7 @@ pub const AUTO_IDENTITY_PREFIX: &str = "auto:";
 /// Split an identity into its user-facing text and whether it was auto-derived.
 ///
 /// The stored identity keeps the [`AUTO_IDENTITY_PREFIX`] marker, but that
-/// marker is internal bookkeeping and must not be shown verbatim; every place
+/// marker is internal bookkeeping and must not be shown verbatim. Every place
 /// that displays an identity strips it through this one helper.
 pub fn display_identity(identity: &str) -> (&str, bool) {
     match identity.strip_prefix(AUTO_IDENTITY_PREFIX) {
@@ -240,8 +240,8 @@ impl LoadedFiles {
     }
 
     /// Re-point loaded recordings after their history identity was renamed from
-    /// `old` to `new`. Only the identity changes; the recording `group_name` is
-    /// stable across a rename, so the [`DatabaseRef`] stays valid.
+    /// `old` to `new`. Only the identity changes. The recording `group_name`
+    /// is stable across a rename, so the [`DatabaseRef`] stays valid.
     pub fn rename_identity(&mut self, old: &str, new: &str) {
         for history in &mut self.history {
             if let FileHistory::Recording {

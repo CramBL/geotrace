@@ -110,7 +110,7 @@ fn pump_history(ui: &mut egui::Ui, s: &mut HistoryHarness) {
 }
 
 /// Run frames (yielding to the worker thread) until `pred` holds or the
-/// budget is exhausted; returns whether it held.
+/// budget is exhausted. Returns whether it held.
 fn run_until(
     h: &mut TestHarness<HistoryHarness>,
     pred: impl Fn(&mut TestHarness<HistoryHarness>) -> bool,
@@ -186,13 +186,13 @@ fn snapshot_history_window_table() {
         entry_with_identity("a much longer recording identity that needs the room"),
         entry_with_identity("survey_flight_2026_07_15.gtd"),
     ]);
-    // The temporary database path differs every run; keep it out of the
+    // The temporary database path differs every run, so keep it out of the
     // image.
     harness.worker.hide_path();
     let mut h = TestHarness::builder()
         .size(egui::vec2(900.0, 500.0))
         .ui_state(show_history, harness);
-    // Auto columns measure their content over the first frames; settle
+    // Auto columns measure their content over the first frames, so settle
     // before snapshotting.
     for _ in 0..4 {
         h.run();
@@ -351,9 +351,8 @@ fn ties_break_stably_and_independently_of_direction() {
     );
 }
 
-/// Clicking the active column reverses it; clicking another switches to it
-/// in that column's own natural direction rather than inheriting the
-/// previous one.
+/// Clicking the active column reverses it. Clicking another switches to it
+/// in that column's own natural direction.
 #[test]
 fn header_clicks_reverse_then_switch_columns() {
     let mut sort = HistorySort::default();
@@ -411,7 +410,7 @@ fn every_sort_column_describes_itself() {
     }
 }
 
-/// The DB hands the listing the raw `meta_travel_mode` wire value; the
+/// The DB hands the listing the raw `meta_travel_mode` wire value. The
 /// hover must show the human spelling for known modes and the preserved
 /// wire value verbatim for unknown ones.
 #[rstest::rstest]
@@ -918,7 +917,7 @@ fn snapshot_history_row_breakdown_truncates_long_channel_list() {
     snapshot_breakdown(&entry, "history_row_breakdown_many_channels");
 }
 
-/// A vector channel shows its component labels; a scalar one is just its
+/// A vector channel shows its component labels. A scalar one is just its
 /// name.
 #[rstest::rstest]
 #[case(&[], "accel")]

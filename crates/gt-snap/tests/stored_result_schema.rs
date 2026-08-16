@@ -139,8 +139,7 @@ fn exhaustive_warnings() -> Vec<SnapWarning> {
 /// decoding).
 #[test]
 fn snapshot_stored_result_schema() {
-    // The fixture must stay exhaustive: a new variant without a pinned
-    // stored spelling fails here instead of silently under-covering.
+    // A new variant without a pinned stored spelling fails here.
     assert_eq!(exhaustive_warnings().len(), SnapWarning::COUNT);
     let stored = json!({
         "result": exhaustive_result(),

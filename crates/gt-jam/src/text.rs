@@ -48,8 +48,6 @@ pub fn cell_summary(day: &str, good: u32, bad: u32, bad_percent: f64) -> Vec<Str
     ]
 }
 
-/// The plot chip's hover text, composed from the shared caveats so it
-/// cannot drift from what the map says.
 /// The query metric's documentation body, composed from the shared caveats.
 pub static QUERY_DOC: LazyLock<String> = LazyLock::new(|| {
     format!(
@@ -59,6 +57,8 @@ pub static QUERY_DOC: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
+/// The plot chip's hover text, composed from the shared caveats so it
+/// cannot drift from what the map says.
 pub static PLOT_HOVER: LazyLock<String> = LazyLock::new(|| {
     format!(
         "Share of aircraft over each fix's cell that reported low navigation accuracy, for that \

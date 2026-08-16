@@ -37,8 +37,8 @@ const _: () = {
 };
 
 /// How far behind the current day the host typically runs. Observed at one
-/// to three days; the largest is used so a 404 inside the window reads as
-/// "not published yet" rather than as a hole in the record.
+/// to three days. The largest is used so a 404 inside the window is worded
+/// as not published yet.
 pub const TYPICAL_PUBLICATION_LAG: Days = Days::new(3);
 
 /// What the calendar alone says about a day, before any request is made.
@@ -55,9 +55,6 @@ pub enum DayOutlook {
 }
 
 /// The calendar's verdict on `day`.
-///
-/// `today_utc` is a parameter rather than a clock read to keep callers
-/// testable; the application supplies [`today_utc`].
 pub fn day_outlook(day: NaiveDate, today_utc: NaiveDate) -> DayOutlook {
     if day < COVERAGE_START {
         DayOutlook::BeforeCoverage
@@ -111,8 +108,7 @@ pub fn days_spanned(start: DateTime<Utc>, end: DateTime<Utc>) -> Option<Vec<Naiv
 /// Every [`DayOutlook::Fetchable`] day in `from..=to`, oldest first.
 pub fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> Vec<NaiveDate> {
     let mut days = Vec::new();
-    // Bounds the walk for a caller that asks from the year 1; the verdict on
-    // each day is still [`day_outlook`]'s.
+    // Bounds the walk for a caller that asks from the year 1.
     let mut day = from.max(COVERAGE_START);
     while day <= to {
         if day_outlook(day, today_utc) == DayOutlook::Fetchable {

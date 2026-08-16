@@ -36,7 +36,6 @@ impl Default for Settings {
     }
 }
 
-/// Aircraft-interference configuration.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct InterferenceSettings {
@@ -53,20 +52,19 @@ impl Default for InterferenceSettings {
     }
 }
 
-/// Snap-to-road configuration: the matching server, the default costing,
-/// the upload-consent acknowledgment, and the advanced trace options.
+/// Snap-to-road configuration.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct SnapSettings {
     /// Base URL of the Valhalla map-matching server. Defaults to the public
-    /// FOSSGIS instance; self-hosters point this at their own server.
+    /// FOSSGIS instance. Self-hosters point this at their own server.
     pub server_url: String,
     /// Costing for tracks without a declared travel mode. A file's declared
     /// travel mode always beats this setting.
     pub costing: gt_snap::wire::Costing,
     /// Host of the server the user has acknowledged uploading recorded
     /// location data to, `None` until the first consent. Consent is per host,
-    /// so changing the server URL to a different host re-prompts; see
+    /// so changing the server URL to a different host re-prompts. See
     /// [`SnapSettings::consent_granted`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub consent_host: Option<String>,
@@ -74,7 +72,7 @@ pub struct SnapSettings {
     /// `Some(false)` = manual only, `None` = never chosen. The choice is
     /// asked exactly once - inside the consent dialog, or as its own prompt
     /// for users who acknowledged uploads before auto mode existed - so
-    /// uploads never silently expand; afterwards the settings checkbox
+    /// uploads never silently expand. Afterwards the settings checkbox
     /// changes it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_snap: Option<bool>,
@@ -83,7 +81,7 @@ pub struct SnapSettings {
     /// [`gt_snap::request_plan::SEARCH_RADIUS_RANGE_M`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search_radius_m: Option<f64>,
-    /// Advanced: cost multiplier penalizing route reversals; raising it
+    /// Advanced: cost multiplier penalizing route reversals. Raising it
     /// smooths wandering matches at intersections. `None` = server default.
     /// Bounded by [`gt_snap::request_plan::TURN_PENALTY_FACTOR_RANGE`].
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -156,11 +154,8 @@ pub struct QuerySettings {
     pub history: Vec<QueryHistoryEntry>,
 }
 
-/// One remembered query: its text, whether the user pinned it against
-/// eviction, and when it last ran.
-///
-/// Stored verbatim - an entry that no longer parses after a language change
-/// simply shows a parse error when loaded, it is never dropped on load.
+/// Stored verbatim: an entry that no longer parses after a language change
+/// shows a parse error when loaded and is never dropped.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct QueryHistoryEntry {
@@ -276,7 +271,7 @@ pub struct PlotSettings {
     pub show_channels: bool,
     /// User-chosen channel component colors, keyed by channel name: a
     /// sparse list of recolored components (TOML cannot hold `None` array
-    /// slots); anything absent keeps the derived hue. Edited through the
+    /// slots). Anything absent keeps the derived hue. Edited through the
     /// chip's right-click menu.
     pub channel_colors: HashMap<String, Vec<ComponentColor>>,
 }
@@ -310,9 +305,8 @@ impl Default for PlotSettings {
 /// New variants can be added freely. Old config files simply won't have the key,
 /// and the apply step treats a missing entry as `true` (the default).
 ///
-/// Re-exported from `gt_types` rather than defined here, so the persisted
-/// settings and the plot widget (`gt_plot::plot_widget`) share one definition
-/// instead of maintaining matching copies by hand.
+/// Re-exported from `gt_types` so the settings and the plot widget
+/// (`gt_plot::plot_widget`) share one definition.
 pub use gt_types::MetricKind;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -332,8 +326,7 @@ pub struct MapSettings {
     /// the list of folded sections: an absent or empty list means nothing is
     /// folded, so older config files open everything unfolded.
     pub point_window_folds: gt_ui_types::PointWindowFolds,
-    /// Opacity of the sky-trails window's trails, as a percentage. Persisted so
-    /// the chosen strength carries across tracks and restarts; clamped to
+    /// Opacity of the sky-trails window's trails, as a percentage. Clamped to
     /// `[gt_sky::TRAIL_OPACITY_PERCENT_MIN, gt_sky::TRAIL_OPACITY_PERCENT_MAX]`
     /// when applied.
     pub sky_trail_opacity_percent: f32,
@@ -361,8 +354,7 @@ pub enum MapLayerSetting {
     Satellite,
 }
 
-/// Default recording-name template: show just the (prefix-stripped) filename,
-/// preserving the historical behavior for users who never change it.
+/// Default recording-name template: the prefix-stripped filename.
 pub const DEFAULT_RECORDING_NAME_TEMPLATE: &str = "{filename}";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -370,7 +362,7 @@ pub const DEFAULT_RECORDING_NAME_TEMPLATE: &str = "{filename}";
 pub struct UiSettings {
     pub theme: ThemeSetting,
     /// Template for the recording name shown in the side panel. Supports the
-    /// `{title}`, `{device}`, `{identity}` and `{filename}` tokens; see
+    /// `{title}`, `{device}`, `{identity}` and `{filename}` tokens. See
     /// [`gt_fmt::render_name_template`].
     pub recording_name_template: String,
 }
@@ -443,7 +435,7 @@ pub fn settings_path() -> Option<PathBuf> {
 /// Load settings from a specific file path, falling back to defaults on any error.
 pub fn load_settings_from(path: &std::path::Path) -> Settings {
     let Ok(text) = std::fs::read_to_string(path) else {
-        return Settings::default(); // absent on first run or read error; not an error
+        return Settings::default(); // absent on first run or read error, not an error
     };
     match toml::from_str::<Settings>(&text) {
         Ok(s) => s,
@@ -537,7 +529,7 @@ mod snap_settings_tests {
         );
     }
 
-    /// The advanced options roundtrip through the settings TOML; unset
+    /// The advanced options roundtrip through the settings TOML. Unset
     /// options are omitted, so old config files stay valid.
     #[test]
     fn advanced_options_roundtrip_through_toml() {
@@ -609,7 +601,7 @@ mod snap_settings_tests {
         assert!(!snap.consent_granted());
     }
 
-    /// The section is new; older config files without it must load with the
+    /// The section is new. Older config files without it must load with the
     /// FOSSGIS default server and no consent.
     #[test]
     fn snap_settings_default_from_absent_toml_section() {
@@ -642,7 +634,7 @@ mod snap_settings_tests {
     /// The settings file a fresh install writes.
     ///
     /// Every default a user inherits is here in one place, so a changed
-    /// default is a reviewed diff rather than a surprise. A field that
+    /// default is a reviewed diff. A field that
     /// serialises here is one every existing config lacks, and so must load
     /// from an older file.
     #[test]

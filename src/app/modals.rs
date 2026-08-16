@@ -21,13 +21,13 @@ pub struct RecordingTrackRemoval {
     pub track_indices: Vec<usize>,
 }
 
-/// What the remove-confirmation dialog asks the app to do, in the one frame
-/// after the user confirms.
+/// Actions the app applies in the frame after the user confirms the remove
+/// dialog.
 pub struct RemoveOutcome {
     /// Per stored recording, the tracks being removed. Empty when nothing
     /// removed was backed by history.
     pub affected: Vec<RecordingTrackRemoval>,
-    /// `true` to permanently delete the affected tracks from the originals;
+    /// `true` to permanently delete the affected tracks from the originals,
     /// `false` to hide them.
     pub permanent: bool,
 }
@@ -440,8 +440,8 @@ pub fn show_load_warnings_dialog(ui: &egui::Ui, popup: &mut Option<(String, Vec<
 }
 
 /// Resizable dialog listing a recording's metadata (title, device, identity,
-/// notes). Opened from a file row's note icon. Roomy and resizable so long
-/// identities or notes containing full file paths can be read in full.
+/// notes). Opened from a file row's note icon. Sized generously so long
+/// identities and note paths read in full.
 pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<RecordingDetails>) {
     let Some(details) = request else {
         return;
@@ -450,7 +450,7 @@ pub fn show_recording_details_dialog(ui: &egui::Ui, request: &mut Option<Recordi
         .ctx()
         .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
 
-    // The titlebar close button drives `open`; Escape also dismisses. A
+    // The titlebar close button drives `open`, Escape also dismisses. A
     // read-only viewer needs no explicit footer button.
     let mut open = true;
     Window::new("Recording details")
@@ -534,7 +534,7 @@ pub enum SnapConsentChoice {
     /// carries the mode choice when the dialog asked for one (`None` = the
     /// choice was already made earlier and was not asked again).
     Accepted { auto_snap: Option<bool> },
-    /// No acknowledgment; the manual snap action stays available and
+    /// No acknowledgment. The manual snap action stays available and
     /// re-prompts. Auto mode turns off - a declined consent must never
     /// leave automatic uploads armed.
     Declined,
@@ -548,7 +548,7 @@ pub enum SnapConsentChoice {
 /// `SnapSettings::consent_granted`). With `ask_auto` the dialog also asks
 /// whether tracks should snap automatically from now on - both agree
 /// buttons acknowledge uploads, they differ only in that choice. Escape,
-/// Cancel, and the close button all decline; the acknowledgment is not
+/// Cancel, and the close button all decline. The acknowledgment is not
 /// persisted on decline, so the next manual trigger re-prompts.
 pub fn show_snap_consent_dialog(
     ui: &egui::Ui,
@@ -589,7 +589,7 @@ pub fn show_snap_consent_dialog(
             ui.label("The track's recorded positions and timestamps are uploaded to");
             ui.monospace(server_url);
             // The service description only applies to the public FOSSGIS
-            // infrastructure; a self-hosted server has its own terms.
+            // infrastructure. A self-hosted server has its own terms.
             if gt_snap::server_host(server_url) == gt_snap::server_host(gt_snap::DEFAULT_SERVER_URL)
             {
                 ui.hyperlink_to(

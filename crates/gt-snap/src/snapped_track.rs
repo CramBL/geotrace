@@ -25,9 +25,8 @@ pub const SHAPE_POLYLINE_PRECISION: u32 = 6;
 
 /// One vertex of the snapped track, degrees.
 ///
-/// Deliberately a named-field struct rather than a tuple or `geo` type: the
-/// polyline decoder speaks x/y, and lat/lon transpositions are exactly the
-/// bug class named fields prevent.
+/// Named fields guard against lat/lon transposition: the polyline decoder
+/// speaks x/y.
 ///
 /// Serde derives exist for persisting cached snap results (see
 /// [`crate::stitch::SnapResult`]).
@@ -43,7 +42,7 @@ pub struct Position {
 pub struct SnappedTrackSegment {
     pub positions: Vec<Position>,
     /// Which matched edge each vertex run came from, for hover attributes.
-    /// Sorted by start; spans of adjacent edges overlap at their shared
+    /// Sorted by start. Spans of adjacent edges overlap at their shared
     /// boundary vertex (lookups take the first covering span). Vertices of
     /// shape stretches without an edge range are simply uncovered.
     #[serde(default)]
@@ -63,7 +62,7 @@ pub struct SnappedEdgeSpan {
 /// Why the snapped track could not be assembled from a response.
 ///
 /// These indicate response inconsistencies (drift between the shape, the
-/// points, and the edges), not user-facing conditions; the caller reports
+/// points, and the edges), not user-facing conditions. The caller reports
 /// them per chunk through the warning reporter.
 #[derive(Debug, PartialEq, thiserror::Error)]
 pub enum SnappedTrackError {
@@ -85,7 +84,7 @@ pub enum SnappedTrackError {
 /// Decode the response shape and split it into snapped-track segments.
 ///
 /// A response without a shape (or without any snapped point) yields no
-/// segments. Unsnapped points contribute no geometry; a run of them between
+/// segments. Unsnapped points contribute no geometry. A run of them between
 /// snapped points is a break, as are the explicit discontinuity flags.
 pub fn snapped_track_segments(
     response: &TraceAttributesResponse,
@@ -114,7 +113,7 @@ pub fn snapped_track_segments_in(
             segments.push(SnappedTrackSegment {
                 positions: shape
                     .get(begin..=end)
-                    .unwrap_or_default() // range is validated above; defensive only
+                    .unwrap_or_default() // range is validated above, defensive only
                     .to_vec(),
                 edge_spans: edge_spans_for(begin, end, &response.edges),
             });
@@ -150,7 +149,6 @@ fn edge_spans_for(begin: usize, end: usize, edges: &[crate::wire::Edge]) -> Vec<
     spans
 }
 
-/// Decode the wire polyline into positions.
 fn decode_shape(encoded: &str) -> Result<Vec<Position>, SnappedTrackError> {
     let line = polyline::decode_polyline(encoded, SHAPE_POLYLINE_PRECISION)?;
     Ok(line
@@ -194,7 +192,7 @@ fn point_groups(points: &[SnappedPoint]) -> Vec<Vec<&SnappedPoint>> {
 /// The shape index range covered by a group's edges, or `None` for a group
 /// with no edge association at all.
 ///
-/// Ranges from a group's edges are unioned via min/max; edges are not
+/// Ranges from a group's edges are unioned via min/max. Edges are not
 /// required to appear in shape-index order within a group.
 fn group_shape_range(
     group: &[&SnappedPoint],

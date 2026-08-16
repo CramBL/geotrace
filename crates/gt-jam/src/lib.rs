@@ -17,10 +17,6 @@
 //!
 //! Roughly 44 000 rows covering the whole world, about 300 KiB gzipped. A
 //! request carries a date and nothing about the user's recordings.
-//!
-//! Shipped so far: the [`calendar`], the endpoint addressing, the shared UI
-//! wording, and the [`wire`] parser. The dataset index, the transport, and
-//! the disk cache land on top.
 
 use std::path::PathBuf;
 
@@ -83,7 +79,7 @@ pub fn parse_day(day: &str) -> Result<NaiveDate, chrono::ParseError> {
 
 /// One day captured under [`fixtures_dir`] by `just jam-fixtures`.
 ///
-/// Captures are frozen once committed; a re-capture's diff is reviewed like
+/// Captures are frozen once committed. A re-capture's diff is reviewed like
 /// code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixtureDay {
@@ -96,7 +92,6 @@ pub struct FixtureDay {
     pub purpose: &'static str,
 }
 
-/// The status the host answers for a day it serves.
 const HTTP_OK: u16 = 200;
 
 impl FixtureDay {

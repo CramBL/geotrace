@@ -102,7 +102,7 @@ fn single_fixture_chunk_stitches_into_result() {
 fn owned_ranges_select_results_across_chunks() {
     let plan = two_chunk_plan();
     let sizes = chunk_sizes(&plan);
-    // Chunk 0 reports every point snapped; chunk 1 reports every point
+    // Chunk 0 reports every point snapped, chunk 1 every point
     // interpolated. Overlap points must take the owning chunk's answer.
     let outcomes = [
         uniform_response(sizes[0], SnapPointKind::Snapped, 1.0).expect("outcome"),
@@ -124,7 +124,7 @@ fn owned_ranges_select_results_across_chunks() {
     sorted.dedup();
     assert_eq!(indices, sorted);
     // Ownership split: chunk 0 owns its interior plus the first half of the
-    // overlap; the counts must reflect the owned ranges, not chunk sizes.
+    // overlap. The counts must reflect the owned ranges, not chunk sizes.
     let expected_snapped = plan.chunks[0].owned.len();
     let expected_interpolated = plan.chunks[1].owned.len();
     assert_eq!(result.kind_counts.snapped, expected_snapped);
@@ -190,8 +190,8 @@ fn failed_chunk_leaves_gap_and_marks_partial() {
     );
     // The failed chunk's owned points are absent, not unsnapped: absence of
     // data is not a kind. The first present point is the surviving chunk's
-    // first owned point (owned.start is chunk-local; resolve it to its
-    // track index through the plan).
+    // first owned point. `owned.start` is chunk-local, resolved to its track
+    // index through the plan.
     let expected_first = plan.chunks[1]
         .sent
         .get(plan.chunks[1].owned.start)
@@ -297,7 +297,7 @@ fn edge_references_survive_cross_chunk_concatenation() {
     let reporter = SnapWarningReporter::default();
     let result = stitch::stitch(&plan, auto_params(), &outcomes, &reporter);
 
-    // Each chunk contributed one edge; points of the second chunk must
+    // Each chunk contributed one edge. Points of the second chunk must
     // reference the second edge, not the first.
     assert_eq!(result.edges.len(), 2);
     let last = result.points.last().expect("points exist");
@@ -396,8 +396,7 @@ fn off_network_boundary_keeps_segments_split() {
     let reporter = SnapWarningReporter::default();
     let result = stitch::stitch(&plan, auto_params(), &outcomes, &reporter);
 
-    // Chunk 0 contributes its segment; chunk 1 contributes none. Nothing
-    // was joined and nothing lost.
+    // Chunk 0 contributes its segment, chunk 1 contributes none.
     assert_eq!(result.segments.len(), 1);
     assert_eq!(result.segments.first().map(|s| s.positions.len()), Some(4));
 }

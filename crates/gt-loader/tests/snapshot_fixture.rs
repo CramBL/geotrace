@@ -1,3 +1,24 @@
+//! Generates `tests/fixtures/snapshot.gtd` at the workspace root and verifies
+//! the structure produced by `gt_loader::load_file`.
+//!
+//! The fixture is deterministic so it can be committed and referenced by GUI
+//! snapshot tests.
+//!
+//! ## Layout
+//!
+//! Track 0 - 12 points at 30 s intervals, all with satellite reports.
+//!   Points 0-4: GPS fix held (5 satellites in fix).
+//!   Point 5:    fix lost (0 in fix)   -> generates GnssFixLost marker.
+//!   Point 6:    still lost.
+//!   Point 7:    fix regained (4 in fix) -> generates GnssFixRegained marker.
+//!   Points 8-11: fix maintained.
+//!   Custom markers at t+75 ("Bike lock spot") and t+225 ("Coffee stop").
+//!
+//! 7-minute gap between tracks.
+//!
+//! Track 1 - 8 points at 30 s intervals, no satellite reports.
+//!   Custom marker at t+780 ("Checkpoint").
+
 #![expect(
     clippy::expect_used,
     reason = "test fixture helpers use expect() for setup invariants"
@@ -11,26 +32,6 @@
     reason = "test fixture setup is inherently complex"
 )]
 
-/// Generates `tests/fixtures/snapshot.gtd` at the workspace root and verifies
-/// the structure produced by `gt_loader::load_file`.
-///
-/// The fixture is intentionally deterministic so it can be committed to the repo
-/// and referenced by GUI snapshot tests later.
-///
-/// ## Layout
-///
-/// Track 0 – 12 points at 30 s intervals, all with satellite reports.
-///   Points 0-4: GPS fix held (5 satellites in fix).
-///   Point 5:    fix lost (0 in fix)   → generates GnssFixLost marker.
-///   Point 6:    still lost.
-///   Point 7:    fix regained (4 in fix) → generates GnssFixRegained marker.
-///   Points 8-11: fix maintained.
-///   Custom markers at t+75 ("Bike lock spot") and t+225 ("Coffee stop").
-///
-/// 7-minute gap between tracks.
-///
-/// Track 1 – 8 points at 30 s intervals, no satellite reports.
-///   Custom marker at t+780 ("Checkpoint").
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -46,7 +47,7 @@ use uom::si::f64::Length;
 use uom::si::length::kilometer;
 
 fn fixture_path() -> PathBuf {
-    // CARGO_MANIFEST_DIR is crates/gt-io. Workspace root is two levels up.
+    // The workspace root is two levels up from crates/gt-loader.
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace = manifest
         .parent()

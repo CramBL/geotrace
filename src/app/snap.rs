@@ -7,7 +7,7 @@
 //! Tracks enter a priority queue via [`SnapScheduler::request_snap`], and
 //! one run is in flight at a time so the server's fair-use budget is shared
 //! globally (the transport also paces individual requests). Manual entries
-//! run first (FIFO among themselves); automatic entries run only while
+//! run first (FIFO among themselves). Automatic entries run only while
 //! their track is shown on the map, and stay parked while hidden - server
 //! load is bounded by what the user actually inspects.
 //!
@@ -105,9 +105,8 @@ impl From<SnapParams> for SnapParamsKey {
 }
 
 /// Identity of one snap result in the dedupe cache: track content, request
-/// parameters, and the server host the run would go to. Host included so a
-/// server change never masquerades old results as current ones - the same
-/// parameters against a different server are a different run.
+/// parameters, and the server host the run would go to. Host included so
+/// results from a different server are never treated as current.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SnapCacheKey {
     content: TrackContentKey,
@@ -132,7 +131,7 @@ impl SnapCacheKey {
 pub struct SnapRun {
     pub result: SnapResult,
     /// Collected per run, shown in the snap status hover via
-    /// [`warning_line`]; a run that produced no result at all instead
+    /// [`warning_line`]. A run that produced no result at all instead
     /// surfaces through [`SnapActivity::Failed`]'s summary.
     pub warnings: Vec<SnapWarning>,
     /// Host of the server the run was sent to, for staleness against the
@@ -209,7 +208,7 @@ impl SnapRun {
 
 /// One [`SnapWarning`] as the snap status hover shows it.
 ///
-/// Lives app-side so the panel needs no gt-snap dependency; chunk indices
+/// Lives app-side so the panel needs no gt-snap dependency. Chunk indices
 /// are shown 1-based, matching the progress display ("completed 2 of 5").
 pub fn warning_line(warning: &SnapWarning) -> String {
     match warning {
@@ -338,7 +337,6 @@ pub struct SnapProgress {
     pub queued: usize,
 }
 
-/// The run currently talking to the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapInFlight {
     pub track: TrackRef,
@@ -399,7 +397,7 @@ pub struct SnapScheduler {
     /// Base URL of the matching server the next transport is built against.
     server_url: String,
     /// Shared across runs so request pacing carries over run boundaries.
-    /// Lazily built; `None` until the first run (or after a build failure or
+    /// Lazily built. `None` until the first run (or after a build failure or
     /// a server-URL change).
     http: Option<Arc<Connection>>,
     /// Where that transport comes from. Supplied by the application, so
@@ -410,7 +408,7 @@ pub struct SnapScheduler {
     queue: VecDeque<PendingRun>,
     /// The queued tracks currently shown on the map, per
     /// [`Self::set_visibility`]. Gates which [`SnapPriority::Auto`] entries
-    /// may dequeue; scoped to the queue so frame-to-frame comparison stays
+    /// may dequeue. Scoped to the queue so frame-to-frame comparison stays
     /// proportional to pending work, not to the loaded data.
     visible: HashSet<TrackRef>,
     in_flight: Option<TrackRef>,
@@ -444,7 +442,7 @@ impl SnapScheduler {
     }
 
     /// Point future runs at a different matching server. Drops the cached
-    /// transport so the next run builds against the new URL; a run already in
+    /// transport so the next run builds against the new URL. A run already in
     /// flight finishes against the old server.
     pub fn set_server_url(&mut self, url: &str) {
         if self.server_url == url {
@@ -569,7 +567,7 @@ impl SnapScheduler {
         }
     }
 
-    /// Update which tracks are shown on the map. Called every frame; when
+    /// Update which tracks are shown on the map. Called every frame. When
     /// the set changes, a parked automatic entry may have become eligible,
     /// so the worker gets a start poke.
     pub fn set_visibility(&mut self, visibility: &TrackDataVisibility) {
@@ -587,10 +585,10 @@ impl SnapScheduler {
 
     /// Seed a run restored from the recording history database into the
     /// session stores. A run completed this session wins over the stored
-    /// one (it is strictly newer), so restoration never clobbers; a queued
-    /// automatic entry for the track is cancelled - its answer just
-    /// arrived from disk. Manual entries proceed: the user explicitly
-    /// asked for a fresh run.
+    /// one (it is strictly newer), so restoration never clobbers. A queued
+    /// automatic entry for the track is cancelled: the stored run already
+    /// answers it. Manual entries proceed: the user explicitly asked for a
+    /// fresh run.
     pub fn restore_run(&mut self, track_ref: TrackRef, track: &LoadedTrack, run: SnapRun) {
         // Cancel first: a pending automatic fetch is answered by this run.
         if let Some(position) = self
@@ -626,7 +624,7 @@ impl SnapScheduler {
     }
 
     /// Forget all transient per-track activity. Call after file/track
-    /// removals shift indices; the content-keyed cache and display stores
+    /// removals shift indices. The content-keyed cache and display stores
     /// are unaffected, and an in-flight run finishes into them under its
     /// stable key.
     pub fn reset_track_states(&mut self) {
@@ -651,7 +649,7 @@ impl SnapScheduler {
                     completed_chunks,
                     total_chunks,
                 } => {
-                    // Only meaningful while this track is still known; after
+                    // Only meaningful while this track is still known. After
                     // a reset the entry is gone and progress is dropped.
                     if self.activity.contains_key(&track) {
                         self.activity.insert(
@@ -877,7 +875,7 @@ mod tests {
     }
 
     /// Tests drive the manager through its message channel instead of real
-    /// worker threads; `GEOTRACE_OFFLINE=1` (set by `just test`) would make
+    /// worker threads. `GEOTRACE_OFFLINE=1` (set by `just test`) would make
     /// `request_snap` refuse, so these tests inject messages directly.
     #[test]
     fn done_message_moves_run_into_cache_and_clears_activity() {
@@ -1084,7 +1082,7 @@ mod tests {
     }
 
     /// Staleness reasons: each differing component contributes one line
-    /// naming the stored and the current value; identical runs are fresh.
+    /// naming the stored and the current value. Identical runs are fresh.
     #[rstest::rstest]
     #[case::fresh(SnapParams::new(Costing::Auto), server_host(DEFAULT_SERVER_URL), &[])]
     #[case::costing_differs(
@@ -1133,7 +1131,7 @@ mod tests {
     }
 
     /// The global summary counts queued entries and singles out the
-    /// in-flight run with its chunk progress; failed entries are neither.
+    /// in-flight run with its chunk progress. Failed entries are neither.
     #[test]
     fn progress_summarizes_the_activity_map() {
         let mut scheduler = scheduler();
@@ -1220,7 +1218,7 @@ mod tests {
     }
 
     /// A manual request for a track already queued - automatically or
-    /// manually - promotes it to the front as a manual entry; an automatic
+    /// manually - promotes it to the front as a manual entry. An automatic
     /// re-request leaves the queue untouched. Nothing duplicates entries.
     #[test]
     fn manual_request_promotes_queued_auto_entry() {
@@ -1261,7 +1259,7 @@ mod tests {
         assert_eq!(scheduler.queue.len(), 2, "promotion must not duplicate");
 
         // Promote `a` past the already-manual `b`, leaving `b` manual and
-        // non-front; a second manual click on `b` still moves it to the
+        // non-front. A second manual click on `b` still moves it to the
         // front without duplicating - the last click wins the queue order.
         scheduler.request_snap(
             a,
@@ -1286,8 +1284,8 @@ mod tests {
         assert_eq!(scheduler.queue.len(), 2, "re-promotion must not duplicate");
     }
 
-    /// Hiding a queued track parks its automatic entry; showing it again
-    /// makes it eligible - visibility gates dequeueing, never drops work.
+    /// Hiding a queued track parks its automatic entry. Showing it again
+    /// makes it eligible: visibility gates dequeueing, never drops work.
     #[test]
     fn visibility_change_parks_and_unparks_auto_entries() {
         use gt_ui_types::{FileVisibility, TrackVisibility};
@@ -1364,7 +1362,7 @@ mod tests {
     }
 
     /// A restored run seeds the display and dedupe stores and cancels a
-    /// pending automatic entry (its answer just arrived from disk); manual
+    /// pending automatic entry (the stored run already answers it). Manual
     /// entries survive, and a session run is never clobbered.
     #[test]
     fn restored_run_seeds_stores_and_cancels_auto_entry() {

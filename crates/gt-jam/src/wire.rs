@@ -163,8 +163,7 @@ pub enum ParseWarning {
         detail: String,
     },
 
-    /// Zero aircraft, so the row carries no share. The host omits such cells
-    /// rather than publishing them as zero.
+    /// Zero aircraft, so the row has no share. The host omits such cells.
     EmptyTally { line: usize, cell: CellIndex },
 
     /// A cell already seen earlier in the dataset. The first row is kept.
@@ -225,7 +224,7 @@ impl ParseWarningReporter {
 
 /// Parse one day's dataset, in published row order.
 ///
-/// Unusable rows go to `reporter` and are skipped; only an unexpected header
+/// Unusable rows go to `reporter` and are skipped. Only an unexpected header
 /// refuses the whole dataset.
 pub fn parse_dataset(
     csv: &str,
