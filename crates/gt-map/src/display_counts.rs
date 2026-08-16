@@ -105,7 +105,7 @@ impl DisplayCounts {
         for (fi, file) in files.iter().enumerate() {
             for ti in 0..file.tracks.len() {
                 let track_ref = TrackRef::new(FileIdx::new(fi), TrackIdx::new(ti));
-                let Some((track, trip_vis)) =
+                let Some((track, track_vis)) =
                     visibility::track_in_scope(files, visibility, filter, track_ref)
                 else {
                     continue;
@@ -119,13 +119,13 @@ impl DisplayCounts {
                     })
                 };
 
-                if trip_vis.category_visible(DataCategory::Track) {
+                if track_vis.category_visible(DataCategory::Track) {
                     // Counted per track regardless of query-hide coverage:
                     // "Tracks" answers "is this track's line eligible to
                     // draw", not "does it currently draw any pixels".
                     counts.tracks += 1;
                 }
-                if trip_vis.category_visible(DataCategory::Tpv) {
+                if track_vis.category_visible(DataCategory::Tpv) {
                     counts.track_points += (0..track.points.len())
                         .filter(|&pi| point_in_scope(pi))
                         .count();
@@ -144,14 +144,14 @@ impl DisplayCounts {
                         .filter(|(pi, p)| p.satellites.is_some() && point_in_scope(*pi))
                         .count();
                 }
-                if trip_vis.category_visible(DataCategory::CustomMarker) {
+                if track_vis.category_visible(DataCategory::CustomMarker) {
                     counts.custom_markers += track
                         .custom_markers
                         .iter()
                         .filter(|m| point_passes_time_filter(m.time, filter))
                         .count();
                 }
-                if trip_vis.category_visible(DataCategory::GeneratedMarker) {
+                if track_vis.category_visible(DataCategory::GeneratedMarker) {
                     counts.generated_markers += track
                         .generated_markers
                         .iter()
@@ -161,7 +161,7 @@ impl DisplayCounts {
                         })
                         .count();
                 }
-                if trip_vis.category_visible(DataCategory::EventMarker) {
+                if track_vis.category_visible(DataCategory::EventMarker) {
                     counts.event_markers += track
                         .event_markers
                         .iter()

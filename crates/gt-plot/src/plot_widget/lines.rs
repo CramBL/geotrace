@@ -20,7 +20,7 @@ use super::clock_excursion::ClockExcursionHover;
 use super::jamming::{
     JammingHover, JammingPlotCache, JammingStyle, JammingTrack, JammingViewport, add_jamming_series,
 };
-use super::levels::TripLevelCache;
+use super::levels::TrackLevelCache;
 use super::snap_error::{
     SnapErrorHover, SnapErrorPlotCache, SnapErrorStyle, SnapErrorViewport, add_snap_error_series,
 };
@@ -70,7 +70,7 @@ pub(super) fn add_series_lines<'a>(
     // The recording's plot label, `None` while a single track is visible and
     // nothing needs naming.
     track_label: Option<&str>,
-    cache: &TripLevelCache,
+    cache: &TrackLevelCache,
     metric_vis: &MetricVisibility,
     channel_vis: &ChannelVisibility,
     component_colors: &HashMap<String, Vec<Option<Color32>>>,

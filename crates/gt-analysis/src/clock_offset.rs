@@ -110,7 +110,9 @@ pub fn detect_excursions(points: &[NavPoint], threshold_s: f32) -> Vec<ClockOffs
     }
 
     let offsets: Vec<i64> = samples.iter().map(|s| s.offset_ms).collect();
-    let baseline_ms = crate::robust::median_i64(&offsets);
+    let Some(baseline_ms) = crate::robust::median_i64(&offsets) else {
+        return Vec::new();
+    };
     let threshold_ms = threshold_ms(threshold_s);
 
     let mut excursions = Vec::new();

@@ -17,7 +17,7 @@ use chips::{MetricAvailability, SectionGates, loaded_channels, metric_filter_row
 use clock_excursion::{ExcursionViewport, add_clock_excursions};
 use jamming::{JammingPlotCache, JammingViewport, jamming_available, sync_jamming_cache};
 use legend::show_file_legend_overlay;
-use levels::{TripLevelCache, budget_cap, compute_level_cache, single_target};
+use levels::{TrackLevelCache, budget_cap, compute_level_cache, single_target};
 use lines::{
     NearestHoverLabel, add_series_lines, add_util_anomalies, series_track_ref,
     show_nearest_hover_label,
@@ -152,7 +152,7 @@ pub struct PlotState {
     pub(crate) series_cache: Vec<TrackSeries>,
     /// Cached level selections, one entry per series.
     /// Invalidated when the effective plot bounds or target sample count changes.
-    level_cache: Vec<TripLevelCache>,
+    level_cache: Vec<TrackLevelCache>,
     /// The `(eff_x_min, eff_x_max, plot_width_bits, sample_cap)` at which the
     /// current `level_cache` was computed.  `None` forces a recompute on the
     /// next frame.  Used for hysteresis: the cache is reused as long as the view
@@ -312,7 +312,7 @@ pub fn show_track_plot(
     let visible: Vec<bool> = state
         .series_cache
         .iter()
-        .map(|s| trip_is_visible(visibility, filter, files, s.fi, s.ti))
+        .map(|s| track_is_visible(visibility, filter, files, s.fi, s.ti))
         .collect();
     let visible_count = visible.iter().filter(|&&v| v).count();
 
@@ -457,7 +457,7 @@ pub fn show_track_plot(
 
     let mut new_hovered_time: Option<DateTime<Utc>> = None;
     let mut new_computed_bounds: Option<(f64, f64, u32, usize)> = None;
-    let mut new_level_cache: Option<Vec<TripLevelCache>> = None;
+    let mut new_level_cache: Option<Vec<TrackLevelCache>> = None;
     let mut new_applied_map_x_range: Option<Option<(u64, u64)>> = None;
     // The custom hover label to draw: the closest candidate offered by any
     // series of any recording inside the plot closure, turned into a tooltip
@@ -523,10 +523,10 @@ pub fn show_track_plot(
 
         // Recompute if the view changed enough since the last frame.
         // Uses rayon to parallelise across series - each is independent.
-        let resolved: std::borrow::Cow<[TripLevelCache]> = if cache_valid {
+        let resolved: std::borrow::Cow<[TrackLevelCache]> = if cache_valid {
             std::borrow::Cow::Borrowed(level_cache)
         } else {
-            let fresh: Vec<TripLevelCache> = series_cache
+            let fresh: Vec<TrackLevelCache> = series_cache
                 .par_iter()
                 .map(|s| compute_level_cache(s, eff_x_min, eff_x_max, available_width, sample_cap))
                 .collect();
@@ -707,7 +707,7 @@ pub fn show_track_plot(
     };
 }
 /// Returns `true` when the track at `(fi, ti)` passes visibility and filter checks.
-fn trip_is_visible(
+fn track_is_visible(
     visibility: &TrackDataVisibility,
     global_filter: &GlobalFilter,
     files: &[LoadedFile],
@@ -720,10 +720,10 @@ fn trip_is_visible(
     if !file_vis.enabled {
         return false;
     }
-    let Some(trip_vis) = file_vis.tracks.get(ti) else {
+    let Some(track_vis) = file_vis.tracks.get(ti) else {
         return false;
     };
-    if !trip_vis.enabled {
+    if !track_vis.enabled {
         return false;
     }
     let Some(file) = files.get(fi) else {
@@ -759,10 +759,10 @@ pub fn find_closest_tpv(
         }
         for (ti, track) in file.tracks.iter().enumerate() {
             let ti = TrackIdx::new(ti);
-            let Some(trip_vis) = ti.get(&file_vis.tracks) else {
+            let Some(track_vis) = ti.get(&file_vis.tracks) else {
                 continue;
             };
-            if !trip_vis.enabled {
+            if !track_vis.enabled {
                 continue;
             }
             if !gt_filter::track_passes_filter(&track.metadata, filter) {
