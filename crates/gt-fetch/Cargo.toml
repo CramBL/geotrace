@@ -1,5 +1,5 @@
 [package]
-name = "gt-jam"
+name = "gt-fetch"
 description.workspace = true
 version.workspace = true
 edition.workspace = true
@@ -10,22 +10,13 @@ authors.workspace = true
 doctest = false
 
 [dependencies]
-chrono.workspace = true
-gt-fetch = { path = "../gt-fetch" }
 gt-types = { path = "../gt-types" }
-h3o.workspace = true
 parking_lot.workspace = true
-strum.workspace = true
+reqwest.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-insta.workspace = true
-proptest.workspace = true
-# The fixture-capture example talks to the host directly, not through
-# gt_fetch::Transport.
-reqwest.workspace = true
 rstest.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true

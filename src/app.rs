@@ -24,13 +24,12 @@ use std::collections::HashMap;
 use std::{cell::RefCell, env, path::PathBuf, rc::Rc};
 
 use egui_tiles::{Container, Linear, LinearDir, Tile, TileId, Tiles, Tree};
+use gt_fetch::TransportSource;
 use gt_filter::GlobalFilter;
-use gt_jam::transport as jam_transport;
 use gt_loaded_files::{FileHistory, LoadedFiles};
 use gt_map::NavMap;
 use gt_plot::PlotState;
 use gt_side_panel::{FilterPanelState, TreeState};
-use gt_snap::transport as snap_transport;
 use gt_snap::wire::Costing;
 use gt_track_builder::SegmentationConfig;
 use gt_types::{AssociationConfig, LoadWarning, NavPoint, TrackRef};
@@ -100,19 +99,11 @@ struct ResegmentPrompt {
     marker_settings_changed: bool,
 }
 
-fn jam_transport_source(offline: bool) -> jam_transport::TransportSource {
+fn transport_source(offline: bool) -> TransportSource {
     if offline {
-        jam_transport::TransportSource::Offline
+        TransportSource::Offline
     } else {
-        jam_transport::TransportSource::Network
-    }
-}
-
-fn snap_transport_source(offline: bool) -> snap_transport::TransportSource {
-    if offline {
-        snap_transport::TransportSource::Offline
-    } else {
-        snap_transport::TransportSource::Network
+        TransportSource::Network
     }
 }
 
@@ -366,7 +357,7 @@ impl App {
         let loader = LoadJobs::new(cc.egui_ctx.clone());
         let snap = snap::SnapScheduler::new(
             cc.egui_ctx.clone(),
-            snap_transport_source(options.offline),
+            transport_source(options.offline),
             options.offline,
         );
 
@@ -393,7 +384,7 @@ impl App {
             cc.egui_ctx.clone(),
             archive,
             gt_jam::DEFAULT_BASE_URL.to_owned(),
-            jam_transport_source(options.offline),
+            transport_source(options.offline),
         );
         let app_version = options.app_version;
 

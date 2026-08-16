@@ -13,6 +13,7 @@ doctest = false
 test = false
 
 [dependencies]
+gt-fetch = { path = "../gt-fetch" }
 gt-types = { path = "../gt-types" }
 parking_lot.workspace = true
 polyline.workspace = true

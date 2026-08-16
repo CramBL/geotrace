@@ -2159,6 +2159,7 @@ dependencies = [
  "env_logger",
  "geotrace-sdk",
  "geotrace-sdk-units",
+ "gt-fetch",
  "gt-filter",
  "gt-fmt",
  "gt-jam",
@@ -2456,6 +2457,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gt-fetch"
+version = "0.12.0"
+dependencies = [
+ "gt-types",
+ "parking_lot",
+ "reqwest 0.13.4",
+ "rstest",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "gt-filter"
 version = "0.12.0"
 dependencies = [
@@ -2559,6 +2571,7 @@ name = "gt-jam"
 version = "0.12.0"
 dependencies = [
  "chrono",
+ "gt-fetch",
  "gt-types",
  "h3o",
  "insta",
@@ -2785,6 +2798,7 @@ version = "0.12.0"
 dependencies = [
  "chrono",
  "geo-types",
+ "gt-fetch",
  "gt-test-utils",
  "gt-types",
  "insta",

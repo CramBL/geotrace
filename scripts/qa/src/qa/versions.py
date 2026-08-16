@@ -119,6 +119,7 @@ _APP_LOCK_CRATES: list[str] = [
     "geotrace",
     "gt-analysis",
     "gt-egui-mipmap",
+    "gt-fetch",
     "gt-filter",
     "gt-fmt",
     "gt-geo-math",

@@ -3814,7 +3814,7 @@ fn snap_runs_persist_and_restore_through_the_app() {
     // Restore leg: a fresh scheduler seeded through the response handler.
     harness.state_mut().snap = crate::app::snap::SnapScheduler::new(
         egui::Context::default(),
-        gt_snap::transport::TransportSource::Offline,
+        gt_fetch::TransportSource::Offline,
         true,
     );
     harness
