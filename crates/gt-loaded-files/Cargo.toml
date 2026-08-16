@@ -15,5 +15,8 @@ gt-fmt = { path = "../gt-fmt" }
 gt-history-types = { path = "../gt-history-types" }
 gt-types = { path = "../gt-types" }
 
+[dev-dependencies]
+gt-test-utils = { path = "../gt-test-utils" }
+
 [lints]
 workspace = true

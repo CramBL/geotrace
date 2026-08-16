@@ -116,19 +116,6 @@ pub enum DataCategory {
     EventMarker,
 }
 
-impl DataCategory {
-    /// Index into `MapHighlight::hover_candidates` for this category.
-    /// Returns `None` for categories that don't participate in multi-hover.
-    pub fn hover_slot(self) -> Option<usize> {
-        match self {
-            Self::Tpv | Self::SatelliteReport => Some(0),
-            Self::EventMarker => Some(1),
-            Self::CustomMarker => Some(2),
-            Self::GeneratedMarker => Some(3),
-            Self::Track => None,
-        }
-    }
-}
 
 crate::enum_bitset! {
     /// Per-track element-visibility set.

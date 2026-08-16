@@ -2181,7 +2181,7 @@ fn accel_channel_gtd_bytes(speed_kmh: f64) -> Vec<u8> {
 /// popup offers from.
 fn push_file_with_channel(harness: &mut Harness<App>, name: &str, unit: &str) {
     use gt_types::{
-        Channel, FileMetadata, FileSource, LoadedFile, LoadedTrack, TrackLod, TrackMetadata,
+        Channel, FileSource, LoadedFile, LoadedTrack, TrackLod,
     };
     let channel = Channel {
         name: name.to_owned(),
@@ -2193,9 +2193,9 @@ fn push_file_with_channel(harness: &mut Harness<App>, name: &str, unit: &str) {
         values: vec![],
     };
     let file = LoadedFile {
-        metadata: FileMetadata::default(),
+        metadata: gt_test_utils::empty_file_metadata(),
         tracks: vec![LoadedTrack {
-            metadata: TrackMetadata::default(),
+            metadata: gt_test_utils::empty_track_metadata(),
             points: vec![],
             lod: TrackLod::default(),
             sat_label_anchors: Vec::new(),
@@ -4234,7 +4234,7 @@ fn snapshot_recording_details_dialog() {
                 device: Some("uBlox ZED-F9P".to_owned()),
                 notes: Some("Rooftop antenna, clear sky.".to_owned()),
                 travel_mode: Some(gt_types::TravelMode::Bicycle),
-                ..gt_types::FileMetadata::default()
+                ..gt_test_utils::empty_file_metadata()
             },
             // A long, auto-derived, path-like identity to show the dialog gives
             // it room instead of clipping it.

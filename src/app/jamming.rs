@@ -1134,7 +1134,7 @@ mod tests {
         scheduler.archived_cells.insert(day, 1);
 
         let files = vec![gt_types::LoadedFile {
-            metadata: gt_types::FileMetadata::default(),
+            metadata: gt_test_utils::empty_file_metadata(),
             tracks: vec![track],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],
@@ -1170,7 +1170,7 @@ mod tests {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         let track = track_with_time_range();
         let files = vec![gt_types::LoadedFile {
-            metadata: gt_types::FileMetadata::default(),
+            metadata: gt_test_utils::empty_file_metadata(),
             tracks: vec![track],
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: vec![],

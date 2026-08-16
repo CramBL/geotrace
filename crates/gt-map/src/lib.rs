@@ -39,7 +39,8 @@ use gt_loaded_files::RecordingNames;
 use gt_types::{DataCategory, FileIdx, LoadedFile, SpatialPoint, TrackRef};
 use gt_ui_types::{
     DataPointRef, DisplayCategory, DisplayMask, EventMarkerVisibility, GeneratedMarkerVisibility,
-    HighlightScope, MapHighlight, MapScope, PinnedPopup, PointWindowFolds, QueryMatches,
+    HighlightScope, HoverCandidates, MapHighlight, MapScope, PinnedPopup, PointWindowFolds,
+    QueryMatches,
     SkyGlyphVariant, SkyTrailsRequest, SnappedTracks, TrackDataVisibility,
 };
 use rstar::PointDistance as _;
@@ -80,6 +81,9 @@ pub enum MapContextAction {
     ShowSkyTrails(SkyTrailsRequest),
 }
 
+const BLINK_DURATION_SEC: f32 = 3.0;
+const BLINK_PULSE_HZ: f32 = 2.0;
+
 /// Timestamps are egui clock seconds (`InputState::time`), so the pulse is
 /// deterministic under `egui_kittest`'s simulated time.
 struct BlinkState {
@@ -99,13 +103,12 @@ impl BlinkState {
             return 0.0;
         };
         let elapsed = (now - start) as f32;
-        if elapsed >= 3.0 {
+        if elapsed >= BLINK_DURATION_SEC {
             self.start = None;
             0.0
         } else {
-            // 2 Hz pulsing that fades to zero over 3 s.
-            let fade = 1.0 - (elapsed / 3.0);
-            (std::f32::consts::TAU * elapsed * 2.0).sin().abs() * fade
+            let fade = 1.0 - (elapsed / BLINK_DURATION_SEC);
+            (std::f32::consts::TAU * elapsed * BLINK_PULSE_HZ).sin().abs() * fade
         }
     }
 
@@ -277,30 +280,24 @@ impl<'a> MapDrawContext<'a> {
     /// frame - the map layer draws one stacked label in their place, so
     /// independent renderers do not pile theirs at the same spot.
     fn suppress_overlapping_hover_labels(&mut self, disambig_open: bool) {
-        let prev_multi_hover = self.highlight.hover_candidates.iter().flatten().count() > 1;
+        let prev_multi_hover = self.highlight.hover_candidates.is_ambiguous();
         self.highlight.suppress_hover_labels = disambig_open || prev_multi_hover;
     }
 }
 
-/// The nearest visible element per category group under the cursor, one slot
-/// each in [`DataCategory::hover_slot`] order: 0 = TPV or satellite report,
-/// 1 = event marker, 2 = custom marker, 3 = generated marker.
-#[derive(Clone, Copy, Default)]
-struct HoverCandidates {
-    slots: [Option<DataPointRef>; 4],
+/// The inputs deciding whether the disambiguation popup closes this frame.
+#[derive(Clone, Copy)]
+struct DisambiguationDismissal {
+    just_opened: bool,
+    clicked_elsewhere: bool,
+    escape_pressed: bool,
 }
 
-impl HoverCandidates {
-    /// The element a hover or a click acts on: TPV when it is among them,
-    /// otherwise the first filled slot.
-    fn primary(&self) -> Option<DataPointRef> {
-        self.slots.iter().flatten().copied().next()
-    }
-
-    /// Whether several element types sit under the cursor at once, so a click
-    /// cannot tell which one the user meant.
-    fn is_ambiguous(&self) -> bool {
-        self.slots.iter().flatten().count() > 1
+impl DisambiguationDismissal {
+    /// `clicked_elsewhere` also fires on the frame the opening click lands, so
+    /// the popup ignores it while `just_opened`.
+    fn closes_popup(self) -> bool {
+        !self.just_opened && (self.clicked_elsewhere || self.escape_pressed)
     }
 }
 
@@ -539,7 +536,7 @@ impl NavMap {
         show_compound_hover_label(ui, &ctx, hover, disambig_open);
 
         ctx.highlight.hover = hover.primary().map(HighlightScope::Point);
-        ctx.highlight.hover_candidates = hover.slots;
+        ctx.highlight.hover_candidates = hover;
 
         context_action
     }
@@ -818,18 +815,12 @@ impl NavMap {
             if !is_spatial_point_visible(sp, scope) {
                 continue;
             }
-            if let Some(slot) = sp.category.hover_slot() {
-                #[expect(
-                    clippy::indexing_slicing,
-                    reason = "hover_slot() returns 0..=3; array has 4 elements"
-                )]
-                hover.slots[slot].get_or_insert_with(|| DataPointRef {
-                    track: sp.track_ref(),
-                    category: sp.category,
-                    point_index: sp.point_index,
-                });
-            }
-            if hover.slots.iter().all(Option::is_some) {
+            hover.keep_nearest(DataPointRef {
+                track: sp.track_ref(),
+                category: sp.category,
+                point_index: sp.point_index,
+            });
+            if hover.every_category_filled() {
                 break;
             }
         }
@@ -955,7 +946,7 @@ impl NavMap {
             .show(ui.ctx(), |ui| {
                 Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_min_width(160.0);
-                    for candidate in candidates.slots.iter().flatten().copied() {
+                    for candidate in candidates.iter() {
                         if draw_disambig_row(
                             ui,
                             candidate,
@@ -972,10 +963,12 @@ impl NavMap {
                     }
                 });
             });
-        if !just_opened
-            && (area_resp.response.clicked_elsewhere()
-                || ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)))
-        {
+        let dismissal = DisambiguationDismissal {
+            just_opened,
+            clicked_elsewhere: area_resp.response.clicked_elsewhere(),
+            escape_pressed: ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)),
+        };
+        if dismissal.closes_popup() {
             self.disambiguation_candidates = HoverCandidates::default();
         }
     }
@@ -1100,7 +1093,7 @@ fn show_compound_hover_label(
         .fixed_pos(cursor_pos + egui::vec2(15.0, 10.0))
         .order(egui::Order::Tooltip)
         .show(ui.ctx(), |ui| {
-            draw_multi_hover_label_contents(ui, &hover.slots, ctx.files, ctx.recording_labels());
+            draw_multi_hover_label_contents(ui, hover, ctx.files, ctx.recording_labels());
         });
 }
 
@@ -1141,8 +1134,8 @@ fn show_sticky_popup(
     default_pos: egui::Pos2,
     folds: &mut PointWindowFolds,
 ) -> Option<SkyTrailsRequest> {
-    let title: String = if sticky_ref.category == DataCategory::Tpv {
-        sticky_ref
+    let title: String = match sticky_ref.category {
+        DataCategory::Tpv => sticky_ref
             .track
             .fi
             .get(files)
@@ -1151,9 +1144,8 @@ fn show_sticky_popup(
             .map_or_else(
                 || "GNSS fix".to_string(),
                 |p| p.tpv.time().utc().format("%Y-%m-%d %H:%M:%S").to_string(),
-            )
-    } else if sticky_ref.category == DataCategory::SatelliteReport {
-        sticky_ref
+            ),
+        DataCategory::SatelliteReport => sticky_ref
             .track
             .fi
             .get(files)
@@ -1168,9 +1160,8 @@ fn show_sticky_popup(
                         |t| t.format("%Y-%m-%d %H:%M:%S").to_string(),
                     )
                 },
-            )
-    } else if sticky_ref.category == DataCategory::GeneratedMarker {
-        sticky_ref
+            ),
+        DataCategory::GeneratedMarker => sticky_ref
             .track
             .fi
             .get(files)
@@ -1179,9 +1170,8 @@ fn show_sticky_popup(
             .map_or_else(
                 || "GNSS event".to_string(),
                 |m| m.time.format("%Y-%m-%d %H:%M:%S").to_string(),
-            )
-    } else if sticky_ref.category == DataCategory::EventMarker {
-        sticky_ref
+            ),
+        DataCategory::EventMarker => sticky_ref
             .track
             .fi
             .get(files)
@@ -1190,10 +1180,8 @@ fn show_sticky_popup(
             .map_or_else(
                 || "Event".to_string(),
                 |m| m.time.format("%Y-%m-%d %H:%M:%S").to_string(),
-            )
-    } else {
-        // CustomMarker
-        sticky_ref
+            ),
+        DataCategory::CustomMarker => sticky_ref
             .track
             .fi
             .get(files)
@@ -1202,7 +1190,8 @@ fn show_sticky_popup(
             .map_or_else(
                 || "Custom marker".to_string(),
                 |m| m.time.format("%Y-%m-%d %H:%M:%S").to_string(),
-            )
+            ),
+        DataCategory::Track => String::new(),
     };
 
     let window = Window::new(title)

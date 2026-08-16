@@ -419,7 +419,7 @@ mod tests {
                     Utc.timestamp_opt(0, 0).single().expect("valid"),
                     Utc.timestamp_opt(60, 0).single().expect("valid"),
                 ),
-                ..FileMetadata::default()
+                ..gt_test_utils::empty_file_metadata()
             },
             tracks: vec![],
             event_marker_styles: std::collections::HashMap::new(),

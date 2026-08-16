@@ -320,7 +320,7 @@ impl<'a> IntoIterator for &'a mut LoadedFiles {
 #[cfg(test)]
 mod tests {
     use super::{DatabaseRef, FileHistory, LoadedFiles, RecordingMeta, display_identity};
-    use gt_types::{FileMetadata, LoadedFile};
+    use gt_types::LoadedFile;
 
     fn meta() -> RecordingMeta {
         RecordingMeta {
@@ -352,7 +352,7 @@ mod tests {
 
     fn empty_file() -> LoadedFile {
         LoadedFile {
-            metadata: FileMetadata::default(),
+            metadata: gt_test_utils::empty_file_metadata(),
             tracks: Vec::new(),
             event_marker_styles: std::collections::HashMap::new(),
             orphaned_event_markers: Vec::new(),

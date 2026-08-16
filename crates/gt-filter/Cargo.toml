@@ -16,6 +16,7 @@ uom.workspace = true
 
 [dev-dependencies]
 geo-types.workspace = true
+gt-test-utils = { path = "../gt-test-utils" }
 
 [lints]
 workspace = true

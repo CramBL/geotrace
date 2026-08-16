@@ -14,7 +14,7 @@ use gt_types::satellites::{Constellation, Satellite, Satellites};
 use gt_types::time_types::GpsTime;
 use gt_types::tpv::TimePositionVelocity;
 use gt_types::{
-    Channel, FileMetadata, FileSource, LoadedFile, LoadedTrack, NavPoint, TrackLod, TrackMetadata,
+    Channel, FileSource, LoadedFile, LoadedTrack, NavPoint, TrackLod,
 };
 use uom::si::angle::degree;
 use uom::si::f64::{Angle, Velocity};
@@ -109,9 +109,9 @@ fn sample_times(offsets: impl Iterator<Item = i64>) -> Vec<DateTime<chrono::Utc>
 /// A single-track file carrying `channels` over [`test_points`].
 pub(crate) fn file_with_channels(channels: Vec<Channel>) -> LoadedFile {
     LoadedFile {
-        metadata: FileMetadata::default(),
+        metadata: gt_test_utils::empty_file_metadata(),
         tracks: vec![LoadedTrack {
-            metadata: TrackMetadata::default(),
+            metadata: gt_test_utils::empty_track_metadata(),
             points: test_points(),
             lod: TrackLod::default(),
             sat_label_anchors: Vec::new(),

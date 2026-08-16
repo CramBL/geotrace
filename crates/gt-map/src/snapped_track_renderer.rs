@@ -29,7 +29,7 @@ use gt_ui_types::{SnappedEdgeInfo, SnappedTracks};
 use walkers::{MapMemory, Plugin, Projector};
 
 use crate::polyline::{CULL_MARGIN_PX, VisiblePath, segment_outside, visible_path};
-use crate::track_renderer::draw_dashed_line;
+use crate::track_renderer::{DashPattern, draw_dashed_line};
 use crate::transform::MercTransform;
 
 /// Stroke width. Thinner than the recorded trackline (3.0) so the reference
@@ -39,10 +39,12 @@ const SNAPPED_STROKE_WIDTH: f32 = 2.0;
 /// Alpha the track color is reduced to for the snapped track.
 const SNAPPED_ALPHA: f32 = 0.55;
 
-/// Dash and gap lengths in screen pixels. Deliberately shorter than the
-/// ghost-fix dashing (8/5) so the two dashed styles stay distinguishable.
-const SNAPPED_DASH_PX: f32 = 5.0;
-const SNAPPED_GAP_PX: f32 = 4.0;
+/// Shorter than [`crate::track_renderer::GHOST_FIX_DASH`], so the two dashed
+/// styles stay distinguishable.
+const SNAPPED_DASH: DashPattern = DashPattern {
+    dash_px: 5.0,
+    gap_px: 4.0,
+};
 
 /// Hover hit radius around the snapped line, screen pixels. Tighter than
 /// the recorded data's 20 px point hit-test: a line is a precise target,
@@ -175,13 +177,7 @@ impl Plugin for SnappedTrackRenderer<'_> {
                         for span in spans.iter() {
                             span_points.clear();
                             span_points.extend(span.iter().map(|&((), pos)| pos));
-                            draw_dashed_line(
-                                ui.painter(),
-                                &span_points,
-                                stroke,
-                                SNAPPED_DASH_PX,
-                                SNAPPED_GAP_PX,
-                            );
+                            draw_dashed_line(ui.painter(), &span_points, stroke, SNAPPED_DASH);
                         }
                     }
                 }

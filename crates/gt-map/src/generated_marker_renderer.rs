@@ -150,18 +150,12 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
             );
         }
 
-        // Show tooltip for the hovered generated marker. Suppressed when the primary
-        // hover is already a TPV point - the TPV tooltip covers the same data and
-        // showing both would produce two overlapping labels at the same map position.
-        let primary_is_tpv = matches!(
-            self.highlight.hover,
-            Some(HighlightScope::Point(r)) if r.category == DataCategory::Tpv
-        );
-        if !primary_is_tpv
-            && let Some(r) = self.highlight.hover_candidates[3]
-            && self.highlight.sticky != Some(r)
-            && !ui.ctx().any_popup_open()
-            && !self.highlight.suppress_hover_labels
+        // A TPV tooltip already shows this marker's data at the same position.
+        if !self.highlight.primary_hover_is_tpv()
+            && let Some(r) = self.highlight.hover_candidates.generated_marker
+            && self
+                .highlight
+                .shows_hover_label(r, ui.ctx().any_popup_open())
             && let Some(file) = r.track.fi.get(self.files)
             && let Some(track) = r.track.index.get(&file.tracks)
             && let Some(marker) = r.point_index.get(&track.generated_markers)

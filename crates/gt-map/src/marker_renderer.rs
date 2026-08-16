@@ -92,21 +92,20 @@ impl Plugin for MarkerRenderer<'_> {
         }
         batch.paint(ui.painter());
 
-        // Show hover label for the hovered custom marker. Uses hover_candidates[2]
-        // so the label appears even when a Tpv point is the primary hover.
-        // When a TPV tooltip is also visible (hover_candidates[0] is Some), draw
-        // the label above the icon to avoid overlapping the TPV tooltip which
-        // egui places below/right of the cursor.
-        if let Some(r) = self.highlight.hover_candidates[2]
-            && self.highlight.sticky != Some(r)
-            && !ui.ctx().any_popup_open()
-            && !self.highlight.suppress_hover_labels
+        if let Some(r) = self.highlight.hover_candidates.custom_marker
+            && self
+                .highlight
+                .shows_hover_label(r, ui.ctx().any_popup_open())
             && let Some(file) = r.track.fi.get(self.files)
             && let Some(track) = r.track.index.get(&file.tracks)
             && let Some(marker) = r.point_index.get(&track.custom_markers)
         {
             let pos = transform.to_screen(marker.merc);
-            let tpv_also_hovered = self.highlight.hover_candidates[0].is_some();
+            let tpv_also_hovered = self
+                .highlight
+                .hover_candidates
+                .tpv_or_satellite_report
+                .is_some();
             show_marker_hover_label(ui, marker, pos, tpv_also_hovered);
         }
     }

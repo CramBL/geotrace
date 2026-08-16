@@ -456,7 +456,7 @@ mod tests {
             })
             .collect();
         gt_types::LoadedTrack {
-            metadata: gt_types::track::TrackMetadata::default(),
+            metadata: gt_test_utils::empty_track_metadata(),
             points,
             lod: gt_types::track::TrackLod::default(),
             sat_label_anchors: Vec::new(),

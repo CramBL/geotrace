@@ -673,13 +673,11 @@ impl<'a> TrackLayers<'a> {
     /// tooltip for the hovered point (set by NavMap the previous frame) and
     /// the plot-cursor cross-highlight ring.
     fn show_hover_overlays(&self, ui: &Ui, style: &TpvDrawStyle, transform: &MercTransform) {
-        // Suppressed when the sticky popup is already showing this exact
-        // point and when any popup is open.
         if let Some(HighlightScope::Point(r)) = self.highlight.hover
             && r.category == DataCategory::Tpv
-            && self.highlight.sticky != Some(r)
-            && !ui.ctx().any_popup_open()
-            && !self.highlight.suppress_hover_labels
+            && self
+                .highlight
+                .shows_hover_label(r, ui.ctx().any_popup_open())
         {
             // Hovering a matched point adds the match context above the
             // standard point table.

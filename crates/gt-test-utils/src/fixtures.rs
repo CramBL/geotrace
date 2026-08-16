@@ -14,6 +14,58 @@ use gt_types::{
     TimePositionVelocity,
 };
 
+/// Track metadata with every count and measure zeroed, at the epoch and the
+/// coordinate origin, for tests that fill in only the fields they exercise.
+pub fn empty_track_metadata() -> gt_types::track::TrackMetadata {
+    gt_types::track::TrackMetadata {
+        index: 0,
+        distance_km: Length::new::<uom::si::length::kilometer>(0.0),
+        duration: Duration::zero(),
+        time_range: gt_types::track::TimeRange::new(
+            chrono::DateTime::UNIX_EPOCH,
+            chrono::DateTime::UNIX_EPOCH,
+        ),
+        bounding_box: gt_types::Rect::new(
+            gt_types::Coord { x: 0.0, y: 0.0 },
+            gt_types::Coord { x: 0.0, y: 0.0 },
+        ),
+        merc_bounds: gt_types::track::MercBounds {
+            x_min: 0.0,
+            x_max: 0.0,
+            y_min: 0.0,
+            y_max: 0.0,
+        },
+        point_set_diameter_m: Length::new::<meter>(0.0),
+        segment_length_range: None,
+        has_custom_markers: false,
+        tpv_count: 0,
+        satellite_report_count: 0,
+        custom_marker_count: 0,
+        generated_marker_count: 0,
+        event_marker_count: 0,
+        fix_stats: None,
+    }
+}
+
+/// File metadata with an unnamed file and every measure zeroed, at the epoch,
+/// for tests that fill in only the fields they exercise.
+pub fn empty_file_metadata() -> gt_types::FileMetadata {
+    gt_types::FileMetadata {
+        filename: String::new(),
+        total_distance_km: Length::new::<uom::si::length::kilometer>(0.0),
+        total_duration: Duration::zero(),
+        time_range: gt_types::track::TimeRange::new(
+            chrono::DateTime::UNIX_EPOCH,
+            chrono::DateTime::UNIX_EPOCH,
+        ),
+        fix_stats: None,
+        title: None,
+        device: None,
+        notes: None,
+        travel_mode: None,
+    }
+}
+
 struct RouteSegment {
     start: Point<f64>,
     end: Point<f64>,
@@ -259,7 +311,7 @@ pub fn loaded_track_from(
                     .unwrap_or_default(),
             ),
             tpv_count: points.len(),
-            ..gt_types::track::TrackMetadata::default()
+            ..empty_track_metadata()
         },
         points,
         lod: gt_types::track::TrackLod::default(),
@@ -302,7 +354,7 @@ pub fn nav_point_at_meters(x_m: f64, y_m: f64, satellites: Option<Satellites>) -
 /// content (satellite reports, or anchors set on the returned track).
 pub fn loaded_track_with_points(points: Vec<NavPoint>) -> gt_types::LoadedTrack {
     gt_types::LoadedTrack {
-        metadata: gt_types::track::TrackMetadata::default(),
+        metadata: empty_track_metadata(),
         points,
         lod: gt_types::track::TrackLod::default(),
         sat_label_anchors: Vec::new(),

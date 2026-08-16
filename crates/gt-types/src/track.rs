@@ -7,12 +7,11 @@ use crate::sat_label::SatLabelAnchor;
 use crate::satellites::Satellites;
 use crate::time_types::GpsTime;
 use chrono::{DateTime, Duration, Utc};
-use geo_types::{Coord, Rect};
+use geo_types::Rect;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use uom::si::f64::Length;
-use uom::si::length::{kilometer, meter};
 
 /// Normalised Web Mercator bounding box, with all values in `[0.0, 1.0]`.
 ///
@@ -220,38 +219,6 @@ impl TrackMetadata {
     /// Returns `true` when the track has at least one custom, event, or generated marker.
     pub fn has_any_marker(&self) -> bool {
         self.has_custom_markers || self.generated_marker_count > 0 || self.event_marker_count > 0
-    }
-}
-
-/// Sentinel default for use in test helpers via struct-update syntax (`..TrackMetadata::default()`).
-///
-/// All numeric fields are zero, bounding box is a point at the origin, and
-/// `fix_stats` is `None`. Not intended for production construction. Callers
-/// should set all semantically meaningful fields explicitly.
-impl Default for TrackMetadata {
-    fn default() -> Self {
-        Self {
-            index: 0,
-            distance_km: Length::new::<kilometer>(0.0),
-            duration: Duration::zero(),
-            time_range: TimeRange::new(DateTime::<Utc>::UNIX_EPOCH, DateTime::<Utc>::UNIX_EPOCH),
-            bounding_box: Rect::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 0.0, y: 0.0 }),
-            merc_bounds: MercBounds {
-                x_min: 0.0,
-                x_max: 0.0,
-                y_min: 0.0,
-                y_max: 0.0,
-            },
-            point_set_diameter_m: Length::new::<meter>(0.0),
-            segment_length_range: None,
-            has_custom_markers: false,
-            tpv_count: 0,
-            satellite_report_count: 0,
-            custom_marker_count: 0,
-            generated_marker_count: 0,
-            event_marker_count: 0,
-            fix_stats: None,
-        }
     }
 }
 
@@ -484,26 +451,6 @@ pub struct FileMetadata {
     pub travel_mode: Option<TravelMode>,
 }
 
-/// Sentinel default for use in test helpers via struct-update syntax (`..FileMetadata::default()`).
-///
-/// Filename is empty, all durations and distances are zero, and `fix_stats` is `None`.
-/// Not intended for production construction.
-impl Default for FileMetadata {
-    fn default() -> Self {
-        Self {
-            filename: String::new(),
-            total_distance_km: Length::new::<kilometer>(0.0),
-            total_duration: Duration::zero(),
-            time_range: TimeRange::new(DateTime::<Utc>::UNIX_EPOCH, DateTime::<Utc>::UNIX_EPOCH),
-            fix_stats: None,
-            title: None,
-            device: None,
-            notes: None,
-            travel_mode: None,
-        }
-    }
-}
-
 /// Configuration for log-marker and satellite association.
 ///
 /// Stored in `Settings` and persisted to the config file. Also carried on
@@ -622,7 +569,36 @@ mod nearest_satellite_report_tests {
     use crate::time_types::GpsTime;
     use crate::tpv::TimePositionVelocity;
 
-    use super::{LoadedTrack, TrackMetadata};
+    use geo_types::{Coord, Rect};
+    use uom::si::f64::Length;
+    use uom::si::length::{kilometer, meter};
+
+    use super::{LoadedTrack, MercBounds, TimeRange, TrackMetadata};
+
+    fn empty_metadata() -> TrackMetadata {
+        TrackMetadata {
+            index: 0,
+            distance_km: Length::new::<kilometer>(0.0),
+            duration: Duration::zero(),
+            time_range: TimeRange::new(DateTime::<Utc>::UNIX_EPOCH, DateTime::<Utc>::UNIX_EPOCH),
+            bounding_box: Rect::new(Coord { x: 0.0, y: 0.0 }, Coord { x: 0.0, y: 0.0 }),
+            merc_bounds: MercBounds {
+                x_min: 0.0,
+                x_max: 0.0,
+                y_min: 0.0,
+                y_max: 0.0,
+            },
+            point_set_diameter_m: Length::new::<meter>(0.0),
+            segment_length_range: None,
+            has_custom_markers: false,
+            tpv_count: 0,
+            satellite_report_count: 0,
+            custom_marker_count: 0,
+            generated_marker_count: 0,
+            event_marker_count: 0,
+            fix_stats: None,
+        }
+    }
 
     /// A track from `(seconds, report)` specs, where `Some(n)` attaches a
     /// report with `n` satellites so assertions can tell reports apart.
@@ -646,7 +622,7 @@ mod nearest_satellite_report_tests {
             })
             .collect();
         LoadedTrack {
-            metadata: TrackMetadata::default(),
+            metadata: empty_metadata(),
             points,
             lod: Default::default(),
             sat_label_anchors: Vec::new(),

@@ -97,12 +97,10 @@ impl Plugin for EventMarkerRenderer<'_> {
         }
         batch.paint(ui.painter());
 
-        // Show tooltip for the hovered event marker. Uses hover_candidates[1] so
-        // the tooltip appears even when a Tpv point is the primary hover.
-        if let Some(r) = self.highlight.hover_candidates[1]
-            && self.highlight.sticky != Some(r)
-            && !ui.ctx().any_popup_open()
-            && !self.highlight.suppress_hover_labels
+        if let Some(r) = self.highlight.hover_candidates.event_marker
+            && self
+                .highlight
+                .shows_hover_label(r, ui.ctx().any_popup_open())
             && let Some(file) = r.track.fi.get(self.files)
             && let Some(track) = r.track.index.get(&file.tracks)
             && let Some(marker) = r.point_index.get(&track.event_markers)

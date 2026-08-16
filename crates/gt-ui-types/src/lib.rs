@@ -19,7 +19,8 @@ pub use display_mask::{DisplayCategory, DisplayMask};
 pub use event_marker_visibility::EventMarkerVisibility;
 pub use generated_marker_visibility::GeneratedMarkerVisibility;
 pub use highlight::{
-    DataPointRef, HighlightScope, MapHighlight, MatchHighlight, PinWithheld, PinnedPopup,
+    DataPointRef, HighlightScope, HoverCandidates, MapHighlight, MatchHighlight, PinWithheld,
+    PinnedPopup,
 };
 pub use jamming_series::{JammingPoint, JammingSeries};
 pub use point_window::PointWindowFolds;

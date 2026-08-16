@@ -724,6 +724,18 @@ impl<P: MetricProvider> Ctx<'_, P> {
         raw_value(self.provider, metric, index)
     }
 
+    /// Undefined arithmetic (a negative radicand, a division by zero, an
+    /// absent sample) yields NaN or an infinity: the value drops out and the
+    /// point counts as skipped for non-finite arithmetic.
+    fn finite_or_poison(&mut self, value: f64) -> Option<f64> {
+        if value.is_finite() {
+            Some(value)
+        } else {
+            self.non_finite = true;
+            None
+        }
+    }
+
     fn metric_at(&mut self, metric: QueryMetric, index: usize) -> Option<f64> {
         let value = if metric == QueryMetric::Accel {
             derived_accel(self.provider, index)
@@ -818,16 +830,10 @@ fn eval_num<P: MetricProvider>(ctx: &mut Ctx<'_, P>, expr: &CExpr, scope: Scope)
             Scope::Sample(row) => row.get(key.component.unwrap_or(0)).copied(),
             Scope::Point(_) | Scope::Window(_) | Scope::SampleWindow { .. } => None,
         },
-        // norm is the Euclidean magnitude of the whole sample row. A non-finite
-        // component (an absent sample) poisons it like any undefined arithmetic.
+        // norm is the Euclidean magnitude of the whole sample row.
         CExpr::Norm(_) => match scope {
             Scope::Sample(row) => {
-                let result = row.iter().map(|v| v * v).sum::<f64>().sqrt();
-                if !result.is_finite() {
-                    ctx.non_finite = true;
-                    return None;
-                }
-                Some(result)
+                ctx.finite_or_poison(row.iter().map(|v| v * v).sum::<f64>().sqrt())
             }
             Scope::Point(_) | Scope::Window(_) | Scope::SampleWindow { .. } => None,
         },
@@ -839,14 +845,8 @@ fn eval_num<P: MetricProvider>(ctx: &mut Ctx<'_, P>, expr: &CExpr, scope: Scope)
         } => aggregate(ctx, *func, *circular, source, arg, scope),
         CExpr::Abs(inner) => eval_num(ctx, inner, scope).map(f64::abs),
         CExpr::Sqrt(inner) => {
-            // A negative radicand roots to NaN. Poison it like any undefined
-            // arithmetic.
             let result = eval_num(ctx, inner, scope)?.sqrt();
-            if !result.is_finite() {
-                ctx.non_finite = true;
-                return None;
-            }
-            Some(result)
+            ctx.finite_or_poison(result)
         }
         CExpr::Neg(inner) => eval_num(ctx, inner, scope).map(|v| -v),
         CExpr::Arith { op, lhs, rhs } => {
@@ -857,19 +857,11 @@ fn eval_num<P: MetricProvider>(ctx: &mut Ctx<'_, P>, expr: &CExpr, scope: Scope)
                 ArithOp::Mul => l * r,
                 ArithOp::Div => l / r,
             };
-            if !result.is_finite() {
-                ctx.non_finite = true;
-                return None;
-            }
-            Some(result)
+            ctx.finite_or_poison(result)
         }
         CExpr::Power { base, exponent } => {
             let result = eval_num(ctx, base, scope)?.powi(i32::from(*exponent));
-            if !result.is_finite() {
-                ctx.non_finite = true;
-                return None;
-            }
-            Some(result)
+            ctx.finite_or_poison(result)
         }
         // Condition nodes never appear in value position.
         CExpr::Not(_) | CExpr::Cmp { .. } | CExpr::Logic { .. } => None,
@@ -995,11 +987,7 @@ fn reduce_values<P: MetricProvider>(
         // their own scalar `CExpr` nodes.
         Func::Abs | Func::Sqrt | Func::Norm => return None,
     };
-    if !value.is_finite() {
-        ctx.non_finite = true;
-        return None;
-    }
-    Some(value)
+    ctx.finite_or_poison(value)
 }
 
 /// Signed shortest angular difference from `first` to `last`, in degrees,

@@ -44,7 +44,7 @@ mod tests {
             metadata: FileMetadata {
                 filename: filename.to_owned(),
                 title: Some(title.to_owned()),
-                ..FileMetadata::default()
+                ..gt_test_utils::empty_file_metadata()
             },
             tracks: Vec::new(),
             event_marker_styles: std::collections::HashMap::new(),
