@@ -653,6 +653,7 @@ impl App {
             query_history_revision: self.query_window.history_revision(),
             snap: self.snap_settings.clone(),
             geomagnetic_indices: self.geomagnetic_index_settings.clone(),
+            interference: self.interference_settings.clone(),
         }
     }
 
