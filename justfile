@@ -70,6 +70,13 @@ examples:
 gen-fixture:
     cargo run -p geotrace-c --bin gen_fixture
 
+# Refresh the gt-ionex map fixtures from the JPL archive (network!).
+# Fixtures are frozen once committed - review the resulting diff like code.
+# Name files to capture only those (additive); no args captures all.
+[group("native")]
+ionex-fixtures *FILES:
+    cargo run -p gt-ionex --example fetch_ionex_fixtures -- {{ FILES }}
+
 # Refresh the gt-jam interference dataset fixtures from gpsjam.org (network!).
 # Fixtures are frozen once committed - review the resulting diff like code.
 # Name days to capture only those (additive); no args captures all.

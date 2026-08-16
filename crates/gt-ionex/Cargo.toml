@@ -1,0 +1,29 @@
+[package]
+name = "gt-ionex"
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+chrono.workspace = true
+gt-types = { path = "../gt-types" }
+thiserror.workspace = true
+
+[dev-dependencies]
+# The archives serve IONEX files gzipped, and the capture example stores them
+# decompressed because the parser reads text.
+flate2.workspace = true
+proptest.workspace = true
+# The fixture-capture example talks to the archive directly, not through
+# gt_fetch::Transport.
+reqwest.workspace = true
+rstest.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

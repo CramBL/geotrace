@@ -40,6 +40,7 @@ members = [
     "crates/gt-history-backend-sys",
     "crates/gt-history-types",
     "crates/gt-icon-tessellate",
+    "crates/gt-ionex",
     "crates/gt-jam",
     "crates/gt-jam-store",
     "crates/gt-loaded-files",
@@ -93,6 +94,9 @@ egui_kittest = { version = "0.36", features = ["eframe", "wgpu", "snapshot"] }
 egui_plot = "0.37.0"
 egui_tiles = "0.17"
 env_logger = "0.11.10"
+# The IONEX archives serve their files gzipped without a transfer encoding,
+# so the client decompresses them itself.
+flate2 = "1"
 geo = "0.33.1"
 geo-types = "0.7.19"
 # H3 cell indices, the addressing scheme the interference datasets are

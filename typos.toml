@@ -4,6 +4,8 @@ extend-exclude = [
     "tests/fixtures/demo_trip/markers.csv",
     # Captured interference datasets: H3 cell indices are hex strings, not words
     "crates/gt-jam/tests/fixtures/*.csv",
+    # Captured IONEX maps: four-letter IGS station codes are not words
+    "crates/gt-ionex/tests/fixtures/*",
 ]
 
 [default.extend-words]
