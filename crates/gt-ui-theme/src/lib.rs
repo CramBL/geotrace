@@ -1,11 +1,13 @@
 use egui::Color32;
 
+/// U+2026 HORIZONTAL ELLIPSIS - truncation marker, and the button-label
+/// suffix for actions that need further input after the click (DESIGN.md).
+/// Defined by [`gt_fmt`], which formats values for both the UI and non-UI
+/// callers.
+pub use gt_fmt::ELLIPSIS;
 /// U+2014 EM DASH - used as a placeholder when a value is absent. Defined by
 /// [`gt_fmt`], which formats values for both the UI and non-UI callers.
 pub use gt_fmt::EM_DASH;
-/// U+2026 HORIZONTAL ELLIPSIS - truncation marker, and the button-label
-/// suffix for actions that need further input after the click (DESIGN.md).
-pub const ELLIPSIS: &str = "…";
 /// U+2212 MINUS SIGN - visually distinct from the ASCII hyphen-minus. Defined
 /// by [`gt_fmt`], which formats values for both the UI and non-UI callers.
 pub use gt_fmt::MINUS_SIGN;

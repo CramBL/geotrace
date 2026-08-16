@@ -3,8 +3,11 @@
 //! A template is free text with `{token}` placeholders. Recognised tokens are
 //! substituted with the matching field; a token whose field is absent collapses,
 //! taking its adjacent literal separator with it, so `"{title} — {device}"` with
-//! no device renders as just the title (not `"Alpha — "`). Unknown tokens are
-//! kept verbatim as literal text, and an empty result falls back to the filename.
+//! no device renders as just the title (not `"Alpha — "`). A token may cap its
+//! value at `N` characters as `{title:12}`. Unknown tokens are kept verbatim as
+//! literal text, and an empty result falls back to the filename.
+
+use std::{borrow::Cow, num::NonZeroUsize};
 
 /// The field values a [`render_name_template`] call draws from.
 ///
@@ -55,11 +58,49 @@ impl Token {
     }
 }
 
-/// A parsed template segment: either literal text or a recognised token.
+/// A token placeholder as written in the template: the token itself and the
+/// optional character limit from its `{token:N}` suffix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TokenPlaceholder {
+    token: Token,
+    max_chars: Option<NonZeroUsize>,
+}
+
+impl TokenPlaceholder {
+    /// Parse the text between the braces, `None` for anything that is not a
+    /// known token with an optional positive limit.
+    fn parse_between_braces(spec: &str) -> Option<Self> {
+        let (name, max_chars) = match spec.split_once(':') {
+            Some((name, limit)) => {
+                // Integer parsing accepts a leading `+`: the digit check keeps
+                // the limit to plain decimals.
+                if !limit.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return None;
+                }
+                (name, Some(limit.parse::<NonZeroUsize>().ok()?))
+            }
+            None => (spec, None),
+        };
+        Some(Self {
+            token: name.parse().ok()?,
+            max_chars,
+        })
+    }
+
+    fn resolve_within_limit<'a>(self, fields: &NameFields<'a>) -> Option<Cow<'a, str>> {
+        let value = self.token.resolve(fields)?;
+        Some(match self.max_chars {
+            Some(max_chars) => crate::truncate_with_ellipsis(value, max_chars),
+            None => Cow::Borrowed(value),
+        })
+    }
+}
+
+/// A parsed template segment: either literal text or a token placeholder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Part<'a> {
     Literal(&'a str),
-    Token(Token),
+    Token(TokenPlaceholder),
 }
 
 /// Split `template` into literal and token parts.
@@ -82,11 +123,11 @@ fn parse(template: &str) -> Vec<Part<'_>> {
         let after_brace = from_open.get(1..).unwrap_or("");
         match after_brace.find('}') {
             Some(rel_close) => {
-                let name = after_brace.get(..rel_close).unwrap_or("");
-                match name.parse::<Token>() {
-                    Ok(token) => parts.push(Part::Token(token)),
-                    // Unknown token: keep the whole `{name}` as literal text.
-                    Err(_) => {
+                let spec = after_brace.get(..rel_close).unwrap_or("");
+                match TokenPlaceholder::parse_between_braces(spec) {
+                    Some(placeholder) => parts.push(Part::Token(placeholder)),
+                    // Unknown token: keep the whole `{spec}` as literal text.
+                    None => {
                         let literal = from_open.get(..rel_close + 2).unwrap_or(from_open);
                         parts.push(Part::Literal(literal));
                     }
@@ -124,24 +165,29 @@ pub fn render_name_template(template: &str, fields: &NameFields<'_>) -> String {
     for part in parse(template) {
         match part {
             Part::Literal(text) => pending.push_str(text),
-            Part::Token(token) => match token.resolve(fields).filter(|v| !v.is_empty()) {
-                Some(value) => {
-                    // Emit the pending literal when it separates prior content
-                    // from this token, or when it is genuine leading text (not a
-                    // separator orphaned by an absent token).
-                    if emitted_content || !pending_after_absent {
-                        out.push_str(&pending);
+            Part::Token(placeholder) => {
+                match placeholder
+                    .resolve_within_limit(fields)
+                    .filter(|value| !value.is_empty())
+                {
+                    Some(value) => {
+                        // Emit the pending literal when it separates prior
+                        // content from this token, or when it is genuine leading
+                        // text (not a separator orphaned by an absent token).
+                        if emitted_content || !pending_after_absent {
+                            out.push_str(&pending);
+                        }
+                        pending.clear();
+                        pending_after_absent = false;
+                        out.push_str(&value);
+                        emitted_content = true;
                     }
-                    pending.clear();
-                    pending_after_absent = false;
-                    out.push_str(value);
-                    emitted_content = true;
+                    None => {
+                        pending.clear();
+                        pending_after_absent = true;
+                    }
                 }
-                None => {
-                    pending.clear();
-                    pending_after_absent = true;
-                }
-            },
+            }
         }
     }
     // Flush trailing literal text on the same rule a present token uses: keep it
@@ -221,6 +267,44 @@ mod tests {
         );
     }
 
+    #[rstest]
+    // A value over the limit is cut to that many characters plus an ellipsis.
+    #[case("{title:3}", Some("Alphabet"), "Alp…")]
+    // A value within the limit renders unchanged.
+    #[case("{title:9}", Some("Alpha"), "Alpha")]
+    // An absent token with a limit collapses with its separator as usual.
+    #[case("{title:4} — {device}", None, "Bravo")]
+    // Each token of a limited pair is cut on its own limit.
+    #[case("{title:2} — {device:2}", Some("Alpha"), "Al… — Br…")]
+    fn limits_token_length(
+        #[case] template: &str,
+        #[case] title: Option<&str>,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(
+            render_name_template(template, &fields(title, Some("Bravo"), None)),
+            expected
+        );
+    }
+
+    #[rstest]
+    // No limit given.
+    #[case("{title:}")]
+    // Zero cannot cut anything.
+    #[case("{title:0}")]
+    // Non-numeric limit.
+    #[case("{title:abc}")]
+    // A signed number: integer parsing would accept a leading sign, the syntax
+    // does not.
+    #[case("{title:-3}")]
+    #[case("{title:+3}")]
+    fn malformed_limit_renders_as_literal(#[case] template: &str) {
+        assert_eq!(
+            render_name_template(template, &fields(Some("Alpha"), None, None)),
+            template
+        );
+    }
+
     #[test]
     fn middle_token_absent_keeps_one_separator() {
         // A collapsing middle token should not eat both surrounding separators.
@@ -268,6 +352,14 @@ mod tests {
         #[test]
         fn render_never_panics(template in ".*") {
             let _ = render_name_template(&template, &fields(Some("Alpha"), None, Some("auto:x")));
+        }
+
+        /// Any limit spec, well-formed or not, renders a multi-byte value
+        /// without panicking on a character boundary.
+        #[test]
+        fn render_limited_token_never_panics(limit in "[^{}]{0,8}") {
+            let template = format!("{{title:{limit}}}");
+            let _ = render_name_template(&template, &fields(Some("ærøskøbing"), None, None));
         }
     }
 }

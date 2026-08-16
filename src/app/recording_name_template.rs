@@ -18,6 +18,9 @@ const STRUCTURE_FIELDS: NameFields<'static> = NameFields {
 
 const GUIDE_WIDTH: f32 = 400.0;
 
+/// The character limit the guide's `{token:N}` hint line demonstrates.
+const TOKEN_LIMIT_EXAMPLE_CHARS: usize = 12;
+
 /// Where the recording behind the preview line came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PreviewOrigin {
@@ -161,15 +164,19 @@ fn show_template_guide(
                 )
                 .weak(),
             );
+            let limit_hint = format!(
+                "{{title:{TOKEN_LIMIT_EXAMPLE_CHARS}}} shows at most the first {TOKEN_LIMIT_EXAMPLE_CHARS} characters"
+            );
+            ui.label(RichText::new(limit_hint).weak());
         });
 }
 
 #[cfg(test)]
 mod tests {
-    use gt_fmt::{Token, render_name_template};
+    use gt_fmt::{NameFields, Token, render_name_template};
     use strum::IntoEnumIterator as _;
 
-    use super::STRUCTURE_FIELDS;
+    use super::{STRUCTURE_FIELDS, TOKEN_LIMIT_EXAMPLE_CHARS};
 
     /// Every token stands for its own name in the structure preview, so a token
     /// renamed in `gt-fmt` cannot leave the preview rendering the old name.
@@ -182,5 +189,23 @@ mod tests {
                 name
             );
         }
+    }
+
+    /// The guide's hint line names a character limit. The structure preview it
+    /// sits under cuts at exactly that limit.
+    #[test]
+    fn hinted_limit_cuts_the_structure_preview() {
+        let template = format!("{{identity:{TOKEN_LIMIT_EXAMPLE_CHARS}}}");
+        let rendered = render_name_template(&template, &STRUCTURE_FIELDS);
+        assert_eq!(rendered, "identity");
+
+        let long_identity = NameFields {
+            identity: Some("Kongelig Dansk Aeroklub"),
+            ..STRUCTURE_FIELDS
+        };
+        assert_eq!(
+            render_name_template(&template, &long_identity),
+            "Kongelig Dan…"
+        );
     }
 }
