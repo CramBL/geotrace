@@ -20,9 +20,22 @@ use gt_track_builder::{GeneratedMarkerConfig, SegmentationConfig, TrackLayoutCon
 use gt_types::AssociationConfig;
 use strum::IntoEnumIterator;
 
-use super::{App, backfill_ui, recording_name_template};
+use super::backfill_ui::{BackfillAction, BackfillReadiness};
+use super::{App, geomagnetic_index_ui, recording_name_template};
 
 impl App {
+    /// What a download control may do right now. An archive that could not be
+    /// opened outranks offline mode: it is the permanent condition.
+    fn backfill_readiness(&self, archive_available: bool) -> BackfillReadiness {
+        if !archive_available {
+            BackfillReadiness::WithoutArchive
+        } else if self.offline {
+            BackfillReadiness::Offline
+        } else {
+            BackfillReadiness::Ready
+        }
+    }
+
     /// Render the Settings window.
     ///
     /// Returns `true` in the frame when the user clicks "Apply to loaded data",
@@ -435,17 +448,17 @@ impl App {
                         ui.end_row();
                     });
                 ui.add_space(8.0);
-                if let Some(action) = self.backfill_ui.ui(
-                    ui,
-                    self.jamming.backfill_progress(),
-                    self.jamming.archive_available(),
-                ) {
+                let readiness = self.backfill_readiness(self.jamming.archive_available());
+                if let Some(action) =
+                    self.interference_backfill_ui
+                        .ui(ui, self.jamming.backfill_progress(), readiness)
+                {
                     match action {
-                        backfill_ui::BackfillAction::Start { from, to } => {
+                        BackfillAction::Start { from, to } => {
                             let queued = self.jamming.backfill(from, to);
-                            self.backfill_ui.report_started(queued);
+                            self.interference_backfill_ui.report_started(queued);
                         }
-                        backfill_ui::BackfillAction::Cancel => self.jamming.cancel_backfill(),
+                        BackfillAction::Cancel => self.jamming.cancel_backfill(),
                     }
                 }
 
@@ -479,7 +492,29 @@ impl App {
                             self.geomagnetic_index_settings.base_url = base_url;
                         }
                         ui.end_row();
+
+                        geomagnetic_index_ui::show_fetch_rows(
+                            ui,
+                            self.geomagnetic_indices.fetch_status(),
+                        );
                     });
+                geomagnetic_index_ui::show_failures(ui, self.geomagnetic_indices.failures());
+                ui.add_space(8.0);
+                let readiness =
+                    self.backfill_readiness(self.geomagnetic_indices.archive_available());
+                if let Some(action) = self.geomagnetic_index_backfill_ui.ui(
+                    ui,
+                    self.geomagnetic_indices.backfill_progress(),
+                    readiness,
+                ) {
+                    match action {
+                        BackfillAction::Start { from, to } => {
+                            let queued = self.geomagnetic_indices.backfill(from, to);
+                            self.geomagnetic_index_backfill_ui.report_started(queued);
+                        }
+                        BackfillAction::Cancel => self.geomagnetic_indices.cancel_backfill(),
+                    }
+                }
 
                 // Only meaningful in dist builds. Builds without the self-update
                 // feature carry no update check to toggle.

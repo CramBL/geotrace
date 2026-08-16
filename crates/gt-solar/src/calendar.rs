@@ -11,6 +11,10 @@ use strum::IntoEnumIterator as _;
 
 use crate::GeomagneticIndex;
 
+/// First day any index has values for, and so the earliest day worth
+/// requesting. Kp reaches furthest back.
+pub const COVERAGE_START: NaiveDate = GeomagneticIndex::Kp.coverage_start();
+
 /// Most UTC days one recording is allowed to pull in.
 ///
 /// A recording spanning longer than this is left to an explicit backfill: a
@@ -54,6 +58,14 @@ pub fn fetchable_indices(
 ) -> impl Iterator<Item = GeomagneticIndex> {
     GeomagneticIndex::iter()
         .filter(move |index| day_outlook(*index, day, today_utc) == DayOutlook::Fetchable)
+}
+
+/// Every day in `from..=to` at least one index covers, oldest first.
+pub fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> Vec<NaiveDate> {
+    // The lower bound keeps a caller asking from the year 1 out of the walk.
+    gt_types::utc_days::days_in_range(from.max(COVERAGE_START)..=to, |day| {
+        fetchable_indices(day, today_utc).next().is_some()
+    })
 }
 
 #[cfg(test)]
@@ -116,5 +128,35 @@ mod tests {
             fetchable_indices(day, today()).collect::<Vec<_>>(),
             expected
         );
+    }
+
+    /// Adding an index that reaches further back moves the start of coverage.
+    #[test]
+    fn coverage_starts_with_the_index_that_reaches_furthest_back() {
+        assert_eq!(
+            Some(COVERAGE_START),
+            GeomagneticIndex::iter()
+                .map(GeomagneticIndex::coverage_start)
+                .min()
+        );
+        assert_eq!(COVERAGE_START, date(1932, 1, 1));
+    }
+
+    #[rstest]
+    #[case::a_week(date(2026, 7, 20), date(2026, 7, 26), 7)]
+    #[case::one_day(date(2026, 7, 20), date(2026, 7, 20), 1)]
+    #[case::reversed(date(2026, 7, 26), date(2026, 7, 20), 0)]
+    #[case::clamped_to_coverage(date(1900, 1, 1), COVERAGE_START, 1)]
+    #[case::stops_at_today(date(2026, 7, 27), date(2026, 8, 10), 3)]
+    #[case::entirely_in_the_future(date(2026, 8, 1), date(2026, 8, 10), 0)]
+    fn fetchable_days_covers_the_range_the_service_can_serve(
+        #[case] from: NaiveDate,
+        #[case] to: NaiveDate,
+        #[case] expected: usize,
+    ) {
+        let days = fetchable_days(from, to, today());
+        assert_eq!(days.len(), expected);
+        assert!(days.iter().all(|day| *day >= COVERAGE_START));
+        assert!(days.iter().all(|day| *day <= today()));
     }
 }

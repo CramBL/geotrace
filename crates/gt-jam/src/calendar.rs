@@ -95,19 +95,10 @@ pub fn days_spanned(start: DateTime<Utc>, end: DateTime<Utc>) -> Option<Vec<Naiv
 
 /// Every [`DayOutlook::Fetchable`] day in `from..=to`, oldest first.
 pub fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> Vec<NaiveDate> {
-    let mut days = Vec::new();
-    // Bounds the walk for a caller that asks from the year 1.
-    let mut day = from.max(COVERAGE_START);
-    while day <= to {
-        if day_outlook(day, today_utc) == DayOutlook::Fetchable {
-            days.push(day);
-        }
-        let Some(next) = day.checked_add_days(Days::new(1)) else {
-            break;
-        };
-        day = next;
-    }
-    days
+    // The lower bound keeps a caller asking from the year 1 out of the walk.
+    gt_types::utc_days::days_in_range(from.max(COVERAGE_START)..=to, |day| {
+        day_outlook(day, today_utc) == DayOutlook::Fetchable
+    })
 }
 
 /// The current UTC day. Datasets are UTC-day granular, so a local date is

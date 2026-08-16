@@ -82,16 +82,11 @@ impl TimeRange {
         if last < first {
             return None;
         }
-        let mut days = Vec::new();
-        let mut day = first;
-        while day <= last {
-            if days.len() == max_days {
-                return None;
-            }
-            days.push(day);
-            day = day.checked_add_days(Days::new(1))?;
-        }
-        Some(days)
+        // A range of centuries is rejected without being walked: the bound
+        // stops one day past the cap.
+        let bound = first.checked_add_days(Days::new(u64::try_from(max_days).ok()?))?;
+        let days = crate::utc_days::days_in_range(first..=last.min(bound), |_| true);
+        (days.len() <= max_days).then_some(days)
     }
 }
 

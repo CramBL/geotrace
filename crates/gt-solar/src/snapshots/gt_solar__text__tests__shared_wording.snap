@@ -3,6 +3,8 @@ source: crates/gt-solar/src/text.rs
 expression: wording
 ---
 label: Geomagnetic activity
+indices: Kp and Hp30 indices
+archive: geomagnetic index archive
 summary: Planetary geomagnetic activity index over the time each fix was recorded.
 source caveat: Averaged over magnetometer stations worldwide, so a value describes the planet over a period, not the ionosphere above one receiver.
 scale caveat: The scale is quasi logarithmic and published in thirds of a unit. Storm levels start at 5 (G1), Kp stops at 9, and Hp30 keeps climbing past it in an extreme storm.

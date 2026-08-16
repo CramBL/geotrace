@@ -1,32 +1,169 @@
-//! The "download interference history" control in the settings dialog.
+//! The "download history" control in the settings dialog, shown under every
+//! dataset that archives whole UTC days.
 //!
-//! Emits a [`BackfillAction`]. The scheduler is not driven directly, so the
-//! control can be tested without an archive or a host.
+//! Emits a [`BackfillAction`]: the control can be tested without an archive
+//! or a host, because it never drives a scheduler itself.
 
-use chrono::{Datelike as _, Days, NaiveDate};
+use std::marker::PhantomData;
+use std::time::Duration;
+
+use chrono::{Datelike as _, Days, NaiveDate, Utc};
 use egui::{Button, ProgressBar, RichText, Ui};
 use egui_extras::DatePickerButton;
 use egui_phosphor::regular::CLOUD_ARROW_DOWN as ICON_DOWNLOAD;
 use egui_phosphor::regular::X as ICON_CANCEL;
 use jiff::civil::Date;
 
-use gt_jam::calendar::{self, COVERAGE_START};
-
-use super::jamming::BackfillProgress;
-
-/// Size of one archived day on disk, measured over the captured fixtures.
-const BYTES_PER_DAY: u64 = 81 * 1024;
+use super::backfill::BackfillProgress;
 
 /// Estimates above this display in minutes.
 const MINUTES_CUTOFF_SECS: u64 = 90;
 
-/// Range presets, as days back from today. [`None`] is the whole coverage
-/// window.
-const PRESETS: [(&str, Option<u64>); 3] = [
-    ("30 days", Some(30)),
-    ("1 year", Some(365)),
-    ("Everything", None),
-];
+/// Estimates above this display in hours.
+const HOURS_CUTOFF_MINS: u64 = 90;
+
+/// Days the range covers before the user picks one.
+const DEFAULT_RANGE_DAYS: u64 = 30;
+
+/// One range preset, offered as a button beside the pickers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BackfillPreset {
+    pub label: &'static str,
+    /// Days back from today the range starts. [`None`] reaches back to the
+    /// start of coverage.
+    pub days_back: Option<u64>,
+}
+
+/// A dataset the control downloads history for: what its host publishes, and
+/// what one day of it costs.
+pub trait BackfillDataset {
+    /// Distinguishes this control's date pickers from another control's.
+    const ID_PREFIX: &'static str;
+    /// Names the archive days are downloaded into, as the outcome line and
+    /// the disabled hover spell it.
+    const ARCHIVE_NAME: &'static str;
+    /// Names what one day holds, as the download button's hover spells it.
+    const DAY_SUBJECT: &'static str;
+    /// How many requests one day costs.
+    const REQUESTS_PER_DAY: u64;
+    /// Gap the transport keeps between requests to the host.
+    const REQUEST_INTERVAL: Duration;
+    /// Bytes one archived day takes on disk, measured on a filled archive.
+    const BYTES_PER_DAY: u64;
+    /// The presets offered beside the pickers, widest last.
+    const PRESETS: [BackfillPreset; 3];
+
+    /// First UTC day the host publishes, the earliest the pickers offer.
+    fn coverage_start() -> NaiveDate;
+
+    /// The days in `from..=to` the host can serve.
+    fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> Vec<NaiveDate>;
+
+    /// A rough wall-clock and disk estimate for downloading `count` days.
+    fn estimate(count: usize) -> String {
+        let days = count as u64;
+        let seconds = days * Self::REQUESTS_PER_DAY * Self::REQUEST_INTERVAL.as_secs();
+        let minutes = seconds.div_ceil(60);
+        let duration = if seconds < MINUTES_CUTOFF_SECS {
+            format!("{seconds} s")
+        } else if minutes < HOURS_CUTOFF_MINS {
+            format!("{minutes} min")
+        } else {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "an estimate in hours needs its leading digits only"
+            )]
+            let hours = seconds as f64 / 3600.0;
+            format!("{hours:.1} h")
+        };
+        format!(
+            "{days} {}, about {duration} and {}",
+            gt_fmt::pluralize(count, "day", "days"),
+            gt_fmt::format_bytes(days * Self::BYTES_PER_DAY)
+        )
+    }
+}
+
+/// The daily interference datasets from gpsjam.org.
+pub struct InterferenceBackfill;
+
+impl BackfillDataset for InterferenceBackfill {
+    const ID_PREFIX: &'static str = "interference_backfill";
+    const ARCHIVE_NAME: &'static str = "interference archive";
+    const DAY_SUBJECT: &'static str = "daily interference datasets";
+    const REQUESTS_PER_DAY: u64 = 1;
+    const REQUEST_INTERVAL: Duration = gt_jam::transport::REQUEST_INTERVAL;
+    const BYTES_PER_DAY: u64 = 81 * 1024;
+    const PRESETS: [BackfillPreset; 3] = [
+        BackfillPreset {
+            label: "30 days",
+            days_back: Some(30),
+        },
+        BackfillPreset {
+            label: "1 year",
+            days_back: Some(365),
+        },
+        BackfillPreset {
+            label: "Everything",
+            days_back: None,
+        },
+    ];
+
+    fn coverage_start() -> NaiveDate {
+        gt_jam::calendar::COVERAGE_START
+    }
+
+    fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> Vec<NaiveDate> {
+        gt_jam::calendar::fetchable_days(from, to, today_utc)
+    }
+}
+
+/// The Kp and Hp30 indices from GFZ Potsdam.
+pub struct GeomagneticIndexBackfill;
+
+impl BackfillDataset for GeomagneticIndexBackfill {
+    const ID_PREFIX: &'static str = "geomagnetic_index_backfill";
+    const ARCHIVE_NAME: &'static str = gt_solar::text::ARCHIVE_NAME;
+    const DAY_SUBJECT: &'static str = gt_solar::text::INDEX_NAMES;
+    /// One request per index.
+    const REQUESTS_PER_DAY: u64 = 2;
+    const REQUEST_INTERVAL: Duration = gt_solar::transport::REQUEST_INTERVAL;
+    const BYTES_PER_DAY: u64 = 12 * 1024;
+    /// Kp reaches back to 1932, which no preset offers: downloading it whole
+    /// takes days.
+    const PRESETS: [BackfillPreset; 3] = [
+        BackfillPreset {
+            label: "30 days",
+            days_back: Some(30),
+        },
+        BackfillPreset {
+            label: "1 year",
+            days_back: Some(365),
+        },
+        BackfillPreset {
+            label: "5 years",
+            days_back: Some(5 * 365),
+        },
+    ];
+
+    fn coverage_start() -> NaiveDate {
+        gt_solar::calendar::COVERAGE_START
+    }
+
+    fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> Vec<NaiveDate> {
+        gt_solar::calendar::fetchable_days(from, to, today_utc)
+    }
+}
+
+/// Whether a download can start, and what stops it when it cannot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackfillReadiness {
+    Ready,
+    /// There is nowhere to download to: the archive could not be opened.
+    WithoutArchive,
+    /// No request may leave the machine: `GEOTRACE_OFFLINE` is set.
+    Offline,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackfillAction {
@@ -38,16 +175,17 @@ pub enum BackfillAction {
 ///
 /// Held as [`jiff::civil::Date`], which is what [`DatePickerButton`] edits.
 /// The rest of the app is on [`chrono`], so the two convert here.
-pub struct BackfillUi {
+pub struct BackfillUi<D: BackfillDataset> {
     from: Date,
     to: Date,
     /// The outcome of the last start, shown until the next one.
     outcome: Option<String>,
+    dataset: PhantomData<D>,
 }
 
-impl Default for BackfillUi {
+impl<D: BackfillDataset> Default for BackfillUi<D> {
     fn default() -> Self {
-        Self::with_today(calendar::today_utc())
+        Self::with_today(Utc::now().date_naive())
     }
 }
 
@@ -70,43 +208,27 @@ fn to_chrono(date: Date) -> Option<NaiveDate> {
     )
 }
 
-/// A rough wall-clock and disk estimate. A full backfill takes roughly an
-/// hour.
-fn estimate(count: usize) -> String {
-    let days = count as u64;
-    let seconds = days * gt_jam::transport::REQUEST_INTERVAL.as_secs();
-    let duration = if seconds < MINUTES_CUTOFF_SECS {
-        format!("{seconds} s")
-    } else {
-        format!("{} min", seconds.div_ceil(60))
-    };
-    format!(
-        "{days} {}, about {duration} and {}",
-        gt_fmt::pluralize(count, "day", "days"),
-        gt_fmt::format_bytes(days * BYTES_PER_DAY)
-    )
-}
-
-/// The start of a preset range: `days_back` before `today`, or the start of
-/// coverage when the preset is the whole window.
-fn preset_start(today: NaiveDate, days_back: Option<u64>) -> NaiveDate {
-    days_back
-        .and_then(|back| today.checked_sub_days(Days::new(back)))
-        .unwrap_or(COVERAGE_START)
-        .max(COVERAGE_START)
-}
-
-impl BackfillUi {
-    /// Seeded with the thirty days ending `today`.
+impl<D: BackfillDataset> BackfillUi<D> {
+    /// Seeded with the last [`DEFAULT_RANGE_DAYS`] days, ending `today`.
     ///
     /// `today` is a parameter so a snapshot of the settings window does not
     /// change every day.
     pub fn with_today(today: NaiveDate) -> Self {
         Self {
-            from: to_jiff(preset_start(today, Some(30))),
+            from: to_jiff(Self::preset_start(today, Some(DEFAULT_RANGE_DAYS))),
             to: to_jiff(today),
             outcome: None,
+            dataset: PhantomData,
         }
+    }
+
+    /// The start of a preset range: `days_back` before `today`, or the start
+    /// of coverage when the preset is the whole window.
+    fn preset_start(today: NaiveDate, days_back: Option<u64>) -> NaiveDate {
+        days_back
+            .and_then(|back| today.checked_sub_days(Days::new(back)))
+            .unwrap_or_else(D::coverage_start)
+            .max(D::coverage_start())
     }
 
     /// The selected range, or [`None`] when it runs backwards. The pickers
@@ -118,13 +240,12 @@ impl BackfillUi {
 
     /// Sets the outcome line shown under the range controls.
     ///
-    /// [`None`] is [`super::jamming::JammingScheduler::backfill`] reporting
-    /// no archive.
+    /// [`None`] is the scheduler reporting no archive.
     pub fn report_started(&mut self, queued: Option<usize>) {
         self.outcome = Some(match queued {
-            None => "No interference archive to download into".to_owned(),
+            None => format!("No {} to download into", D::ARCHIVE_NAME),
             Some(0) => "Every day in that range is already archived".to_owned(),
-            Some(queued) => format!("Downloading {}", estimate(queued)),
+            Some(queued) => format!("Downloading {}", D::estimate(queued)),
         });
     }
 
@@ -132,27 +253,27 @@ impl BackfillUi {
         &mut self,
         ui: &mut Ui,
         progress: Option<BackfillProgress>,
-        archive_available: bool,
+        readiness: BackfillReadiness,
     ) -> Option<BackfillAction> {
         let mut action = None;
         let running = progress.is_some();
-        let today = calendar::today_utc();
+        let today = Utc::now().date_naive();
         // The host serves nothing outside this window, so the calendar does
         // not offer it.
-        let years = i16::try_from(COVERAGE_START.year()).unwrap_or(i16::MIN)
+        let years = i16::try_from(D::coverage_start().year()).unwrap_or(i16::MIN)
             ..=i16::try_from(today.year()).unwrap_or(i16::MAX);
 
         ui.horizontal(|ui| {
             ui.label("Range")
                 .on_hover_text("UTC days, both ends included");
             for (date, salt) in [
-                (&mut self.from, "backfill_from"),
-                (&mut self.to, "backfill_to"),
+                (&mut self.from, format!("{}_from", D::ID_PREFIX)),
+                (&mut self.to, format!("{}_to", D::ID_PREFIX)),
             ] {
                 ui.add_enabled(
                     !running,
                     DatePickerButton::new(date)
-                        .id_salt(salt)
+                        .id_salt(&salt)
                         .start_end_years(years.clone())
                         .highlight_weekends(false),
                 )
@@ -162,12 +283,12 @@ impl BackfillUi {
 
         ui.horizontal(|ui| {
             ui.label(RichText::new("Preset").weak());
-            for (label, days_back) in PRESETS {
+            for preset in D::PRESETS {
                 if ui
-                    .add_enabled(!running, Button::new(label).small())
+                    .add_enabled(!running, Button::new(preset.label).small())
                     .clicked()
                 {
-                    self.from = to_jiff(preset_start(today, days_back));
+                    self.from = to_jiff(Self::preset_start(today, preset.days_back));
                     self.to = to_jiff(today);
                 }
             }
@@ -192,26 +313,24 @@ impl BackfillUi {
         }
 
         ui.horizontal(|ui| {
-            let range = self.range().filter(|_| archive_available);
+            let range = self
+                .range()
+                .filter(|_| readiness == BackfillReadiness::Ready);
             let button = ui.add_enabled(
                 range.is_some(),
                 Button::new(format!("{ICON_DOWNLOAD} Download history")),
             );
             let button = match range {
                 Some((from, to)) => button.on_hover_text(format!(
-                    "Download the daily interference datasets for this range: at most {}. \
-                     Days already archived are skipped.",
-                    estimate(calendar::fetchable_days(from, to, today).len())
+                    "Download the {} for this range: at most {}. Days already archived are \
+                     skipped.",
+                    D::DAY_SUBJECT,
+                    D::estimate(D::fetchable_days(from, to, today).len())
                 )),
                 None => button,
             };
             if button
-                .on_disabled_hover_text(if archive_available {
-                    "Pick an end date on or after the start date"
-                } else {
-                    "The interference archive could not be opened, so there is nowhere \
-                     to download to"
-                })
+                .on_disabled_hover_text(Self::blocked_hover(readiness))
                 .clicked()
                 && let Some((from, to)) = range
             {
@@ -223,6 +342,21 @@ impl BackfillUi {
         });
 
         action
+    }
+
+    /// Why the download button is grayed out. A readiness that allows a
+    /// download leaves the range as the one thing that can be wrong.
+    fn blocked_hover(readiness: BackfillReadiness) -> String {
+        match readiness {
+            BackfillReadiness::Ready => "Pick an end date on or after the start date".to_owned(),
+            BackfillReadiness::WithoutArchive => format!(
+                "There is nowhere to download to: the {} could not be opened",
+                D::ARCHIVE_NAME
+            ),
+            BackfillReadiness::Offline => {
+                "Downloading is disabled while GEOTRACE_OFFLINE is set".to_owned()
+            }
+        }
     }
 }
 
@@ -236,13 +370,26 @@ mod tests {
 
     use super::*;
 
+    /// The interference control stands in for both: the dataset only supplies
+    /// constants, and the geomagnetic ones are covered where they differ.
+    type TestBackfillUi = BackfillUi<InterferenceBackfill>;
+
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(year, month, day).unwrap()
     }
 
+    fn state(from: NaiveDate, to: NaiveDate) -> TestBackfillUi {
+        TestBackfillUi {
+            from: to_jiff(from),
+            to: to_jiff(to),
+            outcome: None,
+            dataset: PhantomData,
+        }
+    }
+
     /// Pinned at both ends of the coverage window and across a leap day.
     #[rstest]
-    #[case::coverage_start(COVERAGE_START)]
+    #[case::coverage_start(gt_jam::calendar::COVERAGE_START)]
     #[case::a_leap_day(date(2024, 2, 29))]
     #[case::new_years_eve(date(2026, 12, 31))]
     #[case::the_first_of_a_month(date(2026, 8, 1))]
@@ -259,30 +406,47 @@ mod tests {
         #[case] to: NaiveDate,
         #[case] usable: bool,
     ) {
-        let state = BackfillUi {
-            from: to_jiff(from),
-            to: to_jiff(to),
-            outcome: None,
-        };
-        assert_eq!(state.range(), usable.then_some((from, to)));
+        assert_eq!(state(from, to).range(), usable.then_some((from, to)));
     }
 
     #[test]
     fn the_default_range_is_the_last_thirty_days() {
-        let state = BackfillUi::default();
+        let state = TestBackfillUi::default();
         let (from, to) = state.range().expect("the default range is usable");
-        assert_eq!(to, calendar::today_utc());
+        assert_eq!(to, Utc::now().date_naive());
         assert_eq!((to - from).num_days(), 30);
     }
 
     /// A preset never reaches back past the first published day.
     #[test]
     fn presets_stay_inside_the_coverage_window() {
-        let today = calendar::today_utc();
-        for (_, days_back) in PRESETS {
-            assert!(preset_start(today, days_back) >= COVERAGE_START);
+        let today = Utc::now().date_naive();
+        for preset in InterferenceBackfill::PRESETS {
+            assert!(
+                TestBackfillUi::preset_start(today, preset.days_back)
+                    >= gt_jam::calendar::COVERAGE_START
+            );
         }
-        assert_eq!(preset_start(today, None), COVERAGE_START);
+        assert_eq!(
+            TestBackfillUi::preset_start(today, None),
+            gt_jam::calendar::COVERAGE_START
+        );
+    }
+
+    /// The geomagnetic presets stop short of Kp's 1932 start, and the widest
+    /// of them still reaches back five years.
+    #[test]
+    fn the_geomagnetic_presets_stay_within_five_years() {
+        let today = Utc::now().date_naive();
+        let widest = GeomagneticIndexBackfill::PRESETS
+            .into_iter()
+            .filter_map(|preset| preset.days_back)
+            .max();
+        assert_eq!(widest, Some(5 * 365));
+        assert!(
+            BackfillUi::<GeomagneticIndexBackfill>::preset_start(today, widest)
+                > gt_solar::calendar::COVERAGE_START
+        );
     }
 
     #[rstest]
@@ -291,16 +455,31 @@ mod tests {
     #[case::a_year(365, "365 days, about 13 min and 28.9 MB")]
     #[case::the_whole_archive(1600, "1600 days, about 54 min and 126.6 MB")]
     fn estimates_scale_from_seconds_to_minutes(#[case] days: usize, #[case] expected: &str) {
-        assert_eq!(estimate(days), expected);
+        assert_eq!(InterferenceBackfill::estimate(days), expected);
+    }
+
+    /// A day of indices costs two requests, and a range long enough to run
+    /// for hours is stated in hours.
+    #[rstest]
+    #[case::one_day(1, "1 day, about 4 s and 12.0 KB")]
+    #[case::a_year(365, "365 days, about 25 min and 4.3 MB")]
+    #[case::five_years(1825, "1825 days, about 2.0 h and 21.4 MB")]
+    fn geomagnetic_estimates_count_a_request_per_index(
+        #[case] days: usize,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(GeomagneticIndexBackfill::estimate(days), expected);
     }
 
     /// Nothing is requested until the button is pressed.
     #[test]
     fn rendering_the_control_starts_nothing() {
-        let mut state = BackfillUi::default();
+        let mut state = TestBackfillUi::default();
         let actions = RefCell::new(Vec::new());
         let mut harness = Harness::new_ui(|ui| {
-            actions.borrow_mut().extend(state.ui(ui, None, true));
+            actions
+                .borrow_mut()
+                .extend(state.ui(ui, None, BackfillReadiness::Ready));
         });
         harness.run();
         assert!(actions.borrow().is_empty());
@@ -308,11 +487,11 @@ mod tests {
 
     #[test]
     fn pressing_download_starts_the_selected_range() {
-        let mut state = BackfillUi::default();
+        let mut state = TestBackfillUi::default();
         let expected = state.range().expect("the default range is usable");
         let action = RefCell::new(None);
         let mut harness = Harness::new_ui(|ui| {
-            if let Some(emitted) = state.ui(ui, None, true) {
+            if let Some(emitted) = state.ui(ui, None, BackfillReadiness::Ready) {
                 *action.borrow_mut() = Some(emitted);
             }
         });
@@ -329,13 +508,9 @@ mod tests {
 
     #[test]
     fn a_backwards_range_disables_the_button() {
-        let mut state = BackfillUi {
-            from: to_jiff(date(2026, 7, 26)),
-            to: to_jiff(date(2026, 7, 20)),
-            outcome: None,
-        };
+        let mut state = state(date(2026, 7, 26), date(2026, 7, 20));
         let mut harness = Harness::new_ui(|ui| {
-            state.ui(ui, None, true);
+            state.ui(ui, None, BackfillReadiness::Ready);
         });
         harness.run();
         assert!(
@@ -346,13 +521,15 @@ mod tests {
         );
     }
 
-    /// Never hidden, per DESIGN.md: without an archive the button is there
-    /// and says why it does nothing.
-    #[test]
-    fn without_an_archive_the_button_is_disabled() {
-        let mut state = BackfillUi::default();
+    /// Never hidden, per DESIGN.md: what blocks a download grays the button
+    /// and says so on hover.
+    #[rstest]
+    #[case::without_an_archive(BackfillReadiness::WithoutArchive)]
+    #[case::offline(BackfillReadiness::Offline)]
+    fn a_blocked_download_leaves_the_button_disabled(#[case] readiness: BackfillReadiness) {
+        let mut state = TestBackfillUi::default();
         let mut harness = Harness::new_ui(|ui| {
-            state.ui(ui, None, false);
+            state.ui(ui, None, readiness);
         });
         harness.run();
         assert!(
@@ -361,16 +538,36 @@ mod tests {
                 .accesskit_node()
                 .is_disabled()
         );
+    }
+
+    #[rstest]
+    #[case::ready(
+        BackfillReadiness::Ready,
+        "Pick an end date on or after the start date"
+    )]
+    #[case::without_an_archive(
+        BackfillReadiness::WithoutArchive,
+        "There is nowhere to download to: the interference archive could not be opened"
+    )]
+    #[case::offline(
+        BackfillReadiness::Offline,
+        "Downloading is disabled while GEOTRACE_OFFLINE is set"
+    )]
+    fn the_disabled_hover_names_what_blocks_the_download(
+        #[case] readiness: BackfillReadiness,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(TestBackfillUi::blocked_hover(readiness), expected);
     }
 
     /// While running, the range is locked and the only action is cancelling.
     #[test]
     fn a_running_backfill_offers_cancel_instead_of_download() {
-        let mut state = BackfillUi::default();
+        let mut state = TestBackfillUi::default();
         let action = RefCell::new(None);
         let progress = BackfillProgress { done: 3, total: 10 };
         let mut harness = Harness::new_ui(|ui| {
-            if let Some(emitted) = state.ui(ui, Some(progress), true) {
+            if let Some(emitted) = state.ui(ui, Some(progress), BackfillReadiness::Ready) {
                 *action.borrow_mut() = Some(emitted);
             }
         });
@@ -393,8 +590,26 @@ mod tests {
         #[case] queued: Option<usize>,
         #[case] expected: &str,
     ) {
-        let mut state = BackfillUi::default();
+        let mut state = TestBackfillUi::default();
         state.report_started(queued);
         assert_eq!(state.outcome.as_deref(), Some(expected));
+    }
+
+    /// The outcome line and the disabled hover name the archive of the dataset
+    /// the control downloads.
+    #[test]
+    fn the_geomagnetic_control_names_its_own_archive() {
+        let mut state = BackfillUi::<GeomagneticIndexBackfill>::default();
+        state.report_started(None);
+        assert_eq!(
+            state.outcome.as_deref(),
+            Some("No geomagnetic index archive to download into")
+        );
+        assert_eq!(
+            BackfillUi::<GeomagneticIndexBackfill>::blocked_hover(
+                BackfillReadiness::WithoutArchive
+            ),
+            "There is nowhere to download to: the geomagnetic index archive could not be opened"
+        );
     }
 }
