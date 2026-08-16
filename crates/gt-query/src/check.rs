@@ -134,13 +134,12 @@ pub struct CheckedQuery {
 }
 
 impl CheckedQuery {
-    /// The resolved source: the nav points or a channel's samples.
     pub(crate) fn source(&self) -> &CheckedSource {
         &self.source
     }
 
-    /// Whether the source is a channel (its samples are the timeline), rather
-    /// than the nav points. The app uses this to route or gate a run.
+    /// Whether the source is a channel, with its samples as the timeline. The
+    /// app uses this to route or gate a run.
     pub fn is_channel_source(&self) -> bool {
         matches!(self.source, CheckedSource::Channel(_))
     }
@@ -154,7 +153,6 @@ impl CheckedQuery {
         }
     }
 
-    /// The window a windowed query aggregates over, if any.
     pub fn window(&self) -> Option<Window> {
         self.window
     }
@@ -460,8 +458,7 @@ fn base_with_exponent(name: &str, exponent: i8) -> String {
 }
 
 /// The value type of a scalar channel from its schema entry. The unit fixes the
-/// dimension; an angular channel with a period wraps, so it is a direction
-/// rather than a plain angle.
+/// dimension. An angular channel with a period wraps, making it a direction.
 ///
 /// A custom or absent unit resolves to a bare number. SDK writers require the
 /// custom-unit escape hatch explicitly; legacy file metadata can still arrive
@@ -476,8 +473,8 @@ fn channel_value_type(info: &ChannelInfo) -> ValueType {
         return ValueType::Dimensionless(Kind::Number);
     };
     let vt = value_type(quantity);
-    // A period only means "wraps" for an angle; ignore it otherwise. This keeps
-    // the invariant that `circular` is set only when the dimension is ANGLE.
+    // A period only means "wraps" for an angle. Ignoring it otherwise keeps the
+    // invariant that `circular` is set only when the dimension is ANGLE.
     if info.period_deg.is_some()
         && matches!(vt, ValueType::Dimensioned { dim, .. } if dim == Dimension::ANGLE)
     {
@@ -523,8 +520,8 @@ fn resolve_component(c: &ChannelRef, info: &ChannelInfo) -> Result<Option<usize>
                 )),
             }
         }
-        // A scalar channel has one value; a whole vector has none until a
-        // component is named (norm over the vector lands later).
+        // A scalar channel has one value. A whole vector has none until a
+        // component is named: norm handles the whole-vector case.
         None if info.components.is_empty() => Ok(None),
         None => {
             let first = info.components.first().map_or("x", String::as_str);
@@ -608,7 +605,7 @@ pub fn check(query: &Query, schema: &ChannelSchema) -> Result<CheckedQuery, Diag
     let window = match query.window {
         None => None,
         // The conversion only fails on targets where usize is narrower than
-        // u64; kept as a defensive branch rather than an assumption.
+        // u64.
         Some(AstWindow::Count { len, span }) => {
             let n = usize::try_from(len).map_err(|_overflow| err(span, "window is too large"))?;
             Some(Window::Count(n))
@@ -757,7 +754,7 @@ fn declared_twice(decl: &ParamDecl) -> Diagnostic {
     err(decl.span, format!("{} is declared twice", decl.name))
 }
 
-/// util_* needs mask; slip_* needs mask, snr_drop, and slip_window.
+/// util_* needs mask. slip_* needs mask, snr_drop, and slip_window.
 fn require_params(occurrences: &[(QueryMetric, Span)], params: Params) -> Result<(), Diagnostic> {
     for &(metric, span) in occurrences {
         let mut missing = Vec::new();
@@ -817,8 +814,8 @@ fn dedup_metrics(metrics: impl Iterator<Item = QueryMetric>) -> Vec<QueryMetric>
     out
 }
 
-/// `time` always comes first; explicit `table` columns win over the default
-/// of every referenced metric in first-mention order.
+/// `time` always comes first. Explicit `table` columns win over the default of
+/// every referenced metric in first-mention order.
 fn build_columns(query: &Query, referenced: &[QueryMetric]) -> Vec<QueryMetric> {
     let listed: Vec<QueryMetric> = match &query.table {
         Some(table) => table.columns.iter().map(|c| c.metric).collect(),
@@ -874,8 +871,6 @@ impl Checker<'_> {
         match expr {
             Expr::Number(lit) => Ok((literal_type(lit), CExpr::Const(literal_base(lit)))),
             Expr::Metric(m) => {
-                // Nav-point metrics on a channel source would need interpolating
-                // onto the channel's sample times, which is a later step.
                 self.reject_metric_on_channel_source(m.metric, m.span)?;
                 if self.windowed && !in_agg {
                     return Err(err_hint(
@@ -915,7 +910,7 @@ impl Checker<'_> {
         let result = match base_type {
             ValueType::Condition => return Err(err(span, "cannot raise a condition to a power")),
             ValueType::Timestamp => return Err(err(span, "timestamps do not support powers")),
-            // The power scales the dimension; the wrap flag drops, since a
+            // The power scales the dimension. The wrap flag drops, since a
             // squared angle is no longer a direction.
             ValueType::Dimensioned { dim, .. } => dimensioned(dim.powi(exponent)),
             // Any power of a dimensionless value is a bare number.
@@ -931,11 +926,12 @@ impl Checker<'_> {
     }
 
     /// Validate a per-sample reference to channel `name`, labelled as it reads
-    /// in source (`@accel.x`, `norm(@accel)`). A per-sample value must be
-    /// aggregated, except on a channel source where a reference to the source
-    /// channel is itself the match granularity - unless a window groups samples,
-    /// which then needs an aggregate. On a channel source, naming any other
-    /// channel is off the source's timeline.
+    /// in source (`@accel.x`, `norm(@accel)`).
+    ///
+    /// A per-sample value must be aggregated. On a channel source, a reference
+    /// to the source channel is itself the match granularity, and a window
+    /// grouping those samples needs an aggregate again. Naming any other
+    /// channel on a channel source is off the source's timeline.
     fn per_sample_ok(
         &self,
         name: &str,
@@ -960,11 +956,9 @@ impl Checker<'_> {
             return Ok(());
         }
         // Per sample and not inside an aggregate. On the points source with no
-        // window, wrapping it in an aggregate alone dead-ends on "needs a
-        // window" (the channel is on a finer clock than the points), so point
-        // at the two forms that actually work rather than the misleading
-        // single-step hint. Windowed - on either source - an aggregate is the
-        // whole fix.
+        // window, the hint names the two working forms: an aggregate alone
+        // still needs a window, since the channel is on a finer clock than the
+        // points. Windowed, on either source, an aggregate is the whole fix.
         let help = if self.source_channel.is_none() && !self.windowed {
             format!("aggregate it over a window like max({label}), or query @{name} as the source")
         } else {
@@ -1119,7 +1113,7 @@ impl Checker<'_> {
             return Err(err(span, format!("{func} needs a value, not a condition")));
         }
         let circular = matches!(value_type, ValueType::Dimensioned { circular: true, .. });
-        // avg/min/max collapse a direction ambiguously; the rest are fine.
+        // avg/min/max collapse a direction ambiguously. The rest are fine.
         if circular && matches!(func, Func::Avg | Func::Min | Func::Max) {
             return Err(err_hint(
                 span,
@@ -1128,7 +1122,7 @@ impl Checker<'_> {
             ));
         }
         // Circular variance is a unitless quantity in [0, 1], not a squared
-        // angle, so `var` on a direction is a category error rather than a value.
+        // angle.
         if circular && func == Func::Var {
             return Err(err_hint(
                 span,
@@ -1354,10 +1348,9 @@ fn squared_hint(lt: ValueType, rt: ValueType) -> Option<String> {
     (reduces_to(lt, rt) || reduces_to(rt, lt)).then(|| "take its square root with sqrt".to_owned())
 }
 
-/// `+ - * /` on the value types. Replaces the old hand-written quantity table
-/// with dimensional algebra: multiplication adds dimensions, division
+/// `+ - * /` on the value types. Multiplication adds dimensions, division
 /// subtracts, and a dimensionless result becomes a bare number. Products and
-/// quotients of dimensioned values are therefore always well-formed - a wrong
+/// quotients of dimensioned values are therefore always well-formed: a wrong
 /// combination surfaces when the result is compared, not here.
 fn arith(
     op: ArithOp,
@@ -1417,7 +1410,7 @@ fn add_sub(
 }
 
 /// The sum's type once the operands are known compatible. Dimensioned operands
-/// share a dimension and keep it; dimensionless operands combine their kinds.
+/// share a dimension and keep it. Dimensionless operands combine their kinds.
 fn add_sub_result(lt: ValueType, rt: ValueType) -> ValueType {
     match (lt, rt) {
         (ValueType::Dimensionless(a), ValueType::Dimensionless(b)) => {
@@ -1426,14 +1419,14 @@ fn add_sub_result(lt: ValueType, rt: ValueType) -> ValueType {
         (ValueType::Dimensioned { dim, .. }, _) => ValueType::linear(dim),
         _ => {
             // Compatible operands are either both dimensionless or both the
-            // same dimension; timestamps and conditions are rejected upstream.
+            // same dimension. Timestamps and conditions are rejected upstream.
             debug_assert!(false, "add_sub_result reached an incompatible operand pair");
             lt
         }
     }
 }
 
-/// The kind of a dimensionless sum. A bare number takes on the other kind; two
+/// The kind of a dimensionless sum. A bare number takes on the other kind. Two
 /// like kinds stay themselves.
 fn combine_kinds(a: Kind, b: Kind) -> Kind {
     match (a, b) {
@@ -1443,7 +1436,7 @@ fn combine_kinds(a: Kind, b: Kind) -> Kind {
 }
 
 /// Product: dimensions multiply. Scaling a dimensioned value by a dimensionless
-/// one keeps its dimension (and its wrap flag); two dimensionless values give a
+/// one keeps its dimension (and its wrap flag). Two dimensionless values give a
 /// bare number.
 fn multiply(lt: ValueType, rt: ValueType) -> ValueType {
     match (lt, rt) {
@@ -1466,7 +1459,7 @@ fn multiply(lt: ValueType, rt: ValueType) -> ValueType {
 }
 
 /// Quotient: dimensions divide. Dividing by a dimensionless value keeps the
-/// numerator's dimension; other combinations subtract the exponents, with a
+/// numerator's dimension. Other combinations subtract the exponents, with a
 /// dimensionless result collapsing to a bare number.
 fn divide(lt: ValueType, rt: ValueType) -> ValueType {
     match (lt, rt) {
@@ -1491,8 +1484,8 @@ fn divide(lt: ValueType, rt: ValueType) -> ValueType {
 }
 
 /// Whether two value types can be compared. Dimensioned values compare when
-/// their dimensions match (so a plain angle and a direction, both `A`, do);
-/// dimensionless values compare when their kinds line up.
+/// their dimensions match (so a plain angle and a direction, both `A`, do).
+/// Dimensionless values compare when their kinds line up.
 fn compatible(a: ValueType, b: ValueType) -> bool {
     match (a, b) {
         (ValueType::Timestamp, ValueType::Timestamp) => true,
@@ -1644,8 +1637,7 @@ mod tests {
 
     /// Every quantity maps to a value type and back, so `named_dimension` stays
     /// in step with `Quantity::dimension`. A new quantity not wired into
-    /// `named_dimension` fails here instead of silently becoming an unnamed
-    /// exotic value that degrades every error message.
+    /// `named_dimension` fails here.
     #[test]
     fn value_type_round_trips_through_named_quantity() {
         let mut covered = 0;

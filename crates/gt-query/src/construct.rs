@@ -141,14 +141,14 @@ const STAGES: &[Construct] = &[
     },
 ];
 
-/// The logical connectives of a `where` condition. Keywords rather than enum
-/// variants, so they are catalogued by hand like the stages.
+/// The logical connectives of a `where` condition. No enum backs these, so
+/// they are catalogued by hand like the stages.
 const CONNECTIVES: &[Construct] = &[
     Construct {
         name: "and",
         kind: ConstructKind::Connective,
         summary: "both conditions must hold",
-        doc: "Joins two conditions; a point (or window) matches only when \
+        doc: "Joins two conditions. A point (or window) matches only when \
               both sides do. Binds tighter than `or`.",
         examples: &["points | where eph > 20 m and velocity > 5 km/h"],
     },
@@ -156,8 +156,8 @@ const CONNECTIVES: &[Construct] = &[
         name: "or",
         kind: ConstructKind::Connective,
         summary: "either condition may hold",
-        doc: "Joins two conditions; a point (or window) matches when either \
-              side does. `and` binds tighter; parenthesize to override.",
+        doc: "Joins two conditions. A point (or window) matches when either \
+              side does. `and` binds tighter, so parenthesize to override.",
         examples: &["points | where velocity < 2 km/h or eph > 50 m"],
     },
     Construct {
@@ -165,7 +165,7 @@ const CONNECTIVES: &[Construct] = &[
         kind: ConstructKind::Connective,
         summary: "invert a condition",
         doc: "Matches where the condition does not. Applies to the next \
-              atom; parenthesize a compound condition to negate all of it.",
+              atom. Parenthesize a compound condition to negate all of it.",
         examples: &["points | where not (velocity > 5 km/h and eph < 10 m)"],
     },
 ];
@@ -201,7 +201,6 @@ fn mode_construct(mode: DisplayMode) -> Construct {
 }
 
 fn func_construct(func: Func) -> Construct {
-    // min/max/avg are self-evident: summary only, no doc body (Marc).
     let (summary, doc, examples): (_, _, &[&str]) = match func {
         Func::Avg => ("average over the window", "", &["avg(velocity) > 30 km/h"]),
         Func::Min => (
@@ -220,9 +219,9 @@ fn func_construct(func: Func) -> Construct {
         Func::Std => (
             "standard deviation over the window",
             "The population standard deviation, divided by N. Same unit as the \
-             values, so it compares directly against a threshold, unlike a \
-             variance. On a direction (`heading`) it is circular, robust across \
-             the 0/360 wrap.",
+             values, so it compares directly against a threshold. On a \
+             direction (`heading`) it is circular, robust across the 0/360 \
+             wrap.",
             &["std(heading) <= 3 deg", "std(velocity) < 2 km/h"],
         ),
         Func::Var => (
@@ -257,8 +256,8 @@ fn func_construct(func: Func) -> Construct {
         ),
         Func::Sqrt => (
             "square root",
-            "The square root of a value; its unit is the square root of the \
-             value's unit, so it reduces a squared quantity - `sqrt(velocity²)` \
+            "The square root of a value. Its unit is the square root of the \
+             value's unit, so it reduces a squared quantity: `sqrt(velocity²)` \
              is a speed. Pair it with `²` for magnitudes, e.g. \
              `sqrt(lat² + lon²)`. Works with or without a window.",
             &["sqrt(lat² + lon²) > 1 deg"],
@@ -452,8 +451,8 @@ fn metric_docs(metric: QueryMetric) -> (&'static str, &'static str, &'static [&'
             "distance to the road-snapped position",
             "Distance from the recorded point to its road-snapped position, \
              in metres - the observed deviation from the road network. Needs \
-             a completed snap run; points the road network rejected, points \
-             thinned before upload, and tracks without a run carry no value. \
+             a completed snap run. Points the road network rejected, points \
+             thinned before upload, and tracks without a run have no value. \
              Never triggers an upload. Compare against eph to weigh the \
              receiver's claimed accuracy against observed deviation.",
             &["where snap_error > eph"],

@@ -126,11 +126,10 @@ pub struct SkyTrailsWindow {
     /// Whether the current-instant signal heat field is drawn beneath the
     /// trails.
     show_heatmap: bool,
-    /// How strongly the trails are drawn, as the opacity field's percentage.
-    /// Unlike the other view toggles this is a persisted preference, seeded from
-    /// settings via [`SkyTrailsWindow::set_trail_opacity_percent`] and left alone
-    /// by `open_track`, so it carries across tracks and restarts rather than
-    /// resetting.
+    /// How strongly the trails are drawn, as the opacity field's percentage. A
+    /// persisted preference, seeded from settings via
+    /// [`SkyTrailsWindow::set_trail_opacity_percent`] and left alone by
+    /// `open_track`.
     trail_opacity_percent: f32,
     /// An instant the window was asked to open at, applied on the next
     /// `show` once the trails - and so the track's time span - are known.
@@ -139,15 +138,14 @@ pub struct SkyTrailsWindow {
     pending_scrub_to: Option<GpsTime>,
     /// The extracted trails for `track`, kept while the window stays on one
     /// track. Tracks are immutable once loaded, so a per-track cache needs no
-    /// invalidation; re-extracted only when the shown track changes.
+    /// invalidation. Re-extracted only when the shown track changes.
     cache: Option<(TrackRef, SkyTrails)>,
 }
 
 impl SkyTrailsWindow {
     /// Drop the window's `TrackRef`-keyed state after track indices shift
     /// (a removal or re-segmentation), so it never shows stale trails or
-    /// cross-highlights the wrong point. The window closes rather than
-    /// re-resolving a `TrackRef` that now addresses different data.
+    /// cross-highlights the wrong point. The window closes.
     pub fn invalidate(&mut self) {
         self.open = false;
         self.track = None;
@@ -180,7 +178,7 @@ impl SkyTrailsWindow {
         self.open_track(request.track);
         if let Some(at) = request.at {
             self.pending_scrub_to = Some(at);
-            // Landing on a moment is an inspection, not a playthrough.
+            // Opening at an instant pauses playback.
             self.playing = false;
         }
     }
@@ -224,7 +222,7 @@ impl SkyTrailsWindow {
             return;
         };
         let Some(track) = track_ref.resolve(files) else {
-            // The track went away (file removed); close.
+            // Close when the file was removed.
             self.open = false;
             return;
         };
@@ -320,11 +318,10 @@ impl WindowBody<'_> {
         };
 
         // The arrow-key transport (seek, speed) only fires while the pointer is
-        // over the window, so it never hijacks the arrows from the rest of the
-        // app. Spacebar is not gated this way - it toggles play/pause wherever
-        // the pointer is (handled in `transport`). Tested against the full
-        // content rect - `ui`'s min_rect is still empty this early in the
-        // layout, so `ui_contains_pointer` would miss.
+        // over the window. Spacebar is not gated this way: it toggles play and
+        // pause wherever the pointer is (handled in `transport`). Tested against
+        // the full content rect, since `ui`'s min_rect is still empty this early
+        // in the layout and `ui_contains_pointer` would miss.
         let window_hovered = ui.rect_contains_pointer(ui.max_rect());
 
         // Advance playback, then clamp - so a paused scrubber and a finished
@@ -335,7 +332,7 @@ impl WindowBody<'_> {
         let dt = frame_dt(ui);
         advance_playback(ui, playing, *speed, scrub_secs, total_secs, dt);
         // Before the plot is laid out, so a seek shows on the same frame it is
-        // pressed rather than the next one.
+        // pressed.
         handle_seek_keys(ui, window_hovered, total_secs, scrub_secs, speed, dt);
         *scrub_secs = scrub_secs.clamp(0.0, total_secs);
         let scrub_time = offset_time(first, *scrub_secs);
@@ -346,12 +343,10 @@ impl WindowBody<'_> {
         // each frame, so it shows only while the window is driving a scrub.
         highlight.scrub_time = Some(scrub_time.utc());
 
-        // The map point for the current instant stays highlighted the whole
-        // time the window is open - while playing, dragging, or parked - not
-        // only mid-drag. The app writes the time-series plot's own hover into
-        // this same channel before `show()` runs, so defer to it when the plot
-        // is actively hovering a point: the trails window only fills the
-        // channel when the plot left it empty.
+        // The trails window fills `plot_hover_point` only when the plot left it
+        // empty: the app writes the time-series plot's own hover into the same
+        // channel before `show()` runs. Otherwise the map point for the current
+        // instant stays highlighted the whole time the window is open.
         if highlight.plot_hover_point.is_none()
             && let Some(epoch) = floor_epoch(trails, scrub_time)
         {
@@ -426,8 +421,7 @@ impl WindowBody<'_> {
 }
 
 /// The window's view toggles, borrowed from the [`WindowBody`] state so the
-/// checkboxes write straight back. Grouped into a struct to keep them off the
-/// helper's parameter list, which would otherwise be a row of bare booleans.
+/// checkboxes write straight back.
 struct ViewToggles<'a> {
     show_trails: &'a mut bool,
     trail_opacity_percent: &'a mut f32,
@@ -452,11 +446,8 @@ fn view_toggles(ui: &mut egui::Ui, toggles: ViewToggles<'_>) {
         "Draw each satellite's whole path across the sky. Off shows only where \
          they are at the current instant.",
     );
-    // A compact percentage field rather than a slider, which would eat a row's
-    // width. Directly under the checkbox it qualifies, and indented so it reads
-    // as belonging to it rather than as a fifth independent control. Grayed out
-    // with the trails off - there is nothing for it to act on - rather than
-    // disappearing and reflowing the column.
+    // Indented under the checkbox it qualifies. Grayed out with the trails off,
+    // per DESIGN.md's gray-out-never-hide rule.
     ui.indent("trail_opacity", |ui| {
         ui.add_enabled_ui(*show_trails, |ui| {
             ui.horizontal(|ui| {
@@ -482,18 +473,14 @@ fn view_toggles(ui: &mut egui::Ui, toggles: ViewToggles<'_>) {
         "Keep only the parts of each trail where the satellite was used in the \
          fix, and hide the current marker of one that is not right now.",
     );
-    // The help cursor is the real "hover me for an explanation" cue; the
-    // underlined term is the static hint.
     ui.checkbox(show_not_in_fix, not_in_fix_label(ui))
         .on_hover_cursor(egui::CursorIcon::Help)
         .on_hover_text("Satellites seen but never used in a fix over this track");
 }
 
-/// The "Show *not in fix*" checkbox label. The GNSS term is italic and carries
-/// a faint underline - the "there is a definition here" marker - so it reads
-/// as a term of art with an explanation behind it. The underline is kept weak
-/// so it does not read as a link, and the caller pairs it with the help cursor,
-/// which is what actually signals "hover me".
+/// The "Show *not in fix*" checkbox label, with the GNSS term italic under a
+/// faint underline. The caller pairs it with the help cursor that signals the
+/// hover.
 fn not_in_fix_label(ui: &egui::Ui) -> egui::text::LayoutJob {
     let font = egui::TextStyle::Body.resolve(ui.style());
     let color = ui.visuals().text_color();
@@ -618,11 +605,11 @@ fn stats_row(
 /// The seen count and, while the not-in-fix filter is on, the unfiltered total
 /// in parentheses beside it.
 ///
-/// Without the total the count silently drops when the filter engages, which
-/// reads as satellites leaving the sky rather than the view. The parenthetical
-/// gets its own fixed column, reserved on every row of a filtered table (empty
-/// on rows that hide nothing), so the seen numbers stay in one line. Added
-/// right to left, so the parenthetical sits to the right of the number.
+/// Without the total the count silently drops when the filter engages. The
+/// parenthetical gets its own fixed column, reserved on every row of a filtered
+/// table (empty on rows that hide nothing), so the seen numbers stay in one
+/// line. Added right to left, so the parenthetical sits to the right of the
+/// number.
 fn seen_columns(ui: &mut egui::Ui, count: &EpochCount, has_paren: bool, on: bool) {
     let hidden = count
         .seen_unfiltered
@@ -650,9 +637,9 @@ fn seen_columns(ui: &mut egui::Ui, count: &EpochCount, has_paren: bool, on: bool
 }
 
 /// The total row: summed fix and seen across every constellation. The bold
-/// "Total" label and the separator above set it off; its counts stay the same
-/// weight and tier colour as the per-constellation rows, so the numbers read
-/// as one column.
+/// "Total" label and the separator above set it off. Its counts stay the same
+/// weight and tier colour as the per-constellation rows, so the numbers read as
+/// one column.
 fn stats_total_row(ui: &mut egui::Ui, counts: &[EpochCount], has_paren: bool) {
     let (seen, seen_unfiltered, fix) = counts.iter().fold((0, 0, 0), |(s, u, f), c| {
         (s + c.seen, u + c.seen_unfiltered, f + c.fix)
@@ -761,18 +748,18 @@ fn floor_epoch(trails: &SkyTrails, time: GpsTime) -> Option<&TrailEpoch> {
     trails.epochs.get(after.saturating_sub(1))
 }
 
-/// The scrub position after one frame of playback, and whether playback keeps
-/// running. It advances by the frame's elapsed time (clamped to
-/// [`MAX_PLAYBACK_FRAME_SECS`]) scaled by `speed`, and stops at the end of the
-/// track.
 /// Where on the scrubber `at` falls, given the track's `first` epoch and span.
 ///
 /// Clamped, so a point whose fix sits just outside the reported epochs lands on
-/// the nearest end of the scrubber rather than off it.
+/// the nearest end of the scrubber.
 fn scrub_offset_of(first: GpsTime, at: GpsTime, total_secs: f64) -> f64 {
     secs_between(first, at).clamp(0.0, total_secs)
 }
 
+/// The scrub position after one frame of playback, and whether playback keeps
+/// running. It advances by the frame's elapsed time (clamped to
+/// [`MAX_PLAYBACK_FRAME_SECS`]) scaled by `speed`, and stops at the end of the
+/// track.
 fn advanced_scrub(scrub_secs: f64, speed: f32, dt: f32, total_secs: f64) -> (f64, bool) {
     let next = scrub_secs + f64::from(speed) * f64::from(dt);
     if next >= total_secs {
@@ -801,7 +788,6 @@ fn advance_playback(
         return;
     }
     (*scrub, *playing) = advanced_scrub(*scrub, speed, dt, total);
-    // Keep animating next frame.
     ui.ctx().request_repaint();
 }
 
@@ -844,9 +830,8 @@ fn stepped_speed(speed: f32, steps: i32) -> f32 {
 /// system's auto-repeat.
 ///
 /// `key_pressed` counts repeats, and a held key produces a stream of them.
-/// Counting those as taps made a held arrow stutter along at the OS repeat
-/// rate and kept resetting the hold timer, so the continuous sweep engaged for
-/// a moment and then never again.
+/// Counting those as taps would step the scrubber at the OS repeat rate and
+/// keep resetting the hold timer that starts the continuous sweep.
 fn tapped(input: &egui::InputState, key: egui::Key) -> bool {
     input.events.iter().any(|event| {
         matches!(
@@ -898,7 +883,7 @@ fn handle_seek_keys(
         *speed = stepped_speed(*speed, if faster { 1 } else { -1 });
     }
 
-    // Both arrows down cancel out rather than picking a winner.
+    // Both arrows down cancel out.
     let direction = f64::from(i8::from(right) - i8::from(left));
     if direction == 0.0 {
         ui.data_mut(|d| d.remove::<f64>(press_id));
@@ -1009,8 +994,8 @@ fn transport(
     });
 }
 
-/// The play / pause button; returns its response for the click and focus
-/// checks. Shows a pause glyph while playing, a play glyph while stopped.
+/// The play / pause button. Returns its response for the click and focus
+/// checks.
 fn play_button(ui: &mut egui::Ui, playing: bool) -> egui::Response {
     let glyph = if playing { ICON_PAUSE } else { ICON_PLAY };
     ui.add(egui::Button::new(

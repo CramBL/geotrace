@@ -244,10 +244,10 @@ fn multi_hover_names_the_hovered_fixs_recording() {
     assert!(harness.inner.query_by_label("morning.gtd").is_none());
 }
 
-/// Snapshot: the disambiguation popup (item 16) with large icons via
-/// LayoutJob. Calls the real `draw_disambig_row` so the test stays in sync
-/// with the production code. Verifies that the icon renders at a visually
-/// larger size than the label text.
+/// Snapshot: the disambiguation popup with large icons via LayoutJob. Calls
+/// the real `draw_disambig_row` so the test stays in sync with the production
+/// code. Verifies that the icon renders at a visually larger size than the
+/// label text.
 #[test]
 fn snap_disambig_popup_big_icons() {
     let files = vec![make_snapshot_file()];

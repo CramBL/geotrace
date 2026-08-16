@@ -39,9 +39,8 @@ pub(crate) fn min_spacing_px(variant: SkyGlyphVariant) -> f32 {
     }
 }
 
-/// Zoom at or above which sky glyphs draw. Below it a track collapses to a
-/// few pixels and per-point glyphs would be noise, so the overlay stays
-/// quiet - matching where per-fix icons become legible.
+/// Zoom at or above which sky glyphs draw, matching where per-fix icons become
+/// legible. Below it a track collapses to a few pixels.
 pub(crate) const MIN_ZOOM: f64 = 13.0;
 
 /// Outer radius of the ring annulus. The hole keeps the fix's heading arrow
@@ -78,7 +77,7 @@ const DISC_RADIUS_PX: f32 = 20.0;
 /// straight or the anchor has no usable neighbor - up and to the side, like
 /// the satellite-label anchor, so the disc and its leader clear the fix and
 /// its heading arrow. On a curve the disc is placed perpendicular to the
-/// track instead (see [`disc_offset`]); this vector's length sets that
+/// track instead (see [`disc_offset`]). This vector's length sets that
 /// perpendicular distance.
 const DISC_OFFSET_PX: Vec2 = Vec2::new(14.0, -36.0);
 
@@ -236,11 +235,10 @@ pub(crate) fn draw_glyphs(
     }
 }
 
-/// Draw one sky ring: a faint baseline annulus with one bead per satellite
-/// at its azimuth. A report with satellites in the fix draws a solid
-/// baseline and filled beads for the fix satellites; a report with none (a
-/// fix loss) draws a dashed baseline and hollow beads for the tracked
-/// satellites, so "sky seen but unused" reads differently from a normal fix.
+/// Draw one sky ring: a faint baseline annulus with one bead per satellite at
+/// its azimuth. A report with satellites in the fix draws a solid baseline and
+/// filled beads for them. A report with none (a fix loss) draws a dashed
+/// baseline and hollow beads for the tracked satellites.
 fn draw_ring(
     ui: &egui::Ui,
     center: Pos2,
@@ -326,12 +324,10 @@ fn tangent_sample(
 /// The offset from a fix to its sky-disc center.
 ///
 /// Placed perpendicular to the local track tangent, on the outer side of a
-/// bend, so the disc and its leader clear the trackline instead of always
-/// sitting straight above it (which crossed the line wherever the track ran
-/// horizontally). Where the track is straight the perpendicular is ambiguous,
-/// so the disc goes up (or, for a vertical track, up-and-right); where the
-/// anchor has no usable neighbor on either side it falls back to
-/// [`DISC_OFFSET_PX`].
+/// bend, so the disc and its leader clear the trackline. Where the track is
+/// straight the perpendicular is ambiguous, so the disc goes up (or, for a
+/// vertical track, up-and-right). Where the anchor has no usable neighbor on
+/// either side it falls back to [`DISC_OFFSET_PX`].
 fn disc_offset(
     track: &LoadedTrack,
     pi: usize,
@@ -393,7 +389,7 @@ fn outward_normal(tangent: Vec2, fix_pos: Pos2, prev: Option<Pos2>, next: Option
         } else {
             -candidate
         };
-        // `up.y.abs() > EPSILON` is just "the normal isn't horizontal"; only
+        // `up.y.abs() > EPSILON` is just "the normal isn't horizontal". Only
         // then does the y test above settle it, otherwise fall to the x tie.
         if up.y.abs() > f32::EPSILON || up.x >= 0.0 {
             up

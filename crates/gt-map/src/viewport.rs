@@ -296,9 +296,9 @@ pub(crate) fn compute_visible_bounding_box(
 /// Uses the walkers `Projector` to unproject the four corners of `map_rect`
 /// into geographic positions and returns their bounding envelope.
 pub(crate) fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Rect) -> GeoBounds {
-    // `my_position` is only used as a fallback when the map is in GPS-follow mode;
-    // since we always call `center_at()` explicitly, `detached()` provides the
-    // actual center.  Fall back to (0, 0) if `detached()` is unset.
+    // `my_position` is only used as a fallback when the map is in GPS-follow
+    // mode. `center_at()` is always called explicitly, so `detached()` provides
+    // the actual center. Fall back to (0, 0) if `detached()` is unset.
     let center = map_memory
         .detached()
         .unwrap_or_else(|| walkers::lat_lon(0.0, 0.0));

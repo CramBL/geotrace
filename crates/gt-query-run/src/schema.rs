@@ -5,7 +5,7 @@ use uom::si::angle::degree;
 
 /// The schema the editor checks against: every scalar or vector channel across
 /// the loaded files, keyed by name. A channel is queryable if any loaded track
-/// carries it; a run over a track lacking it reports the window as skipped.
+/// has it. A run over a track lacking it reports the window as skipped.
 /// Compatible units such as `g` and `mg` share a base dimension. Incompatible
 /// definitions remain in the schema as an explicit diagnostic.
 pub fn schema_from_files(files: &[LoadedFile]) -> ChannelSchema {

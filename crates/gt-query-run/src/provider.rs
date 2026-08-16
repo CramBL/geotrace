@@ -121,7 +121,7 @@ impl<'a> TrackProvider<'a> {
         let percent = self
             .util
             .and_then(|u| series(u).get(index).copied().flatten())?;
-        // gt-analysis reports percent; the evaluator's ratio base is the 0-1
+        // gt-analysis reports percent. The evaluator's ratio base is the 0-1
         // fraction, converted through the language's canonical % factor.
         Some(percent * Unit::PERCENT.to_base())
     }
@@ -251,8 +251,8 @@ impl MetricProvider for TrackProvider<'_> {
             QueryMetric::Jamming => self
                 .jamming
                 .and_then(|values| values.get(index).copied().flatten())
-                // Resolved as a percentage; the evaluator's ratio base is
-                // the 0-1 fraction, like the util metrics.
+                // A percentage, converted to the 0-1 ratio base like the util
+                // metrics.
                 .map(|percent| percent * Unit::PERCENT.to_base()),
         }
     }
@@ -288,9 +288,8 @@ impl MetricProvider for TrackProvider<'_> {
     }
 
     /// The whole sample timeline of `name` in base units, for a query whose
-    /// source is that channel. Each sample's time is its own (sub-second)
-    /// clock, since the channel is the timeline here rather than being bucketed
-    /// onto nav-point seconds.
+    /// source is that channel. Each sample keeps its own (sub-second) time: the
+    /// channel is the timeline here.
     fn channel_timeline(&self, name: &str) -> ChannelTimeline {
         let Some((channel, columns, to_base)) = self.resolve_channel(name) else {
             return ChannelTimeline::default();

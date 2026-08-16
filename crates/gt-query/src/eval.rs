@@ -42,7 +42,7 @@ impl ChannelSamples {
     fn rows(&self) -> impl Iterator<Item = &[f64]> {
         // `chunks_exact` panics on a zero size and silently drops a trailing
         // partial row, so guard the size and assert the row-major contract
-        // rather than lose data (mirrors `Channel::slice_time_range`).
+        // (mirrors `Channel::slice_time_range`).
         let columns = self.columns.max(1);
         debug_assert_eq!(
             self.values.len() % columns,
@@ -148,12 +148,10 @@ pub struct RunSummary {
     /// Skips from non-finite arithmetic (e.g. division by zero) - kept
     /// separate so they stay visible without a metric to blame.
     pub skipped_non_finite: usize,
-    /// Tracks that carried no value at all for a referenced metric - a
-    /// track without a snap run (or one whose run left every point
-    /// unsnapped), an eph-less receiver. Point-level skips land in
-    /// [`Self::skipped`]; this names whole tracks the metric could never
-    /// match on. Deliberately about values, not causes: the summary must
-    /// not claim "never snapped" for a run that merely produced nothing.
+    /// Tracks with no value at all for a referenced metric (no snap run, a run
+    /// that left every point unsnapped, an eph-less receiver). Point-level
+    /// skips land in [`Self::skipped`]. Counted by value, not by cause: the
+    /// summary must not claim "never snapped" for a run that produced nothing.
     pub tracks_without: BTreeMap<QueryMetric, usize>,
     pub tracks_shorter_than_window: usize,
     /// Declared `with` parameters no referenced metric needs.
@@ -171,8 +169,7 @@ pub struct RunOutput {
 pub fn run<P: MetricProvider>(query: &CheckedQuery, tracks: &[TrackInput<'_, P>]) -> RunOutput {
     let never = || false;
     run_cancellable(query, tracks, &never).unwrap_or_else(|| RunOutput {
-        // Unreachable: the cancel check above never fires. Constructed rather
-        // than unwrapped to keep the no-panic guarantee.
+        // Unreachable: the cancel check above never fires.
         matches: Vec::new(),
         columns: query.columns().to_vec(),
         summary: RunSummary::default(),
@@ -180,8 +177,7 @@ pub fn run<P: MetricProvider>(query: &CheckedQuery, tracks: &[TrackInput<'_, P>]
 }
 
 /// Like [`run`], stopping early when `should_cancel` returns true. Returns
-/// `None` on cancellation - partial results are never surfaced, so a
-/// cancelled run cannot masquerade as a complete one.
+/// `None` on cancellation: partial results are never returned.
 pub fn run_cancellable<P: MetricProvider>(
     query: &CheckedQuery,
     tracks: &[TrackInput<'_, P>],
@@ -264,15 +260,11 @@ impl RunSummary {
     }
 }
 
-/// The referenced metrics `provider` carries no value for at any point -
-/// whole-track absences like a missing snap run, a run that left every
-/// point unsnapped, or an eph-less receiver. Absence is about values, not
-/// causes: both no-run and all-unsnapped tracks count, and the summary
-/// wording stays truthful for both.
-/// `accel` derives from velocity, so its presence is probed through
-/// velocity; channel-source queries reference no nav metrics, so they get
-/// an empty list for free. An empty provider reports nothing: there are no
-/// points the metric could have been missing on.
+/// The referenced metrics `provider` has no value for at any point.
+///
+/// `accel` derives from velocity, so its presence is probed through velocity.
+/// An empty provider reports nothing: there are no points the metric could
+/// have been missing on.
 pub(crate) fn absent_metrics(
     metrics: &[QueryMetric],
     provider: &impl MetricProvider,
@@ -424,13 +416,12 @@ fn duration_windows<P: MetricProvider>(
     check_interval: usize,
 ) -> Option<bool> {
     let len = matched.len();
-    // Each point's time places a window's span; a nav point always has one, so
-    // in practice none are missing.
+    // Each point's time places a window's span. A nav point always has one.
     let times: Vec<Option<f64>> = (0..len).map(|i| ctx.raw(QueryMetric::Time, i)).collect();
-    // How far the data reaches, which bounds where a full window fits. Taken as
-    // the max rather than the last value: this crate does not assume per-track
-    // time is monotonic (see `derived_accel`, which flags backward steps), so a
-    // clock jump must not make later anchors vanish.
+    // How far the data reaches, which bounds where a full window fits.
+    // Per-track time is not assumed monotonic (see `derived_accel`, which flags
+    // backward steps), so this takes the max: a clock jump must not make later
+    // anchors vanish.
     let max_time = times
         .iter()
         .flatten()
@@ -661,7 +652,7 @@ impl Skips {
     }
 }
 
-/// All `where` stages must hold; a missing value in any of them poisons the
+/// All `where` stages must hold. A missing value in any of them poisons the
 /// whole point or window to "skipped".
 fn verdict<P: MetricProvider>(
     query: &CheckedQuery,
@@ -692,8 +683,8 @@ struct TimeSpan {
 
 /// A window over the points `start..end`, plus the time span its channel
 /// samples come from. The span is absent only when a boundary point has no
-/// timestamp (never for nav points); a channel aggregate then reports a missing
-/// time rather than blaming the channel.
+/// timestamp (never for nav points). A channel aggregate then reports a missing
+/// time.
 #[derive(Clone, Copy)]
 struct WindowScope {
     start: usize,
@@ -771,8 +762,8 @@ pub fn derived_accel(provider: &impl MetricProvider, index: usize) -> Option<f64
     Some((v1 - v0) / dt)
 }
 
-/// Condition nodes. The checker guarantees which nodes are conditions, so a
-/// value node here is a checker bug and poisons rather than lies.
+/// Condition nodes. The checker guarantees which nodes are conditions: a value
+/// node here is a checker bug and yields `None`.
 fn eval_bool<P: MetricProvider>(ctx: &mut Ctx<'_, P>, expr: &CExpr, scope: Scope) -> Option<bool> {
     match expr {
         CExpr::Not(inner) => eval_bool(ctx, inner, scope).map(|b| !b),
@@ -848,8 +839,8 @@ fn eval_num<P: MetricProvider>(ctx: &mut Ctx<'_, P>, expr: &CExpr, scope: Scope)
         } => aggregate(ctx, *func, *circular, source, arg, scope),
         CExpr::Abs(inner) => eval_num(ctx, inner, scope).map(f64::abs),
         CExpr::Sqrt(inner) => {
-            // A negative radicand roots to NaN; poison it like any undefined
-            // arithmetic rather than comparing a NaN.
+            // A negative radicand roots to NaN. Poison it like any undefined
+            // arithmetic.
             let result = eval_num(ctx, inner, scope)?.sqrt();
             if !result.is_finite() {
                 ctx.non_finite = true;
@@ -899,9 +890,8 @@ fn both_nums<P: MetricProvider>(
 /// Evaluate the aggregate argument once per native sample of channel `name` in
 /// the window's time span, each argument seeing that sample's whole row (so a
 /// `@name.x`/`@name.y`/`norm` reads aligned columns). An absent span (a boundary
-/// point had no timestamp) reports a missing time; a span with no samples
-/// reports the missing channel. Either way the aggregate poisons rather than
-/// matching silently.
+/// point had no timestamp) reports a missing time. A span with no samples
+/// reports the missing channel. Either way the aggregate poisons.
 fn reduce_channel<P: MetricProvider>(
     ctx: &mut Ctx<'_, P>,
     name: &str,
@@ -962,8 +952,7 @@ fn aggregate<P: MetricProvider>(
 }
 
 /// Reduce a window's gathered per-sample `values` by `func`. A non-finite
-/// result (overflow, or the circular-std singularity) poisons rather than
-/// comparing as a bare infinity.
+/// result (overflow, or the circular-std singularity) poisons.
 fn reduce_values<P: MetricProvider>(
     func: Func,
     circular: bool,
@@ -1002,15 +991,10 @@ fn reduce_values<P: MetricProvider>(
         }
         // The checker rejects var on a direction, so it is always linear.
         Func::Var => population_variance(&values),
-        // The checker never emits abs, sqrt, or norm as an aggregate; they are
+        // The checker never emits abs, sqrt, or norm as an aggregate. They are
         // their own scalar `CExpr` nodes.
         Func::Abs | Func::Sqrt | Func::Norm => return None,
     };
-    // Like arithmetic (see `eval_num`), an aggregate never hands a non-finite
-    // value to a comparison: an overflowing sum (in `avg` or `population_std`),
-    // or the circular-std singularity of a window with no resultant direction,
-    // poisons and is reported as skipped rather than comparing as a bare
-    // infinity.
     if !value.is_finite() {
         ctx.non_finite = true;
         return None;
@@ -1021,10 +1005,10 @@ fn reduce_values<P: MetricProvider>(
 /// Signed shortest angular difference from `first` to `last`, in degrees,
 /// approximately in (-180, 180].
 ///
-/// Expressed as the rotation carrying `first` onto `last`, so the wrap is the
-/// rotation group's job rather than hand-rolled modular arithmetic. At the
-/// exact antipode the sign is implementation-defined: the turn is equally short
-/// either way, and `angle()` decides it by floating-point rounding.
+/// Expressed as the rotation carrying `first` onto `last`, which handles the
+/// wrap. At the exact antipode the sign is implementation-defined: the turn is
+/// equally short either way, and `angle()` decides it by floating-point
+/// rounding.
 fn circular_delta(first: f64, last: f64) -> f64 {
     let rotation =
         UnitComplex::new(last.to_radians()) * UnitComplex::new(first.to_radians()).inverse();
@@ -1033,9 +1017,8 @@ fn circular_delta(first: f64, last: f64) -> f64 {
 
 /// Population standard deviation (divided by N) of the window's values.
 ///
-/// N is the whole window, so this describes the data in hand rather than
-/// estimating a larger population, the same descriptive stance as
-/// `avg`/`min`/`max`/`spread`. A single value has a deviation of 0.
+/// Divided by N over the whole window, like `avg`/`min`/`max`/`spread`. A
+/// single value has a deviation of 0.
 fn population_std(values: &[f64]) -> f64 {
     population_variance(values).sqrt()
 }
@@ -1055,8 +1038,8 @@ fn population_variance(values: &[f64]) -> f64 {
 /// Built from the mean resultant length R of the directions as unit vectors:
 /// `sqrt(-2 ln R)` (Mardia), which is robust across the 0/360 wrap where a
 /// linear standard deviation of the degrees is not. Identical directions give
-/// 0; as they spread toward uniform, R falls to 0 and the deviation grows
-/// without bound, reaching a non-finite value at the R = 0 singularity that the
+/// 0. As they spread toward uniform, R falls to 0 and the deviation grows
+/// without bound. At the R = 0 singularity the value is non-finite, which the
 /// [`aggregate`] boundary turns into a reported skip.
 fn circular_std(values: &[f64]) -> f64 {
     let n = values.len() as f64;
@@ -1134,8 +1117,7 @@ mod tests {
 
     #[test]
     fn circular_std_stays_small_across_the_wrap() {
-        // Headings clustered around north stay small, unlike a linear std of
-        // the raw degrees (which 359, 0, 1 would blow up).
+        // Headings clustered around north stay small.
         assert!(circular_std(&[359.0, 0.0, 1.0]) < 2.0);
         // Identical directions collapse to zero (within float noise).
         assert!(circular_std(&[123.0, 123.0, 123.0]) < 1e-6);
@@ -1145,7 +1127,7 @@ mod tests {
     }
 
     #[test]
-    fn circular_spread_hugs_the_wrap() {
+    fn circular_spread_measures_across_the_wrap() {
         let mut wrapped = vec![350.0, 10.0, 0.0];
         assert!((circular_spread(&mut wrapped) - 20.0).abs() < 1e-12);
         let mut plain = vec![10.0, 40.0];

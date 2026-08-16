@@ -15,7 +15,8 @@
 //! ");
 //! ```
 //!
-//! The classification behind that picture asks real code every question it can:
+//! The classification behind that picture delegates every decision to real
+//! code:
 //! [`gt_ui_types::MapScope::point_visibility`] for whether a point is on the map
 //! and why not (the same predicate the map's own hit-testing and pinned popup
 //! use),
@@ -37,7 +38,7 @@
 //! [`gt_track_builder::build_loaded_file`], points from
 //! [`gt_types::tpv::TimePositionVelocity`]'s builder, the run from
 //! [`gt_query_run::QuerySession`], the per-point verdict from
-//! [`gt_ui_types::MapScope`], and the pinned popup's fate from
+//! [`gt_ui_types::MapScope`], and the pinned popup's state from
 //! [`gt_ui_types::MapHighlight::pin_this_frame`].
 //! A field added to a loaded recording therefore never reaches here.
 

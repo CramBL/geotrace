@@ -4,8 +4,7 @@
 //! Layer order is explicit here: every trackline first (under everything),
 //! then per track the quality line and the icons. The line geometry (LOD
 //! selection, time filter, projection, culling) is computed once per track
-//! and shared by both line layers through [`LinePointKey`], where the two
-//! previous plugins each walked the points themselves.
+//! and shared by both line layers through [`LinePointKey`].
 
 use egui::{Color32, Response, Stroke, Ui};
 use gt_filter::GlobalFilter;
@@ -73,12 +72,9 @@ fn decimation_cell_merc(spacing_px: f32, zoom: f64) -> f64 {
 /// bucket. One key drives both layers, so each track's points are
 /// LOD-selected, projected, and culled exactly once per frame.
 ///
-/// The combined key merges sub-pixel points only when all components
-/// match, where the two previous passes each merged on their own narrower
-/// key. The painted pixels are the same through occasional extra collinear
-/// vertices - and in one edge case a different primitive: a sub-pixel
-/// cluster with mixed quality keeps >= 2 points and paints as a short span
-/// where the old trackline-only reduction collapsed to a dot (pinned by
+/// The combined key merges sub-pixel points only when every component matches.
+/// A sub-pixel cluster with mixed quality therefore keeps >= 2 points and
+/// paints as a short span (pinned by
 /// `sub_pixel_quality_transition_yields_spans_not_dot`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct LinePointKey {
@@ -425,7 +421,7 @@ impl<'a> TrackLayers<'a> {
                 continue;
             }
             let track_ref = TrackRef::new(geo.fi, geo.ti);
-            // A layer per draw query, painted in its own color; overlapping
+            // A layer per draw query, painted in its own color. Overlapping
             // halos stack because each is a separate pass. Capped at the
             // mask width, matching `QueryMatches::draw_mask`.
             for (layer_idx, layer) in draws
@@ -557,7 +553,7 @@ impl<'a> TrackLayers<'a> {
         let query_matches = self.query_matches;
         let variant = self.sky_glyph_variant;
         if zoom < sky_glyph_renderer::MIN_ZOOM {
-            // No rings at this zoom; still refresh the scratch to the right
+            // No rings at this zoom. Still refresh the scratch to the right
             // number of empty buckets so the paint pass reads a matching
             // length, without walking any points.
             sky_glyph_renderer::select_glyphs(
@@ -710,9 +706,8 @@ impl<'a> TrackLayers<'a> {
 
 /// Maximal runs of consecutive shown (non-hidden) points within one span.
 ///
-/// In `draw` mode nothing is hidden, so this yields the whole span as one
-/// run and rendering is unchanged. In `keep`/`hide` the line breaks at every
-/// hidden point rather than bridging the gap.
+/// In `draw` mode nothing is hidden, so this yields the whole span as one run.
+/// In `keep`/`hide` the line breaks at every hidden point.
 fn shown_runs(
     span: &[(LinePointKey, egui::Pos2)],
 ) -> impl Iterator<Item = &[(LinePointKey, egui::Pos2)]> {
@@ -924,8 +919,7 @@ mod tests {
 
     #[test]
     fn shown_runs_of_all_visible_is_one_run() {
-        // Draw mode: nothing hidden, so the whole span is a single run and
-        // rendering is byte-identical to before the keep/hide feature.
+        // Draw mode: nothing hidden, so the whole span is a single run.
         let s = span(&[false, false, false]);
         let runs: Vec<usize> = shown_runs(&s).map(<[_]>::len).collect();
         assert_eq!(runs, vec![3]);

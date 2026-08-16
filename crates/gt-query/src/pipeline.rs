@@ -3,9 +3,9 @@
 //! Each query is a full `points | ... | mode` pipeline. They compose by
 //! folding a per-track visibility set: `hide`/`keep` shrink it, `draw` records
 //! a colored layer over what is still visible. A later query never sees a point
-//! an earlier one hid, and because each query evaluates over the maximal runs
-//! of contiguous survivors (via [`RunView`]), a window never spans a hidden
-//! point and derived metrics reset at each gap.
+//! an earlier one hid. Each query evaluates over the maximal runs of contiguous
+//! survivors (via [`RunView`]), so a window never spans a hidden point and
+//! derived metrics reset at each gap.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -19,8 +19,7 @@ use crate::eval::{
 };
 use crate::metric::QueryMetric;
 
-/// One query's contribution to the pipeline: what it matched at its own step,
-/// its columns, and its summary. Feeds the per-query results panel.
+/// Feeds the per-query results panel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueryOutput {
     pub mode: DisplayMode,
@@ -223,7 +222,7 @@ fn fold_track<P: MetricProvider>(
             shorter_than_window: query.window().is_some() && !run_long_enough,
         });
 
-        // `shows` is the shared keep/hide/draw truth table; draw shows every
+        // `shows` is the shared keep/hide/draw truth table. Draw shows every
         // point, so the fold leaves visibility untouched and only records the
         // matched mask for the final halo pass.
         for (vis, hit) in visible.iter_mut().zip(&matched) {
@@ -439,7 +438,7 @@ mod tests {
 
     #[test]
     fn keep_hides_the_non_matching_points() {
-        // 30 km/h is 8.33 m/s; points 1 and 3 exceed it.
+        // 30 km/h is 8.33 m/s. Points 1 and 3 exceed it.
         let provider = Speeds(vec![5.0, 20.0, 5.0, 20.0]);
         let out = compose(&["points | where velocity > 30 km/h | keep"], &provider);
         assert_eq!(hidden_ranges(&out), vec![0..1, 2..3]);
@@ -469,9 +468,9 @@ mod tests {
             &provider,
         );
         assert_eq!(hidden_ranges(&out), vec![2..3]);
-        // The 10->20 step inside the first run is a real acceleration; the
-        // 1->100 jump is not matched, because accel is missing at the start of
-        // the second run rather than differencing across the hidden point.
+        // The 10->20 step inside the first run is a real acceleration. The
+        // 1->100 jump is not matched: accel is missing at the start of the
+        // second run.
         assert_eq!(draw_ranges(&out, 0), vec![1..2]);
     }
 
@@ -490,7 +489,7 @@ mod tests {
             provider: &provider,
         }];
 
-        // Interval 1 checks every point; cancel after a few so the stop lands
+        // Interval 1 checks every point. Cancel after a few so the stop lands
         // inside a run's scan, not only at the per-track entry.
         let calls = std::cell::Cell::new(0_u32);
         let cancel_after_three = || {

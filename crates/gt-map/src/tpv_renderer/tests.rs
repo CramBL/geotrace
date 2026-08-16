@@ -138,10 +138,8 @@ fn sky_for(point: &NavPoint) -> SkySection<'_> {
         })
 }
 
-/// The two satellite columns are cut where they come out closest in
-/// height, without reordering the constellations. The old fixed
-/// two-per-row chunking aligned rows instead, so an 11-satellite GPS
-/// beside a 6-satellite Galileo left the difference as dead space.
+/// The two satellite columns are cut where they come out closest in height,
+/// without reordering the constellations.
 #[rstest]
 // A 40-satellite, 4-constellation fix: GPS 11, GLONASS 8, Galileo 6,
 // BeiDou 15 (plus 2 header rows each). Cutting after GLONASS gives
@@ -168,9 +166,9 @@ fn balanced_split_keeps_a_lone_panel_in_one_column() {
     assert_eq!(super::balanced_split(&[]), 0);
 }
 
-/// Snapshot: a 40-satellite, 4-constellation fix - the case that drove the
-/// rebuild. The two columns are cut where they even out, so the uneven
-/// constellations pack tight, and the plot stays beside them.
+/// Snapshot: a 40-satellite, 4-constellation fix. The two columns are cut
+/// where they even out, so the uneven constellations pack tight, and the plot
+/// stays beside them.
 #[test]
 fn dense_multi_constellation_packs_into_two_columns() {
     let point = make_point(Some(sats_dense_multi_constellation()));

@@ -4,9 +4,6 @@ use gt_query::lexer::{self, TokenClass};
 use gt_query::{ChannelSchema, CheckedQuery, Diagnostic};
 
 /// One query in the editor text: its byte range and its check outcome.
-///
-/// Queries are separated by a blank line; the range keeps each one addressable
-/// in editor coordinates so diagnostics and the caret map back.
 pub struct QueryChunk {
     pub range: Range<usize>,
     pub result: Result<CheckedQuery, Diagnostic>,
@@ -18,20 +15,19 @@ pub fn check_text(text: &str, schema: &ChannelSchema) -> Result<CheckedQuery, Di
 }
 
 /// Parse and check every query in `text` against the loaded channels.
-/// Queries are separated by a blank line; each chunk keeps its byte range so
+/// Queries are separated by a blank line. Each chunk keeps its byte range so
 /// diagnostics and the caret map back to editor coordinates.
 ///
-/// A chunk holding no code - a standalone comment paragraph - is not a query:
-/// it is skipped rather than checked, so a block comment between queries
-/// neither errors nor blocks a run.
+/// A chunk holding no code, a standalone comment paragraph, is skipped: a block
+/// comment between queries neither errors nor blocks a run.
 pub fn check_all(text: &str, schema: &ChannelSchema) -> Vec<QueryChunk> {
     split_queries(text)
         .into_iter()
         .filter_map(|range| {
             let src = text.get(range.clone()).unwrap_or("");
-            // Comment-only via the highlighter's classes rather than the
-            // parsing tokenizer: the latter also drops rejected characters,
-            // which must still be checked (and reported), not skipped.
+            // Comment-only via the highlighter's classes: the parsing
+            // tokenizer drops rejected characters, which must still be checked
+            // and reported.
             let comment_only = lexer::highlight_classes(src)
                 .iter()
                 .all(|(_, class)| *class == TokenClass::Comment);
@@ -46,11 +42,12 @@ pub fn check_all(text: &str, schema: &ChannelSchema) -> Vec<QueryChunk> {
         .collect()
 }
 
-/// The byte range of the text the caret's completions analyze: the query
-/// chunk containing the caret; or, when the caret sits on the line directly
-/// after a chunk (an Enter pressed to continue it with `| …`), that chunk
-/// extended to the caret so continuation typing is analyzed in context;
-/// otherwise an empty context at the caret (a fresh query).
+/// The byte range of the text the caret's completions analyze.
+///
+/// The query chunk containing the caret. When the caret sits on the line
+/// directly after a chunk (an Enter pressed to continue it with `| …`), that
+/// chunk extended to the caret. Otherwise an empty context at the caret, for a
+/// fresh query.
 pub fn analysis_context(text: &str, caret: usize) -> Range<usize> {
     let mut preceding: Option<Range<usize>> = None;
     for range in split_queries(text) {
@@ -136,7 +133,7 @@ mod tests {
         assert_eq!(analysis_context("points | draw", 6), 0..13);
         // Caret on the line directly after a chunk (Enter pressed to continue
         // it): the chunk extends to the caret, so `| where` is analyzed in
-        // context rather than as a fresh query.
+        // context.
         let text = "points\n";
         assert_eq!(analysis_context(text, text.len()), 0..text.len());
         // A blank line in between is the query separator: fresh context.

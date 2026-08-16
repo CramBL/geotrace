@@ -27,7 +27,7 @@ pub(crate) const MAX_LOD_ERROR_PX: f32 = 0.75;
 ///
 /// Matching on this is what guarantees a track can never silently vanish
 /// while part of it is on screen: the collapsed case is a variant the
-/// compiler forces every caller to handle, not a convention to remember.
+/// compiler forces every caller to handle.
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub(crate) enum VisiblePath<K> {
     /// No part of the path lies inside the cull rect.
@@ -44,8 +44,7 @@ pub(crate) enum VisiblePath<K> {
 ///
 /// `span_ends` holds the exclusive end index of each span, so a whole frame's
 /// track geometry costs a single heap allocation (the boundary list stays
-/// inline for the common case of a handful of spans) instead of one `Vec`
-/// per span.
+/// inline for the common case of a handful of spans).
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub(crate) struct PolylineSpans<K> {
     points: Vec<(K, egui::Pos2)>,
@@ -286,9 +285,8 @@ mod tests {
         // Every comparison against NaN is false: the same-side cull never
         // rejects a NaN segment, and the keep-condition of the sub-pixel
         // merge (distance >= threshold) never holds either, so a same-key
-        // NaN point is silently merged away instead of reaching the painter.
-        // This documents the behavior rather than endorsing NaN input;
-        // upstream projection should not produce it.
+        // NaN point is silently merged away before reaching the painter.
+        // Upstream projection should not produce NaN.
         let pts = vec![
             real(10.0, 10.0),
             (false, pos2(f32::NAN, 10.0)),

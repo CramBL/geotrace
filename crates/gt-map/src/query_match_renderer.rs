@@ -59,9 +59,8 @@ pub(crate) fn draw_match_ring(ui: &Ui, pos: Pos2, radius: f32, color: Color32) {
 
 /// Maximal runs of consecutive matched points within one span.
 ///
-/// Unlike the quality line's edge coloring (each edge takes its start
-/// point's key), a halo edge exists only when BOTH endpoints matched -
-/// otherwise the halo would overshoot the match by one edge on each side.
+/// A halo edge exists only when BOTH endpoints matched, so the halo never
+/// overshoots the match by an edge.
 fn matched_runs<'a, K>(
     span: &'a [(K, Pos2)],
     matched: &'a impl Fn(&K) -> bool,
@@ -71,8 +70,7 @@ fn matched_runs<'a, K>(
 }
 
 /// The tooltip header for a hovered match: point count and duration, plus
-/// the stale note. The point table below it stays the standard hover table
-/// (the full match table with query columns arrives with the query window).
+/// the stale note. The point table below it is the standard hover table.
 pub(crate) fn match_header_ui(
     ui: &mut Ui,
     files: &[LoadedFile],

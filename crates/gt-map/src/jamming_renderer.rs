@@ -165,9 +165,8 @@ impl Plugin for JammingRenderer<'_> {
         );
         draw_cells(ui, &cells);
 
-        // Yields while any track element owns the pointer: the recorded data
-        // is what the user came for, and a cell covers the whole viewport at
-        // track zoom.
+        // Cell hover is disabled while a track element is hovered: a cell
+        // covers the whole viewport at track zoom.
         if !self.hover_enabled {
             return;
         }
@@ -205,9 +204,8 @@ fn contains_point(polygon: &[Pos2], point: Pos2) -> bool {
     inward_edges(polygon).all(|(vertex, inward)| (point - vertex).dot(inward) >= 0.0)
 }
 
-/// The cell hover: the counts behind the colour, and nothing else. What the
-/// data is and what it cannot say is on the display toggle's own hover, so
-/// it is not repeated over every cell.
+/// The cell hover shows the counts behind the colour. The display toggle's own
+/// hover describes the dataset.
 fn cell_tooltip(ui: &mut Ui, cell: &CellShape, day: chrono::NaiveDate) {
     let observation = &cell.observation;
     let Some(rate) = observation.rate() else {
@@ -542,7 +540,6 @@ mod tests {
         assert_eq!(lon, FULL_LON_RANGE);
     }
 
-    /// An ordinary window keeps its own bounds rather than widening.
     #[test]
     fn an_ordinary_window_keeps_its_longitudes() {
         let (_, lon) = geographic_window(bounds(0.54, 0.55, 0.31, 0.32));
@@ -583,7 +580,6 @@ mod tests {
         }
     }
 
-    /// A segment nowhere near the cell is dropped rather than drawn.
     #[test]
     fn a_hatch_line_outside_the_cell_is_dropped() {
         let cell = CellIndex::from_str(BALTIC).expect("cell index");

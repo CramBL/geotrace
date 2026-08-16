@@ -100,10 +100,9 @@ fn the_selection_survives_clearing_and_the_next_run() {
     ");
 }
 
-/// The hovered match belongs to the results table, so clearing the results
-/// leaves it pointing at a match that is no longer listed.
+/// Clearing the results drops the hovered match with them.
 #[test]
-fn the_hovered_match_outlives_the_results_it_came_from() {
+fn clearing_drops_the_hovered_match() {
     let mut scenario = scenario();
     scenario.run("points | where velocity > 30 km/h | draw");
     scenario.hover_match(0, 0);

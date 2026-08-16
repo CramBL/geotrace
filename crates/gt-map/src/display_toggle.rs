@@ -2,8 +2,7 @@
 //! element categories are shown or hidden via the [`DisplayMask`].
 //!
 //! The popup lists every [`DisplayCategory`] with its in-scope count
-//! ([`DisplayCounts`]), so an over-inked map explains itself: the row with
-//! the four-digit count is the switch that fixes it.
+//! ([`DisplayCounts`]).
 
 use egui::Button;
 use egui::{Align2, Area, Frame, Id, RichText, Ui};
@@ -39,15 +38,13 @@ pub(crate) struct InterferenceRow<'a> {
 /// Session-only UI state of the display toggle.
 #[derive(Default)]
 pub(crate) struct DisplayToggleState {
-    /// Whether the popup is open.
     open: bool,
     /// The mask as it was before the last `only` solo, restored by
     /// pressing `only` again on the soloed category.
     solo_restore: Option<DisplayMask>,
 }
 
-/// The category's sentence-case popup label.
-fn label(category: DisplayCategory) -> &'static str {
+fn popup_label(category: DisplayCategory) -> &'static str {
     match category {
         DisplayCategory::Tracks => "Tracks",
         DisplayCategory::TrackPoints => "Track points",
@@ -62,19 +59,17 @@ fn label(category: DisplayCategory) -> &'static str {
     }
 }
 
-/// Why a category's row is disabled. Interference comes from the archive,
-/// every other category from the loaded recordings.
+/// Why a category's row is disabled.
 fn empty_hover_text(category: DisplayCategory) -> String {
     match category {
         DisplayCategory::JammingHexes => "No interference data archived for this day".to_owned(),
         _ => format!(
             "No {} in the loaded recordings",
-            label(category).to_lowercase()
+            popup_label(category).to_lowercase()
         ),
     }
 }
 
-/// The hover text of a category row.
 fn row_hover_text(category: DisplayCategory, visible: bool) -> String {
     let verb = if visible { "Hide" } else { "Show" };
     let description = match category {
@@ -87,7 +82,7 @@ fn row_hover_text(category: DisplayCategory, visible: bool) -> String {
     format!(
         "{verb} all {} on the map. Does not affect filters or the track list. \
          Alt-click to show only this category.{description}",
-        label(category).to_lowercase()
+        popup_label(category).to_lowercase()
     )
 }
 
@@ -158,7 +153,6 @@ fn variant_picker_ui(ui: &mut Ui, visible: bool, variant: &mut SkyGlyphVariant) 
     }
 }
 
-/// The variant's hover text on the picker button.
 fn variant_hover_text(variant: SkyGlyphVariant) -> &'static str {
     match variant {
         SkyGlyphVariant::Ring => "Minimal: one bead per fix satellite at its azimuth",
@@ -271,9 +265,9 @@ pub(crate) fn show_display_toggle(
             });
         });
 
-    // Close on click-outside; clicks on the eye button itself already
-    // toggled `open` above, and clicks inside the popup keep it open so
-    // multi-toggling is one gesture.
+    // Close on click-outside. Clicks on the eye button itself already toggled
+    // `open` above, and clicks inside the popup keep it open so multi-toggling
+    // is one gesture.
     if popup_response.response.clicked_elsewhere()
         && button_response.inner.inner.clicked_elsewhere()
     {
@@ -297,9 +291,9 @@ pub(crate) fn popup_contents(
         ui.horizontal(|ui| {
             let glyph = if visible { ICON_EYE } else { ICON_EYE_SLASH };
             let text = if visible {
-                RichText::new(format!("{glyph} {}", label(category)))
+                RichText::new(format!("{glyph} {}", popup_label(category)))
             } else {
-                RichText::new(format!("{glyph} {}", label(category))).weak()
+                RichText::new(format!("{glyph} {}", popup_label(category))).weak()
             };
             let in_scope = count > 0 || category == DisplayCategory::JammingHexes;
             let row = ui
@@ -335,8 +329,8 @@ pub(crate) fn popup_contents(
                         ui.label(RichText::new(gt_fmt::format_count(count)).weak());
                     });
                 });
-                // The solo button fades in on row hover and stays while
-                // the category is soloed so it can be un-soloed.
+                // The solo button shows on row hover and stays while the
+                // category is soloed so it can be un-soloed.
                 if in_scope && (row.hovered() || is_soloed(*mask, category)) {
                     let only = ui
                         .small_button("only")

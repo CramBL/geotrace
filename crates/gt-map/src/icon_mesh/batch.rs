@@ -5,8 +5,7 @@
 //! everything into one untextured [epaint::Mesh].
 //! egui merges untextured vertex-colored meshes into its surrounding draw
 //! batches, so a whole pass of icons costs no extra draw calls, and the
-//! baked anti-alias fringe scales with the geometry instead of blurring the
-//! way rasterized textures do.
+//! baked anti-alias fringe scales with the geometry.
 
 use egui::epaint;
 use egui::{Color32, Pos2, Vec2};
@@ -24,7 +23,7 @@ pub struct IconInstance {
     ///
     /// The template's stretched square viewbox maps to this rect, so extents
     /// matching the SVG's aspect ratio (the pins are 18x24) draw undistorted,
-    /// while [Vec2::splat] stretches into a square like the old texture quads.
+    /// while [Vec2::splat] stretches them into a square.
     pub half_extents: Vec2,
     /// Unit direction the icon's "up" aligns to; `None` draws it upright.
     pub direction: Option<Vec2>,
@@ -125,8 +124,7 @@ impl<'a> IconMeshBatch<'a> {
         // skips the color math entirely.
         let [col_x, col_y] = rotation_columns(instance.direction, instance.half_extents);
         let tint_is_white = instance.tints == [Color32::WHITE; 2];
-        // extend with exact-size iterators so the Vecs reserve once per
-        // template instead of growing inside the loop.
+        // extend with exact-size iterators: one reserve per template.
         mesh.vertices.extend(template.vertices.iter().map(|vertex| {
             let [px, py] = vertex.pos;
             epaint::Vertex {
@@ -195,9 +193,9 @@ impl<'a> IconMeshBatch<'a> {
         }
     }
 
-    /// Group instances by (icon, bucket) in first-seen order, preserving
-    /// the relative order of same-template icons; distinct templates only
-    /// reorder where they overlap, which the barriers rule out.
+    /// Group instances by (icon, bucket) in first-seen order, preserving the
+    /// relative order of same-template icons. Distinct templates only reorder
+    /// where they overlap, which the barriers rule out.
     fn group_instances(
         &self,
         library: &IconMeshLibrary,
@@ -236,8 +234,7 @@ impl<'a> IconMeshBatch<'a> {
 }
 
 /// Rotate `offset` so the template's "up" direction `(0, -1)` aligns with
-/// `direction` (a unit vector). Same convention as the rotated texture quads
-/// this pipeline replaced.
+/// `direction` (a unit vector).
 fn rotate_up_to(offset: Vec2, direction: Vec2) -> Vec2 {
     Vec2::new(
         -offset.x * direction.y - offset.y * direction.x,
@@ -279,8 +276,7 @@ fn physical_extent_px(half_extents_pt: Vec2, pixels_per_point: f32) -> f32 {
 /// tint.
 ///
 /// [Color32]'s `Mul` is a componentwise gamma-space multiply, exactly what
-/// egui's shader does when tinting a textured quad, so tint semantics match
-/// the old texture path.
+/// egui's shader does when tinting a textured quad.
 fn tinted_color(template: [u8; 4], tint: Color32) -> Color32 {
     premultiplied(template) * tint
 }

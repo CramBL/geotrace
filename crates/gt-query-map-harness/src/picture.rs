@@ -40,8 +40,8 @@ impl TrackPicture {
 /// selection and hovered match beneath it, and the real map's own element
 /// counts.
 ///
-/// Rendered as a picture of the tracks, so a scenario's snapshot reads as the
-/// shape of the result rather than a list of ranges:
+/// Rendered as a picture of the tracks, so a scenario's snapshot shows the
+/// shape of the result:
 ///
 /// ```text
 /// track.gtd#0  ..0000xx
@@ -93,8 +93,7 @@ impl fmt::Display for MapPicture {
                 }
             }
         }
-        // Only when something is pinned, so the scenarios that pin nothing keep
-        // reading as the map alone.
+        // Omitted when nothing is pinned.
         if let Some(pin) = self.pin {
             writeln!(f, "popup: {}", popup_line(pin))?;
         }

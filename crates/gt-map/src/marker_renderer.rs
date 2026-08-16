@@ -114,10 +114,9 @@ impl Plugin for MarkerRenderer<'_> {
 
 /// Paint the marker's label directly onto the map canvas.
 ///
-/// When `tpv_also_hovered` is true, the TPV tooltip is also visible near the
-/// cursor.  To avoid overlap, the label is drawn above the icon instead of
-/// below.  If the label is too wide to share screen space alongside the tooltip
-/// it is replaced with a "cannot be shown" message that includes the metric.
+/// With `tpv_also_hovered` the label is drawn above the icon, clear of the TPV
+/// tooltip. A label too wide to fit there is replaced with a message giving its
+/// width.
 fn show_marker_hover_label(ui: &Ui, marker: &CustomMarker, pos: Pos2, tpv_also_hovered: bool) {
     const MAX_LABEL_WIDTH: f32 = 120.0;
     const FONT: egui::FontId = egui::FontId::proportional(13.0);
@@ -179,7 +178,7 @@ fn draw_marker_icon(
         ui.painter()
             .circle_stroke(center, 14.0, Stroke::new(2.0_f32, HIGHLIGHT_BLUE));
     }
-    // The SVGs carry their own colors; only the log pin is recolored, cycling
+    // The SVGs have their own colors. Only the log pin is recolored, cycling
     // through the per-logfile palette.
     let color = match marker.icon {
         MarkerIcon::Log => {
@@ -190,8 +189,6 @@ fn draw_marker_icon(
         }
         _ => Color32::WHITE,
     };
-    // Apply the hover-fade by reducing the tint alpha so non-focused icons
-    // recede against the map tiles instead of merely darkening.
     let tint = track_renderer::apply_fade_alpha(color, fade);
     let instance = match marker.icon {
         // The pins anchor their tip at the marker position.

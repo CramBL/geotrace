@@ -248,8 +248,7 @@ fn point_segment_distance_sq(p: Pos2, a: Pos2, b: Pos2) -> f32 {
 }
 
 /// The hover rows: the matched edge's name plus its attribute grid. Absent
-/// attributes are omitted - the tooltip states what is known, not what the
-/// map data lacks.
+/// attributes are omitted.
 fn edge_tooltip_rows(ui: &mut Ui, edge: &SnappedEdgeInfo) {
     ui.label(RichText::new(edge.name.as_deref().unwrap_or("Unnamed road")).strong());
     egui::Grid::new("snapped_edge_grid")

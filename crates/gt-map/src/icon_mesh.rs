@@ -29,8 +29,7 @@ pub(crate) const ICON_HALF_EXTENT_LARGE_PT: f32 = 12.0;
 pub(crate) const PIN_HALF_EXTENTS_PT: Vec2 = Vec2::new(9.0, 12.0);
 
 /// The half extent a [MarkerIcon] is drawn with when rendered as a square
-/// icon: satellites and the warning triangle get the larger size, matching
-/// the old per-call-site texture rects.
+/// icon: satellites and the warning triangle get the larger size.
 pub(crate) fn marker_icon_half_extent(icon: MarkerIcon) -> f32 {
     match icon {
         MarkerIcon::Warning | MarkerIcon::Satellite | MarkerIcon::SatelliteLost => {
@@ -160,7 +159,7 @@ impl IconMeshLibrary {
     /// Decode the meshes embedded by the build script.
     ///
     /// The embedded blob is generated from the same assets and types at build
-    /// time, so an error here means a corrupted binary; the
+    /// time, so an error here means a corrupted binary. The
     /// `embedded_meshes_decode_for_every_icon` test guards the bake in CI.
     pub fn embedded() -> Result<Self, IconMeshLibraryError> {
         Self::decode(ICON_MESH_BYTES)
@@ -204,7 +203,6 @@ impl IconMeshLibrary {
         })
     }
 
-    /// The pre-tessellated meshes for `icon`.
     pub fn tessellation(&self, icon: IconId) -> &IconTessellation {
         match icon {
             IconId::Check => &self.check,

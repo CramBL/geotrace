@@ -46,8 +46,7 @@ pub struct RunFingerprint {
 }
 
 impl RunFingerprint {
-    /// Snapshot the state a run depends on, compared against a stored one to
-    /// gray out outdated results.
+    /// Snapshot the run inputs.
     pub fn of(inputs: RunInputs<'_>) -> Self {
         let RunInputs {
             loaded_files,
@@ -124,9 +123,8 @@ mod tests {
         assert_ne!(base, fingerprint(&filtered));
     }
 
-    /// A new snap run for an evaluated track changes the fingerprint (a
-    /// re-snap changes the values, so results gray out); handing in the
-    /// same run keeps it equal.
+    /// A new snap run for an evaluated track changes the fingerprint, so
+    /// results gray out. Handing in the same run keeps it equal.
     #[test]
     fn fingerprint_tracks_snap_run_identity() {
         let mut loaded_files = LoadedFiles::new();

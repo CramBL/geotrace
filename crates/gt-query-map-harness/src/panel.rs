@@ -2,7 +2,7 @@ use std::fmt;
 
 use gt_query_run::{QueryChunk, RunResults};
 
-/// What became of the last run the scenario asked for.
+/// Outcome of the scenario's last run request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunAttempt {
     /// The run evaluated and its results are current.
@@ -24,9 +24,8 @@ impl fmt::Display for RunAttempt {
 /// What the query window says about the editor text and the last run: how the
 /// text split into queries, how each one checked, and the per-query summaries.
 ///
-/// The counterpart to [`crate::MapPicture`]: this is the panel's account, that
-/// one is the map's. Borrowed straight from the session, so it renders the
-/// session's own data rather than a copy of it.
+/// The counterpart to [`crate::MapPicture`]. Borrowed straight from the
+/// session, so it renders the session's own data.
 pub struct PanelView<'a> {
     pub chunks: &'a [QueryChunk],
     pub run: Option<RunAttempt>,

@@ -3,8 +3,8 @@
 
 use gt_query_map_harness::{Dataset, FileSpec, MapScenario, PointSpec, TrackSpec};
 
-/// A recording with no fixes has no tracks, so a run over it has nothing to
-/// evaluate and nothing to say.
+/// A recording with no fixes has no tracks, so a run over it evaluates
+/// nothing.
 #[test]
 fn a_file_without_tracks_runs_and_matches_nothing() {
     let mut scenario = MapScenario::new(Dataset::of_files(&[FileSpec::new("silent.gtd")]));
@@ -60,8 +60,8 @@ fn a_single_point_track_has_no_acceleration() {
     ");
 }
 
-/// A window longer than the track matches nothing, and the summary says the
-/// track was too short rather than staying silent.
+/// A window longer than the track matches nothing, and the summary reports the
+/// track as too short.
 #[test]
 fn a_track_shorter_than_the_window_reports_it() {
     let mut scenario = MapScenario::new(Dataset::single_track(TrackSpec::from_speeds_kmh(&[

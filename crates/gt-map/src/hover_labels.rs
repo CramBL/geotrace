@@ -49,17 +49,12 @@ const HOVER_BAND_ALPHA: f32 = 0.3;
 const HOVER_BAND_PAD_PX: f32 = 2.0;
 const HOVER_BAND_ROUNDING_PX: f32 = 3.0;
 
-/// Whether `rect` is hovered, and, when it is, applies the interactive
-/// affordance: a subtle highlight band over the element plus the pointer
-/// cursor, so a satellite-table target that drives the sky-plot highlight
-/// reads as interactive rather than plain text. Shared by the sticky point
-/// popup and the trails window.
+/// Whether `rect` is hovered, and, when it is, paints a highlight band over
+/// the element and sets the pointer cursor.
 ///
-/// The band is painted on top of the element (at low alpha, so the text stays
-/// legible) rather than behind it. The sticky popup is an [`egui::Window`]
-/// (`Order::Middle`), so a band on a background-order layer - the technique
-/// `gt_side_panel::paint_map_hover_bg` uses for its panel rows, which are not
-/// inside a window - would render behind the window frame and vanish.
+/// The band is painted on top of the element at low alpha. The sticky popup is
+/// an [`egui::Window`] (`Order::Middle`), so a band on a background-order layer
+/// would render behind the window frame and vanish.
 pub(crate) fn hover_affordance(ui: &egui::Ui, rect: egui::Rect) -> bool {
     if !ui.rect_contains_pointer(rect) {
         return false;
@@ -69,20 +64,13 @@ pub(crate) fn hover_affordance(ui: &egui::Ui, rect: egui::Rect) -> bool {
 }
 
 /// [`hover_affordance`] for one row of a stacked list, hit-testing a band that
-/// reaches halfway into the gaps above and below so consecutive rows tile
-/// without a dead strip between them.
-///
-/// Rows are laid out with spacing between them, and a plain rect hit-test
-/// leaves that spacing hovering nothing. Dragging the pointer down a satellite
-/// table would then drop the sky-plot highlight in every gap, so the plot
-/// flashed back to full strength between one satellite and the next. Bridging
-/// the gap hands the highlight straight from one row to the next. The band is
-/// still painted at the row's own rect, so the rows stay visually separate.
+/// covers the gaps above and below so consecutive rows tile without a dead
+/// strip between them. The band is painted at the row's own rect, so the rows
+/// stay visually separate.
 ///
 /// A full spacing each side, not half: a grid leaves two spacings between
-/// consecutive rows, so half would still leave the middle uncovered. Reaching
-/// too far is harmless - where two rows overlap the lower one wins, which is
-/// still a clean hand-off - whereas reaching too short brings the flicker back.
+/// consecutive rows, so half would leave the middle uncovered. Where two rows
+/// overlap the lower one wins.
 pub(crate) fn row_hover_affordance(ui: &egui::Ui, rect: egui::Rect) -> bool {
     let bridge = ui.spacing().item_spacing.y;
     if !ui.rect_contains_pointer(rect.expand2(egui::vec2(0.0, bridge))) {
@@ -106,10 +94,7 @@ fn paint_hover_band(ui: &egui::Ui, rect: egui::Rect) {
 
 /// Returns `true` when the multi-hover compound label should be drawn.
 ///
-/// `current_multi_hover`, more than one candidate hovered this frame.
-/// `disambig_open`, the disambiguation popup is open.
-/// `suppress_hover_labels`, set from the previous frame's candidate count.
-/// False on the transition frame so the compound label and individual
+/// False on the transition frame so the compound label and the individual
 /// renderer tooltips never appear simultaneously.
 #[expect(
     clippy::fn_params_excessive_bools,
@@ -177,11 +162,6 @@ fn resolve_candidate<'a>(
     })
 }
 
-/// Renders a single candidate's section inside the multi-hover label.
-///
-/// Shows a header line (icon + summary) for every type, plus type-specific body
-/// content: the full hover table for TPV points, and the duration for GNSS-fix-
-/// regained markers.
 fn draw_candidate_section(
     ui: &mut egui::Ui,
     candidate: DataPointRef,
@@ -240,8 +220,6 @@ fn draw_candidate_section(
 }
 
 /// Renders a single row of the disambiguation popup.
-///
-/// Returns the response from `selectable_label` so the caller can check `.clicked()`.
 pub(crate) fn draw_disambig_row(
     ui: &mut egui::Ui,
     candidate: DataPointRef,
