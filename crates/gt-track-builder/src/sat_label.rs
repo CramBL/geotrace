@@ -5,7 +5,7 @@ use gt_types::sat_label::{SatLabelAnchor, SatLabelTier};
 use gt_types::{FixQuality, NavPoint, PointIdx};
 
 /// Along-track spacing of [`SatLabelTier::Fill`] anchors. Dense enough that
-/// labels appear on every screen at street-level zoom; the renderer's
+/// labels appear on every screen at street-level zoom. The renderer's
 /// collision resolution thins them everywhere else.
 const FILL_SPACING_M: f64 = 100.0;
 
@@ -25,7 +25,7 @@ struct SatPoint {
 /// transitions, local minima of the fix count, track endpoints and
 /// ghost-stretch recoveries, and periodic fill along the track. Only points
 /// carrying a satellite report qualify. Each point gets at most one anchor,
-/// keeping the highest-priority tier; the result is ascending by point index.
+/// keeping the highest-priority tier. The result is ascending by point index.
 pub fn build_sat_label_anchors(points: &[NavPoint]) -> Vec<SatLabelAnchor> {
     let sat_points: Vec<SatPoint> = points
         .iter()
@@ -100,7 +100,7 @@ fn add_fix_count_minima(anchors: &mut BTreeMap<usize, SatLabelTier>, sat_points:
 
 /// Anchor the first real fix carrying a satellite report after each ghost
 /// stretch. Quality transitions already cover recoveries from zero-fix
-/// ghosts; this additionally catches heading-loss ghosts, where the fix
+/// ghosts. This additionally catches heading-loss ghosts, where the fix
 /// count (and therefore the quality tier) never changed.
 fn add_ghost_recoveries(anchors: &mut BTreeMap<usize, SatLabelTier>, points: &[NavPoint]) {
     for (i, w) in points.windows(2).enumerate() {
@@ -149,7 +149,7 @@ mod tests {
     const DEG_PER_METER: f64 = 360.0 / 40_030_173.0;
 
     /// A point `x_m` meters east of the origin. `fix_count: None` means no
-    /// satellite report attached; `heading: false` makes a ghost fix.
+    /// satellite report attached. `heading: false` makes a ghost fix.
     fn point(x_m: f64, fix_count: Option<u32>, heading: bool) -> NavPoint {
         let sats = fix_count.map(|n| {
             let list: Vec<_> = (1..=n.max(1))

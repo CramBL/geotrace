@@ -16,15 +16,13 @@ use crate::app::history_db::{DeleteReason, HistoryWorker};
 /// metadata columns (date, duration, points, size, actions) size to their
 /// fixed-format content, and the identity column fills whatever width is left,
 /// clipping long names. Its width is a function of the window's width, so the
-/// table is always exactly as wide as the window - resize the window to give
-/// identity more or less room.
+/// table is always exactly as wide as the window.
 ///
-/// Identity is sized as a [`Column::exact`] recomputed each frame rather than a
-/// [`Column::remainder`] on purpose. A remainder that is not the *last* column
-/// ratchets in egui_extras: it feeds its clipped width back into its own minimum
-/// every frame, so it can never shrink again, which stops the window from being
-/// made narrower and lets it creep wider. Computing the width ourselves sidesteps
-/// that: the table always fits the window, so the window stays freely resizable.
+/// Identity is sized as a [`Column::exact`] recomputed each frame. A
+/// [`Column::remainder`] that is not the *last* column ratchets in egui_extras:
+/// it feeds its clipped width back into its own minimum every frame, so it can
+/// never shrink again, which stops the window from being made narrower and lets
+/// it creep wider.
 pub(super) fn history_table(
     ui: &mut egui::Ui,
     list_height: f32,
@@ -36,10 +34,8 @@ pub(super) fn history_table(
 ) {
     let row_height = ui.text_style_height(&egui::TextStyle::Body) + 6.0;
 
-    // Identity fills the width the metadata columns leave over. We size it as an
-    // exact column ourselves (window width minus last frame's metadata width)
-    // rather than a `Column::remainder`, whose ratcheting breaks window shrink -
-    // see this function's doc comment for the full rationale.
+    // Identity is window width minus last frame's metadata width, see this
+    // function's doc comment.
     let available_width = ui.available_width();
     let metadata_width_id = ui.id().with("history_metadata_width");
     let identity_width = ui
@@ -77,11 +73,11 @@ pub(super) fn history_table(
         .columns(Column::auto().resizable(false), SortColumn::COUNT - 1)
         .column(Column::auto().resizable(false))
         .header(row_height, |mut header| {
-            // Driven off the enum rather than a parallel list of titles, so a
-            // new sortable column cannot be added without a header appearing.
+            // Driven off the enum, so a new sortable column cannot be added
+            // without a header appearing.
             for column in SortColumn::iter() {
                 header.col(|ui| {
-                    // Identity is the measured, term-explained column; every
+                    // Identity is the measured, term-explained column. Every
                     // other one is a plain sortable header.
                     let term = (column == SortColumn::Identity).then(|| {
                         identity_right.set(ui.max_rect().right());
@@ -97,8 +93,7 @@ pub(super) fn history_table(
         })
         .body(|body| {
             body.rows(row_height, visible.len(), |mut row| {
-                // In-range by construction: `rows` hands out indices below
-                // `visible.len()`; skip defensively rather than unwrap.
+                // In-range by construction. `get` guards anyway.
                 let Some(entry) = visible.get(row.index()) else {
                     return;
                 };
@@ -118,9 +113,9 @@ pub(super) fn history_table(
 
 /// A clickable table header that orders the list by `column`.
 ///
-/// The active column carries a caret pointing the way its values run; clicking
+/// The active column shows a caret pointing the way its values run. Clicking
 /// it reverses that, clicking any other column switches to it. `term`, when
-/// given, is the column's glossary explanation - it underlines the title and
+/// given, is the column's glossary explanation: it underlines the title and
 /// leads the hover, matching [`crate::terms::term_label`].
 fn sort_header(ui: &mut egui::Ui, column: SortColumn, sort: &mut HistorySort, term: Option<&str>) {
     let active = sort.column == column;
@@ -142,15 +137,13 @@ fn sort_header(ui: &mut egui::Ui, column: SortColumn, sort: &mut HistorySort, te
             title
         })
         .inner
-        // A header sorts on click, so the pointer says "clickable" - not the
-        // text I-beam a selectable label would otherwise put here.
+        // Pointer cursor, not the text I-beam.
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_ui(|ui| {
             if let Some(term) = term {
                 ui.label(term);
             }
-            // Name the order the click produces, not the one already applied,
-            // so the hint reads as the action it is.
+            // The hint names the order a click produces.
             let next = if active {
                 sort.direction.reversed()
             } else {
@@ -173,9 +166,9 @@ fn sort_header(ui: &mut egui::Ui, column: SortColumn, sort: &mut HistorySort, te
 const IDENTITY_MIN_WIDTH: f32 = 160.0;
 
 /// Identity's width on the very first frame, before the metadata columns have
-/// been measured (see [`history_table`]); from then on it fills the leftover
-/// width. Kept above [`IDENTITY_MIN_WIDTH`] so this bootstrap value is already a
-/// readable width without needing the same clamp the measured path applies.
+/// been measured (see [`history_table`]). From then on it fills the leftover
+/// width. Kept above [`IDENTITY_MIN_WIDTH`] so this bootstrap value is already
+/// a readable width.
 const IDENTITY_DEFAULT_WIDTH: f32 = 280.0;
 
 fn render_row(
@@ -242,8 +235,7 @@ fn render_row(
 /// blank space beside it - the recording's data breakdown as hover text.
 ///
 /// Nothing inside a value cell senses hover or click of its own, so covering
-/// the cell's whole rect is what makes the breakdown reachable by pointing
-/// anywhere along the row rather than only at the label.
+/// the cell's whole rect is what makes the breakdown reachable.
 fn breakdown_cell(
     row: &mut TableRow<'_, '_>,
     entry: &RecordingEntry,
@@ -326,8 +318,7 @@ pub(super) fn data_breakdown_ui(ui: &mut egui::Ui, entry: &RecordingEntry) {
 /// channel's component labels), unit, and sample count. Long channel lists are
 /// truncated so the hover cannot outgrow the screen.
 ///
-/// A recording with no channels says so rather than rendering nothing - the
-/// absence is the answer to "what custom data is in here".
+/// A recording with no channels renders an explicit none row.
 fn channels_breakdown_ui(ui: &mut egui::Ui, channels: &[ChannelSummary]) {
     ui.add_space(4.0);
     if channels.is_empty() {
@@ -353,8 +344,8 @@ fn channels_breakdown_ui(ui: &mut egui::Ui, channels: &[ChannelSummary]) {
                     // wrap against, so let the labels size the column instead.
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     ui.label(channel_title(channel));
-                    // The producer's own words for what the channel measures,
-                    // tucked under the name so the columns stay aligned.
+                    // The description goes under the name so the columns stay
+                    // aligned.
                     if let Some(description) = &channel.description {
                         ui.label(
                             RichText::new(description)
@@ -415,7 +406,7 @@ fn format_stored_count(n: u64) -> String {
 }
 
 /// Render the inline identity-rename editor in the identity column. Commits on
-/// Enter, cancels on focus loss (click-away or Escape); either way the editor
+/// Enter, cancels on focus loss (click-away or Escape). Either way the editor
 /// closes. A no-op commit (empty, or unchanged from the displayed name) does not
 /// send a rename. `rename` is guaranteed `Some` by the caller.
 fn render_rename_editor(
@@ -455,7 +446,7 @@ fn begin_rename(rename: &mut Option<RenameEdit>, entry: &RecordingEntry) {
 }
 
 /// The identity column of a History row. Double-clicking the cell opens the
-/// inline rename editor; right-clicking offers Rename and Delete.
+/// inline rename editor. Right-clicking offers Rename and Delete.
 fn identity_cell(
     ui: &mut egui::Ui,
     entry: &RecordingEntry,
@@ -503,13 +494,12 @@ fn identity_cell(
         })
         .inner
         // Double-click renames and right-click offers the menu, so the cell
-        // reads as interactive rather than as editable text.
+        // reads as interactive.
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_ui(|ui| {
             ui.label(identity);
             metadata_detail_rows(ui, &meta);
-            // The same breakdown the value cells show, so the hover is the
-            // whole row's story wherever the pointer lands.
+            // The same breakdown hover as the value cells.
             ui.separator();
             data_breakdown_ui(ui, entry);
             ui.separator();

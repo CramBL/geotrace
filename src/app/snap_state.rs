@@ -44,7 +44,7 @@ pub(super) struct SnapErrorDerived {
     run: gt_ui_types::ArcIdentity,
     /// The plot series, one entry per sent point.
     series: Arc<Vec<gt_ui_types::SnapErrorPoint>>,
-    /// One slot per track point; `Some` exactly for sent points that came
+    /// One slot per track point. `Some` exactly for sent points that came
     /// back snapped or interpolated - the fixed `snap_error` semantics
     /// (see docs/snap/design.md, "Query integration").
     values: Arc<Vec<Option<f64>>>,
@@ -84,7 +84,7 @@ impl SnapErrorDerived {
     }
 
     /// Map gt-snap's wire-format point kind onto the plot's plain mirror
-    /// (a mirror so `gt-ui-types` stays free of the gt-snap dependency;
+    /// (a mirror so `gt-ui-types` stays free of the gt-snap dependency, and
     /// this function is the one place both types are visible).
     fn kind(kind: gt_snap::wire::SnapPointKind) -> gt_ui_types::SnapErrorKind {
         match kind {
@@ -141,7 +141,7 @@ impl App {
 
     /// Act on a "Snap again as" choice. A track choice runs right away
     /// unless that track already has a run for the costing, which raises
-    /// the replace dialog; a recording choice raises the scope dialog.
+    /// the replace dialog. A recording choice raises the scope dialog.
     pub(super) fn handle_snap_costing_request(
         &mut self,
         target: SnapCostingTarget,
@@ -238,8 +238,7 @@ impl App {
                     None => {
                         // Without an override, `effective_costing` returns
                         // `None` only for a declared road-less mode, so
-                        // `declared` is present here; skip (= idle)
-                        // defensively rather than unwrap.
+                        // `declared` is present here, the guard is defensive.
                         let Some(mode) = declared else { continue };
                         SnapRowView::Unsnappable {
                             travel_mode: mode.display_name().to_owned(),
@@ -441,13 +440,12 @@ impl App {
     }
 
     /// Enqueue an automatic run for every snappable track without a
-    /// displayed run. Hidden tracks park in the queue until shown; tracks
+    /// displayed run. Hidden tracks park in the queue until shown. Tracks
     /// with transient activity (queued, in flight, failed) are left alone
     /// by the scheduler, and stale runs are re-run manually only.
     pub(super) fn queue_auto_snaps(&mut self) {
         // Offline pauses auto mode entirely (the scheduler would refuse
-        // each request anyway; skipping documents the pause and saves the
-        // per-track planning work).
+        // each request anyway). Skipping saves the per-track planning work.
         if self.offline || !self.snap_settings.auto_snap_active() {
             return;
         }
@@ -497,7 +495,7 @@ impl App {
     /// are matched to tracks by content fingerprint, so index shifts or a
     /// re-segmentation since storage simply leave non-matching entries
     /// unrestored. Each run restores once, to its first matching track
-    /// among the files loaded from this recording; the content-keyed
+    /// among the files loaded from this recording. The content-keyed
     /// stores serve every duplicate of that track from the same entry.
     pub(super) fn restore_snap_runs(&mut self, db_ref: &gt_store::DatabaseRef, blob: &[u8]) {
         let Some(stored) = snap_persist::decode(blob) else {

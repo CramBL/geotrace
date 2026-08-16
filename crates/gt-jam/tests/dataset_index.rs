@@ -1,8 +1,8 @@
 //! [`JamDataset`] against the captured world day.
 //!
-//! The unit tests build datasets of two or three cells; these run the index
+//! The unit tests build datasets of two or three cells. These run the index
 //! over all 44 546 cells the host actually published, where H3's distortion
-//! near pentagons and the poles is present rather than assumed away.
+//! near pentagons and the poles is present.
 
 mod support;
 

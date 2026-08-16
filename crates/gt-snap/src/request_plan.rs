@@ -6,7 +6,7 @@
 //!   one point per [`MIN_POINT_INTERVAL`]. Snap error is only defined for
 //!   sent points.
 //! - **Chunking**: split into [`CHUNK_POINTS`]-sized requests sharing
-//!   [`CHUNK_OVERLAP_POINTS`] of context; the constants carry the rationale.
+//!   [`CHUNK_OVERLAP_POINTS`] of context.
 //! - **`gps_accuracy` derivation**: median eph of the sent points, clamped
 //!   to [`GPS_ACCURACY_RANGE_M`] - the one parameter GeoTrace knows better
 //!   than the server default.
@@ -18,11 +18,11 @@ use gt_types::{NavPoint, PointIdx};
 
 use crate::wire::{Costing, ShapePoint, TraceAttributesRequest, TraceOptions};
 
-/// Minimum time between two sent points; input at a higher rate is thinned.
+/// Minimum time between two sent points. Input at a higher rate is thinned.
 pub const MIN_POINT_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Maximum sent points per request chunk. Far under the server's observed
-/// 16 000-point cap; sized so one failed chunk loses little work and
+/// 16 000-point cap. Sized so one failed chunk loses little work and
 /// progress updates stay frequent.
 pub const CHUNK_POINTS: usize = 1000;
 
@@ -37,7 +37,7 @@ const _: () = assert!(
 );
 
 /// Bounds for the derived `gps_accuracy`, meters. The lower bound keeps a
-/// receiver's optimistic eph from starving the candidate search; the upper
+/// receiver's optimistic eph from starving the candidate search. The upper
 /// bound keeps outlier eph from letting the match wander off the road.
 pub const GPS_ACCURACY_RANGE_M: RangeInclusive<f64> = 5.0..=30.0;
 
@@ -54,7 +54,7 @@ pub const GPS_ACCURACY_OVERRIDE_RANGE_M: RangeInclusive<f64> = 0.0..=100.0;
 
 /// Client-side range for `trace_options.turn_penalty_factor`.
 /// Empirically the server enforces only the lower bound (negative values
-/// are rejected with error 158; 10^9 was accepted), so the upper bound is
+/// are rejected with error 158, and 10^9 was accepted), so the upper bound is
 /// this client's own sanity cap - Valhalla's guidance suggests around 500
 /// to smooth wandering matches, and far larger values stop changing the
 /// match.
@@ -67,12 +67,11 @@ pub const TURN_PENALTY_FACTOR_RANGE: RangeInclusive<f64> = 0.0..=100_000.0;
 ///
 /// Values are clamped to the server-accepted ranges when the request is
 /// built ([`SnapParams::trace_options`]): the server rejects out-of-range
-/// trace options (400, error 158) instead of clamping, so no code path may
-/// send unbounded values.
+/// trace options with a 400, error 158.
 ///
 /// Serde derives exist for persisting a run's parameters with its cached
-/// result; the options default so parameters added later decode absent
-/// from older stored results.
+/// result. The options default so parameters added later decode absent from
+/// older stored results.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SnapParams {
     pub costing: Costing,
@@ -84,8 +83,8 @@ pub struct SnapParams {
     /// [`TURN_PENALTY_FACTOR_RANGE`].
     #[serde(default)]
     pub turn_penalty_factor: Option<f64>,
-    /// Expected GNSS accuracy in meters, replacing the eph-derived value;
-    /// bounded by [`GPS_ACCURACY_OVERRIDE_RANGE_M`].
+    /// Expected GNSS accuracy in meters, replacing the eph-derived value.
+    /// Bounded by [`GPS_ACCURACY_OVERRIDE_RANGE_M`].
     #[serde(default)]
     pub gps_accuracy_override_m: Option<f64>,
 }
@@ -127,7 +126,6 @@ impl SnapParams {
     }
 }
 
-/// Clamp a value into an inclusive range.
 fn clamp_to(range: &RangeInclusive<f64>, value: f64) -> f64 {
     value.clamp(*range.start(), *range.end())
 }
@@ -161,16 +159,15 @@ pub struct Chunk {
     /// The points this chunk sends, in track order. Includes overlap.
     pub sent: Vec<SentPoint>,
     /// The sub-range of [`sent`](Self::sent) this chunk is authoritative
-    /// for. Overlap points outside this range are context only; stitching
-    /// takes their match results from the neighboring chunk instead, where
-    /// they are more interior.
+    /// for. Overlap points outside this range are context only. Stitching
+    /// takes their match results from the neighboring chunk, where they are
+    /// more interior.
     pub owned: Range<usize>,
     pub continuity: ChunkContinuity,
 }
 
 impl Chunk {
-    /// The subslice of [`sent`](Self::sent) this chunk is authoritative for
-    /// (see [`owned`](Self::owned)).
+    /// See [`owned`](Self::owned).
     pub fn owned_sent(&self) -> &[SentPoint] {
         self.sent.get(self.owned.clone()).unwrap_or_default()
     }
@@ -233,10 +230,10 @@ pub fn plan(points: &[NavPoint]) -> RequestPlan {
 
 /// Select the points to send, split into stretches at the ghost fixes.
 ///
-/// A ghost fix is a receiver dead-reckoning guess rather than a measured
-/// position, so it is never sent - and the stretch ends there, because two
-/// points sent either side of a dropped run arrive as neighbors and the
-/// matcher routes a road through the gap between them.
+/// Ghost fixes are never sent: they are dead-reckoning guesses, not measured
+/// positions. Each one ends the stretch. Two points sent either side of a
+/// dropped run arrive as neighbors and the matcher routes a road through the
+/// gap between them.
 fn downsample(points: &[NavPoint]) -> Vec<SendableStretch> {
     let mut stretches = Vec::new();
     let mut start = 0;
@@ -262,7 +259,7 @@ fn downsample_run(run: &[NavPoint], base: usize) -> Vec<SentPoint> {
         let keep = match last_kept {
             None => true,
             // `to_std` fails for a negative elapsed time (out-of-order
-            // timestamps); such a point is never kept as a new sample.
+            // timestamps). Such a point is never kept as a new sample.
             Some(last) => time
                 .signed_duration_since(last)
                 .to_std()
@@ -298,9 +295,9 @@ fn chunk_stretch(sent: &[SentPoint]) -> Vec<Chunk> {
         let end = (start + CHUNK_POINTS).min(sent.len());
         let is_first = start == 0;
         let is_last = end == sent.len();
-        // Ownership: the overlap between two chunks is split at its middle;
-        // each point belongs to the chunk where it lies further from the
-        // chunk edge (the design's "prefer interior" stitching rule).
+        // The overlap between two chunks is split at its middle. Each point
+        // belongs to the chunk where it lies further from the chunk edge
+        // (the design's "prefer interior" stitching rule).
         let own_from = if is_first {
             0
         } else {

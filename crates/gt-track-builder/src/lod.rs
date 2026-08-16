@@ -26,9 +26,8 @@ const MAX_KEPT_DENOMINATOR: usize = 4;
 /// previous one, so the total build cost is a geometric series in the point
 /// count, capped by the shrink ratio a stored level must reach.
 ///
-/// The first level's tolerance starts near the track's mean segment length
-/// (rather than at [`LOD_BASE_TOLERANCE_MERC`]) so sparse recordings don't
-/// store a cascade of full-length levels that drop nothing.
+/// The first level's tolerance starts near the track's mean segment length so
+/// sparse recordings store no full-length levels.
 pub fn build_track_lod(points: &[NavPoint]) -> TrackLod {
     if points.len() < MIN_LEVEL_POINTS || u32::try_from(points.len()).is_err() {
         return TrackLod::default();
@@ -130,7 +129,6 @@ fn decimate(
             last_kept = Some((point.merc, class));
         }
     }
-    // The track must end where it ends, even if the final stretch merged.
     if let Some(last) = last_candidate
         && kept.last() != Some(&last)
     {

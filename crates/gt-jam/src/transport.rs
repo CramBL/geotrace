@@ -28,7 +28,6 @@ pub const REQUEST_INTERVAL: Duration = Duration::from_secs(2);
 /// Sent so the host can attribute the traffic.
 pub const CLIENT_ID_HEADER: (&str, &str) = ("X-Client-Id", "geotrace");
 
-/// HTTP status for a day the host has no file for.
 const HTTP_NOT_FOUND: u16 = 404;
 
 /// One HTTP response: what classification needs from it.
@@ -170,9 +169,7 @@ enum Classified {
     Transient(String),
 }
 
-/// Classify one response.
-///
-/// 5xx retries; 4xx is deterministic and does not.
+/// A 5xx is retried once. A 4xx is deterministic and is not.
 fn classify(response: HttpResponse) -> Classified {
     let HttpResponse { status, body } = response;
     let Ok(code) = reqwest::StatusCode::from_u16(status) else {
@@ -333,8 +330,7 @@ mod tests {
         );
     }
 
-    /// The offline source connects, and then declines every request, so a
-    /// caller sees a working transport that says no.
+    /// The offline source connects. Every send fails.
     #[test]
     fn the_offline_source_refuses_every_request() {
         let transport = TransportSource::Offline

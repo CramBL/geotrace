@@ -585,7 +585,7 @@ impl JammingScheduler {
     }
 }
 
-/// How long the next request waits, so requests to the host stay
+/// Delay before dispatching the next request, keeping requests to the host
 /// [`REQUEST_INTERVAL`] apart.
 ///
 /// `last_request` is when the previous request was scheduled to go out, which
@@ -978,7 +978,7 @@ mod tests {
         assert!(scheduler.is_fetching());
     }
 
-    /// A recording is requested once; loading it again asks for nothing.
+    /// A recording is requested once. Loading it again asks for nothing.
     #[test]
     fn a_day_is_queued_at_most_once() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
@@ -1110,8 +1110,8 @@ mod tests {
         track
     }
 
-    /// A track whose fixes fall in an archived cell gets a value per fix;
-    /// one whose day is not archived breaks the line instead.
+    /// A track whose fixes fall in an archived cell gets a value per fix.
+    /// One whose day is not archived breaks the line instead.
     #[test]
     fn plot_points_come_from_the_fixs_own_day() {
         let (_dir, store, mut scheduler) = scheduler_with_archive();

@@ -13,7 +13,7 @@
 //! Usage: `just snap-fixtures [SCENARIO...]`, or
 //! `cargo run -p gt-snap --example fetch_snap_fixtures -- [SCENARIO...]`.
 //! Naming scenarios captures only those (an additive capture: entries for
-//! untouched scenarios are kept in `capture.json`); no arguments re-captures
+//! untouched scenarios are kept in `capture.json`). No arguments re-captures
 //! everything.
 //! Point it at a self-hosted server with `GEOTRACE_SNAP_SERVER=http://localhost:8002`.
 
@@ -43,7 +43,7 @@ use gt_snap::{
 };
 
 /// Fixed base timestamp for synthetic traces: 2026-01-01T12:00:00Z.
-/// Fixed (rather than "now") so re-captures diff cleanly.
+/// Fixed so re-captures diff cleanly.
 const BASE_TIME_UNIX: i64 = 1_767_268_800;
 
 /// Coordinate rounding sent to the server: six decimals is about 0.1 m,
@@ -114,8 +114,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let dir = fixtures_dir();
     fs::create_dir_all(&dir)?;
 
-    // Positional args select a scenario subset for an additive capture;
-    // no args re-captures everything.
+    // Positional args select a scenario subset for an additive capture.
+    // No args re-captures everything.
     let args: Vec<String> = env::args().skip(1).collect();
     let selected: Vec<&str> = if args.is_empty() {
         FIXTURE_SCENARIOS.to_vec()
@@ -169,7 +169,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let status = response.status().as_u16();
         let body = response.text()?;
 
-        // Pretty-print JSON bodies so fixture diffs are reviewable; keep
+        // Pretty-print JSON bodies so fixture diffs are reviewable. Keep
         // anything unparsable (e.g. the reverse proxy's HTML 413) verbatim.
         let (body_pretty, osm_changeset) = match serde_json::from_str::<Value>(&body) {
             Ok(value) => {
@@ -276,7 +276,7 @@ fn scenario_request(name: &str) -> Value {
         // route discontinuity flags for the jump - it marks the boundary
         // points `unmatched` and continues, with `edge_index` running on
         // across the physically impossible junction. Snapped-track splitting
-        // must therefore treat unmatched runs as breaks too; the only flag
+        // must therefore treat unmatched runs as breaks too. The only flag
         // exemplar is in `partially_snappable`.
         "teleport_gap" => {
             let mut shape = trace(20, BOULEVARD_ROUTE, Some(1.0));
@@ -325,7 +325,7 @@ fn scenario_request(name: &str) -> Value {
 
 /// `count` shape points spread evenly along the anchor chain `route`, with
 /// deterministic cross-track jitter. `seconds_per_point` adds `time` values
-/// from [`BASE_TIME_UNIX`]; `None` omits timestamps.
+/// from [`BASE_TIME_UNIX`]. `None` omits timestamps.
 fn trace(count: usize, route: &[Coord], seconds_per_point: Option<f64>) -> Vec<ShapePoint> {
     trace_from(count, route, seconds_per_point, 0)
 }
@@ -381,7 +381,6 @@ fn point_along(route: &[Coord], t: f64) -> Coord {
     *route.last().unwrap_or(&route[0])
 }
 
-/// Round a coordinate to [`COORD_DECIMALS`] decimals.
 fn round_coord(value: f64) -> f64 {
     let scale = 10f64.powi(COORD_DECIMALS);
     (value * scale).round() / scale

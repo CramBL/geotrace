@@ -1,17 +1,17 @@
 //! Capture live interference datasets from the publisher.
 //!
 //! Requests each day of [`gt_jam::FIXTURE_DAYS`] into `tests/fixtures/`.
-//! A served day is written as its own file; a refused one has no dataset, so
+//! A served day is written as its own file. A refused one has no dataset, so
 //! only its `capture.json` entry records the answer, alongside the capture
 //! date and host.
 //!
-//! Fixtures are frozen once committed; a re-capture's diff is reviewed like
+//! Fixtures are frozen once committed. A re-capture's diff is reviewed like
 //! code.
 //!
 //! Usage: `just jam-fixtures [DAY...]`, or
 //! `cargo run -p gt-jam --example fetch_jam_fixtures -- [DAY...]`.
 //! Naming days captures only those, keeping the manifest entries of the
-//! rest; no arguments re-captures everything.
+//! rest. No arguments re-captures everything.
 //! Point it at a mirror with `GEOTRACE_JAM_HOST=https://mirror.example`.
 
 // Examples favour brevity: the core's robustness restriction lints (no
@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let dir = fixtures_dir();
     fs::create_dir_all(&dir)?;
 
-    // Positional args select a subset; no args re-captures every day.
+    // Positional args select a subset. No args re-captures every day.
     let args: Vec<String> = env::args().skip(1).collect();
     let selected: Vec<FixtureDay> = if args.is_empty() {
         FIXTURE_DAYS.to_vec()
@@ -118,7 +118,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         // overwrite the fixture with them.
         //
         // Keyed on what the host answered now, not on what FIXTURE_DAYS
-        // declares; tests/captured_days.rs catches the disagreement.
+        // declares. tests/captured_days.rs catches the disagreement.
         let (rows, recorded_body) = if served {
             let reporter = ParseWarningReporter::default();
             let observations = wire::parse_dataset(&body, &reporter).map_err(|err| {

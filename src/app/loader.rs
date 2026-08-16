@@ -82,13 +82,11 @@ pub enum LoadOutcome {
     reason = "Completed carries a full LoadOutcome by design; boxing would add an allocation on the infrequent completion path"
 )]
 pub enum LoadMessage {
-    /// Intermediate progress update - does not indicate completion.
     Progress {
         id: u64,
         fraction: f32,
         stage: &'static str,
     },
-    /// The job is finished - either a usable result or an error string.
     Completed {
         id: u64,
         outcome: Result<LoadOutcome, String>,
@@ -563,7 +561,6 @@ impl LoadJobs {
             .expect("failed to spawn file-dialog thread");
     }
 
-    /// Consume a pending file-picker result if one has arrived.
     pub fn drain_file_dialog(&mut self) -> Option<PathBuf> {
         let rx = self.file_dialog_rx.as_ref()?;
         let Ok(path_opt) = rx.try_recv() else {
@@ -830,7 +827,7 @@ pub(crate) fn config_from_stored_segmentation(
 /// Returns `true` when the marker settings implied by a stored recording match
 /// the current app config. History did not persist every generated-marker field,
 /// so missing fields are treated as the historical defaults for mismatch
-/// detection only; loading still uses [`config_from_stored_segmentation`].
+/// detection only. Loading still uses [`config_from_stored_segmentation`].
 pub(crate) fn marker_settings_match_config(
     settings: &gt_store::StoredSegmentation,
     current: &SegmentationConfig,

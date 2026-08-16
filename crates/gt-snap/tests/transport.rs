@@ -56,8 +56,8 @@ impl Transport for CannedTransport {
         *self.requests_seen.borrow_mut() += 1;
         let mut script = self.script.borrow_mut();
         if script.is_empty() {
-            // A dry script means the test under-declared its requests;
-            // surface it as a transport error the assertions will trip on.
+            // A dry script means the test under-declared its requests.
+            // Surface it as a transport error the assertions will trip on.
             return Err(TransportError {
                 detail: "canned transport script ran dry".to_owned(),
             });
@@ -85,7 +85,7 @@ fn connection_reset() -> Result<HttpResponse, TransportError> {
 
 #[test]
 fn fixture_success_body_classifies_and_stitches_end_to_end() {
-    // The captured partially_snappable response has 20 matched points; a
+    // The captured partially_snappable response has 20 matched points, so a
     // 20-point plan is one chunk.
     let plan = request_plan::plan(&points(20));
     let transport = CannedTransport::new(vec![ok(fixture_body(
@@ -227,9 +227,9 @@ fn unparsable_success_body_is_a_failure() {
 
 proptest::proptest! {
     /// The classifier consumes untrusted network responses: any status code
-    /// crossed with any body must produce outcomes, never a panic. (Curated
-    /// fixture bodies are exercised by the tests above; this covers
-    /// everything else, mirroring the shape-decoder fuzz tests.)
+    /// crossed with any body must produce outcomes, never a panic. Curated
+    /// fixture bodies are exercised by the tests above, this covers everything
+    /// else, mirroring the shape-decoder fuzz tests.
     #[test]
     fn arbitrary_responses_never_panic(code in proptest::prelude::any::<u16>(), body in ".{0,512}") {
         let plan = request_plan::plan(&points(5));
@@ -242,8 +242,7 @@ proptest::proptest! {
     }
 }
 
-/// The offline source connects, and then declines every request, so a caller
-/// sees a working transport that says no.
+/// The offline source connects. Every send fails.
 #[test]
 fn the_offline_source_refuses_every_request() {
     let transport = TransportSource::Offline
@@ -262,8 +261,8 @@ fn the_offline_source_refuses_every_request() {
     assert!(err.detail.contains(gt_types::env::OFFLINE_DETAIL));
 }
 
-/// Every chunk of an offline run fails. The server was never asked where
-/// the track ran, so nothing is reported as off-network.
+/// Every chunk of an offline run fails. No request is sent, so nothing is
+/// classified off-network.
 #[test]
 fn an_offline_plan_fails_every_chunk() {
     let transport = TransportSource::Offline

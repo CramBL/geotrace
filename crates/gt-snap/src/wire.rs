@@ -4,7 +4,7 @@
 //! value names, while Rust type names use the project's snap vocabulary
 //! (Valhalla's "matched"/"unmatched" become snapped/unsnapped, see
 //! `docs/snap/design.md`).
-//! Only fields with a consumer are modeled; serde skips everything else in
+//! Only fields with a consumer are modeled. Serde skips everything else in
 //! the responses (`alternate_paths`, `raw_score`, `units`, ...).
 //!
 //! Every type is validated against the live-captured fixtures under
@@ -47,7 +47,7 @@ pub const INCLUDED_ATTRIBUTES: &[&str] = &[
 pub struct ShapePoint {
     pub lat: f64,
     pub lon: f64,
-    /// Unix seconds. Optional on the wire; timestamps aid the matcher's
+    /// Unix seconds. Optional on the wire. Timestamps aid the matcher's
     /// candidate selection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time: Option<i64>,
@@ -55,9 +55,9 @@ pub struct ShapePoint {
 
 /// The Valhalla costing model a snap run matches against.
 ///
-/// Deliberately only one per distinct road network (see the design doc's
-/// costing decision); the remaining Valhalla costings are auto variants that
-/// differ only via special-lane tags.
+/// One per distinct road network (see the design doc's costing decision).
+/// The remaining Valhalla costings are auto variants that differ only via
+/// special-lane tags.
 #[derive(
     Debug,
     Clone,
@@ -83,10 +83,8 @@ pub enum Costing {
 impl Costing {
     /// Canonical human-readable name shown in the UI, e.g. the costing combo.
     ///
-    /// Single source of truth for this type's display spelling - call sites
-    /// should format through this rather than re-typing the name. "Auto" is
-    /// Valhalla's name for the motor-vehicle road network, kept as-is so the
-    /// UI matches the server vocabulary users find in Valhalla docs.
+    /// "Auto" is Valhalla's name for the motor-vehicle road network, kept
+    /// as-is so the UI matches the vocabulary of the Valhalla docs.
     pub fn display_name(self) -> &'static str {
         match self {
             Costing::Auto => "Auto",
@@ -96,7 +94,6 @@ impl Costing {
     }
 }
 
-/// Whether an attribute filter includes or excludes the listed attributes.
 #[derive(
     Debug,
     Clone,
@@ -143,14 +140,14 @@ impl AttributeFilter {
 /// rejection exemplar).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct TraceOptions {
-    /// Expected GNSS accuracy in meters; tells the matcher how far off-road
-    /// a point may plausibly lie.
+    /// Expected GNSS accuracy in meters. Bounds how far off-road the matcher
+    /// may place a point.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gps_accuracy: Option<f64>,
     /// Meters around each input point searched for candidate road edges.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub search_radius: Option<f64>,
-    /// Cost multiplier penalizing route reversals; raising it smooths
+    /// Cost multiplier penalizing route reversals. Raising it smooths
     /// wandering matches at intersections.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_penalty_factor: Option<f64>,
@@ -224,9 +221,9 @@ pub enum SnapPointKind {
 
 /// One snapped point of the response, 1:1 with the request's shape points.
 ///
-/// Field names follow the wire (`matched_points[]` entries); notably
+/// Field names follow the wire (`matched_points[]` entries). Notably
 /// `distance_from_trace_point` is the snap error in meters. Unsnapped points
-/// carry neither an error nor an edge.
+/// have neither an error nor an edge.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub struct SnappedPoint {
     pub lat: f64,
@@ -236,7 +233,7 @@ pub struct SnappedPoint {
     /// Index into [`TraceAttributesResponse::edges`], or `None` when the
     /// point has no edge association. Captured reality: the wire encodes
     /// "no edge" as `u64::MAX` on interpolated points (not by omitting the
-    /// field); that sentinel is folded into `None` here and never escapes
+    /// field). That sentinel is folded into `None` here and never escapes
     /// the wire layer.
     #[serde(default, deserialize_with = "edge_index_from_wire")]
     pub edge_index: Option<u64>,
@@ -312,7 +309,7 @@ impl RoadClass {
 
 /// Valhalla's surface classification.
 ///
-/// `Serialize` exists for persisting cached snap results; the `Unknown`
+/// `Serialize` exists for persisting cached snap results. The `Unknown`
 /// roundtrip works like [`RoadClass`]'s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumCount, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -349,7 +346,7 @@ impl Surface {
 
 /// A posted speed limit. Valhalla reports most edges as a km/h number, but
 /// a derestricted road (a German autobahn stretch) comes back as the string
-/// `"unlimited"` - a plain `u32` field fails the whole chunk over it.
+/// `"unlimited"`.
 ///
 /// `Serialize` mirrors the wire shape (number or `"unlimited"`), so cached
 /// results round-trip unchanged.
@@ -439,15 +436,13 @@ pub struct TraceAttributesResponse {
     /// The snapped track geometry as an encoded polyline (6-digit precision).
     #[serde(default)]
     pub shape: Option<String>,
-    /// OSM data version the match was computed against; cache metadata.
+    /// OSM data version the match was computed against.
     #[serde(default)]
     pub osm_changeset: Option<u64>,
     /// Per-run trust indicator, 0..=1.
     #[serde(default)]
     pub confidence_score: Option<f64>,
-    /// Kept raw: no live exemplar of a warning exists (out-of-range options
-    /// reject instead of warning), so guessing a shape would be worse than
-    /// passing the values through to the log.
+    /// Kept raw: no live exemplar of a warning exists to model a shape.
     #[serde(default)]
     pub warnings: Vec<Value>,
 }

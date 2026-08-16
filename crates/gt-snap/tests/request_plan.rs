@@ -116,7 +116,7 @@ fn out_of_order_timestamps_are_not_kept() {
     let mut pts = points(5, 1000, |_| None);
     pts.reverse();
     let plan = request_plan::plan(&pts);
-    // Only the first point qualifies; every later one goes back in time.
+    // Only the first point qualifies. Every later one goes back in time.
     assert_eq!(plan.sent_point_count(), 1);
 }
 
@@ -140,7 +140,7 @@ fn gps_accuracy_is_clamped_median(#[case] ephs: &[f32], #[case] expected: Option
 /// the sent points alone.
 #[test]
 fn gps_accuracy_derives_from_sent_points_only() {
-    // Every 10th point (the kept ones) has eph 10; the rest carry 900.
+    // Every 10th point (the kept ones) has eph 10. The rest have 900.
     let pts = points(50, 100, |i| Some(if i % 10 == 0 { 10.0 } else { 900.0 }));
     let plan = request_plan::plan(&pts);
     assert_eq!(plan.gps_accuracy_m, Some(10.0));
@@ -261,8 +261,7 @@ fn gps_accuracy_ignores_ghost_fixes() {
 }
 
 /// Advanced options: raw override values vs. the trace options actually
-/// sent - everything clamps to the server-accepted ranges (the server
-/// rejects out-of-range options with error 158 instead of clamping).
+/// sent. Everything clamps to the server-accepted ranges.
 #[rstest]
 #[case::in_range_passes_through(Some(25.0), Some(25.0))]
 #[case::above_cap_clamps(Some(250.0), Some(*SEARCH_RADIUS_RANGE_M.end()))]
@@ -317,8 +316,8 @@ fn gps_accuracy_override_beats_derived(
     assert_eq!(params.gps_accuracy_sent_m(derived), sent);
 }
 
-/// All-default params send no trace_options at all; the chunk request
-/// carries them only when something differs from the server default.
+/// All-default params send no trace_options at all. The chunk request
+/// includes them only when something differs from the server default.
 #[test]
 fn default_params_send_no_trace_options() {
     assert_eq!(SnapParams::new(Costing::Auto).trace_options(None), None);

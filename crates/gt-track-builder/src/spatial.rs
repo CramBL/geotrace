@@ -5,9 +5,6 @@ use gt_types::{DataCategory, FileIdx, LoadedFile, PointIdx, SpatialPoint, TrackI
 /// Includes real TPV fixes (heading present), custom markers, generated markers,
 /// and event markers. Ghost TPV fixes are excluded until their positions are
 /// pre-computed at load time.
-///
-/// Call `RTree::bulk_load` once after all files are loaded. The result is stored
-/// on `NavMap` and rebuilt whenever the file list changes.
 pub fn build_global_tree(files: &[LoadedFile]) -> rstar::RTree<SpatialPoint> {
     let mut points: Vec<SpatialPoint> = Vec::new();
     for (fi, file) in files.iter().enumerate() {

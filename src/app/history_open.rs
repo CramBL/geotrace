@@ -26,8 +26,8 @@ impl App {
         self.toasts.info(toast);
     }
 
-    /// Open the history database again, for a failure that resolves itself
-    /// once whatever held the file lets go.
+    /// Retry opening after a transient failure, e.g. another process released
+    /// the file.
     pub(super) fn reopen_history_database(&mut self, path: &std::path::Path, ctx: &egui::Context) {
         match storage::reopen_recordings(path) {
             Ok(db) => self.adopt_history_database(db, ctx, "Opened the history database"),
@@ -411,8 +411,7 @@ impl App {
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .show(ui.ctx(), |ui| {
-                    // Bound the width so a long recording name wraps this sentence
-                    // instead of stretching the dialog across the screen.
+                    // Bound the width so a long recording name wraps.
                     ui.set_max_width(460.0);
                     ui.add(Label::new(format!(
                         "'{}' was stored with a different track-splitting setting than the current one.",
@@ -500,8 +499,7 @@ impl App {
                 .collapsible(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .show(ui.ctx(), |ui| {
-                    // Bound the width so a long recording identity truncates instead
-                    // of stretching this auto-sized dialog.
+                    // Bound the width so a long recording identity truncates.
                     ui.set_max_width(460.0);
                     let rec_label = gt_fmt::pluralize(n, "recording", "recordings");
                     ui.label(format!(

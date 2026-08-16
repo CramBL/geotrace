@@ -76,7 +76,7 @@ impl JamStore {
     /// Open the archive at `path`, creating it if it does not exist.
     ///
     /// Rows left behind by an interrupted [`Self::insert_day`] are dropped
-    /// here rather than leaking for the life of the file.
+    /// here.
     pub fn open_or_create(path: &Path) -> Result<Self, JamStoreError> {
         let _guard = ARCHIVE_LOCK.lock();
         if path.exists() {
@@ -403,8 +403,8 @@ impl<'a> Column<'a> {
             .map_err(|err| backend(&err))
     }
 
-    /// Shuffle transposes fixed-width elements, which a variable-length
-    /// string is not, so a string column is deflated only.
+    /// String columns are deflate-only: shuffle transposes fixed-width
+    /// elements, which a variable-length string is not.
     fn create_strings(group: &Group, name: &str, chunk_rows: usize) -> Result<(), JamStoreError> {
         group
             .new_dataset::<VarLenUnicode>()
@@ -435,8 +435,8 @@ impl<'a> Column<'a> {
             .map_err(|err| backend(&err))
     }
 
-    /// Reads `rows`, refusing a range the column does not hold rather than
-    /// letting HDF5 answer with fewer values than asked for.
+    /// Reads `rows`, refusing a range the column does not hold. HDF5 returns
+    /// fewer values than asked for an out-of-range slice.
     fn read_slice<T: hdf5::H5Type + Clone>(
         &self,
         rows: Range<usize>,

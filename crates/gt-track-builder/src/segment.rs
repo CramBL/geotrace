@@ -37,15 +37,11 @@ impl Default for TrackLayoutConfig {
 
 /// Configuration for per-kind generated-marker detection.
 ///
-/// These settings affect marker output only; they do not change track ranges or
-/// hidden-track index meaning.
+/// These settings affect marker output only. They do not change track ranges
+/// or hidden-track index meaning.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GeneratedMarkerConfig {
-    /// Whether to emit a [`GeneratedMarkerKind::GnssFixLost`] marker when the fix
-    /// drops.
     pub detect_gnss_fix_lost: bool,
-    /// Whether to emit a [`GeneratedMarkerKind::GnssFixRegained`] marker when the
-    /// fix returns.
     pub detect_gnss_fix_regained: bool,
     /// Whether to flag abrupt GPS↔system clock-offset jumps as
     /// [`GeneratedMarkerKind::ClockDiscontinuity`] markers.
@@ -59,13 +55,13 @@ pub struct GeneratedMarkerConfig {
     pub detect_clock_offset_excursions: bool,
     /// Deviation from a track's baseline clock offset, in seconds, above which a
     /// sample counts as an excursion.  Shared with the plot, which keeps those
-    /// samples off its shared y-axis; see `gt_analysis::clock_offset`.
+    /// samples off its shared y-axis. See `gt_analysis::clock_offset`.
     pub clock_excursion_threshold_s: f32,
     /// Whether to flag loss-of-lock (cycle slip) events as
     /// [`GeneratedMarkerKind::Slip`] markers.
     pub detect_slips: bool,
     /// Elevation mask (degrees) for slip detection.  Shared with the slip-rate
-    /// plot so markers and plot agree; see `gt_analysis::slip`.
+    /// plot so markers and plot agree. See `gt_analysis::slip`.
     pub slip_elevation_mask_deg: f32,
     /// SNR drop (dB-Hz between epochs) above which a still-tracked satellite is
     /// counted as having slipped.
@@ -132,20 +128,18 @@ pub fn segment_tracks(points: &[NavPoint], config: &TrackLayoutConfig) -> Vec<Ra
 }
 
 /// State machine for tracking GPS fix transitions within a track.
-///
-/// Three states:
-/// - `Waiting` - no satellite report seen yet.
-/// - `HasFix` - the most recent satellite report had `fix_count > 0`.
-/// - `LostFix` - most recent report had `fix_count == 0`. Records when the fix
-///   was last seen so the regained-duration can be computed.
 enum GpsFixState {
+    /// No satellite report seen yet.
     Waiting,
+    /// The most recent satellite report had `fix_count > 0`.
     HasFix {
         last_time: GpsTime,
         last_lat: Latitude,
         last_lon: Longitude,
     },
+    /// The most recent satellite report had `fix_count == 0`.
     LostFix {
+        /// When the fix was last seen, for the regained-duration.
         lost_at: GpsTime,
     },
 }
@@ -186,7 +180,6 @@ impl GpsFixTracker {
                 last_lon,
             } => {
                 if fix_count == 0 {
-                    // Fix just dropped - emit GnssFixLost at the last known fix position.
                     result = Some(GeneratedMarker::new(
                         last_time.utc(),
                         GeneratedMarkerKind::GnssFixLost,
@@ -205,7 +198,6 @@ impl GpsFixTracker {
             }
             GpsFixState::LostFix { lost_at } => {
                 if fix_count > 0 {
-                    // Fix regained - emit GnssFixRegained with gap duration.
                     let duration = point.tpv.time().signed_duration_since(lost_at);
                     result = Some(GeneratedMarker::new(
                         point.tpv.time().utc(),
@@ -267,9 +259,7 @@ fn detect_generated_markers(
     markers
 }
 
-/// Whether a fix-transition marker kind is enabled by `config`.  Non-fix kinds
-/// are gated by their own toggles at their call sites, so this returns `true`
-/// for them rather than claiming to decide.
+/// Non-fix kinds are gated at their call sites and return `true` here.
 fn fix_marker_enabled(kind: &GeneratedMarkerKind, config: &GeneratedMarkerConfig) -> bool {
     match kind {
         GeneratedMarkerKind::GnssFixLost => config.detect_gnss_fix_lost,
@@ -343,23 +333,21 @@ pub fn clock_discontinuity_floor_seconds(sigmas: f64) -> f64 {
 /// Emit a [`GeneratedMarkerKind::ClockDiscontinuity`] for each sample where the
 /// GPS−system offset *jumps* abruptly from the previous sample.
 ///
-/// Detection runs on the first-difference (step) series - the change in offset
-/// between consecutive with-system-timestamp samples - rather than on the offset
-/// itself.  Two passes: the first measures the track's typical step size (median
-/// and median absolute deviation, both near zero for a healthy clock). The
-/// second flags any step more than `sigmas` robust standard deviations from
-/// that.  Working on jumps (not levels) means a discontinuity is
-/// flagged once, at the transition, instead of once per sample of a shifted
-/// plateau - and a genuine large-but-steady offset (e.g. a host clock that
-/// drifted while parked underground) produces no jumps and so no markers.
-/// Deriving the bar from the track's own behaviour - not a fixed magnitude -
-/// is what keeps it device-agnostic.  Detection only. No data is altered.
+/// Detection runs on the first-difference (step) series, the change in offset
+/// between consecutive with-system-timestamp samples. Two passes: the first
+/// measures the track's typical step size (median and median absolute
+/// deviation), the second flags any step more than `sigmas` robust standard
+/// deviations from that, floored at [`MIN_CLOCK_SPREAD_MS`].
+///
+/// Working on jumps, not levels, flags a discontinuity once at the transition,
+/// not once per sample of a shifted plateau. A steady large offset produces no
+/// jumps.
 ///
 /// `sigmas` is the outlier sensitivity (see
-/// [`SegmentationConfig::clock_discontinuity_sigmas`]).  `excursion_indices`
+/// [`SegmentationConfig::clock_discontinuity_sigmas`]). `excursion_indices`
 /// (ascending) names the samples already explained by a
-/// [`GeneratedMarkerKind::ClockOffsetExcursion`]; they are left out of the step
-/// series so an excursion is one marker rather than a jump out and a jump back.
+/// [`GeneratedMarkerKind::ClockOffsetExcursion`], which are left out of the
+/// step series.
 fn detect_clock_discontinuities(
     points: &[NavPoint],
     sigmas: f64,
@@ -380,8 +368,7 @@ fn detect_clock_discontinuities(
         return Vec::new();
     }
     // Saturating arithmetic throughout: offsets come from a parsed binary
-    // format, so steps and deviations are kept structurally overflow-proof for
-    // adversarial timestamps rather than relying on values staying small.
+    // format and may be adversarial.
     let steps: Vec<i64> = samples
         .windows(2)
         .filter_map(|w| match w {
@@ -653,8 +640,9 @@ pub fn build_loaded_file(
                 .collect();
 
             // Each channel keeps only the samples in this track's time range.
-            // Tracks are time-disjoint, so a sample lands in at most one track;
-            // a channel with no samples here is dropped from this track.
+            // Tracks are time-disjoint, so a sample lands in at most one
+            // track. A channel with no samples here is dropped from this
+            // track.
             let track_channels: Vec<Channel> = channels
                 .iter()
                 .map(|c| c.slice_time_range(track_start, track_end))
@@ -720,7 +708,7 @@ pub fn build_loaded_file(
 
     // Channel samples that fell in a between-track gap (e.g. a sensor still
     // logging while GPS had no fix) belong to no track and were dropped above.
-    // Surface the loss rather than hiding it.
+    // Surface the loss.
     let input_samples: usize = channels.iter().map(|c| c.times.len()).sum();
     let kept_samples: usize = loaded_tracks
         .iter()
@@ -829,9 +817,8 @@ pub fn reassemble_channels(tracks: &[LoadedTrack]) -> Vec<Channel> {
 /// Overwrites `merc` on ghost points (those with `heading == None`) with
 /// positions linearly interpolated from the surrounding real fixes (`fix_count > 0`).
 ///
-/// The renderer displays ghost points at the interpolated position rather than at their
-/// raw GPS coordinates (which may be unreliable when no heading is present). Pre-computing
-/// this once at load time eliminates the O(k) per-ghost scan that previously ran every frame.
+/// The renderer displays ghost points at the interpolated position. Raw GPS
+/// coordinates may be unreliable when no heading is present.
 ///
 /// Runs in O(n) over all points in the track.
 #[expect(
@@ -1284,7 +1271,8 @@ mod tests {
         );
         assert_eq!(f.tracks.len(), 2);
 
-        // Track 1 keeps the two in-range samples; the gap sample (1800) is dropped.
+        // Track 1 keeps the two in-range samples. The gap sample (1800) is
+        // dropped.
         let t0 = &f.tracks[0].channels;
         assert_eq!(t0.len(), 1);
         assert_eq!(t0[0].name, "incline");
@@ -1296,8 +1284,8 @@ mod tests {
         assert_eq!(t1.len(), 1);
         assert_eq!(t1[0].times, vec![utc(3600)]);
 
-        // Reassembly concatenates the per-track slices back in time order; the
-        // dropped gap sample stays dropped.
+        // Reassembly concatenates the per-track slices back in time order.
+        // The dropped gap sample stays dropped.
         let reassembled = reassemble_channels(&f.tracks);
         assert_eq!(reassembled.len(), 1);
         assert_eq!(reassembled[0].times, vec![utc(0), utc(30), utc(3600)]);
@@ -1370,7 +1358,7 @@ mod tests {
 
     #[test]
     fn a_channel_absent_from_a_track_is_not_attached() {
-        // Channel samples only in track 2's range; track 1 carries no channel.
+        // Channel samples only in track 2's range. Track 1 has no channel.
         let pts = vec![make_point_at(0), make_point_at(3600), make_point_at(3660)];
         let channel = Channel {
             name: "accel".to_owned(),

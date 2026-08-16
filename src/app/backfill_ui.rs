@@ -14,11 +14,10 @@ use gt_jam::calendar::{self, COVERAGE_START};
 
 use super::jamming::BackfillProgress;
 
-/// How much one archived day costs on disk, measured over the captured
-/// fixtures, for the size estimate.
+/// Size of one archived day on disk, measured over the captured fixtures.
 const BYTES_PER_DAY: u64 = 81 * 1024;
 
-/// Above this, the estimate reads in minutes.
+/// Estimates above this display in minutes.
 const MINUTES_CUTOFF_SECS: u64 = 90;
 
 /// Range presets, as days back from today. [`None`] is the whole coverage
@@ -29,7 +28,6 @@ const PRESETS: [(&str, Option<u64>); 3] = [
     ("Everything", None),
 ];
 
-/// What the control is asking the app to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackfillAction {
     Start { from: NaiveDate, to: NaiveDate },
@@ -72,8 +70,8 @@ fn to_chrono(date: Date) -> Option<NaiveDate> {
     )
 }
 
-/// A rough wall-clock and disk estimate for `days`, since a full backfill
-/// runs for the better part of an hour.
+/// A rough wall-clock and disk estimate. A full backfill takes roughly an
+/// hour.
 fn estimate(count: usize) -> String {
     let days = count as u64;
     let seconds = days * gt_jam::transport::REQUEST_INTERVAL.as_secs();
@@ -118,8 +116,7 @@ impl BackfillUi {
         (from <= to).then_some((from, to))
     }
 
-    /// Record what a start produced, so the user learns that a range they
-    /// already hold cost nothing.
+    /// Sets the outcome line shown under the range controls.
     ///
     /// [`None`] is [`super::jamming::JammingScheduler::backfill`] reporting
     /// no archive.

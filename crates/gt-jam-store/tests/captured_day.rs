@@ -10,7 +10,7 @@ use gt_jam_store::{FILE_NAME, JamStore};
 
 const HOST: &str = "https://gpsjam.org";
 
-/// Ceiling for one stored day. It measures about 81 KiB; the headroom
+/// Ceiling for one stored day. It measures about 81 KiB. The headroom
 /// absorbs HDF5 version differences without letting a lost filter through,
 /// which would cost 891 KiB.
 const MAX_ARCHIVE_BYTES: u64 = 200_000;

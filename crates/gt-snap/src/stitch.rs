@@ -4,7 +4,7 @@
 //! an off-network rejection (the server's error 444 - not a failure, see
 //! [`ChunkOutcome::OffNetwork`]), or a failure that survived the transport's
 //! retry. Stitching takes each chunk's *owned* point range (overlap points
-//! are context; the neighboring chunk owns them where they are more
+//! are context, owned by the neighboring chunk where they are more
 //! interior), maps results back to track [`PointIdx`]s, and assembles the
 //! per-point series, the snapped-track geometry, and the run metadata.
 //!
@@ -32,37 +32,37 @@ pub enum ChunkOutcome {
     /// per-point `unmatched`, so stitching maps it to all-unsnapped points.
     OffNetwork,
     /// The chunk failed even after the transport's retry. The string is the
-    /// transport's rendered error; its points carry no data.
+    /// transport's rendered error. Its points have no data.
     Failed(String),
 }
 
 /// One warning accumulated while stitching. Structured per the warning
-/// reporter pattern (CODE_STYLE.md); the app decides how to surface them.
+/// reporter pattern (CODE_STYLE.md). The app decides how to surface them.
 ///
 /// Serde derives exist for persisting a run's warnings with its cached
-/// [`SnapResult`]; snake_case tags keep the stored form stable against
+/// [`SnapResult`]. Snake_case tags keep the stored form stable against
 /// variant renames being caught in review.
 #[derive(Debug, Clone, PartialEq, strum::EnumCount, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SnapWarning {
-    /// A chunk failed after retry; its owned points carry no snap data.
+    /// A chunk failed after retry. Its owned points have no snap data.
     ChunkFailed { chunk_index: usize, detail: String },
-    /// The server response did not have one matched point per sent point;
-    /// results cannot be mapped back to the track, so the chunk is treated
+    /// The server response did not have one matched point per sent point.
+    /// Results cannot be mapped back to the track, so the chunk is treated
     /// as failed.
     PointCountMismatch {
         chunk_index: usize,
         sent: usize,
         received: usize,
     },
-    /// The chunk's snapped-track geometry was internally inconsistent; the
+    /// The chunk's snapped-track geometry was internally inconsistent. The
     /// per-point data is kept but the chunk contributes no geometry.
     Geometry { chunk_index: usize, detail: String },
     /// Chunks were matched against different OSM data versions (the map
     /// updated mid-run). The first version is kept as the result's.
     OsmChangesetMismatch { first: u64, later: u64 },
-    /// The server attached warnings to a chunk's response; passed through
-    /// verbatim (no live exemplar exists to model them more tightly).
+    /// The server attached warnings to a chunk's response, passed through
+    /// verbatim. No live exemplar exists to model them more tightly.
     Server {
         chunk_index: usize,
         warnings: Vec<Value>,
@@ -133,7 +133,7 @@ pub struct SnapPoint {
     pub edge: Option<usize>,
     /// True when no snap data precedes this point: the plan dropped a ghost
     /// run before it, a chunk failed there, or it opens the result. Series
-    /// drawn over these points break here instead of spanning the gap.
+    /// drawn over these points break here.
     #[serde(default)]
     pub follows_gap: bool,
 }
@@ -142,9 +142,8 @@ pub struct SnapPoint {
 ///
 /// Serde derives exist for the persistent cache in the recording history
 /// database. Optional and collection fields carry `#[serde(default)]` so
-/// fields added later decode absent from older stored results instead of
-/// failing the whole blob; the schema is pinned by a snapshot test
-/// (`stored_result_schema`).
+/// fields added later decode absent from older stored results. The schema is
+/// pinned by a snapshot test (`stored_result_schema`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SnapResult {
     /// Per sent point with data, ascending by track index. Sent points of
@@ -164,7 +163,7 @@ pub struct SnapResult {
     /// Most conservative (lowest) confidence across the successful chunks.
     #[serde(default)]
     pub confidence_score: Option<f64>,
-    /// OSM data version of the first successful chunk; a mid-run version
+    /// OSM data version of the first successful chunk. A mid-run version
     /// change is reported as a warning.
     #[serde(default)]
     pub osm_changeset: Option<u64>,
@@ -276,7 +275,7 @@ pub fn stitch(
 
         for (local, sent) in chunk.owned_sent().iter().enumerate() {
             let Some(matched) = response.snapped_points.get(chunk.owned.start + local) else {
-                continue; // count validated above; defensive only
+                continue; // count validated above, defensive only
             };
             result.kind_counts.count(matched.kind);
             result.points.push(SnapPoint {
@@ -343,9 +342,8 @@ pub fn stitch(
                 }
             };
 
-        // Only a chunk that actually placed geometry can offer its trailing
-        // segment for the next chunk to join onto; anything else would weld
-        // the next chunk to a stale, non-adjacent segment.
+        // Only a chunk that placed geometry arms joining. Otherwise the next
+        // chunk would join a non-adjacent segment.
         join_pending = contributed_geometry && ends_snappable;
     }
 
@@ -368,7 +366,6 @@ fn owned_boundary_snappable(chunk: &Chunk, response: &TraceAttributesResponse) -
     (starts, ends)
 }
 
-/// Fold a chunk's run-level metadata into the result.
 fn stitch_metadata(
     result: &mut SnapResult,
     response: &TraceAttributesResponse,

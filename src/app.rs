@@ -47,8 +47,7 @@ struct SharedAppState {
     tree: TreeState,
     highlight: MapHighlight,
     filter: GlobalFilter,
-    /// Global per-category visibility of the map ink. UI to edit it lands
-    /// with the display toggle popup; until then it stays all-visible.
+    /// Global per-category visibility of the map ink.
     display_mask: DisplayMask,
     /// Which sky-glyph variant the map overlay draws.
     sky_glyph_variant: SkyGlyphVariant,
@@ -101,7 +100,6 @@ struct ResegmentPrompt {
     marker_settings_changed: bool,
 }
 
-/// The interference transport for this run.
 fn jam_transport_source(offline: bool) -> jam_transport::TransportSource {
     if offline {
         jam_transport::TransportSource::Offline
@@ -110,7 +108,6 @@ fn jam_transport_source(offline: bool) -> jam_transport::TransportSource {
     }
 }
 
-/// The snap-to-road transport for this run.
 fn snap_transport_source(offline: bool) -> snap_transport::TransportSource {
     if offline {
         snap_transport::TransportSource::Offline
@@ -138,7 +135,7 @@ pub struct StartupOptions {
 
 /// The dense per-component color slots the plot reads, from the settings
 /// file's sparse recolored-component entries. Entries past the widest index
-/// size the vector; anything absent stays the derived hue.
+/// size the vector. Anything absent stays the derived hue.
 fn dense_component_colors(
     entries: &[crate::settings::ComponentColor],
 ) -> Vec<Option<egui::Color32>> {
@@ -196,11 +193,11 @@ pub struct App {
     /// the upload-consent acknowledgment.
     snap_settings: crate::settings::SnapSettings,
     /// Whether the snap upload-consent dialog is currently shown. Raised by
-    /// the side panel's manual snap trigger while consent is pending; lowered
+    /// the side panel's manual snap trigger while consent is pending, lowered
     /// by the dialog.
     snap_consent_prompt: bool,
     /// Auto mode should sweep for unsnapped tracks: set when files load,
-    /// indices shift, or auto mode turns on; consumed once per frame.
+    /// indices shift, or auto mode turns on. Consumed once per frame.
     snap_auto_sweep: bool,
     /// Per-run derived snap error data, keyed by track content and
     /// invalidated by the run's `Arc` identity. Downstream caches (the
@@ -208,10 +205,10 @@ pub struct App {
     /// must stay stable across frames and change exactly when the run does.
     snap_error_cache: HashMap<snap::TrackContentKey, SnapErrorDerived>,
     /// Session-only per-track costing overrides ("Snap again as…"). The
-    /// override beats the declared travel mode and the configured default;
-    /// content-keyed so it survives index shifts like the run stores. Not
+    /// override beats the declared travel mode and the configured default.
+    /// Content-keyed so it survives index shifts like the run stores. Not
     /// persisted: after a restart the stored run goes stale against the
-    /// resolved default again - consistent, never misleading.
+    /// resolved default again.
     snap_costing_overrides: HashMap<snap::TrackContentKey, Costing>,
     /// The snap trigger that raised the consent dialog. Run when the
     /// dialog is accepted, dropped when it is declined.
@@ -221,7 +218,7 @@ pub struct App {
     /// The recording-level costing choice waiting on the scope dialog.
     snap_scope_prompt: Option<SnapScopePrompt>,
     /// Tracks whose completed snapped track is toggled off the map. Session
-    /// state, like the snap cache; cleared with the other per-track snap
+    /// state, like the snap cache. Cleared with the other per-track snap
     /// state when indices shift.
     hidden_snapped: std::collections::HashSet<TrackRef>,
 
@@ -237,11 +234,9 @@ pub struct App {
     /// Path to config file - if None, settings are not loaded from or saved to disk.
     config_path: Option<PathBuf>,
 
-    /// Whether the Settings window is currently open.
     settings_open: bool,
-    /// Whether the About dialog is currently open.
     about_open: bool,
-    /// The running crate version; fixed to a placeholder in tests so
+    /// The running crate version. Fixed to a placeholder in tests so
     /// version-bearing UI snapshots stay stable across release bumps.
     app_version: &'static str,
     /// Active segmentation config - applied to all new file loads and re-segmentation.
@@ -322,7 +317,7 @@ impl App {
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
         cc.egui_ctx.set_fonts(fonts);
 
-        // GPU-instanced icon rendering; without a wgpu render state (or with
+        // GPU-instanced icon rendering. Without a wgpu render state (or with
         // a corrupted embed, which NavMap reports) the map falls back to the
         // CPU mesh path. Dithering on, matching eframe's renderer default.
         if let Some(render_state) = &cc.wgpu_render_state
@@ -511,7 +506,6 @@ impl App {
             .collect()
     }
 
-    /// Dispatch a file path to the appropriate loader based on its extension.
     fn spawn_load_path(&mut self, path: PathBuf) {
         let ext = path
             .extension()
@@ -527,7 +521,6 @@ impl App {
         }
     }
 
-    /// Returns `true` when the plot tile is currently visible.
     fn plot_is_visible(&self) -> bool {
         self.tiles_tree.tiles.is_visible(self.plot_tile_id)
     }
@@ -714,7 +707,6 @@ impl App {
         self.on_track_indices_changed();
     }
 
-    /// Process a completed background load: integrate the result into shared state.
     fn handle_completed_load(&mut self, completed: CompletedLoad, now: f64) {
         match completed.outcome {
             Ok(LoadOutcome::GtdFile {
@@ -729,8 +721,8 @@ impl App {
                     completed.filename,
                     file.tracks.len()
                 );
-                // Stored recordings may carry cached snap runs; fetch them
-                // (the response restores them into the session stores).
+                // Stored recordings may have cached snap runs. The response
+                // restores them into the session stores.
                 if let Some(db_ref) = history.db_ref() {
                     self.history.load_snap_runs(db_ref.clone());
                 }
@@ -758,7 +750,6 @@ impl App {
                     completed_at: now,
                 });
                 if was_stored {
-                    // The recording list now has a new entry, refresh it.
                     self.history_window.invalidate();
                     self.check_auto_prune();
                 }
@@ -797,14 +788,10 @@ impl App {
         }
     }
 
-    /// Apply the history side of a "remove" confirmation: hide the affected
-    /// recordings, or permanently delete them when the user opted in. The toast
-    /// is shown when the worker confirms via [`Self::handle_history_response`].
     /// Bookkeeping after any structural change to `loaded_files` (removal,
     /// re-segmentation): track indices shifted, so the spatial index and all
     /// `TrackRef`-keyed transient state must be rebuilt or dropped. Every
-    /// mutation site must call this - pairing the two here keeps a future
-    /// mutation site from forgetting one of them.
+    /// mutation site must call this.
     fn on_track_indices_changed(&mut self) {
         self.snap.reset_track_states();
         self.snap_auto_sweep = true;
@@ -814,6 +801,9 @@ impl App {
         self.map.rebuild_spatial_index(&s.loaded_files);
     }
 
+    /// Hides the affected recordings, or deletes them when
+    /// `outcome.permanent`. The toast is shown when the worker confirms via
+    /// [`Self::handle_history_response`].
     fn apply_remove_outcome(&self, outcome: &modals::RemoveOutcome) {
         for removal in &outcome.affected {
             if outcome.permanent {

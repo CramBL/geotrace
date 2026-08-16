@@ -23,7 +23,7 @@ impl RecordingNames {
     /// The `{filename}` token gets the name with the longest directory prefix
     /// shared by all loaded files removed, so files like
     /// `/home/user/recordings/a.gtd` and `/home/user/recordings/b.gtd` show as
-    /// `a.gtd` and `b.gtd` rather than their full paths.
+    /// `a.gtd` and `b.gtd`.
     pub fn resolve(files: LoadedFilesView<'_>, template: &str) -> Self {
         let filenames: Vec<&str> = files
             .files()
@@ -71,8 +71,8 @@ impl RecordingNames {
     }
 }
 
-/// Returns the byte offset at which each name's *display* form begins — i.e.
-/// the length of the longest common directory prefix shared by all names.
+/// Returns the length of the longest common directory prefix shared by all
+/// names: the byte offset at which each name's display form begins.
 ///
 /// Returns `0` when there is nothing meaningful to strip: fewer than two names,
 /// no name contains a path separator (so there is no directory structure to
@@ -96,8 +96,8 @@ fn common_path_prefix_len(names: &[&str]) -> usize {
             .count();
         acc.min(len)
     });
-    // `common_bytes` may land in the middle of a multi-byte character; snap to a
-    // valid char boundary before searching for the last separator. Because the
+    // `common_bytes` may land in the middle of a multi-byte character, so snap
+    // to a valid char boundary before searching for the last separator. Because the
     // leading `common_bytes` bytes are identical in all names, the resulting
     // index is a valid char boundary in every name.
     let common_bytes = first.floor_char_boundary(common_bytes);

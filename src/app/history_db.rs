@@ -110,7 +110,7 @@ pub enum Response {
     /// (the session stores keep working), so the app logs rather than
     /// toasts.
     SnapRunsStored(Result<(), DbError>),
-    /// A recording's stored snap runs, `None` when it carries none.
+    /// A recording's stored snap runs, `None` when it has no stored runs.
     SnapRunsLoaded {
         db_ref: DatabaseRef,
         blob: Result<Option<Vec<u8>>, DbError>,
@@ -446,8 +446,6 @@ mod tests {
     use gt_store::{StoredSegmentation, TrackRange};
     use gt_test_utils::{SyntheticGtdSpec, synthetic_gtd_bytes};
 
-    // Brings in `HistoryWorker`, `Request`/`Response`, `Recordings`, `Context`,
-    // `PruneMode`, `AutoPruneOutcome`, etc. without re-importing sibling modules.
     use super::*;
 
     fn sample_bytes() -> Vec<u8> {

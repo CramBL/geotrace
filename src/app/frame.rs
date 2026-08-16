@@ -208,7 +208,7 @@ impl App {
 
                     // While a query is filtering the map but its window is
                     // closed, the button turns amber with a "!" so the active
-                    // filter is not forgotten; right-click clears it. The amber
+                    // filter is not forgotten. Right-click clears it. The amber
                     // is dimmed in light mode, where the bright tone glares.
                     let query_active = self.query_window.filter_active();
                     let show_alert = query_active && !self.query_window.open;
@@ -490,7 +490,7 @@ impl App {
             // Forward plot hover → map highlight (must happen after the tree renders
             // so that show_track_plot has already written the current hovered_time).
             // The pre-computed `plot_hover_point` lets TpvRenderer look up the
-            // closest point in O(1) instead of re-scanning all track points.
+            // closest point in O(1).
             let plot_visible = self.plot_is_visible();
             if plot_visible {
                 if let Some(cursor_time) = s.plot_state.hovered_time {
@@ -545,8 +545,8 @@ impl App {
                 display_mask,
                 ..
             } = &mut *s;
-            // The map and plot consumed last frame's hovered match above;
-            // clearing here keeps it set only while a header is hovered.
+            // The map and plot consumed last frame's hovered match above.
+            // Clearing here keeps it set only while a header is hovered.
             highlight.hover_match = None;
             // Likewise the scrub line: cleared here (after the plot read last
             // frame's value) so it stays set only while the sky-trails window
@@ -624,8 +624,7 @@ impl App {
                         self.snap_settings.auto_snap = Some(auto);
                     }
                     self.snap_consent_prompt = false;
-                    // The click that raised the dialog proceeds now that
-                    // uploads are acknowledged.
+                    // Run the request parked while consent was pending.
                     let parked = std::mem::take(&mut self.pending_snap);
                     self.run_snap_request(parked);
                     self.snap_auto_sweep = true;
@@ -671,8 +670,7 @@ impl App {
                 .anchor(egui::Align2::RIGHT_BOTTOM, [-8.0, -8.0])
                 .show(ui.ctx(), |ui| {
                     ui.set_min_width(260.0);
-                    // Cap the width so a long recording name truncates instead of
-                    // stretching this auto-sized overlay across the window.
+                    // Cap the width so a long recording name truncates.
                     ui.set_max_width(340.0);
 
                     for job in &self.loader.loading_jobs {
@@ -778,8 +776,8 @@ impl App {
         let remove_outcome = {
             let mut refmut = self.shared.borrow_mut();
             let s = &mut *refmut;
-            // Resolved only while the dialog is up: the map and the plot pay for
-            // their own names every frame, this one would be thrown away.
+            // Resolved only while the dialog is up. The map and plot resolve
+            // their own names each frame.
             let outcome = s.tree.delete_confirm.is_some().then(|| {
                 let recording_names =
                     RecordingNames::resolve(s.loaded_files.view(), &s.recording_name_template);

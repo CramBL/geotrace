@@ -20,7 +20,7 @@ const SELF_UPDATE_HELP: &str = "\n      --update   Update in place and exit";
 #[cfg(not(feature = "self-update"))]
 const SELF_UPDATE_HELP: &str = "";
 
-/// What the command line asks the binary to do, resolved before any GUI setup.
+/// The action requested on the command line, resolved before any GUI setup.
 ///
 /// Flags win over files, so `geotrace --version foo.gtd` prints the version and
 /// never opens a window. The variants are ordered by that precedence.
@@ -30,9 +30,8 @@ enum CliAction {
     Version,
     /// Print help and exit (`--help` / `-h`).
     Help,
-    /// Update in place and exit (`--update`). Recognized in every build so a
-    /// build without the updater can report it clearly rather than mistaking
-    /// the flag for a file path; only dist builds can actually honor it.
+    /// Update in place and exit (`--update`). Recognized in every build so one
+    /// without the updater can report it clearly. Only dist builds honor it.
     SelfUpdate,
     /// Launch the GUI, opening the given files on startup.
     Launch(Vec<PathBuf>),
@@ -70,8 +69,6 @@ fn run_self_update_cli() -> ExitCode {
     }
 }
 
-/// Builds without the updater still recognize `--update` so they can report it
-/// plainly instead of treating the flag as a file to open.
 #[cfg(not(feature = "self-update"))]
 fn run_self_update_cli() -> ExitCode {
     eprintln!("updating is not supported by this build");
@@ -214,9 +211,8 @@ mod tests {
 
     use crate::CliAction;
 
-    // The window icon is embedded at compile time and decoded at startup, so a
-    // corrupt asset would only surface when someone launches the GUI. Decode it
-    // here so CI fails loudly instead.
+    // Decodes independently of app startup so a corrupt embedded icon fails
+    // CI instead of only surfacing when someone launches the GUI.
     #[test]
     fn embedded_app_icon_is_a_valid_png() {
         let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/geotrace_icon.png"))
@@ -249,8 +245,6 @@ mod tests {
         );
     }
 
-    // A flag beats any files on the line: `geotrace --version foo.gtd` prints the
-    // version and never opens a window.
     #[test]
     fn a_flag_wins_over_files() {
         let args = vec!["--version".to_owned(), "foo.gtd".to_owned()];

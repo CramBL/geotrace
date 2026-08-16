@@ -4,8 +4,7 @@
 //! harness (`examples/fetch_snap_fixtures.rs`), and the files under
 //! `tests/fixtures/`: every scenario has its request/response pair, nothing
 //! stray lingers after a scenario rename, and the captured statuses stay
-//! pinned so a re-capture that changes server behavior fails loudly instead
-//! of slipping through review.
+//! pinned so a re-capture that changes server behavior fails.
 
 use std::collections::BTreeSet;
 use std::fs;

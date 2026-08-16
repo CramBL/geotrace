@@ -16,14 +16,8 @@ mod table;
 
 /// Turn off label text-selection for a History window's contents.
 ///
-/// egui makes every label selectable by default, which puts a text-editing
-/// I-beam under the pointer over each one. That reads as an invitation to type
-/// where there is nothing to type: these windows are captions, values, and
-/// controls rather than prose, and a column header that sorts on click was
-/// showing the same I-beam as a text field.
-///
-/// Anything genuinely worth copying opts back in with [`Label::selectable`],
-/// and keeps the I-beam as the signal that it can be.
+/// egui labels default to selectable. Anything worth copying opts back in
+/// with [`Label::selectable`].
 fn use_plain_labels(ui: &mut egui::Ui) {
     ui.style_mut().interaction.selectable_labels = false;
 }
@@ -269,8 +263,8 @@ impl SortColumn {
         }
     }
 
-    /// How the given order reads for this column, for the header's hover hint -
-    /// "newest first" says more about a date column than "descending" does.
+    /// The header's hover hint for this column in `direction`, e.g. "newest
+    /// first".
     fn order_hint(self, direction: SortDirection) -> &'static str {
         match (self, direction) {
             (Self::Identity, SortDirection::Ascending) => "A to Z",
@@ -288,7 +282,7 @@ impl SortColumn {
 
     /// Order two entries by this column's value, ascending. Identity compares
     /// on the displayed name (case-insensitively), so the order matches what
-    /// the column actually shows rather than the stored `auto:`-prefixed form.
+    /// the column shows.
     fn compare(self, a: &RecordingEntry, b: &RecordingEntry) -> Ordering {
         match self {
             Self::Identity => compare_identities(&a.db_ref.identity, &b.db_ref.identity),
@@ -333,8 +327,7 @@ struct HistorySort {
 }
 
 impl Default for HistorySort {
-    /// Newest first, matching the order the database itself lists recordings
-    /// in - so opening the window shows what it always did until sorted.
+    /// Newest first, the database's own listing order.
     fn default() -> Self {
         Self {
             column: SortColumn::Date,
@@ -362,9 +355,8 @@ impl HistorySort {
 
     /// Order `entries` in place.
     ///
-    /// Ties break on the recording's database reference, which is unique - so
-    /// equal keys (two same-size recordings, say) keep one stable order instead
-    /// of shuffling between frames, and the tie-break stays independent of the
+    /// Ties break on the recording's database reference, which is unique, so
+    /// equal keys keep one stable order. The tie-break is independent of the
     /// chosen direction.
     fn apply(self, entries: &mut [&RecordingEntry]) {
         entries.sort_by(|a, b| {
@@ -413,8 +405,7 @@ pub struct HistoryWindow {
     /// Error from the last operation, if any.
     error: Option<String>,
     prune: PruneDialog,
-    /// Whether the "delete hidden data" confirmation dialog is open.
-    confirm_delete_hidden: bool,
+    delete_hidden_confirm_open: bool,
     /// Whether a recording-list request is in flight (drives the spinner and
     /// prevents re-requesting every frame while waiting).
     list_pending: bool,
@@ -444,7 +435,7 @@ impl HistoryWindow {
             filter_date_to: String::new(),
             error: None,
             prune: PruneDialog::new(),
-            confirm_delete_hidden: false,
+            delete_hidden_confirm_open: false,
             list_pending: false,
             rename: None,
             sort: HistorySort::default(),
@@ -547,19 +538,18 @@ impl HistoryWindow {
 
         let mut open = self.open;
 
-        // Escape closes the whole window only when nothing more local wants it:
-        // while the confirmation dialog is up it dismisses that, and while an
-        // inline rename is open it must reach the editor to cancel it (so the
-        // key is left unconsumed here in that case, via short-circuit).
+        // Escape closes the whole window only when nothing more local wants
+        // it. The confirmation dialog and an open inline rename both take it
+        // first, so the key is left unconsumed here via short-circuit.
         if self.rename.is_none()
-            && !self.confirm_delete_hidden
+            && !self.delete_hidden_confirm_open
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
         {
             open = false;
         }
 
         // Take the inline-rename state out so `render_row` can mutate it while
-        // `self.entries` is borrowed immutably for the list; restored after.
+        // `self.entries` is borrowed immutably for the list. Restored after.
         let mut rename = std::mem::take(&mut self.rename);
 
         Window::new("History")
@@ -594,7 +584,7 @@ impl HistoryWindow {
 
                 // Toolbar row: identity filter on the left, actions on the
                 // right. The right-side controls are laid out right-to-left so
-                // they claim their width first; the filter field then fills only
+                // they claim their width first. The filter field then fills only
                 // the space between the label and them. Adding the field in the
                 // outer left-to-right layout instead lets it grow into the
                 // right-side controls and overlap them once the window narrows.
@@ -618,7 +608,7 @@ impl HistoryWindow {
                                 "No hidden tracks to delete"
                             });
                         if delete_hidden.clicked() {
-                            self.confirm_delete_hidden = true;
+                            self.delete_hidden_confirm_open = true;
                         }
                         if ui.button("Prune…").clicked() {
                             self.prune.open = true;
@@ -806,8 +796,7 @@ impl HistoryWindow {
                     }
                 });
                 if let Some(path) = worker.path() {
-                    // Worth copying out of the app, so this one keeps text
-                    // selection - and the I-beam that advertises it.
+                    // Kept selectable for copying.
                     ui.add(
                         Label::new(RichText::new(path.display().to_string()).weak())
                             .selectable(true),
@@ -819,9 +808,9 @@ impl HistoryWindow {
 
         // Confirmation for the destructive "delete hidden data" action, mirroring
         // the prune/auto-prune confirm flow (no permanent delete without a prompt).
-        if self.confirm_delete_hidden {
+        if self.delete_hidden_confirm_open {
             if hidden_count == 0 {
-                self.confirm_delete_hidden = false;
+                self.delete_hidden_confirm_open = false;
             } else {
                 let mut do_delete = false;
                 let mut cancel =
@@ -857,9 +846,9 @@ impl HistoryWindow {
                     });
                 if do_delete {
                     worker.delete_hidden_tracks();
-                    self.confirm_delete_hidden = false;
+                    self.delete_hidden_confirm_open = false;
                 } else if cancel {
-                    self.confirm_delete_hidden = false;
+                    self.delete_hidden_confirm_open = false;
                 }
             }
         }

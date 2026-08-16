@@ -1,7 +1,7 @@
 //! The stored form of a recording's snap runs.
 //!
 //! The recording history database keeps one opaque blob per recording (see
-//! `gt_history_types::SNAP_GROUP`); this module owns what is inside it: a
+//! `gt_history_types::SNAP_GROUP`). This module owns what is inside it: a
 //! versioned serde-JSON envelope holding the latest run of every track that
 //! has one, each keyed by the track's content fingerprint. Content keys
 //! rather than track indices, so re-segmentation or index shifts can never
@@ -10,8 +10,8 @@
 //!
 //! Decoding is tolerant: an unreadable or newer-versioned blob is treated
 //! as absent (with a warning) rather than failing the recording. The inner
-//! types' schema is pinned by `gt-snap`'s `stored_result_schema` snapshot;
-//! fields added later decode absent from older blobs via serde defaults.
+//! types' schema is pinned by `gt-snap`'s `stored_result_schema` snapshot.
+//! Fields added later decode absent from older blobs via serde defaults.
 
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +21,7 @@ use gt_types::LoadedTrack;
 use super::snap::{SnapRun, TrackContentKey};
 
 /// Version of the envelope layout itself (not the inner result schema).
-/// Bumped only on incompatible layout changes; a blob written by a newer
+/// Bumped only on incompatible layout changes. A blob written by a newer
 /// version is treated as absent rather than misread.
 const STORED_SNAP_FORMAT_VERSION: u32 = 1;
 
@@ -83,7 +83,7 @@ pub fn encode<'a>(runs: impl IntoIterator<Item = (&'a LoadedTrack, &'a SnapRun)>
             })
             .collect(),
     };
-    // Serializing owned serde types cannot fail; an empty blob decodes as
+    // Serializing owned serde types cannot fail. An empty blob decodes as
     // absent, so even a hypothetical failure only costs the cache entry.
     serde_json::to_vec(&envelope).unwrap_or_default()
 }
@@ -233,7 +233,7 @@ mod tests {
         assert_eq!(restored.result.params.costing, Costing::Auto);
     }
 
-    /// A minimal current-version envelope decodes; unknown extra fields are
+    /// A minimal current-version envelope decodes. Unknown extra fields are
     /// tolerated - the forward-compatibility contract for stored blobs.
     #[test]
     fn minimal_and_extended_envelopes_decode() {

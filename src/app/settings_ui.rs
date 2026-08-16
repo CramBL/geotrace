@@ -814,10 +814,8 @@ impl App {
     }
 }
 
-/// Value an advanced snap option is seeded with when enabled, chosen once
-/// per option so enabling is a meaningful starting point rather than a
-/// range edge. Search radius: the tuned fixture's value, comfortably wider
-/// than typical GNSS noise.
+/// Value an advanced snap option is seeded with when enabled. Search radius:
+/// the tuned fixture's value, comfortably wider than typical GNSS noise.
 const SEARCH_RADIUS_SEED_M: f64 = 25.0;
 /// Turn penalty seed: Valhalla's own suggestion for smoothing wandering
 /// matches (see the design doc's parameter inventory).
@@ -901,8 +899,6 @@ fn theme_pref_from_setting(s: crate::settings::ThemeSetting) -> egui::ThemePrefe
 
 /// Renders compound duration fields (e.g. `[0d] [9h] [30m] [0s]`).
 ///
-/// `show_days` controls whether the days field is included.
-/// `show_hours` controls whether the hours field is included.
 /// Each component is independent. The total is clamped to `[min_secs, max_secs]`.
 fn compound_duration_input(
     ui: &mut egui::Ui,

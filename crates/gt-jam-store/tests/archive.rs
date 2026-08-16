@@ -226,7 +226,7 @@ fn any_date_round_trips_through_the_day_index(#[case] date: Option<NaiveDate>) {
     );
 }
 
-/// An archive written by a newer build is refused rather than misread.
+/// An archive written by a newer build is refused.
 #[test]
 fn a_newer_schema_is_refused() {
     let dir = tempfile::tempdir().expect("temp dir");

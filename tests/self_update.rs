@@ -10,7 +10,7 @@
 //!
 //! Gated two ways so it never runs on an ordinary `cargo test`:
 //! - the `self-update` feature (a `required-features` test target in
-//!   `Cargo.toml`), so the `--update` flag exists in the binary under test;
+//!   `Cargo.toml`), so the `--update` flag exists in the binary under test.
 //! - the `GEOTRACE_RUN_UPDATE_TEST` env var, because it reaches out to GitHub
 //!   and mutates a file. CI sets both (see `ci_self_update.yml`).
 
@@ -42,7 +42,7 @@ fn headless_update_replaces_the_binary() {
 
     // A cargo-dist install receipt claiming version 0.0.1, so axoupdater always
     // considers an update necessary. Fields mirror what the real installer
-    // writes; `install_prefix` is the sandbox so the replace stays contained.
+    // writes. `install_prefix` is the sandbox so the replace stays contained.
     let prefix = bin_dir.path().display().to_string().replace('\\', "\\\\");
     let receipt = format!(
         r#"{{"binaries":["{APP}"],"install_prefix":"{prefix}","provider":{{"source":"cargo-dist","version":"0.10.0"}},"source":{{"app_name":"{APP}","name":"{APP}","owner":"{OWNER}","release_type":"github"}},"version":"0.0.1"}}"#
