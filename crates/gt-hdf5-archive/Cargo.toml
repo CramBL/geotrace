@@ -1,5 +1,5 @@
 [package]
-name = "gt-jam-store"
+name = "gt-hdf5-archive"
 description.workspace = true
 version.workspace = true
 edition.workspace = true
@@ -9,16 +9,11 @@ authors.workspace = true
 
 [lib]
 doctest = false
-# All tests are integration tests against real archive files.
-test = false
 
 [dependencies]
 chrono.workspace = true
-gt-hdf5-archive = { path = "../gt-hdf5-archive" }
-gt-jam = { path = "../gt-jam" }
-h3o.workspace = true
 hdf5.workspace = true
-parking_lot.workspace = true
+log.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

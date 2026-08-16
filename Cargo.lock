@@ -2502,6 +2502,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "gt-hdf5-archive"
+version = "0.12.0"
+dependencies = [
+ "chrono",
+ "hdf5-metno",
+ "log",
+ "rstest",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "gt-history"
 version = "0.12.0"
 dependencies = [
@@ -2589,10 +2601,10 @@ name = "gt-jam-store"
 version = "0.12.0"
 dependencies = [
  "chrono",
+ "gt-hdf5-archive",
  "gt-jam",
  "h3o",
  "hdf5-metno",
- "log",
  "parking_lot",
  "rstest",
  "tempfile",
