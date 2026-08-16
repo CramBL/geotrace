@@ -286,9 +286,14 @@ mod tests {
         );
     }
 
-    /// Every plot metric is reachable from a query, no plot metric is covered
-    /// twice, and the extra query-only metrics are exactly the five per-point
-    /// fields. A new `MetricKind` variant fails here until it is wired up.
+    /// Plot metrics not yet reachable from a query: the geomagnetic index
+    /// lines, until their values reach the run providers.
+    const PLOT_ONLY_METRICS: [MetricKind; 2] = [MetricKind::Hp30, MetricKind::Kp];
+
+    /// Every other plot metric is reachable from a query, no plot metric is
+    /// covered twice, and the extra query-only metrics are exactly the five
+    /// per-point fields. A new `MetricKind` variant fails here until it is
+    /// wired up or listed in [`PLOT_ONLY_METRICS`].
     #[test]
     fn covers_every_metric_kind() {
         let mapped: Vec<MetricKind> = QueryMetric::iter()
@@ -300,8 +305,11 @@ mod tests {
         let unmapped: Vec<MetricKind> = MetricKind::iter()
             .filter(|kind| !mapped.contains(kind))
             .collect();
-        assert_eq!(unmapped, vec![], "every plot metric is query-reachable");
-        assert_eq!(QueryMetric::COUNT, MetricKind::COUNT + 5);
+        assert_eq!(unmapped, PLOT_ONLY_METRICS);
+        assert_eq!(
+            QueryMetric::COUNT,
+            MetricKind::COUNT + 5 - PLOT_ONLY_METRICS.len()
+        );
     }
 
     /// The DSL name is the `MetricKind` wire name with the unit suffix

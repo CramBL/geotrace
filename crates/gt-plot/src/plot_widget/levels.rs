@@ -63,6 +63,39 @@ pub(super) fn track_target(
     want.clamp(2, cap)
 }
 
+/// The viewport one line selects its mipmap levels against, shared by every
+/// metric whose line is built from per-fix values rather than from
+/// [`TrackSeries`].
+#[derive(Debug, Clone, Copy)]
+pub(super) struct LineViewport {
+    pub(super) x_min: f64,
+    pub(super) x_max: f64,
+    pub(super) width: f32,
+    pub(super) cap: usize,
+}
+
+impl LineViewport {
+    /// The level each run draws at, in the order the runs are given.
+    pub(super) fn select_run_levels(self, runs: &[MipMap]) -> Vec<LevelSelection> {
+        runs.iter()
+            .map(|run| {
+                let target =
+                    track_target(run.x_range(), self.x_min, self.x_max, self.width, self.cap);
+                run.select_indices(self.x_min, self.x_max, target)
+            })
+            .collect()
+    }
+
+    /// Whether any of `run` lies inside the viewport.
+    ///
+    /// A selection always keeps one boundary point, so slice emptiness cannot
+    /// identify a run outside the viewport.
+    pub(super) fn shows(self, run: &MipMap) -> bool {
+        run.x_range()
+            .is_some_and(|(lo, hi)| lo <= self.x_max && hi >= self.x_min)
+    }
+}
+
 /// Cached level selections for every metric of one track's series, plus one
 /// per channel component (dynamic, hence no `Copy`).
 #[derive(Debug, Clone, Default)]
@@ -104,8 +137,9 @@ pub(super) struct TrackLevelCache {
 }
 
 impl TrackLevelCache {
-    /// `None` for metrics with no mipmap: snap error draws from the external
-    /// per-run series, not from `TrackSeries`.
+    /// `None` for metrics with no mipmap: snap error, interference and the
+    /// geomagnetic indices draw from their own per-track series, not from
+    /// `TrackSeries`.
     pub(super) fn level_for(&self, kind: MetricKind) -> Option<LevelSelection> {
         Some(match kind {
             MetricKind::SatsSeen => self.total_seen,
@@ -140,7 +174,9 @@ impl TrackLevelCache {
             MetricKind::SlipBeidou => self.slip_beidou,
             MetricKind::SlipNavic => self.slip_navic,
             MetricKind::SlipQzss => self.slip_qzss,
-            MetricKind::SnapError | MetricKind::Jamming => return None,
+            MetricKind::SnapError | MetricKind::Jamming | MetricKind::Hp30 | MetricKind::Kp => {
+                return None;
+            }
         })
     }
 }
@@ -182,7 +218,9 @@ impl crate::series::TrackSeries {
             MetricKind::SlipBeidou => &self.slip_beidou,
             MetricKind::SlipNavic => &self.slip_navic,
             MetricKind::SlipQzss => &self.slip_qzss,
-            MetricKind::SnapError | MetricKind::Jamming => return None,
+            MetricKind::SnapError | MetricKind::Jamming | MetricKind::Hp30 | MetricKind::Kp => {
+                return None;
+            }
         })
     }
 }

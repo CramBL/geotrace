@@ -441,6 +441,10 @@ impl App {
             self.jamming.plot_series(&shared.loaded_files)
         };
         let jamming_query_values = jamming::JammingScheduler::query_values(&jamming_series);
+        let geomagnetic_series = {
+            let shared = self.shared.borrow();
+            self.geomagnetic_indices.plot_series(&shared.loaded_files)
+        };
 
         CentralPanel::default().show(ui, |ui| {
             let panel_rect = ui.max_rect();
@@ -479,6 +483,7 @@ impl App {
                     snapped_tracks: &snapped_tracks,
                     snap_error: &snap_error,
                     jamming_series: &jamming_series,
+                    geomagnetic_series: &geomagnetic_series,
                     jamming_dataset,
                     jamming_day,
                     jamming_empty,

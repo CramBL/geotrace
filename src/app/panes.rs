@@ -40,6 +40,8 @@ pub(super) struct MainBehavior<'a> {
     pub(super) snap_error: &'a gt_ui_types::SnapErrorSeries,
     /// Interference per fix, resolved from the archive.
     pub(super) jamming_series: &'a gt_ui_types::JammingSeries,
+    /// Geomagnetic index values per fix, resolved from the archive.
+    pub(super) geomagnetic_series: &'a gt_ui_types::GeomagneticSeries,
 }
 
 impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
@@ -124,6 +126,7 @@ impl egui_tiles::Behavior<MainPane> for MainBehavior<'_> {
                     map_sync_x_range,
                     self.snap_error,
                     self.jamming_series,
+                    self.geomagnetic_series,
                     &mut s.plot_state,
                 );
             }

@@ -2,6 +2,7 @@ pub mod arc_identity;
 pub mod display_mask;
 pub mod event_marker_visibility;
 pub mod generated_marker_visibility;
+pub mod geomagnetic_series;
 pub mod highlight;
 pub mod jamming_series;
 pub mod point_window;
@@ -18,6 +19,7 @@ pub use arc_identity::ArcIdentity;
 pub use display_mask::{DisplayCategory, DisplayMask};
 pub use event_marker_visibility::EventMarkerVisibility;
 pub use generated_marker_visibility::GeneratedMarkerVisibility;
+pub use geomagnetic_series::{GeomagneticPoint, GeomagneticSeries};
 pub use highlight::{
     DataPointRef, HighlightScope, HoverCandidates, MapHighlight, MatchHighlight, PinWithheld,
     PinnedPopup,

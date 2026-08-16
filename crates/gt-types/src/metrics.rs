@@ -64,6 +64,13 @@ pub enum MetricKind {
     /// integrity, in percent, for the fix's own UTC day (see `gt-jam`).
     /// Values exist only for days held in the interference archive.
     Jamming,
+    /// Planetary geomagnetic activity on the Kp scale over the 30-minute
+    /// period the fix falls in (see `gt-solar`). Values exist only for days
+    /// held in the geomagnetic index archive, and climb past 9 in an extreme
+    /// storm.
+    Hp30,
+    /// The same scale over the 3-hour Kp period the fix falls in, capped at 9.
+    Kp,
 }
 
 #[cfg(test)]
@@ -117,6 +124,8 @@ mod tests {
             (MetricKind::SlipQzss, "slip_qzss"),
             (MetricKind::SnapError, "snap_error"),
             (MetricKind::Jamming, "jamming"),
+            (MetricKind::Hp30, "hp30"),
+            (MetricKind::Kp, "kp"),
         ];
         assert_eq!(expected.len(), MetricKind::COUNT);
         for (kind, wire) in expected {

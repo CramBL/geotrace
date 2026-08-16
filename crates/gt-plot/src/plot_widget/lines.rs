@@ -17,12 +17,11 @@ use super::chips::{
     metric_is_shown,
 };
 use super::clock_excursion::ClockExcursionHover;
-use super::jamming::{
-    JammingHover, JammingPlotCache, JammingStyle, JammingTrack, JammingViewport, add_jamming_series,
-};
-use super::levels::TrackLevelCache;
+use super::geomagnetic::{GeomagneticPlotCache, add_geomagnetic_series};
+use super::jamming::{JammingHover, JammingPlotCache, JammingTrack, add_jamming_series};
+use super::levels::{LineViewport, TrackLevelCache};
 use super::snap_error::{
-    SnapErrorHover, SnapErrorPlotCache, SnapErrorStyle, SnapErrorViewport, add_snap_error_series,
+    SnapErrorHover, SnapErrorPlotCache, SnapErrorStyle, add_snap_error_series,
 };
 use super::style::{
     channel_line_color, effective_component_color, file_line_style, metric_line_color,
@@ -82,19 +81,20 @@ pub(super) fn add_series_lines<'a>(
     line_width: f32,
     dark_mode: bool,
     snap_error: Option<&'a SnapErrorPlotCache>,
-    snap_viewport: SnapErrorViewport,
     snap_pointer: Option<egui::Pos2>,
     jamming: Option<&'a JammingPlotCache>,
-    jamming_viewport: JammingViewport,
+    geomagnetic: Option<&'a GeomagneticPlotCache>,
+    viewport: LineViewport,
     nearest: &mut NearestHoverLabel,
 ) {
     let prefix = track_label.map_or_else(String::new, |label| format!("{label}: "));
     let focused = placed.matches_hover_scope(hover_scope);
     let has_track_focus = hover_scope.is_some();
 
+    let line_style = file_line_style(placed.fi);
     // The hover-dim treatment every line shares: full color plus highlight
     // while its own chip is hovered, dimmed while any other chip is.
-    let hover_treatment = |base: Color32, is_hovered_chip: bool| {
+    let stroke_with_hover_treatment = |base: Color32, is_hovered_chip: bool| {
         let (mut color, highlighted) = match hovered_chip {
             Some(_) if is_hovered_chip => (base, true),
             Some(_) => (base.gamma_multiply(0.2), false),
@@ -103,9 +103,13 @@ pub(super) fn add_series_lines<'a>(
         if has_track_focus && !focused {
             color = color.gamma_multiply(0.2);
         }
-        (color, highlighted || (has_track_focus && focused))
+        LineStroke {
+            color,
+            style: line_style,
+            width: line_width,
+            highlighted: highlighted || (has_track_focus && focused),
+        }
     };
-    let line_style = file_line_style(placed.fi);
 
     for kind in MetricKind::iter() {
         // Skip metrics with no chip on screen - collapsed advanced section, or a
@@ -118,8 +122,8 @@ pub(super) fn add_series_lines<'a>(
             continue;
         }
         let is_hovered = hovered_chip == Some(&HoveredChip::Metric(kind));
-        let (color, highlighted) =
-            hover_treatment(metric_line_color(kind, placed.fi, dark_mode), is_hovered);
+        let stroke =
+            stroke_with_hover_treatment(metric_line_color(kind, placed.fi, dark_mode), is_hovered);
         // Snap error has no mipmap. It draws from the external per-run series
         // right after this loop.
         let (Some(mipmap), Some(level)) = (placed.series.mipmap_for(kind), cache.level_for(kind))
@@ -130,10 +134,7 @@ pub(super) fn add_series_lines<'a>(
             plot_ui,
             mipmap.slice_at(level),
             format!("{prefix}{}", kind.label()),
-            color,
-            line_style,
-            line_width,
-            highlighted,
+            stroke,
         );
     }
 
@@ -141,7 +142,7 @@ pub(super) fn add_series_lines<'a>(
         && let Some(snap_cache) = snap_error
     {
         let is_hovered = hovered_chip == Some(&HoveredChip::Metric(MetricKind::SnapError));
-        let (color, highlighted) = hover_treatment(
+        let stroke = stroke_with_hover_treatment(
             metric_line_color(MetricKind::SnapError, placed.fi, dark_mode),
             is_hovered,
         );
@@ -150,16 +151,10 @@ pub(super) fn add_series_lines<'a>(
             &prefix,
             track_label,
             snap_cache,
-            snap_viewport,
+            viewport,
             snap_pointer,
             nearest,
-            SnapErrorStyle {
-                color,
-                style: line_style,
-                width: line_width,
-                highlighted,
-                dark_mode,
-            },
+            SnapErrorStyle { stroke, dark_mode },
         );
     }
 
@@ -167,7 +162,7 @@ pub(super) fn add_series_lines<'a>(
         && let Some(jamming_cache) = jamming
     {
         let is_hovered = hovered_chip == Some(&HoveredChip::Metric(MetricKind::Jamming));
-        let (color, highlighted) = hover_treatment(
+        let stroke = stroke_with_hover_treatment(
             metric_line_color(MetricKind::Jamming, placed.fi, dark_mode),
             is_hovered,
         );
@@ -179,15 +174,24 @@ pub(super) fn add_series_lines<'a>(
                 pointer: snap_pointer,
             },
             jamming_cache,
-            jamming_viewport,
-            JammingStyle {
-                color,
-                style: line_style,
-                width: line_width,
-                highlighted,
-            },
+            viewport,
+            stroke,
             nearest,
         );
+    }
+
+    if let Some(geomagnetic_cache) = geomagnetic {
+        for (kind, runs) in geomagnetic_cache.lines() {
+            if !metric_vis.field(kind) {
+                continue;
+            }
+            let is_hovered = hovered_chip == Some(&HoveredChip::Metric(kind));
+            let stroke = stroke_with_hover_treatment(
+                metric_line_color(kind, placed.fi, dark_mode),
+                is_hovered,
+            );
+            add_geomagnetic_series(plot_ui, &prefix, kind, runs, viewport, stroke);
+        }
     }
 
     // Channel lines, one per component, gated like the chips: the whole
@@ -219,7 +223,7 @@ pub(super) fn add_series_lines<'a>(
         {
             // Rotate before the hover treatment, so dimming applies to the
             // component's own hue.
-            let (color, highlighted) = hover_treatment(
+            let stroke = stroke_with_hover_treatment(
                 effective_component_color(component_colors, &channel.name, base, index),
                 is_hovered,
             );
@@ -227,10 +231,7 @@ pub(super) fn add_series_lines<'a>(
                 plot_ui,
                 component.mipmap.slice_at(*selection),
                 format!("{prefix}{}{unit_suffix}", component.label),
-                color,
-                line_style,
-                line_width,
-                highlighted,
+                stroke,
             );
         }
     }
@@ -331,6 +332,16 @@ impl PlacedTrackSeries {
     }
 }
 
+/// How one line is stroked: its color after the hover treatment, the file's
+/// dash pattern, the user's line width, and whether it draws highlighted.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct LineStroke {
+    pub(super) color: Color32,
+    pub(super) style: LineStyle,
+    pub(super) width: f32,
+    pub(super) highlighted: bool,
+}
+
 /// Submit one metric line to the plot, borrowing the point slice directly via
 /// [`PlotPoints::Borrowed`] - no allocation.
 ///
@@ -344,21 +355,40 @@ pub(super) fn add_line<'a>(
     plot_ui: &mut egui_plot::PlotUi<'a>,
     data: &'a [egui_plot::PlotPoint],
     name: String,
-    color: Color32,
-    style: LineStyle,
-    width: f32,
-    highlighted: bool,
+    stroke: LineStroke,
 ) {
     if data.len() < 2 {
         return;
     }
     plot_ui.line(
         Line::new(name, PlotPoints::Borrowed(data))
-            .color(color)
-            .style(style)
-            .width(width)
-            .highlight(highlighted),
+            .color(stroke.color)
+            .style(stroke.style)
+            .width(stroke.width)
+            .highlight(stroke.highlighted),
     );
+}
+
+/// Maximal stretches of consecutive valued points, in the order given. A
+/// point with no value breaks the line, and a run of one point draws nothing.
+pub(super) fn line_runs(points: impl Iterator<Item = Option<PlotPoint>>) -> Vec<Vec<PlotPoint>> {
+    let mut runs = Vec::new();
+    let mut run: Vec<PlotPoint> = Vec::new();
+    let mut flush = |run: &mut Vec<PlotPoint>| {
+        if run.len() >= 2 {
+            runs.push(std::mem::take(run));
+        } else {
+            run.clear();
+        }
+    };
+    for point in points {
+        match point {
+            Some(point) => run.push(point),
+            None => flush(&mut run),
+        }
+    }
+    flush(&mut run);
+    runs
 }
 
 /// Pre-formatted tooltip contents for one masked-satellite anomaly marker.

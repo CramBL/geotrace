@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use egui_plot::PlotPoint;
-use gt_egui_mipmap::{LevelSelection, MipMap};
+use gt_egui_mipmap::MipMap;
 use gt_types::{MetricKind, TrackRef};
 use gt_ui_types::{ArcIdentity, JammingPoint, JammingSeries};
 
@@ -16,8 +16,10 @@ use crate::series::PlacedTrackSeries;
 
 use super::chips::MetricKindUi;
 
-use super::levels::track_target;
-use super::lines::{NearestHoverLabel, PlotHoverLabel, add_line, visible_by_x};
+use super::levels::LineViewport;
+use super::lines::{
+    LineStroke, NearestHoverLabel, PlotHoverLabel, add_line, line_runs, visible_by_x,
+};
 
 /// One track's interference line, rebuilt only when its source changes.
 #[derive(Debug, Clone)]
@@ -133,59 +135,14 @@ pub(super) fn sync_jamming_cache(
     }
 }
 
-/// Maximal stretches of consecutive valued points. A fix whose day is not
-/// archived has no value and breaks the line. Runs of one point draw nothing.
+/// The line's runs. A fix whose day is not archived has no value and breaks
+/// the line.
 fn jamming_runs(points: &[JammingPoint]) -> Vec<Vec<PlotPoint>> {
-    let mut runs = Vec::new();
-    let mut run: Vec<PlotPoint> = Vec::new();
-    let mut flush = |run: &mut Vec<PlotPoint>| {
-        if run.len() >= 2 {
-            runs.push(std::mem::take(run));
-        } else {
-            run.clear();
-        }
-    };
-    for point in points {
-        match point.percent {
-            Some(percent) => run.push(PlotPoint::new(point.x_secs, percent)),
-            None => flush(&mut run),
-        }
-    }
-    flush(&mut run);
-    runs
-}
-
-/// The viewport parameters the line selects its mipmap levels with.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct JammingViewport {
-    pub(super) x_min: f64,
-    pub(super) x_max: f64,
-    pub(super) width: f32,
-    pub(super) cap: usize,
-}
-
-/// How the line is stroked, matching the other metrics' styling inputs.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct JammingStyle {
-    pub(super) color: egui::Color32,
-    pub(super) style: egui_plot::LineStyle,
-    pub(super) width: f32,
-    pub(super) highlighted: bool,
-}
-
-fn select_run_levels(runs: &[MipMap], viewport: JammingViewport) -> Vec<LevelSelection> {
-    runs.iter()
-        .map(|run| {
-            let target = track_target(
-                run.x_range(),
-                viewport.x_min,
-                viewport.x_max,
-                viewport.width,
-                viewport.cap,
-            );
-            run.select_indices(viewport.x_min, viewport.x_max, target)
-        })
-        .collect()
+    line_runs(points.iter().map(|point| {
+        point
+            .percent
+            .map(|percent| PlotPoint::new(point.x_secs, percent))
+    }))
 }
 
 /// Which track is being drawn, and where the pointer is.
@@ -207,8 +164,8 @@ pub(super) fn add_jamming_series<'a>(
     prefix: &str,
     track: JammingTrack<'_>,
     cache: &'a JammingPlotCache,
-    viewport: JammingViewport,
-    style: JammingStyle,
+    viewport: LineViewport,
+    stroke: LineStroke,
     nearest: &mut NearestHoverLabel,
 ) {
     let JammingTrack {
@@ -218,16 +175,13 @@ pub(super) fn add_jamming_series<'a>(
     for (run, selection) in cache
         .runs
         .iter()
-        .zip(select_run_levels(&cache.runs, viewport))
+        .zip(viewport.select_run_levels(&cache.runs))
     {
         add_line(
             plot_ui,
             run.slice_at(selection),
             format!("{prefix}{}", MetricKind::Jamming.label()),
-            style.color,
-            style.style,
-            style.width,
-            style.highlighted,
+            stroke,
         );
     }
 

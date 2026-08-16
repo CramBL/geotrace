@@ -9,7 +9,7 @@
 //! flight at a time, and the transport spaces requests
 //! [`transport::REQUEST_INTERVAL`] apart.
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -19,10 +19,13 @@ use chrono::{NaiveDate, Utc};
 use egui::Context;
 
 use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
+use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Series, KpSeries};
 use gt_solar::{GeomagneticIndex, TimeWindow, calendar, transport, wire};
 use gt_store::{SolarStore, SolarStoreError};
-use gt_types::TimeRange;
+use gt_types::{LoadedFile, LoadedTrack, TimeRange, TrackRef};
+use gt_ui_types::{GeomagneticPoint, GeomagneticSeries};
+use strum::IntoEnumIterator as _;
 
 use super::backfill::{BackfillProgress, PendingBackfill};
 use super::geomagnetic_index_ui::GeomagneticIndexFetchStatus;
@@ -97,6 +100,14 @@ pub struct GeomagneticIndexScheduler {
     recording_days: BTreeMap<NaiveDate, RecordingDayCoverage>,
     /// Set while an explicit backfill is running.
     backfill: Option<PendingBackfill>,
+    /// UTC days the archive holds samples for, read once at startup and
+    /// extended on ingest, so resolving a fix's value never reads the day
+    /// index per frame. Assumes this process is the archive's only writer.
+    archived_days: HashSet<NaiveDate>,
+    /// Per-track plot points, keyed by the days they were resolved from, so
+    /// the `Arc` identity the plot caches on only changes when the archive
+    /// gained a day the track needs.
+    plot_points: HashMap<TrackRef, (Vec<NaiveDate>, Arc<Vec<GeomagneticPoint>>)>,
 }
 
 impl GeomagneticIndexScheduler {
@@ -107,7 +118,13 @@ impl GeomagneticIndexScheduler {
         transport_source: TransportSource,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
+        let archived_days = store
+            .as_ref()
+            .map(|store| archived_days_of(store))
+            .unwrap_or_default();
         Self {
+            archived_days,
+            plot_points: HashMap::new(),
             ctx,
             tx,
             rx,
@@ -302,6 +319,7 @@ impl GeomagneticIndexScheduler {
                     kp_samples,
                     hp30_samples,
                 } => {
+                    self.archived_days.insert(day);
                     if let Some(coverage) = self.recording_days.get_mut(&day) {
                         *coverage = RecordingDayCoverage::Archived;
                     }
@@ -337,6 +355,99 @@ impl GeomagneticIndexScheduler {
         self.seen.clear();
         self.failures.clear();
         self.backfill = None;
+    }
+
+    /// Geomagnetic index values for the plot: one point per fix of every
+    /// loaded track, from the archived period covering that fix's own UTC
+    /// time.
+    ///
+    /// A track's points are rebuilt only when the archive gains one of the
+    /// days it spans, so the `Arc` the plot caches on stays stable.
+    pub fn plot_series(&mut self, files: &[LoadedFile]) -> GeomagneticSeries {
+        let mut series = GeomagneticSeries::default();
+        let mut live: HashSet<TrackRef> = HashSet::new();
+        // Shared across tracks: a batch of recordings from one drive all read
+        // the same day.
+        let mut archived: HashMap<NaiveDate, ArchivedDay> = HashMap::new();
+
+        for (fi, file) in files.iter().enumerate() {
+            for (ti, track) in file.tracks.iter().enumerate() {
+                let track_ref =
+                    TrackRef::new(gt_types::FileIdx::new(fi), gt_types::TrackIdx::new(ti));
+                live.insert(track_ref);
+
+                let resolved_from = self.archived_days_spanned_by(track);
+                let cached = self
+                    .plot_points
+                    .get(&track_ref)
+                    .filter(|(days, _)| *days == resolved_from);
+                let points = match cached {
+                    Some((_, points)) => Arc::clone(points),
+                    None => {
+                        let points = Arc::new(Self::resolve_points(
+                            self.store.as_deref(),
+                            &mut archived,
+                            track,
+                        ));
+                        self.plot_points
+                            .insert(track_ref, (resolved_from, Arc::clone(&points)));
+                        points
+                    }
+                };
+                if points
+                    .iter()
+                    .any(|point| point.hp30.is_some() || point.kp.is_some())
+                {
+                    series.points_by_track.insert(track_ref, points);
+                }
+            }
+        }
+        self.plot_points.retain(|track, _| live.contains(track));
+        series
+    }
+
+    /// The archived days the track's fixes fall in, as the cache key: a
+    /// track's points change exactly when this set does.
+    fn archived_days_spanned_by(&self, track: &LoadedTrack) -> Vec<NaiveDate> {
+        let range = track.metadata.time_range;
+        gt_types::utc_days::days_in_range(
+            range.start.date_naive()..=range.end.date_naive(),
+            |day| self.archived_days.contains(&day),
+        )
+    }
+
+    /// One point per fix, valued from the archived periods of the fix's own
+    /// UTC day. Both indices publish periods that start on the hour or the
+    /// half hour, so no period a fix falls in begins on the day before.
+    fn resolve_points(
+        store: Option<&SolarStore>,
+        archived: &mut HashMap<NaiveDate, ArchivedDay>,
+        track: &LoadedTrack,
+    ) -> Vec<GeomagneticPoint> {
+        track
+            .points
+            .iter()
+            .map(|point| {
+                let time = point.tpv.time().utc();
+                let day = time.date_naive();
+                let day_series = archived
+                    .entry(day)
+                    .or_insert_with(|| ArchivedDay::read(store, day));
+                GeomagneticPoint {
+                    x_secs: time.timestamp() as f64,
+                    hp30: day_series
+                        .hp30
+                        .as_ref()
+                        .and_then(|series| series.activity_at(time))
+                        .map(GeomagneticActivity::value),
+                    kp: day_series
+                        .kp
+                        .as_ref()
+                        .and_then(|series| series.activity_at(time))
+                        .map(GeomagneticActivity::value),
+                }
+            })
+            .collect()
     }
 
     #[cfg(test)]
@@ -397,6 +508,54 @@ impl GeomagneticIndexScheduler {
             }
         }
     }
+}
+
+/// One day's archived series, read once and shared by every fix falling in
+/// that day.
+#[derive(Default)]
+struct ArchivedDay {
+    kp: Option<KpSeries>,
+    hp30: Option<Hp30Series>,
+}
+
+impl ArchivedDay {
+    fn read(store: Option<&SolarStore>, day: NaiveDate) -> Self {
+        let Some(store) = store else {
+            return Self::default();
+        };
+        Self {
+            kp: read_archived_series(store.kp_series(day), GeomagneticIndex::Kp, day),
+            hp30: read_archived_series(store.hp30_series(day), GeomagneticIndex::Hp30, day),
+        }
+    }
+}
+
+/// The archived series, reporting a read that failed and treating it as an
+/// unarchived day.
+fn read_archived_series<S>(
+    read: Result<Option<S>, SolarStoreError>,
+    index: GeomagneticIndex,
+    day: NaiveDate,
+) -> Option<S> {
+    read.inspect_err(|err| log::error!("Reading archived {index} for {day}: {err}"))
+        .ok()
+        .flatten()
+}
+
+/// Every day the archive holds samples of any index for.
+fn archived_days_of(store: &SolarStore) -> HashSet<NaiveDate> {
+    GeomagneticIndex::iter()
+        .filter_map(|index| {
+            store
+                .archived_days(index)
+                .inspect_err(|err| {
+                    log::error!("Reading the {index} archive index: {err}");
+                })
+                .ok()
+        })
+        .flatten()
+        .map(|archived| archived.day)
+        .collect()
 }
 
 #[expect(
@@ -511,7 +670,7 @@ mod tests {
 
     use gt_fetch::{HttpRequest, HttpResponse, TransportError};
     use gt_solar::DEFAULT_BASE_URL;
-    use gt_solar::series::{KpSample, KpStatus};
+    use gt_solar::series::{Hp30Sample, KpSample, KpStatus};
     use gt_store::Store;
 
     use super::*;
@@ -599,15 +758,19 @@ mod tests {
         }
     }
 
+    fn kp_sample(period_start: DateTime<Utc>, value: f64) -> KpSample {
+        KpSample {
+            period_start,
+            activity: GeomagneticActivity::from_published_value(GeomagneticIndex::Kp, value),
+            status: KpStatus::Definitive,
+        }
+    }
+
     fn kp_day(status: KpStatus) -> KpSeries {
         KpSeries {
             samples: vec![KpSample {
-                period_start: at(2026, 7, 20, 0),
-                activity: gt_solar::activity::GeomagneticActivity::from_published_value(
-                    GeomagneticIndex::Kp,
-                    2.667,
-                ),
                 status,
+                ..kp_sample(at(2026, 7, 20, 0), 2.667)
             }],
         }
     }
@@ -1147,6 +1310,178 @@ mod tests {
                 "{index}"
             );
         }
+    }
+
+    /// The fixes of one recording, `step_secs` apart, with the time range a
+    /// real load derives from its points.
+    fn track_over(start: DateTime<Utc>, count: usize, step_secs: i64) -> gt_types::LoadedTrack {
+        let mut track = gt_test_utils::fixtures::loaded_track_with_points(
+            gt_test_utils::fixtures::nav_points_from(start, count, step_secs),
+        );
+        track.metadata.time_range = TimeRange::new(
+            start,
+            start + chrono::TimeDelta::seconds(step_secs * count.saturating_sub(1) as i64),
+        );
+        track
+    }
+
+    fn loaded_files_of(track: gt_types::LoadedTrack) -> Vec<LoadedFile> {
+        vec![LoadedFile {
+            metadata: gt_test_utils::empty_file_metadata(),
+            tracks: vec![track],
+            event_marker_styles: HashMap::new(),
+            orphaned_event_markers: vec![],
+            load_warnings: vec![],
+            source: gt_types::FileSource::GtdBytes(Arc::from(Vec::<u8>::new())),
+        }]
+    }
+
+    fn hp30_sample(period_start: DateTime<Utc>, value: f64) -> Hp30Sample {
+        Hp30Sample {
+            period_start,
+            activity: GeomagneticActivity::from_published_value(GeomagneticIndex::Hp30, value),
+        }
+    }
+
+    /// The first two Hp30 periods and the first Kp period of `day`, archived
+    /// as the scheduler's own ingest leaves them.
+    fn archive_first_periods_of(store: &SolarStore, day: NaiveDate) {
+        let midnight = day.and_time(chrono::NaiveTime::MIN).and_utc();
+        store
+            .insert_or_replace_hp30_day(
+                day,
+                "host",
+                Utc::now(),
+                &Hp30Series {
+                    samples: vec![
+                        hp30_sample(midnight, 4.667),
+                        hp30_sample(midnight + chrono::TimeDelta::minutes(30), 6.333),
+                    ],
+                },
+            )
+            .expect("insert hp30");
+        store
+            .insert_or_replace_kp_day(
+                day,
+                "host",
+                Utc::now(),
+                &KpSeries {
+                    samples: vec![kp_sample(midnight, 5.0)],
+                },
+            )
+            .expect("insert kp");
+    }
+
+    /// The value of the period a fix falls in holds for the whole period, so
+    /// fixes either side of a period boundary read different Hp30 values while
+    /// the six-times longer Kp period covers all of them.
+    #[test]
+    fn a_fix_takes_the_value_of_the_period_it_falls_in() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2026, 7, 20);
+        archive_first_periods_of(&store, archived);
+        scheduler.archived_days.insert(archived);
+        let files = loaded_files_of(track_over(
+            at(2026, 7, 20, 0) + chrono::TimeDelta::minutes(29),
+            4,
+            30,
+        ));
+
+        let series = scheduler.plot_series(&files);
+        let points = series
+            .points_by_track
+            .values()
+            .next()
+            .expect("the track has values");
+
+        let hp30: Vec<Option<f64>> = points.iter().map(|point| point.hp30).collect();
+        assert_eq!(
+            hp30,
+            [Some(4.667), Some(4.667), Some(6.333), Some(6.333)],
+            "the boundary falls between the second and third fix"
+        );
+        let kp: Vec<Option<f64>> = points.iter().map(|point| point.kp).collect();
+        assert_eq!(kp, [Some(5.0); 4]);
+    }
+
+    /// A fix past the last archived period of its day has no value, and its
+    /// track offers no series when no fix has one.
+    #[test]
+    fn a_track_past_every_archived_period_has_no_plot_series() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2026, 7, 20);
+        archive_first_periods_of(&store, archived);
+        scheduler.archived_days.insert(archived);
+        let files = loaded_files_of(track_over(at(2026, 7, 20, 12), 4, 30));
+
+        assert!(scheduler.plot_series(&files).is_empty());
+    }
+
+    /// A recording from before Hp30 begins draws the Kp line alone.
+    #[test]
+    fn a_day_archived_for_one_index_values_only_that_line() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(1970, 1, 1);
+        let midnight = archived.and_time(chrono::NaiveTime::MIN).and_utc();
+        store
+            .insert_or_replace_kp_day(
+                archived,
+                "host",
+                Utc::now(),
+                &KpSeries {
+                    samples: vec![kp_sample(midnight, 2.667)],
+                },
+            )
+            .expect("insert kp");
+        scheduler.archived_days.insert(archived);
+        let files = loaded_files_of(track_over(midnight, 2, 30));
+
+        let series = scheduler.plot_series(&files);
+        let points = series
+            .points_by_track
+            .values()
+            .next()
+            .expect("the track has values");
+        assert!(points.iter().all(|point| point.hp30.is_none()));
+        assert!(points.iter().all(|point| point.kp == Some(2.667)));
+    }
+
+    /// Until the day arrives the track has no points to draw.
+    #[test]
+    fn a_track_with_no_archived_day_has_no_plot_series() {
+        let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        let files = loaded_files_of(track_over(at(2026, 7, 20, 0), 4, 30));
+
+        assert!(scheduler.plot_series(&files).is_empty());
+    }
+
+    /// A day the fetch worker archives is resolved into the loaded track's
+    /// points on the next frame, without reloading the recording.
+    #[test]
+    fn archiving_a_day_gives_the_loaded_track_its_values() {
+        let (_dir, store, mut scheduler) = scheduler_with_archive();
+        let archived = day(2026, 7, 20);
+        let files = loaded_files_of(track_over(at(2026, 7, 20, 0), 4, 30));
+        assert!(scheduler.plot_series(&files).is_empty());
+
+        archive_first_periods_of(&store, archived);
+        scheduler
+            .tx
+            .send(IndexDayMessage::Stored {
+                day: archived,
+                kp_samples: 1,
+                hp30_samples: 2,
+            })
+            .expect("send");
+        scheduler.poll();
+
+        let series = scheduler.plot_series(&files);
+        let points = series
+            .points_by_track
+            .values()
+            .next()
+            .expect("the archived day reached the track");
+        assert!(points.iter().all(|point| point.hp30 == Some(4.667)));
     }
 
     /// One index failing leaves the whole day unarchived, so the next session
