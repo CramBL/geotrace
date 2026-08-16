@@ -15,6 +15,7 @@ mod settings_ui;
 mod snap;
 mod snap_persist;
 mod snap_state;
+mod solar;
 mod storage;
 pub use storage::Storage;
 #[cfg(feature = "self-update")]
@@ -240,6 +241,11 @@ pub struct App {
     history: history_db::HistoryWorker,
     /// Queues and ingests interference days for loaded tracks.
     jamming: jamming::JammingScheduler,
+    /// Queues and ingests geomagnetic index days for loaded tracks.
+    geomagnetic_indices: solar::GeomagneticIndexScheduler,
+    /// Persisted geomagnetic index configuration: the host serving Kp and
+    /// Hp30.
+    geomagnetic_index_settings: crate::settings::GeomagneticIndexSettings,
     /// No network access this run. Set once from [`StartupOptions`].
     offline: bool,
     backfill_ui: backfill_ui::BackfillUi,
@@ -378,6 +384,7 @@ impl App {
             history,
             history_failure,
             archive,
+            geomagnetic_indices,
         } = options.storage.open(&cc.egui_ctx);
 
         let jamming = jamming::JammingScheduler::new(
@@ -386,10 +393,18 @@ impl App {
             gt_jam::DEFAULT_BASE_URL.to_owned(),
             transport_source(options.offline),
         );
+        let geomagnetic_indices = solar::GeomagneticIndexScheduler::new(
+            cc.egui_ctx.clone(),
+            geomagnetic_indices,
+            gt_solar::DEFAULT_BASE_URL.to_owned(),
+            transport_source(options.offline),
+        );
         let app_version = options.app_version;
 
         let mut app = Self {
             jamming,
+            geomagnetic_indices,
+            geomagnetic_index_settings: crate::settings::GeomagneticIndexSettings::default(),
             offline: options.offline,
             backfill_ui: backfill_ui::BackfillUi::default(),
             interference_settings: crate::settings::InterferenceSettings::default(),
@@ -637,6 +652,7 @@ impl App {
             skipped_version: self.skipped_version.clone(),
             query_history_revision: self.query_window.history_revision(),
             snap: self.snap_settings.clone(),
+            geomagnetic_indices: self.geomagnetic_index_settings.clone(),
         }
     }
 
@@ -719,6 +735,8 @@ impl App {
                 }
                 for track in &file.tracks {
                     self.jamming.request_days_for(track.metadata.time_range);
+                    self.geomagnetic_indices
+                        .request_days_for(track.metadata.time_range);
                 }
                 let orphans: Vec<(chrono::DateTime<chrono::Utc>, String)> = file
                     .orphaned_event_markers

@@ -23,11 +23,13 @@
 
 use std::path::PathBuf;
 
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, NaiveDate, NaiveTime, TimeDelta, Utc};
 
 pub mod activity;
+pub mod calendar;
 pub mod series;
 pub mod text;
+pub mod transport;
 pub mod wire;
 
 /// Base URL of the default index host. Configurable in settings, for a
@@ -93,7 +95,45 @@ impl GeomagneticIndex {
             Self::Hp30 => false,
         }
     }
+
+    /// First UTC day the index has values for. Kp reaches back to the
+    /// International Polar Year of 1932, Hp30 to 1985.
+    pub const fn coverage_start(self) -> NaiveDate {
+        match self {
+            Self::Kp => KP_COVERAGE_START,
+            Self::Hp30 => HP30_COVERAGE_START,
+        }
+    }
 }
+
+/// First day of each index's coverage, as (year, month, day).
+const KP_COVERAGE_START_YMD: (i32, u32, u32) = (1932, 1, 1);
+const HP30_COVERAGE_START_YMD: (i32, u32, u32) = (1985, 1, 1);
+
+const KP_COVERAGE_START: NaiveDate = coverage_start(KP_COVERAGE_START_YMD);
+const HP30_COVERAGE_START: NaiveDate = coverage_start(HP30_COVERAGE_START_YMD);
+
+const fn coverage_start((year, month, day): (i32, u32, u32)) -> NaiveDate {
+    match NaiveDate::from_ymd_opt(year, month, day) {
+        Some(date) => date,
+        // Dead arm: const evaluation cannot unwrap without panicking, and the
+        // assertions below fail the build if it ever stops being dead.
+        None => NaiveDate::MIN,
+    }
+}
+
+const _: () = {
+    let (year, month, day) = KP_COVERAGE_START_YMD;
+    assert!(
+        NaiveDate::from_ymd_opt(year, month, day).is_some(),
+        "KP_COVERAGE_START_YMD must name a real calendar date"
+    );
+    let (year, month, day) = HP30_COVERAGE_START_YMD;
+    assert!(
+        NaiveDate::from_ymd_opt(year, month, day).is_some(),
+        "HP30_COVERAGE_START_YMD must name a real calendar date"
+    );
+};
 
 /// The UTC window one request covers, inclusive of both ends: a request from
 /// midnight to midnight answers with the following day's first period too.
@@ -102,6 +142,29 @@ pub struct TimeWindow {
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
 }
+
+impl TimeWindow {
+    /// Midnight to the last second of `day`, so the response holds every
+    /// period starting within the day and none of the next day's.
+    pub fn covering_utc_day(day: NaiveDate) -> Self {
+        Self {
+            start: day.and_time(NaiveTime::MIN).and_utc(),
+            end: day.and_time(LAST_SECOND_OF_DAY).and_utc(),
+        }
+    }
+}
+
+const LAST_SECOND_OF_DAY: NaiveTime = match NaiveTime::from_hms_opt(23, 59, 59) {
+    Some(time) => time,
+    // Dead arm: const evaluation cannot unwrap without panicking, and the
+    // assertion below fails the build if it ever stops being dead.
+    None => NaiveTime::MIN,
+};
+
+const _: () = assert!(
+    NaiveTime::from_hms_opt(23, 59, 59).is_some(),
+    "LAST_SECOND_OF_DAY must name a real time of day"
+);
 
 /// The URL of `index` over `window` on `base_url`, which must not end in a
 /// slash.

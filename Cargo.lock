@@ -2173,6 +2173,7 @@ dependencies = [
  "gt-side-panel",
  "gt-sky",
  "gt-snap",
+ "gt-solar",
  "gt-store",
  "gt-test-utils",
  "gt-track-builder",
@@ -2830,6 +2831,7 @@ name = "gt-solar"
 version = "0.12.0"
 dependencies = [
  "chrono",
+ "gt-fetch",
  "insta",
  "proptest",
  "reqwest 0.13.4",

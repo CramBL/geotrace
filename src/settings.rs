@@ -16,6 +16,7 @@ pub struct Settings {
     pub query: QuerySettings,
     pub snap: SnapSettings,
     pub interference: InterferenceSettings,
+    pub geomagnetic_indices: GeomagneticIndexSettings,
 }
 
 impl Default for Settings {
@@ -32,6 +33,7 @@ impl Default for Settings {
             query: QuerySettings::default(),
             snap: SnapSettings::default(),
             interference: InterferenceSettings::default(),
+            geomagnetic_indices: GeomagneticIndexSettings::default(),
         }
     }
 }
@@ -48,6 +50,22 @@ impl Default for InterferenceSettings {
     fn default() -> Self {
         Self {
             base_url: gt_jam::DEFAULT_BASE_URL.to_owned(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct GeomagneticIndexSettings {
+    /// Base URL of the Kp/Hp30 index host. Defaults to GFZ Potsdam, which
+    /// publishes them. A self-hosted mirror or an offline copy goes here.
+    pub base_url: String,
+}
+
+impl Default for GeomagneticIndexSettings {
+    fn default() -> Self {
+        Self {
+            base_url: gt_solar::DEFAULT_BASE_URL.to_owned(),
         }
     }
 }
@@ -629,6 +647,32 @@ mod snap_settings_tests {
         let text = toml::to_string_pretty(&settings).expect("serialize");
         let parsed: Settings = toml::from_str(&text).expect("parse");
         assert_eq!(parsed.interference.base_url, "https://mirror.example");
+    }
+
+    /// A settings file written before the geomagnetic index section existed
+    /// loads with the GFZ default host.
+    #[test]
+    fn a_settings_file_without_the_geomagnetic_index_section_loads() {
+        let stored = "version = 1\n";
+        let settings: Settings = toml::from_str(stored).expect("parse");
+        assert_eq!(
+            settings.geomagnetic_indices.base_url,
+            gt_solar::DEFAULT_BASE_URL
+        );
+    }
+
+    /// A configured index mirror round-trips.
+    #[test]
+    fn a_configured_geomagnetic_index_host_round_trips() {
+        let mut settings = Settings::default();
+        settings.geomagnetic_indices.base_url = "https://mirror.example".to_owned();
+
+        let text = toml::to_string_pretty(&settings).expect("serialize");
+        let parsed: Settings = toml::from_str(&text).expect("parse");
+        assert_eq!(
+            parsed.geomagnetic_indices.base_url,
+            "https://mirror.example"
+        );
     }
 
     /// The settings file a fresh install writes.

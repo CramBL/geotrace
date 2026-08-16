@@ -10,6 +10,7 @@
 - With more than one file loaded, a fix point's hover tooltip, the stacked label shown when map points overlap and the clicked-point window each name the recording the point belongs to.
 - Editing the recording name template in Settings opens a guide below the field, listing the tokens and previewing the template as you type.
 - A recording name template token can cap its length, as `{title:12}` for at most the first 12 characters of the title.
+- Loading a recording downloads the Kp and Hp30 geomagnetic indices for the days it spans into a local archive, so it can be read against what the geomagnetic field was doing while it was made. The host serving them is in Settings under "Geomagnetic indices", and nothing is downloaded in offline mode.
 
 ### Fixed
 

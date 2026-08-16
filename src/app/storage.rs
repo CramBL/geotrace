@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use egui::Context;
-use gt_store::{DbError, HistoryDatabase as _, JamStore, Recordings, Store};
+use gt_store::{DbError, HistoryDatabase as _, JamStore, Recordings, SolarStore, Store};
 
 use super::history_db::HistoryWorker;
 
@@ -54,6 +54,8 @@ pub struct OpenStorage {
     pub history_failure: Option<HistoryFailure>,
     /// [`None`] disables interference fetching and nothing else.
     pub archive: Option<Arc<JamStore>>,
+    /// [`None`] disables geomagnetic index fetching and nothing else.
+    pub geomagnetic_indices: Option<Arc<SolarStore>>,
 }
 
 impl OpenStorage {
@@ -63,6 +65,7 @@ impl OpenStorage {
             history: HistoryWorker::disabled(),
             history_failure: None,
             archive: None,
+            geomagnetic_indices: None,
         }
     }
 }
@@ -115,10 +118,10 @@ pub(crate) fn reopen_recordings(path: &Path) -> Result<Recordings, HistoryFailur
     Recordings::open_or_create(path).map_err(|err| classify_failure(&err, path.to_owned()))
 }
 
-/// Open both databases under `store`.
+/// Open every database under `store`.
 ///
-/// The archive is opened whatever the recordings database did: one being
-/// unusable says nothing about the other.
+/// Each archive is opened whatever the recordings database did: one being
+/// unusable says nothing about the others.
 fn open_in(store: &Store, ctx: &Context) -> OpenStorage {
     let (history, history_failure) = match store.open_recordings() {
         Ok(db) => (HistoryWorker::spawn(db, ctx.clone()), None),
@@ -138,10 +141,21 @@ fn open_in(store: &Store, ctx: &Context) -> OpenStorage {
         })
         .ok();
 
+    let geomagnetic_indices = store
+        .open_geomagnetic_indices()
+        .inspect_err(|err| {
+            log::error!(
+                "Geomagnetic index archive at {} is unusable: {err}",
+                store.geomagnetic_indices_path().display()
+            );
+        })
+        .ok();
+
     OpenStorage {
         history,
         history_failure,
         archive,
+        geomagnetic_indices,
     }
 }
 
@@ -172,15 +186,17 @@ mod tests {
         assert!(opened.history.path().is_none());
         assert!(opened.history_failure.is_none());
         assert!(opened.archive.is_none());
+        assert!(opened.geomagnetic_indices.is_none());
     }
 
     #[test]
-    fn a_usable_store_opens_both_databases() {
+    fn a_usable_store_opens_every_database() {
         let (_dir, store) = store();
         let opened = open_in(&store, &Context::default());
 
         assert!(opened.history.path().is_some(), "the worker has a database");
         assert!(opened.archive.is_some());
+        assert!(opened.geomagnetic_indices.is_some());
         assert!(opened.history_failure.is_none());
     }
 
@@ -220,6 +236,7 @@ mod tests {
             "the unreadable database is reported for the UI"
         );
         assert!(opened.history.path().is_none());
-        assert!(opened.archive.is_some(), "the archive is unaffected");
+        assert!(opened.archive.is_some(), "the archives are unaffected");
+        assert!(opened.geomagnetic_indices.is_some());
     }
 }
