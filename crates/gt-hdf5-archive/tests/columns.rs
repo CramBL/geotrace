@@ -6,7 +6,7 @@ use rstest::rstest;
 use tempfile::TempDir;
 
 use gt_hdf5_archive::day_index::{DayIndex, RowPlacement};
-use gt_hdf5_archive::{ArchiveError, Column, ColumnFormat, attributes, dates};
+use gt_hdf5_archive::{Column, ColumnFormat, attributes, dates};
 
 const FORMAT: ColumnFormat = ColumnFormat {
     chunk_rows: 8,
@@ -68,8 +68,8 @@ fn reading_past_the_end_of_a_column_is_refused() {
 
     let err = column.read_slice::<u32>(1..3).expect_err("past the end");
     assert_eq!(
-        err,
-        ArchiveError::Corrupt("values holds 2 rows, asked for 1..3".to_owned())
+        err.to_string(),
+        "archive is inconsistent: values holds 2 rows, asked for 1..3"
     );
 }
 

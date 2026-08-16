@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use gt_hdf5_archive::day_index::{DayIndex, RowPlacement};
-use gt_hdf5_archive::{ArchiveError, Column, attributes};
+use gt_hdf5_archive::{ArchiveError, ArchiveFile, Column, attributes};
 use gt_jam::dataset::JamDataset;
 use gt_jam::wire::HexObservation;
 use h3o::CellIndex;
@@ -22,13 +22,6 @@ pub const FILE_NAME: &str = "jamming.h5";
 
 /// The archive's name in messages about its columns.
 const ARCHIVE_NAME: &str = "interference archive";
-
-/// Serializes archive access from this process.
-///
-/// [`JamStore::insert_day`] reads a column length, resizes, then writes, and
-/// a reader between those steps would see a day's rows without its index
-/// entry. `gt-history` guards its own HDF5 file the same way.
-static ARCHIVE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, thiserror::Error)]
 pub enum JamStoreError {
@@ -52,6 +45,10 @@ impl From<ArchiveError> for JamStoreError {
     fn from(err: ArchiveError) -> Self {
         match err {
             ArchiveError::Backend(message) => Self::Backend(message),
+            ArchiveError::Io(err) => Self::Io(err),
+            ArchiveError::SchemaTooNew { found, supported } => {
+                Self::SchemaTooNew { found, supported }
+            }
             ArchiveError::Corrupt(message) => Self::Corrupt(message),
         }
     }
@@ -75,12 +72,13 @@ pub struct StoredDay {
 }
 
 /// The interference archive.
-///
-/// Holds a path, not an open handle: each call opens the file for the access
-/// it needs.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct JamStore {
-    path: PathBuf,
+    /// Every operation holds the lock for its whole sequence: [`Self::insert_day`]
+    /// reads a column length, resizes, appends, and writes the day index
+    /// last, and a caller reading between those steps sees rows that no index
+    /// entry names.
+    archive: Mutex<ArchiveFile>,
 }
 
 impl JamStore {
@@ -89,27 +87,27 @@ impl JamStore {
     /// Rows left behind by an interrupted [`Self::insert_day`] are dropped
     /// here.
     pub fn open_or_create(path: &Path) -> Result<Self, JamStoreError> {
-        let _guard = ARCHIVE_LOCK.lock();
-        if path.exists() {
-            Self::validate(path)?;
-            Self::drop_unindexed_rows(path)?;
+        let mut archive = ArchiveFile::new(path);
+        if archive.exists() {
+            archive.validate_schema_version(
+                schema::SCHEMA_VERSION_ATTR,
+                schema::CURRENT_SCHEMA_VERSION,
+            )?;
+            Self::drop_unindexed_rows(&mut archive)?;
         } else {
-            Self::create(path)?;
+            Self::create(&mut archive)?;
         }
         Ok(Self {
-            path: path.to_owned(),
+            archive: Mutex::new(archive),
         })
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    pub fn path(&self) -> PathBuf {
+        self.archive.lock().path().to_owned()
     }
 
-    fn create(path: &Path) -> Result<(), JamStoreError> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let file = hdf5::File::create(path)?;
+    fn create(archive: &mut ArchiveFile) -> Result<(), JamStoreError> {
+        let file = archive.create()?;
         attributes::write_i64(
             &file,
             schema::SCHEMA_VERSION_ATTR,
@@ -132,20 +130,8 @@ impl JamStore {
         Ok(())
     }
 
-    fn validate(path: &Path) -> Result<(), JamStoreError> {
-        let file = hdf5::File::open(path)?;
-        let found = attributes::read_i64(&file, schema::SCHEMA_VERSION_ATTR).unwrap_or_default();
-        if found > schema::CURRENT_SCHEMA_VERSION {
-            return Err(JamStoreError::SchemaTooNew {
-                found,
-                supported: schema::CURRENT_SCHEMA_VERSION,
-            });
-        }
-        Ok(())
-    }
-
-    fn drop_unindexed_rows(path: &Path) -> Result<(), JamStoreError> {
-        let file = hdf5::File::open_rw(path)?;
+    fn drop_unindexed_rows(archive: &mut ArchiveFile) -> Result<(), JamStoreError> {
+        let file = archive.open_read_write()?;
         let days = file.group(schema::DAYS_GROUP)?;
         let observations = file.group(schema::OBSERVATIONS_GROUP)?;
         DayIndex::new(&days).drop_unindexed_rows(
@@ -158,8 +144,8 @@ impl JamStore {
 
     /// Every stored day, oldest first.
     pub fn days(&self) -> Result<Vec<StoredDay>, JamStoreError> {
-        let _guard = ARCHIVE_LOCK.lock();
-        let file = hdf5::File::open(&self.path)?;
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
         let days = file.group(schema::DAYS_GROUP)?;
         Ok(DayIndex::new(&days)
             .entries()?
@@ -175,8 +161,8 @@ impl JamStore {
 
     /// Whether `day` has already been stored.
     pub fn contains(&self, day: NaiveDate) -> Result<bool, JamStoreError> {
-        let _guard = ARCHIVE_LOCK.lock();
-        let file = hdf5::File::open(&self.path)?;
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
         let days = file.group(schema::DAYS_GROUP)?;
         Ok(DayIndex::new(&days).row_of(day)?.is_some())
     }
@@ -191,8 +177,8 @@ impl JamStore {
         fetched_at: DateTime<Utc>,
         observations: &[HexObservation],
     ) -> Result<(), JamStoreError> {
-        let _guard = ARCHIVE_LOCK.lock();
-        let file = hdf5::File::open_rw(&self.path)?;
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_write()?;
         let days = file.group(schema::DAYS_GROUP)?;
         let index = DayIndex::new(&days);
         if index.row_of(day)?.is_some() {
@@ -241,8 +227,8 @@ impl JamStore {
         &self,
         day: NaiveDate,
     ) -> Result<Option<Vec<HexObservation>>, JamStoreError> {
-        let _guard = ARCHIVE_LOCK.lock();
-        let file = hdf5::File::open(&self.path)?;
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
         let days = file.group(schema::DAYS_GROUP)?;
         let Some(rows) = DayIndex::new(&days).extent_of(day)? else {
             return Ok(None);

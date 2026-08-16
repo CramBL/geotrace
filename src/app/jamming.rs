@@ -102,7 +102,7 @@ pub struct JammingScheduler {
     rx: mpsc::Receiver<JamMessage>,
     base_url: String,
     /// `None` disables fetching: no archive to write to.
-    store: Option<JamStore>,
+    store: Option<Arc<JamStore>>,
     /// Connected on the first request, and dropped when the host changes.
     http: Option<Arc<Connection>>,
     /// Where that transport comes from. Supplied by the application, so
@@ -142,7 +142,7 @@ pub struct JammingScheduler {
 impl JammingScheduler {
     pub fn new(
         ctx: Context,
-        store: Option<JamStore>,
+        store: Option<Arc<JamStore>>,
         base_url: String,
         transport_source: TransportSource,
     ) -> Self {
@@ -241,7 +241,7 @@ impl JammingScheduler {
     /// Returns how many days were queued, or [`None`] when there is no
     /// archive to write them to.
     pub fn backfill(&mut self, from: NaiveDate, to: NaiveDate) -> Option<usize> {
-        let store = self.store.clone()?;
+        let store = Arc::clone(self.store.as_ref()?);
         self.cancel_backfill();
         let mut pending = HashSet::new();
         for day in calendar::fetchable_days(from, to, calendar::today_utc()) {
@@ -381,7 +381,7 @@ impl JammingScheduler {
                     Some((_, points)) => Arc::clone(points),
                     None => {
                         let points = Arc::new(Self::resolve_points(
-                            self.store.as_ref(),
+                            self.store.as_deref(),
                             &mut datasets,
                             track,
                         ));
@@ -491,7 +491,7 @@ impl JammingScheduler {
             return None;
         }
         self.store
-            .as_ref()?
+            .as_deref()?
             .dataset(day)
             .inspect_err(|err| log::error!("Reading interference cells for {day}: {err}"))
             .ok()
@@ -537,7 +537,10 @@ impl JammingScheduler {
         if self.in_flight.is_some() {
             return;
         }
-        let (Some(store), Some(day)) = (self.store.clone(), self.queue.front().copied()) else {
+        let (Some(store), Some(day)) = (
+            self.store.as_ref().map(Arc::clone),
+            self.queue.front().copied(),
+        ) else {
             return;
         };
         let transport = self.transport();
@@ -604,7 +607,7 @@ fn spawn_fetch(
     ctx: Context,
     tx: mpsc::Sender<JamMessage>,
     transport: Arc<Connection>,
-    store: JamStore,
+    store: Arc<JamStore>,
     base_url: String,
     day: NaiveDate,
     delay: Duration,
@@ -695,7 +698,7 @@ mod tests {
         JammingScheduler::disabled(Context::default())
     }
 
-    fn archive() -> (TempDir, JamStore) {
+    fn archive() -> (TempDir, Arc<JamStore>) {
         let dir = tempfile::tempdir().expect("temp dir");
         let store = Store::open_in(dir.path())
             .open_interference()
@@ -704,11 +707,11 @@ mod tests {
     }
 
     /// Archive-backed, and wired so no request leaves the machine.
-    fn scheduler_with_archive() -> (TempDir, JamStore, JammingScheduler) {
+    fn scheduler_with_archive() -> (TempDir, Arc<JamStore>, JammingScheduler) {
         let (dir, store) = archive();
         let scheduler = JammingScheduler::new(
             Context::default(),
-            Some(store.clone()),
+            Some(Arc::clone(&store)),
             DEFAULT_BASE_URL.to_owned(),
             TransportSource::Offline,
         );

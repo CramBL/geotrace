@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use gt_hdf5_archive::day_index::{DayIndex, RowPlacement};
-use gt_hdf5_archive::{ArchiveError, Column, attributes, dates};
+use gt_hdf5_archive::{ArchiveError, ArchiveFile, Column, attributes, dates};
 use gt_solar::GeomagneticIndex;
 use gt_solar::activity::GeomagneticActivity;
 use gt_solar::series::{Hp30Sample, Hp30Series, IndexSample, IndexSeries, KpSample, KpSeries};
@@ -25,14 +25,6 @@ pub mod schema;
 
 /// Name of the archive file, joined to the data directory by the caller.
 pub const FILE_NAME: &str = "geomagnetic.h5";
-
-/// Serializes archive access from this process.
-///
-/// [`SolarStore::insert_or_replace_kp_day`] reads a column length, resizes,
-/// then writes, and a reader between those steps would see a day's samples
-/// without its index entry. `gt-history` guards its own HDF5 file the same
-/// way.
-static ARCHIVE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, thiserror::Error)]
 pub enum SolarStoreError {
@@ -53,6 +45,10 @@ impl From<ArchiveError> for SolarStoreError {
     fn from(err: ArchiveError) -> Self {
         match err {
             ArchiveError::Backend(message) => Self::Backend(message),
+            ArchiveError::Io(err) => Self::Io(err),
+            ArchiveError::SchemaTooNew { found, supported } => {
+                Self::SchemaTooNew { found, supported }
+            }
             ArchiveError::Corrupt(message) => Self::Corrupt(message),
         }
     }
@@ -76,12 +72,13 @@ pub struct ArchivedIndexDay {
 }
 
 /// The geomagnetic index archive.
-///
-/// Holds a path, not an open handle: each call opens the file for the access
-/// it needs.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SolarStore {
-    path: PathBuf,
+    /// Every operation holds the lock for its whole sequence:
+    /// [`Self::insert_or_replace_kp_day`] reads a column length, resizes,
+    /// appends, and writes the day index last, and a caller reading between
+    /// those steps sees samples that no index entry names.
+    archive: Mutex<ArchiveFile>,
 }
 
 impl SolarStore {
@@ -89,27 +86,27 @@ impl SolarStore {
     ///
     /// Samples left behind by an interrupted store are dropped here.
     pub fn open_or_create(path: &Path) -> Result<Self, SolarStoreError> {
-        let _guard = ARCHIVE_LOCK.lock();
-        if path.exists() {
-            Self::validate(path)?;
-            Self::drop_unindexed_samples(path)?;
+        let mut archive = ArchiveFile::new(path);
+        if archive.exists() {
+            archive.validate_schema_version(
+                schema::SCHEMA_VERSION_ATTR,
+                schema::CURRENT_SCHEMA_VERSION,
+            )?;
+            Self::drop_unindexed_samples(&mut archive)?;
         } else {
-            Self::create(path)?;
+            Self::create(&mut archive)?;
         }
         Ok(Self {
-            path: path.to_owned(),
+            archive: Mutex::new(archive),
         })
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    pub fn path(&self) -> PathBuf {
+        self.archive.lock().path().to_owned()
     }
 
-    fn create(path: &Path) -> Result<(), SolarStoreError> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let file = hdf5::File::create(path)?;
+    fn create(archive: &mut ArchiveFile) -> Result<(), SolarStoreError> {
+        let file = archive.create()?;
         attributes::write_i64(
             &file,
             schema::SCHEMA_VERSION_ATTR,
@@ -135,20 +132,8 @@ impl SolarStore {
         Ok(())
     }
 
-    fn validate(path: &Path) -> Result<(), SolarStoreError> {
-        let file = hdf5::File::open(path)?;
-        let found = attributes::read_i64(&file, schema::SCHEMA_VERSION_ATTR).unwrap_or_default();
-        if found > schema::CURRENT_SCHEMA_VERSION {
-            return Err(SolarStoreError::SchemaTooNew {
-                found,
-                supported: schema::CURRENT_SCHEMA_VERSION,
-            });
-        }
-        Ok(())
-    }
-
-    fn drop_unindexed_samples(path: &Path) -> Result<(), SolarStoreError> {
-        let file = hdf5::File::open_rw(path)?;
+    fn drop_unindexed_samples(archive: &mut ArchiveFile) -> Result<(), SolarStoreError> {
+        let file = archive.open_read_write()?;
         for index in GeomagneticIndex::iter() {
             let days = file.group(&index.days_group_path())?;
             let samples = file.group(&index.samples_group_path())?;
@@ -166,8 +151,8 @@ impl SolarStore {
         &self,
         index: GeomagneticIndex,
     ) -> Result<Vec<ArchivedIndexDay>, SolarStoreError> {
-        let _guard = ARCHIVE_LOCK.lock();
-        let file = hdf5::File::open(&self.path)?;
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
         let days = file.group(&index.days_group_path())?;
         Ok(DayIndex::new(&days)
             .entries()?
@@ -187,8 +172,8 @@ impl SolarStore {
         index: GeomagneticIndex,
         day: NaiveDate,
     ) -> Result<bool, SolarStoreError> {
-        let _guard = ARCHIVE_LOCK.lock();
-        let file = hdf5::File::open(&self.path)?;
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
         let days = file.group(&index.days_group_path())?;
         Ok(DayIndex::new(&days).row_of(day)?.is_some())
     }
@@ -238,9 +223,9 @@ impl SolarStore {
         fetched_at: DateTime<Utc>,
         samples: &[S],
     ) -> Result<(), SolarStoreError> {
-        let _guard = ARCHIVE_LOCK.lock();
         let index = S::INDEX;
-        let file = hdf5::File::open_rw(&self.path)?;
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_write()?;
         let group = file.group(&index.samples_group_path())?;
 
         let offset = Column::new(&group, schema::SAMPLE_PERIOD_START).rows()?;
@@ -266,8 +251,8 @@ impl SolarStore {
         &self,
         day: NaiveDate,
     ) -> Result<Option<IndexSeries<S>>, SolarStoreError> {
-        let _guard = ARCHIVE_LOCK.lock();
-        let file = hdf5::File::open(&self.path)?;
+        let mut archive = self.archive.lock();
+        let file = archive.open_read_only()?;
         let days = file.group(&S::INDEX.days_group_path())?;
         let Some(rows) = DayIndex::new(&days).extent_of(day)? else {
             return Ok(None);
