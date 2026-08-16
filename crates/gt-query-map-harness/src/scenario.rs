@@ -87,6 +87,7 @@ impl MapScenario {
             filter,
             snap_errors: dataset.snap_errors(),
             jamming: dataset.jamming(),
+            geomagnetic: dataset.geomagnetic(),
         };
         self.last_run = match session.start_run(inputs) {
             Some(prepared) => {
@@ -321,6 +322,7 @@ impl MapScenario {
             filter,
             snap_errors: dataset.snap_errors(),
             jamming: dataset.jamming(),
+            geomagnetic: dataset.geomagnetic(),
         });
         *pin = highlight.pin_this_frame(map_scope(
             dataset,

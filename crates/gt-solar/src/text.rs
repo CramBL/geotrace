@@ -55,6 +55,58 @@ pub fn period_summary(
     lines
 }
 
+impl GeomagneticIndex {
+    /// The plot chip's hover text, composed from the shared caveats so it
+    /// cannot drift from what the hover label and the query metric say.
+    pub fn plot_hover_text(self) -> &'static str {
+        match self {
+            Self::Kp => KP_PLOT_HOVER.as_str(),
+            Self::Hp30 => HP30_PLOT_HOVER.as_str(),
+        }
+    }
+
+    /// The query metric's documentation body.
+    pub fn query_doc(self) -> &'static str {
+        match self {
+            Self::Kp => KP_QUERY_DOC.as_str(),
+            Self::Hp30 => HP30_QUERY_DOC.as_str(),
+        }
+    }
+
+    fn build_plot_hover_text(self) -> String {
+        format!(
+            "Planetary geomagnetic activity over the {period} {self} period each fix falls in. \
+             {SOURCE_CAVEAT} {SCALE_CAVEAT} The line breaks where no value is archived.",
+            period = self.period_length_adjective()
+        )
+    }
+
+    fn build_query_doc(self) -> String {
+        format!(
+            "Planetary geomagnetic activity over the {period} {self} period the fix's own UTC \
+             time falls in. {SOURCE_CAVEAT} {SCALE_CAVEAT} Fixes whose day is not in the \
+             {ARCHIVE_NAME} carry no value.",
+            period = self.period_length_adjective()
+        )
+    }
+
+    /// The period length as it reads before a noun: "the 3-hour period".
+    fn period_length_adjective(self) -> &'static str {
+        match self {
+            Self::Kp => "3-hour",
+            Self::Hp30 => "30-minute",
+        }
+    }
+}
+
+static KP_PLOT_HOVER: LazyLock<String> =
+    LazyLock::new(|| GeomagneticIndex::Kp.build_plot_hover_text());
+static HP30_PLOT_HOVER: LazyLock<String> =
+    LazyLock::new(|| GeomagneticIndex::Hp30.build_plot_hover_text());
+static KP_QUERY_DOC: LazyLock<String> = LazyLock::new(|| GeomagneticIndex::Kp.build_query_doc());
+static HP30_QUERY_DOC: LazyLock<String> =
+    LazyLock::new(|| GeomagneticIndex::Hp30.build_query_doc());
+
 /// The indices GeoTrace downloads, as every control offering them names
 /// them.
 pub const INDEX_NAMES: &str = "Kp and Hp30 indices";
@@ -130,9 +182,17 @@ mod tests {
              source caveat: {SOURCE_CAVEAT}\n\
              scale caveat: {SCALE_CAVEAT}\n\
              no value caveat: {NO_VALUE_CAVEAT}\n\
+             Kp plot hover: {}\n\
+             Hp30 plot hover: {}\n\
+             Kp query doc: {}\n\
+             Hp30 query doc: {}\n\
              attribution: {}\n\
              publisher: {PUBLISHER_URL}\n\
              license: {LICENSE_URL}",
+            GeomagneticIndex::Kp.plot_hover_text(),
+            GeomagneticIndex::Hp30.plot_hover_text(),
+            GeomagneticIndex::Kp.query_doc(),
+            GeomagneticIndex::Hp30.query_doc(),
             *ATTRIBUTION
         );
         insta::assert_snapshot!("shared_wording", wording);

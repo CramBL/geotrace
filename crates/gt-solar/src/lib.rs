@@ -88,6 +88,17 @@ impl GeomagneticIndex {
         }
     }
 
+    /// Start of the period covering `time`.
+    ///
+    /// Periods run from UTC midnight and both lengths divide the day evenly,
+    /// so a period start is a whole multiple of the period length in Unix
+    /// seconds. [`None`] for a time outside the representable range.
+    pub fn period_start_covering(self, time: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        let seconds_per_period = self.period_length().num_seconds();
+        let periods = time.timestamp().div_euclid(seconds_per_period);
+        DateTime::from_timestamp(periods.checked_mul(seconds_per_period)?, 0)
+    }
+
     /// Whether the service publishes a status alongside each value.
     pub const fn publishes_status(self) -> bool {
         match self {
@@ -332,6 +343,39 @@ mod tests {
     ) {
         assert_eq!(index.period_length(), length);
         assert_eq!(index.period_length_words(), words);
+    }
+
+    #[rstest]
+    #[case::hp30_inside_a_period(
+        GeomagneticIndex::Hp30,
+        "2024-05-10T18:29:59Z",
+        "2024-05-10T18:00:00Z"
+    )]
+    #[case::hp30_on_a_boundary(
+        GeomagneticIndex::Hp30,
+        "2024-05-10T18:30:00Z",
+        "2024-05-10T18:30:00Z"
+    )]
+    #[case::kp_inside_a_period(
+        GeomagneticIndex::Kp,
+        "2024-05-10T20:59:59Z",
+        "2024-05-10T18:00:00Z"
+    )]
+    #[case::kp_at_midnight(GeomagneticIndex::Kp, "2024-05-10T00:00:00Z", "2024-05-10T00:00:00Z")]
+    #[case::kp_before_the_epoch(
+        GeomagneticIndex::Kp,
+        "1932-01-01T01:30:00Z",
+        "1932-01-01T00:00:00Z"
+    )]
+    fn a_period_start_floors_to_the_published_grid(
+        #[case] index: GeomagneticIndex,
+        #[case] time: &str,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(
+            index.period_start_covering(timestamp(time)),
+            Some(timestamp(expected))
+        );
     }
 
     #[test]

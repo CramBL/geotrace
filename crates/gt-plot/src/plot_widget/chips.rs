@@ -12,6 +12,7 @@ use egui_phosphor::regular::GAUGE as ICON_GAUGE;
 use egui_phosphor::regular::GEAR as ICON_GEAR;
 use egui_phosphor::regular::LINK as ICON_LINK;
 use egui_phosphor::regular::WAVE_SINE as ICON_WAVE_SINE;
+use gt_solar::GeomagneticIndex;
 use gt_types::MetricKind;
 use gt_types::satellites::{Constellation, ConstellationSet};
 use strum::IntoEnumIterator;
@@ -141,6 +142,8 @@ impl MetricKindUi for MetricKind {
             return Some(gt_jam::text::PLOT_HOVER.as_str());
         }
         match self {
+            Self::Hp30 => Some(GeomagneticIndex::Hp30.plot_hover_text()),
+            Self::Kp => Some(GeomagneticIndex::Kp.plot_hover_text()),
             Self::Eph => Some(
                 "Estimated Horizontal Position error - the GPS receiver's own estimate of how \
                  far the reported position may be from the true position, in metres. \
@@ -240,7 +243,11 @@ pub struct MetricVisibility(MetricKindSet);
 
 impl Default for MetricVisibility {
     fn default() -> Self {
-        Self(MetricKindSet::all())
+        Self(
+            MetricKind::iter()
+                .filter(|kind| kind.visible_by_default())
+                .collect(),
+        )
     }
 }
 
@@ -988,23 +995,23 @@ mod tests {
         assert_eq!(with, 24);
     }
 
-    /// Every metric is visible by default, and toggling one leaves the rest
-    /// untouched.
+    /// The default set is the one each metric declares, and toggling one
+    /// leaves the rest untouched.
     #[test]
-    fn visibility_defaults_on_and_toggles_independently() {
+    fn visibility_defaults_per_metric_and_toggles_independently() {
         let mut vis = MetricVisibility::default();
-        assert!(MetricKind::iter().all(|k| vis.field(k)));
+        assert!(MetricKind::iter().all(|k| vis.field(k) == k.visible_by_default()));
 
         vis.set(MetricKind::Velocity, false);
         assert!(!vis.field(MetricKind::Velocity));
         assert!(
             MetricKind::iter()
                 .filter(|&k| k != MetricKind::Velocity)
-                .all(|k| vis.field(k))
+                .all(|k| vis.field(k) == k.visible_by_default())
         );
 
         vis.set(MetricKind::Velocity, true);
-        assert!(MetricKind::iter().all(|k| vis.field(k)));
+        assert!(MetricKind::iter().all(|k| vis.field(k) == k.visible_by_default()));
     }
 
     /// Each metric has independent visibility state, so toggling one never
@@ -1013,12 +1020,12 @@ mod tests {
     fn each_metric_toggles_independently() {
         for target in MetricKind::iter() {
             let mut vis = MetricVisibility::default();
-            vis.set(target, false);
-            assert!(!vis.field(target));
+            vis.set(target, !target.visible_by_default());
+            assert_eq!(vis.field(target), !target.visible_by_default());
             assert!(
                 MetricKind::iter()
                     .filter(|&k| k != target)
-                    .all(|k| vis.field(k)),
+                    .all(|k| vis.field(k) == k.visible_by_default()),
                 "toggling {target:?} disturbed another metric"
             );
         }

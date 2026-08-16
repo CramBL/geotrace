@@ -300,6 +300,8 @@ enum Kind {
     Count,
     /// A percentage-denominated share (satellite utilization).
     Ratio,
+    /// A number on a published scale (the geomagnetic indices).
+    Index,
 }
 
 impl ValueType {
@@ -323,6 +325,7 @@ fn value_type(quantity: Quantity) -> ValueType {
         Quantity::Timestamp => ValueType::Timestamp,
         Quantity::Count => ValueType::Dimensionless(Kind::Count),
         Quantity::Ratio => ValueType::Dimensionless(Kind::Ratio),
+        Quantity::Index => ValueType::Dimensionless(Kind::Index),
         // Every remaining quantity is a dimensioned value; `Direction` is the
         // only one that wraps. Its dimension is taken from the single source
         // in `Quantity::dimension`.
@@ -351,6 +354,7 @@ fn named_quantity(vt: ValueType) -> Option<Quantity> {
         ValueType::Timestamp => Quantity::Timestamp,
         ValueType::Dimensionless(Kind::Count) => Quantity::Count,
         ValueType::Dimensionless(Kind::Ratio) => Quantity::Ratio,
+        ValueType::Dimensionless(Kind::Index) => Quantity::Index,
         ValueType::Dimensionless(Kind::Number) => return None,
         ValueType::Dimensioned { dim, circular } => return named_dimension(dim, circular),
     })
@@ -1499,14 +1503,17 @@ fn compatible(a: ValueType, b: ValueType) -> bool {
     }
 }
 
-/// A bare number compares with a count (`sats_fix > 6`), but a count and a
-/// ratio never mix, and a bare number never stands in for a ratio (which must
-/// carry `%`).
+/// A bare number compares with a count (`sats_fix > 6`) and with an index
+/// (`hp30 > 5`), but a count, a ratio, and an index never mix, and a bare
+/// number never stands in for a ratio (which must carry `%`).
 fn dimensionless_compatible(a: Kind, b: Kind) -> bool {
     a == b
         || matches!(
             (a, b),
-            (Kind::Number, Kind::Count) | (Kind::Count, Kind::Number)
+            (Kind::Number, Kind::Count)
+                | (Kind::Count, Kind::Number)
+                | (Kind::Number, Kind::Index)
+                | (Kind::Index, Kind::Number)
         )
 }
 
@@ -1632,7 +1639,7 @@ mod tests {
     use rstest::rstest;
     use strum::{EnumCount as _, IntoEnumIterator as _};
 
-    use super::Kind::{Count, Number, Ratio};
+    use super::Kind::{Count, Index, Number, Ratio};
     use super::*;
 
     /// Every quantity maps to a value type and back, so `named_dimension` stays
@@ -1652,9 +1659,14 @@ mod tests {
         assert_eq!(covered, Quantity::COUNT);
     }
 
-    /// A bare number pairs with a count, never a ratio; a count and a ratio
-    /// never mix.
+    /// A bare number pairs with a count and with an index, never a ratio.
+    /// A count, a ratio, and an index never mix.
     #[rstest]
+    #[case::number_index(Number, Index, true)]
+    #[case::index_number(Index, Number, true)]
+    #[case::index_index(Index, Index, true)]
+    #[case::index_count(Index, Count, false)]
+    #[case::index_ratio(Index, Ratio, false)]
     #[case::number_number(Number, Number, true)]
     #[case::count_count(Count, Count, true)]
     #[case::ratio_ratio(Ratio, Ratio, true)]

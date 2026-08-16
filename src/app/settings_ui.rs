@@ -713,7 +713,14 @@ impl App {
             shared.plot_state.mark_masked_fix = s.analysis.mark_masked_fix;
             let vis = &mut shared.plot_state.metric_vis;
             for k in crate::settings::MetricKind::iter() {
-                vis.set(k, s.plot.metric.get(&k).copied().unwrap_or(true));
+                vis.set(
+                    k,
+                    s.plot
+                        .metric
+                        .get(&k)
+                        .copied()
+                        .unwrap_or_else(|| k.visible_by_default()),
+                );
             }
             let channel_vis = &mut shared.plot_state.channel_vis;
             for (name, &visible) in &s.plot.channel {

@@ -564,6 +564,7 @@ impl App {
                 ui.ctx(),
                 RunInputs {
                     jamming: &jamming_query_values,
+                    geomagnetic: &geomagnetic_series,
                     loaded_files: loaded_files.view(),
                     visibility: tree.visibility(),
                     filter,

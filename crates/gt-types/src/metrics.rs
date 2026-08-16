@@ -73,13 +73,24 @@ pub enum MetricKind {
     Kp,
 }
 
+impl MetricKind {
+    /// Whether the metric's chip starts enabled, before any saved setting.
+    ///
+    /// Kp starts disabled: it is the same field as [`MetricKind::Hp30`] at a
+    /// six times coarser cadence, so drawing both by default draws the same
+    /// storm twice.
+    pub const fn visible_by_default(self) -> bool {
+        !matches!(self, Self::Kp)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde::Deserialize;
     use serde::de::IntoDeserializer;
     use serde::de::value::{Error as DeError, StrDeserializer};
-    use strum::EnumCount;
+    use strum::{EnumCount, IntoEnumIterator};
 
     /// Locks the on-disk spelling of every variant. `Settings` files persist
     /// these strings under `[plot.metric]`. A silent rename here would orphan
@@ -136,5 +147,15 @@ mod tests {
                 "deserializing {wire:?}"
             );
         }
+    }
+
+    /// Kp is the one metric that starts hidden, so a fresh install draws the
+    /// half-hourly index alone.
+    #[test]
+    fn only_kp_starts_hidden() {
+        let hidden: Vec<MetricKind> = MetricKind::iter()
+            .filter(|kind| !kind.visible_by_default())
+            .collect();
+        assert_eq!(hidden, [MetricKind::Kp]);
     }
 }
