@@ -123,6 +123,7 @@ _APP_LOCK_CRATES: list[str] = [
     "gt-filter",
     "gt-fmt",
     "gt-geo-math",
+    "gt-hdf5-archive",
     "gt-history",
     "gt-history-backend-pure",
     "gt-history-backend-sys",

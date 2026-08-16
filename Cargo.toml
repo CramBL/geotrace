@@ -34,6 +34,7 @@ members = [
     "crates/gt-filter",
     "crates/gt-fmt",
     "crates/gt-geo-math",
+    "crates/gt-hdf5-archive",
     "crates/gt-history",
     "crates/gt-history-backend-pure",
     "crates/gt-history-backend-sys",
