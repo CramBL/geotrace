@@ -12,11 +12,8 @@
 //! comparing against a percentage, which is the whole point of dimensional
 //! checking in this language.
 //!
-//! The zero-exponent (dimensionless) case still hides a distinction the
-//! language cares about - a count is not a ratio is not a bare number - which a
-//! later kind tag will carry alongside the exponents. This type is the exponent
-//! arithmetic only; nothing consumes it yet (the checker is routed through it in
-//! a following change).
+//! This type is the exponent arithmetic only. The distinction between a count,
+//! a ratio, and a bare number is carried by the checker's own kind tag.
 
 use std::ops::{Div, Mul};
 
@@ -24,11 +21,8 @@ use std::ops::{Div, Mul};
 ///
 /// The exponents are `i8`, which stays compact where the dimension is embedded
 /// (in the checker's value type) while giving ample headroom for exponents that
-/// stay within a handful of units. The arithmetic saturates rather than
-/// overflowing, so a pathological expression (a very long `*` chain, say)
-/// yields a stuck exotic dimension instead of panicking or wrapping - a
-/// saturated dimension simply matches nothing, which is the right outcome for
-/// nonsense input.
+/// stay within a handful of units. Arithmetic saturates, and a saturated
+/// dimension matches no named dimension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Dimension {
     pub length: i8,
@@ -60,7 +54,6 @@ impl Dimension {
     }
 
     /// Raised to an integer power: exponents scale, so `speed² = L² T⁻²`.
-    /// A zeroth power is dimensionless; a negative power inverts.
     pub fn powi(self, n: i8) -> Dimension {
         Dimension {
             length: self.length.saturating_mul(n),
@@ -173,8 +166,8 @@ mod tests {
 
     #[test]
     fn arithmetic_saturates_instead_of_overflowing() {
-        // A very long product folds many exponent additions; saturation keeps
-        // it finite (a stuck exotic dimension) rather than overflowing i8.
+        // A very long product folds many exponent additions. Saturation keeps
+        // the exponents at `i8::MAX`.
         let huge = (0..200).fold(Dimension::LENGTH, |acc, _| acc * Dimension::LENGTH);
         assert_eq!(huge.length, i8::MAX);
         assert!(!huge.is_dimensionless());

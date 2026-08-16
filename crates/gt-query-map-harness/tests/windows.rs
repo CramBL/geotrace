@@ -79,8 +79,8 @@ fn a_window_never_spans_a_hidden_point() {
     ");
 }
 
-/// Interference values ride alongside the recording rather than in it, and
-/// resolve as a percentage.
+/// Interference values are supplied per track, not stored in the recording,
+/// and resolve as a percentage.
 #[test]
 fn an_interference_filter_reads_the_supplied_series() {
     let mut scenario = MapScenario::new(Dataset::single_track(

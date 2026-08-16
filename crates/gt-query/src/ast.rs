@@ -17,7 +17,6 @@ impl Span {
         Self { start, end }
     }
 
-    /// Smallest span covering both inputs.
     pub fn to(self, other: Span) -> Span {
         Span {
             start: self.start.min(other.start),
@@ -40,7 +39,7 @@ pub struct Query {
     pub source: Source,
     pub params: Vec<ParamDecl>,
     pub window: Option<Window>,
-    /// One entry per `where` stage; they combine as if joined with `and`.
+    /// One entry per `where` stage. They combine as if joined with `and`.
     pub predicates: Vec<Expr>,
     /// The `draw`/`keep`/`hide` display stage, when written. Absent means
     /// the implicit `draw`.
@@ -107,7 +106,6 @@ impl ParamName {
     }
 }
 
-/// A numeric literal, optionally carrying a unit (`30 km/h`, `6`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NumberLit {
     pub value: f64,
@@ -157,8 +155,7 @@ pub enum Expr {
         exponent: i8,
         span: Span,
     },
-    /// A channel reference. The checker will resolve it against the channel
-    /// schema (not yet implemented).
+    /// A channel reference, resolved by the checker against the channel schema.
     Channel(ChannelRef),
 }
 
@@ -238,8 +235,8 @@ impl BinaryOp {
     }
 }
 
-/// Functions callable in expressions. All except `abs` and `sqrt` are window
-/// aggregates.
+/// Functions callable in expressions. All except `abs`, `sqrt`, and `norm` are
+/// window aggregates.
 #[derive(
     Debug,
     Clone,
@@ -271,13 +268,13 @@ pub enum Func {
 impl Func {
     /// The quantity this function produces from an argument of `arg`. `spread`,
     /// `std`, and `delta` collapse a direction to a plain angle and a timestamp
-    /// to a duration; the others pass the quantity through.
+    /// to a duration. The others pass the quantity through.
     ///
     /// A completion-level approximation, shared by [`crate::check`] and
     /// [`crate::completions_at`]. `var` and `sqrt` change the dimension in ways
-    /// no [`Quantity`] can name (squaring, halving), so their true result is
-    /// computed at the dimension level in the checker; here they pass through,
-    /// which is good enough for offering unit completions.
+    /// no [`Quantity`] can name (squaring, halving), so the checker computes
+    /// their true result at the dimension level. Here they pass through, which
+    /// is enough for offering unit completions.
     pub fn result_quantity(self, arg: Quantity) -> Quantity {
         match self {
             Func::Spread | Func::Std | Func::Delta => match arg {

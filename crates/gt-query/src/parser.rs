@@ -1,7 +1,7 @@
 //! Recursive-descent parser from tokens to the [`Query`] syntax tree.
 //!
 //! Hand-rolled so every error carries the exact wording and span the editor
-//! shows; several messages are pinned verbatim by tests.
+//! shows. Several messages are pinned verbatim by tests.
 
 use std::str::FromStr as _;
 
@@ -85,8 +85,6 @@ impl<'src> Parser<'src> {
         Diagnostic::new(span, message)
     }
 
-    /// An error whose fix goes in the structured `help` field (shown as a
-    /// separate "Hint:" line) rather than tacked onto the message.
     fn error_hint(
         &self,
         span: Span,
@@ -115,7 +113,6 @@ impl<'src> Parser<'src> {
                 self.advance();
                 Source::Points
             }
-            // A channel names its own timeline as the source (`@accel | ...`).
             Some(tok) if tok.kind == Token::Channel => {
                 self.advance();
                 Source::Channel(self.channel_ref_of(tok))
@@ -248,7 +245,7 @@ impl<'src> Parser<'src> {
         let num_text = tok.text.to_owned();
         self.advance();
 
-        // A unit after the number makes it a time span (`window 15 s`); the
+        // A unit after the number makes it a time span (`window 15 s`), and the
         // checker validates the unit is a duration. Otherwise it is a point
         // count, which must be a whole number of at least 1.
         if self.at_unit_start() {
@@ -487,7 +484,7 @@ impl<'src> Parser<'src> {
         };
         let raw = match tok.kind {
             Token::Superscript => superscript_value(tok.text),
-            // Strip the leading `^`; a fractional part means a non-whole power.
+            // A fractional part means a non-whole power.
             Token::CaretPower => match tok.text.get(1..) {
                 Some(digits) if digits.contains('.') => {
                     return Err(self.error(tok.span, "a power must be a whole number"));
@@ -530,15 +527,12 @@ impl<'src> Parser<'src> {
                     _ => Err(self.error(self.here(), "expected )")),
                 }
             }
-            Token::Ident => self.name(tok),
+            Token::Ident => self.func_call_or_metric(tok),
             Token::Channel => Ok(self.channel_ref(tok)),
             _ => Err(self.error(tok.span, "expected a value")),
         }
     }
 
-    /// Parses a channel-reference token (`@name` or `@name.component`) into a
-    /// [`ChannelRef`]. The lexer guarantees the `@name[.component]` shape, so
-    /// the split is infallible.
     fn channel_ref(&mut self, tok: Tok<'src>) -> Expr {
         self.advance();
         Expr::Channel(self.channel_ref_of(tok))
@@ -565,8 +559,7 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// An identifier in value position: a function call or a metric.
-    fn name(&mut self, tok: Tok<'src>) -> Result<Expr, Diagnostic> {
+    fn func_call_or_metric(&mut self, tok: Tok<'src>) -> Result<Expr, Diagnostic> {
         let next_is_paren = matches!(self.peek_at(1), Some(t) if t.kind == Token::LParen);
         if let Ok(func) = Func::from_str(tok.text) {
             if !next_is_paren {
@@ -628,8 +621,7 @@ impl<'src> Parser<'src> {
         })
     }
 
-    /// Whether the upcoming tokens could begin a unit; used for the reserved
-    /// `window 15 s` form.
+    /// Used for the reserved `window 15 s` form.
     fn at_unit_start(&self) -> bool {
         match self.peek() {
             Some(t) if t.kind == Token::Percent || t.kind == Token::Per => true,
@@ -640,7 +632,7 @@ impl<'src> Parser<'src> {
 
     /// The optional unit after a number literal. An identifier here that is
     /// not a unit is always a mistake (the grammar has no juxtaposition), so
-    /// it reports "unknown unit" rather than confusing errors downstream.
+    /// it reports "unknown unit".
     fn unit(&mut self) -> Result<Option<(Unit, Span)>, Diagnostic> {
         let Some(tok) = self.peek() else {
             return Ok(None);
@@ -679,8 +671,8 @@ impl<'src> Parser<'src> {
 
     /// A unit written as an identifier, optionally with `/second` and
     /// `/second/third` slash continuations (`km/h`, `m/s2`, `km/h/s`). The
-    /// longest matching compound wins; a leftover `/ident` that isn't part of
-    /// a known unit is left for expression-level division.
+    /// longest matching compound wins. A leftover `/ident` that isn't part of a
+    /// known unit is left for expression-level division.
     fn unit_from_ident_chain(
         &mut self,
         first: Tok<'src>,

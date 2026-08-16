@@ -77,7 +77,7 @@ struct TrackSnapshot {
 impl TrackSnapshot {
     /// Snapshot each of `tracks` from the loaded files.
     ///
-    /// Cloning the points is the simple-and-correct baseline; an `Arc`-based
+    /// Cloning the points is the simple-and-correct baseline. An `Arc`-based
     /// snapshot is the known follow-up if this shows up in profiling.
     fn collect(tracks: &[TrackRef], inputs: RunInputs<'_>) -> Vec<Self> {
         let RunInputs {
@@ -155,7 +155,7 @@ impl PreparedRun {
     pub fn execute(&self) -> RunOutcome {
         let cancelled = || self.handle.cancelled();
         // A channel-source query runs standalone (the session gates a mix), on
-        // its own sample timeline rather than the composing points pipeline.
+        // its own sample timeline.
         if let Some(query) = self.queries.first().filter(|q| q.is_channel_source()) {
             return self.execute_channel(query, &cancelled);
         }
@@ -167,8 +167,6 @@ impl PreparedRun {
             .queries
             .iter()
             .any(|q| q.referenced_metrics().iter().any(|m| m.is_slip()));
-        // One derived-series set per track, so `with` parameters merge: the first
-        // query to set mask/snr_drop/slip_window wins (queries rarely disagree).
         let params = merge_params(&self.queries);
 
         let mut track_data = RunTrackData::new();

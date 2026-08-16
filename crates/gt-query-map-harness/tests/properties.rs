@@ -2,9 +2,8 @@
 //!
 //! Every property drives the real [`MapScenario`], so each assertion also runs
 //! the harness's own check of the per-point classification against the map's
-//! [`gt_map::display_counts::DisplayCounts`] - the panel/map agreement comes
-//! along for free wherever a property calls `picture()` or `classify()` through
-//! it.
+//! [`gt_map::display_counts::DisplayCounts`]. The panel/map agreement is
+//! exercised wherever a property calls `picture()` or `classify()`.
 
 mod support;
 

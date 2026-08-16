@@ -25,7 +25,7 @@ pub const EPOCH_SECS: i64 = 1_700_000_000;
 const TRACK_GAP_SECS: i64 = 600;
 
 /// Degrees of latitude and longitude between consecutive seconds, so points a
-/// second apart are a metre-scale step rather than the same spot.
+/// second apart are a metre-scale step.
 const DEG_PER_SEC: f64 = 0.001;
 
 /// Base position of every dataset, in the Copenhagen area like the other

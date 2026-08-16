@@ -174,7 +174,8 @@ impl MapScenario {
     }
 
     /// Recompare the results against the current inputs. Every step already
-    /// does this, mirroring the app's per-frame refresh; call it to say so.
+    /// does this, mirroring the app's per-frame refresh. This call exists for
+    /// explicit scripts.
     pub fn refresh_staleness(&mut self) -> &mut Self {
         self.sync()
     }

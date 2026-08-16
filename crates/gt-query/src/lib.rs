@@ -59,7 +59,6 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    /// An error with no suggestion.
     pub(crate) fn new(span: Span, message: impl Into<String>) -> Self {
         Self {
             span,
@@ -68,8 +67,7 @@ impl Diagnostic {
         }
     }
 
-    /// An error whose fix goes in `help` (shown as a separate "Hint:" line)
-    /// rather than tacked onto the message.
+    /// An error whose fix goes in `help`, shown as a separate "Hint:" line.
     pub(crate) fn with_hint(
         span: Span,
         message: impl Into<String>,

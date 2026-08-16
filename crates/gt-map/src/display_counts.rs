@@ -23,8 +23,7 @@ use gt_ui_types::{
 };
 use rustc_hash::FxHasher;
 
-/// Counts the map is handed rather than deriving: they come from the app,
-/// not from the loaded recordings.
+/// Counts the app supplies, not derived from the loaded recordings.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SuppliedCounts<'a> {
     /// Snapped geometry, already scoped by the app.
@@ -49,9 +48,7 @@ pub struct DisplayCounts {
     query_highlights: usize,
     snapped_tracks: usize,
     sky_glyphs: usize,
-    /// Interference cells available for the shown day. Comes from the
-    /// archive, not the loaded recordings, so it is supplied rather than
-    /// walked.
+    /// Interference cells available for the shown day, from the archive.
     jamming_hexes: usize,
 }
 
@@ -98,10 +95,8 @@ impl DisplayCounts {
         query_matches: Option<&QueryMatches>,
         supplied: SuppliedCounts<'_>,
     ) -> Self {
-        // Snapped geometry arrives pre-scoped (the app applies tree
-        // visibility and the per-track glyph toggle before the map sees
-        // it), so its count is exactly the tracks whose snapped track
-        // would draw - re-deriving scope here could only drift from that.
+        // Snapped geometry arrives pre-scoped: the app applies tree visibility
+        // and the per-track glyph toggle before the map sees it.
         let mut counts = Self {
             jamming_hexes: supplied.jamming_cells,
             snapped_tracks: supplied.snapped_tracks.map_or(0, |s| s.by_track.len()),
@@ -139,7 +134,7 @@ impl DisplayCounts {
                         .iter()
                         .filter(|a| point_in_scope(a.point.as_usize()))
                         .count();
-                    // Sky glyphs anchor on report-bearing points; like the
+                    // Sky glyphs anchor on report-bearing points. Like the
                     // labels they are per-point track ink, so they share the
                     // Tpv tree gate.
                     counts.sky_glyphs += track
@@ -193,14 +188,14 @@ impl DisplayCounts {
 }
 
 /// The inputs [`DisplayCounts::compute`] reads, captured so a cache can tell
-/// when a recompute is actually needed. Compared by value; `compute` reads
-/// nothing else, so equal keys guarantee equal counts.
+/// when a recompute is needed. Compared by value: equal keys guarantee equal
+/// counts.
 ///
-/// `files` is fingerprinted structurally rather than cloned: point and marker
-/// data is immutable once loaded, so the per-track array lengths (plus the
-/// file/track counts) change exactly when a load, unload, or reload changes
-/// what could be counted. `snapped_tracks` collapses to its track count -
-/// the only thing `compute` reads from it.
+/// `files` is fingerprinted structurally from the per-track array lengths plus
+/// the file and track counts. Point and marker data is immutable once loaded,
+/// so those change exactly when a load, unload, or reload changes what could be
+/// counted. `snapped_tracks` collapses to its track count, the only thing
+/// `compute` reads from it.
 #[derive(Clone, PartialEq)]
 struct DisplayCountsKey {
     files_sig: u64,
@@ -270,9 +265,9 @@ pub(crate) struct DisplayCountsCache {
 
 impl DisplayCountsCache {
     /// Return the counts for the current inputs, reusing the last result when
-    /// nothing `compute` reads has changed. The hit path (the popup left open
-    /// over a static scene) clones nothing - it compares the stored key
-    /// against the borrowed inputs; only a miss stores a fresh key.
+    /// nothing `compute` reads has changed. The hit path clones nothing: it
+    /// compares the stored key against the borrowed inputs. Only a miss stores
+    /// a fresh key.
     #[expect(clippy::too_many_arguments, reason = "mirrors DisplayCounts::compute")]
     pub(crate) fn get(
         &mut self,
@@ -364,8 +359,7 @@ mod tests {
                     .lat(lat)
                     .lon(lon)
                     .build();
-                // Point 1 carries a satellite report, so it anchors a sky
-                // glyph.
+                // Point 1 has a satellite report, so it anchors a sky glyph.
                 let satellites =
                     (i == 1).then(|| gt_types::satellites::Satellites::new(None, None, Vec::new()));
                 NavPoint::new(tpv, satellites)
@@ -476,8 +470,7 @@ mod tests {
     }
 
     /// Snapped geometry is counted straight from the pre-scoped
-    /// [`SnappedTracks`] view - one per track with a shown run - rather
-    /// than re-derived from the files.
+    /// [`SnappedTracks`] view: one per track with a shown run.
     #[test]
     fn snapped_tracks_are_counted_from_the_prescoped_view() {
         let files = vec![fixture()];
@@ -511,8 +504,8 @@ mod tests {
             ..GlobalFilter::default()
         };
         let counts = compute(&files, &vis_all(), &filter, None);
-        // Points t1 and t2 pass; both anchors (t0, t3) fall outside; the
-        // t2 custom marker and the t1 generated marker stay.
+        // Points t1 and t2 pass, both anchors (t0, t3) fall outside. The t2
+        // custom marker and the t1 generated marker stay.
         assert_eq!(counts.get(DisplayCategory::TrackPoints), 2);
         assert_eq!(counts.get(DisplayCategory::SatelliteLabels), 0);
         assert_eq!(counts.get(DisplayCategory::CustomMarkers), 1);
@@ -548,8 +541,8 @@ mod tests {
         let files = vec![fixture()];
         let track_ref = TrackRef::new(FileIdx::new(0), TrackIdx::new(0));
         let matches = QueryMatches {
-            // Points 0 and 1 removed by a `hide` query: they leave the
-            // point count and take the point-0 anchor with them.
+            // Points 0 and 1 removed by a `hide` query, which drops them from
+            // the point count and drops the point-0 anchor.
             hidden: HashMap::from([(track_ref, vec![0..1, 1..2])]),
             draws: vec![DrawLayer {
                 color: 0,
@@ -674,8 +667,8 @@ mod tests {
         }
     }
 
-    /// Repeated calls with unchanged inputs run the O(all points) walk once;
-    /// a changed input runs it again. This is the whole point of the cache.
+    /// Repeated calls with unchanged inputs run the O(all points) walk once. A
+    /// changed input runs it again.
     #[test]
     fn cache_skips_the_walk_when_inputs_are_unchanged() {
         let files = vec![fixture()];

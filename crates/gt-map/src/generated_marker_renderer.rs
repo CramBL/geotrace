@@ -63,8 +63,8 @@ impl<'a> GeneratedMarkerRenderer<'a> {
             ui.strong(generated_marker_header(&marker.kind));
             match &marker.kind {
                 // A slip groups the satellites that lost lock at this epoch, so
-                // show what changed for each (geometry and signal, before/after)
-                // rather than the whole-epoch point table.
+                // show what changed for each (geometry and signal,
+                // before/after).
                 gt_types::GeneratedMarkerKind::Slip(event) => {
                     ui.separator();
                     show_slip_table(ui, event);
@@ -172,8 +172,6 @@ impl Plugin for GeneratedMarkerRenderer<'_> {
     }
 }
 
-/// Returns the header string for a generated-marker tooltip or hover section.
-///
 /// Centralises the "GNSS fix regained after Xs" formatting so both the live
 /// tooltip (`show_tooltip`) and the multi-hover compound label
 /// (`draw_candidate_section`) always produce identical text.
@@ -270,14 +268,13 @@ pub(crate) fn show_slip_table(ui: &mut Ui, event: &gt_types::satellites::SlipEve
 ///
 /// `to` is `None` when the satellite dropped out (lost lock), so only the
 /// last-known `from` value is shown.  Otherwise `from -> to`, collapsing to a
-/// single value when the two render identically (unchanged, or both unknown -
-/// which shows a lone dash rather than `- -> -`).
+/// single value when the two render identically (unchanged, or both unknown,
+/// which shows a lone dash).
 fn slip_change(from: Option<f32>, to: Option<Option<f32>>, unit: &str) -> String {
     let fmt = |v: Option<f32>| v.map_or_else(|| "-".to_owned(), |x| format!("{x:.1}{unit}"));
     // Compare the rendered text, not the floats, to sidestep `float_cmp`.
     let before = fmt(from);
     match to {
-        // Satellite gone: there is no "after", so just the last-known value.
         None => before,
         Some(after) => {
             let after = fmt(after);
@@ -375,7 +372,7 @@ fn draw_generated_marker(
             );
         }
         gt_types::GeneratedMarkerKind::ClockDiscontinuity { .. } => {
-            // Exclamation mark: an anomaly to inspect.
+            // Exclamation mark.
             let st = Stroke::new(2.0_f32, faded_stroke);
             painter.line_segment(
                 [
@@ -387,8 +384,7 @@ fn draw_generated_marker(
             painter.circle_filled(center + egui::vec2(0.0, s * 0.85), 1.3, faded_stroke);
         }
         gt_types::GeneratedMarkerKind::ClockOffsetExcursion { .. } => {
-            // A spike off a flat baseline: the offset left its level and came
-            // straight back.
+            // A spike off a flat baseline.
             let st = Stroke::new(2.0_f32, faded_stroke);
             let base_y = s * 0.55;
             let path = [

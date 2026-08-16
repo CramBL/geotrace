@@ -10,8 +10,8 @@ use proptest::prelude::*;
 /// Metrics the synthetic points carry, and a query may therefore read.
 ///
 /// `heading` is a direction, and its aggregates are circular statistics. The
-/// oracle stays out of that business, so heading appears in per-point predicates
-/// only (see [`agg_metric`]).
+/// oracle implements no circular statistics, so heading appears in per-point
+/// predicates only (see [`agg_metric`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Metric {
     Velocity,

@@ -30,9 +30,9 @@ pub struct Completions {
     pub items: Vec<Construct>,
 }
 
-/// How a completion request was initiated. The trigger decides how eager the
-/// empty-prefix behavior is: while typing, most positions wait for a first
-/// character; an explicit request opens on whatever the slot accepts.
+/// How a completion request was initiated. While typing, most positions wait
+/// for a first character. An explicit request opens on whatever the slot
+/// accepts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionTrigger {
     /// Recomputed as the caret moves or the text changes.
@@ -55,7 +55,7 @@ pub fn completions_at(
     let toks = lexer::tokenize(src);
 
     // The partial word under the cursor is a name-shaped token the cursor
-    // sits within or just after; its span is what accepting replaces.
+    // sits within or just after. Its span is what accepting replaces.
     let word = toks
         .iter()
         .find(|t| is_wordish(t.kind) && t.span.start < cursor && cursor <= t.span.end);
@@ -118,7 +118,7 @@ pub fn completions_at(
         })
         .filter_map(|c| fuzzy_score(prefix, c.name).map(|score| (score, c)))
         .collect();
-    // Higher score first; stable, so the catalog order breaks ties.
+    // Higher score first. The sort is stable, so the catalog order breaks ties.
     items.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
 
     // The word the cursor sits in is already a complete construct (the caret
@@ -159,10 +159,8 @@ pub struct ChannelCompletions {
 /// `@ac` (or a lone `@`) offers the schema's scalar channels and each vector
 /// channel's components (`@accel.x`), ranked against the text after the `@`.
 ///
-/// The sigil is explicit intent, but not unconditional: a `@` inside a
-/// comment is prose, and one in a position no channel can occupy (a stage
-/// keyword, a `table` column, a `with` parameter) would only complete into a
-/// parse error - both stay quiet.
+/// No completion inside a comment, or in a position no channel can occupy (a
+/// stage keyword, a `table` column, a `with` parameter).
 pub fn channel_completions_at(
     src: &str,
     cursor: usize,
@@ -185,7 +183,7 @@ pub fn channel_completions_at(
             fuzzy_score(prefix, &suggestion.name).map(|score| (score, suggestion))
         })
         .collect();
-    // Highest score first; the schema iterates in arbitrary (hash) order, so
+    // Highest score first. The schema iterates in arbitrary (hash) order, so
     // break ties by name for a stable popup.
     scored.sort_by(|(a_score, a), (b_score, b)| {
         b_score.cmp(a_score).then_with(|| a.name.cmp(&b.name))
@@ -219,8 +217,8 @@ fn channel_offers(name: &str, info: &ChannelInfo) -> Vec<ChannelSuggestion> {
 }
 
 /// The channel under `cursor` for a hover tooltip, or `None` when the token is
-/// not a channel the schema knows. A component `@accel.x` reads as the channel's
-/// dimension; a whole vector `@accel` reads as a vector with its component list.
+/// not a channel the schema knows. The hover shows the channel's dimension for
+/// a component `@accel.x`, and the component list for a whole vector `@accel`.
 pub fn channel_at(src: &str, cursor: usize, schema: &ChannelSchema) -> Option<ChannelSuggestion> {
     let cursor = cursor.min(src.len());
     let toks = lexer::tokenize(src);
@@ -234,7 +232,7 @@ pub fn channel_at(src: &str, cursor: usize, schema: &ChannelSchema) -> Option<Ch
     };
     let info = schema.get(name)?;
     match component {
-        // A named component reads as the channel's dimension, if it exists.
+        // A named component shows the channel's dimension, if it exists.
         Some(component) => {
             info.components
                 .iter()
@@ -244,7 +242,7 @@ pub fn channel_at(src: &str, cursor: usize, schema: &ChannelSchema) -> Option<Ch
                     summary: channel_summary(info),
                 })
         }
-        // A scalar channel reads as its dimension; a whole vector names its
+        // A scalar channel shows its dimension. A whole vector shows its
         // components, since it has no scalar value on its own.
         None if info.components.is_empty() => Some(ChannelSuggestion {
             name: name.to_owned(),
@@ -367,8 +365,8 @@ fn starts_at_boundary(src: &str, start: usize) -> bool {
 /// The walk covers the whole run back to the start of the condition atom
 /// (`where`, a connective, a comma). A dimension-changing operator anywhere in
 /// that run (`velocity / eph`, a power) means the found name does not type the
-/// value, so the inference honestly gives up rather than suggesting the wrong
-/// units. `+`/`-` keep the dimension and are walked through.
+/// value, and the walk returns `None`. `+`/`-` keep the dimension and are
+/// walked through.
 fn allowed_units_at(
     toks: &[lexer::Tok<'_>],
     word_start: usize,
@@ -395,7 +393,7 @@ fn allowed_units_at(
                     Some(_) => None,
                 };
             }
-            // The value's dimension is not the found name's; give up.
+            // The value's dimension is not the found name's.
             Token::Star | Token::Slash | Token::Superscript | Token::CaretPower => return None,
             Token::Ident if source.is_none() => {
                 if let Ok(param) = ParamName::from_str(tok.text) {
@@ -410,9 +408,6 @@ fn allowed_units_at(
                 }
             }
             Token::Channel if source.is_none() => {
-                // The channel's quantity comes from its schema unit; a channel
-                // with no (or an unknown) unit is a bare number, like the
-                // checker types it.
                 let quantity = channel_quantity(tok.text, schema)?;
                 source = Some((idx, quantity));
             }
@@ -461,8 +456,8 @@ fn wrapped_quantity(toks: &[lexer::Tok<'_>], value_idx: usize, quantity: Quantit
 /// The construct under the cursor, for hover. `None` over whitespace, an
 /// operator, or an unknown word.
 ///
-/// `min` is both the aggregate and the minute unit; a number immediately
-/// before it means the unit, otherwise the function - the same disambiguation
+/// `min` is both the aggregate and the minute unit. A number immediately
+/// before it means the unit, otherwise the function, the same disambiguation
 /// the parser uses.
 pub fn construct_at(src: &str, cursor: usize) -> Option<&'static Construct> {
     let cursor = cursor.min(src.len());
@@ -520,8 +515,8 @@ impl Slot {
             }
             Slot::Column => kind == ConstructKind::Metric,
             Slot::Unit => kind == ConstructKind::Unit,
-            // `not` starts an atom rather than joining two, so after a
-            // complete one only `and`/`or` fit.
+            // `not` starts an atom, so after a complete one only `and`/`or`
+            // fit.
             Slot::Connective => kind == ConstructKind::Connective && construct.name != "not",
             Slot::None => false,
         }
@@ -584,8 +579,8 @@ fn slot_before(toks: &[lexer::Tok<'_>], word_start: usize) -> Slot {
                 | Token::Star
                 | Token::Slash,
             ) => Slot::ValueName,
-            // After a complete atom (metric, `)`, `%`, a unit): a comparison
-            // operator or a connective can follow; only the connectives are
+            // After a complete atom (metric, `)`, `%`, a unit) a comparison
+            // operator or a connective can follow. Only the connectives are
             // completable names.
             _ => Slot::Connective,
         },
@@ -630,7 +625,7 @@ fn is_wordish(kind: Token) -> bool {
 }
 
 /// Fuzzy score of `name` against the typed `prefix`, or `None` when it does
-/// not match. Exact prefix beats subsequence; shorter names win ties. The
+/// not match. Exact prefix beats subsequence, and shorter names win ties. The
 /// language is all-lowercase, so matching is case-insensitive on the input.
 fn fuzzy_score(prefix: &str, name: &str) -> Option<i32> {
     if prefix.is_empty() {
@@ -743,8 +738,8 @@ mod tests {
 
     #[test]
     fn partial_stage_keyword_fuzzy_filters() {
-        // "wh": `where` is a prefix (ranks first); `with` matches as a
-        // subsequence (w..h); `window` has no 'h' so it is filtered out.
+        // "wh": `where` is a prefix and ranks first. `with` matches as a
+        // subsequence (w..h). `window` has no 'h' so it is filtered out.
         let items = names("points | wh");
         assert_eq!(items.first(), Some(&"where"));
         assert!(items.contains(&"with"));
@@ -884,8 +879,7 @@ mod tests {
     #[test]
     fn connectives_complete_after_an_atom() {
         // After a complete comparison, a typed character offers the joining
-        // connectives - but nothing pops eagerly, and `not` (which starts an
-        // atom rather than joining two) is not offered there.
+        // connectives. Nothing pops eagerly, and `not` is not offered there.
         assert!(names("points | where velocity > 30 km/h ").is_empty());
         assert_eq!(names("points | where velocity > 30 km/h a"), vec!["and"]);
         assert_eq!(names("points | where velocity > 30 km/h o"), vec!["or"]);
@@ -911,12 +905,12 @@ mod tests {
     }
 
     #[test]
-    fn arithmetic_between_metrics_gives_up_instead_of_guessing() {
-        // `velocity / eph` is dimensionless; suggesting length units (from
-        // `eph`) would be wrong, so nothing pops eagerly...
+    fn arithmetic_between_metrics_offers_no_eager_units() {
+        // `velocity / eph` is dimensionless. Length units (from `eph`) would be
+        // wrong, so nothing pops eagerly.
         assert!(names("points | where velocity / eph > 3 ").is_empty());
-        // ...while a typed prefix still completes over the full unit set (the
-        // honest fallback when the quantity is unknown).
+        // A typed prefix still completes over the full unit set, the fallback
+        // when the quantity is unknown.
         let typed = names("points | where velocity / eph > 3 k");
         assert!(typed.contains(&"km/h"));
         assert!(typed.contains(&"km"));

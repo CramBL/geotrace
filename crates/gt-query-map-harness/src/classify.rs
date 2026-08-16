@@ -2,8 +2,8 @@ use gt_ui_types::{DrawLayerMask, PointVisibility};
 
 /// One point of one track, as the map currently reads it.
 ///
-/// [`PointClass::visibility`] is the map's own answer - the harness asks
-/// [`gt_ui_types::MapScope::point_visibility`] rather than deciding anything itself.
+/// [`PointClass::visibility`] comes from
+/// [`gt_ui_types::MapScope::point_visibility`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PointClass {
     pub visibility: PointVisibility,
@@ -91,9 +91,8 @@ mod tests {
         assert_eq!(class(visibility, layers).glyph(), expected);
     }
 
-    /// Every way the map can withhold a point reads as its own glyph, so a
-    /// picture can never conflate two of them - and a new one fails here rather
-    /// than quietly rendering as something else.
+    /// Every way the map can withhold a point has its own glyph, so a picture
+    /// can never conflate two of them. A new one fails here.
     #[test]
     fn the_glyphs_cover_every_visibility_and_stay_distinct() {
         let all = [

@@ -61,7 +61,7 @@ const SWATCH_ROUNDING_PX: f32 = 2.0;
 const SWATCH_MARGIN_PX: f32 = 1.0;
 
 /// Size of the solid fold triangle. Big enough that its constellation tint
-/// reads as the colour key the swatch used to provide.
+/// reads as the colour key to the plot's marks.
 const FOLD_ARROW_SIZE_PX: f32 = 9.0;
 
 /// Box the fold triangle is allocated in, leaving a little air around it.
@@ -245,8 +245,8 @@ pub(crate) fn draw_track_icons(
         // Direction for the chevron:
         // - If the GPS reported a heading (fix-lost but device maintained estimate),
         //   use it - it is more accurate than deriving from neighbour positions.
-        // - Otherwise derive from neighbouring Mercator positions (Mercator y
-        //   increases southward, matching egui y-down, so no Y-flip needed).
+        // - Otherwise derive from neighbouring Mercator positions (see
+        //   [`ghost_direction`]).
         let direction = if let Some(h) = point.tpv.heading() {
             let angle_rad = h.get::<radian>() - std::f64::consts::FRAC_PI_2;
             egui::vec2(angle_rad.cos() as f32, angle_rad.sin() as f32)
@@ -604,9 +604,6 @@ pub(crate) fn show_sticky_tpv_content(
         |ui: &mut Ui, folds: &mut PointWindowFolds, highlight: &mut Option<SkyHighlight>| {
             let mut open_trails = false;
             if !matches!(sky, SkySection::TrackWithoutReports) {
-                // Title on the left, action on the right: the header doubles as
-                // the plot's title bar, so the button that opens the same sky
-                // over the whole track belongs at its far end.
                 // Sized to the plot it titles: a right-aligned button in an
                 // unbounded row would stretch the whole column to the window's
                 // width and squeeze the satellite tables out.
@@ -648,8 +645,7 @@ pub(crate) fn show_sticky_tpv_content(
             open_trails
         };
     // The satellite tables always scroll on their own, so the plot beside or
-    // above them never scrolls out of view the way it did when one scroll
-    // area held everything.
+    // above them never scrolls out of view.
     let satellites =
         |ui: &mut Ui, folds: &mut PointWindowFolds, highlight: &mut Option<SkyHighlight>| {
             ScrollArea::vertical()
@@ -687,7 +683,6 @@ fn sticky_metrics(
     highlight: &mut Option<SkyHighlight>,
     recording_name: Option<&str>,
 ) {
-    // Basic metrics (2-column grid).
     Grid::new("sticky_tpv_basic").num_columns(2).show(ui, |ui| {
         recording_row_ui(ui, recording_name);
 
@@ -719,37 +714,31 @@ fn sticky_metrics(
             ui.end_row();
         }
 
-        match &p.satellites {
-            Some(sats) => {
-                let fix = sats.fix_count();
-                let seen = sats.satellite_count();
-                ui.label("Satellites");
-                let dark_mode = ui.visuals().dark_mode;
-                ui.horizontal(|ui| {
-                    let fix_resp =
-                        ui.colored_label(fix_count_color(fix, dark_mode), fix.to_string());
-                    if crate::hover_labels::hover_affordance(ui, fix_resp.rect) {
-                        *highlight = Some(SkyHighlight::in_fix());
-                    }
-                    ui.label("/");
-                    ui.colored_label(seen_count_color(seen, dark_mode), seen.to_string());
-                });
-                ui.end_row();
-
-                // Time delta between the GPS fix and the satellite report.
-                // A nonzero delta means the satellite data is from a slightly
-                // different moment than the fix - worth showing for diagnostics.
-                if let Some(sat_gps_time) = sats.gps_time() {
-                    let sat_delta_ms = (p.tpv.time() - sat_gps_time).num_milliseconds();
-                    if sat_delta_ms != 0 {
-                        ui.label(format!("Sat {DELTA}t"));
-                        ui.label(gt_fmt::format_signed_delta(sat_delta_ms));
-                        ui.end_row();
-                    }
+        if let Some(sats) = &p.satellites {
+            let fix = sats.fix_count();
+            let seen = sats.satellite_count();
+            ui.label("Satellites");
+            let dark_mode = ui.visuals().dark_mode;
+            ui.horizontal(|ui| {
+                let fix_resp = ui.colored_label(fix_count_color(fix, dark_mode), fix.to_string());
+                if crate::hover_labels::hover_affordance(ui, fix_resp.rect) {
+                    *highlight = Some(SkyHighlight::in_fix());
                 }
-            }
-            None => {
-                // No satellite report for this point - omit the row.
+                ui.label("/");
+                ui.colored_label(seen_count_color(seen, dark_mode), seen.to_string());
+            });
+            ui.end_row();
+
+            // Time delta between the GPS fix and the satellite report.
+            // A nonzero delta means the satellite data is from a slightly
+            // different moment than the fix - worth showing for diagnostics.
+            if let Some(sat_gps_time) = sats.gps_time() {
+                let sat_delta_ms = (p.tpv.time() - sat_gps_time).num_milliseconds();
+                if sat_delta_ms != 0 {
+                    ui.label(format!("Sat {DELTA}t"));
+                    ui.label(gt_fmt::format_signed_delta(sat_delta_ms));
+                    ui.end_row();
+                }
             }
         }
 
@@ -764,17 +753,15 @@ fn sticky_metrics(
     });
 }
 
-/// A fold arrow, tinted with the colour of whatever it folds. Tinting it is
-/// what lets the constellation panels drop their separate colour swatch: one
-/// element carries both the fold state and the key to the plot's marks.
+/// A fold arrow, tinted with the colour of whatever it folds, so one element
+/// shows both the fold state and the key to the plot's marks.
 fn fold_arrow(ui: &mut Ui, folded: bool, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(FOLD_ARROW_BOX_PX), egui::Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
     }
-    // Painted rather than set as a glyph: only the Regular phosphor weight is
-    // loaded, and its caret is too fine to carry the constellation colour now
-    // that the arrow has taken the swatch's job.
+    // Painted, not set as a glyph: only the Regular phosphor weight is loaded,
+    // and its caret is too fine to show the constellation colour.
     let c = rect.center();
     let half = FOLD_ARROW_SIZE_PX / 2.0;
     let points = if folded {
@@ -828,7 +815,6 @@ fn sticky_satellites(
     folds: &mut PointWindowFolds,
     highlight: &mut Option<SkyHighlight>,
 ) {
-    // Comprehensive per-PRN satellite table grouped by constellation.
     let Some(sats) = &p.satellites else {
         return;
     };
@@ -855,9 +841,8 @@ fn sticky_satellites(
         })
         .collect();
 
-    // Two columns when there is room, one when the window is narrow. Never
-    // more than two: a third column would sit far enough from the plot that
-    // correlating a row with its mark gets hard.
+    // Never more than two columns: a third would sit far enough from the plot
+    // that correlating a row with its mark gets hard.
     let two_columns = groups.len() > 1 && ui.available_width() >= MIN_TWO_COLUMN_WIDTH_PX;
     if !two_columns {
         for group in &groups {
@@ -866,9 +851,8 @@ fn sticky_satellites(
         return;
     }
 
-    // Cut the ordered list where the two columns come out closest in height,
-    // so uneven constellations pack tight instead of leaving the dead space
-    // that fixed two-per-row chunking left behind.
+    // Cut the ordered list where the two columns come out closest in height, so
+    // uneven constellations pack tight.
     let weights: SmallVec<[usize; Constellation::COUNT]> =
         groups.iter().map(|group| group.weight(*folds)).collect();
     let (left, right) = groups.split_at(balanced_split(&weights));
@@ -889,8 +873,7 @@ fn sticky_satellites(
 /// The index at which to cut an ordered list of column weights into two
 /// columns of as-equal height as possible.
 ///
-/// A single cut rather than a repack, so constellations keep their familiar
-/// order (GPS first, and so on) while the columns still come out balanced.
+/// One cut point, with the order preserved (GPS first, and so on).
 fn balanced_split(weights: &[usize]) -> usize {
     if weights.len() < 2 {
         return weights.len();
@@ -930,9 +913,8 @@ fn constellation_panel(
     ui.vertical(|ui| {
         let dark_mode = ui.visuals().dark_mode;
         let const_fix = satellites.iter().filter(|s| s.in_fix()).count() as u32;
-        // Header: the fold arrow in the constellation's plot colour (it
-        // replaces a separate swatch, so folding costs no extra chrome), the
-        // name, and the fix/seen count.
+        // Header: the fold arrow in the constellation's plot colour, the name,
+        // and the fix/seen count.
         //
         // The whole row folds on click, not just the arrow - the row is what
         // lights up on hover, so that is what has to be clickable. Which part
@@ -985,10 +967,10 @@ fn constellation_panel(
                 ui.label(RichText::new("Fix").weak().small());
                 ui.end_row();
 
-                // A satellite contributing to the fix reads as the
-                // "good" tier green; an idle one is de-emphasised
-                // with egui's own weak-text colour, which already
-                // tracks the theme.
+                // A satellite contributing to the fix is shown in the
+                // "good" tier green. An idle one is de-emphasised with
+                // egui's own weak-text colour, which already tracks the
+                // theme.
                 let in_fix_color = gt_ui_theme::SatCountTier::Good.color(dark_mode);
                 let muted_color = ui.visuals().weak_text_color();
                 for sat in satellites {
@@ -1042,10 +1024,8 @@ pub(crate) fn constellation_swatch(ui: &mut Ui, constellation: Constellation) {
 }
 
 fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
-    // Only show satellite rows when a report is actually attached to this point.
-    // Omit the section entirely when there is no report - a missing report
-    // does not mean there was no GPS fix, just that no satellite data was
-    // captured or associated for this particular point.
+    // A missing report does not mean there was no GPS fix, just that no
+    // satellite data was captured or associated for this point.
     let Some(sats) = &p.satellites else {
         return;
     };
@@ -1071,7 +1051,6 @@ fn show_satellite_rows(ui: &mut Ui, p: &NavPoint) {
     });
     ui.end_row();
 
-    // Per-constellation breakdown - each with its own colored fix/seen counts.
     for constellation in [
         Constellation::Gps,
         Constellation::Galileo,
@@ -1629,8 +1608,6 @@ fn draw_navigation_arrow(
     }
 }
 
-/// Convert a [0.0, 1.0] alpha value to a u8. The `clamp` call guarantees the
-/// result is in [0, 255], so sign loss is impossible despite the lint warning.
 #[inline]
 fn alpha_u8(alpha: f32) -> u8 {
     #[expect(

@@ -47,7 +47,6 @@ impl fmt::Display for Query {
     }
 }
 
-/// A number literal with its unit as written.
 struct Lit<'a>(&'a crate::ast::NumberLit);
 
 impl fmt::Display for Lit<'_> {

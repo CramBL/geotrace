@@ -71,7 +71,8 @@ impl<C: Ord + Copy> DecimationScratch<C> {
                 bucket.push(point_index);
             }
         }
-        // Cell iteration order is arbitrary; renderers get ascending indices.
+        // Cell iteration order is arbitrary: sort so renderers get ascending
+        // indices.
         for bucket in &mut self.selected {
             bucket.sort_unstable();
         }
@@ -128,7 +129,6 @@ mod tests {
 
     #[test]
     fn smallest_candidate_wins_a_cell() {
-        // Two candidates in one cell; the smaller by Ord (rank) survives.
         let mut scratch = DecimationScratch::default();
         let out = resolve(
             &mut scratch,

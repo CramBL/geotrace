@@ -42,10 +42,10 @@ pub enum Token {
     Slash,
     #[token("%")]
     Percent,
-    // A postfix power. The superscript form is canonical (`x²`, `x⁻³`); the
-    // caret form (`x^2`, `x^-3`) is accepted so pasted or pre-rewrite text still
-    // parses. Both carry an integer the parser resolves; a fractional caret
-    // power lexes here so the parser can reject it with a pointed message.
+    // A postfix power. The superscript form is canonical (`x²`, `x⁻³`). The
+    // caret form (`x^2`, `x^-3`) is accepted so pasted text still parses. Both
+    // hold an integer the parser resolves. A fractional caret power lexes here
+    // so the parser can reject it with a pointed message.
     #[regex(r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+")]
     Superscript,
     #[regex(r"\^-?[0-9]+(\.[0-9]+)?")]
@@ -82,16 +82,15 @@ pub enum Token {
     // splits the name from the optional component.
     #[regex(r"@(?&ident)(\.(?&ident))?")]
     Channel,
-    // A real token rather than a skip so the highlighter can color comments;
-    // `lex` filters it out before parsing. Consuming to end of line is the
-    // point, hence the greedy-repetition opt-in logos 0.16 requires.
+    // A real token so the highlighter can color comments: `lex` filters it out
+    // before parsing. Consuming to end of line needs the greedy-repetition
+    // opt-in logos 0.16 requires.
     #[regex(r"#[^\n]*", allow_greedy = true)]
     Comment,
 }
 
 /// Coarse token grouping for syntax highlighting. Defined here so the
-/// highlighter derives directly from the one lexer instead of keeping its
-/// own keyword list.
+/// highlighter derives directly from the one lexer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenClass {
     Keyword,
@@ -156,7 +155,6 @@ impl Token {
     }
 }
 
-/// A token with its source span and text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tok<'src> {
     pub kind: Token,
@@ -184,7 +182,7 @@ pub fn lex(src: &str) -> Result<Vec<Tok<'_>>, Diagnostic> {
                 return Err(Diagnostic {
                     span,
                     message: format!("unexpected character `{ch}`"),
-                    // The lowercase hint fits an uppercase keyword; it would
+                    // The lowercase hint fits an uppercase keyword. It would
                     // mislead for a stray symbol like `^` or `@`.
                     help: ch
                         .is_ascii_uppercase()
@@ -307,8 +305,8 @@ mod tests {
 
     #[test]
     fn a_bare_or_malformed_at_is_a_lex_error() {
-        // `@` needs a name; `@.x` has no name before the dot. Both are rejected
-        // rather than producing a partial token.
+        // `@` needs a name. `@.x` has no name before the dot. Both are
+        // rejected.
         for src in ["@", "@.x"] {
             let err = lex(src).unwrap_err();
             assert_eq!(err.message, "unexpected character `@`", "for {src}");

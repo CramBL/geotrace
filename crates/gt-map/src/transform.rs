@@ -212,7 +212,7 @@ impl MercTransform {
 
     /// Pixels per metre at the viewport centre's latitude - the scale gate
     /// for meter-sized annotations (the snap error whiskers). Inverts the
-    /// Mercator y of the centre; one trigonometric round trip per frame.
+    /// Mercator y of the centre. One trigonometric round trip per frame.
     pub(crate) fn pixels_per_meter_at_center(&self) -> f64 {
         let lat_rad = (std::f64::consts::PI * (1.0 - 2.0 * self.merc_center.y))
             .sinh()

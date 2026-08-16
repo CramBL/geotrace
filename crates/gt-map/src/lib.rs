@@ -61,7 +61,6 @@ use crate::viewport::{
     compute_viewport_bounds, compute_visible_bounding_box, is_spatial_point_visible, zoom_to_fit,
 };
 
-/// Which tile source to use for the background map.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum MapLayer {
     #[default]
@@ -75,20 +74,14 @@ pub enum MapLayer {
 /// responsible for applying it to the visibility state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapContextAction {
-    /// Hide every track except the given one.
     ShowOnlyTrack(TrackRef),
-    /// Hide every file except the given one.
     ShowOnlyFile(FileIdx),
     /// Open the sky trails window, per the request's track and instant.
     ShowSkyTrails(SkyTrailsRequest),
 }
 
-/// Manages the load-highlight pulse animation.
-///
-/// Tracks when the animation started and provides the per-frame alpha value.
-/// Once expired it clears itself so callers can avoid unnecessary repaints.
-/// Timestamps are egui clock seconds (`InputState::time`) rather than wall
-/// time, so the pulse is deterministic under `egui_kittest`'s simulated time.
+/// Timestamps are egui clock seconds (`InputState::time`), so the pulse is
+/// deterministic under `egui_kittest`'s simulated time.
 struct BlinkState {
     start: Option<f64>,
 }
@@ -138,22 +131,14 @@ const HOVER_FADE_OUT_FAST: f32 = 1.5;
 /// no scrolling.
 const POINT_WINDOW_DEFAULT_SIZE: [f32; 2] = [600.0, 460.0];
 /// Floor for the point window, below which the plot and satellite columns stop
-/// fitting side by side. Narrower than this the satellite column is squeezed
-/// rather than reflowed - single-column reflow lands with the two-column
-/// packing work.
+/// fitting side by side.
 const POINT_WINDOW_MIN_WIDTH_PX: f32 = 340.0;
 const POINT_WINDOW_MIN_HEIGHT_PX: f32 = 260.0;
 
-/// Whether this category's sticky window shows the full point layout - the sky
-/// plot beside the per-constellation satellite tables. That content is the
-/// data-heavy one (a 40-satellite fix is far taller than a marker's few rows),
-/// so it gets a resizable frame while the marker popups stay auto-sized.
+/// Whether this category's sticky window shows the sky plot beside the
+/// per-constellation satellite tables, in a resizable frame.
 ///
-/// The window builder and the body both switch on this, so the frame and the
-/// content they choose cannot drift apart. Matched exhaustively rather than
-/// with `matches!`, so a new [`DataCategory`] cannot quietly default to the
-/// wrong frame - it breaks the build until someone decides which layout it
-/// takes.
+/// Matched exhaustively so a new [`DataCategory`] has to pick its layout.
 fn sticky_uses_point_layout(category: DataCategory) -> bool {
     match category {
         DataCategory::Tpv | DataCategory::SatelliteReport => true,
@@ -182,16 +167,6 @@ struct HoverFadeState {
 }
 
 impl HoverFadeState {
-    /// Advance the animation by one frame and return the current progress.
-    ///
-    /// - **Track changed while hovering**: resets the delay timer and
-    ///   *freezes* `progress`, the overlay holds its current opacity while
-    ///   the cursor moves, eliminating the "light-up then dim" oscillation
-    ///   between adjacent tracks.
-    /// - **Same track held for ≥ [`HOVER_HYSTERESIS_SEC`]**: fades in.
-    /// - **Hover ended**: ease-in fade-out starting very slowly and
-    ///   accelerating, so the overlay is still ≈ 78 % visible after 1 s
-    ///   and fully gone after ≈ 2 s.
     fn tick(&mut self, now: f64, hover_active: bool, current_focused: Option<TrackRef>) -> f32 {
         let dt = (now - self.prev_time).clamp(0.0, 0.1) as f32;
         self.prev_time = now;
@@ -212,7 +187,6 @@ impl HoverFadeState {
             if delay_expired {
                 self.progress = (self.progress + dt * HOVER_FADE_IN_RATE).min(1.0);
             }
-            // Delay not expired: keep progress frozen, no fade-in, no fade-out.
         } else {
             self.focused_track = None;
             self.hover_since = None;
@@ -528,8 +502,7 @@ impl NavMap {
         let animation = self.tick_animations(ui, &ctx, now);
 
         // Read before the click below can open or close the popup, and reused
-        // as-is by the compound hover label at the end of the frame: both
-        // decisions are about the popup the user was already looking at.
+        // as-is by the compound hover label at the end of the frame.
         let disambig_open = self.disambiguation_is_open();
         ctx.suppress_overlapping_hover_labels(disambig_open);
 
@@ -540,21 +513,17 @@ impl NavMap {
         let plan = self.collect_viewport_points(ui.max_rect(), map_center, &ctx);
         let map_response = self.show_map(ui, &ctx, &plan, animation);
 
-        // Double-click anywhere on the map: zoom out to fit the visible tracks.
         if map_response.double_clicked()
             && let Some(bbox) = ctx.visible_bounding_box()
         {
             zoom_to_fit(&mut self.map_memory, map_response.rect, bbox);
         }
 
-        // Cache the drawn viewport's geographic bounds so callers can query
-        // them via `viewport_geo_bounds()` after each draw call.
         let map_rect = map_response.rect;
         self.last_viewport_bounds = Some(compute_viewport_bounds(&self.map_memory, map_rect));
 
-        // What the map draws this frame, for hit-testing and for the pinned
-        // popup. The mask is copied, so the display toggle below may change it
-        // for the next frame without this frame disagreeing with itself.
+        // The mask is copied, so the display toggle below changes it only for
+        // the next frame.
         let scope = ctx.scope();
         let hover = self.detect_hover(ui, &map_response, map_center, scope);
 
@@ -603,8 +572,7 @@ impl NavMap {
         self.new_file_boundary = self.last_file_count;
         let had_tracks = self.last_file_count > 0;
         self.last_file_count = ctx.files.len();
-        // Only blink when adding to existing content. The first load needs no
-        // visual callout because there is nothing else to differentiate from.
+        // Only blink when adding to existing content.
         if had_tracks {
             self.blink.trigger(now);
         }
@@ -767,7 +735,7 @@ impl NavMap {
             && let Some(snapped) = ctx.snapped_tracks
             && !snapped.is_empty()
         {
-            // Edge hover yields while the recorded data owns the pointer.
+            // Edge hover is disabled while a recorded element is hovered.
             map = map.with_plugin(SnappedTrackRenderer::new(
                 snapped,
                 ctx.files,
@@ -1095,19 +1063,18 @@ impl NavMap {
     }
 }
 
-/// Where the map looks before anything frames it: Copenhagen.
+/// Default map center: Copenhagen.
 fn default_map_center() -> walkers::Position {
     walkers::lat_lon(55.676, 12.565)
 }
 
-/// Ask for another frame soon, so an animation keeps advancing.
 fn request_animation_frame(ui: &egui::Ui) {
     ui.ctx()
         .request_repaint_after(std::time::Duration::from_millis(16));
 }
 
 /// One stacked label near the cursor when several item types are hovered at
-/// once, instead of letting each renderer place its own label at the same spot.
+/// once.
 ///
 /// Guarded on `suppress_hover_labels` (set from the previous frame's candidate
 /// count) so that on the first frame of a multi-hover transition the individual
@@ -1137,12 +1104,10 @@ fn show_compound_hover_label(
         });
 }
 
-/// Shows a draggable, text-selectable egui window with data for the given sticky element.
 /// The clicked-point window body: the deselect hint pinned to the window floor
-/// as an inner bottom panel, with the plot-and-satellites content filling the
-/// space above it. Same inner-panel idiom the side panel uses to pin its
-/// progress strip above a scrolling tree, so the satellite table scrolls
-/// inside the remaining space rather than the whole body scrolling.
+/// as an inner bottom panel, with the plot-and-satellites content scrolling in
+/// the space above it.
+///
 /// Returns whether the user asked to open the sky trails window at this
 /// point's instant.
 #[must_use]
@@ -1176,8 +1141,6 @@ fn show_sticky_popup(
     default_pos: egui::Pos2,
     folds: &mut PointWindowFolds,
 ) -> Option<SkyTrailsRequest> {
-    // For TPV points, satellite reports, and generated-marker events the window
-    // title is the point's datetime. For everything else fall back to a generic label.
     let title: String = if sticky_ref.category == DataCategory::Tpv {
         sticky_ref
             .track
@@ -1257,8 +1220,6 @@ fn show_sticky_popup(
     };
     let mut trails_request = None;
     window.show(ctx, |ui| match sticky_ref.category {
-        // Both carry the same point content, so they share one arm - and with
-        // it the resizable frame that `sticky_uses_point_layout` selects.
         DataCategory::Tpv | DataCategory::SatelliteReport => {
             if let Some(track) = sticky_ref
                 .track
@@ -1309,9 +1270,7 @@ fn show_sticky_popup(
                 .and_then(|f| sticky_ref.track.index.get(&f.tracks))
                 .and_then(|t| sticky_ref.point_index.get(&t.generated_markers))
             {
-                // The window title already shows the time, so the body adds
-                // what hovering shows plus the position: the event summary,
-                // the position, and (for a slip) the per-satellite table.
+                // The window title already shows the time.
                 let header =
                     crate::generated_marker_renderer::generated_marker_header(&marker.kind);
                 Grid::new("sticky_gen_grid").num_columns(2).show(ui, |ui| {

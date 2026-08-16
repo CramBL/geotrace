@@ -98,15 +98,14 @@ fn tooltip_suppressed_when_popup_open() {
     );
 }
 
-/// Mirrors the disambiguation-close guard introduced to fix the popup-flash bug:
+/// Mirrors the disambiguation-close guard:
 /// ```ignore
 /// if !just_opened_disambig && (area_resp.response.clicked_elsewhere() || esc) {
 ///     self.disambiguation_candidates = [None; 4];
 /// }
 /// ```
-/// Before the fix, `just_opened_disambig` did not exist, so `clicked_elsewhere()`
-/// (which fires on the same frame as the click that opened the popup) immediately
-/// cleared the candidates and the popup disappeared in one frame.
+/// `clicked_elsewhere()` fires on the same frame as the click that opened the
+/// popup, so `just_opened_disambig` keeps that frame from closing it.
 #[expect(
     clippy::fn_params_excessive_bools,
     reason = "mirrors the three independent boolean inputs to the guard"
@@ -201,7 +200,7 @@ fn generated_marker_tooltip_shown_when_primary_hover_is_non_tpv() {
     );
 }
 
-/// Mirrors the full renderer tooltip guard (items 14/15), which now also checks
+/// Mirrors the full renderer tooltip guard, which also checks
 /// `suppress_hover_labels` so that individual tooltips are suppressed both when
 /// the disambiguation popup is open and when multiple candidates are hovered.
 fn tooltip_guard_passes_full(
@@ -243,7 +242,7 @@ fn tooltip_suppressed_when_suppress_hover_labels_set() {
 }
 
 /// When the disambiguation popup is open, individual renderer tooltips must not
-/// appear so they don't overlap the popup (item 14).
+/// appear so they don't overlap the popup.
 #[test]
 fn tooltip_suppressed_when_disambig_popup_open() {
     let p = tpv_point(0);

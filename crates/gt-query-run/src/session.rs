@@ -10,7 +10,7 @@ use crate::run::{PreparedRun, RunHandle, RunKind, RunOutcome, RunProduct};
 /// What [`QuerySession::sync_checks`] found changed since the last check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckRefresh {
-    /// Text and schema both unchanged; the chunks were kept.
+    /// Text and schema both unchanged, so the chunks were kept.
     Unchanged,
     /// The channel schema changed - a file load or unload - but the text did
     /// not, so a `@name` error may have resolved on its own.
@@ -29,7 +29,7 @@ pub struct QueryProgress {
 }
 
 /// A run in flight somewhere else: what it takes to watch, cancel, and later
-/// receive it. The transport back is the driver's business.
+/// receive it. The caller transports the outcome back.
 struct InFlightRun {
     handle: RunHandle,
     track_total: usize,
@@ -333,10 +333,10 @@ mod tests {
             .expect("the query checks and nothing is in flight");
         assert!(
             session.run_in_flight(),
-            "the run is in flight until it lands"
+            "the run is in flight until it completes"
         );
         session.finish_run(prepared.execute());
-        assert!(!session.run_in_flight(), "the run has landed");
+        assert!(!session.run_in_flight(), "the run completed");
     }
 
     #[test]
@@ -408,7 +408,11 @@ mod tests {
             &state,
             "points | where velocity > 30 km/h | draw",
         );
-        let before = session.matches().expect("the first run landed").draws.len();
+        let before = session
+            .matches()
+            .expect("the first run completed")
+            .draws
+            .len();
 
         session.set_text("points | where velocity > 1 km/h | hide".to_owned());
         session.sync_checks(&state.schema());
@@ -416,7 +420,7 @@ mod tests {
         session.cancel_run();
         session.finish_run(prepared.execute());
 
-        assert!(!session.run_in_flight(), "the cancelled run landed");
+        assert!(!session.run_in_flight(), "the cancelled run completed");
         let matches = session.matches().expect("the previous results stand");
         assert_eq!(matches.draws.len(), before, "the draw layer is untouched");
     }

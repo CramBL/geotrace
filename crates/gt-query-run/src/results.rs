@@ -77,18 +77,18 @@ impl PointsResults {
                 .collect()
         };
 
-        // The point-key mask distinguishes only so many halo layers; extra draw
+        // The point-key mask distinguishes only so many halo layers. Extra draw
         // queries beyond that cannot be rendered distinctly.
         if output.draws.len() > DrawLayerMask::MAX_LAYERS {
             log::warn!(
-                "query has {} draw stages; only the first {} render as halos",
+                "query has {} draw stages: only the first {} render as halos",
                 output.draws.len(),
                 DrawLayerMask::MAX_LAYERS
             );
         }
 
-        // The i-th draw query gets palette color i; the map keys its halo layer to
-        // the same order.
+        // The i-th draw query gets palette color i. The map keys its halo layer
+        // to the same order.
         let draw_color: HashMap<usize, usize> = output
             .draws
             .iter()
@@ -334,7 +334,7 @@ fn summary_line(summary: &RunSummary, mode: DisplayMode) -> String {
         summary.tracks_with_matches,
         gt_fmt::pluralize(summary.tracks_with_matches, "track", "tracks"),
     )];
-    // keep/hide remove points from the map; always say how many, so hidden
+    // keep/hide remove points from the map. Always say how many, so hidden
     // data stays accounted for.
     let hidden = match mode {
         DisplayMode::Draw => None,
@@ -434,7 +434,7 @@ mod tests {
                 provider: &provider,
             }],
         );
-        // keep hides the 3 non-matching points; hide hides the 2 matching.
+        // keep hides the 3 non-matching points. hide hides the 2 matching.
         assert!(summary_line(&output.summary, DisplayMode::Keep).contains("3 of 5 points hidden"));
         assert!(summary_line(&output.summary, DisplayMode::Hide).contains("2 of 5 points hidden"));
         assert!(!summary_line(&output.summary, DisplayMode::Draw).contains("hidden"));

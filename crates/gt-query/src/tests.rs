@@ -152,7 +152,7 @@ fn run_one(src: &str, provider: &TestProvider) -> RunOutput {
 /// A track that carries no value at all for a referenced metric is
 /// counted per metric in `tracks_without` - whole-track absences (no
 /// snap run, an eph-less receiver) get named, not just point skips. A
-/// track with even one value stays out; `accel` derives from velocity,
+/// track with even one value stays out. `accel` derives from velocity,
 /// so its absence is probed through velocity.
 #[test]
 fn summary_counts_tracks_without_a_referenced_metric() {
@@ -217,7 +217,7 @@ fn summary_counts_tracks_without_a_referenced_metric() {
 
 #[test]
 fn point_predicate_matches_consecutive_runs() {
-    // 30 km/h is 8.33 m/s; points 1, 2, and 4 exceed it.
+    // 30 km/h is 8.33 m/s. Points 1, 2, and 4 exceed it.
     let provider = TestProvider::new(5).with(
         QueryMetric::Velocity,
         vec![Some(5.0), Some(10.0), Some(9.0), Some(3.0), Some(12.0)],
@@ -291,7 +291,7 @@ fn a_duration_window_reduces_the_points_in_its_time_span() {
         &provider,
     );
     // Anchor 0 (pts 0,1 avg 10) and anchor 1 (pts 1,2 avg 5 m/s) clear the
-    // 5 km/h bar; anchor 2 (pts 2,3 avg 0) does not; anchor 3 doesn't fit.
+    // 5 km/h bar. Anchor 2 (pts 2,3 avg 0) does not, and anchor 3 doesn't fit.
     assert_eq!(output.matches[0].ranges, vec![0..3]);
 }
 
@@ -328,7 +328,7 @@ fn a_fractional_duration_window_spans_sub_second() {
         "points | window 0.5 s | where avg(velocity) > 5 km/h",
         &provider,
     );
-    // Anchor 0 (pts 0,1 avg 10, match); anchor 1 (pts 1,2 avg 5 m/s, match).
+    // Anchor 0 (pts 0,1 avg 10, match). Anchor 1 (pts 1,2 avg 5 m/s, match).
     assert_eq!(output.matches[0].ranges, vec![0..3]);
 }
 
@@ -434,7 +434,7 @@ fn std_over_a_window_uses_population_deviation() {
         "points | window 2 | where std(velocity) < 2 km/h",
         &provider,
     );
-    // Windows [0,2) and [1,3) are flat; [2,4) has a 5 m/s std and fails.
+    // Windows [0,2) and [1,3) are flat. [2,4) has a 5 m/s std and fails.
     assert_eq!(output.matches[0].ranges, vec![0..3]);
 }
 
@@ -639,8 +639,6 @@ fn jamming_accepts_ratios_and_rejects_other_dimensions(#[case] src: &str, #[case
     assert_eq!(checked.is_ok(), accepted, "for {src}: {checked:?}");
 }
 
-/// The metric needs no `with` parameters, unlike the util and slip
-/// metrics: its values come from the archive, not from a derivation.
 /// The rejection names the metric and shows the form that works.
 #[test]
 fn a_jamming_comparison_without_a_unit_says_so() {
@@ -648,6 +646,7 @@ fn a_jamming_comparison_without_a_unit_says_so() {
     assert_eq!(err.message, "jamming needs a unit, e.g. 50 %");
 }
 
+/// The metric's values come from the archive, not from a derivation.
 #[test]
 fn jamming_needs_no_parameters() {
     let checked = parse("points | where jamming > 10 %").and_then(|query| chk(&query).map(|_| ()));
@@ -718,8 +717,7 @@ fn deep_nesting_errors_instead_of_overflowing() {
 #[case("points | where eph / eph > 0.5")]
 #[case("points | where eph / clock_delta > 1 m/s")]
 #[case("points | where velocity / clock_delta > 0.1 m/s2")]
-// speed * duration is a length; speed / length is a rate. Both are new:
-// the old table rejected any product or quotient of two dimensioned values.
+// speed * duration is a length. speed / length is a rate.
 #[case("points | where velocity * clock_delta > eph")]
 #[case("points | where velocity / eph > 2 per min")]
 fn arithmetic_accepts_well_formed_dimensions(#[case] src: &str) {
@@ -982,7 +980,7 @@ fn power_with_a_zero_exponent_is_one() {
 #[test]
 fn a_negative_power_of_zero_poisons_the_point() {
     // 0⁻¹ is infinite, so that point is skipped like any undefined
-    // arithmetic; the finite inverse still matches.
+    // arithmetic. The finite inverse still matches.
     let provider = TestProvider::new(2).with(QueryMetric::SatsFix, vec![Some(0.0), Some(2.0)]);
     let output = run_one("points | where sats_fix⁻¹ < 1", &provider);
     assert_eq!(output.matches[0].ranges, vec![1..2]);
@@ -1052,7 +1050,7 @@ fn a_channel_reference_parses_and_formats(
 ) {
     use crate::ast::Expr;
     let query = parse(src).expect(src);
-    // The predicate is `<channel> > 0`; the channel is the comparison's LHS.
+    // The predicate is `<channel> > 0`, so the channel is the comparison's LHS.
     let Some(Expr::Binary { lhs, .. }) = query.predicates.first() else {
         panic!("expected a comparison in {src}");
     };
@@ -1163,7 +1161,7 @@ fn a_channel_without_a_known_unit_is_a_bare_number(#[case] unit: Option<&str>) {
 
 #[test]
 fn a_bare_channel_must_be_aggregated() {
-    // Like a nav-point metric, a channel has no per-point value; used raw it
+    // Like a nav-point metric, a channel has no per-point value. Used raw it
     // errors with a hint to wrap it in an aggregate.
     let schema = schema_with("accel", Some("g"), None);
     let err = check(
@@ -1267,7 +1265,7 @@ fn a_component_on_a_scalar_channel_is_rejected() {
 
 #[test]
 fn a_bare_component_must_be_aggregated() {
-    // Like a nav-point metric, a component has no per-point value; used raw
+    // Like a nav-point metric, a component has no per-point value. Used raw
     // it hints at wrapping it in an aggregate, keeping the `.x`.
     let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let err = check(
@@ -1300,8 +1298,8 @@ fn a_windowless_points_channel_points_at_the_working_forms() {
 
 #[test]
 fn an_aggregate_without_a_window_hints_at_adding_one() {
-    // Following the hint above to an aggregate still needs a window; the
-    // error now says how instead of leaving the user stuck.
+    // Following the hint above to an aggregate still needs a window: the error
+    // says how.
     let schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
     let err = check(
         &parse("points | where max(@accel.x) > 0.2 mg").unwrap(),
@@ -1342,8 +1340,8 @@ fn components_of_one_channel_combine_per_sample() {
 
 #[test]
 fn two_different_channels_cannot_combine() {
-    // Distinct channels are on independent clocks, even at the same
-    // dimension (both acceleration here, so the timeline rule is what bites,
+    // Distinct channels are on independent clocks, even at the same dimension
+    // (both acceleration here, so the timeline rule is the one that rejects it,
     // not a unit mismatch).
     let mut schema = vector_schema("accel", Some("g"), &["x", "y", "z"]);
     schema.insert(
@@ -1422,7 +1420,7 @@ fn norm_schema() -> ChannelSchema {
     Some("split it into separate aggregates, one per channel")
 )]
 // And a channel cannot mix with a per-point metric (accel is acceleration,
-// matching norm's dimension, so the timeline rule is what bites).
+// matching norm's dimension, so the timeline rule is the one that rejects it).
 #[case(
     "max(norm(@accel) + accel) > 1 g",
     "cannot mix @accel with a per-point metric",
@@ -1971,8 +1969,7 @@ mod properties {
     }
 
     fn unit_strategy() -> impl Strategy<Value = Unit> {
-        // Built from the enum's own iterator so a new variant is covered
-        // by the format/reparse round-trip automatically.
+        // The canonical catalog, which is the set the formatter emits.
         proptest::sample::select(Unit::CANONICAL.to_vec())
     }
 
@@ -2083,7 +2080,7 @@ mod properties {
         let table = proptest::option::of(proptest::collection::vec(metric_strategy(), 1..4));
         (params, window, predicates, mode, table).prop_map(
             |(params, window, predicates, mode, table)| Query {
-                // The round-trip fuzz targets stage formatting; channel-source
+                // The round-trip fuzz targets stage formatting. Channel-source
                 // formatting is pinned by a dedicated test.
                 source: Source::Points,
                 params: params

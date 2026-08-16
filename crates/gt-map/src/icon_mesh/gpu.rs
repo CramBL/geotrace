@@ -22,10 +22,9 @@ use wgpu::util::DeviceExt as _;
 
 use crate::icon_mesh::{IconId, IconMeshLibrary};
 
-/// Minimum instances in a flush segment for the GPU path; smaller segments
-/// go through the CPU mesh path, whose cost at that size is trivial, so
-/// barrier-heavy zoomed-in frames do not create a stream of tiny buffers
-/// and draw calls.
+/// Minimum instances in a flush segment for the GPU path. Smaller segments go
+/// through the CPU mesh path, so barrier-heavy zoomed-in frames do not create a
+/// stream of tiny buffers and draw calls.
 pub const GPU_MIN_INSTANCES: usize = 32;
 
 /// Marker in the egui context data store: GPU icon resources are installed
@@ -288,7 +287,7 @@ pub(crate) struct InstanceGroup {
 
 /// The paint callback for one flush segment.
 ///
-/// Owns its instance data; the instance buffer is created in `prepare` and
+/// Owns its instance data. The instance buffer is created in `prepare` and
 /// kept on the callback itself, so no cross-frame bookkeeping lives in
 /// [CallbackResources].
 pub(crate) struct IconDrawCallback {

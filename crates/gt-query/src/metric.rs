@@ -93,9 +93,8 @@ impl Quantity {
     /// that never take part in dimensional arithmetic ([`Quantity::Timestamp`]
     /// and [`Quantity::Condition`]).
     ///
-    /// [`Quantity::Count`] and [`Quantity::Ratio`] are both dimensionless (a
-    /// share and a tally have no unit); the exponents cannot tell them apart,
-    /// which is why a later kind tag rides alongside the dimension.
+    /// [`Quantity::Count`] and [`Quantity::Ratio`] are both dimensionless. The
+    /// exponents cannot tell them apart: the checker's `Kind` tag does.
     pub fn dimension(self) -> Option<Dimension> {
         Some(match self {
             Quantity::Angle | Quantity::Direction => Dimension::ANGLE,
@@ -235,7 +234,7 @@ mod tests {
 
     /// Every quantity's dimension is pinned, and only `Timestamp` and
     /// `Condition` are non-dimensional. Asserted against `COUNT` so a new
-    /// quantity must be classified here rather than defaulting silently.
+    /// quantity must be classified here.
     #[test]
     fn quantity_dimensions_are_pinned() {
         let dimensioned = [
@@ -246,8 +245,6 @@ mod tests {
             (Quantity::Length, Dimension::LENGTH),
             (Quantity::Duration, Dimension::TIME),
             (Quantity::Rate, Dimension::RATE),
-            // A count and a ratio are both dimensionless: the exponents cannot
-            // separate them, which is the later kind tag's job.
             (Quantity::Count, Dimension::DIMENSIONLESS),
             (Quantity::Ratio, Dimension::DIMENSIONLESS),
         ];
@@ -263,14 +260,11 @@ mod tests {
             .filter(|q| q.dimension().is_none())
             .collect();
         assert_eq!(non_dimensional, [Quantity::Timestamp, Quantity::Condition]);
-        // The dimensioned and non-dimensional variants together are exhaustive,
-        // so a new quantity must be classified in one of them.
         assert_eq!(dimensioned.len() + non_dimensional.len(), Quantity::COUNT);
     }
 
-    /// The exponent algebra reproduces the derivations the checker currently
-    /// hard-codes (`length / time = speed`, `speed / time = acceleration`), so
-    /// routing the checker through dimensions later preserves behavior.
+    /// The exponent algebra reproduces the named derivations
+    /// (`length / time = speed`, `speed / time = acceleration`).
     #[test]
     fn dimensional_algebra_reproduces_the_named_derivations() {
         let dim = |q: Quantity| q.dimension().unwrap();
