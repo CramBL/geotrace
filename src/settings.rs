@@ -72,19 +72,33 @@ impl Default for GeomagneticIndexSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(from = "TecWireSettings")]
 pub struct TecSettings {
-    /// Base URL of the ionospheric TEC map host. Defaults to JPL, which
-    /// publishes them. A self-hosted mirror or an offline copy goes here.
-    pub base_url: String,
+    /// Hosts serving the ionospheric TEC maps, tried in this order. Defaults
+    /// to JPL, which publishes them. Self-hosted mirrors and offline copies of
+    /// the same directory layout go here.
+    pub mirrors: gt_ionex::MirrorList,
 }
 
-impl Default for TecSettings {
-    fn default() -> Self {
-        Self {
-            base_url: gt_ionex::DEFAULT_BASE_URL.to_owned(),
-        }
+/// The `[tec]` section as files on disk hold it.
+///
+/// `base_url` named the single host before the mirror list existed. A config
+/// holding it and no `mirrors` key loads that host as its only mirror, and the
+/// key is not written back.
+#[derive(Default, serde::Deserialize)]
+#[serde(default)]
+struct TecWireSettings {
+    mirrors: Vec<gt_ionex::MirrorBaseUrl>,
+    base_url: Option<gt_ionex::MirrorBaseUrl>,
+}
+
+impl From<TecWireSettings> for TecSettings {
+    fn from(wire: TecWireSettings) -> Self {
+        let mirrors = gt_ionex::MirrorList::new(wire.mirrors)
+            .or_else(|| wire.base_url.map(gt_ionex::MirrorList::single))
+            .unwrap_or_default();
+        Self { mirrors }
     }
 }
 
@@ -494,6 +508,8 @@ pub fn load_settings() -> Settings {
 
 #[cfg(test)]
 mod snap_settings_tests {
+    use rstest::rstest;
+
     use super::*;
 
     /// Every advanced option flows into the run parameters - the params
@@ -668,21 +684,75 @@ mod snap_settings_tests {
         assert_eq!(parsed.interference.base_url, "https://mirror.example");
     }
 
-    /// A settings file written before the TEC section existed loads with the
-    /// default host.
+    fn tec_mirrors(stored: &str) -> Vec<String> {
+        let settings: Settings = toml::from_str(stored).expect("parse");
+        settings
+            .tec
+            .mirrors
+            .as_slice()
+            .iter()
+            .map(gt_ionex::MirrorBaseUrl::to_string)
+            .collect()
+    }
+
+    /// A file written before the mirror list existed keeps fetching from the
+    /// host it names, and one written before the TEC section existed fetches
+    /// from the publishing host.
+    #[rstest]
+    #[case::without_the_tec_section("version = 1", &[gt_ionex::DEFAULT_BASE_URL])]
+    #[case::with_the_single_host_key(
+        "[tec]\nbase_url = \"https://mirror.example\"",
+        &["https://mirror.example"]
+    )]
+    #[case::with_a_mirror_list(
+        "[tec]\nmirrors = [\"https://first.example\", \"https://second.example\"]",
+        &["https://first.example", "https://second.example"]
+    )]
+    #[case::with_the_single_host_key_beside_a_list(
+        "[tec]\nmirrors = [\"https://first.example\"]\nbase_url = \"https://mirror.example\"",
+        &["https://first.example"]
+    )]
+    #[case::with_an_empty_list("[tec]\nmirrors = []", &[gt_ionex::DEFAULT_BASE_URL])]
+    fn a_stored_tec_section_loads_as_the_mirrors_to_fetch_from(
+        #[case] stored: &str,
+        #[case] expected: &[&str],
+    ) {
+        assert_eq!(tec_mirrors(stored), expected);
+    }
+
+    /// The single-host key is read once and dropped: what is written back is
+    /// the mirror list alone.
     #[test]
-    fn a_settings_file_without_the_tec_section_loads() {
-        let settings: Settings = toml::from_str("version = 1").expect("parse");
-        assert_eq!(settings.tec.base_url, gt_ionex::DEFAULT_BASE_URL);
+    fn a_migrated_tec_host_is_written_back_as_a_mirror_list() {
+        let settings: Settings =
+            toml::from_str("[tec]\nbase_url = \"https://mirror.example\"").expect("parse");
+
+        let text = toml::to_string(&settings).expect("serialize");
+        let reloaded: Settings = toml::from_str(&text).expect("parse");
+
+        assert!(
+            !text.contains("base_url = \"https://mirror.example\""),
+            "{text}"
+        );
+        assert_eq!(
+            reloaded.tec.mirrors.as_slice(),
+            [gt_ionex::MirrorBaseUrl::new("https://mirror.example")]
+        );
     }
 
     #[test]
-    fn a_configured_tec_host_round_trips() {
+    fn a_configured_tec_mirror_list_round_trips() {
         let mut settings = Settings::default();
-        settings.tec.base_url = "https://mirror.example".to_owned();
+        settings.tec.mirrors = gt_ionex::MirrorList::new(vec![
+            gt_ionex::MirrorBaseUrl::new("https://first.example"),
+            gt_ionex::MirrorBaseUrl::new("https://second.example"),
+        ])
+        .expect("two named hosts");
+
         let text = toml::to_string(&settings).expect("serialize");
         let parsed: Settings = toml::from_str(&text).expect("parse");
-        assert_eq!(parsed.tec.base_url, "https://mirror.example");
+
+        assert_eq!(parsed.tec.mirrors, settings.tec.mirrors);
     }
 
     /// A settings file written before the geomagnetic index section existed

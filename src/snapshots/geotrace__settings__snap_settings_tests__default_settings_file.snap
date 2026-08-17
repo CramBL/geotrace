@@ -74,4 +74,4 @@ base_url = "https://gpsjam.org"
 base_url = "https://kp.gfz.de"
 
 [tec]
-base_url = "https://sideshow.jpl.nasa.gov/pub/iono_daily"
+mirrors = ["https://sideshow.jpl.nasa.gov/pub/iono_daily"]

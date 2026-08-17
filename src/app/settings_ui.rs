@@ -21,7 +21,7 @@ use gt_types::AssociationConfig;
 use strum::IntoEnumIterator;
 
 use super::backfill_ui::{BackfillAction, BackfillReadiness};
-use super::{App, day_failures, geomagnetic_index_ui, recording_name_template};
+use super::{App, day_failures, geomagnetic_index_ui, recording_name_template, tec_mirrors_ui};
 
 impl App {
     /// What a download control may do right now. An archive that could not be
@@ -530,23 +530,15 @@ impl App {
                     .num_columns(2)
                     .spacing([8.0, 6.0])
                     .show(ui, |ui| {
-                        let url_help = "Base URL of the host serving the global ionosphere maps. \
-                                        The default is JPL, which publishes them. Point it at a \
-                                        mirror or an offline copy to fetch from there instead. \
-                                        Requests carry a date and nothing about your recordings.";
-                        ui.label(format!(
-                            "{} Base URL",
-                            egui_phosphor::regular::GLOBE_SIMPLE
-                        ))
-                        .on_hover_text(url_help);
-                        let mut base_url = self.tec_settings.base_url.clone();
-                        if ui
-                            .text_edit_singleline(&mut base_url)
-                            .on_hover_text(url_help)
-                            .changed()
-                        {
-                            self.tec_maps.set_base_url(&base_url);
-                            self.tec_settings.base_url = base_url;
+                        let mirrors_help = "Hosts serving the global ionosphere maps, tried in \
+                                            order until one has the day's file. The default is \
+                                            JPL, which publishes them. Add a mirror or an offline \
+                                            copy serving the same directory layout to fetch from \
+                                            there instead.";
+                        ui.label(format!("{} Mirrors", egui_phosphor::regular::GLOBE_SIMPLE))
+                            .on_hover_text(mirrors_help);
+                        if tec_mirrors_ui::show_mirror_list(ui, &mut self.tec_settings.mirrors) {
+                            self.tec_maps.set_mirrors(&self.tec_settings.mirrors);
                         }
                         ui.end_row();
                     });
@@ -789,7 +781,7 @@ impl App {
         self.geomagnetic_indices
             .set_base_url(&s.geomagnetic_indices.base_url);
         self.tec_settings = s.tec.clone();
-        self.tec_maps.set_base_url(&s.tec.base_url);
+        self.tec_maps.set_mirrors(&s.tec.mirrors);
         self.snap.set_server_url(&s.snap.server_url);
         self.sync_db_path();
     }

@@ -1414,6 +1414,41 @@ fn query_history_persists_across_settings_roundtrip() {
     assert_eq!(harness.state().query_window.history().len(), 1);
 }
 
+/// An added TEC mirror reaches the settings file and points the scheduler at
+/// the whole list on the way back in.
+#[test]
+fn tec_mirrors_persist_across_settings_roundtrip() {
+    let mut harness = Harness::builder()
+        .with_wait_for_pending_images(false)
+        .build_eframe(transient_app);
+    harness.step();
+    let before = harness.state().collect_snapshot();
+
+    harness
+        .state_mut()
+        .tec_settings
+        .mirrors
+        .add(gt_ionex::MirrorBaseUrl::new("https://mirror.example"));
+
+    assert!(
+        harness.state().collect_snapshot() != before,
+        "the autosaver sees the edited list"
+    );
+    let flushed = harness.state().collect_settings_for_flush();
+    let toml = toml::to_string(&flushed).expect("settings serialize");
+    let reloaded: crate::settings::Settings = toml::from_str(&toml).expect("settings parse");
+    assert_eq!(reloaded.tec.mirrors, flushed.tec.mirrors);
+
+    harness.state_mut().apply_startup_settings(&reloaded);
+    assert_eq!(
+        harness.state().tec_settings.mirrors.as_slice(),
+        [
+            gt_ionex::MirrorBaseUrl::new(gt_ionex::DEFAULT_BASE_URL),
+            gt_ionex::MirrorBaseUrl::new("https://mirror.example"),
+        ]
+    );
+}
+
 /// Channel plot toggles survive the settings flush/load roundtrip: the
 /// revealed section and a hidden channel come back, and the TOML encoding
 /// itself round-trips the dynamic name map.

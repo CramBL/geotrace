@@ -19,8 +19,9 @@
 //! https://sideshow.jpl.nasa.gov/pub/iono_daily/IONEX_final/y2024/JPLG1310.24I.gz
 //! ```
 //!
-//! [`calendar`] says which days and products are worth asking for, and
-//! [`transport`] fetches one day and decompresses it.
+//! [`calendar`] says which days and products are worth requesting,
+//! [`mirrors`] holds the hosts to try in order, and [`transport`] fetches one
+//! day and decompresses it.
 
 use std::path::PathBuf;
 
@@ -29,16 +30,19 @@ use chrono::{Datelike as _, NaiveDate};
 pub mod calendar;
 pub mod grid;
 pub mod maps;
+pub mod mirrors;
 pub mod parse;
 pub mod tec;
 pub mod transport;
+
+pub use mirrors::{MirrorBaseUrl, MirrorList};
 
 /// Suffix the archives serve their files under. The parser reads the
 /// decompressed text.
 pub const COMPRESSED_SUFFIX: &str = ".gz";
 
-/// Base URL of the default map host. Configurable in settings, for a mirror
-/// or an offline copy.
+/// Base URL of the host that publishes the maps, and the sole entry of a
+/// default [`MirrorList`].
 pub const DEFAULT_BASE_URL: &str = "https://sideshow.jpl.nasa.gov/pub/iono_daily";
 
 /// Which of JPL's two daily map products a file comes from.
@@ -59,7 +63,7 @@ pub enum IonexProduct {
 }
 
 impl IonexProduct {
-    /// The order a day is asked for in: the settled product first, so a day
+    /// The order a day is requested in: the settled product first, so a day
     /// old enough to have one is never archived from the earlier estimate.
     pub const PREFERENCE_ORDER: [Self; 2] = [Self::Final, Self::Rapid];
 
@@ -223,7 +227,7 @@ mod tests {
         );
     }
 
-    /// The settled product is asked for first, and adding a product cannot
+    /// The settled product is requested first, and adding a product cannot
     /// leave it out of the order.
     #[test]
     fn every_product_is_tried_in_preference_order() {
