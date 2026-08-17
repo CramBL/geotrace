@@ -7,6 +7,7 @@ mod interference;
 mod persist;
 mod processing;
 mod snap;
+mod source_page;
 mod tec;
 
 use egui::{ScrollArea, Window};
@@ -27,7 +28,7 @@ use super::App;
 use super::backfill_ui::BackfillReadiness;
 
 /// One category of the settings window, in the order the rail lists them.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, EnumIter)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug, EnumIter)]
 pub(super) enum SettingsPage {
     #[default]
     Processing,
