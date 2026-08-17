@@ -407,7 +407,7 @@ fn snapshot_snap_glyph_masked_category() {
     harness.snapshot("side_panel_snap_glyph_masked");
 }
 
-/// Under `GEOTRACE_OFFLINE` every snap trigger is grayed out, never hidden.
+/// Offline, every snap trigger is grayed out, never hidden.
 #[test]
 fn snapshot_snap_trigger_offline() {
     let mut state = make_state(1);

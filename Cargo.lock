@@ -2463,7 +2463,6 @@ dependencies = [
 name = "gt-fetch"
 version = "0.12.0"
 dependencies = [
- "gt-types",
  "parking_lot",
  "reqwest 0.13.4",
  "rstest",

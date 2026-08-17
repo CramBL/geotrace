@@ -1,0 +1,123 @@
+# Re-captures the committed fixtures from the live services and fails when what
+# a service serves today no longer matches what is committed.
+#
+# No `pull_request` or `pull_request_target` trigger of any kind, because this
+# workflow reaches the network: `push` events on the base repository only fire
+# for refs pushed by someone with write access, which keeps code from a fork or
+# an untrusted pull request from ever running it.
+name: Fixture freshness
+
+on:
+  push:
+    branches: [trunk]
+    # The release tags of app-release.yml and release-sdk.yml: a release
+    # captures the state of the services it was cut against.
+    tags:
+      - "app**[0-9]+.[0-9]+.[0-9]+*"
+      - "geotrace-sdk-v[0-9]+.[0-9]+.[0-9]+*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# One run at a time: the capture tools pace themselves against small public
+# research services, and a cancelled run would cut a capture in half.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # The directories the capture recipes write into. gt-snap is absent: its
+  # map-matching answers change with every OpenStreetMap edit, so its fixtures
+  # are frozen by design and checked on demand through `just snap-live-test`.
+  FIXTURE_DIRS: crates/gt-ionex/tests/fixtures crates/gt-jam/tests/fixtures crates/gt-solar/tests/fixtures
+
+jobs:
+  freshness:
+    name: Fixture freshness
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # 2026-03-27
+        with:
+          toolchain: stable
+
+      # Restore-only, so this workflow never writes a cache. zizmor does not
+      # read save-if, hence the ignore.
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning]
+        with:
+          shared-key: app
+          save-if: false
+
+      - name: Install tools
+        uses: taiki-e/install-action@920ab1831fbf4fb3ef75c8ead83556c918bb7290 # v2.79.8
+        with:
+          tool: nextest,just
+
+      # Uncached: the qa project has no runtime dependencies to restore.
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: false
+
+      # Staging the scrubbed manifests makes them the baseline the drift step
+      # diffs the freshly captured ones against, without committing anything.
+      - name: Scrub the committed manifests into the baseline
+        run: |
+          just qa::scrub-capture-manifests
+          git add -- $FIXTURE_DIRS
+
+      - name: Capture the ionosphere maps (JPL archive)
+        run: |
+          just ionex-fixtures || {
+            echo "::error::gt-ionex capture failed: the JPL archive refused the request or was unreachable. This is a capture failure, not fixture drift."
+            exit 1
+          }
+
+      - name: Capture the interference datasets (gpsjam.org)
+        if: ${{ !cancelled() }}
+        run: |
+          just jam-fixtures || {
+            echo "::error::gt-jam capture failed: gpsjam.org refused the request or was unreachable. This is a capture failure, not fixture drift."
+            exit 1
+          }
+
+      - name: Capture the geomagnetic indices (GFZ Potsdam)
+        if: ${{ !cancelled() }}
+        run: |
+          just solar-fixtures || {
+            echo "::error::gt-solar capture failed: the GFZ Potsdam service refused the request or was unreachable. This is a capture failure, not fixture drift."
+            exit 1
+          }
+
+      - name: Scrub the fresh manifests
+        if: ${{ !cancelled() }}
+        run: just qa::scrub-capture-manifests
+
+      - name: Detect fixture drift
+        if: ${{ !cancelled() }}
+        run: |
+          if git diff --exit-code -- $FIXTURE_DIRS; then
+            echo "Every fixture captured by this run matches what is committed."
+          else
+            echo "::error::Fixtures drifted: a service no longer serves what is committed. Review the diff above, then re-capture with just ionex-fixtures, just jam-fixtures, just solar-fixtures and commit the result."
+            exit 1
+          fi
+
+      - name: Test against the fresh captures
+        if: ${{ !cancelled() }}
+        run: |
+          cargo nextest run -p gt-ionex --test captured_maps --profile ci
+          cargo nextest run -p gt-jam --test captured_days --profile ci
+          cargo nextest run -p gt-jam-store --test captured_day --profile ci
+          cargo nextest run -p gt-solar --test captured_windows --profile ci
+          cargo nextest run -p gt-solar-store --test captured_days --profile ci

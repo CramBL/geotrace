@@ -556,7 +556,7 @@ impl App {
                     )
                     .on_hover_text(
                         "Check for a newer GeoTrace release on startup and prompt to install it. \
-                         Always off in development builds and when GEOTRACE_OFFLINE is set.",
+                         Always off in development builds and in offline mode.",
                     );
                 }
             });

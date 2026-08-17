@@ -290,8 +290,8 @@ fn complement(ranges: &[std::ops::Range<usize>], len: usize) -> Vec<std::ops::Ra
 }
 
 /// Drive the full `NavMap::draw` path over the fixture track with a
-/// hardcoded set of query matches. Requires `GEOTRACE_OFFLINE=1` (set by
-/// `just test`) so no map tiles render beneath the halos.
+/// hardcoded set of query matches. No map tiles render beneath the halos:
+/// the map is built with [`TileAccess::Offline`].
 fn snapshot_nav_map_with_matches(name: &'static str, mode: DisplayMode, stale: bool) {
     use std::collections::HashMap;
 
@@ -388,8 +388,8 @@ fn snapshot_jamming_dataset() -> JamDataset {
 /// The interference overlay under the fixture track. At the zoom that
 /// frames a 1 km track a single 22 km cell covers the viewport, so this
 /// pins the fill and the draw order - track ink over cells - rather than
-/// the ramp, which `jamming_renderer`'s own tests cover. Requires
-/// `GEOTRACE_OFFLINE=1` (set by `just test`) so no map tiles render.
+/// the ramp, which `jamming_renderer`'s own tests cover. No map tiles
+/// render: the map is built with [`TileAccess::Offline`].
 #[rstest::rstest]
 #[case::dark("jamming_overlay_dark", true, None)]
 #[case::light("jamming_overlay_light", false, None)]
@@ -444,8 +444,8 @@ const SNAPPED_OFFSET_MERC_Y: f64 = -1.5e-6;
 /// Snapshot the map with `make_snapshot_file`'s track plus the snapped
 /// geometry `geometry_for` derives from its points, drawn under `mask`.
 /// With `hover`, the pointer is parked there before the snapshot (frames
-/// are stepped past egui's tooltip delay). Requires `GEOTRACE_OFFLINE=1`
-/// (set by `just test`) so no map tiles render.
+/// are stepped past egui's tooltip delay). No map tiles render: the map is
+/// built with [`TileAccess::Offline`].
 fn snapshot_snapped_tracks_with(
     name: &str,
     mask: DisplayMask,

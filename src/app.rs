@@ -119,8 +119,8 @@ pub struct StartupOptions {
     /// Whether the app runs without network access: no interference
     /// downloads, no snapping, no update check, no map tiles.
     ///
-    /// `main` reads `GEOTRACE_OFFLINE` to set it, and is the only place that
-    /// consults the environment. Everything downstream is handed the value.
+    /// `main` sets it from the `--offline` flag, and is the only place that
+    /// reads the command line. Everything downstream is handed the value.
     pub offline: bool,
     /// Which databases the run opens.
     pub storage: storage::Storage,
@@ -296,8 +296,8 @@ pub struct App {
     /// Only present in dist builds (the `self-update` feature).
     #[cfg(feature = "self-update")]
     update_checker: update::UpdateChecker,
-    /// When `true`, check for updates on startup (also gated on release build and
-    /// `GEOTRACE_OFFLINE` being unset). Mirrors `settings.update.check_on_startup`.
+    /// When `true`, check for updates on startup (also gated on a release build
+    /// and on not running offline). Mirrors `settings.update.check_on_startup`.
     update_check_on_startup: bool,
     /// A release version the user chose to skip. Suppresses the update prompt for
     /// exactly this version. Mirrors `settings.update.skipped_version`.

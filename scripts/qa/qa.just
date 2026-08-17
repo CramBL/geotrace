@@ -18,6 +18,10 @@ check-narrative-comments:
     {{ _QA }} check-narrative-comments
 
 [group("qa")]
+check-no-network:
+    {{ _QA }} check-no-network
+
+[group("qa")]
 check-raw-colors:
     {{ _QA }} check-raw-colors
 
@@ -25,6 +29,12 @@ check-raw-colors:
 qa-lint:
     {{ _QA }} ruff check {{ source_directory() }}/src
     {{ _QA }} mypy --strict {{ source_directory() }}/src
+
+# Normalize the capture timestamps in the fixture manifests, so a fresh
+# capture diffs against the committed one on served data alone.
+[group("qa")]
+scrub-capture-manifests *MANIFESTS:
+    {{ _QA }} scrub-capture-manifests {{ MANIFESTS }}
 
 [group("qa")]
 generate-gold:

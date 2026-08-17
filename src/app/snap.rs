@@ -882,9 +882,8 @@ mod tests {
         }
     }
 
-    /// Tests drive the manager through its message channel instead of real
-    /// worker threads. `GEOTRACE_OFFLINE=1` (set by `just test`) would make
-    /// `request_snap` refuse, so these tests inject messages directly.
+    /// No request is ever sent: tests drive the scheduler through its
+    /// message channel.
     #[test]
     fn done_message_moves_run_into_cache_and_clears_activity() {
         let mut scheduler = scheduler();
@@ -1074,7 +1073,7 @@ mod tests {
 
         // Requesting auto again: cache hit, promoted, nothing queued.
         // (request_snap's offline gate sits after the cache lookup, so this
-        // path is exercised even under GEOTRACE_OFFLINE.)
+        // path is exercised offline too.)
         scheduler.request_snap(track_ref(), &track, auto, SnapPriority::Manual);
         assert_eq!(
             scheduler
