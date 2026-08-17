@@ -1,16 +1,12 @@
 //! Settings for the Kp and Hp30 geomagnetic index downloads.
 
 use crate::app::backfill_ui::BackfillAction;
+use crate::app::settings_ui::SettingsPage;
 use crate::app::{App, day_failures, geomagnetic_index_ui};
 
 impl App {
     pub(super) fn show_geomagnetic_index_page(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            ui.label(egui_phosphor::regular::MAGNET);
-            ui.strong("Geomagnetic indices");
-        });
-        ui.separator();
+        SettingsPage::GeomagneticIndices.show_header(ui);
         egui::Grid::new("geomagnetic_index_grid")
             .num_columns(2)
             .spacing([8.0, 6.0])

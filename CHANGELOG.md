@@ -20,6 +20,10 @@
   A day no mirror could serve names each of them and the status it returned.
 - The `--offline` flag runs GeoTrace without network access: no map tiles, downloads, snapping, or update check. It replaces the undocumented `GEOTRACE_OFFLINE` environment variable, which is no longer read.
 
+### Changed
+
+- The settings window shows one category at a time, picked from a rail on the left, instead of every section stacked in one column. The recording name template moved to the "Interface" page and the update check to "Application". The window is resizable and keeps its size as the page changes.
+
 ### Fixed
 
 - Hover labels no longer stack on top of each other, in the plot and on the map's interference layer.

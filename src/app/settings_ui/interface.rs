@@ -1,19 +1,14 @@
 //! Presentation settings for names GeoTrace derives from a recording.
 
 use egui::Grid;
-use egui_phosphor::regular::TEXT_AA as ICON_TEXT_AA;
 
+use crate::app::settings_ui::SettingsPage;
 use crate::app::{App, recording_name_template};
 
 impl App {
-    pub(super) fn show_display_page(&self, ui: &mut egui::Ui) {
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            ui.label(ICON_TEXT_AA);
-            ui.strong("Display");
-        });
-        ui.separator();
-        Grid::new("display_grid")
+    pub(super) fn show_interface_page(&self, ui: &mut egui::Ui) {
+        SettingsPage::Interface.show_header(ui);
+        Grid::new("interface_grid")
             .num_columns(2)
             .spacing([8.0, 6.0])
             .show(ui, |ui| {

@@ -1,15 +1,11 @@
 //! Settings for the global ionosphere map downloads.
 
+use crate::app::settings_ui::SettingsPage;
 use crate::app::{App, day_failures, tec_mirrors_ui};
 
 impl App {
     pub(super) fn show_tec_page(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            ui.label(egui_phosphor::regular::WAVES);
-            ui.strong("Ionospheric TEC");
-        });
-        ui.separator();
+        SettingsPage::IonosphericTec.show_header(ui);
         egui::Grid::new("tec_grid")
             .num_columns(2)
             .spacing([8.0, 6.0])

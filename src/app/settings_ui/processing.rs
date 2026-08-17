@@ -8,20 +8,16 @@ use egui_phosphor::regular::CHECK_CIRCLE as ICON_CHECK_CIRCLE;
 use egui_phosphor::regular::LINK_BREAK as ICON_LINK_BREAK;
 use egui_phosphor::regular::MAP_PIN as ICON_MAP_PIN;
 use egui_phosphor::regular::SCISSORS as ICON_SCISSORS;
-use egui_phosphor::regular::SLIDERS_HORIZONTAL as ICON_SLIDERS_HORIZONTAL;
 use egui_phosphor::regular::WARNING as ICON_WARNING;
 use egui_phosphor::regular::X_CIRCLE as ICON_X_CIRCLE;
 
 use crate::app::App;
+use crate::app::settings_ui::SettingsPage;
 
 impl App {
     /// Returns `true` in the frame when the user clicks "Apply to loaded data".
     pub(super) fn show_processing_page(&mut self, ui: &mut egui::Ui) -> bool {
-        ui.horizontal(|ui| {
-            ui.label(ICON_SLIDERS_HORIZONTAL);
-            ui.strong("Processing");
-        });
-        ui.separator();
+        SettingsPage::Processing.show_header(ui);
         Grid::new("settings_grid")
             .num_columns(2)
             .spacing([8.0, 6.0])
@@ -207,7 +203,7 @@ impl App {
                     "Mark each clock offset excursion: a sample or two whose GPS/system clock \
                      offset left the track's baseline and returned - typically a receiver \
                      reporting its pre-gap GPS epoch for the first fix after a recording gap. \
-                     The threshold comes from the Analysis section, so the markers and the \
+                     The threshold comes from the Analysis page, so the markers and the \
                      plot's off-scale indicators agree.";
                 ui.label(format!("{ICON_WARNING} Clock offset excursion"))
                     .on_hover_text(excursion_help);
@@ -226,7 +222,7 @@ impl App {
                      or whose SNR dropped sharply between epochs. Hover a marker for which \
                      satellite slipped and its before/after elevation, azimuth, and SNR. \
                      Detection uses the elevation mask and SNR-drop threshold from the Analysis \
-                     section, so the markers and the slip-rate plot agree.";
+                     page, so the markers and the slip-rate plot agree.";
                 ui.label(format!("{ICON_LINK_BREAK} Satellite slip"))
                     .on_hover_text(slip_help);
                 ui.checkbox(

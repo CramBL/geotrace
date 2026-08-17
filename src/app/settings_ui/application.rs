@@ -1,11 +1,11 @@
 //! The startup update check toggle.
 
 use crate::app::App;
+use crate::app::settings_ui::SettingsPage;
 
 impl App {
-    pub(super) fn show_updates_page(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(12.0);
-        ui.separator();
+    pub(super) fn show_application_page(&mut self, ui: &mut egui::Ui) {
+        SettingsPage::Application.show_header(ui);
         ui.checkbox(
             &mut self.update_check_on_startup,
             "Check for updates on startup",

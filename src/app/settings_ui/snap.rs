@@ -5,15 +5,11 @@ use gt_snap::wire::Costing;
 use strum::IntoEnumIterator;
 
 use crate::app::App;
+use crate::app::settings_ui::SettingsPage;
 
 impl App {
     pub(super) fn show_snap_page(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            ui.label(egui_phosphor::regular::PATH);
-            ui.strong("Snap to road");
-        });
-        ui.separator();
+        SettingsPage::SnapToRoad.show_header(ui);
         egui::Grid::new("snap_grid")
             .num_columns(2)
             .spacing([8.0, 6.0])
