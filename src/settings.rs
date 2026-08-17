@@ -17,6 +17,7 @@ pub struct Settings {
     pub snap: SnapSettings,
     pub interference: InterferenceSettings,
     pub geomagnetic_indices: GeomagneticIndexSettings,
+    pub tec: TecSettings,
 }
 
 impl Default for Settings {
@@ -34,6 +35,7 @@ impl Default for Settings {
             snap: SnapSettings::default(),
             interference: InterferenceSettings::default(),
             geomagnetic_indices: GeomagneticIndexSettings::default(),
+            tec: TecSettings::default(),
         }
     }
 }
@@ -66,6 +68,22 @@ impl Default for GeomagneticIndexSettings {
     fn default() -> Self {
         Self {
             base_url: gt_solar::DEFAULT_BASE_URL.to_owned(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct TecSettings {
+    /// Base URL of the ionospheric TEC map host. Defaults to JPL, which
+    /// publishes them. A self-hosted mirror or an offline copy goes here.
+    pub base_url: String,
+}
+
+impl Default for TecSettings {
+    fn default() -> Self {
+        Self {
+            base_url: gt_ionex::DEFAULT_BASE_URL.to_owned(),
         }
     }
 }
@@ -648,6 +666,23 @@ mod snap_settings_tests {
         let text = toml::to_string_pretty(&settings).expect("serialize");
         let parsed: Settings = toml::from_str(&text).expect("parse");
         assert_eq!(parsed.interference.base_url, "https://mirror.example");
+    }
+
+    /// A settings file written before the TEC section existed loads with the
+    /// default host.
+    #[test]
+    fn a_settings_file_without_the_tec_section_loads() {
+        let settings: Settings = toml::from_str("version = 1").expect("parse");
+        assert_eq!(settings.tec.base_url, gt_ionex::DEFAULT_BASE_URL);
+    }
+
+    #[test]
+    fn a_configured_tec_host_round_trips() {
+        let mut settings = Settings::default();
+        settings.tec.base_url = "https://mirror.example".to_owned();
+        let text = toml::to_string(&settings).expect("serialize");
+        let parsed: Settings = toml::from_str(&text).expect("parse");
+        assert_eq!(parsed.tec.base_url, "https://mirror.example");
     }
 
     /// A settings file written before the geomagnetic index section existed

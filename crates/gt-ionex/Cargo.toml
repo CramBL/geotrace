@@ -11,13 +11,14 @@ doctest = false
 
 [dependencies]
 chrono.workspace = true
+# The archives serve IONEX files gzipped, and the parser reads text.
+flate2.workspace = true
+gt-fetch = { path = "../gt-fetch" }
 gt-types = { path = "../gt-types" }
+strum.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-# The archives serve IONEX files gzipped, and the capture example stores them
-# decompressed because the parser reads text.
-flate2.workspace = true
 proptest.workspace = true
 # The fixture-capture example talks to the archive directly, not through
 # gt_fetch::Transport.

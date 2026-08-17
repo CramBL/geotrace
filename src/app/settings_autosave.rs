@@ -91,6 +91,8 @@ pub(super) struct AppSnapshot {
     pub geomagnetic_indices: crate::settings::GeomagneticIndexSettings,
     /// Compared as the whole persisted struct, like [`Self::snap`].
     pub interference: crate::settings::InterferenceSettings,
+    /// Compared as the whole persisted struct, like [`Self::snap`].
+    pub tec: crate::settings::TecSettings,
 }
 
 impl Default for AppSnapshot {
@@ -141,6 +143,7 @@ impl Default for AppSnapshot {
             snap: crate::settings::SnapSettings::default(),
             geomagnetic_indices: crate::settings::GeomagneticIndexSettings::default(),
             interference: crate::settings::InterferenceSettings::default(),
+            tec: crate::settings::TecSettings::default(),
         }
     }
 }

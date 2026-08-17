@@ -130,6 +130,7 @@ _APP_LOCK_CRATES: list[str] = [
     "gt-history-types",
     "gt-icon-tessellate",
     "gt-ionex",
+    "gt-ionex-store",
     "gt-jam",
     "gt-jam-store",
     "gt-loaded-files",

@@ -120,6 +120,7 @@ impl App {
         }
         self.jamming.poll();
         self.geomagnetic_indices.poll();
+        self.tec_maps.poll();
 
         // Apply finished snap runs and progress updates, persist completed
         // runs of history-stored files, and let the queue react to

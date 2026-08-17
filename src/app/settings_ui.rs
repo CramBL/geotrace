@@ -21,7 +21,7 @@ use gt_types::AssociationConfig;
 use strum::IntoEnumIterator;
 
 use super::backfill_ui::{BackfillAction, BackfillReadiness};
-use super::{App, geomagnetic_index_ui, recording_name_template};
+use super::{App, day_failures, geomagnetic_index_ui, recording_name_template};
 
 impl App {
     /// What a download control may do right now. An archive that could not be
@@ -498,7 +498,11 @@ impl App {
                             self.geomagnetic_indices.fetch_status(),
                         );
                     });
-                geomagnetic_index_ui::show_failures(ui, self.geomagnetic_indices.failures());
+                day_failures::show_failures(
+                    ui,
+                    "geomagnetic_index_failures",
+                    self.geomagnetic_indices.failures(),
+                );
                 ui.add_space(8.0);
                 let readiness =
                     self.backfill_readiness(self.geomagnetic_indices.archive_available());
@@ -515,6 +519,38 @@ impl App {
                         BackfillAction::Cancel => self.geomagnetic_indices.cancel_backfill(),
                     }
                 }
+
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui_phosphor::regular::WAVES);
+                    ui.strong("Ionospheric TEC");
+                });
+                ui.separator();
+                egui::Grid::new("tec_grid")
+                    .num_columns(2)
+                    .spacing([8.0, 6.0])
+                    .show(ui, |ui| {
+                        let url_help = "Base URL of the host serving the global ionosphere maps. \
+                                        The default is JPL, which publishes them. Point it at a \
+                                        mirror or an offline copy to fetch from there instead. \
+                                        Requests carry a date and nothing about your recordings.";
+                        ui.label(format!(
+                            "{} Base URL",
+                            egui_phosphor::regular::GLOBE_SIMPLE
+                        ))
+                        .on_hover_text(url_help);
+                        let mut base_url = self.tec_settings.base_url.clone();
+                        if ui
+                            .text_edit_singleline(&mut base_url)
+                            .on_hover_text(url_help)
+                            .changed()
+                        {
+                            self.tec_maps.set_base_url(&base_url);
+                            self.tec_settings.base_url = base_url;
+                        }
+                        ui.end_row();
+                    });
+                day_failures::show_failures(ui, "tec_failures", self.tec_maps.failures());
 
                 // Only meaningful in dist builds. Builds without the self-update
                 // feature carry no update check to toggle.
@@ -752,6 +788,8 @@ impl App {
         self.geomagnetic_index_settings = s.geomagnetic_indices.clone();
         self.geomagnetic_indices
             .set_base_url(&s.geomagnetic_indices.base_url);
+        self.tec_settings = s.tec.clone();
+        self.tec_maps.set_base_url(&s.tec.base_url);
         self.snap.set_server_url(&s.snap.server_url);
         self.sync_db_path();
     }
@@ -856,6 +894,7 @@ impl App {
             snap: self.snap_settings.clone(),
             interference: self.interference_settings.clone(),
             geomagnetic_indices: self.geomagnetic_index_settings.clone(),
+            tec: self.tec_settings.clone(),
         }
     }
 

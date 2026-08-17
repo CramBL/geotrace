@@ -41,6 +41,7 @@ members = [
     "crates/gt-history-types",
     "crates/gt-icon-tessellate",
     "crates/gt-ionex",
+    "crates/gt-ionex-store",
     "crates/gt-jam",
     "crates/gt-jam-store",
     "crates/gt-loaded-files",
@@ -289,6 +290,7 @@ geotrace-sdk-units = { path = "sdk/rust/geotrace-sdk-units" }
 gt-fetch = { path = "crates/gt-fetch" }
 gt-filter = { path = "crates/gt-filter" }
 gt-fmt = { path = "crates/gt-fmt" }
+gt-ionex = { path = "crates/gt-ionex" }
 gt-jam = { path = "crates/gt-jam" }
 gt-loaded-files = { path = "crates/gt-loaded-files" }
 gt-loader = { path = "crates/gt-loader" }
@@ -326,6 +328,8 @@ winres = "0.1.12"
 
 [dev-dependencies]
 egui_kittest.workspace = true
+# Gzips an IONEX file for the TEC ingest tests, the way the archive serves one.
+flate2.workspace = true
 geotrace-sdk = { path = "sdk/rust/geotrace-sdk" }
 gt-test-utils = { path = "crates/gt-test-utils", features = ["snapshot"] }
 insta.workspace = true

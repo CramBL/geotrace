@@ -1,6 +1,7 @@
 mod auto_prune;
 mod backfill;
 mod backfill_ui;
+mod day_failures;
 mod frame;
 mod geomagnetic_index_ui;
 mod history;
@@ -19,6 +20,7 @@ mod snap_persist;
 mod snap_state;
 mod solar;
 mod storage;
+mod tec;
 pub use storage::Storage;
 #[cfg(feature = "self-update")]
 pub mod update;
@@ -248,6 +250,10 @@ pub struct App {
     /// Persisted geomagnetic index configuration: the host serving Kp and
     /// Hp30.
     geomagnetic_index_settings: crate::settings::GeomagneticIndexSettings,
+    /// Queues and ingests TEC map days for loaded tracks.
+    tec_maps: tec::TecMapScheduler,
+    /// Persisted TEC configuration: the host serving the ionosphere maps.
+    tec_settings: crate::settings::TecSettings,
     /// No network access this run. Set once from [`StartupOptions`].
     offline: bool,
     interference_backfill_ui: backfill_ui::BackfillUi<backfill_ui::InterferenceBackfill>,
@@ -388,6 +394,7 @@ impl App {
             history_failure,
             archive,
             geomagnetic_indices,
+            tec_maps,
         } = options.storage.open(&cc.egui_ctx);
 
         let jamming = jamming::JammingScheduler::new(
@@ -402,12 +409,20 @@ impl App {
             gt_solar::DEFAULT_BASE_URL.to_owned(),
             transport_source(options.offline),
         );
+        let tec_maps = tec::TecMapScheduler::new(
+            cc.egui_ctx.clone(),
+            tec_maps,
+            gt_ionex::DEFAULT_BASE_URL.to_owned(),
+            transport_source(options.offline),
+        );
         let app_version = options.app_version;
 
         let mut app = Self {
             jamming,
             geomagnetic_indices,
             geomagnetic_index_settings: crate::settings::GeomagneticIndexSettings::default(),
+            tec_maps,
+            tec_settings: crate::settings::TecSettings::default(),
             offline: options.offline,
             interference_backfill_ui: backfill_ui::BackfillUi::default(),
             geomagnetic_index_backfill_ui: backfill_ui::BackfillUi::default(),
@@ -658,6 +673,7 @@ impl App {
             snap: self.snap_settings.clone(),
             geomagnetic_indices: self.geomagnetic_index_settings.clone(),
             interference: self.interference_settings.clone(),
+            tec: self.tec_settings.clone(),
         }
     }
 
@@ -742,6 +758,7 @@ impl App {
                     self.jamming.request_days_for(track.metadata.time_range);
                     self.geomagnetic_indices
                         .request_days_for(track.metadata.time_range);
+                    self.tec_maps.request_days_for(track.metadata.time_range);
                 }
                 let orphans: Vec<(chrono::DateTime<chrono::Utc>, String)> = file
                     .orphaned_event_markers
