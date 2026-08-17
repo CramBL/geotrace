@@ -189,7 +189,7 @@ impl Plugin for JammingRenderer<'_> {
 }
 
 /// The cell under the pointer, if any. Cells do not overlap, so the first
-/// containing one is the answer.
+/// containing one is returned.
 fn cell_at_pointer(cells: &[CellShape], pointer: Pos2) -> Option<&CellShape> {
     cells
         .iter()
@@ -264,7 +264,7 @@ fn paint_hatched(ui: &Ui, cell: &CellShape) {
 }
 
 /// Twice the signed area of a polygon. Negative when its vertices wind the
-/// other way, which decides which side of an edge the interior is on.
+/// other way, which determines which side of an edge the interior is on.
 fn signed_area_x2(polygon: &[Pos2]) -> f32 {
     polygon
         .iter()

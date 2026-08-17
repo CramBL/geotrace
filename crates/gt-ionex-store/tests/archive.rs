@@ -192,7 +192,7 @@ fn an_unarchived_day_reads_back_as_nothing() {
     assert_eq!(store.archived_product(day(0)).expect("archive read"), None);
 }
 
-/// The product decides whether the day is fetched again, so it must be read
+/// The product determines whether the day is fetched again, so it must be read
 /// back for the day it belongs to.
 #[rstest]
 #[case::a_settled_day(IonexProduct::Final)]

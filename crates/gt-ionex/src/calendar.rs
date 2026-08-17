@@ -1,9 +1,9 @@
 //! Which UTC days are worth requesting.
 //!
-//! Two answers are knowable without asking: JPL has no maps before
+//! Two facts are knowable without a request: JPL has no maps before
 //! [`COVERAGE_START`], and none for a day that has not happened. Everything
 //! else is [`DayOutlook::Fetchable`], the current day included, where both
-//! products answer 404 until the day has been processed.
+//! products return 404 until the day has been processed.
 
 use chrono::NaiveDate;
 
@@ -64,8 +64,8 @@ pub fn day_outlook(day: NaiveDate, today_utc: NaiveDate) -> DayOutlook {
     }
 }
 
-/// The products worth asking for `day`, settled product first, or nothing for
-/// a day outside coverage.
+/// The products worth requesting for `day`, settled product first, or nothing
+/// for a day outside coverage.
 pub fn fetchable_products(day: NaiveDate, today_utc: NaiveDate) -> &'static [IonexProduct] {
     match day_outlook(day, today_utc) {
         DayOutlook::Fetchable => &IonexProduct::PREFERENCE_ORDER,
@@ -75,7 +75,7 @@ pub fn fetchable_products(day: NaiveDate, today_utc: NaiveDate) -> &'static [Ion
 
 /// Every day in `from..=to` inside coverage, oldest first.
 pub fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> Vec<NaiveDate> {
-    // The lower bound keeps a caller asking from the year 1 out of the walk.
+    // The lower bound keeps a range starting in the year 1 out of the walk.
     gt_types::utc_days::days_in_range(from.max(COVERAGE_START)..=to, |day| {
         !fetchable_products(day, today_utc).is_empty()
     })
@@ -124,8 +124,8 @@ mod tests {
         assert_eq!(reached, DayOutlook::iter().collect::<HashSet<_>>());
     }
 
-    /// A fetchable day is asked for the settled product first, and a day
-    /// outside coverage is never asked for at all.
+    /// A fetchable day requests the settled product first, and a day outside
+    /// coverage is never requested at all.
     #[rstest]
     #[case::a_settled_day(date(2024, 5, 10), &[IonexProduct::Final, IonexProduct::Rapid])]
     #[case::before_coverage(date(1970, 1, 1), &[])]

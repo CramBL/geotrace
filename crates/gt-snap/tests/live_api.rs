@@ -48,8 +48,8 @@ fn boulevard_points() -> Vec<NavPoint> {
 /// assertions only.
 ///
 /// Ignored so that plain `cargo test` skips it as well as nextest: this is
-/// the one test that contacts a public server, and it runs only when asked
-/// for by name.
+/// the one test that contacts a public server, and it runs only when selected
+/// by name.
 #[ignore = "contacts the live Valhalla server; run with `just snap-live-test`"]
 #[test]
 fn full_pipeline_against_live_server() {

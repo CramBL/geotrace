@@ -125,7 +125,7 @@ pub struct SkyTrailsWindow {
     /// [`SkyTrailsWindow::set_trail_opacity_percent`] and left alone by
     /// `open_track`.
     trail_opacity_percent: f32,
-    /// An instant the window was asked to open at, applied on the next
+    /// An instant the window was requested to open at, applied on the next
     /// `show` once the trails - and so the track's time span - are known.
     /// Requests arrive before the trails are extracted, so the scrub position
     /// cannot be resolved at request time.
@@ -368,7 +368,7 @@ impl WindowBody<'_> {
         }
         // Stats and counts reflect the report in effect at this instant.
         let stats_time = floor_epoch(trails, scrub_time).map_or(first, |e| e.time);
-        // Computed before layout: the counts decide how wide the seen column
+        // Computed before layout: the counts determine how wide the seen column
         // has to be, and that in turn sets the stats column and the plot.
         let counts = trails.counts_at(stats_time, *show_not_in_fix);
         let has_paren = any_row_is_filtered(&counts);

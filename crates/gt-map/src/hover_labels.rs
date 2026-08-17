@@ -16,7 +16,7 @@ use gt_ui_types::{DataPointRef, HoverCandidates};
 
 use crate::recording_labels::RecordingLabels;
 
-/// Which map layer owns the pointer, deciding whose hover label draws.
+/// Which map layer owns the pointer, determining whose hover label draws.
 ///
 /// Recorded elements come first, then the snapped track, then the
 /// interference cells beneath both: an overlay yields to everything above it

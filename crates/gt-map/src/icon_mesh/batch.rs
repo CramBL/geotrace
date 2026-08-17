@@ -53,8 +53,8 @@ pub struct IconInstance {
 ///   zoomed-in frames do not spray tiny draw calls.
 ///
 /// A batch without a library (the embedded meshes failed to decode, reported
-/// at startup) accepts pushes and paints nothing, so renderers carry no
-/// per-call-site `Option` plumbing.
+/// at startup) accepts pushes and paints nothing, so renderers need no
+/// per-call-site `Option` boilerplate.
 pub struct IconMeshBatch<'a> {
     library: Option<&'a IconMeshLibrary>,
     pixels_per_point: f32,

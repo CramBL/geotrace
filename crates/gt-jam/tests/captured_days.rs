@@ -44,7 +44,7 @@ fn every_declared_day_has_a_matching_manifest_entry() {
         assert_eq!(
             entry.get("http_status").and_then(Value::as_u64),
             Some(u64::from(fixture.http_status)),
-            "{}: the capture answered differently than FIXTURE_DAYS declares",
+            "{}: the capture recorded a different status than FIXTURE_DAYS declares",
             fixture.day
         );
         assert!(

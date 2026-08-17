@@ -1,6 +1,6 @@
 //! Which UTC days are worth requesting.
 //!
-//! Only two answers are knowable without asking: nothing exists before
+//! Only two facts are knowable without a request: nothing exists before
 //! [`COVERAGE_START`], and nothing exists for a day that has not happened.
 //! Everything else is [`DayOutlook::Fetchable`], including days too recent
 //! to be published - the lag runs one to three days and is unannounced, so
@@ -15,7 +15,7 @@ use gt_types::TimeRange;
 ///
 /// Probed, not taken from the publisher's prose, which names February 2022
 /// without a day: on 2026-07-31 every day from 2022-01-31 through
-/// 2022-02-13 answered 404, and 2022-02-14 answered 200.
+/// 2022-02-13 returned 404, and 2022-02-14 returned 200.
 const COVERAGE_START_YMD: (i32, u32, u32) = (2022, 2, 14);
 
 /// First UTC day the host published a dataset for.
@@ -70,7 +70,7 @@ pub fn day_outlook(day: NaiveDate, today_utc: NaiveDate) -> DayOutlook {
 /// published it yet.
 ///
 /// Distinguishes a pending day from a gap in the record when a dataset is
-/// missing. Never decides whether to request one.
+/// missing. Never determines whether to request one.
 pub fn awaiting_publication(day: NaiveDate, today_utc: NaiveDate) -> bool {
     match today_utc.checked_sub_days(TYPICAL_PUBLICATION_LAG) {
         Some(newest_expected) => day > newest_expected,
@@ -95,7 +95,7 @@ pub fn days_spanned(start: DateTime<Utc>, end: DateTime<Utc>) -> Option<Vec<Naiv
 
 /// Every [`DayOutlook::Fetchable`] day in `from..=to`, oldest first.
 pub fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> Vec<NaiveDate> {
-    // The lower bound keeps a caller asking from the year 1 out of the walk.
+    // The lower bound keeps a range starting in the year 1 out of the walk.
     gt_types::utc_days::days_in_range(from.max(COVERAGE_START)..=to, |day| {
         day_outlook(day, today_utc) == DayOutlook::Fetchable
     })
@@ -130,7 +130,8 @@ mod tests {
     #[case::long_before_coverage(date(2019, 6, 4), DayOutlook::BeforeCoverage)]
     #[case::the_first_covered_day(date(2022, 2, 14), DayOutlook::Fetchable)]
     #[case::a_settled_past_day(date(2026, 7, 20), DayOutlook::Fetchable)]
-    // Inside the publication lag: still requested, the host decides.
+    // Inside the publication lag: still requested, the host determines the
+    // outcome.
     #[case::yesterday(date(2026, 7, 28), DayOutlook::Fetchable)]
     #[case::today(date(2026, 7, 29), DayOutlook::Fetchable)]
     #[case::tomorrow(date(2026, 7, 30), DayOutlook::InFuture)]

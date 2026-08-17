@@ -904,7 +904,7 @@ fn classify_shows_all_icons_when_even_the_shortest_segment_is_spaced() {
 }
 
 #[test]
-fn classify_mixed_spacing_decides_per_fix() {
+fn classify_mixed_spacing_selects_per_fix() {
     // Parked-then-highway: zero-length segments next to 100 m hops.
     let track = track_with_segment_range(0.0, 100.0);
     assert_eq!(

@@ -76,7 +76,7 @@ pub struct JammingScheduler {
     /// Connected on the first request, and dropped when the host changes.
     http: Option<Arc<Connection>>,
     /// Where that transport comes from. Supplied by the application, so
-    /// nothing here decides whether requests may leave the machine.
+    /// nothing here determines whether requests may leave the machine.
     transport_source: TransportSource,
     queue: VecDeque<NaiveDate>,
     /// Every day queued this session, so a day is requested at most once
@@ -95,8 +95,8 @@ pub struct JammingScheduler {
     shown: Option<(NaiveDate, JamDataset)>,
     /// Which day the overlay shows, and the stepper's bounds.
     selection: DaySelection,
-    /// Days the host answered it has no dataset for, which the legend
-    /// distinguishes from a day nothing was downloaded for.
+    /// Days the host has no dataset for, which the legend distinguishes from
+    /// a day nothing was downloaded for.
     refused: HashSet<NaiveDate>,
     /// Per-track plot points, keyed by the days they were resolved from, so
     /// the `Arc` identity the plot caches on only changes when the archive
@@ -194,7 +194,7 @@ impl JammingScheduler {
                 Ok(false) => self.queue.push_back(day),
                 Err(err) => {
                     let detail = format!("reading the archive: {err}");
-                    log::error!("Cannot tell whether {day} is archived: {detail}");
+                    log::error!("Cannot determine whether {day} is archived: {detail}");
                     self.failures.push(DayFailure { day, detail });
                 }
             }
@@ -226,7 +226,7 @@ impl JammingScheduler {
                 }
                 Err(err) => {
                     let detail = format!("reading the archive: {err}");
-                    log::error!("Cannot tell whether {day} is archived: {detail}");
+                    log::error!("Cannot determine whether {day} is archived: {detail}");
                     self.failures.push(DayFailure { day, detail });
                 }
             }
@@ -685,7 +685,7 @@ mod tests {
         (dir, store, scheduler)
     }
 
-    /// Answers every request with one canned response.
+    /// Returns one canned response for every request.
     struct CannedTransport {
         status: u16,
         body: String,
@@ -731,7 +731,7 @@ mod tests {
         assert_eq!(scheduler.backfill_progress(), None);
     }
 
-    /// A range entirely outside the coverage window asks for nothing.
+    /// A range entirely outside the coverage window requests nothing.
     #[test]
     fn a_backfill_outside_coverage_queues_nothing() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
@@ -803,7 +803,7 @@ mod tests {
         assert_eq!(scheduler.backfill_progress(), None);
     }
 
-    /// Cancelling drops the queued days and lets a later backfill ask for
+    /// Cancelling drops the queued days and lets a later backfill request
     /// them again.
     #[test]
     fn cancelling_releases_the_queued_days() {
@@ -834,7 +834,7 @@ mod tests {
         );
         assert!(
             !scheduler.seen.contains(&queued),
-            "a day that never went out can be asked for again"
+            "a day that never went out can be requested again"
         );
     }
 
@@ -944,7 +944,7 @@ mod tests {
         assert!(scheduler.is_fetching());
     }
 
-    /// A recording is requested once. Loading it again asks for nothing.
+    /// A recording is requested once. Loading it again requests nothing.
     #[test]
     fn a_day_is_queued_at_most_once() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();

@@ -103,7 +103,7 @@ fn owned_ranges_select_results_across_chunks() {
     let plan = two_chunk_plan();
     let sizes = chunk_sizes(&plan);
     // Chunk 0 reports every point snapped, chunk 1 every point
-    // interpolated. Overlap points must take the owning chunk's answer.
+    // interpolated. Overlap points must take the owning chunk's result.
     let outcomes = [
         uniform_response(sizes[0], SnapPointKind::Snapped, 1.0).expect("outcome"),
         uniform_response(sizes[1], SnapPointKind::Interpolated, 2.0).expect("outcome"),
@@ -461,8 +461,8 @@ fn chunks_across_a_ghost_gap_keep_their_geometry_split() {
 }
 
 /// An off-network chunk opening a stretch marks its first point as
-/// following the gap too: the break is a property of the plan, not of how
-/// the server answered.
+/// following the gap too: the break is a property of the plan, not of what
+/// the server returned.
 #[test]
 fn an_off_network_chunk_after_a_ghost_gap_follows_the_gap() {
     let plan = request_plan::plan(&support::points_with_ghosts_at(20, &[10, 11, 12]));

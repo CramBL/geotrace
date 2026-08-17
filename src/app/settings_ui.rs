@@ -337,9 +337,9 @@ impl App {
 
                         let auto_help = "Automatically snap loaded tracks that are shown on \
                                          the map. Hidden tracks wait until shown, and a \
-                                         manual trigger always jumps the queue. Enabling asks \
-                                         for upload consent first when it has not been given \
-                                         for the configured server.";
+                                         manual trigger always jumps the queue. Enabling \
+                                         prompts for upload consent first when it has not \
+                                         been given for the configured server.";
                         ui.label(format!("{} Auto snap", egui_phosphor::regular::LIGHTNING))
                             .on_hover_text(auto_help);
                         let mut auto = self.snap_settings.auto_snap == Some(true);

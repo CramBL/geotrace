@@ -248,10 +248,10 @@ mod tests {
         // Back-to-front, so a higher index draws on top.
         let layers: Vec<egui::LayerId> = ctx.memory(|memory| memory.layer_ids().collect());
         let legend_id = legend_id.expect("the legend renders with two visible files");
-        let position = |wanted: egui::Id| {
+        let position = |target: egui::Id| {
             layers
                 .iter()
-                .position(|layer| layer.id == wanted)
+                .position(|layer| layer.id == target)
                 .expect("layer is registered")
         };
         let legend_position = position(legend_id);

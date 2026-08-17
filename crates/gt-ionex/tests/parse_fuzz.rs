@@ -133,7 +133,7 @@ proptest::proptest! {
 }
 
 proptest::proptest! {
-    /// Any position and time a caller can ask for, against a whole capture.
+    /// Any position and time a caller can request, against a whole capture.
     #[test]
     fn any_position_and_time_resolves_within_the_captured_values(
         latitude in -90.0_f64..=90.0,

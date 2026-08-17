@@ -285,7 +285,8 @@ const SMOOTH_HALF_WINDOW_S: i64 = 2;
 
 /// Average each fix's speed and heading with its neighbours within
 /// [`SMOOTH_HALF_WINDOW_S`]. Headings are unwrapped into a continuous series
-/// first so averaging across the 360° seam cannot fold a bend into a spin.
+/// first so averaging across the 360° wrap boundary cannot fold a bend into a
+/// spin.
 fn smooth_dynamics(fixes: &[FixDynamics]) -> Vec<FixDynamics> {
     let mut unwrapped: Vec<f64> = Vec::with_capacity(fixes.len());
     for fix in fixes {
@@ -417,7 +418,7 @@ fn verify_demo_file(path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Er
     // 92 real fixes plus 59 ghost points (one per missing tunnel second).
     // Ghost points are the fixes the builder synthesizes for orphaned
     // satellite reports: interpolated position and heading, but no
-    // measured accuracy - the missing eph is what tells them apart.
+    // measured accuracy - the missing eph is what distinguishes them.
     let points = file.nav_points();
     assert_eq!(points.len(), 151);
     let is_ghost = |p: &&geotrace_sdk::NavPoint| p.fix.eph_m.is_none();

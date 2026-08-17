@@ -995,7 +995,7 @@ fn reduce_values<P: MetricProvider>(
 ///
 /// Expressed as the rotation carrying `first` onto `last`, which handles the
 /// wrap. At the exact antipode the sign is implementation-defined: the turn is
-/// equally short either way, and `angle()` decides it by floating-point
+/// equally short either way, and `angle()` resolves it by floating-point
 /// rounding.
 fn circular_delta(first: f64, last: f64) -> f64 {
     let rotation =

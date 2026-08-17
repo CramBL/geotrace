@@ -242,7 +242,7 @@ fn contested_loser_becomes_ghost_fix() -> Result<(), BuildError> {
 ///
 /// Fix A at t=0 ms, Fix B at t=3 000 ms.
 /// Report R1 at t=100 ms → assigned to A (100 ms distance).
-/// Report R2 at t=200 ms → also wants A (200 ms), loses. Also outside window of B → ghost.
+/// Report R2 at t=200 ms → also closest to A (200 ms), loses. Also outside window of B → ghost.
 /// Report R3 at t=2 900 ms → assigned to B (100 ms distance).
 ///
 /// Ghost fixes between real fixes carry the bearing heading (not `None`), so we

@@ -1099,7 +1099,7 @@ fn vector_schema(name: &str, unit: Option<&str>, components: &[&str]) -> Channel
 
 #[test]
 fn a_channel_absent_from_the_schema_is_no_such_channel() {
-    // An empty schema knows no channels.
+    // An empty schema has no channels.
     let err = check(
         &parse("points | window 10 | where max(@accel) > 0.1 g").unwrap(),
         &ChannelSchema::new(),

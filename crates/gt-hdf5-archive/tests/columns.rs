@@ -57,7 +57,7 @@ fn a_column_holds_everything_appended_to_it() {
     assert_eq!(column.read_slice::<u32>(1..3).expect("slice"), [2, 3]);
 }
 
-/// HDF5 answers an out-of-range slice with fewer values than asked for, which
+/// HDF5 returns fewer values than requested for an out-of-range slice, which
 /// would silently shorten a day.
 #[test]
 fn reading_past_the_end_of_a_column_is_refused() {
@@ -69,7 +69,7 @@ fn reading_past_the_end_of_a_column_is_refused() {
     let err = column.read_slice::<u32>(1..3).expect_err("past the end");
     assert_eq!(
         err.to_string(),
-        "archive is inconsistent: values holds 2 rows, asked for 1..3"
+        "archive is inconsistent: values holds 2 rows, requested 1..3"
     );
 }
 

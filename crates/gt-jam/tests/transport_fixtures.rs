@@ -1,4 +1,4 @@
-//! Classification against what the host really answered.
+//! Classification against what the host really returned.
 //!
 //! The unit tests script synthetic statuses. These replay the captured
 //! bodies and statuses from `capture.json`, so the served day and the
@@ -15,7 +15,7 @@ use gt_jam::transport::{self, FetchOutcome};
 use gt_jam::wire::{self, ParseWarningReporter};
 use gt_jam::{DEFAULT_BASE_URL, dataset_url, parse_day};
 
-/// Answers every request with one captured response, recording the URLs.
+/// Returns one captured response for every request, recording the URLs.
 struct FixtureTransport {
     response: HttpResponse,
     urls: RefCell<Vec<String>>,

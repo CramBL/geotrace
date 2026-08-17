@@ -96,8 +96,8 @@ impl App {
         }
     }
 
-    /// Ask the history worker whether auto-pruning is needed. The result comes
-    /// back as a [`history_db::Response::AutoPruned`]. Called after each
+    /// Query the history worker for whether auto-pruning is needed. The result
+    /// comes back as a [`history_db::Response::AutoPruned`]. Called after each
     /// successful GTD insert.
     pub(super) fn check_auto_prune(&self) {
         if !self.auto_prune_enabled {

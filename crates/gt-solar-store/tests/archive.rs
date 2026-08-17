@@ -204,7 +204,7 @@ fn replacing_a_day_leaves_the_days_around_it_alone() {
     assert_eq!(store.kp_series(day(2)).expect("kp"), Some(kp_day(day(2))));
 }
 
-/// Store order does not decide read order.
+/// Store order does not determine read order.
 #[test]
 fn archived_days_come_back_oldest_first_with_their_provenance() {
     let (_dir, store) = store().unwrap();
@@ -230,7 +230,7 @@ fn archived_days_come_back_oldest_first_with_their_provenance() {
     assert_eq!(first.fetched_at, fetched_at());
 }
 
-/// A window the service answered with no periods is still an archived day,
+/// A window the service returned with no periods is still an archived day,
 /// distinct from one never fetched.
 #[test]
 fn a_day_with_no_samples_is_still_archived() {

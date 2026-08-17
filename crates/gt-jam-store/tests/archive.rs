@@ -113,7 +113,7 @@ fn days_stored_together_stay_separate() {
     );
 }
 
-/// Ingest order does not decide read order.
+/// Ingest order does not determine read order.
 #[test]
 fn days_come_back_oldest_first() {
     let (_dir, store) = store().unwrap();

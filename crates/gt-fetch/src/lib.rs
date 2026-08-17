@@ -14,7 +14,7 @@ use parking_lot::Mutex;
 const RETRIES: usize = 1;
 
 /// Timeout per request. Generous, because some hosts do server-side work
-/// before answering.
+/// before responding.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Request header (name, value) a host can use to attribute traffic, sent
@@ -56,8 +56,7 @@ impl HttpRequest {
 /// One HTTP response: what classification needs from it.
 ///
 /// The body is text by default. [`BytesResponse`] is the same response with an
-/// undecoded body, which is what a host serving a compressed file answers
-/// with.
+/// undecoded body, which is what a host serving a compressed file returns.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpResponse<B = String> {
     pub status: u16,
@@ -146,7 +145,7 @@ where
     }
 }
 
-/// Which transport the application runs with, decided once at startup.
+/// Which transport the application runs with, selected once at startup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportSource {
     Network,
@@ -214,8 +213,8 @@ impl HttpTransport {
 }
 
 impl HttpTransport {
-    /// Pace, send, and hand back the answered response for the caller to read
-    /// the body from.
+    /// Pace, send, and hand back the response for the caller to read the body
+    /// from.
     fn send_paced(
         &self,
         request: &HttpRequest,

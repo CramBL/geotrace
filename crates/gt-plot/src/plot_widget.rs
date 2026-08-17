@@ -505,7 +505,7 @@ pub fn show_track_plot(
         .x_axis_formatter(x_fmt)
         .label_formatter(|pos| cursor_label(&custom_hover_label_shown, pos));
 
-    // Tell egui_plot the full data extent so double-click reset zooms to fit.
+    // Pass the full data extent to egui_plot so double-click reset zooms to fit.
     if has_full_range {
         plot = plot.include_x(full_x_min).include_x(full_x_max);
     }

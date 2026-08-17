@@ -154,8 +154,9 @@ pub fn category_in_scope<'a>(
 
 /// Why the element a [`DataPointRef`] addresses is, or is not, on the map.
 ///
-/// The variants are ordered the way [`MapScope::point_visibility`] decides, so an
-/// element failing several gates reports the first gate the map itself applies.
+/// The variants are ordered the way [`MapScope::point_visibility`] evaluates
+/// them, so an element failing several gates reports the first gate the map
+/// itself applies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumCount)]
 pub enum PointVisibility {
     /// Drawn on the map.
@@ -182,7 +183,7 @@ impl PointVisibility {
     }
 }
 
-/// Everything that decides whether the map draws one addressed element: the
+/// Everything that determines whether the map draws one addressed element: the
 /// loaded recordings, the tree, the global filter, the display mask, and the last
 /// query's effect.
 ///

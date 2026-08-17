@@ -34,7 +34,7 @@ const DEG_PER_SEC: f64 = 0.001;
 const BASE_LAT_DEG: f64 = 55.0;
 const BASE_LON_DEG: f64 = 12.0;
 
-/// The typed address of a track, for the terse call sites a scenario wants.
+/// The typed address of a track, for the terse call sites a scenario requires.
 pub fn track(file_index: usize, track_index: usize) -> TrackRef {
     TrackRef::new(FileIdx::new(file_index), TrackIdx::new(track_index))
 }

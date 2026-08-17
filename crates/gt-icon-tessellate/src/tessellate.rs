@@ -73,7 +73,7 @@ enum PaintOp {
 }
 
 struct StrokeStyle {
-    /// Width as written in the SVG; its meaning is decided per bake by
+    /// Width as written in the SVG; its meaning is determined per bake by
     /// [StrokeWidthUnit] (see [stroke_width_px]).
     width: f32,
     cap: LineCap,

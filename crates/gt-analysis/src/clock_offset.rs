@@ -295,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn the_threshold_decides_what_counts_as_a_departure() {
+    fn the_threshold_determines_what_counts_as_a_departure() {
         let mut points: Vec<NavPoint> = (0..8).map(|i| point(1000 + i, 200)).collect();
         points.push(point(1008, 30_200));
         points.extend((0..8).map(|i| point(1009 + i, 200)));
@@ -339,9 +339,9 @@ mod tests {
         );
     }
 
-    /// Which level is the baseline is decided by the majority, not by which came
-    /// first: three samples at one offset and two at another makes the two the
-    /// excursion, however large the gap between them.
+    /// Which level is the baseline is determined by the majority, not by which
+    /// came first: three samples at one offset and two at another makes the two
+    /// the excursion, however large the gap between them.
     #[test]
     fn the_majority_of_a_track_defines_its_baseline() {
         let mut points: Vec<NavPoint> = (0..3).map(|i| point(1000 + i, 3_600_000)).collect();

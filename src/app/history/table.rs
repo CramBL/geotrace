@@ -46,7 +46,7 @@ pub(super) fn history_table(
 
     // Right edges of the identity and last (action) columns, captured from the
     // header this frame to measure the metadata width for the next one. The
-    // measurement is only trusted outside the table's sizing pass: during it the
+    // measurement is only valid outside the table's sizing pass: during it the
     // auto columns have not yet grown to their content, so the reserve reads too
     // small and identity briefly blows up (window sticks wide).
     let identity_right = Cell::new(0.0_f32);

@@ -2,7 +2,7 @@
 //! shows them in.
 //!
 //! Shared by every day-keyed fetch worker: what a failed day is and how it
-//! reads is the same whichever host was asked.
+//! reads is the same whichever host it came from.
 
 use chrono::NaiveDate;
 use egui::{Label, RichText, Ui};

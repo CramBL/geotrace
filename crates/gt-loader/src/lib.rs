@@ -679,8 +679,8 @@ mod tests {
     #[test]
     fn reencode_drops_only_the_given_ranges() {
         let t0 = base();
-        // Five fixes one second apart, each at a distinct longitude so we can
-        // tell which ones survived.
+        // Five fixes one second apart, each at a distinct longitude so the
+        // assertions can identify which ones survived.
         let mut recorder = NavFileBuilder::new().open();
         for i in 0..5i64 {
             recorder.add_nav_fix(

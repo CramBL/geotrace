@@ -55,7 +55,7 @@ pub struct TecMapScheduler {
     /// changes.
     http: Option<Arc<Connection>>,
     /// Where that transport comes from. Supplied by the application, so
-    /// nothing here decides whether requests may leave the machine.
+    /// nothing here determines whether requests may leave the machine.
     transport_source: TransportSource,
     queue: VecDeque<NaiveDate>,
     /// Every day queued this session, so a day is requested at most once even

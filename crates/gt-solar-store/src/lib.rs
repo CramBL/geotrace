@@ -182,7 +182,7 @@ impl SolarStore {
     /// was archived for that day.
     ///
     /// The day is the key the series is read back under. A window requested
-    /// midnight to midnight answers with the following day's first period too,
+    /// midnight to midnight also returns the following day's first period,
     /// and the archive stores whichever samples it is given.
     pub fn insert_or_replace_kp_day(
         &self,

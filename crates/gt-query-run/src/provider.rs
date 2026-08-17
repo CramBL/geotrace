@@ -217,7 +217,7 @@ impl MetricProvider for TrackProvider<'_> {
             QueryMetric::Velocity => point.tpv.velocity().map(|v| v.get::<meter_per_second>()),
             QueryMetric::Heading => point.tpv.heading().map(|h| h.get::<degree>()),
             // Derived by the evaluator (`gt_query::derived_accel`), never
-            // asked of providers.
+            // requested from providers.
             QueryMetric::Accel => None,
             QueryMetric::Eph => point.tpv.eph_m().map(f64::from),
             QueryMetric::ClockDelta => point.tpv.sys_time().map(|sys| {

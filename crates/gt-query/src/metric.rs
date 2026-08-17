@@ -100,7 +100,7 @@ impl Quantity {
     /// and [`Quantity::Condition`]).
     ///
     /// [`Quantity::Count`] and [`Quantity::Ratio`] are both dimensionless. The
-    /// exponents cannot tell them apart: the checker's `Kind` tag does.
+    /// exponents cannot distinguish them: the checker's `Kind` tag does.
     pub fn dimension(self) -> Option<Dimension> {
         Some(match self {
             Quantity::Angle | Quantity::Direction => Dimension::ANGLE,

@@ -165,7 +165,7 @@ pub fn point_item_row(
     );
 }
 
-/// What a clicked point row asks the app for, consumed on the same frame.
+/// What a clicked point row requests from the app, consumed on the same frame.
 pub struct PointClickRequests<'a> {
     pub map_center: &'a mut Option<(f64, f64)>,
     pub popup_pos: &'a mut Option<egui::Pos2>,

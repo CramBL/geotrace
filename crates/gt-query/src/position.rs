@@ -217,7 +217,7 @@ fn channel_offers(name: &str, info: &ChannelInfo) -> Vec<ChannelSuggestion> {
 }
 
 /// The channel under `cursor` for a hover tooltip, or `None` when the token is
-/// not a channel the schema knows. The hover shows the channel's dimension for
+/// not a channel the schema has. The hover shows the channel's dimension for
 /// a component `@accel.x`, and the component list for a whole vector `@accel`.
 pub fn channel_at(src: &str, cursor: usize, schema: &ChannelSchema) -> Option<ChannelSuggestion> {
     let cursor = cursor.min(src.len());
@@ -358,7 +358,7 @@ fn starts_at_boundary(src: &str, start: usize) -> bool {
 
 /// The unit names allowed for the value at this position, or `None` when the
 /// quantity can't be inferred. Walks left from the number to whatever the
-/// value belongs to: a `window` duration, a `with` parameter (`mask` wants an
+/// value belongs to: a `window` duration, a `with` parameter (`mask` requires an
 /// angle, `snr_drop` no unit), or a compared metric or channel (`velocity` a
 /// speed, `@accel` its schema unit's quantity).
 ///
@@ -523,7 +523,7 @@ impl Slot {
     }
 }
 
-/// Decide the slot from the tokens strictly before the word being completed.
+/// Determine the slot from the tokens strictly before the word being completed.
 fn slot_before(toks: &[lexer::Tok<'_>], word_start: usize) -> Slot {
     let before: Vec<Token> = toks
         .iter()
@@ -786,7 +786,7 @@ mod tests {
     }
 
     #[test]
-    fn nothing_glued_to_a_finished_unit() {
+    fn nothing_joined_to_a_finished_unit() {
         // The `h` of `km/h` sits after `/`, not a boundary, so it is not
         // completed into `heading` or `eph`.
         let items = names("points | window 3 | where avg(velocity) > 30 km/h");

@@ -1,6 +1,6 @@
 //! Viewport-stable placement of the satellite-count labels.
 //!
-//! Which points are worth labeling is decided at load time
+//! Which points are worth labeling is determined at load time
 //! (`LoadedTrack::sat_label_anchors`, see [`gt_track_builder::sat_label`]).
 //! This module resolves per-frame which anchors actually get a label,
 //! decimating them through the shared [`crate::collision_grid`] so the
@@ -32,10 +32,10 @@ pub(crate) struct Candidate {
 /// `scratch`, returning the per-geometry point-index lists it holds.
 ///
 /// `tracks` yields each visible track with its geometry index and ref;
-/// `point_passes` applies the per-point conditions the caller already
-/// knows about (time filter, query hiding). Anchors outside `viewport`
-/// are skipped. Within each `cell_merc`-sized grid cell the
-/// highest-priority candidate wins ([`Candidate`]'s ordering).
+/// `point_passes` applies the caller's own per-point conditions (time
+/// filter, query hiding). Anchors outside `viewport` are skipped. Within
+/// each `cell_merc`-sized grid cell the highest-priority candidate wins
+/// ([`Candidate`]'s ordering).
 pub(crate) fn select_sat_labels<'s, 'a>(
     scratch: &'s mut LabelSelection,
     tracks: impl Iterator<Item = (usize, TrackRef, &'a LoadedTrack)>,

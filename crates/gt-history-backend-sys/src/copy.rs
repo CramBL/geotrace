@@ -1269,7 +1269,7 @@ const WRITER_FLAGS: u8 = 5;
 /// Set the superblock status flags a crashed writer leaves behind, the
 /// mirror of [`clear_write_lock`].
 ///
-/// libhdf5 clears the flags on close and, within one process, knows it
+/// libhdf5 clears the flags on close and, within one process, tracks that it
 /// already holds the file, so the state cannot be reached by opening one.
 #[cfg(test)]
 pub(crate) fn mark_write_locked(db_path: &Path) -> Result<(), InternalError> {

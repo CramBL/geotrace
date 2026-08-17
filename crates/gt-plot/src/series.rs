@@ -52,7 +52,7 @@ pub(crate) struct TrackSeries {
     pub qzss_seen: MipMap,
     pub qzss_fix: MipMap,
     /// Constellations that appear at least once in this track's satellite
-    /// reports.  The plot uses the union across tracks to decide which
+    /// reports.  The plot uses the union across tracks to select which
     /// per-constellation chips and lines to show, so a constellation with no
     /// data never clutters the UI.
     pub present: ConstellationSet,
@@ -518,7 +518,7 @@ mod tests {
         clippy::float_cmp,
         reason = "the offset passes through untransformed, so equality is exact"
     )]
-    fn the_threshold_decides_what_leaves_the_line() {
+    fn the_threshold_determines_what_leaves_the_line() {
         let track = track_with_a_clock_spike(8, 4);
         let analysis = AnalysisConfig {
             clock_excursion_threshold_s: 4200.0,
