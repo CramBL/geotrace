@@ -7,13 +7,15 @@ use egui_phosphor::regular::X as ICON_X;
 use std::path::PathBuf;
 use std::{
     sync::Arc,
-    thread,
     time::{Duration as StdDuration, Instant},
 };
 
 use egui_kittest::{Harness, kittest::NodeT as _, kittest::Queryable as _};
 use geotrace_sdk::{Channel, ChannelUnit, DateTime, Duration, Unit, Utc};
-use gt_test_utils::{DEMO_BYTES, GOLD_BYTES, SyntheticGtdSpec, TestHarness, synthetic_gtd_bytes};
+use gt_test_utils::{
+    DEMO_BYTES, GOLD_BYTES, HarnessInteraction as _, SyntheticGtdSpec, TestHarness,
+    synthetic_gtd_bytes,
+};
 use gt_types::{FileIdx, LoadWarning, TrackIdx, TrackRef};
 
 use super::App;
@@ -116,32 +118,26 @@ fn minimal_gtd_bytes() -> Vec<u8> {
     })
 }
 
-/// Step the harness repeatedly until all background load jobs have finished.
+/// Drop `file` into the app and step until the background load thread has
+/// finished with it.
 ///
-/// Background threads send a `Completed` message when done. `drain_load_channel`
-/// (called at the start of every `ui()` frame) picks it up and removes the job.
-/// We sleep briefly between steps to let the threads make progress.
-fn step_until_loaded(harness: &mut Harness<App>) {
-    for _ in 0..200 {
-        if harness.state().loader.loading_jobs.is_empty() {
-            return;
-        }
-        thread::sleep(StdDuration::from_millis(5));
-        harness.step();
-    }
-    // One final step in case the last drain hadn't run yet.
+/// The thread sends a `Completed` message when done and `drain_load_channel`
+/// (called at the start of every `ui()` frame) removes the job.
+fn drop_file_and_wait_for_load(harness: &mut Harness<App>, file: TestDroppedFile) {
+    harness.input_mut().dropped_files.push(Arc::new(file));
     harness.step();
+    assert!(
+        harness.step_until(|harness| harness.state().loader.loading_jobs.is_empty()),
+        "the background load did not finish"
+    );
 }
 
 /// Step the harness repeatedly until the query worker's result has landed.
 fn step_until_query_result(harness: &mut Harness<App>) {
-    for _ in 0..200 {
-        if harness.state().query_window.matches().is_some() {
-            return;
-        }
-        thread::sleep(StdDuration::from_millis(5));
-        harness.step();
-    }
+    assert!(
+        harness.step_until(|harness| harness.state().query_window.matches().is_some()),
+        "the query worker produced no result"
+    );
 }
 
 fn load_three_overlapping_files(harness: &mut Harness<App>) {
@@ -201,12 +197,7 @@ fn load_three_overlapping_files(harness: &mut Harness<App>) {
     ];
 
     for (name, bytes) in overlapping_files {
-        harness
-            .input_mut()
-            .dropped_files
-            .push(Arc::new(TestDroppedFile::bytes(bytes, name)));
-        harness.step();
-        step_until_loaded(harness);
+        drop_file_and_wait_for_load(harness, TestDroppedFile::bytes(bytes, name));
     }
 }
 
@@ -220,12 +211,7 @@ fn drag_drop_gtd_path_loads_file() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
-    harness
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::path(tmp_path)));
-    harness.step(); // processes the drop, spawns load thread
-    step_until_loaded(&mut harness); // waits for thread + drains channel
+    drop_file_and_wait_for_load(&mut harness, TestDroppedFile::path(tmp_path));
 
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 1);
 }
@@ -237,15 +223,10 @@ fn drag_drop_gtd_bytes_loads_file() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
-    harness
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            gtd_bytes.as_slice(),
-            "test.gtd",
-        )));
-    harness.step(); // processes the drop, spawns load thread
-    step_until_loaded(&mut harness); // waits for thread + drains channel
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes.as_slice(), "test.gtd"),
+    );
 
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 1);
 }
@@ -258,15 +239,10 @@ fn query_results_go_stale_when_the_filter_changes() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
-    harness
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            gtd_bytes.as_slice(),
-            "test.gtd",
-        )));
-    harness.step();
-    step_until_loaded(&mut harness);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes.as_slice(), "test.gtd"),
+    );
 
     {
         let app = harness.state_mut();
@@ -331,15 +307,10 @@ fn query_matches_on_snap_error_after_a_run() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
-    harness
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            gtd_bytes.as_slice(),
-            "test.gtd",
-        )));
-    harness.step();
-    step_until_loaded(&mut harness);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes.as_slice(), "test.gtd"),
+    );
     let track = gt_types::TrackRef::new(gt_types::FileIdx::new(0), gt_types::TrackIdx::new(0));
     inject_completed_run(&mut harness, track);
 
@@ -394,15 +365,10 @@ fn query_match_header_hover_highlights_the_match() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
-    harness
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            gtd_bytes.as_slice(),
-            "test.gtd",
-        )));
-    harness.step();
-    step_until_loaded(&mut harness);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes.as_slice(), "test.gtd"),
+    );
 
     {
         let app = harness.state_mut();
@@ -458,14 +424,10 @@ fn drag_drop_unknown_bytes_sets_error() {
         .build_eframe(transient_app);
     // \xff is not valid UTF-8 and doesn't match the HDF5 magic, so the error
     // is detected synchronously without spawning a background thread.
-    harness
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            b"\xff\xfe\x00binary_junk".as_slice(),
-            "mystery.bin",
-        )));
-    harness.step();
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(b"\xff\xfe\x00binary_junk".as_slice(), "mystery.bin"),
+    );
 
     assert!(harness.state().load_error.is_some());
     assert_eq!(harness.state().shared.borrow().loaded_files.len(), 0);
@@ -682,13 +644,8 @@ fn dragging_files_header_moves_legend_overlay() {
         .borrow()
         .plot_state
         .file_legend_offset;
-    let drag_handle = harness.get_by_label(ICON_DOTS_SIX);
-    let start = drag_handle.rect().center();
-    let end = start + egui::vec2(120.0, 70.0);
-    harness.drag_at(start);
-    harness.hover_at(end);
-    harness.drop_at(end);
-    harness.step();
+    let start = harness.get_by_label(ICON_DOTS_SIX).rect().center();
+    harness.press_drag_release(start, egui::vec2(120.0, 70.0), 1);
 
     let after = harness
         .state()
@@ -710,20 +667,8 @@ fn dragging_files_header_moves_legend_overlay() {
 fn dragging_files_header_far_across_many_frames_does_not_snap_back() {
     let mut harness = harness_with_three_files_loaded();
 
-    let drag_handle = harness.get_by_label(ICON_DOTS_SIX);
-    let start = drag_handle.rect().center();
-    harness.drag_at(start);
-    harness.step();
-
-    let mut pos = start;
-    for _ in 0..10 {
-        pos += egui::vec2(20.0, 15.0);
-        harness.hover_at(pos);
-        harness.step();
-    }
-
-    harness.drop_at(pos);
-    harness.step();
+    let start = harness.get_by_label(ICON_DOTS_SIX).rect().center();
+    harness.press_drag_release(start, egui::vec2(200.0, 150.0), 10);
 
     let offset = harness
         .state()
@@ -744,13 +689,8 @@ fn dragging_legend_near_top_left_redocks_automatically() {
     let mut harness = harness_with_three_files_loaded();
     detach_legend(&mut harness, egui::vec2(220.0, 120.0));
 
-    let drag_handle = harness.get_by_label(ICON_DOTS_SIX);
-    let start = drag_handle.rect().center();
-    let end = start - egui::vec2(210.0, 110.0);
-    harness.drag_at(start);
-    harness.hover_at(end);
-    harness.drop_at(end);
-    harness.step();
+    let start = harness.get_by_label(ICON_DOTS_SIX).rect().center();
+    harness.press_drag_release(start, egui::vec2(-210.0, -110.0), 1);
 
     let offset = harness
         .state()
@@ -777,13 +717,10 @@ fn snapshot_app_with_file_loaded() {
         .eframe(build_app);
     harness.inner.step();
 
-    harness
-        .inner
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(GOLD_BYTES, "gold.gtd")));
-    harness.inner.step();
-    step_until_loaded(&mut harness.inner);
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(GOLD_BYTES, "gold.gtd"),
+    );
     // The app repaints continuously (map + background jobs). Run many frames
     // so the map zoom and plot layout converge before we snapshot.
     harness.inner.run_steps(60);
@@ -803,13 +740,10 @@ fn snapshot_app_with_file_loaded_light() {
         .eframe(build_app);
     harness.inner.step();
 
-    harness
-        .inner
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(GOLD_BYTES, "gold.gtd")));
-    harness.inner.step();
-    step_until_loaded(&mut harness.inner);
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(GOLD_BYTES, "gold.gtd"),
+    );
     harness.inner.ctx.set_theme(egui::ThemePreference::Light);
     harness.inner.run_steps(60);
 
@@ -826,13 +760,10 @@ fn snapshot_app_sahara_tracks() {
         .eframe(build_app);
     harness.inner.step();
 
-    harness
-        .inner
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(GOLD_BYTES, "gold.gtd")));
-    harness.inner.step();
-    step_until_loaded(&mut harness.inner);
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(GOLD_BYTES, "gold.gtd"),
+    );
 
     // Identify the Sahara tracks by latitude: they are all centred around
     // 23°N 13°E. The bounding_box is in (lon, lat) geo-types order, so
@@ -873,16 +804,10 @@ fn snapshot_app_demo_trip() {
         .eframe(build_app);
     harness.inner.step();
 
-    harness
-        .inner
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            DEMO_BYTES,
-            "demo_trip.gtd",
-        )));
-    harness.inner.step();
-    step_until_loaded(&mut harness.inner);
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
+    );
 
     {
         let mut state = harness.inner.state().shared.borrow_mut();
@@ -908,16 +833,10 @@ fn snapshot_app_query_window() {
         .eframe(build_app);
     harness.inner.step();
 
-    harness
-        .inner
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            DEMO_BYTES,
-            "demo_trip.gtd",
-        )));
-    harness.inner.step();
-    step_until_loaded(&mut harness.inner);
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
+    );
 
     {
         let mut state = harness.inner.state().shared.borrow_mut();
@@ -981,16 +900,10 @@ fn snapshot_app_query_editor_light() {
         .eframe(build_app);
     harness.inner.step();
 
-    harness
-        .inner
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            DEMO_BYTES,
-            "demo_trip.gtd",
-        )));
-    harness.inner.step();
-    step_until_loaded(&mut harness.inner);
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
+    );
 
     harness.inner.ctx.set_theme(egui::ThemePreference::Light);
     let app = harness.inner.state_mut();
@@ -1016,16 +929,10 @@ fn snapshot_app_query_match_hover() {
         .eframe(build_app);
     harness.inner.step();
 
-    harness
-        .inner
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            DEMO_BYTES,
-            "demo_trip.gtd",
-        )));
-    harness.inner.step();
-    step_until_loaded(&mut harness.inner);
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
+    );
 
     {
         let mut state = harness.inner.state().shared.borrow_mut();
@@ -1074,16 +981,10 @@ fn snapshot_app_plot_channels() {
         .eframe(build_app);
     harness.inner.step();
 
-    harness
-        .inner
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            DEMO_BYTES,
-            "demo_trip.gtd",
-        )));
-    harness.inner.step();
-    step_until_loaded(&mut harness.inner);
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
+    );
     harness.inner.run_steps(5);
 
     // Hidden by default: no channel chip until the section is revealed.
@@ -1145,16 +1046,10 @@ fn snapshot_app_plot_light() {
         .eframe(build_app);
     harness.inner.step();
 
-    harness
-        .inner
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            DEMO_BYTES,
-            "demo_trip.gtd",
-        )));
-    harness.inner.step();
-    step_until_loaded(&mut harness.inner);
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
+    );
 
     // Force the light theme (startup settings default to system/dark in tests).
     harness.inner.ctx.set_theme(egui::ThemePreference::Light);
@@ -1199,16 +1094,10 @@ fn snapshot_app_query_channel_source() {
         .eframe(build_app);
     harness.inner.step();
 
-    harness
-        .inner
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            accel_channel_gtd_bytes(28.0),
-            "accel_demo.gtd",
-        )));
-    harness.inner.step();
-    step_until_loaded(&mut harness.inner);
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
+    );
 
     {
         let mut state = harness.inner.state().shared.borrow_mut();
@@ -1249,16 +1138,10 @@ fn snapshot_app_query_points_with_channel() {
         .eframe(build_app);
     harness.inner.step();
 
-    harness
-        .inner
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            accel_channel_gtd_bytes(28.0),
-            "accel_demo.gtd",
-        )));
-    harness.inner.step();
-    step_until_loaded(&mut harness.inner);
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(accel_channel_gtd_bytes(28.0), "accel_demo.gtd"),
+    );
 
     {
         let mut state = harness.inner.state().shared.borrow_mut();
@@ -1319,16 +1202,10 @@ fn snapshot_query_pipeline() {
         .size(egui::vec2(1280.0, 800.0))
         .eframe(build_app);
     harness.inner.step();
-    harness
-        .inner
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            DEMO_BYTES,
-            "demo_trip.gtd",
-        )));
-    harness.inner.step();
-    step_until_loaded(&mut harness.inner);
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(DEMO_BYTES, "demo_trip.gtd"),
+    );
     {
         let mut state = harness.inner.state().shared.borrow_mut();
         state.zoom_to_visible_request = true;
@@ -1379,15 +1256,10 @@ fn query_history_persists_across_settings_roundtrip() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
-    harness
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            gtd_bytes.as_slice(),
-            "test.gtd",
-        )));
-    harness.step();
-    step_until_loaded(&mut harness);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes.as_slice(), "test.gtd"),
+    );
 
     {
         let app = harness.state_mut();
@@ -1650,15 +1522,10 @@ fn app_with_query_window_open() -> Harness<'static, App> {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
-    harness
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            gtd_bytes.as_slice(),
-            "test.gtd",
-        )));
-    harness.step();
-    step_until_loaded(&mut harness);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes.as_slice(), "test.gtd"),
+    );
     harness.state_mut().query_window.open = true;
     harness.run_steps(3);
     harness
@@ -2026,16 +1893,10 @@ fn snapshot_app_plot_channel_components() {
         .size(egui::vec2(1280.0, 800.0))
         .eframe(build_app);
     harness.inner.step();
-    harness
-        .inner
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            accel_channel_gtd_bytes(0.9),
-            "accel.gtd",
-        )));
-    harness.inner.step();
-    step_until_loaded(&mut harness.inner);
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(accel_channel_gtd_bytes(0.9), "accel.gtd"),
+    );
     harness.inner.run_steps(5);
 
     harness.inner.get_by_label_contains("Channels").click();
@@ -2068,16 +1929,10 @@ fn channel_chip_menu_offers_component_colors() {
         .size(egui::vec2(1280.0, 800.0))
         .eframe(build_app);
     harness.inner.step();
-    harness
-        .inner
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            accel_channel_gtd_bytes(0.9),
-            "accel.gtd",
-        )));
-    harness.inner.step();
-    step_until_loaded(&mut harness.inner);
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(accel_channel_gtd_bytes(0.9), "accel.gtd"),
+    );
     harness.inner.run_steps(5);
     harness.inner.get_by_label_contains("Channels").click();
     harness.inner.run_steps(3);
@@ -2141,16 +1996,10 @@ fn snapshot_app_plot_channel_color_override() {
         .size(egui::vec2(1280.0, 800.0))
         .eframe(build_app);
     harness.inner.step();
-    harness
-        .inner
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            accel_channel_gtd_bytes(0.9),
-            "accel.gtd",
-        )));
-    harness.inner.step();
-    step_until_loaded(&mut harness.inner);
+    drop_file_and_wait_for_load(
+        &mut harness.inner,
+        TestDroppedFile::bytes(accel_channel_gtd_bytes(0.9), "accel.gtd"),
+    );
     harness.inner.run_steps(5);
 
     harness.inner.get_by_label_contains("Channels").click();
@@ -2553,15 +2402,10 @@ fn snapshot_settings_window() {
 
 /// Load one recording and give it the metadata the name template draws on.
 fn load_recording_with_metadata(harness: &mut Harness<App>) {
-    harness
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            minimal_gtd_bytes(),
-            "ride.gtd",
-        )));
-    harness.step();
-    step_until_loaded(harness);
+    drop_file_and_wait_for_load(
+        harness,
+        TestDroppedFile::bytes(minimal_gtd_bytes(), "ride.gtd"),
+    );
     let mut shared = harness.state().shared.borrow_mut();
     if let Some(file) = shared.loaded_files.get_mut(0) {
         file.metadata.title = Some("Morning ride".to_owned());
@@ -3842,12 +3686,14 @@ fn snap_runs_persist_and_restore_through_the_app() {
         crate::app::snap::TrackContentKey::new(loaded)
     };
     harness.state().persist_snap_runs(&[content]);
-    let blob = wait_for(|| {
-        Recordings::open_or_create(&db_path)
-            .ok()
-            .and_then(|db| db.snap_blob(&db_ref).ok())
-            .flatten()
-    });
+    let blob = harness
+        .step_until_some(|_| {
+            Recordings::open_or_create(&db_path)
+                .ok()
+                .and_then(|db| db.snap_blob(&db_ref).ok())
+                .flatten()
+        })
+        .expect("the history worker stored the snap blob");
 
     // Restore leg: a fresh scheduler seeded through the response handler.
     harness.state_mut().snap = crate::app::snap::SnapScheduler::new(
@@ -3871,18 +3717,6 @@ fn snap_runs_persist_and_restore_through_the_app() {
         .latest_run_for(loaded)
         .expect("stored run restored into the fresh session");
     assert_eq!(restored.result.points.len(), 60);
-}
-
-/// Poll `read` until it yields a value, with a bounded wait - the history
-/// worker runs on its own thread.
-fn wait_for<T>(read: impl Fn() -> Option<T>) -> T {
-    for _ in 0..200 {
-        if let Some(value) = read() {
-            return value;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    panic!("timed out waiting for the history worker");
 }
 
 /// Inject a completed run for `track` straight into the scheduler cache,
@@ -4040,15 +3874,10 @@ fn snapshot_app_plot_clock_excursion() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
-    harness
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            gtd_bytes.as_slice(),
-            "ride.gtd",
-        )));
-    harness.step();
-    step_until_loaded(&mut harness);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes.as_slice(), "ride.gtd"),
+    );
 
     {
         let state = harness.state_mut();
@@ -4075,15 +3904,10 @@ fn snapshot_app_plot_snap_error() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
-    harness
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            gtd_bytes.as_slice(),
-            "ride.gtd",
-        )));
-    harness.step();
-    step_until_loaded(&mut harness);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes.as_slice(), "ride.gtd"),
+    );
     let track = gt_types::TrackRef::new(gt_types::FileIdx::new(0), gt_types::TrackIdx::new(0));
     inject_completed_run(&mut harness, track);
     harness.run_steps(5);
@@ -4117,15 +3941,10 @@ fn snap_error_chip_is_disabled_until_a_run_completes() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
-    harness
-        .input_mut()
-        .dropped_files
-        .push(Arc::new(TestDroppedFile::bytes(
-            gtd_bytes.as_slice(),
-            "ride.gtd",
-        )));
-    harness.step();
-    step_until_loaded(&mut harness);
+    drop_file_and_wait_for_load(
+        &mut harness,
+        TestDroppedFile::bytes(gtd_bytes.as_slice(), "ride.gtd"),
+    );
     let track = gt_types::TrackRef::new(gt_types::FileIdx::new(0), gt_types::TrackIdx::new(0));
     harness.run_steps(3);
 

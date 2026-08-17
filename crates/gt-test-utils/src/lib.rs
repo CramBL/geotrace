@@ -1,5 +1,7 @@
 pub mod fixtures;
 #[cfg(feature = "snapshot")]
+pub mod interaction;
+#[cfg(feature = "snapshot")]
 pub mod snapshot_harness;
 
 pub use fixtures::{
@@ -9,7 +11,9 @@ pub use fixtures::{
     synthetic_gtd_bytes_with_channels,
 };
 #[cfg(feature = "snapshot")]
-pub use snapshot_harness::{Queryable, TestHarness, TestHarnessBuilder};
+pub use interaction::HarnessInteraction;
+#[cfg(feature = "snapshot")]
+pub use snapshot_harness::{By, Queryable, TestHarness, TestHarnessBuilder};
 
 pub const GOLD_BYTES: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),

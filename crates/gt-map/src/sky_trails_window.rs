@@ -1044,7 +1044,7 @@ fn apply_scrub_highlight(highlight: &mut MapHighlight, track_ref: TrackRef, epoc
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, Duration, Utc};
-    use gt_test_utils::TestHarness;
+    use gt_test_utils::{HarnessInteraction as _, TestHarness};
 
     use gt_types::satellites::{Constellation, Satellite, Satellites};
     use gt_types::{
@@ -1178,22 +1178,20 @@ mod tests {
                     });
             });
 
-        let window_size = |h: &TestHarness<'_>| {
-            h.inner
-                .ctx
-                .memory(|m| m.area_rect(egui::Id::new(Some("Sky trails"))))
-                .map(|r| r.size())
-        };
-
         // A couple of frames to settle: the first sizes against the default,
         // the second against the measured transport.
-        harness.run();
-        harness.run();
-        let settled = window_size(&harness).expect("the window is shown");
+        let settled = harness
+            .inner
+            .settled_window_size("Sky trails", 2)
+            .expect("the window is shown");
 
         for frame in 0..10 {
             harness.run();
-            let now = window_size(&harness).expect("the window is shown");
+            let now = harness
+                .inner
+                .window_rect("Sky trails")
+                .expect("the window is shown")
+                .size();
             assert!(
                 (now - settled).length() < 0.5,
                 "frame {frame}: window grew from {settled:?} to {now:?}"

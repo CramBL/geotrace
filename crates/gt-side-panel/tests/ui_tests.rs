@@ -18,7 +18,7 @@ use gt_side_panel::{
     FilterPanelState, PanelContext, SnapCostingTarget, SnapPanelView, SnapRowView, TreeState,
     show_side_panel,
 };
-use gt_test_utils::TestHarness;
+use gt_test_utils::{By, HarnessInteraction as _, TestHarness};
 use gt_types::{FileIdx, FixStats, LoadWarning, TrackIdx, TrackRef};
 use gt_ui_types::{DisplayCategory, DisplayMask, MapHighlight, SnapCosting};
 
@@ -563,8 +563,9 @@ fn costing_submenu_requests_the_chosen_costing() {
         .get_by_label_contains("#1  4.6 km")
         .click_secondary();
     harness.run();
-    harness.inner.get_by_label_contains("Snap again as").hover();
-    harness.inner.run_steps(3);
+    harness
+        .inner
+        .hover_and_settle(By::new().label_contains("Snap again as"), 3);
     harness.inner.get_by_label("Bicycle").click();
     harness.run();
 
@@ -589,8 +590,9 @@ fn recording_context_menu_requests_the_costing_for_the_recording() {
         .get_by_label_contains("ride_0")
         .click_secondary();
     harness.run();
-    harness.inner.get_by_label_contains("Snap again as").hover();
-    harness.inner.run_steps(3);
+    harness
+        .inner
+        .hover_and_settle(By::new().label_contains("Snap again as"), 3);
     harness.inner.get_by_label("Pedestrian").click();
     harness.run();
 
@@ -616,8 +618,9 @@ fn status_glyph_context_menu_requests_the_chosen_costing() {
 
     harness.inner.get_by_label(ICON_PATH).click_secondary();
     harness.run();
-    harness.inner.get_by_label_contains("Snap again as").hover();
-    harness.inner.run_steps(3);
+    harness
+        .inner
+        .hover_and_settle(By::new().label_contains("Snap again as"), 3);
     harness.inner.get_by_label("Bicycle").click();
     harness.run();
 
@@ -649,8 +652,9 @@ fn unsnappable_rows_offer_the_costing_override() {
         .get_by_label_contains("#1  4.6 km")
         .click_secondary();
     harness.run();
-    harness.inner.get_by_label_contains("Snap as").hover();
-    harness.inner.run_steps(3);
+    harness
+        .inner
+        .hover_and_settle(By::new().label_contains("Snap as"), 3);
     harness.inner.get_by_label("Pedestrian").click();
     harness.run();
 
@@ -678,8 +682,9 @@ fn snapshot_snap_costing_submenu() {
         .get_by_label_contains("#1  4.6 km")
         .click_secondary();
     harness.run();
-    harness.inner.get_by_label_contains("Snap again as").hover();
-    harness.inner.run_steps(3);
+    harness
+        .inner
+        .hover_and_settle(By::new().label_contains("Snap again as"), 3);
     harness.snapshot("side_panel_snap_costing_submenu");
 }
 
@@ -1229,7 +1234,7 @@ fn clicking_note_icon_requests_recording_details() {
 fn settled_docked_panel_width(state: State) -> f32 {
     let width = std::rc::Rc::new(std::cell::Cell::new(-1.0_f32));
     let width_probe = std::rc::Rc::clone(&width);
-    let mut harness = gt_test_utils::TestHarness::builder()
+    let mut harness = TestHarness::builder()
         .size(egui::vec2(1200.0, 600.0))
         .ui_state(
             move |ui, s: &mut State| {

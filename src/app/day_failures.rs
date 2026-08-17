@@ -51,8 +51,8 @@ pub fn show_failures(ui: &mut Ui, list_id: &str, failures: &[DayFailure]) {
 
 #[cfg(test)]
 mod tests {
-    use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable as _;
+    use gt_test_utils::TestHarness;
 
     use super::*;
 
@@ -70,11 +70,17 @@ mod tests {
     #[test]
     fn a_failed_day_is_listed_with_its_cause() {
         let failures = [failure(21)];
-        let mut harness = Harness::new_ui(|ui| show_failures(ui, "failures", &failures));
+        let mut harness = TestHarness::builder().ui(|ui| show_failures(ui, "failures", &failures));
         harness.run();
-        assert!(harness.query_by_label_contains("1 day could not").is_some());
         assert!(
             harness
+                .inner
+                .query_by_label_contains("1 day could not")
+                .is_some()
+        );
+        assert!(
+            harness
+                .inner
                 .query_by_label_contains("2026-07-21 - Kp: HTTP 500 Internal Server Error")
                 .is_some()
         );
@@ -84,27 +90,34 @@ mod tests {
     #[test]
     fn a_long_failure_list_is_capped_under_its_count() {
         let failures: Vec<DayFailure> = (1..=20).map(failure).collect();
-        let mut harness = Harness::new_ui(|ui| show_failures(ui, "failures", &failures));
+        let mut harness = TestHarness::builder().ui(|ui| show_failures(ui, "failures", &failures));
         harness.run();
         assert!(
             harness
+                .inner
                 .query_by_label_contains("20 days could not")
                 .is_some()
         );
         assert!(
-            harness.query_by_label_contains("2026-07-20 -").is_some(),
+            harness
+                .inner
+                .query_by_label_contains("2026-07-20 -")
+                .is_some(),
             "the newest failure is listed"
         );
         assert!(
-            harness.query_by_label_contains("2026-07-15 -").is_none(),
+            harness
+                .inner
+                .query_by_label_contains("2026-07-15 -")
+                .is_none(),
             "the sixth-newest failure is past the cap"
         );
     }
 
     #[test]
     fn nothing_is_drawn_without_a_failure() {
-        let mut harness = Harness::new_ui(|ui| show_failures(ui, "failures", &[]));
+        let mut harness = TestHarness::builder().ui(|ui| show_failures(ui, "failures", &[]));
         harness.run();
-        assert!(harness.query_by_label_contains("could not").is_none());
+        assert!(harness.inner.query_by_label_contains("could not").is_none());
     }
 }
