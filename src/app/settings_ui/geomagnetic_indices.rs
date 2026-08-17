@@ -2,47 +2,47 @@
 
 use crate::app::backfill_ui::BackfillAction;
 use crate::app::settings_ui::SettingsPage;
-use crate::app::{App, day_failures, geomagnetic_index_ui};
+use crate::app::settings_ui::source_page::{self, SourcePageSlots};
+use crate::app::{App, geomagnetic_index_ui};
+
+const URL_HOVER: &str = "Base URL of the host serving the Kp and Hp30 geomagnetic indices. The \
+                         default is GFZ Potsdam, which publishes them. Point it at a mirror or an \
+                         offline copy to fetch from there instead. Requests carry a date range \
+                         and nothing about your recordings.";
 
 impl App {
     pub(super) fn show_geomagnetic_index_page(&mut self, ui: &mut egui::Ui) {
-        SettingsPage::GeomagneticIndices.show_header(ui);
-        egui::Grid::new("geomagnetic_index_grid")
-            .num_columns(2)
-            .spacing([8.0, 6.0])
-            .show(ui, |ui| {
-                let url_help = "Base URL of the host serving the Kp and Hp30 \
-                                geomagnetic indices. The default is GFZ Potsdam, which \
-                                publishes them. Point it at a mirror or an offline copy \
-                                to fetch from there instead. Requests carry a date range \
-                                and nothing about your recordings.";
-                ui.label(format!("{} Base URL", egui_phosphor::regular::GLOBE_SIMPLE))
-                    .on_hover_text(url_help);
-                let mut base_url = self.geomagnetic_index_settings.base_url.clone();
-                if ui
-                    .text_edit_singleline(&mut base_url)
-                    .on_hover_text(url_help)
-                    .changed()
-                {
-                    self.geomagnetic_indices.set_base_url(&base_url);
-                    self.geomagnetic_index_settings.base_url = base_url;
-                }
-                ui.end_row();
-
-                geomagnetic_index_ui::show_fetch_rows(ui, self.geomagnetic_indices.fetch_status());
-            });
-        day_failures::show_failures(
-            ui,
-            "geomagnetic_index_failures",
-            self.geomagnetic_indices.failures(),
-        );
-        ui.add_space(8.0);
+        let mut base_url = self.geomagnetic_index_settings.base_url.clone();
+        let mut base_url_changed = false;
+        let fetch_status = self.geomagnetic_indices.fetch_status();
+        let progress = self.geomagnetic_indices.backfill_progress();
         let readiness = self.backfill_readiness(self.geomagnetic_indices.archive_available());
-        if let Some(action) = self.geomagnetic_index_backfill_ui.ui(
+        let mut backfill_action = None;
+
+        source_page::show_source_page(
             ui,
-            self.geomagnetic_indices.backfill_progress(),
-            readiness,
-        ) {
+            SettingsPage::GeomagneticIndices,
+            SourcePageSlots {
+                endpoint: |ui: &mut egui::Ui| {
+                    base_url_changed = source_page::show_base_url_row(ui, URL_HOVER, &mut base_url)
+                },
+                status: Some(|ui: &mut egui::Ui| {
+                    geomagnetic_index_ui::show_fetch_rows(ui, fetch_status);
+                }),
+                failures: self.geomagnetic_indices.failures(),
+                backfill: Some(|ui: &mut egui::Ui| {
+                    backfill_action = self
+                        .geomagnetic_index_backfill_ui
+                        .ui(ui, progress, readiness);
+                }),
+            },
+        );
+
+        if base_url_changed {
+            self.geomagnetic_indices.set_base_url(&base_url);
+            self.geomagnetic_index_settings.base_url = base_url;
+        }
+        if let Some(action) = backfill_action {
             match action {
                 BackfillAction::Start { from, to } => {
                     let queued = self.geomagnetic_indices.backfill(from, to);
