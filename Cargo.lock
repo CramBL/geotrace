@@ -2592,6 +2592,7 @@ dependencies = [
  "proptest",
  "reqwest 0.13.4",
  "rstest",
+ "serde",
  "serde_json",
  "strum",
  "thiserror 2.0.20",

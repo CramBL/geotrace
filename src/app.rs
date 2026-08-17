@@ -21,6 +21,7 @@ mod snap_state;
 mod solar;
 mod storage;
 mod tec;
+mod tec_mirrors_ui;
 pub use storage::Storage;
 #[cfg(feature = "self-update")]
 pub mod update;
@@ -412,7 +413,7 @@ impl App {
         let tec_maps = tec::TecMapScheduler::new(
             cc.egui_ctx.clone(),
             tec_maps,
-            gt_ionex::DEFAULT_BASE_URL.to_owned(),
+            gt_ionex::MirrorList::default(),
             transport_source(options.offline),
         );
         let app_version = options.app_version;

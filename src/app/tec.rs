@@ -4,9 +4,10 @@
 //! request reporting over an mpsc channel, `request_repaint` on every message.
 //!
 //! Loading a track queues the UTC days it spans, and one day's request walks
-//! JPL's products until one has a file. A day the archive holds in the settled
-//! product is never requested again. One request is in flight at a time, and
-//! the transport spaces requests [`transport::REQUEST_INTERVAL`] apart.
+//! the configured mirrors and JPL's products until one has a file. A day the
+//! archive holds in the settled product is never requested again. One request
+//! is in flight at a time, and the transport spaces requests
+//! [`transport::REQUEST_INTERVAL`] apart.
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
@@ -17,6 +18,7 @@ use chrono::{NaiveDate, Utc};
 use egui::Context;
 
 use gt_fetch::{Connection, OfflineTransport, Transport, TransportSource};
+use gt_ionex::mirrors::{MirrorAttempt, MirrorBaseUrl, MirrorList, MirrorOutcome};
 use gt_ionex::{IonexProduct, calendar, transport};
 use gt_store::{IonexStore, IonexStoreError};
 use gt_types::TimeRange;
@@ -27,8 +29,12 @@ use super::day_failures::DayFailure;
 enum MapDayMessage {
     Stored {
         day: NaiveDate,
+        mirror: MirrorBaseUrl,
         product: IonexProduct,
         map_count: usize,
+        /// The mirrors tried before the one that served, and what each
+        /// returned.
+        skipped: Vec<MirrorAttempt>,
     },
     Failed {
         day: NaiveDate,
@@ -41,10 +47,12 @@ pub struct TecMapScheduler {
     ctx: Context,
     tx: mpsc::Sender<MapDayMessage>,
     rx: mpsc::Receiver<MapDayMessage>,
-    base_url: String,
+    /// The hosts a day is requested from, in the order they are tried.
+    mirrors: MirrorList,
     /// `None` disables fetching: no archive to write to.
     store: Option<Arc<IonexStore>>,
-    /// Connected on the first request, and dropped when the host changes.
+    /// Connected on the first request, and dropped when the mirror list
+    /// changes.
     http: Option<Arc<Connection>>,
     /// Where that transport comes from. Supplied by the application, so
     /// nothing here decides whether requests may leave the machine.
@@ -61,7 +69,7 @@ impl TecMapScheduler {
     pub fn new(
         ctx: Context,
         store: Option<Arc<IonexStore>>,
-        base_url: String,
+        mirrors: MirrorList,
         transport_source: TransportSource,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
@@ -69,7 +77,7 @@ impl TecMapScheduler {
             ctx,
             tx,
             rx,
-            base_url,
+            mirrors,
             store,
             http: None,
             transport_source,
@@ -82,8 +90,8 @@ impl TecMapScheduler {
 
     /// Queue the days a recording spans.
     ///
-    /// Days already archived in the settled product, outside JPL's coverage,
-    /// or already queued are dropped. A recording spanning more than
+    /// Days already archived in the settled product, outside the archives'
+    /// coverage, or already queued are dropped. A recording spanning more than
     /// [`calendar::MAX_DAYS_PER_TRACK`] queues nothing.
     pub fn request_days_for(&mut self, range: TimeRange) {
         if self.store.is_none() {
@@ -112,7 +120,7 @@ impl TecMapScheduler {
                 Err(err) => {
                     if self.seen.insert(day) {
                         let detail = format!("reading the archive: {err}");
-                        log::error!("Cannot tell whether {day} is archived: {detail}");
+                        log::error!("Cannot determine whether {day} is archived: {detail}");
                         self.failures.push(DayFailure { day, detail });
                     }
                 }
@@ -154,10 +162,26 @@ impl TecMapScheduler {
             match message {
                 MapDayMessage::Stored {
                     day,
+                    mirror,
                     product,
                     map_count,
+                    skipped,
                 } => {
-                    log::info!("Archived {map_count} {product} TEC maps for {day}");
+                    for attempt in skipped {
+                        match attempt.outcome {
+                            MirrorOutcome::NoFile => log::debug!(
+                                "{} holds no {} TEC map for {day}",
+                                attempt.mirror,
+                                attempt.product
+                            ),
+                            MirrorOutcome::Failed(detail) => log::warn!(
+                                "No {} TEC map for {day} from {}: {detail}",
+                                attempt.product,
+                                attempt.mirror
+                            ),
+                        }
+                    }
+                    log::info!("Archived {map_count} {product} TEC maps for {day} from {mirror}");
                 }
                 MapDayMessage::Failed { day, detail } => {
                     log::error!("No TEC maps archived for {day}: {detail}");
@@ -168,16 +192,16 @@ impl TecMapScheduler {
         self.start_next();
     }
 
-    /// Point the scheduler at `base_url`.
+    /// Point the scheduler at `mirrors`.
     ///
-    /// A changed host drops the queue, `seen` and the failures: they belong to
-    /// the old host. Archived days are kept - a day already archived does not
-    /// depend on which host served it.
-    pub fn set_base_url(&mut self, base_url: &str) {
-        if self.base_url == base_url {
+    /// A changed list drops the queue, `seen` and the failures: they belong to
+    /// the old list. Archived days are kept - a day already archived does not
+    /// depend on which mirror served it.
+    pub fn set_mirrors(&mut self, mirrors: &MirrorList) {
+        if self.mirrors == *mirrors {
             return;
         }
-        base_url.clone_into(&mut self.base_url);
+        self.mirrors = mirrors.clone();
         self.http = None;
         self.queue.clear();
         self.seen.clear();
@@ -212,12 +236,13 @@ impl TecMapScheduler {
             self.tx.clone(),
             transport,
             store,
-            self.base_url.clone(),
+            self.mirrors.clone(),
             day,
         );
     }
 
-    /// The transport to fetch on, opened once and kept until the host changes.
+    /// The transport to fetch on, opened once and kept until the mirror list
+    /// changes.
     ///
     /// A transport that cannot be opened stands in as the offline one for this
     /// dispatch only, and the day fails through the worker like any other
@@ -253,42 +278,55 @@ fn spawn_fetch(
     tx: mpsc::Sender<MapDayMessage>,
     transport: Arc<Connection>,
     store: Arc<IonexStore>,
-    base_url: String,
+    mirrors: MirrorList,
     day: NaiveDate,
 ) {
     thread::Builder::new()
         .name(format!("tec-{day}"))
         .spawn(move || {
-            let message = ingest(transport.as_ref(), &store, &base_url, day);
+            let message = ingest(transport.as_ref(), &store, &mirrors, day);
             tx.send(message).ok();
             ctx.request_repaint();
         })
         .expect("failed to spawn TEC map worker thread");
 }
 
-/// Fetch `day`, parse the file, and add its maps to the archive.
+/// Fetch `day` from the first mirror that has it, parse the file, and add its
+/// maps to the archive.
 ///
-/// A day no product has a file for fails like a request that could not be
-/// made: nothing is known about it, so a later session asks again.
+/// A day no mirror has a file for fails like a request that could not be made:
+/// nothing is known about it, so a later session requests it again.
 fn ingest(
     transport: &impl Transport<Vec<u8>>,
     store: &IonexStore,
-    base_url: &str,
+    mirrors: &MirrorList,
     day: NaiveDate,
 ) -> MapDayMessage {
     let today = Utc::now().date_naive();
-    let (product, maps) = match transport::fetch_day_maps(transport, base_url, day, today) {
-        transport::DayFetch::Fetched { product, maps } => (product, maps),
-        transport::DayFetch::Missing => {
-            return MapDayMessage::Failed {
-                day,
-                detail: "no map published by either product".to_owned(),
-            };
-        }
-        transport::DayFetch::Failed(detail) => return MapDayMessage::Failed { day, detail },
-    };
+    let (mirror, product, maps, skipped) =
+        match transport::fetch_day_maps(transport, mirrors, day, today) {
+            transport::DayFetch::Fetched {
+                mirror,
+                product,
+                maps,
+                skipped,
+            } => (mirror, product, maps, skipped),
+            transport::DayFetch::Missing => {
+                return MapDayMessage::Failed {
+                    day,
+                    detail: "no map published by any mirror".to_owned(),
+                };
+            }
+            transport::DayFetch::Failed(failure) => {
+                return MapDayMessage::Failed {
+                    day,
+                    detail: failure.to_string(),
+                };
+            }
+        };
 
-    if let Err(err) = store.insert_or_replace_day(day, base_url, Utc::now(), product, &maps) {
+    if let Err(err) = store.insert_or_replace_day(day, mirror.as_ref(), Utc::now(), product, &maps)
+    {
         return MapDayMessage::Failed {
             day,
             detail: err.to_string(),
@@ -296,8 +334,10 @@ fn ingest(
     }
     MapDayMessage::Stored {
         day,
+        mirror,
         product,
         map_count: maps.maps().len(),
+        skipped,
     }
 }
 
@@ -382,7 +422,7 @@ mod tests {
         let scheduler = TecMapScheduler::new(
             Context::default(),
             Some(Arc::clone(&store)),
-            DEFAULT_BASE_URL.to_owned(),
+            MirrorList::default(),
             TransportSource::Offline,
         );
         (dir, store, scheduler)
@@ -393,12 +433,41 @@ mod tests {
         TecMapScheduler::new(
             Context::default(),
             None,
-            DEFAULT_BASE_URL.to_owned(),
+            MirrorList::default(),
             TransportSource::Offline,
         )
     }
 
-    /// Answers every request with one canned response, recording the URLs.
+    fn mirrors(hosts: &[&str]) -> MirrorList {
+        MirrorList::new(hosts.iter().copied().map(MirrorBaseUrl::new).collect())
+            .expect("a named host")
+    }
+
+    /// Serves a file for one mirror's requests, and a 404 for every other
+    /// mirror.
+    struct MirrorAwareTransport {
+        serving: String,
+        body: Vec<u8>,
+        urls: RefCell<Vec<String>>,
+    }
+
+    impl Transport<Vec<u8>> for MirrorAwareTransport {
+        fn send(&self, request: &HttpRequest) -> Result<BytesResponse, TransportError> {
+            let url = request.url().to_owned();
+            let serving = url.starts_with(&self.serving);
+            self.urls.borrow_mut().push(url);
+            Ok(BytesResponse {
+                status: if serving { 200 } else { 404 },
+                body: if serving {
+                    self.body.clone()
+                } else {
+                    Vec::new()
+                },
+            })
+        }
+    }
+
+    /// Serves one canned response to every request, recording the URLs.
     struct CannedTransport {
         status: u16,
         body: Vec<u8>,
@@ -501,7 +570,7 @@ mod tests {
         assert!(scheduler.is_fetching());
     }
 
-    /// A recording is requested once. Loading it again asks for nothing.
+    /// A recording is requested once. Loading it again requests nothing.
     #[test]
     fn a_day_is_queued_at_most_once() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
@@ -522,30 +591,34 @@ mod tests {
         assert!(scheduler.seen.is_empty());
     }
 
-    /// A changed host drops what belonged to the old one.
-    #[test]
-    fn changing_the_host_drops_the_queue_and_its_failures() {
+    /// A changed mirror list drops what belonged to the old one, whether a
+    /// host changed or the order did.
+    #[rstest]
+    #[case::another_host(&["https://mirror.example"])]
+    #[case::the_same_hosts_in_another_order(&["https://mirror.example", DEFAULT_BASE_URL])]
+    fn changing_the_mirror_list_drops_the_queue_and_its_failures(#[case] changed: &[&str]) {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
+        scheduler.set_mirrors(&mirrors(&[DEFAULT_BASE_URL, "https://mirror.example"]));
         scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 11, 17)));
         scheduler.failures.push(DayFailure {
             day: day(2024, 5, 10),
             detail: "HTTP 500 Internal Server Error".to_owned(),
         });
 
-        scheduler.set_base_url("https://mirror.example");
+        scheduler.set_mirrors(&mirrors(changed));
 
-        assert!(scheduler.seen.is_empty(), "the old host's requests");
+        assert!(scheduler.seen.is_empty(), "the old list's requests");
         assert_eq!(scheduler.queued(), 0);
         assert!(scheduler.failures().is_empty());
     }
 
     #[test]
-    fn setting_the_same_host_changes_nothing() {
+    fn setting_the_same_mirror_list_changes_nothing() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
         scheduler.request_days_for(TimeRange::new(at(2024, 5, 10, 8), at(2024, 5, 10, 17)));
         let seen = scheduler.seen.len();
 
-        scheduler.set_base_url(DEFAULT_BASE_URL);
+        scheduler.set_mirrors(&MirrorList::default());
 
         assert_eq!(scheduler.seen.len(), seen);
     }
@@ -572,15 +645,15 @@ mod tests {
         );
     }
 
-    /// The settled product is asked for first, and the archive records the
-    /// host that served it along with the product it came from.
+    /// The settled product is requested first, and the archive records the
+    /// mirror that served it along with the product it came from.
     #[test]
-    fn an_ingested_day_archives_its_maps_the_product_and_the_host() {
+    fn an_ingested_day_archives_its_maps_the_product_and_the_mirror() {
         let (_dir, store) = archive();
         let ingested = day(2024, 5, 10);
         let transport = CannedTransport::serving(gzipped(&published_file()));
 
-        let message = ingest(&transport, &store, DEFAULT_BASE_URL, ingested);
+        let message = ingest(&transport, &store, &MirrorList::default(), ingested);
 
         assert!(matches!(
             message,
@@ -613,7 +686,7 @@ mod tests {
         let ingested = day(2024, 5, 10);
         let transport = CannedTransport::serving(gzipped(&published_file()));
 
-        ingest(&transport, &store, DEFAULT_BASE_URL, ingested);
+        ingest(&transport, &store, &MirrorList::default(), ingested);
 
         let maps = store
             .day_maps(ingested)
@@ -638,8 +711,8 @@ mod tests {
         let ingested = day(2024, 5, 10);
         let transport = CannedTransport::serving(gzipped(&published_file()));
 
-        ingest(&transport, &store, DEFAULT_BASE_URL, ingested);
-        ingest(&transport, &store, DEFAULT_BASE_URL, ingested);
+        ingest(&transport, &store, &MirrorList::default(), ingested);
+        ingest(&transport, &store, &MirrorList::default(), ingested);
 
         assert_eq!(store.archived_days().expect("days").len(), 1);
     }
@@ -657,10 +730,75 @@ mod tests {
             urls: RefCell::new(Vec::new()),
         };
 
-        let message = ingest(&transport, &store, DEFAULT_BASE_URL, day(2024, 5, 10));
+        let message = ingest(&transport, &store, &MirrorList::default(), day(2024, 5, 10));
 
         assert!(matches!(message, MapDayMessage::Failed { .. }));
         assert!(store.archived_days().expect("days").is_empty());
+    }
+
+    #[test]
+    fn a_day_the_second_mirror_served_is_archived_under_that_mirror() {
+        let (_dir, store) = archive();
+        let ingested = day(2024, 5, 10);
+        let transport = MirrorAwareTransport {
+            serving: "https://second.example".to_owned(),
+            body: gzipped(&published_file()),
+            urls: RefCell::new(Vec::new()),
+        };
+
+        let message = ingest(
+            &transport,
+            &store,
+            &mirrors(&["https://first.example", "https://second.example"]),
+            ingested,
+        );
+
+        match message {
+            MapDayMessage::Stored {
+                mirror, skipped, ..
+            } => {
+                assert_eq!(mirror, MirrorBaseUrl::new("https://second.example"));
+                assert_eq!(skipped.len(), 1, "the first mirror holds no file");
+            }
+            MapDayMessage::Failed { detail, .. } => panic!("{detail}"),
+        }
+        assert_eq!(
+            store
+                .archived_days()
+                .expect("days")
+                .first()
+                .map(|entry| entry.host.clone()),
+            Some("https://second.example".to_owned())
+        );
+    }
+
+    /// A day every mirror failed on names each of them and why.
+    #[test]
+    fn a_day_every_mirror_failed_on_reports_each_failure() {
+        let (_dir, store) = archive();
+        let transport = CannedTransport {
+            status: 500,
+            body: Vec::new(),
+            urls: RefCell::new(Vec::new()),
+        };
+
+        let message = ingest(
+            &transport,
+            &store,
+            &mirrors(&["https://first.example", "https://second.example"]),
+            day(2024, 5, 10),
+        );
+
+        match message {
+            MapDayMessage::Failed { day, detail } => {
+                assert_eq!(
+                    DayFailure { day, detail }.to_string(),
+                    "2024-05-10 - final: https://first.example: HTTP 500 Internal Server Error, \
+                     https://second.example: HTTP 500 Internal Server Error"
+                );
+            }
+            MapDayMessage::Stored { .. } => panic!("no mirror served a file"),
+        }
     }
 
     /// Offline, a queued day is still dispatched: the transport declines the

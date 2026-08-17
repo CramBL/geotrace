@@ -16,6 +16,8 @@
 - The plot draws the "Hp30 index" line, one value per fix from the archived period the fix falls in, with the three-hourly "Kp index" one chip away. Both chips stay grayed out until the days a recording spans are archived.
 - Hovering an index line names the value, its storm class on the G scale, and the period it covers. The indices are queryable as `hp30` and `kp` too, so `where hp30 > 5 and slip_all > 2 per min` selects the fixes that lost lock during a geomagnetic storm.
 - Loading a recording downloads JPL's global ionosphere maps for the days it spans into a local archive, so the ionospheric delay it was recorded under is on hand. The host serving them is in Settings under "Ionospheric TEC", and nothing is downloaded in offline mode.
+- Settings' "Ionospheric TEC" section takes an ordered list of mirrors instead of a single host, tried in turn until one has the day's map file.
+  A day no mirror could serve names each of them and the status it returned.
 
 ### Fixed
 
