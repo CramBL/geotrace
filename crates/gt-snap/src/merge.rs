@@ -1,9 +1,9 @@
-//! Stitch per-chunk match results into one [`SnapResult`] for a track.
+//! Merge per-chunk match results into one [`SnapResult`] for a track.
 //!
 //! Each chunk of the request plan produced an outcome: a successful match,
 //! an off-network rejection (the server's error 444 - not a failure, see
 //! [`ChunkOutcome::OffNetwork`]), or a failure that survived the transport's
-//! retry. Stitching takes each chunk's *owned* point range (overlap points
+//! retry. Merging takes each chunk's *owned* point range (overlap points
 //! are context, owned by the neighboring chunk where they are more
 //! interior), maps results back to track [`PointIdx`]s, and assembles the
 //! per-point series, the snapped-track geometry, and the run metadata.
@@ -29,14 +29,14 @@ pub enum ChunkOutcome {
     Success(TraceAttributesResponse),
     /// The server rejected the whole chunk with error 444: every point is
     /// off the road network. Captured reality: this arrives instead of
-    /// per-point `unmatched`, so stitching maps it to all-unsnapped points.
+    /// per-point `unmatched`, so merging maps it to all-unsnapped points.
     OffNetwork,
     /// The chunk failed even after the transport's retry. The string is the
     /// transport's rendered error. Its points have no data.
     Failed(String),
 }
 
-/// One warning accumulated while stitching. Structured per the warning
+/// One warning accumulated while merging. Structured per the warning
 /// reporter pattern (CODE_STYLE.md). The app determines how to surface them.
 ///
 /// Serde derives exist for persisting a run's warnings with its cached
@@ -138,7 +138,7 @@ pub struct SnapPoint {
     pub follows_gap: bool,
 }
 
-/// The stitched result of one snap run over one track.
+/// The merged result of one snap run over one track.
 ///
 /// Serde derives exist for the persistent cache in the recording history
 /// database. Optional and collection fields carry `#[serde(default)]` so
@@ -179,11 +179,11 @@ pub struct SnapResult {
     pub partial: bool,
 }
 
-/// Stitch chunk outcomes into a [`SnapResult`].
+/// Merge chunk outcomes into a [`SnapResult`].
 ///
 /// `outcomes` must be 1:1 with `plan.chunks` - a mismatch is a programming
 /// error in the transport, not a recoverable condition.
-pub fn stitch(
+pub fn merge(
     plan: &RequestPlan,
     params: SnapParams,
     outcomes: &[ChunkOutcome],
@@ -209,9 +209,9 @@ pub fn stitch(
 
     let mut previous = PreviousChunk::default();
     for (chunk_index, (chunk, outcome)) in plan.chunks.iter().zip(outcomes).enumerate() {
-        previous = stitch_chunk(
+        previous = merge_chunk(
             &mut result,
-            ChunkStitch {
+            ChunkMergeInput {
                 chunk,
                 chunk_index,
                 outcome,
@@ -235,7 +235,7 @@ struct PreviousChunk {
     produced_points: bool,
 }
 
-struct ChunkStitch<'a> {
+struct ChunkMergeInput<'a> {
     chunk: &'a Chunk,
     chunk_index: usize,
     outcome: &'a ChunkOutcome,
@@ -244,14 +244,14 @@ struct ChunkStitch<'a> {
 
 /// Append one chunk's points and geometry to `result`, returning what it
 /// leaves for the next chunk.
-fn stitch_chunk(
+fn merge_chunk(
     result: &mut SnapResult,
-    ChunkStitch {
+    ChunkMergeInput {
         chunk,
         chunk_index,
         outcome,
         previous,
-    }: ChunkStitch<'_>,
+    }: ChunkMergeInput<'_>,
     reporter: &SnapWarningReporter,
 ) -> PreviousChunk {
     // A chunk opening a stretch is separated from the previous one by
@@ -308,7 +308,7 @@ fn stitch_chunk(
         });
     }
 
-    stitch_metadata(result, response, reporter);
+    merge_metadata(result, response, reporter);
     let edge_base = result.edges.len();
     result.edges.extend(response.edges.iter().cloned());
 
@@ -402,7 +402,7 @@ fn owned_boundary_snappable(chunk: &Chunk, response: &TraceAttributesResponse) -
     (starts, ends)
 }
 
-fn stitch_metadata(
+fn merge_metadata(
     result: &mut SnapResult,
     response: &TraceAttributesResponse,
     reporter: &SnapWarningReporter,

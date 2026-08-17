@@ -3301,8 +3301,8 @@ fn costing_override_beats_the_declared_mode() {
 #[test]
 fn costing_override_reaches_the_dispatched_run() {
     use crate::app::snap::{SnapCacheKey, SnapRun};
+    use gt_snap::merge::{self, SnapWarningReporter};
     use gt_snap::request_plan::SnapParams;
-    use gt_snap::stitch::{self, SnapWarningReporter};
     use gt_snap::wire::Costing;
 
     let mut harness = Harness::builder()
@@ -3324,7 +3324,7 @@ fn costing_override_reaches_the_dispatched_run() {
             gt_snap::server_host(gt_snap::DEFAULT_SERVER_URL),
         );
         let run = SnapRun::new(
-            stitch::stitch(
+            merge::merge(
                 &gt_snap::request_plan::plan(&[]),
                 params,
                 &[],
@@ -3726,8 +3726,8 @@ fn snap_runs_persist_and_restore_through_the_app() {
 /// series has a line break and markers to show.
 fn inject_completed_run(harness: &mut Harness<'_, App>, track: gt_types::TrackRef) {
     use crate::app::snap::{SnapCacheKey, SnapRun};
+    use gt_snap::merge::{SnapPoint, SnapResult};
     use gt_snap::snapped_track::{Position, SnappedTrackSegment};
-    use gt_snap::stitch::{SnapPoint, SnapResult};
     use gt_snap::wire::{Costing, SnapPointKind};
 
     let points: Vec<SnapPoint> = (0..60)
@@ -3766,7 +3766,7 @@ fn inject_completed_run(harness: &mut Harness<'_, App>, track: gt_types::TrackRe
             edge_spans: Vec::new(),
         }],
         edges: Vec::new(),
-        kind_counts: gt_snap::stitch::SnapKindCounts::default(),
+        kind_counts: gt_snap::merge::SnapKindCounts::default(),
         confidence_score: None,
         osm_changeset: None,
         params: gt_snap::request_plan::SnapParams::new(Costing::Auto),

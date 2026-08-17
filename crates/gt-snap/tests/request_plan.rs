@@ -207,7 +207,7 @@ fn the_fix_after_a_gap_is_sent_within_the_downsample_interval() {
 }
 
 /// Chunks continue their own stretch (sharing overlap) and open a new one
-/// across a gap, so stitching never bridges the dropped run.
+/// across a gap, so merging never bridges the dropped run.
 #[test]
 fn chunks_continue_within_a_stretch_and_open_after_a_gap() {
     let gap = CHUNK_POINTS + 1..CHUNK_POINTS + 4;
