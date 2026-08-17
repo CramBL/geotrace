@@ -22,7 +22,7 @@
 
 ### Changed
 
-- The settings window shows one category at a time, picked from a rail on the left, instead of every section stacked in one column. The recording name template moved to the "Interface" page and the update check to "Application". The window is resizable and keeps its size as the page changes.
+- The settings window shows one category at a time, picked from a rail on the left, instead of every section stacked in one column. The recording name template moved to the "Interface" page and the update check to "Application".
 
 ### Fixed
 
