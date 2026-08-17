@@ -401,7 +401,7 @@ pub struct SnapScheduler {
     /// a server-URL change).
     http: Option<Arc<Connection>>,
     /// Where that transport comes from. Supplied by the application, so
-    /// nothing here decides whether requests may leave the machine.
+    /// nothing here determines whether requests may leave the machine.
     transport_source: TransportSource,
     /// No requests are queued at all while offline. Cached runs stay usable.
     offline: bool,
@@ -465,7 +465,7 @@ impl SnapScheduler {
 
     /// Whether a completed run for this track under these parameters and
     /// the current host is cached, i.e. whether [`Self::request_snap`]
-    /// would redisplay it instead of asking the server.
+    /// would redisplay it instead of requesting a new one from the server.
     pub fn has_cached_run(&self, track: &LoadedTrack, params: SnapParams) -> bool {
         self.cache
             .contains_key(&SnapCacheKey::new(track, params, self.current_host()))
@@ -587,10 +587,10 @@ impl SnapScheduler {
     /// session stores. A run completed this session wins over the stored
     /// one (it is strictly newer), so restoration never clobbers. A queued
     /// automatic entry for the track is cancelled: the stored run already
-    /// answers it. Manual entries proceed: the user explicitly asked for a
+    /// satisfies it. Manual entries proceed: the user explicitly asked for a
     /// fresh run.
     pub fn restore_run(&mut self, track_ref: TrackRef, track: &LoadedTrack, run: SnapRun) {
-        // Cancel first: a pending automatic fetch is answered by this run.
+        // Cancel first: a pending automatic fetch is satisfied by this run.
         if let Some(position) = self
             .queue
             .iter()
@@ -1367,7 +1367,7 @@ mod tests {
     }
 
     /// A restored run seeds the display and dedupe stores and cancels a
-    /// pending automatic entry (the stored run already answers it). Manual
+    /// pending automatic entry (the stored run already satisfies it). Manual
     /// entries survive, and a session run is never clobbered.
     #[test]
     fn restored_run_seeds_stores_and_cancels_auto_entry() {
@@ -1386,7 +1386,10 @@ mod tests {
             empty_run(SnapParams::new(Costing::Auto)),
         );
         assert!(scheduler.latest_run_for(&track).is_some());
-        assert!(scheduler.queue.is_empty(), "the parked answer arrived");
+        assert!(
+            scheduler.queue.is_empty(),
+            "the parked automatic entry was cancelled"
+        );
         assert_eq!(scheduler.activity_for(track_ref()), None);
 
         // A second restore (or an older stored run) never clobbers.

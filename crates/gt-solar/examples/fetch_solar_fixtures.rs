@@ -2,7 +2,7 @@
 //!
 //! Requests each window of [`gt_solar::FIXTURE_WINDOWS`] into
 //! `tests/fixtures/`, one file per window, and records what the service
-//! answered in `capture.json` alongside the capture date and host.
+//! returned in `capture.json` alongside the capture date and host.
 //!
 //! Fixtures are frozen once committed. A re-capture's diff is reviewed like
 //! code.

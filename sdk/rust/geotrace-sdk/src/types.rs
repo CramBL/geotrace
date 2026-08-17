@@ -85,8 +85,8 @@ pub struct Satellite {
 /// `EnumString` (via `strum`) gives the lowercase wire form used by
 /// [`Constellation::try_from_lower_case`], derived from the variant names so it
 /// can't desync from them. [`Constellation::display_name`] is a separate,
-/// deliberately-exhaustive `match` - it is the single place that answers the
-/// "BeiDou" vs "Beidou" vs "BEIDOU" spelling question, and the compiler forces
+/// deliberately-exhaustive `match` - it is the single place that fixes the
+/// "BeiDou" vs "Beidou" vs "BEIDOU" spelling, and the compiler forces
 /// it to be updated whenever a variant is added, unlike a derived
 /// `#[strum(message = ...)]` (which would silently fall back to `None` instead).
 #[derive(

@@ -15,9 +15,9 @@
 //!
 //! The response holds parallel arrays: one value per period, the period start
 //! times, and for Kp a status per value. [`wire`] parses them into
-//! [`series::KpSeries`] and [`series::Hp30Series`]. A window the service has
-//! no values for, before an index begins or beyond its last published period,
-//! answers HTTP 200 with empty arrays.
+//! [`series::KpSeries`] and [`series::Hp30Series`]. For a window the service
+//! has no values for, before an index begins or beyond its last published
+//! period, it returns HTTP 200 with empty arrays.
 //!
 //! [`text`] holds the wording every surface showing a value uses.
 
@@ -147,7 +147,7 @@ const _: () = {
 };
 
 /// The UTC window one request covers, inclusive of both ends: a request from
-/// midnight to midnight answers with the following day's first period too.
+/// midnight to midnight also returns the following day's first period.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimeWindow {
     pub start: DateTime<Utc>,
@@ -233,7 +233,7 @@ pub const FIXTURE_WINDOWS: [FixtureWindow; 4] = [
         index: GeomagneticIndex::Kp,
         start: "2024-04-01T00:00:00Z",
         end: "2024-04-02T00:00:00Z",
-        purpose: "a day no storm reached, the shape most requests answer with",
+        purpose: "a day no storm reached, the shape most responses have",
     },
     FixtureWindow {
         name: "kp-storm",
@@ -254,12 +254,12 @@ pub const FIXTURE_WINDOWS: [FixtureWindow; 4] = [
         index: GeomagneticIndex::Hp30,
         start: "1980-01-01T00:00:00Z",
         end: "1980-01-02T00:00:00Z",
-        purpose: "a window before Hp30 begins in 1985, answered with empty arrays and HTTP 200",
+        purpose: "a window before Hp30 begins in 1985, returned as empty arrays with HTTP 200",
     },
 ];
 
 /// File name of the capture manifest written beside the fixtures, recording
-/// when each window was captured and what the service answered.
+/// when each window was captured and what the service returned.
 pub const CAPTURE_MANIFEST: &str = "capture.json";
 
 /// Directory holding the captured response fixtures.

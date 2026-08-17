@@ -26,9 +26,10 @@ pub struct QueryMatches {
 /// Which `draw` layers cover one point, as a fixed-width bitset (bit `i` for
 /// `draws[i]`).
 ///
-/// The map renderer stores one of these in every point key and asks it which
-/// layer to paint. Layer indices past [`DrawLayerMask::MAX_LAYERS`] cannot be
-/// represented: the app clamps the pipeline to that many draw queries.
+/// The map renderer stores one of these in every point key and reads which
+/// layer to paint from it. Layer indices past [`DrawLayerMask::MAX_LAYERS`]
+/// cannot be represented: the app clamps the pipeline to that many draw
+/// queries.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DrawLayerMask(u16);
 

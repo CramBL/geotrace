@@ -21,8 +21,7 @@ use crate::fmt::Superscript;
 use crate::metric::{Quantity, QueryMetric};
 use crate::unit::{self, example_literal, unit_list};
 
-/// What a query needs to know about one ad-hoc channel to type-check a
-/// reference to it.
+/// What type-checking a reference to one ad-hoc channel requires.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ChannelInfo {
     /// Recognized or custom unit. Custom labels are treated as bare numbers.

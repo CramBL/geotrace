@@ -101,7 +101,7 @@ impl HoverCandidates {
     }
 
     /// Whether several element types sit under the cursor at once, so a click
-    /// cannot tell which one the user meant.
+    /// cannot resolve which one the user meant.
     pub fn is_ambiguous(&self) -> bool {
         self.iter().count() > 1
     }

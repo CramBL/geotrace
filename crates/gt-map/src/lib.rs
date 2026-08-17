@@ -287,7 +287,7 @@ impl<'a> MapDrawContext<'a> {
     }
 }
 
-/// The inputs deciding whether the disambiguation popup closes this frame.
+/// The inputs determining whether the disambiguation popup closes this frame.
 #[derive(Clone, Copy)]
 struct DisambiguationDismissal {
     just_opened: bool,
@@ -581,7 +581,7 @@ impl NavMap {
         self.global_tree = gt_track_builder::build_global_tree(ctx.files);
     }
 
-    /// Advance the blink pulse and the hover-focus fade, asking for another
+    /// Advance the blink pulse and the hover-focus fade, requesting another
     /// frame while either is running.
     ///
     /// The fade reads the previous frame's highlight, which is what the

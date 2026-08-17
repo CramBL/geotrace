@@ -1,5 +1,5 @@
-//! A headless harness for the seam between the query language and map point
-//! state.
+//! A headless harness for the boundary between the query language and map
+//! point state.
 //!
 //! A scenario builds a synthetic dataset, drives a script of steps, and asserts
 //! on what the map would show - with no egui, no worker thread, and no GPU:

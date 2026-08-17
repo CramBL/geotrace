@@ -339,7 +339,7 @@ pub(crate) fn compute_viewport_bounds(map_memory: &MapMemory, map_rect: egui::Re
 ///
 /// A trackline and a raw satellite report have no hover target of their own -
 /// neither is ever inserted into the spatial index, and neither is clickable.
-/// Everything else is hit-testable exactly while the map draws it, asked of
+/// Everything else is hit-testable exactly while the map draws it, queried from
 /// [`MapScope::draws`] so hit-testing cannot drift from what is on screen.
 pub(crate) fn is_spatial_point_visible(sp: &SpatialPoint, scope: MapScope<'_>) -> bool {
     !matches!(

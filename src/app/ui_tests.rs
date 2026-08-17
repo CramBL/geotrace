@@ -1599,7 +1599,7 @@ fn display_mask_persists_across_settings_roundtrip() {
     );
 }
 
-/// The interference layer is off until asked for, and stays on once it is.
+/// The interference layer is off until enabled, and stays on once it is.
 #[test]
 fn showing_the_interference_layer_persists_across_settings_roundtrip() {
     use gt_ui_types::DisplayCategory;
@@ -3069,9 +3069,9 @@ fn snap_consent_escape_declines_without_persisting() {
 }
 
 /// Uploads acknowledged before auto mode existed: the one-time prompt
-/// appears once a snappable track is loaded, and its answer persists.
+/// appears once a snappable track is loaded, and the choice persists.
 #[test]
-fn auto_prompt_asks_once_after_earlier_consent() {
+fn auto_prompt_appears_once_after_earlier_consent() {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
@@ -3109,7 +3109,7 @@ fn auto_prompt_asks_once_after_earlier_consent() {
 
 /// Auto mode armed without acknowledged uploads (the settings checkbox):
 /// the consent dialog opens on the first load with a snappable track, and
-/// nothing is enqueued before it is answered.
+/// nothing is enqueued until the user responds.
 #[test]
 fn auto_without_consent_prompts_before_anything_is_sent() {
     let mut harness = Harness::builder()
@@ -3540,7 +3540,7 @@ fn has_cached_auto_run(harness: &Harness<'_, App>, track: gt_types::TrackRef) ->
 
 /// A harness whose single track already has a cached auto-costing run,
 /// with the auto choice requested and its dialog on screen.
-fn harness_asking_to_replace_the_auto_run<'a>() -> (Harness<'a, App>, gt_types::TrackRef) {
+fn harness_prompting_to_replace_the_auto_run<'a>() -> (Harness<'a, App>, gt_types::TrackRef) {
     let mut harness = Harness::builder()
         .with_wait_for_pending_images(false)
         .build_eframe(transient_app);
@@ -3558,10 +3558,10 @@ fn harness_asking_to_replace_the_auto_run<'a>() -> (Harness<'a, App>, gt_types::
 }
 
 /// A "Snap again as" choice for a costing the track already has a run for
-/// asks before replacing it, and cancelling keeps that run.
+/// prompts before replacing it, and cancelling keeps that run.
 #[test]
-fn costing_choice_with_a_cached_run_asks_before_replacing_it() {
-    let (mut harness, track) = harness_asking_to_replace_the_auto_run();
+fn costing_choice_with_a_cached_run_prompts_before_replacing_it() {
+    let (mut harness, track) = harness_prompting_to_replace_the_auto_run();
 
     assert_eq!(
         harness.state().snap_replace_prompt.map(|p| p.choice),
@@ -3570,7 +3570,7 @@ fn costing_choice_with_a_cached_run_asks_before_replacing_it() {
     assert_eq!(
         harness.state().snap.activity_for(track),
         None,
-        "nothing runs while the dialog asks"
+        "nothing runs while the dialog is open"
     );
 
     harness.input_mut().events.push(egui::Event::Key {
@@ -3593,7 +3593,7 @@ fn costing_choice_with_a_cached_run_asks_before_replacing_it() {
 /// server instead of redisplaying what the track already had.
 #[test]
 fn confirming_the_replace_prompt_discards_the_cached_run() {
-    let (mut harness, track) = harness_asking_to_replace_the_auto_run();
+    let (mut harness, track) = harness_prompting_to_replace_the_auto_run();
 
     harness
         .get_by_role_and_label(egui::accesskit::Role::Button, "Snap again")
@@ -3769,7 +3769,7 @@ fn recording_scope_parks_the_whole_batch_on_one_consent_dialog() {
     }
 }
 
-/// The persistence glue end to end, against a real temporary database:
+/// The persistence integration end to end, against a real temporary database:
 /// a completed run of a history-stored file is written into the
 /// recording's snap blob via the worker, and feeding the stored blob back
 /// through the response handler seeds a fresh scheduler's stores.

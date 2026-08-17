@@ -64,7 +64,7 @@ pub struct SnapPanelView<'a> {
 /// progress strip pinned to the panel bottom while anything is pending.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SnapProgressView {
-    /// The run currently talking to the server, if any.
+    /// The run whose request is in flight, if any.
     pub in_flight: Option<SnapInFlightView>,
     /// Tracks waiting in the queue (including autos parked while hidden).
     pub queued: usize,
@@ -856,8 +856,8 @@ const QUEUED_BADGE_FONT: f32 = 9.0;
 const IN_FLIGHT_SPINNER_SIZE: f32 = 10.0;
 
 /// The in-progress overlays on the (disabled, therefore faded) trigger
-/// glyph: a clock badge while queued, a spinner while talking to the
-/// server - waiting and working read differently at a glance.
+/// glyph: a clock badge while queued, a spinner while the request is in
+/// flight - waiting and working read differently at a glance.
 fn snap_trigger_overlay(ui: &mut egui::Ui, row: &SnapRowView, rect: egui::Rect) {
     match row {
         SnapRowView::Queued => {

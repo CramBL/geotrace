@@ -1,6 +1,6 @@
-//! How the editor buffer's blank lines and whitespace decide what counts as a
-//! query, since that is what `split_queries` answers and everything downstream
-//! trusts.
+//! How the editor buffer's blank lines and whitespace determine what counts as
+//! a query, since that is what `split_queries` returns and everything
+//! downstream relies on.
 
 use gt_query_map_harness::{Dataset, MapScenario, TrackSpec};
 use rstest::rstest;

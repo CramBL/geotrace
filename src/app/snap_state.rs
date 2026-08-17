@@ -17,9 +17,9 @@ pub(super) struct SnapReplacePrompt {
     pub(super) choice: gt_ui_types::SnapCosting,
 }
 
-/// A snap trigger waiting on the upload-consent dialog. Nothing it asks
-/// for is applied before consent: the costing overrides and the cached
-/// runs it replaces stay untouched until the runs actually go out.
+/// A snap trigger waiting on the upload-consent dialog. Nothing it requests
+/// is applied before consent: the costing overrides and the cached runs it
+/// replaces stay untouched until the runs actually go out.
 #[derive(Debug, Default)]
 pub(super) struct PendingSnapRequest {
     pub(super) track_refs: Vec<TrackRef>,

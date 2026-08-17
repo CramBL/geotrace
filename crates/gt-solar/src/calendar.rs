@@ -1,6 +1,6 @@
 //! Which UTC days are worth requesting, and for which index.
 //!
-//! Two answers are knowable without asking: an index has no values before
+//! Two facts are knowable without a request: an index has no values before
 //! [`GeomagneticIndex::coverage_start`], and none for a day that has not
 //! happened. Everything else is [`DayOutlook::Fetchable`], the current day
 //! included: GFZ publishes a nowcast value for the running period and replaces
@@ -62,7 +62,7 @@ pub fn fetchable_indices(
 
 /// Every day in `from..=to` at least one index covers, oldest first.
 pub fn fetchable_days(from: NaiveDate, to: NaiveDate, today_utc: NaiveDate) -> Vec<NaiveDate> {
-    // The lower bound keeps a caller asking from the year 1 out of the walk.
+    // The lower bound keeps a range starting in the year 1 out of the walk.
     gt_types::utc_days::days_in_range(from.max(COVERAGE_START)..=to, |day| {
         fetchable_indices(day, today_utc).next().is_some()
     })

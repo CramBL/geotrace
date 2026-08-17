@@ -221,8 +221,8 @@ impl QuerySession {
         self.in_flight = None;
     }
 
-    /// Ask the run in flight to stop. It reports back as cancelled, leaving the
-    /// previous results in place.
+    /// Request that the run in flight stop. It reports back as cancelled,
+    /// leaving the previous results in place.
     pub fn cancel_run(&self) {
         if let Some(in_flight) = &self.in_flight {
             in_flight.handle.cancel();

@@ -47,8 +47,8 @@ pub struct SkyTrailsPlot<'a> {
     /// in the fix, so a rarely-used satellite shows only the short arcs it
     /// contributed. A slip on a satellite never in the fix goes with it. The
     /// trimming reads whole-track fix state, so it applies with or without a
-    /// [`Self::scrub`]. The scrub only decides the marker, which is hidden for a
-    /// satellite merely tracked at that instant.
+    /// [`Self::scrub`]. The scrub only determines the marker, which is hidden
+    /// for a satellite merely tracked at that instant.
     in_fix_now: bool,
     /// When true, a smooth signal-strength heat field is drawn beneath the
     /// trails from the current-instant in-fix satellites. Inert without a
@@ -162,7 +162,7 @@ impl<'a> SkyTrailsPlot<'a> {
         // The trails plot is always full size, so the grid is fully labelled.
         grid::draw_grid(ui, center, radius, true);
         // The mask angle when the pointer is on its ring, else `None` - one
-        // value that answers both "is it hovered" and "which angle to label".
+        // value covering both whether it is hovered and which angle to label.
         let hovered_mask_deg = self
             .elevation_mask_deg
             .zip(response.hover_pos())
@@ -200,7 +200,7 @@ impl<'a> SkyTrailsPlot<'a> {
                 continue;
             }
             // Hide satellites that were never in the fix over the track, when
-            // asked to. This is a whole-track judgement, so it hides the trail;
+            // enabled. This is a whole-track judgement, so it hides the trail;
             // the current-instant "in fix only" filter below hides only the
             // marker, leaving the path in place.
             if !self.show_not_in_fix && !trail.ever_in_fix() {

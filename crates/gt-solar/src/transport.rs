@@ -1,7 +1,7 @@
-//! Fetch one index window and classify what the service answered.
+//! Fetch one index window and classify what the service returned.
 //!
-//! [`gt_fetch::Transport`] sends the request. A window the service has no
-//! values for is answered with HTTP 200 and empty arrays, so there is no
+//! [`gt_fetch::Transport`] sends the request. For a window the service has no
+//! values for it returns HTTP 200 and empty arrays, so there is no
 //! missing-window status to classify: every response outside 2xx is a failure,
 //! and a 5xx is retried once.
 
@@ -25,7 +25,7 @@ pub struct FetchFailure {
 }
 
 /// Fetch `index` over `window` from `base_url`, retrying a transient failure
-/// once. Whether the body parses is [`crate::wire`]'s answer.
+/// once. Whether the body parses is determined by [`crate::wire`].
 pub fn fetch_index_window(
     transport: &impl Transport,
     base_url: &str,
@@ -84,7 +84,7 @@ mod tests {
         })
     }
 
-    /// Replays a scripted sequence and records the URLs it was asked for.
+    /// Replays a scripted sequence and records the requested URLs.
     struct CannedTransport {
         script: RefCell<Vec<Result<HttpResponse, TransportError>>>,
         urls: RefCell<Vec<String>>,
@@ -186,7 +186,7 @@ mod tests {
         );
     }
 
-    /// Offline, the service is never asked, so nothing is known about the
+    /// Offline, the service is never contacted, so nothing is known about the
     /// window: that is a failure, not an empty one.
     #[test]
     fn an_offline_fetch_fails() {

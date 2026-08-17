@@ -8,8 +8,8 @@
 //! - **Chunking**: split into [`CHUNK_POINTS`]-sized requests sharing
 //!   [`CHUNK_OVERLAP_POINTS`] of context.
 //! - **`gps_accuracy` derivation**: median eph of the sent points, clamped
-//!   to [`GPS_ACCURACY_RANGE_M`] - the one parameter GeoTrace knows better
-//!   than the server default.
+//!   to [`GPS_ACCURACY_RANGE_M`] - the one parameter GeoTrace derives more
+//!   accurately than the server default.
 
 use std::ops::{Range, RangeInclusive};
 use std::time::Duration;

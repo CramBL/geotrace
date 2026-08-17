@@ -13,7 +13,7 @@ pub enum AutoPruneOutcome {
 /// recordings if it does.
 ///
 /// When `confirm` is `true` the database is not touched - candidates are
-/// returned so the caller can ask for confirmation first.
+/// returned so the caller can prompt for confirmation first.
 pub fn run(
     db: &mut Recordings,
     max_bytes: u64,

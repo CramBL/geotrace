@@ -1102,7 +1102,7 @@ pub(crate) struct TpvDrawStyle {
     pub(crate) outline_alpha: f32,
     pub(crate) base_arrow_size: f32,
     /// Opacity of the fix icon currently being drawn, in (0.0, 1.0].
-    /// Decided per fix from its local on-screen spacing (see
+    /// Determined per fix from its local on-screen spacing (see
     /// [`fix_icon_alpha`]). Below 1.0 the icon is crossfading into the
     /// continuous quality line, and fully transparent icons are skipped
     /// before drawing.
@@ -1141,7 +1141,7 @@ pub(crate) fn glyph_size_scale(style: &TpvDrawStyle) -> f32 {
     style.base_arrow_size / MAX_ARROW_SIZE_PX
 }
 
-/// How a track's fix icons fade this frame, decided O(1) from the track's
+/// How a track's fix icons fade this frame, determined O(1) from the track's
 /// precomputed segment-length range before any per-point work.
 ///
 /// At a given map scale every fix's local spacing lies between the track's
@@ -1158,7 +1158,7 @@ pub(crate) enum TrackIconFade {
     /// icon is fully opaque and the quality line is not needed.
     AllVisible,
     /// Spacing crosses the fade band (e.g. parked phases on an otherwise
-    /// moving track): opacity is decided per fix from its local spacing.
+    /// moving track): opacity is determined per fix from its local spacing.
     PerFix,
 }
 
@@ -1389,7 +1389,7 @@ fn draw_tpv_point(
 
 /// Draw the satellite-count labels for a track's selected anchor points.
 ///
-/// Which anchors get a label this frame is decided by
+/// Which anchors get a label this frame is determined by
 /// [`crate::sat_labels::select_sat_labels`]; this pass just renders them.
 /// Labels draw at full opacity regardless of the icon crossfade - the
 /// anchor selection already bounds their density, and a faded-out cluster

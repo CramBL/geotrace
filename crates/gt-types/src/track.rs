@@ -470,7 +470,7 @@ pub struct FileMetadata {
 /// Configuration for log-marker and satellite association.
 ///
 /// Stored in `Settings` and persisted to the config file. Also carried on
-/// `LoadedFile` so that re-processing knows which window was last used.
+/// `LoadedFile` so that re-processing can read which window was last used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct AssociationConfig {
@@ -657,7 +657,7 @@ mod nearest_satellite_report_tests {
     }
 
     /// A track from `(seconds, report)` specs, where `Some(n)` attaches a
-    /// report with `n` satellites so assertions can tell reports apart.
+    /// report with `n` satellites so assertions can distinguish reports.
     fn track(spec: &[(i64, Option<u32>)]) -> LoadedTrack {
         let start = DateTime::<Utc>::from_timestamp(1_748_000_000, 0).expect("valid");
         let points = spec

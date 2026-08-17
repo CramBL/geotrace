@@ -109,7 +109,7 @@ pub trait EventKind: __private::Sealed {
     }
 }
 
-/// Internal plumbing for the `#[derive(EventKind)]` macro.
+/// Internal support code for the `#[derive(EventKind)]` macro.
 ///
 /// Not part of the public API. Subject to change without notice.
 #[doc(hidden)]

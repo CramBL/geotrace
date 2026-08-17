@@ -827,7 +827,7 @@ fn hover_pos(h: &mut TestHarness<HistoryHarness>, target: egui::Pos2) {
 
 /// Point at the widget labelled `label` and stop before its tooltip opens.
 ///
-/// For asking what cursor a widget wants. A tooltip is its own layer and a
+/// For reading the cursor a widget requests. A tooltip is its own layer and a
 /// big one lands over the pointer, which takes the hover off the widget
 /// underneath and resets the cursor - so the cursor has to be read while
 /// the widget is still the thing being pointed at.
@@ -859,7 +859,7 @@ fn topmost_labelled(h: &TestHarness<HistoryHarness>, label: &str) -> egui::Pos2 
 /// function the tooltip calls.
 ///
 /// Driven directly rather than through a hover so the image is just the
-/// breakdown: what it covers is everything the breakdown itself decides -
+/// breakdown: what it covers is everything the breakdown itself determines -
 /// which rows appear, how the channels lay out, and where it truncates.
 /// That the hover actually reaches it is covered separately, by the tests
 /// that hover a real row.
@@ -882,8 +882,8 @@ fn snapshot_history_row_breakdown() {
 }
 
 /// A recording with no channels states that in its breakdown rather than
-/// leaving the question unanswered by rendering nothing. Its hidden tracks
-/// also earn the note explaining where they came from.
+/// rendering nothing. Its hidden tracks also get the note explaining where
+/// they came from.
 #[test]
 fn snapshot_history_row_breakdown_without_channels() {
     let mut entry = sortable_entry(
@@ -934,12 +934,12 @@ fn channel_title_appends_vector_components(#[case] components: &[&str], #[case] 
     assert_eq!(channel_title(&channel), expected);
 }
 
-/// The cursor the window is asking for right now.
+/// The cursor the window requests right now.
 fn cursor_icon(h: &TestHarness<HistoryHarness>) -> egui::CursorIcon {
     h.inner.output().platform_output.cursor_icon
 }
 
-/// Each part of the window asks for the cursor that matches what it does.
+/// Each part of the window requests the cursor that matches what it does.
 ///
 /// egui makes labels selectable by default, which puts a text-editing
 /// I-beam over every one of them - so a column header that sorts on click
@@ -960,7 +960,7 @@ fn cursor_icon(h: &TestHarness<HistoryHarness>) -> egui::CursorIcon {
 #[case::static_caption(point_at_widget, "GB", egui::CursorIcon::Default)]
 #[case::button(point_at_widget, "Prune…", egui::CursorIcon::Default)]
 #[case::checkbox(point_at_widget, "Auto-store recordings", egui::CursorIcon::Default)]
-fn elements_ask_for_a_cursor_that_matches_what_they_do(
+fn elements_request_a_cursor_that_matches_what_they_do(
     #[case] hover: fn(&mut TestHarness<HistoryHarness>, &str),
     #[case] label: &str,
     #[case] expected: egui::CursorIcon,
@@ -972,7 +972,7 @@ fn elements_ask_for_a_cursor_that_matches_what_they_do(
     assert_eq!(
         cursor_icon(&h),
         expected,
-        "hovering {label:?} should ask for {expected:?}",
+        "hovering {label:?} should request {expected:?}",
     );
 }
 
@@ -1059,7 +1059,7 @@ fn the_breakdown_names_the_recordings_channels() {
 }
 
 /// The identity cell keeps its own metadata hover and gains the breakdown,
-/// so the tooltip tells the same story wherever along the row it opens.
+/// so the tooltip shows the same content wherever along the row it opens.
 #[test]
 fn hovering_the_identity_cell_shows_metadata_and_the_breakdown() {
     let mut entry = entry_with_channels();

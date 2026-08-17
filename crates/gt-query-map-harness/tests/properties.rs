@@ -1,4 +1,4 @@
-//! Properties of the query/map seam over generated datasets and programs.
+//! Properties of the query/map boundary over generated datasets and programs.
 //!
 //! Every property drives the real [`MapScenario`], so each assertion also runs
 //! the harness's own check of the per-point classification against the map's

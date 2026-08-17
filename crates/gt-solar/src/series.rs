@@ -83,7 +83,7 @@ impl IndexSample for Hp30Sample {
 }
 
 /// One index over one requested window, in published order: oldest period
-/// first, one sample per period the service answered with.
+/// first, one sample per period the service returned.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IndexSeries<S> {
     pub samples: Vec<S>,

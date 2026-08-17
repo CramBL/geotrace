@@ -22,7 +22,7 @@ pub enum EmptyReason {
     /// Inside the coverage window and old enough to have been published,
     /// but the archive has nothing.
     NotFetched,
-    /// The host answered that it has no dataset for the day.
+    /// The host responded that it has no dataset for the day.
     NotPublished,
 }
 

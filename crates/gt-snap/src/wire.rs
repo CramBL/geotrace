@@ -15,7 +15,7 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
-/// The response attributes production requests ask for: the matched-point
+/// The response attributes production requests specify: the matched-point
 /// group, the matched shape, the map-data version and run confidence for
 /// cache metadata and the snap status, and the edge attribute subset shown on
 /// snapped-track hover (see the feature inventory in docs/snap/design.md).

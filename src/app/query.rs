@@ -57,7 +57,7 @@ const HISTORY_LINE_MAX_CHARS: NonZeroUsize = match NonZeroUsize::new(48) {
 const TOOLTIP_MAX_WIDTH: f32 = 360.0;
 
 /// Id salt for the query editor's text field. Fixed (not derived from the
-/// enclosing `Ui`) so the autocomplete caret/focus plumbing - and the UI
+/// enclosing `Ui`) so the autocomplete caret/focus integration - and the UI
 /// snapshot test - can address the widget directly.
 pub(crate) const EDITOR_ID_SALT: &str = "query_editor";
 
@@ -2156,7 +2156,7 @@ mod tests {
         // A stage keyword gets a trailing space so the next token can follow.
         // A metric does not: an operator, not a space, comes next. A function
         // brings its parentheses with the caret stepping inside them. A unit
-        // pads itself off a glued digit.
+        // pads itself off an adjacent digit.
         let find = |name| gt_query::catalog().iter().find(|c| c.name == name);
         let stage = Candidate::from_construct(find("where").expect("where is catalogued"));
         assert_eq!(stage.insert, "where");

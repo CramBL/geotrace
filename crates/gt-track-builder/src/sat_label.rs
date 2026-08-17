@@ -11,7 +11,7 @@ const FILL_SPACING_M: f64 = 100.0;
 
 /// A satellite-report point of the track, with the fields the anchor
 /// selection passes reason about. Snapshotting the count and quality up
-/// front keeps the windowed passes free of repeated `Option` plumbing.
+/// front keeps the windowed passes free of repeated `Option` boilerplate.
 struct SatPoint {
     index: usize,
     fix_count: u32,

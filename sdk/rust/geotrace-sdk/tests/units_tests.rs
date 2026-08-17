@@ -6,7 +6,7 @@ use proptest::prelude::*;
     clippy::float_cmp,
     reason = "whole-degree inputs make every arc exact in f64"
 )]
-fn signed_arc_crosses_the_compass_seam() {
+fn signed_arc_crosses_the_compass_wraparound() {
     let arc = |from: f64, to: f64| Angle::degrees(from).signed_arc_to(Angle::degrees(to));
     assert_eq!(arc(359.0, 1.0).as_degrees(), 2.0);
     assert_eq!(arc(1.0, 359.0).as_degrees(), -2.0);

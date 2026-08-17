@@ -3,10 +3,10 @@
 //! "In scope" means post-tree (file/track enablement and the per-category
 //! tree toggles, including the per-kind marker refinements), post-filter
 //! (track filter and time window), post-query (`keep`/`hide` point
-//! removal), and pre-display-mask. The counts therefore answer "how much
-//! ink would this category draw if displayed" - which is what the display
-//! toggle popup shows next to each row, and why a viewport-dependent
-//! number would be wrong here.
+//! removal), and pre-display-mask. The counts therefore report how much ink
+//! a category would draw if displayed - which is what the display toggle
+//! popup shows next to each row, and why a viewport-dependent number would
+//! be wrong here.
 //!
 //! The gating comes from the crate's `scope` module, the same predicates
 //! the renderers apply, so the counts cannot drift from what actually
@@ -121,8 +121,8 @@ impl DisplayCounts {
 
                 if track_vis.category_visible(DataCategory::Track) {
                     // Counted per track regardless of query-hide coverage:
-                    // "Tracks" answers "is this track's line eligible to
-                    // draw", not "does it currently draw any pixels".
+                    // "Tracks" counts whether this track's line is eligible
+                    // to draw, not whether it currently draws any pixels.
                     counts.tracks += 1;
                 }
                 if track_vis.category_visible(DataCategory::Tpv) {
@@ -187,7 +187,7 @@ impl DisplayCounts {
     }
 }
 
-/// The inputs [`DisplayCounts::compute`] reads, captured so a cache can tell
+/// The inputs [`DisplayCounts::compute`] reads, captured so a cache can detect
 /// when a recompute is needed. Compared by value: equal keys guarantee equal
 /// counts.
 ///
@@ -252,7 +252,7 @@ fn files_signature(files: &[LoadedFile]) -> u64 {
 }
 
 /// Memoizes [`DisplayCounts::compute`] across frames. The display-toggle popup
-/// asks for counts every frame it is open, but the O(all points) walk only
+/// requests counts every frame it is open, but the O(all points) walk only
 /// needs to rerun when one of its inputs changes.
 #[derive(Default)]
 pub(crate) struct DisplayCountsCache {

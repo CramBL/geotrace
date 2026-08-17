@@ -8,11 +8,11 @@
 //!
 //! - Transport-level failures and server errors (HTTP 5xx) get one retry:
 //!   they may be transient. Any 4xx is deterministic and is never retried.
-//!   Retrying would spend fair-use budget for the same answer.
+//!   Retrying would spend fair-use budget for the same result.
 //! - The server's error 444 (off-network) is a valid result, not a failure:
 //!   it becomes [`ChunkOutcome::OffNetwork`].
-//! - Error bodies are not always JSON (the reverse proxy answers oversized
-//!   requests with an HTML 413 page). Anything unparsable is a failure
+//! - Error bodies are not always JSON (the reverse proxy returns an HTML 413
+//!   page for oversized requests). Anything unparsable is a failure
 //!   holding the raw status.
 
 use gt_fetch::{Classified, HttpRequest, HttpResponse, Transport};

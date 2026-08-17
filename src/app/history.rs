@@ -450,8 +450,9 @@ impl HistoryWindow {
             || !self.filter_date_to.is_empty()
     }
 
-    /// Ask `worker` for the recording list unless it is already cached or a
-    /// request is in flight. The reply arrives via [`HistoryWindow::set_entries`].
+    /// Request the recording list from `worker` unless it is already cached or
+    /// a request is in flight. The reply arrives via
+    /// [`HistoryWindow::set_entries`].
     pub fn request_recording_list_if_missing(&mut self, worker: &HistoryWorker) {
         if self.entries.is_none() && !self.list_pending && worker.available() {
             worker.list();
@@ -461,7 +462,7 @@ impl HistoryWindow {
 
     /// The most recently started recording of the cached list, `None` until the
     /// list has arrived. Equal start times break on the database reference, so
-    /// the answer does not depend on the order the backend enumerated the
+    /// the result does not depend on the order the backend enumerated the
     /// groups in.
     pub fn latest_listed_recording(&self) -> Option<&RecordingEntry> {
         self.entries.as_ref()?.iter().max_by(|a, b| {
@@ -538,7 +539,7 @@ impl HistoryWindow {
 
         let mut open = self.open;
 
-        // Escape closes the whole window only when nothing more local wants
+        // Escape closes the whole window only when nothing more local claims
         // it. The confirmation dialog and an open inline rename both take it
         // first, so the key is left unconsumed here via short-circuit.
         if self.rename.is_none()

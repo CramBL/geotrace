@@ -229,7 +229,7 @@ fn a_window_before_the_index_begins_is_captured_as_an_empty_series() {
             .get("http_status")
             .and_then(Value::as_u64),
         Some(HTTP_OK),
-        "a window before coverage is answered, not refused"
+        "a window before coverage is served, not refused"
     );
 }
 

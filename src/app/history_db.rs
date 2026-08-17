@@ -117,7 +117,8 @@ pub enum Response {
     },
 }
 
-/// Owns the history-database worker thread and the channels to talk to it.
+/// Owns the history-database worker thread and the request and response
+/// channels to it.
 pub struct HistoryWorker {
     req_tx: Option<Sender<Request>>,
     resp_rx: Receiver<Response>,

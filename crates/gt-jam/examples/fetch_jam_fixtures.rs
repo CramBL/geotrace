@@ -2,7 +2,7 @@
 //!
 //! Requests each day of [`gt_jam::FIXTURE_DAYS`] into `tests/fixtures/`.
 //! A served day is written as its own file. A refused one has no dataset, so
-//! only its `capture.json` entry records the answer, alongside the capture
+//! only its `capture.json` entry records the status, alongside the capture
 //! date and host.
 //!
 //! Fixtures are frozen once committed. A re-capture's diff is reviewed like
@@ -117,7 +117,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         // gets compressed bytes that still look like a body and would
         // overwrite the fixture with them.
         //
-        // Keyed on what the host answered now, not on what FIXTURE_DAYS
+        // Keyed on what the host returned now, not on what FIXTURE_DAYS
         // declares. tests/captured_days.rs catches the disagreement.
         let (rows, recorded_body) = if served {
             let reporter = ParseWarningReporter::default();

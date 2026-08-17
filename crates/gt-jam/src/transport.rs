@@ -1,12 +1,12 @@
-//! Fetch one day's dataset and classify what the host answered.
+//! Fetch one day's dataset and classify what the host returned.
 //!
 //! [`gt_fetch::Transport`] sends requests over the network. `classify` below
 //! maps an [`gt_fetch::HttpResponse`] to a [`FetchOutcome`] for one
 //! interference day.
 //!
 //! A 404 is [`FetchOutcome::Missing`], not a failure. Whether that means
-//! "not published yet" or a gap in the record is
-//! [`crate::calendar::awaiting_publication`]'s answer, not the transport's.
+//! "not published yet" or a gap in the record is determined by
+//! [`crate::calendar::awaiting_publication`], not by the transport.
 
 use std::time::Duration;
 
@@ -28,8 +28,8 @@ const HTTP_NOT_FOUND: u16 = 404;
 #[derive(Debug, Clone, PartialEq, Eq, strum::EnumCount, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum FetchOutcome {
-    /// The dataset, as served. Whether it parses is
-    /// [`crate::wire::parse_dataset`]'s answer.
+    /// The dataset, as served. Whether it parses is determined by
+    /// [`crate::wire::parse_dataset`].
     Served(String),
     /// The host has no file for this day.
     Missing,
@@ -97,7 +97,7 @@ mod tests {
         })
     }
 
-    /// Replays a scripted sequence and records the URLs it was asked for.
+    /// Replays a scripted sequence and records the requested URLs.
     struct CannedTransport {
         script: RefCell<Vec<Result<HttpResponse, TransportError>>>,
         urls: RefCell<Vec<String>>,
@@ -210,7 +210,7 @@ mod tests {
     }
 
     /// An offline fetch is a failure, not a missing day: the host was never
-    /// asked, so nothing is known about whether it has the dataset.
+    /// contacted, so nothing is known about whether it has the dataset.
     #[test]
     fn an_offline_fetch_is_a_failure_not_a_missing_day() {
         let transport = TransportSource::Offline
@@ -223,7 +223,7 @@ mod tests {
     }
 
     proptest::proptest! {
-        /// Status alone decides the outcome, for any status and any body.
+        /// Status alone determines the outcome, for any status and any body.
         #[test]
         fn any_response_classifies_by_status(
             status in proptest::prelude::any::<u16>(),

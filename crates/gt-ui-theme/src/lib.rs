@@ -315,7 +315,7 @@ pub enum SatCountTier {
     Fair,
     /// Marginal: a fix is degraded or fragile.
     Poor,
-    /// Too few to trust: no fix or a lone satellite.
+    /// Too few to be reliable: no fix or a lone satellite.
     Critical,
 }
 

@@ -183,7 +183,7 @@ fn snap_multi_hover_tpv_and_generated_marker() {
 }
 
 /// Two loaded files with distinct filenames, so the labels that name a
-/// recording have something to tell apart.
+/// recording have something to distinguish.
 fn two_recordings_loaded() -> gt_loaded_files::LoadedFiles {
     let mut loaded = gt_loaded_files::LoadedFiles::new();
     for filename in ["morning.gtd", "evening.gtd"] {

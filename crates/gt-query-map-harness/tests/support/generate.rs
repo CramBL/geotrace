@@ -76,7 +76,7 @@ impl Agg {
 
 /// What a comparison's left side reads: a metric at the point, or an aggregate
 /// over the window. The checker rejects a bare metric under a window and an
-/// aggregate without one, so a stage's window decides which of these it holds.
+/// aggregate without one, so a stage's window determines which of these it holds.
 #[derive(Debug, Clone, Copy)]
 pub enum Term {
     Point(Metric),
@@ -429,8 +429,8 @@ impl GenDataset {
         scenario
     }
 
-    /// The longest track, which bounds the windows a program can usefully ask
-    /// for.
+    /// The longest track, which bounds the windows a program can usefully
+    /// request.
     pub fn longest_track(&self) -> usize {
         self.files
             .iter()
@@ -560,7 +560,7 @@ fn mode() -> impl Strategy<Value = Mode> {
     prop_oneof![Just(Mode::Keep), Just(Mode::Hide), Just(Mode::Draw)]
 }
 
-/// One stage. `max_window` bounds the window size a stage may ask for, so a
+/// One stage. `max_window` bounds the window size a stage may request, so a
 /// generated program stays relevant to the dataset it runs over - a window
 /// longer than every track would make every stage vacuous.
 fn gen_stage(max_window: usize) -> impl Strategy<Value = Stage> {

@@ -356,7 +356,7 @@ fn disc_offset_for_samples(
         (None, None) => return DISC_OFFSET_PX * size_scale,
     };
     // A hairpin can leave the two samples nearly coincident, so guard the
-    // normalization rather than trust the >= 8px per-side sampling alone.
+    // normalization rather than rely on the >= 8px per-side sampling alone.
     if tangent.length() < f32::EPSILON {
         return DISC_OFFSET_PX * size_scale;
     }

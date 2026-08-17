@@ -577,7 +577,7 @@ fn costing_submenu_requests_the_chosen_costing() {
 }
 
 /// The recording row's context menu carries the same submenu, targeting
-/// the whole recording so the app can ask for a scope.
+/// the whole recording so the app can request a scope.
 #[test]
 fn recording_context_menu_requests_the_costing_for_the_recording() {
     let state = make_state(1);

@@ -37,7 +37,7 @@ pub enum ChunkOutcome {
 }
 
 /// One warning accumulated while stitching. Structured per the warning
-/// reporter pattern (CODE_STYLE.md). The app decides how to surface them.
+/// reporter pattern (CODE_STYLE.md). The app determines how to surface them.
 ///
 /// Serde derives exist for persisting a run's warnings with its cached
 /// [`SnapResult`]. Snake_case tags keep the stored form stable against

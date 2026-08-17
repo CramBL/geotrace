@@ -55,8 +55,8 @@ const DATE_FORMAT: &str = "%Y-%m-%d";
 
 /// The URL of `day`'s dataset on `base_url`, which must not end in a slash.
 ///
-/// Whether the day is worth requesting is [`calendar::day_outlook`]'s
-/// answer, not this one's.
+/// [`calendar::day_outlook`] determines whether the day is worth requesting,
+/// not this function.
 pub fn dataset_url(base_url: &str, day: NaiveDate) -> String {
     format!(
         "{base_url}{DATASET_PATH_PREFIX}{file_name}",
@@ -85,8 +85,8 @@ pub fn parse_day(day: &str) -> Result<NaiveDate, chrono::ParseError> {
 pub struct FixtureDay {
     /// The UTC day, as it appears in the dataset's file name.
     pub day: &'static str,
-    /// The status the host answered when this day was captured. Pinned here
-    /// as well as in the manifest, so a changed answer fails a test.
+    /// The status the host returned when this day was captured. Pinned here
+    /// as well as in the manifest, so a changed status fails a test.
     pub http_status: u16,
     /// What this capture exists to exercise.
     pub purpose: &'static str,
@@ -113,13 +113,13 @@ pub const FIXTURE_DAYS: [FixtureDay; 2] = [
     FixtureDay {
         day: "2022-02-13",
         http_status: 404,
-        purpose: "the day before coverage begins, so its 404 is permanent: a valid answer \
+        purpose: "the day before coverage begins, so its 404 is permanent: a valid response \
                   meaning 'never published', not a failed request",
     },
 ];
 
 /// File name of the capture manifest written beside the fixtures, recording
-/// when each day was captured and what the host answered.
+/// when each day was captured and what status the host returned.
 pub const CAPTURE_MANIFEST: &str = "capture.json";
 
 /// Directory holding the captured dataset fixtures.
@@ -177,7 +177,7 @@ mod tests {
     }
 
     /// A captured day must never be one the host has not reached yet: such a
-    /// day answers 404 now and 200 later, which would rot the fixture into
+    /// day returns 404 now and 200 later, which would rot the fixture into
     /// meaning the opposite of what it was captured for.
     #[test]
     fn no_captured_day_is_still_ahead_of_the_host() {

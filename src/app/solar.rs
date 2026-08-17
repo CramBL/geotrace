@@ -73,7 +73,7 @@ pub struct GeomagneticIndexScheduler {
     /// Connected on the first request, and dropped when the host changes.
     http: Option<Arc<Connection>>,
     /// Where that transport comes from. Supplied by the application, so
-    /// nothing here decides whether requests may leave the machine.
+    /// nothing here determines whether requests may leave the machine.
     transport_source: TransportSource,
     queue: VecDeque<NaiveDate>,
     /// Every day queued this session, so a day is requested at most once even
@@ -161,7 +161,7 @@ impl GeomagneticIndexScheduler {
                 Err(err) => {
                     if self.seen.insert(day) {
                         let detail = format!("reading the archive: {err}");
-                        log::error!("Cannot tell whether {day} is archived: {detail}");
+                        log::error!("Cannot determine whether {day} is archived: {detail}");
                         self.failures.push(DayFailure { day, detail });
                     }
                     RecordingDayCoverage::Awaited
@@ -198,7 +198,7 @@ impl GeomagneticIndexScheduler {
                 Ok(false) => {}
                 Err(err) => {
                     let detail = format!("reading the archive: {err}");
-                    log::error!("Cannot tell whether {day} is archived: {detail}");
+                    log::error!("Cannot determine whether {day} is archived: {detail}");
                     self.failures.push(DayFailure { day, detail });
                 }
             }
@@ -710,7 +710,7 @@ mod tests {
         )
     }
 
-    /// Answers every request with one canned response, recording the URLs.
+    /// Returns one canned response for every request, recording the URLs.
     struct CannedTransport {
         status: u16,
         body: String,
@@ -890,7 +890,7 @@ mod tests {
         assert!(scheduler.is_fetching());
     }
 
-    /// A recording is requested once. Loading it again asks for nothing.
+    /// A recording is requested once. Loading it again requests nothing.
     #[test]
     fn a_day_is_queued_at_most_once() {
         let (_dir, _store, mut scheduler) = scheduler_with_archive();
@@ -1094,7 +1094,7 @@ mod tests {
         );
         assert!(
             !scheduler.seen.contains(&queued),
-            "a day that never went out can be asked for again"
+            "a day that never went out can be requested again"
         );
     }
 
@@ -1200,7 +1200,7 @@ mod tests {
         }
     }
 
-    /// Before Hp30 begins, only Kp is asked for, and the day is archived from
+    /// Before Hp30 begins, only Kp is requested, and the day is archived from
     /// what the service does publish.
     #[test]
     fn a_day_before_hp30_begins_archives_kp_alone() {
@@ -1229,8 +1229,8 @@ mod tests {
         );
     }
 
-    /// Empty arrays are a published answer, not a failure: the day is archived
-    /// with no samples, which is what keeps it from being asked for again.
+    /// Empty arrays are a published result, not a failure: the day is archived
+    /// with no samples, which is what keeps it from being requested again.
     #[test]
     fn a_day_without_published_values_is_archived_empty() {
         let (_dir, store) = archive();
@@ -1472,7 +1472,7 @@ mod tests {
     }
 
     /// One index failing leaves the whole day unarchived, so the next session
-    /// asks for both again.
+    /// requests both again.
     #[test]
     fn a_day_whose_second_index_fails_archives_neither() {
         let (_dir, store) = archive();

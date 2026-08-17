@@ -112,7 +112,7 @@ impl<'a> Column<'a> {
     }
 
     /// Reads `rows`, refusing a range the column does not hold. HDF5 returns
-    /// fewer values than asked for an out-of-range slice.
+    /// fewer values than requested for an out-of-range slice.
     pub fn read_slice<T: hdf5::H5Type + Clone>(
         &self,
         rows: Range<usize>,
@@ -120,7 +120,7 @@ impl<'a> Column<'a> {
         let available = self.rows()?;
         if rows.end > available {
             return Err(ArchiveError::Corrupt(format!(
-                "{} holds {available} rows, asked for {}..{}",
+                "{} holds {available} rows, requested {}..{}",
                 self.name, rows.start, rows.end
             )));
         }

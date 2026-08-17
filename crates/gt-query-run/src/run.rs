@@ -14,7 +14,7 @@ use crate::results::{ChannelTrackResult, channel_query_matches, matched_point_ra
 /// Per-track derived series of one run, keyed by the track they came from.
 pub(crate) type RunTrackData = HashMap<TrackRef, TrackQueryData>;
 
-/// How a run dispatches, decided from the checked queries' sources.
+/// How a run dispatches, determined from the checked queries' sources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunKind {
     /// Every query is points-source: run the composing pipeline.
@@ -38,8 +38,8 @@ pub struct RunHandle {
 }
 
 impl RunHandle {
-    /// Ask the run to stop. It finishes with a cancelled [`RunOutcome`], which
-    /// leaves the previous results in place.
+    /// Request that the run stop. It finishes with a cancelled [`RunOutcome`],
+    /// which leaves the previous results in place.
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
     }

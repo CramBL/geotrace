@@ -120,7 +120,7 @@ pub struct StartupOptions {
     /// downloads, no snapping, no update check, no map tiles.
     ///
     /// `main` reads `GEOTRACE_OFFLINE` to set it, and is the only place that
-    /// consults the environment. Everything downstream is handed the answer.
+    /// consults the environment. Everything downstream is handed the value.
     pub offline: bool,
     /// Which databases the run opens.
     pub storage: storage::Storage,
